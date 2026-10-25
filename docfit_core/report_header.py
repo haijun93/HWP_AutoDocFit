@@ -830,6 +830,11 @@ def apply_header(header_root, section, spec: dict, merge_refs, fit_table=None, s
                 sub.append(q)
             written["overview"] += 1
         _remap(p, maps)
+        if block["role"] == "overview":
+            from .document_structure import justify_overview
+            table = next((x for x in p.iter() if _tag(x) == "tbl"), None)
+            if table is not None:
+                justify_overview(header_root, table)
         new_blocks.append(p)
     if target["info"] and not written["info"]:
         # 예시에 보고 주체 자리가 없거나(표지에만 있는 서식 등) 쓸 값이 없으면 대상의 보고 주체를 잃지 않게 그대로 둔다.

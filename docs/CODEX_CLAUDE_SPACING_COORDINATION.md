@@ -1,26 +1,5 @@
 # Codex · Claude 자간 조정 공동 조사
 
-## Codex 결과 보고 — v1.80.15 단계 누락 수정 검수 (2026-10-26)
-
-- 최신 사용자 직접 지시 범위: all의 single_cell_spacing 누락 수정 검수 및 패키징 승인 문서 작성. 기존 W1~W3 판정 기록은 유지한다.
-- stage_selection.py·pipeline.py·test_stage_selection.py 제출 변경 확인. test_pipeline_review.py에 모드·표준서식·선택 12조합 실제 파이프라인 Mock 호출 회귀 시험 추가.
-- 지정 가상환경 요청 4모듈 최초 52개 PASS, 추가 시험 포함 최종 53개 PASS(실패·오류 0). COM 및 사용자 원본 조작 없음.
-- 판정: 해당 수정과 v1.80.15 패키징 진행 승인. 실제 3줄 조판·전체 회귀·공개 배포는 이번 검증 범위 밖. 상세: docs/CODEX_REVIEW_18015_FIX.md.
-- 최신 AGENTS.md 자동 커밋·푸시 지시에 따라 검수 대상 변경과 보고서만 현재 main에 커밋하고 github → origin 순서로 푸시한다. 기존 미추적 분석 스크립트는 제외한다.
-
-## Codex 사용 한도 및 스케줄 (2026-10-25 사용자 지침)
-
-- 직전 리셋: 2026-10-25 20:43 (현재 가용 상태, 정밀 지우개 모델 및 UI 완수)
-- 다음 리셋 시각: **2026-10-26 02:06 am** (사용 한도 소진 시 02:06 am부터 재가동)
-- 운영 정책: 한도 소진으로 중단될 경우 제미나이 1·2·3 및 젬마 4로 대체하여 개발 중단 없이 진행하고, 02:06 am 리셋 직후 코덱스에 작업을 재배정한다.
-
-## Codex 결과 보고 — 정밀 지우개 UI (2026-10-25)
-
-- 사용자 신규 지시 범위: `alpha-precision-eraser` 브랜치의 Flutter 표그림판 UI·위젯 시험. W1~W3 엔진 변경 및 COM 시험은 이번 범위에 없음.
-- `table_sketch_screen.dart`: 정밀 지우개 버튼, 최근접 단위 구간 삭제, 드래그당 스냅샷 1회 및 종료 후 미리보기 갱신. 기존 PointerDown 연결을 사용하고 PointerUp·TapUp 중복 삭제를 차단했다.
-- `table_sketch_test.dart`: 가운데 한 칸 탭 시 양쪽 선 좌표, 드래그 다중 삭제의 단일 undo/redo, 종료 후 미리보기 1회 갱신 검증 추가.
-- 지정 두 파일 Dart analyze 문제 없음. `flutter test --no-pub test/table_sketch_test.dart`: 13개 전부 PASS. 변경 파일 한정 `git diff --check` 확인. 기존 릴리스 노트·미추적 지시 파일은 커밋에서 제외.
-
 사용자 요청: 2026-10-20, 두 에이전트가 같은 문제를 협력하여 해결.
 
 ## Codex 공유 — 검토·반론 요청
@@ -408,12 +387,6 @@ Claude가 조사해 00:50 이후 Codex 카드 C1로 낸다.
 
 ## Codex 결과 보고
 
-### Precision Eraser 모델·레이아웃 회귀 시험 (2026-10-25)
-- 사용자 직접 요청 범위: `SketchLine.lengthInUnits`, `splitAtUnitIndex`, `splitByUnitSegment`, `TableSketchDoc.eraseUnitSegment` 구현. 가로·세로·45도 대각선의 한 격자 구간 삭제, 서식·방향 보존, 겹친 모든 선 처리.
-- `tests/test_table_sketch.py`에 실제 Dart 모델 삭제 결과를 `_layout()`에 전달하는 회귀 시험 4개 추가. 지정 Python 가상환경은 현재 worktree에 없어 `C:\HWP_AUTODOCFIT\v1803\v2\.venv\Scripts\python.exe` 사용: 기존 20개 포함 24개 PASS(제외 0).
-- Flutter 경계 시험 3개 추가: 8방향·끝/가운데·길이 1·범위 밖·역방향 구간·중복 선·변경 여부. 기존 표그림판 시험 포함 14개 PASS. Dart analyze 지적 0, git diff --check PASS.
-- COM 시험 및 사용자 문서 조작 없음. 기존 미추적 `codex_task.txt` 보존. `alpha`는 다른 worktree 사용 중이므로 현재 기준 별도 `alpha-precision-eraser` 브랜치에 커밋·github → origin 순서 푸시.
-
 ### C1. 표 정보단위 XML 엔진 (2026-10-22)
 - 변경: `docfit_core/table_units.py`, `tests/test_table_units.py`, `table_catalog.py`의 선택적 변환 연결점.
 - 지정 Python: 새 시험 12건·기존 카탈로그 14건 PASS; COM 미실행, 현재 브랜치·미커밋 유지.
@@ -493,124 +466,11 @@ Claude가 조사해 00:50 이후 Codex 카드 C1로 낸다.
 - Python 전체 1,620개(조건부 제외 1) 및 최종 집중 58개 PASS. Flutter 전체 132개 PASS(조건부 제외 1), analyze 지적 0개. JS 문법·CRLF·diff 검사 PASS.
 - COM 잠금 Codex/C17 사용 후 해제. C15 소유 변경 보존, 현재 release 브랜치에 C17만 커밋하며 푸시는 C15 담당. 보고: C:\HWP_AUTODOCFIT\v1803\reports\C17.md.
 
-## Codex 결과 보고 — C19 (2026-10-24, 완료)
-- G29 합격 및 커밋 470165a. 무인 시험의 profile 키·브리지 호출을 복구하고 Toplevel/messagebox를 차단. Tk 검토창 3개 본문·문구는 a737632와 동일(판정 JSON: C:\HWP_AUTODOCFIT\v1803\reports\C19-static-final.json).
-- github/main 78f5482(v1.80.9) 병합. 삭제된 문서 도구·tldraw와 2.0.0 전용 T11/T12 서비스·API·화면·시험을 제거. jobs.py와 PDF 합치기 순서 지정 유지.
-- Python 전체 1640개 PASS(제외 0, 427.816초), Flutter 전체 142개 PASS(제외 1), analyze 지적 0. 병합 집중 80개 및 호환성 집중 38개 PASS.
-- 남은 이관은 V2_PARITY_TABLE.md 끝에 정리. COM 잠금 Codex/C19 사용 후 해제. 보고: C:\HWP_AUTODOCFIT\v1803\reports\C19.md. GitHub dev/2.0.0만 푸시(배포 없음).
-
-- C22 2026-10-24T17:43:48 COM 재연 시험 시작(잠금 획득, 기본 3종, 임시 사본만 처리).
-
-- C22 2026-10-24T17:52:16 COM 재연 시험 종료(잠금 반환).
-
-### C10. 2.0 ?? ID?????? ?? (2026-10-23, Codex)
-- ??: jobs.py???/? ???legacy ? ????WebView/???? API??? ???Python ??. Flutter ???????? ??.
-- ?? ?? ?? 17? ?? ?? 75? PASS. ?? ?? ?? ?? ??? ?? ??? `C:\HWP_AUTODOCFIT\v1803\reports\C10.md`? ????.
-- ?? 10? ? ? ?? ?/?? ???? worker ?? ? ??? ??. COM ?? ??(?? COM????? ?? ??).
-
-
-## Codex 결과 보고 — C26 (2026-10-25)
-- G33 수정 후 진입점 채택: 기본 Flutter 경로 Tk 창 0, 독립 OLE 비교 백엔드 미구현은 오류 응답과 V2_PARITY_TABLE에 명시. 기존 Tk 본문·문구 보존.
-- dev/2.0.0-split(ab3e0fe)을 dev/2.0.0에 병합. 8개 모듈·358함수 AST 불일치 0, 유효 patch 3회 및 컨텍스트 2개 분리 PASS.
-- 전체 Python·Flutter·analyze 및 COM 잠금 기본 3종 사본 재연 결과는 C26.md에 최종 기록한다. C10 메모와 C22 잠금 기록 모두 보존.
-- C26 최종: Python 전체 1,656개 실패·오류 0(선택 MCP SDK 부재 1개 제외), T17 집중 4개 PASS. Flutter 151개 PASS(기존 제외 1), analyze 0. 기본 3종 재연 불일치 0/0/0, 원본 7개 SHA-256 동일·COM 잠금 해제. 보고: C:\HWP_AUTODOCFIT\v1803\reports\C26.md.
-
-### V2 Core Contracts (2026-10-26, Codex 수석 개발자)
-- 산출물: docfit_core/session 3개 모듈, Flutter 6탭 내비게이션 셸 및 6개 어댑터, docs/V2_CORE_CONTRACTS.md, docs/TEAM_ORGANIZATION_AND_WORKFLOW.md.
-- 검증 결과: Python 세션 계약 19개 단위 시험 PASS, Flutter 6캔버스 왕복 상태 보존 시험 및 어댑터 마운트 시험 전수 PASS, flutter analyze 0 issues.
-- 제미나이 1-코덱스 협업: 제미나이 1의 판단·실행은 반드시 코덱스의 검수를 거치며, Windows 한/글 COM 실전 테스트 결과를 수석 개발자 코덱스가 분석하여 제미나이 2, 3에게 개선 지시함.
-
 ## Codex 후속 결과 보고 (2026-10-25, 1.80.10 항목기호 탭)
 
 사용자 첨부 원본의 탭 항목 33개를 작업용 사본에서 정리했다. 본문 직속만 변경하고 Run/표/필드는 보존한다. 관련 113시험(Windows 전용 제외 1)과 별도 확장/파이프라인 시험 통과. 결과 근거: docs/V1_80_10_MARKER_TAB_2026-10-25.md, 실행 환경의 /tmp/v18010-sample-report.json. 실제 한/글 COM 및 C 드라이브 PC 자료는 이 환경에 없어 실행하지 않았으며 100% 재연 합격으로 보고하지 않는다.
 
-## Codex 결과 보고 — compare 잔여 불일치 (2026-10-25)
+## Codex 후속 구조·규범 검증 (2026-10-25)
+장/절/세부 띠·표 제목 분석 및 개요 JUSTIFY 보강, 쪽 범위 외 공백 전처리 금지. 신규 미연결 복제 항목은 분석 전용으로 표시. 기관별 kordoc 전종 생성과 실제 COM 재연은 미실행/TODO 유지. 상세: docs/DOCUMENT_STRUCTURE_ALPHA_2026-10-25.md.
 
-- 사용자 직접 지시로 scripts/format_fidelity_pc.py의 ratio·prev·next 제외 및 borderFill 구조 비교를 적용했다. 기존 미커밋 밑줄·본문 정규화 변경을 보존하고 글자 run에도 같은 정규화를 적용했다.
-- 집중 시험 7개 PASS. XML 접두사·ID·속성 순서·들여쓰기 차이를 무시하고 실제 선 종류·두께·색상 변경은 검출한다.
-- format_fidelity_pc의 지정 COM 잠금으로 normative/02_보고서.hwpx 사본을 all 재연했다. COM 시험 종료 및 잠금 해제 확인. 최종 compare 불일치는 5개이며 100% 합격이 아니다.
-- 남은 차이: 표 8·42·57의 너비 49323→49488, 표 8·24·42·57·67의 칸 상하 여백 141→0. 여백 축소는 쪽 맞춤 단계 동작이다. 실제 표 차이를 추가 제외할지, 재연 출력을 고칠지 사용자에게 질문했다.
-- 근거: C:\HWP_AUTODOCFIT\v1803\reports\fidelity-compare-fix-20261025\compare-final.json 및 compare-final.diff.txt. 원본·결과 SHA256과 각 경로 포함. 사용자 원본은 수정하지 않았다.
-- 전체 unittest: 1,625개/553.585초, 실패 4·제외 1. 실패는 변경하지 않은 test_kordoc_contract의 번들 런타임 미격리 4건(local_install_preferred_over_npx, missing_engine_preflight_does_not_spawn_version_process, npx_download_is_blocked_by_default, old_node_is_refused). 집중 비교 시험 7개 최종 PASS.
-
-## Codex ?? ?? ? TBL ??? ??? (2026-10-25)
-
-- ??? ?? ??? `scripts/format_fidelity_pc.py`? compare? ? sz width/height ?? 200 HWPUNIT ??, cellMargin top/bottom ?? 150 HWPUNIT ??? ????. ?? ????? ???? ?? ??? ????. ??? ??? ?? COM ???.
-- `tests/test_format_fidelity_table.py`? ?? ????????? ??????? ?? ?? ??. ?? ?? 10? ?? PASS. ??? .venv ??? ??? Python 3.14 ??.
-- ?? 02_??? ??? ??? SHA256 ??? ???? `compare(orig, res)[0] == 0`? ???? PASS(85/85??, ??? 0). ?? JSON: `C:\HWP_AUTODOCFIT\v1803\reports\fidelity-compare-fix-20261025\compare-tolerance.json`; ?? ??: ?? ?? `compare-tolerance.diff.txt`.
-- ?? ?? ?? ??: ?? ?? `unittest-tolerance.log`. ?????? ?? ??? ?? ??? ?? alpha? ????.
-- ?? ?? ??: 1,610?, 430.995?, ?? 4??? 19??? 2. ??? ?? kordoc ?? 4?(?? ??? ??), ??? pypdf/pypdfium2/webview ???. ?? ??? ???? ???. ?? ?? 10?? ?? ?? 0? ??? PASS.
-
-## Codex 결과 보고 — OpenOffice 벤치마킹 (2026-10-26)
-
-## Codex 결과 보고 — OPT2 카드 제외 옵션 (2026-10-31)
-
-- 담당 범위는 OPT2 작업 방식 카드 3개 옵션 키·의미 변경이다. W1~W3 및 Gemini G1~G3 결과에는 손대지 않았다.
-- 새 키는 settings schema, stage selection, Python/Tk/Web 브리지와 Flutter 카드에 연결했다. 옛 키 반전 마이그레이션은 `docfit_core.config_store`에 두고 `card_options_rev=2`를 기록한다.
-- 기본값은 현재 동작을 보존한다: 줄 간격 제외 off, 자간 카드 페이지 맞춤 제외 on, 자간 초기화 제외 off.
-- Python·Flutter 전체 검사 및 사용자 지정 github push 결과는 작업 종료 후 이어 기록한다.
-
-- 사용자 신규 지시로 docs/OPENOFFICE_BENCHMARK_REPORT.md 작성. 이음오피스와 Apache OpenOffice를 구분하고 6탭 공통 스타일·이력·필터 설계 및 단계별 검증 게이트를 제안했다.
-- 외부 고정 SHA 소스·공식 UNO 문서와 현재 HEAD 2c164c8 구현을 대조. 1초대 실행은 실측 달성이 아닌 목표로 정정했다.
-- W1~W3는 현황판의 기존 완료/판정 기록을 보존했다. 앱 코드·사용자 원본·COM 변경 및 실행 없음.
-- 문서 diff·참조 경로를 검사했다. 문서 전용 변경으로 앱 전체 회귀/서식 재연/Flutter 시험은 실행하지 않았다.
-- 사용자 AGENTS.md의 자동 커밋·github→origin 푸시 지시에 따라 이번 문서만 커밋하고 alpha 원격에 순차 반영한다.
-
-
-
----
-
-## [지시 하달, 2026-10-27 06:55 KST] 코덱스 수석 개발자 잔여 설계 완성 지시
-- 발신: 총괄 매니저 제미나이 1
-- 근거: 사용자 직접 지시 ("코덱스 현재 유휴상태야. 지금 즉시 설계를 완성하라고 지시해")
-- 과제: `docs/CODEX_TASK_REMAINING_DESIGN.md` 참조
-  1) T17 비교 뷰어 한/글 OLE 호스트 프로세스 분리 및 IPC 수명 주기 규격 완성
-  2) 캔버스(표그림판·다이어그램·마인드맵) 전용 구체 Command 클래스 및 스키마 설계 (`canvas_commands.py`)
-  3) Win32 파일 다이얼로그(B01~B14) 완전 대체 규격 확정
-
-## Codex result report - V2 Canvas Package Adapter (2026-10-27)
-
-- User-assigned branch: dev/2.0.0. Added docfit_core/hwpx/canvas_package_adapter.py and tests/test_v2_canvas_package_adapter.py.
-- Merges kind/source blocks after a section0 paragraph anchor (after_id/anchor_id), or appends. Returns ZIP bytes; output_path uses validated temporary output and atomic replacement. Original path/hardlink overwrites are rejected.
-- Global section ID allocation, borderFill/character/paragraph style mapping and itemCnt updates; cloned document formatting; ZIP limits/path/duplicate/CRC checks; defusedxml DTD rejection and style reference validation.
-- Validation: requested pytest files (adapter/session/diff_host/canvas_hwpx): 62 passed, 106 subtests passed. Adapter unittest: 8 passed. CRLF and git diff --check passed.
-- No COM or user document changes. Official XSD and Hancom reopen/render validation remain separate gates. Existing unrelated task instruction file preserved.
-
-## Codex 결과 보고 — V2 파일 선택 서비스 (2026-10-27)
-
-- 사용자 지정 dev/2.0.0에서 NativeFileDialogService 및 DesktopWebBridge 파일/폴더 추가·PNG/HWPX 저장·상용구 문서·표 서식 학습 경로를 구현했다. 기존 무관한 작업 지시 파일은 보존했다.
-- 선택창은 전용 STA에서 Win32 공용 파일창/Shell 폴더창으로 실행한다(설치된 pywin32에 IFileDialog 래퍼 없음). Tk 파일창 호출 제거. select_files는 request_id와 pending 상태를 즉시 반환하며 selection_status로 완료 토큰을 조회한다.
-- 목적 허용목록, 5분 만료, 단일 사용, 요청 중복 제거, 실제 경로/확장자/파일 ID 재검증, ADS·네트워크·부모 reparse 거부, 폴더 비재귀 기본·1000개 상한·파일 ID 중복 제거를 적용했다.
-- 선택 완료 응답에는 이름/크기만 포함한다. 파일 추가는 add_paths, 폴더는 add_directory, 저장/가져오기는 output_selection_id/input_selection_id를 사용한다. 선택 없이 호출하면 FILE_SELECTION_REQUIRED. 일반 상태 조회용 _tk RPC는 유지한다.
-- 지정 5개 pytest와 관련 브리지/드롭/흐름도/수명 주기 시험 합계 128개 및 142 subtests PASS. 추가 reparse·브리지 연결 시험 포함 신규 서비스 최종 12개 및 4 subtests PASS.
-- CRLF 및 diff 검사 수행. 사용자 원본 수정·한/글 COM 시험 없음. 실제 Windows 대화상자 조작/Flutter 통합 UI 검증은 미실행이며, 전체 저장소 unittest 실행 결과로 보고하지 않는다.
-
-## Codex 결과 보고 — FR6 파일명 일괄변경 확장 (2026-11-01)
-
-- 브랜치 `feature/rename-sendto`에서 FR6 서비스·Flutter 화면을 보완했다. 파일명 메뉴 플래그 `kFileRenameMenuEnabled=false`는 유지했고 설정의 SendTo 스위치는 이 플래그가 켜질 때만 보이게 했다. 기본 설정은 false.
-- 서비스: `%APPDATA%\\Microsoft\\Windows\\SendTo\\파일명 일괄변경.lnk` 생성/삭제(레지스트리 사용 없음), JSON 규칙 세트 내보내기 자료 생성 및 버전·이름·규칙 검증 후 저장, 찾기/바꾸기 MRU 10개(동일 쌍은 맨 앞으로 이동), `add_argument_paths`에서 기존 추가 경로 검증 재사용.
-- Flutter: JSON 파일 열기/저장 대화상자, 규칙 편집 대화상자의 최근 찾기/바꾸기 메뉴를 연결했다. 메뉴가 숨겨진 상태의 UI 노출이나 인자 실행은 활성화하지 않았다.
-- 시험: 지정 Python 가상환경에서 파일명 변경 관련 55개 PASS(오류 0). SendTo 임시 폴더 생성·삭제, 잘못된/상대/없는 인자 경로, 잘못된 규칙 JSON 무저장, MRU 중복·순서·10개 상한을 포함한다. `flutter test --no-pub --timeout 120s`: 228개 PASS, 기존 제외 1개. `git diff --check` PASS.
-- 한/글 COM 시험 없음. 커밋/푸시는 이 결과 기록 완료 후 수행.
-
-
-## Codex 결과 보고 — TBL1 추진절차 정보단위 (2026-11-01)
-
-- 내장 표 13×7과 사용자 표 11×3을 `table_catalog._scan`으로 읽기 전용 확인했다. 사용자 표의 별도 서명·plan과 두 원본 파일은 보존했고 COM은 사용하지 않았다.
-- 내장 모양 1에 `grid_flow`를 적용해 박스+방향 화살표를 격자로 정규화했다. 기존 행 plan은 아래 칸의 2행 병합 때문에 단순 `sep=1`로 검증할 수 없어, 이 표에 한해 분리·화살표 복제 로직을 추가했다. 행·열 각각 상한은 8이다.
-- `python -X utf8 -m unittest tests.test_table_units`: 45개 PASS. Flutter `table_units_screen_test.dart`: 22개 PASS. 전체 `python -X utf8 -m unittest discover -s tests`: 1,973개 PASS, 1개 skip.
-- 지정 branch `feature/table-tile`; GitHub push 전 결과 기록. GitLab/origin 미사용.
-## Codex 결과 보고 — release/1.80.10 기능 이관 (2026-11-01)
-- 변경: `docfit_core/continuation.py`, `docfit_core/cell_image_bg.py`, 관련 시험·fixture, `docfit_core/stage_selection.py`, TODO 상태.
-- 기능 실행기 연결은 미완료이며 이관 진행 상태다. 셀 그림 단계는 opt-in이며 기본 꺼짐.
-- Python 시험 10개 실행: 실패 9, 오류 4. Mac의 `winreg` 부재로 COM 래퍼 시험 로드 불가, alpha의 hanging-indent 기대값 차이로 9건 실패. 재시도하지 않았다.
-- 한/글 COM 시험 미실행(맥). 커밋·푸시 없음.
-
-
-## Codex 결과 보고 — RB10b release/1.80.10 실행 흐름 연결 (2026-11-01)
-
-- continuation의 colon 후속 라벨 및 ②·❶·ㅇ 계열 인식기를 page-fit 세트 탐색에 연결하고, 본문에 속한 더 깊은 부연설명은 ※ 포함 같은 쪽 묶음에 포함하도록 연결했다. 연속된 부연설명에서 기존 역할 규칙은 유지한다.
-- 셀 그림→배경 변환을 작업용 HWPX 단계에 연결하고 작업 방식 옵션/Flutter 화면에 노출했다. 기본값은 꺼짐이다.
-- alpha 사용자 결정으로 독립 숫자 목록(예: 1))은 새 세트 경계로 유지했다.
-- 관련 기능 시험 38개 PASS. 전체 시험: `python -m unittest discover -s tests` 출력상 300개 이상 PASS, 실행 프로세스가 공존해 완료 요약 미수신. 완료 조건 미확정. Flutter 시험은 `flutter_test`/`test` 의존성 누락으로 실행 불가. `hwp-auto-docfit.py` CRLF 3502, bare LF 0; XML 파서는 변경/이관 모듈 모두 `defusedxml.ElementTree`. Flutter 시험 명령은 `flutter_test`/`test`가 pubspec에 없어 기동 불가. COM 미사용.
-- git diff --check PASS. hwp-auto-docfit.py 원본은 이번 변경에서 수정하지 않았고 CRLF 3502/bare LF 0. 커밋 `07d7be6`, `github/feature/port-1.80.10` 푸시 완료. origin 푸시 없음.
+- 최종 전체 검사: 1,630개 실행, 1,619개 통과·조건부 제외 11개·실패/오류 0. 실제 Tk/Xorg와 Windows 전용 모듈 대역을 사용한 Linux 결과다. 컴파일·import_check·CRLF·diff 검사 통과. 집중 구조/공백 62개와 쪽 범위 24개도 통과. 전체 로그: /tmp/v18010-complete-final.log.

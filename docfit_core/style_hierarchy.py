@@ -232,6 +232,8 @@ def hierarchy_summary(analysis):
              "논리적 구조: 1단계 제목 > 2단계 장 > 3단계 중제목(Ⅰ) > 4단계 소제목(□) > 5단계(ㅇ) > 6단계(-); "
              "부연설명은 관련 항목과 같은 쪽",
              "원문자(① 등)는 서식에 따라 5단계 ㅇ, 6단계 -, 부연설명 기호를 대신할 수 있음"]
+    if (analysis.get("document_structure") or {}).get("nodes"):
+        lines.insert(0, "확장 문서 구조: 제목표 · 요약박스 · 장 띠 > 절 띠 > 세부 띠 > □ > ㅇ > - (요약박스는 부속 요소)")
     kind = analysis.get("document_type")
     if kind:
         lines.append(f"문서 유형: {kind} — {DOCUMENT_TYPES.get(kind, '')}")

@@ -158,6 +158,36 @@ CELL_ROLES = {
 # 서식 적용에 쓰려고 표 XML을 보관하는 종류. 한 칸 상자(box)도 보관한다(2026-10-04 서식 복사 전면 복제).
 SAMPLE_KINDS = ("title1", "title2", "title3", "overview", "midtitle1", "midtitle2", "attach1", "attach2", "box")
 
+# Distinct structural bands supplement the stable legacy midtitle1/midtitle2 keys.
+BAND_LABELS = {}
+for _role, _label in (("chapter", "장 띠"), ("section", "절 띠"), ("detail", "세부 띠")):
+    for _cols in (1, 2, 3):
+        _kind = f"{_role}_band_{_cols}"
+        if _role == "chapter" and _cols in (2, 3):
+            continue
+        BAND_LABELS[_kind] = f"{_label} (1행 {_cols}셀)"
+FORM_KINDS += tuple(BAND_LABELS)
+SAMPLE_KINDS += tuple(BAND_LABELS)
+FORM_LABELS.update(BAND_LABELS)
+
+def structural_form_kind(table):
+    from .document_structure import band
+    info = band(table)
+    if not info:
+        return None
+    cols = int(info["layout"][-1])
+    if info["role"] == "chapter" and cols in (2, 3):
+        return "midtitle1" if cols == 3 else "midtitle2"
+    return f"{info['role']}_band_{cols}"
+
+def enforce_overview_sample(sample):
+    from .document_structure import justify_overview
+    header = ET.fromstring(sample["header_xml"])
+    table = ET.fromstring(sample["table_xml"])
+    justify_overview(header, table)
+    return {**sample, "header_xml": ET.tostring(header, encoding="unicode"),
+            "table_xml": ET.tostring(table, encoding="unicode")}
+
 _CHAR_CHILD_ORDER = ("fontRef", "ratio", "spacing", "relSz", "offset", "italic", "bold", "underline",
                      "strikeout", "outline", "shadow", "emboss", "engrave", "supscript", "subscript")
 _INLINE = {"fwSpace": " ", "nbSpace": " ", "tab": "\t", "lineBreak": "\n"}
@@ -893,7 +923,7 @@ def analyze_format_elements(path, classify=None):
             for run in (x for x in p if _tag(x) == "run"):
                 for table in (x for x in run if _tag(x) == "tbl"):
                     table_count += 1
-                    kind = classify(table) if classify else None
+                    kind = structural_form_kind(table) or (classify(table) if classify else None)
                     if kind == "box" and previous_kind and previous_kind.startswith("title"):
                         kind = "overview"
                     previous_kind = kind
@@ -943,18 +973,27 @@ def analyze_format_elements(path, classify=None):
         if kind in SAMPLE_KINDS:
             table, _ = max(forms[kind], key=lambda item: _agreement(item[1], summary))
             samples[kind] = extract_sample(header, table)
+            if kind == "overview":
+                samples[kind] = enforce_overview_sample(samples[kind])
+                summary["required_alignment"] = "JUSTIFY"
     tables = OrderedDict()
     for part in ("header", "body"):
         if general[part]:
             tables[part] = _tally_all(general[part], CELL_KEYS + CHAR_KEYS + PARA_KEYS)
+    from .document_structure import analyze as analyze_structure
+    structure = analyze_structure(roots, index, classify)
+    for caption in structure["table_titles"]:
+        caption["elements"] = _tally_all([{
+            **caption["typography"], **caption["paragraph_style"]}], CHAR_KEYS + PARA_KEYS)
     return {
         "version": 1, "source": path.name, "page": _tally_all(pages, PAGE_KEYS),
+        "document_structure": structure,
         "first_paragraphs": first_paragraphs,
         "paragraph_groups": paragraph_groups,
         "forms": form_summary,
         # count는 데이터 표 수, other는 데이터 표가 아닌 일반 표(문서 머리 표·제목형 표) 수, data_tables는
         # 데이터 표의 표 번호(top_level_tables 순서, 1부터).
-        "tables": {"count": len(data_tables), "other": other_tables, "data_tables": data_tables, **tables},
+        "tables": {"titles": structure["table_titles"], "count": len(data_tables), "other": other_tables, "data_tables": data_tables, **tables},
         "spacing_rules": spacing_rules,
         "page_number": page_number,
         "samples": samples,
@@ -1347,7 +1386,13 @@ def element_mode(key, path):
         return MODE_SHOW if key in _PAGE_SHOW_KEYS else MODE_VALUE
     if area == "table":
         return MODE_SHOW if key in _TABLE_SHOW_KEYS else MODE_VALUE
+    if area == "table_title":
+        return MODE_SHOW  # observation-only until a title patch path is enabled
     if area == "form":
+        if len(path) > 1 and path[1] in BAND_LABELS:
+            return MODE_SHOW  # new band samples are analyzed, not yet a general patch contract
+        if len(path) > 1 and path[1] == "overview" and key == "align":
+            return MODE_RULE
         # 서식 표는 예시 표를 통째로 복사한다. 표 폭은 쪽 최대 폭에 예시 열 비율(결정 1).
         return MODE_RULE if key == "width" else MODE_VALUE
     return MODE_VALUE
@@ -1393,12 +1438,16 @@ def detail_nodes(analysis):
         for part, label in (("header", "첫 행(머리글) 칸"), ("body", "나머지(본문) 칸")):
             if tables.get(part):
                 nodes.append((("table", part), ("tables",), label))
+    for number, caption in enumerate(analysis.get("tables", {}).get("titles", [])):
+        nodes.append((("table_title", number), None, "표 제목 · " + caption["text"]))
     return nodes
 
 
 def element_map(analysis, path):
     """경로가 가리키는 {요소: 대표값 정보}. 목록 제목처럼 요소가 없는 경로는 {}."""
     try:
+        if path[0] == "table_title":
+            return analysis["tables"]["titles"][path[1]]["elements"]
         if path == ("page",):
             return analysis["page"]
         if path[0] == "group":
@@ -1528,6 +1577,8 @@ def apply_to_profile(profile):
     for kind, sample in list(stored.items()):
         if kind in forms:
             stored[kind] = refresh_sample(sample, forms[kind])
+            if kind == "overview":
+                stored[kind] = enforce_overview_sample(stored[kind])
     sync_hierarchy(profile)
     return profile
 
