@@ -227,3 +227,33 @@ class SidebarModeTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SidebarCaptionTests(unittest.TestCase):
+    """사이드메뉴 모드: 제목줄을 없애 창이 아이콘 줄 폭까지 줄고, 끄면 원래 스타일로 돌아온다(2026-11-07)."""
+
+    def test_caption_stripped_on_enable_and_restored_on_disable(self):
+        from docfit_app.sidebar_mode import SidebarModeController
+        calls = []
+
+        class Api:
+            def work_area(self, hwnd): return (0, 0, 1920, 1040)
+            def set_window_pos(self, *a): calls.append(('pos', a[3]))
+            def strip_caption(self, hwnd): calls.append('strip'); return 0x16CF0000
+            def set_window_style(self, hwnd, style): calls.append(('style', style))
+            def frame_width(self, hwnd): return 0
+            def dpi_scale(self, hwnd): return 1.0
+
+        class Win:
+            def handle(self): return 1
+            def geometry(self): return (100, 100, 1040, 700)
+            def topmost(self): return False
+            def set_sidebar_only(self, v): calls.append(('only', v))
+
+        c = SidebarModeController(Api(), Win(), True, 'right')
+        r = c.toggle(True)
+        self.assertEqual(r['width'], 56)
+        self.assertLess(calls.index('strip'), calls.index(('pos', 56)))
+        c.toggle(False)
+        self.assertIn(('style', 0x16CF0000), calls)
+        self.assertLess(calls.index(('style', 0x16CF0000)), calls.index(('pos', 1040)))

@@ -3134,6 +3134,53 @@ class _Win32WindowApi:
         dpi = get_dpi(hwnd) if get_dpi else 0
         return dpi / 96 if dpi else 1.0
 
+    GWL_STYLE = -16
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    SWP_FRAMECHANGED = 0x0020
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_NOZORDER = 0x0004
+
+    def _style_fns(self):
+        from ctypes import wintypes
+        lib = self._ctypes.WinDLL('user32', use_last_error=True)
+        get = lib['GetWindowLongPtrW']
+        get.argtypes = [wintypes.HWND, self._ctypes.c_int]
+        get.restype = self._ctypes.c_ssize_t
+        put = lib['SetWindowLongPtrW']
+        put.argtypes = [wintypes.HWND, self._ctypes.c_int, self._ctypes.c_ssize_t]
+        put.restype = self._ctypes.c_ssize_t
+        pos = lib['SetWindowPos']
+        pos.argtypes = [wintypes.HWND, wintypes.HWND, self._ctypes.c_int, self._ctypes.c_int,
+                        self._ctypes.c_int, self._ctypes.c_int, wintypes.UINT]
+        pos.restype = wintypes.BOOL
+        return get, put, pos
+
+    def window_style(self, hwnd):
+        if self._ctypes is None:
+            return None
+        get, _put, _pos = self._style_fns()
+        return int(get(hwnd, self.GWL_STYLE))
+
+    def set_window_style(self, hwnd, style):
+        """창 스타일을 바꾸고 틀을 다시 그리게 한다(위치·크기·Z순서 유지)."""
+        if self._ctypes is None:
+            return
+        _get, put, pos = self._style_fns()
+        put(hwnd, self.GWL_STYLE, int(style))
+        pos(hwnd, None, 0, 0, 0, 0,
+            self.SWP_FRAMECHANGED | self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE)
+
+    def strip_caption(self, hwnd):
+        """사이드메뉴 모드: 제목줄·크기 조절 틀을 없애 Windows 최소 창 폭(약 136px) 제한을 벗어난다.
+        원래 스타일을 돌려준다(끌 때 복원용)."""
+        style = self.window_style(hwnd)
+        if style is None:
+            return None
+        self.set_window_style(hwnd, style & ~(self.WS_CAPTION | self.WS_THICKFRAME))
+        return style
+
 
 class _PyWebViewWindow:
     def __init__(self, window, settings=None, saved_state=None):

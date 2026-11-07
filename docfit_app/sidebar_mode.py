@@ -42,7 +42,23 @@ class SidebarModeController:
         self.saved_side = saved_side
         self.saved = None
         self.saved_min_size = None
+        self.saved_style = None
         self.active = False
+
+    def _strip_caption(self, hwnd):
+        """제목줄을 없애 창이 아이콘 줄 폭까지 줄어들게 한다(사용자 요청 2026-11-07: 흰 화면 100% 제거)."""
+        if self.saved_style is not None or not hasattr(self.api, 'strip_caption'):
+            return
+        try:
+            self.saved_style = self.api.strip_caption(hwnd)
+        except Exception:
+            self.saved_style = None
+
+    def _restore_caption(self, hwnd):
+        if self.saved_style is None or not hasattr(self.api, 'set_window_style'):
+            return
+        style, self.saved_style = self.saved_style, None
+        self.api.set_window_style(hwnd, style)
 
     def _sidebar_width(self, hwnd):
         scale, frame = 1.0, None
@@ -107,14 +123,17 @@ class SidebarModeController:
             if hasattr(self.window, 'save_side'):
                 self.window.save_side(side)
             try:
+                self._strip_caption(hwnd)
                 width = self._place(hwnd, side)
                 self.window.set_sidebar_only(True)
             except Exception:
+                self._restore_caption(hwnd)
                 self._restore_min_size()
                 raise
             self.active = True
             return {'ok': True, 'active': True, 'side': side, 'width': width}
         self.window.set_sidebar_only(False)
+        self._restore_caption(hwnd)
         s = self.saved
         self.api.set_window_pos(hwnd, s['x'], s['y'], s['width'], s['height'], s['topmost'])
         # 원래 크기로 돌린 다음 최소 크기를 되돌려야 WinForms가 창을 다시 키우며 위치를 흔들지 않는다.
