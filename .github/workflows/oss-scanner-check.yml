@@ -1,0 +1,29 @@
+name: OSS Scanner enrolment check
+on:
+  push:
+    branches: [feature/oss-scanner]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Validate enrolment files with the scanner's validator
+        run: |
+          git clone --depth 1 https://github.com/anthropics/oss-scanner /tmp/oss-scanner
+          python3 -m pip install --quiet pyyaml
+          mkdir -p /tmp/oss-scanner/projects/hwp-auto-docfit
+          cp .oss-scanner/project/project.yaml /tmp/oss-scanner/projects/hwp-auto-docfit/
+          cd /tmp/oss-scanner && python3 tools/validate.py
+      - name: Build image (network on, like the scanner)
+        run: docker build -f .oss-scanner/Dockerfile -t hwp-autodocfit-scan .
+      - name: Run tests offline inside the image
+        run: |
+          docker run --rm --network none -w /src hwp-autodocfit-scan \
+            bash -lc 'xvfb-run -a python scripts/linux_stub_test_runner.py discover -s tests > /tmp/t.log 2>&1; tail -5 /tmp/t.log; grep -E "^Ran |^OK|^FAILED" /tmp/t.log' | tee result.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: oss-scanner-check
+          path: result.txt
