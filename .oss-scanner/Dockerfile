@@ -5,7 +5,7 @@
 FROM python:3.14-bookworm
 ENV DEBIAN_FRONTEND=noninteractive PYTHONDONTWRITEBYTECODE=1 PIP_DISABLE_PIP_VERSION_CHECK=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        tk xvfb libgl1 libglib2.0-0 ca-certificates \
+        tk xvfb xauth libgl1 libglib2.0-0 ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY . /src
 WORKDIR /src
