@@ -72,17 +72,18 @@ class WebCspTests(unittest.TestCase):
         return html, dict(
             (part.split()[0], part.split()[1:]) for part in match.group(1).split(";") if part.strip())
 
-    @unittest.skip("S6 보류(2026-11-07): pywebview api.js가 new Function을 써서 'unsafe-eval' 없이는 API가 안 생김. "
-                   "docs/CSP_S6_재설계_2026-11-07.md의 정책(unsafe-eval 포함)을 Windows에서 확인한 뒤 해제하고 unsafe-eval 부재 검사를 바꿀 것")
     def test_flutter_index_has_minimal_csp(self):
         html, policy = self.policy("flutter_ui/web/index.html")
         self.assertEqual(policy["object-src"], ["'none'"])
         self.assertEqual(policy["default-src"], ["'self'"])
         self.assertNotIn("'unsafe-inline'", policy["script-src"])
-        self.assertNotIn("'unsafe-eval'", policy["script-src"])
+        # pywebview api.js가 new Function을 쓰므로 'unsafe-eval'은 필수다(docs/CSP_S6_재설계_2026-11-07.md).
+        self.assertIn("'unsafe-eval'", policy["script-src"])
         self.assertIn("'wasm-unsafe-eval'", policy["script-src"])
         for source in policy.values():
             self.assertFalse({"*", "http:", "https:"} & set(source))
+        self.assertEqual(policy["base-uri"], ["'self'"])
+        self.assertEqual(policy["form-action"], ["'none'"])
         self.assertIn("blob:", policy["worker-src"])
         self.assertIn("data:", policy["img-src"])
         # 인라인 스크립트가 없어야 'self'만으로 동작한다.
@@ -93,6 +94,8 @@ class WebCspTests(unittest.TestCase):
         html, policy = self.policy("desktop_web/index.html")
         self.assertEqual(policy["connect-src"], ["'none'"])
         self.assertNotIn("'unsafe-inline'", policy["script-src"])
+        # desktop_web은 pywebview 없이 쓰는 정적 화면: 문자열 평가 불필요, 더 엄격하게 유지한다.
+        self.assertNotIn("'unsafe-eval'", policy["script-src"])
         self.assertNotRegex(html, r"<script(?![^>]*\bsrc=)[^>]*>")
 
 
