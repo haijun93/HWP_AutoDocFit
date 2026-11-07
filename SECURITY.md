@@ -17,6 +17,7 @@
 
 **공개 이슈(Issue)에 취약점 내용을 올리지 마세요.** 수정 전에 악용될 수 있습니다.
 
+- **메일**: haijun93@gmail.com (보안 신고 전용 연락처, Anthropic OSS Scanner 보고서 수신 주소와 같음)
 - **GitHub**: 저장소의 **Security → Report a vulnerability**(비공개 취약점 신고)를 이용해 주세요. 이 메뉴가 보이지 않으면 GitLab 기밀 이슈를 이용해 주세요.
 - **GitLab**: 이슈를 만들 때 **기밀(Confidential)**로 표시해 주세요.
 
