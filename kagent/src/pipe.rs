@@ -30,7 +30,7 @@ fn dropped_web_url(path: &str) -> Option<String> {
         .then(|| trimmed.trim_end_matches('/').to_string())
 }
 
-fn user_sid() -> String {
+pub(crate) fn user_sid() -> String {
     static SID: OnceLock<String> = OnceLock::new();
     SID.get_or_init(|| unsafe {
         let mut token: HANDLE = std::ptr::null_mut();

@@ -3603,6 +3603,12 @@ def run_webview(gui):
 
     def initialize_webview(web_window):
         _dismiss_splash()
+        # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
+        try:
+            from docfit_app.kagent_app_service import start_background
+            start_background()
+        except Exception:
+            logging.getLogger(__name__).exception("Could not start kagent app service pipe")
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

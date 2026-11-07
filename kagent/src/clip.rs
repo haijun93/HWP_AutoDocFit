@@ -396,6 +396,23 @@ pub fn write(hwnd: HWND, kind: &str, payload: &[u8], extra: &[u8]) -> bool {
     }
 }
 
+/// 엑셀 표 '목표 결과'(xl_target): 변환한 HTML과 글 두 형식만 올린다. 엑셀 원래 형식(Biff·XML Spreadsheet 등)을
+/// 함께 두면 한/글이 그쪽을 골라 일반 붙여넣기와 같아지므로 넣지 않는다(앱 `ExcelTableService._write_html`과 같음).
+pub fn write_html_text(hwnd: HWND, html: &[u8], text: &str) -> bool {
+    let Some(_open) = Open::new(hwnd) else { return false };
+    unsafe {
+        if EmptyClipboard() == 0 {
+            return false;
+        }
+        let html_ok = put(formats().named[0].1, html);
+        if !text.is_empty() {
+            let bytes: Vec<u8> = text.encode_utf16().chain([0]).flat_map(|u| u.to_le_bytes()).collect();
+            let _ = put(CF_UNICODETEXT as u32, &bytes);
+        }
+        html_ok
+    }
+}
+
 unsafe fn restore_formats(items: &[(String, Vec<u8>)]) {
     for (name, data) in items {
         if name == "CF_HDROP" { continue; }

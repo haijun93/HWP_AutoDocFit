@@ -251,6 +251,13 @@ class NoShadeCopyTests(unittest.TestCase):
         self.assertTrue(service.command("copy_no_shade", {"id": 7})["ok"])
         self.assertEqual(excel.reads, 4)
 
+    def test_accepts_restore_converted_to_target_result(self):
+        # 에이전트가 엑셀 표를 '목표 결과'로 되돌리면 숫자 앞 공백·공백뿐인 칸이 정리된 글이 클립보드에 있다.
+        raw = "부서명\t금액\r\n　\t" + " " * 20 + "88,180 "
+        service, _, excel = self.make(data=raw, clip=lambda n: (b"<table>", "부서명\t금액\r\n\t88,180 "))
+        self.assertTrue(service.command("copy_no_shade", {"id": 7})["ok"])
+        self.assertEqual(excel.commands, ["strip_shading"])
+
     def test_restore_never_lands_leaves_clipboard_alone(self):
         service, _, excel = self.make(clip=lambda n: (b"<table>", "다른 내용"))
         result = service.command("copy_no_shade", {"id": 7})

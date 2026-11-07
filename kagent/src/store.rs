@@ -41,6 +41,8 @@ pub struct Settings {
     pub popup_height: i64,
     /// 스티커 창 접힘 상태.
     pub popup_collapsed: bool,
+    /// 엑셀 표 항목은 앱에 맡겨 '목표 결과'(공백·빈 칸·열 너비·칸 여백 정리)로 붙이기. 앱이 꺼져 있으면 원래대로.
+    pub excel_target_paste: bool,
 }
 
 impl Default for Settings {
@@ -69,6 +71,7 @@ impl Default for Settings {
             popup_width: 0,
             popup_height: 0,
             popup_collapsed: false,
+            excel_target_paste: true,
         }
     }
 }
@@ -104,6 +107,7 @@ impl Settings {
             ("popup_width", self.popup_width.into()),
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
+            ("excel_target_paste", self.excel_target_paste.into()),
             ("policy_rev", 1i64.into()),
         ])
     }
@@ -170,6 +174,7 @@ impl Settings {
         if let Some(n) = v.num("popup_width").filter(|n| (200.0..=4000.0).contains(n)) { self.popup_width = n as i64; }
         if let Some(n) = v.num("popup_height").filter(|n| (150.0..=4000.0).contains(n)) { self.popup_height = n as i64; }
         if let Some(b) = v.bool("popup_collapsed") { self.popup_collapsed = b; }
+        if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
     }
 
     pub fn load(path: &str) -> Settings {
@@ -624,6 +629,21 @@ mod tests {
         let mut again = Settings::default();
         again.apply(&back.to_json());
         assert_eq!(again.max_items, back.max_items);
+    }
+
+    #[test]
+    fn excel_target_paste_defaults_on_and_round_trips() {
+        assert!(Settings::default().excel_target_paste, "기본 켬");
+        // 예전 설정 파일(키 없음)도 켬
+        assert!(Settings::load(&std::env::temp_dir().join("kagent-no-such-dir").join("settings.json").to_string_lossy()).excel_target_paste);
+        let mut st = Settings::default();
+        st.apply(&json::parse(r#"{"excel_target_paste":false}"#).unwrap());
+        assert!(!st.excel_target_paste);
+        st.apply(&json::parse(r#"{"excel_target_paste":"no"}"#).unwrap());
+        assert!(!st.excel_target_paste, "참/거짓이 아니면 무시");
+        let mut back = Settings::default();
+        back.apply(&st.to_json());
+        assert!(!back.excel_target_paste);
     }
 
     #[test]

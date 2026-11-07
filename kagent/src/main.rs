@@ -20,6 +20,7 @@ mod store;
 mod timeline;
 mod util;
 mod watch;
+mod xl_target;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicI64, Ordering};
@@ -746,7 +747,16 @@ pub fn restore(id: i64, paste: bool, target: HWND) -> bool {
     let payload = app().store.lock().unwrap().payload(id).ok().flatten();
     let Some((kind, data, extra)) = payload else { return false };
     let hwnd = main_hwnd();
-    if !clip::write(hwnd, &kind, &data, &extra) {
+    // 엑셀 표 항목은 설정이 켜져 있으면 앱에 '목표 결과' 변환을 맡긴다. 앱이 꺼져 있거나 늦거나 쓰기에
+    // 실패하면 저장한 원래 형식 그대로 올린다.
+    let enabled = app().settings.lock().unwrap().excel_target_paste;
+    let converted = xl_target::convert(&kind, &data, &extra, enabled);
+    let written = xl_target::write_choice(
+        converted,
+        |(html, text)| clip::write_html_text(hwnd, html, text),
+        || clip::write(hwnd, &kind, &data, &extra),
+    );
+    if written.is_none() {
         return false;
     }
     app().self_seq.store(unsafe { GetClipboardSequenceNumber() }, Ordering::Relaxed);

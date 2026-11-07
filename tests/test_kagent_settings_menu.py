@@ -39,7 +39,8 @@ class KAgentSettingsMenuTests(unittest.TestCase):
             self.assertEqual(rust_choices(rust), dart_choices(dart), rust)
 
     def test_menu_uses_same_settings_keys_as_management_window(self):
-        for key in ("max_items", "max_total_mb", "max_age_days", "sticky_popup", "always_on_top", "auto_paste"):
+        for key in ("max_items", "max_total_mb", "max_age_days", "sticky_popup", "always_on_top", "auto_paste",
+                    "excel_target_paste"):
             self.assertIn(f"'{key}'", DIALOG)
             self.assertIn(f'"{key}"', RUST)
 

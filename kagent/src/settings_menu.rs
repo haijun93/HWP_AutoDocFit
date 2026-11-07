@@ -72,10 +72,11 @@ impl Number {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Flag { AutoPaste, Sticky, AlwaysOnTop, WatchScreenshots }
+pub enum Flag { AutoPaste, Sticky, AlwaysOnTop, WatchScreenshots, ExcelTarget }
 
 impl Flag {
-    const ALL: [Flag; 4] = [Flag::Sticky, Flag::AlwaysOnTop, Flag::AutoPaste, Flag::WatchScreenshots];
+    // 명령 번호는 순서로 정해지므로 새 항목은 끝에 붙인다.
+    const ALL: [Flag; 5] = [Flag::Sticky, Flag::AlwaysOnTop, Flag::AutoPaste, Flag::WatchScreenshots, Flag::ExcelTarget];
 
     fn key(self) -> &'static str {
         match self {
@@ -83,6 +84,7 @@ impl Flag {
             Flag::Sticky => "sticky_popup",
             Flag::AlwaysOnTop => "always_on_top",
             Flag::WatchScreenshots => "watch_screenshots",
+            Flag::ExcelTarget => "excel_target_paste",
         }
     }
     fn label(self) -> &'static str {
@@ -91,6 +93,7 @@ impl Flag {
             Flag::Sticky => "스티커 메모처럼 화면에 유지",
             Flag::AlwaysOnTop => "항상 위",
             Flag::WatchScreenshots => "스크린샷 폴더 감시(Win+PrtScn 그림 기록)",
+            Flag::ExcelTarget => "엑셀 표는 목표 결과로 붙이기",
         }
     }
     fn get(self, s: &Settings) -> bool {
@@ -99,6 +102,7 @@ impl Flag {
             Flag::Sticky => s.sticky_popup,
             Flag::AlwaysOnTop => s.always_on_top,
             Flag::WatchScreenshots => s.watch_screenshots,
+            Flag::ExcelTarget => s.excel_target_paste,
         }
     }
 }
@@ -310,13 +314,14 @@ mod tests {
         let s = Settings::default();
         let m = build(&s, Extra { autostart: Some(false), resume_in_min: None });
         for prefix in ["일시정지", "보관 개수: 500개", "전체 최대 크기: 200MB", "항목 하나 최대 크기: 10MB", "보관 기간: 30일",
-                       "스티커 메모처럼", "항상 위", "고르면 바로 붙여넣기", "스크린샷 폴더 감시", "Windows 로그인 시 자동 실행",
+                       "스티커 메모처럼", "항상 위", "고르면 바로 붙여넣기", "스크린샷 폴더 감시", "엑셀 표는 목표 결과로 붙이기", "Windows 로그인 시 자동 실행",
                        "단축키: Ctrl+Shift+V", "모두 지우기", "몽땅클립보드 끄기"] {
             find(&m, prefix);
         }
         // 켜진 설정은 체크 표시
         assert!(matches!(find(&m, "항상 위"), Entry::Item { checked: true, .. }));
         assert!(matches!(find(&m, "스티커"), Entry::Item { checked: false, .. }));
+        assert!(matches!(find(&m, "엑셀 표는 목표 결과로"), Entry::Item { checked: true, .. }), "기본 켬");
         assert!(matches!(find(&m, "Windows 로그인"), Entry::Item { checked: false, .. }));
         // 단축키는 표시만
         assert!(matches!(find(&m, "단축키"), Entry::Item { enabled: false, id: 0, .. }));
@@ -369,6 +374,7 @@ mod tests {
         assert!(apply(Command::Toggle(Flag::Sticky)).sticky_popup);
         assert!(!apply(Command::Toggle(Flag::AutoPaste)).auto_paste);
         assert!(!apply(Command::Toggle(Flag::WatchScreenshots)).watch_screenshots);
+        assert!(!apply(Command::Toggle(Flag::ExcelTarget)).excel_target_paste);
         // 범위 밖 값은 Settings::apply가 거부(관리창 settings_set과 같은 검사)
         assert_eq!(apply(Command::Set(Number::MaxItems, 5)).max_items, 500);
         assert_eq!(apply(Command::Set(Number::MaxItemMb, 99)).max_item_bytes, 10 * 1024 * 1024);
@@ -385,6 +391,15 @@ mod tests {
                 assert_eq!(n.current(&s), *v, "{n:?} {v}");
             }
         }
+    }
+
+    #[test]
+    fn existing_flag_ids_are_unchanged_and_excel_target_is_new() {
+        // 예전 메뉴 번호(130~133)는 그대로, 새 항목은 134.
+        assert_eq!(command_id(Command::Toggle(Flag::Sticky)), 130);
+        assert_eq!(command_id(Command::Toggle(Flag::WatchScreenshots)), 133);
+        assert_eq!(command_id(Command::Toggle(Flag::ExcelTarget)), 134);
+        assert_eq!(command_of(134), Some(Command::Toggle(Flag::ExcelTarget)));
     }
 
     #[test]
