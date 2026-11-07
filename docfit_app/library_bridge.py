@@ -347,6 +347,43 @@ def open_library_item(item, *, opener=None, browser=None, allow_risky=None):
         raise LibraryOpenError("ERROR", f"자료를 열지 못했습니다: {exc}") from exc
     return True
 
+
+ITEM_STAT_LIMIT = 500
+
+
+def library_item_stats(request_fn, item_ids, *, limit=ITEM_STAT_LIMIT):
+    """자료함 '탐색기 형식' 보기의 크기·수정한 날짜·원본 있음 여부.
+
+    화면이 보낸 경로는 받지 않고 item_id마다 klib에 저장된 경로(item_get)만 읽는다.
+    웹 주소·경로 없는 자료(메모·텍스트)는 빈 값으로 돌려준다. 한 번에 [limit]개까지만 조회한다.
+    결과: {id: {"exists": bool|None, "is_dir": bool, "size": int|None, "mtime": float|None}}
+    """
+    stats = {}
+    for raw in list(item_ids or [])[:limit]:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        stored = request_fn({"cmd": "item_get", "id": item_id})
+        entry = {"exists": None, "is_dir": False, "size": None, "mtime": None}
+        stats[str(item_id)] = entry
+        if not isinstance(stored, dict) or not stored.get("ok"):
+            entry["exists"] = False
+            continue
+        source = str(stored.get("source_path") or "").strip()
+        lowered = source.lower()
+        if (not source or any(ch in source for ch in ("\n", "\r", "\0"))
+                or "://" in source or lowered.startswith(("file:", "javascript:", "shell:", "ms-"))):
+            continue
+        try:
+            st = os.stat(source)
+        except OSError:
+            entry["exists"] = False
+            continue
+        is_dir = os.path.isdir(source)
+        entry.update(exists=True, is_dir=is_dir, size=None if is_dir else int(st.st_size), mtime=float(st.st_mtime))
+    return stats
+
 def save_clipboard_image(bridge, box_id, display_name, png_bytes, *, space="temp"):
 
     import base64

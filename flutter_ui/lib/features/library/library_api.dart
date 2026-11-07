@@ -354,15 +354,57 @@ abstract interface class LibraryMemoApi {
   EditorBackend? get memoEditorBackend;
 }
 
+/// 탐색기 형식 보기의 크기·수정한 날짜·원본 있음 여부. 값이 없는 칸(메모·웹 주소 등)은 null.
+class LibraryFileInfo {
+  const LibraryFileInfo({this.exists, this.isDirectory = false, this.size, this.modified});
+
+  factory LibraryFileInfo.fromJson(Map<Object?, Object?> json) {
+    final mtime = json['mtime'];
+    final size = json['size'];
+    final exists = json['exists'];
+    return LibraryFileInfo(
+      exists: exists is bool ? exists : null,
+      isDirectory: json['is_dir'] == true,
+      size: size is num ? size.toInt() : null,
+      modified: mtime is num ? DateTime.fromMillisecondsSinceEpoch((mtime * 1000).round()) : null,
+    );
+  }
+
+  /// true=원본 있음, false=원본이 없어짐, null=확인 대상 아님(경로 없는 자료·웹 주소).
+  final bool? exists;
+  final bool isDirectory;
+  final int? size;
+  final DateTime? modified;
+
+  bool get missing => exists == false;
+}
+
+/// 저장된 원본 경로의 파일 정보를 읽는다(Python `library({"cmd":"item_stat"})`). 화면은 보이는 줄만 묻는다.
+abstract interface class LibraryFileInfoApi {
+  Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds);
+}
+
 typedef LibraryBridgeCall =
     Future<Object?> Function(String method, List<Object?> args);
 
 /// Adapts screen models to klib's command and response schema.
 
-class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, LibraryOpenApi, LibraryMemoApi {
+class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, LibraryOpenApi, LibraryMemoApi, LibraryFileInfoApi {
   BridgeLibraryApi(this._call);
 
   final LibraryBridgeCall _call;
+
+  @override
+  Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds) async {
+    final ids = [for (final id in itemIds) if (int.tryParse(id) != null) int.parse(id)];
+    if (ids.isEmpty) return const {};
+    final items = (await _request('item_stat', {'item_ids': ids}))['items'];
+    if (items is! Map) return const {};
+    return {
+      for (final e in items.entries)
+        if (e.value is Map) '${e.key}': LibraryFileInfo.fromJson(e.value as Map),
+    };
+  }
 
   @override
   Future<LibraryOpenResult> openItem({
