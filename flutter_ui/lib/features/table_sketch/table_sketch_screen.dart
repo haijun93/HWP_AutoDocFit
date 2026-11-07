@@ -275,33 +275,31 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     }
     if (!mounted || draft['exists'] != true || draft['sketch'] is! Map) return;
     if (_editedBeforeDraftCheck) return;
-    final recover = await showDialog<bool>(
-      context: context,
-      // 바깥 클릭·Esc로 닫아도 되게 하고, 그때는 초안을 남겨 둔다(화면 이동을 막지 않음).
-      barrierDismissible: true,
-      builder: (ctx) => AlertDialog(
-        title: const Text('복구 가능한 작업이 있습니다'),
-        content: const Text('이전에 저장하지 못한 표그림판 작업을 복구할까요?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('복구 안 함')),
-          FilledButton(
-            key: const ValueKey('draft-restore'),
-            autofocus: true, // 기본 선택 = 복구(Enter), 사용자 요청 2026-11-07
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('복구'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    // Esc 등으로 닫히면(null) 복구도 삭제도 하지 않고 초안을 남겨 둔다.
-    if (recover == null) return;
+    // 묻지 않고 바로 복구한다(사용자 요청 2026-11-07). 원하지 않으면 알림의 '버리기'로 되돌린다.
+    const recover = true;
     if (recover == true && draft['sketch'] is Map) {
       setState(() {
         _doc = TableSketchDoc.fromJson(draft['sketch'] as Map);
         _sel = SketchSelection();
       });
       _triggerPreviewDebounced();
+      final before = TableSketchDoc();
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        key: const ValueKey('draft-restored'),
+        content: const Text('저장하지 못했던 표그림판 작업을 자동으로 복구했어요.'),
+        action: SnackBarAction(
+          label: '버리기',
+          onPressed: () {
+            if (!mounted) return;
+            setState(() {
+              _doc = before;
+              _sel = SketchSelection();
+            });
+            _triggerPreviewDebounced();
+            unawaited(_sketchApi.clearDraft().catchError((Object _) {}));
+          },
+        ),
+      ));
     } else {
       try {
         await _sketchApi.clearDraft();

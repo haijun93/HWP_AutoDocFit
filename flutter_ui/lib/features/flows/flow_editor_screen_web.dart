@@ -382,32 +382,12 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
   Future<void> offerRecovery() async {
     final draft = await draftClient.pending();
     if (draft == null || !mounted) return;
-    final restore = await showHostDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('저장하지 않은 편집 내용'),
-        content: Text(
-          "'${draft['name']}'을(를) 편집하던 내용이 자동 저장돼 있어요. 복구할까요?",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('버리기'),
-          ),
-          FilledButton(
-            key: const ValueKey('draft-restore'),
-            autofocus: true, // 기본 선택 = 복구(Enter), 사용자 요청 2026-11-07
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('복구'),
-          ),
-        ],
-      ),
-    );
-    // 바깥 클릭·Esc로 닫으면(null) 복구도 삭제도 하지 않고 자동 저장본을 남겨 둔다.
-    if (restore == null) return;
-    if (restore != true) {
-      await draftClient.clear();
-      return;
+    // 묻지 않고 바로 복구한다(사용자 요청 2026-11-07: 기본값으로 "복구"가 시행되게). 아래 알림으로만 알린다.
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        key: const ValueKey('draft-restored'),
+        content: Text("'${draft['name']}'을(를) 편집하던 내용을 자동으로 복구했어요."),
+      ));
     }
     final (id, rev) = await draftClient.reconnect(draft);
     identity = id;
