@@ -46,7 +46,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            max_items: 50,
+            // 사용자 결정(2026-11-07): 보관 500개·200MB·30일·암호화 켬.
+            max_items: 500,
             max_item_bytes: 10 * 1024 * 1024,
             max_total_bytes: 200 * 1024 * 1024,
             max_age_days: 30.0,
@@ -103,10 +104,20 @@ impl Settings {
             ("popup_width", self.popup_width.into()),
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
+            ("policy_rev", 1i64.into()),
         ])
     }
 
     /// 값이 있고 범위 안이면 반영한다(잘못된 값은 무시).
+    /// 설정 파일을 읽을 때만 쓰는 이전: 정책 반영 전 파일(policy_rev 없음)에서 예전 기본값 50을 그대로 쓰던 사용자는
+    /// 새 기본값 500으로 올린다(사용자 결정 2026-11-07). 직접 고른 다른 값은 그대로 둔다.
+    pub fn apply_file(&mut self, v: &Value) {
+        self.apply(v);
+        if v.num("policy_rev").is_none() && self.max_items == 50 {
+            self.max_items = 500;
+        }
+    }
+
     pub fn apply(&mut self, v: &Value) {
         if let Some(n) = v.num("max_items").filter(|n| (10.0..=1000.0).contains(n)) {
             self.max_items = n as i64;
@@ -164,7 +175,7 @@ impl Settings {
     pub fn load(path: &str) -> Settings {
         let mut s = Settings::default();
         if let Some(v) = std::fs::read_to_string(path).ok().and_then(|t| json::parse(&t)) {
-            s.apply(&v);
+            s.apply_file(&v);
         }
         s
     }
@@ -583,11 +594,29 @@ mod tests {
     }
 
     #[test]
+    fn policy_2026_11_07_defaults_and_old_default_migration() {
+        let s = Settings::default();
+        assert_eq!((s.max_items, s.max_total_bytes, s.max_age_days as i64, s.watch_screenshots), (500, 200 * 1024 * 1024, 30, true));
+        // 정책 전 파일에서 예전 기본값 50 → 500
+        let mut old = Settings::default();
+        old.apply_file(&json::parse(r#"{"max_items":50}"#).unwrap());
+        assert_eq!(old.max_items, 500);
+        // 사용자가 고른 다른 값은 유지
+        let mut chosen = Settings::default();
+        chosen.apply_file(&json::parse(r#"{"max_items":200}"#).unwrap());
+        assert_eq!(chosen.max_items, 200);
+        // 정책 반영 후 저장된 50은 사용자가 고른 값으로 보고 유지
+        let mut kept = Settings::default();
+        kept.apply_file(&json::parse(r#"{"max_items":50,"policy_rev":1}"#).unwrap());
+        assert_eq!(kept.max_items, 50);
+    }
+
+    #[test]
     fn settings_ranges() {
         let mut st = Settings::default();
         st.apply(&json::parse(r#"{"max_items":5,"max_total_mb":100,"auto_paste":false,"excluded_apps":["A.EXE"]}"#)
             .unwrap());
-        assert_eq!(st.max_items, 50); // 10 미만은 무시
+        assert_eq!(st.max_items, 500); // 10 미만은 무시(기본값 500 유지)
         assert_eq!(st.max_total_bytes, 100 * 1024 * 1024);
         assert!(!st.auto_paste);
         assert_eq!(st.excluded_apps, vec!["a.exe"]);

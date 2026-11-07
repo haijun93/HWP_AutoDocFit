@@ -309,7 +309,7 @@ mod tests {
     fn menu_covers_all_management_window_settings() {
         let s = Settings::default();
         let m = build(&s, Extra { autostart: Some(false), resume_in_min: None });
-        for prefix in ["일시정지", "보관 개수: 50개", "전체 최대 크기: 200MB", "항목 하나 최대 크기: 10MB", "보관 기간: 30일",
+        for prefix in ["일시정지", "보관 개수: 500개", "전체 최대 크기: 200MB", "항목 하나 최대 크기: 10MB", "보관 기간: 30일",
                        "스티커 메모처럼", "항상 위", "고르면 바로 붙여넣기", "스크린샷 폴더 감시", "Windows 로그인 시 자동 실행",
                        "단축키: Ctrl+Shift+V", "모두 지우기", "몽땅클립보드 끄기"] {
             find(&m, prefix);
@@ -329,7 +329,7 @@ mod tests {
         let Entry::Sub { entries, .. } = find(&m, "보관 개수") else { panic!() };
         let checked: Vec<_> = entries.iter().filter_map(|e| match e {
             Entry::Item { label, checked: true, radio: true, .. } => Some(label.clone()), _ => None }).collect();
-        assert_eq!(checked, ["50개"]);
+        assert_eq!(checked, ["500개"]); // 기본값 500(사용자 결정 2026-11-07)
         s.max_items = 77;
         s.max_age_days = 365.0;
         let m = build(&s, Extra::default());
@@ -370,7 +370,7 @@ mod tests {
         assert!(!apply(Command::Toggle(Flag::AutoPaste)).auto_paste);
         assert!(!apply(Command::Toggle(Flag::WatchScreenshots)).watch_screenshots);
         // 범위 밖 값은 Settings::apply가 거부(관리창 settings_set과 같은 검사)
-        assert_eq!(apply(Command::Set(Number::MaxItems, 5)).max_items, 50);
+        assert_eq!(apply(Command::Set(Number::MaxItems, 5)).max_items, 500);
         assert_eq!(apply(Command::Set(Number::MaxItemMb, 99)).max_item_bytes, 10 * 1024 * 1024);
         assert_eq!(settings_patch(&s, Command::Pause(30)), None);
         assert_eq!(settings_patch(&s, Command::Quit), None);
