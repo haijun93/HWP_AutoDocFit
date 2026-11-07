@@ -25,6 +25,9 @@ PURPOSES = {
     'flow_png': ('save', frozenset({'.png'})),
     'flow_hwpx': ('save', frozenset({'.hwpx'})),
     'notebook_hwpx': ('save', frozenset({'.hwpx'})),
+    # 메모 편집기: 텍스트 파일 열기·다른 이름으로 저장(인코딩·줄바꿈 선택). 경로는 호스트만 안다.
+    'memo_text_open': ('open', frozenset({'.txt', '.md', '.csv', '.log'})),
+    'memo_text_save': ('save', frozenset({'.txt', '.md'})),
     # 파일이름 탭: 모든 확장자(None = 확장자 제한 없음).
     'rename_files': ('open', None),
     'rename_folder': ('directory', None),

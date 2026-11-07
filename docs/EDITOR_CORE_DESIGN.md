@@ -363,3 +363,63 @@ Rust 직접 호출: `Document::{line_range, char_count, byte_to_char, char_to_by
 
 ### 11.5 시험
 `cargo test`(editor_core): 단위 1(줄 색인 무작위 모델 + 글자 오프셋 캐시 대조 추가) + `tests/bigview.rs` 6(줄 범위·글자↔줄/열 왕복, 무작위 편집 3000단계 캐시 정합, 인코딩·줄바꿈 선택 저장 바이트 대조, 변환 불가 목록·실패 시 불변, JSON 명령, 100만 줄 성능) + 기존 core 21·encoding 14·perf 3. 의존성 추가 없음.
+
+
+## 12. 메모 화면 3단계 연결 (MEMO3, 2026-11-08, 브랜치 `feature/memo3`)
+
+11절의 3단계 API를 klib·Python·Flutter 메모 편집기에 연결했다. 코어(editor_core)는 고치지 않았다. Cargo 의존성 추가 없음.
+
+### 12.1 통로
+- **klib**: `edit_` 접두 위임(9절) 그대로라 코드 변경 없음. 시험 `test_edit_stage3_large_file_and_encoding_save`(10만 줄 CP949 파일 열기 → 줄 범위 → 줄 편집 → 변환 불가 → CP949 거절·UTF-8 BOM+LF 저장, 120줄 응답이 64 KiB 안인지).
+- **Python**: `ALLOWED_COMMANDS`에 `edit_line_range`·`edit_char_to_line_col`·`edit_line_col_to_char`·`edit_to_char`·`edit_from_char`·`edit_unencodable`·`edit_status`.
+  화면이 파일 경로를 모르게 **호스트 파일 대화상자**를 거친다(`desktop_web_ui._memo_editor_request`):
+  `edit_select_file {mode: open|save}` → 선택 번호(`selection_id`, 경로는 호스트 메모리에만, 5분·1회용) →
+  `edit_open {selection_id}`(목적 `memo_text_open`: .txt .md .csv .log) / `edit_save {selection_id, encoding, line_ending}`(목적 `memo_text_save`: .txt .md)에서 호스트가 경로로 바꿔 klib에 넘긴다.
+  `path` 인자는 여전히 거절하고, 코어 응답의 `path`는 지우고 파일 이름 `name`만 화면에 돌려준다. 열기용 선택으로 저장하거나 다른 명령에 선택 번호를 쓰면 거절.
+
+### 12.2 화면 (`flutter_ui/lib/features/editor/`)
+- `editor_files.dart`: `EditorFileSupport`(인코딩·줄바꿈·파일 이름·`unencodable`·`saveToFile`), `MemoFileGateway`(대화상자·열기), `UnencodableReport`.
+- **열기(Ctrl+O, 도구줄 폴더 단추)**: 지금 내용이 있으면 확인 후 대화상자 → `edit_open {selection_id}`(인코딩·줄바꿈 자동 감지). 결과가
+  128 KiB·3000줄 이하면 글을 받아(`fetchEditorText`, 응답 한도를 넘으면 줄 수를 반씩 줄임) **기존 입력칸**으로 편집하고, 연 문서를 그대로 이어 쓴다(`KlibEditorCore.adopt`). 그보다 크면 **큰 글 보기**.
+- **큰 글 보기**(`large_text_session.dart` + `large_text_view.dart`): Rust 문서가 원본이고 글 전체를 Flutter로 가져오지 않는다.
+  고정 높이 줄 목록(`ListView.builder` + `itemExtent`)이 보이는 줄만 만들고, 세션은 `edit_line_range`로 120줄씩 받아 캐시한다(2만 줄 넘으면 먼 줄부터 버림).
+  **편집 중인 한 줄(문단)만 `TextField`**라 IME 조합은 기존대로 그 입력칸이 처리하고(조합 중에는 아래 키를 가로채지 않음), 줄을 옮기거나 포커스를 잃으면 그 줄을 `edit_commit`+`edit_replace`로 확정한다.
+  Enter=줄 나누기, 줄 맨 앞 Backspace=앞 줄과 합치기, 줄 끝 Delete=다음 줄과 합치기, ↑/↓=위아래 줄, 줄바꿈이 든 붙여넣기(Ctrl+V)는 한 번의 replace.
+  편집 뒤 캐시는 같은 규칙으로 고쳐(뒤쪽 줄 번호 +k·시작 바이트 +delta) 다시 받지 않고, 편집 전에 보낸 줄 요청의 응답은 버전 번호로 버린다. 실행취소·다시실행·모두 바꾸기는 캐시를 비우고 보이는 줄만 다시 받는다.
+  찾기는 `edit_find`(거꾸로 찾기·개수는 응답 크기 때문에 `edit_find_all` 1000건까지), 바꾸기는 '모두 바꾸기'만. 서식 단추는 끈다(평문). 자동 줄 바꿈 없음(긴 줄은 잘려 보임, 메모장 '자동 줄 바꿈' 끔과 같음).
+  응답 한도(64 KiB)를 넘는 한 줄은 '너무 긴 줄'로 표시만 하고 편집하지 않는다. 큰 파일 보기 중에는 메모 저장 단추(노트북·자료함)가 안내만 하고 저장하지 않는다(파일은 '다른 이름으로 저장').
+- **다른 이름으로 저장(Ctrl+Shift+S, `memo_save_dialog.dart`)**: 인코딩 UTF-8·UTF-8 BOM·UTF-16 LE·CP949, 줄바꿈 CRLF·LF(기본값 = 지금 형식).
+  CP949면 먼저 `edit_unencodable`로 점검해, 바꿀 수 없는 글자가 있으면 '?'로 바꾸지 않고 **글자 종류별 개수와 처음 나오는 자리(줄·열, '이동')** 를 보여 주고 'UTF-8로 저장' 또는 '돌아가기'를 고르게 한다. 통과하면 저장 위치 대화상자 → `edit_save`.
+- **상태 표시줄**: 인코딩·줄바꿈은 코어가 알려 준 값(연 파일에서 감지한 형식, 저장 뒤에는 저장한 형식)이다. 큰 글 보기에서는 '큰 파일 보기 · N줄', 줄·열은 편집 줄의 커서, 글자 수는 코어 값. 왼쪽에 열기·저장 결과 안내.
+
+### 12.3 10만 줄 파일 열기 시간 (Windows 11, release)
+파일: 100,000줄 한글·영문 혼합 CRLF(CP949 5,688,888 B / UTF-8 7,388,888 B).
+
+| 경로 | 항목 | 결과 |
+|---|---|---:|
+| klib 프로세스 안(`handle_request`, `cargo test --release`) | 열기(CP949 감지·LF 통일·줄 색인) | 79.8 ms |
+| | 첫 화면 120줄 / 끝 화면 120줄 | 0.36 ms / 7.19 ms |
+| 실제 파이프(Python `LibraryBridge` → 격리 시험 klib, 5회) | 열기 CP949 중앙값 | 67.6 ms (63.2~123.7) |
+| | 열기 UTF-8 중앙값 | 72.9 ms (59.1~82.7) |
+| | 첫 화면 120줄 / 끝 화면 | 약 21 ms / 26~28 ms |
+| | CP949 변환 불가 점검(10만 줄) | 16.3 ms(CP949 원본) / 38.0 ms(UTF-8 원본) |
+| | UTF-8 BOM + LF 저장(7.3 MB) | 46~47 ms |
+| Flutter 위젯 시험(가짜 백엔드, 참고값) | 열기 → 첫 화면 그리기 | 약 0.5~0.6 s(가짜가 요청마다 글 전체를 다시 나눠 느림) |
+
+열기 = 파일 선택 뒤 `edit_open`부터 첫 화면 줄 120개가 오기까지 약 **90~100 ms**(파이프 포함). 입력칸에 글 전체를 넣지 않으므로 10만 줄이어도 화면에 만드는 위젯은 보이는 줄 수만큼이다.
+
+**파이프 지연 주의(기존 구조, 이번에 고치지 않음)**: 같은 요청을 반복하면 대부분 0.2~0.5 ms인데 가끔 **20 ms**(서버 대기 주기)·**63 ms**(파이프 인스턴스가 아직 없을 때 Python 클라이언트가 50 ms 쉬고 다시 붙는 재시도 `retry_delay`)가 끼어든다.
+줄 범위·`edit_info`처럼 응답이 큰 요청은 거의 매번 약 20 ms다. 큰 글 보기의 줄 확정(commit+replace 2회 왕복)이 0.5~90 ms로 들쭉날쭉한 원인이며, 파이프 서버가 다음 인스턴스를 미리 만들어 두거나(여러 인스턴스 대기) 클라이언트 재시도 간격을 줄이면 개선된다(klib·브리지 공용 경로라 별도 카드 권장).
+
+### 12.4 시험
+- cargo: klib `test_edit_stage3_large_file_and_encoding_save` 추가(기존 `test_edit_commands_delegate_to_editor_core` 포함 전체 통과), editor_core 전체.
+- Python: `tests/test_library_bridge.py::MemoEditorFileBridgeTests` 4건(3단계 명령 허용·`edit_select_file`은 klib로 가지 않음, 목적별 확장자, 선택 번호로 열기·저장 시 호스트 경로만 전달·응답에서 path 제거·1회용, 잘못된 모드·목적·명령·확장자 거절).
+- Flutter: `test/memo_editor_file_test.dart` 6건(작은 CP949/CRLF 파일 열기 → 상태 표시줄·제목 → 입력 반영 → UTF-8 BOM+LF 저장 후 상태 표시줄 갱신, CP949 변환 불가 목록·이동·돌아가기·UTF-8로 저장, 취소·Dart 폴백 시 단추 숨김,
+  **10만 줄 큰 글 보기**(줄 범위 요청만·글 전체 명령 없음·끝 스크롤·줄 편집·Enter 나누기·Backspace 합치기·뒤쪽 캐시 이동·실행취소·먼 줄 찾기·CP949 저장), 응답 한도 초과 시 줄 요청 반씩 나누기·너무 긴 줄 편집 거절, 보고서 해석). 가짜 백엔드(`test/fake_editor_backend.dart`)에 3단계 명령 추가.
+
+### 12.5 남은 일
+1. Windows 실기에서 큰 글 보기의 한글 IME 조합(편집 줄 TextField)·마우스 끌어 여러 줄 선택(지금은 한 줄 안에서만 선택) 확인.
+2. 큰 글 보기의 여러 줄 선택·복사·삭제, 바꾸기(한 건씩), 자동 줄 바꿈, 가로 스크롤 — 지금은 한 줄 편집 모델.
+3. 큰 파일의 자동 저장·복구 사본(`edit_autosave`): klib가 유휴 종료(기본 60초, 30초 깨우기로 막음)되면 저장하지 않은 큰 파일 편집은 사라진다(화면에 안내).
+4. 위 12.3의 파이프 지연(20/63 ms).
+5. 같은 파일 '저장'(덮어쓰기): 지금은 '다른 이름으로 저장'만(대화상자에서 같은 파일을 고르면 덮어쓰기 확인 후 저장).

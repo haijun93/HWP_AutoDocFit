@@ -2391,16 +2391,41 @@ class DesktopWebBridge:
     def _memo_editor_request(self, request):
         """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 노트북 '+메모 추가'와 자료함 '+메모'가 쓴다.
 
-        파일 경로 인자(path)는 받지 않는다: 메모는 노트북 출처로 저장하므로 편집 코어가 디스크를 읽고 쓸 일이 없고,
-        화면에서 임의 경로를 열거나 덮어쓰는 통로가 되지 않게 막는다.
+        파일 경로 인자(path)는 받지 않는다: 화면에서 임의 경로를 열거나 덮어쓰는 통로가 되지 않게 막는다.
+        텍스트 파일 열기·다른 이름으로 저장은 호스트의 파일 대화상자를 거친다:
+        `edit_select_file {mode: open|save}` → 선택 번호(selection_id, 경로는 호스트에만 보관) →
+        `edit_open {selection_id}` / `edit_save {selection_id, encoding, line_ending}`에서 호스트가 경로로 바꿔 klib에 넘긴다.
         """
         from docfit_app.library_bridge import EDITOR_COMMANDS
-        if request.get("cmd") not in EDITOR_COMMANDS:
-            return {"ok": False, "message": "허용되지 않은 편집기 명령입니다."}
-        if "path" in request:
-            return {"ok": False, "message": "편집기 명령에는 파일 경로를 쓸 수 없습니다."}
+        cmd = request.get("cmd")
+        purposes = {"edit_open": "memo_text_open", "edit_save": "memo_text_save"}
         try:
-            return self._get_library_bridge().request(request)
+            if cmd == "edit_select_file":
+                mode = request.get("mode")
+                purpose = {"open": "memo_text_open", "save": "memo_text_save"}.get(mode)
+                if purpose is None:
+                    return {"ok": False, "message": "mode는 open 또는 save여야 합니다."}
+                import uuid
+                return self._file_dialogs.select_files(uuid.uuid4().hex, purpose, mode)
+            if cmd not in EDITOR_COMMANDS:
+                return {"ok": False, "message": "허용되지 않은 편집기 명령입니다."}
+            if "path" in request:
+                return {"ok": False, "message": "편집기 명령에는 파일 경로를 쓸 수 없습니다."}
+            name = None
+            if "selection_id" in request:
+                if cmd not in purposes:
+                    return {"ok": False, "message": "파일 선택은 열기·저장에만 쓸 수 있습니다."}
+                path = self._selection_path(request, purposes[cmd], "selection_id")
+                request = {k: v for k, v in request.items() if k != "selection_id"}
+                request["path"] = path
+                name = os.path.basename(path)
+            response = self._get_library_bridge().request(request)
+            if isinstance(response, dict):
+                # 화면에는 파일 이름만 알린다(코어 응답의 전체 경로 path는 호스트에만 둔다).
+                response = {k: v for k, v in response.items() if k != "path"}
+                if name is not None and response.get("ok"):
+                    response["name"] = name
+            return response
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
 

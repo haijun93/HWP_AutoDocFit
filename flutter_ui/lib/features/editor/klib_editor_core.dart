@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart' show ChangeNotifier, Listenable;
 import 'package:flutter/services.dart' show TextEditingValue, TextRange, TextSelection;
 
 import 'editor_core.dart';
+import 'editor_files.dart';
 import 'markdown_format.dart' as md;
 import 'markdown_format.dart' show PlainParagraph;
 import 'text_offsets.dart';
@@ -40,7 +41,41 @@ class _Notifier extends ChangeNotifier {
 
 int _int(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
-class KlibEditorCore implements EditorCore {
+/// 이미 열린 문서 [doc]의 글 전체를 받는다. 응답 한도(64 KiB)를 넘으면 줄 수를 반씩 줄여 나눠 받는다.
+Future<String> fetchEditorText(EditorBackend backend, int doc, {int chunkLines = 400}) async {
+  Future<Map<String, Object?>> send(Map<String, Object?> req) async {
+    final r = await backend({...req, 'doc': doc});
+    if (r['ok'] != true) throw EditorBackendError('${r['message'] ?? '편집 코어 요청이 실패했습니다.'}');
+    return r;
+  }
+
+  try {
+    return '${(await send({'cmd': 'edit_text'}))['text'] ?? ''}';
+  } on EditorBackendError catch (e) {
+    if (e.lostDocument) rethrow;
+  }
+  final lines = _int((await send({'cmd': 'edit_info'}))['lines']);
+  final out = <String>[];
+  var step = chunkLines;
+  var from = 0;
+  while (from < lines) {
+    final Map<String, Object?> r;
+    try {
+      r = await send({'cmd': 'edit_lines', 'from': from, 'to': from + step});
+    } on EditorBackendError catch (e) {
+      if (e.lostDocument || step == 1) rethrow;
+      step = (step / 2).ceil();
+      continue;
+    }
+    for (final row in (r['lines'] as List? ?? const [])) {
+      out.add('${(row as Map)['text'] ?? ''}');
+    }
+    from += step;
+  }
+  return out.join('\n');
+}
+
+class KlibEditorCore implements EditorCore, EditorFileSupport {
   KlibEditorCore(this._backend, {String text = '', this.keepAlive = const Duration(seconds: 30), this.chunkLines = 400}) {
     final (normalized, _) = normalizeNewlines(text, const []);
     _value = TextEditingValue(text: normalized, selection: TextSelection.collapsed(offset: normalized.length));
@@ -56,6 +91,27 @@ class KlibEditorCore implements EditorCore {
         return false;
       },
     );
+    if (keepAlive > Duration.zero) _timer = Timer.periodic(keepAlive, (_) => unawaited(_heartbeat()));
+  }
+
+  /// 파일 열기(`edit_open {selection_id}`)로 이미 열린 문서 [doc]를 이어받는다. [text]는 그 문서의 글(LF)이다.
+  KlibEditorCore.adopt(
+    this._backend, {
+    required int doc,
+    required String text,
+    String lineEnding = 'CRLF',
+    String encoding = 'UTF-8',
+    String? fileName,
+    this.keepAlive = const Duration(seconds: 30),
+    this.chunkLines = 400,
+  }) {
+    _value = TextEditingValue(text: text, selection: const TextSelection.collapsed(offset: 0));
+    _mirror = text;
+    _doc = doc;
+    _lineEnding = lineEnding;
+    _encoding = encoding;
+    _fileName = fileName;
+    _ready = Future.value(true);
     if (keepAlive > Duration.zero) _timer = Timer.periodic(keepAlive, (_) => unawaited(_heartbeat()));
   }
 
@@ -85,6 +141,7 @@ class KlibEditorCore implements EditorCore {
   bool _canRedo = false;
   String _lineEnding = 'CRLF';
   String _encoding = 'UTF-8';
+  String? _fileName;
   final _changes = _Notifier();
 
   /// Rust 코어와 연결됐는지(열기 성공 여부). 시험·진단용.
@@ -107,6 +164,12 @@ class KlibEditorCore implements EditorCore {
 
   @override
   String get engineName => _fallback == null ? 'Rust' : 'Dart';
+
+  @override
+  String? get fileName => _fileName;
+
+  @override
+  bool get canSaveToFile => _fallback == null && !_disposed;
 
   @override
   Listenable get changes => _changes;
@@ -152,9 +215,9 @@ class KlibEditorCore implements EditorCore {
     if (r['encoding'] is String) _encoding = r['encoding'] as String;
   }
 
-  Future<void> _open(String text, {String? mirror, String? lineEnding}) async {
+  Future<void> _open(String text, {String? mirror, String? lineEnding, String? encoding}) async {
     _doc = null;
-    final r = await _send('edit_open', {'text': text, 'line_ending': ?lineEnding});
+    final r = await _send('edit_open', {'text': text, 'line_ending': ?lineEnding, 'encoding': ?encoding});
     _doc = _int(r['doc']);
     _mirror = mirror ?? text;
   }
@@ -164,7 +227,12 @@ class KlibEditorCore implements EditorCore {
     if (_fallback != null || _disposed) return;
     _gen++;
     try {
-      await _open(_value.text, lineEnding: _lineEnding); // 화면 글은 LF라 원래 줄바꿈 형식을 알려 준다
+      // 화면 글은 LF라 원래 줄바꿈·저장 인코딩을 알려 준다(인코딩을 못 맞추면 그것만 빼고 다시 연다).
+      try {
+        await _open(_value.text, lineEnding: _lineEnding, encoding: _encoding);
+      } on EditorBackendError catch (_) {
+        await _open(_value.text, lineEnding: _lineEnding);
+      }
       _canUndo = false;
       _canRedo = false;
       _needCommit = false;
@@ -482,6 +550,35 @@ class KlibEditorCore implements EditorCore {
       count = _int(r['count']);
     });
     return count;
+  }
+
+  // ---- 파일 저장(3단계) ----
+
+  @override
+  Future<UnencodableReport> unencodable(String encoding) async {
+    if (!canSaveToFile || !await _ready) throw EditorBackendError('Rust 편집 코어가 연결되지 않았습니다.');
+    // 앞선 입력이 모두 반영된 뒤 점검한다(요청 줄).
+    final r = await _enqueue(() => _send('edit_unencodable', {'encoding': encoding, 'limit': 50}));
+    return UnencodableReport.fromJson(r);
+  }
+
+  @override
+  Future<void> saveToFile(String selectionId, {required String encoding, required String lineEnding}) async {
+    if (!canSaveToFile || !await _ready) throw EditorBackendError('Rust 편집 코어가 연결되지 않아 파일로 저장할 수 없습니다.');
+    try {
+      final r = await _enqueue(
+        () => _send('edit_save', {'selection_id': selectionId, 'encoding': encoding, 'line_ending': lineEnding}),
+      );
+      if (r['name'] is String) _fileName = r['name'] as String;
+    } on EditorBackendError catch (e) {
+      if (e.lostDocument) {
+        await _enqueue(_recover);
+        throw EditorBackendError('편집 코어가 다시 시작돼 저장하지 못했습니다. 한 번 더 저장해 주세요.');
+      }
+      rethrow;
+    } finally {
+      _notify();
+    }
   }
 
   @override
