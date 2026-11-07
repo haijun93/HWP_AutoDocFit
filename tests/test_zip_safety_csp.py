@@ -77,7 +77,7 @@ class WebCspTests(unittest.TestCase):
         self.assertEqual(policy["object-src"], ["'none'"])
         self.assertEqual(policy["default-src"], ["'self'"])
         self.assertNotIn("'unsafe-inline'", policy["script-src"])
-        # pywebview api.js가 new Function을 쓰므로 'unsafe-eval'은 필수다(docs/CSP_S6_재설계_2026-11-07.md).
+        # pywebview api.js가 new Function을 쓰므로 'unsafe-eval'은 필수다(docs/CSP_S6_REDESIGN_2026-11-07.md).
         self.assertIn("'unsafe-eval'", policy["script-src"])
         self.assertIn("'wasm-unsafe-eval'", policy["script-src"])
         for source in policy.values():
