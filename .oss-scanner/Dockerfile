@@ -17,3 +17,6 @@ RUN grep -viE '^(pywin32)\b' requirements.txt > /tmp/requirements-linux.txt \
 RUN python -m compileall -q docfit_core docfit_app docfit_engine desktop_web_ui.py
 # Run the test suite offline with:  python scripts/linux_stub_test_runner.py discover -s tests
 # (tests that need Tk/Windows/Hancom are expected to fail or skip on Linux).
+# Run as an unprivileged user by default (the scanner switches to root for its own layer).
+RUN useradd --create-home --uid 10001 scanner && chown -R scanner /src
+USER scanner
