@@ -1990,6 +1990,21 @@ class DesktopWebBridge:
             logging.getLogger(__name__).warning("몽땅클립보드 관리창 처리 실패", exc_info=True)
             return {"ok": False, "message": str(exc) or "관리창 설정을 처리하지 못했습니다."}
 
+    def external_app(self, action, payload=None):
+        """외부 프로그램(사진첩·아웃라이너·사진관리, 별도 프로세스) 실행·경로 지정. 개발자 모드 전용."""
+        if not self._developer_mode_enabled():
+            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 사용할 수 있습니다."}
+        try:
+            service = getattr(self, "_external_apps_service", None)
+            if service is None:
+                from docfit_app.external_apps_service import ExternalAppsService
+                settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+                service = self._external_apps_service = ExternalAppsService(settings, dialogs=self._file_dialogs)
+            return service.command(action, payload)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("외부 프로그램 처리 실패", exc_info=True)
+            return {"ok": False, "code": "APP_FAILED", "message": str(exc) or "프로그램을 열지 못했습니다."}
+
     def file_rename(self, action, payload=None):
         """파일이름 탭: 목록·미리보기·적용·되돌리기(경로는 호스트에만 둔다)."""
         try:
@@ -3245,7 +3260,7 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
