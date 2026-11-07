@@ -55,6 +55,11 @@ class _MemoEditorPageState<T> extends State<MemoEditorPage<T>> {
   String? _error;
 
   Future<void> _save() async {
+    if (_controller.isLargeFile) {
+      // 큰 파일은 글 전체를 화면으로 가져오지 않으므로 메모(노트북·자료함)로 넣지 않는다.
+      setState(() => _error = "큰 파일 보기 중입니다. 도구줄의 '다른 이름으로 저장'으로 파일에 저장하세요.");
+      return;
+    }
     await _controller.flush();
     final doc = _controller.document;
     if (doc.isBlank) {
@@ -90,6 +95,8 @@ class _MemoEditorPageState<T> extends State<MemoEditorPage<T>> {
             final backend? => (text) => KlibEditorCore(backend, text: text),
             null => null,
           },
+          // 텍스트 파일 열기·다른 이름으로 저장(인코딩·줄바꿈 선택)도 같은 klib 통로를 쓴다.
+          fileBackend: widget.editorBackend,
           footer: Padding(
             padding: const EdgeInsets.only(top: 8),
             child: Row(

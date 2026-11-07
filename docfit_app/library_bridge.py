@@ -47,6 +47,8 @@ ALLOWED_COMMANDS = frozenset({
     "md_parse", "md_inline", "md_block", "md_link", "md_rule", "md_code_block", "md_clear",
 
     "set_line_ending", "set_encoding", "save", "autosave",
+    # 3단계(EDCORE3, 설계 문서 11절): 큰 글 보기(줄 범위·글자 오프셋)·변환 불가 글자·상태 표시줄 값.
+    "line_range", "char_to_line_col", "line_col_to_char", "to_char", "from_char", "unencodable", "status",
 
 )))
 

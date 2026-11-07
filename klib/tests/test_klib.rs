@@ -870,3 +870,74 @@ fn test_item_text_get_set_for_memo_editor() {
     assert!(escaped.str("message").unwrap().contains("데이터 폴더 밖"));
     assert_eq!(fs::read_to_string(&outside).unwrap(), "사용자 원본");
 }
+
+/// 3단계(EDCORE3) 명령: 큰 파일 열기 → 보이는 줄만 조회 → 줄 편집 → 변환 불가 글자 → 인코딩·줄바꿈 선택 저장.
+/// Flutter 큰 글 보기(LargeTextSession)가 보내는 순서 그대로. 10만 줄 파일 열기 시간을 출력한다(--nocapture).
+#[test]
+fn test_edit_stage3_large_file_and_encoding_save() {
+    let ctx = TestContext::new("edit_stage3");
+    let db = Mutex::new(Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap());
+    let running = AtomicBool::new(true);
+    let call = |req: String| json::parse(&pipe::handle_request(&req, &db, &running)).unwrap();
+    let ok = |v: &json::Value| assert_eq!(v.bool("ok"), Some(true), "응답 실패: {:?}", v.str("message"));
+
+    // 10만 줄 CP949 + CRLF 파일(한글·영문 혼합).
+    let mut text = String::new();
+    for i in 0..100_000 {
+        text.push_str(&format!("{i:06}번째 줄 가나다라마바사 메모장 벤치마킹 line {i}\r\n"));
+    }
+    let bytes = editor_core::cp949::encode(&text).unwrap();
+    let path = ctx.dir.join("big.txt");
+    fs::write(&path, &bytes).unwrap();
+    let p = path.to_str().unwrap().replace('\\', "/");
+
+    let t0 = std::time::Instant::now();
+    let opened = call(format!(r#"{{"cmd":"edit_open","path":"{p}"}}"#));
+    let open_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    ok(&opened);
+    let doc = opened.i64("doc").unwrap();
+    assert_eq!((opened.str("encoding"), opened.str("line_ending")), (Some("CP949"), Some("CRLF")));
+    assert_eq!(opened.i64("lines"), Some(100_001));
+    let t1 = std::time::Instant::now();
+    let first_raw = pipe::handle_request(&format!(r#"{{"cmd":"edit_line_range","doc":{doc},"start_line":0,"count":120}}"#), &db, &running);
+    let first_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    // 응답 한 줄이 Python 브리지 한도(64 KiB) 안인지: 화면은 120줄씩 가져온다.
+    assert!(first_raw.len() < 64 * 1024, "응답 {} 바이트", first_raw.len());
+    let first = json::parse(&first_raw).unwrap();
+    ok(&first);
+    assert_eq!(first.i64("total_lines"), Some(100_001));
+    assert_eq!(first.arr("lines").unwrap().len(), 120);
+    let t2 = std::time::Instant::now();
+    let tail = call(format!(r#"{{"cmd":"edit_line_range","doc":{doc},"start_line":99950,"count":120}}"#));
+    let tail_ms = t2.elapsed().as_secs_f64() * 1000.0;
+    let rows = tail.arr("lines").unwrap();
+    assert_eq!(rows.len(), 51); // 마지막 빈 줄 포함, 범위를 넘으면 잘린다
+    assert!(rows[0].str("text").unwrap().starts_with("099950번째"));
+    println!("[EDIT_STAGE3] 10만 줄 파일({} 바이트) 열기 {open_ms:.1} ms, 첫 화면 120줄 {first_ms:.2} ms, 끝 화면 {tail_ms:.2} ms", bytes.len());
+
+    // 한 줄 편집(줄 50001 맨 앞에 이모지) → 상태·변환 불가 목록.
+    let line = call(format!(r#"{{"cmd":"edit_line_range","doc":{doc},"start_line":50000,"count":1}}"#));
+    let start = line.arr("lines").unwrap()[0].i64("start").unwrap();
+    ok(&call(format!(r#"{{"cmd":"edit_replace","doc":{doc},"start":{start},"end":{start},"text":"😀"}}"#)));
+    let st = call(format!(r#"{{"cmd":"edit_status","doc":{doc},"pos":{}}}"#, start + 4));
+    assert_eq!((st.i64("line"), st.i64("col"), st.str("encoding")), (Some(50001), Some(2), Some("CP949")));
+    let un = call(format!(r#"{{"cmd":"edit_unencodable","doc":{doc},"encoding":"CP949"}}"#));
+    assert_eq!((un.bool("ok_to_save"), un.i64("total")), (Some(false), Some(1)));
+    assert_eq!(un.arr("first").unwrap()[0].i64("line"), Some(50001));
+    // CP949로는 거절(파일·설정 그대로), UTF-8 BOM + LF로는 저장.
+    let out = ctx.dir.join("out.txt");
+    let o = out.to_str().unwrap().replace('\\', "/");
+    let refused = call(format!(r#"{{"cmd":"edit_save","doc":{doc},"path":"{o}","encoding":"CP949"}}"#));
+    assert_eq!(refused.bool("ok"), Some(false));
+    assert!(!out.exists());
+    assert_eq!(call(format!(r#"{{"cmd":"edit_info","doc":{doc}}}"#)).str("encoding"), Some("CP949"));
+    let saved = call(format!(r#"{{"cmd":"edit_save","doc":{doc},"path":"{o}","encoding":"UTF-8 BOM","line_ending":"LF"}}"#));
+    ok(&saved);
+    assert_eq!((saved.str("encoding"), saved.str("line_ending"), saved.bool("dirty")), (Some("UTF-8 BOM"), Some("LF"), Some(false)));
+    let written = fs::read(&out).unwrap();
+    assert_eq!(&written[..3], b"\xEF\xBB\xBF");
+    assert!(!written.contains(&b'\r'));
+    let lc = call(format!(r#"{{"cmd":"edit_char_to_line_col","doc":{doc},"char":0}}"#));
+    assert_eq!((lc.i64("line"), lc.i64("col")), (Some(1), Some(1)));
+    ok(&call(format!(r#"{{"cmd":"edit_close","doc":{doc}}}"#)));
+}

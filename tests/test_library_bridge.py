@@ -428,5 +428,89 @@ class LibraryMemoBridgeTests(unittest.TestCase):
                          "DEVELOPER_MODE_REQUIRED")
 
 
+class MemoEditorFileBridgeTests(unittest.TestCase):
+    """메모 편집기 3단계: 큰 글 보기 명령 허용, 파일 대화상자를 거친 열기·인코딩 선택 저장."""
+
+    def _bridge(self, dialogs):
+        import desktop_web_ui
+        bridge = desktop_web_ui.DesktopWebBridge.__new__(desktop_web_ui.DesktopWebBridge)
+        bridge._developer_mode_enabled = lambda: True
+        bridge._file_dialogs = dialogs
+        return bridge
+
+    def _dialogs(self, root, picked):
+        from docfit_app.native_file_dialog_service import NativeFileDialogService
+        return NativeFileDialogService(dialog=lambda purpose, mode, multiple: [str(picked)])
+
+    def test_stage3_commands_are_allowed(self):
+        from docfit_app.library_bridge import EDITOR_COMMANDS
+        for cmd in ("edit_line_range", "edit_char_to_line_col", "edit_line_col_to_char", "edit_to_char",
+                    "edit_from_char", "edit_unencodable", "edit_status"):
+            self.assertIn(cmd, ALLOWED_COMMANDS)
+            self.assertIn(cmd, EDITOR_COMMANDS)
+        self.assertNotIn("edit_select_file", ALLOWED_COMMANDS)  # 호스트가 처리(klib로 가지 않음)
+
+    def test_memo_text_purposes(self):
+        from docfit_app.native_file_dialog_service import PURPOSES
+        self.assertEqual(PURPOSES["memo_text_open"][0], "open")
+        self.assertIn(".txt", PURPOSES["memo_text_open"][1])
+        self.assertEqual(PURPOSES["memo_text_save"], ("save", frozenset({".txt", ".md"})))
+
+    def test_open_and_save_through_selection_ids_pass_host_paths_only(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "큰글.txt"
+            source.write_bytes("가나\r\n다".encode("cp949"))
+            target = Path(tmp) / "저장.txt"
+            fake = mock.Mock()
+            fake.request.return_value = {"ok": True, "doc": 4, "encoding": "CP949", "line_ending": "CRLF",
+                                         "path": str(source)}
+            with mock.patch("docfit_app.library_bridge.LibraryBridge", return_value=fake):
+                bridge = self._bridge(self._dialogs(tmp, source))
+                picked = bridge.notebook({"cmd": "edit_select_file", "mode": "open"})
+                self.assertTrue(picked["ok"])
+                self.assertNotIn(tmp, str(picked))  # 화면에는 경로가 가지 않는다
+                opened = bridge.notebook({"cmd": "edit_open", "selection_id": picked["selection_id"]})
+                self.assertEqual(opened["name"], "큰글.txt")
+                self.assertNotIn("path", opened)  # 코어 응답의 전체 경로는 화면으로 가지 않는다
+                sent = fake.request.call_args.args[0]
+                self.assertEqual((sent["cmd"], Path(sent["path"])), ("edit_open", source.resolve()))
+                self.assertNotIn("selection_id", sent)
+                # 선택 번호는 한 번만 쓸 수 있다.
+                self.assertFalse(bridge.notebook({"cmd": "edit_open", "selection_id": picked["selection_id"]})["ok"])
+
+                bridge._file_dialogs = self._dialogs(tmp, target)
+                chosen = bridge.library({"cmd": "edit_select_file", "mode": "save"})
+                saved = bridge.library({"cmd": "edit_save", "doc": 4, "selection_id": chosen["selection_id"],
+                                        "encoding": "UTF-8 BOM", "line_ending": "LF"})
+                self.assertTrue(saved["ok"])
+                sent = fake.request.call_args.args[0]
+                self.assertEqual(Path(sent["path"]), target.resolve())
+                self.assertEqual((sent["encoding"], sent["line_ending"]), ("UTF-8 BOM", "LF"))
+
+    def test_selection_rules(self):
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "a.txt"
+            source.write_text("x", encoding="utf-8")
+            with mock.patch("docfit_app.library_bridge.LibraryBridge") as factory:
+                bridge = self._bridge(self._dialogs(tmp, source))
+                self.assertFalse(bridge.notebook({"cmd": "edit_select_file", "mode": "shell"})["ok"])
+                picked = bridge.notebook({"cmd": "edit_select_file", "mode": "open"})
+                # 열기용 선택으로 저장할 수 없고, 다른 명령에는 선택 번호를 쓸 수 없다.
+                self.assertFalse(bridge.notebook({"cmd": "edit_save", "doc": 1, "selection_id": picked["selection_id"]})["ok"])
+                self.assertFalse(bridge.notebook({"cmd": "edit_text", "doc": 1, "selection_id": "x"})["ok"])
+                self.assertFalse(bridge.notebook({"cmd": "edit_open", "path": str(source)})["ok"])
+                factory.assert_not_called()
+            # 지원하지 않는 확장자는 대화상자 결과부터 거절된다.
+            exe = Path(tmp) / "a.exe"
+            exe.write_bytes(b"MZ")
+            self.assertFalse(self._bridge(self._dialogs(tmp, exe)).notebook({"cmd": "edit_select_file", "mode": "open"})["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

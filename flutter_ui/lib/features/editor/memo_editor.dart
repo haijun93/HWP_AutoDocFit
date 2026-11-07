@@ -6,6 +6,10 @@
 ///
 /// 메모장처럼: Ctrl+F 찾기, Ctrl+H 바꾸기, F3/Shift+F3 다음/이전, Ctrl+휠·Ctrl+= / Ctrl+- / Ctrl+0 확대·축소,
 /// 아래 상태 표시줄에 줄·열, 글자 수, 확대 비율, 줄바꿈, 인코딩.
+///
+/// 3단계(EDCORE3, [MemoEditor.fileBackend]가 있을 때): Ctrl+O 텍스트 파일 열기(인코딩·줄바꿈 자동 감지),
+/// Ctrl+Shift+S 다른 이름으로 저장(인코딩·줄바꿈 선택, CP949 변환 불가 글자 확인). 열린 파일이
+/// [MemoEditor.largeFileBytes]·[MemoEditor.largeFileLines]를 넘으면 글 전체를 입력칸에 넣지 않고 큰 글 보기([LargeTextView])로 연다.
 library;
 
 import 'dart:async';
@@ -15,7 +19,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'editor_core.dart';
+import 'editor_files.dart';
+import 'klib_editor_core.dart' show EditorBackend, KlibEditorCore, fetchEditorText;
+import 'large_text_session.dart';
+import 'large_text_view.dart';
 import 'markdown_format.dart';
+import 'memo_save_dialog.dart';
 import 'text_offsets.dart' show lineColumnAt;
 
 /// 제목과 Markdown 본문.
@@ -38,7 +47,14 @@ class MemoEditorController {
 
   /// 기다리는 자동 저장이 있으면 바로 저장한다.
   Future<void> flush() async => _state?._flush();
+
+  /// 큰 파일 보기 중인지(이때 [document]의 본문은 열기 전 메모 그대로다 — 파일은 '다른 이름으로 저장'으로 저장).
+  bool get isLargeFile => _state?._large != null;
 }
+
+/// 이보다 큰 파일은 큰 글 보기로 연다.
+const int kMemoLargeFileBytes = 128 * 1024;
+const int kMemoLargeFileLines = 3000;
 
 class MemoEditor extends StatefulWidget {
   const MemoEditor({
@@ -50,6 +66,9 @@ class MemoEditor extends StatefulWidget {
     this.createCore,
     this.autoSaveDelay = const Duration(milliseconds: 800),
     this.footer,
+    this.fileBackend,
+    this.largeFileBytes = kMemoLargeFileBytes,
+    this.largeFileLines = kMemoLargeFileLines,
   });
 
   final MemoDocument initial;
@@ -67,6 +86,13 @@ class MemoEditor extends StatefulWidget {
 
   /// 본문 아래에 둘 위젯(예: '출처로 저장' 단추).
   final Widget? footer;
+
+  /// 텍스트 파일 열기·다른 이름으로 저장 통로(호스트 파일 대화상자 + klib edit_*). 없으면 두 단추를 숨긴다.
+  final EditorBackend? fileBackend;
+
+  /// 열린 파일이 이 크기(UTF-8 바이트)나 줄 수를 넘으면 큰 글 보기로 연다.
+  final int largeFileBytes;
+  final int largeFileLines;
 
   @override
   State<MemoEditor> createState() => _MemoEditorState();
@@ -127,7 +153,15 @@ class _CtrlZoomScrollPhysics extends ScrollPhysics {
 }
 
 class _MemoEditorState extends State<MemoEditor> {
-  late final EditorCore _core = (widget.createCore ?? (t) => DartEditorCore(text: t))(widget.initial.markdown);
+  late EditorCore _core = (widget.createCore ?? (t) => DartEditorCore(text: t))(widget.initial.markdown);
+
+  /// 큰 글 보기 중이면 그 세션(본문 입력칸 대신 [LargeTextView]).
+  LargeTextSession? _large;
+  final _largeKey = GlobalKey<LargeTextViewState>();
+  final _largeCaret = ValueNotifier<LargeCaret>((line: 1, column: 1));
+
+  /// 파일 열기·저장 결과 안내(상태 표시줄 왼쪽).
+  String? _fileMessage;
   late final _title = TextEditingController(text: widget.initial.title);
   late final _body = _MemoTextController(text: widget.initial.markdown);
   final _bodyFocus = FocusNode();
@@ -159,6 +193,7 @@ class _MemoEditorState extends State<MemoEditor> {
     _body.addListener(_onBodyChanged);
     _title.addListener(_scheduleSave);
     _core.changes.addListener(_onCoreChanged);
+    _largeCaret.addListener(_onLargeChanged); // 큰 글 보기 커서 → 상태 표시줄
   }
 
   @override
@@ -168,6 +203,9 @@ class _MemoEditorState extends State<MemoEditor> {
     _groupTimer?.cancel();
     _core.changes.removeListener(_onCoreChanged);
     _core.dispose();
+    _large?.removeListener(_onLargeChanged);
+    _large?.dispose();
+    _largeCaret.dispose();
     _title.dispose();
     _body.dispose();
     _bodyFocus.dispose();
@@ -263,18 +301,184 @@ class _MemoEditorState extends State<MemoEditor> {
   }
 
   Future<void> _command(EditorCommand command) async {
+    if (_large != null) return; // 큰 파일 보기에서는 서식 명령을 쓰지 않는다(평문 편집)
     await _runCore(() => _core.apply(command));
     _bodyFocus.requestFocus();
   }
 
-  Future<void> _undo() => _runCore(_core.undo);
+  Future<void> _undo() async {
+    if (_large != null) return _largeKey.currentState?.undo();
+    await _runCore(_core.undo);
+  }
 
-  Future<void> _redo() => _runCore(_core.redo);
+  Future<void> _redo() async {
+    if (_large != null) return _largeKey.currentState?.undo(redo: true);
+    await _runCore(_core.redo);
+  }
 
   Future<void> _link() async {
+    if (_large != null) return;
     final url = await showDialog<String>(context: context, builder: (_) => const _LinkDialog());
     if (url == null || url.trim().isEmpty) return;
     await _runCore(() => _core.insertLink(url));
+    _bodyFocus.requestFocus();
+  }
+
+  // ---- 파일 열기·저장(3단계) ----
+
+  MemoFileGateway? get _files => switch (widget.fileBackend) {
+    final b? => MemoFileGateway(b),
+    null => null,
+  };
+
+  EditorFileSupport? get _fileTarget {
+    final large = _large;
+    if (large != null) return large.canSaveToFile ? large : null;
+    final core = _core;
+    return core is EditorFileSupport && (core as EditorFileSupport).canSaveToFile ? core as EditorFileSupport : null;
+  }
+
+  void _onLargeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _replaceCore(EditorCore core) {
+    _core.changes.removeListener(_onCoreChanged);
+    _core.dispose();
+    _core = core;
+    core.changes.addListener(_onCoreChanged);
+    _body.highlight = TextRange.empty;
+    _setBody(core.value);
+  }
+
+  void _setLarge(LargeTextSession? session) {
+    _large?.removeListener(_onLargeChanged);
+    _large?.dispose();
+    _large = session;
+    session?.addListener(_onLargeChanged);
+    _largeCaret.value = (line: 1, column: 1);
+  }
+
+  static int _num(Object? v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
+
+  Future<void> _openFile() async {
+    final files = _files;
+    if (files == null || _busy) return;
+    if (!_document.isBlank || _large != null) {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('파일 열기'),
+          content: const Text('지금 편집 중인 내용 대신 고른 파일을 엽니다. 계속할까요?'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
+            FilledButton(key: const ValueKey('memo-open-confirm'), onPressed: () => Navigator.pop(context, true), child: const Text('열기')),
+          ],
+        ),
+      );
+      if (ok != true || !mounted) return;
+    }
+    await _largeKey.currentState?.commit();
+    setState(() => _busy = true);
+    var opened = false;
+    try {
+      final selection = await files.pick(save: false);
+      if (selection == null) return;
+      final info = await files.open(selection);
+      final doc = _num(info['doc']);
+      final name = info['name'] is String ? info['name'] as String : null;
+      final small = _num(info['len']) <= widget.largeFileBytes && _num(info['lines']) <= widget.largeFileLines;
+      if (small) {
+        final String text;
+        try {
+          text = await fetchEditorText(files.backend, doc);
+        } catch (_) {
+          await files.close(doc);
+          rethrow;
+        }
+        _setLarge(null);
+        _replaceCore(KlibEditorCore.adopt(
+          files.backend,
+          doc: doc,
+          text: text,
+          lineEnding: '${info['line_ending'] ?? 'CRLF'}',
+          encoding: '${info['encoding'] ?? 'UTF-8'}',
+          fileName: name,
+        ));
+        opened = true;
+      } else {
+        _setLarge(LargeTextSession(files.backend, doc: doc, info: info));
+      }
+      if (name != null && (_title.text.trim().isEmpty || _title.text.trim() == '새 메모')) {
+        final dot = name.lastIndexOf('.');
+        _title.text = dot > 0 ? name.substring(0, dot) : name;
+      }
+      final target = _fileTarget;
+      _fileMessage = '열었습니다: ${name ?? '파일'} (${memoFileFormatLabel(target?.encoding ?? '${info['encoding']}', target?.lineEnding ?? '${info['line_ending']}')}'
+          '${_large != null ? ', 큰 파일 보기' : ''})';
+    } catch (error) {
+      _fileMessage = '파일을 열지 못했습니다: $error';
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+        if (opened) _scheduleSave();
+      }
+    }
+  }
+
+  Future<void> _saveAs() async {
+    final files = _files;
+    final target = _fileTarget;
+    if (files == null || target == null || _busy) return;
+    await _largeKey.currentState?.commit();
+    if (!mounted) return;
+    final choice = await showDialog<MemoSaveChoice>(
+      context: context,
+      builder: (_) => MemoSaveDialog(encoding: target.encoding, lineEnding: target.lineEnding, fileName: target.fileName, check: target.unencodable),
+    );
+    if (choice == null || !mounted) return;
+    final place = choice.goTo;
+    if (place != null) {
+      await _goTo(place.line, place.column);
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final selection = await files.pick(save: true);
+      if (selection == null) return;
+      await target.saveToFile(selection, encoding: choice.encoding, lineEnding: choice.lineEnding);
+      _fileMessage = '저장했습니다: ${target.fileName ?? '파일'} (${memoFileFormatLabel(target.encoding, target.lineEnding)})';
+    } catch (error) {
+      _fileMessage = '저장하지 못했습니다: $error';
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// 줄·열(1부터, 글자 단위)로 커서를 옮기고 그 글자를 선택한다.
+  Future<void> _goTo(int line, int column) async {
+    if (_large != null) {
+      await _largeKey.currentState?.goTo(line, column);
+      return;
+    }
+    final text = _body.text;
+    var offset = 0;
+    for (var l = 1; l < line; l++) {
+      final next = text.indexOf('\n', offset);
+      if (next < 0) break;
+      offset = next + 1;
+    }
+    int step(int at) {
+      final u = text.codeUnitAt(at);
+      return (u >= 0xD800 && u <= 0xDBFF && at + 1 < text.length) ? 2 : 1;
+    }
+
+    for (var c = 1; c < column && offset < text.length && text.codeUnitAt(offset) != 0x0A; c++) {
+      offset += step(offset);
+    }
+    final end = offset < text.length && text.codeUnitAt(offset) != 0x0A ? offset + step(offset) : offset;
+    // 커서(extent)는 그 글자 앞: 상태 표시줄이 알린 줄·열과 같게.
+    _body.selection = TextSelection(baseOffset: end, extentOffset: offset);
     _bodyFocus.requestFocus();
   }
 
@@ -297,7 +501,7 @@ class _MemoEditorState extends State<MemoEditor> {
 
   void _openFind({bool replace = false}) {
     final sel = _body.selection;
-    if (sel.isValid && !sel.isCollapsed) {
+    if (_large == null && sel.isValid && !sel.isCollapsed) {
       final picked = sel.textInside(_body.text);
       if (!picked.contains('\n')) _findQuery.text = picked;
     }
@@ -331,6 +535,21 @@ class _MemoEditorState extends State<MemoEditor> {
       if (!_findOpen) _openFind();
       return;
     }
+    final large = _largeKey.currentState;
+    if (_large != null && large != null) {
+      final ok = await large.find(query, _findOptions, backward: backward);
+      if (!mounted) return;
+      if (!ok) {
+        setState(() => _findMessage = "'$query'을(를) 찾을 수 없습니다.");
+        return;
+      }
+      var n = 0;
+      try {
+        n = await _large!.countMatches(query, _findOptions);
+      } catch (_) {}
+      if (mounted) setState(() => _findMessage = n >= 1000 ? '1000개 이상 일치' : '$n개 일치');
+      return;
+    }
     final found = await _runCore(() => _core.find(query, _findOptions, backward: backward));
     if (!mounted) return;
     if (found == null) {
@@ -347,6 +566,10 @@ class _MemoEditorState extends State<MemoEditor> {
   Future<void> _replaceNext() async {
     final query = _findQuery.text;
     if (query.isEmpty) return;
+    if (_large != null) {
+      setState(() => _findMessage = '큰 파일 보기에서는 모두 바꾸기만 됩니다.');
+      return;
+    }
     final replaced = await _runCore(() => _core.replaceNext(query, _replaceWith.text, _findOptions));
     if (!mounted) return;
     final sel = _core.value.selection;
@@ -362,7 +585,10 @@ class _MemoEditorState extends State<MemoEditor> {
   Future<void> _replaceAll() async {
     final query = _findQuery.text;
     if (query.isEmpty) return;
-    final n = await _runCore(() => _core.replaceAll(query, _replaceWith.text, _findOptions)) ?? 0;
+    final large = _largeKey.currentState;
+    final n = _large != null && large != null
+        ? await large.replaceAll(query, _replaceWith.text, _findOptions)
+        : await _runCore(() => _core.replaceAll(query, _replaceWith.text, _findOptions)) ?? 0;
     if (!mounted) return;
     _body.highlight = TextRange.empty;
     setState(() => _findMessage = n == 0 ? "'$query'을(를) 찾을 수 없습니다." : '$n개를 바꿨습니다.');
@@ -408,25 +634,40 @@ class _MemoEditorState extends State<MemoEditor> {
 
   Widget _toolbar() {
     const divider = SizedBox(height: 24, child: VerticalDivider(width: 12));
+    final large = _large;
+    // 큰 파일 보기에서는 서식 단추를 끈다(평문 편집).
+    VoidCallback? fmt(VoidCallback f) => large == null ? f : null;
+    final canUndo = large?.canUndo ?? _core.canUndo;
+    final canRedo = large?.canRedo ?? _core.canRedo;
     return Wrap(
       key: const ValueKey('memo-toolbar'),
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _tool('memo-undo', '실행취소 (Ctrl+Z)', Icons.undo, _core.canUndo ? () => unawaited(_undo()) : null),
-        _tool('memo-redo', '다시실행 (Ctrl+Y)', Icons.redo, _core.canRedo ? () => unawaited(_redo()) : null),
+        if (widget.fileBackend != null) ...[
+          _tool('memo-open-file', '텍스트 파일 열기 (Ctrl+O)', Icons.folder_open_outlined, () => unawaited(_openFile())),
+          _tool(
+            'memo-save-file',
+            '다른 이름으로 저장 — 인코딩·줄바꿈 선택 (Ctrl+Shift+S)',
+            Icons.save_as_outlined,
+            _fileTarget == null ? null : () => unawaited(_saveAs()),
+          ),
+          divider,
+        ],
+        _tool('memo-undo', '실행취소 (Ctrl+Z)', Icons.undo, canUndo ? () => unawaited(_undo()) : null),
+        _tool('memo-redo', '다시실행 (Ctrl+Y)', Icons.redo, canRedo ? () => unawaited(_redo()) : null),
         divider,
         Tooltip(
           message: '문단 형식',
           child: DropdownButton<int>(
             key: const ValueKey('memo-block-style'),
-            value: _core.blockStyle,
+            value: large == null ? _core.blockStyle : 0,
             underline: const SizedBox.shrink(),
             isDense: true,
             items: [
               for (final e in kMemoBlockStyles.entries)
                 DropdownMenuItem(key: ValueKey('memo-block-style-${e.key}'), value: e.key, child: Text(e.value)),
             ],
-            onChanged: (level) async {
+            onChanged: large != null ? null : (level) async {
               if (level == null) return;
               await _runCore(() => _core.setBlockStyle(level));
               _bodyFocus.requestFocus();
@@ -434,19 +675,19 @@ class _MemoEditorState extends State<MemoEditor> {
           ),
         ),
         divider,
-        _tool('memo-bold', '굵게 (Ctrl+B)', Icons.format_bold, () => unawaited(_command(EditorCommand.bold))),
-        _tool('memo-italic', '기울임 (Ctrl+I)', Icons.format_italic, () => unawaited(_command(EditorCommand.italic))),
-        _tool('memo-link', '링크 (Ctrl+K)', Icons.link, () => unawaited(_link())),
+        _tool('memo-bold', '굵게 (Ctrl+B)', Icons.format_bold, fmt(() => unawaited(_command(EditorCommand.bold)))),
+        _tool('memo-italic', '기울임 (Ctrl+I)', Icons.format_italic, fmt(() => unawaited(_command(EditorCommand.italic)))),
+        _tool('memo-link', '링크 (Ctrl+K)', Icons.link, fmt(() => unawaited(_link()))),
         divider,
-        _tool('memo-code', '인라인 코드', Icons.code, () => unawaited(_command(EditorCommand.inlineCode))),
-        _tool('memo-code-block', '코드 블록', Icons.data_object, () => unawaited(_command(EditorCommand.codeBlock))),
+        _tool('memo-code', '인라인 코드', Icons.code, fmt(() => unawaited(_command(EditorCommand.inlineCode)))),
+        _tool('memo-code-block', '코드 블록', Icons.data_object, fmt(() => unawaited(_command(EditorCommand.codeBlock)))),
         divider,
-        _tool('memo-bullet', '글머리 목록', Icons.format_list_bulleted, () => unawaited(_command(EditorCommand.bulletList))),
-        _tool('memo-numbered', '번호 목록', Icons.format_list_numbered, () => unawaited(_command(EditorCommand.numberedList))),
-        _tool('memo-quote', '인용', Icons.format_quote, () => unawaited(_command(EditorCommand.quote))),
-        _tool('memo-rule', '구분선', Icons.horizontal_rule, () => unawaited(_command(EditorCommand.horizontalRule))),
+        _tool('memo-bullet', '글머리 목록', Icons.format_list_bulleted, fmt(() => unawaited(_command(EditorCommand.bulletList)))),
+        _tool('memo-numbered', '번호 목록', Icons.format_list_numbered, fmt(() => unawaited(_command(EditorCommand.numberedList)))),
+        _tool('memo-quote', '인용', Icons.format_quote, fmt(() => unawaited(_command(EditorCommand.quote)))),
+        _tool('memo-rule', '구분선', Icons.horizontal_rule, fmt(() => unawaited(_command(EditorCommand.horizontalRule)))),
         divider,
-        _tool('memo-clear', '서식 지우기', Icons.format_clear, () => unawaited(_command(EditorCommand.clearFormatting))),
+        _tool('memo-clear', '서식 지우기', Icons.format_clear, fmt(() => unawaited(_command(EditorCommand.clearFormatting)))),
         divider,
         _tool('memo-find', '찾기 (Ctrl+F)', Icons.search, _openFind),
         _tool('memo-replace', '바꾸기 (Ctrl+H)', Icons.find_replace, () => _openFind(replace: true)),
@@ -543,9 +784,21 @@ class _MemoEditorState extends State<MemoEditor> {
 
   Widget _statusBar() {
     final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final large = _large;
     final value = _body.value;
-    final caret = value.selection.isValid ? value.selection.extentOffset : value.text.length;
-    final pos = lineColumnAt(value.text, caret);
+    final ({int line, int column}) pos;
+    final int chars;
+    if (large != null) {
+      pos = _largeCaret.value;
+      chars = large.chars;
+    } else {
+      final caret = value.selection.isValid ? value.selection.extentOffset : value.text.length;
+      pos = lineColumnAt(value.text, caret);
+      chars = value.text.runes.length;
+    }
+    // 상태 표시줄의 인코딩·줄바꿈 = 저장할 때 쓸 값(연 파일에서 감지했거나 마지막으로 저장한 형식).
+    final encoding = large?.encoding ?? _core.encoding;
+    final lineEnding = large?.lineEnding ?? _core.lineEnding;
     final style = TextStyle(fontSize: 12, color: muted);
     Widget cell(String key, String text, {String? tooltip}) {
       final child = Padding(
@@ -561,19 +814,34 @@ class _MemoEditorState extends State<MemoEditor> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          const Spacer(),
+          Expanded(
+            child: Text(
+              large?.lostMessage ?? _fileMessage ?? '',
+              key: const ValueKey('memo-file-message'),
+              style: style.copyWith(color: large?.lostMessage != null ? Theme.of(context).colorScheme.error : null),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          if (large != null) ...[
+            cell('memo-status-mode', '큰 파일 보기 · ${large.totalLines}줄', tooltip: '보이는 줄만 불러와 그립니다. 편집 중인 줄만 입력칸이며 서식 단추는 쓰지 않습니다.'),
+            sep,
+          ],
           cell('memo-status-position', '줄 ${pos.line}, 열 ${pos.column}'),
           sep,
-          cell('memo-status-chars', '${value.text.runes.length}자'),
+          cell('memo-status-chars', '$chars자'),
           sep,
           cell('memo-status-zoom', '${(_zoom * 100).round()}%', tooltip: 'Ctrl+휠, Ctrl+= / Ctrl+- 로 확대·축소, Ctrl+0 원래 크기'),
           sep,
-          cell('memo-status-eol', memoLineEndingLabel(_core.lineEnding)),
+          cell(
+            'memo-status-eol',
+            memoLineEndingLabel(lineEnding),
+            tooltip: large?.mixedLineEndings == true ? '줄바꿈이 섞여 있습니다. 저장하면 이 형식으로 맞춥니다.' : null,
+          ),
           sep,
           cell(
             'memo-status-encoding',
-            _core.encoding,
-            tooltip: _core.engineName == 'Rust' ? '편집 엔진: Rust 코어(klib)' : '편집 엔진: 임시(Dart) 코어 — klib 연결 안 됨',
+            encoding,
+            tooltip: large != null || _core.engineName == 'Rust' ? '편집 엔진: Rust 코어(klib)' : '편집 엔진: 임시(Dart) 코어 — klib 연결 안 됨',
           ),
         ],
       ),
@@ -603,6 +871,10 @@ class _MemoEditorState extends State<MemoEditor> {
         const SingleActivator(LogicalKeyboardKey.digit0, control: true): () => _setZoom(1),
         const SingleActivator(LogicalKeyboardKey.numpad0, control: true): () => _setZoom(1),
         if (_findOpen) const SingleActivator(LogicalKeyboardKey.escape): _closeFind,
+        if (widget.fileBackend != null) ...{
+          const SingleActivator(LogicalKeyboardKey.keyO, control: true): () => unawaited(_openFile()),
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true, shift: true): () => unawaited(_saveAs()),
+        },
       },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -629,7 +901,17 @@ class _MemoEditorState extends State<MemoEditor> {
             child: Listener(
               key: const ValueKey('memo-body-zoom'),
               onPointerSignal: _onPointerSignal,
-              child: TextField(
+              child: _large != null
+                  ? LargeTextView(
+                      key: _largeKey,
+                      session: _large!,
+                      fontSize: kMemoBaseFontSize * _zoom,
+                      caret: _largeCaret,
+                      onError: (m) {
+                        if (mounted) setState(() => _fileMessage = m);
+                      },
+                    )
+                  : TextField(
                 key: const ValueKey('memo-body'),
                 controller: _body,
                 focusNode: _bodyFocus,
