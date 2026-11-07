@@ -5,6 +5,7 @@ from pathlib import Path
 from docfit_core.excel_table import parse_clipboard
 from docfit_core.excel_table_hwpx import to_hwpx
 from docfit_core.excel_html_shading import strip_cell_shading_report
+from docfit_core.excel_paste_target import clean_tsv, to_target_html_report
 from .native_table_clipboard import copy_hwpx_document
 
 class ExcelTableService:
@@ -15,6 +16,7 @@ class ExcelTableService:
 
     def command(self, action, payload=None):
         if action == 'strip_shading': return self._strip_shading()
+        if action == 'target_paste': return self._target_paste(payload)
         if action not in ('convert', 'paste_clean'): return {'ok':False,'message':'엑셀 표 변환 명령을 확인해 주세요.'}
         try:
             html_data, tsv = self.clipboard()
@@ -30,6 +32,20 @@ class ExcelTableService:
             return {'ok':True,'rows':model['row_count'],'cols':model['col_count'],'cleaned':model['cleaned'],
                     'message':'한/글에서 Ctrl+V로 붙여넣으세요.'}
         except (ValueError, OSError) as exc: return {'ok':False,'message':str(exc)}
+
+    def _target_paste(self, payload=None):
+        """클립보드의 엑셀 HTML을 '목표 결과' 형태(공백·빈 칸·열 너비·칸 여백 정리)로 바꿔 같은 클립보드에 다시 넣는다.
+        바꿀 것이 없거나 실패하면 클립보드를 건드리지 않는다. 한/글 붙여넣기 확인은 PC에서 해야 한다."""
+        html_data, tsv = self.clipboard()
+        if not html_data:
+            return {'ok':False,'message':'클립보드에서 엑셀 표를 찾지 못했습니다. 엑셀에서 셀을 복사한 뒤 다시 눌러 주세요.'}
+        strip = isinstance(payload,dict) and payload.get('keep_cell_background') is False
+        html, report = to_target_html_report(html_data, shading='strip' if strip else 'keep')
+        if not report['changed']:
+            return {'ok':True,'changed':False,'message':'정리할 내용이 없거나 표를 안전하게 바꿀 수 없어 클립보드를 그대로 두었습니다.'+(' ('+report['reason']+')' if report.get('reason') else '')}
+        try: self.html_writer(html, clean_tsv(tsv))
+        except Exception as exc: return {'ok':False,'message':'클립보드에 쓰지 못했습니다: '+str(exc)}
+        return {'ok':True,'changed':True,'report':report,'message':'엑셀 표를 정리했습니다. 한/글에서 Ctrl+V로 붙여넣으세요.'}
 
     def _strip_shading(self):
         """클립보드의 엑셀 HTML에서 셀 배경만 지워 같은 클립보드에 다시 넣는다. 바꿀 것이 없거나 실패하면 클립보드를 건드리지 않는다."""
