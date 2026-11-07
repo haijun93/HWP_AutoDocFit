@@ -14,6 +14,7 @@ mod open_item;
 mod json;
 mod pipe;
 mod popup;
+mod settings_menu;
 mod sqlite;
 mod store;
 mod timeline;
@@ -416,6 +417,111 @@ pub fn save_settings() {
     let _ = s.save(&settings_path());
 }
 
+/// 설정 바꾸기(파이프 `settings_set`·빠른 목록 설정 메뉴 공통): 범위 검사 → 저장 → 보관 한도 정리 →
+/// 창·단축키·감시 갱신(창 스레드). 관리창과 빠른 목록이 같은 값 하나를 쓴다.
+pub fn update_settings(new: &json::Value) -> Settings {
+    let a = app();
+    let snapshot = {
+        let mut s = a.settings.lock().unwrap();
+        s.apply(new);
+        s.clone()
+    };
+    save_settings();
+    let _ = a.store.lock().unwrap().enforce(&snapshot, now());
+    refresh_recent();
+    unsafe { PostMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
+    snapshot
+}
+
+/// 시간 일시정지가 끝나는 때(ms, 0 = 없음).
+static PAUSE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
+const TIMER_RESUME: usize = 2;
+
+/// 일시정지(분, 0 = 다시 켤 때까지). 시간이 지나면 에이전트가 스스로 다시 기록한다.
+pub fn pause_for(minutes: u32) {
+    let hwnd = main_hwnd();
+    set_paused(hwnd, true); // 이전 시간 예약은 여기서 지워진다
+    if minutes > 0 {
+        let ms = minutes.min(1440) * 60_000;
+        PAUSE_UNTIL_MS.store(now_ms() + ms as u64, Ordering::Relaxed);
+        unsafe { SetTimer(hwnd, TIMER_RESUME, ms, None) };
+    }
+}
+
+/// 시간 일시정지면 다시 기록까지 남은 분(올림).
+pub fn resume_in_minutes() -> Option<u64> {
+    let until = PAUSE_UNTIL_MS.load(Ordering::Relaxed);
+    let now = now_ms();
+    (until > now).then(|| (until - now).div_ceil(60_000))
+}
+
+// ---- Windows 로그인 시 자동 실행(HKCU Run, 앱 kagent_client.set_autostart와 같은 값) ----
+// Win32_System_Registry 기능을 늘리지 않으려고 advapi32의 다섯 함수만 직접 선언한다.
+#[link(name = "advapi32")]
+unsafe extern "system" {
+    fn RegOpenKeyExW(key: isize, sub: *const u16, options: u32, sam: u32, out: *mut isize) -> u32;
+    fn RegQueryValueExW(key: isize, name: *const u16, reserved: *mut u32, kind: *mut u32, data: *mut u8, len: *mut u32) -> u32;
+    fn RegSetValueExW(key: isize, name: *const u16, reserved: u32, kind: u32, data: *const u8, len: u32) -> u32;
+    fn RegDeleteValueW(key: isize, name: *const u16) -> u32;
+    fn RegCloseKey(key: isize) -> u32;
+}
+const HKEY_CURRENT_USER: isize = 0x8000_0001u32 as i32 as isize;
+const KEY_QUERY_VALUE: u32 = 0x0001;
+const KEY_SET_VALUE: u32 = 0x0002;
+const REG_SZ: u32 = 1;
+
+fn open_run_key(sam: u32) -> Option<isize> {
+    let mut key = 0isize;
+    let r = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, wide(settings_menu::RUN_KEY).as_ptr(), 0, sam, &mut key) };
+    (r == 0).then_some(key)
+}
+
+/// 자동 실행 등록 여부. 레지스트리를 읽지 못하면 None.
+pub fn autostart_enabled() -> Option<bool> {
+    let key = open_run_key(KEY_QUERY_VALUE)?;
+    let name = wide(settings_menu::RUN_NAME);
+    let mut buf = vec![0u16; 2048];
+    let mut len = (buf.len() * 2) as u32;
+    let mut kind = 0u32;
+    let r = unsafe { RegQueryValueExW(key, name.as_ptr(), std::ptr::null_mut(), &mut kind, buf.as_mut_ptr() as *mut u8, &mut len) };
+    unsafe { RegCloseKey(key) };
+    match r {
+        0 => {
+            let n = (len as usize / 2).min(buf.len());
+            let value = String::from_utf16_lossy(&buf[..n]);
+            Some(kind == REG_SZ && settings_menu::is_autostart_command(value.trim_end_matches('\0')))
+        }
+        2 => Some(false), // ERROR_FILE_NOT_FOUND: 등록 없음
+        _ => None,
+    }
+}
+
+/// 자동 실행 켜기/끄기. 켜면 지금 실행 중인 kagent.exe를 30초 늦게 시작하도록 등록한다.
+pub fn set_autostart(enabled: bool) -> Result<(), String> {
+    if std::env::var_os("KAGENT_TEST_ROOT").is_some() {
+        return Err("시험 실행에서는 자동 실행 등록을 바꾸지 않습니다.".into());
+    }
+    let key = open_run_key(KEY_SET_VALUE | KEY_QUERY_VALUE).ok_or("자동 실행 등록 위치를 열지 못했습니다.")?;
+    let name = wide(settings_menu::RUN_NAME);
+    let r = if enabled {
+        let exe = std::env::current_exe().map_err(|e| e.to_string());
+        match exe {
+            Ok(exe) => {
+                let value = wide(&settings_menu::autostart_command(&exe.to_string_lossy()));
+                unsafe { RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, value.as_ptr() as *const u8, (value.len() * 2) as u32) }
+            }
+            Err(e) => {
+                unsafe { RegCloseKey(key) };
+                return Err(e);
+            }
+        }
+    } else {
+        match unsafe { RegDeleteValueW(key, name.as_ptr()) } { 2 => 0, r => r }
+    };
+    unsafe { RegCloseKey(key) };
+    if r == 0 { Ok(()) } else { Err(format!("자동 실행 설정을 바꾸지 못했습니다(Windows 오류 {r}).")) }
+}
+
 /// 작업 스레드: 클립보드에서 복사해 온 내용을 변환·암호화·저장한다(낮은 우선순위).
 fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
     unsafe {
@@ -622,7 +728,11 @@ fn tray_menu(hwnd: HWND) {
     }
 }
 
+/// 일시정지 켜기/끄기. 트레이·앱(파이프)·설정 메뉴 어느 쪽에서 바꾸든 남아 있던 시간 예약은 지운다
+/// (시간 일시정지는 `pause_for`가 이 함수 뒤에 다시 건다).
 pub fn set_paused(hwnd: HWND, paused: bool) {
+    PAUSE_UNTIL_MS.store(0, Ordering::Relaxed);
+    unsafe { KillTimer(hwnd, TIMER_RESUME) };
     app().settings.lock().unwrap().paused = paused;
     save_settings();
     set_listening(hwnd, !paused);
@@ -675,6 +785,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         let _ = a.tx.lock().unwrap().send((capture, source));
                     }
                 }
+                0
+            }
+            WM_TIMER if wp == TIMER_RESUME => {
+                set_paused(hwnd, false); // 타이머도 함께 멈춘다
+                popup::refresh();
                 0
             }
             WM_HOTKEY if wp as i32 == HOTKEY_ID => {
