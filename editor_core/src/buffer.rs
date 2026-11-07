@@ -5,6 +5,8 @@
 //! `논리 위치 + 갭 크기`로 저장되므로, 갭 자리에서 입력·삭제를 해도 뒤쪽 줄 수만큼 값을 고쳐 쓰지 않는다
 //! (갭을 옮길 때만 옮겨지는 구간의 줄을 고친다). 100만 글자·줄당 4자(25만 줄)에서 이어 입력이 글자당 33 µs → 아래 표 참고.
 
+use std::cell::{Cell, RefCell};
+
 pub struct TextBuffer {
     buf: Vec<u8>,
     gs: usize,
@@ -12,6 +14,11 @@ pub struct TextBuffer {
     /// 줄 시작(물리 좌표). `<= gs`면 논리 위치 그대로, `>= ge`면 `- 갭 크기`가 논리 위치.
     line_starts: Vec<usize>,
     chars: usize,
+    /// 줄 시작 앞의 글자 수 캐시(`cc[i]` = 줄 i 시작 앞 글자 수). 앞에서부터 채워지는 접두 구간만 유효하다.
+    /// 캐시된 마지막 줄 시작보다 앞에서 편집하면 그 줄 뒤쪽을 버리고, 질의 때 필요한 만큼만 다시 채운다.
+    cc: RefCell<Vec<usize>>,
+    /// 캐시된 마지막 줄의 시작(논리 오프셋). 편집이 이보다 뒤면 캐시를 건드리지 않는다(이어 입력 경로 보호).
+    cc_tail: Cell<usize>,
 }
 
 impl Default for TextBuffer {
@@ -22,7 +29,7 @@ impl Default for TextBuffer {
 
 impl TextBuffer {
     pub fn new() -> Self {
-        TextBuffer { buf: Vec::new(), gs: 0, ge: 0, line_starts: vec![0], chars: 0 }
+        TextBuffer { buf: Vec::new(), gs: 0, ge: 0, line_starts: vec![0], chars: 0, cc: RefCell::new(vec![0]), cc_tail: Cell::new(0) }
     }
 
     pub fn from_str(s: &str) -> Self {
@@ -123,6 +130,7 @@ impl TextBuffer {
             return;
         }
         debug_assert!(self.is_char_boundary(pos));
+        self.cc_invalidate(pos);
         self.ensure_gap(s.len());
         self.move_gap(pos);
         self.normalize_at_gap();
@@ -143,6 +151,7 @@ impl TextBuffer {
             return String::new();
         }
         let removed = self.slice(start, end);
+        self.cc_invalidate(start);
         self.move_gap(start);
         self.normalize_at_gap();
         self.chars -= removed.chars().count();
@@ -212,9 +221,70 @@ impl TextBuffer {
         }
         Ok(())
     }
-    /// `[start,end)`의 글자 수.
+    /// `[start,end)`의 글자 수(바이트 상위 비트로 세므로 갭을 두 조각으로 나눠 슬라이스 단위로 센다).
     pub fn count_chars(&self, start: usize, end: usize) -> usize {
-        (start..end).filter(|&i| (self.byte_at(i) & 0xC0) != 0x80).count()
+        let g = self.ge - self.gs;
+        let cnt = |b: &[u8]| b.iter().filter(|&&x| (x & 0xC0) != 0x80).count();
+        if end <= self.gs {
+            cnt(&self.buf[start..end])
+        } else if start >= self.gs {
+            cnt(&self.buf[start + g..end + g])
+        } else {
+            cnt(&self.buf[start..self.gs]) + cnt(&self.buf[self.ge..end + g])
+        }
+    }
+
+    // ---- 글자 오프셋 ↔ 바이트/줄 ----
+    fn cc_invalidate(&self, pos: usize) {
+        if pos >= self.cc_tail.get() {
+            return;
+        }
+        let l = self.line_of(pos);
+        let mut cc = self.cc.borrow_mut();
+        cc.truncate(l + 1);
+        self.cc_tail.set(self.line_start(l));
+    }
+    /// 줄 `upto`까지 캐시를 채운다(이미 있으면 아무것도 안 함).
+    fn cc_fill(&self, upto: usize) {
+        let upto = upto.min(self.line_starts.len() - 1);
+        let mut cc = self.cc.borrow_mut();
+        while cc.len() <= upto {
+            let l = cc.len() - 1;
+            let (a, b) = (self.line_start(l), self.line_start(l + 1));
+            let next = cc[l] + self.count_chars(a, b);
+            cc.push(next);
+        }
+        self.cc_tail.set(self.line_start(cc.len() - 1));
+    }
+    /// 바이트 오프셋 → 글자 오프셋. 캐시가 채워져 있으면 O(log 줄 수 + 줄 길이).
+    pub fn byte_to_char(&self, pos: usize) -> usize {
+        let l = self.line_of(pos);
+        self.cc_fill(l);
+        self.cc.borrow()[l] + self.count_chars(self.line_start(l), pos)
+    }
+    /// 줄 `line`(0부터) 시작 앞의 글자 수.
+    pub fn char_of_line(&self, line: usize) -> usize {
+        let l = line.min(self.line_starts.len() - 1);
+        self.cc_fill(l);
+        self.cc.borrow()[l]
+    }
+    /// 글자 오프셋 → (바이트 오프셋, 줄(0부터)). 범위를 넘으면 `None`.
+    pub fn char_to_byte(&self, ci: usize) -> Option<(usize, usize)> {
+        if ci > self.chars {
+            return None;
+        }
+        self.cc_fill(self.line_starts.len() - 1);
+        let l = self.cc.borrow().partition_point(|&x| x <= ci) - 1;
+        let mut left = ci - self.cc.borrow()[l];
+        let (mut pos, end) = (self.line_start(l), self.len());
+        while left > 0 && pos < end {
+            pos += 1;
+            while pos < end && !self.is_char_boundary(pos) {
+                pos += 1;
+            }
+            left -= 1;
+        }
+        Some((pos, l))
     }
 }
 
@@ -258,6 +328,11 @@ mod tests {
             assert_eq!(b.line_start(line), expect_start);
             let p = bounds_pos(&model, rnd(model.len() + 1));
             assert_eq!(b.line_of(p), model[..p].matches('\n').count());
+            // 글자 오프셋 캐시: 편집 사이에 섞어 질의해도 모델과 같아야 한다
+            let ci = model[..p].chars().count();
+            assert_eq!(b.byte_to_char(p), ci, "{step}단계 byte_to_char");
+            assert_eq!(b.char_to_byte(ci).map(|x| x.0), Some(p), "{step}단계 char_to_byte");
+            assert_eq!(b.char_to_byte(model.chars().count() + 1), None);
         }
         assert_eq!(b.as_str(), model);
     }
