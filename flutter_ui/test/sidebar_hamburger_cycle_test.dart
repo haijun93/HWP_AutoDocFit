@@ -225,4 +225,32 @@ void main() {
     expect(rail.width, 136);
     final err = tester.takeException(); expect(err, isNull, reason: err?.toString());
   });
+
+  testWidgets('hamburger icon lines up vertically with the menu icons', (tester) async {
+    Future<void> check(Size size, int taps) async {
+      tester.view.physicalSize = size;
+      tester.view.devicePixelRatio = 1;
+      await tester.pumpWidget(MaterialApp(
+        home: TabNavigationShell(
+          documentEditor: const SizedBox(), tableTemplates: const SizedBox(), tableSketch: const SizedBox(),
+          diagram: const SizedBox(), mindMap: const SizedBox(), fileConversion: const SizedBox(),
+          paint: const SizedBox(), fileRename: const SizedBox(), timemachine: const SizedBox(),
+          developerMode: true, onSidebarModeRequest: (enabled) async => true,
+        ),
+      ));
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
+      for (var i = 0; i < taps; i++) {
+        await tester.tap(toggle);
+        await tester.pumpAndSettle();
+      }
+      final burger = tester.getCenter(find.byIcon(Icons.menu)).dx;
+      final firstMenuIcon = tester.getCenter(find.descendant(of: find.byType(InkWell), matching: find.byType(Icon)).first).dx;
+      expect((burger - firstMenuIcon).abs(), lessThan(1.0), reason: 'size=$size taps=$taps');
+    }
+    addTearDown(tester.view.reset);
+    await check(const Size(1040, 700), 0); // 펼침
+    await check(const Size(1040, 700), 1); // 접힘
+    await check(const Size(1040, 700), 2); // 사이드메뉴 모드
+  });
 }

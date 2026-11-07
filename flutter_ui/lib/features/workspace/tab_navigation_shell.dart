@@ -540,13 +540,18 @@ class WorkspaceTabBar extends StatelessWidget {
           children: [
             if (showToggle) SizedBox(
               height: 48,
+              // 햄버거 아이콘을 메뉴 아이콘과 같은 세로줄에 맞춘다(사용자 요청 2026-11-07):
+              // 접힘·사이드메뉴 모드는 가운데, 펼침은 메뉴 아이콘 중심(목록 여백 6 + 항목 여백 12 + 아이콘 반폭 10 = 28)에 맞춤.
               child: Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
+                alignment: expanded ? Alignment.centerLeft : Alignment.center,
+                child: Padding(
+                  padding: EdgeInsets.only(left: expanded ? 4 : 0),
+                  child: IconButton(
                   key: const ValueKey('workspaceSidebarToggle'),
                   tooltip: expanded ? '메뉴 접기' : '메뉴 펼치기',
                   onPressed: onToggleExpanded,
                   icon: const Icon(Icons.menu),
+                  ),
                 ),
               ),
             ),
