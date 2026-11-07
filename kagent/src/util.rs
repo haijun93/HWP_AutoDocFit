@@ -45,6 +45,40 @@ pub fn base64(data: &[u8]) -> String {
     out
 }
 
+/// 표준 base64 풀기(패딩 필수, 공백·다른 글자가 있으면 None).
+pub fn unbase64(text: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        } as u32)
+    }
+    let bytes = text.as_bytes();
+    if bytes.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let chunks = bytes.len() / 4;
+    for (i, chunk) in bytes.chunks(4).enumerate() {
+        let pad = chunk.iter().rev().take_while(|&&c| c == b'=').count();
+        if pad > 2 || (pad > 0 && i + 1 != chunks) {
+            return None;
+        }
+        let mut n = 0u32;
+        for &c in &chunk[..4 - pad] {
+            n = n << 6 | val(c)?;
+        }
+        n <<= 6 * pad as u32;
+        let b = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
+        out.extend_from_slice(&b[..3 - pad]);
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -68,5 +102,18 @@ mod tests {
         assert_eq!(super::base64(b"f"), "Zg==");
         assert_eq!(super::base64(b"fo"), "Zm8=");
         assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
+    }
+
+    #[test]
+    fn unbase64_round_trips_and_rejects_bad_input() {
+        for data in [&b""[..], b"f", b"fo", b"foo", b"foobar", &[0u8, 255, 128, 7, 0][..]] {
+            assert_eq!(super::unbase64(&super::base64(data)).as_deref(), Some(data));
+        }
+        let all: Vec<u8> = (0..=255).collect();
+        assert_eq!(super::unbase64(&super::base64(&all)).unwrap(), all);
+        assert_eq!(super::unbase64("Zg="), None); // 길이
+        assert_eq!(super::unbase64("Z==g"), None); // 패딩 위치
+        assert_eq!(super::unbase64("Zg==Zg=="), None); // 중간 패딩
+        assert_eq!(super::unbase64("Zm9v YmFy"), None);
     }
 }

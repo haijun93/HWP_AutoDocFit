@@ -702,6 +702,24 @@ class _KClipPanelState extends State<KClipPanel> {
             const Text('고르면 바로 붙여넣기'),
           ],
         ),
+        Tooltip(
+          message: '엑셀에서 복사한 표를 고르면 숫자 앞 공백·빈 칸·열 너비·칸 여백을 정리해 붙입니다. '
+              '앱이 꺼져 있으면 원래대로 붙습니다.',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Switch(
+                key: const ValueKey('kclip-excel-target'),
+                value: settings['excel_target_paste'] != false,
+                onChanged: (v) => _act('settings_set', {
+                  'settings': {'excel_target_paste': v},
+                }),
+              ),
+              // 좁은 스티커 창(최소 폭)에서도 넘치지 않게 글자는 줄을 바꾼다.
+              const Flexible(child: Text('엑셀 표는 목표 결과로 붙이기')),
+            ],
+          ),
+        ),
       ],
     );
   }

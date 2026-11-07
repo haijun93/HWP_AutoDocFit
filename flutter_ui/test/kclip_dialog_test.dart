@@ -508,6 +508,72 @@ void main() {
     expect(find.text('사이드메뉴 모드에서는 창 크기를 바꿀 수 없습니다.'), findsOneWidget);
   });
 
+  testWidgets('엑셀 표 목표 결과 설정: 값이 없으면 켬, 끄고 켜면 settings_set으로 보낸다', (tester) async {
+    tester.view.physicalSize = const Size(1200, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final patches = <Map>[];
+    var current = <String, Object?>{'max_items': 500};
+    Future<Object?> api(String method, List<Object?> args) async {
+      if (method == 'window_control') return {'ok': true, 'maximized': false};
+      if (method != 'kclip') return {'ok': true};
+      switch (args[0]) {
+        case 'status':
+          return {'ok': true, 'running': true, 'available': true, 'status': {'paused': false}};
+        case 'list':
+          return {'ok': true, 'items': []};
+        case 'settings_get':
+          return {'ok': true, 'settings': current};
+        case 'settings_set':
+          final patch = Map<String, Object?>.from((args[1] as Map)['settings'] as Map);
+          patches.add(patch);
+          current = {...current, ...patch};
+          return {'ok': true, 'settings': current};
+      }
+      return {'ok': true};
+    }
+
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: SizedBox(height: 760, child: KClipPanel(api: api)),
+    )));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('kclip-excel-target'));
+    expect(toggle, findsOneWidget);
+    expect(find.text('엑셀 표는 목표 결과로 붙이기'), findsOneWidget);
+    expect(tester.widget<Switch>(toggle).value, isTrue, reason: '예전 에이전트(키 없음)도 기본 켬');
+
+    await tester.ensureVisible(toggle);
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(patches.last, {'excel_target_paste': false});
+    expect(tester.widget<Switch>(toggle).value, isFalse);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(patches.last, {'excel_target_paste': true});
+    expect(tester.widget<Switch>(toggle).value, isTrue);
+  });
+
+  testWidgets('단축키 진입(빠른 관리창)에는 설정 줄이 없다', (tester) async {
+    Future<Object?> api(String method, List<Object?> args) async {
+      if (method != 'kclip') return {'ok': true};
+      switch (args[0]) {
+        case 'status':
+          return {'ok': true, 'running': true, 'available': true, 'status': {}};
+        case 'list':
+          return {'ok': true, 'items': []};
+        case 'settings_get':
+          return {'ok': true, 'settings': {}};
+      }
+      return {'ok': true};
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: SizedBox(height: 760, child: KClipPanel(api: api, mode: KClipEntryMode.hotkey)),
+    )));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('kclip-excel-target')), findsNothing);
+  });
+
   testWidgets('항목별 삭제·고정 해제와 모두 지우기(고정 보존 안내)', (tester) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1;

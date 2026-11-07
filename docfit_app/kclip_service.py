@@ -175,10 +175,13 @@ class KClipService:
         if isinstance(restored, dict) and restored.get("ok") is False:
             return restored
         excel = self._excel()
-        want = _norm_text(info.get("data"))
+        # 에이전트가 엑셀 표를 '목표 결과'로 되돌렸으면 글도 같은 공백 규칙으로 정리돼 있다(설정 excel_target_paste).
+        from docfit_core.excel_paste_target import clean_tsv
+        raw = str(info.get("data") or "")
+        wants = {_norm_text(raw), _norm_text(clean_tsv(raw))}
         for _ in range(40):  # 되돌리기는 kagent 창 스레드에서 비동기로 일어난다(최대 약 2초).
             html, tsv = excel.clipboard()
-            if html and _norm_text(tsv) == want:
+            if html and _norm_text(tsv) in wants:
                 break
             self._sleep(0.05)
         else:
