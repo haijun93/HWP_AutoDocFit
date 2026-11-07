@@ -50,7 +50,8 @@ void main() {
     // (3) 닫은 채로 작업 화면 닫기(앱 창도 사이드메뉴 모드로 요청)
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    expect(railWidth(), kSidebarCollapsedWidth);
+    // 사이드메뉴 모드에서는 아이콘 줄이 창 폭을 채운다.
+    expect(railWidth(), tester.view.physicalSize.width);
     expect(find.text('work-area'), findsNothing);
     expect(requests, [true]);
 
@@ -162,7 +163,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.pumpAndSettle();
     expect(requests, [true]);
-    expect(railWidth(), kSidebarCollapsedWidth);
+    expect(railWidth(), tester.view.physicalSize.width);
     expect(find.text('work-area'), findsNothing);
     expect(find.text('문서편집'), findsNothing);
     expect(find.textContaining('사이드메뉴 모드'), findsNothing);
@@ -188,5 +189,40 @@ void main() {
     expect(requests, [true, false]);
     expect(railWidth(), kSidebarExpandedWidth);
     expect(find.text('work-area'), findsOneWidget);
+  });
+
+  testWidgets('sidebar-only mode fills the whole window width with the menu (no blank area)', (tester) async {
+    tester.view.physicalSize = const Size(1040, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: TabNavigationShell(
+        documentEditor: const Text('work-area'),
+        tableTemplates: const SizedBox(),
+        tableSketch: const SizedBox(),
+        diagram: const SizedBox(),
+        mindMap: const SizedBox(),
+        fileConversion: const SizedBox(),
+        paint: const SizedBox(),
+        fileRename: const SizedBox(),
+        timemachine: const SizedBox(),
+        developerMode: true,
+        onSidebarModeRequest: (enabled) async => true,
+      ),
+    ));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
+    // 넓은 창은 펼친 상태로 시작: 닫기 → 사이드메뉴 모드.
+    for (var i = 0; i < 2; i++) {
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+    }
+    expect(find.text('work-area'), findsNothing);
+    // 앱이 창을 아이콘 줄 폭(Windows 최소 136px)으로 줄인 상태.
+    tester.view.physicalSize = const Size(136, 700);
+    await tester.pumpAndSettle();
+    final rail = tester.getSize(find.ancestor(of: toggle, matching: find.byType(Container)).first);
+    expect(rail.width, 136);
+    final err = tester.takeException(); expect(err, isNull, reason: err?.toString());
   });
 }

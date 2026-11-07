@@ -359,7 +359,32 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
               autofocus: true,
               child: Row(
                 children: [
-                  WorkspaceTabBar(
+                  // 사이드메뉴 모드에서는 아이콘 줄이 창 폭을 채운다(Windows 창 최소 폭 때문에 남던 빈 칸 제거, 2026-11-07).
+                  if (_sidebarOnly) Expanded(child: WorkspaceTabBar(
+                    labels: _labels,
+                    icons: _icons,
+                    selectedIndex: _index,
+                    onSelected: _select,
+                    hiddenTabs: widget.hiddenTabs,
+                    scrollController: _tabScrollController,
+                    trailing: widget.trailing,
+                    libraryScreen: widget.libraryScreen,
+                    notebookScreen: widget.notebookScreen,
+                    expanded: expanded,
+                    onToggleExpanded: _toggleSidebar,
+                    showToggle: true,
+                    developerMode: widget.developerMode,
+                    onSidebarModeChanged: _setSidebarOnly,
+                    onSidebarSideSwitch: widget.onSidebarSideSwitch,
+                    sidebarOnly: _sidebarOnly,
+                    selectedExtra: _extra,
+                    onOpenExtra: _openExtra,
+                    // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
+                    onPreview: widget.developerMode ? _previewTab : null,
+                    onPreviewExtra: widget.developerMode ? _previewExtra : null,
+                    onPreviewCancel: widget.developerMode ? _cancelPreview : null,
+                    onAlwaysOnTop: _toggleAlwaysOnTop,
+                  )) else WorkspaceTabBar(
                     labels: _labels,
                     icons: _icons,
                     selectedIndex: _index,
@@ -504,10 +529,12 @@ class WorkspaceTabBar extends StatelessWidget {
     return Material(
       color: Colors.white,
       child: Container(
-        width: expanded ? kSidebarExpandedWidth : kSidebarCollapsedWidth,
-        decoration: const BoxDecoration(
-          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-        ),
+        width: sidebarOnly ? double.infinity : (expanded ? kSidebarExpandedWidth : kSidebarCollapsedWidth),
+        decoration: sidebarOnly
+            ? null
+            : const BoxDecoration(
+                border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
+              ),
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
           children: [
