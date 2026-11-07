@@ -11,7 +11,9 @@ import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../notebook/notebook_api.dart';
 import 'library_api.dart';
+import 'library_explorer_view.dart';
 import 'library_layout.dart';
+import 'library_view_prefs.dart';
 
 String _errorText(Object error) => error.toString().replaceFirst(RegExp(r'^(Bad state|StateError): '), '');
 
@@ -131,7 +133,15 @@ class LibraryScreen extends StatefulWidget {
     this.initialBoxId,
     this.initialItemId,
     this.openApi,
+    this.viewPrefs,
+    this.fileInfoApi,
   });
+
+  /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
+  final LibraryViewPrefs? viewPrefs;
+
+  /// 탐색기 형식의 크기·수정한 날짜 조회. 생략하면 `api`가 `LibraryFileInfoApi`일 때 그것을 쓴다.
+  final LibraryFileInfoApi? fileInfoApi;
 
   /// 있으면 항목 메뉴에 '노트북에 출처로 추가'가 나타난다.
   final NotebookApi? notebookApi;
@@ -192,9 +202,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
   static const _cardWidth = LibraryLayout.cardWidth;
   static const _cardHeight = LibraryLayout.cardHeight;
 
+  /// 보기 방식. 기본은 캔버스형이고, 마지막 선택을 저장해 다음에 그대로 연다.
+  LibraryViewMode _viewMode = LibraryViewMode.canvas;
+  final _explorer = LibraryExplorerController();
+  late final LibraryViewPrefs _viewPrefs = widget.viewPrefs ?? const DefaultLibraryViewPrefs();
+
+  LibraryFileInfoApi? get _fileInfoApi {
+    final explicit = widget.fileInfoApi;
+    if (explicit != null) return explicit;
+    final Object api = widget.api;
+    return api is LibraryFileInfoApi ? api : null;
+  }
+
+  Future<void> _restoreViewMode() async {
+    final mode = await _viewPrefs.read(libraryViewModeKey);
+    final style = await _viewPrefs.read(libraryExplorerStyleKey);
+    if (!mounted) return;
+    setState(() {
+      _viewMode = LibraryViewMode.values.where((m) => m.name == mode).firstOrNull ?? LibraryViewMode.canvas;
+      _explorer.style = LibraryExplorerStyle.values.where((s) => s.name == style).firstOrNull ?? _explorer.style;
+    });
+  }
+
+  /// 보기 전환. 자료·선택·검색어는 그대로 두고 표시만 바꾼다.
+  void _setViewMode(LibraryViewMode mode) {
+    if (mode == _viewMode) return;
+    setState(() => _viewMode = mode);
+    unawaited(_viewPrefs.write(libraryViewModeKey, mode.name));
+  }
+
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreViewMode());
     _loadBoxes();
     final drops = _dropApi;
     if (drops != null) {
@@ -237,9 +277,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     var added = 0;
+    // 탐색기 형식에서 영역 폴더를 열어 두었으면 그 영역에, 아니면 핵심자료에 넣는다.
+    final space = (_viewMode == LibraryViewMode.explorer ? _explorer.folder : null) ?? LibrarySpace.core;
     for (final path in paths) {
       try {
-        await _addFile(LibraryFileDrop(path: path), LibrarySpace.core, Offset.zero);
+        await _addFile(LibraryFileDrop(path: path), space, Offset.zero);
         added++;
       } catch (error) {
         if (mounted) setState(() => _statusMessage = '추가하지 못했습니다: $error');
@@ -476,6 +518,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (_selectedBox?.id == box.id) return;
     setState(() {
       _selectedBox = box;
+      _explorer.resetForBox();
       _searchController.clear();
       _searchResults.clear();
       _highlightedItemId = null;
@@ -810,7 +853,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
           if (!except.contains(e.key)) LibraryLayout.rectAt(e.value),
       ];
 
-  Offset _nextPosition(LibrarySpace space) => LibraryLayout.nextSlot(_occupied(space), width: _spaceWidths[space]);
+  /// 캔버스를 아직 그리지 않아(탐색기 형식으로 열었을 때) 영역 폭을 모르면 보통 폭으로 셈한다.
+  static const _fallbackSpaceWidth = 600.0;
+
+  Offset _nextPosition(LibrarySpace space) =>
+      LibraryLayout.nextSlot(_occupied(space), width: _spaceWidths[space] ?? _fallbackSpaceWidth);
 
   /// 여러 자료를 한 번에 옮긴다. 하나라도 실패하면 이미 옮긴 것을 되돌린다(부분 적용 방지).
   Future<bool> _applyMoves(List<LibraryItem> items, LibrarySpace space, Map<String, Offset> targets) async {
@@ -900,6 +947,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     setState(() {
       _boxes = [..._boxes, box];
       _selectedBox = box;
+      _explorer.resetForBox();
       _selectedIds.clear();
     });
     await _loadBoxContent(box.id);
@@ -1305,6 +1353,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
               onPressed: _createBox,
               icon: const Icon(Icons.create_new_folder_outlined),
             ),
+            SegmentedButton<LibraryViewMode>(
+              key: const ValueKey('libraryViewToggle'),
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const [
+                ButtonSegment(
+                  value: LibraryViewMode.canvas,
+                  icon: Icon(Icons.dashboard_outlined, size: 18, key: ValueKey('libraryViewCanvas')),
+                  label: Text('캔버스'),
+                  tooltip: '4개 영역에 카드를 놓는 보기',
+                ),
+                ButtonSegment(
+                  value: LibraryViewMode.explorer,
+                  icon: Icon(Icons.view_list_outlined, size: 18, key: ValueKey('libraryViewExplorer')),
+                  label: Text('탐색기 형식'),
+                  tooltip: 'Windows 파일 탐색기처럼 폴더·목록으로 보기',
+                ),
+              ],
+              selected: {_viewMode},
+              onSelectionChanged: (modes) => _setViewMode(modes.single),
+            ),
             Text(_selectedBox!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '자료함 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Icons.edit_outlined)),
             IconButton(key: const ValueKey('libraryDeleteBox'), tooltip: '자료함 삭제', onPressed: _deleteBox, icon: const Icon(Icons.delete_outline)),
@@ -1335,7 +1404,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
               label: Text(_memoDraft == null ? '+메모' : '+메모(초안)'),
             ),
             OutlinedButton(key: const ValueKey('libraryPaste'), onPressed: _paste, child: const Text('붙여넣기')),
-            const Text('각 공간에 파일을 끌어 놓으세요. Ctrl+클릭으로 여러 개를 고릅니다.'),
+            Text(_viewMode == LibraryViewMode.canvas
+                ? '각 공간에 파일을 끌어 놓으세요. Ctrl+클릭으로 여러 개를 고릅니다.'
+                : '더블클릭으로 열고, Ctrl·Shift+클릭으로 여러 개를 고릅니다. 왼쪽 폴더에 끌어 놓으면 이동(Ctrl: 복사)합니다.'),
           ]),
         ),
         if (_showSearchResults && _searchResults.isNotEmpty) SizedBox(height: 72, child: ListView.builder(
@@ -1348,8 +1419,61 @@ class _LibraryScreenState extends State<LibraryScreen> {
         _buildScanPanel(),
         if (_statusMessage != null) Text(_statusMessage!, key: const ValueKey('libraryStatus')),
         if (_selectedIds.isNotEmpty) _buildSelectionBar(),
-        Expanded(child: _buildQuadrants()),
+        Expanded(child: _viewMode == LibraryViewMode.explorer ? _buildExplorer() : _buildQuadrants()),
       ]);
+
+  /// 탐색기 형식 보기. 조작은 캔버스와 같은 처리 함수를 쓴다(관계선 만들기 같은 캔버스 전용 동작만 없다).
+  Widget _buildExplorer() {
+    final box = _selectedBox!;
+    final infoApi = _fileInfoApi;
+    return LibraryExplorerView(
+      key: const ValueKey('libraryExplorerView'),
+      boxName: box.name,
+      items: _items,
+      spaceNames: _spaceNames,
+      selectedIds: _selectedIds,
+      highlightedItemId: _highlightedItemId,
+      controller: _explorer,
+      busy: _batchBusy,
+      onSelectionChanged: (ids) => setState(() {
+        _selectedIds
+          ..clear()
+          ..addAll(ids);
+        _highlightedItemId = null;
+      }),
+      onFolderChanged: (space) {
+        if (space != null) _activeSpace = space;
+      },
+      onOpen: _openItem,
+      onOpenSelection: () => unawaited(_openSelection()),
+      onRename: _renameItem,
+      onDeleteSelection: () => unawaited(_deleteSelection()),
+      onMoveItems: (items, space) async {
+        if (_batchBusy) return;
+        setState(() => _batchBusy = true);
+        try {
+          await _moveItemsToSpace(items, space);
+          if (mounted && items.length == 1) setState(() => _statusMessage = '“${items.single.title}”을(를) ${_spaceNames[space]}(으)로 옮겼습니다.');
+        } finally {
+          if (mounted) setState(() => _batchBusy = false);
+        }
+      },
+      onCopyItems: (items, space) async {
+        if (_batchBusy) return;
+        setState(() => _batchBusy = true);
+        try {
+          await _copyItems(items, box, space, removeOriginals: false);
+        } finally {
+          if (mounted) setState(() => _batchBusy = false);
+        }
+      },
+      onFileDrop: (drop, space) => _addFile(drop, space, Offset.zero),
+      onCopyPaths: () => unawaited(_copySelectionPaths()),
+      onStyleChanged: (style) => unawaited(_viewPrefs.write(libraryExplorerStyleKey, style.name)),
+      onAddToNotebook: widget.notebookApi == null ? null : _addToNotebook,
+      fileInfoLoader: infoApi?.fileInfo,
+    );
+  }
 
   Widget _buildSelectionBar() {
     final enabled = !_batchBusy;

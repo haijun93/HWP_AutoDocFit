@@ -2359,6 +2359,13 @@ class DesktopWebBridge:
                 return {"ok": True, "paths": paths}
             if isinstance(request, dict) and request.get("cmd") == "open_item":
                 return self._library_open_item(request)
+            if isinstance(request, dict) and request.get("cmd") == "item_stat":
+                # 탐색기 형식 보기: 저장된 경로만 읽어 크기·수정한 날짜·원본 있음 여부를 알린다.
+                from docfit_app.library_bridge import library_item_stats
+                ids = request.get("item_ids")
+                if not isinstance(ids, list):
+                    return {"ok": False, "message": "item_ids 목록이 필요합니다."}
+                return {"ok": True, "items": library_item_stats(self._get_library_bridge().request, ids)}
             if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
                 # 자료함 '+메모' 편집기도 노트북과 같은 통로(경로 인자 거절)를 쓴다.
                 return self._memo_editor_request(request)
