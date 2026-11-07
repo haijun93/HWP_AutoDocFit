@@ -9,6 +9,7 @@ import '../library/library_api.dart';
 import '../library/library_screen.dart';
 import '../notebook/notebook_api.dart';
 import '../notebook/notebook_screen.dart';
+import '../external_apps/external_app_launcher.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import 'tab_navigation_shell.dart';
@@ -177,6 +178,7 @@ class IntegratedWorkspace extends StatelessWidget {
       developerMode: developerMode,
       libraryScreen: libraryScreen ?? LibraryScreen(api: BridgeLibraryApi(api), notebookApi: BridgeNotebookApi(api)),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
+      onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
       onSidebarSideSwitch: onSidebarSideSwitch,
       onAlwaysOnTopChanged: (enabled) async {
         await api('always_on_top', [enabled]);

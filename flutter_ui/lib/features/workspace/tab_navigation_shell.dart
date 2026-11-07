@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/close_guards.dart';
+import '../external_apps/external_app_launcher.dart';
 
 /// 탭 번호. 파일이름 뒤에 타임머신을 두고 파일변환을 맨 끝에 둔다.
 const kTabFileRename = 6;
@@ -58,6 +59,9 @@ void closeWorkspaceScreen(BuildContext context) {
 
 /// Root workspace contract. Owners inject adapters in this fixed order.
 /// Keep the shell mounted (and keys stable) for the lifetime of the workspace.
+/// 외부 프로그램 메뉴를 눌렀을 때 호출(사이드메뉴 위치의 context, 누른 프로그램).
+typedef ExternalAppOpener = void Function(BuildContext context, ExternalAppSpec app);
+
 class TabNavigationShell extends StatefulWidget {
   const TabNavigationShell({
     super.key,
@@ -80,6 +84,7 @@ class TabNavigationShell extends StatefulWidget {
     this.developerMode = false,
     this.libraryScreen,
     this.notebookScreen,
+    this.onOpenExternalApp,
     this.onSidebarSideSwitch,
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
@@ -106,6 +111,8 @@ class TabNavigationShell extends StatefulWidget {
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
+  /// 개발자 모드 전용 외부 프로그램(사진첩·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
+  final ExternalAppOpener? onOpenExternalApp;
   final VoidCallback? onSidebarSideSwitch;
   /// 항상 위 켜기/끄기를 앱(창)에 요청한다.
   final Future<void> Function(bool enabled)? onAlwaysOnTopChanged;
@@ -370,6 +377,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     trailing: widget.trailing,
                     libraryScreen: widget.libraryScreen,
                     notebookScreen: widget.notebookScreen,
+                    onOpenExternalApp: widget.onOpenExternalApp,
                     expanded: expanded,
                     onToggleExpanded: _toggleSidebar,
                     showToggle: true,
@@ -394,6 +402,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     trailing: widget.trailing,
                     libraryScreen: widget.libraryScreen,
                     notebookScreen: widget.notebookScreen,
+                    onOpenExternalApp: widget.onOpenExternalApp,
                     expanded: expanded,
                     onToggleExpanded: _toggleSidebar,
                     showToggle: true,
@@ -472,6 +481,7 @@ class WorkspaceTabBar extends StatelessWidget {
     this.onAlwaysOnTop,
     this.libraryScreen,
     this.notebookScreen,
+    this.onOpenExternalApp,
     this.onPreview,
     this.onPreviewCancel,
     this.showToggle = true,
@@ -501,6 +511,8 @@ class WorkspaceTabBar extends StatelessWidget {
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
+  /// 개발자 모드 전용 외부 프로그램 실행(별도 프로그램). 선택 표시는 하지 않는다.
+  final ExternalAppOpener? onOpenExternalApp;
   final ValueChanged<int>? onPreview;
   final VoidCallback? onPreviewCancel;
   final bool showToggle;
@@ -597,6 +609,19 @@ class WorkspaceTabBar extends StatelessWidget {
                       onPreviewCancel: onPreviewCancel,
                       onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '노트북', notebookScreen!),
                     ),
+                  // 외부 프로그램(사진첩·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
+                  // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
+                  if (developerMode && onOpenExternalApp != null)
+                    for (final app in kExternalApps)
+                      _TabPill(
+                        key: app.menuKey,
+                        label: app.label,
+                        icon: app.icon,
+                        selected: false,
+                        color: color,
+                        expanded: expanded,
+                        onTap: () => onOpenExternalApp!(context, app),
+                      ),
                 ],
               ),
             ),
