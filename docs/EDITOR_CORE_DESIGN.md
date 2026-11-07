@@ -317,3 +317,49 @@ if val.str("cmd").is_some_and(|c| c.starts_with("edit_")) {
 
 ### 9.5 시험
 `cd editor_core && cargo test` — 단위 1(줄 색인 무작위 모델) + 통합: `tests/core.rs` 21, `tests/encoding.rs` 14(CP949 표 해시·17,048자 왕복·대표 값·거절, 감지 순서·별칭, 지정 열기, CP949 파일 열기→편집→저장 왕복, 변환 불가 글자 처리, 상태 값, API, 모두 바꾸기 단위/범위/가장자리), 성능 2 + 100만 글자 2. 의존성 추가 없음(`Cargo.lock`에 외부 패키지 없음).
+
+## 11. 3단계 ③ 큰 글 보기·인코딩 선택 저장 (EDCORE3, 2026-11-07, 브랜치 `feature/edcore`)
+klib `edit_*` 명령에 얹을 JSON 규약이다(klib 코드는 Windows에서 연결 — 이 카드에서는 고치지 않음). 위치 인자는 기존대로 **UTF-8 바이트 오프셋**, 새 `char`는 **글자(유니코드 스칼라) 오프셋**(0부터), 줄은 `edit_line_range`만 0부터이고 `line`/`col` 입출력은 1부터(메모장 규약).
+
+### 11.1 큰 글 보기
+| 명령 | 요청 | 응답 |
+|---|---|---|
+| `edit_line_range` | `{"cmd":"edit_line_range","doc":1,"start_line":999000,"count":50}` (`count` 기본 50, 상한 5000) | `{"ok":true,"total_lines":1000001,"start_line":999000,"chars":23888890,"lines":[{"line":999000,"start":…,"start_char":…,"text":"…"},…]}` — 범위를 넘으면 잘려 나오고 `lines`가 `[]`일 수 있음. `text`에 줄바꿈은 없음 |
+| `edit_char_to_line_col` | `{"cmd":"edit_char_to_line_col","doc":1,"char":12345}` | `{"ok":true,"line":3,"col":7,"pos":…}` (`pos`=바이트) |
+| `edit_line_col_to_char` | `{"cmd":"edit_line_col_to_char","doc":1,"line":3,"col":7}` | `{"ok":true,"char":12345,"pos":…}` (범위 밖은 줄/문서 끝으로 맞춤) |
+| `edit_to_char` / `edit_from_char` | `{"pos":…}` / `{"char":…}` | `{"char":…}` / `{"pos":…}` |
+| 전체 줄·글자 수 | 기존 `edit_info`/`edit_status`의 `lines`,`chars` | O(1) |
+
+권장 호출: 화면에는 보이는 줄 ± 여유만 `edit_line_range`로 가져오고, 스크롤바 길이는 `total_lines`로 정한다. 편집 응답(`edit_insert` 등)에도 `lines`,`chars`가 이미 들어 있다.
+
+### 11.2 인코딩·줄바꿈 선택 저장, 변환 불가 글자
+| 명령 | 요청 | 응답 |
+|---|---|---|
+| `edit_unencodable` | `{"cmd":"edit_unencodable","doc":1,"encoding":"CP949","limit":100}` (`limit` 기본 100) | `{"ok":true,"encoding":"CP949","ok_to_save":false,"total":4,"distinct_count":2,"distinct":[{"char":"😀","code":"U+1F600","count":3},…(최대 200종, 많은 순)],"first":[{"char":"😀","code":"U+1F600","pos":6,"char_index":4,"line":2,"col":2},…(앞쪽 limit개)]}` |
+| `edit_save` | `{"cmd":"edit_save","doc":1,"path":"C:\\…\\a.txt","encoding":"UTF-8 BOM","line_ending":"CRLF"}` — `encoding`(UTF-8·UTF-8 BOM·UTF-16 LE·UTF-16 BE·CP949, 별칭 허용)·`line_ending`(LF·CRLF·CR) **둘 다 생략 가능**(생략하면 문서의 현재 설정) | 성공: `edit_info` 모양(저장 설정이 방금 고른 값으로 바뀌고 `dirty:false`). 실패: `{"ok":false,"message":"CP949로 저장할 수 없는 글자 4개(서로 다른 2종): '😀'(U+1F600) 2줄 2열, …"}` — **파일도 문서 설정도 그대로** |
+
+UI 흐름: '다른 이름으로/인코딩 변경' 대화상자에서 CP949를 고르면 먼저 `edit_unencodable`을 부르고 `ok_to_save:false`면 `distinct`/`first`로 목록·'이동' 버튼(`line`,`col`)을 보여 준 뒤 UTF-8로 되돌리도록 안내한다. 몰래 `?`로 바꾸지 않는다. UTF-8/UTF-16은 `total`이 항상 0.
+
+Rust 직접 호출: `Document::{line_range, char_count, byte_to_char, char_to_byte, char_to_line_col, line_col_to_char, unencodable, to_bytes_with, save_as}`.
+
+### 11.3 구현 요점과 한계
+- **줄 범위**: 줄 색인(`line_starts`)을 줄 번호로 직접 접근하므로 시작 줄과 무관, `count`와 읽은 글 크기에만 비례. 줄 번호 ↔ 바이트는 이분 탐색 O(log 줄 수).
+- **글자 오프셋 변환**: 줄마다 '줄 시작 앞 글자 수' 캐시(`TextBuffer::cc`)를 두고 질의 때 앞에서부터 **필요한 만큼만** 채운다. 변환 = 캐시 이분 탐색 O(log 줄 수) + 한 줄 안 걷기 O(줄 길이). 한 줄이 아주 긴 글(예: 100만 글자 한 줄)은 줄 안 걷기가 O(줄 길이)다.
+- **편집과 캐시**: 캐시된 마지막 줄보다 **뒤**에서의 편집(이어 입력, 끝에 덧붙이기)은 캐시를 건드리지 않는다(입력 경로 비용 변화 없음 — 아래 표). 그보다 **앞**에서 편집하면 그 줄 뒤쪽 캐시만 버리고, 다음 질의가 다시 채운다 → 가운데 편집 직후 첫 '끝 쪽' 질의가 O(뒤쪽 글 크기)(아래 4.7 ms). 즉 완전한 O(log n)은 **캐시가 채워진 읽기 위주 보기**에서 성립한다.
+- `edit_save`의 `path`는 그대로 임시 파일 후 교체. CP949 점검은 저장 때 한 번 더 수행(변환 불가가 있으면 쓰기 전에 거절).
+
+### 11.4 측정 (macOS arm64, `cargo test --release --test bigview perf_million_lines_range -- --nocapture`, 100만 줄·글 약 2,389만 자·줄당 약 24자)
+| 항목 | 결과 |
+|---|---:|
+| 100만 줄 글 열기(LF 통일·줄 색인) | 39.8 ms |
+| 줄 범위 50줄 조회, 시작 줄 흩뿌려 100회, 중앙값 | 2.5 µs (최대 889 µs = 글자 캐시를 처음 채울 때) |
+| 글자 → (줄,열) → 글자 왕복 1000회, 중앙값 | 0.71 µs (최대 250 µs) |
+| 가운데(50만 줄) 편집 직후 끝 글자 질의(뒤쪽 캐시 재계산) | 4.7 ms |
+| 끝에 입력 직후 끝 글자 질의 | 0.8 µs |
+| CP949 + CRLF 저장 바이트 생성(변환 불가 점검 포함) | 103.4 ms (25,888,892 바이트) |
+| UTF-16 LE + LF 저장 바이트 생성 | 51.3 ms (37,777,786 바이트) |
+
+입력 성능 회귀 없음(`perf_1m`, 같은 기기): 이어 입력 글자당 0.04~0.09 µs(전 0.06), 무작위 위치 입력 2000회 34~58 ms(전 54).
+
+### 11.5 시험
+`cargo test`(editor_core): 단위 1(줄 색인 무작위 모델 + 글자 오프셋 캐시 대조 추가) + `tests/bigview.rs` 6(줄 범위·글자↔줄/열 왕복, 무작위 편집 3000단계 캐시 정합, 인코딩·줄바꿈 선택 저장 바이트 대조, 변환 불가 목록·실패 시 불변, JSON 명령, 100만 줄 성능) + 기존 core 21·encoding 14·perf 3. 의존성 추가 없음.

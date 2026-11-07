@@ -91,6 +91,39 @@ pub struct Replaced {
     pub range: Option<(usize, usize)>,
 }
 
+/// `line_range` 한 줄.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineInfo {
+    pub line: usize,
+    pub start: usize,
+    pub start_char: usize,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineRange {
+    pub total_lines: usize,
+    pub lines: Vec<LineInfo>,
+}
+
+/// 변환 불가 글자 하나의 위치(`byte`·`char_index`는 0부터, `line`·`col`은 1부터).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unencodable {
+    pub ch: char,
+    pub byte: usize,
+    pub char_index: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// 인코딩 변환 점검 결과: 전체 개수, 서로 다른 글자별 개수(많은 순·같으면 코드 순), 앞쪽 위치 `limit`개.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EncodeReport {
+    pub total: usize,
+    pub distinct: Vec<(char, usize)>,
+    pub first: Vec<Unencodable>,
+}
+
 impl Default for Document {
     fn default() -> Self {
         Self::new()
@@ -204,6 +237,47 @@ impl Document {
             left -= 1;
         }
         pos
+    }
+
+    // ---- 큰 글 보기: 글자 오프셋·줄 범위 ----
+    /// 글자(유니코드 스칼라) 수. O(1).
+    pub fn char_count(&self) -> usize {
+        self.buf.char_count()
+    }
+
+    /// 바이트 오프셋 → 글자 오프셋(0부터). 줄 앞 글자 수 캐시 덕에 O(log 줄 수 + 줄 길이).
+    /// 캐시는 편집된 줄 뒤쪽만 버리고 질의 때 필요한 만큼만 다시 채운다(가운데 편집 직후 첫 질의는 O(뒤쪽 글 크기)).
+    pub fn byte_to_char(&self, pos: usize) -> Res<usize> {
+        self.check_pos(pos)?;
+        Ok(self.buf.byte_to_char(pos))
+    }
+
+    /// 글자 오프셋(0부터) → 바이트 오프셋.
+    pub fn char_to_byte(&self, ci: usize) -> Res<usize> {
+        self.buf.char_to_byte(ci).map(|x| x.0).ok_or_else(|| format!("글자 위치 {ci}가 범위를 벗어났습니다(전체 {}자).", self.buf.char_count()))
+    }
+
+    /// 글자 오프셋(0부터) → (줄, 열) (둘 다 1부터, 열은 글자 단위).
+    pub fn char_to_line_col(&self, ci: usize) -> Res<(usize, usize)> {
+        let (_, l) = self.buf.char_to_byte(ci).ok_or_else(|| format!("글자 위치 {ci}가 범위를 벗어났습니다(전체 {}자).", self.buf.char_count()))?;
+        Ok((l + 1, ci - self.buf.char_of_line(l) + 1))
+    }
+
+    /// (줄, 열)(1부터) → 글자 오프셋(0부터). 범위를 넘으면 줄/문서 끝으로 맞춘다.
+    pub fn line_col_to_char(&self, line1: usize, col1: usize) -> usize {
+        self.buf.byte_to_char(self.offset_of(line1, col1))
+    }
+
+    /// 줄 범위 조회: `start`(0부터)부터 최대 `count`줄. 줄마다 (줄 번호 0부터, 시작 바이트, 시작 글자, 텍스트).
+    /// 줄 번호 → 위치는 색인 직접 접근이라 시작 줄 위치와 무관하게 `count`와 읽은 글 크기에만 비례한다.
+    pub fn line_range(&self, start: usize, count: usize) -> LineRange {
+        let total = self.buf.line_count();
+        let from = start.min(total);
+        let to = from.saturating_add(count).min(total);
+        let lines = (from..to)
+            .map(|l| LineInfo { line: l, start: self.buf.line_start(l), start_char: self.buf.char_of_line(l), text: self.line_text(l) })
+            .collect();
+        LineRange { total_lines: total, lines }
     }
 
     /// 상태 표시줄 값. `pos`는 커서(바이트), `sel`은 선택 범위(있으면 선택 글자 수 포함).
@@ -541,6 +615,59 @@ impl Document {
         let enc = self.encoding;
         let s = fileio::lf_to(self.buf.as_str(), le);
         fileio::encode(&s, enc)
+    }
+
+    /// `enc`로 저장할 수 없는 글자를 점검한다(문서는 바꾸지 않음). UTF-8/UTF-16은 항상 비어 있고, CP949만 해당한다.
+    pub fn unencodable(&mut self, enc: Encoding, limit: usize) -> EncodeReport {
+        let mut rep = EncodeReport { total: 0, distinct: vec![], first: vec![] };
+        if enc != Encoding::Cp949 {
+            return rep;
+        }
+        let mut counts: std::collections::HashMap<char, usize> = std::collections::HashMap::new();
+        let mut hits: Vec<(usize, char, usize)> = vec![];
+        let mut ci = 0usize;
+        for (pos, c) in self.buf.as_str().char_indices() {
+            if !crate::cp949::can_encode(c) {
+                rep.total += 1;
+                *counts.entry(c).or_insert(0) += 1;
+                if hits.len() < limit {
+                    hits.push((pos, c, ci));
+                }
+            }
+            ci += 1;
+        }
+        let mut d: Vec<(char, usize)> = counts.into_iter().collect();
+        d.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        rep.distinct = d;
+        for (pos, ch, char_index) in hits {
+            let (l, col) = self.line_col(pos).unwrap_or((0, 0));
+            rep.first.push(Unencodable { ch, byte: pos, char_index, line: l, col });
+        }
+        rep
+    }
+
+    /// 문서 상태를 바꾸지 않고, 지정한 인코딩·줄바꿈으로 저장할 바이트를 만든다.
+    /// 인코딩이 CP949인데 변환 불가 글자가 있으면 오류(어떤 글자가 어디 있는지 포함).
+    pub fn to_bytes_with(&mut self, enc: Encoding, le: LineEnding) -> Res<Vec<u8>> {
+        let rep = self.unencodable(enc, 5);
+        if rep.total > 0 {
+            let list: Vec<String> = rep.first.iter().map(|u| format!("'{}'(U+{:04X}) {}줄 {}열", u.ch, u.ch as u32, u.line, u.col)).collect();
+            return Err(format!("{}로 저장할 수 없는 글자 {}개(서로 다른 {}종): {}. UTF-8·UTF-16으로 저장하거나 글자를 고치세요.", enc.name(), rep.total, rep.distinct.len(), list.join(", ")));
+        }
+        let s = fileio::lf_to(self.buf.as_str(), le);
+        fileio::encode(&s, enc)
+    }
+
+    /// 인코딩·줄바꿈을 고르며 저장한다. 성공하면 문서의 저장 설정·경로를 그것으로 바꾸고 깨끗한 상태로 표시한다.
+    /// 실패하면(변환 불가 글자 등) 파일도 문서 설정도 그대로다.
+    pub fn save_as(&mut self, path: &Path, enc: Encoding, le: LineEnding) -> Res<()> {
+        let bytes = self.to_bytes_with(enc, le)?;
+        fileio::write_atomic(path, &bytes)?;
+        self.encoding = enc;
+        self.line_ending = le;
+        self.path = Some(path.to_string_lossy().into_owned());
+        self.mark_clean();
+        Ok(())
     }
 
     /// 저장 인코딩을 바꾼다. 그 인코딩으로 표현할 수 없는 글자가 있으면 바꾸지 않고 어디 있는지 알린다.

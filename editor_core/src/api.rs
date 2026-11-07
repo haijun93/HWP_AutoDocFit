@@ -99,6 +99,51 @@ impl Engine {
                 let v = (from.min(to)..to).map(|l| Json::obj(vec![("line", num(l)), ("start", num(d.line_start(l))), ("text", d.line_text(l).into())])).collect();
                 Ok(Json::obj(vec![("lines", Json::Arr(v))]))
             }
+            "edit_line_range" => {
+                // 큰 글 보기: start_line(0부터)부터 count줄(기본 50, 최대 5000)
+                let start = req.usize("start_line").unwrap_or(0);
+                let count = req.usize("count").unwrap_or(50).min(5000);
+                let d = self.doc(req)?;
+                let r = d.line_range(start, count);
+                let v = r
+                    .lines
+                    .iter()
+                    .map(|l| Json::obj(vec![("line", num(l.line)), ("start", num(l.start)), ("start_char", num(l.start_char)), ("text", l.text.clone().into())]))
+                    .collect();
+                Ok(Json::obj(vec![("total_lines", num(r.total_lines)), ("start_line", num(start.min(r.total_lines))), ("chars", num(d.char_count())), ("lines", Json::Arr(v))]))
+            }
+            "edit_char_to_line_col" => {
+                let c = need("char")?;
+                let d = self.doc(req)?;
+                let (l, col) = d.char_to_line_col(c)?;
+                Ok(Json::obj(vec![("line", num(l)), ("col", num(col)), ("pos", num(d.char_to_byte(c)?))]))
+            }
+            "edit_line_col_to_char" => {
+                let (l, c) = (need("line")?, need("col")?);
+                let d = self.doc(req)?;
+                let pos = d.offset_of(l, c);
+                Ok(Json::obj(vec![("char", num(d.byte_to_char(pos)?)), ("pos", num(pos))]))
+            }
+            "edit_to_char" => {
+                let p = need("pos")?;
+                Ok(Json::obj(vec![("char", num(self.doc(req)?.byte_to_char(p)?))]))
+            }
+            "edit_from_char" => {
+                let c = need("char")?;
+                Ok(Json::obj(vec![("pos", num(self.doc(req)?.char_to_byte(c)?))]))
+            }
+            "edit_unencodable" => {
+                let enc = Encoding::from_name(req.str("encoding").ok_or("encoding이 필요합니다.")?).ok_or(ENC_HELP)?;
+                let limit = req.usize("limit").unwrap_or(100);
+                let r = self.doc(req)?.unencodable(enc, limit);
+                let distinct = r.distinct.iter().take(200).map(|&(c, n)| Json::obj(vec![("char", c.to_string().into()), ("code", format!("U+{:04X}", c as u32).into()), ("count", num(n))])).collect();
+                let first = r
+                    .first
+                    .iter()
+                    .map(|u| Json::obj(vec![("char", u.ch.to_string().into()), ("code", format!("U+{:04X}", u.ch as u32).into()), ("pos", num(u.byte)), ("char_index", num(u.char_index)), ("line", num(u.line)), ("col", num(u.col))]))
+                    .collect();
+                Ok(Json::obj(vec![("encoding", enc.name().into()), ("ok_to_save", (r.total == 0).into()), ("total", num(r.total)), ("distinct_count", num(r.distinct.len())), ("distinct", Json::Arr(distinct)), ("first", Json::Arr(first))]))
+            }
             "edit_replace" => {
                 let (s, e) = (need("start")?, need("end")?);
                 let t = req.str("text").unwrap_or("");
@@ -298,7 +343,16 @@ impl Engine {
             "edit_save" => {
                 let d = self.doc(req)?;
                 let p = req.str("path").map(str::to_string).or_else(|| d.path.clone()).ok_or("path가 필요합니다.")?;
-                d.save(Path::new(&p))?;
+                // encoding·line_ending을 주면 그 형식으로 저장하고 문서 설정도 바꾼다(실패하면 둘 다 그대로)
+                let enc = match req.str("encoding") {
+                    Some(n) => Encoding::from_name(n).ok_or(ENC_HELP)?,
+                    None => d.encoding,
+                };
+                let le = match req.str("line_ending") {
+                    Some(n) => LineEnding::from_name(n).ok_or("line_ending은 LF·CRLF·CR 중 하나여야 합니다.")?,
+                    None => d.line_ending,
+                };
+                d.save_as(Path::new(&p), enc, le)?;
                 Ok(info(d))
             }
             "edit_autosave" => {
