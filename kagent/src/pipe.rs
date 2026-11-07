@@ -17,7 +17,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, PostMessa
 
 use crate::json::{self, Value};
 use crate::util::{base64, now, wide};
-use crate::{VERSION, WM_PAUSE, WM_SETTINGS, app, main_hwnd, refresh_recent};
+use crate::{VERSION, WM_PAUSE, app, main_hwnd, refresh_recent};
 
 const MAX_REQUEST: usize = 64 * 1024;
 
@@ -327,15 +327,8 @@ pub fn handle(v: &Value) -> Value {
         "settings_get" => ok(vec![("settings", a.settings.lock().unwrap().to_json())]),
         "settings_set" => {
             let Some(new) = v.get("settings") else { return error("설정을 확인해 주세요.") };
-            let snapshot = {
-                let mut s = a.settings.lock().unwrap();
-                s.apply(new);
-                s.clone()
-            };
-            crate::save_settings();
-            let _ = a.store.lock().unwrap().enforce(&snapshot, now());
-            refresh_recent();
-            unsafe { PostMessageW(hwnd, WM_SETTINGS, 0, 0) };
+            // 빠른 목록 설정 메뉴와 같은 길(검사·저장·정리·창 갱신).
+            let snapshot = crate::update_settings(new);
             ok(vec![("settings", snapshot.to_json())])
         }
         "quit" => {

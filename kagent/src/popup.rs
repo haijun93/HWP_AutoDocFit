@@ -15,6 +15,11 @@
 //!    아무 분류에서나 글자를 치면 키워드검색으로 넘어간다. ←→·Tab(Shift+Tab)으로 분류 이동, Ctrl+F는 키워드검색.
 //!    좁은 폭에서는 단추 여백을 줄이고, 그래도 넘치면 짧은 이름(캡처·검색), 마지막엔 같은 폭으로 나눠 말줄임.
 //! 목록 순서: 고정 항목 먼저, 그 안과 나머지는 최근 사용 순(최신순).
+//! ③ 설정(2026-11-07): 상단 메뉴바 맨 왼쪽 단추(톱니). 관리창과 같은 설정을 메뉴로 바꾼다(`settings_menu.rs`).
+//! ④ 테두리(2026-11-07): 예전엔 WS_THICKFRAME 틀 + WS_BORDER 선 + CS_DROPSHADOW 그림자 세 겹이라 오른쪽·아래가
+//!    이중선으로 보였다. 지금은 WM_NCCALCSIZE로 비클라이언트 틀을 없애고 테두리 선은 한 겹만 둔다 —
+//!    Windows 11은 DWM이 그리는 테두리(색 지정)+둥근 모서리, 그 밖에는 직접 그린 1px 선. 그림자는 DWM(4면).
+//!    크기 조절은 가장자리 6px(배율 적용)를 WM_NCHITTEST에서 좌·우·아래·아래 모서리로 돌려준다(`frame_hit`).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
@@ -32,6 +37,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::category::Category;
+use crate::settings_menu::{self, Command, Entry};
 use crate::store::Summary;
 use crate::open_item;
 use crate::util::wide;
@@ -47,13 +53,17 @@ const HEAD_H: i32 = 32;
 const CAT_H: i32 = 28;
 /// 캡션 단추 하나의 폭(Windows 기본 캡션 단추 46px).
 const CAPTION_W: i32 = 46;
-/// 접힌 창 높이. 두꺼운 틀 안쪽에 머리글이 다 보이도록 틀 높이를 더한다.
-const COLLAPSED_H: i32 = HEAD_H + 12;
+/// 접힌 창 높이(틀이 없으므로 머리글 + 위아래 테두리 1px).
+const COLLAPSED_H: i32 = HEAD_H + 2;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
-/// 최소 폭: 제목(약 90) + 캡션 단추 5개(230).
-const MIN_W: i32 = 320;
-const MIN_H: i32 = HEAD_H + CAT_H + ROW_H * 2 + 12;
+/// 최소 폭: 제목(약 90) + 단추 6개(276).
+const MIN_W: i32 = 370;
+const MIN_H: i32 = HEAD_H + CAT_H + ROW_H * 2 + 2;
+/// 크기 조절로 쓰는 가장자리 폭(창 안쪽).
+const GRIP: i32 = 6;
+/// 테두리 선 색(BGR).
+const BORDER: u32 = 0x00BDBDBD;
 const TAB_MARGIN: i32 = 6;
 const TAB_PAD: i32 = 9;
 const TAB_MIN_PAD: i32 = 4;
@@ -124,11 +134,11 @@ fn next_tab(cur: usize, delta: isize) -> usize {
 // ---- 상단 메뉴바 단추 ----
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum HeadButton { Capture, Pin, Minimize, Maximize, Close }
+enum HeadButton { Settings, Capture, Pin, Minimize, Maximize, Close }
 
 /// 왼쪽부터 놓이는 순서. 모두 같은 폭이고 닫기가 맨 오른쪽.
-const HEAD_BUTTONS: [HeadButton; 5] =
-    [HeadButton::Capture, HeadButton::Pin, HeadButton::Minimize, HeadButton::Maximize, HeadButton::Close];
+const HEAD_BUTTONS: [HeadButton; 6] = [HeadButton::Settings, HeadButton::Capture, HeadButton::Pin,
+                                       HeadButton::Minimize, HeadButton::Maximize, HeadButton::Close];
 
 /// 단추의 가로 범위(창 안 좌표, 화면 배율 적용한 폭).
 fn head_button_span(b: HeadButton, width: i32, button_w: i32) -> (i32, i32) {
@@ -152,6 +162,7 @@ fn head_button(x: i32, y: i32, width: i32, button_w: i32, head: i32) -> Option<H
 /// 단추 이름(접근성·마우스 올림 안내).
 fn head_button_name(b: HeadButton, pinned: bool, maximized: bool) -> &'static str {
     match b {
+        HeadButton::Settings => "설정 (보관 개수·자동 실행 등)",
         HeadButton::Capture => "화면 캡처",
         HeadButton::Pin if pinned => "항상 위 끄기 (켜짐)",
         HeadButton::Pin => "항상 위 켜기",
@@ -165,11 +176,91 @@ fn head_button_name(b: HeadButton, pinned: bool, maximized: bool) -> &'static st
 /// Segoe MDL2 Assets 글리프(Windows 캡션 단추와 같은 기호).
 fn head_button_glyph(b: HeadButton, pinned: bool, maximized: bool) -> char {
     match b {
+        HeadButton::Settings => '\u{E713}',                  // Setting
         HeadButton::Capture => '\u{E722}',                   // Camera
         HeadButton::Pin => if pinned { '\u{E840}' } else { '\u{E718}' }, // Pinned / Pin
         HeadButton::Minimize => '\u{E921}',                  // ChromeMinimize
         HeadButton::Maximize => if maximized { '\u{E923}' } else { '\u{E922}' }, // ChromeRestore / ChromeMaximize
         HeadButton::Close => '\u{E8BB}',                     // ChromeClose
+    }
+}
+
+// ---- 틀(테두리·크기 조절) ----
+
+/// WM_NCHITTEST 결과.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Hit { Client, Caption, Left, Right, Bottom, BottomLeft, BottomRight }
+
+impl Hit {
+    fn code(self) -> u32 {
+        match self {
+            Hit::Client => HTCLIENT,
+            Hit::Caption => HTCAPTION,
+            Hit::Left => HTLEFT,
+            Hit::Right => HTRIGHT,
+            Hit::Bottom => HTBOTTOM,
+            Hit::BottomLeft => HTBOTTOMLEFT,
+            Hit::BottomRight => HTBOTTOMRIGHT,
+        }
+    }
+}
+
+/// 창 안 좌표(x, y)가 무엇을 가리키는지(순수 함수). 틀이 없으므로 가장자리 grip 폭을 크기 조절에 쓴다.
+/// - 좌·우·아래·아래 모서리만 크기 조절(위쪽은 머리글 = 끌어 옮기기, 요구대로).
+/// - 머리글의 단추 위는 오른쪽 가장자리여도 단추(닫기 단추 끝까지 누를 수 있게).
+/// - 최대화 중이면 크기 조절 없음, 접힌 창이면 아래로 늘이지 않는다(펼치기는 메뉴로).
+fn frame_hit(x: i32, y: i32, w: i32, h: i32, grip: i32, head: i32, on_button: bool, maximized: bool,
+             collapsed: bool) -> Hit {
+    if y < head && on_button {
+        return Hit::Client;
+    }
+    if !maximized && x >= 0 && y >= 0 && x < w && y < h {
+        let left = x < grip;
+        let right = x >= w - grip;
+        let bottom = !collapsed && y >= h - grip;
+        match (left, right, bottom) {
+            (true, _, true) => return Hit::BottomLeft,
+            (_, true, true) => return Hit::BottomRight,
+            (_, _, true) => return Hit::Bottom,
+            (true, _, _) => return Hit::Left,
+            (_, true, _) => return Hit::Right,
+            _ => {}
+        }
+    }
+    if y >= 0 && y < head { Hit::Caption } else { Hit::Client }
+}
+
+/// 테두리 선을 직접 그릴지: DWM이 테두리 색을 받아 그려 주면(Windows 11) 그리지 않는다 — 한 겹만.
+fn draws_own_border(dwm_border: bool) -> bool {
+    !dwm_border
+}
+
+/// Windows 11에서 DWM 테두리를 쓰는지(창을 만들 때 정한다).
+static DWM_BORDER: AtomicBool = AtomicBool::new(false);
+
+#[repr(C)]
+struct Margins { left: i32, right: i32, top: i32, bottom: i32 }
+
+#[link(name = "dwmapi")]
+unsafe extern "system" {
+    fn DwmSetWindowAttribute(hwnd: HWND, attr: u32, value: *const core::ffi::c_void, size: u32) -> i32;
+    fn DwmExtendFrameIntoClientArea(hwnd: HWND, margins: *const Margins) -> i32;
+}
+const DWMWA_WINDOW_CORNER_PREFERENCE: u32 = 33;
+const DWMWA_BORDER_COLOR: u32 = 34;
+const DWMWCP_ROUND: u32 = 2;
+
+/// 틀 꾸밈: DWM 그림자(틀을 1px 안으로 늘려야 틀 없는 창에도 4면 그림자가 생김), Windows 11 둥근 모서리·테두리 색.
+/// Windows 10에서는 모서리·테두리 색 속성이 실패하고 직접 그린 1px 선을 쓴다.
+unsafe fn style_frame(hwnd: HWND) {
+    unsafe {
+        let m = Margins { left: 0, right: 0, top: 1, bottom: 0 };
+        DwmExtendFrameIntoClientArea(hwnd, &m);
+        let corner = DWMWCP_ROUND;
+        DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const u32 as _, 4);
+        let color = BORDER;
+        let ok = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color as *const u32 as _, 4) >= 0;
+        DWM_BORDER.store(ok, Ordering::Relaxed);
     }
 }
 
@@ -340,7 +431,7 @@ pub fn register(instance: HINSTANCE) {
         let class = wide(CLASS);
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: CS_DROPSHADOW,
+            style: 0, // 그림자는 DWM이 4면에(CS_DROPSHADOW는 오른쪽·아래에만 생겨 이중선처럼 보였다)
             lpfnWndProc: Some(wndproc),
             cbClsExtra: 0,
             cbWndExtra: 0,
@@ -356,9 +447,15 @@ pub fn register(instance: HINSTANCE) {
         let topmost = app().settings.lock().unwrap().always_on_top;
         let ex_style = WS_EX_TOOLWINDOW | if topmost { WS_EX_TOPMOST } else { 0 };
         let hwnd = CreateWindowExW(ex_style, class.as_ptr(), wide("몽땅클립보드").as_ptr(),
-                                   WS_POPUP | WS_BORDER | WS_THICKFRAME, 0, 0, BASE_W, 200, std::ptr::null_mut(),
+                                   // WS_THICKFRAME은 크기 조절·DWM 그림자용으로만 두고 틀 자체는 WM_NCCALCSIZE로 없앤다.
+                                   WS_POPUP | WS_THICKFRAME, 0, 0, BASE_W, 200, std::ptr::null_mut(),
                                    std::ptr::null_mut(), instance, std::ptr::null());
         HWND_POPUP.store(hwnd as isize, Ordering::Relaxed);
+        if !hwnd.is_null() {
+            style_frame(hwnd);
+            SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
     }
 }
 
@@ -722,7 +819,8 @@ unsafe fn paint(hwnd: HWND) {
                 fill(br, 0x00F2DCC4);
             }
             SetTextColor(mem, if hovered && b == HeadButton::Close { 0x00FFFFFF } else if on { ACCENT } else { 0x00333333 });
-            SelectObject(mem, if matches!(b, HeadButton::Capture | HeadButton::Pin) { glyph_big } else { glyph });
+            let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Pin);
+            SelectObject(mem, if big { glyph_big } else { glyph });
             draw(&head_button_glyph(b, pinned, maximized).to_string(), br, DT_CENTER);
         }
         let buttons_left = head_button_span(HEAD_BUTTONS[0], w, bw).0;
@@ -746,6 +844,7 @@ unsafe fn paint(hwnd: HWND) {
         if collapsed {
             st.tab_spans.clear();
             drop(st);
+            own_border(mem, rc);
             BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
             return;
         }
@@ -847,7 +946,22 @@ unsafe fn paint(hwnd: HWND) {
             }
         }
         drop(st);
+        own_border(mem, rc);
         BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+    }
+}
+
+/// Windows 11이 아니면 창 둘레에 1px 선을 한 번만 그린다(틀·WS_BORDER가 없으므로 이것이 유일한 테두리).
+unsafe fn own_border(mem: HDC, rc: RECT) {
+    if !draws_own_border(DWM_BORDER.load(Ordering::Relaxed)) {
+        return;
+    }
+    unsafe {
+        let brush = CreateSolidBrush(BORDER);
+        if !brush.is_null() {
+            FrameRect(mem, &rc, brush);
+            DeleteObject(brush);
+        }
     }
 }
 
@@ -927,6 +1041,101 @@ unsafe fn window_menu(hwnd: HWND, pt: POINT) {
     }
 }
 
+/// 메뉴 모델(`settings_menu::Entry`)을 Win32 메뉴로 만든다. 하위 메뉴는 부모 메뉴가 없앨 때 함께 없어진다.
+unsafe fn build_menu(entries: &[Entry]) -> HMENU {
+    unsafe {
+        let menu = CreatePopupMenu();
+        if menu.is_null() {
+            return menu;
+        }
+        for e in entries {
+            match e {
+                Entry::Separator => { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
+                Entry::Item { id, label, checked, radio, enabled } => {
+                    let flags = MF_STRING | if *checked && !*radio { MF_CHECKED } else { 0 }
+                        | if *enabled { 0 } else { MF_GRAYED };
+                    AppendMenuW(menu, flags, *id, wide(label).as_ptr());
+                    if *checked && *radio {
+                        CheckMenuRadioItem(menu, *id as u32, *id as u32, *id as u32, MF_BYCOMMAND);
+                    }
+                }
+                Entry::Sub { label, entries } => {
+                    let sub = build_menu(entries);
+                    if !sub.is_null() {
+                        AppendMenuW(menu, MF_STRING | MF_POPUP, sub as usize, wide(label).as_ptr());
+                    }
+                }
+            }
+        }
+        menu
+    }
+}
+
+/// 상단 메뉴바 '설정' 단추: 관리창과 같은 설정을 메뉴로 보여 주고, 고르면 바로 반영한다(적용 단추 없음).
+unsafe fn settings_menu(hwnd: HWND) {
+    unsafe {
+        let settings = app().settings.lock().unwrap().clone();
+        let extra = settings_menu::Extra {
+            autostart: crate::autostart_enabled(),
+            resume_in_min: crate::resume_in_minutes(),
+        };
+        let menu = build_menu(&settings_menu::build(&settings, extra));
+        if menu.is_null() {
+            return;
+        }
+        // 단추 바로 아래, 단추 왼쪽 끝에 맞춘다.
+        let (left, _) = head_button_span(HeadButton::Settings, client_width(hwnd), scale(hwnd, CAPTION_W));
+        let mut pt = POINT { x: left, y: scale(hwnd, HEAD_H) };
+        ClientToScreen(hwnd, &mut pt);
+        // 메뉴가 바깥 클릭·Esc로 닫히려면 소유 창이 앞에 있어야 한다(붙여넣을 창은 열 때 기억해 둠).
+        SetForegroundWindow(hwnd);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+                                     pt.x, pt.y, 0, hwnd, std::ptr::null());
+        DestroyMenu(menu);
+        {
+            let mut st = STATE.lock().unwrap();
+            st.hover_btn = None;
+            st.pressed_btn = None;
+        }
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+        if let Some(c) = settings_menu::command_of(command as usize) {
+            run_settings_command(hwnd, c);
+        }
+    }
+}
+
+fn run_settings_command(hwnd: HWND, c: Command) {
+    let settings = app().settings.lock().unwrap().clone();
+    if let Some(patch) = settings_menu::settings_patch(&settings, c) {
+        // 파이프 settings_set과 같은 길: 범위 검사·저장·보관 한도 정리·창 갱신.
+        crate::update_settings(&patch);
+        return;
+    }
+    match c {
+        Command::Pause(minutes) => crate::pause_for(minutes),
+        Command::Resume => crate::set_paused(main_hwnd(), false),
+        Command::Autostart(on) => {
+            if let Err(message) = crate::set_autostart(on) {
+                unsafe {
+                    MessageBoxW(hwnd, wide(&message).as_ptr(), wide("몽땅클립보드").as_ptr(), MB_OK | MB_ICONWARNING);
+                }
+            }
+        }
+        Command::ClearAll => clear_all(hwnd),
+        Command::Quit => unsafe {
+            let text = "몽땅클립보드를 끌까요?\n\n복사 기록과 빠른 목록 단축키가 멈춥니다. 기록은 지워지지 않으며, \
+                        앱의 몽땅클립보드 화면에서 다시 켤 수 있습니다.";
+            if MessageBoxW(hwnd, wide(text).as_ptr(), wide("몽땅클립보드").as_ptr(),
+                           MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES {
+                hide();
+                PostMessageW(main_hwnd(), WM_CLOSE, 0, 0);
+            }
+        },
+        Command::Set(..) | Command::Toggle(_) => {}
+    }
+    refresh();
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -974,19 +1183,20 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
+            // 비클라이언트 틀을 없앤다(창 전체가 그리기 영역). 테두리는 한 겹만 — own_border·DWM 참고.
+            WM_NCCALCSIZE if wp != 0 => 0,
             WM_NCHITTEST => {
-                let hit = DefWindowProcW(hwnd, msg, wp, lp);
-                if hit != HTCLIENT as LRESULT {
-                    return hit; // 틀(크기 조절)
-                }
                 let (sx, sy) = xy(lp);
                 let mut pt = POINT { x: sx, y: sy };
                 ScreenToClient(hwnd, &mut pt);
-                if pt.y >= 0 && pt.y < scale(hwnd, HEAD_H) && head_button_at(hwnd, pt.x, pt.y).is_none() {
-                    HTCAPTION as LRESULT
-                } else {
-                    HTCLIENT as LRESULT
-                }
+                let mut rc: RECT = std::mem::zeroed();
+                GetClientRect(hwnd, &mut rc);
+                let (head, row) = (scale(hwnd, HEAD_H), scale(hwnd, ROW_H));
+                let maximized = STATE.lock().unwrap().restore_rect.is_some();
+                let collapsed = rc.bottom < head + scale(hwnd, CAT_H) + row;
+                let on_button = head_button_at(hwnd, pt.x, pt.y).is_some();
+                frame_hit(pt.x, pt.y, rc.right, rc.bottom, scale(hwnd, GRIP), head, on_button, maximized, collapsed)
+                    .code() as LRESULT
             }
             WM_NCLBUTTONDBLCLK if wp == HTCAPTION as usize => {
                 toggle_max(hwnd);
@@ -1148,6 +1358,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if btn.is_some() || pressed.is_some() {
                     // Windows 캡션 단추처럼 누른 단추 위에서 뗄 때만 동작한다.
                     match btn.filter(|b| Some(*b) == pressed) {
+                        Some(HeadButton::Settings) => { settings_menu(hwnd); return 0; }
                         Some(HeadButton::Capture) => { hide(); crate::capture_screen(); }
                         Some(HeadButton::Pin) => toggle_pin(),
                         Some(HeadButton::Minimize) => minimize(),
@@ -1240,8 +1451,8 @@ mod tests {
     use crate::category::CategorySet;
 
     #[test]
-    fn caption_buttons_right_to_left_close_max_min_pin_capture() {
-        // 폭 600, 단추 46: 닫기 554..600, 최대화 508..554, 최소화 462..508, 항상 위 416..462, 캡처 370..416
+    fn caption_buttons_right_to_left_close_max_min_pin_capture_settings() {
+        // 폭 600, 단추 46: 닫기 554..600, 최대화 508..554, 최소화 462..508, 항상 위 416..462, 캡처 370..416, 설정 324..370
         assert_eq!(head_button(599, 5, 600, 46, 32), Some(HeadButton::Close));
         assert_eq!(head_button(554, 5, 600, 46, 32), Some(HeadButton::Close));
         assert_eq!(head_button(553, 5, 600, 46, 32), Some(HeadButton::Maximize));
@@ -1252,7 +1463,9 @@ mod tests {
         assert_eq!(head_button(416, 5, 600, 46, 32), Some(HeadButton::Pin));
         assert_eq!(head_button(415, 5, 600, 46, 32), Some(HeadButton::Capture));
         assert_eq!(head_button(370, 5, 600, 46, 32), Some(HeadButton::Capture));
-        assert_eq!(head_button(369, 5, 600, 46, 32), None); // 제목(끌어 옮기기) 영역
+        assert_eq!(head_button(369, 5, 600, 46, 32), Some(HeadButton::Settings));
+        assert_eq!(head_button(324, 5, 600, 46, 32), Some(HeadButton::Settings));
+        assert_eq!(head_button(323, 5, 600, 46, 32), None); // 제목(끌어 옮기기) 영역
         assert_eq!(head_button(10, 5, 600, 46, 32), None);
     }
 
@@ -1266,9 +1479,10 @@ mod tests {
 
     #[test]
     fn caption_button_spans_are_equal_and_contiguous() {
-        let spans: Vec<_> = HEAD_BUTTONS.iter().map(|b| head_button_span(*b, 320, 46)).collect();
-        assert_eq!(spans.last().unwrap().1, 320);
-        assert_eq!(spans[0].0, 320 - 46 * 5); // 최소 폭에서도 제목 칸 90px 남음
+        let spans: Vec<_> = HEAD_BUTTONS.iter().map(|b| head_button_span(*b, MIN_W, 46)).collect();
+        assert_eq!(spans.last().unwrap().1, MIN_W);
+        assert_eq!(spans[0].0, MIN_W - 46 * 6);
+        assert!(spans[0].0 >= 90); // 최소 폭에서도 제목 칸 90px 남음
         for pair in spans.windows(2) {
             assert_eq!(pair[0].1, pair[1].0);
         }
@@ -1283,6 +1497,66 @@ mod tests {
         assert_eq!(head_button_glyph(HeadButton::Pin, false, false), '\u{E718}');
         assert_eq!(head_button_name(HeadButton::Pin, true, false), "항상 위 끄기 (켜짐)");
         assert_eq!(head_button_name(HeadButton::Maximize, false, true), "이전 크기로 복원");
+        assert_eq!(head_button_glyph(HeadButton::Settings, false, false), '\u{E713}');
+        assert!(head_button_name(HeadButton::Settings, false, false).starts_with("설정"));
+        assert_eq!(HEAD_BUTTONS[0], HeadButton::Settings);
+    }
+
+    /// 크기 조절 판정을 화면 배율별로(100·150·200%) — 같은 논리 좌표가 같은 결과.
+    #[test]
+    fn frame_hit_resizes_left_right_bottom_only_at_every_scale() {
+        for pct in [100, 150, 200] {
+            let s = |v: i32| v * pct / 100;
+            let (w, h, grip, head) = (s(440), s(400), s(GRIP), s(HEAD_H));
+            let hit = |x: i32, y: i32| frame_hit(x, y, w, h, grip, head, false, false, false);
+            assert_eq!(hit(0, s(200)), Hit::Left, "{pct}%");
+            assert_eq!(hit(grip - 1, s(200)), Hit::Left);
+            assert_eq!(hit(grip, s(200)), Hit::Client);
+            assert_eq!(hit(w - 1, s(200)), Hit::Right);
+            assert_eq!(hit(w - grip, s(200)), Hit::Right);
+            assert_eq!(hit(w - grip - 1, s(200)), Hit::Client);
+            assert_eq!(hit(s(200), h - 1), Hit::Bottom);
+            assert_eq!(hit(s(200), h - grip - 1), Hit::Client);
+            assert_eq!(hit(0, h - 1), Hit::BottomLeft);
+            assert_eq!(hit(w - 1, h - 1), Hit::BottomRight);
+            // 위쪽은 크기 조절이 아니라 머리글(끌어 옮기기). 왼쪽 가장자리는 머리글 높이에서도 크기 조절.
+            assert_eq!(hit(s(200), 0), Hit::Caption);
+            assert_eq!(hit(s(200), head - 1), Hit::Caption);
+            assert_eq!(hit(s(200), head), Hit::Client);
+            assert_eq!(hit(0, 0), Hit::Left);
+        }
+    }
+
+    #[test]
+    fn frame_hit_buttons_win_and_maximized_or_collapsed_limits_resizing() {
+        let (w, h, grip, head) = (440, 400, 6, 32);
+        // 머리글 오른쪽 끝(닫기 단추)은 단추가 이긴다.
+        assert_eq!(frame_hit(w - 1, 5, w, h, grip, head, true, false, false), Hit::Client);
+        assert_eq!(frame_hit(w - 1, head, w, h, grip, head, false, false, false), Hit::Right);
+        // 최대화: 크기 조절 없음, 머리글은 그대로 이동 영역(두 번 클릭으로 복원).
+        assert_eq!(frame_hit(0, 200, w, h, grip, head, false, true, false), Hit::Client);
+        assert_eq!(frame_hit(200, h - 1, w, h, grip, head, false, true, false), Hit::Client);
+        assert_eq!(frame_hit(200, 5, w, h, grip, head, false, true, false), Hit::Caption);
+        // 접힌 창(머리글만): 아래로 늘이지 않고 좌우 폭만 조절.
+        let ch = COLLAPSED_H;
+        assert_eq!(frame_hit(200, ch - 1, w, ch, grip, head, false, false, true), Hit::Client);
+        assert_eq!(frame_hit(200, 5, w, ch, grip, head, false, false, true), Hit::Caption);
+        assert_eq!(frame_hit(0, 5, w, ch, grip, head, false, false, true), Hit::Left);
+        assert_eq!(frame_hit(w - 1, ch - 1, w, ch, grip, head, false, false, true), Hit::Right);
+        // 창 밖 좌표는 크기 조절로 보지 않는다.
+        assert_eq!(frame_hit(-1, 200, w, h, grip, head, false, false, false), Hit::Client);
+        assert_eq!(Hit::Caption.code(), HTCAPTION);
+        assert_eq!(Hit::BottomRight.code(), HTBOTTOMRIGHT);
+    }
+
+    #[test]
+    fn exactly_one_border_layer() {
+        // Windows 11(DWM이 테두리 색을 받음) → 직접 그리지 않음, 그 밖 → 직접 1px.
+        assert!(!draws_own_border(true));
+        assert!(draws_own_border(false));
+        // 접힌 창은 머리글 + 위아래 1px, 틀 두께(예전 12px)를 더하지 않는다.
+        assert_eq!(COLLAPSED_H, HEAD_H + 2);
+        assert!(MIN_H > COLLAPSED_H);
     }
 
     #[test]
