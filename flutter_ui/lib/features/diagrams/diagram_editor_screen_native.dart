@@ -302,28 +302,12 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
     if (diagramId != null) return;
     final draft = await draftClient.pending();
     if (draft == null || !mounted) return;
-    final restore = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('저장하지 않은 편집 내용'),
-        content: Text(
-          "'${draft['name']}'을(를) 편집하던 내용이 자동 저장돼 있어요. 복구할까요?",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('버리기'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('복구'),
-          ),
-        ],
-      ),
-    );
-    if (restore != true) {
-      await draftClient.clear();
-      return;
+    // 묻지 않고 바로 복구한다(사용자 요청 2026-11-07: 기본값으로 "복구"가 시행되게). 아래 알림으로만 알린다.
+    if (mounted) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
+        key: const ValueKey('draft-restored'),
+        content: Text("'${draft['name']}'을(를) 편집하던 내용을 자동으로 복구했어요."),
+      ));
     }
     final (id, rev) = await draftClient.reconnect(draft);
     diagramId = id;

@@ -622,12 +622,16 @@ class DesktopWebBridge:
             engine_reason = "그림 파일은 글자 인식(OCR)이 필요해 변환할 수 없습니다(폐쇄망 꾸러미에 OCR 미포함)"
         # HWP·HWPX는 한/글이 직접 PDF로 저장한다. 다른 입력만 kordoc 중간 변환이 필요하다.
         # 이미 PDF인 파일은 PDF 변환에서 건너뛰므로 변환 엔진이 필요 없다.
-        pdf_needs_kordoc = any(suffix not in HANCOM_PDF_DIRECT and suffix != ".pdf" for suffix in suffixes)
-        pdf_ready = hwp_ready and (not pdf_needs_kordoc or kordoc_ready)
+        pdf_needs_kordoc = any(suffix not in HANCOM_PDF_DIRECT and suffix != ".pdf" and suffix not in IMAGE_INPUT_EXTENSIONS
+                               for suffix in suffixes)
+        # 그림(JPG·PNG 등)은 Pillow로 바로 PDF를 만들므로 한/글·OCR이 필요 없다(2026-11-07).
+        pdf_needs_hwp = any(suffix not in IMAGE_INPUT_EXTENSIONS and suffix != ".pdf" for suffix in suffixes)
+        pdf_ready = (hwp_ready or not pdf_needs_hwp) and (not pdf_needs_kordoc or kordoc_ready)
         invalid_reason = "변환할 수 없는 파일 형식이 있습니다"
         pdf_reason = (invalid_reason if not valid else
-                      "한/글 PDF 저장 기능을 사용할 수 없습니다" if not hwp_ready else
+                      "한/글 PDF 저장 기능을 사용할 수 없습니다" if pdf_needs_hwp and not hwp_ready else
                       engine_reason if pdf_needs_kordoc and not kordoc_ready else
+                      "그림을 그대로 PDF로 저장 · 한/글·글자 인식 불필요" if not pdf_needs_hwp else
                       "한/글 내장 PDF 저장 사용 · 추가 변환기 설치 없음" if not pdf_needs_kordoc else
                       "변환 엔진 + 한/글 PDF 저장 준비됨")
         # 그림은 한/글 PDF 저장본을 쪽마다 렌더링하므로 PDF와 준비 조건이 같다.
@@ -644,7 +648,11 @@ class DesktopWebBridge:
         # 합치기에서 PDF·그림은 그대로 쓰고, HWP·HWPX는 한/글, 그 밖의 형식만 변환 엔진이 더 필요하다.
         merge_converted = [s for s in suffixes if s != ".pdf" and s not in IMAGE_INPUT_EXTENSIONS]
         merge_ready = merge_direct or (hwp_ready and (kordoc_ready or all(s in HANCOM_PDF_DIRECT for s in merge_converted)))
-        image_reason = (pdf_reason if not (valid and pdf_ready) else
+        # 그림 → 그림(PNG·JPG) 변환은 여전히 기존 변환 경로(글자 인식)를 거친다. 그림 → PDF만 OCR 없이 된다(2026-11-07).
+        image_input_needs_ocr = any(suffix in IMAGE_INPUT_EXTENSIONS for suffix in suffixes) and not prerequisites.get("ocr", True)
+        image_targets_ready = pdf_ready and not image_input_needs_ocr
+        image_reason = ("그림 파일은 글자 인식(OCR)이 필요해 변환할 수 없습니다(폐쇄망 꾸러미에 OCR 미포함)" if valid and image_input_needs_ocr else
+                        pdf_reason if not (valid and pdf_ready) else
                         "한/글 PDF 저장 후 쪽마다 그림 저장 · 여러 쪽은 폴더로 저장")
         pandoc_only = all(suffix in {".html", ".htm", ".md", ".txt"} for suffix in suffixes)
         pandoc_targets_ready = pandoc_ready and (kordoc_ready or pandoc_only)
@@ -672,7 +680,7 @@ class DesktopWebBridge:
                "reason": invalid_reason if not valid else engine_reason if not kordoc_ready and not pandoc_only else
                         "내장 Pandoc을 사용할 수 없음" if not pandoc_ready else "내장 Pandoc 준비됨"} for kind in ("docx", "epub", "html")),
             # PDF만 넣으면 한/글·변환 엔진 없이 쪽마다 바로 그린다.
-            *({"format": kind, "label": kind.upper(), "enabled": valid and (pdf_only or pdf_ready),
+            *({"format": kind, "label": kind.upper(), "enabled": valid and (pdf_only or image_targets_ready),
                "reason": "PDF 쪽마다 그림 저장 · 한/글 불필요" if valid and pdf_only else image_reason}
               for kind in IMAGE_FORMATS),
         ]
@@ -1276,7 +1284,7 @@ class DesktopWebBridge:
                     unregister()
             self.gui._Flutter설정_반영(values)
             if self.window is not None and 'always_on_top' in values:
-                self.window.set_on_top(bool(values['always_on_top']))
+                _set_window_on_top(self.window, bool(values['always_on_top']))
                 self._saved_window['topmost'] = bool(values['always_on_top'])
             return self._settings_snapshot()
         return self._tk(lambda: response(save))
@@ -1973,7 +1981,7 @@ class DesktopWebBridge:
                 return
             if enabled is None:  # 앱 본래 항상 위 설정으로 되돌림
                 enabled = bool(self.gui._준말_서비스().settings.read().get("always_on_top", False))
-            window.set_on_top(bool(enabled))
+            _set_window_on_top(window, bool(enabled))
 
         try:
             store = self._tk(lambda: self.gui._준말_서비스().settings)
@@ -1981,6 +1989,21 @@ class DesktopWebBridge:
         except Exception as exc:
             logging.getLogger(__name__).warning("몽땅클립보드 관리창 처리 실패", exc_info=True)
             return {"ok": False, "message": str(exc) or "관리창 설정을 처리하지 못했습니다."}
+
+    def external_app(self, action, payload=None):
+        """외부 프로그램(사진첩·아웃라이너·사진관리, 별도 프로세스) 실행·경로 지정. 개발자 모드 전용."""
+        if not self._developer_mode_enabled():
+            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 사용할 수 있습니다."}
+        try:
+            service = getattr(self, "_external_apps_service", None)
+            if service is None:
+                from docfit_app.external_apps_service import ExternalAppsService
+                settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+                service = self._external_apps_service = ExternalAppsService(settings, dialogs=self._file_dialogs)
+            return service.command(action, payload)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("외부 프로그램 처리 실패", exc_info=True)
+            return {"ok": False, "code": "APP_FAILED", "message": str(exc) or "프로그램을 열지 못했습니다."}
 
     def file_rename(self, action, payload=None):
         """파일이름 탭: 목록·미리보기·적용·되돌리기(경로는 호스트에만 둔다)."""
@@ -2059,8 +2082,9 @@ class DesktopWebBridge:
                     _Win32WindowApi(), _PyWebViewWindow(self.window, self.gui._준말_서비스().settings, lambda: self._saved_window), True,
                     values.get('sidebar_mode_side', 'right'))
             else:
+                # 복원 위치는 컨트롤러가 켤 때 잰 실제 창(물리 픽셀)을 쓴다. 처음 만든 창 크기(논리 픽셀)로
+                # 덮어쓰면 창을 옮기거나 키운 뒤, 또는 배율 125%·150%에서 엉뚱한 크기로 돌아간다.
                 self.sidebar_controller.developer_mode = True
-                self.sidebar_controller.saved = self._saved_window
             result = self.sidebar_controller.toggle(bool(enabled))
             self.sidebar_active = bool(enabled)
             return result
@@ -2096,7 +2120,7 @@ class DesktopWebBridge:
                 return {'ok': False, 'message': '항상 위 설정은 개발자 모드에서만 사용할 수 있습니다.'}
             self.gui._준말_서비스().settings.update(lambda current: current.update({'always_on_top': bool(enabled)}))
             if self.window is not None:
-                self.window.set_on_top(bool(enabled))
+                _set_window_on_top(self.window, bool(enabled))
             return {'ok': True, 'enabled': bool(enabled)}
         return self._tk(execute)
 
@@ -2295,6 +2319,43 @@ class DesktopWebBridge:
             self._library_bridge = LibraryBridge()
         return self._library_bridge
 
+    def _library_open_item(self, request):
+        """자료함 자료를 연결 앱·탐색기·브라우저로 연다(더블클릭).
+
+        item_id가 있으면 klib에 저장된 경로(kind·source_path)만 쓴다(화면이 보낸 경로는 무시).
+        item_id가 없으면(내보낸 폴더·검색 결과) 실행 파일은 차단한다.
+        실행기는 self._library_opener / self._library_browser로 바꿔 시험한다.
+        """
+        from docfit_app.library_bridge import LibraryOpenError, open_library_item
+
+        target = {
+            "kind": request.get("kind"),
+            "source_path": str(request.get("source_path") or ""),
+            "confirmed": bool(request.get("confirmed")),
+        }
+        item_id = request.get("item_id")
+        registered = item_id not in (None, "")
+        if registered:
+            try:
+                stored = self._get_library_bridge().request({"cmd": "item_get", "id": int(item_id)})
+            except (TypeError, ValueError):
+                return {"ok": False, "code": "INVALID_PATH", "message": "잘못된 자료 ID입니다."}
+            if not isinstance(stored, dict) or not stored.get("ok"):
+                message = stored.get("message") if isinstance(stored, dict) else None
+                return {"ok": False, "code": "NOT_REGISTERED", "message": message or "자료함에서 자료를 찾을 수 없습니다."}
+            target["kind"] = stored.get("kind") or target["kind"]
+            target["source_path"] = str(stored.get("source_path") or "")
+        try:
+            opened = open_library_item(
+                target,
+                opener=getattr(self, "_library_opener", None),
+                browser=getattr(self, "_library_browser", None),
+                allow_risky=None if registered else False,
+            )
+        except LibraryOpenError as exc:
+            return {"ok": False, "code": exc.code, "message": str(exc), "path": target["source_path"]}
+        return {"ok": True, "opened": bool(opened), "path": target["source_path"]}
+
     def library(self, request):
         """Forward one allowlisted library JSON request when the opt-in flag is set."""
         if not self._developer_mode_enabled():
@@ -2306,9 +2367,39 @@ class DesktopWebBridge:
                 if getattr(self, "_folder_scan", None) is None:
                     self._folder_scan = FolderScanService(self._get_library_bridge)
                 return self._folder_scan.handle(request)
+            if isinstance(request, dict) and request.get("cmd") == "lib_drop_watch":
+                return self._library_drop_watch(bool(request.get("active")))
+            if isinstance(request, dict) and request.get("cmd") == "lib_take_drop":
+                paths, self._library_drop = list(getattr(self, "_library_drop", None) or []), []
+                return {"ok": True, "paths": paths}
             if isinstance(request, dict) and request.get("cmd") == "open_item":
-                from docfit_app.library_bridge import open_library_item
-                return {"ok": True, "opened": open_library_item(request)}
+                return self._library_open_item(request)
+            if isinstance(request, dict) and request.get("cmd") == "item_stat":
+                # 탐색기 형식 보기: 저장된 경로만 읽어 크기·수정한 날짜·원본 있음 여부를 알린다.
+                from docfit_app.library_bridge import library_item_stats
+                ids = request.get("item_ids")
+                if not isinstance(ids, list):
+                    return {"ok": False, "message": "item_ids 목록이 필요합니다."}
+                return {"ok": True, "items": library_item_stats(self._get_library_bridge().request, ids)}
+            if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
+                # 자료함 '+메모' 편집기도 노트북과 같은 통로(경로 인자 거절)를 쓴다.
+                return self._memo_editor_request(request)
+            return self._get_library_bridge().request(request)
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+
+    def _memo_editor_request(self, request):
+        """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 노트북 '+메모 추가'와 자료함 '+메모'가 쓴다.
+
+        파일 경로 인자(path)는 받지 않는다: 메모는 노트북 출처로 저장하므로 편집 코어가 디스크를 읽고 쓸 일이 없고,
+        화면에서 임의 경로를 열거나 덮어쓰는 통로가 되지 않게 막는다.
+        """
+        from docfit_app.library_bridge import EDITOR_COMMANDS
+        if request.get("cmd") not in EDITOR_COMMANDS:
+            return {"ok": False, "message": "허용되지 않은 편집기 명령입니다."}
+        if "path" in request:
+            return {"ok": False, "message": "편집기 명령에는 파일 경로를 쓸 수 없습니다."}
+        try:
             return self._get_library_bridge().request(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
@@ -2321,6 +2412,8 @@ class DesktopWebBridge:
         """
         if not self._developer_mode_enabled():
             return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 노트북을 사용할 수 있습니다."}
+        if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
+            return self._memo_editor_request(request)
         if not isinstance(request, dict) or not str(request.get("cmd", "")).startswith("nb_"):
             return {"ok": False, "message": "허용되지 않은 노트북 명령입니다."}
         cmd = request["cmd"]
@@ -2330,12 +2423,43 @@ class DesktopWebBridge:
             if cmd == "nb_take_drop":
                 paths, self._notebook_drop = list(getattr(self, "_notebook_drop", None) or []), []
                 return {"ok": True, "paths": paths}
+            if cmd == "nb_select_output":
+                # 노트 HWPX 내보내기 저장 위치(네이티브 저장 대화상자, 경로는 호스트에만 보관).
+                import uuid
+                return self._file_dialogs.select_files(uuid.uuid4().hex, "notebook_hwpx", "save")
             if getattr(self, "_notebook_service", None) is None:
                 from docfit_app.notebook_service import NotebookService
                 self._notebook_service = NotebookService(self._get_library_bridge())
+            if cmd == "nb_export_hwpx":
+                target = self._selection_path(request, "notebook_hwpx", "output_selection_id")
+                return self._notebook_service.export_hwpx(request, target)
             return self._notebook_service.handle(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    def _library_drop_watch(self, active):
+        """자료함 화면이 열려 있는 동안 창에 놓은 파일을 자료함 항목으로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
+        current = getattr(self, "drop_target", "documents")
+        if active:
+            if current != "library":
+                self._drop_target_before_library = current
+            self._apply_drop_target("library")
+        elif current == "library":
+            self._apply_drop_target(getattr(self, "_drop_target_before_library", None) or "documents")
+        return {"ok": True, "drop_target": self.drop_target}
+
+    def _receive_library_paths(self, paths):
+        """자료함에 끌어 놓은 파일: 경로를 맡겨 두고 화면에 알린다(화면이 lib_take_drop으로 가져가 항목으로 추가)."""
+        pending = list(getattr(self, "_library_drop", None) or [])
+        pending.extend(str(p) for p in (paths or [])[:200] if str(p).strip())
+        self._library_drop = pending
+        window = self.window
+        if window is not None and hasattr(window, "run_js"):
+            try:
+                window.run_js("window.dispatchEvent(new Event('docfit-library-files-dropped'));")
+            except Exception:
+                logging.getLogger(__name__).debug("library drop notify failed", exc_info=True)
+        return {"ok": True, "pending": len(pending)}
 
     def _notebook_drop_watch(self, active):
         """노트북 화면이 열려 있는 동안 창에 놓은 파일을 노트북 출처로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
@@ -2609,7 +2733,7 @@ class DesktopWebBridge:
 
     def _apply_drop_target(self, target):
         if target not in ("documents", "manual_documents", "format", "quick_format", "sketch_image", "paint_image",
-                          "rename_files", "kclip", "notebook"):
+                          "rename_files", "kclip", "notebook", "library"):
             raise ValueError("지원하지 않는 놓기 대상입니다.")
         self.drop_target = target
         if target == "format":   # 서식 관리 창을 열 때 서식예시 폴더에 새로 넣은 예시를 찾아 등록한다
@@ -2624,6 +2748,7 @@ class DesktopWebBridge:
                     else "여기에 놓으면 그림판 배경 사진으로 넣습니다" if target == "paint_image"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
                     else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
+                    else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
                     else "여기에 놓으면 문서 목록에 추가됩니다")
             try:
                 window.run_js(f"window.docfitDropText = {text!r};")
@@ -2670,6 +2795,9 @@ class DesktopWebBridge:
             return self._receive_sketch_image(paths, client_x, client_y, event="docfit-paint-image-dropped")
         if self.drop_target == "rename_files":
             return self._receive_rename_paths(paths)
+        if self.drop_target == "library":
+            self._receive_library_paths(paths)
+            return self.get_state()
         if self.drop_target == "notebook":
             self._receive_notebook_paths(paths)
             return self.get_state()
@@ -2920,6 +3048,16 @@ def _file_size(path):
         return None
 
 
+def _set_window_on_top(window, enabled):
+    """앱 창 '항상 위'. pywebview 6은 set_on_top 대신 on_top 속성을 쓴다
+    (사용자 보고 2026-11-07: '항상 위' 단추가 AttributeError로 동작하지 않음)."""
+    setter = getattr(window, "set_on_top", None)
+    if callable(setter):
+        setter(bool(enabled))
+    else:
+        window.on_top = bool(enabled)
+
+
 class _Win32WindowApi:
     """Monitor work-area and SetWindowPos wrapper; isolated for fake-driven tests."""
     SPI_GETWORKAREA = 0x0030
@@ -2962,12 +3100,108 @@ class _Win32WindowApi:
 
     def set_window_pos(self, hwnd, x, y, width, height, topmost):
         insert_after = self.HWND_TOPMOST if topmost else self.HWND_NOTOPMOST
-        if not self.user32.SetWindowPos(hwnd, insert_after, x, y, width, height, self.SWP_NOACTIVATE):
-            raise OSError('앱 창 위치를 바꾸지 못했습니다.')
+        set_window_pos = self.user32.SetWindowPos
+        if self._ctypes is not None:
+            # 64비트에서 형을 정하지 않으면 HWND(-1 = 맨 위)와 창 핸들이 32비트로 넘어가 호출이 실패한다
+            # (사용자 보고 2026-11-07: 사이드메뉴 모드·햄버거 3단계가 '앱 창 위치를 바꾸지 못했습니다'로 실패).
+            from ctypes import wintypes
+            set_window_pos = self._ctypes.WinDLL('user32', use_last_error=True).SetWindowPos
+            set_window_pos.argtypes = [wintypes.HWND, wintypes.HWND, self._ctypes.c_int, self._ctypes.c_int,
+                                       self._ctypes.c_int, self._ctypes.c_int, wintypes.UINT]
+            set_window_pos.restype = wintypes.BOOL
+        if not set_window_pos(hwnd, insert_after, int(x), int(y), int(width), int(height), self.SWP_NOACTIVATE):
+            code = self._ctypes.get_last_error() if self._ctypes is not None else 0
+            raise OSError(f'앱 창 위치를 바꾸지 못했습니다.' + (f' (오류 {code})' if code else ''))
         return True
 
     def is_zoomed(self, hwnd):
         return bool(self.user32.IsZoomed(hwnd))
+
+    def _rect(self, name, hwnd):
+        if self._ctypes is None:
+            import ctypes
+        else:
+            ctypes = self._ctypes
+        from ctypes import wintypes
+        getter = getattr(self.user32, name)
+        if self._ctypes is not None:
+            # SetWindowPos와 같은 이유로 64비트 창 핸들을 HWND 형으로 넘긴다.
+            getter = self._ctypes.WinDLL('user32', use_last_error=True)[name]
+            getter.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+            getter.restype = wintypes.BOOL
+        rect = wintypes.RECT()
+        if not getter(hwnd, ctypes.byref(rect)):
+            raise OSError('앱 창 크기를 확인하지 못했습니다.')
+        return rect
+
+    def window_rect(self, hwnd):
+        """창 위치·크기(물리 픽셀, SetWindowPos와 같은 단위): x, y, 폭, 높이."""
+        r = self._rect('GetWindowRect', hwnd)
+        return r.left, r.top, r.right - r.left, r.bottom - r.top
+
+    def frame_width(self, hwnd):
+        """창 바깥 폭 - 안쪽(웹 화면) 폭 = 좌우 테두리 합(물리 픽셀)."""
+        outer = self._rect('GetWindowRect', hwnd)
+        inner = self._rect('GetClientRect', hwnd)
+        return max(0, (outer.right - outer.left) - (inner.right - inner.left))
+
+    def dpi_scale(self, hwnd):
+        """창이 있는 모니터의 화면 배율(1.0 = 100%)."""
+        get_dpi = getattr(self.user32, 'GetDpiForWindow', None)
+        if get_dpi is not None and self._ctypes is not None:
+            from ctypes import wintypes
+            get_dpi = self._ctypes.WinDLL('user32', use_last_error=True)['GetDpiForWindow']
+            get_dpi.argtypes = [wintypes.HWND]
+            get_dpi.restype = wintypes.UINT
+        dpi = get_dpi(hwnd) if get_dpi else 0
+        return dpi / 96 if dpi else 1.0
+
+    GWL_STYLE = -16
+    WS_CAPTION = 0x00C00000
+    WS_THICKFRAME = 0x00040000
+    SWP_FRAMECHANGED = 0x0020
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_NOZORDER = 0x0004
+
+    def _style_fns(self):
+        from ctypes import wintypes
+        lib = self._ctypes.WinDLL('user32', use_last_error=True)
+        get = lib['GetWindowLongPtrW']
+        get.argtypes = [wintypes.HWND, self._ctypes.c_int]
+        get.restype = self._ctypes.c_ssize_t
+        put = lib['SetWindowLongPtrW']
+        put.argtypes = [wintypes.HWND, self._ctypes.c_int, self._ctypes.c_ssize_t]
+        put.restype = self._ctypes.c_ssize_t
+        pos = lib['SetWindowPos']
+        pos.argtypes = [wintypes.HWND, wintypes.HWND, self._ctypes.c_int, self._ctypes.c_int,
+                        self._ctypes.c_int, self._ctypes.c_int, wintypes.UINT]
+        pos.restype = wintypes.BOOL
+        return get, put, pos
+
+    def window_style(self, hwnd):
+        if self._ctypes is None:
+            return None
+        get, _put, _pos = self._style_fns()
+        return int(get(hwnd, self.GWL_STYLE))
+
+    def set_window_style(self, hwnd, style):
+        """창 스타일을 바꾸고 틀을 다시 그리게 한다(위치·크기·Z순서 유지)."""
+        if self._ctypes is None:
+            return
+        _get, put, pos = self._style_fns()
+        put(hwnd, self.GWL_STYLE, int(style))
+        pos(hwnd, None, 0, 0, 0, 0,
+            self.SWP_FRAMECHANGED | self.SWP_NOMOVE | self.SWP_NOSIZE | self.SWP_NOZORDER | self.SWP_NOACTIVATE)
+
+    def strip_caption(self, hwnd):
+        """사이드메뉴 모드: 제목줄·크기 조절 틀을 없애 Windows 최소 창 폭(약 136px) 제한을 벗어난다.
+        원래 스타일을 돌려준다(끌 때 복원용)."""
+        style = self.window_style(hwnd)
+        if style is None:
+            return None
+        self.set_window_style(hwnd, style & ~(self.WS_CAPTION | self.WS_THICKFRAME))
+        return style
 
 
 class _PyWebViewWindow:
@@ -2989,7 +3223,27 @@ class _PyWebViewWindow:
         return bool(self.saved_state()['topmost']) if self.saved_state else bool(getattr(self.window, '_on_top', False))
 
     def set_sidebar_only(self, enabled):
-        self.window.resize(190 if enabled else self.saved_state()['width'], self.saved_state()['height'])
+        # 창 위치·크기는 SidebarModeController가 SetWindowPos(물리 픽셀)로 정한다.
+        # 예전처럼 여기서 다시 resize하면 높이가 처음 창 높이로 돌아가고 폭도 고정값(190)이 된다.
+        return None
+
+    def min_size(self):
+        """WinForms 창 최소 크기(물리 픽셀). pywebview min_size=(260, 180)×배율로 정해져 있다."""
+        size = self.window.native.MinimumSize
+        return int(size.Width), int(size.Height)
+
+    def set_min_size(self, width, height):
+        native = self.window.native
+
+        def apply():
+            from System.Drawing import Size
+            native.MinimumSize = Size(int(width), int(height))
+
+        if getattr(native, 'InvokeRequired', False):
+            from System import Action
+            native.Invoke(Action(apply))
+        else:
+            apply()
 
     def save_side(self, side):
         if self.settings is not None:
@@ -3006,7 +3260,7 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
@@ -3289,7 +3543,7 @@ def run_webview(gui):
     bridge._saved_window = {'x': x, 'y': y, 'width': width, 'height': height, 'topmost': False}
     try:
         initial_settings = bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
-        window.set_on_top(bool(initial_settings.get('always_on_top', False)))
+        _set_window_on_top(window, bool(initial_settings.get('always_on_top', False)))
         bridge._saved_window['topmost'] = bool(initial_settings.get('always_on_top', False))
     except Exception:
         logging.getLogger(__name__).debug('Could not apply saved always-on-top setting', exc_info=True)

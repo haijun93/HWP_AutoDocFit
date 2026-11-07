@@ -1,20 +1,49 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/drop_events.dart';
+import '../editor/memo_editor.dart';
+import '../editor/memo_editor_page.dart';
 import '../library/library_api.dart';
+import '../library/library_screen.dart';
+import '../workspace/tab_navigation_shell.dart' show HostClosablePage;
 import 'notebook_api.dart';
 
-/// 노트북 화면(개발자 모드). 세 칸: 출처 · 근거 찾기/미리보기/변환 · 노트.
+/// 노트북 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
 /// 폭이 [kNotebookWideWidth] 미만이면 세 칸을 탭으로 바꾼다.
 const kNotebookWideWidth = 1000.0;
+
+/// 본문검색 결과·출처 비교·미리보기 본문의 기본 글자 크기: 10pt.
+/// 기준: Flutter 논리 픽셀 1px = 1/96인치(Windows 100% 배율의 화면 픽셀, CSS px와 같음), 1pt = 1/72인치
+/// → 10pt = 10 × 96 ÷ 72 ≈ 13.33 논리 픽셀. Windows 배율(125%·150%)은 기기 픽셀 비율로, 접근성 글자 확대는
+/// textScaler로 따로 곱해지므로 여기서는 크기를 고정해 호스트의 기본 글자 크기(약 30px로 보이던 원인)에 끌려가지 않게 한다.
+const kNbReadingFontSize = 10 * 96 / 72;
+const _readingStyle = TextStyle(fontSize: kNbReadingFontSize, height: 1.5);
+
+/// 넓은 화면의 칸 폭(사용자가 구분선을 끌어 조정). 기본·최소·최대와 가운데 칸 최소 폭.
+const kNotebookSourcesWidth = 260.0;
+const kNotebookNotesWidth = 340.0;
+const kNotebookSourcesMin = 180.0;
+const kNotebookSourcesMax = 560.0;
+const kNotebookNotesMin = 240.0;
+const kNotebookNotesMax = 560.0;
+const kNotebookMiddleMin = 320.0;
+const kNotebookHandleWidth = 8.0;
+
+/// 마지막으로 정한 칸 폭. 앱을 켜 둔 동안 노트북을 다시 열어도 유지한다(파일 저장은 후속).
+double _savedSourcesWidth = kNotebookSourcesWidth;
+double _savedNotesWidth = kNotebookNotesWidth;
 
 enum _Middle { search, compare, preview, transform }
 
 /// 창에 파일을 끌어 놓았다는 알림을 듣는다. 돌려준 함수를 부르면 듣기를 멈춘다.
 typedef NotebookDropWatcher = void Function() Function(void Function() onDrop);
+
+/// 출처의 원본 자료함 항목을 보여 준다(자료함 화면을 열어 그 자료함·항목을 고르고 강조).
+typedef NotebookOpenLibraryItem = Future<void> Function(BuildContext context, String boxId, String itemId);
 
 void Function() _watchNotebookDrops(void Function() onDrop) =>
     watchWindowEvent('docfit-notebook-files-dropped', onDrop);
@@ -24,7 +53,7 @@ String _errorText(Object error) => error.toString().replaceFirst(RegExp(r'^(Bad 
 String _fileName(String path) => path.split(RegExp(r'[\\/]')).last;
 
 class NotebookScreen extends StatefulWidget {
-  const NotebookScreen({super.key, required this.api, this.library, this.watchDropEvents});
+  const NotebookScreen({super.key, required this.api, this.library, this.watchDropEvents, this.openLibraryItem});
 
   final NotebookApi api;
 
@@ -34,11 +63,17 @@ class NotebookScreen extends StatefulWidget {
   /// 시험에서 드롭 알림을 직접 넣을 때 쓴다. 없으면 창 이벤트를 듣는다.
   final NotebookDropWatcher? watchDropEvents;
 
+  /// '자료함에서 보기'가 자료함을 여는 방법. 없으면 [library]로 자료함 화면을 새 페이지로 연다.
+  final NotebookOpenLibraryItem? openLibraryItem;
+
   @override
   State<NotebookScreen> createState() => _NotebookScreenState();
 }
 
 class _NotebookScreenState extends State<NotebookScreen> {
+  double _sourcesWidth = _savedSourcesWidth;
+  double _notesWidth = _savedNotesWidth;
+  double _lastTotalWidth = 0;
   final _queryController = TextEditingController();
   final _titleController = TextEditingController();
   final _bodyController = TextEditingController();
@@ -67,6 +102,9 @@ class _NotebookScreenState extends State<NotebookScreen> {
   /// 노트 목록을 거르는 태그(null이면 전체).
   String? _tagFilter;
   String? _status;
+
+  /// '+메모 추가' 편집기의 자동 저장 초안(출처로 저장하거나 삭제하면 비운다). 노트북 화면이 열려 있는 동안 유지된다.
+  MemoDocument? _memoDraft;
   bool _busy = false;
   bool _loaded = false;
   void Function()? _stopDrops;
@@ -124,7 +162,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
       final known = _sources.map((s) => s.id).toSet();
       _sources = sources;
       _checked.removeWhere((id) => !sources.any((s) => s.id == id));
-      // 새로 들어온 출처는 근거 찾기 범위에 넣어 둔다.
+      // 새로 들어온 출처는 본문검색 범위에 넣어 둔다.
       _checked.addAll(sources.where((s) => !known.contains(s.id)).map((s) => s.id));
       _notes = notes;
       if (_tagFilter != null && !notes.any((n) => n.tags.contains(_tagFilter))) _tagFilter = null;
@@ -209,6 +247,37 @@ class _NotebookScreenState extends State<NotebookScreen> {
     await _addPaths([trimmed]);
   }
 
+  /// '+메모 추가': 메모 편집기를 열고, 저장하면 TEXT 형식 출처로 넣는다. 닫기만 하면 초안은 남는다.
+  Future<void> _addMemo() async {
+    final nb = _notebook;
+    if (nb == null) return;
+    final controller = MemoEditorController();
+    final initial = _memoDraft ?? const MemoDocument(title: '새 메모', markdown: '');
+    final saved = await Navigator.of(context).push<int>(
+      MaterialPageRoute(
+        builder: (context) => MemoEditorPage<int>(
+          initial: initial,
+          controller: controller,
+          onAutoSave: (doc) async {
+            if (mounted) setState(() => _memoDraft = doc);
+          },
+          onDelete: () {
+            setState(() => _memoDraft = null);
+            Navigator.of(context).pop();
+          },
+          onSave: (doc) =>
+              widget.api.addMemoSource(nb.id, title: doc.title.isEmpty ? '새 메모' : doc.title, markdown: doc.markdown),
+          saveLabel: '출처로 저장',
+          hint: "작성된 메모를 저장하면 TEXT 형식으로 '출처'에 추가됩니다.",
+          editorBackend: widget.api.memoEditorBackend,
+        ),
+      ),
+    );
+    if (!mounted || saved == null) return;
+    setState(() => _memoDraft = null);
+    await _run(_loadNotebookContent, done: '메모를 출처에 추가했습니다.');
+  }
+
   /// 여러 파일을 차례로 출처로 넣는다. 하나가 실패해도 나머지는 계속한다.
   Future<void> _addPaths(List<String> paths) async {
     final nb = _notebook;
@@ -273,6 +342,43 @@ class _NotebookScreenState extends State<NotebookScreen> {
       }
       await _loadNotebookContent();
     }, done: '출처를 뺐습니다(원본 파일은 그대로입니다).');
+  }
+
+  /// 출처가 나온 자료함 항목을 찾아 자료함 화면에서 보여 준다.
+  Future<void> _showInLibrary(NbSource source) async {
+    final nb = _notebook;
+    if (nb == null) return;
+    NbSourceItemLink? link;
+    await _run(() async => link = await widget.api.sourceItem(nb.id, source.id));
+    final found = link;
+    if (!mounted || found == null) return; // 실패 문구는 _run이 이미 보였다.
+    final boxId = found.boxId;
+    final itemId = found.itemId;
+    if (!found.found || boxId == null || itemId == null) {
+      setState(() => _status = found.reason.isEmpty ? '자료함 항목을 찾을 수 없습니다.' : found.reason);
+      return;
+    }
+    final open = widget.openLibraryItem ?? _defaultOpenLibraryItem;
+    await open(context, boxId, itemId);
+  }
+
+  Future<void> _defaultOpenLibraryItem(BuildContext context, String boxId, String itemId) async {
+    final library = widget.library;
+    if (library == null) {
+      setState(() => _status = '자료함을 열 수 없습니다.');
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => HostClosablePage(
+          title: '자료함',
+          backLabel: '노트북으로',
+          child: LibraryScreen(api: library, notebookApi: widget.api, initialBoxId: boxId, initialItemId: itemId),
+        ),
+      ),
+    );
+    // 자료함에서 이 노트북에 출처를 더 넣었을 수 있다.
+    if (mounted) await _run(_loadNotebookContent);
   }
 
   List<int>? get _scope => _checked.length == _sources.length ? null : _checked.toList();
@@ -452,6 +558,25 @@ class _NotebookScreenState extends State<NotebookScreen> {
     );
   }
 
+  /// 노트를 한/글 HWPX로 저장한다(저장 위치는 호스트 저장 대화상자). 출처 비교를 했으면 비교 표도 넣는다.
+  Future<void> _exportHwpx() async {
+    final nb = _notebook;
+    final id = _noteId;
+    if (nb == null || id == null) {
+      setState(() => _status = '먼저 노트를 저장하세요.');
+      return;
+    }
+    String? saved;
+    var finished = false;
+    await _run(() async {
+      saved = await widget.api.exportHwpx(nb.id, id, compareQuery: _compareQuery, compareSourceIds: _compareScope);
+      finished = true;
+    });
+    if (!mounted || !finished) return; // 실패 문구는 _run이 이미 보였다.
+    final path = saved;
+    setState(() => _status = path == null ? 'HWPX 내보내기를 취소했습니다.' : '한/글 문서로 저장했습니다: $path');
+  }
+
   String _sourceName(int id) => _sources.where((s) => s.id == id).map((s) => s.displayName).firstOrNull ?? '출처 $id';
 
   @override
@@ -523,14 +648,27 @@ class _NotebookScreenState extends State<NotebookScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         if (constraints.maxWidth >= kNotebookWideWidth) {
+          _lastTotalWidth = constraints.maxWidth;
+          final (sourcesWidth, notesWidth) = _effectiveWidths(constraints.maxWidth);
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(width: 260, child: _sourcesPane()),
-              const VerticalDivider(width: 1),
+              SizedBox(width: sourcesWidth, child: _sourcesPane()),
+              _PaneResizeHandle(
+                key: const ValueKey('nb-resize-sources'),
+                semanticLabel: '출처 칸 폭 조정',
+                onDelta: (d) => _resize(sources: d),
+                onReset: () => _resetWidths(sources: true),
+              ),
               Expanded(child: _middlePane()),
-              const VerticalDivider(width: 1),
-              SizedBox(width: 340, child: _notesPane()),
+              _PaneResizeHandle(
+                key: const ValueKey('nb-resize-notes'),
+                semanticLabel: '노트 칸 폭 조정',
+                // 구분선을 오른쪽으로 끌면 노트 칸이 좁아진다.
+                onDelta: (d) => _resize(notes: -d),
+                onReset: () => _resetWidths(notes: true),
+              ),
+              SizedBox(width: notesWidth, child: _notesPane()),
             ],
           );
         }
@@ -551,6 +689,44 @@ class _NotebookScreenState extends State<NotebookScreen> {
         );
       },
     );
+  }
+
+  /// 저장된 폭을 최소·최대와 가운데 칸 최소 폭 안으로 맞춘다.
+  (double, double) _effectiveWidths(double total) {
+    var sources = _sourcesWidth.clamp(kNotebookSourcesMin, kNotebookSourcesMax).toDouble();
+    var notes = _notesWidth.clamp(kNotebookNotesMin, kNotebookNotesMax).toDouble();
+    final room = total - kNotebookMiddleMin - kNotebookHandleWidth * 2;
+    if (sources + notes > room) {
+      var extra = sources + notes - room;
+      final cutNotes = (notes - kNotebookNotesMin).clamp(0.0, extra).toDouble();
+      notes -= cutNotes;
+      extra -= cutNotes;
+      sources = (sources - extra).clamp(kNotebookSourcesMin, kNotebookSourcesMax).toDouble();
+    }
+    return (sources, notes);
+  }
+
+  void _resize({double sources = 0, double notes = 0}) {
+    final total = _lastTotalWidth;
+    if (total <= 0) return;
+    setState(() {
+      final (currentSources, currentNotes) = _effectiveWidths(total);
+      var nextSources = (currentSources + sources).clamp(kNotebookSourcesMin, kNotebookSourcesMax).toDouble();
+      var nextNotes = (currentNotes + notes).clamp(kNotebookNotesMin, kNotebookNotesMax).toDouble();
+      final room = total - kNotebookMiddleMin - kNotebookHandleWidth * 2;
+      // 가운데 칸이 최소 폭보다 좁아지는 쪽으로는 더 넓힐 수 없다.
+      if (sources > 0 && nextSources + currentNotes > room) nextSources = (room - currentNotes).clamp(kNotebookSourcesMin, nextSources).toDouble();
+      if (notes > 0 && currentSources + nextNotes > room) nextNotes = (room - currentSources).clamp(kNotebookNotesMin, nextNotes).toDouble();
+      _sourcesWidth = _savedSourcesWidth = nextSources;
+      _notesWidth = _savedNotesWidth = nextNotes;
+    });
+  }
+
+  void _resetWidths({bool sources = false, bool notes = false}) {
+    setState(() {
+      if (sources) _sourcesWidth = _savedSourcesWidth = kNotebookSourcesWidth;
+      if (notes) _notesWidth = _savedNotesWidth = kNotebookNotesWidth;
+    });
   }
 
   Widget _paneHeader(String title, List<Widget> actions) => Padding(
@@ -584,17 +760,30 @@ class _NotebookScreenState extends State<NotebookScreen> {
               onPressed: _busy ? null : _importFromLibrary,
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
             ),
-          TextButton.icon(
-            key: const ValueKey('nb-source-add'),
-            onPressed: _busy ? null : _addSource,
-            icon: const Icon(Icons.add, size: 18),
-            label: const Text('출처 추가'),
-          ),
         ]),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Wrap(
+            children: [
+              TextButton.icon(
+                key: const ValueKey('nb-source-add'),
+                onPressed: _busy ? null : _addSource,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('출처 추가'),
+              ),
+              TextButton.icon(
+                key: const ValueKey('nb-memo-add'),
+                onPressed: _busy ? null : _addMemo,
+                icon: const Icon(Icons.add, size: 18),
+                label: Text(_memoDraft == null ? '메모 추가' : '메모 추가(작성 중)'),
+              ),
+            ],
+          ),
+        ),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 12),
           child: Text(
-            '체크한 출처에서만 근거를 찾습니다. 파일을 이 창에 끌어 놓아도 출처로 추가됩니다.',
+            '체크한 출처에서만 본문검색합니다. 파일을 이 창에 끌어 놓아도 출처로 추가됩니다.',
             style: TextStyle(fontSize: 12, color: Colors.black54),
           ),
         ),
@@ -611,11 +800,22 @@ class _NotebookScreenState extends State<NotebookScreen> {
                           value: _checked.contains(s.id),
                           onChanged: (v) => setState(() => v == true ? _checked.add(s.id) : _checked.remove(s.id)),
                         ),
+                        isThreeLine: true,
                         title: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Icon(_kindIcon(s.kind), size: 16),
                             const SizedBox(width: 4),
-                            Expanded(child: Text(s.displayName, overflow: TextOverflow.ellipsis)),
+                            Expanded(
+                              child: Tooltip(
+                                key: ValueKey('nb-source-name-${s.id}'),
+                                message: s.origin.isEmpty || s.origin == s.displayName
+                                    ? s.displayName
+                                    : '${s.displayName}\n${s.origin}',
+                                waitDuration: const Duration(milliseconds: 400),
+                                child: Text(s.displayName, maxLines: 2, overflow: TextOverflow.ellipsis),
+                              ),
+                            ),
                           ],
                         ),
                         subtitle: Text(
@@ -623,10 +823,22 @@ class _NotebookScreenState extends State<NotebookScreen> {
                           style: const TextStyle(fontSize: 12),
                         ),
                         onTap: () => _preview(s.id, null),
-                        trailing: IconButton(
-                          tooltip: '출처 빼기',
-                          icon: const Icon(Icons.close, size: 18),
-                          onPressed: _busy ? null : () => _removeSource(s),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (s.itemId != null && (widget.library != null || widget.openLibraryItem != null))
+                              IconButton(
+                                key: ValueKey('nb-source-in-library-${s.id}'),
+                                tooltip: '자료함에서 보기',
+                                icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                                onPressed: _busy ? null : () => _showInLibrary(s),
+                              ),
+                            IconButton(
+                              tooltip: '출처 빼기',
+                              icon: const Icon(Icons.close, size: 18),
+                              onPressed: _busy ? null : () => _removeSource(s),
+                            ),
+                          ],
                         ),
                       ),
                   ],
@@ -647,7 +859,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
             runSpacing: 4,
             children: [
               for (final (mode, key, label) in const [
-                (_Middle.search, 'nb-mid-search', '근거 찾기'),
+                (_Middle.search, 'nb-mid-search', '본문검색'),
                 (_Middle.compare, 'nb-mid-compare', '출처 비교'),
                 (_Middle.preview, 'nb-mid-preview', '미리보기'),
                 (_Middle.transform, 'nb-mid-transform', '변환'),
@@ -698,7 +910,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
               FilledButton(
                 key: const ValueKey('nb-search-run'),
                 onPressed: _busy ? null : _search,
-                child: const Text('근거 찾기'),
+                child: const Text('본문검색'),
               ),
             ],
           ),
@@ -722,7 +934,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
-                      _highlighted(hit.body, _queryController.text),
+                      _highlighted(hit.body, _queryController.text, key: ValueKey('nb-hit-body-$i')),
                       Wrap(
                         alignment: WrapAlignment.end,
                         spacing: 4,
@@ -844,7 +1056,11 @@ class _NotebookScreenState extends State<NotebookScreen> {
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   const SizedBox(height: 4),
-                                  _highlighted(group.hits[i].body, _compareQuery ?? ''),
+                                  _highlighted(
+                                    group.hits[i].body,
+                                    _compareQuery ?? '',
+                                    key: ValueKey('nb-compare-body-${group.sourceId}-$i'),
+                                  ),
                                   Align(
                                     alignment: Alignment.centerRight,
                                     child: IconButton(
@@ -868,10 +1084,10 @@ class _NotebookScreenState extends State<NotebookScreen> {
     );
   }
 
-  /// 검색어와 일치하는 부분을 굵게 보인다.
-  Widget _highlighted(String body, String query) {
+  /// 검색어와 일치하는 부분을 굵게 보인다. 글자 크기는 [kNbReadingFontSize](10pt) 고정.
+  Widget _highlighted(String body, String query, {Key? key}) {
     final terms = query.split(RegExp(r'\s+')).where((t) => t.length > 1).map(RegExp.escape).toList();
-    if (terms.isEmpty) return Text(body);
+    if (terms.isEmpty) return Text.rich(TextSpan(text: body, style: _readingStyle), key: key);
     final pattern = RegExp(terms.join('|'));
     final spans = <TextSpan>[];
     var start = 0;
@@ -886,7 +1102,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
       start = m.end;
     }
     if (start < body.length) spans.add(TextSpan(text: body.substring(start)));
-    return Text.rich(TextSpan(children: spans, style: DefaultTextStyle.of(context).style));
+    return Text.rich(TextSpan(children: spans, style: _readingStyle), key: key);
   }
 
   Widget _previewView() {
@@ -918,7 +1134,8 @@ class _NotebookScreenState extends State<NotebookScreen> {
                 Expanded(
                   child: SelectableText(
                     p.isTable ? p.body.replaceAll('\t', '  |  ') : p.body,
-                    style: p.level > 0 ? const TextStyle(fontWeight: FontWeight.w600) : null,
+                    key: ValueKey('nb-preview-text-${p.ordinal}'),
+                    style: p.level > 0 ? _readingStyle.copyWith(fontWeight: FontWeight.w600) : _readingStyle,
                   ),
                 ),
                 IconButton(
@@ -1032,7 +1249,12 @@ class _NotebookScreenState extends State<NotebookScreen> {
                     key: ValueKey('nb-note-${note.id}'),
                     dense: true,
                     selected: note.id == _noteId,
-                    title: Text(note.title, overflow: TextOverflow.ellipsis),
+                    isThreeLine: true,
+                    title: Tooltip(
+                      message: note.title,
+                      waitDuration: const Duration(milliseconds: 400),
+                      child: Text(note.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+                    ),
                     subtitle: Text(
                       [
                         '인용 ${note.citations.length}개',
@@ -1116,10 +1338,35 @@ class _NotebookScreenState extends State<NotebookScreen> {
                 runSpacing: 8,
                 alignment: WrapAlignment.end,
                 children: [
-                  OutlinedButton(
+                  PopupMenuButton<String>(
                     key: const ValueKey('nb-note-export'),
-                    onPressed: _busy || _noteId == null ? null : _exportNote,
-                    child: const Text('Markdown 내보내기'),
+                    enabled: !_busy && _noteId != null,
+                    tooltip: '내보내기 형식 고르기',
+                    onSelected: (format) => format == 'hwpx' ? _exportHwpx() : _exportNote(),
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        key: ValueKey('nb-export-md'),
+                        value: 'md',
+                        child: ListTile(dense: true, leading: Icon(Icons.description_outlined), title: Text('Markdown')),
+                      ),
+                      PopupMenuItem(
+                        key: ValueKey('nb-export-hwpx'),
+                        value: 'hwpx',
+                        child: ListTile(
+                          dense: true,
+                          leading: Icon(Icons.save_alt),
+                          title: Text('HWPX(한/글)'),
+                          subtitle: Text('저장 위치를 골라 한/글 문서로 저장'),
+                        ),
+                      ),
+                    ],
+                    child: IgnorePointer(
+                      child: OutlinedButton.icon(
+                        onPressed: _busy || _noteId == null ? null : () {},
+                        icon: const Icon(Icons.arrow_drop_down),
+                        label: const Text('내보내기'),
+                      ),
+                    ),
                   ),
                   FilledButton(
                     key: const ValueKey('nb-note-save'),
@@ -1309,6 +1556,85 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
           child: Text('가져오기 ${_picked.length}개'),
         ),
       ],
+    );
+  }
+}
+
+/// 두 칸 사이의 구분선. 끌거나 좌우 방향키로 폭을 바꾸고, 두 번 누르거나 Home 키로 기본 폭으로 되돌린다.
+class _PaneResizeHandle extends StatefulWidget {
+  const _PaneResizeHandle({super.key, required this.semanticLabel, required this.onDelta, required this.onReset});
+
+  final String semanticLabel;
+  final ValueChanged<double> onDelta;
+  final VoidCallback onReset;
+
+  @override
+  State<_PaneResizeHandle> createState() => _PaneResizeHandleState();
+}
+
+class _PaneResizeHandleState extends State<_PaneResizeHandle> {
+  final _node = FocusNode(debugLabel: 'nb-pane-resize');
+  bool _hover = false;
+  bool _focus = false;
+
+  @override
+  void dispose() {
+    _node.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      widget.onDelta(-16);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      widget.onDelta(16);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.home) {
+      widget.onReset();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final active = _hover || _focus;
+    return Semantics(
+      label: widget.semanticLabel,
+      hint: '끌거나 좌우 방향키로 폭을 바꾸고, 두 번 누르면 기본 폭으로 돌아갑니다',
+      child: Focus(
+        focusNode: _node,
+        onFocusChange: (value) => setState(() => _focus = value),
+        onKeyEvent: _onKey,
+        child: MouseRegion(
+          cursor: SystemMouseCursors.resizeColumn,
+          onEnter: (_) => setState(() => _hover = true),
+          onExit: (_) => setState(() => _hover = false),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: (_) => _node.requestFocus(),
+            // 누른 지점부터 움직인 거리를 모두 반영(끌기 시작 여유 20px만큼 손잡이가 늦게 따라오지 않게).
+            dragStartBehavior: DragStartBehavior.down,
+            onHorizontalDragUpdate: (details) => widget.onDelta(details.delta.dx),
+            onDoubleTap: widget.onReset,
+            child: SizedBox(
+              width: kNotebookHandleWidth,
+              child: Center(
+                child: Container(
+                  width: active ? 3 : 1,
+                  color: active ? theme.colorScheme.primary : theme.dividerColor,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

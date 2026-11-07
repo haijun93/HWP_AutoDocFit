@@ -2,6 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/close_guards.dart';
+import '../external_apps/external_app_launcher.dart';
+
 /// 탭 번호. 파일이름 뒤에 타임머신을 두고 파일변환을 맨 끝에 둔다.
 const kTabFileRename = 6;
 const kTabTimemachine = 7;
@@ -12,6 +15,11 @@ const kTabCount = 9;
 const kSidebarCollapsedWidth = 56.0;
 const kSidebarExpandedWidth = 200.0;
 const kSidebarAutoExpandWidth = 900.0;
+
+/// 개발자 모드의 자료함·노트북. 다른 메뉴처럼 오른쪽 실행창 안에 연다(사용자 요청 2026-11-07:
+/// 열어도 사이드메뉴가 사라지지 않게). 열려 있는 동안에만 화면을 만들어 끌어 놓기 감시가
+/// 화면을 열 때 시작하고 다른 메뉴로 옮기면 멈춘다.
+enum WorkspaceExtraPage { library, notebook }
 
 const kFileRenameMenuEnabled = true;
 const kDefaultHiddenTabs = kFileRenameMenuEnabled ? <int>{} : <int>{kTabFileRename};
@@ -51,6 +59,9 @@ void closeWorkspaceScreen(BuildContext context) {
 
 /// Root workspace contract. Owners inject adapters in this fixed order.
 /// Keep the shell mounted (and keys stable) for the lifetime of the workspace.
+/// 외부 프로그램 메뉴를 눌렀을 때 호출(사이드메뉴 위치의 context, 누른 프로그램).
+typedef ExternalAppOpener = void Function(BuildContext context, ExternalAppSpec app);
+
 class TabNavigationShell extends StatefulWidget {
   const TabNavigationShell({
     super.key,
@@ -73,6 +84,7 @@ class TabNavigationShell extends StatefulWidget {
     this.developerMode = false,
     this.libraryScreen,
     this.notebookScreen,
+    this.onOpenExternalApp,
     this.onSidebarSideSwitch,
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
@@ -99,6 +111,8 @@ class TabNavigationShell extends StatefulWidget {
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
+  /// 개발자 모드 전용 외부 프로그램(사진첩·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
+  final ExternalAppOpener? onOpenExternalApp;
   final VoidCallback? onSidebarSideSwitch;
   /// 항상 위 켜기/끄기를 앱(창)에 요청한다.
   final Future<void> Function(bool enabled)? onAlwaysOnTopChanged;
@@ -130,18 +144,43 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   int _hoverRequest = 0;
   int _sidebarStage = 0;
 
+  /// 오른쪽 실행창에 연 자료함·노트북(null이면 [_index] 탭).
+  WorkspaceExtraPage? _extra;
+
+  /// 마우스 올림(초점 이동 포함) 자동 호출. 개발자 모드에서만 쓴다(사용자 요청 2026-11-07:
+  /// 기본은 클릭해야 실행화면을 부른다).
   void _previewTab(int index) {
     final request = ++_hoverRequest;
     Future<void>.delayed(const Duration(milliseconds: 150), () {
-      if (!mounted || request != _hoverRequest || index == _index ||
-          widget.hiddenTabs.contains(index)) {
+      if (!mounted || !widget.developerMode || request != _hoverRequest ||
+          (index == _index && _extra == null) || widget.hiddenTabs.contains(index)) {
         return;
       }
       _select(index);
     });
   }
 
+  void _previewExtra(WorkspaceExtraPage page) {
+    final request = ++_hoverRequest;
+    Future<void>.delayed(const Duration(milliseconds: 150), () {
+      if (!mounted || !widget.developerMode || request != _hoverRequest || _extra == page) return;
+      _openExtra(page);
+    });
+  }
+
   void _cancelPreview() { _hoverRequest++; }
+
+  void _openExtra(WorkspaceExtraPage page) {
+    if (!widget.developerMode || _extra == page) return;
+    setState(() => _extra = page);
+  }
+
+  @override
+  void didUpdateWidget(covariant TabNavigationShell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 개발자 모드를 끄면 자료함·노트북 메뉴가 사라지므로 화면도 닫는다.
+    if (!widget.developerMode && _extra != null) _extra = null;
+  }
 
   @override
   void dispose() {
@@ -177,11 +216,14 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
 
   void _select(int index) {
     if (widget.hiddenTabs.contains(index)) return;
-    if (index == _index) {
+    if (index == _index && _extra == null) {
       widget.onTabChanged?.call(index);
       return;
     }
-    setState(() => _index = index);
+    setState(() {
+      _index = index;
+      _extra = null;
+    });
     widget.onTabChanged?.call(index);
   }
 
@@ -212,7 +254,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     if (index != null && mounted) _select(index);
   }
 
-  /// 햄버거 단추 순환(사용자 지시 2026-11-07):
+  /// 햄버거 단추 순환(사용자 지시 2026-11-07): 일반 모드는 펼치기 ↔ 닫기만 되풀이하고,
+  /// 개발자 모드에서만 3번째로 작업 화면까지 닫는다(사이드메뉴 모드).
+  /// 개발자 모드 순서:
   /// 펼치기 → 닫기(아이콘만) → 닫은 채로 오른쪽 작업 화면까지 닫기 → 다시 펼치기.
   /// 다음 단계는 지금 화면 상태로 정하므로 처음 상태와 관계없이 순서가 맞다.
   Future<void> _toggleSidebar() async {
@@ -227,10 +271,16 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       // (2) 닫기
       setState(() { _expanded = false; _sidebarStage = 1; });
       widget.onSidebarExpandedChanged?.call(false);
-    } else if (_sidebarStage == 1) {
+    } else if (_sidebarStage == 1 && widget.developerMode) {
       // (3) 단추로 닫은 다음 번에는 작업 화면까지 닫는다.
       await _setSidebarOnly(true);
-      if (!mounted || !_sidebarOnly) return;
+      if (!mounted) return;
+      if (!_sidebarOnly) {
+        // 사이드메뉴 모드를 쓸 수 없으면(개발자 모드 꺼짐 등) 멈추지 않고 다시 펼친다.
+        setState(() { _expanded = true; _sidebarStage = 0; });
+        widget.onSidebarExpandedChanged?.call(true);
+        return;
+      }
       setState(() { _expanded = false; _sidebarStage = 2; });
     } else {
       // (1) 처음부터 닫혀 있던 메뉴는 먼저 펼친다.
@@ -272,7 +322,23 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       widget.fileConversion,
     ];
     _built = true;
-    final expanded = _expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth;
+    // 사이드메뉴 모드에서는 창 폭이 아이콘 줄(kSidebarCollapsedWidth)에 맞춰지므로 항상 아이콘만 보인다
+    // (펼친 상태에서 '사이드메뉴 모드' 단추로 켜도 글자 라벨이 잘리지 않게, 사용자 요청 2026-11-07).
+    final expanded = !_sidebarOnly &&
+        (_expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth);
+    final extraChild = switch (_extra) {
+      WorkspaceExtraPage.library => widget.libraryScreen,
+      WorkspaceExtraPage.notebook => widget.notebookScreen,
+      null => null,
+    };
+    final Widget? extraPage = extraChild == null
+        ? null
+        : HostClosablePage(
+            key: ValueKey('workspace-extra-${_extra!.name}'),
+            title: _extra == WorkspaceExtraPage.library ? '자료함' : '노트북',
+            onBack: _goHome,
+            child: extraChild,
+          );
     return Scaffold(
       body: WorkspaceTabScope(
         goHome: _goHome,
@@ -300,7 +366,8 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
               autofocus: true,
               child: Row(
                 children: [
-                  WorkspaceTabBar(
+                  // 사이드메뉴 모드에서는 아이콘 줄이 창 폭을 채운다(Windows 창 최소 폭 때문에 남던 빈 칸 제거, 2026-11-07).
+                  if (_sidebarOnly) Expanded(child: WorkspaceTabBar(
                     labels: _labels,
                     icons: _icons,
                     selectedIndex: _index,
@@ -310,6 +377,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     trailing: widget.trailing,
                     libraryScreen: widget.libraryScreen,
                     notebookScreen: widget.notebookScreen,
+                    onOpenExternalApp: widget.onOpenExternalApp,
                     expanded: expanded,
                     onToggleExpanded: _toggleSidebar,
                     showToggle: true,
@@ -317,20 +385,62 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
-                    onPreview: _previewTab,
-                    onPreviewCancel: _cancelPreview,
+                    selectedExtra: _extra,
+                    onOpenExtra: _openExtra,
+                    // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
+                    onPreview: widget.developerMode ? _previewTab : null,
+                    onPreviewExtra: widget.developerMode ? _previewExtra : null,
+                    onPreviewCancel: widget.developerMode ? _cancelPreview : null,
+                    onAlwaysOnTop: _toggleAlwaysOnTop,
+                  )) else WorkspaceTabBar(
+                    labels: _labels,
+                    icons: _icons,
+                    selectedIndex: _index,
+                    onSelected: _select,
+                    hiddenTabs: widget.hiddenTabs,
+                    scrollController: _tabScrollController,
+                    trailing: widget.trailing,
+                    libraryScreen: widget.libraryScreen,
+                    notebookScreen: widget.notebookScreen,
+                    onOpenExternalApp: widget.onOpenExternalApp,
+                    expanded: expanded,
+                    onToggleExpanded: _toggleSidebar,
+                    showToggle: true,
+                    developerMode: widget.developerMode,
+                    onSidebarModeChanged: _setSidebarOnly,
+                    onSidebarSideSwitch: widget.onSidebarSideSwitch,
+                    sidebarOnly: _sidebarOnly,
+                    selectedExtra: _extra,
+                    onOpenExtra: _openExtra,
+                    // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
+                    onPreview: widget.developerMode ? _previewTab : null,
+                    onPreviewExtra: widget.developerMode ? _previewExtra : null,
+                    onPreviewCancel: widget.developerMode ? _cancelPreview : null,
                     onAlwaysOnTop: _toggleAlwaysOnTop,
                   ),
                   if (!_sidebarOnly) Expanded(
-                    child: IndexedStack(
-                      index: _index,
+                    child: Stack(
+                      fit: StackFit.expand,
                       children: [
-                        for (var i = 0; i < pages.length; i++)
-                          TickerMode(
-                            key: ValueKey('workspace-tab-$i'),
-                            enabled: i == _index,
-                            child: widget.hiddenTabs.contains(i) ? const SizedBox.shrink() : pages[i],
+                        // 자료함·노트북을 열어도 탭 화면(편집 중인 내용)은 그대로 둔다.
+                        Offstage(
+                          offstage: extraPage != null,
+                          child: TickerMode(
+                            enabled: extraPage == null,
+                            child: IndexedStack(
+                              index: _index,
+                              children: [
+                                for (var i = 0; i < pages.length; i++)
+                                  TickerMode(
+                                    key: ValueKey('workspace-tab-$i'),
+                                    enabled: i == _index,
+                                    child: widget.hiddenTabs.contains(i) ? const SizedBox.shrink() : pages[i],
+                                  ),
+                              ],
+                            ),
                           ),
+                        ),
+                        ?extraPage,
                       ],
                     ),
                   ),
@@ -371,9 +481,13 @@ class WorkspaceTabBar extends StatelessWidget {
     this.onAlwaysOnTop,
     this.libraryScreen,
     this.notebookScreen,
+    this.onOpenExternalApp,
     this.onPreview,
     this.onPreviewCancel,
     this.showToggle = true,
+    this.selectedExtra,
+    this.onOpenExtra,
+    this.onPreviewExtra,
   });
 
   final Set<int> hiddenTabs;
@@ -397,9 +511,29 @@ class WorkspaceTabBar extends StatelessWidget {
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
+  /// 개발자 모드 전용 외부 프로그램 실행(별도 프로그램). 선택 표시는 하지 않는다.
+  final ExternalAppOpener? onOpenExternalApp;
   final ValueChanged<int>? onPreview;
   final VoidCallback? onPreviewCancel;
   final bool showToggle;
+
+  /// 오른쪽 실행창에 열린 자료함·노트북. 있으면 그 항목만 선택 표시한다.
+  final WorkspaceExtraPage? selectedExtra;
+
+  /// 자료함·노트북을 실행창 안에 연다. 없으면(메뉴만 따로 쓸 때) 예전처럼 새 화면으로 띄운다.
+  final ValueChanged<WorkspaceExtraPage>? onOpenExtra;
+  final ValueChanged<WorkspaceExtraPage>? onPreviewExtra;
+
+  void _openExtra(BuildContext context, WorkspaceExtraPage page, String title, Widget child) {
+    final open = onOpenExtra;
+    if (open != null) {
+      open(page);
+      return;
+    }
+    Navigator.of(context).push(MaterialPageRoute<void>(
+      builder: (_) => HostClosablePage(title: title, child: child),
+    ));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -407,22 +541,29 @@ class WorkspaceTabBar extends StatelessWidget {
     return Material(
       color: Colors.white,
       child: Container(
-        width: expanded ? kSidebarExpandedWidth : kSidebarCollapsedWidth,
-        decoration: const BoxDecoration(
-          border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
-        ),
+        width: sidebarOnly ? double.infinity : (expanded ? kSidebarExpandedWidth : kSidebarCollapsedWidth),
+        decoration: sidebarOnly
+            ? null
+            : const BoxDecoration(
+                border: Border(right: BorderSide(color: Color(0xFFE2E8F0))),
+              ),
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
           children: [
             if (showToggle) SizedBox(
               height: 48,
+              // 햄버거 아이콘을 메뉴 아이콘과 같은 세로줄에 맞춘다(사용자 요청 2026-11-07):
+              // 접힘·사이드메뉴 모드는 가운데, 펼침은 메뉴 아이콘 중심(목록 여백 6 + 항목 여백 12 + 아이콘 반폭 10 = 28)에 맞춤.
               child: Align(
-                alignment: Alignment.centerLeft,
-                child: IconButton(
+                alignment: expanded ? Alignment.centerLeft : Alignment.center,
+                child: Padding(
+                  padding: EdgeInsets.only(left: expanded ? 4 : 0),
+                  child: IconButton(
                   key: const ValueKey('workspaceSidebarToggle'),
                   tooltip: expanded ? '메뉴 접기' : '메뉴 펼치기',
                   onPressed: onToggleExpanded,
                   icon: const Icon(Icons.menu),
+                  ),
                 ),
               ),
             ),
@@ -437,7 +578,7 @@ class WorkspaceTabBar extends StatelessWidget {
                         key: Key('workspaceTab-$i'),
                         label: labels[i],
                         icon: icons[i],
-                        selected: i == selectedIndex,
+                        selected: selectedExtra == null && i == selectedIndex,
                         color: color,
                         expanded: expanded,
                         onPreview: onPreview == null ? null : () => onPreview!(i),
@@ -449,25 +590,38 @@ class WorkspaceTabBar extends StatelessWidget {
                       key: const ValueKey('library-open'),
                       label: '자료함',
                       icon: Icons.dashboard_customize_outlined,
-                      selected: false,
+                      selected: selectedExtra == WorkspaceExtraPage.library,
                       color: color,
                       expanded: expanded,
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => libraryScreen!,
-                      )),
+                      onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.library),
+                      onPreviewCancel: onPreviewCancel,
+                      onTap: () => _openExtra(context, WorkspaceExtraPage.library, '자료함', libraryScreen!),
                     ),
                   if (developerMode && notebookScreen != null)
                     _TabPill(
                       key: const ValueKey('notebook-open'),
                       label: '노트북',
                       icon: Icons.menu_book_outlined,
-                      selected: false,
+                      selected: selectedExtra == WorkspaceExtraPage.notebook,
                       color: color,
                       expanded: expanded,
-                      onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
-                        builder: (_) => notebookScreen!,
-                      )),
+                      onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.notebook),
+                      onPreviewCancel: onPreviewCancel,
+                      onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '노트북', notebookScreen!),
                     ),
+                  // 외부 프로그램(사진첩·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
+                  // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
+                  if (developerMode && onOpenExternalApp != null)
+                    for (final app in kExternalApps)
+                      _TabPill(
+                        key: app.menuKey,
+                        label: app.label,
+                        icon: app.icon,
+                        selected: false,
+                        color: color,
+                        expanded: expanded,
+                        onTap: () => onOpenExternalApp!(context, app),
+                      ),
                 ],
               ),
             ),
@@ -634,4 +788,107 @@ class _TabPill extends StatelessWidget {
       child: expanded ? item : Tooltip(message: label, child: item),
     );
   }
+}
+
+/// 자료함·노트북처럼 위에 띄운 화면. 저장할 편집이 없으므로 앱을 닫을 때
+/// 스스로 닫혀 종료를 막지 않는다(사용자 보고 2026-11-07: X를 눌러도 안 닫힘).
+class HostClosablePage extends StatefulWidget {
+  const HostClosablePage({
+    super.key,
+    required this.title,
+    required this.child,
+    this.backLabel = '처음 화면으로',
+    this.onBack,
+  });
+  final String title;
+  final Widget child;
+
+  /// 왼쪽 위 돌아가기 단추 글(다른 화면에서 열었으면 그 화면 이름).
+  final String backLabel;
+
+  /// 실행창 안에 넣어 쓸 때 돌아가기(단추·Esc) 동작. 있으면 새 경로가 아니므로
+  /// 종료 대기열(CloseGuards)에 등록하지 않는다(앱을 닫으면 셸과 함께 닫힌다).
+  final VoidCallback? onBack;
+
+  @override
+  State<HostClosablePage> createState() => _HostClosablePageState();
+}
+
+class _HostClosablePageState extends State<HostClosablePage> {
+  CloseLease? _lease;
+
+  void _back() {
+    final onBack = widget.onBack;
+    if (onBack != null) {
+      onBack();
+    } else {
+      Navigator.of(context).maybePop();
+    }
+  }
+
+  Future<bool> _prepareHostClose() async {
+    if (!mounted) return true;
+    final navigator = Navigator.of(context);
+    final route = ModalRoute.of(context);
+    if (route != null) navigator.removeRoute(route);
+    return true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.onBack == null) {
+      _lease = CloseGuards.register(_prepareHostClose);
+    } else {
+      // 실행창 안에서는 셸이 이미 초점을 잡고 있어 autofocus가 듣지 않는다. Esc가 듣도록 직접 가져온다.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_focus.hasFocus) _focus.requestFocus();
+      });
+    }
+  }
+
+  final FocusNode _focus = FocusNode(debugLabel: 'HostClosablePage');
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    _lease?.release();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): _back,
+        },
+        child: Focus(
+          focusNode: _focus,
+          autofocus: true,
+          child: Column(
+            children: [
+              Material(
+                color: Theme.of(context).colorScheme.surface,
+                child: SizedBox(
+                  height: 44,
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 4),
+                      TextButton.icon(
+                        key: const ValueKey('host-page-back'),
+                        onPressed: _back,
+                        icon: const Icon(Icons.arrow_back),
+                        label: Text(widget.backLabel),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              Expanded(child: widget.child),
+            ],
+          ),
+        ),
+      );
 }

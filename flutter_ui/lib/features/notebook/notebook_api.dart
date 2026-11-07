@@ -1,6 +1,10 @@
 /// 노트북(개발자 모드) 화면용 API. klib의 nb_* 명령을 Python 'notebook' 브리지로 부른다.
 library;
 
+import '../editor/markdown_format.dart' show markdownToPlainParagraphs;
+import '../editor/klib_editor_core.dart' show EditorBackend;
+import '../library/library_api.dart';
+
 class Notebook {
   const Notebook({required this.id, required this.name});
   final int id;
@@ -15,6 +19,7 @@ class NbSource {
     required this.status,
     required this.paragraphCount,
     this.origin = '',
+    this.itemId,
   });
   final int id;
   final String displayName;
@@ -22,6 +27,26 @@ class NbSource {
   final String status;
   final int paragraphCount;
   final String origin;
+
+  /// 자료함 항목에서 온 출처면 그 항목 id(klib nb_source.item_id). 아니면 null.
+  final String? itemId;
+}
+
+/// 자료함 항목을 출처로 넣은 결과. [reused]면 이미 출처에 있어 새로 만들지 않았다.
+class NbItemSourceResult {
+  const NbItemSourceResult({required this.sourceId, required this.reused});
+  final int sourceId;
+  final bool reused;
+}
+
+/// 출처의 원본 자료함 항목(klib nb_source_item). [found]가 false면 [reason]에 까닭이 있다.
+class NbSourceItemLink {
+  const NbSourceItemLink({required this.found, this.boxId, this.itemId, this.displayName = '', this.reason = ''});
+  final bool found;
+  final String? boxId;
+  final String? itemId;
+  final String displayName;
+  final String reason;
 }
 
 class NbParagraph {
@@ -46,7 +71,7 @@ class NbParagraph {
   bool get isTable => kind == 'table';
 }
 
-/// 근거 찾기 결과 문단.
+/// 본문검색 결과 문단.
 class NbHit {
   const NbHit({
     required this.sourceId,
@@ -139,6 +164,16 @@ abstract class NotebookApi {
   /// 파일 경로만 klib에 넘긴다(추출은 엔진/추출 서비스가 맡음).
   Future<int> addSource(int notebookId, String path);
   Future<void> removeSource(int notebookId, int sourceId);
+
+  /// '+메모 추가'로 쓴 메모를 TEXT(.txt) 출처로 넣는다. [markdown]은 서식 원문이고,
+  /// 색인에는 서식 기호를 뺀 평문 문단이 들어간다(호스트 nb_memo_add). 새 출처 id를 돌려준다.
+  Future<int> addMemoSource(int notebookId, {required String title, required String markdown});
+
+  /// 자료함 항목을 출처로 넣는다(klib nb_source_from_item). 이미 출처면 그 출처를 돌려주고 reused=true.
+  Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId);
+
+  /// 출처가 나온 자료함 항목을 찾는다(klib nb_source_item).
+  Future<NbSourceItemLink> sourceItem(int notebookId, int sourceId);
   Future<List<NbParagraph>> paragraphs(int notebookId, int sourceId);
   Future<List<NbHit>> search(int notebookId, String query, {List<int>? sourceIds, int limit = 20});
 
@@ -152,11 +187,18 @@ abstract class NotebookApi {
   /// [compareQuery]가 있으면 그 검색어의 출처 비교 절([compareSourceIds] 범위)을 뒤에 붙인다.
   Future<String> exportMarkdown(int notebookId, int noteId, {String? compareQuery, List<int>? compareSourceIds});
 
+  /// 노트를 한/글 HWPX 문서로 저장한다. 저장 위치는 호스트의 저장 대화상자에서 고르며,
+  /// 사용자가 취소하면 null, 저장하면 저장한 경로를 돌려준다(제목·태그·본문·인용·출처 비교 표).
+  Future<String?> exportHwpx(int notebookId, int noteId, {String? compareQuery, List<int>? compareSourceIds});
+
   /// 창에 끌어 놓은 파일을 노트북 출처로 받기 켜기·끄기(노트북 화면이 열려 있는 동안 켠다).
   Future<void> watchDrops(bool active);
 
   /// 창에 끌어 놓아 맡겨 둔 파일 경로를 가져간다(가져가면 비워진다).
   Future<List<String>> takeDroppedPaths();
+
+  /// '+메모 추가' 편집기가 쓸 Rust 편집 코어(klib edit_*) 통로. 없으면 null(편집기는 Dart 임시 코어를 쓴다).
+  EditorBackend? get memoEditorBackend;
 }
 
 typedef NotebookBridgeCall = Future<Object?> Function(String method, List<Object?> args);
@@ -210,12 +252,39 @@ class BridgeNotebookApi implements NotebookApi {
         status: _str(r['status']),
         paragraphCount: _int(r['paragraph_count']),
         origin: _str(r['origin']),
+        itemId: r['item_id'] == null ? null : _str(r['item_id']),
       ),
   ];
 
   @override
+  Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId) async {
+    final id = int.tryParse(itemId.trim());
+    if (id == null) throw StateError('잘못된 자료함 항목 id입니다: $itemId');
+    final r = await _request('nb_source_from_item', {'notebook_id': notebookId, 'item_id': id});
+    return NbItemSourceResult(sourceId: _int(r['id']), reused: r['reused'] == true);
+  }
+
+  @override
+  Future<NbSourceItemLink> sourceItem(int notebookId, int sourceId) async {
+    final r = await _request('nb_source_item', {'notebook_id': notebookId, 'source_id': sourceId});
+    final found = r['found'] == true;
+    return NbSourceItemLink(
+      found: found,
+      boxId: r['box_id'] == null ? null : _str(r['box_id']),
+      itemId: r['item_id'] == null ? null : _str(r['item_id']),
+      displayName: _str(r['display_name']),
+      reason: found ? '' : (r['reason'] == null ? '자료함 항목을 찾을 수 없습니다.' : _str(r['reason'])),
+    );
+  }
+
+  @override
   Future<int> addSource(int notebookId, String path) async =>
       _int((await _request('nb_source_add', {'notebook_id': notebookId, 'source_path': path}))['id']);
+
+  @override
+  Future<int> addMemoSource(int notebookId, {required String title, required String markdown}) async => _int(
+    (await _request('nb_memo_add', {'notebook_id': notebookId, 'title': title, 'markdown': markdown}))['id'],
+  );
 
   @override
   Future<void> removeSource(int notebookId, int sourceId) =>
@@ -333,19 +402,49 @@ class BridgeNotebookApi implements NotebookApi {
       );
 
   @override
+  Future<String?> exportHwpx(int notebookId, int noteId, {String? compareQuery, List<int>? compareSourceIds}) async {
+    final selection = await _request('nb_select_output');
+    if (selection['cancelled'] == true) return null;
+    final selectionId = selection['selection_id'];
+    if (selectionId is! String || selectionId.isEmpty) throw StateError('저장 위치를 확인해 주세요.');
+    final saved = await _request('nb_export_hwpx', {
+      'notebook_id': notebookId,
+      'note_id': noteId,
+      'output_selection_id': selectionId,
+      if (compareQuery != null && compareQuery.trim().isNotEmpty) ...{
+        'compare_query': compareQuery.trim(),
+        'compare_source_ids': ?compareSourceIds,
+      },
+    });
+    return _str(saved['path']);
+  }
+
+  @override
   Future<void> watchDrops(bool active) => _request('nb_drop_watch', {'active': active});
 
   @override
   Future<List<String>> takeDroppedPaths() async => [
     for (final p in (await _request('nb_take_drop'))['paths'] as List? ?? const []) '$p',
   ];
+
+  @override
+  EditorBackend get memoEditorBackend => (request) async {
+    // 노트북 브리지가 edit_* 명령을 klib에 그대로 넘긴다(Python desktop_web_ui.notebook). 실패도 ok:false 응답으로 온다.
+    final result = await _call('notebook', [request]);
+    if (result is! Map) return const {'ok': false, 'message': '편집기 브리지 응답 형식이 잘못되었습니다.'};
+    return Map<String, Object?>.from(result);
+  };
 }
 
 /// 시험·미리보기용 메모리 구현. 파일 내용은 [fileContents]에서 읽고, 없으면 파일 이름을 한 문단으로 쓴다.
 class InMemoryNotebookApi implements NotebookApi {
-  InMemoryNotebookApi({Map<String, String>? fileContents}) : _files = fileContents ?? const {};
+  InMemoryNotebookApi({Map<String, String>? fileContents, this.library}) : _files = fileContents ?? const {};
 
   final Map<String, String> _files;
+
+  /// 자료함 항목 연결(addSourceFromItem·sourceItem)에 쓰는 자료함. 없으면 그 두 기능은 오류를 낸다.
+  final LibraryApi? library;
+  final _sourceItems = <int, String>{};
   final _notebooks = <Notebook>[];
   final _sources = <int, List<NbSource>>{};
   final _paragraphs = <int, List<NbParagraph>>{};
@@ -388,10 +487,81 @@ class InMemoryNotebookApi implements NotebookApi {
     return id;
   }
 
+  /// 메모 출처의 Markdown 원문(시험 확인용): 출처 id → 원문.
+  final memoMarkdown = <int, String>{};
+
+  @override
+  Future<int> addMemoSource(int notebookId, {required String title, required String markdown}) async {
+    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('노트북을 찾을 수 없습니다.');
+    final plain = markdownToPlainParagraphs(markdown);
+    if (plain.isEmpty) throw StateError('메모에 내용이 없습니다.');
+    final id = _next++;
+    final name = title.trim().isEmpty ? '새 메모' : title.trim();
+    _paragraphs[id] = [
+      for (var i = 0; i < plain.length; i++)
+        NbParagraph(sourceId: id, ordinal: i, body: plain[i].text, level: plain[i].level),
+    ];
+    memoMarkdown[id] = markdown;
+    (_sources[notebookId] ??= []).add(
+      NbSource(id: id, displayName: name, kind: 'txt', status: 'ready', paragraphCount: plain.length, origin: 'memo://$id.txt'),
+    );
+    return id;
+  }
+
   @override
   Future<void> removeSource(int notebookId, int sourceId) async {
     _sources[notebookId]?.removeWhere((s) => s.id == sourceId);
     _paragraphs.remove(sourceId);
+    _sourceItems.remove(sourceId);
+  }
+
+  Future<LibraryItem?> _libraryItem(String itemId) async {
+    final lib = library;
+    if (lib == null) throw StateError('자료함이 연결되지 않았습니다.');
+    for (final box in await lib.listBoxes()) {
+      final item = (await lib.listItems(box.id)).where((i) => i.id == itemId).firstOrNull;
+      if (item != null) return item;
+    }
+    return null;
+  }
+
+  @override
+  Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId) async {
+    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('노트북을 찾을 수 없습니다.');
+    final item = await _libraryItem(itemId);
+    if (item == null) throw StateError('해당 자료 항목을 찾을 수 없습니다.');
+    for (final s in _sources[notebookId] ?? const <NbSource>[]) {
+      if (_sourceItems[s.id] == itemId) return NbItemSourceResult(sourceId: s.id, reused: true);
+    }
+    final path = item.source?.trim() ?? '';
+    if (path.isEmpty) throw StateError('이 자료 항목에는 파일 경로가 없어 출처로 추가할 수 없습니다.');
+    final id = await addSource(notebookId, path);
+    _sourceItems[id] = itemId;
+    final list = _sources[notebookId]!;
+    final index = list.indexWhere((s) => s.id == id);
+    final s = list[index];
+    list[index] = NbSource(
+      id: s.id,
+      displayName: item.title.isEmpty ? s.displayName : item.title,
+      kind: s.kind,
+      status: s.status,
+      paragraphCount: s.paragraphCount,
+      origin: s.origin,
+      itemId: itemId,
+    );
+    return NbItemSourceResult(sourceId: id, reused: false);
+  }
+
+  @override
+  Future<NbSourceItemLink> sourceItem(int notebookId, int sourceId) async {
+    if (!(_sources[notebookId] ?? const <NbSource>[]).any((s) => s.id == sourceId)) {
+      throw StateError('출처를 찾을 수 없습니다.');
+    }
+    final itemId = _sourceItems[sourceId];
+    if (itemId == null) return const NbSourceItemLink(found: false, reason: '자료함 항목과 연결되지 않은 출처입니다.');
+    final item = await _libraryItem(itemId);
+    if (item == null) return NbSourceItemLink(found: false, itemId: itemId, reason: '자료함 항목이 삭제되었습니다.');
+    return NbSourceItemLink(found: true, boxId: item.boxId, itemId: item.id, displayName: item.title);
   }
 
   @override
@@ -503,6 +673,27 @@ class InMemoryNotebookApi implements NotebookApi {
     return buffer.toString();
   }
 
+  /// HWPX 내보내기 기록(시험 확인용): (노트북, 노트, 비교 검색어).
+  final hwpxExports = <(int, int, String?)>[];
+
+  /// 다음 HWPX 내보내기에서 저장 대화상자를 취소한 것처럼 한다(시험용).
+  bool cancelNextHwpxExport = false;
+
+  @override
+  Future<String?> exportHwpx(int notebookId, int noteId, {String? compareQuery, List<int>? compareSourceIds}) async {
+    if (cancelNextHwpxExport) {
+      cancelNextHwpxExport = false;
+      return null;
+    }
+    final note = (_notes[notebookId] ?? const <NbNote>[]).firstWhere(
+      (n) => n.id == noteId,
+      orElse: () => throw StateError('노트를 찾을 수 없습니다.'),
+    );
+    final query = compareQuery?.trim() ?? '';
+    hwpxExports.add((notebookId, noteId, query.isEmpty ? null : query));
+    return 'memory://${note.title}.hwpx';
+  }
+
   @override
   Future<void> watchDrops(bool active) async => watchingDrops = active;
 
@@ -512,4 +703,10 @@ class InMemoryNotebookApi implements NotebookApi {
     _dropped.clear();
     return paths;
   }
+
+  /// 시험에서 Rust 편집 코어 대신 쓸 통로. 기본은 없음(Dart 임시 코어).
+  EditorBackend? editorBackend;
+
+  @override
+  EditorBackend? get memoEditorBackend => editorBackend;
 }

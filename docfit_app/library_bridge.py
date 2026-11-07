@@ -20,6 +20,8 @@ ALLOWED_COMMANDS = frozenset({
 
     "item_add", "item_get", "item_update", "item_rename", "item_move", "item_delete", "item_search",
 
+    "item_text_get", "item_text_set",  # 글 자료 사본 읽기·고치기(자료함 메모 편집기). 경로 인자 없음.
+
     "relation_add", "relation_delete", "relation_list", "relation_update", "box_export",
 
     "search", "index_file", "remove_file",
@@ -28,11 +30,27 @@ ALLOWED_COMMANDS = frozenset({
 
     "nb_create", "nb_list", "nb_update", "nb_delete",
 
-    "nb_source_add", "nb_source_list", "nb_source_remove", "nb_source_paragraphs", "nb_index",
+    "nb_source_add", "nb_source_from_item", "nb_source_item", "nb_source_list", "nb_source_remove", "nb_source_paragraphs", "nb_index",
 
     "nb_search", "nb_transform", "nb_note_save", "nb_note_list", "nb_note_delete", "nb_export_md", "nb_compare",
 
-})
+} | frozenset(f"edit_{name}" for name in (
+
+    # 메모 편집기 코어(editor_core, klib 파이프 edit_*). docs/EDITOR_CORE_DESIGN.md 4절.
+
+    "ping", "open", "close", "info", "text", "lines", "insert", "delete", "replace",
+
+    "begin_group", "end_group", "commit", "undo", "redo", "line_col", "offset", "to_utf16", "from_utf16",
+
+    "find", "find_all", "replace_next", "replace_all",
+
+    "md_parse", "md_inline", "md_block", "md_link", "md_rule", "md_code_block", "md_clear",
+
+    "set_line_ending", "set_encoding", "save", "autosave",
+
+)))
+
+EDITOR_COMMANDS = frozenset(c for c in ALLOWED_COMMANDS if c.startswith("edit_"))
 
 class LibraryBridgeError(RuntimeError):
 
@@ -260,39 +278,111 @@ def _open_pipe(name):
 
     return open(name, "r+b", buffering=0)
 
-def open_library_item(item):
+# 연결 앱으로 바로 열면 프로그램이 실행되는 확장자. 자료함 등록 자료는 사용자 확인 뒤에만, 등록되지 않은 경로는 차단한다.
+RISKY_OPEN_EXTENSIONS = frozenset({
+    ".exe", ".bat", ".cmd", ".com", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh",
+    ".msi", ".msp", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".msc", ".reg", ".jar", ".appref-ms",
+})
 
-    """Open a referenced file/folder or an explicitly safe web link."""
 
-    import webbrowser
+class LibraryOpenError(LibraryBridgeError):
+    """자료 열기 실패. code로 화면이 이유를 구분한다."""
 
-    kind = item.get("kind")
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
 
-    source = item.get("source_path", "")
 
-    if kind == "link":
+def is_risky_open_path(path):
+    return os.path.splitext(str(path or "").strip().rstrip(". "))[1].lower() in RISKY_OPEN_EXTENSIONS
 
+
+def open_library_item(item, *, opener=None, browser=None, allow_risky=None):
+
+    """Open a referenced file/folder or an explicitly safe web link.
+
+    opener(path)·browser(url)는 시험용 가짜 실행기를 넣는 자리다(기본: os.startfile·webbrowser.open).
+    실행 파일(.exe·.bat·.ps1 등)은 item["confirmed"]가 참일 때만 연다(allow_risky=False면 항상 차단).
+    """
+
+    kind = str(item.get("kind") or "")
+    source = str(item.get("source_path") or "").strip()
+    if any(ch in source for ch in ("\n", "\r", "\0")):
+        raise LibraryOpenError("INVALID_PATH", "줄바꿈이나 제어 문자가 든 경로는 열 수 없습니다.")
+    if not source:
+        raise LibraryOpenError("NO_SOURCE", "원본 파일 경로가 없는 자료입니다.")
+    lowered = source.lower()
+    if kind == "link" or lowered.startswith(("http://", "https://")):
         from urllib.parse import urlparse
 
         parsed = urlparse(source)
-
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise LibraryOpenError("BLOCKED", "http/https 링크만 열 수 있습니다.")
+        if browser is None:
+            import webbrowser
 
-            raise LibraryBridgeError("http/https 링크만 열 수 있습니다.")
-
-        return webbrowser.open(source)
-
-    if os.name != "nt":
-
-        raise LibraryBridgeError("자료 열기는 Windows에서 지원됩니다.")
-
-    if not source or not os.path.exists(source):
-
-        raise LibraryBridgeError("자료 경로를 찾을 수 없습니다.")
-
-    os.startfile(source)
-
+            browser = webbrowser.open
+        if not browser(source):
+            raise LibraryOpenError("NO_APP", "기본 브라우저를 실행하지 못했습니다.")
+        return True
+    if "://" in source or lowered.startswith(("file:", "javascript:", "shell:", "ms-")):
+        raise LibraryOpenError("BLOCKED", "파일·폴더 경로나 http/https 주소만 열 수 있습니다.")
+    if not os.path.exists(source):
+        raise LibraryOpenError("SOURCE_MISSING", "원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).")
+    if not os.path.isdir(source) and is_risky_open_path(source):
+        if allow_risky is False:
+            raise LibraryOpenError("BLOCKED", "자료함에 등록되지 않은 실행 파일은 열 수 없습니다.")
+        if not item.get("confirmed"):
+            raise LibraryOpenError("CONFIRM_REQUIRED", "실행 파일입니다. 실행할지 확인이 필요합니다.")
+    if opener is None:
+        if os.name != "nt":
+            raise LibraryOpenError("ERROR", "자료 열기는 Windows에서 지원됩니다.")
+        opener = os.startfile
+    try:
+        opener(source)
+    except OSError as exc:
+        # 연결된 앱이 없으면 Windows가 ERROR_NO_ASSOCIATION(1155)을 돌려준다.
+        if getattr(exc, "winerror", None) in (1155, 1156) or "association" in str(exc).lower():
+            raise LibraryOpenError("NO_APP", "이 형식에 연결된 앱이 없습니다.") from exc
+        raise LibraryOpenError("ERROR", f"자료를 열지 못했습니다: {exc}") from exc
     return True
+
+
+ITEM_STAT_LIMIT = 500
+
+
+def library_item_stats(request_fn, item_ids, *, limit=ITEM_STAT_LIMIT):
+    """자료함 '탐색기 형식' 보기의 크기·수정한 날짜·원본 있음 여부.
+
+    화면이 보낸 경로는 받지 않고 item_id마다 klib에 저장된 경로(item_get)만 읽는다.
+    웹 주소·경로 없는 자료(메모·텍스트)는 빈 값으로 돌려준다. 한 번에 [limit]개까지만 조회한다.
+    결과: {id: {"exists": bool|None, "is_dir": bool, "size": int|None, "mtime": float|None}}
+    """
+    stats = {}
+    for raw in list(item_ids or [])[:limit]:
+        try:
+            item_id = int(raw)
+        except (TypeError, ValueError):
+            continue
+        stored = request_fn({"cmd": "item_get", "id": item_id})
+        entry = {"exists": None, "is_dir": False, "size": None, "mtime": None}
+        stats[str(item_id)] = entry
+        if not isinstance(stored, dict) or not stored.get("ok"):
+            entry["exists"] = False
+            continue
+        source = str(stored.get("source_path") or "").strip()
+        lowered = source.lower()
+        if (not source or any(ch in source for ch in ("\n", "\r", "\0"))
+                or "://" in source or lowered.startswith(("file:", "javascript:", "shell:", "ms-"))):
+            continue
+        try:
+            st = os.stat(source)
+        except OSError:
+            entry["exists"] = False
+            continue
+        is_dir = os.path.isdir(source)
+        entry.update(exists=True, is_dir=is_dir, size=None if is_dir else int(st.st_size), mtime=float(st.st_mtime))
+    return stats
 
 def save_clipboard_image(bridge, box_id, display_name, png_bytes, *, space="temp"):
 

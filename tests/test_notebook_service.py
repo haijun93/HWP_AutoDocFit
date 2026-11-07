@@ -8,7 +8,8 @@ from unittest import mock
 
 from docfit_app.library_bridge import ALLOWED_COMMANDS, LibraryBridgeError
 from docfit_app.notebook_service import (
-    NOTEBOOK_COMMANDS, NotebookService, extract_source_paragraphs, needs_python_extraction,
+    NOTEBOOK_COMMANDS, NotebookService, extract_source_paragraphs, memo_markdown_to_paragraphs,
+    needs_python_extraction,
 )
 
 
@@ -18,6 +19,10 @@ class FakeBridge:
 
     def request(self, request):
         self.calls.append(request)
+        if request["cmd"] == "item_get":
+            return dict(self.item, ok=True) if getattr(self, "item", None) else {"ok": False}
+        if request["cmd"] == "nb_source_from_item":
+            return {"ok": True, "id": 9, "paragraph_count": len(request.get("paragraphs") or []), "reused": getattr(self, "reused", False)}
         if request["cmd"] == "nb_source_add":
             return {"ok": True, "id": 7, "paragraph_count": len(request.get("paragraphs") or [])}
         return {"ok": True}
@@ -81,6 +86,43 @@ class NotebookServiceTests(unittest.TestCase):
         self.assertEqual(bridge.calls, [request])
         extractor.assert_not_called()
 
+    def test_item_link_commands_are_allowed(self):
+        for cmd in ("nb_source_from_item", "nb_source_item"):
+            self.assertIn(cmd, NOTEBOOK_COMMANDS)
+            self.assertIn(cmd, ALLOWED_COMMANDS)
+
+    def test_from_item_rust_format_passes_to_klib(self):
+        bridge = FakeBridge()
+        bridge.item = {"source_path": str(self.dir / "a.hwpx")}
+        request = {"cmd": "nb_source_from_item", "notebook_id": 3, "item_id": 5}
+        NotebookService(bridge).handle(request)
+        self.assertEqual(bridge.calls[-1], request)
+
+    def test_from_item_pdf_is_extracted_and_extra_batches_indexed(self):
+        pdf = self.dir / "자료.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        rows = [{"text": "Ⅰ. 개요", "level": 1, "table": False, "location": "1쪽"}]
+        bridge = FakeBridge()
+        bridge.item = {"source_path": str(pdf)}
+        result = NotebookService(bridge, extractor=mock.Mock(return_value=rows)).handle(
+            {"cmd": "nb_source_from_item", "notebook_id": 3, "item_id": 5})
+        self.assertEqual(result["id"], 9)
+        sent = bridge.calls[-1]
+        self.assertEqual((sent["cmd"], sent["item_id"], sent["paragraphs"]), ("nb_source_from_item", 5, rows))
+
+    def test_from_item_reused_source_is_not_reindexed(self):
+        pdf = self.dir / "자료.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        bridge = FakeBridge()
+        bridge.item = {"source_path": str(pdf)}
+        bridge.reused = True
+        rows = [{"text": "가", "level": 0, "table": False, "location": ""}]
+        with mock.patch("docfit_app.notebook_service._batches", return_value=iter([rows, rows])):
+            result = NotebookService(bridge, extractor=mock.Mock(return_value=rows)).handle(
+                {"cmd": "nb_source_from_item", "notebook_id": 3, "item_id": 5})
+        self.assertTrue(result["reused"])
+        self.assertNotIn("nb_index", [c["cmd"] for c in bridge.calls])
+
     def test_pdf_is_extracted_in_python_and_sent_with_paragraphs(self):
         pdf = self.dir / "자료.pdf"
         pdf.write_bytes(b"%PDF-1.4")
@@ -142,6 +184,44 @@ class NotebookServiceTests(unittest.TestCase):
         with self.assertRaises(LibraryBridgeError):
             service.handle({"cmd": "box_list"})
 
+    def test_memo_markdown_to_plain_paragraphs(self):
+        markdown = ("# 회의 메모\n\n**복지 예산** 확대와 *도로* 정비\n- 첫째 `항목`\n1. 둘째\n> 인용 [자료](https://a.kr)\n"
+                    "---\n```\ncode **그대로**\n```\n")
+        rows = memo_markdown_to_paragraphs(markdown)
+        self.assertEqual([r["text"] for r in rows],
+                         ["회의 메모", "복지 예산 확대와 도로 정비", "첫째 항목", "둘째", "인용 자료 (https://a.kr)",
+                          "code **그대로**"])
+        self.assertEqual(rows[0]["level"], 1)
+        self.assertEqual(memo_markdown_to_paragraphs(" \n---\n"), [])
+
+    def test_memo_is_written_as_txt_and_added_with_plain_paragraphs(self):
+        bridge = FakeBridge()
+        memo_dir = self.dir / "memos"
+        service = NotebookService(bridge, memo_dir=memo_dir)
+        markdown = "# 제목\n\n**굵은** 본문\r\n- 목록"
+        result = service.handle({"cmd": "nb_memo_add", "notebook_id": 4, "title": '새/메모:"1"', "markdown": markdown})
+        self.assertEqual(result, {"ok": True, "id": 7, "paragraph_count": 3})
+        (add,) = bridge.calls
+        self.assertEqual((add["cmd"], add["notebook_id"], add["display_name"]), ("nb_source_add", 4, '새/메모:"1"'))
+        path = Path(add["source_path"])
+        self.assertEqual(path.parent, memo_dir)
+        self.assertEqual(path.suffix, ".txt")
+        self.assertNotIn("/", path.stem.replace("\\", ""))
+        self.assertEqual(path.read_bytes().decode("utf-8"), markdown)
+        self.assertEqual([p["text"] for p in add["paragraphs"]], ["제목", "굵은 본문", "목록"])
+        # 같은 제목으로 또 저장해도 기존 파일을 덮어쓰지 않는다.
+        service.handle({"cmd": "nb_memo_add", "notebook_id": 4, "title": '새/메모:"1"', "markdown": "둘째"})
+        self.assertEqual(len(list(memo_dir.iterdir())), 2)
+
+    def test_memo_rejects_empty_or_too_long(self):
+        bridge = FakeBridge()
+        service = NotebookService(bridge, memo_dir=self.dir / "memos")
+        self.assertFalse(service.handle({"cmd": "nb_memo_add", "notebook_id": 1, "markdown": "  \n---"})["ok"])
+        self.assertFalse(service.handle({"cmd": "nb_memo_add", "notebook_id": 1, "markdown": None})["ok"])
+        self.assertFalse(service.handle({"cmd": "nb_memo_add", "notebook_id": 1, "markdown": "가" * 200_001})["ok"])
+        self.assertEqual(bridge.calls, [])
+        self.assertFalse((self.dir / "memos").exists() and any((self.dir / "memos").iterdir()))
+
 
 class DesktopNotebookTests(unittest.TestCase):
     def test_single_notebook_method(self):
@@ -180,6 +260,37 @@ class DesktopNotebookTests(unittest.TestCase):
         self.assertEqual(bridge.notebook({"cmd": "nb_take_drop"})["paths"], [])
         self.assertEqual(bridge.notebook({"cmd": "nb_drop_watch", "active": False})["drop_target"], "rename_files")
 
+
+    def test_library_drop_watch_routes_drops_to_library_and_restores(self):
+        """탐색기에서 자료함 창에 끌어 놓은 파일을 자료함이 가져간다(사용자 보고 2026-11-07)."""
+        bridge = make_desktop_bridge()
+        bridge.drop_target = "documents"
+        bridge.get_state = lambda: {"state": True}
+        bridge.add_paths = mock.Mock(side_effect=AssertionError("문서 목록으로 가면 안 됨"))
+        self.assertEqual(bridge.library({"cmd": "lib_drop_watch", "active": True})["drop_target"], "library")
+        bridge.receive_drop(["C:/자료/가.hwpx"])
+        bridge.receive_drop(["C:/자료/나.xlsx"])
+        self.assertEqual(bridge.library({"cmd": "lib_take_drop"})["paths"], ["C:/자료/가.hwpx", "C:/자료/나.xlsx"])
+        self.assertEqual(bridge.library({"cmd": "lib_take_drop"})["paths"], [])
+        self.assertEqual(bridge.library({"cmd": "lib_drop_watch", "active": False})["drop_target"], "documents")
+
+    def test_item_link_requests_from_flutter_reach_klib(self):
+        """자료함↔노트북 화면이 보내는 요청 모양(BridgeNotebookApi)이 notebook 브리지를 거쳐 klib에 그대로 간다."""
+        bridge = make_desktop_bridge()
+        fake = FakeBridge()
+        with tempfile.TemporaryDirectory() as tmp:
+            fake.item = {"id": 5, "box_id": 2, "source_path": str(Path(tmp) / "예산.hwpx")}
+            fake.reused = True
+            add = {"cmd": "nb_source_from_item", "notebook_id": 3, "item_id": 5}
+            look = {"cmd": "nb_source_item", "notebook_id": 3, "source_id": 9}
+            with mock.patch("docfit_app.library_bridge.LibraryBridge", return_value=fake):
+                added = bridge.notebook(add)
+                bridge.notebook(look)
+        # '이미 출처에 있음' 표시는 klib의 reused 값을 그대로 쓴다.
+        self.assertEqual((added["ok"], added["id"], added["reused"]), (True, 9, True))
+        self.assertEqual([c["cmd"] for c in fake.calls], ["item_get", "nb_source_from_item", "nb_source_item"])
+        self.assertEqual(fake.calls[1], add)
+        self.assertEqual(fake.calls[2], look)
 
 if __name__ == "__main__":
     unittest.main()

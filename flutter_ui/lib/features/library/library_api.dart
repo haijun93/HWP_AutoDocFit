@@ -1,3 +1,5 @@
+import '../editor/klib_editor_core.dart' show EditorBackend;
+
 enum LibrarySpace { core, basis, reference, temp }
 
 enum LibraryItemKind {
@@ -297,6 +299,14 @@ class LibraryScanStatus {
 }
 
 /// 자료함 폴더 스캔(선택 기능). `LibraryApi`를 구현한 클래스가 함께 구현하면 화면에 스캔 단추가 나타난다.
+/// 창(탐색기)에서 끌어 놓은 파일 받기. 브리지가 놓기 대상을 자료함으로 바꾸고 경로를 맡아 둔다.
+abstract interface class LibraryDropApi {
+  Future<void> watchDrops(bool active);
+
+  /// 맡겨 둔 경로를 가져간다(가져가면 비워진다).
+  Future<List<String>> takeDroppedPaths();
+}
+
 abstract interface class LibraryScanApi {
   /// klib 요청: box_scan {box_id, path}
   Future<void> startScan(String boxId, String path);
@@ -308,15 +318,155 @@ abstract interface class LibraryScanApi {
   Future<void> cancelScan();
 }
 
+/// 자료 열기 결과. 실패하면 [code]·[message]로 이유를 알린다.
+class LibraryOpenResult {
+  const LibraryOpenResult({required this.ok, this.code = '', this.message = ''});
+
+  final bool ok;
+
+  /// SOURCE_MISSING(원본 없음) | NO_SOURCE(경로 없음) | CONFIRM_REQUIRED(실행 파일 확인 필요)
+  /// | BLOCKED(차단) | INVALID_PATH | NOT_REGISTERED | NO_APP(연결 앱 없음) | ERROR
+  final String code;
+
+  final String message;
+}
+
+/// 자료를 Windows 연결 앱·탐색기·기본 브라우저로 연다(Python `library({"cmd":"open_item"})`).
+abstract interface class LibraryOpenApi {
+  /// [itemId]가 있으면 호스트가 자료함에 저장된 경로를 다시 읽어 그 경로만 연다.
+  Future<LibraryOpenResult> openItem({
+    String? itemId,
+    required LibraryItemKind kind,
+    required String source,
+    bool confirmed = false,
+  });
+}
+
+/// 자료함 '+메모'·글 자료 고치기(메모 편집기). 글 자료(text·note)의 내용을 klib 사본에서 읽고 고친다.
+abstract interface class LibraryMemoApi {
+  /// 글 자료 내용. 글 자료가 아니거나 사본을 못 읽으면 예외.
+  Future<String> readItemText(String itemId);
+
+  /// 글 자료 내용과 이름을 고친다. [title]이 비면 이름은 그대로 둔다.
+  Future<void> updateItemText(String itemId, {required String title, required String text});
+
+  /// 메모 편집기가 쓸 Rust 편집 코어(klib edit_*) 통로. 없으면 null(편집기는 Dart 임시 코어를 쓴다).
+  EditorBackend? get memoEditorBackend;
+}
+
+/// 탐색기 형식 보기의 크기·수정한 날짜·원본 있음 여부. 값이 없는 칸(메모·웹 주소 등)은 null.
+class LibraryFileInfo {
+  const LibraryFileInfo({this.exists, this.isDirectory = false, this.size, this.modified});
+
+  factory LibraryFileInfo.fromJson(Map<Object?, Object?> json) {
+    final mtime = json['mtime'];
+    final size = json['size'];
+    final exists = json['exists'];
+    return LibraryFileInfo(
+      exists: exists is bool ? exists : null,
+      isDirectory: json['is_dir'] == true,
+      size: size is num ? size.toInt() : null,
+      modified: mtime is num ? DateTime.fromMillisecondsSinceEpoch((mtime * 1000).round()) : null,
+    );
+  }
+
+  /// true=원본 있음, false=원본이 없어짐, null=확인 대상 아님(경로 없는 자료·웹 주소).
+  final bool? exists;
+  final bool isDirectory;
+  final int? size;
+  final DateTime? modified;
+
+  bool get missing => exists == false;
+}
+
+/// 저장된 원본 경로의 파일 정보를 읽는다(Python `library({"cmd":"item_stat"})`). 화면은 보이는 줄만 묻는다.
+abstract interface class LibraryFileInfoApi {
+  Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds);
+}
+
 typedef LibraryBridgeCall =
     Future<Object?> Function(String method, List<Object?> args);
 
 /// Adapts screen models to klib's command and response schema.
 
-class BridgeLibraryApi implements LibraryApi, LibraryScanApi {
+class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, LibraryOpenApi, LibraryMemoApi, LibraryFileInfoApi {
   BridgeLibraryApi(this._call);
 
   final LibraryBridgeCall _call;
+
+  @override
+  Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds) async {
+    final ids = [for (final id in itemIds) if (int.tryParse(id) != null) int.parse(id)];
+    if (ids.isEmpty) return const {};
+    final items = (await _request('item_stat', {'item_ids': ids}))['items'];
+    if (items is! Map) return const {};
+    return {
+      for (final e in items.entries)
+        if (e.value is Map) '${e.key}': LibraryFileInfo.fromJson(e.value as Map),
+    };
+  }
+
+  @override
+  Future<LibraryOpenResult> openItem({
+    String? itemId,
+    required LibraryItemKind kind,
+    required String source,
+    bool confirmed = false,
+  }) async {
+    final Object? result;
+    try {
+      result = await _call('library', [
+        <String, Object?>{
+          'cmd': 'open_item',
+          if (itemId != null && itemId.isNotEmpty) 'item_id': int.tryParse(itemId) ?? itemId,
+          'kind': kind.name,
+          'source_path': source,
+          'confirmed': confirmed,
+        },
+      ]);
+    } catch (error) {
+      return LibraryOpenResult(ok: false, code: 'ERROR', message: '$error');
+    }
+    if (result is! Map) {
+      return const LibraryOpenResult(ok: false, code: 'ERROR', message: '자료함 브리지 응답 형식이 잘못되었습니다.');
+    }
+    if (result['ok'] == true && result['opened'] != false) return const LibraryOpenResult(ok: true);
+    return LibraryOpenResult(
+      ok: false,
+      code: '${result['code'] ?? (result['ok'] == true ? 'NO_APP' : 'ERROR')}',
+      message: '${result['message'] ?? '자료를 열지 못했습니다.'}',
+    );
+  }
+
+  @override
+  Future<String> readItemText(String itemId) async =>
+      _string((await _request('item_text_get', {'id': _id(itemId)}))['content']);
+
+  @override
+  Future<void> updateItemText(String itemId, {required String title, required String text}) async {
+    await _request('item_text_set', {'id': _id(itemId), 'display_name': title.trim(), 'content': text});
+  }
+
+  @override
+  EditorBackend get memoEditorBackend => (request) async {
+    // 자료함 브리지(Python desktop_web_ui.library)가 edit_* 명령을 klib에 넘긴다(경로 인자는 거절). 실패도 ok:false 응답으로 온다.
+    final Object? result;
+    try {
+      result = await _call('library', [request]);
+    } catch (error) {
+      return {'ok': false, 'message': '$error'};
+    }
+    if (result is! Map) return const {'ok': false, 'message': '편집기 브리지 응답 형식이 잘못되었습니다.'};
+    return Map<String, Object?>.from(result);
+  };
+
+  @override
+  Future<void> watchDrops(bool active) => _request('lib_drop_watch', {'active': active});
+
+  @override
+  Future<List<String>> takeDroppedPaths() async => [
+    for (final p in (await _request('lib_take_drop'))['paths'] as List? ?? const []) '$p',
+  ];
 
   Future<Map<String, Object?>> _request(
     String cmd, [
@@ -627,7 +777,7 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi {
           .toList();
 }
 
-class InMemoryLibraryApi implements LibraryApi {
+class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
   InMemoryLibraryApi({
     List<LibraryBox>? initialBoxes,
 
@@ -912,6 +1062,33 @@ class InMemoryLibraryApi implements LibraryApi {
     if (i == null) throw StateError('자료 없음');
 
     _items[itemId] = i.copyWith(title: title);
+  }
+
+  /// 시험에서 Rust 편집 코어 대신 쓸 통로. 기본은 없음(Dart 임시 코어).
+  EditorBackend? editorBackend;
+
+  @override
+  EditorBackend? get memoEditorBackend => editorBackend;
+
+  @override
+  Future<String> readItemText(String itemId) async {
+    final i = _items[itemId];
+    if (i == null) throw StateError('자료 없음');
+    if (i.kind != LibraryItemKind.text && i.kind != LibraryItemKind.note) {
+      throw StateError('글 자료(text·note)만 메모 편집기로 열 수 있습니다.');
+    }
+    return i.text ?? '';
+  }
+
+  @override
+  Future<void> updateItemText(String itemId, {required String title, required String text}) async {
+    final i = _items[itemId];
+    if (i == null) throw StateError('자료 없음');
+    if (i.kind != LibraryItemKind.text && i.kind != LibraryItemKind.note) {
+      throw StateError('글 자료(text·note)만 메모 편집기로 고칠 수 있습니다.');
+    }
+    final name = title.trim();
+    _items[itemId] = i.copyWith(title: name.isEmpty ? null : name, text: text);
   }
 
   @override

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/library/library_api.dart';
 import 'package:docfit_ui/features/notebook/notebook_api.dart';
@@ -20,7 +21,7 @@ Future<void> _enterDialog(WidgetTester tester, String fieldKey, String okKey, St
   await tester.pumpAndSettle();
 }
 
-/// 출처 추가 → 근거 찾기 → 노트에 인용 → 저장 → Markdown 내보내기.
+/// 출처 추가 → 본문검색 → 노트에 인용 → 저장 → Markdown 내보내기.
 Future<void> _flow(WidgetTester tester, InMemoryNotebookApi api, {required bool narrow}) async {
   await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
   await tester.pumpAndSettle();
@@ -72,11 +73,29 @@ Future<void> _flow(WidgetTester tester, InMemoryNotebookApi api, {required bool 
   expect(notes.single.citations.single.quote, '복지 예산은 120억 원으로 늘었다.');
   expect(notes.single.citations.single.paragraphOrdinal, 1);
 
+  await _chooseExport(tester, 'nb-export-md');
+  expect(find.textContaining('> 복지 예산은 120억 원으로 늘었다.'), findsOneWidget);
+  await tester.tap(find.text('닫기'));
+  await tester.pumpAndSettle();
+
+  // 같은 내보내기 메뉴의 HWPX(한/글): 저장 위치를 고르면 저장 경로를, 취소하면 취소 문구를 보인다.
+  await _chooseExport(tester, 'nb-export-hwpx');
+  expect(find.text('한/글 문서로 저장했습니다: memory://복지 예산 메모.hwpx'), findsOneWidget);
+  expect(api.hwpxExports.single.$2, notes.single.id);
+  api.cancelNextHwpxExport = true;
+  await _chooseExport(tester, 'nb-export-hwpx');
+  expect(find.text('HWPX 내보내기를 취소했습니다.'), findsOneWidget);
+  expect(api.hwpxExports, hasLength(1));
+  expect(tester.takeException(), isNull);
+}
+
+Future<void> _chooseExport(WidgetTester tester, String item) async {
   await tester.ensureVisible(find.byKey(const ValueKey('nb-note-export')));
   await tester.tap(find.byKey(const ValueKey('nb-note-export')));
   await tester.pumpAndSettle();
-  expect(find.textContaining('> 복지 예산은 120억 원으로 늘었다.'), findsOneWidget);
-  expect(tester.takeException(), isNull);
+  expect(find.text('HWPX(한/글)'), findsOneWidget);
+  await tester.tap(find.byKey(ValueKey(item)));
+  await tester.pumpAndSettle();
 }
 
 void main() {
@@ -93,6 +112,62 @@ void main() {
     await _setSize(tester, 700);
     final api = InMemoryNotebookApi(fileContents: {_path: _content});
     await _flow(tester, api, narrow: true);
+  });
+
+  testWidgets('wide notebook panes resize by dragging, keys and double tap; names show two lines', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi();
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nb-create-empty')));
+    await tester.pumpAndSettle();
+    await _enterDialog(tester, 'nb-create-name', 'nb-create-ok', '폭 시험');
+    await tester.tap(find.byKey(const ValueKey('nb-source-add')));
+    await tester.pumpAndSettle();
+    await _enterDialog(tester, 'nb-source-path', 'nb-source-path-ok', _path);
+
+    final sourcesHandle = find.byKey(const ValueKey('nb-resize-sources'));
+    final notesHandle = find.byKey(const ValueKey('nb-resize-notes'));
+    // 출처 파일명은 두 줄까지 보여 준다.
+    expect(tester.widget<Text>(find.text('예산보고.txt')).maxLines, 2);
+    try {
+      final start = tester.getCenter(sourcesHandle).dx;
+      expect(start, kNotebookSourcesWidth + kNotebookHandleWidth / 2);
+      await tester.drag(sourcesHandle, const Offset(100, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(sourcesHandle).dx, start + 100);
+      // 최대 폭을 넘지 않는다.
+      await tester.drag(sourcesHandle, const Offset(2000, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(sourcesHandle).dx, kNotebookSourcesMax + kNotebookHandleWidth / 2);
+      // 두 번 누르면 기본 폭.
+      await tester.tap(sourcesHandle);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(sourcesHandle);
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(sourcesHandle).dx, start);
+
+      // 노트 칸: 구분선을 오른쪽으로 끌면 좁아지고, 왼쪽 방향키는 넓어진다.
+      final notesStart = tester.getCenter(notesHandle).dx;
+      await tester.drag(notesHandle, const Offset(50, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(notesHandle).dx, notesStart + 50);
+      await tester.tap(notesHandle);
+      // 두 번 누르기 판정 시간이 지나야 초점이 확정된다.
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(notesHandle).dx, notesStart + 50 - 16);
+    } finally {
+      await tester.tap(sourcesHandle);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(sourcesHandle);
+      await tester.pumpAndSettle();
+      await tester.tap(notesHandle);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(notesHandle);
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('transform shows rule-based rows and preview highlights paragraph', (tester) async {
@@ -393,15 +468,18 @@ void main() {
       expect(tester.widget<TextField>(find.byKey(const ValueKey('nb-note-tags'))).controller!.text, '예산, 복지');
 
       // 내보내기에 태그와 마지막 출처 비교가 들어간다.
-      await tester.ensureVisible(find.byKey(const ValueKey('nb-note-export')));
-      await tester.tap(find.byKey(const ValueKey('nb-note-export')));
-      await tester.pumpAndSettle();
+      await _chooseExport(tester, 'nb-export-md');
       final text = tester.widget<SelectableText>(find.byKey(const ValueKey('nb-export-text'))).data!;
       expect(text, contains('태그: #예산 #복지'));
       expect(text, contains('## 출처 비교: 복지 예산'));
       expect(text, contains('### 도로.md'));
       expect(text, contains('### 기타.txt\n\n근거 문단 없음'));
       expect(find.textContaining('출처 비교: 복지 예산 포함'), findsOneWidget);
+      await tester.tap(find.text('닫기'));
+      await tester.pumpAndSettle();
+      // HWPX에도 마지막 출처 비교 검색어가 넘어간다(비교 표).
+      await _chooseExport(tester, 'nb-export-hwpx');
+      expect(api.hwpxExports.last.$3, '복지 예산');
       expect(tester.takeException(), isNull);
     });
   }
@@ -434,6 +512,10 @@ void main() {
         },
         'nb_note_save' => {'ok': true, 'id': 9},
         'nb_export_md' => {'ok': true, 'markdown': '# t'},
+        'nb_select_output' => request['cancel'] == true
+            ? {'ok': true, 'cancelled': true}
+            : {'ok': true, 'cancelled': false, 'selection_id': 'sel-1'},
+        'nb_export_hwpx' => {'ok': true, 'path': r'C:\out\노트.hwpx'},
         _ => {'ok': true},
       };
     });
@@ -454,5 +536,150 @@ void main() {
       'compare_query': '복지',
       'compare_source_ids': [5],
     });
+    expect(await api.exportHwpx(1, 9, compareQuery: ' 복지 ', compareSourceIds: [5]), r'C:\out\노트.hwpx');
+    expect(calls[calls.length - 2], {'cmd': 'nb_select_output'});
+    expect(calls.last, {
+      'cmd': 'nb_export_hwpx',
+      'notebook_id': 1,
+      'note_id': 9,
+      'output_selection_id': 'sel-1',
+      'compare_query': '복지',
+      'compare_source_ids': [5],
+    });
+  });
+
+  testWidgets('bridge api hwpx export stops when save dialog is cancelled', (tester) async {
+    final calls = <String>[];
+    final api = BridgeNotebookApi((method, args) async {
+      calls.add('${(args.single as Map)['cmd']}');
+      return {'ok': true, 'cancelled': true};
+    });
+    expect(await api.exportHwpx(1, 2), isNull);
+    expect(calls, ['nb_select_output']);
+  });
+
+  testWidgets('middle tab and search button are named 본문검색', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi(fileContents: {_path: _content});
+    final nb = await api.createNotebook('연구');
+    await api.addSource(nb, _path);
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('nb-mid-search')), matching: find.text('본문검색')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: find.byKey(const ValueKey('nb-search-run')), matching: find.text('본문검색')),
+      findsOneWidget,
+    );
+    expect(find.textContaining('근거 찾기'), findsNothing);
+  });
+
+  testWidgets('search, compare and preview bodies use 10pt even with a huge host font', (tester) async {
+    await _setSize(tester, 1400);
+    expect(kNbReadingFontSize, closeTo(13.333, 0.001)); // 10pt × 96/72
+    final api = InMemoryNotebookApi(fileContents: {_path: _content});
+    final nb = await api.createNotebook('연구');
+    await api.addSource(nb, _path);
+    final huge = ThemeData(textTheme: const TextTheme(bodyMedium: TextStyle(fontSize: 30)));
+    await tester.pumpWidget(MaterialApp(theme: huge, home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+
+    double? spanSize(Finder f) => tester.widget<Text>(f).textSpan!.style!.fontSize;
+    await tester.enterText(find.byKey(const ValueKey('nb-query')), '복지 예산');
+    await tester.tap(find.byKey(const ValueKey('nb-search-run')));
+    await tester.pumpAndSettle();
+    expect(spanSize(find.byKey(const ValueKey('nb-hit-body-0'))), kNbReadingFontSize);
+    // 노란 강조 글자도 같은 크기(부모 크기를 물려받음).
+    final rich = tester.widget<Text>(find.byKey(const ValueKey('nb-hit-body-0'))).textSpan! as TextSpan;
+    expect(rich.children!.whereType<TextSpan>().every((c) => c.style?.fontSize == null), isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('nb-mid-compare')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nb-compare-run')));
+    await tester.pumpAndSettle();
+    final sourceId = (await api.listSources(nb)).single.id;
+    expect(spanSize(find.byKey(ValueKey('nb-compare-body-$sourceId-0'))), kNbReadingFontSize);
+
+    await tester.tap(find.byKey(ValueKey('nb-compare-hit-$sourceId-0')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nb-mid-preview')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<SelectableText>(find.byKey(const ValueKey('nb-preview-text-0'))).style!.fontSize, kNbReadingFontSize);
+  });
+
+  testWidgets('+메모 추가 saves a TEXT source that can be checked, searched and cited', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi();
+    final nb = await api.createNotebook('연구');
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('nb-memo-add')));
+    await tester.pumpAndSettle();
+    expect(find.text('새 메모'), findsOneWidget);
+    expect(find.text("작성된 메모를 저장하면 TEXT 형식으로 '출처'에 추가됩니다."), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('memo-title')), '현장 메모');
+    await tester.enterText(find.byKey(const ValueKey('memo-body')), '공원 정비 예산');
+    await tester.tap(find.byKey(const ValueKey('memo-bold')));
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Saved'), findsOneWidget);
+
+    // 닫았다 다시 열어도 자동 저장 초안이 남아 있다.
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('메모 추가(작성 중)'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nb-memo-add')));
+    await tester.pumpAndSettle();
+    expect(find.text('현장 메모'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('memo-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('메모를 출처에 추가했습니다.'), findsOneWidget);
+    final source = (await api.listSources(nb)).single;
+    expect((source.displayName, source.kind), ('현장 메모', 'txt'));
+    expect(api.memoMarkdown[source.id], startsWith('공원 정비 예산'));
+    expect(find.text('메모 추가'), findsOneWidget);
+    final checkbox = find.descendant(of: find.byKey(ValueKey('nb-source-${source.id}')), matching: find.byType(Checkbox));
+    expect(tester.widget<Checkbox>(checkbox).value, isTrue);
+
+    await tester.enterText(find.byKey(const ValueKey('nb-query')), '공원 예산');
+    await tester.tap(find.byKey(const ValueKey('nb-search-run')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('nb-hit-0')), matching: find.textContaining('현장 메모')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('nb-cite-0')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('nb-citation-0')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('memo delete discards the draft', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi();
+    final nb = await api.createNotebook('연구');
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nb-memo-add')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('memo-body')), '버릴 메모');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.byKey(const ValueKey('memo-delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('memo-delete-ok')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('memo-body')), findsNothing);
+    expect(find.text('메모 추가'), findsOneWidget);
+    expect(await api.listSources(nb), isEmpty);
+  });
+
+  test('bridge api sends nb_memo_add', () async {
+    final calls = <Map>[];
+    final api = BridgeNotebookApi((method, args) async {
+      calls.add(args.single as Map);
+      return {'ok': true, 'id': 11, 'paragraph_count': 1};
+    });
+    expect(await api.addMemoSource(2, title: '메모', markdown: '**본문**'), 11);
+    expect(calls.single, {'cmd': 'nb_memo_add', 'notebook_id': 2, 'title': '메모', 'markdown': '**본문**'});
   });
 }

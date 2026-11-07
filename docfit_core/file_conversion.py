@@ -17,6 +17,23 @@ IMAGE_INPUT_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".webp", ".bmp", ".
 IMAGE_FORMATS = {"jpg": "JPEG", "png": "PNG"}
 IMAGE_DPI = 150
 
+# 한/글이 PDF를 쓰는 중인 임시 파일. 강제 종료(os._exit)는 finally가 돌지 않으므로 종료 직전에 정리한다.
+_PENDING_TEMP_PDFS: set[Path] = set()
+
+
+def cleanup_pending_temp_outputs() -> list[Path]:
+    """저장 중이던 임시 PDF(결과 폴더의 docfit_pdf_*.pdf)만 지운다. 원본·완성된 결과는 건드리지 않는다."""
+    removed = []
+    for path in list(_PENDING_TEMP_PDFS):
+        _PENDING_TEMP_PDFS.discard(path)
+        try:
+            if path.name.startswith("docfit_pdf_") and path.is_file():
+                path.unlink()
+                removed.append(path)
+        except OSError:
+            pass
+    return removed
+
 # 결과 형식과 같은 형식의 입력(예: PDF→PDF)은 변환하지 않는다. PDF 압축(pdfz)은 PDF→PDF가 목적이라 뺀다.
 SAME_FORMAT_SUFFIXES = {
     "hwpx": frozenset({".hwpx"}), "pdf": frozenset({".pdf"}), "docx": frozenset({".docx"}),
@@ -147,6 +164,7 @@ def convert_hwpx_to_pdf(app, source: str | Path, target: str | Path) -> Path:
     # 한/글의 SaveAs가 이미 존재하는 빈 파일에 덮어쓰기 질문을 띄우지 않도록
     # 고유 경로만 확보하고 실제 저장 직전 파일은 제거한다.
     temporary.unlink()
+    _PENDING_TEMP_PDFS.add(temporary)
     opened = False
     try:
         # 암호 문서는 숨은 암호 창에서 멈추지 않고 바로 실패한다(2.0.7).
@@ -179,6 +197,26 @@ def convert_hwpx_to_pdf(app, source: str | Path, target: str | Path) -> Path:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
+        _PENDING_TEMP_PDFS.discard(temporary)
+
+
+def convert_image_to_pdf(source: str | Path, target: str | Path) -> Path:
+    """그림(JPG·PNG 등)을 글자 인식·한/글 없이 Pillow로 바로 PDF로 만든다(그림 그대로 한 쪽, 여러 프레임은 여러 쪽)."""
+    from docfit_core.pdf_merge import PdfMergeError, image_to_pdf_bytes
+
+    source, target = Path(source), Path(target)
+    if source.is_symlink() or not source.is_file() or source.suffix.lower() not in IMAGE_INPUT_EXTENSIONS:
+        raise ValueError("그림 파일(JPG·PNG·WEBP·BMP·TIF·GIF)만 바로 PDF로 만들 수 있습니다.")
+    if target.suffix.lower() != ".pdf" or target.exists():
+        raise ValueError("결과 경로가 잘못되었거나 이미 존재합니다.")
+    try:
+        data = image_to_pdf_bytes(source)
+    except PdfMergeError as exc:
+        raise ValueError(str(exc)) from exc
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "xb") as handle:
+        handle.write(data)
+    return target
 
 
 def convert_to_pdf(app, source: str | Path, target: str | Path) -> Path:
@@ -190,6 +228,8 @@ def convert_to_pdf(app, source: str | Path, target: str | Path) -> Path:
     source, target = Path(source), Path(target)
     if source.suffix.lower() not in CONVERSION_INPUTS:
         raise ValueError("변환할 수 없는 입력 형식입니다.")
+    if source.suffix.lower() in IMAGE_INPUT_EXTENSIONS:
+        return convert_image_to_pdf(source, target)
     if source.suffix.lower() in HANCOM_PDF_DIRECT:
         return convert_hwpx_to_pdf(app, source, target)
     target.parent.mkdir(parents=True, exist_ok=True)

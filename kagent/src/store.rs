@@ -4,6 +4,10 @@
 //! - 같은 내용을 다시 복사하면 새로 쓰지 않고 순서만 앞으로 올린다(중복 0바이트).
 //! - 한도: 고정하지 않은 항목 개수·전체 용량·보관 기간. 항목 하나의 상한은 기록 전에 막는다.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+
+use crate::category::{self, Category, CategorySet, Entry};
 use crate::crypt;
 use crate::json::{self, Value};
 use crate::sqlite::{Arg, Connection};
@@ -42,7 +46,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
-            max_items: 50,
+            // 사용자 결정(2026-11-07): 보관 500개·200MB·30일·암호화 켬.
+            max_items: 500,
             max_item_bytes: 10 * 1024 * 1024,
             max_total_bytes: 200 * 1024 * 1024,
             max_age_days: 30.0,
@@ -99,10 +104,20 @@ impl Settings {
             ("popup_width", self.popup_width.into()),
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
+            ("policy_rev", 1i64.into()),
         ])
     }
 
     /// 값이 있고 범위 안이면 반영한다(잘못된 값은 무시).
+    /// 설정 파일을 읽을 때만 쓰는 이전: 정책 반영 전 파일(policy_rev 없음)에서 예전 기본값 50을 그대로 쓰던 사용자는
+    /// 새 기본값 500으로 올린다(사용자 결정 2026-11-07). 직접 고른 다른 값은 그대로 둔다.
+    pub fn apply_file(&mut self, v: &Value) {
+        self.apply(v);
+        if v.num("policy_rev").is_none() && self.max_items == 50 {
+            self.max_items = 500;
+        }
+    }
+
     pub fn apply(&mut self, v: &Value) {
         if let Some(n) = v.num("max_items").filter(|n| (10.0..=1000.0).contains(n)) {
             self.max_items = n as i64;
@@ -160,7 +175,7 @@ impl Settings {
     pub fn load(path: &str) -> Settings {
         let mut s = Settings::default();
         if let Some(v) = std::fs::read_to_string(path).ok().and_then(|t| json::parse(&t)) {
-            s.apply(&v);
+            s.apply_file(&v);
         }
         s
     }
@@ -180,6 +195,24 @@ pub struct Summary {
     pub pinned: bool,
     pub used: f64,
     pub size: i64,
+    /// 빠른 목록 분류(전체·문서·그림·파일·폴더·웹·화면캡처, 겹칠 수 있음). 목록을 읽을 때 한 번 계산해 둔다.
+    pub cats: CategorySet,
+}
+
+/// 분류·검색용 항목 정보(복호화 결과에서 만든 것, id별 캐시).
+#[derive(Clone, Debug, Default)]
+struct Info {
+    cats: CategorySet,
+    paths: Vec<String>,
+    web_url: Option<String>,
+}
+
+/// 파일 항목 경로가 폴더인지. 네트워크 경로는 조회가 오래 걸릴 수 있어 확장자 추정(None)에 맡긴다.
+fn path_kind(path: &str) -> Option<bool> {
+    if path.starts_with("\\\\") {
+        return None;
+    }
+    std::fs::metadata(path).ok().map(|m| m.is_dir())
 }
 
 impl Summary {
@@ -198,7 +231,9 @@ impl Summary {
 pub struct Store {
     conn: Connection,
     /// 복호화한 미리보기(id → 글). 항목이 바뀔 때마다 50개를 다시 풀지 않도록 둔다.
-    previews: std::collections::HashMap<i64, String>,
+    previews: HashMap<i64, String>,
+    /// 분류·검색 정보(id → Info). 같은 내용을 다시 복사해 서식이 바뀌면 지운다.
+    info: RefCell<HashMap<i64, Info>>,
 }
 
 /// FNV-1a 64비트(중복 판단용 — 길이와 종류를 함께 키로 쓴다).
@@ -230,7 +265,7 @@ impl Store {
             let _ = conn.exec("ALTER TABLE items ADD COLUMN extra BLOB NOT NULL DEFAULT x''");
         }
         if version < 3 { conn.exec(&format!("PRAGMA user_version={SCHEMA_VERSION}"))?; }
-        Ok(Store { conn, previews: std::collections::HashMap::new() })
+        Ok(Store { conn, previews: HashMap::new(), info: RefCell::new(HashMap::new()) })
     }
 
     /// 새 항목이면 (id, true), 이미 있던 내용이면 (id, false)(순서만 앞으로, 서식은 새것으로).
@@ -247,6 +282,7 @@ impl Store {
             } else {
                 self.conn.run("UPDATE items SET used = ?, extra = ? WHERE id = ?",
                               &[Arg::Real(now), Arg::Blob(&sealed_extra), Arg::Int(id)])?;
+                self.info.borrow_mut().remove(&id);
             }
             return Ok((id, false));
         }
@@ -300,29 +336,100 @@ impl Store {
     /// 최근 사용 순. query가 있으면 미리보기에서 대소문자 무시 부분 일치(복호화 뒤 비교).
     pub fn recent(&mut self, limit: usize, query: Option<&str>) -> Result<Vec<Summary>, String> {
         let needle = query.map(|q| q.to_lowercase()).filter(|q| !q.is_empty());
-        let mut out = Vec::new();
-        let cache = &mut self.previews;
-        let mut seen = std::collections::HashSet::new();
-        self.conn.query("SELECT id, kind, preview, pinned, used, size FROM items ORDER BY used DESC", &[], |r| {
+        self.collect(limit, |s, _| {
+            needle.as_ref().is_none_or(|n| s.preview.to_lowercase().contains(n.as_str()))
+        })
+    }
+
+    /// 빠른 목록용: 분류에 속하고 키워드(공백 낱말 모두, 한글 조합 중 글자 포함)가 들어 있는 항목을
+    /// 최근 사용 순으로 limit개까지. 검색 대상은 미리보기·파일 전체 경로·웹 주소(`category::matches_query`).
+    pub fn list(&mut self, limit: usize, cat: Category, query: &str) -> Result<Vec<Summary>, String> {
+        let query = query.trim();
+        self.collect(limit, |s, info| {
+            s.cats.contains(cat)
+                && (query.is_empty() || category::matches_query(&Entry {
+                    preview: s.preview.clone(), paths: info.paths.clone(), web_url: info.web_url.clone(),
+                    ..Default::default()
+                }, query))
+        })
+    }
+
+    /// 최근 사용 순으로 훑으며 keep을 통과한 항목을 모은다. 미리보기·분류는 처음 볼 때만 복호화해 캐시한다.
+    /// limit개를 채우면 멈춘다(그 뒤 항목은 복호화하지 않는다).
+    fn collect(&mut self, limit: usize, mut keep: impl FnMut(&Summary, &Info) -> bool)
+               -> Result<Vec<Summary>, String> {
+        struct Row { id: i64, kind: String, pinned: bool, used: f64, size: i64, source: String, sealed: Option<Vec<u8>> }
+        let mut rows = Vec::new();
+        let cached = &self.previews;
+        self.conn.query("SELECT id, kind, preview, pinned, used, size, source FROM items ORDER BY used DESC", &[], |r| {
             let id = r.int(0);
-            seen.insert(id);
+            let sealed = (!cached.contains_key(&id)).then(|| r.blob(2));
+            rows.push(Row { id, kind: r.text(1), pinned: r.int(3) != 0, used: r.real(4), size: r.int(5), source: r.text(6), sealed });
+        })?;
+        let mut out = Vec::new();
+        for row in &rows {
             if out.len() >= limit {
-                return;
+                break;
             }
-            let preview = cache
-                .entry(id)
-                .or_insert_with(|| crypt::unprotect(&r.blob(2)).map(|b| String::from_utf8_lossy(&b).into_owned())
-                    .unwrap_or_default())
-                .clone();
-            if let Some(n) = &needle {
-                if !preview.to_lowercase().contains(n.as_str()) {
-                    return;
+            let preview = match &row.sealed {
+                Some(sealed) => {
+                    let p = crypt::unprotect(sealed).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+                    self.previews.insert(row.id, p.clone());
+                    p
+                }
+                None => self.previews.get(&row.id).cloned().unwrap_or_default(),
+            };
+            let cached_info = self.info.borrow().get(&row.id).cloned();
+            let info = match cached_info {
+                Some(info) => info,
+                None => {
+                    let info = self.compute_info(row.id, &row.kind, &row.source, &preview);
+                    self.info.borrow_mut().insert(row.id, info.clone());
+                    info
+                }
+            };
+            let summary = Summary { id: row.id, kind: row.kind.clone(), preview, pinned: row.pinned, used: row.used,
+                                    size: row.size, cats: info.cats };
+            if keep(&summary, &info) {
+                out.push(summary);
+            }
+        }
+        let seen: std::collections::HashSet<i64> = rows.iter().map(|r| r.id).collect();
+        self.previews.retain(|id, _| seen.contains(id));
+        self.info.borrow_mut().retain(|id, _| seen.contains(id));
+        Ok(out)
+    }
+
+    /// 분류 판별(category.rs 규칙): 글·파일 항목만 내용을 풀어 본다(그림은 출처·미리보기로 충분).
+    fn compute_info(&self, id: i64, kind: &str, source: &str, preview: &str) -> Info {
+        let mut entry = Entry { id, kind: kind.to_string(), preview: preview.to_string(), source: source.to_string(),
+                                ..Default::default() };
+        if kind == "files" {
+            if let Ok(Some((_, data, _))) = self.payload(id) {
+                entry.paths = String::from_utf8_lossy(&data).lines().map(str::trim).filter(|p| !p.is_empty())
+                    .map(str::to_owned).collect();
+            }
+        } else if kind == "text" {
+            let mut sealed: Option<(Vec<u8>, Vec<u8>)> = None;
+            let _ = self.conn.query("SELECT payload, extra FROM items WHERE id = ?", &[Arg::Int(id)], |r| {
+                sealed = Some((r.blob(0), r.blob(1)));
+            });
+            if let Some((payload, extra)) = sealed {
+                // 본문은 주소 한 개인지 볼 때만 쓴다. 긴 글(암호문 8KB 초과)은 주소일 수 없으므로 풀지 않는다.
+                if payload.len() <= 8192 {
+                    if let Some(data) = crypt::unprotect(&payload) {
+                        entry.text = String::from_utf8_lossy(&data).into_owned();
+                    }
+                }
+                if !extra.is_empty() {
+                    let extra = crypt::unprotect(&extra).unwrap_or_default();
+                    entry.web_url = crate::open_item::web_url_from_extra(&extra);
+                    entry.formats = crate::open_item::formats_from_extra(&extra).into_iter().map(|(n, _)| n).collect();
                 }
             }
-            out.push(Summary { id, kind: r.text(1), preview, pinned: r.int(3) != 0, used: r.real(4), size: r.int(5) });
-        })?;
-        cache.retain(|id, _| seen.contains(id));
-        Ok(out)
+        }
+        let cats = category::classify(&entry, &path_kind);
+        Info { cats, paths: entry.paths, web_url: entry.web_url }
     }
 
     /// (종류, 내용, 서식 묶음).
@@ -437,6 +544,33 @@ mod tests {
     }
 
     #[test]
+    fn list_filters_by_category_and_keyword_newest_first() {
+        let mut s = store();
+        let doc = s.insert_plain("text", "분기 보고서".as_bytes(), "분기 보고서", "hwp.exe", 1.0).unwrap().0;
+        let url = s.insert_plain("text", b"https://example.com/a", "https://example.com/a", "notepad.exe", 2.0).unwrap().0;
+        let shot = s.insert_plain("image", b"png", "캡처 · 그림 1x1", "screenshot", 3.0).unwrap().0;
+        let file = s.insert_plain("files", "C:\\없는폴더\\넷째.hwpx\nC:\\없는폴더\\사진.png".as_bytes(), "파일 2개", "explorer.exe", 4.0).unwrap().0;
+        let ids = |v: Vec<Summary>| v.iter().map(|x| x.id).collect::<Vec<_>>();
+        assert_eq!(ids(s.list(50, Category::All, "").unwrap()), vec![file, shot, url, doc]);
+        assert_eq!(ids(s.list(50, Category::Document, "").unwrap()), vec![file, doc]);
+        assert_eq!(ids(s.list(50, Category::Image, "").unwrap()), vec![file, shot]);
+        assert_eq!(ids(s.list(50, Category::Capture, "").unwrap()), vec![shot]);
+        assert_eq!(ids(s.list(50, Category::Web, "").unwrap()), vec![url]);
+        assert_eq!(ids(s.list(50, Category::File, "").unwrap()), vec![file]);
+        assert!(s.list(50, Category::Folder, "").unwrap().is_empty());
+        // 키워드: 파일 전체 경로까지, 한글 조합 중 글자도
+        assert_eq!(ids(s.list(50, Category::All, "넷ㅉ").unwrap()), vec![file]);
+        assert_eq!(ids(s.list(50, Category::All, "보고 분기").unwrap()), vec![doc]);
+        assert_eq!(ids(s.list(1, Category::All, "").unwrap()), vec![file]);
+        // recent()도 분류를 채운다(빠른 목록이 메모리에서 거를 수 있게)
+        let recent = s.recent(10, None).unwrap();
+        assert!(recent.iter().find(|x| x.id == shot).unwrap().cats.contains(Category::Capture));
+        // 지운 항목은 캐시에서도 빠진다
+        s.delete(doc).unwrap();
+        assert_eq!(ids(s.list(50, Category::Document, "").unwrap()), vec![file]);
+    }
+
+    #[test]
     fn limits_keep_pinned() {
         let mut s = store();
         let mut settings = Settings::default();
@@ -460,11 +594,29 @@ mod tests {
     }
 
     #[test]
+    fn policy_2026_11_07_defaults_and_old_default_migration() {
+        let s = Settings::default();
+        assert_eq!((s.max_items, s.max_total_bytes, s.max_age_days as i64, s.watch_screenshots), (500, 200 * 1024 * 1024, 30, true));
+        // 정책 전 파일에서 예전 기본값 50 → 500
+        let mut old = Settings::default();
+        old.apply_file(&json::parse(r#"{"max_items":50}"#).unwrap());
+        assert_eq!(old.max_items, 500);
+        // 사용자가 고른 다른 값은 유지
+        let mut chosen = Settings::default();
+        chosen.apply_file(&json::parse(r#"{"max_items":200}"#).unwrap());
+        assert_eq!(chosen.max_items, 200);
+        // 정책 반영 후 저장된 50은 사용자가 고른 값으로 보고 유지
+        let mut kept = Settings::default();
+        kept.apply_file(&json::parse(r#"{"max_items":50,"policy_rev":1}"#).unwrap());
+        assert_eq!(kept.max_items, 50);
+    }
+
+    #[test]
     fn settings_ranges() {
         let mut st = Settings::default();
         st.apply(&json::parse(r#"{"max_items":5,"max_total_mb":100,"auto_paste":false,"excluded_apps":["A.EXE"]}"#)
             .unwrap());
-        assert_eq!(st.max_items, 50); // 10 미만은 무시
+        assert_eq!(st.max_items, 500); // 10 미만은 무시(기본값 500 유지)
         assert_eq!(st.max_total_bytes, 100 * 1024 * 1024);
         assert!(!st.auto_paste);
         assert_eq!(st.excluded_apps, vec!["a.exe"]);
