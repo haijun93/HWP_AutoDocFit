@@ -189,7 +189,9 @@ void main() {
     await tester.pump();
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    await tester.tap(toggle);
+    expect(find.text('work-area'), findsOneWidget);
+    expect(find.text('알림-전'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.pumpAndSettle();
     expect(find.text('work-area'), findsNothing);
     expect(find.text('알림-전'), findsNothing);
