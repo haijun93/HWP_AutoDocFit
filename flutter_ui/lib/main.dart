@@ -7,6 +7,11 @@ import 'package:flutter/foundation.dart' show kIsWeb, listEquals;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'app/conversion_tab.dart';
+import 'app/document_artwork.dart';
+import 'app/lifecycle_redraw.dart';
+import 'app/rename_format_dialog.dart';
+
 import 'bridge.dart' as bridge;
 import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
@@ -30,40 +35,8 @@ import 'features/kclip/kclip_dialog.dart';
 
 export 'core/api/abbreviation_api.dart' show ApiCall;
 
-void main() => runApp(const _LifecycleRedraw(child: DocFitApp()));
+void main() => runApp(const LifecycleRedraw(child: DocFitApp()));
 
-class _LifecycleRedraw extends StatefulWidget {
-  const _LifecycleRedraw({required this.child});
-  final Widget child;
-
-  @override
-  State<_LifecycleRedraw> createState() => _LifecycleRedrawState();
-}
-
-class _LifecycleRedrawState extends State<_LifecycleRedraw>
-    with WidgetsBindingObserver {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      WidgetsBinding.instance.scheduleFrame();
-    }
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => widget.child;
-}
 
 const _ink = Color(0xff172b4d);
 const _muted = Color(0xff64748b);
@@ -145,29 +118,6 @@ class DocFitApp extends StatelessWidget {
 /// 6탭 작업 공간. 파일변환 탭은 문서편집 화면의 '파일 변환' 흐름(키패드 포맷 선택 → 진행 → 4. 결과 확인)을
 /// 그대로 쓰고, 탭에는 파일을 놓는 영역만 둔다(2026-10-29 사용자 요청, 2.0.2).
 /// 파일변환 탭: 문서편집 상태(_WorkspaceState)를 읽어 3단 화면을 그린다. 처음에는 상태가 만들어지길 기다린다.
-class _ConversionTab extends StatefulWidget {
-  const _ConversionTab({required this.workspace});
-  final GlobalKey<_WorkspaceState> workspace;
-  @override
-  State<_ConversionTab> createState() => _ConversionTabState();
-}
-
-class _ConversionTabState extends State<_ConversionTab> {
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final host = widget.workspace.currentState;
-    if (host == null) return const Center(child: CircularProgressIndicator());
-    return ConversionWorkspace(host: host);
-  }
-}
 
 class _IntegratedHome extends StatefulWidget {
   const _IntegratedHome({required this.api});
@@ -278,7 +228,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
         tabRequest.value = kTabFileRename;
       },
     ),
-    fileConversionWidget: _ConversionTab(workspace: workspace),
+    fileConversionWidget: ConversionTab(host: () => workspace.currentState),
     onTabChanged: (index) {
       final from = lastTab;
       routeDrops(index);
@@ -4084,171 +4034,4 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   );
 }
 
-/// 서식 이름·기관 이름을 고치는 창. 입력 상자는 창이 완전히 닫힐 때 정리한다.
-class RenameFormatDialog extends StatefulWidget {
-  const RenameFormatDialog({
-    super.key,
-    required this.name,
-    required this.organization,
-  });
-  final String name, organization;
-  @override
-  State<RenameFormatDialog> createState() => _RenameFormatDialogState();
-}
 
-class _RenameFormatDialogState extends State<RenameFormatDialog> {
-  late final name = TextEditingController(text: widget.name);
-  late final organization = TextEditingController(text: widget.organization);
-
-  @override
-  void dispose() {
-    name.dispose();
-    organization.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('서식 이름 바꾸기'),
-    content: SizedBox(
-      width: 380,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              key: const Key('formatNameField'),
-              controller: name,
-              autofocus: true,
-              decoration: const InputDecoration(labelText: '서식 이름'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              key: const Key('formatOrganizationField'),
-              controller: organization,
-              decoration: const InputDecoration(
-                labelText: '기관 이름 (선택)',
-                helperText: '비워 두면 기관 없이 보여요.',
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('취소'),
-      ),
-      FilledButton(
-        onPressed: () => Navigator.pop(context, (
-          name.text.trim(),
-          organization.text.trim(),
-        )),
-        child: const Text('저장'),
-      ),
-    ],
-  );
-}
-
-class DocumentArtwork extends StatelessWidget {
-  const DocumentArtwork({super.key});
-  @override
-  Widget build(BuildContext context) => ExcludeSemantics(
-    child: Stack(
-      alignment: Alignment.center,
-      children: [
-        Container(
-          width: 185,
-          height: 185,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Color(0x55ffffff),
-          ),
-        ),
-        Transform.rotate(
-          angle: -.14,
-          child: Container(
-            width: 121,
-            height: 158,
-            decoration: BoxDecoration(
-              color: const Color(0xffb9cdef),
-              borderRadius: BorderRadius.circular(18),
-            ),
-          ),
-        ),
-        Transform.translate(
-          offset: const Offset(13, -5),
-          child: Transform.rotate(
-            angle: .08,
-            child: Container(
-              width: 120,
-              height: 158,
-              padding: const EdgeInsets.all(19),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(18),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x152b527e),
-                    blurRadius: 24,
-                    offset: Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                    width: 28,
-                    height: 28,
-                    decoration: BoxDecoration(
-                      color: const Color(0xffe7efff),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: const Icon(
-                      Icons.format_align_left_rounded,
-                      color: _blue,
-                      size: 17,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  for (final w in [78.0, 65.0, 78.0, 43.0])
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 9),
-                      child: Container(
-                        width: w,
-                        height: 5,
-                        decoration: BoxDecoration(
-                          color: const Color(0xffe8edf5),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          right: 17,
-          bottom: 18,
-          child: Container(
-            width: 49,
-            height: 49,
-            decoration: BoxDecoration(
-              color: _mint,
-              borderRadius: BorderRadius.circular(17),
-              border: Border.all(color: const Color(0xffecf6f2), width: 4),
-            ),
-            child: const Icon(
-              Icons.check_rounded,
-              color: Colors.white,
-              size: 28,
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
-}
