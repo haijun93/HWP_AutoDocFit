@@ -90,12 +90,14 @@ class TableUnitsService:
         self._gallery = Path(gallery) if gallery else None
 
     def _resolve(self, template_id) -> tuple[Path, str]:
-        """템플릿 id를 (서식 파일, 그 파일 안의 id)로. 'g'로 시작하면 추가 서식 파일이다."""
+        """템플릿 id를 (서식 파일, 그 파일 안의 id)로 변환한다."""
         value = str(template_id)
         if value.startswith(FLOW_OVERRIDE_PREFIX):
             return FLOW_OVERRIDE_CATALOG, value[len(FLOW_OVERRIDE_PREFIX):]
         if self._gallery is not None and value.startswith(GALLERY_PREFIX):
             return self._gallery, value[len(GALLERY_PREFIX):]
+        if value.startswith("tpl8:"):
+            return default_catalog_path().with_name("표 서식모음 TPL8.hwpx"), value[len("tpl8:"):]
         return self.source, value
 
     def _preferences(self):
@@ -134,6 +136,9 @@ class TableUnitsService:
         from defusedxml import ElementTree as ET
         from docfit_core import table_catalog as catalog
         sources = [("", self.source)]
+        tpl8_path = default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
+        if tpl8_path.is_file():
+            sources.append(("tpl8:", tpl8_path))
         if FLOW_OVERRIDE_CATALOG.is_file():
             sources.append((FLOW_OVERRIDE_PREFIX, FLOW_OVERRIDE_CATALOG))
         if self._gallery_ready():
@@ -194,6 +199,10 @@ class TableUnitsService:
             items = table_units.describe_units(self.source)
         except (OSError, ValueError) as exc:
             raise ServiceError("CATALOG_UNAVAILABLE", f"표 서식 모음을 읽지 못했습니다: {exc}") from exc
+        if self.source == default_catalog_path() and default_catalog_path().with_name("표 서식모음 TPL8.hwpx").is_file():
+            for item in table_units.describe_units(default_catalog_path().with_name("표 서식모음 TPL8.hwpx")):
+                item["id"] = "tpl8:" + str(item["id"])
+                items.append(item)
         if FLOW_OVERRIDE_CATALOG.is_file():
             try:
                 replacement = table_units.describe_units(FLOW_OVERRIDE_CATALOG)

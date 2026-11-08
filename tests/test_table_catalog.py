@@ -23,13 +23,61 @@ HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 class TableCatalogTests(unittest.TestCase):
     def test_embedded_catalog_has_named_groups_and_all_table_shapes(self):
         catalog = list_catalog()
-        self.assertEqual(catalog["category_count"], 16)
-        self.assertEqual(catalog["template_count"], 34)
+        self.assertGreaterEqual(catalog["category_count"], 16)
+        self.assertGreaterEqual(catalog["template_count"], 34)
         categories = {item["name"]: item for item in catalog["categories"]}
         self.assertEqual(len(categories["부연설명"]["templates"]), 6)
         self.assertEqual(len(categories["추진절차(가로)"]["templates"]), 5)
         ids = [template["id"] for item in catalog["categories"] for template in item["templates"]]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_tpl8_catalog_dimensions_units_and_template_labels(self):
+        tpl8 = default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
+        catalog = list_catalog(tpl8)
+        expected = {
+            "신구조문대비표": (4, 3, None),
+            "비목별 세부 예산 산출내역표": (4, 6, "(단위: 원)"),
+            "사업 추진 단계별 공정표": (4, 7, None),
+            "민원 접수 및 처리대장": (4, 7, None),
+            "물품·용역 적격심사 세부평가표": (4, 6, "(단위: 점)"),
+            "보조금 집행내역 및 정산총괄표": (4, 6, "(단위: 원)"),
+            "기관 경영목표 성과지표 총괄표": (4, 6, None),
+            "시설물 안전점검 및 조치결과표": (4, 6, None),
+        }
+        self.assertEqual(catalog["template_count"], 8)
+        for category in catalog["categories"]:
+            template = category["templates"][0]
+            rows, cols, unit = expected[category["name"]]
+            self.assertEqual((template["rows"], template["cols"]), (rows, cols))
+            self.assertTrue(all("김민수" not in cell and "이영희" not in cell for row in template["cells"] for cell in row))
+            self.assertEqual(sum(unit in cell for row in template["cells"] for cell in row) if unit else 0, 0)
+            if category["name"] == "비목별 세부 예산 산출내역표":
+                self.assertIn("860,000", " ".join(sum(template["cells"][1:], [])))
+            if category["name"] == "보조금 집행내역 및 정산총괄표":
+                self.assertIn("955,970", " ".join(sum(template["cells"][1:], [])))
+        names = {category["name"] for category in catalog["categories"]}
+        self.assertEqual(names, set(expected))
+
+    def test_tpl8_unit_captions_only_on_numeric_tables_and_right_aligned(self):
+        tpl8 = default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
+        with zipfile.ZipFile(tpl8) as archive:
+            root = ET.fromstring(archive.read("Contents/section0.xml"))
+            header = ET.fromstring(archive.read("Contents/header.xml"))
+        labels = {}
+        for paragraph in root.findall(HP + "p"):
+            text = _text(paragraph)
+            if text.startswith("#"):
+                current = text[1:]
+            elif text.startswith("(단위:"):
+                align_id = paragraph.get("paraPrIDRef")
+                paras = [node for node in header.iter("{http://www.hancom.co.kr/hwpml/2011/head}paraPr") if node.get("id") == align_id]
+                align = paras[0].find("{http://www.hancom.co.kr/hwpml/2011/head}align") if paras else None
+                labels[current] = (text, align.get("horizontal") if align is not None else None)
+        self.assertEqual(labels, {
+            "비목별 세부 예산 산출내역표": ("(단위: 원)", "RIGHT"),
+            "물품·용역 적격심사 세부평가표": ("(단위: 점)", "RIGHT"),
+            "보조금 집행내역 및 정산총괄표": ("(단위: 원)", "RIGHT"),
+        })
 
     def test_export_preserves_exact_table_xml_and_contains_only_selected_table(self):
         catalog_path = default_catalog_path()

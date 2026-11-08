@@ -77,6 +77,27 @@ class TableUnitsServiceTests(unittest.TestCase):
         self.assertIn("units", first)
         self.assertIsNone(first["thumbnail"])
 
+    def test_tpl8_templates_are_listed_and_preview_export_with_stable_prefix_ids(self):
+        templates = [item for item in self.service._units() if item["id"].startswith("tpl8:")]
+        self.assertEqual(len(templates), 8)
+        expected = {
+            "신구조문대비표": (4, 3),
+            "비목별 세부 예산 산출내역표": (4, 6),
+            "사업 추진 단계별 공정표": (4, 7),
+            "민원 접수 및 처리대장": (4, 7),
+            "물품·용역 적격심사 세부평가표": (4, 6),
+            "보조금 집행내역 및 정산총괄표": (4, 6),
+            "기관 경영목표 성과지표 총괄표": (4, 6),
+            "시설물 안전점검 및 조치결과표": (4, 6),
+        }
+        for template in templates:
+            with self.subTest(name=template["category"]):
+                self.assertEqual((template["rows"], template["cols"]), expected[template["category"]])
+                view = self.service.preview(template["id"])
+                self.assertEqual((view["rows"], view["cols"]), expected[template["category"]])
+                exported = self.service._export(Path(self.temp.name), template["id"])
+                self.assertTrue(exported.is_file())
+
     def test_v3_flow_template_replaces_default_with_attached_5_by_3_design(self):
         matches = [item for item in self.service._units()
                    if item["name"] == "추진절차(가로세로) · 모양 1"]

@@ -2,7 +2,7 @@
 
 <h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.41</h2>
 
-| 내려받는 곳 | 설치형 (Setup, 184MB) | 포터블 (Portable, 204MB) |
+| 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
 |:---:|:---:|:---:|
 | GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.41/HWP_AutoDocFit_v2.2.41_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.41/HWP_AutoDocFit_v2.2.41_Portable.exe) |
 | GitLab | [설치형 내려받기](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/raw/downloads/HWP_AutoDocFit_v2.2.41_Setup.exe?inline=false) | [포터블 내려받기](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/raw/downloads/HWP_AutoDocFit_v2.2.41_Portable.exe?inline=false) |
