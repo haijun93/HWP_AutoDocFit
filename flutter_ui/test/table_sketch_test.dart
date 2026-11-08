@@ -546,6 +546,68 @@ void main() {
       },
     );
 
+    testWidgets(
+      'Maze example creates 15x15 grid with lines, fills, texts (S, E) and updates preview',
+      (tester) async {
+        final calls = <List<Object?>>[];
+        Future<Object?> api(String name, List<Object?> args) async {
+          calls.add([name, ...args]);
+          if (name == 'table_sketch') {
+            final action = args[0] as String;
+            if (action == 'preview') {
+              return {
+                'ok': true,
+                'rows': 15,
+                'cols': 15,
+                'cells': [
+                  {'row': 0, 'col': 0, 'rowspan': 1, 'colspan': 1},
+                ],
+                'width_mm': 150.0,
+                'height_mm': 150.0,
+                'warnings': [],
+              };
+            }
+          }
+          return {'ok': true};
+        }
+
+        await tester.pumpWidget(MaterialApp(home: TableSketchScreen(api: api)));
+        await tester.pumpAndSettle();
+
+        // 미로 예시 버튼 클릭
+        expect(find.byKey(const Key('sketchMazeExample')), findsOneWidget);
+        await tester.tap(find.byKey(const Key('sketchMazeExample')));
+        await tester.pumpAndSettle();
+
+        // 디바운스 0.5초 경과
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pumpAndSettle();
+
+        // 미로 예시 생성 후 preview에 15x15 격자, 선, 채우기, 텍스트(S, E)가 담겨 전송되었는지 확인
+        final previewCalls = calls
+            .where((c) => c[0] == 'table_sketch' && c[1] == 'preview')
+            .toList();
+        expect(previewCalls.isNotEmpty, isTrue);
+
+        final lastPreview = previewCalls.last;
+        final sketch = lastPreview[2] as Map;
+        final grid = sketch['grid'] as Map;
+        expect(grid['cols'], equals(15));
+        expect(grid['rows'], equals(15));
+
+        final lines = sketch['lines'] as List;
+        expect(lines.isNotEmpty, isTrue);
+        final fills = sketch['fills'] as List;
+        expect(fills.isNotEmpty, isTrue);
+
+        final texts = sketch['texts'] as List;
+        final textValues = texts.map((t) => t['text']).toList();
+        expect(textValues, containsAll(['S', 'E']));
+
+        expect(tester.takeException(), isNull);
+      },
+    );
+
     testWidgets('preview, copy, and save calls match backend bridge contract', (
       tester,
     ) async {
