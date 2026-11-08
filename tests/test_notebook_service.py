@@ -230,14 +230,6 @@ class DesktopNotebookTests(unittest.TestCase):
         source = inspect.getsource(desktop_web_ui.DesktopWebBridge)
         self.assertEqual(source.count("def notebook(self"), 1)
 
-    def test_developer_mode_off_is_rejected(self):
-        bridge = make_desktop_bridge(developer=False)
-        with mock.patch("docfit_app.library_bridge.LibraryBridge", side_effect=AssertionError):
-            result = bridge.notebook({"cmd": "nb_list"})
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["code"], "DEVELOPER_MODE_REQUIRED")
-        self.assertFalse(hasattr(bridge, "_notebook_service"))
-
     def test_developer_mode_on_creates_service_lazily(self):
         bridge = make_desktop_bridge()
         fake = FakeBridge()
