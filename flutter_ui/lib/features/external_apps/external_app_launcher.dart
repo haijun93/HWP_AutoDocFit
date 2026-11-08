@@ -9,7 +9,11 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 /// 설치 안내·실행 파일 지정 창을 띄운다. 사이드메뉴 항목 키는 `external-app-<id>`.
 /// 라이선스·배포 설계: docs/EXTERNAL_APPS.md.
 class ExternalAppSpec {
-  const ExternalAppSpec({required this.id, required this.label, required this.icon});
+  const ExternalAppSpec({
+    required this.id,
+    required this.label,
+    required this.icon,
+  });
 
   /// Python `external_apps_service.APPS`의 app_id와 같아야 한다.
   final String id;
@@ -21,14 +25,39 @@ class ExternalAppSpec {
 
 /// 사이드메뉴 표시 순서.
 const kExternalApps = <ExternalAppSpec>[
-  ExternalAppSpec(id: 'photo_album', label: '사진첩', icon: Icons.photo_library_outlined),
-  ExternalAppSpec(id: 'outliner', label: '아웃라이너', icon: Icons.account_tree_outlined),
-  ExternalAppSpec(id: 'photo_manager', label: '사진관리', icon: Icons.photo_camera_back_outlined),
+  ExternalAppSpec(
+    id: 'photo_album',
+    label: '사진첩',
+    icon: Icons.photo_library_outlined,
+  ),
+  ExternalAppSpec(
+    id: 'outliner',
+    label: '아웃라이너',
+    icon: Icons.account_tree_outlined,
+  ),
+  ExternalAppSpec(
+    id: 'photo_manager',
+    label: '사진관리',
+    icon: Icons.photo_camera_back_outlined,
+  ),
+  ExternalAppSpec(
+    id: 'pdf_editor',
+    label: 'PDF편집',
+    icon: Icons.picture_as_pdf_outlined,
+  ),
 ];
 
-Future<Map> _callExternalApp(ApiCall api, String action, ExternalAppSpec app, [Map<String, Object?> extra = const {}]) async {
+Future<Map> _callExternalApp(
+  ApiCall api,
+  String action,
+  ExternalAppSpec app, [
+  Map<String, Object?> extra = const {},
+]) async {
   try {
-    final raw = await api('external_app', [action, {'app': app.id, ...extra}]);
+    final raw = await api('external_app', [
+      action,
+      {'app': app.id, ...extra},
+    ]);
     return raw is Map ? raw : const {'ok': false};
   } catch (error) {
     return {'ok': false, 'message': '$error'};
@@ -36,30 +65,45 @@ Future<Map> _callExternalApp(ApiCall api, String action, ExternalAppSpec app, [M
 }
 
 /// 사이드메뉴에서 외부 프로그램 실행. 실행창(오른쪽 화면)은 바꾸지 않는다.
-Future<void> openExternalApp(BuildContext context, ApiCall api, ExternalAppSpec app) async {
+Future<void> openExternalApp(
+  BuildContext context,
+  ApiCall api,
+  ExternalAppSpec app,
+) async {
   final result = await _callExternalApp(api, 'launch', app);
   if (!context.mounted) return;
   if (result['ok'] == true) {
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      SnackBar(content: Text('${app.label}을(를) 별도 창으로 열었습니다.')),
-    );
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text('${app.label}을(를) 별도 창으로 열었습니다.')));
     return;
   }
   if (result['code'] == 'APP_MISSING') {
     await showDialog<void>(
       context: context,
-      builder: (_) => ExternalAppSetupDialog(api: api, app: app, message: '${result['message'] ?? ''}'),
+      builder: (_) => ExternalAppSetupDialog(
+        api: api,
+        app: app,
+        message: '${result['message'] ?? ''}',
+      ),
     );
     return;
   }
   ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-    SnackBar(content: Text('${result['message'] ?? '${app.label}을(를) 열지 못했습니다.'}')),
+    SnackBar(
+      content: Text('${result['message'] ?? '${app.label}을(를) 열지 못했습니다.'}'),
+    ),
   );
 }
 
 /// 실행 파일이 없을 때: 설치 안내 + 포크 저장소·원본 공식 배포처 + 실행 파일 지정.
 class ExternalAppSetupDialog extends StatefulWidget {
-  const ExternalAppSetupDialog({super.key, required this.api, required this.app, required this.message});
+  const ExternalAppSetupDialog({
+    super.key,
+    required this.api,
+    required this.app,
+    required this.message,
+  });
 
   final ApiCall api;
   final ExternalAppSpec app;
@@ -72,27 +116,80 @@ class ExternalAppSetupDialog extends StatefulWidget {
 class _ExternalAppSetupDialogState extends State<ExternalAppSetupDialog> {
   bool _busy = false;
   String? _notice;
+  Map? _install;
+  bool get _autoInstall => widget.app.id == 'pdf_editor';
+
+  Future<void> _installApp() async {
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
+    final result = await _call('install');
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _install = result['install'] is Map
+          ? Map.from(result['install'] as Map)
+          : null;
+    });
+    _pollInstall();
+  }
+
+  Future<void> _pollInstall() async {
+    while (mounted && _install?['running'] == true) {
+      await Future<void>.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
+      final result = await _call('progress');
+      if (!mounted) return;
+      setState(() {
+        _install = result['install'] is Map
+            ? Map.from(result['install'] as Map)
+            : _install;
+      });
+    }
+    if (!mounted || _install?['ok'] != true) return;
+    final launched = await _call('launch');
+    if (!mounted) return;
+    if (launched['ok'] == true) {
+      Navigator.of(context).pop();
+    } else {
+      setState(
+        () => _notice = '${launched['message'] ?? 'PDF편집을 실행하지 못했습니다.'}',
+      );
+    }
+  }
 
   Future<Map> _call(String action, [Map<String, Object?> extra = const {}]) =>
       _callExternalApp(widget.api, action, widget.app, extra);
 
   Future<void> _choose() async {
-    setState(() { _busy = true; _notice = null; });
+    setState(() {
+      _busy = true;
+      _notice = null;
+    });
     final chosen = await _call('choose');
     if (!mounted) return;
-    if (chosen['ok'] == true && chosen['cancelled'] != true && chosen['available'] == true) {
+    if (chosen['ok'] == true &&
+        chosen['cancelled'] != true &&
+        chosen['available'] == true) {
       final launched = await _call('launch');
       if (!mounted) return;
       if (launched['ok'] == true) {
         Navigator.of(context).pop();
         return;
       }
-      setState(() { _busy = false; _notice = '${launched['message'] ?? '${widget.app.label}을(를) 실행하지 못했습니다.'}'; });
+      setState(() {
+        _busy = false;
+        _notice =
+            '${launched['message'] ?? '${widget.app.label}을(를) 실행하지 못했습니다.'}';
+      });
       return;
     }
     setState(() {
       _busy = false;
-      _notice = chosen['cancelled'] == true ? null : '${chosen['message'] ?? '실행 파일을 지정하지 못했습니다.'}';
+      _notice = chosen['cancelled'] == true
+          ? null
+          : '${chosen['message'] ?? '실행 파일을 지정하지 못했습니다.'}';
     });
   }
 
@@ -108,23 +205,53 @@ class _ExternalAppSetupDialogState extends State<ExternalAppSetupDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SelectableText(widget.message),
+          if (_autoInstall) ...[
+            const SizedBox(height: 12),
+            if (_install?['running'] == true) ...[
+              LinearProgressIndicator(
+                value: _install?['percent'] is int
+                    ? (_install!['percent'] as int) / 100
+                    : null,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '${_install?['message'] ?? '준비 중…'}${_install?['percent'] is int ? ' (${_install!['percent']}%)' : ''}',
+              ),
+            ] else if (_install?['ok'] == false)
+              Text(
+                '${_install?['message'] ?? '다운로드하지 못했습니다.'}',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+          ],
           if (_notice != null) ...[
             const SizedBox(height: 12),
-            Text(_notice!, key: const ValueKey('external-app-notice'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error)),
+            Text(
+              _notice!,
+              key: const ValueKey('external-app-notice'),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            ),
           ],
         ],
       ),
     ),
     actions: [
+      if (_autoInstall)
+        TextButton(
+          onPressed: _busy || _install?['running'] == true ? null : _installApp,
+          child: const Text('자동 다운로드'),
+        ),
       TextButton(
         key: const ValueKey('external-app-fork'),
-        onPressed: _busy ? null : () => _call('open_download', {'target': 'fork'}),
+        onPressed: _busy
+            ? null
+            : () => _call('open_download', {'target': 'fork'}),
         child: const Text('포크 저장소'),
       ),
       TextButton(
         key: const ValueKey('external-app-official'),
-        onPressed: _busy ? null : () => _call('open_download', {'target': 'official'}),
+        onPressed: _busy
+            ? null
+            : () => _call('open_download', {'target': 'official'}),
         child: const Text('공식 배포처'),
       ),
       TextButton(

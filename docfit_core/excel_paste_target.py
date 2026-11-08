@@ -15,8 +15,8 @@ from __future__ import annotations
 import re
 from html.parser import HTMLParser
 
-from .excel_html_shading import _rebuild_header, strip_cell_shading_report
-from .excel_table import _NUMERIC
+from .excel_html_shading import _rebuild_header, _strip_declarations, _strip_style_blocks, strip_cell_shading_report
+from .excel_table import _NUMERIC, _class_styles, _color, _style_value
 
 PADDING_LR_PT = 5.1   # 510 한/글 단위
 PADDING_TB_PT = 1.4   # 141 한/글 단위
@@ -40,10 +40,30 @@ def _attrs(raw):
 
 
 def _set_attr(raw, name, value):
-    """태그 속성 문자열에서 name을 value로 바꾸거나 더한다(따옴표는 작은따옴표로 통일)."""
+    """태그 속성 문자열에서 name을 value로 바꾸거나 더한다."""
     pattern = re.compile(rf"(?<![\w-]){name}\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
-    new = f"{name}={value}"
+    val_str = str(value)
+    quoted = f'"{val_str}"' if any(c in val_str for c in " #;:= '\"") else val_str
+    new = f"{name}={quoted}"
     return pattern.sub(lambda _m: new, raw, count=1) if pattern.search(raw) else raw.rstrip() + " " + new
+
+
+def _remove_attr(raw, name):
+    """태그 속성 문자열에서 name 속성을 제거한다."""
+    pattern = re.compile(rf"\s*(?<![\w-]){name}\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+    return pattern.sub("", raw).strip()
+
+
+def _strip_inline_shading(raw_attrs):
+    """태그 속성 문자열의 인라인 style에서 background* 및 mso-pattern을 제거한다."""
+    pattern = re.compile(r"(?<![\w-])style\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I)
+    match = pattern.search(raw_attrs)
+    if not match:
+        return raw_attrs
+    body = match.group(1).strip("\"'")
+    body, _ = _strip_declarations(body)
+    new = f"style='{body}'" if body.strip() else ""
+    return pattern.sub(lambda _m: new, raw_attrs, count=1) if new else pattern.sub("", raw_attrs, count=1).strip()
 
 
 def _set_style(raw, **decls):
@@ -105,7 +125,8 @@ def _normalize_widths(html, report):
     widths = _col_widths(html)
     if not widths or any(w <= 0 for w in widths):
         report["width"] = "열 너비 정보 없음"
-        return html
+        # col 정보가 없어도 table의 cellpadding=0 등은 정리
+        return _TABLE_TAG.sub(lambda m: f"<table {_remove_attr(m.group(1), 'cellpadding').strip()}>".replace("<table >", "<table>"), html, count=1)
     count = len(widths)
     taken, placed = set(), []
     rows = list(_ROW.finditer(html))
@@ -145,9 +166,14 @@ def _normalize_widths(html, report):
             raw = _set_style(_set_attr(m.group(3), "width", _fmt(w)), width=f"{_fmt(w * 0.75)}pt")
             return f"{m.group(1)}{raw}>{m.group(4)}</{m.group(2)}>"
         html = html[:rows[y].start()] + _CELL.sub(fix, row) + html[rows[y].end():]
-    # 3) 표 전체 너비.
+    # 3) 표 전체 너비 및 cellpadding 제거(칸 여백 무력화 방지).
     total = sum(widths)
-    html = _TABLE_TAG.sub(lambda m: "<table" + _set_style(_set_attr(m.group(1), "width", _fmt(total)), width=f"{_fmt(total * 0.75)}pt") + ">", html, count=1)
+    def clean_table(m):
+        t_attrs = _remove_attr(m.group(1), "cellpadding")
+        t_attrs = _set_attr(t_attrs, "width", _fmt(total))
+        t_attrs = _set_style(t_attrs, width=f"{_fmt(total * 0.75)}pt")
+        return f"<table {t_attrs.strip()}>"
+    html = _TABLE_TAG.sub(clean_table, html)
     report["width"] = f"{count}열, 표 너비 {_fmt(total)}px"
     return html
 
@@ -202,19 +228,97 @@ def _transform(data, shading):
     html = body.decode("utf-8")
     if not re.search(r"<t[dh]\b", html, re.I):
         return data, dict(changed=False, reason="표 셀이 없는 HTML")
-    report = dict(changed=False, reason="", numeric=0, blank=0, width="", padding=False, shading_removed=0)
+    report = dict(changed=False, reason="", numeric=0, blank=0, width="", padding=False, shading_removed=0, bg_cells=0)
+    classes = _class_styles(html)
 
     def cell(m):
-        inner, kind = _fix_inner(m.group(4))
+        tag_open = m.group(1)   # "<td" or "<th"
+        tag_name = m.group(2)   # "td" or "th"
+        raw_attrs = m.group(3)
+        raw_inner = m.group(4)
+
+        inner, kind = _fix_inner(raw_inner)
         if kind:
             report["blank" if kind == "blank" else "numeric"] += 1
-        return f"{m.group(1)}{m.group(3)}>{inner}</{m.group(2)}>"
+
+        attrs = _attrs(raw_attrs)
+        cls = attrs.get("class", "").lower()
+        cls_style = classes.get(cls, "")
+        inline_style = attrs.get("style", "")
+
+        # 1. 셀 음영: 클래스/인라인 style의 background를 칸 태그의 bgcolor 속성으로 전환 (인라인 우선)
+        if shading == "keep":
+            fill = (
+                _color(attrs.get("bgcolor"))
+                or _color(_style_value(inline_style, "background", "background-color"))
+                or _color(_style_value(cls_style, "background", "background-color"))
+            )
+            if fill:
+                raw_attrs = _set_attr(raw_attrs, "bgcolor", fill)
+                report["bg_cells"] = report.get("bg_cells", 0) + 1
+            raw_attrs = _strip_inline_shading(raw_attrs)
+        else:
+            raw_attrs = _remove_attr(raw_attrs, "bgcolor")
+            raw_attrs = _strip_inline_shading(raw_attrs)
+
+        # 2. 정렬: 숫자는 앞 공백 제거 후에도 오른쪽 정렬 보존, 일반 셀은 엑셀 정렬 유지 (인라인 우선)
+        plain_text = _plain(raw_inner)
+        is_num = (kind == "numeric") or bool(_NUMERIC.fullmatch(plain_text))
+        if is_num:
+            raw_attrs = _set_attr(raw_attrs, "align", "right")
+            raw_attrs = _set_style(raw_attrs, text_align="right")
+        else:
+            align = (_style_value(inline_style, "text-align") or _style_value(cls_style, "text-align") or attrs.get("align") or "").lower()
+            if align in ("left", "center", "right", "justify"):
+                raw_attrs = _set_attr(raw_attrs, "align", align)
+                raw_attrs = _set_style(raw_attrs, text_align=align)
+
+        # 3. 칸 여백(padding): 상하 1.4pt, 좌우 5.1pt (한/글 단위 141, 510) 인라인 부여
+        raw_attrs = _set_style(
+            raw_attrs,
+            padding_top=f"{PADDING_TB_PT}pt",
+            padding_right=f"{PADDING_LR_PT}pt",
+            padding_bottom=f"{PADDING_TB_PT}pt",
+            padding_left=f"{PADDING_LR_PT}pt",
+        )
+
+        # 4. 세로 정렬: 엑셀 기본 middle 보존 (인라인 우선)
+        valign = (_style_value(inline_style, "vertical-align") or _style_value(cls_style, "vertical-align") or attrs.get("valign") or "middle").lower()
+        if valign in ("top", "middle", "bottom", "baseline"):
+            raw_attrs = _set_attr(raw_attrs, "valign", valign)
+            raw_attrs = _set_style(raw_attrs, vertical_align=valign)
+
+        # 5. 서식 인라이닝: 굵기(font-weight), 글자색(color), 테두리(border)
+        weight = (_style_value(inline_style, "font-weight") or _style_value(cls_style, "font-weight") or "").lower()
+        if tag_name.lower() == "th" or weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600):
+            raw_attrs = _set_style(raw_attrs, font_weight="bold")
+
+        color = _style_value(cls_style, "color")
+        if color and not _style_value(inline_style, "color"):
+            raw_attrs = _set_style(raw_attrs, color=color)
+
+        border = _style_value(cls_style, "border")
+        if border and not _style_value(inline_style, "border"):
+            raw_attrs = _set_style(raw_attrs, border=border)
+
+        attrs_str = raw_attrs.strip()
+        if attrs_str:
+            return f"{tag_open} {attrs_str}>{inner}</{tag_name}>"
+        return f"{tag_open}>{inner}</{tag_name}>"
+
+    if shading == "strip":
+        stripped_html, sh = strip_cell_shading_report(html)
+        report["shading_removed"] = sh["removed"]
+        html = stripped_html
+        classes = _class_styles(html)
+
     new = _CELL.sub(cell, html)
     new = _normalize_widths(new, report)
     new, report["padding"] = _normalize_padding(new)
-    if shading == "strip":
-        new, sh = strip_cell_shading_report(new)
-        report["shading_removed"] = sh["removed"]
+    if shading == "keep":
+        # 셀 배경이 <td bgcolor="...">로 옮겨졌으므로,
+        # <style> 클래스(.xl65 등)에 남아있는 background를 제거하여 문단 배경으로 들어가는 것을 차단한다.
+        new, _ = _strip_style_blocks(new)
     if _shape(html) != _shape(new):
         return data, dict(report, changed=False, reason="구조 검증 실패")
     if new == html:

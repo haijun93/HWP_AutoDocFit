@@ -302,13 +302,7 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
     if (diagramId != null) return;
     final draft = await draftClient.pending();
     if (draft == null || !mounted) return;
-    // 묻지 않고 바로 복구한다(사용자 요청 2026-11-07: 기본값으로 "복구"가 시행되게). 아래 알림으로만 알린다.
-    if (mounted) {
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-        key: const ValueKey('draft-restored'),
-        content: Text("'${draft['name']}'을(를) 편집하던 내용을 자동으로 복구했어요."),
-      ));
-    }
+    // 묻지 않고 바로 복구한다(사용자 요청 2026-11-07: 기본값으로 "복구"가 시행되게). 알림도 띄우지 않는다(사용자 요청 2026-11-08).
     final (id, rev) = await draftClient.reconnect(draft);
     diagramId = id;
     revision = rev;

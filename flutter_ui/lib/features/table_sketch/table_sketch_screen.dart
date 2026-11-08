@@ -284,23 +284,6 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         _sel = SketchSelection();
       });
       _triggerPreviewDebounced();
-      final before = TableSketchDoc();
-      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(
-        key: const ValueKey('draft-restored'),
-        content: const Text('저장하지 못했던 표그림판 작업을 자동으로 복구했어요.'),
-        action: SnackBarAction(
-          label: '버리기',
-          onPressed: () {
-            if (!mounted) return;
-            setState(() {
-              _doc = before;
-              _sel = SketchSelection();
-            });
-            _triggerPreviewDebounced();
-            unawaited(_sketchApi.clearDraft().catchError((Object _) {}));
-          },
-        ),
-      ));
     } else {
       try {
         await _sketchApi.clearDraft();

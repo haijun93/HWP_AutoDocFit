@@ -35,10 +35,10 @@ class FakeDialogs:
 
 
 class RegistryTests(unittest.TestCase):
-    def test_three_apps_with_renamed_fork_urls(self):
-        self.assertEqual(list(APPS), ["photo_album", "outliner", "photo_manager"])
-        self.assertEqual([a.label for a in APPS.values()], ["사진첩", "아웃라이너", "사진관리"])
-        self.assertEqual([a.folder for a in APPS.values()], ["mongdangview", "mongdangoutliner", "mondangpics"])
+    def test_registered_apps_have_renamed_fork_urls(self):
+        self.assertEqual(list(APPS), ["photo_album", "outliner", "photo_manager", "pdf_editor"])
+        self.assertEqual([a.label for a in APPS.values()], ["사진첩", "아웃라이너", "사진관리", "PDF편집"])
+        self.assertEqual([a.folder for a in APPS.values()], ["mongdangview", "mongdangoutliner", "mondangpics", "mongdangpdf"])
         for app in APPS.values():
             self.assertEqual(app.fork_url, f"https://github.com/haijun93/{app.folder}")
             self.assertTrue(app.official_url.startswith("https://"))
@@ -104,7 +104,7 @@ class ExternalAppsServiceTests(unittest.TestCase):
         listed = self._service().command("list")
         self.assertTrue(listed["ok"])
         self.assertEqual([a["app"] for a in listed["apps"]], list(APPS))
-        self.assertEqual([a["available"] for a in listed["apps"]], [False, False, True])
+        self.assertEqual([a["available"] for a in listed["apps"]], [False, False, True, False])
         self.assertEqual(listed["apps"][1]["license"], "AGPL-3.0")
         self.assertEqual(listed["apps"][2]["tools_folder"], "tools\\mondangpics")
 
@@ -327,7 +327,7 @@ class ApplicationServiceTests(unittest.TestCase):
             status = app.dispatch("external_app", ["status", {"app": "outliner"}])
             self.assertTrue(status["ok"])
             self.assertEqual(status["app_info"]["fork_url"], OUTLINER.fork_url)
-            self.assertEqual(len(app.dispatch("external_app", ["list"])["apps"]), 3)
+            self.assertEqual(len(app.dispatch("external_app", ["list"])["apps"]), len(APPS))
 
 
 if __name__ == "__main__":
