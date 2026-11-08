@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import platform
 import tempfile
 import threading
 import unittest
@@ -71,6 +72,23 @@ def release_json(name, url, sha=None, tag="v1.0", size=None):
 
 
 class UrlPolicyTests(unittest.TestCase):
+    def test_pdfcraft_resolves_release_checksum_asset(self):
+        payload = b"portable zip"
+        sha = hashlib.sha256(payload).hexdigest()
+        net = FakeNet()
+        api = "https://api.github.com/repos/haijun93/mongdangpdf/releases/latest"
+        sums_url = "https://github.com/haijun93/mongdangpdf/releases/download/v1/SHA256SUMS.txt"
+        arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+        asset_name = f"pdfcraft-1.2-windows-{arch}-portable.zip"
+        zip_url = f"https://github.com/haijun93/mongdangpdf/releases/download/v1/{asset_name}"
+        net.add(api, json.dumps({"tag_name":"v1", "assets":[
+            {"name":"SHA256SUMS.txt", "browser_download_url":sums_url},
+            {"name":asset_name, "browser_download_url":zip_url, "size":len(payload)}]}))
+        net.add(sums_url, f"{sha}  {asset_name}\n")
+        release = dl.resolve_github(dl.SOURCES["pdf_editor"][0], net)
+        self.assertEqual(release.sha256, sha)
+        self.assertEqual(release.asset, asset_name)
+
     def test_https_and_allowlist(self):
         dl.check_url("https://github.com/a/b")
         dl.check_url("https://download.kde.org/x")
