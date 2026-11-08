@@ -499,6 +499,14 @@ const thirdPartyComponents = [
   ('한/글 자동화 보안 모듈 예시(한컴)', '한/글 COM 자동화 승인', '한컴 예제 배포 조건'),
 ];
 
+/// 개발자 모드 사이드메뉴에서 실행하는 별도 프로그램(앱에 포함하지 않고, 처음 실행할 때 자동으로 받는다).
+/// (메뉴, 프로그램(포크 저장소), 원본, 라이선스)
+const externalPrograms = <(String, String, String, String)>[
+  ('사진첩', 'mongdangview (github.com/haijun93/mongdangview)', 'NeeView — neelabo/NeeView', 'MIT (7-Zip·SevenZipSharp는 LGPL)'),
+  ('아웃라이너', 'mongdangoutliner (github.com/haijun93/mongdangoutliner)', 'Logseq — logseq/logseq', 'AGPL-3.0'),
+  ('사진관리', 'mondangpics (github.com/haijun93/mondangpics)', 'digiKam — KDE/digikam', 'GPL-2.0'),
+];
+
 /// 설정의 '앱 정보': 개발자와 버전, 함께 쓰는 프로그램·코드.
 class AppInfoPanel extends StatelessWidget {
   const AppInfoPanel({super.key, this.version});
@@ -537,6 +545,29 @@ class AppInfoPanel extends StatelessWidget {
             const SizedBox(height: 14),
             for (final (name, use, license) in thirdPartyComponents)
               _component(name, use, license),
+          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+      Container(
+        key: const ValueKey('about-external-programs'),
+        padding: const EdgeInsets.all(24),
+        decoration: Kiosk.cardBox(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('개발자 모드 연결 프로그램', style: Kiosk.cardTitle),
+            const SizedBox(height: 6),
+            const Text(
+              '개발자 모드 사이드메뉴의 사진첩·아웃라이너·사진관리는 이 앱과 따로 실행되는 별도 프로그램입니다. '
+              '앱 설치 파일에는 들어 있지 않고, 메뉴를 처음 누를 때 공식 배포처에서 자동으로 받아 '
+              '이 PC 사용자 폴더(%LOCALAPPDATA% 아래 HWP_AutoDocFit/tools)에 설치합니다. '
+              '각 프로그램의 저작권·라이선스는 원저작자에게 있으며, 고친 소스는 위 포크 저장소에 공개합니다.',
+              style: Kiosk.caption,
+            ),
+            const SizedBox(height: 14),
+            for (final (menu, program, origin, license) in externalPrograms)
+              _component('$menu — $program', '원본: $origin', license),
           ],
         ),
       ),

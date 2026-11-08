@@ -10,10 +10,11 @@ import 'package:flutter/material.dart';
 /// 엔진이 1초마다 보내는 `live` 값(progress_guide.progress_view)을 그대로 그리며, 숫자·링·단계는
 /// 값 사이를 애니메이션으로 이어 준다. 시스템의 '동작 줄이기'가 켜져 있으면 반복 애니메이션을 끈다.
 class LiveProgress extends StatefulWidget {
-  const LiveProgress({super.key, required this.live, required this.onShowLog});
+  const LiveProgress({super.key, required this.live, required this.onShowLog, this.onCancel});
 
   final Map live;
   final VoidCallback onShowLog;
+  final VoidCallback? onCancel;
 
   @override
   State<LiveProgress> createState() => _LiveProgressState();
@@ -175,7 +176,7 @@ class _LiveProgressState extends State<LiveProgress>
       const SizedBox(height: 24),
       Center(child: _ring()),
       const SizedBox(height: 20),
-      _badgeRow(),
+          _badgeRow(),
       if (running && tips.isNotEmpty) ...[
         const SizedBox(height: 20),
         _tipCard(),
@@ -825,13 +826,31 @@ class _LiveProgressState extends State<LiveProgress>
 
   Widget _footer() => Padding(
     padding: const EdgeInsets.only(top: 16),
-    child: Align(
-      alignment: Alignment.centerLeft,
-      child: TextButton.icon(
-        onPressed: widget.onShowLog,
-        icon: const Icon(Icons.receipt_long_outlined),
-        label: const Text('상세 작업 로그'),
-      ),
+    child: Row(
+      children: [
+        TextButton.icon(
+          onPressed: widget.onShowLog,
+          icon: const Icon(Icons.receipt_long_outlined),
+          label: const Text('상세 작업 로그'),
+        ),
+        const Spacer(),
+        if (running && widget.onCancel != null)
+          OutlinedButton.icon(
+            onPressed: widget.onCancel,
+            icon: const Icon(Icons.cancel_outlined),
+            label: const Text('취소'),
+          ),
+        if (live['cancelled'] == true)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Text('취소됨', style: TextStyle(color: _muted)),
+          ),
+        if (live['cancel_requested'] == true && live['cancelled'] != true)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 12),
+            child: Text('취소 중…', style: TextStyle(color: _muted)),
+          ),
+      ],
     ),
   );
 }

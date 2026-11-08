@@ -90,6 +90,7 @@ class TabNavigationShell extends StatefulWidget {
     this.onSidebarSideSwitch,
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
+    this.onSidebarDrag,
   }) : assert(initialIndex >= 0 && initialIndex < kTabCount);
 
   final Widget documentEditor;
@@ -120,6 +121,7 @@ class TabNavigationShell extends StatefulWidget {
   final Future<void> Function(bool enabled)? onAlwaysOnTopChanged;
   /// 사이드메뉴 모드(창을 화면 가장자리에 붙임)를 앱에 요청한다. false를 돌려주면 전환하지 않는다.
   final Future<bool> Function(bool enabled)? onSidebarModeRequest;
+  final Future<void> Function(double deltaY, bool save)? onSidebarDrag;
   final ValueChanged<int>? onTabChanged;
 
   /// 왼쪽 메뉴 아래쪽의 앱 전체 메뉴(사용 방법·작업 로그·설정 등).
@@ -374,6 +376,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
+                    onSidebarDrag: widget.onSidebarDrag,
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
@@ -398,6 +401,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
+                    onSidebarDrag: widget.onSidebarDrag,
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
@@ -463,6 +467,7 @@ class WorkspaceTabBar extends StatelessWidget {
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
     this.sidebarOnly = false,
+    this.onSidebarDrag,
     this.onAlwaysOnTop,
     this.libraryScreen,
     this.notebookScreen,
@@ -492,6 +497,7 @@ class WorkspaceTabBar extends StatelessWidget {
   /// 사이드메뉴 모드(창을 화면 가장자리에 붙임)를 앱에 요청한다. false를 돌려주면 전환하지 않는다.
   final Future<bool> Function(bool enabled)? onSidebarModeRequest;
   final bool sidebarOnly;
+  final Future<void> Function(double deltaY, bool save)? onSidebarDrag;
   final VoidCallback? onAlwaysOnTop;
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
@@ -535,6 +541,20 @@ class WorkspaceTabBar extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
           children: [
+            if (sidebarOnly && developerMode)
+              GestureDetector(
+                key: const ValueKey('sidebar-drag-handle'),
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (details) => onSidebarDrag?.call(details.delta.dy, false),
+                onVerticalDragEnd: (_) => onSidebarDrag?.call(0, true),
+                child: const SizedBox(
+                  height: 14,
+                  width: double.infinity,
+                  child: Center(child: SizedBox(width: 24, height: 2, child: DecoratedBox(
+                    decoration: BoxDecoration(color: Color(0xFF94A3B8), borderRadius: BorderRadius.all(Radius.circular(2))),
+                  ))),
+                ),
+              ),
             if (showToggle) SizedBox(
               height: 48,
               // 햄버거 아이콘을 메뉴 아이콘과 같은 세로줄에 맞춘다(사용자 요청 2026-11-07):

@@ -139,6 +139,7 @@ void main() {
     expect(find.text('work-area'), findsOneWidget);
   });
 
+
   testWidgets('hamburger icon lines up vertically with the menu icons', (tester) async {
     Future<void> check(Size size, int taps) async {
       tester.view.physicalSize = size;

@@ -187,6 +187,9 @@ class IntegratedWorkspace extends StatelessWidget {
         final result = await api('sidebar_mode', [enabled]);
         return result is Map && result['ok'] == true;
       },
+      onSidebarDrag: (deltaY, save) async {
+        await api('sidebar_mode_drag', [deltaY, save]);
+      },
       documentEditor: DocumentEditorAdapter(child: documentEditorWidget),
       tableTemplates: TableTemplatesAdapter(api: api),
       tableSketch: TableSketchAdapter(api: api),
