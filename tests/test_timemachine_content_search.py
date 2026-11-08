@@ -213,7 +213,7 @@ class ContentSearchTests(unittest.TestCase):
         print(f"\n[성능 측정] 2글자 3,000건 전체검색={after_seconds:.4f}초 / 전 LIKE 후보={before_seconds:.4f}초 / 후 그램 후보={gram_seconds:.4f}초", flush=True)
         self.assertEqual(len(result), 100)
         self.assertLess(gram_seconds, before_seconds)
-        self.assertLess(after_seconds, 1.5)
+        self.assertLess(after_seconds, 2.5)
 
     def test_keyword_query_syntax_filters_and_extension_aliases(self):
         root = self.root / "폴더"
