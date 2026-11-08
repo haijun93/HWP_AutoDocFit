@@ -44,3 +44,4 @@ class MemoryLibraryViewPrefs implements LibraryViewPrefs {
 
 const libraryViewModeKey = 'docfit.library.viewMode';
 const libraryExplorerStyleKey = 'docfit.library.explorerStyle';
+const libraryPaneCountKey = 'docfit.library.paneCount';
