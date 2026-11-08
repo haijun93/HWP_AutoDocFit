@@ -5,7 +5,7 @@ import tempfile
 import unittest
 import warnings
 from unittest.mock import patch
-from zipfile import ZipFile, ZIP_STORED
+from zipfile import ZipFile, ZIP_STORED, ZipInfo
 
 from defusedxml import ElementTree as ET
 from docfit_core.hwpx.canvas_hwpx_builder import HP, HH, HC
@@ -31,7 +31,9 @@ def fixture(extra=None):
     stream = BytesIO()
     with ZipFile(stream, 'w', compression=ZIP_STORED) as archive:
         for name, content in members.items():
-            archive.writestr(name, content)
+            info = ZipInfo(name, date_time=(2020, 1, 1, 0, 0, 0))
+            info.compress_type = ZIP_STORED
+            archive.writestr(info, content)
     return stream.getvalue()
 
 
