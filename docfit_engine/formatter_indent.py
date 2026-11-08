@@ -43,8 +43,9 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             """문단 첫 화면줄에서 Shift+Tab을 실행할 본문 시작 문자 위치.
 
             서식 복사한 계층 규칙이 '기호 뒤'면 라벨을 글에 포함해 기호 뒤 글 시작으로, '고정 값'·'없음'이면 내어쓰기
-            규칙이 손대지 않도록 None(복사한 첫 줄 값을 그대로 씀)이다. 규칙이 없을 때는 콜론 라벨이면 콜론 뒤 본문,
-            괄호 라벨 '( )'이면 라벨 뒤가 아니라 기호 뒤 첫 글자(2026-10-10 개정)에 맞춘다.
+            규칙이 손대지 않도록 None(복사한 첫 줄 값을 그대로 씀)이다. 불변 규칙(붙임·항목기호 내어쓰기: 번호+빈칸 뒤 본문
+            첫 글자 기준, 2026-11-08 INDENTFIX)에 따라 괄호 라벨이든 콜론 라벨이든 기호(번호)+빈칸 뒤 본문 첫 글자에 맞춘다.
+            단, 한 줄에 항목기호 뒤 라벨: ① 인라인 기호가 오는 복합 연속 줄은 인라인 기호 위치를 기준으로 한다.
             """
             if (text or "").lstrip().startswith(("*", "＊")):
                 from docfit_core.xml_hanging_indent import hanging_indent_offset
@@ -53,11 +54,14 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             # 복사한 고정 값도, 부연설명(*, **)도 최종 Shift+Tab으로 재서 맞춘다(사용자 2026-11-01).
             if 규칙 == "none" and not (text or "").lstrip().startswith(("*", "＊")):
                 return None
-            if 규칙 == "after_marker":
-                # 콜론 라벨은 예시 규칙과 관계없이 콜론 뒤 본문 첫 글자 기준(불변 규칙, 2026-10-17). 콜론이 없으면
-                # 기본 판정도 기호 뒤(괄호 라벨은 '(')라 예전 결과와 같다.
-                return _여는낫표_건너뛰기(text, _문단_본문시작_오프셋(text))
-            return _여는낫표_건너뛰기(text, _문단_본문시작_오프셋(text))
+            from docfit_core.continuation import inline_item
+            inline = inline_item(text)
+            if inline is not None:
+                return _여는낫표_건너뛰기(text, inline[1])
+            offset = _문단_기호뒤_오프셋(text)
+            if offset is not None and offset < len(text) and text[offset] in (":", "："):
+                offset = _문단_공백_건너뛰기(text, offset + 1)
+            return _여는낫표_건너뛰기(text, offset)
         return bind_function(문단_내어쓰기_기준_오프셋, _docfit_namespace)
     if _docfit_symbol == '_여는낫표_건너뛰기':
         def _여는낫표_건너뛰기(text, offset):
