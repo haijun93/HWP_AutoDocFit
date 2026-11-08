@@ -18,6 +18,7 @@ _HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 _HH = "{http://www.hancom.co.kr/hwpml/2011/head}"
 _HC = "{http://www.hancom.co.kr/hwpml/2011/core}"
 _DEFAULT_NAME = "표 서식모음.hwpx"
+_TPL8_NAME = "표 서식모음 TPL8.hwpx"
 
 _DEFAULT_BORDER_SIDE = {"type": "SOLID", "width": "0.12 mm", "color": "#000000"}
 _DEFAULT_BORDERS = {side: dict(_DEFAULT_BORDER_SIDE) for side in ("top", "bottom", "left", "right")}
@@ -36,6 +37,13 @@ def default_catalog_path() -> Path:
     """개발·PyInstaller 양쪽에서 같은 내장 표 서식 모음을 찾는다."""
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
     return root / "resources" / "서식예시" / _DEFAULT_NAME
+
+
+def _catalog_paths(path: str | Path | None = None) -> list[Path]:
+    if path is not None:
+        return [Path(path)]
+    primary = default_catalog_path()
+    return [primary]
 
 
 def _safe_archive(path: Path) -> zipfile.ZipFile:
@@ -446,9 +454,30 @@ def _scan(path: str | Path) -> list[dict]:
     return records
 
 
+def _scan_catalogs(paths: list[Path]) -> list[dict]:
+    """여러 내장 카탈로그를 합치되 첫 파일의 기존 ID를 보존한다."""
+    result = []
+    offset = max((item["category_index"] for item in _scan(default_catalog_path())), default=-1) + 1
+    for index, source in enumerate(paths):
+        records = _scan(source)
+        categories = sorted({item["category_index"] for item in records})
+        remap_needed = source.name == _TPL8_NAME and len(paths) > 1
+        remap = {old: offset + i for i, old in enumerate(categories)} if remap_needed else {}
+        for item in records:
+            item["source_path"] = source
+            if remap_needed:
+                item["category_index"] = remap[item["category_index"]]
+                item["id"] = f"{item['category_index']}:{item['number']}"
+            result.append(item)
+        if remap_needed:
+            offset += len(categories)
+    return result
+
+
 def list_catalog(path: str | Path | None = None) -> dict:
     """이름 구획과 각 표 모양의 구조·텍스트·서식 미리보기를 반환한다."""
-    records = _scan(path or default_catalog_path())
+    paths = _catalog_paths(path)
+    records = _scan(paths[0])
     categories = []
     for record in records:
         if not categories or categories[-1]["id"] != str(record["category_index"]):
@@ -461,7 +490,7 @@ def list_catalog(path: str | Path | None = None) -> dict:
             key: record[key] for key in ("id", "name", "rows", "cols", "cells", "cell_meta")
         })
     return {
-        "source": Path(path or default_catalog_path()).name,
+        "source": ", ".join(item.name for item in paths),
         "category_count": len(categories),
         "template_count": len(records),
         "categories": categories,
@@ -1026,8 +1055,18 @@ def export_template(template_id: str, output_path: str | Path,
         raise ValueError("표 칸 수정 정보가 올바르지 않습니다.")
     if style_edits is not None and (not isinstance(style_edits, dict) or len(style_edits) > 1000):
         raise ValueError("표 서식 수정 정보가 올바르지 않습니다.")
-    source = Path(catalog_path or default_catalog_path())
-    record = _find_template(_scan(source), str(template_id))
+    paths = _catalog_paths(catalog_path)
+    requested_id = str(template_id)
+    if requested_id.startswith("tpl8:"):
+        catalog_file = default_catalog_path().with_name(_TPL8_NAME)
+        local_id = requested_id[len("tpl8:"):]
+        records = _scan(catalog_file)
+        record = _find_template(records, local_id)
+        record["source_path"] = catalog_file
+    else:
+        records = _scan(paths[0])
+        record = _find_template(records, requested_id)
+    source = Path(record.get("source_path", paths[0]))
     target = Path(output_path)
     if target.suffix.lower() != ".hwpx":
         raise ValueError("저장 파일은 .hwpx 확장자를 사용해 주세요.")

@@ -1638,8 +1638,14 @@ def resize_table(tbl_element, plan, row_count=None, col_count=None, *, id_roots=
 
 
 def _load(template_id, catalog_path):
-    source = Path(catalog_path or catalog.default_catalog_path())
-    record = catalog._find_template(catalog._scan(source), str(template_id))
+    value = str(template_id)
+    if value.startswith("tpl8:"):
+        source = catalog.default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
+        local_id = value[len("tpl8:"):]
+    else:
+        source = Path(catalog_path or catalog.default_catalog_path())
+        local_id = value
+    record = catalog._find_template(catalog._scan(source), local_id)
     with catalog._safe_archive(source) as archive:
         root = ET.fromstring(archive.read(record["section"]))
         table = catalog._top_tables(root.findall(HP + "p")[record["paragraph_index"]])[record["table_index"]]
@@ -1676,7 +1682,7 @@ def preview(template_id, catalog_path=None, row_count=None, col_count=None, *, f
     record, table, header = _load(template_id, catalog_path)
     if arrow:
         # 고른 화살표를 원본 표에 넣은 뒤 미리보기를 만든다(내보내기와 같은 순서).
-        source = Path(catalog_path or catalog.default_catalog_path())
+        source = Path(record.get("source_path", catalog_path or catalog.default_catalog_path()))
         with catalog._safe_archive(source) as archive:
             header_root = ET.fromstring(archive.read("Contents/header.xml"))
         table_arrows.apply(table, table_arrows.detect(record), arrow, header_root)
