@@ -173,7 +173,7 @@ def _normalize_widths(html, report):
         t_attrs = _set_attr(t_attrs, "width", _fmt(total))
         t_attrs = _set_style(t_attrs, width=f"{_fmt(total * 0.75)}pt")
         return f"<table {t_attrs.strip()}>"
-    html = _TABLE_TAG.sub(clean_table, html, count=1)
+    html = _TABLE_TAG.sub(clean_table, html)
     report["width"] = f"{count}열, 표 너비 {_fmt(total)}px"
     return html
 
@@ -245,11 +245,14 @@ def _transform(data, shading):
         cls = attrs.get("class", "").lower()
         cls_style = classes.get(cls, "")
         inline_style = attrs.get("style", "")
-        combined_style = (cls_style + ";" + inline_style).strip(";")
 
-        # 1. 셀 음영: 클래스/인라인 style의 background를 칸 태그의 bgcolor 속성으로 전환
+        # 1. 셀 음영: 클래스/인라인 style의 background를 칸 태그의 bgcolor 속성으로 전환 (인라인 우선)
         if shading == "keep":
-            fill = _color(attrs.get("bgcolor")) or _color(_style_value(combined_style, "background", "background-color"))
+            fill = (
+                _color(attrs.get("bgcolor"))
+                or _color(_style_value(inline_style, "background", "background-color"))
+                or _color(_style_value(cls_style, "background", "background-color"))
+            )
             if fill:
                 raw_attrs = _set_attr(raw_attrs, "bgcolor", fill)
                 report["bg_cells"] = report.get("bg_cells", 0) + 1
@@ -258,14 +261,14 @@ def _transform(data, shading):
             raw_attrs = _remove_attr(raw_attrs, "bgcolor")
             raw_attrs = _strip_inline_shading(raw_attrs)
 
-        # 2. 정렬: 숫자는 앞 공백 제거 후에도 오른쪽 정렬 보존, 일반 셀은 엑셀 정렬 유지
+        # 2. 정렬: 숫자는 앞 공백 제거 후에도 오른쪽 정렬 보존, 일반 셀은 엑셀 정렬 유지 (인라인 우선)
         plain_text = _plain(raw_inner)
         is_num = (kind == "numeric") or bool(_NUMERIC.fullmatch(plain_text))
         if is_num:
             raw_attrs = _set_attr(raw_attrs, "align", "right")
             raw_attrs = _set_style(raw_attrs, text_align="right")
         else:
-            align = (_style_value(combined_style, "text-align") or attrs.get("align") or "").lower()
+            align = (_style_value(inline_style, "text-align") or _style_value(cls_style, "text-align") or attrs.get("align") or "").lower()
             if align in ("left", "center", "right", "justify"):
                 raw_attrs = _set_attr(raw_attrs, "align", align)
                 raw_attrs = _set_style(raw_attrs, text_align=align)
@@ -279,16 +282,20 @@ def _transform(data, shading):
             padding_left=f"{PADDING_LR_PT}pt",
         )
 
-        # 4. 세로 정렬: 엑셀 기본 middle 보존
-        valign = (_style_value(combined_style, "vertical-align") or attrs.get("valign") or "middle").lower()
+        # 4. 세로 정렬: 엑셀 기본 middle 보존 (인라인 우선)
+        valign = (_style_value(inline_style, "vertical-align") or _style_value(cls_style, "vertical-align") or attrs.get("valign") or "middle").lower()
         if valign in ("top", "middle", "bottom", "baseline"):
             raw_attrs = _set_attr(raw_attrs, "valign", valign)
             raw_attrs = _set_style(raw_attrs, vertical_align=valign)
 
-        # 5. 서식 인라이닝: 굵기(font-weight), 테두리(border)
-        weight = (_style_value(combined_style, "font-weight") or "").lower()
+        # 5. 서식 인라이닝: 굵기(font-weight), 글자색(color), 테두리(border)
+        weight = (_style_value(inline_style, "font-weight") or _style_value(cls_style, "font-weight") or "").lower()
         if tag_name.lower() == "th" or weight in ("bold", "bolder") or (weight.isdigit() and int(weight) >= 600):
             raw_attrs = _set_style(raw_attrs, font_weight="bold")
+
+        color = _style_value(cls_style, "color")
+        if color and not _style_value(inline_style, "color"):
+            raw_attrs = _set_style(raw_attrs, color=color)
 
         border = _style_value(cls_style, "border")
         if border and not _style_value(inline_style, "border"):

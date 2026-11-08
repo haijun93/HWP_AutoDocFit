@@ -17,7 +17,14 @@ _NAMED_COLORS = {
     "navy": "#000080", "olive": "#808000", "purple": "#800080", "teal": "#008080", "orange": "#FFA500",
 }
 _NUMBER = r"(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
-_NUMERIC = re.compile(rf"(?:[+-]?{_NUMBER}%?|\({ _NUMBER }\)|[₩$€£¥]\s?[+-]?{_NUMBER})")
+_NUMERIC = re.compile(
+    rf"(?:"
+    rf"[+-]?{_NUMBER}%?|"
+    rf"\(\s*[₩$€£¥]?\s*{_NUMBER}%?\s*\)|"
+    rf"[+-]?[₩$€£¥]\s?[+-]?{_NUMBER}%?|"
+    rf"[▲▼△▽]\s*[+-]?{_NUMBER}%?"
+    rf")"
+)
 _CONTROL = re.compile(r"_x000[0-9A-Fa-f]_|[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f​-‍⁠﻿]")
 _SPACES = re.compile(r"[ \t  -  　]+")
 
@@ -39,13 +46,18 @@ def _style_value(style, *keys):
 
 def _color(value):
     text = (value or "").strip().lower()
-    if not text:
+    if not text or text in ("transparent", "none"):
         return ""
-    m_rgb = re.search(r"rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", text)
+    m_rgb = re.search(r"rgba?\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})(?:\s*,\s*([0-9.]+))?\s*\)", text)
     if m_rgb:
-        r, g, b = (max(0, min(255, int(x))) for x in m_rgb.groups())
+        alpha = m_rgb.group(4)
+        if alpha is not None and float(alpha) == 0:
+            return ""
+        r, g, b = (max(0, min(255, int(x))) for x in m_rgb.groups()[:3])
         return f"#{r:02X}{g:02X}{b:02X}"
     first = text.split()[0]
+    if first in ("transparent", "none"):
+        return ""
     if re.fullmatch(r"#[0-9a-f]{6}", first):
         return first.upper()
     if re.fullmatch(r"#[0-9a-f]{3}", first):

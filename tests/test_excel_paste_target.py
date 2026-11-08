@@ -196,6 +196,58 @@ class TargetHtmlTests(unittest.TestCase):
         self.assertEqual(out.count("align=right"), 3)
         self.assertEqual(out.count("text-align:right"), 3)
 
+    def test_rgba_and_transparent_colors(self):
+        # rgba 지원 및 투명(alpha 0, transparent, none) 색상 무시 검증
+        src = (
+            "<html><body><table><tr>"
+            "<td style='background: rgba(0, 128, 255, 0.8);'>A</td>"
+            "<td style='background: rgba(255, 255, 255, 0);'>B</td>"
+            "<td style='background: transparent;'>C</td>"
+            "<td style='background: none;'>D</td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#0080FF"', out)
+        # B, C, D 칸에는 bgcolor가 없어야 함
+        self.assertEqual(out.count("bgcolor="), 1)
+
+    def test_inline_style_overrides_class_style(self):
+        # 인라인 스타일이 클래스 스타일보다 우선(배경색 및 정렬 오버라이드)
+        src = (
+            "<html><head><style>"
+            ".base { background: yellow; text-align: left; vertical-align: top; }\n"
+            "</style></head><body>"
+            "<table><tr>"
+            "<td class=base style='background: #00FF00; text-align: center;'>항목</td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#00FF00"', out)
+        self.assertNotIn('bgcolor="#FFFF00"', out)
+        self.assertRegex(out, r'align=["\']?center["\']?')
+        self.assertIn('text-align:center', out)
+        self.assertNotIn('text-align:left', out)
+
+    def test_delta_and_currency_negative_alignments(self):
+        # 증감 기호(▲, ▼, △, ▽) 및 다양한 부호/통화 숫자의 오른쪽 정렬 및 공백 정리 검증
+        src = (
+            "<table><tr>"
+            "<td>    ▲ 1,500 </td>"
+            "<td>    ▼ 300 </td>"
+            "<td>    -₩ 45,000 </td>"
+            "<td>    (₩ 10,000) </td>"
+            "<td>    △ 2.5% </td>"
+            "</tr></table>"
+        )
+        out = to_target_html(src)
+        self.assertIn(">▲ 1,500 </td>", out)
+        self.assertIn(">▼ 300 </td>", out)
+        self.assertIn(">-₩ 45,000 </td>", out)
+        self.assertIn(">(₩ 10,000) </td>", out)
+        self.assertIn(">△ 2.5% </td>", out)
+        self.assertEqual(out.count("align=right"), 5)
+        self.assertEqual(out.count("text-align:right"), 5)
+
 
 class TsvTests(unittest.TestCase):
     def test_clean_tsv(self):
