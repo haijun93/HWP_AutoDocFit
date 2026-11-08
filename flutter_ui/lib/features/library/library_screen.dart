@@ -135,10 +135,14 @@ class LibraryScreen extends StatefulWidget {
     this.openApi,
     this.viewPrefs,
     this.fileInfoApi,
+    this.initialPaneCount,
   });
 
   /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
   final LibraryViewPrefs? viewPrefs;
+
+  /// 처음 열 때 설정할 자료 영역 개수(1~4). 없으면 저장된 값 또는 기본 4개.
+  final int? initialPaneCount;
 
   /// 탐색기 형식의 크기·수정한 날짜 조회. 생략하면 `api`가 `LibraryFileInfoApi`일 때 그것을 쓴다.
   final LibraryFileInfoApi? fileInfoApi;
@@ -204,6 +208,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// 보기 방식. 기본은 캔버스형이고, 마지막 선택을 저장해 다음에 그대로 연다.
   LibraryViewMode _viewMode = LibraryViewMode.canvas;
+
+  /// 자료 영역 개수(1~4). 기본값은 4이며, 마지막 선택을 저장해 다음에 그대로 연다.
+  int _paneCount = 4;
   final _explorer = LibraryExplorerController();
   late final LibraryViewPrefs _viewPrefs = widget.viewPrefs ?? const DefaultLibraryViewPrefs();
 
@@ -217,10 +224,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _restoreViewMode() async {
     final mode = await _viewPrefs.read(libraryViewModeKey);
     final style = await _viewPrefs.read(libraryExplorerStyleKey);
+    final paneCountStr = await _viewPrefs.read(libraryPaneCountKey);
     if (!mounted) return;
     setState(() {
       _viewMode = LibraryViewMode.values.where((m) => m.name == mode).firstOrNull ?? LibraryViewMode.canvas;
       _explorer.style = LibraryExplorerStyle.values.where((s) => s.name == style).firstOrNull ?? _explorer.style;
+      final count = int.tryParse(paneCountStr ?? '');
+      if (count != null && count >= 1 && count <= 4) {
+        _paneCount = count;
+      }
     });
   }
 
@@ -231,9 +243,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
     unawaited(_viewPrefs.write(libraryViewModeKey, mode.name));
   }
 
+  /// 자료 영역 개수 변경(1~4). 기존 자료는 삭제되지 않고 숨김만 적용되며, 선택값은 저장된다.
+  void _setPaneCount(int count) {
+    if (count < 1 || count > 4 || count == _paneCount) return;
+    setState(() => _paneCount = count);
+    unawaited(_viewPrefs.write(libraryPaneCountKey, count.toString()));
+  }
+
   @override
   void initState() {
     super.initState();
+    if (widget.initialPaneCount != null && widget.initialPaneCount! >= 1 && widget.initialPaneCount! <= 4) {
+      _paneCount = widget.initialPaneCount!;
+    }
     unawaited(_restoreViewMode());
     _loadBoxes();
     final drops = _dropApi;
@@ -1362,7 +1384,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   value: LibraryViewMode.canvas,
                   icon: Icon(Icons.dashboard_outlined, size: 18, key: ValueKey('libraryViewCanvas')),
                   label: Text('캔버스'),
-                  tooltip: '4개 영역에 카드를 놓는 보기',
+                  tooltip: '영역에 카드를 놓는 보기',
                 ),
                 ButtonSegment(
                   value: LibraryViewMode.explorer,
@@ -1373,6 +1395,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ],
               selected: {_viewMode},
               onSelectionChanged: (modes) => _setViewMode(modes.single),
+            ),
+            SegmentedButton<int>(
+              key: const ValueKey('libraryPaneCountToggle'),
+              showSelectedIcon: false,
+              style: const ButtonStyle(visualDensity: VisualDensity.compact),
+              segments: const [
+                ButtonSegment(
+                  value: 1,
+                  icon: Icon(Icons.crop_square_outlined, size: 16),
+                  label: Text('1', key: ValueKey('libraryPaneCount-1')),
+                  tooltip: '1개 영역 (전체)',
+                ),
+                ButtonSegment(
+                  value: 2,
+                  icon: Icon(Icons.view_column_outlined, size: 16),
+                  label: Text('2', key: ValueKey('libraryPaneCount-2')),
+                  tooltip: '2개 영역 (좌우)',
+                ),
+                ButtonSegment(
+                  value: 3,
+                  icon: Icon(Icons.view_quilt_outlined, size: 16),
+                  label: Text('3', key: ValueKey('libraryPaneCount-3')),
+                  tooltip: '3개 영역 (좌1+우2)',
+                ),
+                ButtonSegment(
+                  value: 4,
+                  icon: Icon(Icons.grid_view_outlined, size: 16),
+                  label: Text('4', key: ValueKey('libraryPaneCount-4')),
+                  tooltip: '4개 영역 (2×2)',
+                ),
+              ],
+              selected: {_paneCount},
+              onSelectionChanged: (counts) => _setPaneCount(counts.single),
             ),
             Text(_selectedBox!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
             IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '자료함 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Icons.edit_outlined)),
@@ -1507,17 +1562,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 
-  Widget _buildQuadrants() => LayoutBuilder(builder: (context, constraints) => Column(children: [
-        Expanded(child: Row(children: [
-          for (final space in [LibrarySpace.core, LibrarySpace.basis])
-            Expanded(child: _quadrant(space)),
-        ])),
-        const Divider(height: 1),
-        Expanded(child: Row(children: [
-          for (final space in [LibrarySpace.reference, LibrarySpace.temp])
-            Expanded(child: _quadrant(space)),
-        ])),
-      ]));
+  Widget _buildQuadrants() => LayoutBuilder(builder: (context, constraints) {
+        switch (_paneCount) {
+          case 1:
+            return _quadrant(LibrarySpace.core);
+          case 2:
+            return Row(children: [
+              Expanded(child: _quadrant(LibrarySpace.core)),
+              Expanded(child: _quadrant(LibrarySpace.basis)),
+            ]);
+          case 3:
+            return Row(children: [
+              Expanded(child: _quadrant(LibrarySpace.core)),
+              Expanded(child: Column(children: [
+                Expanded(child: _quadrant(LibrarySpace.basis)),
+                const Divider(height: 1),
+                Expanded(child: _quadrant(LibrarySpace.reference)),
+              ])),
+            ]);
+          case 4:
+          default:
+            return Column(children: [
+              Expanded(child: Row(children: [
+                for (final space in [LibrarySpace.core, LibrarySpace.basis])
+                  Expanded(child: _quadrant(space)),
+              ])),
+              const Divider(height: 1),
+              Expanded(child: Row(children: [
+                for (final space in [LibrarySpace.reference, LibrarySpace.temp])
+                  Expanded(child: _quadrant(space)),
+              ])),
+            ]);
+        }
+      });
 
   Widget _quadrant(LibrarySpace space) {
     return _LibraryQuadrant(
