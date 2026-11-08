@@ -101,3 +101,46 @@
 - 앱 연동 범위: 예) 자료함·타임머신 폴더를 사진첩/사진관리로 열기(실행 인자에 검증된 폴더 1개, 인자 목록 방식).
 - 지정 경로를 바꾸거나 지우는 화면: 지금은 실행 파일이 없을 때 뜨는 준비 창에서만 지정할 수 있다(`clear` 명령은 있음). 설정 화면에 '외부 프로그램' 칸을 둘지 결정.
 - 정식 공개 전환 기준(개발자 모드 졸업 조건).
+
+## 5. 자동 내려받기·설치 코어 (feature/extdl, 2026-11-08)
+
+사이드메뉴를 처음 눌렀을 때 실행 파일이 없으면 받아 설치하는 **Python 코어와 서비스 명령**이다(화면은 다음 카드). 코드: `docfit_app/external_apps_download.py`, 연결: `ExternalAppsService`. 시험: `tests/test_external_apps_download.py`(인터넷·한/글 COM 없이 주입식 opener).
+
+### 5.1 서비스 명령
+`external_app('install'|'cancel'|'progress'|'status', {"app": app_id 또는 포크 폴더 이름})`
+- `install`: 실행 파일이 이미 있으면(앱 폴더 tools → 사용자 지정 → 내려받은 설치본) **건너뛴다**(`skipped: true`, 네트워크 접근 없음). 없으면 백그라운드 스레드로 시작하고 현재 상태를 돌려준다. 이미 돌고 있으면 `already_running`.
+- `progress`: `install.phase`(starting·resolving·downloading·verifying·extracting·installing·installer_launched·done·error·cancelled), `downloaded`/`total`/`percent`, 실패 시 `code`/`message`.
+- `cancel`: 받기·풀기·무인 설치 대기 중 취소(임시 파일은 지운다).
+- `status`에 `downloadable`, `install`(진행 상태)이 추가되고 `source`에 `downloaded`가 생겼다. 찾는 순서: 앱 폴더 tools → 사용자 지정 경로 → 내려받은 설치본.
+
+### 5.2 출처 목록(`SOURCES`, 데이터) — 앞에서부터 시도
+| 앱 | 1순위 | 2순위 | 설치 방식 |
+| --- | --- | --- | --- |
+| 사진첩 | GitHub `haijun93/mongdangview` 최신 릴리스의 `.zip`(이름에 fd·framework 없는 것) | GitHub `neelabo/NeeView` 최신의 `NeeView*.zip` | 휴대용 zip 풀기 |
+| 아웃라이너 | GitHub `logseq/logseq` 최신의 `Logseq-win-x64-*.zip` | 같은 릴리스의 `Logseq-win-x64-*.exe`(NSIS) | zip 풀기 / `설치exe /S /D=경로`(무인) |
+| 사진관리 | download.kde.org `stable/digikam/` 목록에서 최신 판 폴더(최근 3개까지) → `digiKam-<판>-Qt6-Win64.exe` + 공개 `.sha256` | — | **설치 프로그램을 띄워 사용자가 진행**(`/D=경로`로 폴더만 미리 지정) |
+
+- 사진관리를 무인(`/S`)으로 하지 않는 이유: digiKam Windows 설치본의 무인 옵션 문서를 확인하지 못했다. 확인되기 전까지는 검증한 설치 파일을 `tools\_installers\mondangpics\`에 두고 띄우기만 한다. `/D=`가 무시되면 사용자가 고른 폴더에 깔리고, 그 경우 앱은 "사용자 지정 경로(`choose`)"로 찾는다.
+- 아웃라이너의 NSIS 무인 설치도 실기 확인 전이다(zip이 있으면 zip이 우선이라 거의 쓰이지 않는다).
+
+### 5.3 받기 규칙
+- **HTTPS만**, 사용자 정보(`user:pw@`)·443 외 포트 거절.
+- **호스트 허용 목록**: `github.com`, `objects.githubusercontent.com`, `download.kde.org` + (요청에 없었지만 필요해 더한 것) `api.github.com`(릴리스 조회·`digest`), `release-assets.githubusercontent.com`(현행 GitHub 자산 리디렉션 도착지). **리디렉션은 단계마다 검사**하고 응답의 최종 주소도 다시 검사한다. 허용 목록 밖으로 가면 `HOST_BLOCKED`로 중단한다.
+  - 한계: download.kde.org는 보통 미러로 리디렉션한다. 미러 호스트가 허용 목록에 없으면 실패하므로, 실기에서 막히면 사용자 지정 안내(`open_download`) 또는 목록 보강이 필요하다. 미러가 바뀌어도 아래 SHA-256 확인은 유지된다.
+- 크기 상한: 출처마다(`Source.max_bytes`: 사진첩 400MB·아웃라이너 zip 800MB/exe 600MB·사진관리 1.5GB). `Content-Length`로 먼저, 받는 동안 누적으로 다시 확인. API/목록 응답은 5MB.
+- 진행률 콜백, 취소 플래그(청크마다 확인), **이어받기 없음**: `<파일>.part`에 받고 끝까지 받아 길이가 맞을 때만 이름을 바꾼다. 실패·취소 시 `.part` 삭제.
+
+### 5.4 무결성 — 공개 해시 대조, 없으면 TOFU
+1. 출처가 공개한 SHA-256이 있으면(GitHub API 자산의 `digest: "sha256:…"`, KDE `<파일>.sha256`) 받은 파일의 계산값과 대조. 다르면 `HASH_MISMATCH`, **아무것도 설치하지 않는다**.
+2. 공개 해시가 없으면(예: 오래된 릴리스) 계산값을 `tools\tofu.json`에 `{app_id: {파일이름: {sha256, first_seen}}}`으로 **처음 받은 값**을 기록하고, 같은 파일 이름을 다시 받을 때 값이 다르면 `HASH_MISMATCH`. 설치 기록 `.installed.json`에 `trust`: `published`/`tofu`와 해시·판을 남긴다.
+3. **TOFU의 한계**: 처음 받은 파일이 이미 변조됐다면 알아채지 못한다. 새 판은 파일 이름이 달라 비교 대상이 없으므로(첫 기록만 한다) "같은 이름의 파일이 나중에 바뀐 경우"만 잡는다. 공개 해시가 있는 경우도 해시와 파일을 **같은 서버**(GitHub/KDE)에서 받으므로 그 서버·계정이 뚫리면 막지 못한다. KDE GPG 서명(`.sig`) 확인은 이번 범위 밖이다(§4.2의 `.sig` 대조는 미구현).
+4. 서명되지 않은 외부 exe를 실행하는 것이므로 개발자 모드 전용 제한은 그대로 둔다.
+
+### 5.5 설치 위치·풀기
+- `%LOCALAPPDATA%\HWP_AutoDocFit\tools\<포크 폴더 이름>\` — 사용자 권한만 쓴다(관리자 권한 불필요).
+- zip: `open_zip_safely`(항목 수·크기·압축률 상한, 중복·위험 이름 거절; 한도는 항목 5만·합계 4GB·파일 2GB)로 연 뒤 한 항목씩 풀며 **경로 탈출(`..`·절대·드라이브 문자)·심볼릭 링크 항목 거절**, 풀린 총량 재확인.
+- 임시 폴더 `.stage-*`에 받고 풀어 실행 파일 존재를 확인한 **뒤에** 기존 폴더와 교체(교체 실패 시 되돌림). 실패하면 기존 설치는 그대로이고 임시 폴더는 지운다.
+- 실행 파일 위치는 압축 안 최상위 폴더 유무와 무관하게 3단계 깊이까지 이름으로 찾아 `.installed.json`의 `exe_rel`에 기록한다.
+
+### 5.6 남은 일
+화면(준비 창의 [자동 설치] 단추·진행률 막대·취소), 실기(Windows) 확인 — 각 출처의 실제 자산 이름 패턴·KDE 미러 리디렉션·NSIS 옵션, KDE `.sig` 검증, 설치본 삭제/갱신 명령.
