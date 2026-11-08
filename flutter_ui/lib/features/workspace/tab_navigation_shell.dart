@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -160,6 +162,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
 
   @override
   void dispose() {
+    _snackGuard?.cancel();
     widget.savedSidebarExpanded?.removeListener(_applySaved);
     widget.tabRequest?.removeListener(_applyTabRequest);
     _tabScrollController.dispose();
@@ -260,6 +263,27 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     if (mounted) setState(() => _alwaysOnTop = enabled);
   }
 
+  /// 사이드메뉴 모드(창 폭 56px)에서는 안내·오류 알림(SnackBar)이 세로로 길게 늘어나 메뉴를 가린다
+  /// (사용자 보고 2026-11-08). 모드 동안은 알림을 띄우지 않는다: 들어갈 때 지우고, 그동안 생기는 알림도 바로 지운다.
+  Timer? _snackGuard;
+
+  void _clearSnackBars() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    // clearSnackBars는 사라지는 애니메이션 동안 보이므로 즉시 제거한다.
+    messenger.clearSnackBars();
+    messenger.removeCurrentSnackBar();
+  }
+
+  void _guardSnackBars(bool on) {
+    _snackGuard?.cancel();
+    _snackGuard = null;
+    if (!on) return;
+    _clearSnackBars();
+    _snackGuard = Timer.periodic(const Duration(milliseconds: 100), (_) => _clearSnackBars());
+  }
+
   Future<void> _setSidebarOnly(bool enabled) async {
     final request = widget.onSidebarModeRequest;
     if (request != null && !await request(enabled)) return;
@@ -267,6 +291,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       setState(() {
         _sidebarOnly = enabled;
       });
+      _guardSnackBars(enabled);
     }
   }
 
