@@ -168,6 +168,34 @@ class TargetHtmlTests(unittest.TestCase):
         self.assertIn("padding-bottom:1.4pt", out)
         self.assertIn("padding-left:5.1pt", out)
 
+    def test_rgb_color_and_various_number_formats_alignment(self):
+        # rgb(...) 배경색의 bgcolor 변환 및 통화/괄호 음수/백분율 숫자의 오른쪽 정렬 검증
+        src = (
+            "<html><head><style>"
+            ".curr { background: rgb(255, 255, 0); font-weight: bold; }\n"
+            ".neg { background: rgb(192, 213, 230); color: red; }\n"
+            ".pct { color: black; }\n"
+            "</style></head><body>"
+            "<table><tr>"
+            "<td class=curr>    ₩ 120,000 </td>"
+            "<td class=neg>      (50,000) </td>"
+            "<td class=pct>       98.5% </td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#FFFF00"', out)
+        self.assertIn('bgcolor="#C0D5E6"', out)
+        self.assertNotIn("background:", out)
+        # font-weight 및 color는 유지
+        self.assertIn("font-weight:bold", out)
+        self.assertRegex(out, r"color:\s*red")
+        # 숫자 정렬 보존
+        self.assertIn(">₩ 120,000 </td>", out)
+        self.assertIn(">(50,000) </td>", out)
+        self.assertIn(">98.5% </td>", out)
+        self.assertEqual(out.count("align=right"), 3)
+        self.assertEqual(out.count("text-align:right"), 3)
+
 
 class TsvTests(unittest.TestCase):
     def test_clean_tsv(self):

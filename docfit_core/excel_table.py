@@ -38,12 +38,19 @@ def _style_value(style, *keys):
 
 
 def _color(value):
-    text = (value or "").strip().split()[0].lower() if (value or "").strip() else ""
-    if re.fullmatch(r"#[0-9a-f]{6}", text):
-        return text.upper()
-    if re.fullmatch(r"#[0-9a-f]{3}", text):
-        return "#" + "".join(ch * 2 for ch in text[1:]).upper()
-    return _NAMED_COLORS.get(text, "")
+    text = (value or "").strip().lower()
+    if not text:
+        return ""
+    m_rgb = re.search(r"rgb\s*\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)", text)
+    if m_rgb:
+        r, g, b = (max(0, min(255, int(x))) for x in m_rgb.groups())
+        return f"#{r:02X}{g:02X}{b:02X}"
+    first = text.split()[0]
+    if re.fullmatch(r"#[0-9a-f]{6}", first):
+        return first.upper()
+    if re.fullmatch(r"#[0-9a-f]{3}", first):
+        return "#" + "".join(ch * 2 for ch in first[1:]).upper()
+    return _NAMED_COLORS.get(first, "")
 
 
 def _width(style, attr):

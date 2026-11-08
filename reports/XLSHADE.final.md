@@ -2,7 +2,7 @@
 
 - 작업 일자: 2026-11-08
 - 작업 브랜치: `feature/xlshade` (기준: `origin/main` - v2.2.39 `edec4d1`)
-- 대상 모듈: `docfit_core/excel_paste_target.py`, `tests/test_excel_paste_target.py`, `TODO.md`
+- 대상 모듈: `docfit_core/excel_paste_target.py`, `docfit_core/excel_table.py`, `tests/test_excel_paste_target.py`, `TODO.md`
 
 ---
 
@@ -20,6 +20,7 @@
 
 ### (1) 셀 음영 → 칸(셀) 배경(`bgcolor`)으로 변환 (`docfit_core/excel_paste_target.py`)
 - 각 셀(`<td>`, `<th>`) 변환 시 클래스(`.xl65` 등)와 인라인 `style`에서 배경색(`background`, `background-color`)을 추출하여 `<td bgcolor="#RRGGBB">` 속성으로 부여.
+- `_color` 함수를 개선하여 16진수 색상(#RRGGBB, #RGB) 및 표준 색상명뿐 아니라 `rgb(r, g, b)` 형식도 16진수 색상 코드로 변환 지원.
 - 한/글이 문단 배경으로 오인하는 것을 방지하기 위해:
   - 각 셀 인라인 `style`에서 `background*` 및 `mso-pattern` 속성을 제거.
   - `shading="keep"`일 때도 `<style>` 블록 안의 클래스 규칙에서 `background*` 선언을 제거하여 문단 배경 생성을 원천 차단.
@@ -46,13 +47,14 @@
 - `test_numeric_alignment_preserved_even_when_spaces_removed`: 앞 공백 제거 후에도 `align=right` 및 `text-align:right`로 엑셀 오른쪽 정렬이 보존되는지 검증 (신규 추가).
 - `test_cell_shading_inlined_as_bgcolor_and_style_shading_stripped`: 클래스 정의 음영이 `bgcolor`로 전환되고 스타일시트의 `background`는 제거되는지 검증 (신규 추가).
 - `test_cell_padding_inlined_to_each_td`: 모든 셀에 상하 1.4pt, 좌우 5.1pt 여백이 인라인 부여되고 `cellpadding` 속성이 제거되는지 검증 (신규 추가).
+- `test_rgb_color_and_various_number_formats_alignment`: `rgb(r, g, b)` 배경색의 `bgcolor` 변환 및 통화(`₩ 120,000`), 괄호 음수(`(50,000)`), 백분율(`98.5%`) 숫자의 오른쪽 정렬(`align=right`, `text-align:right`) 및 기타 폰트 서식 유지 검증 (신규 추가).
 - `test_no_widths_still_cleans_text`: 인라인 스타일 부여 상태에서도 빈 칸(`<td ...></td>`) 및 숫자 정렬(`align=right`) 정상 처리 검증.
 
 ### 시험 실행 결과
-- `tests/test_excel_paste_target.py`: 22건 전체 통과 (0.075s)
+- `tests/test_excel_paste_target.py`: 23건 전체 통과 (0.073s)
 - `tests/test_excel_html_shading.py`: 19건 전체 통과
 - `tests/test_excel_table.py`: 17건 전체 통과
 - `tests/test_kagent_app_service.py`: 통과 (8건 중 7건 통과, Windows 전용 파이프 시험 1건 스킵)
 - `tests/test_kclip_service.py`: 22건 전체 통과
-- 연관 모듈 66건 전체 통과.
+- 연관 모듈 67건 전체 통과.
 - 한/글 COM 실기기 시험은 사용자 지시에 따라 실행하지 않음(총괄 수행 예정).
