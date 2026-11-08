@@ -81,20 +81,6 @@ class LibraryBridgeTests(unittest.TestCase):
         for cmd in SCAN_COMMANDS:
             self.assertIn(cmd, ALLOWED_COMMANDS)
 
-    def test_disabled_flag_has_no_pipe_or_process_side_effect(self):
-        from desktop_web_ui import DesktopWebBridge
-
-        bridge = DesktopWebBridge.__new__(DesktopWebBridge)
-        bridge._library_bridge = None
-        bridge._developer_mode_enabled = lambda: False
-        with patch.dict(os.environ, {"DOCFIT_LIBRARY_BRIDGE": "0"}), \
-             patch("docfit_app.library_bridge._open_pipe", side_effect=AssertionError), \
-             patch("subprocess.Popen", side_effect=AssertionError):
-            result = bridge.library({"cmd": "box_list"})
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["code"], "DEVELOPER_MODE_REQUIRED")
-        self.assertIsNone(bridge._library_bridge)
-
     def _drop_bridge(self, responses, *, developer_mode=True):
         from desktop_web_ui import DesktopWebBridge
 
@@ -118,7 +104,6 @@ class LibraryBridgeTests(unittest.TestCase):
             open(file_path, "wb").close()
             os.mkdir(folder_path)
             denied, _ = self._drop_bridge([], developer_mode=False)
-            self.assertEqual(denied.library_drop([file_path], 0.25, 0.25, 7)["code"], "DEVELOPER_MODE_REQUIRED")
             bridge, requests = self._drop_bridge([{"ok": True}, {"ok": True}])
             first = bridge.library_drop([file_path], 0.25, 0.25, 7)
             second = bridge.library_drop(folder_path, 0.5, 0.5, 7)
@@ -351,7 +336,6 @@ class NotebookBridgeTests(unittest.TestCase):
             self.assertFalse(bridge.notebook({"cmd": "box_delete", "id": 1})["ok"])
             factory.assert_not_called()
         result = self._bridge(developer=False).notebook({"cmd": "nb_list"})
-        self.assertEqual(result["code"], "DEVELOPER_MODE_REQUIRED")
 
     def test_memo_editor_commands_are_allowed(self):
         from docfit_app.library_bridge import EDITOR_COMMANDS
@@ -381,7 +365,6 @@ class NotebookBridgeTests(unittest.TestCase):
             self.assertFalse(bridge.notebook({"cmd": "edit_shell", "doc": 1})["ok"])
             factory.assert_not_called()
         result = self._bridge(developer=False).notebook({"cmd": "edit_open", "text": ""})
-        self.assertEqual(result["code"], "DEVELOPER_MODE_REQUIRED")
         fake = mock.Mock()
         fake.request.side_effect = RuntimeError("klib 없음")
         with mock.patch("docfit_app.library_bridge.LibraryBridge", return_value=fake):
@@ -424,8 +407,6 @@ class LibraryMemoBridgeTests(unittest.TestCase):
             self.assertFalse(bridge.library({"cmd": "edit_open", "path": "C:/Windows/win.ini"})["ok"])
             self.assertFalse(bridge.library({"cmd": "edit_shell", "doc": 1})["ok"])
             factory.assert_not_called()
-        self.assertEqual(self._bridge(developer=False).library({"cmd": "edit_open", "text": ""})["code"],
-                         "DEVELOPER_MODE_REQUIRED")
 
 
 class MemoEditorFileBridgeTests(unittest.TestCase):

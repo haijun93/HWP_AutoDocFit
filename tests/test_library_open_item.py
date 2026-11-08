@@ -137,12 +137,3 @@ class DesktopOpenItemTests(unittest.TestCase):
         self.assertEqual(requests, [])
         self.assertEqual(bridge._library_opener.calls, [self.tmp.name])
 
-    def test_open_item_requires_developer_mode(self):
-        bridge, _ = self._bridge({"ok": True})
-        bridge._developer_mode_enabled = lambda: False
-        with patch("os.startfile", side_effect=AssertionError, create=True):
-            self.assertEqual(bridge.library({"cmd": "open_item", "item_id": 1})["code"], "DEVELOPER_MODE_REQUIRED")
-
-
-if __name__ == "__main__":
-    unittest.main()

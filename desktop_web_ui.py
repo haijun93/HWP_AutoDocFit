@@ -2277,8 +2277,6 @@ class DesktopWebBridge:
         box_id는 정수 또는 정수 문자열만 허용하며 int로 변환해 전달한다.
         """
         import math
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 자료함을 사용할 수 있습니다."}
         valid_spaces = {"core", "basis", "reference", "temp"}
         if space is not None and space not in valid_spaces:
             return {"ok": False, "message": "자료함 공간이 올바르지 않습니다."}
@@ -2403,8 +2401,6 @@ class DesktopWebBridge:
 
     def library(self, request):
         """Forward one allowlisted library JSON request when the opt-in flag is set."""
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 자료함을 사용할 수 있습니다."}
         from docfit_app.library_scan import SCAN_COMMANDS, FolderScanService
         try:
             if isinstance(request, dict) and request.get("cmd") in SCAN_COMMANDS:
@@ -2480,8 +2476,6 @@ class DesktopWebBridge:
         출처 추가는 klib가 직접 추출하고, klib가 못 읽는 구형 hwp·pdf만 NotebookService가 Python으로 추출해 넣는다.
         nb_drop_watch(창에 끌어 놓은 파일을 노트북으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
         """
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 노트북을 사용할 수 있습니다."}
         if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
             return self._memo_editor_request(request)
         if not isinstance(request, dict) or not str(request.get("cmd", "")).startswith("nb_"):

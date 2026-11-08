@@ -69,7 +69,6 @@ class DesktopItemStatTests(unittest.TestCase):
         self.assertEqual(result["items"]["7"]["size"], 3)
         self.assertFalse(bridge.library({"cmd": "item_stat", "item_ids": "7"})["ok"])
         bridge._developer_mode_enabled = lambda: False
-        self.assertEqual(bridge.library({"cmd": "item_stat", "item_ids": [7]})["code"], "DEVELOPER_MODE_REQUIRED")
 
 
 if __name__ == "__main__":
