@@ -507,3 +507,185 @@ class ArrowExportTests(unittest.TestCase):
         expected_vert = round((2 - ys[0]) * cell_mm * ts.UNIT_MM) - margin
         self.assertEqual(int(pos.get("horzOffset")), expected_horz)
         self.assertEqual(int(pos.get("vertOffset")), expected_vert)
+
+
+class TableSketchExampleTests(unittest.TestCase):
+    """표그림판 공룡 및 미로 예시 그림 회귀 시험."""
+
+    MAZE_ROWS = [
+        '###############',
+        'S.....#.......#',
+        '#####.#.#####.#',
+        '#.....#.....#.#',
+        '#.#########.#.#',
+        '#.........#.#.#',
+        '#########.#.#.#',
+        '#.......#.#...#',
+        '#.#####.#.#####',
+        '#.#...#.#.....#',
+        '#.#.#.#.#####.#',
+        '#...#.#.....#.#',
+        '#####.#####.#.#',
+        '#...........#.E',
+        '###############',
+    ]
+
+    DINO_ROWS = [
+        '............#########',
+        '...........###########',
+        '...........##.########',
+        '...........###########',
+        '...........###########',
+        '...........###########',
+        '...........######',
+        '...........#########',
+        '.#........######..................##.........##.........##',
+        '.#.......#######..................##.........##.........##',
+        '.##.....##########.............##.##......##.##......##.##',
+        '.###...###########.#...........##.##......##.##......##.##',
+        '.####.#########.....#..........##.##.##...##.##.##...##.##.##',
+        '.###############...............##.##.##...##.##.##...##.##.##',
+        '.###############...............##.##.##...##.##.##...##.##.##',
+        '..##############...............#####.##...#####.##...#####.##',
+        '...#############................####.##....####.##....####.##',
+        '....###########...................#####......#####......#####',
+        '.....#########....................####.......####.......####',
+        '......####.###....................##.........##.........##',
+        '......###...##....................##.........##.........##',
+        '......##.....#....................##.........##.........##',
+        '......#......#....................##.........##.........##.....#',
+        '##....##.....##...........##......##.........##.........##....###',
+        '##################################################################',
+        '',
+        '....##......#.......###...........##...........##.........#',
+    ]
+
+    def _build_maze_sketch(self):
+        lines = []
+        fills = []
+        texts = []
+        rows = self.MAZE_ROWS
+        # 셀 배경색 및 텍스트 설정
+        for y, row in enumerate(rows):
+            for x, cell in enumerate(row):
+                color = '#000000' if cell == '#' else '#FFFFFF'
+                fills.append(dict(x1=x, y1=y, x2=x + 1, y2=y + 1, color=color))
+                if cell in ('S', 'E'):
+                    texts.append(dict(x=x, y=y, text=cell, bold=True))
+        # 행 경계선
+        for y in range(16):
+            run_start = -1
+            for x in range(15):
+                boundary = (y == 0 or y == 15) or (
+                    (rows[y - 1][x] == '#') != (rows[y][x] == '#')
+                )
+                if boundary and run_start < 0:
+                    run_start = x
+                if (not boundary or x == 14) and run_start >= 0:
+                    x2 = 15 if (boundary and x == 14) else x
+                    lines.append(dict(x1=run_start, y1=y, x2=x2, y2=y))
+                    run_start = -1
+        # 열 경계선
+        for x in range(16):
+            run_start = -1
+            for y in range(15):
+                boundary = (x == 0 or x == 15) or (
+                    (rows[y][x - 1] == '#') != (rows[y][x] == '#')
+                )
+                if boundary and run_start < 0:
+                    run_start = y
+                if (not boundary or y == 14) and run_start >= 0:
+                    y2 = 15 if (boundary and y == 14) else y
+                    lines.append(dict(x1=x, y1=run_start, x2=x, y2=y2))
+                    run_start = -1
+        return dict(
+            grid=dict(cols=15, rows=15, cell_mm=2.5),
+            lines=lines,
+            fills=fills,
+            texts=texts,
+        )
+
+    def _build_dino_sketch(self):
+        lines = []
+        fills = []
+        import re
+        for y, row in enumerate(self.DINO_ROWS):
+            for m in re.finditer(r'#+', row):
+                x1, x2 = m.start(), m.end()
+                lines.append(dict(x1=x1, y1=y, x2=x2, y2=y))
+                lines.append(dict(x1=x1, y1=y + 1, x2=x2, y2=y + 1))
+                lines.append(dict(x1=x1, y1=y, x2=x1, y2=y + 1))
+                lines.append(dict(x1=x2, y1=y, x2=x2, y2=y + 1))
+                fills.append(dict(x1=x1, y1=y, x2=x2, y2=y + 1, color='#000000'))
+        return dict(
+            grid=dict(cols=66, rows=27, cell_mm=2.5),
+            lines=lines,
+            fills=fills,
+            texts=[],
+        )
+
+    def test_maze_example_preview_and_hwpx(self):
+        sketch = self._build_maze_sketch()
+        preview = ts.preview(sketch)
+        self.assertTrue(preview.get("ok", False))
+        self.assertEqual(preview["cols"], 15)
+        self.assertEqual(preview["rows"], 15)
+        cells = preview["cells"]
+        self.assertGreater(len(cells), 0)
+
+        # S, E 텍스트가 정상 반영되었는지 확인
+        cell_texts = {c.get("text") for c in cells if c.get("text")}
+        self.assertIn("S", cell_texts)
+        self.assertIn("E", cell_texts)
+
+        # HWPX 변환 검증 (defusedxml ET로 파싱)
+        with tempfile.TemporaryDirectory() as td:
+            hwpx_path = Path(td) / "maze.hwpx"
+            ts.to_hwpx(sketch, hwpx_path)
+            self.assertTrue(hwpx_path.exists())
+            with zipfile.ZipFile(hwpx_path) as z:
+                section_xml = z.read("Contents/section0.xml")
+                root = ET.fromstring(section_xml)
+                tbl = root.find('.//' + ts.HP + 'tbl')
+                self.assertIsNotNone(tbl)
+                self.assertGreater(len(tbl.findall('.//' + ts.HP + 'tc')), 0)
+
+    def test_dino_example_preview_and_hwpx(self):
+        sketch = self._build_dino_sketch()
+        preview = ts.preview(sketch)
+        self.assertTrue(preview.get("ok", False))
+        self.assertGreater(preview["cols"], 0)
+        self.assertGreater(preview["rows"], 0)
+        self.assertGreater(len(preview["cells"]), 0)
+
+        # HWPX 변환 검증
+        with tempfile.TemporaryDirectory() as td:
+            hwpx_path = Path(td) / "dino.hwpx"
+            ts.to_hwpx(sketch, hwpx_path)
+            self.assertTrue(hwpx_path.exists())
+            with zipfile.ZipFile(hwpx_path) as z:
+                section_xml = z.read("Contents/section0.xml")
+                root = ET.fromstring(section_xml)
+                tbl = root.find('.//' + ts.HP + 'tbl')
+                self.assertIsNotNone(tbl)
+
+    def test_save_and_load_examples_via_service(self):
+        with tempfile.TemporaryDirectory() as td:
+            service = TableSketchService(Path(td))
+            maze = self._build_maze_sketch()
+            res_save = service.save("미로예시", maze)
+            self.assertTrue(res_save.get("ok", False))
+
+            res_load = service.load("미로예시")
+            self.assertTrue(res_load.get("ok", False))
+            self.assertEqual(res_load["sketch"]["grid"]["cols"], 15)
+
+            dino = self._build_dino_sketch()
+            res_dino = service.save("공룡예시", dino)
+            self.assertTrue(res_dino.get("ok", False))
+
+            sketches_list = service.list()
+            names = sketches_list.get("sketches", [])
+            self.assertIn("미로예시", names)
+            self.assertIn("공룡예시", names)
+
