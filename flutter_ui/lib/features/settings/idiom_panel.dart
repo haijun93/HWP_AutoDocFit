@@ -495,6 +495,7 @@ const thirdPartyComponents = [
   ('Pillow', '그림 처리', 'MIT-CMU'),
   ('defusedxml', '안전한 XML 읽기', 'PSF'),
   ('PyInstaller', 'EXE 만들기', 'GPL-2.0 (부트로더 예외)'),
+  ('mongdangpdf (원본 pdfcraft)', 'PDF 편집기(개발자 모드 연결 프로그램)', 'Apache-2.0 OR MIT'),
   ('한/글 자동화 보안 모듈 예시(한컴)', '한/글 COM 자동화 승인', '한컴 예제 배포 조건'),
 ];
 

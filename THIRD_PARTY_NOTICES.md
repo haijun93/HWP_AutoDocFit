@@ -31,6 +31,13 @@ license and notice files remain available in the installed kordoc package.
 
 ## Other components
 
+## mongdangpdf / pdfcraft
+
+- Fork: https://github.com/haijun93/mongdangpdf
+- Upstream: https://github.com/storytold/pdfcraft
+- License: Apache-2.0 OR MIT (see the upstream repository's license files)
+- Downloaded as a separate Windows portable application in developer mode; it is not bundled with this app.
+
 | Component | Use | License |
 |---|---|---|
 | Hancom HWP automation security module sample (`MapoHwpAutoDocFitSecurity.dll`) | Approves HWP COM automation; Hancom sample binary renamed for this project | Hancom sample distribution terms |

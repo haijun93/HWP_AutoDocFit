@@ -36,8 +36,8 @@ class FakeDialogs:
 
 class RegistryTests(unittest.TestCase):
     def test_three_apps_with_renamed_fork_urls(self):
-        self.assertEqual(list(APPS), ["photo_album", "outliner", "photo_manager"])
-        self.assertEqual([a.label for a in APPS.values()], ["사진첩", "아웃라이너", "사진관리"])
+        self.assertEqual(list(APPS), ["photo_album", "outliner", "photo_manager", "pdf_editor"])
+        self.assertEqual([a.label for a in APPS.values()], ["사진첩", "아웃라이너", "사진관리", "PDF편집"])
         self.assertEqual([a.folder for a in APPS.values()], ["mongdangview", "mongdangoutliner", "mondangpics"])
         for app in APPS.values():
             self.assertEqual(app.fork_url, f"https://github.com/haijun93/{app.folder}")
