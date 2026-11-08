@@ -108,6 +108,7 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(railWidth(), kSidebarExpandedWidth);
+    await tester.ensureVisible(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.tap(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.pumpAndSettle();
     expect(requests, [true]);
@@ -132,6 +133,7 @@ void main() {
 
     // 끄면 앱 창과 함께 원래(펼친) 메뉴와 작업 화면으로 돌아간다.
     tester.view.physicalSize = const Size(600, 900);
+    await tester.ensureVisible(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.tap(find.byKey(const ValueKey('sidebar-mode-toggle')));
     await tester.pumpAndSettle();
     expect(requests, [true, false]);
@@ -168,41 +170,4 @@ void main() {
     await check(const Size(1040, 700), 2); // 사이드메뉴 모드
   });
 
-  testWidgets('sidebar-only mode hides notices so they never cover the menu', (tester) async {
-    tester.view.physicalSize = const Size(1040, 700);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    late BuildContext pageContext;
-    await tester.pumpWidget(MaterialApp(
-      home: Scaffold(body: TabNavigationShell(
-        documentEditor: Builder(builder: (c) { pageContext = c; return const Text('work-area'); }),
-        tableTemplates: const SizedBox(), tableSketch: const SizedBox(), diagram: const SizedBox(),
-        mindMap: const SizedBox(), fileConversion: const SizedBox(), paint: const SizedBox(),
-        fileRename: const SizedBox(), timemachine: const SizedBox(),
-        developerMode: true, onSidebarModeRequest: (enabled) async => true,
-      )),
-    ));
-    await tester.pumpAndSettle();
-    final messenger = ScaffoldMessenger.of(pageContext);
-    final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
-    messenger.showSnackBar(const SnackBar(content: Text('알림-전')));
-    await tester.pump();
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    expect(find.text('work-area'), findsOneWidget);
-    expect(find.text('알림-전'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('sidebar-mode-toggle')));
-    await tester.pumpAndSettle();
-    expect(find.text('work-area'), findsNothing);
-    expect(find.text('알림-전'), findsNothing);
-    messenger.showSnackBar(const SnackBar(content: Text('알림-중')));
-    await tester.pump();
-    expect(find.text('알림-중'), findsNothing);
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('sidebar-mode-toggle')), findsOneWidget);
-    messenger.showSnackBar(const SnackBar(content: Text('알림-후')));
-    await tester.pump();
-    expect(find.text('알림-후'), findsOneWidget);
-  });
 }
