@@ -10,8 +10,7 @@ import threading
 from pathlib import Path
 
 from docfit_core import table_sketch
-from docfit_core.hwp_table_import import sketch_from_html
-from docfit_core.table_import import import_hwpx_table, list_hwpx_tables
+from docfit_core.table_import import import_html_table, import_hwpx_table, list_hwpx_tables
 from .table_units_service import TableUnitsService, HWP_CLIPBOARD_FORMAT
 
 COM_LOCK = threading.Lock()
@@ -234,10 +233,11 @@ class TableSketchService:
         html = self._clipboard_html()
         if not html:
             raise ValueError("클립보드에 한/글 표가 없습니다. 한/글에서 표를 선택해 복사(Ctrl+C)한 뒤 다시 눌러 주세요.")
-        sketch = sketch_from_html(html, float(cell_mm))
-        source = sketch.pop("source")
-        return dict(ok=True, sketch=sketch, rows=source["rows"], cols=source["cols"], seq=seq,
-                    message=f"한/글 표({source['rows']}행 × {source['cols']}열)를 가져왔어요. 선·글을 고친 뒤 다시 복사할 수 있어요.")
+        sketch, info = import_html_table(html, float(cell_mm))
+        warnings = info.get("warnings", [])
+        return dict(ok=True, sketch=sketch, rows=info["rows"], cols=info["cols"], seq=seq,
+                    warnings=warnings,
+                    message=f"한/글 표({info['rows']}행 × {info['cols']}열)를 가져왔어요. 선·글을 고친 뒤 다시 복사할 수 있어요.")
 
     @staticmethod
     def _hwpx_payload(payload):

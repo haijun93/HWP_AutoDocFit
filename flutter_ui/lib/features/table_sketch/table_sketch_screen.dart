@@ -245,8 +245,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Uint8List? _recognizedImage;
   String? _recognizeError;
   bool _recognizing = false;
-  // HWPX 표 가져오기(TIMPORTUI): 같은 겹쳐 보기·적용·취소를 쓰고 글·문구만 다르다.
+  // HWPX 표 가져오기(TIMPORTUI) 및 클립보드 표 붙여넣기(TPASTE): 같은 겹쳐 보기·적용·취소를 쓰고 글·문구만 다르다.
   bool _importingHwpx = false;
+  bool _pastingHwp = false;
 
   // 저장/불러오기 컨트롤러
   final TextEditingController _saveNameController = TextEditingController(
@@ -832,10 +833,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   // --- 한/글 표 붙여넣기 ---
 
-  /// 한/글에서 복사(Ctrl+C)한 표를 선·글로 바꿔 그림판에 놓는다. 지금 그림은 실행 취소로 되돌릴 수 있다.
+  /// 한/글에서 복사(Ctrl+C)한 표를 선·글로 바꿔 그림판에 겹쳐 보인다.
+  /// 클립보드의 표(HTML Format 우선)를 table_import의 sketch로 바꿔 겹쳐 보기·적용/취소·되돌리기(기존 '한/글 문서에서 표 가져오기' 흐름 재사용).
   /// 단추는 늘 한/글 표를 가져온다. Ctrl+V([fromKey])는 한/글 표가 없거나 그림판 안 복사 뒤 클립보드가 그대로면
-  /// 그림판 안 붙여넣기를 한다(2.0.6: Ctrl+V로도 한/글 표가 붙게).
+  /// 그림판 안 붙여넣기를 한다.
   Future<void> _pasteHwpTable({bool fromKey = false}) async {
+    if (_recognizing) return;
     final res = await _sketchApi.pasteHwp(
       _doc.grid.cellMm,
       afterSeq: fromKey && _clipboard != null ? _clipboardSeq : null,
@@ -849,15 +852,39 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       }
       if (res['code'] == 'UNCHANGED') return;
     }
+    TableSketchDoc? found;
     if (res['ok'] == true && sketch is Map) {
-      _saveSnapshot();
+      try {
+        found = TableSketchDoc.fromJson(sketch);
+      } catch (_) {
+        found = null;
+      }
+    }
+    if (found != null &&
+        (found.lines.isNotEmpty ||
+            found.texts.isNotEmpty ||
+            found.fills.isNotEmpty)) {
+      // 지금 그림판보다 작은 격자로 줄지 않게 한다
+      found.grid = found.grid.copyWith(
+        cols: math.min(200, math.max(found.grid.cols, _doc.grid.cols)),
+        rows: math.min(200, math.max(found.grid.rows, _doc.grid.rows)),
+      );
+      final warnings = res['warnings'];
       setState(() {
-        _doc = TableSketchDoc.fromJson(sketch);
-        _sel = SketchSelection();
-        _previewLine = null;
-        _previewRect = null;
+        _recognizing = false;
+        _importingHwpx = false;
+        _pastingHwp = true;
+        _recognized = found;
+        _recognizedRows =
+            res['rows'] is num ? (res['rows'] as num).toInt() : 0;
+        _recognizedCols =
+            res['cols'] is num ? (res['cols'] as num).toInt() : 0;
+        _recognizedWarnings =
+            warnings is List ? [for (final w in warnings) '$w'] : const [];
+        _recognizedImage = null;
+        _recognizeError = null;
       });
-      _triggerPreviewDebounced();
+      return;
     }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('${res['message'] ?? '한/글 표를 가져오지 못했습니다.'}')),
@@ -2296,16 +2323,19 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               if (MediaQuery.sizeOf(context).width < 600)
                 IconButton(
                   key: const Key('sketchPasteHwp'),
-                  tooltip: '한/글 표 붙여넣기',
+                  tooltip: '붙여넣기 (Ctrl+V)',
                   icon: const Icon(Icons.content_paste_go_rounded),
                   onPressed: _pasteHwpTable,
                 )
               else
-                OutlinedButton.icon(
-                  key: const Key('sketchPasteHwp'),
-                  icon: const Icon(Icons.content_paste_go_rounded, size: 18),
-                  label: const Text('한/글 표 붙여넣기'),
-                  onPressed: _pasteHwpTable,
+                Tooltip(
+                  message: '한/글 표 붙여넣기 (Ctrl+V)',
+                  child: OutlinedButton.icon(
+                    key: const Key('sketchPasteHwp'),
+                    icon: const Icon(Icons.content_paste_go_rounded, size: 18),
+                    label: const Text('붙여넣기'),
+                    onPressed: _pasteHwpTable,
+                  ),
                 ),
               // 글자가 길어 폭 900 미만에서는 아이콘만(700px에서 도구 줄이 넘쳤다).
               // 600 미만은 제목줄이 모자라 아래 도구 줄에 둔다(_buildTopToolbar).
@@ -2959,6 +2989,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     final found = _recognized;
     if (found == null) return;
     _saveSnapshot();
+    final wasPasting = _pastingHwp;
+    final wasImporting = _importingHwpx;
+    final rows = _recognizedRows;
+    final cols = _recognizedCols;
     setState(() {
       _doc = found;
       _recognized = null;
@@ -2967,15 +3001,22 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _previewLine = null;
       _previewRect = null;
       _imageTarget = null;
+      _importingHwpx = false;
+      _pastingHwp = false;
     });
     _triggerPreviewDebounced();
-    _notice(
-      _importingHwpx
-          ? '가져온 표($_recognizedRows행 × $_recognizedCols열)를 적용했습니다. '
-                '선·글을 고칠 수 있고, 되돌리기(Ctrl+Z)로 가져오기 전으로 돌아갑니다.'
-          : '인식한 표($_recognizedRows행 × $_recognizedCols열)를 적용했습니다. '
-                '선을 고칠 수 있고, 되돌리기(Ctrl+Z)로 인식 전으로 돌아갑니다.',
-    );
+    final String label;
+    if (wasPasting) {
+      label = '붙여넣은 표($rows행 × $cols열)를 적용했습니다. '
+          '선·글을 고칠 수 있고, 되돌리기(Ctrl+Z)로 붙여넣기 전으로 돌아갑니다.';
+    } else if (wasImporting) {
+      label = '가져온 표($rows행 × $cols열)를 적용했습니다. '
+          '선·글을 고칠 수 있고, 되돌리기(Ctrl+Z)로 가져오기 전으로 돌아갑니다.';
+    } else {
+      label = '인식한 표($rows행 × $cols열)를 적용했습니다. '
+          '선을 고칠 수 있고, 되돌리기(Ctrl+Z)로 인식 전으로 돌아갑니다.';
+    }
+    _notice(label);
   }
 
   void _cancelRecognized() {
@@ -2983,6 +3024,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _recognized = null;
       _recognizedImage = null;
       _recognizeError = null;
+      _importingHwpx = false;
+      _pastingHwp = false;
     });
   }
 
@@ -2999,7 +3042,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
           const SizedBox(width: 10),
-          Text(_importingHwpx ? '문서에서 표를 읽는 중…' : '이미지에서 표를 인식하는 중…'),
+          Text(_pastingHwp
+              ? '클립보드에서 표를 읽는 중…'
+              : (_importingHwpx ? '문서에서 표를 읽는 중…' : '이미지에서 표를 인식하는 중…')),
         ],
       );
     }
@@ -3048,7 +3093,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                '${_importingHwpx ? '가져온' : '인식한'} 표: '
+                '${_pastingHwp ? '붙여넣은' : (_importingHwpx ? '가져온' : '인식한')} 표: '
                 '$_recognizedRows행 × $_recognizedCols열 (파란 선)',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),

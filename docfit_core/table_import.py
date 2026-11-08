@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+from html.parser import HTMLParser
 import math
 import re
 
@@ -13,6 +14,7 @@ from defusedxml import ElementTree as ET
 
 from .hwpx import open_hwpx_safely
 
+PT_TO_MM = 25.4 / 72
 UNIT_MM = 283.465
 MAX_GRID = 200
 MAX_CELLS = 2000
@@ -322,4 +324,230 @@ def _convert(table, head, cell_mm):
         lines.append({**coords, "width": width, "style": style, **({} if color == "#000000" else {"color": color})})
     sketch = dict(grid=dict(cols=max(36, xs[-1] + _MARGIN), rows=max(50, ys[-1] + _MARGIN), cell_mm=float(cell_mm)),
                   lines=lines, texts=texts, images=[], fills=fills)
+    return sketch, dict(rows=n_rows, cols=n_cols, warnings=sorted(set(warnings)))
+
+
+class _HTMLTableParser(HTMLParser):
+    """첫 최상위 HTML 표의 행·칸(속성·글·굵게·정렬)을 모은다. 칸 안 표는 글만 이어 붙인다."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.rows, self.depth, self.done = [], 0, False
+        self.cell, self.bold_depth, self.paragraph = None, 0, []
+
+    def handle_starttag(self, tag, attrs):
+        if self.done:
+            return
+        attrs = dict(attrs)
+        if tag == "table":
+            self.depth += 1
+            return
+        if self.depth != 1 and not (self.depth > 1 and self.cell is not None):
+            return
+        if self.depth == 1 and tag == "tr":
+            self.rows.append([])
+        elif self.depth == 1 and tag in ("td", "th") and self.rows:
+            if sum(len(r) for r in self.rows) >= MAX_CELLS:
+                raise ValueError("표 칸이 너무 많습니다(2000칸 넘음).")
+            self.cell = {
+                "style": attrs.get("style") or "",
+                "colspan": _int(attrs.get("colspan"), 1),
+                "rowspan": _int(attrs.get("rowspan"), 1),
+                "lines": [],
+                "bold": False,
+                "align": "",
+            }
+            self.paragraph = []
+        elif self.cell is not None:
+            style = (attrs.get("style") or "").lower()
+            if tag in ("b", "strong") or re.search(r"font-weight\s*:\s*(bold|[6-9]00)", style):
+                self.bold_depth += 1
+                self.cell["bold"] = True
+            if tag == "p":
+                match = re.search(r"text-align\s*:\s*(left|center|right|justify)", style)
+                if match and not self.cell["align"]:
+                    self.cell["align"] = match.group(1)
+            if tag == "br":
+                self._end_paragraph()
+
+    def handle_endtag(self, tag):
+        if self.done:
+            return
+        if tag == "table":
+            self.depth -= 1
+            if self.depth == 0:
+                self.done = True
+            return
+        if self.cell is None:
+            return
+        if tag == "p":
+            self._end_paragraph()
+        elif self.depth == 1 and tag in ("td", "th"):
+            self._end_paragraph()
+            self.rows[-1].append(self.cell)
+            self.cell = None
+
+    def handle_data(self, data):
+        if self.cell is not None and not self.done:
+            self.paragraph.append(data)
+
+    def _end_paragraph(self):
+        if self.cell is not None and self.paragraph:
+            text = re.sub(r"\s+", " ", "".join(self.paragraph).replace("\xa0", " ")).strip()
+            self.cell["lines"].append(text)
+        self.paragraph = []
+
+
+def _pt(style, name):
+    match = re.search(name + r"\s*:\s*([\d.]+)\s*pt", style, re.I)
+    return float(match.group(1)) if match else None
+
+
+def _html_background(style):
+    match = re.search(r"background(?:-color)?\s*:\s*([^;]+)", style, re.I)
+    if not match or "#" not in match.group(1):
+        return None
+    match_color = re.search(r"#([0-9a-fA-F]{6})\b", match.group(1))
+    if not match_color:
+        return None
+    color = ("#" + match_color.group(1)).upper()
+    return None if color in (None, "#FFFFFF") else color
+
+
+def _html_border(style, side):
+    match = re.search(r"border-" + side + r"\s*:\s*([^;]+)", style, re.I)
+    if not match:
+        match = re.search(r"border\s*:\s*([^;]+)", style, re.I)
+    if not match:
+        return None
+    value = match.group(1).lower()
+    if "none" in value or "hidden" in value:
+        return None
+    size = re.search(r"([\d.]+)\s*pt", value)
+    points = float(size.group(1)) if size else 0.5
+    kind = "dash" if "dash" in value else "dot" if "dot" in value else "solid"
+    color_m = re.search(r"#([0-9a-fA-F]{6})\b", value)
+    color = ("#" + color_m.group(1)).upper() if color_m else "#000000"
+    if "double" in value:
+        return ("double", "solid", color)
+    return ("thick" if points >= 0.9 else "thin", kind, color)
+
+
+def _place_html_cells(rows):
+    taken, cells = set(), []
+    for r, row in enumerate(rows):
+        c = 0
+        for cell in row:
+            while (r, c) in taken:
+                c += 1
+            rs = max(1, min(MAX_GRID, cell["rowspan"]))
+            cs = max(1, min(MAX_GRID, cell["colspan"]))
+            for dr in range(rs):
+                for dc in range(cs):
+                    taken.add((r + dr, c + dc))
+            cells.append((r, c, rs, cs, cell))
+            c += cs
+    return cells
+
+
+def import_html_table(html: str | bytes, cell_mm: float = 5.0) -> tuple[dict, dict]:
+    """클립보드 HTML(문자열·바이트)에서 표그림판 그림 (sketch, info)을 만든다.
+
+    순수 파이썬(표준 html.parser)으로 실행되며 COM이나 외부 엔진을 쓰지 않는다.
+    """
+    _check_cell_mm(cell_mm)
+    if isinstance(html, bytes):
+        html = html.decode("utf-8", errors="replace")
+    if len(html) > 20 * 1024 * 1024:
+        raise ValueError("복사한 내용이 너무 큽니다.")
+    start = html.find("<!--StartFragment-->")
+    parser = _HTMLTableParser()
+    parser.feed(html[start:] if start >= 0 else html)
+    rows = [row for row in parser.rows if row]
+    if not rows:
+        raise ValueError("클립보드에 한/글 표가 없습니다. 한/글에서 표를 선택해 복사(Ctrl+C)한 뒤 다시 눌러 주세요.")
+
+    raw_cells = _place_html_cells(rows)
+    n_rows = max(r + rs for r, _, rs, _, _ in raw_cells)
+    n_cols = max(c + cs for _, c, _, cs, _ in raw_cells)
+    if n_rows > MAX_GRID or n_cols > MAX_GRID:
+        raise ValueError("표가 너무 커서 표그림판(200칸)에 들어가지 않습니다.")
+
+    # 각 셀을 HWPUNIT으로 환산해 _sizes로 계산
+    items = []
+    warnings = []
+    for r, c, rs, cs, cell in raw_cells:
+        pw = _pt(cell["style"], "width")
+        ph = _pt(cell["style"], "height")
+        w_unit = int(pw * PT_TO_MM * UNIT_MM) if pw else 0
+        h_unit = int(ph * PT_TO_MM * UNIT_MM) if ph else 0
+        text = "\n".join(line for line in cell["lines"] if line).strip()
+        align = {"justify": "left"}.get(cell["align"], cell["align"]) or "center"
+        items.append({
+            "row": r,
+            "col": c,
+            "rowspan": rs,
+            "colspan": cs,
+            "w": w_unit,
+            "h": h_unit,
+            "style": cell["style"],
+            "text": text,
+            "bold": cell["bold"],
+            "align": align,
+        })
+
+    widths = _sizes(items, n_cols, "col", cell_mm, warnings)
+    heights = _sizes(items, n_rows, "row", cell_mm, warnings)
+
+    xs, ys = [_MARGIN], [_MARGIN]
+    for w in widths:
+        xs.append(xs[-1] + w)
+    for h in heights:
+        ys.append(ys[-1] + h)
+
+    if xs[-1] + _MARGIN > MAX_GRID or ys[-1] + _MARGIN > MAX_GRID:
+        raise ValueError(f"표가 너무 커서 표그림판(200칸)에 들어가지 않습니다(칸 간격 {cell_mm:g}mm). 칸 간격을 늘려 보세요.")
+
+    segments, texts, fills = {}, [], []
+
+    def mark(key, line):
+        old = segments.get(key)
+        if line is not None and (old is None or _RANK[line[0]] > _RANK[old[0]]):
+            segments[key] = line
+
+    for it in items:
+        x0, x1 = xs[it["col"]], xs[it["col"] + it["colspan"]]
+        y0, y1 = ys[it["row"]], ys[it["row"] + it["rowspan"]]
+        bg = _html_background(it["style"])
+        if bg:
+            fills.append(dict(x1=x0, y1=y0, x2=x1, y2=y1, color=bg))
+        for x in range(x0, x1):
+            mark(("h", y0, x), _html_border(it["style"], "top"))
+            mark(("h", y1, x), _html_border(it["style"], "bottom"))
+        for y in range(y0, y1):
+            mark(("v", x0, y), _html_border(it["style"], "left"))
+            mark(("v", x1, y), _html_border(it["style"], "right"))
+        if it["text"]:
+            texts.append(dict(x=x0, y=y0, text=it["text"][:10000], bold=it["bold"], align=it["align"]))
+
+    runs = []
+    for (kind, at, start), (width, style, color) in sorted(segments.items()):
+        last = runs[-1] if runs else None
+        if last and last[:2] == [kind, at] and last[3:] == [width, style, color] and last[2][1] == start:
+            last[2][1] = start + 1
+        else:
+            runs.append([kind, at, [start, start + 1], width, style, color])
+
+    lines = []
+    for kind, at, (start, end), width, style, color in runs:
+        coords = dict(x1=start, y1=at, x2=end, y2=at) if kind == "h" else dict(x1=at, y1=start, x2=at, y2=end)
+        lines.append({**coords, "width": width, "style": style, **({} if color == "#000000" else {"color": color})})
+
+    sketch = dict(
+        grid=dict(cols=max(36, xs[-1] + _MARGIN), rows=max(50, ys[-1] + _MARGIN), cell_mm=float(cell_mm)),
+        lines=lines,
+        texts=texts,
+        images=[],
+        fills=fills,
+    )
     return sketch, dict(rows=n_rows, cols=n_cols, warnings=sorted(set(warnings)))

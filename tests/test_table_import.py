@@ -6,7 +6,7 @@ from pathlib import Path
 
 from docfit_app.table_sketch_service import TableSketchService
 from docfit_core import table_sketch
-from docfit_core.table_import import import_hwpx_table, list_hwpx_tables
+from docfit_core.table_import import import_html_table, import_hwpx_table, list_hwpx_tables
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -159,6 +159,34 @@ class TableImportTest(unittest.TestCase):
             with tempfile.NamedTemporaryFile(suffix=".hwpx", dir=folder, delete=False) as bad:
                 bad.write(b"not a zip")
             self.assertFalse(service.command("list_hwpx_tables", dict(path=bad.name))["ok"])
+
+
+    def test_import_html_table_pure_function(self):
+        html = (
+            'Version:1.0\r\nStartHTML:0000000105\r\n'
+            '<html><body><!--StartFragment--><table style="border-collapse:collapse">'
+            '<tr><td style="width:56.69pt;height:28.35pt;border-top:solid #000000 1.7pt;border-left:solid #000000 0.28pt;'
+            'border-bottom:double #000000 1.98pt;border-right:solid #000000 0.28pt;background:#e2efda;">'
+            '<p style="text-align:center;"><b>항목구분</b></p></td>'
+            '<td style="width:56.69pt;height:28.35pt;border:solid #000000 0.28pt;">'
+            '<p style="text-align:right;">12,500</p></td></tr>'
+            '</table><!--EndFragment--></body></html>'
+        )
+        sketch, info = import_html_table(html, cell_mm=5.0)
+        self.assertEqual(info["rows"], 1)
+        self.assertEqual(info["cols"], 2)
+        self.assertEqual(info["warnings"], [])
+        self.assertEqual(sketch["grid"]["cell_mm"], 5.0)
+        self.assertEqual(len(sketch["fills"]), 1)
+        self.assertEqual(sketch["fills"][0]["color"], "#E2EFDA")
+        texts = {t["text"]: t for t in sketch["texts"]}
+        self.assertTrue(texts["항목구분"]["bold"])
+        self.assertEqual(texts["항목구분"]["align"], "center")
+        self.assertEqual(texts["12,500"]["align"], "right")
+        self.assertFalse(texts["12,500"]["bold"])
+        widths = {l["width"] for l in sketch["lines"]}
+        self.assertIn("double", widths)
+        self.assertIn("thick", widths)
 
 
 if __name__ == "__main__":
