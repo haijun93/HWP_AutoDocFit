@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -88,6 +90,7 @@ class TabNavigationShell extends StatefulWidget {
     this.onSidebarSideSwitch,
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
+    this.onSidebarDrag,
   }) : assert(initialIndex >= 0 && initialIndex < kTabCount);
 
   final Widget documentEditor;
@@ -118,6 +121,7 @@ class TabNavigationShell extends StatefulWidget {
   final Future<void> Function(bool enabled)? onAlwaysOnTopChanged;
   /// 사이드메뉴 모드(창을 화면 가장자리에 붙임)를 앱에 요청한다. false를 돌려주면 전환하지 않는다.
   final Future<bool> Function(bool enabled)? onSidebarModeRequest;
+  final Future<void> Function(double deltaY, bool save)? onSidebarDrag;
   final ValueChanged<int>? onTabChanged;
 
   /// 왼쪽 메뉴 아래쪽의 앱 전체 메뉴(사용 방법·작업 로그·설정 등).
@@ -184,6 +188,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
 
   @override
   void dispose() {
+    _snackGuard?.cancel();
     widget.savedSidebarExpanded?.removeListener(_applySaved);
     widget.tabRequest?.removeListener(_applyTabRequest);
     _tabScrollController.dispose();
@@ -297,6 +302,27 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     if (mounted) setState(() => _alwaysOnTop = enabled);
   }
 
+  /// 사이드메뉴 모드(창 폭 56px)에서는 안내·오류 알림(SnackBar)이 세로로 길게 늘어나 메뉴를 가린다
+  /// (사용자 보고 2026-11-08). 모드 동안은 알림을 띄우지 않는다: 들어갈 때 지우고, 그동안 생기는 알림도 바로 지운다.
+  Timer? _snackGuard;
+
+  void _clearSnackBars() {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) return;
+    // clearSnackBars는 사라지는 애니메이션 동안 보이므로 즉시 제거한다.
+    messenger.clearSnackBars();
+    messenger.removeCurrentSnackBar();
+  }
+
+  void _guardSnackBars(bool on) {
+    _snackGuard?.cancel();
+    _snackGuard = null;
+    if (!on) return;
+    _clearSnackBars();
+    _snackGuard = Timer.periodic(const Duration(milliseconds: 100), (_) => _clearSnackBars());
+  }
+
   Future<void> _setSidebarOnly(bool enabled) async {
     final request = widget.onSidebarModeRequest;
     if (request != null && !await request(enabled)) return;
@@ -305,6 +331,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
         _sidebarOnly = enabled;
         _sidebarStage = enabled ? 2 : 0;
       });
+      _guardSnackBars(enabled);
     }
   }
 
@@ -385,6 +412,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
+                    onSidebarDrag: widget.onSidebarDrag,
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
@@ -410,6 +438,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
+                    onSidebarDrag: widget.onSidebarDrag,
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
@@ -478,6 +507,7 @@ class WorkspaceTabBar extends StatelessWidget {
     this.onAlwaysOnTopChanged,
     this.onSidebarModeRequest,
     this.sidebarOnly = false,
+    this.onSidebarDrag,
     this.onAlwaysOnTop,
     this.libraryScreen,
     this.notebookScreen,
@@ -507,6 +537,7 @@ class WorkspaceTabBar extends StatelessWidget {
   /// 사이드메뉴 모드(창을 화면 가장자리에 붙임)를 앱에 요청한다. false를 돌려주면 전환하지 않는다.
   final Future<bool> Function(bool enabled)? onSidebarModeRequest;
   final bool sidebarOnly;
+  final Future<void> Function(double deltaY, bool save)? onSidebarDrag;
   final VoidCallback? onAlwaysOnTop;
   final Widget? libraryScreen;
   /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
@@ -550,6 +581,20 @@ class WorkspaceTabBar extends StatelessWidget {
         child: LayoutBuilder(
           builder: (context, constraints) => Column(
           children: [
+            if (sidebarOnly && developerMode)
+              GestureDetector(
+                key: const ValueKey('sidebar-drag-handle'),
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragUpdate: (details) => onSidebarDrag?.call(details.delta.dy, false),
+                onVerticalDragEnd: (_) => onSidebarDrag?.call(0, true),
+                child: const SizedBox(
+                  height: 14,
+                  width: double.infinity,
+                  child: Center(child: SizedBox(width: 24, height: 2, child: DecoratedBox(
+                    decoration: BoxDecoration(color: Color(0xFF94A3B8), borderRadius: BorderRadius.all(Radius.circular(2))),
+                  ))),
+                ),
+              ),
             if (showToggle) SizedBox(
               height: 48,
               // 햄버거 아이콘을 메뉴 아이콘과 같은 세로줄에 맞춘다(사용자 요청 2026-11-07):

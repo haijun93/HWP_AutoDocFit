@@ -226,6 +226,33 @@ void main() {
     final err = tester.takeException(); expect(err, isNull, reason: err?.toString());
   });
 
+  testWidgets('sidebar drag handle calls API during drag and when released', (tester) async {
+    tester.view.physicalSize = const Size(600, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final drags = <(double, bool)>[];
+    await tester.pumpWidget(MaterialApp(home: TabNavigationShell(
+      documentEditor: const SizedBox(), tableTemplates: const SizedBox(), tableSketch: const SizedBox(),
+      diagram: const SizedBox(), mindMap: const SizedBox(), fileConversion: const SizedBox(),
+      paint: const SizedBox(), fileRename: const SizedBox(), timemachine: const SizedBox(),
+      developerMode: true,
+      onSidebarModeRequest: (enabled) async => true,
+      onSidebarDrag: (delta, save) async => drags.add((delta, save)),
+    )));
+    await tester.pumpAndSettle();
+    final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
+    await tester.tap(toggle); await tester.pumpAndSettle();
+    await tester.tap(toggle); await tester.pumpAndSettle();
+    await tester.tap(toggle); await tester.pumpAndSettle();
+    final handle = find.byKey(const ValueKey('sidebar-drag-handle'));
+    expect(handle, findsOneWidget);
+    expect(tester.getSize(handle).height, 14);
+    await tester.drag(handle, const Offset(0, 42));
+    await tester.pumpAndSettle();
+    expect(drags.any((entry) => entry.$1 > 0 && !entry.$2), isTrue);
+    expect(drags.last, (0, true));
+  });
+
   testWidgets('hamburger icon lines up vertically with the menu icons', (tester) async {
     Future<void> check(Size size, int taps) async {
       tester.view.physicalSize = size;
@@ -252,5 +279,40 @@ void main() {
     await check(const Size(1040, 700), 0); // 펼침
     await check(const Size(1040, 700), 1); // 접힘
     await check(const Size(1040, 700), 2); // 사이드메뉴 모드
+  });
+
+  testWidgets('sidebar-only mode hides notices so they never cover the menu', (tester) async {
+    tester.view.physicalSize = const Size(1040, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    late BuildContext pageContext;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: TabNavigationShell(
+        documentEditor: Builder(builder: (c) { pageContext = c; return const Text('work-area'); }),
+        tableTemplates: const SizedBox(), tableSketch: const SizedBox(), diagram: const SizedBox(),
+        mindMap: const SizedBox(), fileConversion: const SizedBox(), paint: const SizedBox(),
+        fileRename: const SizedBox(), timemachine: const SizedBox(),
+        developerMode: true, onSidebarModeRequest: (enabled) async => true,
+      )),
+    ));
+    await tester.pumpAndSettle();
+    final messenger = ScaffoldMessenger.of(pageContext);
+    final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
+    messenger.showSnackBar(const SnackBar(content: Text('알림-전')));
+    await tester.pump();
+    for (var i = 0; i < 3 && find.text('work-area').evaluate().isNotEmpty; i++) { await tester.tap(toggle); await tester.pump(const Duration(milliseconds: 300)); }
+    expect(find.text('work-area'), findsNothing);
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('알림-전'), findsNothing);
+    messenger.showSnackBar(const SnackBar(content: Text('알림-중')));
+    for (var i = 0; i < 5; i++) { await tester.pump(const Duration(milliseconds: 60)); }
+    expect(find.text('알림-중'), findsNothing);
+    // 사이드메뉴 모드를 끄면 알림이 다시 보인다.
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    messenger.showSnackBar(const SnackBar(content: Text('알림-후')));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.text('알림-후'), findsOneWidget);
+    await tester.pumpAndSettle(const Duration(seconds: 5));
   });
 }

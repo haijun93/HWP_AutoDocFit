@@ -296,3 +296,18 @@ KIND = {
 - 첫 이관 대상 **`library_index`**(3절 #8, 파일 IO만·COM 없음): `start_job('library_index', {library_id})`. 기존 `library('index')` 동기 호출은 그대로.
 - `handshake.capabilities`에 `jobs.v1` 추가. `job_status` 메서드 추가. 전송층 CONTROL 잠금 밖 처리(5.8)는 이번 카드에 포함하지 않음.
 - 시험: `tests/test_ipc_job_library_index.py`(11건).
+
+## 11. 구현 현황 (카드 IPCJOB3, 2단계)
+
+- 이관 대상: P4의 **`file_rename` 적용·되돌리기**(3절 #12, 파일 IO만·COM 없음). `start_job('file_rename_apply', {plan_id, confirm_executables?})`,
+  `start_job('file_rename_undo', {run_id?})`. 기존 `file_rename('apply'|'undo')` 동기 호출은 그대로 병존한다.
+- 시작 전 검증(계획 불일치·확인 필요·바꿀 항목 없음·되돌릴 기록 없음)은 job을 만들지 않고 전송 봉투 `error`로 돌려준다(코드 `RENAME_PLAN_STALE` 등 유지).
+  파일이 미리보기 뒤 바뀐 경우는 job의 `failed`(`RENAME_PLAN_STALE`, `recoverable` 포함)이며 아무것도 바꾸지 않는다.
+- 취소는 **깊이 묶음 사이에서만** 확인한다(`docfit_core/file_rename/executor.py`의 `execute_plan`/`undo`의 선택 인자 `cancelled`·`progress`).
+  이미 바뀐 이름은 유지하고 남은 묶음은 `skipped`, 이력은 `end`로 마무리되어 `undo`로 되돌릴 수 있다. `cancelled.data.partial = {success, failed, skipped}`.
+  취소 후 계획은 동기 `apply`와 같이 소모된다(다시 미리보기 필요).
+- 진행 사건: `progress {stage: apply|undo, file, total, percent}`(초당 10건 상한). `done.result`에는 `{run_id, done, failed, skipped}` 요약만(목록 전체는 싣지 않음 → `file_rename('list')`로 읽음).
+- `job_error`: `code` 속성을 가진 예외(`RenameServiceError` 등)는 `ValueError` 계열이어도 자기 코드를 유지한다.
+- `jobs.py`: `file_rename_apply`/`file_rename_undo`를 `LIGHT_KINDS`·`SINGLETON_KINDS`에 등록.
+- 이번에 하지 않은 것: 자료함 폴더 스캔(`box_scan`, P3)·재귀 `add_paths`(P4). Flutter 화면 연결은 다음 단계.
+- 시험: `tests/test_ipc_job_file_rename.py`(8건).

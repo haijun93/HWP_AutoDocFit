@@ -466,8 +466,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   int tab = 0;
   bool busy = false, polling = false, wasRunning = false;
   int commandVersion = 0;
+  int jobEventSeq = 0;
+  String? activeJobId;
+  bool jobCancelled = false;
   String? error;
   Timer? timer;
+  Timer? jobTimer;
   void Function()? stopWatchingDrops;
   bool dropRefreshQueued = false;
   bool settingsVisible = false;
@@ -639,7 +643,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     });
     unawaited(_enableCloseGuard());
     refresh();
+    // 상태 새로고침은 기존대로 1초마다(시계 초에 묶으면 갱신이 들쭉날쭉해 화면·시험이 놓친다, 11-08).
     timer = Timer.periodic(const Duration(seconds: 1), (_) => refresh());
+    // 작업 진행 이벤트만 350ms로 따로 빠르게 읽는다.
+    jobTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+      if (activeJobId != null) unawaited(pollJobEvents());
+    });
   }
 
   Future<void> _enableCloseGuard() async {
@@ -654,6 +663,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   void dispose() {
     stopWatchingDrops?.call();
     timer?.cancel();
+    jobTimer?.cancel();
     stateVersion.dispose();
     rangeStart.dispose();
     rangeEnd.dispose();
@@ -735,6 +745,38 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       if (mounted && version == commandVersion && next is Map) {
         setState(() {
           apply(next);
+          final job = next['job'] as Map?;
+          final id = job?['id'] ?? job?['job_id'];
+          if (id is String && id.isNotEmpty &&
+              {'queued', 'running'}.contains(job?['state'])) {
+            if (activeJobId != id) jobEventSeq = 0;
+            activeJobId = id;
+            final progress = job?['progress'] as Map?;
+            if (progress != null) {
+              final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
+              final percent = (progress['percent'] as num?)?.toDouble();
+              if (percent != null) live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+              final name = progress['name'];
+              if (name is String && name.isNotEmpty) {
+                live['now'] = name;
+                live['message'] = name;
+              }
+              live['cancel_requested'] = job?['cancel_requested'] == true;
+              state['live'] = live;
+            } else if (job?['cancel_requested'] == true) {
+              final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
+              live['cancel_requested'] = true;
+              state['live'] = live;
+            }
+          } else if (job?['state'] == 'cancelled' &&
+              (job?['id'] == activeJobId || job?['job_id'] == activeJobId)) {
+            final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
+            live['running'] = false;
+            live['cancelled'] = true;
+            state['live'] = live;
+            jobCancelled = true;
+            activeJobId = null;
+          }
           error = null;
         });
       }
@@ -745,6 +787,75 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     } finally {
       polling = false;
       if (mounted && dropRefreshQueued && !busy) unawaited(refresh());
+    }
+  }
+
+  Future<void> pollJobEvents() async {
+    final id = activeJobId;
+    if (id == null || !mounted) return;
+    try {
+      final batch = await widget.api('get_events', [jobEventSeq]);
+      if (!mounted || batch is! Map) return;
+      final events = batch['events'] as List? ?? const [];
+      final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
+      for (final event in events) {
+        if (event is! Map || event['job_id'] != id) continue;
+        final seq = event['seq'];
+        if (seq is num && seq.toInt() > jobEventSeq) jobEventSeq = seq.toInt();
+        final data = event['data'] as Map? ?? const {};
+        if (event['type'] == 'progress') {
+          final percent = (data['percent'] as num?)?.toDouble();
+          if (percent != null) live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+          final name = data['name'] ?? data['file'];
+          if (name is String && name.isNotEmpty) {
+            live['now'] = name;
+            live['message'] = name;
+            live['doc'] = {...(live['doc'] as Map? ?? const {}), 'name': name};
+          }
+          final total = data['total'];
+          final index = data['file'];
+          if (total is num || index is num) {
+            live['doc'] = {...(live['doc'] as Map? ?? const {}),
+              if (index is num) 'index': index,
+              if (total is num) 'total': total};
+          }
+        } else if (event['type'] == 'cancelled') {
+          jobCancelled = true;
+          live['running'] = false;
+          live['cancelled'] = true;
+          live['cancel_requested'] = false;
+          activeJobId = null;
+        } else if (event['type'] == 'done' || event['type'] == 'failed') {
+          live['running'] = false;
+          live['finished'] = event['type'] == 'done';
+          activeJobId = null;
+        }
+      }
+      setState(() {
+        state['live'] = live;
+        if (batch['next_seq'] is num) jobEventSeq = batch['next_seq'] as int;
+      });
+      if (batch['gap'] == true) unawaited(refresh());
+    } catch (_) {
+      // 구형 WebView 호스트는 jobs 메서드가 없을 수 있어 기존 상태 폴링을 유지한다.
+    }
+  }
+
+  Future<void> cancelActiveJob() async {
+    final id = activeJobId;
+    if (id == null || busy) return;
+    try {
+      await widget.api('cancel_job', [id]);
+      if (mounted) {
+        setState(() {
+          final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
+          live['cancel_requested'] = true;
+          state['live'] = live;
+        });
+      }
+    } catch (_) {
+      // 기존 stop 동작은 job API 미지원 호스트의 대체 경로다.
+      await command('stop');
     }
   }
 
@@ -3086,7 +3197,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 : '진행 상황을 확인하세요',
             '${live['message'] ?? ''}',
           ),
-          panel(LiveProgress(live: live, onShowLog: showLog)),
+          panel(LiveProgress(live: live, onShowLog: showLog,
+              onCancel: activeJobId == null ? null : cancelActiveJob)),
         ],
       );
     }

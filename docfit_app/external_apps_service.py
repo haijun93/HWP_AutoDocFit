@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .api_contract import ServiceError
+from .external_apps_download import ExtDlError, ExternalAppInstaller
 
 SETTING_KEY = "external_app_paths"
 # 파일 선택 창 용도(native_file_dialog_service.PURPOSES에 등록). 이름 검사는 validate_exe가 한다.
@@ -131,18 +132,27 @@ def default_popen(args, cwd):
 class ExternalAppsService:
     """화면 명령 external_app(action, {"app": app_id, ...}).
 
-    action: list·status·launch·choose(파일 선택 창)·clear(지정 경로 지우기)·open_download({"target": fork|official}).
+    action: list·status·launch·choose(파일 선택 창)·clear(지정 경로 지우기)·open_download({"target": fork|official})
+    ·install(없으면 자동 내려받기·설치, 백그라운드)·cancel(설치 취소)·progress(설치 진행 상태).
+    "app"에는 app_id 또는 포크 폴더 이름(mongdangview 등)을 쓸 수 있다.
     """
 
-    ACTIONS = ("list", "status", "launch", "choose", "clear", "open_download")
+    ACTIONS = ("list", "status", "launch", "choose", "clear", "open_download", "install", "cancel", "progress")
 
     def __init__(self, settings, *, dialogs=None, folders=app_folders, popen=default_popen,
-                 browser=webbrowser.open):
+                 browser=webbrowser.open, installer=None):
         self._settings = settings
         self._dialogs = dialogs
         self._folders = folders
         self._popen = popen
         self._browser = browser
+        self._installer = installer
+
+    @property
+    def installer(self):
+        if self._installer is None:
+            self._installer = ExternalAppInstaller()
+        return self._installer
 
     # ── 찾기 ──────────────────────────────────────────────────────────────
     def bundled_exe(self, app):
@@ -171,7 +181,13 @@ class ExternalAppsService:
             try:
                 return validate_exe(app, custom), "custom"
             except ExternalAppError:
-                return None, None
+                pass
+        downloaded = self.installer.installed_exe(app)
+        if downloaded is not None:
+            try:
+                return validate_exe(app, downloaded), "downloaded"
+            except ExternalAppError:
+                pass
         return None, None
 
     # ── 명령 ──────────────────────────────────────────────────────────────
@@ -188,7 +204,8 @@ class ExternalAppsService:
         return dict(ok=True, app=app.app_id, available=exe is not None, source=source,
                     path=str(exe) if exe else None, custom_path=custom,
                     custom_valid=bool(custom) and source == "custom",
-                    install_hint=app.install_hint(),
+                    install_hint=app.install_hint(), downloadable=True,
+                    install=self.installer.progress(app),
                     app_info=dict(app=app.app_id, label=app.label, upstream=app.upstream, license=app.license,
                                   tools_folder=f"tools\\{app.folder}", exe_name=app.exe_name,
                                   fork_url=app.fork_url, official_url=app.official_url))
@@ -245,18 +262,36 @@ class ExternalAppsService:
         self._browser(url)
         return dict(ok=True, app=app.app_id, url=url)
 
+    def install(self, app, payload=None):
+        """실행 파일이 없으면 출처 목록에서 받아 사용자 폴더에 설치(백그라운드). 있으면 건너뛴다."""
+        exe, source = self.find_exe(app)
+        if exe is not None:
+            return dict(ok=True, app=app.app_id, skipped=True, available=True, source=source, path=str(exe))
+        return dict(ok=True, app=app.app_id, skipped=False, install=self.installer.start(app))
+
+    def cancel(self, app, payload=None):
+        return dict(ok=True, app=app.app_id, install=self.installer.cancel(app))
+
+    def progress(self, app, payload=None):
+        exe, source = self.find_exe(app)
+        return dict(ok=True, app=app.app_id, available=exe is not None, source=source,
+                    install=self.installer.progress(app))
+
     def command(self, action, payload=None):
         if action not in self.ACTIONS:
             return dict(ok=False, code="INVALID_ACTION", message="허용되지 않은 외부 프로그램 명령입니다.")
         payload = payload if isinstance(payload, dict) else {}
         if action == "list":
             return self.list_apps()
-        app = APPS.get(payload.get("app")) if isinstance(payload.get("app"), str) else None
+        name = payload.get("app") if isinstance(payload.get("app"), str) else None
+        app = APPS.get(name) or next((a for a in APPS.values() if a.folder == name), None)
         if app is None:
             return dict(ok=False, code="UNKNOWN_APP", message="알 수 없는 외부 프로그램입니다.")
         try:
             return getattr(self, action)(app, payload)
         except ExternalAppError as error:
+            return dict(ok=False, app=app.app_id, code=error.code, message=error.message)
+        except ExtDlError as error:
             return dict(ok=False, app=app.app_id, code=error.code, message=error.message)
         except ServiceError as error:
             # 파일 선택 창·설정 저장 오류(선택 만료·접근 거부 등).

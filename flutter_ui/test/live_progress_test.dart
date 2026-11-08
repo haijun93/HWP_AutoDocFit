@@ -87,6 +87,30 @@ void main() {
     expect(find.text('알고 계셨나요?'), findsNothing);
   });
 
+  testWidgets('job 진행률·현재 항목과 취소 완료 상태를 표시한다', (tester) async {
+    var cancelled = false;
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: LiveProgress(
+        live: {..._spacing(), 'ratio': 0.72, 'now': '현재.hwpx'},
+        onShowLog: () {},
+        onCancel: () => cancelled = true,
+      ))),
+    ));
+    await tester.pump();
+    expect(find.text('72%'), findsOneWidget);
+    expect(find.text('현재.hwpx'), findsWidgets);
+    await tester.tap(find.text('취소'));
+    expect(cancelled, isTrue);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: SingleChildScrollView(child: LiveProgress(
+        live: {..._spacing(running: false), 'cancelled': true},
+        onShowLog: () {},
+      ))),
+    ));
+    await tester.pump();
+    expect(find.text('취소됨'), findsOneWidget);
+  });
+
   testWidgets('파일 변환은 파일 대기열과 실패 이유를 보여 준다', (tester) async {
     await _pump(tester, {
       'mode': 'file_format',
