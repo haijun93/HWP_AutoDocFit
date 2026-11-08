@@ -471,6 +471,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   bool jobCancelled = false;
   String? error;
   Timer? timer;
+  Timer? jobTimer;
   void Function()? stopWatchingDrops;
   bool dropRefreshQueued = false;
   bool settingsVisible = false;
@@ -642,13 +643,11 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     });
     unawaited(_enableCloseGuard());
     refresh();
-    timer = Timer.periodic(const Duration(milliseconds: 350), (_) {
-      if (activeJobId != null) {
-        unawaited(pollJobEvents());
-      }
-      if (DateTime.now().millisecondsSinceEpoch ~/ 1000 % 3 == 0) {
-        unawaited(refresh());
-      }
+    // 상태 새로고침은 기존대로 1초마다(시계 초에 묶으면 갱신이 들쭉날쭉해 화면·시험이 놓친다, 11-08).
+    timer = Timer.periodic(const Duration(seconds: 1), (_) => refresh());
+    // 작업 진행 이벤트만 350ms로 따로 빠르게 읽는다.
+    jobTimer = Timer.periodic(const Duration(milliseconds: 350), (_) {
+      if (activeJobId != null) unawaited(pollJobEvents());
     });
   }
 
@@ -664,6 +663,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   void dispose() {
     stopWatchingDrops?.call();
     timer?.cancel();
+    jobTimer?.cancel();
     stateVersion.dispose();
     rangeStart.dispose();
     rangeEnd.dispose();
