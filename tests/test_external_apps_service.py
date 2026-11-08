@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from docfit_app import external_apps_service as eas
 from docfit_app.api_contract import ServiceError
+from docfit_app.external_apps_download import ExternalAppInstaller
 from docfit_app.external_apps_service import APPS, ExternalAppsService, validate_exe
 from docfit_app.native_file_dialog_service import PURPOSES
 from docfit_app.settings_service import SettingsService
@@ -107,6 +108,23 @@ class ExternalAppsServiceTests(unittest.TestCase):
         self.assertEqual([a["available"] for a in listed["apps"]], [False, False, True, False])
         self.assertEqual(listed["apps"][1]["license"], "AGPL-3.0")
         self.assertEqual(listed["apps"][2]["tools_folder"], "tools\\mondangpics")
+
+    def test_latest_release_metadata_and_installed_version_comparison(self):
+        from docfit_app.external_apps_download import Release, Source
+        source = Source("github", "haijun93/mongdangview", r".*\.zip", "zip", 100)
+        release = Release("v2.4.0", "album.zip", "https://github.com/x/album.zip", 12, "a" * 64, source)
+        installer = ExternalAppInstaller(self.root / "tools", sources={"photo_album": ()})
+        service = self._service(installer=installer, release_lookup=lambda app: release)
+        latest = service.command("latest", {"app": PHOTO.app_id})
+        self.assertEqual((latest["version"], latest["size"], latest["license"]), ("2.4.0", 12, PHOTO.license))
+        self.assertFalse(latest["update_available"])
+        folder = self.root / "tools" / PHOTO.folder
+        folder.mkdir(parents=True)
+        (folder / ".installed.json").write_text('{"version":"v2.3.1","exe_rel":"NeeView.exe"}', encoding="utf-8")
+        (folder / "NeeView.exe").write_bytes(b"MZ fake")
+        latest = service.command("latest", {"app": PHOTO.app_id})
+        self.assertTrue(latest["update_available"])
+        self.assertEqual(latest["installed_version"], "2.3.1")
 
     def test_missing_exe_returns_install_guidance_with_both_links(self):
         result = self._service().command("launch", {"app": "photo_manager"})

@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .api_contract import ServiceError
-from .external_apps_download import ExtDlError, ExternalAppInstaller
+from .external_apps_download import ExtDlError, ExternalAppInstaller, latest_releases
 
 SETTING_KEY = "external_app_paths"
 # 파일 선택 창 용도(native_file_dialog_service.PURPOSES에 등록). 이름 검사는 validate_exe가 한다.
@@ -139,16 +139,17 @@ class ExternalAppsService:
     "app"에는 app_id 또는 포크 폴더 이름(mongdangview 등)을 쓸 수 있다.
     """
 
-    ACTIONS = ("list", "status", "launch", "choose", "clear", "open_download", "install", "cancel", "progress")
+    ACTIONS = ("list", "status", "launch", "choose", "clear", "open_download", "install", "cancel", "progress", "latest")
 
     def __init__(self, settings, *, dialogs=None, folders=app_folders, popen=default_popen,
-                 browser=webbrowser.open, installer=None):
+                 browser=webbrowser.open, installer=None, release_lookup=None):
         self._settings = settings
         self._dialogs = dialogs
         self._folders = folders
         self._popen = popen
         self._browser = browser
         self._installer = installer
+        self._release_lookup = release_lookup
 
     @property
     def installer(self):
@@ -197,20 +198,54 @@ class ExternalAppsService:
         apps = []
         for item in APPS.values():
             status = self.status(item)
-            apps.append(dict(status["app_info"], available=status["available"], source=status["source"]))
+            latest = self.latest(item)
+            row = dict(status["app_info"])
+            row.update(available=status["available"], installed_source=status["source"],
+                       installed_version=status["installed_version"])
+            row.update(latest)
+            apps.append(row)
         return dict(ok=True, apps=apps)
 
     def status(self, app, payload=None):
         exe, source = self.find_exe(app)
         custom = self._custom_path(app)
+        installed_version = self._installed_version(app)
         return dict(ok=True, app=app.app_id, available=exe is not None, source=source,
                     path=str(exe) if exe else None, custom_path=custom,
                     custom_valid=bool(custom) and source == "custom",
                     install_hint=app.install_hint(), downloadable=True,
                     install=self.installer.progress(app),
+                    installed_version=installed_version,
                     app_info=dict(app=app.app_id, label=app.label, upstream=app.upstream, license=app.license,
                                   tools_folder=f"tools\\{app.folder}", exe_name=app.exe_name,
                                   fork_url=app.fork_url, official_url=app.official_url))
+
+    def _installed_version(self, app):
+        try:
+            import json
+            path = self.installer.install_dir(app) / ".installed.json"
+            value = json.loads(path.read_text(encoding="utf-8")).get("version")
+            return str(value) if value else None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def latest(self, app, payload=None):
+        try:
+            release = (self._release_lookup(app) if self._release_lookup is not None
+                       else latest_releases(app.app_id, self.installer._opener, self.installer._sources))
+        except ExtDlError as error:
+            return dict(ok=False, app=app.app_id, code=error.code, message=error.message)
+        if release is None:
+            return dict(ok=False, app=app.app_id, code="ASSET_NOT_FOUND", message="최신 릴리스 파일을 찾지 못했습니다.")
+        version = release.version.lstrip("v")
+        installed = self._installed_version(app)
+        from .external_apps_download import compare_versions
+        installed_clean = installed.lstrip("v") if installed else None
+        return dict(ok=True, app=app.app_id, version=version, installed_version=installed_clean,
+                    update_available=bool(installed_clean and compare_versions(version, installed_clean)),
+                    asset=release.asset, size=release.size, source=release.source.where,
+                    source_kind=release.source.kind, fork_url=app.fork_url, official_url=app.official_url,
+                    license=app.license)
 
     def launch(self, app, payload=None):
         exe, source = self.find_exe(app)
@@ -269,6 +304,10 @@ class ExternalAppsService:
         exe, source = self.find_exe(app)
         if exe is not None:
             return dict(ok=True, app=app.app_id, skipped=True, available=True, source=source, path=str(exe))
+        current = self.installer.progress(app)
+        if current.get("phase") == "error" and current.get("code"):
+            return dict(ok=False, app=app.app_id, code=current["code"],
+                        message=current.get("message", "설치를 시작하지 못했습니다."), install=current)
         return dict(ok=True, app=app.app_id, skipped=False, install=self.installer.start(app))
 
     def cancel(self, app, payload=None):
@@ -278,6 +317,9 @@ class ExternalAppsService:
         exe, source = self.find_exe(app)
         return dict(ok=True, app=app.app_id, available=exe is not None, source=source,
                     install=self.installer.progress(app))
+
+    def latest_command(self, app, payload=None):
+        return self.latest(app, payload or {})
 
     def command(self, action, payload=None):
         if action not in self.ACTIONS:
@@ -290,6 +332,8 @@ class ExternalAppsService:
         if app is None:
             return dict(ok=False, code="UNKNOWN_APP", message="알 수 없는 외부 프로그램입니다.")
         try:
+            if action == "latest":
+                return self.latest_command(app, payload)
             return getattr(self, action)(app, payload)
         except ExternalAppError as error:
             return dict(ok=False, app=app.app_id, code=error.code, message=error.message)

@@ -48,14 +48,6 @@ Widget _app({required bool developerMode, required _FakeApi api}) =>
       ),
     );
 
-const _missing = {
-  'ok': false,
-  'code': 'APP_MISSING',
-  'message': '아웃라이너 프로그램(Logseq)이 설치되어 있지 않습니다.',
-};
-
-final _outliner = kExternalApps.firstWhere((a) => a.id == 'outliner');
-
 void main() {
   test('세 프로그램의 id·이름·아이콘이 서로 다르다', () {
     expect(
@@ -119,84 +111,6 @@ void main() {
     expect(find.byKey(const ValueKey('external-app-setup')), findsNothing);
   });
 
-  testWidgets('실행 파일이 없으면 안내 창 → 실행 파일 지정 후 바로 실행', (tester) async {
-    await _size(tester);
-    final api = _FakeApi({
-      'launch': [
-        _missing,
-        {'ok': true, 'launched': true},
-      ],
-      'choose': [
-        {'ok': true, 'cancelled': false, 'available': true, 'source': 'custom'},
-      ],
-    });
-    await tester.pumpWidget(_app(developerMode: true, api: api));
-    await tester.tap(find.byKey(_outliner.menuKey));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('external-app-setup')), findsOneWidget);
-    expect(find.text('아웃라이너 준비'), findsOneWidget);
-    expect(find.textContaining('설치되어 있지 않습니다'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('external-app-choose')));
-    await tester.pumpAndSettle();
-    expect(api.actions, ['launch', 'choose', 'launch']);
-    expect(api.payloads, everyElement({'app': 'outliner'}));
-    expect(find.byKey(const ValueKey('external-app-setup')), findsNothing);
-  });
-
-  testWidgets('다른 프로그램을 지정하면 이유를 보이고, 포크·공식 배포처 단추는 target만 보낸다', (
-    tester,
-  ) async {
-    await _size(tester);
-    final api = _FakeApi({
-      'launch': [_missing],
-      'choose': [
-        {
-          'ok': false,
-          'code': 'APP_WRONG_EXE',
-          'message': '아웃라이너 실행 파일은 Logseq.exe이어야 합니다.',
-        },
-      ],
-      'open_download': [
-        {'ok': true},
-      ],
-    });
-    await tester.pumpWidget(_app(developerMode: true, api: api));
-    await tester.tap(find.byKey(_outliner.menuKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('external-app-choose')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('external-app-notice')), findsOneWidget);
-    expect(find.textContaining('Logseq.exe이어야'), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('external-app-fork')));
-    await tester.tap(find.byKey(const ValueKey('external-app-official')));
-    await tester.pumpAndSettle();
-    expect(api.actions, ['launch', 'choose', 'open_download', 'open_download']);
-    expect(api.payloads.sublist(2), [
-      {'app': 'outliner', 'target': 'fork'},
-      {'app': 'outliner', 'target': 'official'},
-    ]);
-    await tester.tap(find.text('닫기'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('external-app-setup')), findsNothing);
-  });
-
-  testWidgets('선택 창을 취소하면 안내 창이 남고 오류를 보이지 않는다', (tester) async {
-    await _size(tester);
-    final api = _FakeApi({
-      'launch': [_missing],
-      'choose': [
-        {'ok': true, 'cancelled': true, 'available': false},
-      ],
-    });
-    await tester.pumpWidget(_app(developerMode: true, api: api));
-    await tester.tap(find.byKey(_outliner.menuKey));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('external-app-choose')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('external-app-setup')), findsOneWidget);
-    expect(find.byKey(const ValueKey('external-app-notice')), findsNothing);
-  });
-
   testWidgets('개발자 모드 해제 응답 등 다른 오류는 알림으로만 보인다', (tester) async {
     await _size(tester);
     final api = _FakeApi({
@@ -213,6 +127,52 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('개발자 모드에서만 사용할 수 있습니다.'), findsOneWidget);
     expect(find.byKey(const ValueKey('external-app-setup')), findsNothing);
+  });
+
+  testWidgets('미설치 앱은 설치 단추 한 번으로 진행 후 자동 실행한다', (tester) async {
+    await _size(tester);
+    final api = _FakeApi({
+      'launch': [
+        {'ok': false, 'code': 'APP_MISSING', 'message': '설치되어 있지 않습니다.'},
+        {'ok': true, 'launched': true},
+      ],
+      'latest': [{'ok': true, 'version': '2.0.0', 'size': 2097152,
+        'source': 'haijun93/mongdangoutliner', 'license': 'AGPL-3.0'}],
+      'install': [{'ok': true, 'install': {'running': true, 'phase': 'downloading',
+        'percent': 35, 'message': '내려받는 중…'}}],
+      'progress': [{'ok': true, 'install': {'running': false, 'phase': 'done',
+        'ok': true, 'percent': 100, 'message': '설치를 마쳤습니다.'}}],
+    });
+    await tester.pumpWidget(_app(developerMode: true, api: api));
+    await tester.tap(find.byKey(kExternalApps[1].menuKey));
+    await tester.pumpAndSettle();
+    expect(find.text('버전  2.0.0'), findsOneWidget);
+    expect(find.text('크기  2.0 MB'), findsOneWidget);
+    expect(find.text('출처  haijun93/mongdangoutliner'), findsOneWidget);
+    expect(find.text('라이선스  AGPL-3.0'), findsOneWidget);
+    expect(find.byKey(const ValueKey('external-app-install')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('external-app-install')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('external-app-progress')), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pumpAndSettle();
+    expect(api.actions, ['launch', 'latest', 'install', 'progress', 'launch']);
+    expect(find.byKey(const ValueKey('external-app-setup')), findsNothing);
+  });
+
+  testWidgets('설치된 앱의 최신 버전이 높으면 업데이트 단추를 표시한다', (tester) async {
+    await _size(tester);
+    final api = _FakeApi({
+      'launch': [{'ok': false, 'code': 'APP_MISSING', 'message': '설치 경로를 확인합니다.'}],
+      'latest': [{'ok': true, 'version': '3.2.0', 'installed_version': '3.1.0',
+        'update_available': true, 'size': 100, 'source': 'KDE/digikam', 'license': 'GPL-2.0'}],
+    });
+    await tester.pumpWidget(_app(developerMode: true, api: api));
+    await tester.tap(find.byKey(kExternalApps[2].menuKey));
+    await tester.pumpAndSettle();
+    expect(find.text('사진관리 업데이트'), findsOneWidget);
+    expect(find.text('업데이트'), findsOneWidget);
+    expect(find.byKey(const ValueKey('external-app-install')), findsOneWidget);
   });
 
   for (final sidebarOnly in [false, true]) {
