@@ -903,6 +903,43 @@ class DesktopWebBridge:
         gui.worker = manager.thread(identifier)
         return identifier
 
+    def convert_cell_bg(self, payload=None):
+        """표 칸 안의 단독 그림을 셀 배경 이미지로 변환하여 사본으로 저장한다."""
+        from docfit_app.cell_bg_service import convert_cell_bg_service
+        from docfit_app.api_contract import ServiceError
+
+        path = None
+        if isinstance(payload, str):
+            path = payload
+        elif isinstance(payload, dict):
+            path = payload.get("path")
+        elif isinstance(payload, (list, tuple)) and len(payload) > 0:
+            item = payload[0]
+            if isinstance(item, str):
+                path = item
+            elif isinstance(item, dict):
+                path = item.get("path")
+
+        if not path:
+            hwpx_files = [f for f in getattr(self.gui, "files", []) if str(f).lower().endswith(".hwpx")]
+            if hwpx_files:
+                path = hwpx_files[0]
+            else:
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "FILE_SELECTION_REQUIRED",
+                        "message": "변환할 HWPX 문서를 선택하거나 목록에 추가해 주세요.",
+                    },
+                }
+
+        try:
+            return convert_cell_bg_service(path)
+        except ServiceError as exc:
+            return {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+        except Exception as exc:
+            return {"ok": False, "error": {"code": "CONVERSION_FAILED", "message": str(exc)}}
+
     def set_include_spacing(self, on):
         """'한 번에 적용'의 '자간 조정 포함'을 바꾸고 그 카드를 고른다(설정 파일에 저장된다)."""
         def update():
@@ -3292,7 +3329,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
-            "set_conversion_target", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
+            "set_conversion_target", "start_single_file_conversion", "convert_cell_bg", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))
 
