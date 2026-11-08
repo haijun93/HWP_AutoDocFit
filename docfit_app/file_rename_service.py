@@ -234,17 +234,21 @@ class FileRenameService:
                       warnings=i["warnings"], overridden=i["overridden"]) for i in plan["items"]]
         return dict(ok=True, plan_id=plan["plan_id"], items=items, summary=plan["summary"])
 
-    def apply(self, payload):
+    def _check_apply(self, payload):
+        plan = self._plan
+        if plan is None or payload.get("plan_id") != plan["plan_id"]:
+            raise RenameServiceError("RENAME_PLAN_STALE", "미리보기가 바뀌었습니다. 다시 확인해 주세요.")
+        if plan["summary"]["executables"] and payload.get("confirm_executables") is not True:
+            raise RenameServiceError("RENAME_CONFIRM", "실행 파일 이름 변경을 확인해 주세요.")
+        if not plan["summary"]["ok"]:
+            raise RenameServiceError("RENAME_NOTHING", "바꿀 항목이 없습니다.")
+        return plan
+
+    def apply(self, payload, *, cancelled=None, progress=None):
         with self._lock:
-            plan = self._plan
-            if plan is None or payload.get("plan_id") != plan["plan_id"]:
-                raise RenameServiceError("RENAME_PLAN_STALE", "미리보기가 바뀌었습니다. 다시 확인해 주세요.")
-            if plan["summary"]["executables"] and payload.get("confirm_executables") is not True:
-                raise RenameServiceError("RENAME_CONFIRM", "실행 파일 이름 변경을 확인해 주세요.")
-            if not plan["summary"]["ok"]:
-                raise RenameServiceError("RENAME_NOTHING", "바꿀 항목이 없습니다.")
+            plan = self._check_apply(payload)
             try:
-                result = execute_plan(plan, self.history)
+                result = execute_plan(plan, self.history, cancelled=cancelled, progress=progress)
             except PlanStaleError as error:
                 self._plan = None
                 raise RenameServiceError("RENAME_PLAN_STALE", str(error)) from None
@@ -255,12 +259,16 @@ class FileRenameService:
         return dict(self.listing(), run_id=result["run_id"], done=len(result["done"]), failed=result["failed"],
                     skipped=len(result["skipped"]))
 
-    def undo(self, payload):
+    def _check_undo(self, payload):
         run_id = payload.get("run_id") or self._last_run
         if not isinstance(run_id, str):
             raise RenameServiceError("RENAME_NO_HISTORY", "되돌릴 작업이 없습니다.")
+        return run_id
+
+    def undo(self, payload, *, cancelled=None, progress=None):
+        run_id = self._check_undo(payload)
         try:
-            result = undo(self.history, run_id)
+            result = undo(self.history, run_id, cancelled=cancelled, progress=progress)
         except KeyError:
             raise RenameServiceError("RENAME_NO_HISTORY", "되돌릴 작업을 찾지 못했습니다.") from None
         with self._lock:
@@ -271,6 +279,38 @@ class FileRenameService:
                 self._last_run = None
             self._plan = None
         return dict(self.listing(), run_id=result["run_id"], done=len(result["done"]), failed=result["failed"])
+
+    def job_runner(self, op, payload):
+        """JobManager.start용 runner(op: 'apply'|'undo'). 시작 전 검증 실패는 즉시 예외(job 미생성).
+        취소는 깊이 묶음 사이에서만 확인한다: 이미 바뀐 이름은 유지, 나머지는 건너뜀(기록·되돌리기 일관)."""
+        from .job_envelope import ProgressThrottle
+        if op not in ("apply", "undo") or not isinstance(payload, dict):
+            raise RenameServiceError("INVALID_INPUT", "작업 종류를 확인해 주세요.")
+        with self._lock:
+            if op == "apply":
+                self._check_apply(payload)
+            else:
+                self._check_undo(payload)
+        payload = dict(payload)
+
+        def run(report, cancelled):
+            throttle = ProgressThrottle(report)
+
+            def progress(done, total):
+                throttle({"stage": op, "file": done, "total": total,
+                          "percent": 100 if not total else done * 100 / total})
+            try:
+                result = (self.apply if op == "apply" else self.undo)(payload, cancelled=cancelled, progress=progress)
+            finally:
+                throttle.flush()
+            # 목록 전체(listing)는 큰 결과이므로 job 결과에서는 요약만 싣는다.
+            summary = {k: result[k] for k in ("run_id", "done", "failed", "skipped") if k in result}
+            if cancelled():
+                summary["partial"] = {"success": summary.get("done", 0),
+                                      "failed": len(summary.get("failed") or []),
+                                      "skipped": summary.get("skipped", 0)}
+            return summary
+        return run
 
     def _refresh(self, ids, new_paths):
         """이름이 바뀐 목록 항목의 경로·시각을 새로 읽는다(같은 id 유지)."""
