@@ -171,15 +171,13 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   void _cancelPreview() { _hoverRequest++; }
 
   void _openExtra(WorkspaceExtraPage page) {
-    if (!widget.developerMode || _extra == page) return;
+    if (_extra == page) return; // 자료함·노트북은 일반 모드에서도 연다(사용자 지시 2026-11-08).
     setState(() => _extra = page);
   }
 
   @override
   void didUpdateWidget(covariant TabNavigationShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 개발자 모드를 끄면 자료함·노트북 메뉴가 사라지므로 화면도 닫는다.
-    if (!widget.developerMode && _extra != null) _extra = null;
   }
 
   @override
@@ -196,7 +194,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '표그림판',
     '다이어그램',
     '마인드맵',
-    '그림판',
+    '붙임사진 편집',
     '파일명 일괄변경',
     '타임머신',
     // 파일변환은 항상 맨 끝(2026-10-30 사용자 지시).
@@ -585,7 +583,7 @@ class WorkspaceTabBar extends StatelessWidget {
                         onPreviewCancel: onPreviewCancel,
                         onTap: () => onSelected(i),
                       ),
-                  if (developerMode && libraryScreen != null)
+                  if (libraryScreen != null)
                     _TabPill(
                       key: const ValueKey('library-open'),
                       label: '자료함',
@@ -597,7 +595,7 @@ class WorkspaceTabBar extends StatelessWidget {
                       onPreviewCancel: onPreviewCancel,
                       onTap: () => _openExtra(context, WorkspaceExtraPage.library, '자료함', libraryScreen!),
                     ),
-                  if (developerMode && notebookScreen != null)
+                  if (notebookScreen != null)
                     _TabPill(
                       key: const ValueKey('notebook-open'),
                       label: '노트북',

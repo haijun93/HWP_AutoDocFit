@@ -72,7 +72,7 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
           .toString()
       ..title = switch (widget.initialMode) {
         'mindmap' => '마인드맵',
-        'paint' => '그림판',
+        'paint' => '붙임사진 편집',
         _ => '다이어그램',
       }
       ..setAttribute('sandbox', 'allow-scripts allow-same-origin')
