@@ -349,7 +349,7 @@ class InstallerTests(unittest.TestCase):
             self.installer(runner=lambda a, c: 2).install(OUTLINER)
         self.assertEqual(ctx.exception.code, "INSTALL_FAILED")
 
-    def test_kde_interactive_with_sha256_file(self):
+    def test_kde_nsis_silent_with_sha256_file(self):
         body = b"digikam-installer"
         sha = hashlib.sha256(body).hexdigest()
         base = "https://download.kde.org/stable/digikam/"
@@ -358,14 +358,19 @@ class InstallerTests(unittest.TestCase):
         self.net.add(base + "9.1.0/", f'<a href="{name}">x</a><a href="{name}.sha256">s</a><a href="digiKam-9.1.0-Win64.exe">q5</a>')
         self.net.add(base + f"9.1.0/{name}.sha256", f"{sha}  {name}\n")
         self.net.add(base + f"9.1.0/{name}", body, final="https://download.kde.org/stable/digikam/9.1.0/" + name)
-        launched = []
-        inst = self.installer(popen=lambda args: launched.append(args))
+        calls = []
+        def runner(args, cancel):
+            calls.append(args)
+            dest = Path(args[2][3:])
+            dest.mkdir(parents=True)
+            (dest / "digikam.exe").write_bytes(b"MZ")
+            return 0
+        inst = self.installer(runner=runner)
         rel = inst.install(PICS)
         self.assertEqual((rel.version, rel.sha256), ("9.1.0", sha))
-        self.assertEqual(launched[0][0], str(self.root / "_installers" / "mondangpics" / name))
-        self.assertEqual(launched[0][1], f"/D={self.root / 'mondangpics'}")
-        self.assertNotIn("/S", launched[0])
-        self.assertEqual(Path(launched[0][0]).read_bytes(), body)
+        self.assertEqual(calls[0][1], "/S")
+        self.assertEqual(calls[0][2], f"/D={self.root / 'mondangpics'}")
+        self.assertIsNotNone(inst.installed_exe(PICS))
 
     def test_kde_mirror_outside_allowlist_blocked_and_hash_mismatch(self):
         base = "https://download.kde.org/stable/digikam/"
@@ -375,11 +380,11 @@ class InstallerTests(unittest.TestCase):
         self.net.add(base + f"9.1.0/{name}.sha256", "0" * 64)
         self.net.add(base + f"9.1.0/{name}", b"data", final="https://mirror.example.org/" + name)
         with self.assertRaises(ExtDlError) as ctx:
-            self.installer(popen=lambda a: None).install(PICS)
+            self.installer(runner=lambda a, c: None).install(PICS)
         self.assertEqual(ctx.exception.code, "HOST_BLOCKED")
         self.net.add(base + f"9.1.0/{name}", b"data")
         with self.assertRaises(ExtDlError) as ctx:
-            self.installer(popen=lambda a: None).install(PICS)
+            self.installer(runner=lambda a, c: None).install(PICS)
         self.assertEqual(ctx.exception.code, "HASH_MISMATCH")
 
 
@@ -413,7 +418,7 @@ class ServiceCommandTests(unittest.TestCase):
     def test_install_error_reported_in_progress(self):
         self.service.command("install", {"app": "outliner"})  # 경로 없음 → 404
         prog = self.service.command("progress", {"app": "outliner"})["install"]
-        self.assertEqual((prog["phase"], prog["ok"], prog["code"]), ("error", False, "HTTP_ERROR"))
+        self.assertEqual((prog["phase"], prog["ok"], prog["code"]), ("error", False, "ASSET_NOT_FOUND"))
 
     def test_cancel_when_idle_and_unknown_app(self):
         self.assertFalse(self.service.command("cancel", {"app": "outliner"})["install"]["cancel_requested"])

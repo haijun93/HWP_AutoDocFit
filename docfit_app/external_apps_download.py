@@ -59,6 +59,7 @@ class Source:
     package: str         # zip | nsis_silent(/S /D=경로) | installer_interactive(설치 프로그램을 띄워 사용자가 진행)
     max_bytes: int
     note: str = ""
+    latest_only: bool = False
 
 
 MB = 1024 * 1024
@@ -72,8 +73,9 @@ SOURCES = {
         Source("github", "logseq/logseq", r"(?i)Logseq-win-x64-[^/]*\.exe", "nsis_silent", 600 * MB, "NSIS 설치 exe"),
     ),
     "photo_manager": (
+        # 배포 페이지는 NSIS 설치 파일을 제공한다. /S 자동 설치로 통일한다.
         Source("kde", "https://download.kde.org/stable/digikam/", r"digiKam-\d+(?:\.\d+)*-Qt6-Win64\.exe",
-               "installer_interactive", 1500 * MB, "KDE 설치본(무인 옵션 미확인 → 사용자가 진행)"),
+               "nsis_silent", 1500 * MB, "KDE NSIS 설치 파일", latest_only=True),
     ),
     "pdf_editor": (
         Source("github", "haijun93/mongdangpdf", r"(?i)pdfcraft-[0-9][^/]*windows-(?:x64|arm64)-portable\.zip", "zip", 800 * MB, "몽당PDF 포크 휴대용 zip"),
@@ -282,7 +284,43 @@ def resolve_release(sources, opener):
             if exc.code in ("HOST_BLOCKED", "URL_INVALID", "URL_NOT_HTTPS", "CANCELLED"):
                 raise
             last = exc
-    raise last or ExtDlError("ASSET_NOT_FOUND", "받을 출처가 없습니다.")
+    if last is not None:
+        raise last
+    raise ExtDlError("ASSET_NOT_FOUND", "받을 출처가 없습니다.")
+
+
+def compare_versions(left, right):
+    """숫자 버전 비교. 태그의 v 접두어와 접미 설명은 무시한다."""
+    def parts(value):
+        nums = re.findall(r"\d+", str(value or ""))
+        return tuple(int(n) for n in nums) or (0,)
+    a, b = parts(left), parts(right)
+    width = max(len(a), len(b))
+    return (a + (0,) * (width - len(a))) > (b + (0,) * (width - len(b)))
+
+
+def latest_releases(app_id, opener, sources=None):
+    """포크와 원본에서 설치 가능한 최신 자산을 조회하고 가장 높은 버전을 반환한다."""
+    sources = sources if sources is not None else SOURCES
+    found = []
+    app_sources = sources.get(app_id, ())
+    for source in app_sources:
+        if source.latest_only and found:
+            break
+        try:
+            found.append(resolve_release((source,), opener))
+        except ExtDlError as exc:
+            if exc.code in ("HOST_BLOCKED", "URL_INVALID", "URL_NOT_HTTPS", "CANCELLED"):
+                raise
+    if any(source.latest_only for source in app_sources) and found:
+        return found[-1]
+    if not found:
+        return None
+    best = found[0]
+    for release in found[1:]:
+        if compare_versions(release.version, best.version):
+            best = release
+    return best
 
 
 # ── 안전 풀기 ────────────────────────────────────────────────────────────
@@ -459,7 +497,9 @@ class ExternalAppInstaller:
         if not sources:
             raise ExtDlError("NO_SOURCE", "받을 출처가 등록되어 있지 않습니다.")
         job.set(phase="resolving", message="최신판을 확인하는 중…")
-        release = resolve_release(sources, self._opener)
+        release = latest_releases(app.app_id, self._opener, self._sources)
+        if release is None:
+            raise ExtDlError("ASSET_NOT_FOUND", "받을 출처에서 설치 파일을 찾지 못했습니다.")
         source = release.source
         job.set(phase="downloading", version=release.version, asset=release.asset, message="내려받는 중…",
                 total=release.size)
