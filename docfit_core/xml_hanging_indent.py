@@ -191,17 +191,15 @@ def _skip_corner_quote(text: str, index: int | None) -> int | None:
     return index if index < len(text) else None
 
 
-def hanging_indent_offset(text: str | None, *, rule: str = "after_marker") -> int | None:
+def hanging_indent_offset(text: str | None, *, rule: str = "body_start") -> int | None:
     """문단에서 내어쓰기 정렬 기준이 되는 문자 오프셋을 반환한다.
 
-    불변 규칙(붙임·항목기호 내어쓰기: 번호+빈칸 뒤 본문 첫 글자 기준, 2026-11-08 INDENTFIX):
     - 최상위 항목 제목(``ㅁ``/``□``)은 내어쓰기하지 않으므로 ``0``을 반환한다.
-    - 항목기호/번호 문단은 번호(기호)+빈칸 뒤 본문 첫 글자 오프셋을 반환한다.
-      콜론 라벨이 있어도 콜론 뒤로 건너뛰지 않고 본문 첫 글자 기준으로 통일한다(괄호형·콜론형 내어쓰기 통일).
-    - 단, 한 줄에 항목기호 뒤 라벨+콜론+인라인 기호가 오는 복합 연속 문장(예: ``• 위치: ① …``)은
-      인라인 기호 시작 위치를 기준으로 한다.
+    - ``* 항세기: 기후가...``처럼 항목기호 뒤 짧은 콜론 라벨(공백 제외 1~12자)이 있으면
+      콜론과 뒤 공백 다음 첫 글자 오프셋을 반환한다.
+    - 일반 항목기호(``ㅇ (삼체 행성 상황) ...``, ``- 항세기*와 ...``)는 기호와 뒤 공백
+      다음 첫 글자 오프셋을 반환한다(괄호 라벨은 건너뛰지 않음, 2026-10-10 규칙).
     - 본문 첫 글자가 여는 낫표(``「``/``『``)이면 그 안쪽 첫 글자 오프셋을 반환한다.
-    - 명시적으로 ``rule="colon_label"``을 지정한 경우에만 콜론 뒤 본문 첫 글자를 반환한다.
     """
     if not text or rule in ("fixed", "none"):
         return None
@@ -216,32 +214,20 @@ def hanging_indent_offset(text: str | None, *, rule: str = "after_marker") -> in
     idx = _skip_spaces(text, marker_end)
     if idx >= len(text):
         return None
-
-    if rule == "colon_label":
-        if idx < len(text) and text[idx] in (":", "："):
-            after_colon = _skip_spaces(text, idx + 1)
-            if after_colon < len(text):
-                idx = after_colon
-        else:
-            colon_match = _COLON_LABEL_RE.match(text[idx:])
-            if colon_match:
-                label_chars = re.sub(r"\s+", "", colon_match.group(1))
-                if 1 <= len(label_chars) <= 12:
-                    after_colon = idx + colon_match.end()
-                    if after_colon < len(text):
-                        idx = after_colon
+    if rule == "after_marker":
         return _skip_corner_quote(text, idx)
-
-    from .continuation import inline_item
-    inline = inline_item(text)
-    if inline is not None:
-        return _skip_corner_quote(text, inline[1])
-
     if idx < len(text) and text[idx] in (":", "："):
         after_colon = _skip_spaces(text, idx + 1)
         if after_colon < len(text):
             idx = after_colon
-
+    else:
+        colon_match = _COLON_LABEL_RE.match(text[idx:])
+        if colon_match:
+            label_chars = re.sub(r"\s+", "", colon_match.group(1))
+            if 1 <= len(label_chars) <= 12:
+                after_colon = idx + colon_match.end()
+                if after_colon < len(text):
+                    idx = after_colon
     return _skip_corner_quote(text, idx)
 
 
@@ -252,7 +238,7 @@ def hanging_indent_pair(
     ratio: int = 100,
     spacing: int = 0,
     base_left: int = 0,
-    rule: str = "after_marker",
+    rule: str = "body_start",
 ) -> tuple[int, int] | None:
     """문단의 XML ``(left, intent)`` HWPUNIT 여백 쌍을 반환한다."""
     offset = hanging_indent_offset(text, rule=rule)

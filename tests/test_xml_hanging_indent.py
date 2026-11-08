@@ -48,36 +48,23 @@ SAMPLE_LINES = [
 
 class XmlHangingIndentUnitTests(unittest.TestCase):
     def test_todo_96_colon_label_hanging_indent(self):
-        """INDENTFIX(2026-11-08): 번호+빈칸 뒤 본문 첫 글자 기준 내어쓰기 검증.
-
-        (레거시 TODO 96의 콜론 뒤 맞춤은 rule='colon_label'에서만 유지)
-        """
+        """TODO 96: 원문자 및 항목 기호 뒤 콜론(:) 위치에 맞춘 들여쓰기 오프셋 검증."""
         cases = [
-            ("① 사업목적: 인공지능 기반 공공문서 자동화", "사"),
-            ("② 추진방향: 3단계 점진적 적용", "추"),
-            ("1. 대상기관: 서울특별시 마포구청", "대"),
-            ("가. 추진일정: 2026년 10월부터 12월까지", "추"),
-            ("1) 소요예산: 총 5억원 내외", "소"),
-            ("①사업목적:인공지능", "사"),
+            ("① 사업목적: 인공지능 기반 공공문서 자동화", "인"),
+            ("② 추진방향: 3단계 점진적 적용", "3"),
+            ("1. 대상기관: 서울특별시 마포구청", "서"),
+            ("가. 추진일정: 2026년 10월부터 12월까지", "2"),
+            ("1) 소요예산: 총 5억원 내외", "총"),
+            ("①사업목적:인공지능", "인"),
             ("①: 인공지능 기반", "인"),
-            ("① 사업목적 : 인공지능", "사"),
-            ("① 사업목적： 인공지능", "사"),
-            ("① (추진배경): 인공지능 기반", "("),
+            ("① 사업목적 : 인공지능", "인"),
+            ("① 사업목적： 인공지능", "인"),
+            ("① (추진배경): 인공지능 기반", "인"),
         ]
         for text, expected_first_char in cases:
             off = hanging_indent_offset(text)
             self.assertIsNotNone(off, f"Offset should not be None for {text}")
             self.assertEqual(text[off], expected_first_char, f"Mismatched char at {off} for {text}")
-
-        # 명시적 rule="colon_label" 호출 시 콜론 뒤 본문 위치 유지
-        legacy_cases = [
-            ("① 사업목적: 인공지능 기반 공공문서 자동화", "인"),
-            ("② 추진방향: 3단계 점진적 적용", "3"),
-            ("1. 대상기관: 서울특별시 마포구청", "서"),
-        ]
-        for text, expected_first_char in legacy_cases:
-            off = hanging_indent_offset(text, rule="colon_label")
-            self.assertEqual(text[off], expected_first_char)
 
     def test_wrapped_reference_markers_keep_reference_geometry_verbatim(self):
         # 서식 복사는 예시 우선: 여러 줄 문단도 예시의 (left, intent)를 그대로 쓴다(2026-10-21).
@@ -226,10 +213,8 @@ class XmlHangingIndentUnitTests(unittest.TestCase):
         self.assertEqual(hanging_indent_pair("ㅁ 추진 배경", size_pt=17.0), (0, 0))
         self.assertEqual(hanging_indent_offset(" ㅇ (삼체 행성 상황) 3개 항성"), 3)
         self.assertEqual(hanging_indent_pair(" ㅇ (삼체 행성 상황) 3개 항성", size_pt=15.0), (3000, -3000))
-        self.assertEqual(hanging_indent_offset("   * 항세기: 기후가 안정된 시기"), 5)
-        self.assertEqual(hanging_indent_offset("   * 항세기: 기후가 안정된 시기", rule="colon_label"), 10)
-        self.assertEqual(hanging_indent_pair("   * 항세기: 기후가 안정된 시기", size_pt=13.0), (3250, -3250))
-        self.assertEqual(hanging_indent_pair("   * 항세기: 기후가 안정된 시기", size_pt=13.0, rule="colon_label"), (8450, -8450))
+        self.assertEqual(hanging_indent_offset("   * 항세기: 기후가 안정된 시기"), 10)
+        self.assertEqual(hanging_indent_pair("   * 항세기: 기후가 안정된 시기", size_pt=13.0), (8450, -8450))
         self.assertEqual(hanging_indent_offset(" ㅇ 「선(先) 기초과학」"), 4)
         self.assertIsNone(hanging_indent_offset("일반 문단입니다."))
 

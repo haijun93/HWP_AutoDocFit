@@ -42,8 +42,7 @@ class BlackCircledMarkerTest(unittest.TestCase):
                 self.assertIsNotNone(circled)
                 self.assertEqual(circled, dash)
         self.assertEqual(hanging_indent_offset('   ❶ (이동도서관) 서가'), len('   ❶ '))
-        # INDENTFIX(2026-11-08): 번호+빈칸 뒤 본문 첫 글자 기준 내어쓰기(콜론형도 괄호형과 동일하게 기호 뒤 첫 글자)
-        self.assertEqual(hanging_indent_offset('   ❶ 모든 주민 대상: 안내'), len('   ❶ '))
+        self.assertEqual(hanging_indent_offset('   ❶ 모든 주민 대상: 안내'), len('   ❶ 모든 주민 대상: '))
 
     def test_continuation_still_accepts_every_black_circled_digit(self):
         for marker in BLACK_CIRCLED:
