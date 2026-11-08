@@ -106,7 +106,7 @@ void main() {
     expect(find.bySemanticsLabel('표그림판'), findsWidgets);
   });
 
-  testWidgets('개발자 모드: 마우스 올림으로 화면이 바뀐다', (tester) async {
+  testWidgets('개발자 모드: 마우스 올림으로는 전환되지 않고 클릭으로 전환한다', (tester) async {
     await _size(tester);
     final selected = <int>[];
     await tester.pumpWidget(_app(developerMode: true, selected: selected));
@@ -115,6 +115,10 @@ void main() {
     await mouse.addPointer(location: const Offset(1300, 800));
     await mouse.moveTo(tester.getCenter(find.byKey(const Key('workspaceTab-1'))));
     await tester.pump(const Duration(milliseconds: 151));
+    expect(selected, isEmpty);
+    expect(find.text('표템플릿 화면'), findsNothing);
+    await tester.tap(find.byKey(const Key('workspaceTab-1')));
+    await tester.pump();
     expect(selected, const [1]);
     expect(find.text('표템플릿 화면'), findsOneWidget);
   });

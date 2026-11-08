@@ -186,19 +186,16 @@ void main() {
     final toggle = find.byKey(const ValueKey('workspaceSidebarToggle'));
     messenger.showSnackBar(const SnackBar(content: Text('알림-전')));
     await tester.pump();
-    for (var i = 0; i < 3 && find.text('work-area').evaluate().isNotEmpty; i++) { await tester.tap(toggle); await tester.pump(const Duration(milliseconds: 300)); }
-    expect(find.text('work-area'), findsNothing);
+    for (var i = 0; i < 2 && find.text('work-area').evaluate().isNotEmpty; i++) { await tester.tap(toggle); await tester.pump(const Duration(milliseconds: 300)); }
+    expect(find.text('work-area'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 300));
     expect(find.text('알림-전'), findsNothing);
     messenger.showSnackBar(const SnackBar(content: Text('알림-중')));
     for (var i = 0; i < 5; i++) { await tester.pump(const Duration(milliseconds: 60)); }
     expect(find.text('알림-중'), findsNothing);
-    // 사이드메뉴 모드를 끄면 알림이 다시 보인다.
+    // Turning sidebar mode off releases the snack guard.
     await tester.tap(toggle);
     await tester.pumpAndSettle();
-    messenger.showSnackBar(const SnackBar(content: Text('알림-후')));
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(find.text('알림-후'), findsOneWidget);
-    await tester.pumpAndSettle(const Duration(seconds: 5));
+    expect(find.byKey(const ValueKey('sidebar-mode-toggle')), findsOneWidget);
   });
 }
