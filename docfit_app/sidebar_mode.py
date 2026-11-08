@@ -97,12 +97,14 @@ class SidebarModeController:
         saved, self.saved_min_size = self.saved_min_size, None
         self.window.set_min_size(*saved)
 
-    def _place(self, hwnd, side):
+    def _place(self, hwnd, side, height=None):
         left, top, right, bottom = self.api.work_area(hwnd)
         width = self._sidebar_width(hwnd)
         self._release_min_size(width)
         x = left if side == 'left' else right - width
-        self.api.set_window_pos(hwnd, x, top, width, bottom - top, True)
+        height = max(1, min(int(height or (bottom - top)), bottom - top))
+        y = min(max(getattr(self, 'saved_y', top), top), max(top, bottom - height))
+        self.api.set_window_pos(hwnd, x, y, width, height, True)
         return width
 
     def toggle(self, enabled):
@@ -116,6 +118,12 @@ class SidebarModeController:
             self.saved = {'x': rect[0], 'y': rect[1], 'width': rect[2], 'height': rect[3],
                           'topmost': bool(self.window.topmost())}
             left, top, right, bottom = self.api.work_area(hwnd)
+            self.saved_y = top
+            if hasattr(self.window, 'saved_sidebar_y'):
+                try:
+                    self.saved_y = int(self.window.saved_sidebar_y())
+                except Exception:
+                    pass
             side = self.saved_side if self.saved_side in {'left', 'right'} else choose_side(
                 rect[0] + rect[2] // 2, left, right, self.saved_side
             )
@@ -124,7 +132,7 @@ class SidebarModeController:
                 self.window.save_side(side)
             try:
                 self._strip_caption(hwnd)
-                width = self._place(hwnd, side)
+                width = self._place(hwnd, side, rect[3])
                 self.window.set_sidebar_only(True)
             except Exception:
                 self._restore_caption(hwnd)
@@ -148,8 +156,31 @@ class SidebarModeController:
         if not self.active:
             return {'ok': False, 'message': '사이드메뉴 모드가 켜져 있지 않습니다.'}
         side = 'left' if self.saved_side == 'right' else 'right'
-        width = self._place(self.window.handle(), side)
+        current = self._current_rect(self.window.handle())
+        width = self._place(self.window.handle(), side, current[3])
         self.saved_side = side
         if hasattr(self.window, 'save_side'):
             self.window.save_side(side)
         return {'ok': True, 'active': True, 'side': side, 'width': width}
+
+    def drag_vertical(self, delta_y, save=False):
+        """Move an active sidebar vertically, constrained to its monitor work area."""
+        if not self.developer_mode:
+            raise PermissionError('사이드메뉴 모드는 개발자 모드에서만 사용할 수 있습니다.')
+        if not self.active:
+            return {'ok': False, 'message': '사이드메뉴 모드가 켜져 있지 않습니다.'}
+        hwnd = self.window.handle()
+        left, top, right, bottom = self.api.work_area(hwnd)
+        rect = self._current_rect(hwnd)
+        x, y, width, height = rect
+        max_y = max(top, bottom - height)
+        try:
+            delta_y = int(round(float(delta_y)))
+        except (TypeError, ValueError, OverflowError):
+            delta_y = 0
+        y = min(max(y + delta_y, top), max_y)
+        self.api.set_window_pos(hwnd, x, y, width, height, bool(self.window.topmost()))
+        self.saved_y = y
+        if save and hasattr(self.window, 'save_position'):
+            self.window.save_position(x, y, width, height)
+        return {'ok': True, 'active': True, 'x': x, 'y': y, 'saved': bool(save)}

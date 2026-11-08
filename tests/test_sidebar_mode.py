@@ -15,6 +15,8 @@ class FakeApi:
     def work_area(self, hwnd): return self.area
     def set_window_pos(self, hwnd, x, y, width, height, topmost):
         self.positions.append((hwnd, x, y, width, height, topmost))
+    def window_rect(self, hwnd):
+        return self.positions[-1][1:5] if self.positions else (100, 40, 72, 600)
 
 
 class ScaledApi(FakeApi):
@@ -35,11 +37,13 @@ class FakeWindow:
     def __init__(self, rect=(600, 100, 800, 600), topmost=False):
         self.rect, self.on_top, self.only = rect, topmost, None
         self.saved_sides = []
+        self.saved_positions = []
     def handle(self): return 42
     def geometry(self): return self.rect
     def topmost(self): return self.on_top
     def set_sidebar_only(self, value): self.only = value
     def save_side(self, side): self.saved_sides.append(side)
+    def save_position(self, *position): self.saved_positions.append(position)
 
 
 class MinSizeWindow(FakeWindow):
@@ -85,10 +89,10 @@ class SidebarModeTests(unittest.TestCase):
         result = controller.toggle(True)
         self.assertEqual(result['side'], 'right')
         self.assertEqual(result['width'], BASE_WIDTH)
-        self.assertEqual(api.positions[-1], (42, 1100 - BASE_WIDTH, 40, BASE_WIDTH, 800, True))
+        self.assertEqual(api.positions[-1], (42, 1100 - BASE_WIDTH, 40, BASE_WIDTH, 600, True))
         self.assertTrue(window.only)
         controller.toggle(False)
-        self.assertEqual(api.positions[-1], (42, 600, 100, 800, 600, True))
+        self.assertEqual(api.positions[-1], (42, 100, 40, BASE_WIDTH, 600, True))
         self.assertFalse(window.only)
 
     def test_saved_side_has_priority_and_switch_persists_and_moves(self):
@@ -96,10 +100,10 @@ class SidebarModeTests(unittest.TestCase):
         controller = SidebarModeController(api, window, True, saved_side='left')
         enabled = controller.toggle(True)
         self.assertEqual(enabled['side'], 'left')
-        self.assertEqual(api.positions[-1], (42, -1200, 30, BASE_WIDTH, 800, True))
+        self.assertEqual(api.positions[-1], (42, -1200, 30, BASE_WIDTH, 600, True))
         switched = controller.switch_side()
         self.assertEqual(switched['side'], 'right')
-        self.assertEqual(api.positions[-1], (42, -200 - BASE_WIDTH, 30, BASE_WIDTH, 800, True))
+        self.assertEqual(api.positions[-1], (42, -200 - BASE_WIDTH, 30, BASE_WIDTH, 600, True))
         self.assertEqual(window.saved_sides, ['left', 'right'])
         controller.toggle(False)
         next_controller = SidebarModeController(api, window, True, saved_side=controller.saved_side)
@@ -110,7 +114,7 @@ class SidebarModeTests(unittest.TestCase):
         controller = SidebarModeController(api, window, True)
         result = controller.toggle(True)
         self.assertEqual(result['width'], 108)  # 56×1.5 + 24
-        self.assertEqual(api.positions[-1], (42, 2880 - 108, 0, 108, 1680, True))
+        self.assertEqual(api.positions[-1], (42, 2880 - 108, 0, 108, 900, True))
         controller.toggle(False)
         # 논리 픽셀 geometry(600,100,800,600)가 아니라 실제 창(물리 픽셀)으로 돌아간다.
         self.assertEqual(api.positions[-1], (42, 900, 150, 1200, 900, False))
@@ -124,7 +128,7 @@ class SidebarModeTests(unittest.TestCase):
         controller = SidebarModeController(api, window, True, saved_side='left')
         controller.toggle(True)
         self.assertEqual(window.minimum, (108, 270))
-        self.assertEqual(log[:2], [('min', 108, 270), ('pos', 0, 0, 108, 1680)])
+        self.assertEqual(log[:2], [('min', 108, 270), ('pos', 0, 0, 108, 900)])
         controller.switch_side()
         self.assertEqual(window.minimum, (108, 270))
         log.clear()
@@ -174,6 +178,18 @@ class SidebarModeTests(unittest.TestCase):
         controller = SidebarModeController(FakeApi(), FakeWindow(), False)
         with self.assertRaises(PermissionError):
             controller.toggle(True)
+
+    def test_vertical_drag_clamps_to_work_area_and_saves_on_release(self):
+        api, window = FakeApi(area=(100, 40, 1100, 840)), FakeWindow()
+        controller = SidebarModeController(api, window, True, 'left')
+        controller.toggle(True)
+        controller.drag_vertical(120, save=False)
+        self.assertEqual(api.positions[-1][1:5], (100, 160, BASE_WIDTH, 600))
+        controller.drag_vertical(10000, save=True)
+        self.assertEqual(api.positions[-1][1:5], (100, 240, BASE_WIDTH, 600))
+        self.assertEqual(window.saved_positions, [(100, 240, BASE_WIDTH, 600)])
+        controller.drag_vertical(-10000, save=True)
+        self.assertEqual(api.positions[-1][2], 40)
 
     def test_win32_calls_are_injectable(self):
         from desktop_web_ui import _Win32WindowApi
