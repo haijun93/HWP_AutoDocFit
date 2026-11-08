@@ -54,12 +54,17 @@ class ExternalAppsServiceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        # ExternalAppInstaller의 기본 설치 경로가 실제 사용자 LOCALAPPDATA를
+        # 읽지 않도록 테스트별 임시 프로필로 격리한다.
+        self._localappdata_patch = patch.dict(os.environ, {"LOCALAPPDATA": str(self.root / "localappdata")})
+        self._localappdata_patch.start()
         self.app = self.root / "app"
         self.app.mkdir()
         self.settings = SettingsService(self.root / "settings.json")
         self.launched = []
 
     def tearDown(self):
+        self._localappdata_patch.stop()
         self.tmp.cleanup()
 
     def _exe(self, folder, name):
