@@ -67,12 +67,36 @@ class FileDropTests(TestCase):
 
     def test_drop_goes_to_format_cloning_while_format_manager_is_open(self):
         bridge = DesktopWebBridge(Mock())
+        bridge._tk = lambda callback: callback()
         bridge.add_paths, bridge.add_format_paths = Mock(), Mock()
         bridge.receive_drop([r'C:\예시.hwpx'])
         bridge.add_paths.assert_called_once_with([r'C:\예시.hwpx'], from_drop=True)
         bridge.drop_target = 'format'
         bridge.receive_drop([r'C:\예시.hwpx'])
         bridge.add_format_paths.assert_called_once_with([r'C:\예시.hwpx'])
+
+    def test_conversion_drop_only_adds_supported_conversion_documents(self):
+        bridge = DesktopWebBridge(Mock())
+        bridge.drop_target = 'conversion'
+        bridge.add_paths = Mock(return_value={'files': []})
+        bridge._with_notice = Mock(side_effect=lambda message: message)
+        paths = [r'C:\문서\첫째.hwpx', r'C:\문서\둘째.pdf', r'C:\문서\그림.png', r'C:\문서\옛문서.doc', r'C:\문서\실행.exe']
+        bridge.receive_drop(paths)
+        bridge.add_paths.assert_called_once_with(paths[:3], from_drop=False)
+
+    def test_conversion_is_an_accepted_drop_target(self):
+        bridge = DesktopWebBridge(Mock())
+        bridge._tk = lambda callback: callback()
+        bridge.get_state = Mock(return_value={})
+        self.assertEqual(bridge.set_drop_target('conversion'), {})
+        self.assertEqual(bridge.drop_target, 'conversion')
+
+    def test_conversion_drop_rejects_unsupported_only(self):
+        bridge = DesktopWebBridge(Mock())
+        bridge.drop_target = 'conversion'
+        bridge._with_notice = Mock(side_effect=lambda message: message)
+        result = bridge.receive_drop([r'C:\문서\실행.exe'])
+        self.assertIn('변환할 수 있는 문서', result)
 
     def test_kclip_native_drop_routes_all_paths_to_agent_and_reports_duplicates(self):
         bridge = DesktopWebBridge(Mock())

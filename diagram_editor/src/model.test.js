@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {FORMAT,templates,template,validate,decode,node,edge,svg,id,computeNodeAutoFitBox} from './model.js';
+import {FORMAT,templates,template,validate,decode,node,edge,svg,id,computeNodeAutoFitBox,moveHistory} from './model.js';
 const document = graph=>({format:FORMAT,version:1,nodes:graph.nodes,edges:graph.edges});
 test('two templates (horizontal·vertical) round-trip with branches and varied shapes',()=>{
  assert.deepEqual(Object.keys(templates),['horizontal','vertical']);
@@ -35,6 +35,16 @@ test('flow documents round-trip and removed snapshot format is rejected',()=>{
  const graph=document(template('horizontal'));
  assert.deepEqual(decode(graph),{...validate(graph),converted:false});
  assert.throws(()=>decode({document:{store:{}}}));
+});
+test('save/load snapshots remain usable across undo and redo',()=>{
+ const saved=validate(JSON.parse(JSON.stringify(document(template('horizontal')))));
+ const loaded=decode(JSON.parse(JSON.stringify(saved)));
+ const edited={...loaded,nodes:loaded.nodes.slice(0,-1)};
+ const undone=moveHistory(edited,[loaded],[]);
+ assert.deepEqual(undone.current,loaded);
+ const redone=moveHistory(undone.current,undone.forward,undone.backward);
+ assert.deepEqual(redone.current,edited);
+ assert.equal(moveHistory(loaded,[],[]),null);
 });
 
 test('arbitrary HTML fields are discarded and text remains data',()=>{

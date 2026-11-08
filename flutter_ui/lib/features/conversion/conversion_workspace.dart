@@ -238,7 +238,7 @@ class ConversionWorkspace extends StatelessWidget {
                     ),
                     padding: const EdgeInsets.all(16),
                     child: const Text(
-                      '여기에 파일을 끌어 놓으세요\nHWP·HWPX·PDF·DOCX·그림·텍스트',
+                      '여기에 파일을 놓으세요\nHWP·HWPX·PDF·DOCX·그림·텍스트',
                       textAlign: TextAlign.center,
                       style: TextStyle(color: faint, height: 1.6),
                     ),
