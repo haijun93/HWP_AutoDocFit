@@ -10,9 +10,9 @@ from .job_envelope import job_error, fit_result
 
 TERMINAL = {'done', 'failed', 'cancelled'}
 EVENT_TYPES = TERMINAL | {'started', 'progress', 'item_done', 'item_failed', 'log', 'dialog'}
-LIGHT_KINDS = {'inspect', 'preview', 'catalog', 'library_index'}
+LIGHT_KINDS = {'inspect', 'preview', 'catalog', 'library_index', 'file_rename_apply', 'file_rename_undo'}
 # 같은 kind는 동시에 하나만(문서 슬롯은 쓰지 않음). 위반 시 JOB_RUNNING.
-SINGLETON_KINDS = {'library_index'}
+SINGLETON_KINDS = {'library_index', 'file_rename_apply', 'file_rename_undo'}
 _creation_lock = threading.Lock()
 
 

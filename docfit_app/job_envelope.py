@@ -13,12 +13,14 @@ def job_error(exc):
     """예외 → JobError {code,message,recoverable}. 기존 {code,message}에 recoverable만 추가."""
     if isinstance(exc, ServiceError):
         code, recoverable = exc.code, exc.recoverable
-    elif isinstance(exc, (ValueError, TypeError, IndexError, KeyError)):
-        code, recoverable = 'INVALID_INPUT', True
     else:
         code = getattr(exc, 'code', None)
-        code = code if isinstance(code, str) and code else 'JOB_FAILED'
-        recoverable = bool(getattr(exc, 'recoverable', True))
+        if isinstance(code, str) and code:  # 서비스별 오류(예: RenameServiceError)는 자기 코드를 유지한다
+            recoverable = bool(getattr(exc, 'recoverable', True))
+        elif isinstance(exc, (ValueError, TypeError, IndexError, KeyError)):
+            code, recoverable = 'INVALID_INPUT', True
+        else:
+            code, recoverable = 'JOB_FAILED', bool(getattr(exc, 'recoverable', True))
     return {'code': code, 'message': str(exc)[:MESSAGE_MAX], 'recoverable': recoverable}
 
 
