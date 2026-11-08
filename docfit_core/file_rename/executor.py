@@ -101,8 +101,12 @@ def _reason(error):
     return str(error) or error.__class__.__name__
 
 
-def execute_plan(plan, history, *, stop_on_error=True, stat=os.stat, rename=_rename_no_overwrite):
-    """계획의 ok 항목만 실행한다. 미리보기 뒤 파일이 바뀌었으면 하나도 바꾸지 않고 PlanStaleError."""
+def execute_plan(plan, history, *, stop_on_error=True, stat=os.stat, rename=_rename_no_overwrite,
+                 cancelled=None, progress=None):
+    """계획의 ok 항목만 실행한다. 미리보기 뒤 파일이 바뀌었으면 하나도 바꾸지 않고 PlanStaleError.
+
+    cancelled(): 깊이 묶음 사이에서만 확인한다(묶음 안은 중간에 끊지 않아 경로가 꼬이지 않는다).
+    취소되면 남은 묶음은 skipped로 돌려주고 기록(end)은 정상 마무리한다. progress(done, total): 묶음마다 보고."""
     items = [item for item in plan["items"] if item["status"] == "ok"]
     for item in items:
         try:
@@ -116,7 +120,7 @@ def execute_plan(plan, history, *, stop_on_error=True, stat=os.stat, rename=_ren
     # 새 이름은 모두 '옛 폴더 안' 기준으로 계산돼 있으므로 이 순서면 그대로 맞다.
     done, failed, skipped = [], [], []
     for group in _depth_groups(items, deepest_first=True):
-        if failed and stop_on_error:
+        if (failed and stop_on_error) or (cancelled is not None and cancelled()):
             skipped.extend(i["id"] for i in group)
             continue
         d, f, s = _run_moves([(i["id"], i["old_path"], i["new_path"]) for i in group], history, run_id,
@@ -124,6 +128,8 @@ def execute_plan(plan, history, *, stop_on_error=True, stat=os.stat, rename=_ren
         done += d
         failed += f
         skipped += s
+        if progress is not None:
+            progress(len(done), len(items))
     history.write(dict(op="end", run=run_id))
     return dict(run_id=run_id, done=done, failed=failed, skipped=skipped)
 
@@ -140,7 +146,7 @@ def _depth_groups(items, *, deepest_first, key=lambda i: i["old_path"]):
     return [groups[d] for d in sorted(groups, reverse=deepest_first)]
 
 
-def undo(history, run_id, *, rename=_rename_no_overwrite):
+def undo(history, run_id, *, rename=_rename_no_overwrite, cancelled=None, progress=None):
     """실행 하나를 되돌린다. 원래 자리가 이미 다른 파일로 차 있으면 그 항목만 건너뛴다."""
     run = history.get(run_id)
     if run is None:
@@ -150,10 +156,15 @@ def undo(history, run_id, *, rename=_rename_no_overwrite):
     # 되돌리기는 얕은 경로부터: 바깥 폴더 이름을 먼저 되돌려야 안쪽 항목의 기록된 경로가 다시 맞는다.
     entries = [dict(item, id=item_id) for item_id, item in run["items"].items()]
     for group in _depth_groups(entries, deepest_first=False, key=lambda i: i["original"]):
+        if cancelled is not None and cancelled():
+            skipped.extend(i["id"] for i in group)
+            continue
         d, f, s = _undo_group(group, history, undo_id, rename)
         done += d
         failed += f
         skipped += s
+        if progress is not None:
+            progress(len(done), len(entries))
     history.write(dict(op="end", run=undo_id))
     return dict(run_id=undo_id, done=done, failed=failed, skipped=skipped)
 

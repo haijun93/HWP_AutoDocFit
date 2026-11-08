@@ -45,6 +45,15 @@ class ApplicationService:
             service = self._library()
             identifier = self.jobs.begin(kind, {'library_id': library_id})
             return self.jobs.start(kind, {'library_id': library_id}, service.index_runner(library_id), job_id=identifier)
+        if kind in ('file_rename_apply', 'file_rename_undo'):
+            if not isinstance(params, dict):
+                raise ServiceError('INVALID_INPUT', '요청 값을 확인해 주세요.')
+            try:
+                runner = self._rename().job_runner(kind.rsplit('_', 1)[1], params)
+            except ValueError as exc:  # RenameServiceError: 코드를 보존해 전송 봉투로 돌려준다
+                raise ServiceError(getattr(exc, 'code', 'INVALID_INPUT'), str(exc)) from None
+            identifier = self.jobs.begin(kind, {})
+            return self.jobs.start(kind, {}, runner, job_id=identifier)
         raise ServiceError('NOT_AVAILABLE', '이 실행기에서는 해당 문서 엔진을 아직 사용할 수 없습니다.')
 
     @staticmethod
@@ -70,6 +79,12 @@ class ApplicationService:
             from .library_service import LibraryService
             self._library_service = LibraryService(self.store._path.parent / 'workspace' / 'library.db')
         return self._library_service
+
+    def _rename(self):
+        if getattr(self, '_rename_service', None) is None:
+            from .file_rename_service import FileRenameService
+            self._rename_service = FileRenameService(self.store._path.parent)
+        return self._rename_service
 
     def job_status(self, job_id):
         return self.jobs.job_status(job_id)
