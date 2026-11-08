@@ -33,6 +33,9 @@ ALLOWED_HOSTS = frozenset({
     "github.com", "api.github.com", "objects.githubusercontent.com",
     "release-assets.githubusercontent.com", "download.kde.org",
 })
+# 미러로 돌려보내는 배포처(KDE는 사용자 가까운 미러로 리디렉션). 여기서 시작한 리디렉션은 HTTPS면 어느 호스트든 받되,
+# 받은 파일은 반드시 배포처(download.kde.org)가 공개한 SHA-256과 일치해야 설치한다(공개 해시 없으면 거부).
+MIRROR_ORIGINS = frozenset({"download.kde.org"})
 MAX_API_BYTES = 5 * 1024 * 1024
 CHUNK = 64 * 1024
 TIMEOUT = 30
@@ -106,14 +109,16 @@ def check_url(url, hosts=ALLOWED_HOSTS):
         raise ExtDlError("URL_NOT_HTTPS", "HTTPS 주소만 내려받습니다.")
     if parts.username or parts.password or port not in (None, 443):
         raise ExtDlError("URL_INVALID", "내려받기 주소가 올바르지 않습니다.")
-    if host not in hosts:
+    if hosts is not None and host not in hosts:
         raise ExtDlError("HOST_BLOCKED", f"허용 목록에 없는 호스트입니다: {host or '(없음)'}")
     return url
 
 
 class _StrictRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        check_url(urljoin(req.full_url, newurl))
+        source = (urlsplit(req.full_url).hostname or "").lower().rstrip(".")
+        target = urljoin(req.full_url, newurl)
+        check_url(target, hosts=None if source in MIRROR_ORIGINS else ALLOWED_HOSTS)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
@@ -549,6 +554,8 @@ class ExternalAppInstaller:
             if release.sha256 != actual:
                 raise ExtDlError("HASH_MISMATCH", "내려받은 파일의 SHA-256이 공개된 값과 다릅니다. 설치하지 않았습니다.")
             trust = "published"
+        elif (urlsplit(release.url).hostname or "").lower().rstrip(".") in MIRROR_ORIGINS:
+            raise ExtDlError("HASH_MISSING", "배포처가 공개한 SHA-256을 받지 못해 미러 파일을 설치하지 않았습니다. 잠시 뒤 다시 시도해 주세요.")
         else:
             first = known.get(release.asset)
             if isinstance(first, dict) and first.get("sha256") not in (None, actual):

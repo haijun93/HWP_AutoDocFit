@@ -437,3 +437,28 @@ class ServiceCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KdeMirrorRedirectTests(unittest.TestCase):
+    """KDE는 가까운 미러로 리디렉션한다(사용자 보고 11-09: ftp.kaist.ac.kr 차단)."""
+
+    def _redirect(self, src, dst):
+        import urllib.request
+        from docfit_app.external_apps_download import _StrictRedirect
+        req = urllib.request.Request(src)
+        return _StrictRedirect().redirect_request(req, None, 302, "Found", {}, dst)
+
+    def test_kde_redirect_to_https_mirror_is_allowed(self):
+        new = self._redirect("https://download.kde.org/stable/digikam/9.1.0/x.exe",
+                             "https://ftp.kaist.ac.kr/kde/stable/digikam/9.1.0/x.exe")
+        self.assertEqual(new.full_url, "https://ftp.kaist.ac.kr/kde/stable/digikam/9.1.0/x.exe")
+
+    def test_kde_redirect_to_http_mirror_is_blocked(self):
+        from docfit_app.external_apps_download import ExtDlError
+        with self.assertRaises(ExtDlError):
+            self._redirect("https://download.kde.org/a.exe", "http://ftp.kaist.ac.kr/a.exe")
+
+    def test_other_origin_redirect_to_unknown_host_is_blocked(self):
+        from docfit_app.external_apps_download import ExtDlError
+        with self.assertRaises(ExtDlError):
+            self._redirect("https://github.com/a/b/releases/download/v1/x.zip", "https://ftp.kaist.ac.kr/x.zip")
