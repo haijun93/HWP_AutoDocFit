@@ -112,6 +112,19 @@ void main() {
     ]);
   });
 
+  testWidgets('empty conversion list shows a drop area and file picker', (
+    tester,
+  ) async {
+    final host = await pump(tester);
+    host.files = [];
+    host.stateVersion.value++;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('conversionDropZone')), findsOneWidget);
+    expect(find.textContaining('여기에 파일을 놓으세요'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('conversionPickFiles')));
+    expect(host.calls, [ ['add_files'] ]);
+  });
+
   testWidgets('right-click menus on files and results', (tester) async {
     final host = await pump(tester);
     await _rightClick(tester, find.byKey(const Key('conversionFile-0')));

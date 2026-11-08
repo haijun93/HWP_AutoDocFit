@@ -6,7 +6,7 @@ import {freehandNode,freehandPath,withBackground,withoutBackground,fitSize,paint
 import {defaultLayers,addLayer,updateLayer,moveLayer,removeLayer,assignLayer,layeredNodes,layeredEdges,layerOf} from './layers.js';
 import '@xyflow/react/dist/style.css';
 import './style.css';
-import {FORMAT,PALETTE,templates,template,node,edge,id,decode,validate,svg,layoutGraph,computeNodeAutoFitBox,edgeLabelBox,LINE_HEIGHT,nodeFont,nodePaint,edgePath,EDGE_DEFAULT,rotationFromPointer,normalizeRotation} from './model.js';
+import {FORMAT,PALETTE,templates,template,node,edge,id,decode,validate,svg,layoutGraph,computeNodeAutoFitBox,edgeLabelBox,LINE_HEIGHT,nodeFont,nodePaint,edgePath,EDGE_DEFAULT,rotationFromPointer,normalizeRotation,moveHistory} from './model.js';
 import {SHAPE_GROUPS,SHAPES,LINE_SHAPES,shapePath,DASHES,MARKERS,dashArray} from './shapes.js';
 import {sampleMindmap,mindmapGraph,addChild,addSibling,removeNode,updateNode,moveNode,findNode,positionMindmap,reparentNode,autoLayoutMindmap,restyleNodes,MINDMAP_SHAPES,MINDMAP_SCOPES,MINDMAP_THEME_SHAPES,MINDMAP_PALETTES,MINDMAP_GROUNDS,themeOf,clearBranchStyles} from './mindmap.js';
 import {FONTS,registerFonts,ARROWS,DOWN_ARROWS,FLOW_PRESETS,MAX_FLOW_STEPS,MAX_FLOW_ROWS,MAX_ROWS,MAX_COLS,MAX_ORG,ROLE_NAMES,BORDER_TYPES,BORDER_WIDTHS,BORDER_NAMES,
@@ -15,7 +15,6 @@ import {FONTS,registerFonts,ARROWS,DOWN_ARROWS,FLOW_PRESETS,MAX_FLOW_STEPS,MAX_F
  CATALOG_SCOPES,buildCatalogGrid,applyCatalogStructure,setCatalogCellText,setCatalogStyle,setCatalogBorder,buildCatalogEdits,
  isTaskTable,isFixedCalloutCategory,resizeTaskGrid} from './table.js';
 
-const TITLE='다이어그램·마인드맵';
 const newName=mode=>'새 '+(mode==='mindmap'?'마인드맵':mode==='paint'?'그림':'다이어그램');
 function send(message){
  const host=window.chrome?.webview;
@@ -307,7 +306,7 @@ function useInstalledFonts(){
 
 function App(){
  useInstalledFonts();
- const [graph,setGraph]=useState({nodes:[],edges:[]}),[name,setName]=useState('새 '+TITLE),[busy,setBusy]=useState(false),[status,setStatus]=useState('도형을 추가하고 연결점을 끌어 연결하세요.');
+ const [graph,setGraph]=useState({nodes:[],edges:[]}),[name,setName]=useState(newName('diagram')),[busy,setBusy]=useState(false),[status,setStatus]=useState('도형을 추가하고 연결점을 끌어 연결하세요.');
  const [mode,setMode]=useState('diagram'),[role,setRole]=useState({flow:'step',grid:'head'});
  const [catalog,setCatalog]=useState(null),[catalogCategory,setCatalogCategory]=useState(''),[catalogTemplate,setCatalogTemplate]=useState(''),[catalogStates,setCatalogStates]=useState({});
  const [catalogCellSel,setCatalogCellSel]=useState({r:0,c:0}),[catalogScope,setCatalogScope]=useState('cell'),[catalogCustomBorder,setCatalogCustomBorder]=useState(false);
@@ -338,8 +337,10 @@ function App(){
   next=layoutGraph(next);current.current=next;setGraph(next);mark();
  };
  const undo=(redo=false)=>{
-  const stack=redo?future:history,other=redo?history:future;if(!stack.current.length)return;
-  other.current.push(structuredClone(current.current));const next=stack.current.pop();current.current=next;setGraph(next);mark();
+  const stack=redo?future:history,other=redo?history:future;
+  const moved=moveHistory(current.current,stack.current,other.current);if(!moved)return;
+  stack.current=moved.backward;other.current=moved.forward;
+  current.current=moved.current;setGraph(moved.current);mark();
  };
  const fit=()=>setTimeout(()=>flow.current?.fitView({padding:.18}),40);
  const tables=useRef(newTables());
@@ -433,7 +434,7 @@ function App(){
  handle.current=async message=>{
   if(!message||typeof message!=='object')return;
   try{
-   switch(message.type){case 'set_mode':{if(message.mode==='diagram'||message.mode==='mindmap'||message.mode==='paint'){switchMode(message.mode);if(nameRef.current==='새 '+TITLE)setName(newName(message.mode));}break;}
+   switch(message.type){case 'set_mode':{if(message.mode==='diagram'||message.mode==='mindmap'||message.mode==='paint'){switchMode(message.mode);if(nameRef.current==='새 다이어그램'||nameRef.current==='새 마인드맵'||nameRef.current==='새 그림')setName(newName(message.mode));}break;}
     case 'new':tables.current=newTables();setMmSelected(null);replace({nodes:[],edges:[]},newName(mode),false);send({type:'document_new'});break;
     case 'set_background':{
      // 앱 창에 끌어 놓은 사진(앱이 받아 알맞은 크기로 바꿔 넘김)을 그림판 배경으로.
@@ -655,6 +656,7 @@ function App(){
    <button onClick={()=>send({type:'request_list'})}>열기·삭제</button>
    <button onClick={()=>send({type:'request_save'})}>저장</button>
    <button onClick={()=>send({type:'request_save_copy'})}>사본 저장</button>
+   {canvas&&<><button onClick={()=>undo()} title="실행 취소 (Ctrl+Z)">↶ 취소</button><button onClick={()=>undo(true)} title="다시 실행 (Ctrl+Y)">↷ 다시</button><button onClick={duplicate} title="복제 (Ctrl+D)">⧉ 복제</button></>}
    {mode==='catalog'?<><button onClick={()=>send({type:'request_catalog'})}>목록 새로고침</button><button className="primary" disabled={!selectedCatalogTemplate||busy} onClick={copyCatalog}>선택한 표 한/글에 복사</button><button disabled={!selectedCatalogTemplate||busy} onClick={exportCatalog}>수정 표 HWPX 저장</button></>:canvas?<>
     <button disabled={busy} onClick={()=>handle.current({type:'copy_png'})}>그림 복사 (한/글 붙여넣기)</button>
     <button disabled={busy} onClick={()=>send({type:'request_png'})}>{busy?'PNG 변환 중…':'PNG 내보내기'}</button>
@@ -666,7 +668,6 @@ function App(){
     <h2>도형</h2>
     {SHAPE_GROUPS.map(([group,items])=><details key={group} open={openGroups.has(group)} onToggle={e=>{const o=e.currentTarget.open;setOpenGroups(s=>{const next=new Set(s);o?next.add(group):next.delete(group);return next;});}} className="shape-group"><summary>{group}</summary>
      <div className="shape-grid">{items.map(([shape,label])=><button key={shape} title={label} aria-label={label+' 추가'} onClick={()=>add(shape)}><ShapeIcon shape={shape}/></button>)}</div></details>)}
-    <div className="tool-row"><button onClick={()=>undo()} title="실행 취소 (Ctrl+Z)">↶ 취소</button><button onClick={()=>undo(true)} title="다시 실행 (Ctrl+Y)">↷ 다시</button><button onClick={duplicate} title="복제 (Ctrl+D)">⧉ 복제</button></div>
     {selectedNodes.length>1&&<><h2>정렬 ({selectedNodes.length}개)</h2><div className="tool-row">
      {[['left','왼쪽'],['center','가운데'],['right','오른쪽'],['top','위'],['middle','중간'],['bottom','아래']].map(([k,n])=><button key={k} onClick={()=>align(k)}>{n}</button>)}</div></>}
     {selected&&<><h2>선택 도형</h2>
@@ -697,7 +698,6 @@ function App(){
     <h2>넣기</h2>
     <div className="shape-grid">{[['text','글상자'],['rectangle','사각형'],['roundRect','둥근 사각형'],['ellipse','타원'],['circle','원'],['arrowLine','화살표'],['line','직선'],['arrowRight','블록 화살표'],['star5','별'],['calloutRound','말풍선'],['triangle','삼각형'],['heart','하트']].map(([shape,label])=>
      <button key={shape} title={label} aria-label={label+' 넣기'} onClick={()=>addPaint(shape)}><ShapeIcon shape={shape}/></button>)}</div>
-    <div className="tool-row"><button onClick={()=>undo()} title="실행 취소 (Ctrl+Z)">↶ 취소</button><button onClick={()=>undo(true)} title="다시 실행 (Ctrl+Y)">↷ 다시</button><button onClick={duplicate} title="복제 (Ctrl+D)">⧉ 복제</button></div>
     {selected&&<><h2>선택 개체</h2>
      {selected.data.shape!=='freehand'&&<label>글<textarea aria-label="개체 글" maxLength={2000} value={selected.data.label} onChange={e=>edit({label:e.target.value})}/></label>}
      <div className="tool-row"><button onClick={()=>order(true)}>맨 앞으로</button><button onClick={()=>order(false)}>맨 뒤로</button></div>

@@ -9,6 +9,11 @@ const PAINT_SHAPES=new Set(['freehand','image']);
 import {validateMindmap,mindmapGraph} from './mindmap.js';
 import {validateLayers,visibleGraph} from './layers.js';
 export const FORMAT = 'docfit-flow';
+/** Move between undo/redo snapshots without mutating either stack. */
+export function moveHistory(current, backward, forward){
+ if(!backward.length)return null;
+ return {current:backward[backward.length-1],backward:backward.slice(0,-1),forward:[...forward,current]};
+}
 export const COLORS = {blue:'#dbeafe',green:'#dcfce7',orange:'#ffedd5',yellow:'#fef9c3',white:'#ffffff'};
 // 색 고르기 판(PPT 테마 색처럼 자주 쓰는 색).
 export const PALETTE=['#FFFFFF','#F2F2F2','#D9D9D9','#7F7F7F','#262626','#DBEAFE','#BFDBFE','#3B82F6','#1D4ED8','#DCFCE7','#86EFAC','#16A34A',

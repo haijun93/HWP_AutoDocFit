@@ -202,7 +202,11 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       unawaited(
         widget.api('set_drop_target', ['rename_files']).catchError((_) => null),
       );
-    } else if (lastTab == 2 || lastTab == 5 || lastTab == kTabFileRename || lastTab == kTabTimemachine) {
+    } else if (index == kTabFileConversion) {
+      unawaited(
+        widget.api('set_drop_target', ['conversion']).catchError((_) => null),
+      );
+    } else if (lastTab == 2 || lastTab == 5 || lastTab == kTabFileRename || lastTab == kTabTimemachine || lastTab == kTabFileConversion) {
       unawaited(
         widget.api('set_drop_target', ['documents']).catchError((_) => null),
       );
@@ -665,7 +669,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       }
       if (files.isNotEmpty &&
           !locked &&
-          (documentDropped || (documentsChanged && mode == 'file_format'))) {
+          (documentDropped || (documentsChanged && mode == 'file_format')) &&
+          !conversionTabActive) {
         setState(() => tab = 1);
         if (mode == 'file_format' && !conversionTabActive) {
           // 문서편집 화면에서 파일 변환을 하던 옛 흐름(파일변환 탭 밖)만 키패드 팝업을 연다.
@@ -916,7 +921,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       _modeBeforeConversion = mode == 'format' ? 'all' : mode;
       await command('set_mode', ['file_format']);
     }
-    await setDropTarget('documents');
+    await setDropTarget('conversion');
   }
 
   /// 파일변환 탭의 '문서편집 목록의 문서 변환하기': 목록이 비었으면 파일 고르기, 아니면 포맷 고르기로.

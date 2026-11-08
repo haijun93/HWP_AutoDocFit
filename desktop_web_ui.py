@@ -2802,7 +2802,7 @@ class DesktopWebBridge:
         return self.get_state()
 
     def _apply_drop_target(self, target):
-        if target not in ("documents", "manual_documents", "format", "quick_format", "sketch_image", "paint_image",
+        if target not in ("documents", "manual_documents", "conversion", "format", "quick_format", "sketch_image", "paint_image",
                           "rename_files", "kclip", "notebook", "library"):
             raise ValueError("지원하지 않는 놓기 대상입니다.")
         self.drop_target = target
@@ -2816,6 +2816,7 @@ class DesktopWebBridge:
                     else "여기에 놓으면 이 보고서의 서식을 복제합니다" if target == "format"
                     else "표 칸 위에 놓으면 칸 배경 그림으로 넣습니다" if target == "sketch_image"
                     else "여기에 놓으면 그림판 배경 사진으로 넣습니다" if target == "paint_image"
+                    else "여기에 파일을 놓으면 파일변환 목록에 추가됩니다" if target == "conversion"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
                     else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
                     else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
@@ -2865,6 +2866,16 @@ class DesktopWebBridge:
             return self._receive_sketch_image(paths, client_x, client_y, event="docfit-paint-image-dropped")
         if self.drop_target == "rename_files":
             return self._receive_rename_paths(paths)
+        if self.drop_target == "conversion":
+            candidates = [
+                str(path) for path in (paths or [])
+                if Path(str(path)).suffix.lower() in SUPPORTED_INPUT_EXTENSIONS
+            ]
+            if not candidates:
+                return self._with_notice("변환할 수 있는 문서 파일(HWP·HWPX·PDF·DOCX·그림·텍스트)을 놓아 주세요.")
+            if len(candidates) != len(paths or []):
+                self._with_notice("지원하지 않는 파일은 건너뛰고 변환 가능한 파일만 추가했습니다.")
+            return self.add_paths(candidates, from_drop=False)
         if self.drop_target == "library":
             self._receive_library_paths(paths)
             return self.get_state()
