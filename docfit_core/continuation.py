@@ -45,23 +45,35 @@ def is_continuation(parent_indent, text):
 def inline_item(text):
     """Return (family, marker start, body start) only for a single inline item."""
     outer = classify_marker(text)
-    if not outer:
-        return None
-    colon = re.match(r'\s*[^:：\r\n]{1,30}[:：][ \t]+', text[outer[1]:])
-    if not colon:
-        return None
-    start = outer[1] + colon.end()
-    item = classify_marker(text[start:])
-    if not item:
-        return None
-    family, end = item
-    body = start + end
+    if outer:
+        colon = re.match(r'\s*[^:：\r\n]{1,30}[:：][ \t]+', text[outer[1]:])
+        if not colon:
+            return None
+        start = outer[1] + colon.end()
+        item = classify_marker(text[start:])
+        if not item:
+            return None
+        family, end = item
+        body = start + end
+    else:
+        # Attachment heading followed by a numbered first entry: the following
+        # numbered paragraphs form a continuation block aligned at that number.
+        heading = re.match(r'^\s*붙임\s*[:：]?\s*', text)
+        item = classify_marker(text[heading.end():]) if heading else None
+        if not item:
+            return None
+        family, end = item
+        start = heading.end()
+        body = start + end
     while body < len(text) and text[body] in ' \t':
         body += 1
     # Two numbered items on one line retain the original colon alignment.
     tail = text[body:]
     for match in re.finditer(r'\S+', tail):
-        if classify_marker(tail[match.start():]):
+        # Circled item marks after an outer bullet (e.g. "붙임 1. … 2. …")
+        # are sibling items, not a second inline item in the same paragraph.
+        # The outer label's continuation paragraphs may therefore align to it.
+        if classify_marker(tail[match.start():]) and not re.match(r'\d+[.)]', tail[match.start():]):
             return None
     return family, start, body
 
