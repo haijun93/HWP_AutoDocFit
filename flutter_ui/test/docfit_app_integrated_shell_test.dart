@@ -35,7 +35,7 @@ void main() {
     expect(find.byKey(const ValueKey('always-on-top-toggle')), findsNothing);
     expect(find.byKey(const ValueKey('sidebar-mode-toggle')), findsNothing);
     expect(find.byKey(const ValueKey('sidebar-mode-switch-side')), findsNothing);
-    expect(find.byKey(const ValueKey('library-open')), findsNothing);
+    expect(find.byKey(const ValueKey('library-open')), findsOneWidget); // 일반 모드에도 자료함(2026-11-08)
     expect(tester.getTopLeft(find.byKey(const ValueKey('new-document-open'))).dy,
         lessThan(tester.getTopLeft(find.text('몽땅클립보드')).dy));
   });
@@ -204,8 +204,8 @@ void main() {
     expect(calls, contains('add_files:null'));
 
     // Tab 7 그림판: 같은 편집기를 그림판 모드로 연다
-    expect(find.text('그림판'), findsOneWidget);
-    await tester.tap(find.text('그림판'));
+    expect(find.text('붙임사진 편집'), findsOneWidget);
+    await tester.tap(find.text('붙임사진 편집'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(find.byType(PaintAdapter), findsOneWidget);

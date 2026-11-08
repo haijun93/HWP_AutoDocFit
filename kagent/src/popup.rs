@@ -471,6 +471,9 @@ pub fn show() {
     if hwnd.is_null() {
         return;
     }
+    // The Flutter clipboard screen and the popup share SQLite, but an external write may
+    // leave this process's recent snapshot stale. Rebuild it before every fresh open.
+    crate::refresh_recent();
     unsafe {
         let settings = app().settings.lock().unwrap().clone();
         if settings.sticky_popup && IsWindowVisible(hwnd) != 0 {
@@ -1668,5 +1671,22 @@ mod tests {
         assert!(!needs_store(Tab::Cat(Category::Web), full, LIST_LIMIT, true));
         assert!(!needs_store(Tab::Search, full, full, true)); // 빈 찾기 = 메모리 목록
         assert!(needs_store(Tab::Search, 3, 0, false)); // 찾기는 모든 항목 대상
+    }
+
+    #[test]
+    fn opening_popup_reloads_external_sqlite_writes_before_building_list() {
+        // Flutter's management screen writes through the named pipe/SQLite store. Model that
+        // process boundary: the popup cache starts stale, then opening it rebuilds from the DB.
+        let mut store = crate::store::Store::open(":memory:").unwrap();
+        let stale_snapshot: Vec<Summary> = Vec::new();
+        store.insert("text", "격리 통합 시험 복사 항목".as_bytes(), &[],
+                     "격리 통합 시험 복사 항목", "test", 1.0).unwrap();
+
+        assert!(stale_snapshot.is_empty());
+        let refreshed_snapshot = store.recent(crate::RECENT, None).unwrap();
+        let popup_items = order_items(filter_memory(&refreshed_snapshot, Tab::Cat(Category::All)));
+
+        assert_eq!(popup_items.len(), 1);
+        assert_eq!(popup_items[0].preview, "격리 통합 시험 복사 항목");
     }
 }

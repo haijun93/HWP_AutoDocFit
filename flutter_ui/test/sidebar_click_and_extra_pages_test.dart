@@ -106,7 +106,7 @@ void main() {
     expect(find.bySemanticsLabel('표그림판'), findsWidgets);
   });
 
-  testWidgets('개발자 모드: 마우스 올림으로 화면이 바뀐다', (tester) async {
+  testWidgets('개발자 모드: 마우스 올림으로는 전환되지 않고 클릭으로 전환한다', (tester) async {
     await _size(tester);
     final selected = <int>[];
     await tester.pumpWidget(_app(developerMode: true, selected: selected));
@@ -115,6 +115,10 @@ void main() {
     await mouse.addPointer(location: const Offset(1300, 800));
     await mouse.moveTo(tester.getCenter(find.byKey(const Key('workspaceTab-1'))));
     await tester.pump(const Duration(milliseconds: 151));
+    expect(selected, isEmpty);
+    expect(find.text('표템플릿 화면'), findsNothing);
+    await tester.tap(find.byKey(const Key('workspaceTab-1')));
+    await tester.pump();
     expect(selected, const [1]);
     expect(find.text('표템플릿 화면'), findsOneWidget);
   });
@@ -213,7 +217,7 @@ void main() {
     expect(find.byType(WorkspaceTabBar), findsOneWidget);
   });
 
-  testWidgets('개발자 모드를 끄면 열린 자료함도 닫히고 메뉴가 사라진다', (tester) async {
+  testWidgets('자료함·노트북은 일반 모드에서도 메뉴에 있고 열린다(2026-11-08)', (tester) async {
     await _size(tester);
     final library = LibraryScreen(api: InMemoryLibraryApi(), watchDropEvents: (_) => () {});
     await tester.pumpWidget(_app(developerMode: true, library: library));
@@ -222,9 +226,8 @@ void main() {
     expect(find.byType(LibraryScreen), findsOneWidget);
     await tester.pumpWidget(_app(developerMode: false, library: library));
     await tester.pumpAndSettle();
-    expect(find.byType(LibraryScreen), findsNothing);
-    expect(find.byKey(const ValueKey('library-open')), findsNothing);
-    expect(find.text('count:0'), findsOneWidget);
+    expect(find.byKey(const ValueKey('library-open')), findsOneWidget);
+    expect(find.byType(LibraryScreen), findsOneWidget);
   });
 
   testWidgets('메뉴 접힘(아이콘만) 상태에서도 자료함이 넘치지 않고 열린다', (tester) async {

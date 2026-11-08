@@ -59,6 +59,8 @@ APPS = {app.app_id: app for app in (
                 "https://github.com/haijun93/mongdangoutliner", "https://github.com/logseq/logseq/releases"),
     ExternalApp("photo_manager", "사진관리", "mondangpics", "digikam.exe", "digiKam", "GPL-2.0",
                 "https://github.com/haijun93/mondangpics", "https://www.digikam.org/download/"),
+    ExternalApp("pdf_editor", "PDF편집", "mongdangpdf", "pdfcraft.exe", "mongdangpdf (pdfcraft)", "Apache-2.0 OR MIT",
+                "https://github.com/haijun93/mongdangpdf", "https://github.com/storytold/pdfcraft/releases"),
 )}
 
 

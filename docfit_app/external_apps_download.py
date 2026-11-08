@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import stat
@@ -73,6 +74,10 @@ SOURCES = {
     "photo_manager": (
         Source("kde", "https://download.kde.org/stable/digikam/", r"digiKam-\d+(?:\.\d+)*-Qt6-Win64\.exe",
                "installer_interactive", 1500 * MB, "KDE 설치본(무인 옵션 미확인 → 사용자가 진행)"),
+    ),
+    "pdf_editor": (
+        Source("github", "haijun93/mongdangpdf", r"(?i)pdfcraft-[0-9][^/]*windows-(?:x64|arm64)-portable\.zip", "zip", 800 * MB, "몽당PDF 포크 휴대용 zip"),
+        Source("github", "storytold/pdfcraft", r"(?i)pdfcraft-[0-9][^/]*windows-(?:x64|arm64)-portable\.zip", "zip", 800 * MB, "원본 PDFCraft 휴대용 zip"),
     ),
 }
 
@@ -207,15 +212,34 @@ def resolve_github(source, opener):
     if not isinstance(data, dict) or not isinstance(data.get("assets"), list):
         raise ExtDlError("RELEASE_INVALID", "릴리스 정보를 읽지 못했습니다.")
     pattern = re.compile(source.pattern)
-    for asset in data["assets"]:
+    assets = data["assets"]
+    # PDFCraft는 릴리스에 첨부된 SHA256SUMS.txt로 개별 ZIP을 검증한다.
+    sums = {}
+    if source.where in ("haijun93/mongdangpdf", "storytold/pdfcraft"):
+        sums_asset = next((a for a in assets if isinstance(a, dict) and a.get("name") == "SHA256SUMS.txt"), None)
+        if sums_asset and isinstance(sums_asset.get("browser_download_url"), str):
+            try:
+                raw = read_limited(sums_asset["browser_download_url"], opener, 1024 * 1024).decode("ascii", "strict")
+                for line in raw.splitlines():
+                    match = re.fullmatch(r"\s*([0-9a-fA-F]{64})\s+[* ]?([^\s]+)\s*", line)
+                    if match:
+                        sums[match.group(2)] = match.group(1).lower()
+            except (UnicodeError, ExtDlError):
+                sums = {}
+    for asset in assets:
         name = asset.get("name") if isinstance(asset, dict) else None
         link = asset.get("browser_download_url") if isinstance(asset, dict) else None
         if not isinstance(name, str) or not isinstance(link, str) or "/" in name or not pattern.fullmatch(name):
             continue
+        if source.where in ("haijun93/mongdangpdf", "storytold/pdfcraft"):
+            arch = "arm64" if platform.machine().lower() in ("arm64", "aarch64") else "x64"
+            if f"windows-{arch}-portable.zip" not in name.lower():
+                continue
         digest = asset.get("digest")
         sha = digest[7:].lower() if isinstance(digest, str) and digest.lower().startswith("sha256:") \
             and re.fullmatch(r"[0-9a-fA-F]{64}", digest[7:]) else None
         size = asset.get("size") if isinstance(asset.get("size"), int) else None
+        sha = sha or sums.get(name)
         return Release(str(data.get("tag_name") or ""), name, link, size, sha, source)
     raise ExtDlError("ASSET_NOT_FOUND", f"{source.where} 최신 릴리스에서 받을 파일을 찾지 못했습니다.")
 

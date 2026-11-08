@@ -145,45 +145,19 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   bool _sidebarTouched = false;
   bool _sidebarOnly = false;
   bool _built = false;
-  int _hoverRequest = 0;
-  int _sidebarStage = 0;
 
   /// 오른쪽 실행창에 연 자료함·노트북(null이면 [_index] 탭).
   WorkspaceExtraPage? _extra;
 
-  /// 마우스 올림(초점 이동 포함) 자동 호출. 개발자 모드에서만 쓴다(사용자 요청 2026-11-07:
-  /// 기본은 클릭해야 실행화면을 부른다).
-  void _previewTab(int index) {
-    final request = ++_hoverRequest;
-    Future<void>.delayed(const Duration(milliseconds: 150), () {
-      if (!mounted || !widget.developerMode || request != _hoverRequest ||
-          (index == _index && _extra == null) || widget.hiddenTabs.contains(index)) {
-        return;
-      }
-      _select(index);
-    });
-  }
-
-  void _previewExtra(WorkspaceExtraPage page) {
-    final request = ++_hoverRequest;
-    Future<void>.delayed(const Duration(milliseconds: 150), () {
-      if (!mounted || !widget.developerMode || request != _hoverRequest || _extra == page) return;
-      _openExtra(page);
-    });
-  }
-
-  void _cancelPreview() { _hoverRequest++; }
 
   void _openExtra(WorkspaceExtraPage page) {
-    if (!widget.developerMode || _extra == page) return;
+    if (_extra == page) return; // 자료함·노트북은 일반 모드에서도 연다(사용자 지시 2026-11-08).
     setState(() => _extra = page);
   }
 
   @override
   void didUpdateWidget(covariant TabNavigationShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 개발자 모드를 끄면 자료함·노트북 메뉴가 사라지므로 화면도 닫는다.
-    if (!widget.developerMode && _extra != null) _extra = null;
   }
 
   @override
@@ -201,7 +175,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '표그림판',
     '다이어그램',
     '마인드맵',
-    '그림판',
+    '붙임사진 편집',
     '파일명 일괄변경',
     '타임머신',
     // 파일변환은 항상 맨 끝(2026-10-30 사용자 지시).
@@ -260,9 +234,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   }
 
   /// 햄버거 단추 순환(사용자 지시 2026-11-07): 일반 모드는 펼치기 ↔ 닫기만 되풀이하고,
-  /// 개발자 모드에서만 3번째로 작업 화면까지 닫는다(사이드메뉴 모드).
-  /// 개발자 모드 순서:
-  /// 펼치기 → 닫기(아이콘만) → 닫은 채로 오른쪽 작업 화면까지 닫기 → 다시 펼치기.
+  /// 3번째 누름(사이드메뉴만 표시)은 폐기(사용자 지시 2026-11-08): 개발자 모드도 펼치기 ↔ 닫기만.
   /// 다음 단계는 지금 화면 상태로 정하므로 처음 상태와 관계없이 순서가 맞다.
   Future<void> _toggleSidebar() async {
     _sidebarTouched = true;
@@ -270,26 +242,15 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     if (_sidebarOnly) {
       await _setSidebarOnly(false);
       if (!mounted || _sidebarOnly) return;
-      setState(() { _expanded = true; _sidebarStage = 0; });
+      setState(() { _expanded = true; });
       widget.onSidebarExpandedChanged?.call(true);
     } else if (open) {
       // (2) 닫기
-      setState(() { _expanded = false; _sidebarStage = 1; });
+      setState(() { _expanded = false; });
       widget.onSidebarExpandedChanged?.call(false);
-    } else if (_sidebarStage == 1 && widget.developerMode) {
-      // (3) 단추로 닫은 다음 번에는 작업 화면까지 닫는다.
-      await _setSidebarOnly(true);
-      if (!mounted) return;
-      if (!_sidebarOnly) {
-        // 사이드메뉴 모드를 쓸 수 없으면(개발자 모드 꺼짐 등) 멈추지 않고 다시 펼친다.
-        setState(() { _expanded = true; _sidebarStage = 0; });
-        widget.onSidebarExpandedChanged?.call(true);
-        return;
-      }
-      setState(() { _expanded = false; _sidebarStage = 2; });
     } else {
       // (1) 처음부터 닫혀 있던 메뉴는 먼저 펼친다.
-      setState(() { _expanded = true; _sidebarStage = 0; });
+      setState(() { _expanded = true; });
       widget.onSidebarExpandedChanged?.call(true);
     }
   }
@@ -329,7 +290,6 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     if (mounted) {
       setState(() {
         _sidebarOnly = enabled;
-        _sidebarStage = enabled ? 2 : 0;
       });
       _guardSnackBars(enabled);
     }
@@ -409,6 +369,8 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onToggleExpanded: _toggleSidebar,
                     showToggle: true,
                     developerMode: widget.developerMode,
+                    onPreview: null,
+                    onPreviewCancel: null,
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
@@ -416,9 +378,6 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
-                    onPreview: widget.developerMode ? _previewTab : null,
-                    onPreviewExtra: widget.developerMode ? _previewExtra : null,
-                    onPreviewCancel: widget.developerMode ? _cancelPreview : null,
                     onAlwaysOnTop: _toggleAlwaysOnTop,
                   )) else WorkspaceTabBar(
                     labels: _labels,
@@ -435,6 +394,8 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onToggleExpanded: _toggleSidebar,
                     showToggle: true,
                     developerMode: widget.developerMode,
+                    onPreview: null,
+                    onPreviewCancel: null,
                     onSidebarModeChanged: _setSidebarOnly,
                     onSidebarSideSwitch: widget.onSidebarSideSwitch,
                     sidebarOnly: _sidebarOnly,
@@ -442,9 +403,6 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     selectedExtra: _extra,
                     onOpenExtra: _openExtra,
                     // 기본은 클릭으로만 전환하고, 마우스 올림 호출은 개발자 모드에서만 연결한다.
-                    onPreview: widget.developerMode ? _previewTab : null,
-                    onPreviewExtra: widget.developerMode ? _previewExtra : null,
-                    onPreviewCancel: widget.developerMode ? _cancelPreview : null,
                     onAlwaysOnTop: _toggleAlwaysOnTop,
                   ),
                   if (!_sidebarOnly) Expanded(
@@ -630,7 +588,7 @@ class WorkspaceTabBar extends StatelessWidget {
                         onPreviewCancel: onPreviewCancel,
                         onTap: () => onSelected(i),
                       ),
-                  if (developerMode && libraryScreen != null)
+                  if (libraryScreen != null)
                     _TabPill(
                       key: const ValueKey('library-open'),
                       label: '자료함',
@@ -642,7 +600,7 @@ class WorkspaceTabBar extends StatelessWidget {
                       onPreviewCancel: onPreviewCancel,
                       onTap: () => _openExtra(context, WorkspaceExtraPage.library, '자료함', libraryScreen!),
                     ),
-                  if (developerMode && notebookScreen != null)
+                  if (notebookScreen != null)
                     _TabPill(
                       key: const ValueKey('notebook-open'),
                       label: '노트북',

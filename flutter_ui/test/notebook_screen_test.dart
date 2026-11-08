@@ -238,7 +238,7 @@ void main() {
     expect(find.byType(NotebookScreen), findsOneWidget);
   });
 
-  testWidgets('notebook button is hidden outside developer mode', (tester) async {
+  testWidgets('notebook remains available in normal mode', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -254,7 +254,7 @@ void main() {
       ),
     );
     await tester.pump();
-    expect(find.byKey(const ValueKey('notebook-open')), findsNothing);
+    expect(find.byKey(const ValueKey('notebook-open')), findsOneWidget);
   });
 
   testWidgets('dropped files become sources and drop watching follows the screen', (tester) async {

@@ -77,11 +77,15 @@ class TargetHtmlTests(unittest.TestCase):
         self.assertNotIn("padding-left:1px", td)
 
     def test_shading_kept_by_default_and_strip_option(self):
-        self.assertIn(b"background:yellow", self.out)
+        # 셀 음영은 문단 배경이 아닌 칸(셀) 배경(bgcolor)으로 들어간다.
+        self.assertIn(b'bgcolor="#FFFF00"', self.out)
+        self.assertIn(b'bgcolor="#C0D5E6"', self.out)
+        # 문단 배경으로 들어가지 않도록 <style> 클래스의 background는 제거된다.
+        self.assertIsNone(re.search(rb"background:\s*(?:yellow|#c0d5e6)", self.out, re.I))
         stripped, report = to_target_html_report(SRC, shading="strip")
         self.assertTrue(report["changed"])
         self.assertGreater(report["shading_removed"], 0)
-        self.assertIsNone(re.search(rb"background|mso-pattern", stripped))
+        self.assertIsNone(re.search(rb"bgcolor|background|mso-pattern", stripped))
         self.assertEqual(grid(parse_clipboard(stripped, clean=False)), grid(parse_clipboard(self.out, clean=False)))
 
     def test_cf_html_offsets(self):
@@ -126,8 +130,123 @@ class TargetHtmlTests(unittest.TestCase):
     def test_no_widths_still_cleans_text(self):
         out, report = to_target_html_report("<table><tr><td>&nbsp;</td><td>   5 </td></tr></table>")
         self.assertTrue(report["changed"])
-        self.assertIn("<td></td>", out)
-        self.assertIn(">5 </td>", out)
+        self.assertRegex(out, r"<td\b[^>]*></td>")
+        self.assertRegex(out, r"<td\b[^>]*align=right[^>]*>5 </td>")
+
+    def test_numeric_alignment_preserved_even_when_spaces_removed(self):
+        # 앞 공백이 있는 숫자 셀도 align=right 및 text-align:right 가 보장되어 엑셀 오른쪽 정렬 유지
+        src = "<table><tr><td>             12,345 </td><td>    0 </td></tr></table>"
+        out = to_target_html(src)
+        self.assertIn("align=right", out)
+        self.assertIn("text-align:right", out)
+        self.assertIn(">12,345 </td>", out)
+        self.assertIn(">0 </td>", out)
+
+    def test_cell_shading_inlined_as_bgcolor_and_style_shading_stripped(self):
+        # 클래스에 정의된 음영이 칸 태그의 bgcolor로 들어가고 <style>의 background는 제거됨
+        src = (
+            "<html><head><style>"
+            ".c1 { background: #112233; mso-pattern: black none; color: black; }\n"
+            ".c2 { background: red; }\n"
+            "</style></head><body>"
+            "<table><tr><td class=c1>A</td><td class=c2>B</td><td>C</td></tr></table>"
+            "</body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#112233"', out)
+        self.assertIn('bgcolor="#FF0000"', out)
+        self.assertNotIn("background:", out)
+        self.assertNotIn("mso-pattern:", out)
+
+    def test_cell_padding_inlined_to_each_td(self):
+        # 모든 td에 정상 칸 여백(상하 1.4pt, 좌우 5.1pt)이 인라인으로 들어가고 table의 cellpadding은 제거됨
+        src = "<table cellpadding=0><tr><td>글</td></tr></table>"
+        out = to_target_html(src)
+        self.assertNotIn("cellpadding", out)
+        self.assertIn("padding-top:1.4pt", out)
+        self.assertIn("padding-right:5.1pt", out)
+        self.assertIn("padding-bottom:1.4pt", out)
+        self.assertIn("padding-left:5.1pt", out)
+
+    def test_rgb_color_and_various_number_formats_alignment(self):
+        # rgb(...) 배경색의 bgcolor 변환 및 통화/괄호 음수/백분율 숫자의 오른쪽 정렬 검증
+        src = (
+            "<html><head><style>"
+            ".curr { background: rgb(255, 255, 0); font-weight: bold; }\n"
+            ".neg { background: rgb(192, 213, 230); color: red; }\n"
+            ".pct { color: black; }\n"
+            "</style></head><body>"
+            "<table><tr>"
+            "<td class=curr>    ₩ 120,000 </td>"
+            "<td class=neg>      (50,000) </td>"
+            "<td class=pct>       98.5% </td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#FFFF00"', out)
+        self.assertIn('bgcolor="#C0D5E6"', out)
+        self.assertNotIn("background:", out)
+        # font-weight 및 color는 유지
+        self.assertIn("font-weight:bold", out)
+        self.assertRegex(out, r"color:\s*red")
+        # 숫자 정렬 보존
+        self.assertIn(">₩ 120,000 </td>", out)
+        self.assertIn(">(50,000) </td>", out)
+        self.assertIn(">98.5% </td>", out)
+        self.assertEqual(out.count("align=right"), 3)
+        self.assertEqual(out.count("text-align:right"), 3)
+
+    def test_rgba_and_transparent_colors(self):
+        # rgba 지원 및 투명(alpha 0, transparent, none) 색상 무시 검증
+        src = (
+            "<html><body><table><tr>"
+            "<td style='background: rgba(0, 128, 255, 0.8);'>A</td>"
+            "<td style='background: rgba(255, 255, 255, 0);'>B</td>"
+            "<td style='background: transparent;'>C</td>"
+            "<td style='background: none;'>D</td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#0080FF"', out)
+        # B, C, D 칸에는 bgcolor가 없어야 함
+        self.assertEqual(out.count("bgcolor="), 1)
+
+    def test_inline_style_overrides_class_style(self):
+        # 인라인 스타일이 클래스 스타일보다 우선(배경색 및 정렬 오버라이드)
+        src = (
+            "<html><head><style>"
+            ".base { background: yellow; text-align: left; vertical-align: top; }\n"
+            "</style></head><body>"
+            "<table><tr>"
+            "<td class=base style='background: #00FF00; text-align: center;'>항목</td>"
+            "</tr></table></body></html>"
+        )
+        out = to_target_html(src)
+        self.assertIn('bgcolor="#00FF00"', out)
+        self.assertNotIn('bgcolor="#FFFF00"', out)
+        self.assertRegex(out, r'align=["\']?center["\']?')
+        self.assertIn('text-align:center', out)
+        self.assertNotIn('text-align:left', out)
+
+    def test_delta_and_currency_negative_alignments(self):
+        # 증감 기호(▲, ▼, △, ▽) 및 다양한 부호/통화 숫자의 오른쪽 정렬 및 공백 정리 검증
+        src = (
+            "<table><tr>"
+            "<td>    ▲ 1,500 </td>"
+            "<td>    ▼ 300 </td>"
+            "<td>    -₩ 45,000 </td>"
+            "<td>    (₩ 10,000) </td>"
+            "<td>    △ 2.5% </td>"
+            "</tr></table>"
+        )
+        out = to_target_html(src)
+        self.assertIn(">▲ 1,500 </td>", out)
+        self.assertIn(">▼ 300 </td>", out)
+        self.assertIn(">-₩ 45,000 </td>", out)
+        self.assertIn(">(₩ 10,000) </td>", out)
+        self.assertIn(">△ 2.5% </td>", out)
+        self.assertEqual(out.count("align=right"), 5)
+        self.assertEqual(out.count("text-align:right"), 5)
 
 
 class TsvTests(unittest.TestCase):
