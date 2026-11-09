@@ -94,7 +94,7 @@ internal static class SmartLauncher
                         if (!CacheIsValid(cachePath, manifest)) ExtractPayload(cachePath, manifest, true);
                         bool ignored = false;
                         return StartApplication(Path.Combine(cachePath, "app_main.exe"), cachePath,
-                            args, true, null, null, ref ignored);
+                            args, true, null, null, ref ignored, mutexName);
                     }
                     return 0;
                 }
@@ -145,7 +145,7 @@ internal static class SmartLauncher
     }
 
     private static int StartApplication(string appPath, string cachePath, string[] args,
-        bool selfTest, Mutex mutex, string mutexName, ref bool ownsMutex)
+        bool selfTest, Mutex mutex, string mutexName, ref bool ownsMutex, string forwardMutexName = null)
     {
         string eventName = null;
         EventWaitHandle handoff = null;
@@ -164,6 +164,8 @@ internal static class SmartLauncher
             {
                 start.EnvironmentVariables.Remove("DOCFIT_LAUNCHER_HANDOFF_EVENT");
                 start.EnvironmentVariables.Remove("DOCFIT_LAUNCHER_MUTEX_NAME");
+                if (!string.IsNullOrEmpty(forwardMutexName))
+                    start.EnvironmentVariables["DOCFIT_LAUNCHER_MUTEX_NAME"] = forwardMutexName;
             }
             if (!selfTest)
             {
