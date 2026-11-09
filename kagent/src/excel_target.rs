@@ -15,6 +15,10 @@ fn set_attr(raw: &str, name: &str, value: &str) -> String {
     let replacement = format!("{name}={q}");
     if p.is_match(raw) { p.replacen(raw, 1, replacement.as_str()).into_owned() } else { format!("{} {replacement}", raw.trim_end()) }
 }
+fn open_tag(tag: &str, attrs: &str) -> String {
+    let attrs = attrs.trim();
+    if attrs.is_empty() { format!("<{tag}>") } else { format!("<{tag} {attrs}>") }
+}
 fn set_style(raw: &str, decls: &[(&str,String)]) -> String {
     let p = re(r#"(?i)\bstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#);
     let mut body = p.captures(raw).and_then(|c|c.get(1)).map(|m|m.as_str().trim_matches(['"','\'']).to_string()).unwrap_or_default();
@@ -37,7 +41,7 @@ fn strip_shading_attrs(raw:&str, keep:bool)->String {
         for part in body.split(';') { let name=part.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
             if !(name.starts_with("background")||name=="mso-pattern"||name=="mso-background-source"||name=="mso-shading") { kept.push(part); } }
         let joined=kept.join(";");
-        if joined!=body { let rep=if joined.trim().is_empty(){String::new()}else{format!("style='{joined}'")}; out.replace_range(c.get(0).unwrap().range(),&rep); }
+        if joined!=body { let rep=if joined.trim().is_empty(){String::new()}else{format!(" style='{joined}'")}; let range=c.get(0).unwrap().range(); out.replace_range(range,&rep); }
     }
     out
 }
@@ -83,7 +87,7 @@ fn transform(raw:&str,keep:bool)->Vec<u8>{
         attrs=set_attr(&attrs,"valign","middle"); attrs=set_style(&attrs,&[("vertical_align","middle".into())]);
         if tag.eq_ignore_ascii_case("th"){attrs=set_style(&attrs,&[("font_weight","bold".into())]);}
         let _=style;
-        format!("<{tag} {}>{body}</{tag}>",attrs.trim())
+        format!("{}{body}</{tag}>",open_tag(tag, &attrs))
     }).into_owned();
     // Width normalization is only applied when every declared <col> has a positive width.
     new=normalize_widths(&new);
@@ -123,6 +127,6 @@ fn normalize_widths(html:&str)->String {
     for (y,row) in rows.find_iter(html).enumerate(){let text=&html[row.range()];let mut x=0;for c in cell.captures_iter(text){while taken.contains(&(y,x)){x+=1;}let a=attr_map(&c[2]);let cs=a.get("colspan").and_then(|v|v.parse::<usize>().ok()).unwrap_or(1).max(1);let rs=a.get("rowspan").and_then(|v|v.parse::<usize>().ok()).unwrap_or(1).max(1);if x+cs>widths.len(){return html.to_string()}for dy in 0..rs{for dx in 0..cs{taken.insert((y+dy,x+dx));}}placed.push((y,c.get(0).unwrap().start(),x,cs));x+=cs;}}
     if let Some(first)=col.find(html){let last=col.find_iter(html).last().unwrap();let cols=widths.iter().map(|w|format!("<col width={} style='width:{}pt'>",fmt(*w),fmt(*w*0.75))).collect::<Vec<_>>().join("\n");let mut s=html.to_string();s.replace_range(first.start()..last.end(),&cols);let row_ranges:Vec<_>=rows.find_iter(&s).map(|m|m.range()).collect();
         for (y,range) in row_ranges.into_iter().enumerate().rev(){let mut row=s[range.clone()].to_string();let row_spans:Vec<_>=placed.iter().filter(|p|p.0==y).collect();let mut ix=0;row=cell.replace_all(&row,|c:&Captures|{let p=row_spans[ix];ix+=1;let (_,_,x,cs)=*p;let w:f64=widths[x..x+cs].iter().sum();let attrs=set_style(&set_attr(&c[2],"width",&fmt(w)),&[("width",format!("{}pt",fmt(w*0.75)))]);format!("<{} {}>",&c[1],attrs)}).into_owned();s.replace_range(range,&row);}
-        let total:f64=widths.iter().sum();let table=re(r#"(?is)<table\b((?:"[^"]*"|'[^']*'|[^>"'])*)>"#);s=table.replace(&s,|c:&Captures|{let a=re(r#"(?i)\s*\bcellpadding\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&c[1],"").into_owned();let a=set_style(&set_attr(&a,"width",&fmt(total)),&[("width",format!("{}pt",fmt(total*0.75)))]);format!("<table {}>",a.trim())}).into_owned();return s;}
+        let total:f64=widths.iter().sum();let table=re(r#"(?is)<table\b((?:"[^"]*"|'[^']*'|[^>"'])*)>"#);s=table.replace(&s,|c:&Captures|{let a=re(r#"(?i)\s*\bcellpadding\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&c[1],"").into_owned();let a=set_style(&set_attr(&a,"width",&fmt(total)),&[("width",format!("{}pt",fmt(total*0.75)))]);open_tag("table", &a)}).into_owned();return s;}
     html.to_string()
 }
