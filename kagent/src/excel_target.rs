@@ -33,6 +33,16 @@ fn set_style(raw: &str, decls: &[(&str,String)]) -> String {
     let replacement=format!("style='{body}'");
     if p.is_match(raw) { p.replacen(raw,1,replacement.as_str()).into_owned() } else { format!("{} {replacement}",raw.trim_end()) }
 }
+fn normalize_attr_spaces(raw:&str)->String {
+    let mut out=String::new();let mut quote=None;let mut pending=false;
+    for ch in raw.trim().chars(){
+        if let Some(q)=quote {out.push(ch);if ch==q{quote=None;}continue;}
+        if ch=='\''||ch=='"'{if pending&&!out.is_empty(){out.push(' ');}pending=false;quote=Some(ch);out.push(ch);}
+        else if ch.is_whitespace(){pending=true;}
+        else {if pending&&!out.is_empty(){out.push(' ');}pending=false;out.push(ch);}
+    }
+    out
+}
 fn strip_shading_attrs(raw:&str, keep:bool)->String {
     let style=re(r#"(?i)\bstyle\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#);
     let mut out=raw.to_string();
@@ -116,6 +126,7 @@ fn transform(raw:&str,keep:bool)->Vec<u8>{
             }
         }
         attrs=strip_shading_attrs(&attrs,keep);
+        attrs=normalize_attr_spaces(&attrs);
         if isnum { attrs=set_attr(&attrs,"align","right"); attrs=set_style(&attrs,&[("text_align","right".into())]); }
         let style=format!("padding-top:1.4pt;padding-right:5.1pt;padding-bottom:1.4pt;padding-left:5.1pt");
         attrs=set_style(&attrs,&[("padding_top","1.4pt".into()),("padding_right","5.1pt".into()),("padding_bottom","1.4pt".into()),("padding_left","5.1pt".into())]);
@@ -123,7 +134,8 @@ fn transform(raw:&str,keep:bool)->Vec<u8>{
         if tag.eq_ignore_ascii_case("th"){attrs=set_style(&attrs,&[("font_weight","bold".into())]);}
         let _=style;
         let attrs = if !keep { re(r#"(?i)\s*\b(?:bgcolor|background)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&attrs, " ").into_owned() } else { attrs };
-        let opening = if attrs.trim().is_empty() { c[1].to_string() } else { format!("{} {}",&c[1],attrs.trim()) };
+        let opening = if attrs.trim().is_empty() { c[1].to_string() } else { format!("{}{}{}",&c[1],if c[1].ends_with(char::is_whitespace){""}else{" "},attrs.trim()) };
+
         format!("{opening}>{body}</{tag}>")
     }).into_owned();
     // Width normalization is only applied when every declared <col> has a positive width.
@@ -176,6 +188,12 @@ mod tests {
         let output=String::from_utf8(convert(input,"keep")).unwrap();
         assert!(output.contains("bgcolor=\"#AABBCC\""),"{output}");
     }
+    #[test]
+    fn numeric_cell_has_single_attribute_separator() {
+        let input=b"<html xmlns:x='urn:schemas-microsoft-com:office:excel'><table><col width='72'><tr><td align='left'> 88,180 </td></tr></table></html>";
+        let output=String::from_utf8(convert(input,"keep")).unwrap();
+        assert!(output.contains("<td align=right"),"{output}");
+    }
 }
 fn normalize_widths(html:&str)->String {
     let col=re(r#"(?is)<col\b((?:"[^"]*"|'[^']*'|[^>"'])*)>"#); let mut widths=Vec::new();
@@ -185,7 +203,7 @@ fn normalize_widths(html:&str)->String {
     let mut taken=std::collections::HashSet::new();let mut placed=Vec::<(usize,usize,usize,usize)>::new();
     for (y,row) in rows.find_iter(html).enumerate(){let text=&html[row.range()];let mut x=0;for c in cell.captures_iter(text){while taken.contains(&(y,x)){x+=1;}let a=attr_map(&c[2]);let cs=a.get("colspan").and_then(|v|v.parse::<usize>().ok()).unwrap_or(1).max(1);let rs=a.get("rowspan").and_then(|v|v.parse::<usize>().ok()).unwrap_or(1).max(1);if x+cs>widths.len(){return html.to_string()}for dy in 0..rs{for dx in 0..cs{taken.insert((y+dy,x+dx));}}placed.push((y,c.get(0).unwrap().start(),x,cs));x+=cs;}}
     if let Some(first)=col.find(html){let last=col.find_iter(html).last().unwrap();let cols=widths.iter().map(|w|format!("<col width={} style='width:{}pt'>",fmt(*w),fmt(*w*0.75))).collect::<Vec<_>>().join("\n");let mut s=html.to_string();s.replace_range(first.start()..last.end(),&cols);let row_ranges:Vec<_>=rows.find_iter(&s).map(|m|m.range()).collect();
-        for (y,range) in row_ranges.into_iter().enumerate().rev(){let mut row=s[range.clone()].to_string();let row_spans:Vec<_>=placed.iter().filter(|p|p.0==y).collect();let mut ix=0;row=cell.replace_all(&row,|c:&Captures|{let p=row_spans[ix];ix+=1;let (_,_,x,cs)=*p;let w:f64=widths[x..x+cs].iter().sum();let attrs=set_style(&set_attr(&c[2],"width",&fmt(w)),&[("width",format!("{}pt",fmt(w*0.75)))]);format!("<{} {}>",&c[1],attrs)}).into_owned();s.replace_range(range,&row);}
+        for (y,range) in row_ranges.into_iter().enumerate().rev(){let mut row=s[range.clone()].to_string();let row_spans:Vec<_>=placed.iter().filter(|p|p.0==y).collect();let mut ix=0;row=cell.replace_all(&row,|c:&Captures|{let p=row_spans[ix];ix+=1;let (_,_,x,cs)=*p;let w:f64=widths[x..x+cs].iter().sum();let attrs=set_style(&set_attr(&c[2],"width",&fmt(w)),&[("width",format!("{}pt",fmt(w*0.75)))]);format!("<{}{}>",&c[1],attrs.trim_end())}).into_owned();s.replace_range(range,&row);}
         let total:f64=widths.iter().sum();let table=re(r#"(?is)<table\b((?:"[^"]*"|'[^']*'|[^>"'])*)>"#);s=table.replace(&s,|c:&Captures|{let a=re(r#"(?i)\s*\bcellpadding\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&c[1],"").into_owned();let a=set_style(&set_attr(&a,"width",&fmt(total)),&[("width",format!("{}pt",fmt(total*0.75)))]);open_tag("table", &a)}).into_owned();return s;}
     html.to_string()
 }
