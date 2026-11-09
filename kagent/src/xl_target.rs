@@ -7,9 +7,45 @@
 use crate::json::{self, Value};
 use crate::util::{base64, unbase64};
 
-/// Rust 변환이 Python 기준과 완전히 같아질 때만 활성화한다. 비교 도구가 별도 바이너리로
-/// 결과를 검증하고 나서 이 상수를 true로 바꾼다. 현재 앱 파이프를 유지한다.
+/// Python 기준 회귀 비교에서 바이트 일치가 확인된 Rust 변환을 우선 사용한다.
+/// Rust가 변경된 결과를 만들지 못하면 Python 앱 서비스 파이프로 대체한다.
 pub const DIRECT_RUST_ENABLED: bool = true;
+
+fn clean_tsv(text: &str) -> String {
+    fn blank_only(value: &str) -> bool {
+        value.chars().all(|ch| ch.is_whitespace() || matches!(ch, '\u{00a0}' | '\u{2000}'..='\u{200a}' | '\u{202f}' | '\u{205f}' | '\u{3000}'))
+    }
+    fn cell(value: &str) -> String {
+        if blank_only(value) { return String::new(); }
+        let trimmed = value.trim_start_matches([' ', '\u{00a0}', '\u{3000}']);
+        let candidate = trimmed.trim_matches([' ', '\u{00a0}', '\u{3000}']);
+        if crate::excel_target::is_numeric_text(candidate) || is_currency_numeric(candidate) {
+            trimmed.to_string()
+        } else { value.to_string() }
+    }
+    let mut out = String::with_capacity(text.len());
+    for segment in text.split_inclusive('\n') {
+        let (line, ending) = if let Some(line) = segment.strip_suffix("\r\n") { (line, "\r\n") }
+            else if let Some(line) = segment.strip_suffix('\n') { (line, "\n") }
+            else { (segment, "") };
+        out.push_str(&line.split('\t').map(cell).collect::<Vec<_>>().join("\t"));
+        out.push_str(ending);
+    }
+    out
+}
+
+fn is_currency_numeric(value: &str) -> bool {
+    let value = value.trim();
+    let numeric = |s: &str| crate::excel_target::is_numeric_text(s);
+    if value.starts_with('(') && value.ends_with(')') {
+        let inner = value[1..value.len()-1].trim();
+        return ["₩", "$", "€", "£", "¥"].iter().any(|c| inner.strip_prefix(c).is_some_and(numeric));
+    }
+    ["₩", "$", "€", "£", "¥"].iter().any(|c| {
+        value.strip_prefix(c).is_some_and(|rest| numeric(rest.trim()))
+            || value.strip_prefix(['+', '-']).and_then(|s| s.strip_prefix(c)).is_some_and(|rest| numeric(rest.trim()))
+    })
+}
 
 /// 앱 응답을 기다리는 최대 시간(붙여넣기 지연 상한). 넘으면 원래 형식으로 붙인다.
 pub const TIMEOUT_MS: u64 = 1500;
@@ -93,7 +129,7 @@ pub fn convert(kind: &str, payload: &[u8], extra: &[u8], enabled: bool) -> Optio
             let mut output = converted;
             while output.last() == Some(&0) { output.pop(); }
             output.push(0);
-            return Some((output, String::from_utf8_lossy(payload).into_owned()));
+            return Some((output, clean_tsv(&String::from_utf8_lossy(payload))));
         }
     }
     let request = build_request(html, &String::from_utf8_lossy(payload));
@@ -182,6 +218,13 @@ fn call(name: &str, request: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direct_text_cleanup_matches_python_whitespace_rules() {
+        assert_eq!(clean_tsv("제목\t                    88,180 \t \r\n"), "제목\t88,180 \t\r\n");
+        assert_eq!(clean_tsv(" \u{00a0}\t₩ 2,000 \n"), "\t₩ 2,000 \n");
+        assert_eq!(clean_tsv("  보통 텍스트  "), "  보통 텍스트  ");
+    }
 
     const EXCEL: &[u8] = b"Version:0.9\r\nStartHTML:0000000105\r\n<html xmlns:x=\"urn:schemas-microsoft-com:office:excel\">\
 <body><table><tr><td>  88,180 </td></tr></table></body></html>\0";

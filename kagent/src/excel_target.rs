@@ -94,6 +94,7 @@ fn css_color(value: &str) -> Option<String> {
     let first=text.split_whitespace().next().unwrap_or(""); named.iter().find(|(n,_)|*n==first).map(|(_,v)|v.to_string())
 }
 fn numeric(s:&str)->bool { re(r"(?i)^(?:(?:[+-]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)%?)|\(\s*[₩$€£¥]?\s*(?:\d[\d,]*(?:\.\d+)?|\.\d+)%?\s*\)|[+-]?[₩$€£¥]\s?[+-]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)%?|[▲▼△▽]\s*[+-]?(?:\d[\d,]*(?:\.\d+)?|\.\d+)%?)$").is_match(s) }
+pub fn is_numeric_text(s:&str)->bool { numeric(s) }
 fn fmt(v:f64)->String { let s=format!("{v:.2}"); s.trim_end_matches('0').trim_end_matches('.').to_string() }
 
 pub fn convert(input:&[u8], shading:&str)->Vec<u8> {
