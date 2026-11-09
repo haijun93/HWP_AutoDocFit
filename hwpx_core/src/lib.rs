@@ -17,7 +17,7 @@ fn parse_xml(name: &str, bytes: &[u8]) -> Result<Member,String> {
     let mut r=Reader::from_reader(bytes); r.config_mut().trim_text(true);
     let mut buf=Vec::new(); let mut counts=std::collections::BTreeMap::new();
     loop { match r.read_event_into(&mut buf) {
-        Ok(Event::Start(e)) | Ok(Event::Empty(e)) => { let n=String::from_utf8_lossy(e.local_name().as_ref()).into_owned(); *counts.entry(n).or_insert(0)+=1; },
+        Ok(Event::Start(e)) | Ok(Event::Empty(e)) => { let n=e.local_name().as_ref().to_owned(); let n=n.to_string(); *counts.entry(n).or_insert(0)+=1; },
         Ok(Event::DocType(_)) => return Err(format!("DOCTYPE forbidden: {name}")),
         Ok(Event::Eof)=>break,
         Err(e)=>return Err(format!("invalid XML {name}: {e}")), _=>{}
@@ -30,7 +30,7 @@ fn analyze(path:&Path)->Result<String,String>{
  if size>MAX_ARCHIVE{return Err("archive size limit exceeded".into())}
  let mut z=ZipArchive::new(f).map_err(|e|e.to_string())?; if z.len()>MAX_ENTRIES{return Err("entry count limit exceeded".into())}
  let mut total=0u64;let mut members=Vec::new();let mut paragraphs=0;
- for i in 0..z.len(){let mut f=z.by_index(i).map_err(|e|e.to_string())?;let n=f.name().to_string();
+ for i in 0..z.len(){let mut f=z.by_index(i).map_err(|e|e.to_string())?;let n=f.name().map_err(|e|e.to_string())?.to_string();
   if f.is_dir() || !(n=="Contents/header.xml" || (n.starts_with("Contents/section")&&n.ends_with(".xml"))){continue}
   if f.size()>MAX_ENTRY{return Err(format!("entry size limit exceeded: {n}"))} total=total.checked_add(f.size()).ok_or("size overflow")?;if total>MAX_TOTAL{return Err("expanded size limit exceeded".into())}
   let mut b=Vec::with_capacity(f.size() as usize);f.read_to_end(&mut b).map_err(|e|e.to_string())?;let m=parse_xml(&n,&b)?;if n.contains("section"){paragraphs+=*m.elements.get("p").unwrap_or(&0)} members.push(m);
