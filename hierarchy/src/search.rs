@@ -29,13 +29,13 @@ pub struct RankedDocument {
 }
 
 /// Preserve the established Python `hierarchy_relevance` ordering.
-pub fn rank_documents(rows: &mut [RankedDocument], limit: usize) {
+pub fn rank_documents(rows: &mut Vec<RankedDocument>, limit: usize) {
     rows.sort_by(|a, b| {
         a.best_rank.cmp(&b.best_rank)
             .then_with(|| b.total_matches.cmp(&a.total_matches))
+            .then_with(|| a.best_score.total_cmp(&b.best_score))
             .then_with(|| (a.document_date <= 0.0).cmp(&(b.document_date <= 0.0)))
             .then_with(|| b.document_date.total_cmp(&a.document_date))
-            .then_with(|| a.best_score.total_cmp(&b.best_score))
             .then_with(|| a.document.cmp(&b.document))
     });
     rows.truncate(limit);
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn preserves_existing_hierarchy_score_order() {
-        let mut rows = [
+        let mut rows = vec![
             RankedDocument { document: 0, total_matches: 100, best_rank: 2, best_score: -0.8, document_date: 1.0 },
             RankedDocument { document: 1, total_matches: 2, best_rank: 1, best_score: -0.1, document_date: 1.0 },
             RankedDocument { document: 2, total_matches: 2, best_rank: 1, best_score: -0.5, document_date: 0.0 },
