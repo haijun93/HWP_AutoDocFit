@@ -66,6 +66,11 @@ fn strip_shading_attrs(raw:&str, keep:bool)->String {
     out
 }
 fn style_value(raw:&str,key:&str)->Option<String>{let p=re(&format!(r"(?i)(?:^|[;\s]){}\s*:\s*([^;]+)",regex::escape(key)));p.captures(raw).map(|c|c[1].trim().to_string())}
+fn class_styles(html:&str)->std::collections::HashMap<String,String>{
+    let blocks=re(r"(?is)<style\b[^>]*>(.*?)</style\s*>");let rules=re(r"(?is)\.([\w-]+)\s*\{([^}]*)\}");let mut map=std::collections::HashMap::new();
+    for block in blocks.captures_iter(html){for rule in rules.captures_iter(&block[1]){map.insert(rule[1].to_ascii_lowercase(),re(r"\s+").replace_all(&rule[2]," ").into_owned());}}
+    map
+}
 fn set_bgcolor(raw:&str,value:&str)->String {
     let attr=re(r#"(?i)bgcolor\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#);
     if let Some(m)=attr.find_iter(raw).find(|m|m.start()==0 || !raw[..m.start()].chars().last().is_some_and(|c|c.is_alphanumeric()||c=='_'||c=='-')) {
@@ -101,13 +106,16 @@ fn transform(raw:&str,keep:bool)->Vec<u8>{
     let (header,html)=if let Some(c)=start_re.captures(raw){let n=c[1].parse::<usize>().unwrap_or(0);if n>0&&n<raw.len()&&raw.is_char_boundary(n){(&raw[..n],&raw[n..])}else{("",raw)}}else{("",raw)};
     if !re(r"(?i)<t[dh]\b").is_match(html){return raw.as_bytes().to_vec()}
     let mut new=html.to_string();
+    let classes=class_styles(html);
     if !keep { new=strip_style_blocks(&new); }
     // Cell transformation, preserving source markup and attribute ordering.
     let cell=re(r#"(?is)(<(td|th)\b)((?:"[^"]*"|'[^']*'|[^>"'])*)>(.*?)</(td|th)\s*>"#);
     new=cell.replace_all(&new,|c:&Captures|{
         let tag=&c[2]; let mut attrs=c[3].trim().to_string(); let inner=&c[4];
         let blank_re=re(&format!(r"(?is)^[{BLANKS}]*$")); let tags=re(r"<[^>]*>");
-        let stripped=tags.replace_all(inner,"");
+        let entities=re(r"(?i)&nbsp;|&#160;|&#12288;");
+        let tags_stripped=tags.replace_all(inner," ");
+        let stripped=entities.replace_all(&tags_stripped," ");
         let blank=blank_re.is_match(&stripped);
         let numeric_text=plain(inner); let isnum=numeric(&numeric_text);
         let mut body=inner.to_string();
@@ -118,20 +126,25 @@ fn transform(raw:&str,keep:bool)->Vec<u8>{
             let trail=re(&format!(r"(?i)(?:[{BLANKS}]|&nbsp;|&#160;|&#12288;|<span\b[^>]*mso-spacerun[^>]*>(?:[{BLANKS}]|&nbsp;|&#160;|&#12288;)*</span\s*>)+$"));
             if let Some(m)=trail.find(&body){body.replace_range(m.range()," ");}
         }
+        let current=attr_map(&attrs);let cls=current.get("class").and_then(|v|classes.get(&v.to_ascii_lowercase())).map(String::as_str).unwrap_or("");
+        let inline=re(r#"(?i)style\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#).captures(&attrs).and_then(|c|c.get(1)).map(|m|m.as_str().trim_matches(['"','\'']).to_string()).unwrap_or_default();
         if keep {
-            if let Some(raw_color)=attr_map(&attrs).get("bgcolor").and_then(|v|css_color(v)) { attrs=set_bgcolor(&attrs,&raw_color); }
-            else if let Some(raw_style)=re(r#"(?i)style\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)"#).captures(&attrs).and_then(|c|c.get(1)).map(|m|m.as_str().trim_matches(['"','\'']).to_string()) {
-                let fill=style_value(&raw_style,"background-color").or_else(||style_value(&raw_style,"background")).and_then(|v|css_color(&v));
-                if let Some(color)=fill {attrs=set_bgcolor(&attrs,&color);}
-            }
+            let fill=current.get("bgcolor").and_then(|v|css_color(v))
+                .or_else(||style_value(&inline,"background-color").or_else(||style_value(&inline,"background")).and_then(|v|css_color(&v)))
+                .or_else(||style_value(cls,"background-color").or_else(||style_value(cls,"background")).and_then(|v|css_color(&v)));
+            if let Some(color)=fill {attrs=set_bgcolor(&attrs,&color);}
         }
         attrs=strip_shading_attrs(&attrs,keep);
         attrs=normalize_attr_spaces(&attrs);
         if isnum { attrs=set_attr(&attrs,"align","right"); attrs=set_style(&attrs,&[("text_align","right".into())]); }
+        else {let align=style_value(&inline,"text-align").or_else(||style_value(cls,"text-align")).or_else(||current.get("align").cloned()).unwrap_or_default().to_ascii_lowercase();if ["left","center","right","justify"].contains(&align.as_str()){attrs=set_attr(&attrs,"align",&align);attrs=set_style(&attrs,&[("text_align",align)]);}}
         let style=format!("padding-top:1.4pt;padding-right:5.1pt;padding-bottom:1.4pt;padding-left:5.1pt");
         attrs=set_style(&attrs,&[("padding_top","1.4pt".into()),("padding_right","5.1pt".into()),("padding_bottom","1.4pt".into()),("padding_left","5.1pt".into())]);
-        attrs=set_attr(&attrs,"valign","middle"); attrs=set_style(&attrs,&[("vertical_align","middle".into())]);
-        if tag.eq_ignore_ascii_case("th"){attrs=set_style(&attrs,&[("font_weight","bold".into())]);}
+        let valign=style_value(&inline,"vertical-align").or_else(||style_value(cls,"vertical-align")).or_else(||current.get("valign").cloned()).unwrap_or_else(||"middle".into()).to_ascii_lowercase();
+        attrs=set_attr(&attrs,"valign",&valign); attrs=set_style(&attrs,&[("vertical_align",valign)]);
+        let weight=style_value(&inline,"font-weight").or_else(||style_value(cls,"font-weight")).unwrap_or_default();
+        if tag.eq_ignore_ascii_case("th")||weight=="bold"||weight=="bolder"||weight.parse::<u16>().is_ok_and(|v|v>=600){attrs=set_style(&attrs,&[("font_weight","bold".into())]);}
+        for prop in ["color","border"] {if style_value(&inline,prop).is_none(){if let Some(v)=style_value(cls,prop){attrs=set_style(&attrs,&[(if prop=="color"{"color"}else{"border"},v)]);}}}
         let _=style;
         let attrs = if !keep { re(r#"(?i)\s*\b(?:bgcolor|background)\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)"#).replace_all(&attrs, " ").into_owned() } else { attrs };
         let opening = if attrs.trim().is_empty() { c[1].to_string() } else { format!("{}{}{}",&c[1],if c[1].ends_with(char::is_whitespace){""}else{" "},attrs.trim()) };
