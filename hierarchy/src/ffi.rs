@@ -1,5 +1,5 @@
 //! Stable, allocation-safe C ABI for Flutter and other native clients.
-use crate::{analyze_paragraphs, SchemeParagraph};
+use crate::{analyze_paragraphs, SchemeParagraph, StructureDiagnostic};
 use std::{ffi::c_char, ptr, slice, str};
 
 fn escape(value: &str) -> String {
@@ -31,9 +31,17 @@ fn analyze(input: &str) -> Result<String, String> {
         in_attachment: p.get("in_attachment").and_then(|v| v.as_bool()).unwrap_or(false),
     }).collect();
     let results = analyze_paragraphs(&records);
+    let diagnostic = |d: &StructureDiagnostic| -> String { match d {
+        StructureDiagnostic::NumberGap { paragraph, expected, found } => format!("number_gap:{}:{}:{}", paragraph, expected, found),
+        StructureDiagnostic::LevelGap { paragraph, from, to } => format!("level_gap:{}:{}:{}", paragraph, from, to),
+        StructureDiagnostic::OrphanLevel { paragraph, level } => format!("orphan_level:{}:{}", paragraph, level),
+        StructureDiagnostic::OrderViolation { paragraph, expected_rank, found_rank } => format!("order_violation:{}:{}:{}", paragraph, expected_rank, found_rank),
+        StructureDiagnostic::SameLevelDifferentFamily { rank } => format!("same_level_different_family:{}", rank),
+    }};
     let items: Vec<String> = results.iter().map(|r| {
         let parent = r.parent_index.map(|i| i.to_string()).unwrap_or_else(|| "null".into());
-        format!("{{\"role\":{},\"kind\":{},\"parent_index\":{},\"confidence\":{},\"diagnostics\":[]}}", escape(&format!("{:?}", r.role).to_lowercase()), escape(&format!("{:?}", r.kind).to_lowercase()), parent, r.confidence)
+        let diagnostics = r.diagnostics.iter().map(|d| escape(&diagnostic(d))).collect::<Vec<_>>().join(",");
+        format!("{{\"role\":{},\"kind\":{},\"parent_index\":{},\"confidence\":{},\"diagnostics\":[{}]}}", escape(&format!("{:?}", r.role).to_lowercase()), escape(&format!("{:?}", r.kind).to_lowercase()), parent, r.confidence, diagnostics)
     }).collect();
     Ok(format!("{{\"results\":[{}]}}", items.join(",")))
 }

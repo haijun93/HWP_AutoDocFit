@@ -1,4 +1,5 @@
 import os
+import json
 import stat
 import sys
 import tempfile
@@ -52,6 +53,19 @@ class RealExecutableTests(unittest.TestCase):
         self.assertEqual(len(r["levels"]), 2)
         self.assertEqual(r["levels"][:2], [1, 2])
         self.assertEqual(hb.analyze_levels([], {"hierarchy_engine": True})["levels"], [])
+
+    def test_dll_matches_cli(self):
+        library = hb._load_library()
+        executable = hb.find_executable()
+        if library is None or executable is None:
+            self.skipTest("hierarchy DLL or CLI not built")
+        root = Path(__file__).resolve().parents[1]
+        golden = json.loads((root / "hierarchy" / "tests" / "golden.json").read_text(encoding="utf-8"))["cases"]
+        paragraphs = [{"text": row["text"], "indent": 0, "font_size": 12} for row in golden]
+        ffi = hb.run_library(library, paragraphs)
+        cli = hb.run_executable(executable, paragraphs)
+        for key in ("levels", "confidence", "ambiguous", "diagnostics"):
+            self.assertEqual(ffi[key], cli[key], key)
 
 
 if __name__ == "__main__":
