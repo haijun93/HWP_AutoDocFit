@@ -14,6 +14,7 @@ mod nb_transform;
 mod scan;
 mod extract;
 mod index_content;
+mod unify_marker;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -74,6 +75,20 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if args.first().is_some_and(|a| a == "unify-marker") {
+        use std::io::{self, Read};
+        let mut input = String::new();
+        if let Err(error) = io::stdin().read_to_string(&mut input) { eprintln!("{error}"); std::process::exit(1); }
+        let texts: Vec<String> = match json::parse(input.trim()) {
+            Some(json::Value::Arr(items)) => items.into_iter().filter_map(|v| match v { json::Value::Str(s) => Some(s), _ => None }).collect(),
+            _ => input.lines().map(str::to_owned).collect(),
+        };
+        let values: Vec<_> = texts.iter().map(|text| unify_marker::unify_marker(text)).map(|(group, role, marker)|
+            json::Value::Arr(vec![group.into(), role.into(), marker.into()])).collect();
+        println!("{}", json::to_string(&json::Value::Arr(values)));
+        return;
+    }
 
     if args.first().is_some_and(|a| a == "index-content") {
         if args.len() < 3 { eprintln!("usage: klib index-content <db> <file-or-folder>..."); std::process::exit(2); }
