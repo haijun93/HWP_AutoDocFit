@@ -88,11 +88,19 @@ def cases(name, paragraphs):
             ]
         ]
     if name == "document_type":
-        from itertools import combinations
-
-        base = ("장", "중제목", "소제목")
-        subsets = [list(c) for n in range(4) for c in combinations(base, n)]
-        return [{"roles": r, "has_midtitle_table": b} for r in subsets for b in (False, True)]
+        # Exhaust the roles observed in each source fixture (including the
+        # empty set), then check both table-backed and paragraph midtitles.
+        observed = {tuple(sorted(set()))}
+        for role in ROLES:
+            observed.add((role,))
+        for start in range(0, len(paragraphs), 25):
+            roles = sorted({str(p.get("role", "")) for p in paragraphs[start : start + 25]})
+            observed.add(tuple(roles))
+        return [
+            {"roles": list(r), "has_midtitle_table": b}
+            for r in sorted(observed)
+            for b in (False, True)
+        ]
     if name == "analyze_hierarchy":
         corpus = [paragraphs[i : i + 25] for i in range(0, len(paragraphs), 25)]
         return [{"paragraphs": x} for x in corpus]
