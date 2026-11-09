@@ -6,8 +6,10 @@ publish = false
 
 [lib]
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+serde_json = "1"
 
 [[bin]]
 name = "hierarchy"

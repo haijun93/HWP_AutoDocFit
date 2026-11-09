@@ -1,11 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/timemachine/timemachine_screen.dart';
+import 'package:docfit_ui/core/hierarchy_ffi.dart';
 
 void main() {
   _labelsTest();
+  test('DLL이 없는 환경에서 위계 FFI는 기존 백엔드 대체 경로를 선택한다', () {
+    if (!Platform.isWindows) {
+      expect(HierarchyFfi.instance.analyze([{'text': '1. 항목'}]), isNull);
+    }
+  });
   testWidgets('켜기 후 목록과 날짜 머리글 표시', (tester) async {
     final api = _FakeApi();
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call))));
@@ -20,47 +27,44 @@ void main() {
     expect(find.textContaining('오늘 ·'),findsOneWidget);
   });
 
-  testWidgets('개발자 모드가 꺼져 있으면 본문검색·연관검색 진입을 숨기고 호출하지 않는다', (tester) async {
+  testWidgets('일반 모드에서도 본문검색·연관검색 진입과 요청이 가능하다', (tester) async {
     final api = _FakeApi(enabled: true, developerMode: false);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     expect(find.text('파일명'), findsOneWidget);
-    expect(find.text('본문검색'), findsNothing);
-    expect(find.text('연관검색'), findsNothing);
-    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
-    expect(api.calls.any((c) => c.$1.startsWith('content_') || c.$1 == 'related_search'), false);
-    expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '회의');
-  });
-
-  testWidgets('개발자 모드 전환 직후 본문검색 표시와 본문 모드가 바로 바뀐다', (tester) async {
-    final api = _FakeApi(enabled: true, developerMode: true);
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
-    await tester.pumpAndSettle();
+    expect(find.text('본문검색'), findsAtLeastNWidgets(1));
+    expect(find.text('연관검색'), findsOneWidget);
     await tester.tap(find.text('본문검색'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
-    expect(find.text('본문포함.docx'), findsOneWidget);
+    expect(find.byKey(const ValueKey('tm-content-sort-dropdown')), findsOneWidget);
+    await tester.tap(find.text('연관검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '사업');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(api.calls.any((c) => c.$1 == 'related_search'), true);
+  });
+
+  testWidgets('일반 모드에서 검색 후 개발자 모드를 꺼도 본문검색·연관검색이 유지된다', (tester) async {
+    final api = _FakeApi(enabled: true, developerMode: false);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('tm-content-sort-dropdown')), findsOneWidget);
 
     api.developerMode = false;
     await tester.pump(const Duration(milliseconds: 1100));
     await tester.pumpAndSettle();
-    expect(find.text('본문검색'), findsNothing);
-    expect(find.text('본문포함.docx'), findsNothing);
-    expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '');
-    final searchesBefore = api.calls.where((c) => c.$1 == 'content_search').length;
-    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
-    expect(api.calls.where((c) => c.$1 == 'content_search').length, searchesBefore);
+    expect(find.byKey(const ValueKey('tm-content-sort-dropdown')), findsOneWidget);
 
     api.developerMode = true;
     await tester.pump(const Duration(milliseconds: 1100));
     await tester.pumpAndSettle();
-    expect(find.text('본문검색'), findsOneWidget);
+    expect(find.text('본문검색'), findsAtLeastNWidgets(1));
     expect(find.text('연관검색'), findsOneWidget);
   });
 
@@ -658,7 +662,7 @@ void main() {
     expect(find.text('관련도순'), findsWidgets);
 
     // 다른 정렬 선택
-    await tester.tap(find.byKey(const ValueKey('tm-content-sort-dropdown')).last);
+    await tester.tap(find.byKey(const ValueKey('tm-content-sort-dropdown')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('수정일순').last);
     await tester.pumpAndSettle();

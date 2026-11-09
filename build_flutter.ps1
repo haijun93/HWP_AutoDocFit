@@ -16,6 +16,9 @@ if (-not (Get-Command $flutter -ErrorAction SilentlyContinue)) {
     if (Test-Path -LiteralPath $localSdk) { $flutter = $localSdk }
     else { throw 'Flutter SDK not found. Set FLUTTER_SDK or add flutter to PATH.' }
 }
+$hierarchyManifest = Join-Path $PSScriptRoot 'hierarchy\Cargo.toml'
+& cargo build --locked --release --manifest-path $hierarchyManifest
+if ($LASTEXITCODE -ne 0) { throw 'Hierarchy DLL build failed.' }
 & (Join-Path $PSScriptRoot 'scripts\build_flow_editor.ps1')
 Push-Location (Join-Path $PSScriptRoot 'flutter_ui')
 try {

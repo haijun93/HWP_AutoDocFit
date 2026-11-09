@@ -76,6 +76,23 @@ class ContentSearchTests(unittest.TestCase):
         self.index.close()
         self.tmp.cleanup()
 
+    def test_engine_enabled_converts_levels_for_index(self):
+        from unittest.mock import patch
+        from docfit_core.timemachine.content_search import classify_paragraph_levels
+        records = [ParagraphRecord(i, text, "body", LEVEL_ORDER.index("body"), False)
+                   for i, text in enumerate(("제목", "본문"))]
+        with patch("docfit_app.hierarchy_bridge.analyze_levels",
+                   return_value={"levels": [0, 5]}):
+            result = classify_paragraph_levels("dummy.txt", records)
+        self.assertEqual([p.level for p in result], ["document_title", "circle"])
+
+    def test_engine_unavailable_preserves_python_index_classification(self):
+        from unittest.mock import patch
+        records = [ParagraphRecord(0, "ㅁ 항목", "body", LEVEL_ORDER.index("body"), False)]
+        with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value=None):
+            result = classify_paragraph_levels("dummy.txt", records)
+        self.assertEqual(result[0].level, "square")
+
     def test_txt_search_snippet_and_incremental_update(self):
         path = self.root / "보고서.txt"
         path.write_text("분기별 업무 실적 검색 대상 문장", encoding="utf-8")
@@ -140,6 +157,70 @@ class ContentSearchTests(unittest.TestCase):
         self.assertEqual(found[0]["snippet"][slice(*found[0]["highlights"][0])], "업무")
         names = self.index.search_files("strong txt")
         self.assertEqual(names[0]["name"], strong.name)
+
+    def test_sql_document_aggregation_matches_legacy_top20_and_snippets(self):
+        # Small synthetic FTS corpus with ties, hierarchy levels, and multiple hits.
+        with self.index._lock, self.index.db:
+            for doc in range(24):
+                path = f"{self.root}/synthetic-{doc:02}.txt"
+                self.index.db.execute(
+                    "INSERT INTO content_meta(path,name,extension,mtime,ctime,hierarchy_schema_version) VALUES(?,?,?,?,?,?)",
+                    (path, Path(path).name, "txt", 1_800_000_000 + doc, 1_800_000_000 + doc,
+                     CURRENT_HIERARCHY_SCHEMA_VERSION),
+                )
+                paragraphs = [
+                    (0, "chapter", 1, f"needle alpha doc{doc} " + "x " * (doc % 4)),
+                    (1, "body", 8, "alpha elsewhere"),
+                    (2, "body", 8, ("needle " * (1 + doc % 3)) + "ending"),
+                ]
+                for idx, level, rank, body in paragraphs:
+                    self.index.db.execute(
+                        "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body) VALUES(?,?,?,?,?,?)",
+                        (path, Path(path).name, str(idx), level, rank, body),
+                    )
+
+        # Legacy reference: materialize matched paragraphs and apply the former
+        # Python occurrence count, hierarchy/date ordering, and snippet slicing.
+        with self.index._lock:
+            rows = self.index.db.execute("""
+                SELECT path, CAST(paragraph_index AS INTEGER) AS paragraph_index, level, level_rank, body,
+                       bm25(content_paragraph_fts) AS bm25_rank
+                FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?
+                ORDER BY path, CAST(paragraph_index AS INTEGER)
+            """, ('"needle" OR "alpha"',)).fetchall()
+        grouped = {}
+        for row in rows:
+            grouped.setdefault(row["path"], []).append(row)
+        terms = ["needle", "alpha"]
+        expected = []
+        for path, paras in grouped.items():
+            joined = "\n".join(p["body"] or "" for p in paras)
+            folded = joined.casefold()
+            if any(term not in folded for term in terms):
+                continue
+            counts = {term: folded.count(term) for term in terms}
+            best = min((p for p in paras if any(t in (p["body"] or "").casefold() for t in terms)),
+                       key=lambda p: (int(p["level_rank"] or 8), p["paragraph_index"]))
+            expected.append({
+                "path": path,
+                "total_matches": sum(counts.values()),
+                "_best_level_rank": int(best["level_rank"] or 8),
+                "_document_date": 1_800_000_000 + int(path[-6:-4]),
+                "_bm25_score": min(float(p["bm25_rank"] or 0) for p in paras),
+                "body": best["body"],
+            })
+        expected.sort(key=lambda x: (x["_best_level_rank"], -x["total_matches"], 0,
+                                     -x["_document_date"], x["_bm25_score"], x["path"].casefold()))
+        expected = expected[:20]
+        for item in expected:
+            body = item.pop("body")
+            start = max(0, body.casefold().find("needle") - 70)
+            item["snippet"] = body[start:min(len(body), body.casefold().find("needle") + 180)]
+
+        actual = self.index.search("needle alpha", roots=[str(self.root)], limit=20)
+        self.assertEqual([r["path"] for r in actual], [r["path"] for r in expected])
+        self.assertEqual([r["total_matches"] for r in actual], [r["total_matches"] for r in expected])
+        self.assertEqual([r["snippet"] for r in actual], [r["snippet"] for r in expected])
 
     def test_keyword_search_uses_bm25_and_limits_locations(self):
         weak = self.root / "a_weak.txt"

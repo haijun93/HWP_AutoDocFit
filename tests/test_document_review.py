@@ -2,13 +2,21 @@ import tempfile
 import unittest
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
+from unittest.mock import patch
 
+from docfit_core import document_review
+from docfit_app import hierarchy_bridge
 from docfit_core.document_review import _structure_issues, _visual_issues, review_document
 from docfit_core.style_hierarchy import display_role, stored_role
 from tests.test_style_profile import HEADER, SECTION
 
 
 class DocumentReviewTest(unittest.TestCase):
+    def test_engine_level_conversion_keeps_review_role_contract(self):
+        from docfit_core.document_review import convert_engine_levels_to_review_roles
+        self.assertEqual(convert_engine_levels_to_review_roles({"levels": [0, 1, 3, 4, 7]}),
+                         ["제목", "장", "소제목", "본문", "부연설명"])
+
     def test_stage_labels_keep_profile_roles_compatible(self):
         for internal, label in (("제목", "1단계"), ("장", "2단계"), ("중제목", "3단계"),
                                 ("소제목", "4단계"), ("본문", "5단계"),
@@ -36,6 +44,21 @@ class DocumentReviewTest(unittest.TestCase):
         self.assertEqual(result["outline"][0]["role"], "4단계")
         self.assertTrue(any(issue["category"] == "첫머리 검토" for issue in result["issues"]))
         self.assertTrue(any("목표·핵심 실행 방안·일정" in issue["message"] for issue in result["issues"]))
+
+    def test_disabled_engine_matches_legacy_python_review_exactly(self):
+        section = SECTION.replace("문서 제목".encode(), "□ 계획".encode()).replace(
+            "기호 없이 작성된 일반 본문입니다.".encode(), "ㅇ 실행 방안".encode())
+        with tempfile.TemporaryDirectory() as folder:
+            source = self._source(folder, section)
+            # Baseline: the pre-engine Python hierarchy path.
+            with patch.object(document_review, "analyze_engine_levels", return_value=None):
+                legacy = document_review.extract_review_paragraphs(source)
+            # Disabled bridge must select that same fallback and preserve every field.
+            with patch.object(document_review, "analyze_engine_levels",
+                              side_effect=lambda paragraphs: hierarchy_bridge.analyze_levels(
+                                  paragraphs, {"hierarchy_engine": False})):
+                disabled = document_review.extract_review_paragraphs(source)
+        self.assertEqual(disabled, legacy)
 
     def test_review_flags_are_suggestions_with_locations(self):
         section = SECTION.replace("문서 제목".encode(), "- 내용 추진 검토".encode()).replace(
