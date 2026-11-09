@@ -57,8 +57,8 @@ const CAPTION_W: i32 = 46;
 const COLLAPSED_H: i32 = HEAD_H + 2;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
-/// 최소 폭: 제목(약 90) + 단추 6개(276).
-const MIN_W: i32 = 370;
+/// 최소 폭: 제목(약 90) + 단추 7개(322).
+const MIN_W: i32 = 420;
 const MIN_H: i32 = HEAD_H + CAT_H + ROW_H * 2 + 2;
 /// 크기 조절로 쓰는 가장자리 폭(창 안쪽).
 const GRIP: i32 = 6;
@@ -134,10 +134,10 @@ fn next_tab(cur: usize, delta: isize) -> usize {
 // ---- 상단 메뉴바 단추 ----
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum HeadButton { Settings, Capture, Pin, Minimize, Maximize, Close }
+enum HeadButton { Settings, Capture, Memo, Pin, Minimize, Maximize, Close }
 
 /// 왼쪽부터 놓이는 순서. 모두 같은 폭이고 닫기가 맨 오른쪽.
-const HEAD_BUTTONS: [HeadButton; 6] = [HeadButton::Settings, HeadButton::Capture, HeadButton::Pin,
+const HEAD_BUTTONS: [HeadButton; 7] = [HeadButton::Settings, HeadButton::Capture, HeadButton::Memo, HeadButton::Pin,
                                        HeadButton::Minimize, HeadButton::Maximize, HeadButton::Close];
 
 /// 단추의 가로 범위(창 안 좌표, 화면 배율 적용한 폭).
@@ -164,6 +164,7 @@ fn head_button_name(b: HeadButton, pinned: bool, maximized: bool) -> &'static st
     match b {
         HeadButton::Settings => "설정 (보관 개수·자동 실행 등)",
         HeadButton::Capture => "화면 캡처",
+        HeadButton::Memo => "메모 작성",
         HeadButton::Pin if pinned => "항상 위 끄기 (켜짐)",
         HeadButton::Pin => "항상 위 켜기",
         HeadButton::Minimize => "최소화 (단축키로 다시 열기)",
@@ -178,6 +179,7 @@ fn head_button_glyph(b: HeadButton, pinned: bool, maximized: bool) -> char {
     match b {
         HeadButton::Settings => '\u{E713}',                  // Setting
         HeadButton::Capture => '\u{E722}',                   // Camera
+        HeadButton::Memo => '\u{E70F}',                      // Edit
         HeadButton::Pin => if pinned { '\u{E840}' } else { '\u{E718}' }, // Pinned / Pin
         HeadButton::Minimize => '\u{E921}',                  // ChromeMinimize
         HeadButton::Maximize => if maximized { '\u{E923}' } else { '\u{E922}' }, // ChromeRestore / ChromeMaximize
@@ -822,7 +824,7 @@ unsafe fn paint(hwnd: HWND) {
                 fill(br, 0x00F2DCC4);
             }
             SetTextColor(mem, if hovered && b == HeadButton::Close { 0x00FFFFFF } else if on { ACCENT } else { 0x00333333 });
-            let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Pin);
+            let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Memo | HeadButton::Pin);
             SelectObject(mem, if big { glyph_big } else { glyph });
             draw(&head_button_glyph(b, pinned, maximized).to_string(), br, DT_CENTER);
         }
@@ -1366,6 +1368,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     match btn.filter(|b| Some(*b) == pressed) {
                         Some(HeadButton::Settings) => { settings_menu(hwnd); return 0; }
                         Some(HeadButton::Capture) => { hide(); crate::capture_screen(); }
+                        Some(HeadButton::Memo) => { hide(); crate::start_memo(); }
                         Some(HeadButton::Pin) => toggle_pin(),
                         Some(HeadButton::Minimize) => minimize(),
                         Some(HeadButton::Maximize) => toggle_max(hwnd),
@@ -1457,8 +1460,8 @@ mod tests {
     use crate::category::CategorySet;
 
     #[test]
-    fn caption_buttons_right_to_left_close_max_min_pin_capture_settings() {
-        // 폭 600, 단추 46: 닫기 554..600, 최대화 508..554, 최소화 462..508, 항상 위 416..462, 캡처 370..416, 설정 324..370
+    fn caption_buttons_right_to_left_close_max_min_pin_memo_capture_settings() {
+        // 폭 600, 단추 46: 닫기 554..600, 최대화 508..554, 최소화 462..508, 항상 위 416..462, 메모 370..416, 캡처 324..370, 설정 278..324
         assert_eq!(head_button(599, 5, 600, 46, 32), Some(HeadButton::Close));
         assert_eq!(head_button(554, 5, 600, 46, 32), Some(HeadButton::Close));
         assert_eq!(head_button(553, 5, 600, 46, 32), Some(HeadButton::Maximize));
@@ -1467,11 +1470,13 @@ mod tests {
         assert_eq!(head_button(462, 5, 600, 46, 32), Some(HeadButton::Minimize));
         assert_eq!(head_button(461, 5, 600, 46, 32), Some(HeadButton::Pin));
         assert_eq!(head_button(416, 5, 600, 46, 32), Some(HeadButton::Pin));
-        assert_eq!(head_button(415, 5, 600, 46, 32), Some(HeadButton::Capture));
-        assert_eq!(head_button(370, 5, 600, 46, 32), Some(HeadButton::Capture));
-        assert_eq!(head_button(369, 5, 600, 46, 32), Some(HeadButton::Settings));
-        assert_eq!(head_button(324, 5, 600, 46, 32), Some(HeadButton::Settings));
-        assert_eq!(head_button(323, 5, 600, 46, 32), None); // 제목(끌어 옮기기) 영역
+        assert_eq!(head_button(415, 5, 600, 46, 32), Some(HeadButton::Memo));
+        assert_eq!(head_button(370, 5, 600, 46, 32), Some(HeadButton::Memo));
+        assert_eq!(head_button(369, 5, 600, 46, 32), Some(HeadButton::Capture));
+        assert_eq!(head_button(324, 5, 600, 46, 32), Some(HeadButton::Capture));
+        assert_eq!(head_button(323, 5, 600, 46, 32), Some(HeadButton::Settings));
+        assert_eq!(head_button(278, 5, 600, 46, 32), Some(HeadButton::Settings));
+        assert_eq!(head_button(277, 5, 600, 46, 32), None); // 제목(끌어 옮기기) 영역
         assert_eq!(head_button(10, 5, 600, 46, 32), None);
     }
 
@@ -1487,7 +1492,7 @@ mod tests {
     fn caption_button_spans_are_equal_and_contiguous() {
         let spans: Vec<_> = HEAD_BUTTONS.iter().map(|b| head_button_span(*b, MIN_W, 46)).collect();
         assert_eq!(spans.last().unwrap().1, MIN_W);
-        assert_eq!(spans[0].0, MIN_W - 46 * 6);
+        assert_eq!(spans[0].0, MIN_W - 46 * 7);
         assert!(spans[0].0 >= 90); // 최소 폭에서도 제목 칸 90px 남음
         for pair in spans.windows(2) {
             assert_eq!(pair[0].1, pair[1].0);

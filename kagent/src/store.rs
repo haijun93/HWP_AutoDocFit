@@ -302,6 +302,19 @@ impl Store {
         Ok((self.conn.last_id(), true))
     }
 
+    /// 같은 메모 파일의 후속 저장: 행 ID를 보존하고 내용·미리보기·크기·해시를 갱신한다.
+    pub fn update_memo(&mut self, id: i64, data: &[u8], preview: &str, now: f64) -> Result<(), String> {
+        if data.is_empty() || String::from_utf8_lossy(data).trim().is_empty() { return Ok(()); }
+        let hash = content_hash("text", data);
+        let sealed = crypt::protect(data).ok_or("암호화 실패")?;
+        let sealed_preview = crypt::protect(preview.as_bytes()).ok_or("암호화 실패")?;
+        self.conn.run("UPDATE items SET used=?, kind='text', hash=?, size=?, source='notepad.exe', preview=?, payload=?, extra=x'' WHERE id=?",
+            &[Arg::Real(now), Arg::Text(&hash), Arg::Int(data.len() as i64), Arg::Blob(&sealed_preview), Arg::Blob(&sealed), Arg::Int(id)])?;
+        self.previews.insert(id, preview.to_owned());
+        self.info.borrow_mut().remove(&id);
+        Ok(())
+    }
+
     /// 한도 정리: 보관 기간 → 개수 → 전체 용량 순서. 고정 항목은 지우지 않는다. 지운 개수.
     pub fn enforce(&self, s: &Settings, now: f64) -> Result<usize, String> {
         let mut removed = self.conn.run("DELETE FROM items WHERE pinned = 0 AND used < ?",
@@ -546,6 +559,17 @@ mod tests {
         assert_eq!(s.count().unwrap(), 2);
         assert_eq!(s.payload(a).unwrap().unwrap(), ("text".into(), "첫째".as_bytes().to_vec(), Vec::new()));
         assert_eq!(s.recent(10, Some("둘")).unwrap()[0].id, b);
+    }
+
+    #[test]
+    fn memo_saves_update_one_encrypted_item_and_ignore_empty() {
+        let mut s = store();
+        let id = s.insert_plain("text", b"draft", "draft", "notepad.exe", 1.0).unwrap().0;
+        s.update_memo(id, b"", "", 2.0).unwrap();
+        s.update_memo(id, b"revised memo", "revised memo", 3.0).unwrap();
+        assert_eq!(s.count().unwrap(), 1);
+        assert_eq!(s.payload(id).unwrap().unwrap(), ("text".into(), b"revised memo".to_vec(), Vec::new()));
+        assert_eq!(s.recent(10, None).unwrap()[0].id, id);
     }
 
     #[test]
