@@ -13,6 +13,7 @@ mod style_inventory {
     pub mod lang_values;
     pub mod shade;
     pub mod parse_char;
+    pub mod parse_para;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -99,6 +100,11 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tree = value.get("tree").ok_or("_parse_fonts expects {\"tree\": ...}")?;
             Ok(serde_json::to_string(&style_inventory::parse_fonts::parse_fonts(tree)).unwrap())
+        }
+        "_parse_para" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_parse_para expects tree")?;
+            Ok(serde_json::to_string(&style_inventory::parse_para::parse_para(tree)).unwrap())
         }
         "_parse_char" => {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
