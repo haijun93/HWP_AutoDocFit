@@ -104,11 +104,12 @@ def python_rows(paragraphs: list[dict]) -> list[dict]:
     return rows
 
 
-def rust_rows(executable: Path, paragraphs: list[dict]) -> list[dict]:
-    payload = {"paragraphs": [{"text": p["text"],
-                               "indent": p["left"] + p["indent"],
+def rust_rows(executable: Path, paragraphs: list[dict], *, python_compat: bool = True) -> list[dict]:
+    payload = {"paragraphs": [{"text": p["text"], "left": p["left"],
+                               "indent": p["indent"], "font": p["font"],
                                "font_size": p["size_pt"]} for p in paragraphs]}
-    proc = subprocess.run([str(executable)], input=json.dumps(payload, ensure_ascii=False),
+    command = [str(executable)] + (["--python-compat"] if python_compat else [])
+    proc = subprocess.run(command, input=json.dumps(payload, ensure_ascii=False),
                           text=True, encoding="utf-8", capture_output=True, check=True)
     result = json.loads(proc.stdout)
     if len(result.get("levels", [])) != len(paragraphs):

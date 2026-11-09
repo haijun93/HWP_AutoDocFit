@@ -1,10 +1,11 @@
-//! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
+﻿//! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
 use hierarchy::{analyze_paragraphs, ParagraphKind, Role, SchemeParagraph, StructureDiagnostic};
+#[path = "../python_compat.rs"] mod python_compat;
 use std::io::{Read, Write};
 
-struct P { text: String, indent: i32, font_size: f64 }
+pub struct P { pub text: String, pub indent: i32, pub left: i32, pub font: Option<String>, pub font_size: f64 }
 
-struct Parser<'a> { b: &'a [u8], i: usize }
+pub struct Parser<'a> { pub b: &'a [u8], pub i: usize }
 impl<'a> Parser<'a> {
     fn ws(&mut self) { while self.i < self.b.len() && (self.b[self.i] as char).is_ascii_whitespace() { self.i += 1; } }
     fn eat(&mut self, c: u8) -> Result<(), String> { self.ws(); if self.b.get(self.i) == Some(&c) { self.i += 1; Ok(()) } else { Err(format!("'{}' expected at {}", c as char, self.i)) } }
@@ -58,7 +59,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn paragraph(&mut self) -> Result<P, String> {
-        let mut p = P { text: String::new(), indent: 0, font_size: 0.0 };
+        let mut p = P { text: String::new(), indent: 0, left: 0, font: None, font_size: 0.0 };
         self.eat(b'{')?;
         if self.peek() == Some(b'}') { self.i += 1; return Ok(p); }
         loop {
@@ -66,6 +67,8 @@ impl<'a> Parser<'a> {
             match k.as_str() {
                 "text" => p.text = self.string()?,
                 "indent" => p.indent = self.number()? as i32,
+                "left" => p.left = self.number()? as i32,
+                "font" => { if self.peek()==Some(b'n') { self.skip()?; } else { p.font=Some(self.string()?); } },
                 "font_size" => p.font_size = self.number()?,
                 _ => self.skip()?,
             }
@@ -73,7 +76,7 @@ impl<'a> Parser<'a> {
         }
         self.eat(b'}')?; Ok(p)
     }
-    fn root(&mut self) -> Result<Vec<P>, String> {
+    pub fn root(&mut self) -> Result<Vec<P>, String> {
         let mut v = Vec::new();
         self.eat(b'{')?;
         if self.peek() != Some(b'}') {
@@ -133,6 +136,7 @@ fn run() -> Result<String, String> {
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
     let paras = Parser { b: &raw, i: 0 }.root()?;
+    if std::env::args().any(|a| a == "--python-compat") { return python_compat::run_from(raw); }
     let input: Vec<SchemeParagraph> = paras.iter().enumerate().map(|(i, p)| SchemeParagraph {
         text: &p.text, position: i, left_indent: p.indent,
         size_hundredth_pt: (p.font_size * 100.0).round().max(0.0) as u32, bold: false, in_attachment: false,
@@ -155,3 +159,4 @@ fn main() {
         Err(e) => { eprintln!("hierarchy: {}", e); std::process::exit(2); }
     }
 }
+
