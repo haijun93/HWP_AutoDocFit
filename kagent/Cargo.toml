@@ -39,6 +39,7 @@ windows-sys = { version = "0.59", features = [
 ] }
 # 클립보드 비트맵(DIB) ↔ PNG. 순수 Rust.
 png = "0.17"
+regex = "1.13.1"
 
 [profile.release]
 opt-level = 3
