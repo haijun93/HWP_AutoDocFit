@@ -29,24 +29,7 @@ def stage_01(paragraphs):
     return {"records": records}
 
 
-def _analyze_staged(paragraphs, capture=None):
-    """Infer roles from marker + indent + font + size; spacing is diagnostic only.
-
-    Each input has text, left/indent in HWP units, font, size_pt and
-    optional prev_spacing.  No pagination is inferred from XML alone.
-    """
-    from docfit_core.marker_scheme import detect_scheme
-
-    paragraphs = list(paragraphs)
-    scheme = detect_scheme(item.get("text", "") for item in paragraphs)
-    # stage 01: marker/role 수집
-    records = []
-    for idx, item in enumerate(paragraphs):
-        marker, marker_role = leading_marker(item.get("text", ""), scheme)
-        indent = int(item.get("left", 0)) + int(item.get("indent", 0))
-        records.append({**item, "index": idx, "marker": marker, "marker_role": marker_role,
-                        "indent_hwpunit": indent})
-    # stage 02: 문서 통계 및 Counter
+def stage_02(records):
     marked = [r for r in records if r["marker_role"]]
     role_indent = {
         role: _most_common(Counter(r["indent_hwpunit"] for r in marked
@@ -58,13 +41,11 @@ def _analyze_staged(paragraphs, capture=None):
                                    for r in marked if r["marker_role"] == role))
         for role in ROLE_ORDER
     }
-    indent_levels = sorted(set(r["indent_hwpunit"] for r in records))
-    if capture is not None:
-        capture["stage_02"] = {"role_indent": role_indent,
-                               "role_typography": role_typography,
-                               "indent_levels": indent_levels}
-    # stage 03~05: 원문자 예외, 최종 역할/분류
-    styles = defaultdict(list)
+    return {"role_indent": role_indent, "role_typography": role_typography,
+            "indent_levels": sorted(set(r["indent_hwpunit"] for r in records))}
+
+
+def _classify(records, role_indent, role_typography):
     for index, record in enumerate(records):
         role = record["marker_role"]
         if CIRCLED_MARKER.fullmatch(record["marker"]):
@@ -82,11 +63,9 @@ def _analyze_staged(paragraphs, capture=None):
             if candidates:
                 role = min(candidates)[3]
             else:
-                previous = records[index - 1]["role"] if index else ""
+                previous = records[index - 1].get("role", "") if index else ""
                 role = "본문" if previous == "소제목" else "내용" if previous in ("본문", "내용") else "부연설명" if previous == "부연설명" else "미분류"
         elif not role:
-            # Unmarked paragraphs use indentation before typography. A lone
-            # large first line is a title, not an invented list item.
             nearest = []
             for name, value in role_indent.items():
                 if value is None:
@@ -104,10 +83,14 @@ def _analyze_staged(paragraphs, capture=None):
             else:
                 role = "미분류"
         record["role"] = role
-        key = (role, record["marker"] or "(없음)")
-        styles[key].append(record)
-    summary = []
-    variants = []
+    return records
+
+
+def _summarize(records):
+    styles = defaultdict(list)
+    for record in records:
+        styles[(record["role"], record["marker"] or "(없음)")].append(record)
+    summary, variants = [], []
     for (role, marker), items in sorted(styles.items(), key=lambda kv:
                                        (ROLE_ORDER.index(kv[0][0]) if kv[0][0] in ROLE_ORDER else 9,
                                         min(item["index"] for item in kv[1]))):
@@ -118,19 +101,21 @@ def _analyze_staged(paragraphs, capture=None):
                          if x.get("prev_spacing") is not None)
         summary.append({"role": role, "marker": marker, "count": len(items),
                         "font": primary[0], "size_pt": primary[1],
-                        "indent_hwpunit": primary[2],
-                        "left_hwpunit": primary[3], "first_line_hwpunit": primary[4],
+                        "indent_hwpunit": primary[2], "left_hwpunit": primary[3],
+                        "first_line_hwpunit": primary[4],
                         "prev_spacing_values": sorted(spaces),
                         "prev_spacing_typical": _most_common(spaces)})
-        signatures = Counter((item.get("font"), item.get("size_pt"),
-                              item.get("left", 0), item.get("indent", 0),
-                              item.get("prev_spacing")) for item in items)
+        signatures = Counter((x.get("font"), x.get("size_pt"), x.get("left", 0),
+                              x.get("indent", 0), x.get("prev_spacing")) for x in items)
         for (font, size, left, indent, prev), count in signatures.most_common():
             variants.append({"role": role, "marker": marker, "count": count,
-                             "kind": "반복" if count > 1 else "비반복",
-                             "font": font, "size_pt": size,
-                             "left_hwpunit": left, "first_line_hwpunit": indent,
-                             "prev_spacing_hwpunit": prev})
+                             "kind": "반복" if count > 1 else "비반복", "font": font,
+                             "size_pt": size, "left_hwpunit": left,
+                             "first_line_hwpunit": indent, "prev_spacing_hwpunit": prev})
+    return {"styles": summary, "variants": variants}
+
+
+def _warnings(records, role_indent):
     warnings = []
     for index, record in enumerate(records):
         role = record["role"]
@@ -139,7 +124,6 @@ def _analyze_staged(paragraphs, capture=None):
             warnings.append(f"{index + 1}번째 원문자의 역할은 비교할 서식이 없어 확인이 필요합니다.")
         later = [item["role"] for item in records[index + 1:]]
         if role == "소제목":
-            # 소제목 바로 뒤의 부연설명은 0개 이상 허용하되 본문은 필수다.
             following = next((name for name in later if name != "부연설명"), None)
             if following != "본문":
                 warnings.append(f"{index + 1}번째 {display_role('소제목')} 아래에 {display_role('본문')}가 없습니다.")
@@ -148,6 +132,49 @@ def _analyze_staged(paragraphs, capture=None):
         if role == "부연설명" and (index == 0 or records[index - 1]["role"] not in
                                  ("소제목", "본문", "내용", "부연설명")):
             warnings.append(f"{index + 1}번째 부연설명에 짝이 되는 앞 항목이 없습니다.")
+    return warnings
+
+
+def _analyze_staged(paragraphs, capture=None):
+    """Infer roles from marker + indent + font + size; spacing is diagnostic only.
+
+    Each input has text, left/indent in HWP units, font, size_pt and
+    optional prev_spacing.  No pagination is inferred from XML alone.
+    """
+    from docfit_core.marker_scheme import detect_scheme
+
+    paragraphs = list(paragraphs)
+    scheme = detect_scheme(item.get("text", "") for item in paragraphs)
+    # stage 01: marker/role 수집
+    records = []
+    for idx, item in enumerate(paragraphs):
+        marker, marker_role = leading_marker(item.get("text", ""), scheme)
+        indent = int(item.get("left", 0)) + int(item.get("indent", 0))
+        records.append({**item, "index": idx, "marker": marker, "marker_role": marker_role,
+                        "indent_hwpunit": indent})
+    stage_02_values = stage_02(records)
+    role_indent = stage_02_values["role_indent"]
+    role_typography = stage_02_values["role_typography"]
+    indent_levels = stage_02_values["indent_levels"]
+    if capture is not None:
+        capture["stage_02"] = {"role_indent": role_indent,
+                               "role_typography": role_typography,
+                               "indent_levels": indent_levels}
+    stage_03_input = [{**record, "role": record["marker_role"]} for record in records]
+    records = _classify(records, role_indent, role_typography)
+    if capture is not None:
+        capture["stage_03"] = {"records": [{"index": r["index"], "role": r["role"]}
+                                            for r in records
+                                            if CIRCLED_MARKER.fullmatch(r["marker"])]}
+        capture["stage_04"] = {"records": []}
+        capture["stage_05"] = {"role_sequence": [r["role"] for r in records]}
+    grouped = _summarize(records)
+    summary, variants = grouped["styles"], grouped["variants"]
+    warnings = _warnings(records, role_indent)
+    if capture is not None:
+        capture["stage_06"] = {"styles": summary, "variants": variants,
+                               "warnings": warnings,
+                               "document_type": document_type([r["role"] for r in records])}
     # stage 06: 최종 결과 dict
     result = {"version": 1, "priority": ["indentation", "font", "size", "marker"],
             "auxiliary": "prev_spacing", "indent_levels_hwpunit": indent_levels,

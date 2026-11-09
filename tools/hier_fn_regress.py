@@ -247,8 +247,8 @@ def main():
             if diffs:
                 print(f"{label}: differences={len(diffs)}")
                 if args.dump:
-                    for path, left, right in diffs[:12]:
-                        print(f"  {path}: python={left!r} rust={right!r}")
+                    for path, left, right in diffs[:100]:
+                        print(f"  {path}: python={json.dumps(left, ensure_ascii=False)} rust={json.dumps(right, ensure_ascii=False)}")
         total = sum(len(d) for _, d in scheme_rows)
         print(f"detect_scheme documents={len(scheme_rows)} differences={total}")
         return int(total != 0)
@@ -307,6 +307,11 @@ def main():
                         if left != right:
                             print(f"    item {j}: input={c.get('texts', c.get('items'))[j]!r} python={left!r} rust={right!r}")
                             if j >= 60: break
+                break
+            if args.dump and name == "analyze_hierarchy":
+                for i, _c, left, right in diffs[:1]:
+                    for path, py_item, rust_item in _stage_differences(left, right):
+                        print(f"  case {i} {path}: python={json.dumps(py_item, ensure_ascii=False)} rust={json.dumps(rust_item, ensure_ascii=False)}")
                 break
             for i, c, e, a in diffs[:3]:
                 print(f"  case {i}: input={str(c)[:180]}\n    python={str(e)[:300]}\n    rust={str(a)[:300]}")

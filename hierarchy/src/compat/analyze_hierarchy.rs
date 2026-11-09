@@ -60,10 +60,97 @@ pub fn stage_02(records_value: &Value) -> Value {
 
 pub fn analyze_hierarchy_stages(input: &Value) -> Value {
     let first = stage_01(&input["paragraphs"]);
-    json!({"stage_01": first, "stage_02": stage_02(&first)})
+    let second = stage_02(&first);
+    let empty = Vec::new();
+    let records = first["records"].as_array().unwrap_or(&empty);
+    let mut role_indent = HashMap::new();
+    let mut role_typo = HashMap::new();
+    for role in ["제목", "장", "중제목", "소제목", "본문", "내용", "부연설명"] {
+        role_indent.insert(role, second["role_indent"][role].as_i64());
+        let pair = second["role_typography"][role].as_array().cloned().unwrap_or_default();
+        role_typo.insert(role, (pair.first().and_then(Value::as_str).unwrap_or("").to_owned(),
+                                pair.get(1).and_then(Value::as_f64).unwrap_or(0.0)));
+    }
+    let mut classified: Vec<Value> = Vec::new();
+    let mut circled_rows = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        let marker = strv(&record["marker"]);
+        let mut role = strv(&record["marker_role"]);
+        let indent = record["indent_hwpunit"].as_i64().unwrap_or(0);
+        let ambiguous = marker.chars().count() == 1 && marker.chars().next().map(|c|
+            ('①'..='⑳').contains(&c) || ('㉠'..='㉻').contains(&c) ||
+            ('❶'..='❿').contains(&c) || ('➊'..='➓').contains(&c)).unwrap_or(false);
+        if ambiguous {
+            let mut candidates = Vec::new();
+            for (rank, name) in ["본문", "내용", "부연설명"].iter().enumerate() {
+                if let Some(base) = role_indent[name] {
+                    let (font, size) = &role_typo[name];
+                    let distance = (indent - base).abs();
+                    let penalty = if strv(&record["font"]) == *font { 0.0 } else { 150.0 } +
+                        (num(&record["size_pt"]) - *size).abs() * 100.0;
+                    candidates.push((distance, distance as f64 + penalty, rank, *name));
+                }
+            }
+            role = if let Some(candidate) = candidates.into_iter().min_by(|a,b| (a.0,a.1,a.2).partial_cmp(&(b.0,b.1,b.2)).unwrap()) {
+                candidate.3.to_owned()
+            } else if index > 0 && classified[index-1]["role"] == "소제목" { "본문".into() }
+            else if index > 0 && ["본문", "내용"].contains(&strv(&classified[index-1]["role"]).as_str()) { "내용".into() }
+            else if index > 0 && classified[index-1]["role"] == "부연설명" { "부연설명".into() }
+            else { "미분류".into() };
+            circled_rows.push(json!({"index":index,"role":role}));
+        } else if role.is_empty() {
+            let mut nearest = Vec::new();
+            for (rank, name) in ["제목", "장", "중제목", "소제목", "본문", "내용", "부연설명"].iter().enumerate() {
+                if let Some(base) = role_indent[name] {
+                    let (font,size)=&role_typo[name]; let distance=(indent-base).abs();
+                    let penalty=if strv(&record["font"])==*font {0.0}else{150.0}+(num(&record["size_pt"])-*size).abs()*100.0;
+                    nearest.push((distance,distance as f64+penalty,rank,*name));
+                }
+            }
+            nearest.sort_by(|a,b|(a.0,a.1,a.2).partial_cmp(&(b.0,b.1,b.2)).unwrap());
+            role = if nearest.first().map(|x|x.0<=100).unwrap_or(false) { nearest[0].3.to_owned() }
+            else if index==0 && num(&record["size_pt"])>0.0 && records.iter().skip(1).filter_map(|r|r["size_pt"].as_f64()).any(|s|num(&record["size_pt"])>s) { "제목".into() }
+            else { "미분류".into() };
+        }
+        classified.push(json!({"index":index,"role":role,"marker":marker,"record":record}));
+    }
+    let role_sequence: Vec<Value> = classified.iter().map(|r|r["role"].clone()).collect();
+    let mut grouped: Vec<(String,String,Vec<&Value>)> = Vec::new();
+    for rec in &classified {
+        let role=strv(&rec["role"]); let marker=if strv(&rec["marker"]).is_empty(){"(없음)".into()}else{strv(&rec["marker"])};
+        if let Some(group)=grouped.iter_mut().find(|g|g.0==role&&g.1==marker){group.2.push(rec)}else{grouped.push((role,marker,vec![rec]));}
+    }
+    let roles=["제목","장","중제목","소제목","본문","내용","부연설명"];
+    grouped.sort_by_key(|g|(roles.iter().position(|r|*r==g.0).unwrap_or(9),g.2.iter().map(|r|r["index"].as_u64().unwrap_or(0)).min().unwrap_or(0)));
+    let mut styles=Vec::new(); let mut variants=Vec::new();
+    for (role,marker,items) in grouped {
+        let primary=modal(items.iter().map(|r|json!([r["record"]["font"],r["record"]["size_pt"],r["record"]["indent_hwpunit"],r["record"]["left"],r["record"]["indent"]]))).unwrap_or(Value::Null);
+        let vals=primary.as_array().cloned().unwrap_or_default();
+        let mut spaces:Vec<i64>=items.iter().filter_map(|r|r["record"]["prev_spacing"].as_i64()).collect(); spaces.sort(); spaces.dedup();
+        let spacing=modal(items.iter().filter_map(|r|r["record"]["prev_spacing"].as_i64()));
+        styles.push(json!({"role":role,"marker":marker,"count":items.len(),"font":vals.get(0).unwrap_or(&Value::Null),"size_pt":vals.get(1).unwrap_or(&Value::Null),"indent_hwpunit":vals.get(2).unwrap_or(&Value::Null),"left_hwpunit":vals.get(3).unwrap_or(&Value::Null),"first_line_hwpunit":vals.get(4).unwrap_or(&Value::Null),"prev_spacing_values":spaces,"prev_spacing_typical":spacing}));
+        let mut sigs:Vec<(Value,usize)>=Vec::new();
+        for item in &items { let sig=json!([item["record"]["font"],item["record"]["size_pt"],item["record"]["left"],item["record"]["indent"],item["record"]["prev_spacing"]]); if let Some(x)=sigs.iter_mut().find(|x|x.0==sig){x.1+=1}else{sigs.push((sig,1));} }
+        sigs.sort_by_key(|x| std::cmp::Reverse(x.1));
+        for (sig,count) in sigs { variants.push(json!({"role":role,"marker":marker,"count":count,"kind":if count>1{"반복"}else{"비반복"},"font":sig[0],"size_pt":sig[1],"left_hwpunit":sig[2],"first_line_hwpunit":sig[3],"prev_spacing_hwpunit":sig[4]})); }
+    }
+    let mut warnings=Vec::new();
+    for (i,rec) in classified.iter().enumerate() {
+        let role=strv(&rec["role"]);
+        if circled_rows.iter().any(|x|x["index"]==i) && ["본문","내용","부연설명"].iter().all(|r|role_indent[r].is_none()) { warnings.push(json!(format!("{}번째 원문자의 역할은 비교할 서식이 없어 확인이 필요합니다.",i+1))); }
+        let later:Vec<String>=classified.iter().skip(i+1).map(|x|strv(&x["role"])).collect();
+        if role=="소제목" && later.iter().find(|x|x.as_str()!="부연설명").map(String::as_str)!=Some("본문") {warnings.push(json!(format!("{}번째 4단계 아래에 5단계가 없습니다.",i+1)));}
+        if role=="내용" && !classified.iter().take(i).any(|x|x["role"]=="본문") {warnings.push(json!(format!("{}번째 6단계에 앞선 5단계가 없습니다.",i+1)));}
+        if role=="부연설명" && (i==0 || !["소제목","본문","내용","부연설명"].contains(&strv(&classified[i-1]["role"]).as_str())) {warnings.push(json!(format!("{}번째 부연설명에 짝이 되는 앞 항목이 없습니다.",i+1)));}
+    }
+    let dtype=document_type(&Value::Array(role_sequence.clone()),false);
+    let six=json!({"version":1,"priority":["indentation","font","size","marker"],"auxiliary":"prev_spacing","indent_levels_hwpunit":second["indent_levels"],"ambiguous_marker_roles":{"원문자":["본문","내용","부연설명"]},"styles":styles,"variants":variants,"role_sequence":role_sequence,"document_type":dtype,"warnings":warnings,"page_policy":{"subheading_with_bodies":true,"optional_explanations_after_subheading":true,"body_with_contents":true,"explanation_with_parent":true}});
+    json!({"stage_01":first,"stage_02":second,"stage_03":{"records":circled_rows},"stage_04":{"records":[]},"stage_05":{"role_sequence":six["role_sequence"]},"stage_06":{"styles":six["styles"],"variants":six["variants"],"warnings":six["warnings"],"document_type":six["document_type"]},"result":six})
 }
 
 pub fn analyze_hierarchy(input: &Value) -> Value {
+    return analyze_hierarchy_stages(&json!({"paragraphs": input})) ["result"].clone();
+    #[allow(unreachable_code)]
     let empty = Vec::new(); let paras = input.as_array().unwrap_or(&empty);
     let roles = ["장","중제목","소제목","본문","내용","부연설명"];
     let records: Vec<Value> = paras.iter().enumerate().map(|(i,p)| {

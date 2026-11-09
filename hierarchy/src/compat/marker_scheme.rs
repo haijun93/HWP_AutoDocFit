@@ -65,8 +65,8 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
         let full = m.as_str();
         let trimmed = full.trim_end_matches(['.', '．']);
         let parts: Vec<&str> = trimmed.split(['.', '．']).collect();
-        let depth = if parts.first().map(|p| p.len() == 4).unwrap_or(false) { 1 } else { parts.len() };
-        let family = if parts.first().map(|p| p.len() == 4).unwrap_or(false) { "1.".to_owned() } else { format!("{}.", vec!["1"; depth].join(".")) };
+        if parts.first().map(|p| p.len() >= 4 && p.bytes().all(|b| b.is_ascii_digit())).unwrap_or(false) { return None; }
+        let family = format!("{}.", vec!["1"; parts.len()].join("."));
         return Some((family, lead + full.chars().count()));
     }
     for (rx, sep) in [(hyphen_re(), "-")] {
@@ -161,7 +161,7 @@ pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let has_box = occupied.iter().any(|x| x == "□");
     let order = ["1.", "가.", "1)", "가)", "(1)", "(가)", "Ⅰ", "Ⅱ"];
     let mut ordinals: HashMap<String,Vec<Option<Vec<i64>>>> = HashMap::new(); let mut candidates=Vec::new();
-    for (text, marker) in &found { let Some((family,end))=marker else {continue}; if OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅱ","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..*end]); ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
+    for (text, marker) in &found { let Some((family,end))=marker else {continue}; let token_end = char_to_byte(text, *end); if family == "-" || OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if family == "1." && text.trim_start()[..token_end - (text.len()-text.trim_start().len())].chars().take_while(|c| c.is_ascii_digit()).count() >= 4 { continue; } if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅰ.","Ⅱ","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..token_end]); ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
     let sequential: Vec<String> = ordinals.iter().filter(|(_,v)| v.windows(2).any(|w| matches!((&w[0],&w[1]),(Some(a),Some(b)) if a.len()==b.len() && a[..a.len()-1]==b[..b.len()-1] && b.last()==a.last().map(|x|x+1).as_ref()))).map(|(f,_)|f.clone()).collect();
     let mut eligible=sequential.clone(); for (f,v) in &ordinals { if v.first().map(Option::is_none).unwrap_or(false) || f.starts_with("1.1") || f.starts_with("1-1") { if !eligible.contains(f){eligible.push(f.clone());} } }
     let ranks:Vec<Option<usize>>=ordinals.keys().map(|f|order.iter().position(|x|*x==f)).collect(); let official_chain=ranks.len()>1&&ranks.iter().all(Option::is_some)&&ranks.windows(2).all(|w|w[0]<w[1]);
@@ -177,6 +177,10 @@ pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let symbols=levels.iter().filter(|(f,_)|f.chars().count()==1&&ordinal(f,f).is_none()).map(|(f,n)|(f.clone(),LEVELS[(n-1).min(2)].to_string())).collect();
     let mut scheme=MarkerScheme{decimal:levels.keys().any(|f|f.starts_with("1.1")),symbols,excluded,paragraph_count:0,family_levels:levels};
     scheme.paragraph_count=body.iter().filter(|t|scheme.canonical(t).is_some()).count(); scheme
+}
+
+fn char_to_byte(text: &str, char_count: usize) -> usize {
+    text.char_indices().nth(char_count).map(|(index, _)| index).unwrap_or(text.len())
 }
 
 pub fn scheme_json(s: &MarkerScheme) -> Value { json!({"decimal":s.decimal,"symbols":s.symbols,"excluded":s.excluded,"paragraph_count":s.paragraph_count,"family_levels":s.family_levels,"summary":s.summary()}) }
