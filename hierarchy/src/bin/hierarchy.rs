@@ -1,11 +1,10 @@
-﻿//! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
-use hierarchy::{analyze_paragraphs, ParagraphKind, Role, SchemeParagraph, StructureDiagnostic};
-#[path = "../python_compat.rs"] mod python_compat;
+//! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
+use hierarchy::{analyze_paragraphs, Role, SchemeParagraph, StructureDiagnostic};
 use std::io::{Read, Write};
 
-pub struct P { pub text: String, pub indent: i32, pub left: i32, pub font: Option<String>, pub font_size: f64 }
+struct P { text: String, indent: i32, font_size: f64 }
 
-pub struct Parser<'a> { pub b: &'a [u8], pub i: usize }
+struct Parser<'a> { b: &'a [u8], i: usize }
 impl<'a> Parser<'a> {
     fn ws(&mut self) { while self.i < self.b.len() && (self.b[self.i] as char).is_ascii_whitespace() { self.i += 1; } }
     fn eat(&mut self, c: u8) -> Result<(), String> { self.ws(); if self.b.get(self.i) == Some(&c) { self.i += 1; Ok(()) } else { Err(format!("'{}' expected at {}", c as char, self.i)) } }
@@ -59,7 +58,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
     fn paragraph(&mut self) -> Result<P, String> {
-        let mut p = P { text: String::new(), indent: 0, left: 0, font: None, font_size: 0.0 };
+        let mut p = P { text: String::new(), indent: 0, font_size: 0.0 };
         self.eat(b'{')?;
         if self.peek() == Some(b'}') { self.i += 1; return Ok(p); }
         loop {
@@ -67,8 +66,6 @@ impl<'a> Parser<'a> {
             match k.as_str() {
                 "text" => p.text = self.string()?,
                 "indent" => p.indent = self.number()? as i32,
-                "left" => p.left = self.number()? as i32,
-                "font" => { if self.peek()==Some(b'n') { self.skip()?; } else { p.font=Some(self.string()?); } },
                 "font_size" => p.font_size = self.number()?,
                 _ => self.skip()?,
             }
@@ -76,7 +73,7 @@ impl<'a> Parser<'a> {
         }
         self.eat(b'}')?; Ok(p)
     }
-    pub fn root(&mut self) -> Result<Vec<P>, String> {
+    fn root(&mut self) -> Result<Vec<P>, String> {
         let mut v = Vec::new();
         self.eat(b'{')?;
         if self.peek() != Some(b'}') {
@@ -113,44 +110,20 @@ fn diag(d: &StructureDiagnostic) -> String {
     }
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::DocumentTitle => "제목", Role::Chapter => "장", Role::Section => "중제목",
-        Role::Topic | Role::Square => "소제목", Role::Circle => "본문", Role::Dash => "내용",
-        Role::Asterisk => "부연설명", Role::Body | Role::TableCell | Role::Ambiguous => "미분류",
-    }
-}
-
-fn classification(role: Role, kind: ParagraphKind) -> &'static str {
-    match kind {
-        ParagraphKind::AttachmentHeading => "붙임제목",
-        ParagraphKind::ReferenceHeading => "참고제목",
-        ParagraphKind::Annotation => "부연설명",
-        ParagraphKind::Heading => "제목",
-        ParagraphKind::Body if role == Role::Body => "미분류",
-        _ => role_name(role),
-    }
-}
-
 fn run() -> Result<String, String> {
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
     let paras = Parser { b: &raw, i: 0 }.root()?;
-    if std::env::args().any(|a| a == "--python-compat") { return python_compat::run_from(raw); }
     let input: Vec<SchemeParagraph> = paras.iter().enumerate().map(|(i, p)| SchemeParagraph {
         text: &p.text, position: i, left_indent: p.indent,
         size_hundredth_pt: (p.font_size * 100.0).round().max(0.0) as u32, bold: false, in_attachment: false,
     }).collect();
     let out = analyze_paragraphs(&input);
     let levels: Vec<String> = out.iter().map(|a| (a.role as u8).to_string()).collect();
-    let markers: Vec<String> = paras.iter().map(|p| hierarchy::read_prefix_marker(&p.text)
-        .map(|m| hierarchy::canonical_marker(&p.text[..m.end_byte]).to_string()).unwrap_or_default())
-        .map(|m| esc(&m)).collect();
-    let classifications: Vec<String> = out.iter().map(|a| esc(classification(a.role, a.kind))).collect();
     let ambiguous: Vec<String> = out.iter().enumerate().filter(|(_, a)| a.role == Role::Ambiguous).map(|(i, _)| i.to_string()).collect();
     let confidence = out.iter().map(|a| a.confidence).min().unwrap_or(100);
     let diags: Vec<String> = out.iter().flat_map(|a| a.diagnostics.iter().map(diag)).map(|d| esc(&d)).collect();
-    Ok(format!("{{\"levels\":[{}],\"markers\":[{}],\"classifications\":[{}],\"confidence\":{},\"ambiguous\":[{}],\"diagnostics\":[{}]}}", levels.join(","), markers.join(","), classifications.join(","), confidence, ambiguous.join(","), diags.join(",")))
+    Ok(format!("{{\"levels\":[{}],\"confidence\":{},\"ambiguous\":[{}],\"diagnostics\":[{}]}}", levels.join(","), confidence, ambiguous.join(","), diags.join(",")))
 }
 
 fn main() {
@@ -159,4 +132,3 @@ fn main() {
         Err(e) => { eprintln!("hierarchy: {}", e); std::process::exit(2); }
     }
 }
-
