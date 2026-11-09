@@ -33,8 +33,11 @@ flutter_ui/tool/settings_preview_data.dart
 /resources/HWP_AutoDocFit_kordoc_runtime.zip*
 # K에이전트(Rust) 빌드 산출물 — CI가 만들어 resources에 넣는다
 kagent/target/
+kagent/ffi/target/
 klib/target/
 hierarchy/target/
 resources/kagent.exe
 resources/kagent.exe.sha256
+resources/kclip_ffi.dll
+resources/kclip_ffi.dll.sha256
 editor_core/target/

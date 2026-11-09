@@ -46,7 +46,8 @@ def _norm_text(value):
 class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
-                 bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep):
+                 bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep,
+                 ffi_library=None):
         self._excel_service = excel
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
@@ -56,6 +57,8 @@ class KClipService:
         self._autostart_status = autostart_status
         self._bundled = bundled
         self._installed = installed
+        self._ffi_library = (Path(ffi_library) if ffi_library is not None else
+                             Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "resources" / "kclip_ffi.dll")
         self._pause_file = Path(tempfile.gettempdir()) / f"docfit-kclip-pause-{os.getpid()}.json"
 
     def _pause_until(self, until=None):
@@ -87,8 +90,11 @@ class KClipService:
             autostart = bool(self._autostart_status())
         except (OSError, ImportError):
             autostart = False
+        folder = getattr(self.client, "folder", None)
         return dict(ok=True, running=bool(status), available=self._bundled() is not None,
-                    autostart=autostart, consent=CONSENT, status=status or {})
+                    autostart=autostart, consent=CONSENT, status=status or {},
+                    db_path=str(Path(folder) / "clip.db") if folder is not None else None,
+                    ffi_library=str(self._ffi_library) if self._ffi_library.is_file() else None)
 
     def enable(self, payload):
         if payload.get("consent") is not True:

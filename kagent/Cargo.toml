@@ -11,6 +11,11 @@ publish = false
 [lib]
 name = "kagent_category"
 path = "src/category.rs"
+crate-type = ["rlib"]
+
+[[bin]]
+name = "kagent"
+path = "src/main.rs"
 
 [dependencies]
 # Win32 바인딩(순수 Rust, 빌드 스크립트·C 컴파일러 없음).
