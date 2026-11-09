@@ -61,6 +61,11 @@ class SmartLauncherBuildTest(unittest.TestCase):
         main = source.split("private static int Main(", 1)[1].split("private static int StartApplication(", 1)[0]
         self.assertLess(main.index("ShowSplash(version)"), main.rindex("manifest = LoadManifest(version, payloadHash)"))
         self.assertIn("ImmDisableIME(0)", source)
+        duplicate_launch = main.split("if (!ownsMutex)", 1)[1]
+        self.assertIn("args, true, null, null, ref ignored, mutexName", duplicate_launch)
+        start_application = source.split("private static int StartApplication(", 1)[1]
+        self.assertIn("string forwardMutexName = null", start_application)
+        self.assertIn('start.EnvironmentVariables["DOCFIT_LAUNCHER_MUTEX_NAME"] = forwardMutexName;', start_application)
         self.assertIn("DOCFIT_LAUNCHER_HANDOFF_EVENT", app_source)
         self.assertIn("WaitForSingleObject(handle, 45000)", app_source)
         self.assertIn("CreateMutexW(None, True, mutex_name)", app_source)
