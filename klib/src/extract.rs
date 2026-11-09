@@ -102,7 +102,31 @@ fn extract_text(path: &Path) -> Result<Vec<Paragraph>, String> {
 pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "txt" | "md" => extract_text(path),
-        "hwpx" => extract_hwpx(path),
+        "hwpx" => {
+            let mut records = extract_hwpx(path)?;
+            // Match Python extract_paragraphs(): legacy HWPX records are fed
+            // to extract_hwpx positionally (only emitted, non-cell paragraphs
+            // advance the cursor), then their metadata is attached by text FIFO.
+            // The positional pass is observable for table-first documents: the
+            // first body paragraph receives the first legacy cell record.
+            let legacy = crate::legacy_records::run(path)?;
+            // Positional HWPX pairing replaces the paragraph text and metadata
+            // from the legacy list; table-cell paragraphs themselves are omitted.
+            // Reproduce the Python walker cursor semantics directly.
+            for (idx, item) in legacy.iter().enumerate() {
+                if let Some(record) = records.get_mut(idx) {
+                    let legacy_text = item.str("text").unwrap_or("").trim();
+                    if !legacy_text.is_empty() {
+                        record.text = legacy_text.to_owned();
+                        record.hierarchy_level = item.str("level").map(str::to_owned);
+                        record.is_table_cell = item.bool("is_table_cell").unwrap_or(false);
+                        record.style_name = item.str("style_name").map(str::to_owned);
+                        record.outline_level = item.i64("outline_level");
+                    }
+                }
+            }
+            Ok(records)
+        },
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
 }
