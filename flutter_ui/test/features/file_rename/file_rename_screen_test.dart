@@ -85,7 +85,10 @@ void main() {
     expect(find.textContaining('보고서_완료.txt'), findsOneWidget);
     expect(find.text('바뀜'), findsOneWidget);
     expect(find.text('1.5 KB'), findsOneWidget);
-    expect(find.text('10/9 10:05'), findsOneWidget);
+    // 수정 시각은 실행 PC의 시간대로 표시되므로(CI는 UTC) 같은 방식으로 기대값을 만든다.
+    final t = DateTime.fromMillisecondsSinceEpoch(1791507900000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    expect(find.text('${t.month}/${t.day} ${two(t.hour)}:${two(t.minute)}'), findsOneWidget);
     expect(renameActions, contains('preview'));
 
     await tester.tap(find.byKey(const ValueKey('rename-apply')));
