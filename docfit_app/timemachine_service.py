@@ -73,7 +73,7 @@ class TimemachineService:
         subprocess.Popen(["explorer", "/select," + path])
 
     def _defaults(self):
-        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS)}
+        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True}
 
     def _klib_executable(self):
         candidates = []
@@ -184,7 +184,7 @@ class TimemachineService:
                         if rules.skip_file(name):
                             self.content_index.remove_file(path)
                             continue
-                        if ext in {"txt", "md", "hwpx"}:
+                        if self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
                             rust_paths.append(path)
                         else:
                             python_paths.append(path)
@@ -269,7 +269,10 @@ class TimemachineService:
             if mode not in ("max", "mtime") or type(enabled) is not bool:
                 raise ValueError("settings")
             extensions = self._validate_extensions(data.get("extensions", list(DEFAULT_EXTENSIONS)))
-            return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions}
+            rust_content_index = data.get("rust_content_index", True)
+            if type(rust_content_index) is not bool: raise ValueError("settings")
+            return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                    "rust_content_index": rust_content_index}
         except (OSError, ValueError, TypeError, KeyError):
             return defaults
 
@@ -536,7 +539,10 @@ class TimemachineService:
             if mode not in ("max", "mtime") or type(enabled) is not bool:
                 raise ValueError("설정 값을 확인해 주세요.")
             extensions = self._validate_extensions(payload.get("extensions", self._settings["extensions"]))
-            settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions}
+            rust_content_index = payload.get("rust_content_index", self._settings.get("rust_content_index", True))
+            if type(rust_content_index) is not bool: raise ValueError("설정 값을 확인해 주세요.")
+            settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                        "rust_content_index": rust_content_index}
             with self._settings_lock:
                 old_roots = list(self._settings["roots"])
                 changed = self._settings != settings
