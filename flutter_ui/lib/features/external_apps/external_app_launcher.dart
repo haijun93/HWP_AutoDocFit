@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../../core/codicons.dart';
 
 /// 개발자 모드 외부 프로그램(사진첩·아웃라이너·사진관리·PDF편집) 진입점.
 class ExternalAppSpec {
@@ -13,10 +14,10 @@ class ExternalAppSpec {
 }
 
 const kExternalApps = <ExternalAppSpec>[
-  ExternalAppSpec(id: 'photo_album', label: '사진첩', icon: Icons.photo_library_outlined),
-  ExternalAppSpec(id: 'outliner', label: '아웃라이너', icon: Icons.account_tree_outlined),
-  ExternalAppSpec(id: 'photo_manager', label: '사진관리', icon: Icons.photo_camera_back_outlined),
-  ExternalAppSpec(id: 'pdf_editor', label: 'PDF편집', icon: Icons.picture_as_pdf_outlined),
+  ExternalAppSpec(id: 'photo_album', label: '사진첩', icon: Codicons.fileMedia),
+  ExternalAppSpec(id: 'outliner', label: '아웃라이너', icon: Codicons.listTree),
+  ExternalAppSpec(id: 'photo_manager', label: '사진관리', icon: Codicons.folderOpened),
+  ExternalAppSpec(id: 'pdf_editor', label: 'PDF편집', icon: Codicons.filePdf),
 ];
 
 Future<Map> _callExternalApp(ApiCall api, String action, ExternalAppSpec app,

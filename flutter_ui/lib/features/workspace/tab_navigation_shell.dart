@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/close_guards.dart';
+import '../../core/codicons.dart';
 import '../external_apps/external_app_launcher.dart';
 
 /// 탭 번호. 파일이름 뒤에 타임머신을 두고 파일변환을 맨 끝에 둔다.
@@ -168,15 +169,15 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '파일변환',
   ];
   static const _icons = [
-    Icons.description_outlined,
-    Icons.table_chart_outlined,
-    Icons.draw_outlined,
-    Icons.account_tree_outlined,
-    Icons.hub_outlined,
-    Icons.brush_outlined,
-    Icons.drive_file_rename_outline,
-    Icons.history_toggle_off,
-    Icons.transform,
+    Codicons.fileText,
+    Codicons.table,
+    Codicons.edit,
+    Codicons.typeHierarchy,
+    Codicons.organization,
+    Codicons.paintcan,
+    Codicons.replace,
+    Codicons.history,
+    Codicons.arrowSwap,
   ];
 
   void _select(int index) {
@@ -439,7 +440,7 @@ class WorkspaceTabBar extends StatelessWidget {
                   key: const ValueKey('workspaceSidebarToggle'),
                   tooltip: expanded ? '메뉴 접기' : '메뉴 펼치기',
                   onPressed: onToggleExpanded,
-                  icon: const Icon(Icons.menu),
+                  icon: const Icon(Codicons.menu, size: 20),
                   ),
                 ),
               ),
@@ -466,7 +467,7 @@ class WorkspaceTabBar extends StatelessWidget {
                     _TabPill(
                       key: const ValueKey('library-open'),
                       label: '자료함',
-                      icon: Icons.dashboard_customize_outlined,
+                      icon: Codicons.library,
                       selected: selectedExtra == WorkspaceExtraPage.library,
                       color: color,
                       expanded: expanded,
@@ -478,7 +479,7 @@ class WorkspaceTabBar extends StatelessWidget {
                     _TabPill(
                       key: const ValueKey('notebook-open'),
                       label: '노트북',
-                      icon: Icons.menu_book_outlined,
+                      icon: Codicons.book,
                       selected: selectedExtra == WorkspaceExtraPage.notebook,
                       color: color,
                       expanded: expanded,

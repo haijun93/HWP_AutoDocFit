@@ -13,6 +13,7 @@ class Codicons {
   static const IconData plus = IconData(0xEA60, fontFamily: _fontFamily);
   static const IconData close = IconData(0xEA76, fontFamily: _fontFamily);
   static const IconData edit = IconData(0xEA73, fontFamily: _fontFamily);
+  static const IconData replace = IconData(0xEB3D, fontFamily: _fontFamily);
   static const IconData save = IconData(0xEB4B, fontFamily: _fontFamily);
   static const IconData search = IconData(0xEA6D, fontFamily: _fontFamily);
   static const IconData trash = IconData(0xEA81, fontFamily: _fontFamily);

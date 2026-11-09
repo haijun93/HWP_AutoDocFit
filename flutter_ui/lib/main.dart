@@ -15,6 +15,7 @@ import 'app/rename_format_dialog.dart';
 import 'bridge.dart' as bridge;
 import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
+import 'core/codicons.dart';
 import 'core/drop_events.dart';
 import 'features/preview/option_images.dart';
 import 'features/abbreviations/abbreviation_manager.dart';
@@ -252,13 +253,13 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
           final actions = <({String label, IconData icon, VoidCallback onPressed, Key? key})>[
             (
               label: '새문서 열기',
-              icon: Icons.note_add_outlined,
+              icon: Codicons.newFile,
               onPressed: () => _showNewDocument(context, widget.api),
               key: const ValueKey('new-document-open'),
             ),
             (
               label: '몽땅클립보드',
-              icon: Icons.content_paste_search,
+              icon: Codicons.clippy,
               onPressed: () async {
                 if (_kclipOpen) return;
                 _kclipOpen = true;
@@ -272,19 +273,19 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
             ),
             (
               label: '사용 방법',
-              icon: Icons.help_outline_rounded,
+              icon: Codicons.question,
               onPressed: () => workspace.currentState?.showHelp(),
               key: null,
             ),
             (
               label: '작업 로그',
-              icon: Icons.receipt_long_outlined,
+              icon: Codicons.output,
               onPressed: () => workspace.currentState?.showLog(),
               key: null,
             ),
             (
               label: '설정',
-              icon: Icons.settings_outlined,
+              icon: Codicons.gear,
               onPressed: () {
                 WorkspaceTabScope.maybeOf(context)?.selectTab(0);
                 WidgetsBinding.instance.addPostFrameCallback(

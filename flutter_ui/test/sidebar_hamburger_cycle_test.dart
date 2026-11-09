@@ -83,7 +83,7 @@ void main() {
         await tester.tap(toggle);
         await tester.pumpAndSettle();
       }
-      final burger = tester.getCenter(find.byIcon(Icons.menu)).dx;
+      final burger = tester.getCenter(find.descendant(of: toggle, matching: find.byType(Icon))).dx;
       final firstMenuIcon = tester.getCenter(find.descendant(of: find.byType(InkWell), matching: find.byType(Icon)).first).dx;
       expect((burger - firstMenuIcon).abs(), lessThan(1.0), reason: 'size=$size taps=$taps');
     }
