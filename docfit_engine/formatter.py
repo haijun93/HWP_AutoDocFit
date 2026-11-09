@@ -7,7 +7,6 @@ from docfit_engine.runtime import bind_function, bind_class, _plain_bind
 from . import formatter_utils
 from . import formatter_analysis
 from . import formatter_tables
-from . import formatter_apply
 from . import formatter_indent
 
 _TITLES_SYMBOLS = (
@@ -84,12 +83,38 @@ def _install_text(*, _docfit_namespace, _docfit_symbol, bind_function):
     )
 
 
+_APPLY_SYMBOLS = (
+    '_표준서식_문단위간격_표', '기본_계층_스타일', '표준서식_문단위간격_찾기', '기호글꼴_적용', '표글꼴_적용',
+    '복사_문단모양_적용', '계층_추가서식_값', '복사_간격_규칙_적용', '계층_추가서식_적용', '빈줄서식_hwpx_처리',
+    '개요첫칸_hwpx_처리', '강조낱말_hwpx_처리', '_문단_일반글', '_문단_준말_판별', '_문단_준말_제외사유',
+    '_문단_글_바꾸기', '준말_hwpx_처리', '연결부호탭_hwpx_처리', '콜론라벨_hwpx_처리', '준말_사용표_만들기',
+    '준말_선행적용', '_위첨자_글자모양', '_문단_별표_대상', '별표위첨자_hwpx_처리', '별표위첨자_선행적용',
+    '_한글_글꼴표', '_글꼴_확보', '_글자모양_글꼴크기', '_본문기호_글꼴', '붙임글꼴_hwpx_처리',
+    '글자서식_선행적용', '문자모양_적용_현재선택', '_다른_글꼴형식으로_재실행', '문단_줄간격_적용_현재선택', 'HwpUnit_pt',
+    'HwpUnit_mm', '문단_위간격_적용_현재선택', '문단_아래간격_pt_현재문단', '문단_아래간격_적용_현재선택', '_mm_hwpunit',
+    '_현재_쪽여백', '_표준_또는_원본여백', '페이지_여백_설정', '용지_다르면_알림', '들여쓰기_공백_맞추기',
+    '표준서식_기호규칙_찾기', '본문형_일반문장인가', '_사용자서식인가', '알파_일괄서식_가능', '사용자서식_XML추가값',
+    '_GDI_글꼴인가', '_알파_글꼴형식', '_알파_라벨_굵게범위', '표준서식_hwpx_처리', '_알파_한줄문단인가',
+    '표준서식_문단_처리', '빈문단_분류', '항목기호문장_사이_빈문단_찾기', '본문_컨트롤_문단번호', '항목기호문장_사이_빈줄_삭제',
+    '글꼴형식_모으기', '글꼴형식_등록', '표준서식_전체_적용', '표준서식_선행_적용',
+)
+
+
+def _install_apply(*, _docfit_namespace, _docfit_symbol, bind_function):
+    from . import formatter_apply
+    return formatter_apply._install(
+        _docfit_namespace=_docfit_namespace,
+        _docfit_symbol=_docfit_symbol,
+        bind_function=bind_function,
+    )
+
+
 _SPLIT_INSTALLERS = {}
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_utils.SYMBOLS, formatter_utils._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_analysis.SYMBOLS, formatter_analysis._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(_TITLES_SYMBOLS, _install_titles))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_tables.SYMBOLS, formatter_tables._install))
-_SPLIT_INSTALLERS.update(dict.fromkeys(formatter_apply.SYMBOLS, formatter_apply._install))
+_SPLIT_INSTALLERS.update(dict.fromkeys(_APPLY_SYMBOLS, _install_apply))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_indent.SYMBOLS, formatter_indent._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(_UNIFY_SYMBOLS, _install_unify))
 _SPLIT_INSTALLERS.update(dict.fromkeys(_TEXT_SYMBOLS, _install_text))
@@ -121,6 +146,10 @@ def __getattr__(name):
         from . import formatter_text
         globals()["formatter_text"] = formatter_text
         return formatter_text
+    if name == "formatter_apply":
+        from . import formatter_apply
+        globals()["formatter_apply"] = formatter_apply
+        return formatter_apply
     installer = _SPLIT_INSTALLERS.get(name)
     if installer is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
