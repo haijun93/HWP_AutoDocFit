@@ -131,6 +131,25 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     }
 }
 
+/// Rust equivalent of Python `_apply_hierarchy`: match normalized text with
+/// per-text FIFO queues, preserving extraction fields on misses.
+pub(crate) fn apply_hierarchy(records: Vec<Paragraph>, hierarchy_records: &[Value]) -> Vec<Paragraph> {
+    if hierarchy_records.is_empty() { return records; }
+    let mut by_text: std::collections::HashMap<String, std::collections::VecDeque<&Value>> = std::collections::HashMap::new();
+    for item in hierarchy_records {
+        by_text.entry(item.str("text").unwrap_or("").trim().to_owned()).or_default().push_back(item);
+    }
+    records.into_iter().map(|mut record| {
+        if let Some(item) = by_text.get_mut(record.text.trim()).and_then(|items| items.pop_front()) {
+            record.hierarchy_level = item.str("level").map(str::to_owned);
+            record.is_table_cell = item.bool("is_table_cell").unwrap_or(false);
+            record.style_name = item.str("style_name").map(str::to_owned);
+            record.outline_level = item.i64("outline_level");
+        }
+        record
+    }).collect()
+}
+
 #[cfg(test)]
 mod hierarchy_tests {
     use super::*;
