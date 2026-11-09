@@ -9,7 +9,6 @@ from . import formatter_analysis
 from . import formatter_tables
 from . import formatter_apply
 from . import formatter_indent
-from . import formatter_text
 
 _TITLES_SYMBOLS = (
     '개요붙임_원본자료', '붙임_유형판별', '붙임_대상찾기', '중제목_글칸들', '중제목_유형판별', '중제목_대상찾기',
@@ -64,6 +63,27 @@ def _install_unify(*, _docfit_namespace, _docfit_symbol, bind_function):
     )
 
 
+_TEXT_SYMBOLS = (
+    '괄호_안쪽', '대괄호인가', '괄호_문두_라벨인가', '괄호_뒤_콜론인가', '세트후속_범위괄호_라벨인가',
+    '문단_범위_선택', '선택범위_현재크기_pt', '괄호_축소량_pt', '대괄호_축소_제외', '괄호_텍스트_크기_축소_현재선택',
+    '문두_라벨_굵게_제외_문단인가', '항목기호_키', '일관성_굵게_머리말_범위', '문두_라벨_굵게_선반영',
+    '괄호_및_라벨_텍스트_문단_처리', '라벨괄호_계획', '라벨괄호_hwpx_처리', '표안_문단_구분', '공백규칙_글변환',
+    '문장부호뒤공백_글변환', '글규칙_hwpx_처리', '현재문서_XML단계_적용', '괄호_텍스트_크기_축소_전체_적용',
+    '텍스트_hwpx로_변환', '라벨블록_한글삽입', 'AI답변_개조식_변환', '텍스트_hwpx_단독변환', '외부문서_hwpx로_변환',
+    'PDF_서식_이식', '_박스그림표_한글표_삽입', '_박스그림_줄인가', '_박스그림_남은_문단', '_박스그림표_교체',
+    '박스그림_전체_적용', '저장결과_규칙검수',
+)
+
+
+def _install_text(*, _docfit_namespace, _docfit_symbol, bind_function):
+    from . import formatter_text
+    return formatter_text._install(
+        _docfit_namespace=_docfit_namespace,
+        _docfit_symbol=_docfit_symbol,
+        bind_function=bind_function,
+    )
+
+
 _SPLIT_INSTALLERS = {}
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_utils.SYMBOLS, formatter_utils._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_analysis.SYMBOLS, formatter_analysis._install))
@@ -72,7 +92,7 @@ _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_tables.SYMBOLS, formatter_table
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_apply.SYMBOLS, formatter_apply._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_indent.SYMBOLS, formatter_indent._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(_UNIFY_SYMBOLS, _install_unify))
-_SPLIT_INSTALLERS.update(dict.fromkeys(formatter_text.SYMBOLS, formatter_text._install))
+_SPLIT_INSTALLERS.update(dict.fromkeys(_TEXT_SYMBOLS, _install_text))
 
 
 def _export_split_function(function, namespace):
@@ -97,6 +117,10 @@ def __getattr__(name):
         from . import formatter_unify
         globals()["formatter_unify"] = formatter_unify
         return formatter_unify
+    if name == "formatter_text":
+        from . import formatter_text
+        globals()["formatter_text"] = formatter_text
+        return formatter_text
     installer = _SPLIT_INSTALLERS.get(name)
     if installer is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
