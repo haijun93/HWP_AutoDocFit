@@ -7,6 +7,10 @@
 use crate::json::{self, Value};
 use crate::util::{base64, unbase64};
 
+/// Rust 변환이 Python 기준과 완전히 같아질 때만 활성화한다. 비교 도구가 별도 바이너리로
+/// 결과를 검증하고 나서 이 상수를 true로 바꾼다. 현재 앱 파이프를 유지한다.
+pub const DIRECT_RUST_ENABLED: bool = false;
+
 /// 앱 응답을 기다리는 최대 시간(붙여넣기 지연 상한). 넘으면 원래 형식으로 붙인다.
 pub const TIMEOUT_MS: u64 = 1500;
 /// 파이프가 바쁠 때(앱이 다른 요청 처리 중) 한 번 기다리는 시간.
