@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+pub mod search;
+
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
