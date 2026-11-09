@@ -45,6 +45,7 @@ license and notice files remain available in the installed kordoc package.
 | Noto Sans KR | flutter_ui font (see `flutter_ui/assets/OFL.txt`) | SIL Open Font License 1.1 |
 | Noto Sans Symbols 2 Regular | Flutter arrow glyph fallback (`flutter_ui/assets/fonts/NotoSansSymbols2-Regular.ttf`) | SIL Open Font License 1.1 (`flutter_ui/assets/fonts/OFL.txt`) |
 | STIX Two Math | Flutter fallback for ⇑ and ⇓ (`flutter_ui/assets/fonts/STIX2Math.otf`) | SIL Open Font License 1.1 (`flutter_ui/assets/fonts/STIX-OFL.txt`) |
+| VS Code Codicons (microsoft/vscode-codicons) | flutter_ui icons (`flutter_ui/assets/fonts/codicon/`) | Icons: CC-BY-4.0 (`LICENSE`), Code: MIT (`LICENSE-CODE`) |
 | PyInstaller | Executable build | GPL-2.0 with bootloader exception |
 | Python / Tcl/Tk runtime | Bundled in the executable | PSF / Tcl/Tk License |
 
@@ -70,6 +71,7 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | rusqlite 0.33(SQLite 포함), tantivy 0.27 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
 | file_selector, web, webview_flutter_windows 1.2.0 | Flutter 화면 | BSD-3-Clause | 의존성: `flutter_ui/pubspec.yaml`, 라이선스는 일반 지식 |
 | Material Icons 글꼴(Flutter 포함) | 화면 아이콘 | Apache-2.0 | 일반 지식 |
+| VS Code Codicons (microsoft/vscode-codicons) | 화면 아이콘 (`flutter_ui/assets/fonts/codicon/`) | CC-BY-4.0(아이콘) / MIT(코드) | 파일: `flutter_ui/assets/fonts/codicon/LICENSE` 및 `LICENSE-CODE` |
 
 #### 소스 코드 제공 (GPL·LGPL 구성요소)
 

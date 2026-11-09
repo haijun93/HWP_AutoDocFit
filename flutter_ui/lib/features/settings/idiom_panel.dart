@@ -487,6 +487,7 @@ const thirdPartyComponents = [
   ('PDFium (@hyzyla/pdfium 2.1.13)', '스캔 PDF 쪽 그림 만들기', 'MIT · BSD-3-Clause'),
   ('React Flow (@xyflow/react 12.12.0) · React', '업무 흐름도·마인드맵 편집', 'MIT'),
   ('Flutter', '앱 화면', 'BSD-3-Clause'),
+  ('VS Code Codicons (Microsoft)', '앱 아이콘', 'CC-BY-4.0 · MIT'),
   ('Noto Sans KR', '앱 화면 글꼴', 'SIL OFL 1.1'),
   ('Python · Tcl/Tk', '앱 실행 런타임(EXE 내장)', 'PSF · Tcl/Tk'),
   ('pywin32', '한/글 COM 자동화 연결', 'PSF'),
