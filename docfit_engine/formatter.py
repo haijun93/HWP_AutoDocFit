@@ -9,7 +9,6 @@ from . import formatter_analysis
 from . import formatter_tables
 from . import formatter_apply
 from . import formatter_indent
-from . import formatter_unify
 from . import formatter_text
 
 _TITLES_SYMBOLS = (
@@ -39,6 +38,32 @@ def _install_titles(*, _docfit_namespace, _docfit_symbol, bind_function):
     )
 
 
+_UNIFY_SYMBOLS = (
+    '_서식통일_문두요소_범위', '_서식통일_글자모양', '_서식통일_공백제거', '_서식통일_HWPX_분석',
+    '_서식통일_run_text', '_서식통일_XML문단', '_서식통일_위치텍스트', '_서식통일_음영값',
+    '서식통일_표본', '_서식통일_그룹키', '_서식통일_현재_HWPX', '_서식통일_불일치_구간',
+    '_서식통일_부연괄호_불일치_구간', '_서식통일_굵기_불일치_구간', '서식통일_대표',
+    '_서식통일_표지인가', '_서식통일_제목표_표본', '_서식통일_체계경계', '_서식통일_참고표_이웃대표_보완',
+    '_서식통일_대표값_사용자검토', '_서식통일_적용영역_사용자검토', '서식통일_결과창_반영',
+    '_결과창_띄우는가', '_서식통일_최종결과_사용자확인', '_서식통일_미확정_항목',
+    '_서식통일_미확정_빨간표시', '_서식통일_문단앞간격_적용', '_서식통일_내어쓰기_필요',
+    '_서식통일_내어쓰기_상태', '_서식통일_문단서식_적용', '_서식통일_글자요소_적용',
+    '_서식통일_색값', '_서식통일_색_적용', '_서식통일_문단내어쓰기_적용', '_서식통일_문단자간_조정',
+    '_서식통일_글꼴크기만', '_서식통일_글꼴크기_대표', '_서식통일_XML_조사', '_서식통일_COM_조사',
+    '서식통일_전체_적용', '서식통일_자간조정_반영', '서식통일_문장_마무리', '_서식통일_마무리_위치로',
+    '서식통일_보류자간_재조정', '_서식통일_표모형', '서식통일_표_전체_적용',
+)
+
+
+def _install_unify(*, _docfit_namespace, _docfit_symbol, bind_function):
+    from . import formatter_unify
+    return formatter_unify._install(
+        _docfit_namespace=_docfit_namespace,
+        _docfit_symbol=_docfit_symbol,
+        bind_function=bind_function,
+    )
+
+
 _SPLIT_INSTALLERS = {}
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_utils.SYMBOLS, formatter_utils._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_analysis.SYMBOLS, formatter_analysis._install))
@@ -46,7 +71,7 @@ _SPLIT_INSTALLERS.update(dict.fromkeys(_TITLES_SYMBOLS, _install_titles))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_tables.SYMBOLS, formatter_tables._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_apply.SYMBOLS, formatter_apply._install))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_indent.SYMBOLS, formatter_indent._install))
-_SPLIT_INSTALLERS.update(dict.fromkeys(formatter_unify.SYMBOLS, formatter_unify._install))
+_SPLIT_INSTALLERS.update(dict.fromkeys(_UNIFY_SYMBOLS, _install_unify))
 _SPLIT_INSTALLERS.update(dict.fromkeys(formatter_text.SYMBOLS, formatter_text._install))
 
 
@@ -68,6 +93,10 @@ def __getattr__(name):
         from . import formatter_titles
         globals()["formatter_titles"] = formatter_titles
         return formatter_titles
+    if name == "formatter_unify":
+        from . import formatter_unify
+        globals()["formatter_unify"] = formatter_unify
+        return formatter_unify
     installer = _SPLIT_INSTALLERS.get(name)
     if installer is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
