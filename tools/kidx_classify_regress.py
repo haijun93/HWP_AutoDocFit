@@ -17,7 +17,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path)
     parser.add_argument("--exe", type=Path, default=ROOT / "klib" / "target" / "debug" / "klib.exe")
-    parser.add_argument("--stage", type=int, default=1, choices=range(8), help="classification branches enabled (0-7)")
+    parser.add_argument("--stage", type=int, default=6, choices=range(8), help="classification branches enabled (0-7)")
     parser.add_argument("--allow-extraction-errors", action="store_true", help="exclude unextractable files from level comparison")
     parser.add_argument("--dump", action="store_true", help="print only paragraphs with differing levels")
     args = parser.parse_args()
