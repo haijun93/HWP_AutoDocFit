@@ -333,7 +333,6 @@ XML_요소_생성 = _engine_resolve('docfit_engine.com_driver', 'XML_요소_생�
 
 
 XML_자식_추가 = _engine_resolve('docfit_engine.com_driver', 'XML_자식_추가', globals())
-from docfit_core.style_inventory import analyze_style_inventory, build_style_sample, inventory_markdown
 from docfit_core import report_header as 보고서머리
 from docfit_core import connector_tabs as 연결부호탭
 from docfit_core import colon_labels as 콜론라벨
