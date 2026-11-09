@@ -39,12 +39,15 @@ def collect(fixtures: Path, fn_name: str):
                               "expected": style_inventory._sections(archive)})
                 continue
             chars = {}
-            if fn_name in ("_table_signature", "_table_info"):
+            defs = {}
+            if fn_name in ("_table_signature", "_table_info", "inline_effects", "paragraph_style_type", "_mode"):
                 try:
                     header_root = ET.fromstring(archive.read("Contents/header.xml"))
-                    chars = style_inventory.parse_header(header_root)["chars"]
+                    defs = style_inventory.parse_header(header_root)
+                    chars = defs.get("chars", {})
                 except Exception:
                     chars = {}
+                    defs = {}
             for member in sorted(n for n in archive.namelist() if n.startswith("Contents/") and n.endswith(".xml")):
                 try:
                     root = ET.fromstring(archive.read(member))
@@ -144,6 +147,71 @@ def collect(fixtures: Path, fn_name: str):
                                 cases.append({"file": path.name, "member": member,
                                               "input": marker,
                                               "expected": style_inventory._marker_class(marker)})
+                elif fn_name == "inline_effects":
+                    seen_pairs = set()
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "p":
+                            runs = style_inventory._paragraph_runs(element)
+                            seq, main = style_inventory._char_signature(runs, chars)
+                            if main and main in chars:
+                                for cid in seq:
+                                    if cid and cid in chars and cid != main:
+                                        pair = (main, cid)
+                                        if pair not in seen_pairs:
+                                            seen_pairs.add(pair)
+                                            main_char = chars[main]
+                                            other_char = chars[cid]
+                                            cases.append({
+                                                "file": path.name, "member": member,
+                                                "input": {"main": main_char, "other": other_char},
+                                                "expected": sorted(list(style_inventory.inline_effects(main_char, other_char)))
+                                            })
+                elif fn_name == "paragraph_style_type":
+                    if defs:
+                        for element in root.iter():
+                            if style_inventory._tag(element) == "p":
+                                typed = style_inventory.paragraph_style_type(element, defs)
+                                expected = None
+                                if typed is not None:
+                                    key, meas = typed
+                                    expected = [
+                                        list(key),
+                                        {
+                                            **meas,
+                                            "char_seq": list(meas["char_seq"]),
+                                            "effects": list(meas["effects"]),
+                                        }
+                                    ]
+                                cases.append({
+                                    "file": path.name, "member": member,
+                                    "input": {"para": _tree(element), "defs": defs},
+                                    "expected": expected
+                                })
+                elif fn_name == "_mode":
+                    if defs:
+                        from collections import Counter
+                        para_counter = Counter()
+                        style_counter = Counter()
+                        for element in root.iter():
+                            if style_inventory._tag(element) == "p":
+                                pid = element.get("paraPrIDRef")
+                                sid = element.get("styleIDRef")
+                                if pid:
+                                    para_counter[pid] += 1
+                                if sid:
+                                    style_counter[sid] += 1
+                        if para_counter:
+                            cases.append({
+                                "file": path.name, "member": member,
+                                "input": {"counter": list(para_counter.items()), "default": None},
+                                "expected": style_inventory._mode(para_counter, None)
+                            })
+                        if style_counter:
+                            cases.append({
+                                "file": path.name, "member": member,
+                                "input": {"counter": list(style_counter.items()), "default": None},
+                                "expected": style_inventory._mode(style_counter, None)
+                            })
                 elif fn_name == "_shade":
                     values = {e.get("shadeColor") for e in root.iter() if e.get("shadeColor") is not None}
                     for value in sorted(values):
@@ -197,12 +265,60 @@ def collect(fixtures: Path, fn_name: str):
             cases.append({"file": "<edge>", "member": "",
                           "input": marker,
                           "expected": style_inventory._marker_class(marker)})
+    if fn_name == "inline_effects":
+        sample_char = {
+            "font": {"hangul": "함초롬바탕"},
+            "size_pt": 10.0,
+            "bold": False,
+            "italic": False,
+            "underline": "NONE",
+            "color": "#000000",
+            "shade": None,
+            "superscript": False,
+            "subscript": False,
+        }
+        all_on_char = {
+            "font": {"hangul": "함초롬바탕"},
+            "size_pt": 10.0,
+            "bold": True,
+            "italic": True,
+            "underline": "BOTTOM",
+            "color": "#FF0000",
+            "shade": "#FFFF00",
+            "superscript": True,
+            "subscript": True,
+        }
+        cases.append({"file": "<edge>", "member": "none_main", "input": {"main": None, "other": sample_char}, "expected": []})
+        cases.append({"file": "<edge>", "member": "none_other", "input": {"main": sample_char, "other": None}, "expected": []})
+        cases.append({"file": "<edge>", "member": "both_none", "input": {"main": None, "other": None}, "expected": []})
+        cases.append({"file": "<edge>", "member": "same_char", "input": {"main": sample_char, "other": sample_char}, "expected": []})
+        cases.append({"file": "<edge>", "member": "all_effects", "input": {"main": sample_char, "other": all_on_char},
+                      "expected": sorted(list(style_inventory.inline_effects(sample_char, all_on_char)))})
+    if fn_name == "paragraph_style_type":
+        cases.append({
+            "file": "<edge>", "member": "empty_para",
+            "input": {"para": {"tag": "hp:p", "attrib": {}, "children": []}, "defs": {"chars": {}, "paras": {}}},
+            "expected": None,
+        })
+    if fn_name == "_mode":
+        from collections import Counter
+        cases.append({"file": "<edge>", "member": "empty_default_none", "input": {"counter": [], "default": None}, "expected": None})
+        cases.append({"file": "<edge>", "member": "empty_default_val", "input": {"counter": [], "default": "fallback"}, "expected": "fallback"})
+        c1 = Counter({"a": 2, "b": 5, "c": 1})
+        cases.append({"file": "<edge>", "member": "dict_counter", "input": {"counter": list(c1.items()), "default": None}, "expected": style_inventory._mode(c1)})
+        c2 = Counter()
+        c2["first"] = 3
+        c2["second"] = 3
+        c2["third"] = 1
+        cases.append({"file": "<edge>", "member": "tie_break", "input": {"counter": list(c2.items()), "default": None}, "expected": style_inventory._mode(c2)})
+        c3 = Counter({-5: 2, 0: 7, 5: 3})
+        cases.append({"file": "<edge>", "member": "int_keys", "input": {"counter": list(c3.items()), "default": None}, "expected": style_inventory._mode(c3)})
     return cases
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs", "_char_signature", "_table_signature", "_table_info", "_marker_class"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs", "_char_signature", "_table_signature", "_table_info", "_marker_class", "inline_effects", "paragraph_style_type", "_mode"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")

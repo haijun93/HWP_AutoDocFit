@@ -25,6 +25,9 @@ mod style_inventory {
     pub mod table_signature;
     pub mod table_info;
     pub mod marker_class;
+    pub mod inline_effects;
+    pub mod paragraph_style_type;
+    pub mod mode;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -185,6 +188,24 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let marker = value.as_str().or_else(|| value.get("marker").and_then(serde_json::Value::as_str)).unwrap_or("");
             Ok(serde_json::to_string(&style_inventory::marker_class::marker_class(marker)).unwrap())
+        }
+        "inline_effects" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let main = value.get("main");
+            let other = value.get("other");
+            Ok(serde_json::to_string(&style_inventory::inline_effects::inline_effects(main, other)).unwrap())
+        }
+        "paragraph_style_type" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let para = value.get("para").ok_or("paragraph_style_type expects {\"para\": ..., \"defs\": ...}")?;
+            let defs = value.get("defs").ok_or("paragraph_style_type expects {\"para\": ..., \"defs\": ...}")?;
+            Ok(serde_json::to_string(&style_inventory::paragraph_style_type::paragraph_style_type(para, defs)).unwrap())
+        }
+        "_mode" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let counter = value.get("counter").unwrap_or(&value);
+            let default = value.get("default");
+            Ok(serde_json::to_string(&style_inventory::mode::mode(counter, default)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }
