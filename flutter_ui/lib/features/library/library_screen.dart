@@ -1596,15 +1596,21 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _buildQuadrants() => LayoutBuilder(builder: (context, constraints) {
         final spaces = _librarySpacePriority.take(_paneCount).toList();
-        if (_paneCount == 1) return _quadrant(spaces.first);
-        if (_paneCount == 2) return Row(children: [for (final space in spaces) Expanded(child: _quadrant(space))]);
-        if (_paneCount == 3) return Row(children: [
-          Expanded(child: _quadrant(spaces.first)),
-          Expanded(child: Column(children: [for (var i = 1; i < spaces.length; i++) ...[
-            if (i > 1) const Divider(height: 1),
-            Expanded(child: _quadrant(spaces[i])),
-          ]])),
-        ]);
+        if (_paneCount == 1) {
+          return _quadrant(spaces.first);
+        }
+        if (_paneCount == 2) {
+          return Row(children: [for (final space in spaces) Expanded(child: _quadrant(space))]);
+        }
+        if (_paneCount == 3) {
+          return Row(children: [
+            Expanded(child: _quadrant(spaces.first)),
+            Expanded(child: Column(children: [for (var i = 1; i < spaces.length; i++) ...[
+              if (i > 1) const Divider(height: 1),
+              Expanded(child: _quadrant(spaces[i])),
+            ]])),
+          ]);
+        }
         return Column(children: [
           Expanded(child: Row(children: [for (final space in spaces.take(2)) Expanded(child: _quadrant(space))])),
           const Divider(height: 1),
