@@ -74,11 +74,25 @@ def collect(fixtures: Path, fn_name: str):
                     cases.append({"file": path.name, "member": member,
                                   "input": {"tree": _tree(root)},
                                   "expected": style_inventory._parse_fonts(root)})
+                elif fn_name == "_lang_values":
+                    if any(element.get(lang) is not None for element in root.iter()
+                           for lang in style_inventory.LANGS):
+                        for element in root.iter():
+                            if any(element.get(lang) is not None for lang in style_inventory.LANGS):
+                                for cast_name, cast in (("int", int), ("str", str)):
+                                    cases.append({"file": path.name, "member": member,
+                                                  "input": {"tree": _tree(element), "cast": cast_name},
+                                                  "expected": style_inventory._lang_values(element, cast)})
     # Include documented coercion/error edges in addition to fixture-derived values.
     if fn_name == "_mm":
         for value in (None, "invalid", "", 0, 1000):
             cases.append({"file": "<edge>", "member": "", "input": value,
                           "expected": style_inventory._mm(value)})
+    if fn_name == "_lang_values":
+        for cast_name, cast in (("int", int), ("str", str)):
+            cases.append({"file": "<edge>", "member": "",
+                          "input": {"tree": None, "cast": cast_name},
+                          "expected": style_inventory._lang_values(None, cast)})
     return cases
 
 
