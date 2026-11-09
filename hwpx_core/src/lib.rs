@@ -7,6 +7,7 @@ mod style_inventory {
     pub mod first;
     pub mod mm;
     pub mod tag;
+    pub mod text_of;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -78,6 +79,11 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
                 _ => None,
             };
             Ok(serde_json::to_string(&style_inventory::mm::mm(input.as_deref())).unwrap())
+        }
+        "_text_of" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_text_of expects {\"tree\": ...}")?;
+            Ok(serde_json::to_string(&style_inventory::text_of::text_of(tree)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }

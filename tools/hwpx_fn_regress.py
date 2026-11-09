@@ -59,6 +59,11 @@ def collect(fixtures: Path, fn_name: str):
                     for value in sorted(values):
                         cases.append({"file": path.name, "member": member,
                                       "input": value, "expected": style_inventory._mm(value)})
+                elif fn_name == "_text_of":
+                    for element in root.iter():
+                        cases.append({"file": path.name, "member": member,
+                                      "input": {"tree": _tree(element)},
+                                      "expected": style_inventory._text_of(element)})
     # Include documented coercion/error edges in addition to fixture-derived values.
     if fn_name == "_mm":
         for value in (None, "invalid", "", 0, 1000):
@@ -69,7 +74,7 @@ def collect(fixtures: Path, fn_name: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
