@@ -12,6 +12,10 @@ class _UnavailableLibraryApi implements LibraryApi {
 
   @override
 
+  Future<String?> pickFolder() async => null;
+
+  @override
+
   Future<void> renameBox(String boxId, String name) async {}
 
   @override
@@ -1013,11 +1017,47 @@ class _ScanApi extends InMemoryLibraryApi implements LibraryScanApi {
   }
 }
 
+class _ExportApi extends InMemoryLibraryApi {
+  _ExportApi() : super(initialBoxes: const [LibraryBox(id: 'box_1', name: '자료함')]);
+  String? exportedTo;
+  bool failExport = false;
+
+  @override
+  Future<int> exportBox(String boxId, String targetDirectory) async {
+    if (failExport) throw StateError('내보내기 실패');
+    exportedTo = targetDirectory;
+    return 3;
+  }
+}
+
 void libraryScanTests() {
   testWidgets('스캔 API가 없으면 폴더 스캔 단추를 숨긴다', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: LibraryScreen(api: InMemoryLibraryApi(initialBoxes: const [LibraryBox(id: 'box_1', name: '자료함')])))));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('libraryScanFolder')), findsNothing);
+  });
+
+  testWidgets('폴더 선택 결과를 내보내기에 전달하고 위치를 안내한다', (tester) async {
+    final api = _ExportApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(home: LibraryScreen(api: api, folderPicker: () async => r'C:\\LibraryOut')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
+    await tester.pumpAndSettle();
+    expect(api.exportedTo, r'C:\\LibraryOut');
+    expect(find.textContaining('자료 3개를 내보냈습니다'), findsOneWidget);
+  });
+
+  testWidgets('폴더 선택 오류를 SnackBar로 안내한다', (tester) async {
+    final api = _ExportApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: LibraryScreen(api: api, folderPicker: () async => throw StateError('선택 실패')))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('내보내기 폴더를 선택하지 못했습니다'), findsWidgets);
   });
 
   testWidgets('폴더 스캔 진행률을 보이고 취소 단추로 멈춘다', (tester) async {

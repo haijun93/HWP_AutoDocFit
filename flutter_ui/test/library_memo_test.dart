@@ -60,6 +60,17 @@ Future<void> _save(WidgetTester tester) async {
 }
 
 void main() {
+  test('pickFolder requests the native library folder picker', () async {
+    final calls = <(String, List<Object?>)>[];
+    final api = BridgeLibraryApi((method, args) async {
+      calls.add((method, args));
+      return {'ok': true, 'path': r'C:\\LibraryOut'};
+    });
+    expect(await api.pickFolder(), r'C:\\LibraryOut');
+    expect(calls.single.$1, 'library');
+    expect((calls.single.$2.single as Map)['cmd'], 'pick_folder');
+  });
+
   testWidgets('+메모로 쓴 메모를 저장하면 핵심자료에 텍스트 자료로 들어간다', (tester) async {
     final api = InMemoryLibraryApi();
     final box = await api.createBox('메모함');

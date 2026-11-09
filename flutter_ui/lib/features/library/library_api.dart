@@ -133,6 +133,9 @@ class LibraryRelation {
 }
 
 abstract interface class LibraryApi {
+  /// Opens the host application's native directory picker. Null means cancelled.
+  Future<String?> pickFolder();
+
   /// klib 요청: library_list_boxes
 
   /// 인자: 없음
@@ -393,6 +396,9 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
   BridgeLibraryApi(this._call);
 
   final LibraryBridgeCall _call;
+
+  @override
+  Future<String?> pickFolder() async => (await _request('pick_folder'))['path'] as String?;
 
   @override
   Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds) async {
@@ -827,6 +833,9 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
   int _itemSequence = 0;
 
   int _relationSequence = 0;
+
+  @override
+  Future<String?> pickFolder() async => null;
 
   int _maxSequence(int current, String id, String prefix) {
     if (!id.startsWith(prefix)) return current;
