@@ -179,6 +179,7 @@ jobs:
           cargo build --locked --release --manifest-path hierarchy/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item hierarchy/target/release/hierarchy.exe resources/hierarchy.exe -Force
+          Copy-Item hierarchy/target/release/hierarchy.dll resources/hierarchy.dll -Force
       - name: Build klib (Rust)
         shell: pwsh
         run: |
