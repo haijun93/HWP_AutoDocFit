@@ -252,6 +252,7 @@ class TableGridPreview extends StatelessWidget {
               fit: StackFit.expand,
               children: [
                 CustomPaint(
+                  key: const Key('tableGridTextLayer'),
                   size: Size(renderWidth, renderHeight),
                   painter: _TableGridPainter(
                     rows: rows,
@@ -262,6 +263,7 @@ class TableGridPreview extends StatelessWidget {
                     totalWidth: totalWidth,
                     totalHeight: totalHeight,
                     editedCellKeys: editedCellKeys,
+                    fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
                   ),
                 ),
                 if (hasAnyShapes)
@@ -277,6 +279,7 @@ class TableGridPreview extends StatelessWidget {
                       totalWidth: totalWidth,
                       totalHeight: totalHeight,
                       cellShapes: resolvedCellShapes,
+                      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
                     ),
                   ),
                 // 그림 개체(예: 신구대조표·추진절차의 화살표 그림)는 실제 그림으로 그린다.
@@ -378,6 +381,7 @@ class _TableGridPainter extends CustomPainter {
     required this.totalWidth,
     required this.totalHeight,
     required this.editedCellKeys,
+    this.fontFamilyFallback = const ['NotoSansSymbols2', 'STIXTwoMath'],
   });
 
   final int rows;
@@ -388,6 +392,7 @@ class _TableGridPainter extends CustomPainter {
   final double totalWidth;
   final double totalHeight;
   final Set<String> editedCellKeys;
+  final List<String> fontFamilyFallback;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -554,6 +559,7 @@ class _TableGridPainter extends CustomPainter {
           // 미리보기 캔버스(CustomPainter)는 앱 테마 글꼴을 물려받지 않는다. 내장 한글 글꼴을 직접
           // 지정하지 않으면 오프라인에서 한글이 □로 보인다(표그림판 2.0.5와 같은 원인, 2.2.42).
           fontFamily: 'NotoSansKR',
+          fontFamilyFallback: fontFamilyFallback,
           color: textColor,
           fontSize: fontSize,
           fontWeight: cell.style.bold ? FontWeight.bold : FontWeight.normal,
@@ -742,6 +748,7 @@ class TableShapesPainter extends CustomPainter {
     required this.totalWidth,
     required this.totalHeight,
     required this.cellShapes,
+    this.fontFamilyFallback = const ['NotoSansSymbols2', 'STIXTwoMath'],
   });
 
   final int rows;
@@ -752,6 +759,7 @@ class TableShapesPainter extends CustomPainter {
   final double totalWidth;
   final double totalHeight;
   final Map<String, List<CellShape>> cellShapes;
+  final List<String> fontFamilyFallback;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1113,7 +1121,8 @@ class TableShapesPainter extends CustomPainter {
     final textSpan = TextSpan(
       text: text,
       style: TextStyle(
-        fontFamily: 'NotoSansKR', // 앱 테마 글꼴을 물려받지 않는 캔버스: 내장 한글 글꼴 지정
+        fontFamily: 'NotoSansKR',
+        fontFamilyFallback: fontFamilyFallback,
         color: textColor,
         fontSize: fontSize,
         fontWeight: FontWeight.w500,
