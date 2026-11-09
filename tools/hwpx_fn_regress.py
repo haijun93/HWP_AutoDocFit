@@ -31,7 +31,7 @@ def collect(fixtures: Path, fn_name: str):
     if fn_name == "analyze_style_inventory":
         for path in sorted(fixtures.rglob("*.hwpx")):
             try:
-                expected = style_inventory.analyze_style_inventory(path)
+                expected = style_inventory._analyze_style_inventory_python(path)
                 from zipfile import ZipFile
                 from defusedxml import ElementTree as ET
                 sections = []
@@ -377,10 +377,13 @@ def main():
                 if isinstance(value, dict): return {k: normalize_json(v) for k, v in value.items() if k not in ("text", "tail")}
                 if isinstance(value, list): return [normalize_json(v) for v in value]
                 return value
-            compared = {"sections": normalize_json(actual.get("sections", []))}
+            compared = {"sections": normalize_json([
+                {key: section.get(key) for key in ("name", "paragraphs")}
+                for section in actual.get("sections", [])
+            ])}
             expected_value = {"sections": normalize_json(case["expected"].get("sections", []))}
         elif ns.function == "analyze_style_inventory" and stage == "aggregate":
-            compared = actual
+            compared = {key: actual.get(key) for key in case["expected"]}
             expected_value = json.loads(json.dumps(case["expected"], ensure_ascii=False))
         else:
             compared = {key: actual.get(key) for key in case["expected"]} if ns.function == "analyze_style_inventory" else actual

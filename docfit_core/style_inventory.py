@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from collections import Counter, OrderedDict, defaultdict
 import io
+import ctypes
+import json
 import math
+import os
 from pathlib import Path
 import re
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
@@ -405,7 +408,7 @@ def _mode(counter, default=None):
     return counter.most_common(1)[0][0] if counter else default
 
 
-def analyze_style_inventory(path) -> dict:
+def _analyze_style_inventory_python(path) -> dict:
     """HWPX 파일에 정의·사용된 모든 스타일 요소를 분석한다."""
     path = Path(path)
     with open_hwpx_safely(path) as z:
@@ -584,6 +587,56 @@ def analyze_style_inventory(path) -> dict:
         "inline_effects": {k: {**v, "contexts": plain(v["contexts"])} for k, v in effects_use.items()},
         "tables": list(tables.values()),
     }
+
+
+_RUST_INVENTORY_DLL = None
+_RUST_INVENTORY_DLL_TRIED = False
+
+
+def _rust_inventory_dll():
+    global _RUST_INVENTORY_DLL, _RUST_INVENTORY_DLL_TRIED
+    if _RUST_INVENTORY_DLL_TRIED:
+        return _RUST_INVENTORY_DLL
+    _RUST_INVENTORY_DLL_TRIED = True
+    dll_path = Path(os.environ.get(
+        "HWPX_CORE_DLL", Path(__file__).resolve().parents[1] / "hwpx_core" / "target" / "release" / "hwpx_core.dll"))
+    if not dll_path.is_file():
+        return None
+    try:
+        lib = ctypes.CDLL(str(dll_path))
+        lib.hwpx_call.argtypes = (ctypes.c_char_p, ctypes.c_char_p)
+        lib.hwpx_call.restype = ctypes.c_void_p
+        lib.hwpx_last_error.restype = ctypes.c_char_p
+        lib.hwpx_free.argtypes = (ctypes.c_void_p,)
+        _RUST_INVENTORY_DLL = lib
+    except (OSError, AttributeError):
+        return None
+    return _RUST_INVENTORY_DLL
+
+
+def analyze_style_inventory(path) -> dict:
+    """Prefer the Rust HWPX inventory DLL, with the Python analyzer as fallback."""
+    path = Path(path)
+    lib = _rust_inventory_dll()
+    if lib is not None:
+        payload = json.dumps({"path": str(path), "stage": "aggregate"}, ensure_ascii=False).encode("utf-8")
+        ptr = lib.hwpx_call(b"analyze_style_inventory", payload)
+        if ptr:
+            try:
+                result = json.loads(ctypes.string_at(ptr).decode("utf-8"))
+                if isinstance(result, dict) and all(key in result for key in (
+                    "source", "page", "definitions", "summary", "used_fonts", "char_usage", "para_usage",
+                    "style_usage", "border_fill_usage", "combos", "types", "shade_colors", "inline_effects", "tables")):
+                    for key in ("char_usage", "para_usage", "style_usage"):
+                        values = result.get(key)
+                        if isinstance(values, dict) and "null" in values:
+                            values[None] = values.pop("null")
+                    return result
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                pass
+            finally:
+                lib.hwpx_free(ptr)
+    return _analyze_style_inventory_python(path)
 
 
 def _finish_type(t):

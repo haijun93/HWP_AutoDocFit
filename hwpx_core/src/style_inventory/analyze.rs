@@ -95,11 +95,11 @@ pub fn analyze(path: &Path, stage: &str) -> Result<Value,String> {
     let mut sections=Vec::new();
     for name in names { let root=read_member(&mut z,&name)?;let normalized=normalize_tree(&root);let paras=crate::style_inventory::walk::walk(&normalized,"본문");sections.push(json!({"name":name,"paragraphs":paras,"root":normalized})); }
     if stage=="body_walk" { return Ok(json!({"sections":sections})); }
-    if stage=="aggregate" { return Ok(aggregate(&sections,&defs)); }
+    if stage=="aggregate" { return Ok(aggregate(&sections,&defs,path.file_name().and_then(|x|x.to_str()).unwrap_or(""))); }
     Err(format!("analyze stage not implemented: {stage}"))
 }
 
-fn aggregate(sections: &[Value], defs: &Value) -> Value {
+fn aggregate(sections: &[Value], defs: &Value, source: &str) -> Value {
     use std::collections::{BTreeMap, BTreeSet};
     let chars = defs.get("chars").cloned().unwrap_or(json!({}));
     let paras = defs.get("paras").cloned().unwrap_or(json!({}));
@@ -152,7 +152,7 @@ fn aggregate(sections: &[Value], defs: &Value) -> Value {
     for x in &mut combos{x.as_object_mut().unwrap().remove("_key");}
     for x in &mut types{let variants=x["_variant_keys"].as_array().map_or(0,Vec::len);x["variants"]=json!(variants);x.as_object_mut().unwrap().remove("_variant_keys");x.as_object_mut().unwrap().remove("_key");}
     let summary=json!({"paragraphs":total,"fonts_defined":defs["fonts"].as_object().map(|m|m.values().map(|x|x.as_object().map_or(0,|o|o.len())).sum::<usize>()).unwrap_or(0),"fonts_used":used_fonts.len(),"chars_defined":chars.as_object().map_or(0,|m|m.len()),"chars_used":used_chars,"paras_defined":paras.as_object().map_or(0,|m|m.len()),"paras_used":para_use.len(),"styles_defined":defs["styles"].as_object().map_or(0,|m|m.len()),"styles_used":style_use.keys().filter(|s|defs["styles"].get(*s).is_some()).count(),"border_fills_defined":defs["border_fills"].as_object().map_or(0,|m|m.len()),"border_fills_used":borders.len(),"tables":table_total,"table_types":table_types,"combos":combos.len(),"types":types.len(),"shade_colors":shades.len()});
-    json!({"summary":summary,"page":page,"used_fonts":used_fonts,"char_usage":char_use.into_iter().filter(|(_,u)|u["chars"].as_u64().unwrap_or(0)>0).collect::<BTreeMap<_,_>>(),"para_usage":para_use,"style_usage":style_use,"border_fill_usage":borders.into_iter().map(|(k,v)|(k,json!(v.into_iter().collect::<Vec<_>>()))).collect::<BTreeMap<_,_>>(),"combos":combos,"types":types,"shade_colors":shades,"inline_effects":effects,"tables":tables})
+    json!({"source":source,"definitions":defs,"summary":summary,"page":page,"used_fonts":used_fonts,"char_usage":char_use.into_iter().filter(|(_,u)|u["chars"].as_u64().unwrap_or(0)>0).collect::<BTreeMap<_,_>>(),"para_usage":para_use,"style_usage":style_use,"border_fill_usage":borders.into_iter().map(|(k,v)|(k,json!(v.into_iter().collect::<Vec<_>>()))).collect::<BTreeMap<_,_>>(),"combos":combos,"types":types,"shade_colors":shades,"inline_effects":effects,"tables":tables})
 }
 fn attr<'a>(node:&'a Value,key:&str)->Option<&'a str>{node.get("attrib").and_then(|a|a.get(key)).and_then(Value::as_str)}
 fn local(node:&Value)->&str{node.get("tag").and_then(Value::as_str).unwrap_or("").rsplit('}').next().unwrap_or("")}
