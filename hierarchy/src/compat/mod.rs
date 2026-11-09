@@ -22,7 +22,7 @@ pub fn run_fn(name: &str) -> Result<(), String> {
         "stored_role" => serde_json::json!(stored_role::stored_role(input["label"].as_str().unwrap_or(""))),
         "document_type" => serde_json::json!(document_type::document_type(&input["roles"], input["has_midtitle_table"].as_bool().unwrap_or(false))),
         "leading_marker" => serde_json::to_value(leading_marker::leading_marker(input["text"].as_str().unwrap_or(""))).map_err(|e| e.to_string())?,
-        "most_common" => input["values"].as_array().and_then(|v| most_common::most_common(v)).cloned().unwrap_or(input["default"].clone()),
+        "most_common" | "_most_common" => input["values"].as_array().and_then(|v| most_common::most_common(v)).cloned().unwrap_or(input["default"].clone()),
         "analyze_hierarchy" => analyze_hierarchy::analyze_hierarchy(&input["paragraphs"]),
         "hierarchy_summary" => serde_json::json!(hierarchy_summary::hierarchy_summary(&input["analysis"])),
         _ => return Err(format!("unknown compat function: {name}")),
