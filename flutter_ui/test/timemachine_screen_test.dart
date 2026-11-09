@@ -1,11 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/timemachine/timemachine_screen.dart';
+import 'package:docfit_ui/core/hierarchy_ffi.dart';
 
 void main() {
   _labelsTest();
+  test('DLL이 없는 환경에서 위계 FFI는 기존 백엔드 대체 경로를 선택한다', () {
+    if (!Platform.isWindows) {
+      expect(HierarchyFfi.instance.analyze([{'text': '1. 항목'}]), isNull);
+    }
+  });
   testWidgets('켜기 후 목록과 날짜 머리글 표시', (tester) async {
     final api = _FakeApi();
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call))));

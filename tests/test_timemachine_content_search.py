@@ -76,6 +76,23 @@ class ContentSearchTests(unittest.TestCase):
         self.index.close()
         self.tmp.cleanup()
 
+    def test_engine_enabled_converts_levels_for_index(self):
+        from unittest.mock import patch
+        from docfit_core.timemachine.content_search import classify_paragraph_levels
+        records = [ParagraphRecord(i, text, "body", LEVEL_ORDER.index("body"), False)
+                   for i, text in enumerate(("제목", "본문"))]
+        with patch("docfit_app.hierarchy_bridge.analyze_levels",
+                   return_value={"levels": [0, 5]}):
+            result = classify_paragraph_levels("dummy.txt", records)
+        self.assertEqual([p.level for p in result], ["document_title", "circle"])
+
+    def test_engine_unavailable_preserves_python_index_classification(self):
+        from unittest.mock import patch
+        records = [ParagraphRecord(0, "ㅁ 항목", "body", LEVEL_ORDER.index("body"), False)]
+        with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value=None):
+            result = classify_paragraph_levels("dummy.txt", records)
+        self.assertEqual(result[0].level, "square")
+
     def test_txt_search_snippet_and_incremental_update(self):
         path = self.root / "보고서.txt"
         path.write_text("분기별 업무 실적 검색 대상 문장", encoding="utf-8")

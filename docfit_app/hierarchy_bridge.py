@@ -11,7 +11,9 @@ _NAME = "hierarchy.exe" if sys.platform == "win32" else "hierarchy"
 def find_executable():
     repository = Path(__file__).resolve().parent.parent
     base = Path(getattr(sys, "_MEIPASS", repository))
-    for candidate in (base / "resources" / "hierarchy.exe",
+    for candidate in (base / "resources" / _NAME,
+                      base / "resources" / "hierarchy.exe",
+                      base / _NAME,
                       repository / "hierarchy" / "target" / "release" / _NAME,
                       repository / "hierarchy" / "target" / "release" / "hierarchy.exe"):
         if candidate.is_file():
@@ -41,6 +43,18 @@ def run_executable(executable, paragraphs, timeout=TIMEOUT_SECONDS):
 
 def analyze_levels(paragraphs, settings=None, executable=None, timeout=TIMEOUT_SECONDS):
     """설정 hierarchy_engine이 True일 때만 분석한다. 꺼져 있거나 실패하면 None."""
+    if settings is None:
+        # Keep the engine usable in core callers without importing UI/bootstrap modules.
+        try:
+            import os
+            from docfit_app.settings_schema import DEFAULTS
+            from docfit_app.settings_service import SettingsService
+            appdata = os.environ.get("APPDATA")
+            settings = SettingsService(Path(appdata) / "HwpAutoDocFit" / "settings.json").read() if appdata else {}
+            if "hierarchy_engine" not in settings:
+                settings = {**DEFAULTS, **settings}
+        except Exception:
+            settings = {}
     if not (settings or {}).get("hierarchy_engine", False):
         return None
     if not paragraphs:
