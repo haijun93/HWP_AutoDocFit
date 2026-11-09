@@ -180,6 +180,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item hierarchy/target/release/hierarchy.exe resources/hierarchy.exe -Force
           Copy-Item hierarchy/target/release/hierarchy.dll resources/hierarchy.dll -Force
+          if (-not (Test-Path resources/hierarchy.dll)) { throw 'hierarchy.dll missing from packaged resources' }
       - name: Build klib (Rust)
         shell: pwsh
         run: |
