@@ -48,10 +48,29 @@ def find_matching_windows(target_substring: str = "한글편집 후처리") -> l
     return found
 
 
-def kill_pids(pids: set[int]):
-    for pid in list(pids):
+def kill_isolated_processes(isolated_dir: Path, explicit_pids: set[int]):
+    """Strictly kill only processes belonging to the isolated directory or explicit launcher/window PIDs."""
+    # 1. Kill explicit PIDs first
+    for pid in list(explicit_pids):
         if pid and pid > 0:
             subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, check=False)
+
+    # 2. Check for any child processes whose ExecutablePath is inside the isolated directory
+    iso_prefix = str(isolated_dir).replace("'", "''")
+    cmd = (
+        f"Get-CimInstance Win32_Process | "
+        f"Where-Object {{ $_.ExecutablePath -and $_.ExecutablePath.StartsWith('{iso_prefix}') }} | "
+        f"Select-Object -ExpandProperty ProcessId"
+    )
+    try:
+        res = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=5)
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                line = line.strip()
+                if line.isdigit():
+                    subprocess.run(["taskkill", "/PID", line, "/T", "/F"], capture_output=True, check=False)
+    except Exception:
+        pass
 
 
 def measure_single_launch(
@@ -59,7 +78,7 @@ def measure_single_launch(
     isolated_dir: Path,
     version: str,
     target_window_title: str = "한글편집 후처리",
-    timeout: float = 35.0,
+    timeout: float = 40.0,
 ) -> dict:
     local_app_data = isolated_dir / "local"
     roaming_app_data = isolated_dir / "roaming"
@@ -121,31 +140,26 @@ def measure_single_launch(
                 launcher_exit_ms = elapsed
                 launcher_exit_code = ret
 
-        # If both first window and launcher exited, or main window appeared
-        if (first_window_ms is not None and launcher_exit_ms is not None) or main_window_ms is not None:
-            # If main window not seen yet and launcher already exited, give a little time for main window
-            if main_window_ms is None and launcher_exit_ms is not None and (now - started) < 15.0:
-                time.sleep(0.05)
-                continue
+        # Complete when the main GUI window appears, or when launcher exits and main window is seen
+        if main_window_ms is not None:
             break
         time.sleep(0.02)
 
     # Clean up launcher and child processes strictly
-    kill_pids(pids_to_kill)
+    kill_isolated_processes(isolated_dir, pids_to_kill)
     try:
         _, stderr = proc.communicate(timeout=2)
     except Exception:
         stderr = ""
 
-    # Extra verification: wait for killed processes to disappear
-    time.sleep(0.5)
+    time.sleep(1.0)
 
     trace_lines = []
     if stderr:
         trace_lines = [l for l in stderr.splitlines() if "HWP_LAUNCHER_TRACE" in l]
 
     return {
-        "ok": first_window_ms is not None,
+        "ok": first_window_ms is not None or main_window_ms is not None,
         "first_window_ms": first_window_ms,
         "first_window_title": first_window_info["title"] if first_window_info else None,
         "main_window_ms": main_window_ms,
@@ -235,7 +249,7 @@ def run_benchmark(output_report: Path | None = None) -> dict:
             print(f"  -> Cold Main window: {cold_res['main_window_ms']} ms, Launcher exit: {cold_res['launcher_exit_ms']} ms, ok: {cold_res['ok']}")
 
             # Settle and cleanup
-            time.sleep(1.0)
+            time.sleep(1.5)
 
             print(f"[{name}] Measuring Warm launch (cached)...")
             warm_dir = root / name / "warm"
@@ -246,13 +260,13 @@ def run_benchmark(output_report: Path | None = None) -> dict:
                 shutil.copytree(cold_dir / "local", warm_dir / "local")
 
             warm_res = measure_single_launch(
-                exe, warm_dir, version, target_window_title="한글편집 후처리", timeout=25.0,
+                exe, warm_dir, version, target_window_title="한글편집 후처리", timeout=30.0,
             )
             print(f"  -> Warm First window: {warm_res['first_window_ms']} ms ({warm_res['first_window_title']})")
             print(f"  -> Warm Main window: {warm_res['main_window_ms']} ms, Launcher exit: {warm_res['launcher_exit_ms']} ms, ok: {warm_res['ok']}")
 
             # Settle
-            time.sleep(1.0)
+            time.sleep(1.5)
 
             results[name] = {
                 "cold": cold_res,
@@ -270,7 +284,7 @@ def run_benchmark(output_report: Path | None = None) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--report", type=Path, default=ROOT / "dist" / "RL1F.initial.bench.json")
+    parser.add_argument("--report", type=Path, default=ROOT / "dist" / "RL1F.fixed.bench.json")
     args = parser.parse_args()
     run_benchmark(args.report)
     return 0

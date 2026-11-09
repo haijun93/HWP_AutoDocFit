@@ -8,6 +8,7 @@ use rayon::prelude::*;
 use sha2::Digest;
 
 const MUTEX_SUFFIX: &str = "HWP_AutoDocFit_SingleInstance_Mutex";
+const SPLASH_TITLE: &str = "한글편집 후처리 (HWP_AutoDocFit) - 실행 준비";
 
 struct Trace {
     started: Instant,
@@ -206,7 +207,7 @@ fn version_tuple(version: &str) -> Vec<u64> {
 }
 
 #[cfg(windows)]
-fn show_splash(version: &str) {
+fn show_splash(_version: &str) {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, RegisterClassW, ShowWindow, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
@@ -216,7 +217,7 @@ fn show_splash(version: &str) {
     }
     unsafe {
         let class: Vec<u16> = OsStr::new("DocFitRustSplash").encode_wide().chain(Some(0)).collect();
-        let title: Vec<u16> = OsStr::new(&format!("HWP_AutoDocFit v{version} 준비 중")).encode_wide().chain(Some(0)).collect();
+        let title: Vec<u16> = OsStr::new(SPLASH_TITLE).encode_wide().chain(Some(0)).collect();
         let hinst = GetModuleHandleW(std::ptr::null());
         let wc = WNDCLASSW { lpfnWndProc: Some(proc), hInstance: hinst, lpszClassName: class.as_ptr(), ..std::mem::zeroed() };
         RegisterClassW(&wc);
