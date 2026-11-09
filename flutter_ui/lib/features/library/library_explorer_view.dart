@@ -207,6 +207,7 @@ class LibraryExplorerView extends StatefulWidget {
   const LibraryExplorerView({
     super.key,
     required this.boxName,
+    this.visibleSpaces = LibrarySpace.values,
     required this.items,
     required this.spaceNames,
     required this.selectedIds,
@@ -229,6 +230,7 @@ class LibraryExplorerView extends StatefulWidget {
   });
 
   final String boxName;
+  final List<LibrarySpace> visibleSpaces;
 
   /// 자료함의 자료(검색 중이면 검색 결과). 영역으로 걸러 보여 준다.
   final List<LibraryItem> items;
@@ -312,7 +314,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
   }
 
   List<_Entry> _entries(List<LibraryItem> items) => _c.folder == null
-      ? [for (final s in LibrarySpace.values) _Entry.folder(s)]
+      ? [for (final s in widget.visibleSpaces) _Entry.folder(s)]
       : [for (final i in items) _Entry.item(i)];
 
   int _countIn(LibrarySpace space) => widget.items.where((i) => i.space == space).length;
@@ -742,7 +744,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
             title: Text(widget.boxName, overflow: TextOverflow.ellipsis),
             onTap: () => _open(null),
           ),
-          for (final space in LibrarySpace.values)
+          for (final space in widget.visibleSpaces)
             _folderDropTarget(space, (hovering) => ListTile(
                   key: ValueKey('libraryExplorerTree-${space.name}'),
                   dense: true,

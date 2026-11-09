@@ -197,9 +197,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('libraryViewExplorer')));
       await tester.pumpAndSettle();
 
-      // 탐색기에서는 모든 폴더가 보이므로 임시저장소의 문서2도 확인 가능
+      // 탐색기에는 선택한 개수만큼 우선순위 앞 폴더만 보인다.
       expect(find.byKey(const ValueKey('libraryExplorerView')), findsOneWidget);
-      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-core')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsNothing);
 
       // 다시 캔버스로 전환 시 여전히 1개 영역
       await tester.tap(find.byKey(const ValueKey('libraryViewCanvas')));
