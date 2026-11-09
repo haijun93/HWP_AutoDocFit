@@ -60,7 +60,7 @@ class SmartLauncherBuildTest(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(report.read_text(encoding="utf-8").splitlines(),
-                             ["plain", "argument with spaces", 'quoted " value', "ends with slash\\"])
+                             ["--self-test", "plain", "argument with spaces", 'quoted " value', "ends with slash\\"])
 
     def test_payload_is_manifested_and_app_exe_is_renamed(self):
         with tempfile.TemporaryDirectory() as temporary:

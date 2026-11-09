@@ -373,7 +373,7 @@ fn run() -> Result<i32, String> {
             return Ok(0);
         }
         let mut command = Command::new(app);
-        let child_args = if self_test { args.iter().skip(1).cloned().collect::<Vec<_>>() } else { args.clone() };
+        let child_args = args.clone();
         command.args(&child_args).current_dir(&cache);
         for (key, value) in env::vars_os().filter(|(key, _)| key.to_string_lossy().starts_with("DOCFIT_")) {
             command.env(key, value);
