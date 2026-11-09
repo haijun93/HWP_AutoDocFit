@@ -437,14 +437,8 @@ class TimemachineService:
                 name="timemachine-content-index", daemon=True)
             self._content_thread.start()
 
-    # 본문검색(색인·검색·내보내기·오류 목록)과 연관검색은 개발자 모드에서만 허용한다.
-    # 매 명령마다 설정을 다시 읽으므로 설정 전환 직후부터 반영된다.
-    DEVELOPER_ONLY_ACTIONS = frozenset({
-        "content_index", "content_index_all", "content_index_start",
-        "content_index_status", "content_index_progress", "content_index_cancel",
-        "content_search", "content_export_markdown", "content_errors",
-        "content_preview", "related_search", "related_include",
-    })
+    # 본문검색과 연관검색은 일반 모드에서도 허용한다.
+    DEVELOPER_ONLY_ACTIONS = frozenset()
 
     def _command(self, action, payload):
         if action in self.DEVELOPER_ONLY_ACTIONS:
@@ -529,9 +523,6 @@ class TimemachineService:
             query = payload.get("query")
             return {"ok": True, "items": self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500))}
         if action == "related_search":
-            denied = self._require_developer_mode()
-            if denied is not None:
-                return denied
             path = payload.get("path")
             if not isinstance(path, str) or not self._path_in_active_root(path):
                 return self._error("INVALID_INPUT", "현재 조사 폴더의 문서를 선택해 주세요.")

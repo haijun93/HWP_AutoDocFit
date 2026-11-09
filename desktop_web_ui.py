@@ -1985,11 +1985,6 @@ class DesktopWebBridge:
         """타임머신 화면 명령을 처리한다."""
         try:
             from docfit_app.timemachine_service import TimemachineService
-            if action in TimemachineService.DEVELOPER_ONLY_ACTIONS:
-                settings = self._configuration().store.read()
-                if not bool(settings.get("developer_mode", False)):
-                    return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED",
-                            "message": "본문검색은 개발자 모드에서만 사용할 수 있습니다."}
             return self._timemachine_service().command(action, payload)
         except Exception:
             logging.getLogger(__name__).exception("타임머신 처리 실패")
