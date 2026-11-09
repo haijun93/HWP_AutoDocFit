@@ -448,6 +448,47 @@ mod tests {
     }
 
     #[test]
+    fn extract_payload_sequential_stream_verifies_integrity() {
+        use std::io::Write;
+        let test_root = env::temp_dir().join(format!("docfit-test-{}", uuid_token()));
+        let _ = fs::create_dir_all(&test_root);
+        let payload_path = test_root.join("test_payload.zip");
+        let cache_path = test_root.join("cache");
+
+        let file = fs::File::create(&payload_path).unwrap();
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("app_main.exe", options).unwrap();
+        zip.write_all(b"sample-payload-content").unwrap();
+        zip.finish().unwrap();
+
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"sample-payload-content");
+        let item_sha = format!("{:x}", hasher.finalize());
+
+        let manifest = Manifest {
+            version: "2.2.48".into(),
+            payload_hash: HASH.into(),
+            items: vec![
+                ManifestItem {
+                    path: "app_main.exe".into(),
+                    length: 22,
+                    sha256: item_sha,
+                }
+            ],
+        };
+
+        let trace = Trace::new();
+        let res = extract_payload(&payload_path, &cache_path, &manifest, &trace);
+        assert!(res.is_ok(), "extract_payload failed: {:?}", res);
+        assert!(cache_path.join("app_main.exe").is_file());
+        assert_eq!(fs::read_to_string(cache_path.join(".docfit-complete")).unwrap(), HASH);
+
+        let _ = fs::remove_dir_all(&test_root);
+    }
+
+    #[test]
     fn cache_path_matches_csharp_launcher_convention() {
         let root = Path::new(r"C:\Users\sample\AppData\Local");
         assert_eq!(cache_path(root, "1.80.10 Alpha 1", HASH), PathBuf::from(r"C:\Users\sample\AppData\Local\HWP_AutoDocFit\app_v1.80.10_Alpha_1_0123456789ab"));
