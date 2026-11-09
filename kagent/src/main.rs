@@ -10,6 +10,7 @@
 mod category;
 mod clip;
 mod crypt;
+mod memo;
 mod open_item;
 mod json;
 mod pipe;
@@ -603,6 +604,64 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         }
         refresh_recent();
     }
+}
+
+/// 메모장 프로세스가 끝날 때까지 메모 파일을 가볍게 확인한다. 메타데이터가 바뀐 경우에만 UTF-8을 읽고,
+/// 메모 ID를 유지한 채 payload·미리보기·해시를 암호화해 갱신한다.
+pub fn start_memo() {
+    let dir = app().dir.clone();
+    let path = std::path::Path::new(&dir).join(format!("memo-{}.txt", now_ms()));
+    if std::fs::write(&path, []).is_err() { return; }
+    let child = match std::process::Command::new("notepad.exe").arg(&path).spawn() {
+        Ok(child) => child,
+        Err(_) => { let _ = std::fs::remove_file(&path); return; }
+    };
+    let cleanup_path = path.clone();
+    if std::thread::Builder::new().name("kagent-memo".into()).stack_size(256 * 1024).spawn(move || {
+        memo_watch(child, path);
+    }).is_err() {
+        let _ = std::fs::remove_file(cleanup_path);
+    }
+}
+
+fn memo_watch(mut child: std::process::Child, path: std::path::PathBuf) {
+    let mut last = None;
+    let mut memo_id: Option<i64> = None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => break,
+            _ => {}
+        }
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let stamp = (meta.len(), meta.modified().ok());
+            if last.as_ref() != Some(&stamp) {
+                last = Some(stamp);
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    if memo::should_save(&text) {
+                        let settings = app().settings.lock().unwrap().clone();
+                        if text.len() as i64 <= settings.max_item_bytes {
+                            let preview = clip::preview("text", text.as_bytes());
+                            let t = now();
+                            let mut store = app().store.lock().unwrap();
+                            let result = if let Some(id) = memo_id {
+                                store.update_memo(id, text.as_bytes(), &preview, t).map(|_| (id, false))
+                            } else {
+                                store.insert("text", text.as_bytes(), &[], &preview, "notepad.exe", t)
+                            };
+                            if let Ok((id, _)) = result {
+                                memo_id = Some(id);
+                                let _ = store.enforce(&settings, t);
+                                drop(store);
+                                refresh_recent();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+    let _ = std::fs::remove_file(path);
 }
 
 fn parse_hotkey(text: &str) -> Option<(u32, u32)> {
