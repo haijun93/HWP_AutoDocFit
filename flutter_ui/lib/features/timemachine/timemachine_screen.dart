@@ -730,12 +730,16 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
   Future<void> _pickExtensions() async {
     final values=List<String>.from((_settings?['extensions'] as List?) ?? _extensions);
+    var useRust = _settings?['rust_content_index'] != false;
     final saved=await showDialog<bool>(context:context,builder:(context)=>StatefulBuilder(builder:(context,update)=>AlertDialog(
       title:const Text('적용 확장자'),
-      content:Wrap(spacing:6,runSpacing:4,children:[for(final ext in _extensions) FilterChip(label:Text(ext),selected:values.contains(ext),onSelected:(selected)=>update(()=>selected?values.add(ext):values.remove(ext)))]),
+      content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Wrap(spacing:6,runSpacing:4,children:[for(final ext in _extensions) FilterChip(label:Text(ext),selected:values.contains(ext),onSelected:(selected)=>update(()=>selected?values.add(ext):values.remove(ext)))]),
+        SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Rust 본문 색인'),subtitle:const Text('끄면 Python 색인기를 사용합니다.'),value:useRust,onChanged:(value)=>update(()=>useRust=value)),
+      ])),
       actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('취소')),FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('저장'))],
     )));
-    if(saved==true&&mounted)await _saveSettings(Map<String,Object?>.from(_settings!)..['extensions']=values);
+    if(saved==true&&mounted)await _saveSettings(Map<String,Object?>.from(_settings!)..['extensions']=values..['rust_content_index']=useRust);
   }
   Future<void> _addRoot() async {
     final path=await getDirectoryPath(); if(path==null||!mounted)return;

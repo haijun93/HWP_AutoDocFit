@@ -12,6 +12,11 @@ mod content;
 mod notebook;
 mod nb_transform;
 mod scan;
+mod extract;
+mod index_content;
+mod unify_marker;
+mod classify_levels;
+mod legacy_records;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -72,6 +77,53 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if args.first().is_some_and(|a| a == "legacy-records") {
+        let Some(path) = args.get(1) else { eprintln!("legacy-records requires a path"); std::process::exit(2); };
+        match legacy_records::run(std::path::Path::new(path)) { Ok(rows) => println!("{}", json::to_string(&json::Value::Arr(rows))), Err(e) => { eprintln!("{e}"); std::process::exit(1); } }
+        return;
+    }
+
+    if args.first().is_some_and(|a| a == "unify-marker") {
+        use std::io::{self, Read};
+        let mut input = String::new();
+        if let Err(error) = io::stdin().read_to_string(&mut input) { eprintln!("{error}"); std::process::exit(1); }
+        let texts: Vec<String> = match json::parse(input.trim()) {
+            Some(json::Value::Arr(items)) => items.into_iter().filter_map(|v| match v { json::Value::Str(s) => Some(s), _ => None }).collect(),
+            _ => input.lines().map(str::to_owned).collect(),
+        };
+        let values: Vec<_> = texts.iter().map(|text| unify_marker::unify_marker(text)).map(|(group, role, marker)|
+            json::Value::Arr(vec![group.into(), role.into(), marker.into()])).collect();
+        println!("{}", json::to_string(&json::Value::Arr(values)));
+        return;
+    }
+
+    if args.first().is_some_and(|a| a == "classify-levels") {
+        use std::io::{self, Read};
+        let stage = args.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(7).clamp(0, 7);
+        let mut input = String::new();
+        if let Err(error) = io::stdin().read_to_string(&mut input) { eprintln!("{error}"); std::process::exit(1); }
+        if let Err(error) = classify_levels::run(&input, stage) { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
+
+    if args.first().is_some_and(|a| a == "index-content") {
+        if args.len() < 3 { eprintln!("usage: klib index-content <db> <file-or-folder>..."); std::process::exit(2); }
+        if let Err(error) = index_content::run(&args[1], &args[2..]) { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
+
+    if args.first().is_some_and(|a| a == "extract") {
+        let Some(path) = args.get(1) else { eprintln!("extract requires a path"); std::process::exit(2); };
+        match extract::extract(std::path::Path::new(path)) {
+            Ok(paragraphs) => {
+                let records = paragraphs.iter().map(extract::Paragraph::to_json).collect();
+                println!("{}", json::to_string(&json::Value::obj(vec![("paragraphs", json::Value::Arr(records))])));
+            }
+            Err(error) => { eprintln!("{error}"); std::process::exit(1); }
+        }
+        return;
+    }
 
     if let Some(pos) = args.iter().position(|a| a == "--request-json") {
         if let Some(request) = args.get(pos + 1) {

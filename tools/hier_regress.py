@@ -18,6 +18,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 from docfit_core.style_hierarchy import analyze_hierarchy, leading_marker  # noqa: E402
+from docfit_app.hierarchy_bridge import run_library  # noqa: E402
 
 ROLE_LEVEL = {"제목": 0, "장": 1, "중제목": 2, "소제목": 3, "본문": 4, "내용": 5,
               "부연설명": 6, "미분류": 7}
@@ -97,29 +98,35 @@ def python_rows(paragraphs: list[dict]) -> list[dict]:
         # leading_marker's first tuple item is also used as a display fallback
         # for ordinary text (e.g. "표: ..." -> "표"). It is a hierarchy marker
         # only when the Python role detector recognizes a marker role.
-        if role not in {"장", "중제목", "소제목", "본문", "내용", "부연설명"}:
+        if ROLE_LEVEL.get(role, 7) not in range(1, 7):
             marker = ""
         rows.append({"level": ROLE_LEVEL.get(role, 7), "marker": marker,
                      "classification": role})
     return rows
 
 
-def rust_rows(executable: Path, paragraphs: list[dict]) -> list[dict]:
-    payload = {"paragraphs": [{"text": p["text"],
-                               "indent": p["left"] + p["indent"],
-                               "font_size": p["size_pt"]} for p in paragraphs]}
-    proc = subprocess.run([str(executable)], input=json.dumps(payload, ensure_ascii=False),
-                          text=True, encoding="utf-8", capture_output=True, check=True)
-    result = json.loads(proc.stdout)
-    if len(result.get("levels", [])) != len(paragraphs):
-        raise RuntimeError(f"Rust output length mismatch: {len(result.get('levels', []))} != {len(paragraphs)}")
-    # The CLI's classifications are the engine's public role mapping. Numeric
-    # Role enum values are implementation details and are not Python hierarchy
-    # levels; converting them to levels here caused false regressions.
-    return [{"level": ROLE_LEVEL.get(result["classifications"][i], 7),
-             "marker": result["markers"][i],
-             "classification": result["classifications"][i]}
-            for i in range(len(paragraphs))]
+def rust_rows(executable: Path, paragraphs: list[dict], *, python_compat: bool = True) -> list[dict]:
+    payload = {"paragraphs": paragraphs}
+    if executable.suffix.lower() == ".dll":
+        result = run_library(executable, paragraphs)
+        if result is None:
+            raise RuntimeError(f"DLL analysis failed: {executable}")
+    else:
+        command = [str(executable)]
+        proc = subprocess.run(command, input=json.dumps(payload, ensure_ascii=False),
+                              text=True, encoding="utf-8", capture_output=True, check=True)
+        result = json.loads(proc.stdout)
+    roles = result.get("role_sequence", [])
+    if len(roles) != len(paragraphs):
+        raise RuntimeError(f"Rust output length mismatch: {len(roles)} != {len(paragraphs)}")
+    rows = []
+    for i, role in enumerate(roles):
+        marker, _ = leading_marker(paragraphs[i]["text"])
+        if ROLE_LEVEL.get(role, 7) not in range(1, 7):
+            marker = ""
+        rows.append({"level": ROLE_LEVEL.get(role, 7), "marker": marker,
+                     "classification": role})
+    return rows
 
 
 def compare(corpus, executable):
@@ -162,11 +169,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--csv", type=Path, default=REPO / "reports" / "hier_regress.csv")
     parser.add_argument("--executable", type=Path)
+    parser.add_argument("--dll", type=Path, help="compare through the Rust C ABI DLL")
     parser.add_argument("--no-build", action="store_true")
     parser.add_argument("--measure", type=int, default=0,
                         help="measure Python/Rust one-pass classification for N fixture files")
     args = parser.parse_args()
-    executable = args.executable or (REPO / "hierarchy" / "target" / "release" /
+    executable = args.dll or args.executable or (REPO / "hierarchy" / "target" / "release" /
                                      ("hierarchy.exe" if os.name == "nt" else "hierarchy"))
     if not args.no_build:
         executable = build_release()

@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import queue
 import stat
 import subprocess
 import tempfile
@@ -54,6 +55,7 @@ class TimemachineService:
         self._content_lock = threading.RLock()
         self._content_cancel = threading.Event()
         self._content_thread = None
+        self._content_process = None
         self._content_pending_roots = None
         self._content_state = {"running": False, "seen": 0, "indexed": 0, "errors": 0,
                                "cancelled": False, "started_at": None, "finished_at": None}
@@ -71,7 +73,75 @@ class TimemachineService:
         subprocess.Popen(["explorer", "/select," + path])
 
     def _defaults(self):
-        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS)}
+        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True}
+
+    def _klib_executable(self):
+        candidates = []
+        if getattr(__import__('sys'), "frozen", False):
+            candidates.append(Path(__import__('sys')._MEIPASS) / "resources" / "klib.exe")
+        candidates.extend((Path(__file__).resolve().parents[1] / "resources" / "klib.exe",
+                           Path(__file__).resolve().parents[1] / "klib" / "target" / "release" / "klib.exe"))
+        return next((path for path in candidates if path.is_file()), None)
+
+    def _run_klib_index(self, paths, cancel_event, seen, indexed, errors):
+        """Index one supported batch; failed files are returned for Python fallback."""
+        executable = self._klib_executable()
+        if not executable or not paths:
+            return paths, seen, indexed, errors
+        process = None
+        outcomes = {}
+        try:
+            process = subprocess.Popen([str(executable), "index-content", self.content_index.path, *map(str, paths)],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", bufsize=1)
+            with self._content_lock:
+                self._content_process = process
+            lines = queue.Queue()
+            def read_output():
+                for output_line in process.stdout:
+                    lines.put(output_line)
+                lines.put(None)
+            threading.Thread(target=read_output, name="klib-content-progress", daemon=True).start()
+            output_done = False
+            while not output_done:
+                if cancel_event.is_set():
+                    process.terminate()
+                    try: process.wait(timeout=2)
+                    except subprocess.TimeoutExpired: process.kill()
+                    return [], seen, indexed, errors
+                try:
+                    line = lines.get(timeout=.05)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    output_done = True
+                    continue
+                try:
+                    event = json.loads(line)
+                    path = os.path.normcase(os.path.abspath(event.get("path", "")))
+                    status = event.get("status")
+                    if path:
+                        outcomes[path] = status
+                    if status in ("indexed", "skipped"):
+                        seen += 1
+                        indexed += status == "indexed"
+                        with self._content_lock:
+                            self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                except (ValueError, TypeError):
+                    continue
+            returncode = process.wait()
+            failed = [path for path in paths if returncode != 0 or outcomes.get(os.path.normcase(os.path.abspath(str(path)))) in (None, "error")]
+            return failed, seen, indexed, errors
+        except (OSError, ValueError, subprocess.SubprocessError):
+            if process and process.poll() is None:
+                process.terminate()
+                try: process.wait(timeout=2)
+                except subprocess.TimeoutExpired: process.kill()
+            return paths, seen, indexed, errors
+        finally:
+            if process and process.stdout:
+                process.stdout.close()
+            with self._content_lock:
+                self._content_process = None
 
     def close(self):
         self.cancel_content_index(wait=True)
@@ -82,11 +152,12 @@ class TimemachineService:
         with self._content_lock:
             self._content_state.update(running=False, cancelled=cancel_event.is_set(), finished_at=time.time())
 
-    def _content_index_worker(self, roots, extensions, cancel_event=None):
+    def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True):
         cancel_event = cancel_event or self._content_cancel
         seen = indexed = errors = 0
         rules = Rules(extensions=extensions, extra_extensions=extensions)  # 본문 색인 확장자(예: txt)는 타임라인 종류에 없어도 색인한다
         try:
+            rust_paths, python_paths = [], []
             for root in roots:
                 for folder, dirs, files in os.walk(root, followlinks=False):
                     if cancel_event.is_set(): break
@@ -115,16 +186,25 @@ class TimemachineService:
                         if rules.skip_file(name):
                             self.content_index.remove_file(path)
                             continue
-                        result = self.content_index.index_file(path)
-                        seen += 1
-                        indexed += bool(result["indexed"])
-                        errors += bool(result["error"])
-                        with self._content_lock:
-                            self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
+                            rust_paths.append(path)
+                        else:
+                            python_paths.append(path)
                     if cancel_event.is_set():
                         break
                 if cancel_event.is_set():
                     break
+            if not cancel_event.is_set() and rust_paths:
+                fallback, seen, indexed, errors = self._run_klib_index(rust_paths, cancel_event, seen, indexed, errors)
+                python_paths.extend(fallback)
+            for path in python_paths:
+                if cancel_event.is_set(): break
+                result = self.content_index.index_file(path)
+                seen += 1
+                indexed += bool(result["indexed"])
+                errors += bool(result["error"])
+                with self._content_lock:
+                    self._content_state.update(seen=seen, indexed=indexed, errors=errors)
             # 연결이 끊긴 드라이브의 문서는 지워진 것으로 보지 않는다.
             available = [os.path.normcase(os.path.abspath(root)) + os.sep for root in roots if os.path.isdir(root)]
             active_roots = [os.path.normcase(os.path.abspath(root)) + os.sep
@@ -169,6 +249,9 @@ class TimemachineService:
             if not self._content_state["running"]:
                 return {"ok": True, **dict(self._content_state)}
             cancel_event.set()
+            process = self._content_process
+        if process and process.poll() is None:
+            process.terminate()
         if wait and worker and worker is not threading.current_thread():
             worker.join(timeout=max(0.0, timeout))
             if worker.is_alive():
@@ -188,7 +271,10 @@ class TimemachineService:
             if mode not in ("max", "mtime") or type(enabled) is not bool:
                 raise ValueError("settings")
             extensions = self._validate_extensions(data.get("extensions", list(DEFAULT_EXTENSIONS)))
-            return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions}
+            rust_content_index = data.get("rust_content_index", True)
+            if type(rust_content_index) is not bool: raise ValueError("settings")
+            return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                    "rust_content_index": rust_content_index}
         except (OSError, ValueError, TypeError, KeyError):
             return defaults
 
@@ -433,7 +519,7 @@ class TimemachineService:
             self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
                                    "cancelled": False, "started_at": time.time(), "finished_at": None}
             self._content_thread = threading.Thread(target=self._content_index_worker,
-                args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event),
+                args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event, False),
                 name="timemachine-content-index", daemon=True)
             self._content_thread.start()
 
@@ -455,7 +541,10 @@ class TimemachineService:
             if mode not in ("max", "mtime") or type(enabled) is not bool:
                 raise ValueError("설정 값을 확인해 주세요.")
             extensions = self._validate_extensions(payload.get("extensions", self._settings["extensions"]))
-            settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions}
+            rust_content_index = payload.get("rust_content_index", self._settings.get("rust_content_index", True))
+            if type(rust_content_index) is not bool: raise ValueError("설정 값을 확인해 주세요.")
+            settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                        "rust_content_index": rust_content_index}
             with self._settings_lock:
                 old_roots = list(self._settings["roots"])
                 changed = self._settings != settings
