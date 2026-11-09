@@ -4,11 +4,11 @@
   "windows": [
     {
       "title": "한글편집 후처리 · v2.2.43",
-      "pid": 2432,
+      "pid": 7872,
       "image": "D:\\a\\HWP_AutoDocFit\\HWP_AutoDocFit\\dist\\HWP_AutoDocFit\\HWP_AutoDocFit.exe"
     }
   ],
-  "window_ready_ms": 3433.64,
+  "window_ready_ms": 3485.64,
   "smart_launcher": false,
   "first_run_splash_ms": null,
   "offline_ocr": {
