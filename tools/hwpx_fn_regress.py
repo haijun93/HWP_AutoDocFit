@@ -64,6 +64,12 @@ def collect(fixtures: Path, fn_name: str):
                         cases.append({"file": path.name, "member": member,
                                       "input": {"tree": _tree(element)},
                                       "expected": style_inventory._text_of(element)})
+                elif fn_name == "_run_text":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "run":
+                            cases.append({"file": path.name, "member": member,
+                                          "input": {"tree": _tree(element)},
+                                          "expected": style_inventory._run_text(element)})
     # Include documented coercion/error edges in addition to fixture-derived values.
     if fn_name == "_mm":
         for value in (None, "invalid", "", 0, 1000):
