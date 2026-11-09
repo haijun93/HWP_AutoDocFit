@@ -75,7 +75,7 @@ class TimemachineServiceTests(unittest.TestCase):
         self.assertIsInstance(settings["roots"], list)
         self.assertFalse(self.service.command("status")["enabled"])
 
-    def test_content_and_related_search_require_developer_mode(self):
+    def test_content_search_requires_developer_mode_but_related_search_does_not(self):
         output = self.root / "거부.md"
         denied_calls = [
             ("content_search", {"query": "금지"}),
@@ -84,7 +84,6 @@ class TimemachineServiceTests(unittest.TestCase):
             ("content_index_start", {}),
             ("content_index_status", {}),
             ("content_preview", {"path": str(self.root / "없는.txt")}),
-            ("related_search", {"path": str(self.root / "없는.txt")}),
         ]
         for action, payload in denied_calls:
             with self.subTest(action=action):
@@ -93,6 +92,18 @@ class TimemachineServiceTests(unittest.TestCase):
                 self.assertEqual(denied["code"], "DEVELOPER_MODE_REQUIRED")
                 self.assertIn("개발자 모드", denied["message"])
         self.assertFalse(output.exists())
+
+        self.enable()
+        selected = self.root / "selected.txt"
+        related = self.root / "related.txt"
+        selected.write_text("2026\uB144\uB3C4 3\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", encoding="utf-8")
+        related.write_text("2026\uB144\uB3C4 2\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", encoding="utf-8")
+        self.service.content_index.index_file(selected)
+        self.service.content_index.index_file(related)
+        response = self.service.command("related_search", {"path": str(selected)})
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["items"][0]["name"], related.name)
+        self.assertTrue(response["items"][0]["reasons"])
 
         self.developer_mode = True
         self.enable()

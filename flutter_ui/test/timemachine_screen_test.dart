@@ -6,6 +6,37 @@ import 'package:docfit_ui/features/timemachine/timemachine_screen.dart';
 
 void main() {
   _labelsTest();
+  testWidgets('\uC5F0\uAD00\uAC80\uC0C9 \uBAA8\uB4DC\uC640 \uADFC\uAC70 \uCE69\uC740 \uC77C\uBC18 \uBAA8\uB4DC\uC5D0\uC11C\uB3C4 \uD45C\uC2DC\uB41C\uB2E4', (tester) async {
+    final api = _FakeApi(enabled: true, developerMode: false)
+      ..relatedResponse = {
+        'ok': true,
+        'items': [
+          {
+            'name': '2026 2\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34.txt',
+            'score': 80,
+            'reasons': [
+              {'type': 'project', 'label': '\uAC19\uC740 \uC0AC\uC5C5\uBA85', 'values': ['\uB2E8\uD48D\uC0AC\uC5C5']},
+              {'type': 'department', 'label': '\uAC19\uC740 \uBD80\uC11C\uBA85', 'values': ['\uBB38\uD654\uAD00\uAD11\uACFC']},
+            ],
+            'related_reasons': ['\uAC19\uC740 \uC0AC\uC5C5\uBA85: \uB2E8\uD48D\uC0AC\uC5C5', '\uAC19\uC740 \uBD80\uC11C\uBA85: \uBB38\uD654\uAD00\uAD11\uACFC'],
+            'reference_date_found': false,
+          },
+        ],
+      };
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('\uC5F0\uAD00\uAC80\uC0C9'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '??');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pumpAndSettle();
+    expect(api.calls.any((c) => c.$1 == 'related_search'), isTrue);
+    expect(find.text('\uAC19\uC740 \uC0AC\uC5C5\uBA85: \uB2E8\uD48D\uC0AC\uC5C5'), findsOneWidget);
+    expect(find.text('\uAC19\uC740 \uBD80\uC11C\uBA85: \uBB38\uD654\uAD00\uAD11\uACFC'), findsOneWidget);
+  });
+
   testWidgets('켜기 후 목록과 날짜 머리글 표시', (tester) async {
     final api = _FakeApi();
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call))));
@@ -26,7 +57,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('파일명'), findsOneWidget);
     expect(find.text('본문검색'), findsNothing);
-    expect(find.text('연관검색'), findsNothing);
+    expect(find.text('연관검색'), findsOneWidget);
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();

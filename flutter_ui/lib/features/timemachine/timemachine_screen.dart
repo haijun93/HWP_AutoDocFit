@@ -91,15 +91,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         if (response is Map && response['api_version'] == 1 && response['ok'] == true && response['data'] is Map) {
           final values = (response['data'] as Map)['values'];
           enabled = values is Map && values['developer_mode'] == true;
-      } else if (response is Map && response['developer_mode'] is bool) {
-        enabled = response['developer_mode'] == true;
-      }
+        } else if (response is Map && response['developer_mode'] is bool) {
+          enabled = response['developer_mode'] == true;
+        }
       } catch (_) {
         enabled = false;
       }
       if (!mounted) return;
       if (enabled != _developerMode) {
-        final leaveContent = !enabled && (_contentMode || _relatedMode);
+        final leaveContent = !enabled && _contentMode && !_relatedMode;
         setState(() {
           _developerMode = enabled;
           if (leaveContent) _resetContentState();
@@ -291,8 +291,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Future<void> _contentSearch(String query, {String? sort}) async {
     final searchRev = ++_contentSearchRevision;
-    if (!_developerMode) return;
-    if (query.isEmpty) {
+    if (!_developerMode && !_relatedMode) return;
+    if (query.isEmpty && !_relatedMode) {
       if (mounted) {
         setState(() {
           _contentResults = [];
@@ -315,7 +315,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
        final activeSort = sort ?? (_relatedMode ? 'hierarchy_relevance' : _contentSort);
        final relatedMode = _relatedMode;
        final response = await _api.command(relatedMode ? 'related_search' : 'content_search', {
-         'query': query, 'limit': 100,
+         if (!relatedMode) 'query': query,
+        'limit': 100,
          if (relatedMode) 'sort': 'hierarchy_relevance' else 'sort': activeSort == 'relevance' ? 'relevance' : activeSort,
        });
        final rawItems = response['items'];
@@ -446,7 +447,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
 
   Future<void> _setContentMode(bool related) async {
-    if (!_developerMode) return;
+    if (!_developerMode && !related) return;
     setState(() {
       _relatedMode = related;
       _contentMode = true;
@@ -460,7 +461,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       _fileSearchResults = [];
       _fileSearchActive = false;
     });
-    await _contentSearch('', sort: _contentSort);
+    await _contentSearch(related ? ' ' : '', sort: _contentSort);
   }
   Future<void> _runFileSearch(String query) async {
     if (!_fileSearchSupported) return;
@@ -541,7 +542,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
 
   void _toggleRelatedMode(bool value) {
-    if (value && !_developerMode) return;
     setState(() {
       _relatedMode = value;
       _contentMode = value;
@@ -887,8 +887,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
               ],
             ),
           Expanded(
-            child: _developerMode && (_contentMode || _relatedMode)
-                ? Column(children: [if (_contentMode) _contentSearchPanel(), Expanded(child: _contentResultsView())])
+            child: ((_developerMode && _contentMode) || _relatedMode)
+                ? Column(children: [_contentSearchPanel(), Expanded(child: _contentResultsView())])
                 : (_fileTableView && _fileSearchSupported
                     ? _fileSearchTable(_fileSearchActive ? _fileSearchResults : _items)
                     : (isNarrow
@@ -1026,6 +1026,16 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                 Text('${_formatEpochDate(result.mtime)} · ${result.kind.toUpperCase()}', style: Theme.of(context).textTheme.labelSmall),
                 const SizedBox(height: 6),
                 _markedTerms(result.snippet, keywords, maxLines: 3, style: Theme.of(context).textTheme.bodyMedium),
+                if (_relatedMode && result.relatedReasons.isNotEmpty) ...[
+                  const SizedBox(height: 5),
+                  Wrap(spacing: 4, runSpacing: 2, children: [
+                    for (final reason in result.relatedReasons) Chip(
+                      label: Text(reason, style: const TextStyle(fontSize: 11)),
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ]),
+                ],
                 const SizedBox(height: 6),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1507,9 +1517,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final modes = <(String, String)>[
       ('file', '파일명'),
       if (_developerMode) ('content', '본문검색'),
-      if (_developerMode) ('related', '연관검색'),
+      ('related', '\uC5F0\uAD00\uAC80\uC0C9'),
     ];
-    final selected = _developerMode && _relatedMode ? 'related' : _developerMode && _contentMode ? 'content' : 'file';
+    final selected = _relatedMode ? 'related' : _developerMode && _contentMode ? 'content' : 'file';
     if (collapsed) {
       final label = modes.firstWhere((m) => m.$1 == selected).$2;
       return PopupMenuButton<String>(

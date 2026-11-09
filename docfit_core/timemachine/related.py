@@ -48,42 +48,40 @@ def _type(text):
 
 
 def _score(reference, candidate):
+    """?? ?? ??? ?? ??? ??? ?? ????."""
     ref_dict = dict(reference) if hasattr(reference, "keys") else (reference or {})
     cand_dict = dict(candidate) if hasattr(candidate, "keys") else (candidate or {})
     ref_body = ref_dict.get("body") or ""
     cand_body = cand_dict.get("body") or ""
     ref_text = (ref_dict.get("name") or "") + "\n" + ref_body
     cand_text = (cand_dict.get("name") or "") + "\n" + cand_body
-    left, right = _tokens(ref_text), _tokens(cand_text)
-    shared = sorted(left & right)
+    shared = sorted(_tokens(ref_text) & _tokens(cand_text))
     reasons = []
     score = 0
     if shared:
         score += min(50, 12 * len(shared))
-        reasons.append({"type": "terms", "label": "공통 업무·사업 단서", "values": shared[:8]})
+        reasons.append({"type": "terms", "label": "?? ????? ??", "values": shared[:8]})
     shared_projects = sorted(_projects(ref_text) & _projects(cand_text))
     if shared_projects:
         score += 10
-        reasons.append({"type": "project", "label": "같은 사업명", "values": shared_projects[:5]})
+        reasons.append({"type": "project", "label": "?? ???", "values": shared_projects[:5]})
     shared_depts = sorted(_departments(ref_text) & _departments(cand_text))
     if shared_depts:
         score += 10
-        reasons.append({"type": "department", "label": "같은 부서명", "values": shared_depts[:5]})
+        reasons.append({"type": "department", "label": "?? ???", "values": shared_depts[:5]})
     left_type, right_type = _type(ref_text), _type(cand_text)
     if left_type and left_type == right_type:
         score += 25
-        reasons.append({"type": "document_type", "label": "같은 문서 유형", "value": left_type})
+        reasons.append({"type": "document_type", "label": "?? ?? ??", "value": left_type})
     left_period, right_period = _period(ref_text), _period(cand_text)
     if left_period and right_period:
         distance = abs((left_period[0] * 4 + left_period[1]) - (right_period[0] * 4 + right_period[1]))
         if distance <= 4:
             score += 25 - distance * 4
-            reasons.append({"type": "period_pattern", "label": "인접한 기간 패턴", "distance": distance})
+            reasons.append({"type": "period_pattern", "label": "??? ?? ??", "distance": distance})
     if not (shared and left_type and left_type == right_type):
         return None
-    if not score:
-        return None
-    return min(score, 100), reasons
+    return (min(score, 100), reasons) if score else None
 
 
 def reason_texts(reasons):

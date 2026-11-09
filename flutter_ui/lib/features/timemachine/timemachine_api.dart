@@ -87,6 +87,7 @@ class TimemachineContentResult {
     required this.position,
     this.id,
     this.path,
+    this.relatedReasons = const [],
   });
 
   final int? id;
@@ -96,6 +97,7 @@ class TimemachineContentResult {
   final int totalMatches, size, hierarchyRank;
   final double mtime, ctime, bm25;
   final TimemachineResultPosition? position;
+  final List<String> relatedReasons;
 
   factory TimemachineContentResult.fromJson(Map value, {required String query}) {
     final id = _safeInt(value['id']);
@@ -180,6 +182,9 @@ class TimemachineContentResult {
       hierarchyRank: hierarchyRank,
       bm25: bm25,
       position: pos,
+      relatedReasons: value['related_reasons'] is List
+          ? (value['related_reasons'] as List).map((item) => '$item').where((item) => item.isNotEmpty).toList()
+          : const <String>[],
     );
   }
 }

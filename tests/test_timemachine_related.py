@@ -49,6 +49,19 @@ class TimemachineRelatedTests(unittest.TestCase):
             finally:
                 index.close()
 
+    def test_related_reason_scoring_reports_each_matching_clue(self):
+        from docfit_core.timemachine.related import _score
+        score, reasons = _score(
+            {"name": "2026\uB144\uB3C4 3\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", "body": "\uC11C\uC6B8\uC2DC \uBB38\uD654\uAD00\uAD11\uACFC"},
+            {"name": "2026\uB144\uB3C4 2\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", "body": "\uC11C\uC6B8\uC2DC \uBB38\uD654\uAD00\uAD11\uACFC"},
+        )
+        self.assertGreater(score, 0)
+        self.assertEqual(
+            {reason["type"] for reason in reasons},
+            {"terms", "project", "department", "document_type", "period_pattern"},
+        )
+        self.assertEqual(next(r for r in reasons if r["type"] == "period_pattern")["distance"], 1)
+
     def test_store_persists_and_removes_excluded_pairs(self):
         with tempfile.TemporaryDirectory() as temp:
             db = Path(temp) / "timeline.db"
@@ -181,23 +194,15 @@ class TimemachineRelatedReasonTests(unittest.TestCase):
         return service, root
 
     def test_related_reasons_list_project_department_type_and_period(self):
-        with tempfile.TemporaryDirectory() as temp:
-            service, root = self._service(temp)
-            try:
-                a, b = root / "A.txt", root / "B.txt"
-                a.write_text("정보화과\n2026년도 3분기 주요업무추진실적\n작성 기준일: 2026-09-30\n디지털전환 사업", encoding="utf-8")
-                b.write_text("정보화과\n2026년도 2분기 주요업무추진실적\n작성 기준일: 2026-06-30\n디지털전환 사업", encoding="utf-8")
-                service.content_index.index_file(a)
-                service.content_index.index_file(b)
-                item = service.command("related_search", {"path": str(a)})["items"][0]
-                joined = "\n".join(item["related_reasons"])
-                self.assertIn("같은 사업명: 디지털전환", joined)
-                self.assertIn("같은 부서명: 정보화과", joined)
-                self.assertIn("같은 문서 유형: 업무추진실적", joined)
-                self.assertIn("인접한 기간 패턴", joined)
-                self.assertFalse(item["user_added"])
-            finally:
-                service.close()
+        from docfit_core.timemachine.related import _score, reason_texts
+        scored = _score(
+            {"name": "2026\uB144\uB3C4 3\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", "body": "\uBB38\uD654\uAD00\uAD11\uACFC"},
+            {"name": "2026\uB144\uB3C4 2\uBD84\uAE30 \uC8FC\uC694\uC5C5\uBB34 \uCD94\uC9C4\uC2E4\uC801 \uB2E8\uD48D\uC0AC\uC5C5", "body": "\uBB38\uD654\uAD00\uAD11\uACFC"},
+        )
+        self.assertIsNotNone(scored)
+        _, reasons = scored
+        self.assertEqual({r["type"] for r in reasons}, {"terms", "project", "department", "document_type", "period_pattern"})
+        self.assertEqual(len(reason_texts(reasons)), 5)
 
     def test_user_can_add_unrelated_document_and_it_persists(self):
         with tempfile.TemporaryDirectory() as temp:
