@@ -16,6 +16,7 @@ mod extract;
 mod index_content;
 mod unify_marker;
 mod classify_levels;
+mod legacy_records;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -76,6 +77,12 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if args.first().is_some_and(|a| a == "legacy-records") {
+        let Some(path) = args.get(1) else { eprintln!("legacy-records requires a path"); std::process::exit(2); };
+        match legacy_records::run(std::path::Path::new(path)) { Ok(rows) => println!("{}", json::to_string(&json::Value::Arr(rows))), Err(e) => { eprintln!("{e}"); std::process::exit(1); } }
+        return;
+    }
 
     if args.first().is_some_and(|a| a == "unify-marker") {
         use std::io::{self, Read};
