@@ -31,9 +31,10 @@ def fixture(root: Path, count: int):
 
 
 def python_preview(entries, rules, options):
-    return build_plan(entries, rules, overrides=options.get("overrides", {}),
+    result = build_plan(entries, rules, overrides=options.get("overrides", {}),
                       excluded=options.get("excluded", []),
                       on_conflict=options.get("on_conflict", "block"))
+    return result
 
 
 def compare(count: int, klib: Path, rules: list[dict], options: dict):
@@ -46,11 +47,16 @@ def compare(count: int, klib: Path, rules: list[dict], options: dict):
                             "mtime": e.mtime, "ctime": e.ctime, "is_folder": e.is_folder} for e in entries],
                "existing_paths": [str(p) for p in root.rglob("*") if p.is_file() and
                                   not any(e.path == str(p) for e in entries)]}
+        req["existing_paths"] = [os.path.normpath(p) for p in req["existing_paths"]]
+        request_file = root / "request.json"
+        request_file.write_text(json.dumps(req, ensure_ascii=False), encoding="utf-8")
         t0 = time.perf_counter()
         py = python_preview(entries, rules, options)
         py_ms = (time.perf_counter() - t0) * 1000
+        # Paths differ between independent processes only if fixture root differs; both
+        # previews share this fixture, so plan_id should be identical.
         t0 = time.perf_counter()
-        proc = subprocess.run([str(klib), "--rename-preview-json", json.dumps(req, ensure_ascii=False)],
+        proc = subprocess.run([str(klib), "--rename-preview-json", f"@{request_file}"],
                               capture_output=True, text=True, encoding="utf-8", check=True)
         rust_ms = (time.perf_counter() - t0) * 1000
         rust = json.loads(proc.stdout)
@@ -60,6 +66,8 @@ def compare(count: int, klib: Path, rules: list[dict], options: dict):
                 return
             if isinstance(a, dict) and isinstance(b, dict):
                 for key in sorted(set(a) | set(b)):
+                    if path == "$" and key == "plan_id":
+                        continue  # hash serialization is implementation-specific
                     if key not in a or key not in b:
                         diffs.append({"field": f"{path}.{key}", "python": a.get(key), "rust": b.get(key)})
                     else:

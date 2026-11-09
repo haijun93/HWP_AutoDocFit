@@ -12,6 +12,7 @@ mod content;
 mod notebook;
 mod nb_transform;
 mod scan;
+mod rename;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -71,6 +72,17 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(pos) = args.iter().position(|a| a == "--rename-preview-json") {
+        if let Some(request) = args.get(pos + 1) {
+            let request = if let Some(path) = request.strip_prefix('@') {
+                std::fs::read_to_string(path).unwrap_or_else(|_| std::process::exit(2))
+            } else { request.clone() };
+            let Some(value) = json::parse(&request) else { std::process::exit(2) };
+            println!("{}", json::to_string(&rename::preview(&value)));
+            return;
+        }
+        std::process::exit(2);
+    }
     let has = |flag: &str| args.iter().any(|a| a == flag);
 
     if let Some(pos) = args.iter().position(|a| a == "--request-json") {
