@@ -11,6 +11,7 @@ class _FakeBackend {
   List<Map<String, Object?>> entries = [];
   Map<String, Object?>? lastPreview;
   bool conflict = false;
+  Map<String, Object?> dateOptions = {'position': 'none', 'format': 'YYYY.MM.DD', 'delimiter': '_'};
 
   Future<Object?> call(String method, List<Object?> args) async {
     expect(method, 'file_rename');
@@ -18,6 +19,13 @@ class _FakeBackend {
     final payload = (args.length > 1 ? args[1] : null) as Map? ?? const {};
     calls.add(action);
     switch (action) {
+      case 'replace_mru_list':
+        return {'ok': true, 'values': <Map<String, Object?>>[]};
+      case 'date_options_get':
+        return {'ok': true, 'options': dateOptions};
+      case 'date_options_save':
+        dateOptions = Map<String, Object?>.from(payload);
+        return {'ok': true, 'options': dateOptions};
       case 'list':
         return {'ok': true, 'entries': entries};
       case 'pick_files':
@@ -106,32 +114,110 @@ void main() {
     expect(backend.lastPreview!['rules'], isEmpty);
   });
 
-  testWidgets('날짜: 앞에는 끝 마침표를 두고 뒤에는 빼며 짧은 형식도 고른다', (tester) async {
+  testWidgets('날짜: 표기 3종·구분 2종·앞/뒤 선택 시 즉시 미리보기에 반영되고 안 넣음 시 흐리게 처리', (tester) async {
     final backend = _FakeBackend();
     await _pump(tester, backend);
     await tester.tap(find.byKey(const ValueKey('rename-add-files')));
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
 
+    // 안 넣음 상태에서는 Opacity가 흐리게(0.38) 설정되고 IgnorePointer가 true
+    final opacityFinder = find.ancestor(
+      of: find.byKey(const ValueKey('rename-date-format')),
+      matching: find.byType(Opacity),
+    );
+    expect(opacityFinder, findsOneWidget);
+    expect(tester.widget<Opacity>(opacityFinder).opacity, closeTo(0.38, 0.01));
+
+    // 맨 앞 선택
     await tester.ensureVisible(find.text('맨 앞'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('맨 앞'));
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
     expect((backend.lastPreview!['rules'] as List).single, {
-      'kind': 'date', 'source': 'today', 'format': 'YYYY.MM.DD.', 'position': 'prefix', 'sep': '',
+      'kind': 'date',
+      'source': 'today',
+      'format': 'YYYY.MM.DD',
+      'position': 'prefix',
+      'delimiter': '_',
+      'sep': '_',
+    });
+    // 선택 후에는 흐림 해제 (opacity 1.0)
+    expect(tester.widget<Opacity>(opacityFinder).opacity, 1.0);
+
+    // 구분 방식: 괄호 ( ) 선택
+    await tester.ensureVisible(find.text('괄호 ( )'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('괄호 ( )'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+    expect((backend.lastPreview!['rules'] as List).single, {
+      'kind': 'date',
+      'source': 'today',
+      'format': 'YYYY.MM.DD',
+      'position': 'prefix',
+      'delimiter': '()',
+      'sep': '',
     });
 
+    // 맨 뒤 선택
     await tester.tap(find.text('맨 뒤'));
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
-    expect(((backend.lastPreview!['rules'] as List).single as Map)['format'], 'YYYY.MM.DD');
+    expect(((backend.lastPreview!['rules'] as List).single as Map)['position'], 'suffix');
 
+    // 표기 방식: YYMMDD 선택
     final now = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
-    final yymmddItem = find.text('${two(now.year % 100)}${two(now.month)}${two(now.day)}');
+    final yymmddText = '${two(now.year % 100)}${two(now.month)}${two(now.day)}';
+    final yymmddItem = find.text(yymmddText);
     await tester.ensureVisible(yymmddItem);
     await tester.pumpAndSettle();
     await tester.tap(yymmddItem);
     await tester.pumpAndSettle(const Duration(milliseconds: 300));
     expect(((backend.lastPreview!['rules'] as List).single as Map)['format'], 'YYMMDD');
+
+    // 표기 방식: YYYYMMDD 선택
+    final yyyymmddText = '${now.year}${two(now.month)}${two(now.day)}';
+    final yyyymmddItem = find.text(yyyymmddText);
+    await tester.ensureVisible(yyyymmddItem);
+    await tester.pumpAndSettle();
+    await tester.tap(yyyymmddItem);
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+    expect(((backend.lastPreview!['rules'] as List).single as Map)['format'], 'YYYYMMDD');
+
+    // 구분 방식: 밑줄 _ 선택
+    await tester.ensureVisible(find.text('밑줄 _'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('밑줄 _'));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+    expect((backend.lastPreview!['rules'] as List).single, {
+      'kind': 'date',
+      'source': 'today',
+      'format': 'YYYYMMDD',
+      'position': 'suffix',
+      'delimiter': '_',
+      'sep': '_',
+    });
+  });
+
+  testWidgets('날짜: 마지막 선택값을 저장하고 화면 복원 시 적용한다', (tester) async {
+    final backend = _FakeBackend();
+    backend.dateOptions = {
+      'position': 'prefix',
+      'format': 'YYYYMMDD',
+      'delimiter': '()',
+    };
+    await _pump(tester, backend);
+    await tester.tap(find.byKey(const ValueKey('rename-add-files')));
+    await tester.pumpAndSettle(const Duration(milliseconds: 300));
+
+    expect(backend.calls, contains('date_options_get'));
+    expect((backend.lastPreview!['rules'] as List).single, {
+      'kind': 'date',
+      'source': 'today',
+      'format': 'YYYYMMDD',
+      'position': 'prefix',
+      'delimiter': '()',
+      'sep': '',
+    });
   });
 
   for (final size in const [Size(1400, 800), Size(800, 600), Size(620, 700), Size(1000, 420)]) {

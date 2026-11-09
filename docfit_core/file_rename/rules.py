@@ -332,13 +332,36 @@ def _a_ext_case(state, opt, ctx):
     return state[0], state[1].lower() if opt["mode"] == "lower" else state[1].upper()
 
 
+def _parse_date_delimiter(spec):
+    delim = spec.get("delimiter")
+    if delim is None and spec.get("bracket") is True:
+        delim = "()"
+    raw_sep = spec.get("sep")
+    if delim is None and raw_sep in ("()", "bracket", "paren"):
+        delim = "()"
+    if delim is not None:
+        d = str(delim).strip()
+        if d in ("()", "bracket", "paren"):
+            return "()"
+        if d in ("_", "underscore"):
+            return "_"
+        raise RuleError("날짜 구분 방식은 밑줄(_) 또는 괄호(())여야 합니다.")
+    return None
+
+
 def _v_date(spec):
     pattern = _str(spec, "format", "YYYYMMDD", allow_empty=False, max_len=40)
     if not re.search(r"YYYY|YY|MM|DD|hh|mm|ss", pattern):
         raise RuleError("날짜 형식에 YYYY·MM·DD·hh·mm·ss 중 하나가 있어야 합니다.")
-    return dict(source=_choice(spec, "source", "mtime", ("exif", "mtime", "ctime", "today")), format=pattern,
+    delim = _parse_date_delimiter(spec)
+    sep_default = "" if delim == "()" else "_"
+    sep = _str(spec, "sep", sep_default, max_len=8) if "sep" in spec else sep_default
+    opt = dict(source=_choice(spec, "source", "mtime", ("exif", "mtime", "ctime", "today")), format=pattern,
                 position=_choice(spec, "position", "prefix", ("prefix", "suffix", "replace")),
-                sep=_str(spec, "sep", "_", max_len=8))
+                sep=sep)
+    if delim is not None:
+        opt["delimiter"] = delim
+    return opt
 
 
 def _a_date(state, opt, ctx):
@@ -346,7 +369,13 @@ def _a_date(state, opt, ctx):
                                       exif_reader=ctx.get("exif_reader") or read_exif_datetime)
     if fallback:
         ctx["warnings"].add("exif_missing")
-    return _place(state[0], format_datetime(moment, opt["format"]), opt["position"], opt["sep"]), state[1]
+    formatted = format_datetime(moment, opt["format"])
+    delim = opt.get("delimiter")
+    if delim == "()" or opt.get("sep") in ("()", "bracket", "paren"):
+        return _place(state[0], f"({formatted})", opt["position"], ""), state[1]
+    if delim == "_":
+        return _place(state[0], formatted, opt["position"], "_"), state[1]
+    return _place(state[0], formatted, opt["position"], opt.get("sep", "_")), state[1]
 
 
 def _v_exif_date(spec):
@@ -354,8 +383,14 @@ def _v_exif_date(spec):
     pattern = _str(spec, "format", "YYYYMMDD", allow_empty=False, max_len=40)
     if not re.search(r"YYYY|YY|MM|DD|hh|mm|ss", pattern):
         raise RuleError("날짜 형식에 YYYY·MM·DD·hh·mm·ss 중 하나가 있어야 합니다.")
-    return dict(format=pattern, position=_choice(spec, "position", "prefix", ("prefix", "suffix", "replace")),
-                sep=_str(spec, "sep", "_", max_len=8))
+    delim = _parse_date_delimiter(spec)
+    sep_default = "" if delim == "()" else "_"
+    sep = _str(spec, "sep", sep_default, max_len=8) if "sep" in spec else sep_default
+    opt = dict(format=pattern, position=_choice(spec, "position", "prefix", ("prefix", "suffix", "replace")),
+                sep=sep)
+    if delim is not None:
+        opt["delimiter"] = delim
+    return opt
 
 
 def _a_exif_date(state, opt, ctx):
@@ -365,7 +400,13 @@ def _a_exif_date(state, opt, ctx):
     if moment is None:
         ctx["warnings"].add("exif_missing")
         return state
-    return _place(state[0], format_datetime(moment, opt["format"]), opt["position"], opt["sep"]), state[1]
+    formatted = format_datetime(moment, opt["format"])
+    delim = opt.get("delimiter")
+    if delim == "()" or opt.get("sep") in ("()", "bracket", "paren"):
+        return _place(state[0], f"({formatted})", opt["position"], ""), state[1]
+    if delim == "_":
+        return _place(state[0], formatted, opt["position"], "_"), state[1]
+    return _place(state[0], formatted, opt["position"], opt.get("sep", "_")), state[1]
 
 
 def _v_cleanup(spec):
