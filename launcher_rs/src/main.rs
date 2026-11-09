@@ -9,6 +9,24 @@ use sha2::Digest;
 
 const MUTEX_SUFFIX: &str = "HWP_AutoDocFit_SingleInstance_Mutex";
 
+struct Trace {
+    started: Instant,
+    stage: Instant,
+    enabled: bool,
+}
+
+impl Trace {
+    fn new() -> Self {
+        Self { started: Instant::now(), stage: Instant::now(), enabled: env::var_os("HWP_LAUNCHER_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) }
+    }
+    fn mark(&mut self, name: &str) {
+        if self.enabled {
+            eprintln!("launcher-trace stage={} elapsed_ms={} total_ms={}", name, self.stage.elapsed().as_millis(), self.started.elapsed().as_millis());
+        }
+        self.stage = Instant::now();
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ManifestItem {
     path: String,
@@ -316,6 +334,7 @@ fn handoff_mutex(instance: &SingleInstance, child: &mut std::process::Child) -> 
 fn handoff_mutex(_instance: &(), _child: &mut std::process::Child) -> Result<(), String> { Ok(()) }
 
 fn run() -> Result<i32, String> {
+    let mut trace = Trace::new();
     #[cfg(windows)]
     let args: Vec<String> = windows_argv().into_iter().skip(1).collect();
     #[cfg(not(windows))]
@@ -324,6 +343,7 @@ fn run() -> Result<i32, String> {
         .unwrap_or_else(|| { let mut p = env::current_exe().unwrap(); p.set_file_name(format!("{}.manifest.txt", p.file_stem().unwrap().to_string_lossy())); p });
     let manifest_text = fs::read_to_string(&manifest_path).map_err(|e| format!("cannot read launcher manifest {}: {e}", manifest_path.display()))?;
     let manifest = parse_manifest(&manifest_text)?;
+    trace.mark("manifest-check");
     let self_test = args.first().map(|a| a == "--self-test").unwrap_or(false);
     #[cfg(windows)]
     let instance = if self_test || env::var_os("DOCFIT_LAUNCHER_TEST_ROOT").is_some() || args.first().map(|a| !a.starts_with('-')).unwrap_or(false) {
@@ -337,12 +357,14 @@ fn run() -> Result<i32, String> {
         .unwrap_or_else(|| local.join("HWP_AutoDocFit"));
     let cache = if env::var_os("DOCFIT_LAUNCHER_TEST_ROOT").is_some() { cache.join(cache_path(Path::new(""), &manifest.version, &manifest.payload_hash).file_name().unwrap()) }
         else { cache_path(&local, &manifest.version, &manifest.payload_hash) };
+    trace.mark("cache-path");
     if !cache_is_valid(&cache, &manifest) {
         show_splash(&manifest.version);
         let payload = env::var_os("DOCFIT_LAUNCHER_PAYLOAD").map(PathBuf::from)
             .unwrap_or_else(|| { let mut p = env::current_exe().unwrap(); p.set_file_name(format!("{}.payload.zip", p.file_stem().unwrap().to_string_lossy())); p });
         extract_payload(&payload, &cache, &manifest)?;
     }
+    trace.mark("manifest-validation");
     if cache_is_valid(&cache, &manifest) {
         let app = cache.join("app_main.exe");
         #[cfg(windows)]
@@ -363,13 +385,17 @@ fn run() -> Result<i32, String> {
             command.env("DOCFIT_LAUNCHER_HANDOFF_EVENT", &event_name);
             command.env("DOCFIT_LAUNCHER_MUTEX_NAME", &instance.name);
             let mut child = command.spawn().map_err(|e| format!("cannot start cached app: {e}"))?;
+            trace.mark("child-start");
             handoff_mutex(instance, &mut child)?;
+            trace.mark("handoff-wait");
             if let Some(cache_root) = cache.parent() { cleanup_old_caches(cache_root, cache.file_name().unwrap().to_str().unwrap_or(""), &manifest.version); }
             return Ok(0);
         }
         #[cfg(not(windows))]
         let _instance = ();
+        trace.mark("child-start");
         let status = command.status().map_err(|e| format!("cannot start cached app: {e}"))?;
+        trace.mark("child-exit");
         #[cfg(windows)]
         if let Some(cache_root) = cache.parent() { cleanup_old_caches(cache_root, cache.file_name().unwrap().to_str().unwrap_or(""), &manifest.version); }
         return Ok(status.code().unwrap_or(1));

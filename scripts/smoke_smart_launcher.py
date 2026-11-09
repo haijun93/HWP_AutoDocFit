@@ -27,6 +27,7 @@ def compare_launchers(args: argparse.Namespace) -> int:
         subprocess.run([str(find_csc()), "/nologo", "/target:exe", f"/out:{app}", str(child_source)], check=True)
         (bundle / "asset.txt").write_text("fixture", encoding="utf-8")
         results = {}
+        trace_logs = {}
         for kind in ("csharp", "rust"):
             out = root / kind
             out.mkdir()
@@ -47,7 +48,10 @@ def compare_launchers(args: argparse.Namespace) -> int:
             for label in ("self_test", "cached"):
                 start = time.perf_counter()
                 try:
-                    subprocess.run([str(launcher), "--self-test", "--self-test-report", str(report), "argument with spaces"], env=env, timeout=args.timeout, check=True)
+                    traced_env = env.copy()
+                    traced_env["HWP_LAUNCHER_TRACE"] = "1"
+                    completed = subprocess.run([str(launcher), "--self-test", "--self-test-report", str(report), "argument with spaces"], env=traced_env, timeout=args.timeout, check=True, capture_output=True, text=True)
+                    trace_logs.setdefault(kind, {})[label] = completed.stderr.splitlines()
                 except subprocess.CalledProcessError as error:
                     raise RuntimeError(f"{kind} {label} failed; launcher={launcher}, manifest={manifest}, payload={env['DOCFIT_LAUNCHER_PAYLOAD']}") from error
                 results[kind][label + "_ms"] = round((time.perf_counter() - start) * 1000, 2)
@@ -60,6 +64,7 @@ def compare_launchers(args: argparse.Namespace) -> int:
             results[kind]["cold_ms"] = round((time.perf_counter() - start) * 1000, 2)
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps({"comparison": results}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        args.report.with_suffix(".trace.json").write_text(json.dumps(trace_logs, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(results, ensure_ascii=False))
     return 0
 
