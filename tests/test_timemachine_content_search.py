@@ -171,6 +171,67 @@ class ContentSearchTests(unittest.TestCase):
         self.index.index_file(heading); self.index.index_file(body)
         self.assertEqual(self.index.keyword_search("위계점수검색")[0]["name"], heading.name)
 
+    def test_search_optimized_paragraph_query_matches_original_query(self):
+        """Required-column/schema-limited query preserves the prior result rows."""
+        docs = [
+            ("/synthetic/current-a.txt", "current-a.txt", 1, "chapter", 1, "alpha needle beta"),
+            ("/synthetic/current-a.txt", "current-a.txt", 2, "body", 8, "needle tail"),
+            ("/synthetic/current-b.txt", "current-b.txt", 0, "section", 2, "beta alpha"),
+            ("/synthetic/legacy.txt", "legacy.txt", 0, "body", 8, "alpha needle beta"),
+            ("/synthetic/unmatched.txt", "unmatched.txt", 0, "body", 8, "unrelated text"),
+        ]
+        with self.index._lock, self.index.db:
+            self.index.db.executemany(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body) VALUES(?,?,?,?,?,?)",
+                docs,
+            )
+            self.index.db.executemany(
+                "INSERT INTO content_meta(path,size,mtime,ctime,hierarchy_schema_version) VALUES(?,?,?,?,?)",
+                [
+                    ("/synthetic/current-a.txt", 1, 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION),
+                    ("/synthetic/current-b.txt", 1, 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION),
+                    ("/synthetic/legacy.txt", 1, 1.0, 1.0, 0),
+                    ("/synthetic/unmatched.txt", 1, 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION),
+                ],
+            )
+
+        expression = '"alpha" OR "needle"'
+        with self.index._lock:
+            original_rows = self.index.db.execute(
+                """
+                SELECT path, name, paragraph_index, level, level_rank, body,
+                       bm25(content_paragraph_fts) AS bm25_rank
+                FROM content_paragraph_fts
+                WHERE content_paragraph_fts MATCH ?
+                """,
+                (expression,),
+            ).fetchall()
+            optimized_rows = self.index.db.execute(
+                """
+                SELECT path, paragraph_index, level, level_rank, body,
+                       bm25(content_paragraph_fts) AS bm25_rank
+                FROM content_paragraph_fts
+                WHERE content_paragraph_fts MATCH ?
+                  AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                ORDER BY path, CAST(paragraph_index AS INTEGER)
+                """,
+                (expression, CURRENT_HIERARCHY_SCHEMA_VERSION),
+            ).fetchall()
+
+        fields = ("path", "paragraph_index", "level", "level_rank", "body", "bm25_rank")
+        expected = sorted(
+            (tuple(row[key] for key in fields) for row in original_rows
+             if row["path"] != "/synthetic/legacy.txt"),
+            key=lambda row: (row[0], int(row[1])),
+        )
+        actual = sorted(
+            (tuple(row[key] for key in fields) for row in optimized_rows),
+            key=lambda row: (row[0], int(row[1])),
+        )
+        self.assertEqual(expected, actual)
+        self.assertTrue(original_rows)
+        self.assertTrue(all("name" not in row.keys() for row in optimized_rows))
+
     def test_keyword_proximity_bonus_changes_rank(self):
         near = self.root / "near.txt"
         far = self.root / "far.txt"
