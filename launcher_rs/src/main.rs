@@ -212,7 +212,7 @@ fn show_splash(version: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DefWindowProcW, RegisterClassW, ShowWindow, WNDCLASSW, WS_OVERLAPPEDWINDOW, WS_VISIBLE};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     unsafe extern "system" fn proc(hwnd: windows_sys::Win32::Foundation::HWND, msg: u32, wp: usize, lp: isize) -> isize {
-        windows_sys::Win32::UI::WindowsAndMessaging::DefWindowProcW(hwnd, msg, wp, lp)
+        DefWindowProcW(hwnd, msg, wp, lp)
     }
     unsafe {
         let class: Vec<u16> = OsStr::new("DocFitRustSplash").encode_wide().chain(Some(0)).collect();
@@ -230,6 +230,7 @@ fn show_splash(version: &str) {
 fn show_splash(_version: &str) {}
 fn rand_token() -> u64 { use std::hash::{Hash, Hasher}; let mut h = std::collections::hash_map::DefaultHasher::new(); std::thread::current().id().hash(&mut h); h.finish() }
 
+#[allow(dead_code)]
 fn quote_windows_arg(arg: &str) -> String {
     if !arg.is_empty() && !arg.chars().any(|c| c.is_whitespace() || c == '"') { return arg.to_owned(); }
     let mut out = String::from("\"");
