@@ -27,6 +27,9 @@ flutter:
     - family: STIXTwoMath
       fonts:
         - asset: assets/fonts/STIX2Math.otf
+    - family: Codicon
+      fonts:
+        - asset: assets/fonts/codicon/codicon.ttf
   assets:
     - assets/flow_editor/
     - assets/flow_editor/assets/
