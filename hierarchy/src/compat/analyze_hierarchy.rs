@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
-use super::{document_type::document_type, leading_marker::leading_marker};
+use super::{document_type::document_type, leading_marker::leading_marker, marker_scheme::detect_scheme};
 
 fn modal<T: Clone + Eq + std::hash::Hash>(items: impl Iterator<Item=T>) -> Option<T> {
     let mut seen: Vec<(T, usize)> = Vec::new();
@@ -20,9 +20,11 @@ fn num(v: &Value) -> f64 { v.as_f64().unwrap_or(0.0) }
 pub fn stage_01(paragraphs: &Value) -> Value {
     let empty = Vec::new();
     let paras = paragraphs.as_array().unwrap_or(&empty);
+    let texts: Vec<String> = paras.iter().map(|item| strv(&item["text"])).collect();
+    let scheme = detect_scheme(&texts);
     let records: Vec<Value> = paras.iter().enumerate().map(|(index, item)| {
         let text = strv(&item["text"]);
-        let (marker, marker_role) = leading_marker(&text);
+        let (marker, marker_role) = super::leading_marker::leading_marker_with_scheme(&text, Some(&scheme));
         let indent = item["left"].as_i64().unwrap_or(0) + item["indent"].as_i64().unwrap_or(0);
         let mut record = item.as_object().cloned().unwrap_or_default();
         record.insert("index".into(), json!(index));

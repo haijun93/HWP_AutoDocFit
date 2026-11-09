@@ -1,7 +1,7 @@
 use fancy_regex::Regex;
 use std::sync::OnceLock;
 
-use super::canonical_marker::canonical_marker;
+use super::{canonical_marker::canonical_marker, marker_scheme::MarkerScheme};
 
 // Keep these expressions byte-for-byte equivalent to docfit_core/style_hierarchy.py.
 const MARKERS: &[(&str, &str)] = &[
@@ -26,9 +26,16 @@ fn is_match_at_start(regex: &Regex, text: &str) -> Option<String> {
         .map(|m| m.as_str().to_owned())
 }
 
-pub fn leading_marker(text: &str) -> (String, String) {
+pub fn leading_marker(text: &str) -> (String, String) { leading_marker_with_scheme(text, None) }
+
+pub fn leading_marker_with_scheme(text: &str, scheme: Option<&MarkerScheme>) -> (String, String) {
     // Python str.lstrip() uses the Unicode White_Space set, as does char::is_whitespace.
     let stripped = text.trim_start_matches(char::is_whitespace);
+
+    if let Some((marker, _end)) = scheme.and_then(|s| s.canonical(text)) {
+        let marker_role = if marker == "□" { "소제목" } else if marker == "ㅇ" { "본문" } else { "내용" };
+        return (marker, marker_role.into());
+    }
 
     let roman = ROMAN_MARKER.get_or_init(|| {
         Regex::new(r"(?:[IVX]|[IVXLCDM]{2,})[.．](?=\s|$)").unwrap()
