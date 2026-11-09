@@ -123,15 +123,34 @@ fn unicode_category(c: char) -> char {
 
 pub fn ordinal(family: &str, token: &str) -> Option<Vec<i64>> {
     let token = token.trim().replace('．', ".");
-    if family.starts_with('1') || family == "(1)" { return Some(re(r"[0-9]+").find_iter(&token).filter_map(|m| m.ok()?.as_str().parse().ok()).collect()); }
-    if family.contains('가') { return HANGUL.find(token.trim_matches(['.', '(', ')'])).map(|i| vec![i as i64]); }
-    if ["Ⅰ", "ⅰ", "가", "ㄱ"].contains(&family) { let base = family.chars().next()? as i64; return token.chars().next().map(|c| vec![c as i64 - base]); }
-    if family.starts_with('I') { return roman_value(&token).map(|v| vec![v]); }
+    if family.starts_with('1') || family == "(1)" { return Some(re(r"[0-9]+").find_iter(&token).filter_map(|m| m.ok()?.as_str().parse::<i64>().ok()).collect()); }
+    if family.contains('가') { return HANGUL.find(token.trim_matches(['.', '(', ')'])).map(|i| vec![(i / 3) as i64]); }
+    if ["①", "㉠", "㉮"].contains(&family) { let base = family.chars().next()? as i64; return token.chars().next().map(|c| vec![c as i64 - base]); }
+    if family.starts_with('Ⅰ') { return unicode_roman_value(&token).map(|v| vec![v]); }
+    if family.starts_with('I') { return roman_value(token.trim_end_matches('.')).map(|v| vec![v]); }
     let f = family.trim_matches(['.', '(', ')']);
-    if f == "A" || f == "a" { return token.chars().next().map(|c| vec![c as i64]); }
+    if f == "A" || f == "a" { return token.trim_matches(['.', '(', ')']).chars().next().map(|c| vec![c as i64]); }
     None
 }
-fn roman_value(s: &str) -> Option<i64> { let chars: Vec<_> = s.trim_end_matches('.').chars().collect(); let val = |c| match c { 'I'=>1,'V'=>5,'X'=>10,'L'=>50,'C'=>100,'D'=>500,'M'=>1000,_=>0 }; Some((0..chars.len()).map(|i| if i+1<chars.len() && val(chars[i])<val(chars[i+1]) {-val(chars[i])} else {val(chars[i])}).sum()) }
+fn unicode_roman_value(s: &str) -> Option<i64> {
+    let mut normalized = String::new();
+    for c in s.trim_end_matches('.').chars() {
+        normalized.push_str(match c {
+            'Ⅰ'=>"I", 'Ⅱ'=>"II", 'Ⅲ'=>"III", 'Ⅳ'=>"IV", 'Ⅴ'=>"V", 'Ⅵ'=>"VI",
+            'Ⅶ'=>"VII", 'Ⅷ'=>"VIII", 'Ⅸ'=>"IX", 'Ⅹ'=>"X", 'Ⅺ'=>"XI", 'Ⅻ'=>"XII",
+            'Ⅼ'=>"L", 'Ⅽ'=>"C", 'Ⅾ'=>"D", 'Ⅿ'=>"M",
+            other if other.is_ascii() => { normalized.push(other); continue; },
+            _ => return None,
+        });
+    }
+    roman_value(&normalized)
+}
+fn roman_value(s: &str) -> Option<i64> {
+    let chars: Vec<_> = s.chars().collect();
+    if chars.iter().any(|c| !matches!(c, 'I'|'V'|'X'|'L'|'C'|'D'|'M')) { return None; }
+    let value = |c| match c { 'I'=>1,'V'=>5,'X'=>10,'L'=>50,'C'=>100,'D'=>500,'M'=>1000,_=>0 };
+    Some((0..chars.len()).map(|i| if i+1<chars.len() && value(chars[i])<value(chars[i+1]) {-value(chars[i])} else {value(chars[i])}).sum())
+}
 
 pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let excluded_indices = find_attachment_blocks(texts);
