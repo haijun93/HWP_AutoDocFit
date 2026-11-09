@@ -333,7 +333,25 @@ XML_요소_생성 = _engine_resolve('docfit_engine.com_driver', 'XML_요소_생�
 
 
 XML_자식_추가 = _engine_resolve('docfit_engine.com_driver', 'XML_자식_추가', globals())
-from docfit_core import report_header as 보고서머리
+class _보고서머리_지연:
+    def __getattr__(self, name):
+        from docfit_core import report_header as _rh
+        globals()["보고서머리"] = _rh
+        return getattr(_rh, name)
+
+    def __dir__(self):
+        from docfit_core import report_header as _rh
+        globals()["보고서머리"] = _rh
+        return dir(_rh)
+
+    def __bool__(self):
+        return True
+
+    def __repr__(self):
+        return "<lazy docfit_core.report_header>"
+
+
+보고서머리 = _보고서머리_지연()
 from docfit_core import connector_tabs as 연결부호탭
 from docfit_core import colon_labels as 콜론라벨
 from docfit_core import spacing_reset as 자간초기화모듈
