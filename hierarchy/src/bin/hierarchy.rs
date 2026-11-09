@@ -111,6 +111,10 @@ fn diag(d: &StructureDiagnostic) -> String {
 }
 
 fn run() -> Result<String, String> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("fn") {
+        return hierarchy::compat::run_fn(args.get(2).ok_or("function name required")?).map(|_| String::new());
+    }
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
     let paras = Parser { b: &raw, i: 0 }.root()?;
@@ -127,6 +131,10 @@ fn run() -> Result<String, String> {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("fn") {
+        if let Err(e) = hierarchy::compat::run_fn(&std::env::args().nth(2).unwrap_or_default()) { eprintln!("hierarchy: {}", e); std::process::exit(2); }
+        return;
+    }
     match run() {
         Ok(s) => { let _ = writeln!(std::io::stdout(), "{}", s); }
         Err(e) => { eprintln!("hierarchy: {}", e); std::process::exit(2); }

@@ -8,6 +8,8 @@ publish = false
 path = "src/lib.rs"
 
 [dependencies]
+regex = "1"
+serde_json = "1"
 
 [[bin]]
 name = "hierarchy"
