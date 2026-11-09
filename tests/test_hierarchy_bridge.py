@@ -26,9 +26,10 @@ class FakeExecutableTests(unittest.TestCase):
 
     def test_success(self):
         with tempfile.TemporaryDirectory() as d:
-            exe = fake(d, 'import sys,json;json.load(sys.stdin);print(\'{"levels":[1,2],"confidence":9,"ambiguous":[],"diagnostics":[]}\')')
+            payload = '{"role_sequence":["제목","중제목"],"styles":[]}'
+            exe = fake(d, f'import sys,json;json.load(sys.stdin);print({payload!r})')
             r = hb.analyze_levels(PARAS, {"hierarchy_engine": True}, executable=exe)
-        self.assertEqual(r["levels"], [1, 2])
+        self.assertEqual(r["role_sequence"], ["제목", "중제목"])
 
     def test_timeout(self):
         with tempfile.TemporaryDirectory() as d:
@@ -37,7 +38,7 @@ class FakeExecutableTests(unittest.TestCase):
 
     def test_error_paths(self):
         with tempfile.TemporaryDirectory() as d:
-            for body in ("import sys;sys.exit(2)", "print('not json')", 'print(\'{"levels":[1]}\')'):
+            for body in ("import sys;sys.exit(2)", "print('not json')", 'print(\'{"role_sequence":["제목"]}\')'):
                 exe = fake(d, body)
                 self.assertIsNone(hb.analyze_levels(PARAS, {"hierarchy_engine": True}, executable=exe), body)
         self.assertIsNone(hb.analyze_levels(PARAS, {"hierarchy_engine": True}, executable="/nonexistent/x"))
@@ -49,9 +50,8 @@ class RealExecutableTests(unittest.TestCase):
         if exe is None:
             self.skipTest("hierarchy 실행 파일 없음")
         r = hb.analyze_levels(PARAS, {"hierarchy_engine": True}, executable=exe)
-        self.assertEqual(len(r["levels"]), 2)
-        self.assertEqual(r["levels"][:2], [1, 2])
-        self.assertEqual(hb.analyze_levels([], {"hierarchy_engine": True})["levels"], [])
+        self.assertEqual(len(r["role_sequence"]), 2)
+        self.assertEqual(hb.analyze_levels([], {"hierarchy_engine": True})["role_sequence"], [])
 
 
 if __name__ == "__main__":

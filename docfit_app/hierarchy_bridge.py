@@ -1,11 +1,13 @@
 """위계 엔진(hierarchy 실행 파일) 호출 브리지. 설정 hierarchy_engine이 켜졌을 때만 사용한다."""
 import json
+import ctypes
 import subprocess
 import sys
 from pathlib import Path
 
 TIMEOUT_SECONDS = 5.0
 _NAME = "hierarchy.exe" if sys.platform == "win32" else "hierarchy"
+_DLL_NAME = "hierarchy.dll" if sys.platform == "win32" else "libhierarchy.so"
 
 
 def find_executable():
@@ -21,13 +23,41 @@ def find_executable():
     return None
 
 
+def find_library():
+    repository = Path(__file__).resolve().parent.parent
+    base = Path(getattr(sys, "_MEIPASS", repository))
+    for candidate in (base / "resources" / _DLL_NAME,
+                      repository / "hierarchy" / "target" / "release" / _DLL_NAME):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def run_library(library, paragraphs):
+    """Invoke the C ABI and return its native Python-result-shaped JSON."""
+    try:
+        dll = ctypes.CDLL(str(library))
+        dll.hierarchy_analyze_json.argtypes = [ctypes.c_char_p]
+        dll.hierarchy_analyze_json.restype = ctypes.c_void_p
+        dll.hierarchy_json_free.argtypes = [ctypes.c_void_p]
+        dll.hierarchy_json_free.restype = None
+        payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False).encode("utf-8")
+        ptr = dll.hierarchy_analyze_json(payload)
+        if not ptr:
+            return None
+        try:
+            result = json.loads(ctypes.string_at(ptr).decode("utf-8"))
+        finally:
+            dll.hierarchy_json_free(ptr)
+        return result if isinstance(result, dict) and isinstance(result.get("role_sequence"), list) else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
 def run_executable(executable, paragraphs, timeout=TIMEOUT_SECONDS):
     """실행 파일을 호출해 결과 dict를 돌려준다. 시간 초과·오류·형식 불일치는 None."""
     try:
-        payload = json.dumps({"paragraphs": [
-            {"text": str(p.get("text", "")), "indent": int(p.get("indent", 0) or 0),
-             "font_size": float(p.get("font_size", 0) or 0)} for p in paragraphs]},
-            ensure_ascii=False)
+        payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False)
         done = subprocess.run([str(executable)], input=payload.encode("utf-8"),
                               capture_output=True, timeout=timeout, check=False)
         if done.returncode != 0:
@@ -35,8 +65,8 @@ def run_executable(executable, paragraphs, timeout=TIMEOUT_SECONDS):
         result = json.loads(done.stdout.decode("utf-8"))
     except (OSError, ValueError, TypeError, subprocess.SubprocessError):
         return None
-    if not isinstance(result, dict) or not isinstance(result.get("levels"), list) \
-            or len(result["levels"]) != len(paragraphs):
+    if not isinstance(result, dict) or not isinstance(result.get("role_sequence"), list) \
+            or len(result["role_sequence"]) != len(paragraphs):
         return None
     return result
 
@@ -57,8 +87,9 @@ def analyze_levels(paragraphs, settings=None, executable=None, timeout=TIMEOUT_S
             settings = {}
     if not (settings or {}).get("hierarchy_engine", False):
         return None
-    if not paragraphs:
-        return {"levels": [], "confidence": 100, "ambiguous": [], "diagnostics": []}
+    dll = find_library() if executable is None else None
+    if dll is not None:
+        return run_library(dll, paragraphs)
     exe = executable or find_executable()
     if exe is None:
         return None
@@ -75,6 +106,6 @@ def engine_role_of_last(paragraphs, settings=None, executable=None, timeout=TIME
     꺼져 있거나 엔진이 실패·판정 보류면 None이며, 호출한 쪽은 기존 규칙을 그대로 쓴다.
     """
     result = analyze_levels(paragraphs, settings, executable=executable, timeout=timeout)
-    if not result or not result["levels"]:
+    if not result or not result["role_sequence"]:
         return None
-    return ENGINE_ROLE_NAMES.get(result["levels"][-1])
+    return result["role_sequence"][-1]
