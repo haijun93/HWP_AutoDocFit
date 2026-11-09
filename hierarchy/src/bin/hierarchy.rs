@@ -1,5 +1,6 @@
 //! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
-use hierarchy::{analyze_paragraphs, ParagraphKind, Role, SchemeParagraph, StructureDiagnostic};
+use serde_json::Value;
+use hierarchy::StructureDiagnostic;
 use std::io::{Read, Write};
 
 struct P { text: String, indent: i32, font_size: f64 }
@@ -110,46 +111,24 @@ fn diag(d: &StructureDiagnostic) -> String {
     }
 }
 
-fn role_name(role: Role) -> &'static str {
-    match role {
-        Role::DocumentTitle => "제목", Role::Chapter => "장", Role::Section => "중제목",
-        Role::Topic | Role::Square => "소제목", Role::Circle => "본문", Role::Dash => "내용",
-        Role::Asterisk => "부연설명", Role::Body | Role::TableCell | Role::Ambiguous => "미분류",
-    }
-}
-
-fn classification(role: Role, kind: ParagraphKind) -> &'static str {
-    match kind {
-        ParagraphKind::AttachmentHeading => "붙임제목",
-        ParagraphKind::ReferenceHeading => "참고제목",
-        ParagraphKind::Annotation => "부연설명",
-        ParagraphKind::Heading => "제목",
-        ParagraphKind::Body if role == Role::Body => "미분류",
-        _ => role_name(role),
-    }
-}
-
 fn run() -> Result<String, String> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("fn") {
+        return hierarchy::compat::run_fn(args.get(2).ok_or("function name required")?).map(|_| String::new());
+    }
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
-    let paras = Parser { b: &raw, i: 0 }.root()?;
-    let input: Vec<SchemeParagraph> = paras.iter().enumerate().map(|(i, p)| SchemeParagraph {
-        text: &p.text, position: i, left_indent: p.indent,
-        size_hundredth_pt: (p.font_size * 100.0).round().max(0.0) as u32, bold: false, in_attachment: false,
-    }).collect();
-    let out = analyze_paragraphs(&input);
-    let levels: Vec<String> = out.iter().map(|a| (a.role as u8).to_string()).collect();
-    let markers: Vec<String> = paras.iter().map(|p| hierarchy::read_prefix_marker(&p.text)
-        .map(|m| hierarchy::canonical_marker(&p.text[..m.end_byte]).to_string()).unwrap_or_default())
-        .map(|m| esc(&m)).collect();
-    let classifications: Vec<String> = out.iter().map(|a| esc(classification(a.role, a.kind))).collect();
-    let ambiguous: Vec<String> = out.iter().enumerate().filter(|(_, a)| a.role == Role::Ambiguous).map(|(i, _)| i.to_string()).collect();
-    let confidence = out.iter().map(|a| a.confidence).min().unwrap_or(100);
-    let diags: Vec<String> = out.iter().flat_map(|a| a.diagnostics.iter().map(diag)).map(|d| esc(&d)).collect();
-    Ok(format!("{{\"levels\":[{}],\"markers\":[{}],\"classifications\":[{}],\"confidence\":{},\"ambiguous\":[{}],\"diagnostics\":[{}]}}", levels.join(","), markers.join(","), classifications.join(","), confidence, ambiguous.join(","), diags.join(",")))
+    let value: Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+    let paragraphs = value.get("paragraphs").cloned().unwrap_or(Value::Array(vec![]));
+    serde_json::to_string(&hierarchy::compat::analyze_hierarchy::analyze_hierarchy(&paragraphs))
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("fn") {
+        if let Err(e) = hierarchy::compat::run_fn(&std::env::args().nth(2).unwrap_or_default()) { eprintln!("hierarchy: {}", e); std::process::exit(2); }
+        return;
+    }
     match run() {
         Ok(s) => { let _ = writeln!(std::io::stdout(), "{}", s); }
         Err(e) => { eprintln!("hierarchy: {}", e); std::process::exit(2); }
