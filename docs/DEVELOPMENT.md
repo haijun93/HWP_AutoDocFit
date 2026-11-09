@@ -109,6 +109,8 @@ Flutter 화면이 누락된 패키지를 만들지 않으며, 런타임의 기�
 
 정확한 브랜치 병합·CI 빌드·태그 절차는 [인수인계서의 배포 절차](../HANDOVER.md)를 따릅니다.
 
+**긴급 공지(2026-11-09):** 공공 GitLab Runner 일괄 삭제 조치에 따라 GitLab CI 파이프라인 생성은 잠정 중단했습니다. GitHub Actions의 빌드·시험·태그 릴리스 경로는 해당 GitHub 워크플로가 설정된 브랜치·이벤트에서 계속 사용합니다. GitLab Release 동기화와 Pages 자동 배포는 중지 상태이며, 영향 범위와 재개 조건은 [Runner 조치 대응 기록](GITLAB_RUNNER_SUSPENSION_2026-11-09.md)을 확인하세요.
+
 - 작업 완료 후 커밋·푸시합니다. 공개 릴리스는 사용자 요청에 따라 진행합니다.
 - 원격 반영 순서는 `github` → `origin`입니다. 실제 목적지는 `git remote -v`로 확인하며 두 이름이 같은 GitHub 주소이면 GitLab에 반영된 것으로 보고하지 않습니다.
 - Windows 실행 파일은 `release/<버전>` 빌드 작업에서 새로 생성하고 EXE 자체 검사·실제 창 버전·내장 OCR 검증을 통과해야 합니다.
