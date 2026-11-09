@@ -1,4 +1,6 @@
 pub mod compat;
+mod ffi;
+pub mod search;
 
 /// C ABI entry point: accepts a UTF-8 JSON array of paragraphs and returns a
 /// heap allocated UTF-8 JSON string. Release it with `hierarchy_json_free`.
