@@ -106,6 +106,14 @@ def engine_role_of_last(paragraphs, settings=None, executable=None, timeout=TIME
     꺼져 있거나 엔진이 실패·판정 보류면 None이며, 호출한 쪽은 기존 규칙을 그대로 쓴다.
     """
     result = analyze_levels(paragraphs, settings, executable=executable, timeout=timeout)
-    if not result or not result["role_sequence"]:
+    if not result:
         return None
-    return result["role_sequence"][-1]
+    roles = result.get("role_sequence")
+    if isinstance(roles, list) and roles:
+        role = roles[-1]
+        return role if role in ENGINE_ROLE_NAMES.values() else None
+    # Keep callers that inject the former compact engine response working.
+    levels = result.get("levels")
+    if isinstance(levels, list) and levels:
+        return ENGINE_ROLE_NAMES.get(levels[-1])
+    return None
