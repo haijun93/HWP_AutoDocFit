@@ -142,7 +142,9 @@ def _open_checked(url, opener, max_bytes, headers=None):
     sent.update(headers or {})
     resp = opener(url, sent)
     try:
-        check_url(resp.geturl())
+        origin = (urlsplit(url).hostname or "").lower().rstrip(".")
+        # 미러 배포처에서 시작한 내려받기는 최종 주소가 미러여도 된다(HTTPS만, 공개 해시 대조는 설치 단계에서 필수).
+        check_url(resp.geturl(), hosts=None if origin in MIRROR_ORIGINS else ALLOWED_HOSTS)
         raw = resp.headers.get("Content-Length") if getattr(resp, "headers", None) is not None else None
         length = int(raw) if raw not in (None, "") else None
     except BaseException:
