@@ -16,6 +16,8 @@ mod style_inventory {
     pub mod parse_para;
     pub mod parse_border_fill;
     pub mod parse_numbering;
+    pub mod parse_tab;
+    pub mod parse_header;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -134,6 +136,16 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let tree = value.get("tree").ok_or("_lang_values expects {\"tree\": ..., \"cast\": ...}")?;
             let cast = value.get("cast").and_then(serde_json::Value::as_str).unwrap_or("int");
             Ok(serde_json::to_string(&style_inventory::lang_values::lang_values(tree, cast)?).unwrap())
+        }
+        "_parse_tab" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_parse_tab expects tree")?;
+            Ok(serde_json::to_string(&style_inventory::parse_tab::parse_tab(tree)).unwrap())
+        }
+        "parse_header" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("parse_header expects tree")?;
+            Ok(serde_json::to_string(&style_inventory::parse_header::parse_header(tree)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }

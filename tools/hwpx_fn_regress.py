@@ -74,8 +74,8 @@ def collect(fixtures: Path, fn_name: str):
                     cases.append({"file": path.name, "member": member,
                                   "input": {"tree": _tree(root)},
                                   "expected": style_inventory._parse_fonts(root)})
-                elif fn_name in ("_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering") and member == "Contents/header.xml":
-                    target = {"_parse_char": "charPr", "_parse_para": "paraPr", "_parse_border_fill": "borderFill", "_parse_numbering": "numbering"}[fn_name]
+                elif fn_name in ("_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab") and member == "Contents/header.xml":
+                    target = {"_parse_char": "charPr", "_parse_para": "paraPr", "_parse_border_fill": "borderFill", "_parse_numbering": "numbering", "_parse_tab": "tabPr"}[fn_name]
                     fonts = style_inventory._parse_fonts(root)
                     for element in root.iter():
                         if style_inventory._tag(element) == target:
@@ -86,6 +86,10 @@ def collect(fixtures: Path, fn_name: str):
                                 args = {"tree": _tree(element)}
                                 expected = getattr(style_inventory, fn_name)(element)
                             cases.append({"file": path.name, "member": member, "input": args, "expected": expected})
+                elif fn_name == "parse_header" and member == "Contents/header.xml":
+                    cases.append({"file": path.name, "member": member,
+                                  "input": {"tree": _tree(root)},
+                                  "expected": style_inventory.parse_header(root)})
                 elif fn_name == "_shade":
                     values = {e.get("shadeColor") for e in root.iter() if e.get("shadeColor") is not None}
                     for value in sorted(values):
@@ -119,7 +123,7 @@ def collect(fixtures: Path, fn_name: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
