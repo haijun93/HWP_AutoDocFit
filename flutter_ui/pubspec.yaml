@@ -21,6 +21,12 @@ flutter:
     - family: NotoSansKR
       fonts:
         - asset: assets/NotoSansKR.ttf
+    - family: NotoSansSymbols2
+      fonts:
+        - asset: assets/fonts/NotoSansSymbols2-Regular.ttf
+    - family: STIXTwoMath
+      fonts:
+        - asset: assets/fonts/STIX2Math.otf
   assets:
     - assets/flow_editor/
     - assets/flow_editor/assets/

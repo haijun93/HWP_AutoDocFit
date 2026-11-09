@@ -89,6 +89,7 @@ class DocFitApp extends StatelessWidget {
     theme: ThemeData(
       useMaterial3: true,
       fontFamily: 'NotoSansKR',
+      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
       colorScheme: ColorScheme.fromSeed(seedColor: _blue),
       scaffoldBackgroundColor: const Color(0xfff6f8fb),
       filledButtonTheme: FilledButtonThemeData(

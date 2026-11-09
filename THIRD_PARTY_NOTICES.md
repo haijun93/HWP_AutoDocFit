@@ -43,6 +43,8 @@ license and notice files remain available in the installed kordoc package.
 | pywebview | Web UI window | BSD-3-Clause |
 | Flutter | flutter_ui | BSD-3-Clause |
 | Noto Sans KR | flutter_ui font (see `flutter_ui/assets/OFL.txt`) | SIL Open Font License 1.1 |
+| Noto Sans Symbols 2 Regular | Flutter arrow glyph fallback (`flutter_ui/assets/fonts/NotoSansSymbols2-Regular.ttf`) | SIL Open Font License 1.1 (`flutter_ui/assets/fonts/OFL.txt`) |
+| STIX Two Math | Flutter fallback for ⇑ and ⇓ (`flutter_ui/assets/fonts/STIX2Math.otf`) | SIL Open Font License 1.1 (`flutter_ui/assets/fonts/STIX-OFL.txt`) |
 | PyInstaller | Executable build | GPL-2.0 with bootloader exception |
 | Python / Tcl/Tk runtime | Bundled in the executable | PSF / Tcl/Tk License |
 
