@@ -21,7 +21,7 @@ impl Trace {
     }
     fn mark(&mut self, name: &str) {
         if self.enabled {
-            eprintln!("launcher-trace stage={} elapsed_ms={} total_ms={}", name, self.stage.elapsed().as_millis(), self.started.elapsed().as_millis());
+            eprintln!("HWP_LAUNCHER_TRACE stage={} elapsed_ms={} total_ms={}", name, self.stage.elapsed().as_millis(), self.started.elapsed().as_millis());
         }
         self.stage = Instant::now();
     }

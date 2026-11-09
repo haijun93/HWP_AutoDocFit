@@ -50,8 +50,8 @@ def compare_launchers(args: argparse.Namespace) -> int:
                 try:
                     traced_env = env.copy()
                     traced_env["HWP_LAUNCHER_TRACE"] = "1"
-                    completed = subprocess.run([str(launcher), "--self-test", "--self-test-report", str(report), "argument with spaces"], env=traced_env, timeout=args.timeout, check=True, capture_output=True, text=True)
-                    trace_logs.setdefault(kind, {})[label] = completed.stderr.splitlines()
+                    completed = subprocess.run([str(launcher), "--self-test", "--self-test-report", str(report), "argument with spaces"], env=traced_env, timeout=args.timeout, check=True, capture_output=True)
+                    trace_logs.setdefault(kind, {})[label] = [line.decode("ascii", errors="ignore") for line in completed.stderr.splitlines() if line.startswith(b"HWP_LAUNCHER_TRACE ")]
                 except subprocess.CalledProcessError as error:
                     raise RuntimeError(f"{kind} {label} failed; launcher={launcher}, manifest={manifest}, payload={env['DOCFIT_LAUNCHER_PAYLOAD']}") from error
                 results[kind][label + "_ms"] = round((time.perf_counter() - start) * 1000, 2)
