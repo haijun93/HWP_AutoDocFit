@@ -3,9 +3,48 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/file_rename/file_rename_screen.dart';
 
 void main() {
+  final renameActions = <String>[];
+
   Future<dynamic> fakeApi(String method, [dynamic args]) async {
     if (method == 'file_rename') {
       final sub = args is List && args.isNotEmpty ? args[0] : (args is Map ? args['action'] : '');
+      renameActions.add('$sub');
+      if (sub == 'pick_files' || sub == 'list') {
+        return {
+          'ok': true,
+          'added': sub == 'pick_files' ? 1 : 0,
+          'entries': [
+            {'id': 'e1', 'name': '보고서.txt', 'folder': r'C:\test', 'size': 1536, 'mtime': 1791507900.0},
+          ],
+        };
+      }
+      if (sub == 'preview') {
+        return {
+          'ok': true,
+          'plan_id': 'plan1',
+          'items': [
+            {'id': 'e1', 'new_name': '보고서_완료.txt', 'status': 'ok'},
+          ],
+          'summary': {'ok': 1, 'conflict': 0, 'invalid': 0, 'executables': 0},
+        };
+      }
+      if (sub == 'apply' || sub == 'undo') {
+        return {
+          'ok': true,
+          'run_id': 'run1',
+          'done': 1,
+          'failed': [],
+          'entries': [
+            {
+              'id': 'e1',
+              'name': sub == 'apply' ? '보고서_완료.txt' : '보고서.txt',
+              'folder': r'C:\test',
+              'size': 1536,
+              'mtime': 1791507900.0,
+            },
+          ],
+        };
+      }
       if (sub == 'snapshot') {
         return {
           'entries': [
@@ -23,6 +62,46 @@ void main() {
     }
     return {'ok': true};
   }
+
+  testWidgets('backend_preview_row_shows_names_status_size_and_modified_time', (tester) async {
+    renameActions.clear();
+    tester.view.physicalSize = const Size(1100, 800);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: FileRenameScreen(api: fakeApi))));
+    await tester.tap(find.byKey(const ValueKey('rename-add-files')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+
+    expect(find.text('원래 이름'), findsOneWidget);
+    expect(find.text('새 이름 (바뀐 부분 강조 · 두 번 눌러 직접 고치기)'), findsOneWidget);
+    expect(find.text('상태'), findsOneWidget);
+    expect(find.text('크기'), findsOneWidget);
+    expect(find.text('수정 시각'), findsOneWidget);
+    expect(find.text('보고서.txt'), findsOneWidget);
+    expect(find.textContaining('보고서_완료.txt'), findsOneWidget);
+    expect(find.text('바뀜'), findsOneWidget);
+    expect(find.text('1.5 KB'), findsOneWidget);
+    // 수정 시각은 실행 PC의 시간대로 표시되므로(CI는 UTC) 같은 방식으로 기대값을 만든다.
+    final t = DateTime.fromMillisecondsSinceEpoch(1791507900000);
+    String two(int v) => v.toString().padLeft(2, '0');
+    expect(find.text('${t.month}/${t.day} ${two(t.hour)}:${two(t.minute)}'), findsOneWidget);
+    expect(renameActions, contains('preview'));
+
+    await tester.tap(find.byKey(const ValueKey('rename-apply')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('rename-confirm')));
+    await tester.pumpAndSettle();
+    expect(renameActions, contains('apply'));
+    expect(find.byKey(const ValueKey('rename-undo')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('rename-undo')));
+    await tester.pumpAndSettle();
+    expect(renameActions, contains('undo'));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('splitter_drag_updates_layout_and_resize_preserves_ratio', (tester) async {
     tester.view.physicalSize = const Size(1000, 800);

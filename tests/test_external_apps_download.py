@@ -372,7 +372,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(calls[0][2], f"/D={self.root / 'mondangpics'}")
         self.assertIsNotNone(inst.installed_exe(PICS))
 
-    def test_kde_mirror_outside_allowlist_blocked_and_hash_mismatch(self):
+    def test_kde_mirror_is_followed_but_published_hash_must_match(self):
         base = "https://download.kde.org/stable/digikam/"
         name = "digiKam-9.1.0-Qt6-Win64.exe"
         self.net.add(base, '<a href="9.1.0/">9.1.0/</a>')
@@ -381,7 +381,8 @@ class InstallerTests(unittest.TestCase):
         self.net.add(base + f"9.1.0/{name}", b"data", final="https://mirror.example.org/" + name)
         with self.assertRaises(ExtDlError) as ctx:
             self.installer(runner=lambda a, c: None).install(PICS)
-        self.assertEqual(ctx.exception.code, "HOST_BLOCKED")
+        # KDE 미러는 따라가되(11-09), 공개 해시와 다르면 설치하지 않는다.
+        self.assertEqual(ctx.exception.code, "HASH_MISMATCH")
         self.net.add(base + f"9.1.0/{name}", b"data")
         with self.assertRaises(ExtDlError) as ctx:
             self.installer(runner=lambda a, c: None).install(PICS)
@@ -437,3 +438,55 @@ class ServiceCommandTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class KdeMirrorRedirectTests(unittest.TestCase):
+    """KDE는 가까운 미러로 리디렉션한다(사용자 보고 11-09: ftp.kaist.ac.kr 차단)."""
+
+    def _redirect(self, src, dst):
+        import urllib.request
+        from docfit_app.external_apps_download import _StrictRedirect
+        req = urllib.request.Request(src)
+        return _StrictRedirect().redirect_request(req, None, 302, "Found", {}, dst)
+
+    def test_kde_redirect_to_https_mirror_is_allowed(self):
+        new = self._redirect("https://download.kde.org/stable/digikam/9.1.0/x.exe",
+                             "https://ftp.kaist.ac.kr/kde/stable/digikam/9.1.0/x.exe")
+        self.assertEqual(new.full_url, "https://ftp.kaist.ac.kr/kde/stable/digikam/9.1.0/x.exe")
+
+    def test_kde_redirect_to_http_mirror_is_blocked(self):
+        from docfit_app.external_apps_download import ExtDlError
+        with self.assertRaises(ExtDlError):
+            self._redirect("https://download.kde.org/a.exe", "http://ftp.kaist.ac.kr/a.exe")
+
+    def test_other_origin_redirect_to_unknown_host_is_blocked(self):
+        from docfit_app.external_apps_download import ExtDlError
+        with self.assertRaises(ExtDlError):
+            self._redirect("https://github.com/a/b/releases/download/v1/x.zip", "https://ftp.kaist.ac.kr/x.zip")
+
+
+class KdeMirrorFinalUrlTests(unittest.TestCase):
+    """리디렉션 뒤 최종 주소 검사도 KDE 미러를 허용해야 한다(v2.2.43 실제 설치에서 HOST_BLOCKED)."""
+
+    class _Resp:
+        def __init__(self, final):
+            self._final = final
+            self.headers = {"Content-Length": "3"}
+        def geturl(self):
+            return self._final
+        def read(self, n=-1):
+            return b""
+        def close(self):
+            pass
+
+    def test_kde_final_mirror_url_is_accepted(self):
+        from docfit_app.external_apps_download import _open_checked
+        resp, _ = _open_checked("https://download.kde.org/stable/digikam/x.exe",
+                                lambda u, h: self._Resp("https://ftp.kaist.ac.kr/kde/x.exe"), 10)
+        self.assertEqual(resp.geturl(), "https://ftp.kaist.ac.kr/kde/x.exe")
+
+    def test_github_final_unknown_host_is_blocked(self):
+        from docfit_app.external_apps_download import _open_checked, ExtDlError
+        with self.assertRaises(ExtDlError):
+            _open_checked("https://github.com/a/b/releases/download/v1/x.zip",
+                          lambda u, h: self._Resp("https://ftp.kaist.ac.kr/x.zip"), 10)

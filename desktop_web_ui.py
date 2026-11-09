@@ -2277,8 +2277,6 @@ class DesktopWebBridge:
         box_id는 정수 또는 정수 문자열만 허용하며 int로 변환해 전달한다.
         """
         import math
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 자료함을 사용할 수 있습니다."}
         valid_spaces = {"core", "basis", "reference", "temp"}
         if space is not None and space not in valid_spaces:
             return {"ok": False, "message": "자료함 공간이 올바르지 않습니다."}
@@ -2403,8 +2401,6 @@ class DesktopWebBridge:
 
     def library(self, request):
         """Forward one allowlisted library JSON request when the opt-in flag is set."""
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 자료함을 사용할 수 있습니다."}
         from docfit_app.library_scan import SCAN_COMMANDS, FolderScanService
         try:
             if isinstance(request, dict) and request.get("cmd") in SCAN_COMMANDS:
@@ -2480,8 +2476,6 @@ class DesktopWebBridge:
         출처 추가는 klib가 직접 추출하고, klib가 못 읽는 구형 hwp·pdf만 NotebookService가 Python으로 추출해 넣는다.
         nb_drop_watch(창에 끌어 놓은 파일을 노트북으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
         """
-        if not self._developer_mode_enabled():
-            return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 노트북을 사용할 수 있습니다."}
         if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
             return self._memo_editor_request(request)
         if not isinstance(request, dict) or not str(request.get("cmd", "")).startswith("nb_"):
@@ -2802,7 +2796,7 @@ class DesktopWebBridge:
         return self.get_state()
 
     def _apply_drop_target(self, target):
-        if target not in ("documents", "manual_documents", "format", "quick_format", "sketch_image", "paint_image",
+        if target not in ("documents", "manual_documents", "conversion", "format", "quick_format", "sketch_image", "paint_image",
                           "rename_files", "kclip", "notebook", "library"):
             raise ValueError("지원하지 않는 놓기 대상입니다.")
         self.drop_target = target
@@ -2816,6 +2810,7 @@ class DesktopWebBridge:
                     else "여기에 놓으면 이 보고서의 서식을 복제합니다" if target == "format"
                     else "표 칸 위에 놓으면 칸 배경 그림으로 넣습니다" if target == "sketch_image"
                     else "여기에 놓으면 그림판 배경 사진으로 넣습니다" if target == "paint_image"
+                    else "여기에 파일을 놓으면 파일변환 목록에 추가됩니다" if target == "conversion"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
                     else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
                     else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
@@ -2865,6 +2860,16 @@ class DesktopWebBridge:
             return self._receive_sketch_image(paths, client_x, client_y, event="docfit-paint-image-dropped")
         if self.drop_target == "rename_files":
             return self._receive_rename_paths(paths)
+        if self.drop_target == "conversion":
+            candidates = [
+                str(path) for path in (paths or [])
+                if Path(str(path)).suffix.lower() in SUPPORTED_INPUT_EXTENSIONS
+            ]
+            if not candidates:
+                return self._with_notice("변환할 수 있는 문서 파일(HWP·HWPX·PDF·DOCX·그림·텍스트)을 놓아 주세요.")
+            if len(candidates) != len(paths or []):
+                self._with_notice("지원하지 않는 파일은 건너뛰고 변환 가능한 파일만 추가했습니다.")
+            return self.add_paths(candidates, from_drop=False)
         if self.drop_target == "library":
             self._receive_library_paths(paths)
             return self.get_state()

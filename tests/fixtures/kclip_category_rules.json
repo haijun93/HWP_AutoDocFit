@@ -11,9 +11,11 @@
                    "acrord32.exe", "acrord64.exe", "foxitreader.exe", "foxitpdfreader.exe", "wordpad.exe", "hancomoffice.exe"],
   "browsers": ["chrome.exe", "msedge.exe", "firefox.exe", "whale.exe", "brave.exe", "opera.exe", "vivaldi.exe",
                "iexplore.exe", "safari"],
+  "capture_programs": ["screenclippinghost.exe", "snippingtool.exe", "screensketch.exe"],
   "doc_formats": ["hwp character shape", "hwp native", "hwp format", "hwp paragraph shape", "rich text format",
                   "xml spreadsheet", "biff8", "biff12", "csv"],
   "cases": [
+    {"name": "캡처 도구 출처 그림", "entry": {"kind": "image", "source": "SnippingTool.exe", "preview": "그림 10×10"}, "expect": ["전체", "그림", "화면캡처"]},
     {"name": "평범한 글", "entry": {"kind": "text", "source": "notepad.exe", "text": "안녕", "preview": "안녕"}, "expect": ["전체"]},
     {"name": "한/글 프로그램 글", "entry": {"kind": "text", "source": "hwp.exe", "text": "x", "preview": "x"}, "expect": ["전체", "문서"]},
     {"name": "대문자 프로그램 이름", "entry": {"kind": "text", "source": "WINWORD.EXE", "text": "x", "preview": "x"}, "expect": ["전체", "문서"]},

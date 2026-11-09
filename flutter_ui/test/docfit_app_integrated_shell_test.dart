@@ -189,7 +189,7 @@ void main() {
       'mindmap',
     );
 
-    // Tab 6 파일변환: 드롭 영역을 보이고, 작업 방식을 '파일 변환'으로 바꾼다
+    // 파일변환 탭: 드롭 영역·변환 목록을 쓰고 문서편집 탭으로 튀지 않는다.
     await tester.tap(find.text('파일변환'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
@@ -197,13 +197,13 @@ void main() {
     expect(find.byType(ConversionWorkspace), findsOneWidget);
     expect(find.byKey(const Key('conversionDropZone')), findsOneWidget);
     expect(calls, contains('set_mode:file_format'));
-    expect(calls, contains('set_drop_target:documents'));
+    expect(calls, contains('set_drop_target:conversion'));
     await tester.tap(find.byKey(const Key('conversionPickFiles')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     expect(calls, contains('add_files:null'));
 
-    // Tab 7 그림판: 같은 편집기를 그림판 모드로 연다
+    // 그림판: 같은 편집기를 그림판 모드로 연다
     expect(find.text('붙임사진 편집'), findsOneWidget);
     await tester.tap(find.text('붙임사진 편집'));
     await tester.pump();

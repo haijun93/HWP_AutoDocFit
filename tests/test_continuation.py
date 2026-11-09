@@ -31,6 +31,25 @@ class ContinuationTest(unittest.TestCase):
         self.assertIsNone(inline_item('   • 위치: ① 첫째 ② 둘째'))
         self.assertIsNone(inline_item('   • 위치 ① 첫째'))
 
+    def test_attachment_second_number_aligns_with_first_number(self):
+        header, sections = self.make(['붙임  1. 계획서 1부.', '     2. 세부계획서 1부.'])
+        root = sections['section']
+        original_second = plain_text(root[1])
+        changed = align_sections(header, sections, measure=self.measure)
+        self.assertEqual(len(changed), 2)
+        first, second = root
+        self.assertEqual(plain_text(second).strip(), original_second.strip())
+        self.assertEqual(self.pair(header, first)[0], self.pair(header, second)[0])
+
+    def test_parenthesis_and_colon_label_geometry_remain_distinct(self):
+        header, sections = self.make(['ㅇ (개요) 본문', '- 제목: 본문'])
+        root = sections['section']
+        original = ET.tostring(root)
+        align_sections(header, sections, measure=self.measure)
+        # These are not inline-item continuations; the hanging-indent recognizer
+        # continues to own the marker-vs-body distinction.
+        self.assertEqual(ET.tostring(root), original)
+
     def test_final_user_geometry_with_spaces_replaced_by_margins(self):
         p, q = geometry(6880, 9044)
         self.assertEqual(p, (9044, -9044))

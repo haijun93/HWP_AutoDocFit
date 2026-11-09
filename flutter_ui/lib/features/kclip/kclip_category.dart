@@ -35,6 +35,7 @@ const kclipBrowsers = [
   'chrome.exe', 'msedge.exe', 'firefox.exe', 'whale.exe', 'brave.exe', 'opera.exe', 'vivaldi.exe',
   'iexplore.exe', 'safari',
 ];
+const kclipCapturePrograms = ['screenclippinghost.exe', 'snippingtool.exe', 'screensketch.exe'];
 const kclipDocFormats = [
   'hwp character shape', 'hwp native', 'hwp format', 'hwp paragraph shape', 'rich text format',
   'xml spreadsheet', 'biff8', 'biff12', 'csv',
@@ -121,9 +122,13 @@ String? kclipExtension(String path) {
 }
 
 bool _guessIsDir(String path) {
-  if (path.endsWith('\\') || path.endsWith('/')) return true;
+  if (path.endsWith('\\') || path.endsWith('/')) {
+    return true;
+  }
   // Rust는 바이트 길이 2("C:")로 본다 → 첫 글자가 ASCII일 때만 같다.
-  if (path.length == 2 && path.codeUnitAt(0) < 0x80 && path[1] == ':') return true;
+  if (path.length == 2 && path.codeUnitAt(0) < 0x80 && path[1] == ':') {
+    return true;
+  }
   return kclipExtension(path) == null;
 }
 
@@ -140,7 +145,9 @@ List<String> kclipClassify(KClipEntry entry, {KClipIsDir isDir = _unknown}) {
   switch (entry.kind) {
     case 'image':
       set.add('그림');
-      if (source == 'screenshot' || entry.preview.startsWith('캡처 · ')) set.add('화면캡처');
+      if (source == 'screenshot' || kclipCapturePrograms.contains(source) || entry.preview.startsWith('캡처 · ')) {
+        set.add('화면캡처');
+      }
     case 'files':
       for (final path in entry.paths) {
         if (isDir(path) ?? _guessIsDir(path)) {
@@ -156,7 +163,9 @@ List<String> kclipClassify(KClipEntry entry, {KClipIsDir isDir = _unknown}) {
         }
       }
     case 'text':
-      if (kclipDocPrograms.contains(source) || hasFormat(kclipDocFormats)) set.add('문서');
+      if (kclipDocPrograms.contains(source) || hasFormat(kclipDocFormats)) {
+        set.add('문서');
+      }
       if (_isSingleWebUrl(entry.text) || (kclipBrowsers.contains(source) && hasFormat(const ['html format']))) {
         set.add('웹');
       }
