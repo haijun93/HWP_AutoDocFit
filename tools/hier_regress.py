@@ -21,11 +21,6 @@ from docfit_core.style_hierarchy import analyze_hierarchy, leading_marker  # noq
 
 ROLE_LEVEL = {"제목": 0, "장": 1, "중제목": 2, "소제목": 3, "본문": 4, "내용": 5,
               "부연설명": 6, "미분류": 7}
-ENGINE_ROLE = {0: "제목", 1: "장", 2: "중제목", 3: "소제목", 4: "소제목", 5: "본문",
-               6: "내용", 7: "부연설명", 8: "미분류", 9: "미분류", 10: "미분류"}
-ENGINE_LEVEL = {0: 0, 1: 1, 2: 2, 3: 3, 4: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 7, 10: 7}
-
-
 def decode_text(raw: bytes) -> str:
     for encoding in ("utf-8-sig", "utf-16", "cp949"):
         try:
@@ -99,6 +94,11 @@ def python_rows(paragraphs: list[dict]) -> list[dict]:
     rows = []
     for item, role in zip(paragraphs, result["role_sequence"]):
         marker, _ = leading_marker(item["text"])
+        # leading_marker's first tuple item is also used as a display fallback
+        # for ordinary text (e.g. "표: ..." -> "표"). It is a hierarchy marker
+        # only when the Python role detector recognizes a marker role.
+        if role not in {"장", "중제목", "소제목", "본문", "내용", "부연설명"}:
+            marker = ""
         rows.append({"level": ROLE_LEVEL.get(role, 7), "marker": marker,
                      "classification": role})
     return rows
@@ -113,9 +113,13 @@ def rust_rows(executable: Path, paragraphs: list[dict]) -> list[dict]:
     result = json.loads(proc.stdout)
     if len(result.get("levels", [])) != len(paragraphs):
         raise RuntimeError(f"Rust output length mismatch: {len(result.get('levels', []))} != {len(paragraphs)}")
-    return [{"level": ENGINE_LEVEL[int(level)], "marker": result["markers"][i],
-             "classification": ENGINE_ROLE[int(level)]}
-            for i, level in enumerate(result["levels"])]
+    # The CLI's classifications are the engine's public role mapping. Numeric
+    # Role enum values are implementation details and are not Python hierarchy
+    # levels; converting them to levels here caused false regressions.
+    return [{"level": ROLE_LEVEL.get(result["classifications"][i], 7),
+             "marker": result["markers"][i],
+             "classification": result["classifications"][i]}
+            for i in range(len(paragraphs))]
 
 
 def compare(corpus, executable):
@@ -131,7 +135,9 @@ def compare(corpus, executable):
         rust = rust_rows(executable, paragraphs)
         paragraph_count += len(paragraphs)
         for index, (item, py, rs) in enumerate(zip(paragraphs, py_rows, rust), 1):
-            fields = [name for name in ("level", "marker", "classification") if py[name] != rs[name]]
+            fields = [name for name in ("level", "classification") if py[name] != rs[name]]
+            if py["marker"] and py["marker"] != rs["marker"]:
+                fields.append("marker")
             if fields:
                 differences.append({"source": source, "paragraph": index, "text": item["text"],
                                     "python_level": py["level"], "rust_level": rs["level"],

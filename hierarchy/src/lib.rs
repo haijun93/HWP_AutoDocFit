@@ -175,6 +175,9 @@ pub fn read_prefix_marker(text: &str) -> Option<PrefixReading> {
 
 fn parse_scheme_token(s:&str)->Option<(MarkerFamily,Option<u32>,Decoration,usize)> {
     let c=s.chars().next()?; let n=c.len_utf8(); let tail=&s[n..];
+    if s.starts_with("**") && s[2..].chars().next().map(char::is_whitespace).unwrap_or(false) {
+        return Some((MarkerFamily::Asterisk,None,Decoration::Plain,2));
+    }
     let punct=match c {'□'|'ㅁ'|'■'=>Some(MarkerFamily::Square),'ㅇ'|'○'|'◦'=>Some(MarkerFamily::Circle),'-'=>Some(MarkerFamily::Dash),'*'|'※'|'•'|'·'|'‧'|'∙'|'⋅'|'ㆍ'|'●'=>Some(MarkerFamily::Asterisk),_=>None};
     if let Some(f)=punct { if tail.chars().next().map(char::is_whitespace).unwrap_or(false) {return Some((f,None,Decoration::Plain,n));} }
     if ('①'..='⑳').contains(&c)||('㉠'..='㉻').contains(&c) {if tail.chars().next().map(char::is_whitespace).unwrap_or(false){return Some((if ('①'..='⑳').contains(&c){MarkerFamily::CircledNumber}else{MarkerFamily::CircledHangul},Some(c as u32),Decoration::Plain,n));}}
@@ -182,6 +185,12 @@ fn parse_scheme_token(s:&str)->Option<(MarkerFamily,Option<u32>,Decoration,usize
     if c=='('||c=='（' {let close=if c=='(' {')'} else {'）'};if let Some(end)=s.find(close){let inner=&s[n..end];if inner.chars().count()==1&&"가나다라마바사아자차카타파하".contains(inner.chars().next()?){return Some((MarkerFamily::HangulParen,Some(inner.chars().next()? as u32),Decoration::Parentheses,end+close.len_utf8()));}}}
     if (c=='가'||c=='나'||c=='다'||c=='라'||c=='마'||c=='바'||c=='사'||c=='아'||c=='자'||c=='차'||c=='카'||c=='타'||c=='파'||c=='하') && tail.starts_with(')') {let k=1+tail[1..].chars().take_while(|x|x.is_whitespace()).map(char::len_utf8).sum::<usize>();return Some((MarkerFamily::HangulParen,Some("가나다라마바사아자차카타파하".find(c)? as u32),Decoration::ClosingParen,n+k));}
     if c.is_ascii_digit() {let d=s.chars().take_while(|x|x.is_ascii_digit()).count(); let v=s[..d].parse().ok()?; let rest=&s[d..]; if rest.starts_with(". "){return Some((MarkerFamily::DecimalDot,Some(v),Decoration::Dot,d+2));} if rest.starts_with(')')||rest.starts_with("）"){let k=rest.chars().next()?.len_utf8(); if rest[k..].chars().next().map(char::is_whitespace).unwrap_or(true){return Some((MarkerFamily::DecimalParen,Some(v),Decoration::ClosingParen,d+k));}} if rest.chars().next().map(char::is_whitespace).unwrap_or(false){return Some((MarkerFamily::DecimalBare,Some(v),Decoration::Plain,d));} }
+    if let Some(dot) = s.strip_prefix(|c: char| matches!(c, 'I' | 'V' | 'X' | 'L' | 'C' | 'D' | 'M')) {
+        if dot.starts_with('.') && dot[1..].chars().next().map(char::is_whitespace).unwrap_or(true) {
+            let c = s.chars().next()?;
+            return Some((MarkerFamily::RomanUpper, roman_value(&c.to_string()), Decoration::Dot, c.len_utf8() + 1));
+        }
+    }
     if (c=='가'||c=='나'||c=='다'||c=='라'||c=='마'||c=='바'||c=='사'||c=='아'||c=='자'||c=='차'||c=='카'||c=='타'||c=='파'||c=='하') && tail.starts_with(')') {let k=1+tail[1..].chars().take_while(|x|x.is_whitespace()).map(char::len_utf8).sum::<usize>();return Some((MarkerFamily::HangulParen,Some("가나다라마바사아자차카타파하".find(c)? as u32),Decoration::ClosingParen,n+k));}
     if "가나다라마바사아자차카타파하".contains(c)&&(tail.starts_with(". ")||tail.starts_with("． ")) {return Some((MarkerFamily::HangulDot,Some("가나다라마바사아자차카타파하".find(c)? as u32),Decoration::Dot,n+if tail.starts_with(". "){2}else{"． ".len()}));}
     let end=s.find(char::is_whitespace).unwrap_or(s.len()); let token=&s[..end]; if token.starts_with("Ⅰ.")||token.starts_with("Ⅱ.")||token.starts_with("Ⅲ.")||token.starts_with("Ⅳ.")||token.starts_with("Ⅴ.")||token.starts_with("Ⅵ.")||token.starts_with("Ⅶ.")||token.starts_with("Ⅷ.")||token.starts_with("Ⅸ.")||token.starts_with("Ⅹ.")||token.starts_with("Ⅺ.")||token.starts_with("Ⅻ."){let c=token.chars().next()?;return Some((MarkerFamily::RomanUpper,Some(c as u32),Decoration::Dot,token.len()));} if token.starts_with("ⅰ.")||token.starts_with("ⅱ.")||token.starts_with("ⅲ.")||token.starts_with("ⅳ.")||token.starts_with("ⅴ.")||token.starts_with("ⅵ.")||token.starts_with("ⅶ.")||token.starts_with("ⅷ.")||token.starts_with("ⅸ.")||token.starts_with("ⅹ.")||token.starts_with("ⅺ.")||token.starts_with("ⅻ."){let c=token.chars().next()?;return Some((MarkerFamily::RomanLower,Some(c as u32),Decoration::Dot,token.len()));} let (base,dec)=if let Some(x)=token.strip_suffix('.') {(x,Decoration::Dot)} else if let Some(x)=token.strip_suffix('．'){(x,Decoration::Dot)}else{(token,Decoration::Plain)};
