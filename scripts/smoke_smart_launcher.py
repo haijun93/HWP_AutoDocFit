@@ -110,6 +110,14 @@ def main() -> int:
     if args.compare:
         return compare_launchers(args)
     exe = args.exe.resolve()
+    if args.launcher == "rust":
+        rust_exe = exe.parent / (exe.stem + ".rust.exe")
+        rust_manifest = rust_exe.with_suffix(".manifest.txt")
+        rust_payload = rust_exe.with_suffix(".payload.zip")
+        if not rust_exe.exists() or not rust_manifest.exists() or not rust_payload.exists():
+            raise FileNotFoundError("Rust launcher artifacts are missing; build with scripts/build_smart_launcher.py --launcher rust")
+        exe = rust_exe
+        args.manifest = rust_manifest
     version, payload_hash = _manifest_identity(args.manifest.resolve())
     cache_name = "app_v" + "".join(c if c not in '<>:"/\\|?*' else "_" for c in version).replace(" ", "_") + "_" + payload_hash[:12]
     cache = Path(os.environ["LOCALAPPDATA"]) / "HWP_AutoDocFit" / cache_name
