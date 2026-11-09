@@ -31,6 +31,8 @@ PURPOSES = {
     # 파일이름 탭: 모든 확장자(None = 확장자 제한 없음).
     'rename_files': ('open', None),
     'rename_folder': ('directory', None),
+    # Library export and scan destination; returns a host path without staging files.
+    'library_folder': ('directory', None),
     # 외부 프로그램(사진첩·아웃라이너·사진관리) 실행 파일 지정. 이름 검사는 external_apps_service.validate_exe가 한다.
     'external_app_exe': ('open', frozenset({'.exe'})),
 }
@@ -227,6 +229,26 @@ class NativeFileDialogService:
 
     def select_files(self, request_id, purpose, mode='open', multiple=False):
         return copy.deepcopy(self.submit_selection(request_id, purpose, mode, multiple).result())
+
+    def pick_directory(self, purpose='rename_folder'):
+        """Show the native folder picker and return its validated path, or None on cancel."""
+        mode, _ = self._policy(purpose, 'directory', False)
+        if os.name == 'nt':
+            hr = ctypes.OleDLL('ole32').CoInitializeEx(None, 2)
+            if hr not in (0, 1):
+                fail('DIALOG_FAILED')
+        else:
+            hr = None
+        try:
+            paths = self._dialog(purpose, mode, False)
+            if not paths:
+                return None
+            if len(paths) != 1:
+                fail('INVALID_PATH')
+            return str(self._path(paths[0], 'directory', None))
+        finally:
+            if hr is not None:
+                ctypes.OleDLL('ole32').CoUninitialize()
 
     def close(self):
         self._executor.shutdown(wait=False, cancel_futures=True)
