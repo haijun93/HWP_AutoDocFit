@@ -38,3 +38,5 @@ hierarchy/target/
 resources/kagent.exe
 resources/kagent.exe.sha256
 editor_core/target/
+launcher_rs/target/
+
