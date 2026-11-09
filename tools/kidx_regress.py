@@ -34,9 +34,11 @@ def python_records(path: Path) -> list[dict]:
 
 def rust_records(path: Path, exe: Path) -> list[dict]:
     result = subprocess.run(
-        [str(exe), "extract", str(path)], cwd=ROOT, check=True,
+        [str(exe), "extract", str(path)], cwd=ROOT,
         capture_output=True, text=True, encoding="utf-8",
     )
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip() or f"klib exited {result.returncode}")
     data = json.loads(result.stdout)
     return data["paragraphs"] if isinstance(data, dict) else data
 
