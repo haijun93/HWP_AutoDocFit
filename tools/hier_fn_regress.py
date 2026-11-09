@@ -8,6 +8,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from docfit_core import style_hierarchy as py
 from tools.hier_regress import source_corpus, normalize_paragraphs
+from tools.hier_py_stages import run as python_stages
 
 ORDER = (
     "canonical_marker",
@@ -155,6 +156,8 @@ def main():
     ap.add_argument("--function", choices=ORDER)
     ap.add_argument("--executable", type=Path)
     ap.add_argument("--no-build", action="store_true")
+    ap.add_argument("--stages", action="store_true", help="Compare analyze_hierarchy stage intermediates")
+    ap.add_argument("--stage", choices=[f"stage_{i:02}" for i in range(1, 7)], help="Limit stage comparison")
     ap.add_argument("--report", type=Path, default=REPO.parent / "reports" / "HIER6.final.md")
     args = ap.parse_args()
     target_func = args.func_name or args.function
@@ -174,6 +177,38 @@ def main():
     all_paras = normalize_paragraphs([p for _, ps, _ in corpus for p in ps])
     assert len(all_paras) == 549, len(all_paras)
     rows = []
+    if args.stages:
+        stage_rows = []
+        batches = [("549 paragraphs", all_paras)] if args.stage else [("549 paragraphs", all_paras)] + [(name, ps) for name, ps, _ in corpus]
+        for label, selected in batches:
+            for offset in range(0, len(selected), 25):
+                chunk = selected[offset:offset + 25]
+                chunk_label = f"{label}[{offset}:{offset + len(chunk)}]"
+                stages, py_result = python_stages(chunk)
+                if py.analyze_hierarchy(chunk) != py_result:
+                    raise AssertionError(f"Python staged copy differs from original for {chunk_label}")
+                proc = subprocess.run(
+                    [str(exe), "fn", "analyze_hierarchy_stages"],
+                    input=json.dumps({"paragraphs": chunk}, ensure_ascii=False, allow_nan=False),
+                    text=True, encoding="utf-8", capture_output=True,
+                )
+                if proc.returncode:
+                    raise RuntimeError(proc.stderr)
+                rust_stages = json.loads(proc.stdout)
+                rust_stage_values = rust_stages.get("stages", rust_stages)
+                if "stage_01" in rust_stage_values and isinstance(rust_stage_values["stage_01"], dict):
+                    rust_stage_values = {**rust_stage_values, **rust_stage_values["stage_01"]}
+                for stage_name, py_value in stages.items():
+                    if args.stage and stage_name != args.stage:
+                        continue
+                    rust_value = rust_stage_values.get(stage_name)
+                    diff = py_value != rust_value
+                    stage_rows.append((label, stage_name, diff))
+                    if diff and label == "549 paragraphs":
+                        print(f"{chunk_label}: {stage_name} difference=1")
+            print(f"{label}: batches={(len(selected)+24)//25}")
+        print(f"stage comparisons={len(stage_rows)} differences={sum(row[2] for row in stage_rows)}")
+        return int(any(row[2] for row in stage_rows))
     # If no target function given, run canonical list (excluding _most_common alias duplicate in full run)
     run_list = (target_func,) if target_func else [f for f in ORDER if f != "_most_common"]
     for name in run_list:
