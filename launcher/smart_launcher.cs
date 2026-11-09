@@ -21,10 +21,18 @@ internal static class SmartLauncher
     private static NativeSplash splash;
     // 시험 전용: 시작 단계 시각 기록(ms, 프로세스 시작 기준)과 사용자 캐시·뮤텍스와 겹치지 않는 시험 폴더.
     private static readonly string TracePath = Environment.GetEnvironmentVariable("DOCFIT_LAUNCHER_TRACE");
+    private static readonly bool StderrTrace = Environment.GetEnvironmentVariable("HWP_LAUNCHER_TRACE") == "1";
+    private static readonly Stopwatch TraceClock = Stopwatch.StartNew();
+    private static long TracePrevious;
     private static readonly string TestRoot = Environment.GetEnvironmentVariable("DOCFIT_LAUNCHER_TEST_ROOT");
 
     private static void Trace(string stage)
     {
+        if (string.IsNullOrEmpty(TracePath) && !StderrTrace) return;
+        long now = TraceClock.ElapsedMilliseconds;
+        long elapsed = now - TracePrevious;
+        TracePrevious = now;
+        if (StderrTrace) Console.Error.WriteLine("HWP_LAUNCHER_TRACE stage=" + stage + " elapsed_ms=" + elapsed + " total_ms=" + now);
         if (string.IsNullOrEmpty(TracePath)) return;
         try
         {

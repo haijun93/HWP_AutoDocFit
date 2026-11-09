@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -31,20 +32,22 @@ def compare_launchers(args: argparse.Namespace) -> int:
         for kind in ("csharp", "rust"):
             out = root / kind
             out.mkdir()
+            payload = out / "smart-launcher-build" / "payload.zip"
+            _, manifest = make_payload(bundle, payload, "9.97.0-fixture")
             if kind == "csharp":
-                payload = out / "smart-launcher-build" / "payload.zip"
-                _, manifest = make_payload(bundle, payload, "9.97.0-fixture")
                 compile_launcher(payload, manifest, out / "launcher.exe", "9.97.0-fixture", ROOT / "resources" / "app_icon.ico", ROOT / "resources" / "splash.png")
             else:
                 build(bundle, out / "launcher.exe", "9.97.0-fixture", "rust")
+                shutil.copy2(manifest, out / "launcher.manifest.txt")
+                shutil.copy2(payload, out / "launcher.payload.zip")
                 manifest = out / "launcher.manifest.txt"
+            results[kind] = {"fixture_exe_sha256": hashlib.sha256(app.read_bytes()).hexdigest(), "fixture_exe_bytes": app.stat().st_size}
             env = os.environ.copy()
             env["LOCALAPPDATA"] = str(out / "local")
             env["DOCFIT_LAUNCHER_TEST_ROOT"] = str(out / "cache")
             env["DOCFIT_LAUNCHER_MANIFEST"] = str(manifest)
             env["DOCFIT_LAUNCHER_PAYLOAD"] = str(out / "launcher.payload.zip")
             launcher, report = out / "launcher.exe", out / "report.json"
-            results[kind] = {}
             for label in ("self_test", "cached"):
                 start = time.perf_counter()
                 try:
@@ -55,6 +58,10 @@ def compare_launchers(args: argparse.Namespace) -> int:
                 except subprocess.CalledProcessError as error:
                     raise RuntimeError(f"{kind} {label} failed; launcher={launcher}, manifest={manifest}, payload={env['DOCFIT_LAUNCHER_PAYLOAD']}") from error
                 results[kind][label + "_ms"] = round((time.perf_counter() - start) * 1000, 2)
+            # Repeat the same EXE immediately to distinguish one-time AV scanning from steady-state startup.
+            start = time.perf_counter()
+            subprocess.run([str(launcher), "--self-test", "--self-test-report", str(report), "argument with spaces"], env=traced_env, timeout=args.timeout, check=True, capture_output=True)
+            results[kind]["second_consecutive_ms"] = round((time.perf_counter() - start) * 1000, 2)
             shutil.rmtree(out / "cache", ignore_errors=True)
             start = time.perf_counter()
             try:
