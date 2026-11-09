@@ -63,6 +63,15 @@ class FileRenameServiceTests(unittest.TestCase):
         self.assertEqual(values[1], {"find": "f5", "to": "t5"})
         self.assertEqual(len({(v['find'], v['to']) for v in values}), 10)
 
+    def test_date_options_save_and_get(self):
+        initial = self.service.command("date_options_get")["options"]
+        self.assertEqual(initial, {"position": "none", "format": "YYYY.MM.DD", "delimiter": "_"})
+
+        saved = self.service.command("date_options_save", {"position": "prefix", "format": "YYYYMMDD", "delimiter": "()"})
+        self.assertTrue(saved["ok"])
+        loaded = self.service.command("date_options_get")["options"]
+        self.assertEqual(loaded, {"position": "prefix", "format": "YYYYMMDD", "delimiter": "()"})
+
     def test_sendto_shortcut_create_delete_with_injected_folder(self):
         class Link:
             def Save(self):
