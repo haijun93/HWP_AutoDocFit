@@ -202,6 +202,13 @@ void main() {
       expect(find.byKey(const ValueKey('libraryExplorerFolder-core')), findsOneWidget);
       expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsNothing);
 
+      await tester.tap(find.byKey(const ValueKey('libraryPaneCount-3')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-core')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-basis')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-reference')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsNothing);
+
       // 다시 캔버스로 전환 시 여전히 1개 영역
       await tester.tap(find.byKey(const ValueKey('libraryViewCanvas')));
       await tester.pumpAndSettle();
