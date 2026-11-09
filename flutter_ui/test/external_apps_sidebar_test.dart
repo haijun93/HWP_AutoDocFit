@@ -175,8 +175,7 @@ void main() {
     expect(find.byKey(const ValueKey('external-app-install')), findsOneWidget);
   });
 
-  for (final sidebarOnly in [false, true]) {
-    testWidgets('접힌 메뉴(사이드메뉴 모드=$sidebarOnly): 세 아이콘이 다른 메뉴 아이콘과 같은 세로줄에 있다', (
+  testWidgets('접힌 메뉴: 세 아이콘이 다른 메뉴 아이콘과 같은 세로줄에 있다', (
       tester,
     ) async {
       await _size(tester, const Size(800, 1400));
@@ -186,7 +185,7 @@ void main() {
             body: Row(
               children: [
                 SizedBox(
-                  width: sidebarOnly ? 120 : kSidebarCollapsedWidth,
+                  width: kSidebarCollapsedWidth,
                   child: WorkspaceTabBar(
                     labels: const ['문서편집', '표서식'],
                     icons: const [Icons.description, Icons.table_chart],
@@ -195,7 +194,6 @@ void main() {
                     scrollController: ScrollController(),
                     expanded: false,
                     developerMode: true,
-                    sidebarOnly: sidebarOnly,
                     onOpenExternalApp: (_, _) {},
                   ),
                 ),
@@ -227,7 +225,6 @@ void main() {
       }
       expect(tester.takeException(), isNull);
     });
-  }
 
   testWidgets('펼친 메뉴: 세 아이콘이 다른 메뉴 아이콘과 같은 세로줄에 있다', (tester) async {
     await _size(tester, const Size(800, 1400));

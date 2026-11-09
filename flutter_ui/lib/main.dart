@@ -131,8 +131,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   final workspace = GlobalKey<_WorkspaceState>();
   int lastTab = 0;
   bool developerMode = false;
-  bool alwaysOnTop = false;
-  bool sidebarOnly = false;
 
   @override
   void initState() {
@@ -141,7 +139,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       if (!mounted || value is! Map) return;
       setState(() {
         developerMode = value['developer_mode'] == true;
-        alwaysOnTop = value['always_on_top'] == true;
       });
     }).catchError((_) {}));
     HardwareKeyboard.instance.addHandler(_onKClipHotkey);
@@ -174,10 +171,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     if (_kclipOpen) return;
     _kclipOpen = true;
     try {
-      if (sidebarOnly) {
-        await widget.api('sidebar_mode', [false]).catchError((_) => null);
-        if (mounted) setState(() => sidebarOnly = false);
-      }
       if (!mounted) return;
       await showKClipStickyWindow(context, widget.api, mode: KClipEntryMode.hotkey);
     } finally {
@@ -219,12 +212,10 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     api: widget.api,
     tabRequest: tabRequest,
     developerMode: developerMode,
-    onSidebarSideSwitch: () => unawaited(widget.api('sidebar_mode_switch_side', [])),
     documentEditorWidget: Workspace(
       key: workspace,
       api: widget.api,
       developerMode: developerMode,
-      onSidebarSideSwitch: () => unawaited(widget.api('sidebar_mode_switch_side', [])),
       onSidebarCollapsed: (collapsed) =>
           savedSidebarExpanded.value = collapsed == null ? null : !collapsed,
       onRenameOpen: () {
@@ -320,11 +311,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
                     child: TextButton.icon(
                     key: action.key,
                   onPressed: () {
-                    if (sidebarOnly && !action.label.startsWith('사이드메뉴 모드')) {
-                      widget.api('sidebar_mode', [false]).then((_) {
-                        if (mounted) setState(() => sidebarOnly = false);
-                      });
-                    }
                     action.onPressed();
                   },
                     icon: Icon(action.icon, size: 20),
@@ -342,11 +328,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
                     tooltip: tipOf(action.label),
                     visualDensity: VisualDensity.compact,
                     onPressed: () {
-                      if (sidebarOnly && !action.label.startsWith('사이드메뉴 모드')) {
-                        widget.api('sidebar_mode', [false]).then((_) {
-                          if (mounted) setState(() => sidebarOnly = false);
-                        });
-                      }
                       action.onPressed();
                     },
                     icon: Icon(action.icon, size: 20),
@@ -399,7 +380,6 @@ class Workspace extends StatefulWidget {
     this.onSidebarCollapsed,
     this.onRenameOpen,
     this.developerMode = false,
-    this.onSidebarSideSwitch,
   });
   final ApiCall api;
 
@@ -409,14 +389,12 @@ class Workspace extends StatefulWidget {
   /// 탐색기 보내기로 파일이 들어와 파일명 일괄변경 탭을 열어야 할 때.
   final VoidCallback? onRenameOpen;
   final bool developerMode;
-  final VoidCallback? onSidebarSideSwitch;
   @override
   State<Workspace> createState() => _WorkspaceState();
 }
 
 class _WorkspaceState extends State<Workspace> implements ConversionHost {
   Map<String, dynamic> state = {};
-  bool sidebarOnly = false;
   int tab = 0;
   bool busy = false, polling = false, wasRunning = false;
   int commandVersion = 0;
@@ -638,9 +616,6 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     final documentsChanged =
         jsonEncode(state['files'] ?? []) != jsonEncode(next['files'] ?? []);
     state = Map<String, dynamic>.from(next);
-    if (next['sidebar_mode'] is bool && next['sidebar_mode'] != sidebarOnly) {
-      sidebarOnly = next['sidebar_mode'] as bool;
-    }
     final collapsed = next['sidebar_collapsed'];
     widget.onSidebarCollapsed?.call(collapsed is bool ? collapsed : null);
     if (next['rename_open'] == true) widget.onRenameOpen?.call();
@@ -1212,8 +1187,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               child: LayoutBuilder(
                 builder: (context, layout) => Row(
                   children: [
-                    if (sidebarOnly || layout.maxWidth >= 1000) sidebar(),
-                    if (!sidebarOnly) Expanded(
+                    if (layout.maxWidth >= 1000) sidebar(),
+                    Expanded(
                       child: Column(
                         children: [
                           if (busy) const LinearProgressIndicator(minHeight: 2),
@@ -1567,24 +1542,6 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             ),
           ),
         const Spacer(),
-        if (sidebarOnly)
-          if (widget.developerMode)
-            TextButton.icon(
-              key: const ValueKey('sidebar-mode-switch-side'),
-              onPressed: widget.onSidebarSideSwitch,
-              icon: const Icon(Icons.swap_horiz),
-              label: const Text('왼쪽↔오른쪽 고정'),
-            ),
-        if (sidebarOnly)
-          TextButton.icon(
-            key: const ValueKey('sidebar-mode-exit'),
-            onPressed: () async {
-              await widget.api('sidebar_mode', [false]);
-              if (mounted) setState(() => sidebarOnly = false);
-            },
-            icon: const Icon(Icons.close_fullscreen),
-            label: const Text('사이드메뉴 모드 끄기'),
-          ),
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(

@@ -149,7 +149,6 @@ class IntegratedWorkspace extends StatelessWidget {
       this.developerMode = false,
     this.libraryScreen,
     this.notebookScreen,
-    this.onSidebarSideSwitch,
   });
 
   final Widget? trailing;
@@ -158,7 +157,6 @@ class IntegratedWorkspace extends StatelessWidget {
   final bool developerMode;
   final Widget? libraryScreen;
   final Widget? notebookScreen;
-  final VoidCallback? onSidebarSideSwitch;
   final ApiCall api;
   final Widget documentEditorWidget;
   final Widget fileConversionWidget;
@@ -179,17 +177,6 @@ class IntegratedWorkspace extends StatelessWidget {
       libraryScreen: libraryScreen ?? LibraryScreen(api: BridgeLibraryApi(api), notebookApi: BridgeNotebookApi(api)),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
-      onSidebarSideSwitch: onSidebarSideSwitch,
-      onAlwaysOnTopChanged: (enabled) async {
-        await api('always_on_top', [enabled]);
-      },
-      onSidebarModeRequest: (enabled) async {
-        final result = await api('sidebar_mode', [enabled]);
-        return result is Map && result['ok'] == true;
-      },
-      onSidebarDrag: (deltaY, save) async {
-        await api('sidebar_mode_drag', [deltaY, save]);
-      },
       documentEditor: DocumentEditorAdapter(child: documentEditorWidget),
       tableTemplates: TableTemplatesAdapter(api: api),
       tableSketch: TableSketchAdapter(api: api),
