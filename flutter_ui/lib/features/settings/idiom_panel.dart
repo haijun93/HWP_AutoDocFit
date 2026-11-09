@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/codicons.dart';
 import 'kiosk_theme.dart';
 
 /// 설정의 '글자 상용구'·'본문 상용구' 관리(알파, 2026-10-15).
@@ -354,7 +355,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
                 controller: search,
                 onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search, color: Kiosk.faint),
+                  prefixIcon: const Icon(Codicons.search, color: Kiosk.faint),
                   hintText: '상용구 찾기 (${all.length}개)',
                   filled: true,
                   fillColor: Colors.white,
@@ -456,18 +457,18 @@ class _IdiomPanelState extends State<IdiomPanel> {
               onPressed: locked || item['has_file'] != true
                   ? null
                   : () => request('open_body', {'key': item['key']}),
-              icon: const Icon(Icons.open_in_new_rounded),
+              icon: const Icon(Codicons.linkExternal),
             ),
           if (!directConfig) ...[
             IconButton(
               tooltip: '고치기',
               onPressed: locked ? null : () => edit(index),
-              icon: const Icon(Icons.edit_outlined),
+              icon: const Icon(Codicons.edit),
             ),
             IconButton(
               tooltip: '삭제',
               onPressed: locked ? null : () => remove(index),
-              icon: const Icon(Icons.delete_outline_rounded),
+              icon: const Icon(Codicons.trash),
             ),
           ],
         ],

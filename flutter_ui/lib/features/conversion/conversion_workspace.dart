@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/codicons.dart';
 import 'hwp_bulk_panel.dart';
 
 /// 파일변환 탭이 문서편집 상태에서 읽고 부르는 것(2.0.7: 파일변환 탭 한 화면에서 넣기 → 고르기 → 결과까지).
@@ -258,12 +259,12 @@ class ConversionWorkspace extends StatelessWidget {
                             : (d) => _menu(context, d.globalPosition, [
                                 (
                                   '열기',
-                                  Icons.open_in_new,
+                                  Codicons.linkExternal,
                                   () => host.command('open_source_file', [i]),
                                 ),
                                 (
                                   '폴더에서 보기',
-                                  Icons.folder_open_outlined,
+                                  Codicons.folderOpened,
                                   () => host.command('show_source_file', [i]),
                                 ),
                                 (
@@ -279,7 +280,7 @@ class ConversionWorkspace extends StatelessWidget {
                                   ),
                                 (
                                   '목록에서 빼기',
-                                  Icons.close_rounded,
+                                  Codicons.close,
                                   () => host.command('remove_file', [i]),
                                 ),
                               ]),
@@ -303,7 +304,7 @@ class ConversionWorkspace extends StatelessWidget {
                           child: Row(
                             children: [
                               const Icon(
-                                Icons.description_outlined,
+                                Codicons.fileText,
                                 color: faint,
                               ),
                               const SizedBox(width: 10),
@@ -336,7 +337,7 @@ class ConversionWorkspace extends StatelessWidget {
                                 onPressed: host.locked
                                     ? null
                                     : () => host.command('remove_file', [i]),
-                                icon: const Icon(Icons.close_rounded, size: 18),
+                                icon: const Icon(Codicons.close, size: 18),
                               ),
                             ],
                           ),
@@ -353,7 +354,7 @@ class ConversionWorkspace extends StatelessWidget {
                 child: OutlinedButton.icon(
                   key: const Key('conversionPickFiles'),
                   onPressed: host.locked ? null : host.addConversionFiles,
-                  icon: const Icon(Icons.add),
+                  icon: const Icon(Codicons.add),
                   label: const Text('파일 추가하기'),
                 ),
               ),
@@ -363,7 +364,7 @@ class ConversionWorkspace extends StatelessWidget {
                 onPressed: host.locked
                     ? null
                     : () => host.command('add_folder'),
-                icon: const Icon(Icons.create_new_folder_outlined),
+                icon: const Icon(Codicons.newFolder),
                 label: const Text('폴더'),
               ),
             ],
@@ -550,12 +551,12 @@ class ConversionWorkspace extends StatelessWidget {
                               ),
                               (
                                 '폴더에서 보기',
-                                Icons.folder_open_outlined,
+                                Codicons.folderOpened,
                                 () => host.command('show_result', [i]),
                               ),
                               (
                                 '경로 복사',
-                                Icons.content_copy_rounded,
+                                Codicons.copy,
                                 () => Clipboard.setData(
                                   ClipboardData(
                                     text: '${results[i]['path'] ?? ''}',
@@ -564,7 +565,7 @@ class ConversionWorkspace extends StatelessWidget {
                               ),
                               (
                                 '원본 열기',
-                                Icons.description_outlined,
+                                Codicons.fileText,
                                 () => host.command('open_result_source', [i]),
                               ),
                             ]),
@@ -630,7 +631,7 @@ class ConversionWorkspace extends StatelessWidget {
                                 onPressed: () =>
                                     host.command('show_result', [i]),
                                 icon: const Icon(
-                                  Icons.folder_open_outlined,
+                                  Codicons.folderOpened,
                                   size: 20,
                                 ),
                               ),
@@ -669,7 +670,7 @@ class ConversionWorkspace extends StatelessWidget {
               onPressed: results.isEmpty || host.running
                   ? null
                   : () => host.command('show_result', [0]),
-              icon: const Icon(Icons.folder_open_outlined),
+              icon: const Icon(Codicons.folderOpened),
               label: const Text('결과 폴더 열기'),
             ),
             OutlinedButton(

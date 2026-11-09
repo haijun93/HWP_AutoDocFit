@@ -1205,7 +1205,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                                       ? () => command('restart_backend')
                                       : refresh,
                                   tooltip: '다시 연결',
-                                  icon: const Icon(Icons.refresh),
+                                  icon: const Icon(Codicons.refresh),
                                 ),
                               ),
                             ),
@@ -1388,7 +1388,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     onPressed: () async {
                       if (mounted) scaffoldKey.currentState?.openEndDrawer();
                     },
-                    icon: const Icon(Icons.settings_outlined),
+                    icon: const Icon(Codicons.gear),
                   ),
                   SizedBox(width: isNarrow ? 6 : 12),
                 ],
@@ -1594,7 +1594,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             const Spacer(),
             TextButton.icon(
               onPressed: locked ? null : () => command('clear_files'),
-              icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+              icon: const Icon(Codicons.trash, size: 18),
               label: const Text('전체 비우기'),
             ),
           ],
@@ -1622,7 +1622,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 trailing: IconButton(
                   tooltip: '목록에서 제거',
                   onPressed: locked ? null : () => command('remove_file', [i]),
-                  icon: const Icon(Icons.close),
+                  icon: const Icon(Codicons.close),
                 ),
               ),
             ),
@@ -1661,12 +1661,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     children: [
       FilledButton.icon(
         onPressed: locked ? null : () => command('add_files'),
-        icon: const Icon(Icons.add),
+        icon: const Icon(Codicons.add),
         label: const Text('문서 추가'),
       ),
       OutlinedButton.icon(
         onPressed: locked ? null : () => command('add_folder'),
-        icon: const Icon(Icons.folder_open),
+        icon: const Icon(Codicons.folderOpened),
         label: const Text('폴더 추가'),
       ),
       OutlinedButton.icon(
@@ -2869,7 +2869,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   IconButton(
                     tooltip: '닫기',
                     onPressed: () => Navigator.pop(ctx),
-                    icon: const Icon(Icons.close),
+                    icon: const Icon(Codicons.close),
                   ),
                 ],
               ),
@@ -2948,7 +2948,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                                 ? null
                                 : () => command('add_format_file'),
                             icon: const Icon(
-                              Icons.folder_open_outlined,
+                              Codicons.folderOpened,
                               size: 18,
                             ),
                             label: const Text('파일에서 고르기'),
@@ -3569,7 +3569,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             for (var i = 0; i < results.length; i++)
               ListTile(
                 contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.description_outlined),
+                leading: const Icon(Codicons.fileText),
                 title: Text(
                   '${results[i]['name'] ?? ''}',
                   maxLines: 2,
@@ -3593,14 +3593,14 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                       onPressed: busy
                           ? null
                           : () => command('open_result', [i]),
-                      icon: const Icon(Icons.open_in_new),
+                      icon: const Icon(Codicons.linkExternal),
                     ),
                     IconButton(
                       tooltip: '폴더에서 보기',
                       onPressed: busy
                           ? null
                           : () => command('show_result', [i]),
-                      icon: const Icon(Icons.folder_open_outlined),
+                      icon: const Icon(Codicons.folderOpened),
                     ),
                     IconButton(
                       key: Key('compareItem-$i'),
@@ -3887,7 +3887,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   }
                 }
               },
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Codicons.refresh),
               label: const Text('새로 고침'),
             ),
             TextButton.icon(
@@ -3910,7 +3910,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         }
                       }
                     },
-              icon: const Icon(Icons.delete_outline),
+              icon: const Icon(Codicons.trash),
               label: const Text('지우기'),
             ),
             FilledButton(
@@ -3941,7 +3941,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               IconButton(
                 tooltip: '닫기',
                 onPressed: () => scaffoldKey.currentState?.closeEndDrawer(),
-                icon: const Icon(Icons.close),
+                icon: const Icon(Codicons.close),
               ),
             ],
           ),

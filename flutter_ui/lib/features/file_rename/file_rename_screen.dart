@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../../core/codicons.dart';
 import '../../core/drop_events.dart';
 import 'file_rename_api.dart';
 import 'rule_editor.dart';
@@ -593,13 +594,13 @@ class FileRenameScreenState extends State<FileRenameScreen> {
           FilledButton.tonalIcon(
             key: const ValueKey('rename-add-files'),
             onPressed: _busy ? null : () => _run('pick_files'),
-            icon: const Icon(Icons.note_add_outlined),
+            icon: const Icon(Codicons.newFile),
             label: const Text('파일 추가'),
           ),
           const SizedBox(width: 6),
           OutlinedButton.icon(
             onPressed: _busy ? null : () => _run('pick_folder', {'recursive': _recursive}),
-            icon: const Icon(Icons.create_new_folder_outlined),
+            icon: const Icon(Codicons.newFolder),
             label: const Text('폴더 추가'),
           ),
           Checkbox(
@@ -610,13 +611,13 @@ class FileRenameScreenState extends State<FileRenameScreen> {
           if (_advanced) OutlinedButton.icon(
             key: const ValueKey('rename-folder-self'),
             onPressed: _busy ? null : () => _run('pick_folder', {'as_folder': true}),
-            icon: const Icon(Icons.drive_file_rename_outline),
+            icon: const Icon(Codicons.replace),
             label: const Text('폴더 자체 이름 바꾸기'),
           ),
           const SizedBox(width: 8),
           OutlinedButton.icon(
             onPressed: _busy || _entries.isEmpty ? null : () => _run('clear', null, '목록을 비웠습니다'),
-            icon: const Icon(Icons.clear_all),
+            icon: const Icon(Codicons.trash),
             label: const Text('목록 지우기'),
           ),
           const SizedBox(width: 6),
@@ -670,7 +671,7 @@ class FileRenameScreenState extends State<FileRenameScreen> {
           if (_advanced) IconButton(
             tooltip: '이름 바꾼 기록',
             onPressed: _busy ? null : _showHistory,
-            icon: const Icon(Icons.history),
+            icon: const Icon(Codicons.history),
           ),
         ],
       ),
@@ -1129,7 +1130,7 @@ class FileRenameScreenState extends State<FileRenameScreen> {
                                 setState(() => _rules.removeAt(index));
                                 _schedulePreview();
                               },
-                              icon: const Icon(Icons.close),
+                              icon: const Icon(Codicons.close),
                             ),
                           ],
                         ),

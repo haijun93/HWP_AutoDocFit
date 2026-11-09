@@ -1,10 +1,11 @@
-import '../../core/close_guards.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import '../workspace/tab_navigation_shell.dart' show kFileRenameMenuEnabled;
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/close_guards.dart';
+import '../../core/codicons.dart';
 import '../preview/option_images.dart';
 import 'idiom_panel.dart';
 import 'kiosk_theme.dart';
@@ -337,7 +338,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(width: 6),
         box,
         const SizedBox(width: 6),
-        step(Icons.add, 1, '1 늘리기'),
+        step(Codicons.add, 1, '1 늘리기'),
         if (unit != null) ...[
           const SizedBox(width: 8),
           Text(unit, style: Kiosk.body),
@@ -555,7 +556,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       style: const TextStyle(fontSize: 16),
                       decoration: InputDecoration(
                         prefixIcon: const Icon(
-                          Icons.search,
+                          Codicons.search,
                           color: Kiosk.faint,
                         ),
                         hintText: '설정 찾기 (예: 내어쓰기, 자간, 표)',

@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/codicons.dart';
 import '../../core/drop_events.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
@@ -637,7 +638,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                   FilledButton.icon(
                     key: const ValueKey('nb-create-empty'),
                     onPressed: _busy ? null : _createNotebook,
-                    icon: const Icon(Icons.add),
+                    icon: const Icon(Codicons.add),
                     label: const Text('새 노트북 만들기'),
                   ),
                 ],
@@ -742,10 +743,10 @@ class _NotebookScreenState extends State<NotebookScreen> {
   );
 
   IconData _kindIcon(String kind) => switch (kind) {
-    'xlsx' => Icons.table_chart_outlined,
+    'xlsx' => Codicons.table,
     'pptx' => Icons.slideshow_outlined,
     'md' || 'txt' => Icons.notes,
-    _ => Icons.description_outlined,
+    _ => Codicons.fileText,
   };
 
   Widget _sourcesPane() {
@@ -768,13 +769,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
               TextButton.icon(
                 key: const ValueKey('nb-source-add'),
                 onPressed: _busy ? null : _addSource,
-                icon: const Icon(Icons.add, size: 18),
+                icon: const Icon(Codicons.add, size: 18),
                 label: const Text('출처 추가'),
               ),
               TextButton.icon(
                 key: const ValueKey('nb-memo-add'),
                 onPressed: _busy ? null : _addMemo,
-                icon: const Icon(Icons.add, size: 18),
+                icon: const Icon(Codicons.add, size: 18),
                 label: Text(_memoDraft == null ? '메모 추가' : '메모 추가(작성 중)'),
               ),
             ],
@@ -835,7 +836,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                               ),
                             IconButton(
                               tooltip: '출처 빼기',
-                              icon: const Icon(Icons.close, size: 18),
+                              icon: const Icon(Codicons.close, size: 18),
                               onPressed: _busy ? null : () => _removeSource(s),
                             ),
                           ],
@@ -1266,7 +1267,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                     onTap: () => _openNote(note),
                     trailing: IconButton(
                       tooltip: '노트 지우기',
-                      icon: const Icon(Icons.delete_outline, size: 18),
+                      icon: const Icon(Codicons.trash, size: 18),
                       onPressed: _busy ? null : () => _deleteNote(note),
                     ),
                   ),
@@ -1326,7 +1327,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                       onTap: () => _preview(_citations[i].sourceId, _citations[i].paragraphOrdinal),
                       trailing: IconButton(
                         tooltip: '인용 빼기',
-                        icon: const Icon(Icons.close, size: 16),
+                        icon: const Icon(Codicons.close, size: 16),
                         onPressed: () => setState(() => _citations = List.of(_citations)..removeAt(i)),
                       ),
                     ),
@@ -1347,14 +1348,14 @@ class _NotebookScreenState extends State<NotebookScreen> {
                       PopupMenuItem(
                         key: ValueKey('nb-export-md'),
                         value: 'md',
-                        child: ListTile(dense: true, leading: Icon(Icons.description_outlined), title: Text('Markdown')),
+                        child: ListTile(dense: true, leading: Icon(Codicons.fileText), title: Text('Markdown')),
                       ),
                       PopupMenuItem(
                         key: ValueKey('nb-export-hwpx'),
                         value: 'hwpx',
                         child: ListTile(
                           dense: true,
-                          leading: Icon(Icons.save_alt),
+                          leading: Icon(Codicons.save),
                           title: Text('HWPX(한/글)'),
                           subtitle: Text('저장 위치를 골라 한/글 문서로 저장'),
                         ),

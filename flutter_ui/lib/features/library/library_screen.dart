@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_selector/file_selector.dart';
 
+import '../../core/codicons.dart';
 import '../../core/drop_events.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
@@ -1430,8 +1431,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               onSelectionChanged: (counts) => _setPaneCount(counts.single),
             ),
             Text(_selectedBox!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '자료함 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Icons.edit_outlined)),
-            IconButton(key: const ValueKey('libraryDeleteBox'), tooltip: '자료함 삭제', onPressed: _deleteBox, icon: const Icon(Icons.delete_outline)),
+            IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '자료함 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Codicons.edit)),
+            IconButton(key: const ValueKey('libraryDeleteBox'), tooltip: '자료함 삭제', onPressed: _deleteBox, icon: const Icon(Codicons.trash)),
             OutlinedButton(key: const ValueKey('libraryExportBox'), onPressed: _exportBox, child: const Text('물리 폴더로 전환')),
             if (_scanApi != null)
               OutlinedButton(
@@ -1442,7 +1443,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             SizedBox(width: 190, height: 38, child: TextField(
               key: const ValueKey('librarySearch'),
               controller: _searchController,
-              decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: '자료 검색', isDense: true),
+              decoration: const InputDecoration(prefixIcon: Icon(Codicons.search), hintText: '자료 검색', isDense: true),
               onChanged: _search,
             )),
             SizedBox(width: 180, height: 38, child: TextField(
@@ -1455,7 +1456,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             OutlinedButton.icon(
               key: const ValueKey('libraryAddMemo'),
               onPressed: _addMemo,
-              icon: const Icon(Icons.note_add_outlined, size: 18),
+              icon: const Icon(Codicons.newFile, size: 18),
               label: Text(_memoDraft == null ? '+메모' : '+메모(초안)'),
             ),
             OutlinedButton(key: const ValueKey('libraryPaste'), onPressed: _paste, child: const Text('붙여넣기')),
