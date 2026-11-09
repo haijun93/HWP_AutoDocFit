@@ -40,3 +40,5 @@ resources/kagent.exe.sha256
 editor_core/target/
 launcher_rs/target/
 
+
+release-assets/*.exe
