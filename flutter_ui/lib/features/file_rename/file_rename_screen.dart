@@ -304,6 +304,13 @@ class FileRenameScreenState extends State<FileRenameScreen> {
     return '${t.month}/${t.day} ${two(t.hour)}:${two(t.minute)}';
   }
 
+  String _fileSize(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    if (bytes < 1024 * 1024 * 1024) return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+  }
+
   // ── 규칙 ──────────────────────────────────────────────────────────────
   Future<void> _addRule(RuleKind kind) async {
     final rule = <String, Object?>{'kind': kind.kind, ...kind.defaults};
@@ -770,8 +777,10 @@ class FileRenameScreenState extends State<FileRenameScreen> {
                 children: [
                   const SizedBox(width: 40),
                   Expanded(child: Text('원래 이름', style: header)),
-                  Expanded(child: Text('새 이름 (바뀐 부분 강조 · 두 번 눌러 직접 고치기)', style: header)),
-                  SizedBox(width: 80, child: Text('상태', style: header)),
+                  Expanded(flex: 2, child: Text('새 이름 (바뀐 부분 강조 · 두 번 눌러 직접 고치기)', style: header)),
+                  SizedBox(width: 76, child: Text('상태', style: header)),
+                  const SizedBox(width: 72, child: Text('크기', textAlign: TextAlign.right)),
+                  const SizedBox(width: 116, child: Text('수정 시각', textAlign: TextAlign.right)),
                 ],
               ),
             ],
@@ -814,6 +823,7 @@ class FileRenameScreenState extends State<FileRenameScreen> {
                           ),
                         ),
                         Expanded(
+                          flex: 2,
                           child: _highlighted(
                             entry.name,
                             item?.newName ?? '',
@@ -821,7 +831,17 @@ class FileRenameScreenState extends State<FileRenameScreen> {
                             italic: item?.overridden == true,
                           ),
                         ),
-                        SizedBox(width: 80, child: _status(item)),
+                        SizedBox(width: 76, child: _status(item)),
+                        SizedBox(
+                          width: 72,
+                          child: Text(_fileSize(entry.size), textAlign: TextAlign.right,
+                              overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                        ),
+                        SizedBox(
+                          width: 116,
+                          child: Text(_when(entry.mtime), textAlign: TextAlign.right,
+                              overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                        ),
                       ],
                     ),
                   ),
