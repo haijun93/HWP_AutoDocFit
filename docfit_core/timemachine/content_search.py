@@ -137,6 +137,14 @@ def _sort_hierarchy_results(items: list[dict], *, sort: str) -> None:
 def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
     if not paragraphs:
         return []
+    from docfit_app.hierarchy_bridge import analyze_levels
+
+    engine_levels = analyze_levels(
+        [{"text": p.text, "indent": 0, "font_size": 0} for p in paragraphs]
+    )
+    if engine_levels is not None:
+        return convert_engine_levels_to_records(paragraphs, engine_levels)
+
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
     from ..style_unify import unify_marker
@@ -234,6 +242,27 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             )
         )
     return classified
+
+
+def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: dict) -> list[ParagraphRecord]:
+    """엔진의 정수 레벨을 본문 검색 색인 레코드로 변환한다."""
+    levels = result.get("levels", [])
+    converted = []
+    for paragraph, engine_level in zip(paragraphs, levels):
+        level = {0: "document_title", 1: "chapter", 2: "section", 3: "topic",
+                 4: "square", 5: "circle", 6: "dash", 7: "asterisk", 8: "body",
+                 9: "table_cell", 10: "body"}.get(engine_level)
+        if paragraph.is_table_cell:
+            level = "table_cell"
+        if level not in LEVEL_ORDER and level != "table_cell":
+            level = "body"
+        converted.append(ParagraphRecord(
+            paragraph_index=paragraph.paragraph_index, text=paragraph.text, level=level,
+            level_rank=LEVEL_RANKS.get(level, LEVEL_RANKS["body"]),
+            is_table_cell=paragraph.is_table_cell, style_name=paragraph.style_name,
+            outline_level=paragraph.outline_level,
+        ))
+    return converted
 
 
 def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:

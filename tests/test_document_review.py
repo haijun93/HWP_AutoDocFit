@@ -9,6 +9,11 @@ from tests.test_style_profile import HEADER, SECTION
 
 
 class DocumentReviewTest(unittest.TestCase):
+    def test_engine_level_conversion_keeps_review_role_contract(self):
+        from docfit_core.document_review import convert_engine_levels_to_review_roles
+        self.assertEqual(convert_engine_levels_to_review_roles({"levels": [0, 1, 3, 4, 7]}),
+                         ["제목", "장", "소제목", "본문", "부연설명"])
+
     def test_stage_labels_keep_profile_roles_compatible(self):
         for internal, label in (("제목", "1단계"), ("장", "2단계"), ("중제목", "3단계"),
                                 ("소제목", "4단계"), ("본문", "5단계"),

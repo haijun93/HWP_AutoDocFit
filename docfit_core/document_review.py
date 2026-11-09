@@ -9,6 +9,7 @@ from defusedxml.ElementTree import fromstring
 
 from .hwpx import open_hwpx_safely, validate_hwpx
 from .style_hierarchy import analyze_hierarchy, canonical_marker, display_role, leading_marker
+from docfit_app.hierarchy_bridge import analyze_levels as analyze_engine_levels
 
 
 PURPOSES = ("빠른 의사결정용", "상세 설명용")
@@ -120,13 +121,27 @@ def extract_review_paragraphs(path):
                                 if found:
                                     cells.append(found)
     if body:
-        hierarchy = analyze_hierarchy([{"text": item["text"], "font": item["font"],
+        analysis_input = [{"text": item["text"], "font": item["font"],
                                         "size_pt": item["size_pt"], "left": item["left"] or 0,
                                         "indent": item["indent"] or 0,
-                                        "prev_spacing": item["prev_spacing"]} for item in body])
-        for item, role in zip(body, hierarchy["role_sequence"]):
+                                        "prev_spacing": item["prev_spacing"]} for item in body]
+        engine_result = analyze_engine_levels([
+            {"text": item["text"], "indent": (item["left"] or 0) + (item["indent"] or 0),
+             "font_size": item["size_pt"] or 0} for item in body
+        ])
+        roles = (convert_engine_levels_to_review_roles(engine_result)
+                 if engine_result is not None else analyze_hierarchy(analysis_input)["role_sequence"])
+        for item, role in zip(body, roles):
             item["role"] = role
     return body, cells
+
+
+def convert_engine_levels_to_review_roles(result):
+    """엔진 정수 레벨을 서식 분석의 기존 역할명으로 변환한다."""
+    role_map = {0: "제목", 1: "장", 2: "중제목", 3: "소제목",
+                4: "본문", 5: "본문", 6: "내용", 7: "부연설명", 8: "미분류",
+                9: "미분류", 10: "미분류"}
+    return [role_map.get(level, "미분류") for level in result.get("levels", [])]
 
 
 def _issue(severity, category, item, message):
