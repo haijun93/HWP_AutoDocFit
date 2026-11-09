@@ -15,6 +15,7 @@ mod scan;
 mod extract;
 mod index_content;
 mod unify_marker;
+mod classify_levels;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -87,6 +88,15 @@ fn main() {
         let values: Vec<_> = texts.iter().map(|text| unify_marker::unify_marker(text)).map(|(group, role, marker)|
             json::Value::Arr(vec![group.into(), role.into(), marker.into()])).collect();
         println!("{}", json::to_string(&json::Value::Arr(values)));
+        return;
+    }
+
+    if args.first().is_some_and(|a| a == "classify-levels") {
+        use std::io::{self, Read};
+        let stage = args.get(1).and_then(|s| s.parse::<usize>().ok()).unwrap_or(7).clamp(0, 7);
+        let mut input = String::new();
+        if let Err(error) = io::stdin().read_to_string(&mut input) { eprintln!("{error}"); std::process::exit(1); }
+        if let Err(error) = classify_levels::run(&input, stage) { eprintln!("{error}"); std::process::exit(1); }
         return;
     }
 
