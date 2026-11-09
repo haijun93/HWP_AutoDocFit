@@ -1,5 +1,6 @@
 //! 표준입력 JSON → 표준출력 JSON 위계 분석기. 외부 크레이트 없이 최소 JSON만 다룬다.
-use hierarchy::{analyze_paragraphs, Role, SchemeParagraph, StructureDiagnostic};
+use serde_json::Value;
+use hierarchy::StructureDiagnostic;
 use std::io::{Read, Write};
 
 struct P { text: String, indent: i32, font_size: f64 }
@@ -117,17 +118,10 @@ fn run() -> Result<String, String> {
     }
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
-    let paras = Parser { b: &raw, i: 0 }.root()?;
-    let input: Vec<SchemeParagraph> = paras.iter().enumerate().map(|(i, p)| SchemeParagraph {
-        text: &p.text, position: i, left_indent: p.indent,
-        size_hundredth_pt: (p.font_size * 100.0).round().max(0.0) as u32, bold: false, in_attachment: false,
-    }).collect();
-    let out = analyze_paragraphs(&input);
-    let levels: Vec<String> = out.iter().map(|a| (a.role as u8).to_string()).collect();
-    let ambiguous: Vec<String> = out.iter().enumerate().filter(|(_, a)| a.role == Role::Ambiguous).map(|(i, _)| i.to_string()).collect();
-    let confidence = out.iter().map(|a| a.confidence).min().unwrap_or(100);
-    let diags: Vec<String> = out.iter().flat_map(|a| a.diagnostics.iter().map(diag)).map(|d| esc(&d)).collect();
-    Ok(format!("{{\"levels\":[{}],\"confidence\":{},\"ambiguous\":[{}],\"diagnostics\":[{}]}}", levels.join(","), confidence, ambiguous.join(","), diags.join(",")))
+    let value: Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
+    let paragraphs = value.get("paragraphs").cloned().unwrap_or(Value::Array(vec![]));
+    serde_json::to_string(&hierarchy::compat::analyze_hierarchy::analyze_hierarchy(&paragraphs))
+        .map_err(|e| e.to_string())
 }
 
 fn main() {
