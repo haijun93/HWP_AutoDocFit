@@ -4,7 +4,6 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 use std::time::{Duration, Instant};
-use rayon::prelude::*;
 use sha2::Digest;
 
 const MUTEX_SUFFIX: &str = "HWP_AutoDocFit_SingleInstance_Mutex";
@@ -114,28 +113,10 @@ fn cache_is_valid(cache: &Path, manifest: &Manifest) -> bool {
     })
 }
 
-fn sha256_file(path: &Path) -> Result<String, String> {
-    use sha2::{Digest, Sha256};
-    let mut file = fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 1024 * 1024];
-    loop {
-        let count = file.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 { break; }
-        digest.update(&buffer[..count]);
-    }
-    Ok(format!("{:x}", digest.finalize()))
-}
-
 fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest, trace: &Trace) -> Result<(), String> {
     use std::collections::{HashMap, HashSet};
-    use std::io::Cursor;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::io::BufReader;
     let extract_start = Instant::now();
-    let t_payload_hash = Instant::now();
-    let payload_hash = sha256_file(payload)?;
-    trace.record_metric("payload_hash", t_payload_hash.elapsed().as_secs_f64() * 1000.0);
-    if !payload_hash.eq_ignore_ascii_case(&manifest.payload_hash) { return Err("payload SHA-256 mismatch".into()); }
     let parent = final_cache.parent().ok_or("cache path has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let staging = parent.join(format!(".staging-{}", uuid_token()));
@@ -144,54 +125,49 @@ fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest, trac
         let expected: HashMap<String, &ManifestItem> = manifest.items.iter()
             .map(|item| (item.path.to_lowercase(), item)).collect();
         let mut written = HashSet::new();
-        let t_payload_read = Instant::now();
-        let archive_bytes = fs::read(payload).map_err(|e| e.to_string())?;
-        trace.record_metric("payload_read", t_payload_read.elapsed().as_secs_f64() * 1000.0);
-        let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes)).map_err(|e| e.to_string())?;
-        let mut entries = Vec::with_capacity(archive.len());
+
+        let source = fs::File::open(payload).map_err(|e| e.to_string())?;
+        let reader = BufReader::with_capacity(1024 * 1024, source);
+        let mut archive = zip::ZipArchive::new(reader).map_err(|e| e.to_string())?;
+
+        let mut decompress_nanos = 0u64;
+        let mut write_nanos = 0u64;
+        let mut buffer = [0u8; 1024 * 1024];
+
         for index in 0..archive.len() {
-            let entry = archive.by_index(index).map_err(|e| e.to_string())?;
+            let mut entry = archive.by_index(index).map_err(|e| e.to_string())?;
             let name = entry.name().replace('\\', "/");
             validate_relative_path(&name)?;
             let key = name.to_lowercase();
-            if expected.get(&key).is_none() || !written.insert(key.clone()) { return Err(format!("unexpected or duplicate payload path: {name}")); }
-            entries.push((index, name, key));
-        }
-        let decompress_nanos = AtomicU64::new(0);
-        let write_nanos = AtomicU64::new(0);
-        let extracted: Result<Vec<String>, String> = entries.par_iter().map(|(index, name, key)| {
-            let item = expected.get(key).unwrap();
-            let source = fs::File::open(payload).map_err(|e| e.to_string())?;
-            let mut archive = zip::ZipArchive::new(source).map_err(|e| e.to_string())?;
-            let mut entry = archive.by_index(*index).map_err(|e| e.to_string())?;
-            let output = staging.join(name);
+            let item = expected.get(&key).copied().ok_or_else(|| format!("unexpected payload path: {name}"))?;
+            if !written.insert(key) { return Err(format!("duplicate payload path: {name}")); }
+
+            let output = staging.join(&name);
             let t_dir = Instant::now();
             if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
             let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&output).map_err(|e| e.to_string())?;
-            write_nanos.fetch_add(t_dir.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            write_nanos += t_dir.elapsed().as_nanos() as u64;
+
             let mut digest = sha2::Sha256::new();
             let mut size = 0u64;
-            let mut buffer = [0u8; 1024 * 1024];
             loop {
                 let t_dec = Instant::now();
                 let count = entry.read(&mut buffer).map_err(|e| e.to_string())?;
-                decompress_nanos.fetch_add(t_dec.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                decompress_nanos += t_dec.elapsed().as_nanos() as u64;
                 if count == 0 { break; }
                 size += count as u64;
                 if size > item.length { return Err(format!("payload file too large: {name}")); }
                 let t_w = Instant::now();
                 digest.update(&buffer[..count]);
                 file.write_all(&buffer[..count]).map_err(|e| e.to_string())?;
-                write_nanos.fetch_add(t_w.elapsed().as_nanos() as u64, Ordering::Relaxed);
+                write_nanos += t_w.elapsed().as_nanos() as u64;
             }
             let t_fin = Instant::now();
             let actual = format!("{:x}", digest.finalize());
-            write_nanos.fetch_add(t_fin.elapsed().as_nanos() as u64, Ordering::Relaxed);
+            write_nanos += t_fin.elapsed().as_nanos() as u64;
             if size != item.length || !actual.eq_ignore_ascii_case(&item.sha256) { return Err(format!("file SHA-256 mismatch: {name}")); }
-            Ok(name.clone())
-        }).collect();
-        let extracted = extracted?;
-        if extracted.len() != entries.len() { return Err("parallel extraction incomplete".into()); }
+        }
+
         if written.len() != expected.len() { return Err("payload is missing manifest files".into()); }
         let t_rn = Instant::now();
         fs::write(staging.join(".docfit-complete"), &manifest.payload_hash).map_err(|e| e.to_string())?;
@@ -210,9 +186,9 @@ fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest, trac
                 Err(error) => return Err(error.to_string()),
             }
         }
-        write_nanos.fetch_add(t_rn.elapsed().as_nanos() as u64, Ordering::Relaxed);
-        let decompress_ms = (decompress_nanos.load(Ordering::Relaxed) as f64) / 1_000_000.0;
-        let write_ms = (write_nanos.load(Ordering::Relaxed) as f64) / 1_000_000.0;
+        write_nanos += t_rn.elapsed().as_nanos() as u64;
+        let decompress_ms = (decompress_nanos as f64) / 1_000_000.0;
+        let write_ms = (write_nanos as f64) / 1_000_000.0;
         trace.record_metric("decompress", decompress_ms);
         trace.record_metric("file_write", write_ms);
         trace.record_metric("extract_total", extract_start.elapsed().as_secs_f64() * 1000.0);
