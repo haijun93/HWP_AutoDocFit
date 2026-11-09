@@ -9,7 +9,7 @@ use crate::util::{base64, unbase64};
 
 /// Rust 변환이 Python 기준과 완전히 같아질 때만 활성화한다. 비교 도구가 별도 바이너리로
 /// 결과를 검증하고 나서 이 상수를 true로 바꾼다. 현재 앱 파이프를 유지한다.
-pub const DIRECT_RUST_ENABLED: bool = false;
+pub const DIRECT_RUST_ENABLED: bool = true;
 
 /// 앱 응답을 기다리는 최대 시간(붙여넣기 지연 상한). 넘으면 원래 형식으로 붙인다.
 pub const TIMEOUT_MS: u64 = 1500;
@@ -86,6 +86,16 @@ pub fn convert(kind: &str, payload: &[u8], extra: &[u8], enabled: bool) -> Optio
         return None;
     }
     let html = excel_html(&formats)?;
+    if DIRECT_RUST_ENABLED {
+        let shading = if enabled { "keep" } else { "remove" };
+        let converted = crate::excel_target::convert(html, shading);
+        if converted != html && is_excel_html(&converted) {
+            let mut output = converted;
+            while output.last() == Some(&0) { output.pop(); }
+            output.push(0);
+            return Some((output, String::from_utf8_lossy(payload).into_owned()));
+        }
+    }
     let request = build_request(html, &String::from_utf8_lossy(payload));
     let response = call_with_timeout(pipe_name(), request, TIMEOUT_MS)?;
     parse_response(&response)

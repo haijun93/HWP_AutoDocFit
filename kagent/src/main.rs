@@ -22,6 +22,7 @@ mod timeline;
 mod util;
 mod watch;
 mod xl_target;
+mod excel_target;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicI64, Ordering};
