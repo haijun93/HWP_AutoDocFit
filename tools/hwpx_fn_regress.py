@@ -38,6 +38,13 @@ def collect(fixtures: Path, fn_name: str):
                               "input": {"names": archive.namelist()},
                               "expected": style_inventory._sections(archive)})
                 continue
+            chars = {}
+            if fn_name in ("_table_signature", "_table_info"):
+                try:
+                    header_root = ET.fromstring(archive.read("Contents/header.xml"))
+                    chars = style_inventory.parse_header(header_root)["chars"]
+                except Exception:
+                    chars = {}
             for member in sorted(n for n in archive.namelist() if n.startswith("Contents/") and n.endswith(".xml")):
                 try:
                     root = ET.fromstring(archive.read(member))
@@ -107,6 +114,36 @@ def collect(fixtures: Path, fn_name: str):
                             cases.append({"file": path.name, "member": member,
                                           "input": {"tree": _tree(element)},
                                           "expected": [_tree(r) for r in style_inventory._paragraph_runs(element)]})
+                elif fn_name == "_char_signature":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "p":
+                            runs = style_inventory._paragraph_runs(element)
+                            seq, main = style_inventory._char_signature(runs, chars)
+                            cases.append({"file": path.name, "member": member,
+                                          "input": {"runs": [_tree(r) for r in runs]},
+                                          "expected": [list(seq), main]})
+                elif fn_name == "_table_signature":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "tbl":
+                            col_cnt, border_fill, cell_fills, first_row_chars, wide = style_inventory._table_signature(element, chars)
+                            cases.append({"file": path.name, "member": member,
+                                          "input": {"tbl": _tree(element), "chars": chars},
+                                          "expected": [col_cnt, border_fill, list(cell_fills), first_row_chars, wide]})
+                elif fn_name == "_table_info":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "tbl":
+                            cases.append({"file": path.name, "member": member,
+                                          "input": {"tbl": _tree(element), "chars": chars},
+                                          "expected": style_inventory._table_info(element, chars)})
+                elif fn_name == "_marker_class":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "p":
+                            text = style_inventory._text_of(element).strip()
+                            if text:
+                                marker, _ = style_inventory.leading_marker(text)
+                                cases.append({"file": path.name, "member": member,
+                                              "input": marker,
+                                              "expected": style_inventory._marker_class(marker)})
                 elif fn_name == "_shade":
                     values = {e.get("shadeColor") for e in root.iter() if e.get("shadeColor") is not None}
                     for value in sorted(values):
@@ -151,12 +188,21 @@ def collect(fixtures: Path, fn_name: str):
             cases.append({"file": f"<edge_{idx}>", "member": "",
                           "input": {"names": edge},
                           "expected": style_inventory._sections(_MockZip(edge))})
+    if fn_name == "_char_signature":
+        cases.append({"file": "<edge>", "member": "",
+                      "input": {"runs": []},
+                      "expected": [[], None]})
+    if fn_name == "_marker_class":
+        for marker in ("", "1.", "12.", "1.2", "1) ", "(1)", "(15)", "가.", "나.", "하.", "가) ", "(가)", "①", "②", "⑳", "㉠", "㉡", "㉻", "• "):
+            cases.append({"file": "<edge>", "member": "",
+                          "input": marker,
+                          "expected": style_inventory._marker_class(marker)})
     return cases
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs", "_char_signature", "_table_signature", "_table_info", "_marker_class"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")

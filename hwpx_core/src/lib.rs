@@ -21,6 +21,10 @@ mod style_inventory {
     pub mod sections;
     pub mod walk;
     pub mod paragraph_runs;
+    pub mod char_signature;
+    pub mod table_signature;
+    pub mod table_info;
+    pub mod marker_class;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -164,6 +168,23 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tree = value.get("tree").ok_or("_paragraph_runs expects {\"tree\": ...}")?;
             Ok(serde_json::to_string(&style_inventory::paragraph_runs::paragraph_runs(tree)).unwrap())
+        }
+        "_char_signature" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string(&style_inventory::char_signature::char_signature_from_value(&value)).unwrap())
+        }
+        "_table_signature" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string(&style_inventory::table_signature::table_signature_from_value(&value)).unwrap())
+        }
+        "_table_info" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string(&style_inventory::table_info::table_info_from_value(&value)).unwrap())
+        }
+        "_marker_class" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let marker = value.as_str().or_else(|| value.get("marker").and_then(serde_json::Value::as_str)).unwrap_or("");
+            Ok(serde_json::to_string(&style_inventory::marker_class::marker_class(marker)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }
