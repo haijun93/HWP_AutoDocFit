@@ -307,32 +307,24 @@ fn acquire_single_instance() -> Result<Option<SingleInstance>, String> {
 }
 
 #[cfg(windows)]
-fn handoff_mutex(instance: &SingleInstance, child: &mut std::process::Child) -> Result<(), String> {
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-    use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
-    let event_name = format!("Local\\HWP_AutoDocFit_Handoff_{}", std::process::id());
-    let wide: Vec<u16> = OsStr::new(&event_name).encode_wide().chain(Some(0)).collect();
-    let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, wide.as_ptr()) };
-    if event.is_null() { return Err("cannot create mutex handoff event".into()); }
-    let mut interval = Duration::from_millis(100);
+fn handoff_mutex(instance: &SingleInstance, child: &mut std::process::Child, event: windows_sys::Win32::Foundation::HANDLE) -> Result<(), String> {
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+    use windows_sys::Win32::Foundation::WAIT_OBJECT_0;
     let deadline = Instant::now() + Duration::from_secs(45);
     let result = loop {
-        if unsafe { WaitForSingleObject(event, 0) } == 0 { break Ok(()); }
+        let wait_res = unsafe { WaitForSingleObject(event, 100) };
+        if wait_res == WAIT_OBJECT_0 { break Ok(()); }
         if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
             break Err(format!("app exited before mutex handoff: {status}"));
         }
         if Instant::now() >= deadline { break Err("app did not acknowledge mutex handoff within 45 seconds".into()); }
-        std::thread::sleep(interval);
-        interval = (interval + Duration::from_millis(100)).min(Duration::from_millis(500));
     };
     if result.is_ok() { unsafe { windows_sys::Win32::System::Threading::ReleaseMutex(instance.handle); } }
-    unsafe { windows_sys::Win32::Foundation::CloseHandle(event); }
     result
 }
 
 #[cfg(not(windows))]
-fn handoff_mutex(_instance: &(), _child: &mut std::process::Child) -> Result<(), String> { Ok(()) }
+fn handoff_mutex(_instance: &(), _child: &mut std::process::Child, _event: ()) -> Result<(), String> { Ok(()) }
 
 fn run() -> Result<i32, String> {
     let mut trace = Trace::new();
@@ -347,7 +339,7 @@ fn run() -> Result<i32, String> {
     trace.mark("manifest-check");
     let self_test = args.first().map(|a| a == "--self-test").unwrap_or(false);
     #[cfg(windows)]
-    let instance = if self_test || env::var_os("DOCFIT_LAUNCHER_TEST_ROOT").is_some() || args.first().map(|a| !a.starts_with('-')).unwrap_or(false) {
+    let instance = if self_test {
         None
     } else { acquire_single_instance()? };
     if let Some(expected_version) = manifest_text.lines().find_map(|line| line.strip_prefix("V\t")) {
@@ -382,12 +374,26 @@ fn run() -> Result<i32, String> {
         if let Some(path) = env::var_os("DOCFIT_LAUNCHER_PATH") { command.env("DOCFIT_LAUNCHER_PATH", path); }
         #[cfg(windows)]
         if let Some(instance) = instance.as_ref().filter(|_| !self_test) {
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+            use windows_sys::Win32::System::Threading::CreateEventW;
             let event_name = format!("Local\\HWP_AutoDocFit_Handoff_{}", std::process::id());
+            let wide: Vec<u16> = OsStr::new(&event_name).encode_wide().chain(Some(0)).collect();
+            let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, wide.as_ptr()) };
+            if event.is_null() { return Err("cannot create mutex handoff event".into()); }
             command.env("DOCFIT_LAUNCHER_HANDOFF_EVENT", &event_name);
             command.env("DOCFIT_LAUNCHER_MUTEX_NAME", &instance.name);
-            let mut child = command.spawn().map_err(|e| format!("cannot start cached app: {e}"))?;
+            let mut child = match command.spawn() {
+                Ok(c) => c,
+                Err(e) => {
+                    unsafe { windows_sys::Win32::Foundation::CloseHandle(event); }
+                    return Err(format!("cannot start cached app: {e}"));
+                }
+            };
             trace.mark("child-start");
-            handoff_mutex(instance, &mut child)?;
+            let handoff_res = handoff_mutex(instance, &mut child, event);
+            unsafe { windows_sys::Win32::Foundation::CloseHandle(event); }
+            handoff_res?;
             trace.mark("handoff-wait");
             if let Some(cache_root) = cache.parent() { cleanup_old_caches(cache_root, cache.file_name().unwrap().to_str().unwrap_or(""), &manifest.version); }
             return Ok(0);
