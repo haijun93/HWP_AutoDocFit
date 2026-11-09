@@ -2408,6 +2408,9 @@ class DesktopWebBridge:
             if isinstance(request, dict) and request.get("cmd") == "lib_take_drop":
                 paths, self._library_drop = list(getattr(self, "_library_drop", None) or []), []
                 return {"ok": True, "paths": paths}
+            if isinstance(request, dict) and request.get("cmd") == "pick_folder":
+                path = self._file_dialogs.pick_directory("rename_folder")
+                return {"ok": True, "path": path}
             if isinstance(request, dict) and request.get("cmd") == "open_item":
                 return self._library_open_item(request)
             if isinstance(request, dict) and request.get("cmd") == "item_stat":

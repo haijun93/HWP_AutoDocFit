@@ -4,7 +4,6 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:file_selector/file_selector.dart';
 
 import '../../core/drop_events.dart';
 import '../editor/memo_editor.dart';
@@ -163,7 +162,7 @@ class LibraryScreen extends StatefulWidget {
   /// 폴더 스캔 API. 생략하면 `api`가 `LibraryScanApi`일 때 그것을 쓰고, 아니면 스캔 단추를 숨긴다.
   final LibraryScanApi? scanApi;
 
-  /// 스캔할 폴더 선택 창(시험에서 대체). 기본은 file_selector의 getDirectoryPath.
+  /// 스캔할 폴더 선택 창(시험에서 대체). 생략하면 [LibraryApi.pickFolder]를 쓴다.
   final Future<String?> Function()? folderPicker;
   final Duration scanPollInterval;
 
@@ -324,13 +323,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final box = _selectedBox;
     final scan = _scanApi;
     if (box == null || scan == null || (_scanStatus?.isScanning ?? false)) return;
-    final picker = widget.folderPicker;
-    final directory = picker != null ? await picker() : await getDirectoryPath();
+    String? directory;
+    try {
+      directory = await (widget.folderPicker ?? widget.api.pickFolder)();
+    } catch (error) {
+      if (mounted) {
+        final message = '폴더를 선택하지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     if (directory == null || !mounted) return;
     try {
       await scan.startScan(box.id, directory);
     } catch (error) {
-      if (mounted) setState(() => _statusMessage = error.toString());
+      if (mounted) {
+        final message = '폴더 스캔을 시작하지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
       return;
     }
     if (!mounted) return;
@@ -587,15 +599,35 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Future<void> _exportBox() async {
     final box = _selectedBox;
     if (box == null) return;
-    final directory = await getDirectoryPath();
+    String? directory;
+    try {
+      directory = await (widget.folderPicker ?? widget.api.pickFolder)();
+    } catch (error) {
+      if (mounted) {
+        final message = '내보내기 폴더를 선택하지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     if (directory == null || !mounted) return;
-    final count = await widget.api.exportBox(box.id, directory);
+    int count;
+    try {
+      count = await widget.api.exportBox(box.id, directory);
+    } catch (error) {
+      if (mounted) {
+        final message = '자료함을 내보내지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => _statusMessage = '$directory 에 자료 $count개를 내보냈습니다.');
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('저장 위치: $directory'),
-      action: SnackBarAction(label: '열기', onPressed: () => _openPathWithFeedback(directory, LibraryItemKind.folder)),
+      action: SnackBarAction(label: '열기', onPressed: () => _openPathWithFeedback(directory!, LibraryItemKind.folder)),
     ));
   }
 

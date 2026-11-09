@@ -27,6 +27,7 @@ ALLOWED_COMMANDS = frozenset({
     "search", "index_file", "remove_file",
 
     "box_scan", "box_scan_status", "box_scan_cancel", "box_scan_files",
+    "pick_folder",
 
     "nb_create", "nb_list", "nb_update", "nb_delete",
 

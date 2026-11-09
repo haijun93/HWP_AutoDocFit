@@ -307,6 +307,26 @@ class LibraryFirstCallTests(unittest.TestCase):
         self.assertEqual(result, {"ok": True, "boxes": []})
         self.assertIs(bridge._library_bridge, fake)
 
+    def test_pick_folder_uses_native_picker_and_returns_null_on_cancel(self):
+        from unittest import mock
+        import desktop_web_ui
+        bridge = desktop_web_ui.DesktopWebBridge.__new__(desktop_web_ui.DesktopWebBridge)
+        dialogs = mock.Mock()
+        dialogs.pick_directory.return_value = None
+        bridge._file_dialogs = dialogs
+        result = bridge.library({"cmd": "pick_folder"})
+        self.assertEqual(result, {"ok": True, "path": None})
+        dialogs.pick_directory.assert_called_once_with("rename_folder")
+
+    def test_pick_folder_returns_native_path(self):
+        from unittest import mock
+        import desktop_web_ui
+        bridge = desktop_web_ui.DesktopWebBridge.__new__(desktop_web_ui.DesktopWebBridge)
+        dialogs = mock.Mock()
+        dialogs.pick_directory.return_value = r"C:\\Documents"
+        bridge._file_dialogs = dialogs
+        self.assertEqual(bridge.library({"cmd": "pick_folder"}), {"ok": True, "path": r"C:\\Documents"})
+
 
 class NotebookBridgeTests(unittest.TestCase):
     def _bridge(self, developer=True):

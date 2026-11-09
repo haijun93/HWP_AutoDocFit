@@ -228,6 +228,26 @@ class NativeFileDialogService:
     def select_files(self, request_id, purpose, mode='open', multiple=False):
         return copy.deepcopy(self.submit_selection(request_id, purpose, mode, multiple).result())
 
+    def pick_directory(self, purpose='rename_folder'):
+        """Show the native folder picker and return its validated path, or None on cancel."""
+        mode, _ = self._policy(purpose, 'directory', False)
+        if os.name == 'nt':
+            hr = ctypes.OleDLL('ole32').CoInitializeEx(None, 2)
+            if hr not in (0, 1):
+                fail('DIALOG_FAILED')
+        else:
+            hr = None
+        try:
+            paths = self._dialog(purpose, mode, False)
+            if not paths:
+                return None
+            if len(paths) != 1:
+                fail('INVALID_PATH')
+            return str(self._path(paths[0], 'directory', None))
+        finally:
+            if hr is not None:
+                ctypes.OleDLL('ole32').CoUninitialize()
+
     def close(self):
         self._executor.shutdown(wait=False, cancel_futures=True)
         with self._lock:
