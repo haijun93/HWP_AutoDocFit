@@ -9,6 +9,7 @@ mod style_inventory {
     pub mod tag;
     pub mod text_of;
     pub mod run_text;
+    pub mod parse_fonts;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -90,6 +91,11 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tree = value.get("tree").ok_or("_run_text expects {\"tree\": ...}")?;
             Ok(serde_json::to_string(&style_inventory::run_text::run_text(tree)).unwrap())
+        }
+        "_parse_fonts" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_parse_fonts expects {\"tree\": ...}")?;
+            Ok(serde_json::to_string(&style_inventory::parse_fonts::parse_fonts(tree)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }
