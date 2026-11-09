@@ -3688,6 +3688,17 @@ def run_webview(gui):
             start_background()
         except Exception:
             logging.getLogger(__name__).exception("Could not start kagent app service pipe")
+        # 앱을 업데이트한 뒤에도 예전 몽땅클립보드 에이전트(kagent.exe)가 계속 떠 있으면 새 파일로 바꿔 다시 켠다.
+        def upgrade_kagent():
+            try:
+                from docfit_app.kclip_service import KClipService
+                result = KClipService().upgrade_if_stale()
+                if result.get("upgraded") or not result.get("ok", True):
+                    logging.getLogger(__name__).info("몽땅클립보드 에이전트 점검: %s", result)
+            except Exception:
+                logging.getLogger(__name__).exception("몽땅클립보드 에이전트 업그레이드 점검 실패")
+
+        threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

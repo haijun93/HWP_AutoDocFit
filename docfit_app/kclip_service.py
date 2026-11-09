@@ -46,7 +46,7 @@ def _norm_text(value):
 class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
-                 bundled=bundled_exe, excel=None, sleep=time.sleep):
+                 bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep):
         self._excel_service = excel
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
@@ -55,6 +55,7 @@ class KClipService:
         self._autostart = autostart
         self._autostart_status = autostart_status
         self._bundled = bundled
+        self._installed = installed
         self._pause_file = Path(tempfile.gettempdir()) / f"docfit-kclip-pause-{os.getpid()}.json"
 
     def _pause_until(self, until=None):
@@ -104,11 +105,57 @@ class KClipService:
                 if self.client.running():
                     break
                 time.sleep(0.02)
+        else:
+            # 이미 켜져 있어도 예전 버전이면 새 파일로 바꿔 다시 켠다.
+            self.upgrade_if_stale()
         try:
             self._autostart(payload.get("autostart", True) is True)
         except OSError:
             pass
         return self.status()
+
+    def upgrade_if_stale(self):
+        """앱을 업데이트한 뒤에도 **예전 kagent.exe가 계속 실행되는** 문제를 막는다(2026-11-09).
+
+        kagent.exe는 사용자 데이터 폴더에 복사해 두고 Windows 로그인 때 그 파일로 자동 실행한다. 그런데 복사는
+        '켜기' 때 에이전트가 꺼져 있을 때만 했으므로, 한 번 켜 둔 사용자는 앱을 업데이트해도 예전 에이전트가
+        그대로 떠 있어 에이전트 쪽 수정(빠른 목록 등)이 영영 반영되지 않았다. 앱을 시작할 때 이 함수를 불러,
+        설치된 파일이 앱에 들어 있는 파일과 다르면 에이전트를 끄고 새 파일로 바꾼 뒤 (켜져 있었다면) 다시 켠다.
+        한 번도 켠 적이 없으면(설치된 파일 없음) 아무것도 하지 않는다."""
+        exe = self._bundled()
+        if exe is None or not _verify(exe):
+            return dict(ok=True, upgraded=False, reason="no_bundle")
+        try:
+            installed = Path(self._installed())
+            if not installed.is_file():
+                return dict(ok=True, upgraded=False, reason="not_installed")
+            if installed.stat().st_size == Path(exe).stat().st_size and installed.read_bytes() == Path(exe).read_bytes():
+                return dict(ok=True, upgraded=False, reason="current")
+        except OSError as error:
+            return dict(ok=False, upgraded=False, reason=str(error))
+        was_running = bool(self.client.running())
+        if was_running:
+            try:
+                self.client.request("quit")
+            except kc.KAgentError:
+                pass
+            for _ in range(150):
+                if not self.client.running():
+                    break
+                self._sleep(0.02)
+            if self.client.running():
+                return dict(ok=False, upgraded=False, reason="still_running")
+        try:
+            target = self._install(exe)
+        except kc.KAgentError as error:
+            return dict(ok=False, upgraded=False, reason=str(error))
+        if was_running:
+            self._start(target)
+            for _ in range(100):
+                if self.client.running():
+                    break
+                self._sleep(0.02)
+        return dict(ok=True, upgraded=True, restarted=was_running)
 
     def disable(self, payload):
         if self.client.running():

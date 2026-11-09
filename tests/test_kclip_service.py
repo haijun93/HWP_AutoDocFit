@@ -42,12 +42,61 @@ class KClipServiceTests(unittest.TestCase):
             self.calls.append(("start", path))
             self.client.on = True
 
+        self.installed = Path(self.tmp.name) / "installed-kagent.exe"
         self.service = KClipService(self.client, installer=lambda exe: self.calls.append(("install", exe)) or exe,
                                     starter=start, autostart=lambda on: self.calls.append(("autostart", on)),
-                                    bundled=lambda: self.exe)
+                                    bundled=lambda: self.exe, installed=lambda: self.installed, sleep=lambda _s: None)
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_stale_running_agent_is_replaced_and_restarted(self):
+        # 앱 업데이트 뒤에도 예전 에이전트가 떠 있던 문제: 설치된 파일이 앱 파일과 다르면 끄고 바꿔 다시 켠다.
+        self.installed.write_bytes(b"MZ old build")
+        self.client.on = True
+        result = self.service.upgrade_if_stale()
+        self.assertTrue(result["upgraded"])
+        self.assertTrue(result["restarted"])
+        self.assertEqual([c[0] for c in self.calls], ["install", "start"])
+        self.assertEqual(self.client.requests[0][0], "quit")
+        self.assertTrue(self.client.on)
+
+    def test_current_agent_is_left_alone(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.on = True
+        result = self.service.upgrade_if_stale()
+        self.assertFalse(result["upgraded"])
+        self.assertEqual(result["reason"], "current")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.client.requests, [])
+
+    def test_never_enabled_user_is_not_touched(self):
+        result = self.service.upgrade_if_stale()
+        self.assertEqual(result["reason"], "not_installed")
+        self.assertEqual(self.calls, [])
+
+    def test_stale_but_stopped_agent_is_replaced_without_starting(self):
+        self.installed.write_bytes(b"MZ old build")
+        result = self.service.upgrade_if_stale()
+        self.assertTrue(result["upgraded"])
+        self.assertFalse(result["restarted"])
+        self.assertEqual([c[0] for c in self.calls], ["install"])
+
+    def test_agent_that_will_not_quit_is_not_replaced(self):
+        self.installed.write_bytes(b"MZ old build")
+        self.client.on = True
+        self.client.request = lambda cmd, **payload: {"ok": True}  # quit을 무시하는 에이전트
+        result = self.service.upgrade_if_stale()
+        self.assertFalse(result["upgraded"])
+        self.assertEqual(result["reason"], "still_running")
+        self.assertEqual(self.calls, [])
+
+    def test_enable_on_running_stale_agent_upgrades_it(self):
+        self.installed.write_bytes(b"MZ old build")
+        self.client.on = True
+        self.service.command("enable", {"consent": True})
+        self.assertIn("install", [c[0] for c in self.calls])
+        self.assertIn("start", [c[0] for c in self.calls])
 
     def test_enable_requires_consent_then_installs_starts_autostarts(self):
         self.assertEqual(self.service.command("enable", {})["code"], "KCLIP_CONSENT")
