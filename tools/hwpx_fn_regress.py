@@ -74,6 +74,22 @@ def collect(fixtures: Path, fn_name: str):
                     cases.append({"file": path.name, "member": member,
                                   "input": {"tree": _tree(root)},
                                   "expected": style_inventory._parse_fonts(root)})
+                elif fn_name in ("_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering") and member == "Contents/header.xml":
+                    target = {"_parse_char": "charPr", "_parse_para": "paraPr", "_parse_border_fill": "borderFill", "_parse_numbering": "numbering"}[fn_name]
+                    fonts = style_inventory._parse_fonts(root)
+                    for element in root.iter():
+                        if style_inventory._tag(element) == target:
+                            if fn_name == "_parse_char":
+                                args = {"tree": _tree(element), "fonts": fonts}
+                                expected = style_inventory._parse_char(element, fonts)
+                            else:
+                                args = {"tree": _tree(element)}
+                                expected = getattr(style_inventory, fn_name)(element)
+                            cases.append({"file": path.name, "member": member, "input": args, "expected": expected})
+                elif fn_name == "_shade":
+                    values = {e.get("shadeColor") for e in root.iter() if e.get("shadeColor") is not None}
+                    for value in sorted(values):
+                        cases.append({"file": path.name, "member": member, "input": value, "expected": style_inventory._shade(value)})
                 elif fn_name == "_lang_values":
                     if any(element.get(lang) is not None for element in root.iter()
                            for lang in style_inventory.LANGS):
@@ -88,6 +104,11 @@ def collect(fixtures: Path, fn_name: str):
         for value in (None, "invalid", "", 0, 1000):
             cases.append({"file": "<edge>", "member": "", "input": value,
                           "expected": style_inventory._mm(value)})
+    if fn_name == "_shade":
+        values = {case["input"] for case in cases}
+        values.update((None, "none", "#FFFFFF", "#ffffff", "red", ""))
+        for value in sorted(values, key=lambda v: "" if v is None else str(v)):
+            cases.append({"file": "<edge>", "member": "", "input": value, "expected": style_inventory._shade(value)})
     if fn_name == "_lang_values":
         for cast_name, cast in (("int", int), ("str", str)):
             cases.append({"file": "<edge>", "member": "",
@@ -98,7 +119,7 @@ def collect(fixtures: Path, fn_name: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
