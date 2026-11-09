@@ -157,7 +157,7 @@ class TimemachineService:
         seen = indexed = errors = 0
         rules = Rules(extensions=extensions, extra_extensions=extensions)  # 본문 색인 확장자(예: txt)는 타임라인 종류에 없어도 색인한다
         try:
-            rust_paths, python_paths = [], []
+            rust_paths, python_paths, stale_paths = [], [], []
             for root in roots:
                 for folder, dirs, files in os.walk(root, followlinks=False):
                     if cancel_event.is_set(): break
@@ -167,7 +167,7 @@ class TimemachineService:
                             break
                         ext = Path(name).suffix.lower().lstrip(".")
                         if excluded_name(name):
-                            self.content_index.remove_file(os.path.join(folder, name))
+                            stale_paths.append(os.path.join(folder, name))
                             continue
                         if ext not in extensions:
                             continue
@@ -184,7 +184,7 @@ class TimemachineService:
                             # index_file 호출을 건너뛰어 오류 및 처리 카운트를 증가시키지 않는다.
                             continue
                         if rules.skip_file(name):
-                            self.content_index.remove_file(path)
+                            stale_paths.append(path)
                             continue
                         if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
                             rust_paths.append(path)
@@ -205,6 +205,11 @@ class TimemachineService:
                 errors += bool(result["error"])
                 with self._content_lock:
                     self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+            # 취소가 끝나기 전에 건너뛴 파일을 지우지 않도록 색인 완료 후 정리한다.
+            if not cancel_event.is_set():
+                for path in stale_paths:
+                    if cancel_event.is_set(): break
+                    self.content_index.remove_file(path)
             # 연결이 끊긴 드라이브의 문서는 지워진 것으로 보지 않는다.
             available = [os.path.normcase(os.path.abspath(root)) + os.sep for root in roots if os.path.isdir(root)]
             active_roots = [os.path.normcase(os.path.abspath(root)) + os.sep

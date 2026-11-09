@@ -1,6 +1,5 @@
 """Shared settings defaults; storage keys and legacy adapter bindings are preserved."""
 DEFAULTS = {
-    "rust_content_index": True,
     'shell_menu': False,
     'file_rename_sendto': False,
     "prevent_word_split": True,
