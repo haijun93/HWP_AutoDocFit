@@ -28,6 +28,7 @@ import 'features/conversion/floating_format_picker.dart';
 import 'features/conversion/merge_order_dialog.dart';
 import 'features/progress/live_progress.dart';
 import 'features/settings/settings_dialog.dart';
+import 'features/settings/ui_font_scale.dart';
 import 'features/settings/update_panel.dart';
 import 'features/stages/stage_board.dart';
 import 'features/workspace/workspace_adapters.dart';
@@ -84,12 +85,14 @@ class DocFitApp extends StatelessWidget {
   final ApiCall api;
   final bool useIntegratedShell;
   @override
-  Widget build(BuildContext context) => MaterialApp(
+  Widget build(BuildContext context) => ValueListenableBuilder<double>(
+    valueListenable: uiFontScale,
+    builder: (context, fontScale, _) => MaterialApp(
     title: '한글편집 후처리',
     debugShowCheckedModeBanner: false,
-    theme: buildCompactTheme(),
+    theme: buildCompactTheme(fontScale),
     home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
-  );
+  ));
 }
 
 /// 6탭 작업 공간. 파일변환 탭은 문서편집 화면의 '파일 변환' 흐름(키패드 포맷 선택 → 진행 → 4. 결과 확인)을

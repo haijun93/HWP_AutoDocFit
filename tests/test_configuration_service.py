@@ -21,6 +21,8 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(self.store.read()['symbol_fonts']['□']['size'],'18')
         self.assertEqual(result['values']['symbol_fonts.□.font'],'HY견고딕')
         self.assertNotIn('diagram_editor_enabled', snapshot['values'])
+        self.assertEqual(snapshot['values']['ui_font_scale'], 'normal')
+        self.assertEqual(next(field for field in fields() if field['key'] == 'ui_font_scale')['label'], '글자 크기')
         with self.assertRaises(ServiceError):
             self.service.save({'diagram_editor_enabled':True},self.service.snapshot()['revision'])
 
@@ -41,6 +43,14 @@ class ConfigurationTests(unittest.TestCase):
                 self.service.save(values,snapshot['revision'])
         with self.assertRaises(ServiceError): self.service.save({'retry_body':'9'},snapshot['revision'],running=True)
         self.assertFalse(self.path.exists())
+
+    def test_ui_font_scale_persists_and_rejects_unknown_choice(self):
+        snapshot = self.service.snapshot()
+        saved = self.service.save({'ui_font_scale': 'large'}, snapshot['revision'])
+        self.assertEqual(saved['values']['ui_font_scale'], 'large')
+        self.assertEqual(self.service.snapshot()['values']['ui_font_scale'], 'large')
+        with self.assertRaises(ServiceError):
+            self.service.save({'ui_font_scale': 'huge'}, self.service.snapshot()['revision'])
 
     def test_existing_migrations_preserve_explicit_new_choice(self):
         self.store.update(lambda data:data.update({'report_files_rev':1,'log_file':True,

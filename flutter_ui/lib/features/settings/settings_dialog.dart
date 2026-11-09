@@ -8,6 +8,7 @@ import '../../core/api/abbreviation_api.dart';
 import '../preview/option_images.dart';
 import 'idiom_panel.dart';
 import 'kiosk_theme.dart';
+import 'ui_font_scale.dart';
 import 'setting_guides.dart';
 
 /// 전체 설정: 분류 타일을 고르고, 설정마다 한글 문서 예시로 무엇이 달라지는지 보여 준다.
@@ -126,6 +127,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       }
       setState(() {
         snapshot = data;
+        setUiFontScale('${values['ui_font_scale'] ?? 'normal'}');
         changed.clear();
         final present = _categoriesWithFields();
         if (!present.contains(category) && present.isNotEmpty) {
@@ -171,6 +173,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   ];
 
   String _categoryOf(Map field) {
+    if ('${field['key']}' == 'ui_font_scale') return 'ui';
     final guide = guideFor('${field['key']}');
     if (guide != null) return guide.category;
     return switch ('${field['group']}') {
@@ -219,6 +222,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   Widget _control(Map field, bool locked) {
     final key = '${field['key']}';
+    if (key == 'ui_font_scale') {
+      final current = '${_value(key) ?? 'normal'}';
+      final value = current == 'large' ? 'large' : 'normal';
+      return SegmentedButton<String>(
+        segments: const [
+          ButtonSegment(value: 'normal', label: Text('보통 (13)')),
+          ButtonSegment(value: 'large', label: Text('크게 (15)')),
+        ],
+        selected: {value},
+        onSelectionChanged: locked ? null : (selection) => setState(() {
+          final selected = selection.first;
+          changed[key] = selected;
+          setUiFontScale(selected);
+          lastKey = key;
+        }),
+      );
+    }
     if (field['type'] == 'boolean') {
       return Transform.scale(
         scale: 1.15,

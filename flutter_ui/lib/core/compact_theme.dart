@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-ThemeData buildCompactTheme() {
+ThemeData buildCompactTheme([double fontScale = 1.0]) {
   const accent = Color(0xff0078d4);
   const surface = Color(0xffffffff);
   const outline = Color(0xffe5e5e5);
@@ -27,9 +27,9 @@ ThemeData buildCompactTheme() {
     fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
     colorScheme: scheme,
     scaffoldBackgroundColor: const Color(0xfff3f3f3),
-    textTheme: const TextTheme(
-      bodyMedium: TextStyle(fontSize: 13),
-      titleMedium: TextStyle(fontSize: 14),
+    textTheme: TextTheme(
+      bodyMedium: TextStyle(fontSize: 13 * fontScale),
+      titleMedium: TextStyle(fontSize: 14 * fontScale),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(

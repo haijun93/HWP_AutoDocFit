@@ -44,6 +44,7 @@ LABELS = {
  'spacing_enabled':'자간 정리: 자간 기능 사용',
  'spacing_exclude_pagefit':'자간 정리: 페이지 맞춤 제외',
  'spacing_cell_image_to_bg':'자간 정리: 표 셀 내 그림을 배경으로 변경',
+ 'ui_font_scale':'글자 크기',
  'all_cell_image_to_bg':'한 번에 적용: 표 셀 내 그림을 배경으로 변경',
 }
 EXCLUDED = {'ui_tk_fallback', 'hierarchy_engine', 'abbreviations', 'abbreviation_source', 'active_format_profile'} | {k for k in DEFAULTS if k.endswith('_rev')}
@@ -75,6 +76,7 @@ def fields():
                        else 'number' if numeric else 'text', 'default':True if default is None else default,
                        'group':'글꼴' if root in {'symbol_fonts','table_fonts'} else
                        '개발자 도구' if root in {'developer_mode'} else
+                       '작업·프로그램' if root == 'ui_font_scale' else
                        '네트워크' if root in {'check_updates_on_start'} else
                        '표준서식' if root.startswith('std_') or root in {'label_symbols','title_owner_text'} else '작업·프로그램'})
     return result
@@ -115,6 +117,8 @@ class ConfigurationService:
                 if not isinstance(value,bool):
                     raise ServiceError('INVALID_INPUT',field['label']+' 값을 확인해 주세요.')
             elif not isinstance(value,str) or len(value)>4096 or '\x00' in value:
+                raise ServiceError('INVALID_INPUT',field['label']+' 값을 확인해 주세요.')
+            elif key == 'ui_font_scale' and value not in {'normal', 'large'}:
                 raise ServiceError('INVALID_INPUT',field['label']+' 값을 확인해 주세요.')
             elif field['type']=='number':
                 try:
