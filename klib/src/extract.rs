@@ -18,6 +18,37 @@ pub struct Paragraph {
     pub outline_level: Option<i64>,
 }
 
+/// Extracted paragraph enriched with the shared hierarchy compatibility result.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IndexedParagraph {
+    pub paragraph: Paragraph,
+    pub level: String,
+    pub role: String,
+    pub marker: String,
+}
+
+/// Run hierarchy::compat directly on extracted paragraphs without a JSON round trip.
+pub fn analyze_hierarchy(paragraphs: Vec<Paragraph>) -> Result<Vec<IndexedParagraph>, String> {
+    let input: Vec<_> = paragraphs.iter().map(|p| hierarchy::compat::analyze_hierarchy::ParagraphInput {
+        text: p.text.clone(), left: 0, indent: 0,
+        font: p.style_name.clone().unwrap_or_default(), size_pt: 0.0,
+        prev_spacing: None, indent_hwpunit: 0,
+    }).collect();
+    let results = hierarchy::compat::analyze_hierarchy::analyze_hierarchy_typed(&input);
+    if results.len() != paragraphs.len() {
+        return Err("hierarchy result paragraph count mismatch".into());
+    }
+    Ok(paragraphs.into_iter().zip(results).map(|(paragraph, result)| {
+        let role = result.role;
+        let level = match role.as_str() {
+            "제목" => "document_title", "장" => "chapter", "중제목" => "section",
+            "소제목" => "topic", "본문" | "내용" | "미분류" => "body",
+            "부연설명" => "asterisk", _ => "body",
+        }.to_owned();
+        IndexedParagraph { paragraph, level, role, marker: result.marker }
+    }).collect())
+}
+
 impl Paragraph {
     fn line(text: String, line: usize, sequence: usize) -> Self {
         Self { text, location_kind: "line".into(), location_label: format!("{line}행"), sequence,
@@ -73,6 +104,25 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
         "txt" | "md" => extract_text(path),
         "hwpx" => extract_hwpx(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
+    }
+}
+
+#[cfg(test)]
+mod hierarchy_tests {
+    use super::*;
+
+    #[test]
+    fn typed_hierarchy_returns_one_result_per_extracted_paragraph() {
+        let paragraphs = vec![
+            Paragraph::line("제1장 총칙".into(), 1, 1),
+            Paragraph::line("1. 목적".into(), 2, 2),
+            Paragraph::line("본문 내용".into(), 3, 3),
+        ];
+        let result = analyze_hierarchy(paragraphs).unwrap();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].role, "장");
+        assert_eq!(result[0].level, "chapter");
+        assert_eq!(result[0].marker, "제1장");
     }
 }
 

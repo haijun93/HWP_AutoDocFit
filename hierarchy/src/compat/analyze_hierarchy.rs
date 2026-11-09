@@ -1,5 +1,39 @@
 use serde_json::{json, Value};
 use std::collections::HashMap;
+
+/// Typed compatibility input used by native Rust callers such as klib.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ParagraphInput {
+    pub text: String,
+    pub left: i64,
+    pub indent: i64,
+    pub font: String,
+    pub size_pt: f64,
+    pub prev_spacing: Option<i64>,
+    pub indent_hwpunit: i64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParagraphResult {
+    pub role: String,
+    pub marker: String,
+}
+
+/// Analyze native paragraph structs through the same compatibility stages.
+/// JSON remains an internal representation of the legacy algorithm only.
+pub fn analyze_hierarchy_typed(input: &[ParagraphInput]) -> Vec<ParagraphResult> {
+    let paragraphs = Value::Array(input.iter().map(|p| json!({
+        "text": p.text, "left": p.left, "indent": p.indent, "font": p.font,
+        "size_pt": p.size_pt, "prev_spacing": p.prev_spacing,
+        "indent_hwpunit": p.indent_hwpunit,
+    })).collect());
+    let result = analyze_hierarchy(&paragraphs);
+    let roles = result["role_sequence"].as_array().cloned().unwrap_or_default();
+    input.iter().zip(roles).map(|(paragraph, role)| {
+        let marker = super::leading_marker::leading_marker(&paragraph.text).0;
+        ParagraphResult { role: role.as_str().unwrap_or("미분류").to_owned(), marker }
+    }).collect()
+}
 use super::{document_type::document_type, leading_marker::leading_marker, marker_scheme::detect_scheme};
 
 fn modal<T: Clone + Eq + std::hash::Hash>(items: impl Iterator<Item=T>) -> Option<T> {
