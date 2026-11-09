@@ -10,6 +10,28 @@ fn modal<T: Clone + Eq + std::hash::Hash>(items: impl Iterator<Item=T>) -> Optio
 fn strv(v: &Value) -> String { v.as_str().unwrap_or("").to_owned() }
 fn num(v: &Value) -> f64 { v.as_f64().unwrap_or(0.0) }
 
+/// Stage 01: 원문단 순회, marker/role 및 들여쓰기 중간값을 수집한다.
+pub fn stage_01(paragraphs: &Value) -> Value {
+    let empty = Vec::new();
+    let paras = paragraphs.as_array().unwrap_or(&empty);
+    let records: Vec<Value> = paras.iter().enumerate().map(|(index, item)| {
+        let text = strv(&item["text"]);
+        let (marker, marker_role) = leading_marker(&text);
+        let indent = item["left"].as_i64().unwrap_or(0) + item["indent"].as_i64().unwrap_or(0);
+        let mut record = item.as_object().cloned().unwrap_or_default();
+        record.insert("index".into(), json!(index));
+        record.insert("marker".into(), json!(marker));
+        record.insert("marker_role".into(), json!(marker_role));
+        record.insert("indent_hwpunit".into(), json!(indent));
+        Value::Object(record)
+    }).collect();
+    json!({"records": records})
+}
+
+pub fn analyze_hierarchy_stages(input: &Value) -> Value {
+    json!({"stage_01": stage_01(&input["paragraphs"])})
+}
+
 pub fn analyze_hierarchy(input: &Value) -> Value {
     let empty = Vec::new(); let paras = input.as_array().unwrap_or(&empty);
     let roles = ["장","중제목","소제목","본문","내용","부연설명"];

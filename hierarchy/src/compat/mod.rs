@@ -24,6 +24,7 @@ pub fn run_fn(name: &str) -> Result<(), String> {
         "leading_marker" => serde_json::to_value(leading_marker::leading_marker(input["text"].as_str().unwrap_or(""))).map_err(|e| e.to_string())?,
         "most_common" | "_most_common" => input["values"].as_array().and_then(|v| most_common::most_common(v)).cloned().unwrap_or(input["default"].clone()),
         "analyze_hierarchy" => analyze_hierarchy::analyze_hierarchy(&input["paragraphs"]),
+        "analyze_hierarchy_stages" => analyze_hierarchy::analyze_hierarchy_stages(&input),
         "hierarchy_summary" => serde_json::json!(hierarchy_summary::hierarchy_summary(&input["analysis"])),
         _ => return Err(format!("unknown compat function: {name}")),
     };
