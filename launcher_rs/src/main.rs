@@ -14,17 +14,35 @@ struct Trace {
     started: Instant,
     stage: Instant,
     enabled: bool,
+    trace_file: Option<PathBuf>,
 }
 
 impl Trace {
     fn new() -> Self {
-        Self { started: Instant::now(), stage: Instant::now(), enabled: env::var_os("HWP_LAUNCHER_TRACE").as_deref() == Some(std::ffi::OsStr::new("1")) }
+        let enabled = env::var_os("HWP_LAUNCHER_TRACE").as_deref() == Some(std::ffi::OsStr::new("1"));
+        let trace_file = env::var_os("DOCFIT_LAUNCHER_TRACE").map(PathBuf::from);
+        Self { started: Instant::now(), stage: Instant::now(), enabled, trace_file }
     }
     fn mark(&mut self, name: &str) {
+        let now_ms = self.started.elapsed().as_millis();
+        let elapsed_ms = self.stage.elapsed().as_millis();
         if self.enabled {
-            eprintln!("HWP_LAUNCHER_TRACE stage={} elapsed_ms={} total_ms={}", name, self.stage.elapsed().as_millis(), self.started.elapsed().as_millis());
+            eprintln!("HWP_LAUNCHER_TRACE stage={} elapsed_ms={} total_ms={}", name, elapsed_ms, now_ms);
+        }
+        if let Some(ref path) = self.trace_file {
+            let text = format!("{}\t{}\n", name, now_ms);
+            let _ = fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(text.as_bytes()));
         }
         self.stage = Instant::now();
+    }
+    fn record_metric(&self, name: &str, elapsed_ms: f64) {
+        if self.enabled {
+            eprintln!("HWP_LAUNCHER_TRACE metric={} duration_ms={:.2}", name, elapsed_ms);
+        }
+        if let Some(ref path) = self.trace_file {
+            let text = format!("metric_{}\t{:.2}\n", name, elapsed_ms);
+            let _ = fs::OpenOptions::new().create(true).append(true).open(path).and_then(|mut f| f.write_all(text.as_bytes()));
+        }
     }
 }
 
@@ -109,10 +127,14 @@ fn sha256_file(path: &Path) -> Result<String, String> {
     Ok(format!("{:x}", digest.finalize()))
 }
 
-fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest) -> Result<(), String> {
+fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest, trace: &Trace) -> Result<(), String> {
     use std::collections::{HashMap, HashSet};
     use std::io::Cursor;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let extract_start = Instant::now();
+    let t_payload_hash = Instant::now();
     let payload_hash = sha256_file(payload)?;
+    trace.record_metric("payload_hash", t_payload_hash.elapsed().as_secs_f64() * 1000.0);
     if !payload_hash.eq_ignore_ascii_case(&manifest.payload_hash) { return Err("payload SHA-256 mismatch".into()); }
     let parent = final_cache.parent().ok_or("cache path has no parent")?;
     fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -122,7 +144,9 @@ fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest) -> R
         let expected: HashMap<String, &ManifestItem> = manifest.items.iter()
             .map(|item| (item.path.to_lowercase(), item)).collect();
         let mut written = HashSet::new();
+        let t_payload_read = Instant::now();
         let archive_bytes = fs::read(payload).map_err(|e| e.to_string())?;
+        trace.record_metric("payload_read", t_payload_read.elapsed().as_secs_f64() * 1000.0);
         let mut archive = zip::ZipArchive::new(Cursor::new(archive_bytes)).map_err(|e| e.to_string())?;
         let mut entries = Vec::with_capacity(archive.len());
         for index in 0..archive.len() {
@@ -133,32 +157,43 @@ fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest) -> R
             if expected.get(&key).is_none() || !written.insert(key.clone()) { return Err(format!("unexpected or duplicate payload path: {name}")); }
             entries.push((index, name, key));
         }
+        let decompress_nanos = AtomicU64::new(0);
+        let write_nanos = AtomicU64::new(0);
         let extracted: Result<Vec<String>, String> = entries.par_iter().map(|(index, name, key)| {
             let item = expected.get(key).unwrap();
             let source = fs::File::open(payload).map_err(|e| e.to_string())?;
             let mut archive = zip::ZipArchive::new(source).map_err(|e| e.to_string())?;
             let mut entry = archive.by_index(*index).map_err(|e| e.to_string())?;
             let output = staging.join(name);
+            let t_dir = Instant::now();
             if let Some(parent) = output.parent() { fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
             let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&output).map_err(|e| e.to_string())?;
+            write_nanos.fetch_add(t_dir.elapsed().as_nanos() as u64, Ordering::Relaxed);
             let mut digest = sha2::Sha256::new();
             let mut size = 0u64;
             let mut buffer = [0u8; 1024 * 1024];
             loop {
+                let t_dec = Instant::now();
                 let count = entry.read(&mut buffer).map_err(|e| e.to_string())?;
+                decompress_nanos.fetch_add(t_dec.elapsed().as_nanos() as u64, Ordering::Relaxed);
                 if count == 0 { break; }
                 size += count as u64;
                 if size > item.length { return Err(format!("payload file too large: {name}")); }
+                let t_w = Instant::now();
                 digest.update(&buffer[..count]);
                 file.write_all(&buffer[..count]).map_err(|e| e.to_string())?;
+                write_nanos.fetch_add(t_w.elapsed().as_nanos() as u64, Ordering::Relaxed);
             }
+            let t_fin = Instant::now();
             let actual = format!("{:x}", digest.finalize());
+            write_nanos.fetch_add(t_fin.elapsed().as_nanos() as u64, Ordering::Relaxed);
             if size != item.length || !actual.eq_ignore_ascii_case(&item.sha256) { return Err(format!("file SHA-256 mismatch: {name}")); }
             Ok(name.clone())
         }).collect();
         let extracted = extracted?;
         if extracted.len() != entries.len() { return Err("parallel extraction incomplete".into()); }
         if written.len() != expected.len() { return Err("payload is missing manifest files".into()); }
+        let t_rn = Instant::now();
         fs::write(staging.join(".docfit-complete"), &manifest.payload_hash).map_err(|e| e.to_string())?;
         let mut attempt = 0;
         loop {
@@ -175,6 +210,12 @@ fn extract_payload(payload: &Path, final_cache: &Path, manifest: &Manifest) -> R
                 Err(error) => return Err(error.to_string()),
             }
         }
+        write_nanos.fetch_add(t_rn.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        let decompress_ms = (decompress_nanos.load(Ordering::Relaxed) as f64) / 1_000_000.0;
+        let write_ms = (write_nanos.load(Ordering::Relaxed) as f64) / 1_000_000.0;
+        trace.record_metric("decompress", decompress_ms);
+        trace.record_metric("file_write", write_ms);
+        trace.record_metric("extract_total", extract_start.elapsed().as_secs_f64() * 1000.0);
         Ok(())
     })();
     if result.is_err() { let _ = fs::remove_dir_all(&staging); }
@@ -356,7 +397,7 @@ fn run() -> Result<i32, String> {
         show_splash(&manifest.version);
         let payload = env::var_os("DOCFIT_LAUNCHER_PAYLOAD").map(PathBuf::from)
             .unwrap_or_else(|| { let mut p = env::current_exe().unwrap(); p.set_file_name(format!("{}.payload.zip", p.file_stem().unwrap().to_string_lossy())); p });
-        extract_payload(&payload, &cache, &manifest)?;
+        extract_payload(&payload, &cache, &manifest, &trace)?;
     }
     trace.mark("manifest-validation");
     if cache_is_valid(&cache, &manifest) {
@@ -384,6 +425,7 @@ fn run() -> Result<i32, String> {
             if event.is_null() { return Err("cannot create mutex handoff event".into()); }
             command.env("DOCFIT_LAUNCHER_HANDOFF_EVENT", &event_name);
             command.env("DOCFIT_LAUNCHER_MUTEX_NAME", &instance.name);
+            let t_spawn = Instant::now();
             let mut child = match command.spawn() {
                 Ok(c) => c,
                 Err(e) => {
@@ -391,10 +433,13 @@ fn run() -> Result<i32, String> {
                     return Err(format!("cannot start cached app: {e}"));
                 }
             };
+            trace.record_metric("child_spawn", t_spawn.elapsed().as_secs_f64() * 1000.0);
             trace.mark("child-start");
+            let t_handoff = Instant::now();
             let handoff_res = handoff_mutex(instance, &mut child, event);
             unsafe { windows_sys::Win32::Foundation::CloseHandle(event); }
             handoff_res?;
+            trace.record_metric("handoff", t_handoff.elapsed().as_secs_f64() * 1000.0);
             trace.mark("handoff-wait");
             if let Some(cache_root) = cache.parent() { cleanup_old_caches(cache_root, cache.file_name().unwrap().to_str().unwrap_or(""), &manifest.version); }
             return Ok(0);

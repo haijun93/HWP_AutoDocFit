@@ -42,6 +42,17 @@ internal static class SmartLauncher
         catch { }
     }
 
+    private static void TraceMetric(string name, double ms)
+    {
+        if (StderrTrace) Console.Error.WriteLine("HWP_LAUNCHER_TRACE metric=" + name + " duration_ms=" + ms.ToString("0.0", CultureInfo.InvariantCulture));
+        if (string.IsNullOrEmpty(TracePath)) return;
+        try
+        {
+            File.AppendAllText(TracePath, "metric_" + name + "\t" + ms.ToString("0.0", CultureInfo.InvariantCulture) + "\n");
+        }
+        catch { }
+    }
+
     private static bool IsCliCommand(string[] args)
     {
         return args.Length > 0 &&
@@ -180,7 +191,10 @@ internal static class SmartLauncher
                 start.EnvironmentVariables["DOCFIT_LAUNCHER_HANDOFF_EVENT"] = eventName;
                 start.EnvironmentVariables["DOCFIT_LAUNCHER_MUTEX_NAME"] = mutexName;
             }
+            var swSpawn = Stopwatch.StartNew();
             process = Process.Start(start);
+            swSpawn.Stop();
+            TraceMetric("child_spawn", swSpawn.Elapsed.TotalMilliseconds);
             if (process == null) throw new InvalidOperationException("앱 프로세스를 시작하지 못했습니다.");
 
             if (selfTest)
@@ -195,6 +209,8 @@ internal static class SmartLauncher
             {
                 if (handoff.WaitOne(100))
                 {
+                    timer.Stop();
+                    TraceMetric("handoff", timer.Elapsed.TotalMilliseconds);
                     CloseSplash();
                     mutex.ReleaseMutex();
                     ownsMutex = false;
@@ -237,6 +253,10 @@ internal static class SmartLauncher
 
     private static void ExtractPayload(string finalPath, PayloadManifest manifest, bool quiet)
     {
+        var extractSw = Stopwatch.StartNew();
+        long decompressTicks = 0;
+        long writeTicks = 0;
+        var sw = new Stopwatch();
         string parent = Path.GetDirectoryName(finalPath);
         string staging = Path.Combine(parent, ".staging-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(staging);
@@ -262,7 +282,11 @@ internal static class SmartLauncher
                         throw new InvalidDataException("압축 파일의 항목이 매니페스트와 일치하지 않습니다.");
 
                     string outputPath = SafeCombine(staging, relative);
+                    sw.Restart();
                     Directory.CreateDirectory(Path.GetDirectoryName(outputPath));
+                    sw.Stop();
+                    writeTicks += sw.ElapsedTicks;
+
                     using (Stream input = entry.Open())
                     using (var output = new FileStream(outputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                     using (var sha = SHA256.Create())
@@ -270,15 +294,26 @@ internal static class SmartLauncher
                         byte[] buffer = new byte[1024 * 1024];
                         long total = 0;
                         int read;
-                        while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
+                        while (true)
                         {
+                            sw.Restart();
+                            read = input.Read(buffer, 0, buffer.Length);
+                            sw.Stop();
+                            decompressTicks += sw.ElapsedTicks;
+                            if (read <= 0) break;
                             total += read;
                             if (total > item.Length) throw new InvalidDataException("매니페스트보다 큰 파일입니다: " + relative);
+                            sw.Restart();
                             sha.TransformBlock(buffer, 0, read, buffer, 0);
                             output.Write(buffer, 0, read);
+                            sw.Stop();
+                            writeTicks += sw.ElapsedTicks;
                         }
+                        sw.Restart();
                         sha.TransformFinalBlock(new byte[0], 0, 0);
                         string digest = BitConverter.ToString(sha.Hash).Replace("-", "").ToLowerInvariant();
+                        sw.Stop();
+                        writeTicks += sw.ElapsedTicks;
                         if (total != item.Length || !string.Equals(digest, item.Sha256, StringComparison.OrdinalIgnoreCase))
                             throw new InvalidDataException("압축 해제 검증에 실패했습니다: " + relative);
                     }
@@ -289,8 +324,18 @@ internal static class SmartLauncher
                 }
             }
             if (written.Count != manifest.Items.Count) throw new InvalidDataException("압축 파일 일부 항목이 누락되었습니다.");
+            sw.Restart();
             File.WriteAllText(Path.Combine(staging, ".docfit-complete"), manifest.PayloadHash, new UTF8Encoding(false));
             ReplaceCache(staging, finalPath);
+            sw.Stop();
+            writeTicks += sw.ElapsedTicks;
+            extractSw.Stop();
+
+            double decompressMs = (double)decompressTicks / Stopwatch.Frequency * 1000.0;
+            double writeMs = (double)writeTicks / Stopwatch.Frequency * 1000.0;
+            TraceMetric("decompress", decompressMs);
+            TraceMetric("file_write", writeMs);
+            TraceMetric("extract_total", extractSw.Elapsed.TotalMilliseconds);
         }
         catch
         {
