@@ -20,6 +20,7 @@ fn number_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); 
 fn korean_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[가나다라마바사아자차카타파하][.．)]|\([가나다라마바사아자차카타파하]\))(?=\s|$)")) }
 fn roman_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[Ⅰ-Ⅿ]+[.．]?|(?:[IVX]|[IVXLCDM]{2,})[.．])(?=\s|$)")) }
 fn letter_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[A-Za-z][.．)]|\([A-Za-z]\))(?=\s|$)")) }
+fn sub_marker_re() -> &'static regex::Regex { static R: OnceLock<regex::Regex> = OnceLock::new(); R.get_or_init(|| regex::Regex::new(r"[0-9]+|[가나다라마바사아자차카타파하]|[A-Za-z]").expect("valid sub marker regex")) }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MarkerScheme {
@@ -81,20 +82,19 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
             return Some((format!("{}.", vec!["1"; depth].join(sep)), lead + stripped[..m.end()].chars().count()));
         }
     }
-    for (rx, rep) in [(number_re(), "1"), (korean_re(), "가"), (roman_re(), "Ⅰ"), (letter_re(), "A")] {
+    for (rx, rep) in [(number_re(), "1"), (korean_re(), "가"), (roman_re(), "Ⅰ"), (letter_re(), "")] {
         if let Some(m) = rx.find(stripped).ok().flatten().filter(|m| m.start() == 0) {
             let token = m.as_str().replace('．', ".");
             let family = if std::ptr::eq(rx, roman_re()) {
                 format!("{}{}", if token.chars().next().unwrap().is_ascii() { "I" } else { "Ⅰ" }, if token.ends_with('.') { "." } else { "" })
-            } else if rep.is_empty() {
-                let c = token.trim_start_matches('(').chars().next().unwrap();
-                token.replace(c, if c.is_ascii_uppercase() { "A" } else { "a" })
-            } else if std::ptr::eq(rx, number_re()) && token.ends_with(')') && !token.starts_with('(') {
-                "1)".to_owned()
             } else {
-                let mut out = token.clone();
-                for c in token.chars() { if c.is_ascii_digit() || HANGUL.contains(c) { out = out.replace(c, rep); } }
-                out
+                let actual_rep = if rep.is_empty() {
+                    let c = token.trim_start_matches('(').chars().next().unwrap();
+                    if c.is_ascii_uppercase() { "A" } else { "a" }
+                } else {
+                    rep
+                };
+                sub_marker_re().replace(&token, actual_rep).into_owned()
             };
             return Some((family, lead + stripped[..m.end()].chars().count()));
         }
