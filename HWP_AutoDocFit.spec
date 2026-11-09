@@ -15,6 +15,9 @@ if klib_exe.is_file():
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))
+kclip_ffi = root / 'kagent' / 'target' / 'release' / 'kclip_ffi.dll'
+if kclip_ffi.is_file():
+    binaries.append((str(kclip_ffi), '.'))
 for package in ('docfit_core', 'docfit_engine', 'docfit_app', 'docfit_ui'):
     hiddenimports += collect_submodules(package)
 for package in ('tkinterdnd2', 'PIL', 'webview', 'pythonnet', 'clr_loader', 'pypdfium2', 'pypdfium2_raw', 'pypdf', 'cryptography'):

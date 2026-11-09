@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import 'kclip_category.dart';
 import 'kclip_category_prefs.dart';
+import 'kclip_ffi.dart';
 
 /// 몽땅클립보드 관리: 켜기(동의)·끄기·상태·목록(검색·고정·지우기·클립보드에 올리기)·설정.
 /// 빠른 붙여넣기는 상주 프로그램의 단축키 팝업(기본 Ctrl+Shift+V)이 맡고, 이 화면은 관리용이다.
@@ -254,6 +256,7 @@ class KClipPanel extends StatefulWidget {
     this.onHeaderDragUpdate,
     this.onHeaderDragEnd,
     this.categoryPrefs,
+    this.ffi,
   });
 
   final ApiCall api;
@@ -271,6 +274,7 @@ class KClipPanel extends StatefulWidget {
   final GestureDragUpdateCallback? onHeaderDragUpdate;
   final GestureDragEndCallback? onHeaderDragEnd;
   final KClipCategoryPrefs? categoryPrefs;
+  final KClipFfi? ffi;
 
   @override
   State<KClipPanel> createState() => _KClipPanelState();
@@ -296,6 +300,7 @@ class _KClipPanelState extends State<KClipPanel> {
   // 항목 id → 엑셀 표(HTML 서식 포함) 여부. 서식 포함 글 항목만 한 번씩 물어 둔다.
   final Map<int, bool> _tableItems = {};
   final Set<int> _checkingTables = {};
+  KClipFfi? _ffi;
 
   bool get running => status['running'] == true;
   Map get agent => (status['status'] as Map?) ?? const {};
@@ -363,6 +368,38 @@ class _KClipPanelState extends State<KClipPanel> {
   }
 
   Future<Map> _call(String action, [Map<String, Object?>? payload]) async {
+    final ffi = _ffi;
+    if (ffi != null && const {'list', 'get', 'pin', 'delete'}.contains(action)) {
+      try {
+        final dbPath = status['db_path'] as String? ??
+            '${Platform.environment['KAGENT_DATA'] ?? '${Platform.environment['LOCALAPPDATA'] ?? ''}\\HwpAutoDocFit\\kagent'}\\clip.db';
+        final native = ffi.call({
+          'action': action == 'get' ? 'detail' : action,
+          'db_path': dbPath,
+          if (action == 'list') ...{
+            'category': const {
+              '전체': '전체', '문서': '문서', '그림': '그림', '파일': '파일',
+              '폴더': '폴더', '웹': '웹', '화면캡처': '화면캡처',
+            }[category] ?? category,
+            'query': query,
+            'page': payload?['page'] ?? 0,
+            'limit': payload?['limit'] ?? 200,
+          },
+          if (action != 'list') ...?payload,
+        });
+      if (native['ok'] == true) {
+          if (action == 'get') {
+            return {
+              'ok': true,
+              ...((native['item'] as Map?)?.cast<String, Object?>() ?? const {}),
+            };
+          }
+          return native;
+        }
+      } catch (_) {
+        // DLL 누락·저장소 접근 실패는 기존 Python 중계로 자동 대체한다.
+      }
+    }
     final response = await widget.api('kclip', [action, payload ?? const {}]);
     final map = response is Map
         ? response
@@ -380,6 +417,7 @@ class _KClipPanelState extends State<KClipPanel> {
       status = s;
       autostart = s['autostart'] == true;
     });
+    _ffi ??= widget.ffi ?? KClipFfi.tryOpen(libraryPath: s['ffi_library'] as String?);
     if (running) {
       final list = await _call('list', {
         'limit': 200,

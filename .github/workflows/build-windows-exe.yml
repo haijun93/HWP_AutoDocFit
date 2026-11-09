@@ -165,10 +165,15 @@ jobs:
       - name: Build K agent (kagent.exe, Rust)
         shell: pwsh
         run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
           cargo test --release --locked --manifest-path kagent/Cargo.toml
+          cargo test --release --locked --manifest-path kagent/ffi/Cargo.toml --target-dir kagent/target/ffi
+          cargo build --locked --release --manifest-path kagent/ffi/Cargo.toml --target-dir kagent/target/ffi
           cargo build --release --locked --manifest-path kagent/Cargo.toml
           Copy-Item kagent/target/release/kagent.exe resources/kagent.exe -Force
           (Get-FileHash resources/kagent.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kagent.exe.sha256
+          Copy-Item kagent/target/ffi/release/kclip_ffi.dll resources/kclip_ffi.dll -Force
+          (Get-FileHash resources/kclip_ffi.dll -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kclip_ffi.dll.sha256
 
       - name: Test hierarchy core (Rust)
         shell: pwsh
