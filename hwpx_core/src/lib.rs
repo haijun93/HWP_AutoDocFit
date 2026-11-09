@@ -48,4 +48,55 @@ static LAST_ERROR: Mutex<Option<CString>> = Mutex::new(None);
 #[no_mangle] pub unsafe extern "C" fn hwpx_last_error()->*const c_char { LAST_ERROR.lock().unwrap_or_else(|e|e.into_inner()).as_ref().map_or(std::ptr::null(),|s|s.as_ptr()) }
 #[no_mangle] pub unsafe extern "C" fn hwpx_free(p:*mut c_char){if !p.is_null(){drop(CString::from_raw(p));}}
 
+fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
+    match fn_name {
+        "_tag" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tag = value.get("tag").and_then(serde_json::Value::as_str)
+                .ok_or("_tag expects {\"tag\": string}")?;
+            Ok(serde_json::to_string(tag.rsplit('}').next().unwrap_or(tag)).unwrap())
+        }
+        "_first" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let name = value.get("name").and_then(serde_json::Value::as_str)
+                .ok_or("_first expects {\"tree\": ..., \"name\": string}")?;
+            let found = value.get("tree").and_then(|tree| first_tag(tree, name));
+            Ok(serde_json::to_string(&found).unwrap())
+        }
+        "_mm" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let number = match &value {
+                serde_json::Value::Null => 0.0,
+                serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
+                serde_json::Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
+                _ => return Ok("0.0".into()),
+            };
+            let mm = (number / (7200.0 / 25.4) * 10.0).round() / 10.0;
+            Ok(serde_json::to_string(&mm).unwrap())
+        }
+        _ => Err(format!("unknown function: {fn_name}")),
+    }
+}
+
+fn first_tag<'a>(node: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
+    if node.get("tag").and_then(serde_json::Value::as_str).map(|tag| tag.rsplit('}').next().unwrap_or(tag)) == Some(name) {
+        return Some(node);
+    }
+    node.get("children")?.as_array()?.iter().find_map(|child| first_tag(child, name))
+}
+
+#[no_mangle] pub unsafe extern "C" fn hwpx_call(fn_name:*const c_char, json_in:*const c_char)->*mut c_char {
+    let result=catch_unwind(AssertUnwindSafe(||{
+        if fn_name.is_null() || json_in.is_null() { return Err("null argument".into()); }
+        let name=CStr::from_ptr(fn_name).to_str().map_err(|e|e.to_string())?;
+        let input=CStr::from_ptr(json_in).to_str().map_err(|e|e.to_string())?;
+        call(name,input)
+    }));
+    match result {
+        Ok(Ok(s))=>CString::new(s).map(CString::into_raw).unwrap_or(std::ptr::null_mut()),
+        Ok(Err(e))=>{*LAST_ERROR.lock().unwrap_or_else(|e|e.into_inner())=CString::new(e).ok();std::ptr::null_mut()},
+        Err(_)=>{*LAST_ERROR.lock().unwrap_or_else(|e|e.into_inner())=CString::new("panic contained").ok();std::ptr::null_mut()}
+    }
+}
+
 #[cfg(test)] mod tests { use super::*; #[test] fn rejects_doctype(){assert!(parse_xml("x",b"<!DOCTYPE x><x/>").is_err());} #[test] fn counts_namespaces(){let m=parse_xml("x",b"<hp:p xmlns:hp='u'><hp:run/></hp:p>").unwrap();assert_eq!(m.elements["p"],1);} }
