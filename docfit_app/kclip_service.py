@@ -5,12 +5,12 @@
 """
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import sys
 import tempfile
 import time
+import subprocess
 import webbrowser
 from pathlib import Path
 
@@ -30,15 +30,6 @@ def bundled_exe():
     return None
 
 
-def _verify(exe):
-    """배포판에는 SHA-256 파일이 함께 있다 — 있으면 맞는지 확인한다."""
-    digest_file = exe.with_name(exe.name + ".sha256")
-    if not digest_file.is_file():
-        return True
-    expected = digest_file.read_text(encoding="ascii").strip().lower()
-    return hashlib.sha256(exe.read_bytes()).hexdigest() == expected
-
-
 def _norm_text(value):
     return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
@@ -46,16 +37,21 @@ def _norm_text(value):
 class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
-                 bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep):
+                 bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep,
+                 command_runner=None, ffi_library=None):
         self._excel_service = excel
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
+        self._injected_client = client is not None
         self._install = installer
         self._start = starter
         self._autostart = autostart
         self._autostart_status = autostart_status
         self._bundled = bundled
         self._installed = installed
+        self._runner = command_runner or subprocess.run
+        self._ffi_library = (Path(ffi_library) if ffi_library is not None else
+                             Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "resources" / "kclip_ffi.dll")
         self._pause_file = Path(tempfile.gettempdir()) / f"docfit-kclip-pause-{os.getpid()}.json"
 
     def _pause_until(self, until=None):
@@ -78,41 +74,73 @@ class KClipService:
         return expiry
 
     def status(self):
+        if self._injected_client:
+            expiry = self._pause_until()
+            status = self.client.status_file() if self.client.running() else None
+            if status is not None and expiry:
+                status["paused"] = True
+                status["pause_until"] = expiry
+            try:
+                autostart = bool(self._autostart_status())
+            except (OSError, ImportError):
+                autostart = False
+            folder = getattr(self.client, "folder", None)
+            return dict(ok=True, running=bool(status), available=self._bundled() is not None,
+                        autostart=autostart, consent=CONSENT, status=status or {},
+                        db_path=str(Path(folder) / "clip.db") if folder is not None else None,
+                        ffi_library=str(self._ffi_library) if self._ffi_library.is_file() else None)
+        result = self._lifecycle("--status")
+        if not result.get("ok"):
+            return result
+        status = result.get("status") or {}
         expiry = self._pause_until()
-        status = self.client.status_file() if self.client.running() else None
-        if status is not None and expiry:
+        if status and expiry:
             status["paused"] = True
             status["pause_until"] = expiry
+        folder = getattr(self.client, "folder", None)
+        return dict(ok=True, running=bool(result.get("running")), available=bool(result.get("available")),
+                    autostart=bool(result.get("autostart")), consent=CONSENT, status=status,
+                    db_path=result.get("db_path") or (str(Path(folder) / "clip.db") if folder is not None else None),
+                    ffi_library=str(self._ffi_library) if self._ffi_library.is_file() else None)
+
+    def _lifecycle(self, command, *args):
+        exe = self._bundled()
+        if exe is None:
+            return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
         try:
-            autostart = bool(self._autostart_status())
-        except (OSError, ImportError):
-            autostart = False
-        return dict(ok=True, running=bool(status), available=self._bundled() is not None,
-                    autostart=autostart, consent=CONSENT, status=status or {})
+            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=20)
+            result = json.loads(completed.stdout.strip().splitlines()[-1])
+            if completed.returncode or not isinstance(result, dict):
+                raise ValueError("invalid lifecycle response")
+            return result
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
+            return dict(ok=False, code="KCLIP_COMMAND", message=str(error))
 
     def enable(self, payload):
         if payload.get("consent") is not True:
             return dict(ok=False, code="KCLIP_CONSENT", message="안내를 읽고 동의해 주세요.")
-        exe = self._bundled()
-        if exe is None:
-            return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
-        if not _verify(exe):
-            return dict(ok=False, code="KCLIP_INTEGRITY", message="몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요.")
-        if not self.client.running():
-            installed = self._install(exe)
-            self._start(installed)
-            for _ in range(100):
-                if self.client.running():
-                    break
-                time.sleep(0.02)
-        else:
-            # 이미 켜져 있어도 예전 버전이면 새 파일로 바꿔 다시 켠다.
-            self.upgrade_if_stale()
-        try:
-            self._autostart(payload.get("autostart", True) is True)
-        except OSError:
-            pass
-        return self.status()
+        if self._injected_client:
+            exe = self._bundled()
+            if exe is None:
+                return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
+            sidecar = exe.with_name(exe.name + ".sha256")
+            if sidecar.exists():
+                import hashlib
+                if hashlib.sha256(exe.read_bytes()).hexdigest() != sidecar.read_text(encoding="ascii").strip().lower():
+                    return dict(ok=False, code="KCLIP_INTEGRITY", message="몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요.")
+            if not self.client.running():
+                installed = self._install(exe); self._start(installed)
+                for _ in range(100):
+                    if self.client.running(): break
+                    self._sleep(0.02)
+            else: self.upgrade_if_stale()
+            try: self._autostart(payload.get("autostart", True) is True)
+            except OSError: pass
+            return self.status()
+        args = ["--consent"]
+        if payload.get("autostart", True) is True:
+            args.append("--autostart")
+        return self._lifecycle("--enable", *args)
 
     def upgrade_if_stale(self):
         """앱을 업데이트한 뒤에도 **예전 kagent.exe가 계속 실행되는** 문제를 막는다(2026-11-09).
@@ -122,56 +150,35 @@ class KClipService:
         그대로 떠 있어 에이전트 쪽 수정(빠른 목록 등)이 영영 반영되지 않았다. 앱을 시작할 때 이 함수를 불러,
         설치된 파일이 앱에 들어 있는 파일과 다르면 에이전트를 끄고 새 파일로 바꾼 뒤 (켜져 있었다면) 다시 켠다.
         한 번도 켠 적이 없으면(설치된 파일 없음) 아무것도 하지 않는다."""
-        exe = self._bundled()
-        if exe is None or not _verify(exe):
-            return dict(ok=True, upgraded=False, reason="no_bundle")
-        try:
+        if self._injected_client:
+            exe = self._bundled()
+            if exe is None: return dict(ok=True, upgraded=False, reason="no_bundle")
             installed = Path(self._installed())
-            if not installed.is_file():
-                return dict(ok=True, upgraded=False, reason="not_installed")
-            if installed.stat().st_size == Path(exe).stat().st_size and installed.read_bytes() == Path(exe).read_bytes():
-                return dict(ok=True, upgraded=False, reason="current")
-        except OSError as error:
-            return dict(ok=False, upgraded=False, reason=str(error))
-        was_running = bool(self.client.running())
-        if was_running:
-            try:
-                self.client.request("quit")
-            except kc.KAgentError:
-                pass
-            for _ in range(150):
-                if not self.client.running():
-                    break
-                self._sleep(0.02)
-            if self.client.running():
-                return dict(ok=False, upgraded=False, reason="still_running")
-        try:
-            target = self._install(exe)
-        except kc.KAgentError as error:
-            return dict(ok=False, upgraded=False, reason=str(error))
-        if was_running:
-            self._start(target)
-            for _ in range(100):
-                if self.client.running():
-                    break
-                self._sleep(0.02)
-        return dict(ok=True, upgraded=True, restarted=was_running)
+            if not installed.is_file(): return dict(ok=True, upgraded=False, reason="not_installed")
+            if installed.read_bytes() == exe.read_bytes(): return dict(ok=True, upgraded=False, reason="current")
+            was_running = self.client.running()
+            if was_running:
+                try: self.client.request("quit")
+                except kc.KAgentError: pass
+                for _ in range(150):
+                    if not self.client.running(): break
+                    self._sleep(0.02)
+                if self.client.running(): return dict(ok=False, upgraded=False, reason="still_running")
+            try: target = self._install(exe)
+            except kc.KAgentError as error: return dict(ok=False, upgraded=False, reason=str(error))
+            if was_running: self._start(target)
+            return dict(ok=True, upgraded=True, restarted=was_running)
+        return self._lifecycle("--upgrade-if-stale")
 
     def disable(self, payload):
-        if self.client.running():
-            try:
-                self.client.request("quit")
-            except kc.KAgentError:
-                pass
-            for _ in range(50):
-                if not self.client.running():
-                    break
-                time.sleep(0.02)
-        try:
-            self._autostart(False)
-        except OSError:
-            pass
-        return self.status()
+        if self._injected_client:
+            if self.client.running():
+                try: self.client.request("quit")
+                except kc.KAgentError: pass
+            try: self._autostart(False)
+            except OSError: pass
+            return self.status()
+        return self._lifecycle("--disable")
 
     def _forward(self, cmd, payload, keys):
         try:
@@ -297,8 +304,16 @@ class KClipService:
                 except (TypeError, ValueError):
                     return dict(ok=False, code="KCLIP_PAUSE", message="일시정지 시간을 확인해 주세요.")
                 self._pause_until(time.time() + minutes * 60)
+                if not self._injected_client:
+                    result = self._lifecycle("--pause", "--minutes", str(minutes))
+                    if not result.get("ok"):
+                        return result
         elif action == "resume":
             self._pause_file.unlink(missing_ok=True)
+            if not self._injected_client:
+                result = self._lifecycle("--resume")
+                if not result.get("ok"):
+                    return result
         cmd, keys = forwards[action]
         if action in ("get", "restore", "delete", "pin"):
             try:

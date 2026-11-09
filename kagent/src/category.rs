@@ -414,7 +414,9 @@ mod tests {
     // ---- 공통 규칙 표(tests/fixtures/kclip_category_rules.json): 관리창(Dart)과 같은 표·사례를 읽는다 ----
 
     fn shared_rules() -> test_json::Value {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/kclip_category_rules.json");
+        let default = concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/kclip_category_rules.json");
+        let ffi_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/fixtures/kclip_category_rules.json");
+        let path = if std::path::Path::new(ffi_path).is_file() { ffi_path } else { default };
         let text = std::fs::read_to_string(path).expect("공통 분류 규칙 표를 읽지 못함");
         test_json::parse(&text).expect("공통 분류 규칙 표 JSON 오류")
     }

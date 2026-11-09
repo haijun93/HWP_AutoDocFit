@@ -45,10 +45,22 @@ class KClipServiceTests(unittest.TestCase):
         self.installed = Path(self.tmp.name) / "installed-kagent.exe"
         self.service = KClipService(self.client, installer=lambda exe: self.calls.append(("install", exe)) or exe,
                                     starter=start, autostart=lambda on: self.calls.append(("autostart", on)),
-                                    bundled=lambda: self.exe, installed=lambda: self.installed, sleep=lambda _s: None)
+                                    bundled=lambda: self.exe, installed=lambda: self.installed, sleep=lambda _s: None,
+                                    ffi_library=Path(self.tmp.name) / "missing-kclip-ffi.dll")
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_status_exposes_store_and_optional_ffi_paths(self):
+        status = self.service.status()
+        self.assertIsNone(status["db_path"])
+        self.assertIsNone(status["ffi_library"])
+
+    def test_status_exposes_existing_ffi_library_path(self):
+        library = Path(self.tmp.name) / "kclip_ffi.dll"
+        library.write_bytes(b"MZ fake")
+        service = KClipService(self.client, bundled=lambda: self.exe, ffi_library=library)
+        self.assertEqual(service.status()["ffi_library"], str(library))
 
     def test_stale_running_agent_is_replaced_and_restarted(self):
         # 앱 업데이트 뒤에도 예전 에이전트가 떠 있던 문제: 설치된 파일이 앱 파일과 다르면 끄고 바꿔 다시 켠다.

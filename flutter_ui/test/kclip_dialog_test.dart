@@ -2,8 +2,35 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:docfit_ui/features/kclip/kclip_dialog.dart';
+import 'package:docfit_ui/features/kclip/kclip_ffi.dart';
+
+class _FakeKClipFfi extends KClipFfi {
+  _FakeKClipFfi(this.handler) : super.forTesting();
+  final Map<String, Object?> Function(Map<String, Object?>) handler;
+  @override
+  Map<String, Object?> call(Map<String, Object?> request) => handler(request);
+}
 
 void main() {
+  testWidgets('Rust FFI가 실패하면 목록을 Python 중계로 자동 대체한다', (tester) async {
+    final fallback = <String>[];
+    Future<Object?> api(String method, List<Object?> args) async {
+      if (method == 'window_control') return {'ok': true, 'maximized': false};
+      final action = args[0] as String;
+      fallback.add(action);
+      if (action == 'status') return {'ok': true, 'running': true, 'available': true, 'status': {}};
+      if (action == 'list') return {'ok': true, 'items': []};
+      if (action == 'settings_get') return {'ok': true, 'settings': {}};
+      return {'ok': true};
+    }
+    final ffi = _FakeKClipFfi((_) => {'ok': false, 'message': 'DB 잠김'});
+    await tester.pumpWidget(MaterialApp(home: Scaffold(
+      body: SizedBox(height: 760, child: KClipPanel(api: api, ffi: ffi)),
+    )));
+    await tester.pumpAndSettle();
+    expect(fallback, contains('list'));
+  });
+
   testWidgets('동의해야 켤 수 있고, 켜면 목록·고정·되돌려 올리기가 보인다', (tester) async {
     tester.view.physicalSize = const Size(1200, 900);
     tester.view.devicePixelRatio = 1;

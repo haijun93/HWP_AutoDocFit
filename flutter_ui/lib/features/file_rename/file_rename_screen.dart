@@ -66,7 +66,9 @@ class FileRenameScreenState extends State<FileRenameScreen> {
   final _replaceTo = TextEditingController();
   /// none · prefix · suffix
   String _datePosition = 'none';
-  String _dateFormat = 'YYYY.MM.DD.';
+  String _dateFormat = 'YYYY.MM.DD';
+  String _dateDelimiter = '_';
+  bool _dateOptionsLoaded = false;
   bool _advanced = false;
   /// 넓은 창: 오른쪽 입력 칸의 폭 비율. 좁은 창: 위쪽 목록의 높이 비율. 끌어서 바꾼다.
   double _sideFraction = 0.34;
@@ -82,10 +84,53 @@ class FileRenameScreenState extends State<FileRenameScreen> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     // 시작 때 호출을 늘리지 않으려 탭이 처음 보일 때 불러온다.
-    if (!_mruLoaded && TickerMode.valuesOf(context).enabled) {
-      _mruLoaded = true;
-      unawaited(_loadReplaceMru());
+    if (TickerMode.valuesOf(context).enabled) {
+      if (!_mruLoaded) {
+        _mruLoaded = true;
+        unawaited(_loadReplaceMru());
+      }
+      if (!_dateOptionsLoaded) {
+        _dateOptionsLoaded = true;
+        unawaited(_loadDateOptions());
+      }
     }
+  }
+
+  Future<void> _loadDateOptions() async {
+    try {
+      final result = await _api.command('date_options_get');
+      if (!mounted || !result.ok) return;
+      final opts = result.raw['options'] as Map?;
+      if (opts != null) {
+        setState(() {
+          final pos = opts['position'];
+          if (pos is String && (pos == 'none' || pos == 'prefix' || pos == 'suffix')) {
+            _datePosition = pos;
+          }
+          final fmt = opts['format'];
+          if (fmt is String) {
+            if (fmt == 'YYMMDD' || fmt == 'YYYYMMDD') {
+              _dateFormat = fmt;
+            } else if (fmt == 'YYYY.MM.DD' || fmt == 'YYYY.MM.DD.') {
+              _dateFormat = 'YYYY.MM.DD';
+            }
+          }
+          final delim = opts['delimiter'];
+          if (delim is String && (delim == '_' || delim == '()')) {
+            _dateDelimiter = delim;
+          }
+        });
+        _schedulePreview();
+      }
+    } catch (_) {}
+  }
+
+  void _saveDateOptions() {
+    unawaited(_api.command('date_options_save', {
+      'position': _datePosition,
+      'format': _dateFormat,
+      'delimiter': _dateDelimiter,
+    }).catchError((_) => const RenameResult({'ok': false})));
   }
 
   Future<void> _loadReplaceMru() async {
@@ -193,12 +238,10 @@ class FileRenameScreenState extends State<FileRenameScreen> {
       {
         'kind': 'date',
         'source': 'today',
-        // 접미사는 확장자 앞에 오므로 끝 마침표를 빼야 '..hwpx'가 되지 않는다.
-        'format': _datePosition == 'suffix' && _dateFormat.endsWith('.')
-            ? _dateFormat.substring(0, _dateFormat.length - 1)
-            : _dateFormat,
+        'format': _dateFormat,
         'position': _datePosition,
-        'sep': '',
+        'delimiter': _dateDelimiter,
+        'sep': _dateDelimiter == '()' ? '' : '_',
       },
   ];
 
@@ -207,6 +250,7 @@ class FileRenameScreenState extends State<FileRenameScreen> {
       c.clear();
     }
     _datePosition = 'none';
+    _saveDateOptions();
   }
 
   int _count(String key) => (_summary[key] as num?)?.toInt() ?? 0;
@@ -877,11 +921,13 @@ class FileRenameScreenState extends State<FileRenameScreen> {
     decoration: InputDecoration(hintText: hint, isDense: true, border: const OutlineInputBorder()),
   );
 
-  /// 오늘 날짜를 고른 형식으로 보여 준다.
+  /// 오늘 날짜를 고른 형식으로 보여 준다. 끝의 점 없는 2026.11.09 형식으로 통일.
   String _dateSample(String format) {
     final t = DateTime.now();
     String two(int v) => v.toString().padLeft(2, '0');
-    return format == 'YYMMDD' ? '${two(t.year % 100)}${two(t.month)}${two(t.day)}' : '${t.year}.${two(t.month)}.${two(t.day)}.';
+    if (format == 'YYMMDD') return '${two(t.year % 100)}${two(t.month)}${two(t.day)}';
+    if (format == 'YYYYMMDD') return '${t.year}${two(t.month)}${two(t.day)}';
+    return '${t.year}.${two(t.month)}.${two(t.day)}';
   }
 
   /// 칸이 좁으면 단추 묶음을 줄여 넘치지 않게 한다.
@@ -941,25 +987,56 @@ class FileRenameScreenState extends State<FileRenameScreen> {
           selected: {_datePosition},
           onSelectionChanged: (v) {
             setState(() => _datePosition = v.first);
+            _saveDateOptions();
             _schedulePreview();
           },
         )),
         const SizedBox(height: 6),
-        _fit(SegmentedButton<String>(
-          key: const ValueKey('rename-date-format'),
-          showSelectedIcon: false,
-          segments: [
-            ButtonSegment(value: 'YYYY.MM.DD.', label: Text(_dateSample('YYYY.MM.DD.'))),
-            ButtonSegment(value: 'YYMMDD', label: Text(_dateSample('YYMMDD'))),
-          ],
-          selected: {_dateFormat},
-          onSelectionChanged: _datePosition == 'none'
-              ? null
-              : (v) {
-                  setState(() => _dateFormat = v.first);
-                  _schedulePreview();
-                },
-        )),
+        Opacity(
+          opacity: _datePosition == 'none' ? 0.38 : 1.0,
+          child: IgnorePointer(
+            ignoring: _datePosition == 'none',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _fit(SegmentedButton<String>(
+                  key: const ValueKey('rename-date-format'),
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment(value: 'YYYY.MM.DD', label: Text(_dateSample('YYYY.MM.DD'))),
+                    ButtonSegment(value: 'YYMMDD', label: Text(_dateSample('YYMMDD'))),
+                    ButtonSegment(value: 'YYYYMMDD', label: Text(_dateSample('YYYYMMDD'))),
+                  ],
+                  selected: {_dateFormat},
+                  onSelectionChanged: _datePosition == 'none'
+                      ? null
+                      : (v) {
+                          setState(() => _dateFormat = v.first);
+                          _saveDateOptions();
+                          _schedulePreview();
+                        },
+                )),
+                const SizedBox(height: 6),
+                _fit(SegmentedButton<String>(
+                  key: const ValueKey('rename-date-delimiter'),
+                  showSelectedIcon: false,
+                  segments: const [
+                    ButtonSegment(value: '_', label: Text('밑줄 _')),
+                    ButtonSegment(value: '()', label: Text('괄호 ( )')),
+                  ],
+                  selected: {_dateDelimiter},
+                  onSelectionChanged: _datePosition == 'none'
+                      ? null
+                      : (v) {
+                          setState(() => _dateDelimiter = v.first);
+                          _saveDateOptions();
+                          _schedulePreview();
+                        },
+                )),
+              ],
+            ),
+          ),
+        ),
         gap,
         const Divider(height: 1),
         Align(

@@ -222,7 +222,6 @@ if __name__ == "__main__" and len(_selftest_sys.argv) > 1:
         raise SystemExit(_early_cli_main())
 
 from docfit_engine.runtime import resolve as _engine_resolve
-from docfit_engine.pipeline import PipelineCallbacks
 
 import os
 import sys
@@ -334,8 +333,25 @@ XML_요소_생성 = _engine_resolve('docfit_engine.com_driver', 'XML_요소_생�
 
 
 XML_자식_추가 = _engine_resolve('docfit_engine.com_driver', 'XML_자식_추가', globals())
-from docfit_core.style_inventory import analyze_style_inventory, build_style_sample, inventory_markdown
-from docfit_core import report_header as 보고서머리
+class _보고서머리_지연:
+    def __getattr__(self, name):
+        from docfit_core import report_header as _rh
+        globals()["보고서머리"] = _rh
+        return getattr(_rh, name)
+
+    def __dir__(self):
+        from docfit_core import report_header as _rh
+        globals()["보고서머리"] = _rh
+        return dir(_rh)
+
+    def __bool__(self):
+        return True
+
+    def __repr__(self):
+        return "<lazy docfit_core.report_header>"
+
+
+보고서머리 = _보고서머리_지연()
 from docfit_core import connector_tabs as 연결부호탭
 from docfit_core import colon_labels as 콜론라벨
 from docfit_core import spacing_reset as 자간초기화모듈
@@ -371,7 +387,7 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.47"
+APP_VERSION = "2.2.48"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"

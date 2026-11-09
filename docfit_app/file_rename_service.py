@@ -62,6 +62,7 @@ class FileRenameService:
         self._plan = None
         self._last_run = None
         self._mru_path = self.folder / "replace_mru.json"
+        self._date_options_path = self.folder / "date_options.json"
 
     # ── 경로 ──────────────────────────────────────────────────────────────
     @staticmethod
@@ -421,6 +422,27 @@ class FileRenameService:
         self._mru_path.write_text(json.dumps(values, ensure_ascii=False, indent=1), encoding="utf-8")
         return dict(ok=True, values=values)
 
+    def date_options(self, action, payload):
+        defaults = {"position": "none", "format": "YYYY.MM.DD", "delimiter": "_"}
+        try:
+            data = json.loads(self._date_options_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        if action == "date_options_get":
+            res = dict(defaults)
+            for k in defaults:
+                if k in data and isinstance(data[k], str):
+                    res[k] = data[k]
+            return dict(ok=True, options=res)
+        for k in ("position", "format", "delimiter"):
+            if k in payload and isinstance(payload[k], str):
+                data[k] = payload[k]
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self._date_options_path.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        return dict(ok=True, options=data)
+
     @staticmethod
     def set_sendto(enabled, *, sendto_dir=None, executable=None, shortcut_factory=None):
         """SendTo 바로가기를 만들거나 지운다. 레지스트리는 사용하지 않는다."""
@@ -512,6 +534,8 @@ class FileRenameService:
                 return self.ruleset_import(payload)
             if action in ("replace_mru_list", "replace_mru_add"):
                 return self.replace_mru(action, payload)
+            if action in ("date_options_get", "date_options_save"):
+                return self.date_options(action, payload)
             raise RenameServiceError("NOT_AVAILABLE", "지원하지 않는 명령입니다.")
         except RenameServiceError as error:
             return dict(ok=False, code=error.code, message=str(error))

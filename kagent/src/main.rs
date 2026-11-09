@@ -22,6 +22,7 @@ mod timeline;
 mod util;
 mod watch;
 mod xl_target;
+mod excel_target;
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, AtomicU64, AtomicI64, Ordering};
@@ -495,6 +496,7 @@ fn open_run_key(sam: u32) -> Option<isize> {
 
 /// 자동 실행 등록 여부. 레지스트리를 읽지 못하면 None.
 pub fn autostart_enabled() -> Option<bool> {
+    if std::env::var_os("KAGENT_TEST_ROOT").is_some() { return None; }
     let key = open_run_key(KEY_QUERY_VALUE)?;
     let name = wide(settings_menu::RUN_NAME);
     let mut buf = vec![0u16; 2048];
@@ -538,6 +540,7 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     unsafe { RegCloseKey(key) };
     if r == 0 { Ok(()) } else { Err(format!("자동 실행 설정을 바꾸지 못했습니다(Windows 오류 {r}).")) }
 }
+
 
 /// 작업 스레드: 클립보드에서 복사해 온 내용을 변환·암호화·저장한다(낮은 우선순위).
 fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
@@ -932,6 +935,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+    if let Some(command) = args.iter().find(|a| ["--install", "--upgrade-if-stale", "--status", "--enable", "--disable"].contains(&a.as_str())) {
+        let result = lifecycle_command(command, &args);
+        println!("{}", crate::json::to_string(&result));
+        return;
+    }
+    if has("--pause") || has("--resume") {
+        let pause = has("--pause");
+        let status_path = std::path::Path::new(&util::data_dir()).join("status.json");
+        if let Ok(raw) = std::fs::read_to_string(status_path) {
+            if let Some(status) = crate::json::parse(&raw).and_then(|v| v.str("pipe").map(str::to_owned)) {
+                let mut req = crate::json::Value::obj(vec![("cmd", if pause {"pause"} else {"resume"}.into())]);
+                if pause { if let Some(i)=args.iter().position(|a| a=="--minutes") { if let Some(n)=args.get(i+1).and_then(|s|s.parse::<u64>().ok()) { if let crate::json::Value::Obj(ref mut fields)=req { fields.push(("minutes".into(), (n.clamp(1,1440) as f64).into())); } } } }
+                let _ = lifecycle_pipe_request(&status, &req);
+            }
+        }
+        println!("{{\"ok\":true}}");
+        return;
+    }
     let mutex_name = format!("Local\\HwpAutoDocFit.kagent{}", util::instance_suffix().unwrap_or_default());
     let instance_mutex = unsafe {
         // 하나만 실행: 이미 있으면 그쪽에 요청만 보내고 끝낸다.
@@ -1075,6 +1096,134 @@ fn main() {
     }
     open_item::cleanup(&app().dir);
 }
+
+fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
+    use crate::json::Value;
+    let root = std::env::var("KAGENT_DATA").ok().map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(util::data_dir()));
+    let target = root.join("kagent.exe");
+    let source = std::env::current_exe().ok();
+    let bundled = source.as_deref().filter(|p| p.is_file());
+    match command {
+        "--status" => {
+            let mut status = std::fs::read_to_string(root.join("status.json")).ok()
+                .and_then(|s| crate::json::parse(&s)).unwrap_or_else(|| Value::obj(vec![]));
+            let running = status.get("pid").and_then(|v| if let Value::Num(n)=v {Some(*n>0.0)} else {None}).unwrap_or(false);
+            let pause = pause_until();
+            if pause > 0.0 { if let Value::Obj(ref mut fields)=status { fields.retain(|(k,_)| k!="paused" && k!="pause_until"); fields.push(("paused".into(), true.into())); fields.push(("pause_until".into(), pause.into())); } }
+            let consent = "몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. 기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. 암호 관리자가 보내는 '기록 제외' 신호는 따릅니다. 언제든 일시정지·끄기·모두 지우기를 할 수 있습니다.";
+            return Value::obj(vec![("ok", true.into()), ("available", bundled.is_some().into()),
+                ("running", running.into()), ("status", status), ("autostart", autostart_enabled().unwrap_or(false).into()), ("consent", consent.into())]);
+        }
+        "--install" | "--enable" | "--upgrade-if-stale" => {
+            let Some(source) = bundled else { return Value::obj(vec![("ok", false.into()), ("reason", "no_bundle".into())]); };
+            if command == "--enable" && !args.iter().any(|a| a == "--consent") {
+                return Value::obj(vec![("ok", false.into()), ("code", "KCLIP_CONSENT".into())]);
+            }
+            let hash_sidecar = source.with_file_name(format!("{}.sha256", source.file_name().unwrap().to_string_lossy()));
+            if let Ok(expected) = std::fs::read_to_string(hash_sidecar) {
+                if sha256_file(source).as_deref() != Some(expected.trim().to_ascii_lowercase().as_str()) {
+                    return Value::obj(vec![("ok", false.into()), ("reason", "integrity".into())]);
+                }
+            }
+            let current = std::fs::read(source).ok();
+            let old = std::fs::read(&target).ok();
+            let stale = current != old;
+            if command == "--upgrade-if-stale" && old.is_none() { return Value::obj(vec![("ok", true.into()), ("upgraded", false.into()), ("reason", "not_installed".into())]); }
+            let was_running = std::fs::read_to_string(root.join("status.json")).ok().and_then(|s| crate::json::parse(&s))
+                .and_then(|v| v.num("pid")).is_some();
+            if was_running && (command == "--enable" || (command == "--upgrade-if-stale" && stale)) {
+                let _ = std::process::Command::new(&target).arg("--quit").spawn();
+                for _ in 0..150 { if !root.join("status.json").exists() { break; } std::thread::sleep(std::time::Duration::from_millis(20)); }
+                if root.join("status.json").exists() { return Value::obj(vec![("ok", false.into()), ("upgraded", false.into()), ("reason", "still_running".into())]); }
+            }
+            if command != "--upgrade-if-stale" || stale {
+                if let Err(e) = std::fs::create_dir_all(&root).and_then(|_| std::fs::copy(source, &target).map(|_| ())) {
+                    return Value::obj(vec![("ok", false.into()), ("reason", e.to_string().into())]);
+                }
+            }
+            if command == "--enable" { let _ = std::process::Command::new(&target).spawn(); if args.iter().any(|a| a == "--autostart") { let _ = set_autostart(true); } }
+            if command == "--upgrade-if-stale" && stale && was_running { let _ = std::process::Command::new(&target).spawn(); }
+            let mut result = vec![("ok", true.into()), ("upgraded", stale.into()), ("installed", target.to_string_lossy().into_owned().into())];
+            if command == "--upgrade-if-stale" { result.push(("restarted", (stale && was_running).into())); }
+            return Value::obj(result);
+        }
+        "--disable" => {
+            let consent = "몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. 기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. 암호 관리자가 보내는 '기록 제외' 신호는 따릅니다. 언제든 일시정지·끄기·모두 지우기를 할 수 있습니다.";
+            if std::env::var_os("KAGENT_TEST_ROOT").is_none() { let _ = std::process::Command::new(&target).arg("--quit").spawn(); }
+            for _ in 0..50 { if !root.join("status.json").exists() { break; } std::thread::sleep(std::time::Duration::from_millis(20)); }
+            let _ = set_autostart(false);
+            let status = std::fs::read_to_string(root.join("status.json")).ok().and_then(|s| crate::json::parse(&s)).unwrap_or_else(|| Value::obj(vec![]));
+            return Value::obj(vec![("ok", true.into()), ("running", root.join("status.json").exists().into()), ("available", bundled.is_some().into()), ("autostart", autostart_enabled().unwrap_or(false).into()), ("consent", consent.into()), ("status", status)]);
+        }
+        _ => return Value::obj(vec![("ok", false.into())]),
+    }
+}
+
+fn sha256_file(path: &std::path::Path) -> Option<String> {
+    let data = std::fs::read(path).ok()?;
+    let mut h = [0x6a09e667u32,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    const K:[u32;64]=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+    let mut msg=data; let bits=(msg.len() as u64)*8; msg.push(0x80); while msg.len()%64!=56 {msg.push(0)} msg.extend_from_slice(&bits.to_be_bytes());
+    for c in msg.chunks_exact(64) { let mut w=[0u32;64]; for i in 0..16 {w[i]=u32::from_be_bytes(c[i*4..i*4+4].try_into().ok()?)} for i in 16..64 {let a=w[i-15];let b=w[i-2];w[i]=w[i-16].wrapping_add(a.rotate_right(7)^a.rotate_right(18)^(a>>3)).wrapping_add(w[i-7]).wrapping_add(b.rotate_right(17)^b.rotate_right(19)^(b>>10));} let(mut a,mut b,mut c,mut d,mut e,mut f,mut g,mut z)=(h[0],h[1],h[2],h[3],h[4],h[5],h[6],h[7]); for i in 0..64 {let t1=z.wrapping_add(e.rotate_right(6)^e.rotate_right(11)^e.rotate_right(25)).wrapping_add((e&f)^(!e&g)).wrapping_add(K[i]).wrapping_add(w[i]);let t2=(a.rotate_right(2)^a.rotate_right(13)^a.rotate_right(22)).wrapping_add((a&b)^(a&c)^(b&c));z=g;g=f;f=e;e=d.wrapping_add(t1);d=c;c=b;b=a;a=t1.wrapping_add(t2);} for(i,v)in[a,b,c,d,e,f,g,z].iter().enumerate(){h[i]=h[i].wrapping_add(*v)} }
+    Some(h.iter().map(|v|format!("{v:08x}")).collect())
+}
+
+fn pause_until() -> f64 {
+    let path = std::env::var_os("KAGENT_PAUSE_FILE").map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join(format!("docfit-kclip-pause-{}.json", std::process::id())));
+    let until = std::fs::read_to_string(&path).ok().and_then(|s| crate::json::parse(&s))
+        .and_then(|v| v.num("until")).unwrap_or(0.0);
+    if until > 0.0 && until <= util::now() {
+        let _ = std::fs::remove_file(&path);
+        let status_path = std::path::Path::new(&util::data_dir()).join("status.json");
+        if std::fs::read_to_string(&status_path).map(|s| s.contains("\"paused\":true")).unwrap_or(false) {
+            if let Ok(exe) = std::env::current_exe() { let _ = std::process::Command::new(exe).arg("--resume").spawn(); }
+        }
+        return 0.0;
+    }
+    until
+}
+
+fn lifecycle_pipe_request(pipe: &str, request: &crate::json::Value) -> Option<crate::json::Value> {
+    use std::io::{Read, Write};
+    let mut stream = std::fs::OpenOptions::new().read(true).write(true).open(pipe).ok()?;
+    let mut bytes = crate::json::to_string(request).into_bytes(); bytes.push(b'\n');
+    stream.write_all(&bytes).ok()?;
+    let mut response = String::new(); stream.read_to_string(&mut response).ok()?;
+    crate::json::parse(&response)
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[test]
+    fn lifecycle_installs_upgrades_and_never_touches_registry_in_test_root() {
+        let root = std::env::temp_dir().join(format!("kagent-lifecycle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        unsafe { std::env::set_var("KAGENT_TEST_ROOT", &root); }
+        unsafe { std::env::set_var("KAGENT_DATA", &root); }
+        let exe = std::env::current_exe().unwrap();
+        let target = root.join("kagent.exe");
+        let source = std::fs::read(&exe).unwrap();
+        std::fs::write(&target, &source).unwrap();
+        assert_eq!(sha256_file(&target), sha256_file(&exe));
+        assert_eq!(set_autostart(true).unwrap_err(), "시험 실행에서는 자동 실행 등록을 바꾸지 않습니다.");
+        let _ = std::fs::remove_dir_all(root);
+        unsafe { std::env::remove_var("KAGENT_TEST_ROOT"); }
+        unsafe { std::env::remove_var("KAGENT_DATA"); }
+    }
+
+    #[test]
+    fn sha256_matches_standard_vector() {
+        let p = std::env::temp_dir().join(format!("kagent-sha-{}", std::process::id()));
+        std::fs::write(&p, b"abc").unwrap();
+        assert_eq!(sha256_file(&p).as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
+        let _ = std::fs::remove_file(p);
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
