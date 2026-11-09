@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/kclip/kclip_category.dart';
+import 'package:docfit_ui/features/kclip/kclip_category_prefs.dart';
 import 'package:docfit_ui/features/kclip/kclip_dialog.dart';
 
 Map<String, dynamic> _rules() {
@@ -117,5 +118,41 @@ void main() {
       expect(shown(), ids, reason: '분류: $c');
     }
     expect(find.byKey(const ValueKey('kclip-category-글')), findsNothing);
+  });
+
+  testWidgets('마지막 분류를 저장해 다시 연 관리창에 복원한다', (tester) async {
+    final prefs = MemoryKClipCategoryPrefs();
+    Future<Object?> api(String method, List<Object?> args) async {
+      if (method != 'kclip') return {'ok': true};
+      switch (args[0]) {
+        case 'status':
+          return {'ok': true, 'running': true, 'available': true, 'status': {}};
+        case 'list':
+          return {'ok': true, 'items': [
+            {'id': 1, 'kind': 'text', 'preview': '일반 글'},
+            {'id': 2, 'kind': 'files', 'preview': '파일 1개: 보고서.hwpx'},
+          ]};
+        case 'settings_get':
+          return {'ok': true, 'settings': {}};
+      }
+      return {'ok': true};
+    }
+    Widget panel() => MaterialApp(home: Scaffold(
+      body: SizedBox(width: 900, height: 900, child: KClipPanel(api: api, categoryPrefs: prefs)),
+    ));
+
+    await tester.pumpWidget(panel());
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('kclip-category-문서')));
+    await tester.pumpAndSettle();
+    expect(prefs.value, '문서');
+    expect(find.byKey(const ValueKey('kclip-item-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('kclip-item-1')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(panel());
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('kclip-item-2')), findsOneWidget);
+    expect(find.byKey(const ValueKey('kclip-item-1')), findsNothing);
   });
 }

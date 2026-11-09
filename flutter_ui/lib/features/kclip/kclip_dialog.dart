@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import 'kclip_category.dart';
+import 'kclip_category_prefs.dart';
 
 /// 몽땅클립보드 관리: 켜기(동의)·끄기·상태·목록(검색·고정·지우기·클립보드에 올리기)·설정.
 /// 빠른 붙여넣기는 상주 프로그램의 단축키 팝업(기본 Ctrl+Shift+V)이 맡고, 이 화면은 관리용이다.
@@ -102,7 +103,9 @@ class _KClipStickyWindowState extends State<KClipStickyWindow> {
   Future<Map> _window(String action, [Map<String, Object?>? payload]) async {
     try {
       final result = await widget.api('kclip_window', [action, payload ?? const {}]);
-      if (result is Map && result['window'] is Map) return result['window'] as Map;
+      if (result is Map && result['window'] is Map) {
+        return result['window'] as Map;
+      }
     } catch (_) {}
     return const {};
   }
@@ -250,6 +253,7 @@ class KClipPanel extends StatefulWidget {
     this.onAlwaysOnTopChanged,
     this.onHeaderDragUpdate,
     this.onHeaderDragEnd,
+    this.categoryPrefs,
   });
 
   final ApiCall api;
@@ -266,6 +270,7 @@ class KClipPanel extends StatefulWidget {
   /// 머리글을 끌어 스티커 창을 옮긴다.
   final GestureDragUpdateCallback? onHeaderDragUpdate;
   final GestureDragEndCallback? onHeaderDragEnd;
+  final KClipCategoryPrefs? categoryPrefs;
 
   @override
   State<KClipPanel> createState() => _KClipPanelState();
@@ -295,6 +300,7 @@ class _KClipPanelState extends State<KClipPanel> {
   bool get running => status['running'] == true;
   Map get agent => (status['status'] as Map?) ?? const {};
   bool get hotkeyMode => widget.mode == KClipEntryMode.hotkey;
+  KClipCategoryPrefs get _categoryPrefs => widget.categoryPrefs ?? const DefaultKClipCategoryPrefs();
   /// 분류 기준은 빠른 목록(kagent `category.rs`)과 같다(`kclip_category.dart`).
   List<Map> get visibleItems => items.where((item) => kclipItemIn(item, category)).toList();
 
@@ -311,8 +317,20 @@ class _KClipPanelState extends State<KClipPanel> {
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreCategory());
     unawaited(_reload());
     unawaited(_windowControl('state'));
+  }
+
+  Future<void> _restoreCategory() async {
+    final saved = await _categoryPrefs.read();
+    if (!mounted || saved == null || !kclipCategories.contains(saved)) return;
+    setState(() => category = saved);
+  }
+
+  void _selectCategory(String value) {
+    setState(() => category = value);
+    unawaited(_categoryPrefs.write(value));
   }
 
   /// 네이티브 앱 창 최대화/복원(desktop_web_ui.window_control). 실패하면 화면 상태를 바꾸지 않는다.
@@ -801,7 +819,7 @@ class _KClipPanelState extends State<KClipPanel> {
         Wrap(alignment: WrapAlignment.spaceBetween, crossAxisAlignment: WrapCrossAlignment.center,
           children: [
             Wrap(spacing: 2, children: [for (final c in kclipCategories)
-              TextButton(key: ValueKey('kclip-category-$c'), onPressed: () => setState(() => category = c),
+              TextButton(key: ValueKey('kclip-category-$c'), onPressed: () => _selectCategory(c),
                 style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 7)),
                 child: Text(c, style: TextStyle(fontWeight: category == c ? FontWeight.bold : null))) ]),
             SizedBox(width: 210, child: TextField(
@@ -865,7 +883,9 @@ class _KClipPanelState extends State<KClipPanel> {
                               tooltip: '표 항목 메뉴',
                               icon: const Icon(Icons.more_vert),
                               onSelected: (value) {
-                                if (value == 'no_shade') unawaited(_copyNoShade(item));
+                                if (value == 'no_shade') {
+                                  unawaited(_copyNoShade(item));
+                                }
                               },
                               itemBuilder: (context) => const [
                                 PopupMenuItem(

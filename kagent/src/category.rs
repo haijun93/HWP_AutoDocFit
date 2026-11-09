@@ -439,6 +439,7 @@ mod tests {
         assert_eq!(strings(rules.get("image_exts")), own(IMAGE_EXTS));
         assert_eq!(strings(rules.get("doc_programs")), own(DOC_PROGRAMS));
         assert_eq!(strings(rules.get("browsers")), own(BROWSERS));
+        assert_eq!(strings(rules.get("capture_programs")), own(CAPTURE_PROGRAMS));
         assert_eq!(strings(rules.get("doc_formats")), own(DOC_FORMATS));
     }
 
