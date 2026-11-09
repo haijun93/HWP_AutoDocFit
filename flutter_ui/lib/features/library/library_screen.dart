@@ -338,7 +338,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     try {
       await scan.startScan(box.id, directory);
     } catch (error) {
-      if (mounted) setState(() => _statusMessage = error.toString());
+      if (mounted) {
+        final message = '폴더 스캔을 시작하지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
       return;
     }
     if (!mounted) return;
@@ -607,7 +611,17 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     if (directory == null || !mounted) return;
-    final count = await widget.api.exportBox(box.id, directory);
+    int count;
+    try {
+      count = await widget.api.exportBox(box.id, directory);
+    } catch (error) {
+      if (mounted) {
+        final message = '자료함을 내보내지 못했습니다: ${_errorText(error)}';
+        setState(() => _statusMessage = message);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() => _statusMessage = '$directory 에 자료 $count개를 내보냈습니다.');
     if (!mounted) return;

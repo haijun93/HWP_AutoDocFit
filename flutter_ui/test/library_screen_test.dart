@@ -1060,6 +1060,17 @@ void libraryScanTests() {
     expect(find.textContaining('내보내기 폴더를 선택하지 못했습니다'), findsWidgets);
   });
 
+  testWidgets('내보내기 오류를 SnackBar로 안내한다', (tester) async {
+    final api = _ExportApi()..failExport = true;
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: LibraryScreen(api: api, folderPicker: () async => r'C:\\LibraryOut'))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('자료함을 내보내지 못했습니다'), findsWidgets);
+  });
+
   testWidgets('폴더 스캔 진행률을 보이고 취소 단추로 멈춘다', (tester) async {
     final api = _ScanApi();
     await tester.binding.setSurfaceSize(const Size(1200, 800));

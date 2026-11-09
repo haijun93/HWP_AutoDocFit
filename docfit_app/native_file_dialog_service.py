@@ -31,8 +31,6 @@ PURPOSES = {
     # 파일이름 탭: 모든 확장자(None = 확장자 제한 없음).
     'rename_files': ('open', None),
     'rename_folder': ('directory', None),
-    # Library export and scan destination; returns a host path without staging files.
-    'library_folder': ('directory', None),
     # 외부 프로그램(사진첩·아웃라이너·사진관리) 실행 파일 지정. 이름 검사는 external_apps_service.validate_exe가 한다.
     'external_app_exe': ('open', frozenset({'.exe'})),
 }
