@@ -128,7 +128,7 @@ def collect(fixtures: Path, fn_name: str):
                             col_cnt, border_fill, cell_fills, first_row_chars, wide = style_inventory._table_signature(element, chars)
                             cases.append({"file": path.name, "member": member,
                                           "input": {"tbl": _tree(element), "chars": chars},
-                                          "expected": [col_cnt, border_fill, list(cell_fills), first_row_chars, wide]})
+                                          "expected": [col_cnt, border_fill, list(cell_fills), list(first_row_chars) if isinstance(first_row_chars, tuple) else first_row_chars, wide]})
                 elif fn_name == "_table_info":
                     for element in root.iter():
                         if style_inventory._tag(element) == "tbl":

@@ -8,11 +8,16 @@ fn get_attr<'a>(node: &'a Value, name: &str) -> Option<&'a str> {
         .and_then(Value::as_str)
 }
 
+fn local_tag(tag: &str) -> &str {
+    let s = crate::style_inventory::tag::tag(tag);
+    s.rsplit(':').next().unwrap_or(s)
+}
+
 fn iter_tag<'a>(node: &'a Value, target: &str, out: &mut Vec<&'a Value>) {
     if node
         .get("tag")
         .and_then(Value::as_str)
-        .map(crate::style_inventory::tag::tag)
+        .map(local_tag)
         == Some(target)
     {
         out.push(node);
@@ -85,7 +90,7 @@ pub fn table_signature(tbl: &Value, chars: Option<&Value>) -> Value {
                 if child
                     .get("tag")
                     .and_then(Value::as_str)
-                    .map(crate::style_inventory::tag::tag)
+                    .map(local_tag)
                     == Some("tc")
                 {
                     first_row.push(child);
@@ -136,7 +141,14 @@ pub fn table_signature(tbl: &Value, chars: Option<&Value>) -> Value {
         })
         .collect();
 
-    let sz = crate::style_inventory::first::first(tbl, "sz");
+    let mut sz = crate::style_inventory::first::first(tbl, "sz");
+    if sz.is_none() {
+        let mut sz_vec = Vec::new();
+        iter_tag(tbl, "sz", &mut sz_vec);
+        if let Some(found) = sz_vec.first() {
+            sz = Some(found);
+        }
+    }
     let wide = sz
         .map(|s| crate::style_inventory::mm::mm(get_attr(s, "width")) > 120.0)
         .unwrap_or(false);
@@ -216,6 +228,79 @@ mod tests {
                 ["2"],
                 ["함초롬바탕", 10.0, true, "#000000"],
                 true
+            ])
+        );
+    }
+
+    #[test]
+    fn returns_null_first_row_chars_when_no_text() {
+        let tbl = json!({
+            "tag": "{urn:section}tbl",
+            "attrib": {"colCnt": "1", "borderFillIDRef": "3"},
+            "children": [
+                {
+                    "tag": "{urn:section}sz",
+                    "attrib": {"width": "10000"}
+                },
+                {
+                    "tag": "{urn:section}tr",
+                    "children": [
+                        {
+                            "tag": "{urn:section}tc",
+                            "attrib": {"borderFillIDRef": "4"},
+                            "children": []
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let sig = table_signature(&tbl, None);
+        assert_eq!(
+            sig,
+            json!([
+                "1",
+                "3",
+                ["4"],
+                null,
+                false
+            ])
+        );
+    }
+
+    #[test]
+    fn preserves_raw_cid_when_char_missing_in_defs() {
+        let tbl = json!({
+            "tag": "tbl",
+            "attrib": {"colCnt": "1"},
+            "children": [
+                {
+                    "tag": "tr",
+                    "children": [
+                        {
+                            "tag": "tc",
+                            "children": [
+                                {
+                                    "tag": "run",
+                                    "attrib": {"charPrIDRef": "99"},
+                                    "children": [{"tag": "t", "text": "Raw Text"}]
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let sig = table_signature(&tbl, None);
+        assert_eq!(
+            sig,
+            json!([
+                "1",
+                null,
+                [null],
+                "99",
+                false
             ])
         );
     }
