@@ -551,6 +551,9 @@ class _TableGridPainter extends CustomPainter {
       final textSpan = TextSpan(
         text: text,
         style: TextStyle(
+          // 미리보기 캔버스(CustomPainter)는 앱 테마 글꼴을 물려받지 않는다. 내장 한글 글꼴을 직접
+          // 지정하지 않으면 오프라인에서 한글이 □로 보인다(표그림판 2.0.5와 같은 원인, 2.2.42).
+          fontFamily: 'NotoSansKR',
           color: textColor,
           fontSize: fontSize,
           fontWeight: cell.style.bold ? FontWeight.bold : FontWeight.normal,
@@ -1110,6 +1113,7 @@ class TableShapesPainter extends CustomPainter {
     final textSpan = TextSpan(
       text: text,
       style: TextStyle(
+        fontFamily: 'NotoSansKR', // 앱 테마 글꼴을 물려받지 않는 캔버스: 내장 한글 글꼴 지정
         color: textColor,
         fontSize: fontSize,
         fontWeight: FontWeight.w500,
