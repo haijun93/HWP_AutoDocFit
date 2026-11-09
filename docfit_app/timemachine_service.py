@@ -138,6 +138,8 @@ class TimemachineService:
                 except subprocess.TimeoutExpired: process.kill()
             return paths, seen, indexed, errors
         finally:
+            if process and process.stdout:
+                process.stdout.close()
             with self._content_lock:
                 self._content_process = None
 
@@ -150,7 +152,7 @@ class TimemachineService:
         with self._content_lock:
             self._content_state.update(running=False, cancelled=cancel_event.is_set(), finished_at=time.time())
 
-    def _content_index_worker(self, roots, extensions, cancel_event=None):
+    def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True):
         cancel_event = cancel_event or self._content_cancel
         seen = indexed = errors = 0
         rules = Rules(extensions=extensions, extra_extensions=extensions)  # 본문 색인 확장자(예: txt)는 타임라인 종류에 없어도 색인한다
@@ -184,7 +186,7 @@ class TimemachineService:
                         if rules.skip_file(name):
                             self.content_index.remove_file(path)
                             continue
-                        if self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
+                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
                             rust_paths.append(path)
                         else:
                             python_paths.append(path)
@@ -517,7 +519,7 @@ class TimemachineService:
             self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
                                    "cancelled": False, "started_at": time.time(), "finished_at": None}
             self._content_thread = threading.Thread(target=self._content_index_worker,
-                args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event),
+                args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event, False),
                 name="timemachine-content-index", daemon=True)
             self._content_thread.start()
 

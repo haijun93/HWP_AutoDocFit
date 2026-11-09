@@ -72,8 +72,70 @@ class TimemachineServiceTests(unittest.TestCase):
         settings = self.service.command("settings_get")["settings"]
         self.assertEqual(settings["time_mode"], "max")
         self.assertFalse(settings["enabled"])
+        self.assertTrue(settings["rust_content_index"])
         self.assertIsInstance(settings["roots"], list)
         self.assertFalse(self.service.command("status")["enabled"])
+
+    def test_rust_index_failure_falls_back_to_python(self):
+        self.enable()
+        document = self.root / "fallback.txt"
+        document.write_text("rust failure fallback", encoding="utf-8")
+        with patch("docfit_app.timemachine_service.subprocess.Popen", side_effect=OSError("missing klib")):
+            self.service._content_index_worker([str(self.root)], frozenset({"txt"}), threading.Event())
+        self.assertEqual(len(self.service.command("content_search", {"query": "fallback"})["items"]), 1)
+
+    def test_content_index_distributes_supported_and_other_formats(self):
+        self.enable()
+        documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf"]
+        for document in documents:
+            document.write_text("distribution probe", encoding="utf-8")
+        rust_batches, python_calls = [], []
+        def fake_rust(paths, cancel_event, seen, indexed, errors):
+            rust_batches.extend(paths)
+            return paths, seen, indexed, errors
+        original = self.service.content_index.index_file
+        def record_python(path):
+            python_calls.append(Path(path).suffix.lower())
+            return original(path)
+        with patch.object(self.service, "_run_klib_index", side_effect=fake_rust), \
+             patch.object(self.service.content_index, "index_file", side_effect=record_python):
+            self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf"}), threading.Event())
+        self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md"})
+        self.assertCountEqual(python_calls, [".txt", ".md", ".pdf"])
+
+    def test_content_index_cancel_terminates_klib_process(self):
+        self.enable()
+        terminated = threading.Event()
+        class BlockingStdout:
+            def __iter__(self): return self
+            def __next__(self):
+                terminated.wait(2)
+                raise StopIteration
+            def close(self): pass
+        class FakeProcess:
+            stdout = BlockingStdout()
+            returncode = None
+            def poll(self): return self.returncode
+            def terminate(self): self.returncode = 1; terminated.set()
+            def kill(self): self.returncode = -9; terminated.set()
+            def wait(self, timeout=None): return self.returncode
+        process = FakeProcess()
+        self.service._content_state["running"] = True
+        self.service._content_cancel = threading.Event()
+        results = []
+        with patch.object(self.service, "_klib_executable", return_value=Path("fake-klib.exe")), \
+             patch("docfit_app.timemachine_service.subprocess.Popen", return_value=process):
+            worker = threading.Thread(target=lambda: results.append(
+                self.service._run_klib_index([self.root / "wait.txt"], self.service._content_cancel, 0, 0, 0)))
+            worker.start()
+            deadline = time.monotonic() + 1
+            while self.service._content_process is None and time.monotonic() < deadline:
+                time.sleep(.005)
+            result = self.service.cancel_content_index()
+            worker.join(1)
+        self.assertTrue(result["ok"])
+        self.assertTrue(terminated.is_set())
+        self.assertFalse(worker.is_alive())
 
     def test_content_and_related_search_are_available_without_developer_mode(self):
         self.enable()

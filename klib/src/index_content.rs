@@ -85,7 +85,9 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
             params![path,name,i as i64,level,rank,p.text,p.location_label,p.section]).map_err(|e|e.to_string())?;
     }
     tx.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", params![path,name,body]).map_err(|e|e.to_string())?;
-    let grams: std::collections::HashSet<String> = body.as_bytes().windows(2).filter_map(|w| std::str::from_utf8(w).ok().map(str::to_lowercase)).collect();
+    let chars: Vec<char> = body.to_lowercase().chars().collect();
+    let grams: std::collections::HashSet<String> = chars.windows(2)
+        .map(|pair| pair.iter().collect::<String>()).collect();
     for gram in grams { tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",params![gram,path]).map_err(|e|e.to_string())?; }
     tx.execute("INSERT OR REPLACE INTO content_meta(path,size,mtime,ctime,reference_date,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",params![path,size,mtime,meta.created().ok().and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|d.as_secs_f64()).unwrap_or(0.0),date,name,ext,HIERARCHY_VERSION]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e|e.to_string())?;
