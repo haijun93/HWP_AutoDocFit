@@ -149,6 +149,7 @@ def build(bundle: Path, output_exe: Path, version: str, launcher: str = "csharp"
     if launcher == "rust":
         compile_rust_launcher(output_exe.resolve())
         shutil.copy2(manifest, output_exe.resolve().with_suffix(".manifest.txt"))
+        shutil.copy2(payload, output_exe.resolve().with_suffix(".payload.zip"))
     elif launcher == "csharp":
         compile_launcher(
             payload, manifest, output_exe.resolve(), version,

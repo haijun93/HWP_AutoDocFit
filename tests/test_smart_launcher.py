@@ -49,11 +49,16 @@ class SmartLauncherBuildTest(unittest.TestCase):
             env["DOCFIT_LAUNCHER_MANIFEST"] = str(manifest)
             env["DOCFIT_LAUNCHER_PATH"] = str(launcher)
             env["DOCFIT_ARGS_REPORT"] = str(report)
+            env["DOCFIT_LAUNCHER_TEST_ROOT"] = str(root / "isolated-cache")
+            isolated_cache = root / "isolated-cache" / cache_name
+            isolated_cache.parent.mkdir(parents=True)
+            shutil.copytree(cache, isolated_cache)
+            (isolated_cache / ".docfit-complete").write_text(payload_hash, encoding="utf-8")
             completed = subprocess.run(
-                [str(launcher), "plain", "argument with spaces", 'quoted " value', "ends with slash\\"],
-                env=env, timeout=30,
+                [str(launcher), "--self-test", "plain", "argument with spaces", 'quoted " value', "ends with slash\\"],
+                env=env, timeout=30, capture_output=True, text=True,
             )
-            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(report.read_text(encoding="utf-8").splitlines(),
                              ["plain", "argument with spaces", 'quoted " value', "ends with slash\\"])
 
