@@ -280,6 +280,17 @@ fn marker_role(ch: char) -> Option<Role> {
     })
 }
 
+/// Normalize recognized marker glyphs to the same display marker used by the
+/// Python hierarchy analyzer. The input is the marker prefix only.
+pub fn canonical_marker(prefix: &str) -> &str {
+    match prefix.trim() {
+        "ㅁ" | "■" => "□",
+        "○" | "◦" => "ㅇ",
+        "•" | "·" | "‧" | "∙" | "⋅" | "ㆍ" | "●" => "•",
+        value => value,
+    }
+}
+
 fn roman_value(s: &str) -> Option<u32> {
     let mut total = 0i32;
     let mut prev = 0;
