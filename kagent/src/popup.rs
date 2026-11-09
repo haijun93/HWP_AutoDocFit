@@ -911,7 +911,10 @@ unsafe fn paint(hwnd: HWND) {
         if st.items.is_empty() {
             SelectObject(mem, font);
             SetTextColor(mem, 0x00666666);
+            let load_error = app().recent_error.lock().unwrap().clone();
             let msg = match tab {
+                // 저장소를 읽지 못해 비어 있는 경우를 "기록 없음"으로 잘못 알리지 않는다.
+                _ if !load_error.is_empty() => format!("목록을 불러오지 못했습니다: {load_error}"),
                 Tab::Search if !needle.trim().is_empty() => "찾는 글자가 들어 있는 항목이 없습니다.".to_string(),
                 Tab::Cat(Category::All) | Tab::Search => "아직 기록된 항목이 없습니다. 무엇이든 복사해 보세요.".to_string(),
                 Tab::Cat(c) => format!("'{}' 분류에 해당하는 항목이 없습니다.", c.label()),

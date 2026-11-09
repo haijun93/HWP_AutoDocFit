@@ -82,6 +82,8 @@ pub struct App {
     pub store: Mutex<Store>,
     pub settings: Mutex<Settings>,
     pub recent: Mutex<Vec<Summary>>,
+    /// 최근 목록을 저장소에서 읽지 못했을 때의 오류(빠른 목록이 빈 이유를 보이려고 보관, 정상이면 빈 글자).
+    pub recent_error: Mutex<String>,
     pub tx: Mutex<Sender<(Capture, String)>>,
     pub self_seq: AtomicU32,
     pub hwnd: AtomicIsize,
@@ -374,10 +376,23 @@ fn settings_path() -> String {
     format!("{}\\settings.json", app().dir)
 }
 
+/// 저장소 조회 결과를 메모리 목록에 반영한다. 성공이면 새 목록, 실패이면 예전 목록을 그대로 두고 오류 글을 돌려준다.
+pub fn merge_recent(previous: Vec<Summary>, result: Result<Vec<Summary>, String>) -> (Vec<Summary>, Option<String>) {
+    match result {
+        Ok(list) => (list, None),
+        Err(e) => (previous, Some(e)),
+    }
+}
+
 /// 메모리의 최근 목록을 DB에서 다시 읽는다(변경 때만).
 pub fn refresh_recent() {
-    let list = app().store.lock().unwrap().recent(RECENT, None).unwrap_or_default();
+    let result = app().store.lock().unwrap().recent(RECENT, None);
+    let previous = app().recent.lock().unwrap().clone();
+    // 조회에 실패해도 예전 목록을 지우지 않는다(예전에는 오류를 삼키고 빈 목록으로 덮어써, 관리창에는 기록이
+    // 보이는데 빠른 목록만 비어 보였다). 실패 이유는 빠른 목록이 비어 있을 때 화면에 보인다.
+    let (list, error) = merge_recent(previous, result);
     *app().recent.lock().unwrap() = list;
+    *app().recent_error.lock().unwrap() = error.unwrap_or_default();
     write_status();
     unsafe { PostMessageW(main_hwnd(), WM_REFRESH, 0, 0) };
 }
@@ -907,6 +922,7 @@ fn main() {
         store: Mutex::new(store),
         settings: Mutex::new(settings),
         recent: Mutex::new(Vec::new()),
+        recent_error: Mutex::new(String::new()),
         tx: Mutex::new(tx),
         self_seq: AtomicU32::new(0),
         hwnd: AtomicIsize::new(0),
@@ -1004,6 +1020,22 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample(id: i64) -> Summary {
+        Summary { id, kind: "text".into(), preview: format!("항목 {id}"), pinned: false, used: 1.0, size: 1,
+                  cats: crate::category::CategorySet::default() }
+    }
+
+    #[test]
+    fn failed_recent_query_keeps_previous_list_and_reports_error() {
+        let previous = vec![sample(1), sample(2)];
+        let (list, error) = merge_recent(previous.clone(), Err("database is locked".to_string()));
+        assert_eq!(list.len(), 2, "조회 실패 때 예전 목록을 지우면 안 된다");
+        assert_eq!(error.as_deref(), Some("database is locked"));
+        let (list, error) = merge_recent(previous, Ok(vec![sample(3)]));
+        assert_eq!(list.iter().map(|s| s.id).collect::<Vec<_>>(), vec![3]);
+        assert!(error.is_none());
+    }
 
     #[test]
     fn hotkeys() {
