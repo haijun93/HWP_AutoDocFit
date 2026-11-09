@@ -36,6 +36,7 @@ def main() -> int:
     parser.add_argument("paths", nargs="*", type=Path, help="files or folders; defaults to supported fixtures")
     parser.add_argument("--exe", type=Path, default=ROOT / "klib" / "target" / "debug" / "klib.exe")
     parser.add_argument("--queries", nargs=10, default=QUERIES, help="exactly ten query terms")
+    parser.add_argument("--dump", action="store_true", help="print differing paragraph numbers and fields")
     args = parser.parse_args()
     files = sorted({p.resolve() for item in (args.paths or [ROOT / "tests" / "fixtures"])
                     for p in (item.rglob("*") if item.is_dir() else [item])
@@ -69,6 +70,16 @@ def main() -> int:
                     doc_diffs += 1
                     first = next((i for i, pair in enumerate(zip(left, right)) if pair[0] != pair[1]), min(len(left), len(right)))
                     print(f"DOC_DIFF {path}: Python={len(left)} Rust={len(right)} first_difference={first}")
+                    if args.dump:
+                        for position in range(max(len(left), len(right))):
+                            py_row = left[position] if position < len(left) else None
+                            rs_row = right[position] if position < len(right) else None
+                            if py_row == rs_row:
+                                continue
+                            paragraph = (py_row or rs_row)[0]
+                            for field, py_value, rs_value in zip(("paragraph_index", "level", "body"), py_row or (None, None, None), rs_row or (None, None, None)):
+                                if py_value != rs_value:
+                                    print(f"  PARAGRAPH {paragraph} {field}: Python={py_value!r} Rust={rs_value!r}")
             search_diffs = 0
             rs = ContentSearchIndex(rs_db)
             try:
