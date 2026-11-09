@@ -28,6 +28,14 @@ def _tree(element):
 
 def collect(fixtures: Path, fn_name: str):
     cases = []
+    if fn_name == "analyze_style_inventory":
+        for path in sorted(fixtures.rglob("*.hwpx")):
+            try:
+                expected = style_inventory.analyze_style_inventory(path)
+                cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "header"}, "expected": {"definitions": expected["definitions"]}})
+            except Exception as exc:
+                print(f"skip {path.name}: {exc}", file=sys.stderr)
+        return cases
     for path in sorted(fixtures.rglob("*.hwpx")):
         from zipfile import ZipFile
         from defusedxml import ElementTree as ET
@@ -318,10 +326,11 @@ def collect(fixtures: Path, fn_name: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs", "_char_signature", "_table_signature", "_table_info", "_marker_class", "inline_effects", "paragraph_style_type", "_mode"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs", "_char_signature", "_table_signature", "_table_info", "_marker_class", "inline_effects", "paragraph_style_type", "_mode", "analyze_style_inventory"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
+    ap.add_argument("--quiet-diff", action="store_true", help="suppress per-case JSON differences")
     ns = ap.parse_args()
     cases = collect(ns.fixtures, ns.function)
     if ns.cases:
@@ -337,6 +346,8 @@ def main():
     lib.hwpx_free.argtypes = (ctypes.c_void_p,)
     matches = differences = errors = 0
     for case in cases:
+        rust_input = dict(case["input"])
+        stage = rust_input.get("stage")
         payload = json.dumps(case["input"], ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         ptr = lib.hwpx_call(ns.function.encode("ascii"), payload)
         if not ptr:
@@ -347,11 +358,13 @@ def main():
             actual = json.loads(ctypes.string_at(ptr).decode("utf-8"))
         finally:
             lib.hwpx_free(ptr)
-        if actual == case["expected"]:
+        compared = {key: actual.get(key) for key in case["expected"]} if ns.function == "analyze_style_inventory" else actual
+        if json.dumps(compared, ensure_ascii=False, sort_keys=True) == json.dumps(case["expected"], ensure_ascii=False, sort_keys=True):
             matches += 1
         else:
             differences += 1
-            print(json.dumps({"case": case["file"], "member": case["member"],
+            if not ns.quiet_diff:
+                print(json.dumps({"case": case["file"], "member": case["member"],
                               "input": case["input"], "python": case["expected"], "rust": actual},
                              ensure_ascii=False))
     print(json.dumps({"function": ns.function, "cases": len(cases), "matches": matches,

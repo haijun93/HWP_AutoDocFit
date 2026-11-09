@@ -28,6 +28,7 @@ mod style_inventory {
     pub mod inline_effects;
     pub mod paragraph_style_type;
     pub mod mode;
+    pub mod analyze;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -206,6 +207,13 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let counter = value.get("counter").unwrap_or(&value);
             let default = value.get("default");
             Ok(serde_json::to_string(&style_inventory::mode::mode(counter, default)).unwrap())
+        }
+        "analyze_style_inventory" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let path = value.get("path").and_then(serde_json::Value::as_str).ok_or("analyze_style_inventory expects path")?;
+            let stage = fn_name.split_once(':').map(|(_,s)|s).or_else(||value.get("stage").and_then(serde_json::Value::as_str)).unwrap_or("header");
+            let result = style_inventory::analyze::analyze(Path::new(path), stage)?;
+            Ok(serde_json::to_string(&result).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }
