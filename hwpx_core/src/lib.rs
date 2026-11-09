@@ -3,6 +3,12 @@ use serde::Serialize;
 use std::{ffi::{CStr, CString}, fs::File, io::Read, os::raw::c_char, panic::{catch_unwind, AssertUnwindSafe}, path::Path, sync::Mutex};
 use zip::ZipArchive;
 
+mod style_inventory {
+    pub mod first;
+    pub mod mm;
+    pub mod tag;
+}
+
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
 const MAX_ENTRY: u64 = 32 * 1024 * 1024;
 const MAX_TOTAL: u64 = 128 * 1024 * 1024;
@@ -54,35 +60,27 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tag = value.get("tag").and_then(serde_json::Value::as_str)
                 .ok_or("_tag expects {\"tag\": string}")?;
-            Ok(serde_json::to_string(tag.rsplit('}').next().unwrap_or(tag)).unwrap())
+            Ok(serde_json::to_string(style_inventory::tag::tag(tag)).unwrap())
         }
         "_first" => {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let name = value.get("name").and_then(serde_json::Value::as_str)
                 .ok_or("_first expects {\"tree\": ..., \"name\": string}")?;
-            let found = value.get("tree").and_then(|tree| first_tag(tree, name));
+            let found = value.get("tree").and_then(|tree| style_inventory::first::first(tree, name));
             Ok(serde_json::to_string(&found).unwrap())
         }
         "_mm" => {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
-            let number = match &value {
-                serde_json::Value::Null => 0.0,
-                serde_json::Value::Number(n) => n.as_f64().unwrap_or(0.0),
-                serde_json::Value::String(s) => s.trim().parse::<f64>().unwrap_or(0.0),
-                _ => return Ok("0.0".into()),
+            let input = match &value {
+                serde_json::Value::Null => None,
+                serde_json::Value::Number(n) => Some(n.to_string()),
+                serde_json::Value::String(s) => Some(s.clone()),
+                _ => None,
             };
-            let mm = (number / (7200.0 / 25.4) * 10.0).round() / 10.0;
-            Ok(serde_json::to_string(&mm).unwrap())
+            Ok(serde_json::to_string(&style_inventory::mm::mm(input.as_deref())).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }
-}
-
-fn first_tag<'a>(node: &'a serde_json::Value, name: &str) -> Option<&'a serde_json::Value> {
-    if node.get("tag").and_then(serde_json::Value::as_str).map(|tag| tag.rsplit('}').next().unwrap_or(tag)) == Some(name) {
-        return Some(node);
-    }
-    node.get("children")?.as_array()?.iter().find_map(|child| first_tag(child, name))
 }
 
 #[no_mangle] pub unsafe extern "C" fn hwpx_call(fn_name:*const c_char, json_in:*const c_char)->*mut c_char {
