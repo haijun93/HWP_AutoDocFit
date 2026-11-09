@@ -64,6 +64,8 @@ def main() -> int:
             print(f"Rust progress records: {len(progress)}; indexed: {sum(r['status']=='indexed' for r in progress)}; errors: {sum(r['status']=='error' for r in progress)}")
             py_rows, rs_rows = rows(py_db), rows(rs_db)
             doc_diffs = 0
+            level_diffs = 0
+            body_diffs = 0
             for path in sorted(set(py_rows) | set(rs_rows)):
                 left, right = py_rows.get(path, []), rs_rows.get(path, [])
                 if left != right:
@@ -80,6 +82,13 @@ def main() -> int:
                             for field, py_value, rs_value in zip(("paragraph_index", "level", "body"), py_row or (None, None, None), rs_row or (None, None, None)):
                                 if py_value != rs_value:
                                     print(f"  PARAGRAPH {paragraph} {field}: Python={py_value!r} Rust={rs_value!r}")
+                for position in range(max(len(left), len(right))):
+                    py_row = left[position] if position < len(left) else None
+                    rs_row = right[position] if position < len(right) else None
+                    if (py_row or (None, None, None))[1] != (rs_row or (None, None, None))[1]:
+                        level_diffs += 1
+                    if (py_row or (None, None, None))[2] != (rs_row or (None, None, None))[2]:
+                        body_diffs += 1
             search_diffs = 0
             rs = ContentSearchIndex(rs_db)
             try:
@@ -92,7 +101,7 @@ def main() -> int:
                         print(f"SEARCH_DIFF {query!r}: Python={len(a)} Rust={len(b)}")
             finally:
                 rs.close()
-            print(f"Compared {len(files)} files, {sum(map(len, py_rows.values()))} Python paragraphs, {sum(map(len, rs_rows.values()))} Rust paragraphs; document diffs={doc_diffs}; query diffs={search_diffs}")
+            print(f"Compared {len(files)} files, {sum(map(len, py_rows.values()))} Python paragraphs, {sum(map(len, rs_rows.values()))} Rust paragraphs; document diffs={doc_diffs}; level diffs={level_diffs}; body diffs={body_diffs}; query diffs={search_diffs}")
             return 1 if doc_diffs or search_diffs else 0
         finally:
             py.close()

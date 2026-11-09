@@ -69,24 +69,27 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
         if count > 0 { return Ok((false,count as usize)); }
     }
     let paragraphs = crate::extract::extract(Path::new(&path))?;
-    let analyzed = crate::extract::analyze_hierarchy(paragraphs)?;
-    let body = analyzed.iter().map(|p|p.paragraph.text.as_str()).collect::<Vec<_>>().join("\n");
+    let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
+    let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
+    let levels = crate::classify_levels::classify_extracted(&paragraphs, &scheme);
+    let body = paragraphs.iter().map(|p|p.text.as_str()).collect::<Vec<_>>().join("\n");
     let date = extract_date(&body);
     let tx = db.transaction().map_err(|e|e.to_string())?;
     for table in ["content_paragraph_fts","content_fts","content_short_grams","content_meta","content_errors"] {
         tx.execute(&format!("DELETE FROM {table} WHERE path=?"), [&path]).map_err(|e|e.to_string())?;
     }
-    for (i,p) in analyzed.iter().enumerate() {
-        let rank = level_rank(&p.level);
+    for (i,p) in paragraphs.iter().enumerate() {
+        let level = levels.get(i).map(String::as_str).unwrap_or("body");
+        let rank = level_rank(level);
         tx.execute("INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section) VALUES(?,?,?,?,?,?,?,?)",
-            params![path,name,i as i64,p.level,rank,p.paragraph.text,p.paragraph.location_label,p.paragraph.section]).map_err(|e|e.to_string())?;
+            params![path,name,i as i64,level,rank,p.text,p.location_label,p.section]).map_err(|e|e.to_string())?;
     }
     tx.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", params![path,name,body]).map_err(|e|e.to_string())?;
     let grams: std::collections::HashSet<String> = body.as_bytes().windows(2).filter_map(|w| std::str::from_utf8(w).ok().map(str::to_lowercase)).collect();
     for gram in grams { tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",params![gram,path]).map_err(|e|e.to_string())?; }
     tx.execute("INSERT OR REPLACE INTO content_meta(path,size,mtime,ctime,reference_date,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",params![path,size,mtime,meta.created().ok().and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|d.as_secs_f64()).unwrap_or(0.0),date,name,ext,HIERARCHY_VERSION]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e|e.to_string())?;
-    Ok((true,analyzed.len()))
+    Ok((true,paragraphs.len()))
 }
 
 fn level_rank(level:&str)->i64 { match level {"document_title"=>0,"chapter"=>1,"section"=>2,"topic"=>3,"square"=>4,"circle"=>5,"dash"=>6,"asterisk"=>7,_=>8} }
