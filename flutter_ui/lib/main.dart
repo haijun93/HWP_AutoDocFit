@@ -16,6 +16,7 @@ import 'bridge.dart' as bridge;
 import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
 import 'core/drop_events.dart';
+import 'core/compact_theme.dart';
 import 'features/preview/option_images.dart';
 import 'features/abbreviations/abbreviation_manager.dart';
 import 'features/formats/table_template_panel.dart';
@@ -86,32 +87,7 @@ class DocFitApp extends StatelessWidget {
   Widget build(BuildContext context) => MaterialApp(
     title: '한글편집 후처리',
     debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      fontFamily: 'NotoSansKR',
-      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
-      colorScheme: ColorScheme.fromSeed(seedColor: _blue),
-      scaffoldBackgroundColor: const Color(0xfff6f8fb),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(48, 52),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    ),
+    theme: buildCompactTheme(),
     home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
   );
 }
