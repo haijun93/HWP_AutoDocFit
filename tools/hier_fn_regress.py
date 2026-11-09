@@ -43,6 +43,14 @@ ROLES = (
 )
 
 
+def _json_normalize(value):
+    if isinstance(value, dict):
+        return {key: _json_normalize(item) for key, item in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_json_normalize(item) for item in value]
+    return value
+
+
 def _freeze(v):
     if isinstance(v, list):
         return ("__list__", tuple(_freeze(x) for x in v))
@@ -59,6 +67,26 @@ def _unfreeze(v):
         if tag == "__dict__":
             return {k: _unfreeze(item) for k, item in val}
     return v
+
+
+def _stage_differences(left, right, path="$", out=None):
+    """Return leaf paths whose JSON values differ."""
+    if out is None:
+        out = []
+    if isinstance(left, dict) and isinstance(right, dict):
+        for key in sorted(set(left) | set(right)):
+            if key not in left or key not in right:
+                out.append((f"{path}.{key}", left.get(key, "<missing>"), right.get(key, "<missing>")))
+            else:
+                _stage_differences(left[key], right[key], f"{path}.{key}", out)
+    elif isinstance(left, list) and isinstance(right, list):
+        if len(left) != len(right):
+            out.append((f"{path}.length", len(left), len(right)))
+        for index, (a, b) in enumerate(zip(left, right)):
+            _stage_differences(a, b, f"{path}[{index}]", out)
+    elif left != right:
+        out.append((path, left, right))
+    return out
 
 
 def cases(name, paragraphs):
@@ -158,6 +186,7 @@ def main():
     ap.add_argument("--no-build", action="store_true")
     ap.add_argument("--stages", action="store_true", help="Compare analyze_hierarchy stage intermediates")
     ap.add_argument("--stage", choices=[f"stage_{i:02}" for i in range(1, 7)], help="Limit stage comparison")
+    ap.add_argument("--dump", action="store_true", help="Print differing stage leaf paths and values")
     ap.add_argument("--report", type=Path, default=REPO.parent / "reports" / "HIER6.final.md")
     args = ap.parse_args()
     target_func = args.func_name or args.function
@@ -202,10 +231,13 @@ def main():
                     if args.stage and stage_name != args.stage:
                         continue
                     rust_value = rust_stage_values.get(stage_name)
-                    diff = py_value != rust_value
+                    diff = _json_normalize(py_value) != _json_normalize(rust_value)
                     stage_rows.append((label, stage_name, diff))
-                    if diff and label == "549 paragraphs":
+                    if diff:
                         print(f"{chunk_label}: {stage_name} difference=1")
+                    if diff and args.dump:
+                        for path, py_item, rust_item in _stage_differences(py_value, rust_value):
+                            print(f"  {path}: python={json.dumps(py_item, ensure_ascii=False)} rust={json.dumps(rust_item, ensure_ascii=False)}")
             print(f"{label}: batches={(len(selected)+24)//25}")
         print(f"stage comparisons={len(stage_rows)} differences={sum(row[2] for row in stage_rows)}")
         return int(any(row[2] for row in stage_rows))

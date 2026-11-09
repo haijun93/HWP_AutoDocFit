@@ -18,9 +18,11 @@ STAGE_NAMES = (
 )
 
 def stage_01(paragraphs):
+    paragraphs = list(paragraphs)
+    scheme = detect_scheme(item.get("text", "") for item in paragraphs)
     records = []
     for index, item in enumerate(paragraphs):
-        marker, marker_role = leading_marker(item.get("text", ""))
+        marker, marker_role = leading_marker(item.get("text", ""), scheme)
         records.append({**item, "index": index, "marker": marker,
                         "marker_role": marker_role,
                         "indent_hwpunit": int(item.get("left", 0)) + int(item.get("indent", 0))})
@@ -57,6 +59,10 @@ def _analyze_staged(paragraphs, capture=None):
         for role in ROLE_ORDER
     }
     indent_levels = sorted(set(r["indent_hwpunit"] for r in records))
+    if capture is not None:
+        capture["stage_02"] = {"role_indent": role_indent,
+                               "role_typography": role_typography,
+                               "indent_levels": indent_levels}
     # stage 03~05: 원문자 예외, 최종 역할/분류
     styles = defaultdict(list)
     for index, record in enumerate(records):
@@ -159,6 +165,7 @@ def _analyze_staged(paragraphs, capture=None):
 
 
 def run(paragraphs):
-    result = _analyze_staged(paragraphs)
-    return {"stage_01": stage_01(paragraphs), "result": result}, result
+    capture = {}
+    result = _analyze_staged(paragraphs, capture)
+    return {"stage_01": stage_01(paragraphs), **capture, "result": result}, result
 

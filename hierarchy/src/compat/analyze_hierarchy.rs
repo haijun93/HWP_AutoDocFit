@@ -5,7 +5,13 @@ use super::{document_type::document_type, leading_marker::leading_marker};
 fn modal<T: Clone + Eq + std::hash::Hash>(items: impl Iterator<Item=T>) -> Option<T> {
     let mut seen: Vec<(T, usize)> = Vec::new();
     for item in items { if let Some((_, n)) = seen.iter_mut().find(|(v,_)| *v == item) { *n += 1; } else { seen.push((item,1)); } }
-    seen.into_iter().max_by_key(|(_,n)| *n).map(|(v,_)|v)
+    let mut best: Option<(T, usize)> = None;
+    for (value, count) in seen {
+        if best.as_ref().map(|(_, best_count)| count > *best_count).unwrap_or(true) {
+            best = Some((value, count));
+        }
+    }
+    best.map(|(value, _)| value)
 }
 fn strv(v: &Value) -> String { v.as_str().unwrap_or("").to_owned() }
 fn num(v: &Value) -> f64 { v.as_f64().unwrap_or(0.0) }
@@ -28,8 +34,31 @@ pub fn stage_01(paragraphs: &Value) -> Value {
     json!({"records": records})
 }
 
+/// Stage 02: 역할별 문서 통계와 대표 서식을 집계한다.
+pub fn stage_02(records_value: &Value) -> Value {
+    let empty = Vec::new();
+    let records = records_value["records"].as_array().unwrap_or(&empty);
+    let roles = ["장", "중제목", "소제목", "본문", "내용", "부연설명"];
+    let mut role_indent = serde_json::Map::new();
+    let mut role_typography = serde_json::Map::new();
+    for role in roles {
+        let marked: Vec<&Value> = records
+            .iter()
+            .filter(|r| r["marker_role"].as_str() == Some(role))
+            .collect();
+        let indent = modal(marked.iter().map(|r| r["indent_hwpunit"].as_i64().unwrap_or(0)));
+        let typography = modal(marked.iter().map(|r| (r["font"].clone(), r["size_pt"].as_f64().unwrap_or(0.0).to_bits())));
+        role_indent.insert(role.into(), indent.map(|n| json!(n)).unwrap_or(Value::Null));
+        role_typography.insert(role.into(), typography.map(|(font, bits)| json!([font, f64::from_bits(bits)])).unwrap_or(Value::Null));
+    }
+    let mut indent_levels: Vec<i64> = records.iter().map(|r|r["indent_hwpunit"].as_i64().unwrap_or(0)).collect();
+    indent_levels.sort(); indent_levels.dedup();
+    json!({"role_indent":role_indent,"role_typography":role_typography,"indent_levels":indent_levels})
+}
+
 pub fn analyze_hierarchy_stages(input: &Value) -> Value {
-    json!({"stage_01": stage_01(&input["paragraphs"])})
+    let first = stage_01(&input["paragraphs"]);
+    json!({"stage_01": first, "stage_02": stage_02(&first)})
 }
 
 pub fn analyze_hierarchy(input: &Value) -> Value {
