@@ -8,6 +8,7 @@ pub mod leading_marker;
 pub mod most_common;
 pub mod analyze_hierarchy;
 pub mod hierarchy_summary;
+pub mod marker_scheme;
 
 use std::io::{Read, Write};
 
@@ -26,6 +27,12 @@ pub fn run_fn(name: &str) -> Result<(), String> {
         "analyze_hierarchy" => analyze_hierarchy::analyze_hierarchy(&input["paragraphs"]),
         "analyze_hierarchy_stages" => analyze_hierarchy::analyze_hierarchy_stages(&input),
         "hierarchy_summary" => serde_json::json!(hierarchy_summary::hierarchy_summary(&input["analysis"])),
+        "detect_scheme" => {
+            let texts: Vec<String> = input["texts"].as_array().into_iter().flatten().map(|x| x.as_str().unwrap_or("").to_owned()).collect();
+            marker_scheme::scheme_json(&marker_scheme::detect_scheme(&texts))
+        },
+        "classify_marker" => serde_json::Value::Array(input["texts"].as_array().into_iter().flatten().map(|t| serde_json::to_value(marker_scheme::classify_marker(t.as_str().unwrap_or(""))).unwrap_or(serde_json::Value::Null)).collect()),
+        "_ordinal" => serde_json::Value::Array(input["items"].as_array().into_iter().flatten().map(|item| serde_json::to_value(marker_scheme::ordinal(item["family"].as_str().unwrap_or(""), item["token"].as_str().unwrap_or(""))).unwrap_or(serde_json::Value::Null)).collect()),
         _ => return Err(format!("unknown compat function: {name}")),
     };
     serde_json::to_writer(std::io::stdout(), &result).map_err(|e| e.to_string())?;

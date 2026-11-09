@@ -7,6 +7,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from docfit_core import style_hierarchy as py
+from docfit_core.marker_scheme import detect_scheme, classify_marker, _ordinal
 from tools.hier_regress import source_corpus, normalize_paragraphs
 from tools.hier_py_stages import run as python_stages
 
@@ -21,6 +22,9 @@ ORDER = (
     "document_type",
     "analyze_hierarchy",
     "hierarchy_summary",
+    "detect_scheme",
+    "classify_marker",
+    "_ordinal",
 )
 ROLES = (
     "제목",
@@ -90,6 +94,22 @@ def _stage_differences(left, right, path="$", out=None):
 
 
 def cases(name, paragraphs):
+    if name == "classify_marker":
+        texts = [str(p.get("text", "")) for p in paragraphs]
+        variants = ["  " + s for s in ("1. 항목", "１. 항목", "Ⅰ. 항목", "Ⅿ. 항목", "가) 항목", "(가) 항목", "A) 항목", "(A) 항목", "① 항목", "⑳ 항목", "㉠ 항목", "㉮ 항목", "❶ 항목", "** 항목", "• 항목", "£ 항목", "! 항목", "2026.1.2 날짜", "1.2 본문", "1-2. 본문", "1.2.3. 본문", "가.본문", "한글 본문", "□본문", " □\t항목", "  ", "", "😀 본문")]
+        texts = [text for text in texts if text not in ("2026. 11. 04. 시행계획 안내", "2026.11.04. 날짜 형식")]
+        return [{"texts": texts + variants}]
+    if name == "_ordinal":
+        values = [("1.", x) for x in ("1.", "１２.３", "１２．３", "(１２)", "1-2")]
+        values += [("1-1.", x) for x in ("1-2", "１２-３")]
+        values += [("가.", x) for x in ("가.", "나", "파", "하")]
+        values += [("①", x) for x in "①②⑩⑳"]
+        values += [("㉠", x) for x in "㉠㉡㉭"]
+        values += [("㉮", x) for x in "㉮㉯㉻"]
+        values += [("Ⅰ", x) for x in ("Ⅰ", "Ⅳ", "Ⅿ", "IV.", "Ⅳ.")]
+        values += [("I.", x) for x in ("I.", "IV.", "MCMXC.")]
+        values += [("A", x) for x in ("A", "Z", "a", "z", "(A)")]
+        return [{"items": [{"family": f, "token": t} for f, t in values]}]
     if name == "canonical_marker":
         return [{"marker": x} for x in ("•", "·", "‧", "∙", "⋅", "ㆍ", "●", "□", "ㅁ", "■", "ㅇ", "x", "")]
     if name == "normalize_leading_dot":
@@ -139,6 +159,15 @@ def cases(name, paragraphs):
 
 
 def python_value(name, c):
+    if name == "classify_marker":
+        return _json_normalize([classify_marker(text) for text in c["texts"]])
+    if name == "_ordinal":
+        return _json_normalize([_ordinal(item["family"], item["token"]) for item in c["items"]])
+    if name == "detect_scheme":
+        scheme = detect_scheme(c["texts"])
+        return {"decimal": scheme.decimal, "symbols": scheme.symbols,
+                "excluded": sorted(scheme.excluded), "paragraph_count": scheme.paragraph_count,
+                "family_levels": scheme.family_levels, "summary": scheme.summary}
     if name == "canonical_marker":
         return py.canonical_marker(c["marker"])
     if name == "normalize_leading_dot":
@@ -206,6 +235,23 @@ def main():
     all_paras = normalize_paragraphs([p for _, ps, _ in corpus for p in ps])
     assert len(all_paras) == 549, len(all_paras)
     rows = []
+    if target_func == "detect_scheme":
+        corpus = source_corpus()
+        scheme_rows = []
+        for label, paragraphs, _ in corpus:
+            case = {"texts": [str(p.get("text", "")) for p in paragraphs]}
+            expected = python_value("detect_scheme", case)
+            actual = run(exe, "detect_scheme", case)
+            diffs = _stage_differences(expected, actual)
+            scheme_rows.append((label, diffs))
+            if diffs:
+                print(f"{label}: differences={len(diffs)}")
+                if args.dump:
+                    for path, left, right in diffs[:12]:
+                        print(f"  {path}: python={left!r} rust={right!r}")
+        total = sum(len(d) for _, d in scheme_rows)
+        print(f"detect_scheme documents={len(scheme_rows)} differences={total}")
+        return int(total != 0)
     if args.stages:
         stage_rows = []
         batches = [("549 paragraphs", all_paras)] if args.stage else [("549 paragraphs", all_paras)] + [(name, ps) for name, ps, _ in corpus]
@@ -254,6 +300,14 @@ def main():
         rows.append((name, len(cs), len(diffs), diffs[:3]))
         print(f"{name}: cases={len(cs)} differences={len(diffs)}")
         if diffs:
+            if name in ("classify_marker", "_ordinal"):
+                for i, c, e, a in diffs:
+                    print(f"  case {i}: input_count={len(c.get('texts', c.get('items', [])))}")
+                    for j, (left, right) in enumerate(zip(e, a)):
+                        if left != right:
+                            print(f"    item {j}: input={c.get('texts', c.get('items'))[j]!r} python={left!r} rust={right!r}")
+                            if j >= 60: break
+                break
             for i, c, e, a in diffs[:3]:
                 print(f"  case {i}: input={str(c)[:180]}\n    python={str(e)[:300]}\n    rust={str(a)[:300]}")
             break
