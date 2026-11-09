@@ -17,6 +17,46 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class SmartLauncherBuildTest(unittest.TestCase):
+    def test_rust_launcher_forwards_windows_arguments_with_spaces_and_quotes(self):
+        if os.name != "nt":
+            self.skipTest("Windows process argument integration test")
+        with tempfile.TemporaryDirectory(prefix="docfit-rust-args-") as temporary:
+            root = Path(temporary)
+            cache = root / "cache"
+            cache.mkdir()
+            csc = find_csc()
+            app = cache / "app_main.exe"
+            subprocess.run([str(csc), "/nologo", "/target:exe", f"/out:{app}",
+                            str(ROOT / "tests" / "fixtures" / "rust_launcher_args_child.cs")], check=True)
+            version = "9.97.0-test"
+            payload_hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            manifest = root / "launcher.manifest.txt"
+            manifest.write_text(
+                f"V\t{version}\nP\t{payload_hash}\nF\t{hashlib.sha256(app.read_bytes()).hexdigest()}\t{app.stat().st_size}\tapp_main.exe\n",
+                encoding="utf-8",
+            )
+            cache_name = f"app_v{version}_{payload_hash[:12]}"
+            launcher_cache = root / "local" / "HWP_AutoDocFit" / cache_name
+            launcher_cache.parent.mkdir(parents=True)
+            shutil.copytree(cache, launcher_cache)
+            (launcher_cache / ".docfit-complete").write_text(payload_hash, encoding="utf-8")
+            launcher = root / "launcher.exe"
+            from scripts.build_smart_launcher import compile_rust_launcher
+            compile_rust_launcher(launcher)
+            report = root / "report with spaces.json"
+            env = os.environ.copy()
+            env["LOCALAPPDATA"] = str(root / "local")
+            env["DOCFIT_LAUNCHER_MANIFEST"] = str(manifest)
+            env["DOCFIT_LAUNCHER_PATH"] = str(launcher)
+            env["DOCFIT_ARGS_REPORT"] = str(report)
+            completed = subprocess.run(
+                [str(launcher), "plain", "argument with spaces", 'quoted " value', "ends with slash\\"],
+                env=env, timeout=30,
+            )
+            self.assertEqual(completed.returncode, 0)
+            self.assertEqual(report.read_text(encoding="utf-8").splitlines(),
+                             ["plain", "argument with spaces", 'quoted " value', "ends with slash\\"])
+
     def test_payload_is_manifested_and_app_exe_is_renamed(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -128,15 +128,34 @@ def compile_launcher(
     subprocess.run(command, cwd=ROOT, check=True)
 
 
-def build(bundle: Path, output_exe: Path, version: str) -> tuple[str, Path]:
+def compile_rust_launcher(output_exe: Path) -> None:
+    if os.name != "nt":
+        raise OSError("Rust smart portable launcher compilation requires Windows")
+    cargo = shutil.which("cargo")
+    if not cargo:
+        raise FileNotFoundError("cargo was not found on PATH")
+    subprocess.run([cargo, "build", "--release", "--manifest-path", str(ROOT / "launcher_rs" / "Cargo.toml")],
+                   cwd=ROOT, check=True)
+    built = ROOT / "launcher_rs" / "target" / "release" / "docfit-smart-launcher.exe"
+    output_exe.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(built, output_exe)
+
+
+def build(bundle: Path, output_exe: Path, version: str, launcher: str = "csharp") -> tuple[str, Path]:
     if not version or any(c in version for c in "\r\n\t"):
         raise ValueError("version must be a single non-empty line")
     payload = output_exe.parent / "smart-launcher-build" / "payload.zip"
     payload_hash, manifest = make_payload(bundle.resolve(), payload, version)
-    compile_launcher(
-        payload, manifest, output_exe.resolve(), version,
-        ROOT / "resources" / "app_icon.ico", ROOT / "resources" / "splash.png",
-    )
+    if launcher == "rust":
+        compile_rust_launcher(output_exe.resolve())
+        shutil.copy2(manifest, output_exe.resolve().with_suffix(".manifest.txt"))
+    elif launcher == "csharp":
+        compile_launcher(
+            payload, manifest, output_exe.resolve(), version,
+            ROOT / "resources" / "app_icon.ico", ROOT / "resources" / "splash.png",
+        )
+    else:
+        raise ValueError(f"unknown launcher implementation: {launcher}")
     return payload_hash, output_exe.resolve()
 
 
@@ -145,8 +164,10 @@ def main() -> int:
     parser.add_argument("--bundle", type=Path, default=ROOT / "dist" / "HWP_AutoDocFit")
     parser.add_argument("--output", type=Path, default=ROOT / "dist" / "HWP_AutoDocFit.exe")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--launcher", choices=("csharp", "rust"), default="csharp",
+                        help="launcher implementation (default: csharp)")
     args = parser.parse_args()
-    digest, output = build(args.bundle, args.output, args.version)
+    digest, output = build(args.bundle, args.output, args.version, args.launcher)
     print(f"Created {output} ({output.stat().st_size:,} bytes); cache payload sha256={digest}")
     return 0
 
