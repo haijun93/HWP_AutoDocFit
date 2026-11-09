@@ -37,12 +37,12 @@ def main():
     if os.name != "nt":
         rust = ROOT / "kagent" / "target" / "debug" / "xl_regress"
     # File transport avoids command line size limits on Windows.
-    payload = [{"name": n, "input": base64.b64encode(b).decode()} for n, b in samples()]
+    payload = [{"name": n, "input": base64.b64encode(b).decode(), "shading": args.shading} for n, b in samples()]
     with tempfile.TemporaryDirectory() as tmp:
         inp, outp = Path(tmp) / "input.json", Path(tmp) / "output.json"
         inp.write_text(json.dumps(payload), encoding="utf-8")
         with outp.open("wb") as out:
-            subprocess.run([str(rust), str(inp)], stdout=out, check=True, cwd=ROOT)
+            subprocess.run([str(rust), str(inp)], stdout=out, stderr=subprocess.PIPE, check=True, cwd=ROOT)
         rust_bytes = outp.read_bytes()
     actual = {x["name"]: base64.b64decode(x["output"]) for x in json.loads(rust_bytes)}
     # Python reference executed in the requested application environment.
@@ -50,7 +50,12 @@ def main():
     py = subprocess.run([str(args.python), "-c", script, args.shading], input=json.dumps(payload).encode(), stdout=subprocess.PIPE, cwd=ROOT, check=True)
     expected = {x["name"]: base64.b64decode(x["output"]) for x in json.loads(py.stdout)}
     diffs = [n for n in expected if expected[n] != actual.get(n)]
-    print(json.dumps({"examples": len(expected), "differences": diffs, "count": len(diffs)}, ensure_ascii=False, indent=2))
+    details = []
+    for name in diffs:
+        left, right = expected[name], actual.get(name, b"")
+        first = next((i for i, (a, b) in enumerate(zip(left, right)) if a != b), min(len(left), len(right)))
+        details.append({"name": name, "python_bytes": len(left), "rust_bytes": len(right), "first_difference": first})
+    print(json.dumps({"examples": len(expected), "differences": diffs, "count": len(diffs), "details": details}, ensure_ascii=False, indent=2))
     return bool(diffs)
 
 
