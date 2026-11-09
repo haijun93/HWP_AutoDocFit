@@ -103,6 +103,8 @@ const _spaceNames = {
   LibrarySpace.reference: '참고자료',
   LibrarySpace.temp: '임시저장소',
 };
+const _librarySpacePriority = [LibrarySpace.core, LibrarySpace.basis, LibrarySpace.reference, LibrarySpace.temp];
+const _libraryPaneWidthKey = 'docfit.library.paneWidth';
 
 /// 내용(경로·URL·텍스트) 없이 klib에 내용만 저장되어 다시 만들 수 없는 자료는 복사할 수 없다.
 bool _canCopyItem(LibraryItem item) =>
@@ -210,6 +212,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// 자료 영역 개수(1~4). 기본값은 4이며, 마지막 선택을 저장해 다음에 그대로 연다.
   int _paneCount = 4;
+  double _rightPaneWidth = 240;
   final _explorer = LibraryExplorerController();
   late final LibraryViewPrefs _viewPrefs = widget.viewPrefs ?? const DefaultLibraryViewPrefs();
 
@@ -224,6 +227,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final mode = await _viewPrefs.read(libraryViewModeKey);
     final style = await _viewPrefs.read(libraryExplorerStyleKey);
     final paneCountStr = await _viewPrefs.read(libraryPaneCountKey);
+    final paneWidthStr = await _viewPrefs.read(_libraryPaneWidthKey);
     if (!mounted) return;
     setState(() {
       _viewMode = LibraryViewMode.values.where((m) => m.name == mode).firstOrNull ?? LibraryViewMode.canvas;
@@ -232,6 +236,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (count != null && count >= 1 && count <= 4) {
         _paneCount = count;
       }
+      final paneWidth = double.tryParse(paneWidthStr ?? '');
+      if (paneWidth != null && paneWidth.isFinite) _rightPaneWidth = paneWidth.clamp(120.0, 640.0).toDouble();
     });
   }
 
@@ -299,7 +305,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
     var added = 0;
     // 탐색기 형식에서 영역 폴더를 열어 두었으면 그 영역에, 아니면 핵심자료에 넣는다.
-    final space = (_viewMode == LibraryViewMode.explorer ? _explorer.folder : null) ?? LibrarySpace.core;
+    final space = (_viewMode == LibraryViewMode.explorer ? _explorer.folder : null) ?? _defaultDropSpace;
     for (final path in paths) {
       try {
         await _addFile(LibraryFileDrop(path: path), space, Offset.zero);
@@ -309,6 +315,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
       }
     }
     if (mounted && added > 0) setState(() => _statusMessage = '파일 $added개를 자료함에 넣었습니다.');
+  }
+
+  LibrarySpace get _defaultDropSpace => _librarySpacePriority[_paneCount - 1];
+
+  void _resizeRightPane(double delta, double availableWidth) {
+    final width = (_rightPaneWidth - delta).clamp(120.0, math.min(640.0, math.max(120.0, availableWidth - 220))).toDouble();
+    if (width == _rightPaneWidth) return;
+    setState(() => _rightPaneWidth = width);
+    unawaited(_viewPrefs.write(_libraryPaneWidthKey, width.toString()));
   }
 
   LibraryScanApi? get _scanApi {
@@ -1506,7 +1521,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
         _buildScanPanel(),
         if (_statusMessage != null) Text(_statusMessage!, key: const ValueKey('libraryStatus')),
         if (_selectedIds.isNotEmpty) _buildSelectionBar(),
-        Expanded(child: _viewMode == LibraryViewMode.explorer ? _buildExplorer() : _buildQuadrants()),
+        Expanded(child: LayoutBuilder(builder: (context, constraints) {
+          final maxRight = math.max(120.0, constraints.maxWidth - 220);
+          final rightWidth = _rightPaneWidth.clamp(120.0, math.min(640.0, maxRight)).toDouble();
+          return Row(children: [
+            Expanded(child: _viewMode == LibraryViewMode.explorer ? _buildExplorer() : _buildQuadrants()),
+            MouseRegion(
+              key: const ValueKey('libraryPaneResizeHandle'),
+              cursor: SystemMouseCursors.resizeColumn,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onHorizontalDragUpdate: (details) => _resizeRightPane(details.delta.dx, constraints.maxWidth),
+                child: const SizedBox(width: 8, child: Center(child: VerticalDivider(width: 1, indent: 4, endIndent: 4))),
+              ),
+            ),
+            SizedBox(key: const ValueKey('libraryRightPane'), width: rightWidth, child: const Center(child: Text('상세 / 미리보기'))),
+          ]);
+        })),
       ]);
 
   /// 탐색기 형식 보기. 조작은 캔버스와 같은 처리 함수를 쓴다(관계선 만들기 같은 캔버스 전용 동작만 없다).
@@ -1516,6 +1547,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return LibraryExplorerView(
       key: const ValueKey('libraryExplorerView'),
       boxName: box.name,
+      visibleSpaces: _librarySpacePriority.take(_paneCount).toList(),
       items: _items,
       spaceNames: _spaceNames,
       selectedIds: _selectedIds,
@@ -1595,37 +1627,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Widget _buildQuadrants() => LayoutBuilder(builder: (context, constraints) {
-        switch (_paneCount) {
-          case 1:
-            return _quadrant(LibrarySpace.core);
-          case 2:
-            return Row(children: [
-              Expanded(child: _quadrant(LibrarySpace.core)),
-              Expanded(child: _quadrant(LibrarySpace.basis)),
-            ]);
-          case 3:
-            return Row(children: [
-              Expanded(child: _quadrant(LibrarySpace.core)),
-              Expanded(child: Column(children: [
-                Expanded(child: _quadrant(LibrarySpace.basis)),
-                const Divider(height: 1),
-                Expanded(child: _quadrant(LibrarySpace.reference)),
-              ])),
-            ]);
-          case 4:
-          default:
-            return Column(children: [
-              Expanded(child: Row(children: [
-                for (final space in [LibrarySpace.core, LibrarySpace.basis])
-                  Expanded(child: _quadrant(space)),
-              ])),
-              const Divider(height: 1),
-              Expanded(child: Row(children: [
-                for (final space in [LibrarySpace.reference, LibrarySpace.temp])
-                  Expanded(child: _quadrant(space)),
-              ])),
-            ]);
+        final spaces = _librarySpacePriority.take(_paneCount).toList();
+        if (_paneCount == 1) {
+          return _quadrant(spaces.first);
         }
+        if (_paneCount == 2) {
+          return Row(children: [for (final space in spaces) Expanded(child: _quadrant(space))]);
+        }
+        if (_paneCount == 3) {
+          return Row(children: [
+            Expanded(child: _quadrant(spaces.first)),
+            Expanded(child: Column(children: [for (var i = 1; i < spaces.length; i++) ...[
+              if (i > 1) const Divider(height: 1),
+              Expanded(child: _quadrant(spaces[i])),
+            ]])),
+          ]);
+        }
+        return Column(children: [
+          Expanded(child: Row(children: [for (final space in spaces.take(2)) Expanded(child: _quadrant(space))])),
+          const Divider(height: 1),
+          Expanded(child: Row(children: [for (final space in spaces.skip(2)) Expanded(child: _quadrant(space))])),
+        ]);
       });
 
   Widget _quadrant(LibrarySpace space) {

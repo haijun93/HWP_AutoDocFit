@@ -120,6 +120,28 @@ void main() {
       expect(find.byKey(const ValueKey('librarySpace-temp')), findsNothing);
     });
 
+    testWidgets('오른쪽 패널 폭을 조절하고 저장한 폭을 복원한다', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(1200, 800));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final prefs = MemoryLibraryViewPrefs();
+      final api = InMemoryLibraryApi(initialBoxes: const [LibraryBox(id: 'box_1', name: '자료함')]);
+      Future<void> pumpLibrary() async {
+        await tester.pumpWidget(MaterialApp(home: Scaffold(body: LibraryScreen(api: api, viewPrefs: prefs))));
+        await tester.pumpAndSettle();
+      }
+
+      await pumpLibrary();
+      final pane = tester.getSize(find.byKey(const ValueKey('libraryRightPane')));
+      await tester.drag(find.byKey(const ValueKey('libraryPaneResizeHandle')), const Offset(-100, 0));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byKey(const ValueKey('libraryRightPane'))).width, pane.width + 100);
+      expect(prefs.values['docfit.library.paneWidth'], isNotNull);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpLibrary();
+      expect(tester.getSize(find.byKey(const ValueKey('libraryRightPane'))).width, pane.width + 100);
+    });
+
     testWidgets('개수를 줄여도 내용은 삭제되지 않고 숨겨지며, 늘리면 다시 보인다', (tester) async {
       await tester.binding.setSurfaceSize(const Size(1200, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -197,9 +219,17 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('libraryViewExplorer')));
       await tester.pumpAndSettle();
 
-      // 탐색기에서는 모든 폴더가 보이므로 임시저장소의 문서2도 확인 가능
+      // 탐색기에는 선택한 개수만큼 우선순위 앞 폴더만 보인다.
       expect(find.byKey(const ValueKey('libraryExplorerView')), findsOneWidget);
-      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-core')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('libraryPaneCount-3')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-core')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-basis')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-reference')), findsOneWidget);
+      expect(find.byKey(const ValueKey('libraryExplorerFolder-temp')), findsNothing);
 
       // 다시 캔버스로 전환 시 여전히 1개 영역
       await tester.tap(find.byKey(const ValueKey('libraryViewCanvas')));
