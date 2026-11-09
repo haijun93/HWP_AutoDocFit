@@ -783,31 +783,36 @@ class ContentSearchIndex:
         if not valid_meta:
             return []
 
-        # 3. 일치 문단 및 BM25 점수 조회 (FTS MATCH로 검색어 포함 문단만 추출)
+        # 3. 필요한 열만 읽고 현재 위계 스키마가 있는 후보 문서로 제한한다.
         para_rows = []
         with self._lock:
             if fts_terms:
                 match_expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in fts_terms)
                 try:
                     para_rows = self.db.execute("""
-                        SELECT path, name, paragraph_index, level, level_rank, body, bm25(content_paragraph_fts) AS bm25_rank
+                        SELECT path, paragraph_index, level, level_rank, body, bm25(content_paragraph_fts) AS bm25_rank
                         FROM content_paragraph_fts
                         WHERE content_paragraph_fts MATCH ?
-                    """, (match_expr,)).fetchall()
+                          AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                        ORDER BY path, CAST(paragraph_index AS INTEGER)
+                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
                 except sqlite3.OperationalError:
                     para_rows = self.db.execute("""
-                        SELECT path, name, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
+                        SELECT path, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
                         FROM content_paragraph_fts
                         WHERE content_paragraph_fts MATCH ?
-                    """, (match_expr,)).fetchall()
+                          AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                        ORDER BY path, CAST(paragraph_index AS INTEGER)
+                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
             else:
                 term_conds = " OR ".join("body LIKE ?" for _ in terms)
-                params = ["%" + t + "%" for t in terms]
                 para_rows = self.db.execute(f"""
-                    SELECT path, name, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
+                    SELECT path, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
                     FROM content_paragraph_fts
-                    WHERE {term_conds}
-                """, params).fetchall()
+                    WHERE ({term_conds})
+                      AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                    ORDER BY path, CAST(paragraph_index AS INTEGER)
+                """, (*["%" + t + "%" for t in terms], CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
 
         # 4. 문서별 문단 그룹화 및 일치 여부 / 점수 집계
         from collections import defaultdict

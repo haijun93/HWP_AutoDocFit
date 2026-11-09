@@ -177,6 +177,13 @@ class EngineWiringTest(unittest.TestCase):
         self.assertEqual(self._spacing_search_limit(in_cell=True, current_min=-20, drop=('표칸_자간_하한',)), 5)
         self.assertEqual(self._spacing_search_limit(in_cell=False, current_min=-20, drop=('표칸_자간_하한',)), 30)
 
+    def test_table_cell_retry_budget_reaches_minus_25_without_extra_probes(self):
+        # The table budget must cover its full 25-point range while retaining five search steps.
+        self.assertEqual(self.ns['자간_최대시도_표'], 25)
+        self.assertEqual(self._spacing_search_limit(in_cell=True, current_min=0), 25)
+        self.assertEqual(self._spacing_search_limit(in_cell=True, current_min=-20), 5)
+        self.assertEqual(self._spacing_search_limit(in_cell=True, current_min=-24), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

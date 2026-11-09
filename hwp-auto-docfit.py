@@ -371,7 +371,7 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.44"
+APP_VERSION = "2.2.45"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"
@@ -641,7 +641,7 @@ _ttf_패밀리이름 = _engine_resolve('docfit_engine.formatter', '_ttf_패밀�
 단어중간_줄바꿈방지_사용 = False
 문장부호_2줄_기준글자수 = 5
 자간_최대시도_본문 = 30
-자간_최대시도_표 = 5
+자간_최대시도_표 = 25
 # 표 칸 전용 하한(TCELL231): 설정 table_linespacing_min·table_spacing_min을 작업 시작 때 읽어 덮어쓴다. 본문 한도와 별개.
 표칸_줄간격_하한 = 100
 표칸_자간_하한 = -25
