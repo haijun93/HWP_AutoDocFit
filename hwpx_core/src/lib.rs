@@ -14,6 +14,8 @@ mod style_inventory {
     pub mod shade;
     pub mod parse_char;
     pub mod parse_para;
+    pub mod parse_border_fill;
+    pub mod parse_numbering;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -105,6 +107,16 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tree = value.get("tree").ok_or("_parse_para expects tree")?;
             Ok(serde_json::to_string(&style_inventory::parse_para::parse_para(tree)).unwrap())
+        }
+        "_parse_border_fill" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_parse_border_fill expects tree")?;
+            Ok(serde_json::to_string(&style_inventory::parse_border_fill::parse_border_fill(tree)).unwrap())
+        }
+        "_parse_numbering" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_parse_numbering expects tree")?;
+            Ok(serde_json::to_string(&style_inventory::parse_numbering::parse_numbering(tree)).unwrap())
         }
         "_parse_char" => {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
