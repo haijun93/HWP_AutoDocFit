@@ -812,45 +812,86 @@ class ContentSearchIndex:
         if not valid_meta:
             return []
 
-        # 3. 필요한 열만 읽고 현재 위계 스키마가 있는 후보 문서로 제한한다.
-        para_rows = []
+        # 3. FTS 문단을 문서별로 SQL 집계한다. 본문 전체는 순위 계산 뒤
+        # 상위 결과 snippet을 만들 때만 다시 읽는다.
+        count_terms = [(t, t) for t in parsed["terms"]] + [(p, p) for p in parsed["phrases"]]
+        aggregate_sql = []
+        for idx, (label, term) in enumerate(count_terms):
+            aggregate_sql.append(
+                f"SUM(CASE WHEN instr(body_folded, lower(?)) > 0 "
+                f"THEN (length(body_folded) - length(replace(body_folded, lower(?), ''))) "
+                f"/ max(length(lower(?)), 1) "
+                f"ELSE 0 END) AS match_count_{idx}"
+            )
+        count_columns = ", ".join(aggregate_sql)
+        match_any = " OR ".join("instr(body_folded, lower(?)) > 0" for _ in terms)
+        # FTS BM25 is constant per query result document in this path's legacy
+        # ranking; use the minimum matching paragraph rank and first top-level
+        # paragraph for the established hierarchy tie break.
         with self._lock:
             if fts_terms:
                 match_expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in fts_terms)
                 try:
-                    para_rows = self.db.execute("""
-                        SELECT path, paragraph_index, level, level_rank, body, bm25(content_paragraph_fts) AS bm25_rank
-                        FROM content_paragraph_fts
-                        WHERE content_paragraph_fts MATCH ?
-                          AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
-                        ORDER BY path, CAST(paragraph_index AS INTEGER)
-                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
+                    aggregate_rows = self.db.execute(f"""
+                        WITH scored AS MATERIALIZED (
+                            SELECT path, paragraph_index, level, level_rank, body, lower(body) AS body_folded,
+                                   bm25(content_paragraph_fts) AS bm25_rank
+                            FROM content_paragraph_fts
+                            WHERE content_paragraph_fts MATCH ?
+                              AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                        ), matched AS (
+                            SELECT * FROM scored WHERE ({match_any})
+                        ), best AS (
+                            SELECT path, MIN(COALESCE(level_rank, 8)) AS best_level_rank,
+                                   MIN(bm25_rank) AS best_bm25,
+                                   MIN(CAST(paragraph_index AS INTEGER)) AS first_match_index
+                            FROM matched GROUP BY path
+                        ), chosen AS (
+                            SELECT m.path, MIN(CAST(m.paragraph_index AS INTEGER)) AS chosen_paragraph_index
+                            FROM matched m JOIN best b ON b.path=m.path AND b.best_level_rank=COALESCE(m.level_rank, 8)
+                            GROUP BY m.path
+                        ), counts AS (
+                            SELECT path, COUNT(*) AS matched_paragraphs, {count_columns}
+                            FROM matched GROUP BY path
+                        )
+                        SELECT b.path, c.matched_paragraphs, b.best_level_rank, b.best_bm25,
+                               ch.chosen_paragraph_index, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
+                        FROM best b JOIN counts c ON c.path=b.path JOIN chosen ch ON ch.path=b.path
+                        ORDER BY c.matched_paragraphs DESC LIMIT 100000
+                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms,
+                          *[v for _, t in count_terms for v in (t, t, t)])).fetchall()
                 except sqlite3.OperationalError:
-                    para_rows = self.db.execute("""
-                        SELECT path, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
+                    aggregate_rows = self.db.execute(f"""
+                        SELECT path, COUNT(*) AS matched_paragraphs,
+                               MIN(CASE WHEN ({match_any}) THEN COALESCE(level_rank, 8) END) AS best_level_rank,
+                               0.0 AS best_bm25,
+                               MIN(CASE WHEN ({match_any}) THEN CAST(paragraph_index AS INTEGER) END) AS chosen_paragraph_index,
+                               {count_columns}
                         FROM content_paragraph_fts
                         WHERE content_paragraph_fts MATCH ?
                           AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
-                        ORDER BY path, CAST(paragraph_index AS INTEGER)
-                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
+                          AND ({match_any})
+                        GROUP BY path
+                        ORDER BY SUM(CASE WHEN ({match_any}) THEN 1 ELSE 0 END) DESC
+                        LIMIT 100000
+                    """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms, *terms)).fetchall()
             else:
-                term_conds = " OR ".join("body LIKE ?" for _ in terms)
-                para_rows = self.db.execute(f"""
-                    SELECT path, paragraph_index, level, level_rank, body, 0.0 AS bm25_rank
-                    FROM content_paragraph_fts
-                    WHERE ({term_conds})
+                aggregate_rows = self.db.execute(f"""
+                    SELECT path, COUNT(*) AS matched_paragraphs,
+                           MIN(CASE WHEN ({match_any}) THEN COALESCE(level_rank, 8) END) AS best_level_rank,
+                           0.0 AS best_bm25,
+                           MIN(CASE WHEN ({match_any}) THEN CAST(paragraph_index AS INTEGER) END) AS chosen_paragraph_index,
+                           {count_columns}
+                    FROM (SELECT content_paragraph_fts.*, lower(body) AS body_folded
+                          FROM content_paragraph_fts)
+                    WHERE ({match_any})
                       AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
-                    ORDER BY path, CAST(paragraph_index AS INTEGER)
-                """, (*["%" + t + "%" for t in terms], CURRENT_HIERARCHY_SCHEMA_VERSION)).fetchall()
+                    GROUP BY path
+                    ORDER BY SUM(CASE WHEN ({match_any}) THEN 1 ELSE 0 END) DESC
+                    LIMIT 100000
+                """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], *terms, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms)).fetchall()
 
-        # 4. 문서별 문단 그룹화 및 일치 여부 / 점수 집계
-        from collections import defaultdict
-        paras_by_path = defaultdict(list)
-        for pr in para_rows:
-            pr_path = pr["path"]
-            matched_key = pr_path if pr_path in valid_meta else os.path.abspath(pr_path)
-            if matched_key in valid_meta:
-                paras_by_path[matched_key].append(pr)
+        # 4. SQL 집계 결과로 문서 AND·근접 조건을 판정한다.
 
         # 제외어 포함 문서 사전 추출
         excluded_paths = set()
@@ -873,24 +914,26 @@ class ContentSearchIndex:
                             excluded_paths.add(os.path.abspath(er[0]))
 
         prepared = []
-        count_terms = [(t, t) for t in parsed["terms"]] + [(p, p) for p in parsed["phrases"]]
-
-        for path, p_list in paras_by_path.items():
+        for aggregate in aggregate_rows:
+            path = aggregate["path"]
+            path = path if path in valid_meta else os.path.abspath(path)
             if path in excluded_paths or os.path.abspath(path) in excluded_paths:
                 continue
             meta = valid_meta.get(path)
             if not meta:
                 continue
 
-            combined_matched_text = "\n".join(p["body"] or "" for p in p_list)
-            combined_folded = combined_matched_text.casefold()
-
-            # 전체 문서 AND 검사
-            if any(t.casefold() not in combined_folded for t in terms):
+            match_counts = {label: int(aggregate[f"match_count_{idx}"] or 0)
+                            for idx, (label, _) in enumerate(count_terms)}
+            # SQL occurrence counts allow document-level AND without materializing bodies.
+            if any(match_counts.get(t, 0) == 0 for t in terms):
                 continue
 
             # N 근접도 검사
             if parsed["near"] is not None and len(terms) > 1:
+                with self._lock:
+                    near_rows = self.db.execute("SELECT body FROM content_paragraph_fts WHERE path=? ORDER BY CAST(paragraph_index AS INTEGER)", (path,)).fetchall()
+                combined_matched_text = "\n".join(r["body"] or "" for r in near_rows)
                 word_spans = [(m.group().casefold(), m.start(), m.end()) for m in re.finditer(r"\S+", combined_matched_text)]
                 term_positions = [[i for i, (word, _, _) in enumerate(word_spans) if term.casefold() in word]
                                   for term in terms]
@@ -901,41 +944,10 @@ class ContentSearchIndex:
                     continue
 
             # 언급 횟수 집계
-            match_counts = {label: combined_folded.count(term.casefold()) for label, term in count_terms}
             total_matches = sum(match_counts.values())
-
-            # 일치 문단 수집
-            matching_paras = []
-            for p in p_list:
-                p_body = p["body"] or ""
-                p_folded = p_body.casefold()
-                if any(t.casefold() in p_folded for t in terms):
-                    p_idx = int(p["paragraph_index"])
-                    p_rank = int(p["level_rank"]) if p["level_rank"] is not None else LEVEL_ORDER.index("body")
-                    p_bm25 = float(p["bm25_rank"]) if "bm25_rank" in p.keys() and p["bm25_rank"] is not None else 0.0
-                    matching_paras.append(
-                        ParagraphMatch(
-                            paragraph_index=p_idx,
-                            level=p["level"],
-                            level_rank=p_rank,
-                            match_counts={label: p_folded.count(term.casefold()) for label, term in count_terms},
-                            bm25=p_bm25,
-                            snippet="",
-                            highlights=[],
-                        )
-                    )
-
-            if not matching_paras:
-                best_level = LEVEL_LABELS["body"]
-                best_level_rank = LEVEL_ORDER.index("body")
-                best_bm25 = 0.0
-                target_para_body = p_list[0]["body"] if p_list else ""
-            else:
-                best_level, best_level_rank = _best_level(matching_paras)
-                best_bm25 = min(m.bm25 for m in matching_paras)
-                highest_matches = [m for m in matching_paras if m.level_rank == best_level_rank]
-                chosen_match = highest_matches[0]
-                target_para_body = next((p["body"] for p in p_list if int(p["paragraph_index"]) == chosen_match.paragraph_index), p_list[0]["body"])
+            best_level_rank = int(aggregate["best_level_rank"] if aggregate["best_level_rank"] is not None else LEVEL_ORDER.index("body"))
+            best_level = LEVEL_LABELS.get(LEVEL_ORDER[best_level_rank] if best_level_rank < len(LEVEL_ORDER) else "body", LEVEL_LABELS["body"])
+            best_bm25 = float(aggregate["best_bm25"] or 0.0)
 
             doc_date = _document_date(meta["ctime"], meta["mtime"])
             file_name = meta["name"] or os.path.basename(path)
@@ -943,7 +955,7 @@ class ContentSearchIndex:
             prepared.append({
                 "path": path,
                 "name": file_name,
-                "_target_body": target_para_body or "",
+                "_chosen_paragraph_index": aggregate["chosen_paragraph_index"],
                 "score": total_matches,
                 "match_counts": match_counts,
                 "total_matches": total_matches,
@@ -957,6 +969,14 @@ class ContentSearchIndex:
         # 5. 정렬 및 순위 부여
         _sort_hierarchy_results(prepared, sort=sort)
         final_items = prepared[:lim]
+        with self._lock:
+            for item in final_items:
+                chosen = item.pop("_chosen_paragraph_index")
+                row = self.db.execute("SELECT body,level FROM content_paragraph_fts WHERE path=? AND CAST(paragraph_index AS INTEGER)=? ORDER BY CAST(paragraph_index AS INTEGER) LIMIT 1",
+                                      (item["path"], chosen)).fetchone()
+                item["_target_body"] = (row["body"] if row else "") or ""
+                if row and row["level"] == "table_cell":
+                    item["best_level"] = LEVEL_LABELS["table_cell"]
         for idx, item in enumerate(final_items):
             # 스니펫·하이라이트는 화면에 보일 상위 결과에만 만든다(N214B 속도 개선, 결과 동일)
             target_para_body = item.pop("_target_body")

@@ -411,6 +411,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hierarchy"
+version = "0.1.0"
+
+[[package]]
 name = "htmlescape"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -482,6 +486,7 @@ name = "klib"
 version = "0.1.0"
 dependencies = [
  "editor_core",
+ "hierarchy",
  "md5",
  "regex",
  "rusqlite",

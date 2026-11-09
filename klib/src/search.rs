@@ -272,25 +272,41 @@ impl SearchIndex {
             }
         }
         q=Box::new(BooleanQuery::new(clauses));
-        let top=searcher.search(&q,&TopDocs::with_limit(options.limit.max(1)*10).order_by_score())?;
-        let mut groups:HashMap<String,SearchHit>=HashMap::new();
-        let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
+        let top=searcher.search(&q,&TopDocs::with_limit(options.limit.max(1).saturating_mul(20).min(4000)).order_by_score())?;
+        // First pass stores only compact metadata, not paragraph bodies or snippets.
+        let mut candidates: Vec<(String, Score, u8, i64, Option<u64>, String, String, Vec<String>, tantivy::DocAddress)> = Vec::with_capacity(top.len());
         for (score,addr) in top {
             let d=searcher.doc::<TantivyDocument>(addr)?;
             let path=d.get_first(self.fields.path).and_then(|v|v.as_str()).unwrap_or("").to_string();
-            let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("").to_string();
             let page=d.get_first(self.fields.page).and_then(|v|v.as_u64());
-            let hit=groups.entry(path.clone()).or_insert_with(|| SearchHit {path,name:d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").into(),title:d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").into(),score,paragraph_count:0,snippets:Vec::new(),page,box_ids:d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect(),hit_pages:Vec::new(),highlighted:Vec::new()});
-            hit.paragraph_count+=1;
-            if hit.snippets.len()<3 {
-                let snippet=generator.snippet(&body);
-                hit.highlighted.extend(snippet.highlighted().iter().map(|range| snippet.fragment()[range.clone()].to_string()));
+            let level=d.get_first(self.fields.level).and_then(|v|v.as_u64()).unwrap_or(0).min(255) as u8;
+            let recency=d.get_first(self.fields.mtime).and_then(|v|v.as_i64()).unwrap_or(0);
+            let name=d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string();
+            let title=d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string();
+            let box_ids=d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect();
+            candidates.push((path,score,level,recency,page,name,title,box_ids,addr));
+        }
+        let compact: Vec<_> = candidates.iter().enumerate().map(|(i,c)| hierarchy::search::Candidate {document:i,score:c.1,hierarchy_rank:c.2,recency:c.3}).collect();
+        let ranked=hierarchy::search::aggregate(&compact, options.limit.max(1));
+        let mut groups: HashMap<usize,SearchHit> = HashMap::new();
+        let ranked_len=ranked.len();
+        let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
+        for row in &ranked {
+            let c=&candidates[row.document];
+            let hit=groups.entry(row.document).or_insert_with(||SearchHit{path:c.0.clone(),name:c.5.clone(),title:c.6.clone(),score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,box_ids:c.7.clone(),hit_pages:Vec::new(),highlighted:Vec::new()});
+            let d=searcher.doc::<TantivyDocument>(c.8)?;
+            let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
+            let snippet=generator.snippet(body);
+            if hit.snippets.is_empty() {
+                hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
                 hit.snippets.push(snippet.fragment().to_string());
             }
-            hit.hit_pages.push(page);
-            if score>hit.score {hit.score=score;}
+            hit.hit_pages.push(c.4);
         }
-        let mut out:Vec<_>=groups.into_values().collect(); out.sort_by(|a,b|b.score.total_cmp(&a.score)); out.truncate(options.limit.max(1)); Ok(out)
+        let mut out: Vec<_>=Vec::with_capacity(ranked_len);
+        // Search-policy output order comes from hierarchy::search::aggregate.
+        for row in ranked { if let Some(hit)=groups.remove(&row.document) { out.push(hit); } }
+        Ok(out)
     }
 
     fn load_synonyms(&self) -> Vec<Vec<String>> {
@@ -357,6 +373,14 @@ mod tests {
  #[test] fn tokenizer_utf8_offsets(){let mut s=KoBigram.token_stream("\u{ac00}\u{b098}\u{b2e4}");s.advance();assert_eq!(&"\u{ac00}\u{b098}\u{b2e4}"[s.token().offset_from..s.token().offset_to],"\u{ac00}\u{b098}");}
  #[test] fn directives_extract_filters(){let p=parse_directives("\u{d55c}\u{ad6d}\u{c5b4} ext:txt path:abc");assert_eq!(p.text,"\u{d55c}\u{ad6d}\u{c5b4}");assert_eq!(p.filters.len(),2);}
  #[test] fn add_and_search(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();ix.add_or_update(&paragraph("a.txt","\u{d55c}\u{ad6d}\u{c5b4} \u{ac80}\u{c0c9} \u{bb38}\u{b2e8}")).unwrap();assert_eq!(ix.search("\u{d55c}\u{ad6d}\u{c5b4}",SearchOptions{limit:10}).unwrap().len(),1);let _=std::fs::remove_dir_all(dir);}
+ #[test] fn hierarchy_aggregation_keeps_top_twenty_order_and_snippets(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    for n in 0..25 { let mut p=paragraph(&format!("doc-{n:02}.txt"),&format!("서울 예산 정책 자료 {n}")); p.level=if n<20 {1}else{0}; p.mtime=n as i64; ix.add_or_update(&p).unwrap(); }
+    let hits=ix.search("서울",SearchOptions{limit:20}).unwrap();
+    assert_eq!(hits.len(),20); assert!(hits.iter().all(|h|h.paragraph_count==1 && !h.snippets[0].is_empty()));
+    assert!(hits.iter().all(|h|h.path.starts_with("doc-")));
+    let _=std::fs::remove_dir_all(dir);
+ }
  #[test] fn notebook_index_reuses_search_index_with_exact_scope_and_rank(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();let source=|id|crate::notebook::Source{id,notebook_id:7,kind:"txt".into(),origin:"".into(),display_name:format!("자료{id}"),status:"ready".into(),reason:"".into(),paragraph_count:1,original_size:0,original_mtime:0};let a=source(31);let b=source(32);ix.replace_notebook_source(7,&a,&[crate::notebook::Paragraph{source_id:31,ordinal:0,location:"1".into(),level:0,kind:"text".into(),body:"서울 예산".into()}]).unwrap();ix.replace_notebook_source(7,&b,&[crate::notebook::Paragraph{source_id:32,ordinal:0,location:"2".into(),level:0,kind:"text".into(),body:"서울 서울 예산 예산".into()}]).unwrap();let all=ix.search_notebook(7,"서울 예산",None,10).unwrap();assert_eq!(all.len(),2);assert!(all[0].score>=all[1].score);assert!(ix.search_notebook(7,"서울 예산",Some(&[31]),10).unwrap().iter().all(|h|h.source_id==31));assert!(ix.search_notebook(8,"서울 예산",None,10).unwrap().is_empty());ix.remove_notebook(7).unwrap();assert!(ix.search_notebook(7,"서울",None,10).unwrap().is_empty());let _=std::fs::remove_dir_all(dir);}
  #[test] fn chosung_and_fuzzy_helpers(){assert_eq!(cho_text("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}"),"\u{314E}\u{3148}\u{3142}\u{3148}\u{3145}\u{314C}");assert!(is_chosung_query("\u{314E}\u{3148}\u{3142}\u{3148}"));assert!(fuzzy_query("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}",schema().1.body_jamo).is_some());}
 }
