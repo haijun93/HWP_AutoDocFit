@@ -49,3 +49,18 @@
 4. **Rust 단위/통합 테스트**:
    - 명령: `cargo test --manifest-path hierarchy/Cargo.toml`
    - 결과: 41개 테스트 전체 통과 (lib 38개, bin_cli 3개)
+
+---
+
+## 4. 수정 결과
+
+1. **불일치 0건 달성**:
+   - `detect_scheme`: 29개 코퍼스 문서 549문단 전체에서 Python 대비 차이 7건 -> **0건** 완전 해소.
+   - `analyze_hierarchy`: 22개 케이스 차이 **0건** 유지.
+   - `hier_regress`: 29개 문서 549문단 차이 **0건** 유지.
+2. **원인별 조치 완료**:
+   - `classify_marker`: `regex::Regex` 기반 일괄 치환(`sub_marker_re`)으로 다자리 연도("2026.")가 "1111."로 오분류되던 문제를 해결하여 Python과 1:1 일치.
+   - `detect_scheme`: `OFFICIAL`에 `("-", "-")` 반영, 임의 4자리 숫자 건너뛰기 제거, 공문서 표준 순서(`order`) 일치화 완료.
+3. **테스트 통과**:
+   - `cargo test --manifest-path hierarchy/Cargo.toml` 41개 테스트 전체 통과 (unit 38, integration 3).
+
