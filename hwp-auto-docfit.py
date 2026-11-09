@@ -222,7 +222,6 @@ if __name__ == "__main__" and len(_selftest_sys.argv) > 1:
         raise SystemExit(_early_cli_main())
 
 from docfit_engine.runtime import resolve as _engine_resolve
-from docfit_engine.pipeline import PipelineCallbacks
 
 import os
 import sys
