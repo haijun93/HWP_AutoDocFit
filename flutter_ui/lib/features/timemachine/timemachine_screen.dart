@@ -291,7 +291,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Future<void> _contentSearch(String query, {String? sort}) async {
     final searchRev = ++_contentSearchRevision;
-    if (!_developerMode) return;
     if (query.isEmpty) {
       if (mounted) {
         setState(() {
@@ -446,7 +445,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
 
   Future<void> _setContentMode(bool related) async {
-    if (!_developerMode) return;
     setState(() {
       _relatedMode = related;
       _contentMode = true;
@@ -500,7 +498,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
 
   Future<void> _startContentIndex() async {
-    if (!_developerMode) return;
     final response = await _api.command('content_index_start');
     if (!mounted) return;
     setState(() { _contentProgress = response; _contentIndexRunning = response['running'] == true; });
@@ -522,7 +519,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     if (mounted) setState(() { _contentProgress = status; _contentIndexRunning = status['running'] == true; });
   }
   void _toggleContentMode(bool value) {
-    if (value && !_developerMode) return;
     setState(() {
       _contentMode = value;
       _relatedMode = false;
@@ -541,7 +537,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   }
 
   void _toggleRelatedMode(bool value) {
-    if (value && !_developerMode) return;
     setState(() {
       _relatedMode = value;
       _contentMode = value;
@@ -592,7 +587,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       developerMode = false;
     }
     setState(() { _settings = loaded; _developerMode = developerMode; _watchByAgent = status['watch'] == 'agent';
-      if (!developerMode && (_contentMode || _relatedMode)) _resetContentState();
       if (status['ok'] != true) _error = '${status['message'] ?? '상태를 불러오지 못했습니다.'}'; });
     if (loaded['enabled'] == true) {
       // 에이전트가 없으면 앱을 열 때 증분 색인한다(사용자 결정 6). 에이전트가 있으면 폴더 설정만 맞춘다.
@@ -887,7 +881,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
               ],
             ),
           Expanded(
-            child: _developerMode && (_contentMode || _relatedMode)
+            child: (_contentMode || _relatedMode)
                 ? Column(children: [if (_contentMode) _contentSearchPanel(), Expanded(child: _contentResultsView())])
                 : (_fileTableView && _fileSearchSupported
                     ? _fileSearchTable(_fileSearchActive ? _fileSearchResults : _items)
@@ -1432,19 +1426,19 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Text(_relatedMode ? '연관검색' : '본문검색', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-        if (_developerMode && _contentIndexRunning) ...[
+        if (_contentIndexRunning) ...[
           const SizedBox(width: 80, child: LinearProgressIndicator()),
           Text('${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건', style: const TextStyle(fontSize: 12)),
           TextButton(onPressed: _cancelContentIndex, child: const Text('\uCDE8\uC18C')),
-        ] else if (_developerMode)
+        ] else
           TextButton.icon(
             onPressed: _startContentIndex,
             icon: const Icon(Icons.play_arrow, size: 16),
             label: const Text('\uBCF8\uBB38 \uC0C9\uC778'),
           ),
-        if (_developerMode && _contentProgress['errors'] != null)
+        if (_contentProgress['errors'] != null)
           Text('추출 실패 ${_contentProgress['errors']}건', style: const TextStyle(fontSize: 12, color: Colors.red)),
-        if (_developerMode || _relatedMode) Row(
+        Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             const Text('정렬: ', style: TextStyle(fontSize: 12)),
@@ -1453,7 +1447,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
               value: _contentSort,
               isDense: true,
             items: [
-                if (_relatedMode || _developerMode)
+                if (_relatedMode)
                   const DropdownMenuItem(value: 'hierarchy_relevance', child: Text('위계순')),
                 const DropdownMenuItem(value: 'relevance', child: Text('관련도순')),
                 if (_developerMode)
@@ -1506,10 +1500,10 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Widget _searchModeSelector({required bool collapsed}) {
     final modes = <(String, String)>[
       ('file', '파일명'),
-      if (_developerMode) ('content', '본문검색'),
-      if (_developerMode) ('related', '연관검색'),
+      ('content', '본문검색'),
+      ('related', '연관검색'),
     ];
-    final selected = _developerMode && _relatedMode ? 'related' : _developerMode && _contentMode ? 'content' : 'file';
+    final selected = _relatedMode ? 'related' : _contentMode ? 'content' : 'file';
     if (collapsed) {
       final label = modes.firstWhere((m) => m.$1 == selected).$2;
       return PopupMenuButton<String>(
