@@ -121,7 +121,7 @@ fn aggregate(sections: &[Value], defs: &Value) -> Value {
                 let margin = find_local(pp, "margin");
                 let mut margins = serde_json::Map::new();
                 for k in ["left","right","top","bottom","header","footer","gutter"] {
-                    margins.insert(k.into(), margin.and_then(|m| find_local(m,k)).map(|x| crate::style_inventory::mm::mm(attr(x,"value"))).unwrap_or(0.0).into());
+                    margins.insert(k.into(), crate::style_inventory::mm::mm(margin.and_then(|m| attr(m,k))).into());
                 }
                 page=json!({"width_mm":crate::style_inventory::mm::mm(attr(pp,"width")),"height_mm":crate::style_inventory::mm::mm(attr(pp,"height")),"orientation":if attr(pp,"landscape")==Some("NARROWLY"){"가로"}else{"세로"},"margin_mm":if margin.is_some(){Value::Object(margins)}else{json!({})}});
             }
