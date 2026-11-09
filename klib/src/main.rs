@@ -13,6 +13,7 @@ mod notebook;
 mod nb_transform;
 mod scan;
 mod extract;
+mod index_content;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -73,6 +74,12 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if args.first().is_some_and(|a| a == "index-content") {
+        if args.len() < 3 { eprintln!("usage: klib index-content <db> <file-or-folder>..."); std::process::exit(2); }
+        if let Err(error) = index_content::run(&args[1], &args[2..]) { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
 
     if args.first().is_some_and(|a| a == "extract") {
         let Some(path) = args.get(1) else { eprintln!("extract requires a path"); std::process::exit(2); };
