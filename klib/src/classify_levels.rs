@@ -25,7 +25,7 @@ fn classify(paragraphs: &[Value], stage: usize) -> Vec<Value> {
     classify_with_scheme(paragraphs, stage, &scheme)
 }
 
-fn classify_with_scheme(paragraphs: &[Value], stage: usize, scheme: &hierarchy::compat::marker_scheme::MarkerScheme) -> Vec<Value> {
+pub(crate) fn classify_with_scheme(paragraphs: &[Value], stage: usize, scheme: &hierarchy::compat::marker_scheme::MarkerScheme) -> Vec<Value> {
     paragraphs.iter().map(|p| {
         let style = text(p, "style_name").to_lowercase();
         let outline = integer(p, "outline_level");
