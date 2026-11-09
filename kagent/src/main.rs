@@ -1148,6 +1148,7 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             return Value::obj(result);
         }
         "--disable" => {
+            let consent = "몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. 기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. 암호 관리자가 보내는 '기록 제외' 신호는 따릅니다. 언제든 일시정지·끄기·모두 지우기를 할 수 있습니다.";
             if std::env::var_os("KAGENT_TEST_ROOT").is_none() { let _ = std::process::Command::new(&target).arg("--quit").spawn(); }
             for _ in 0..50 { if !root.join("status.json").exists() { break; } std::thread::sleep(std::time::Duration::from_millis(20)); }
             let _ = set_autostart(false);
