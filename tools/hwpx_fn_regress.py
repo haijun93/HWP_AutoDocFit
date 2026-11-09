@@ -32,6 +32,17 @@ def collect(fixtures: Path, fn_name: str):
         for path in sorted(fixtures.rglob("*.hwpx")):
             try:
                 expected = style_inventory.analyze_style_inventory(path)
+                from zipfile import ZipFile
+                from defusedxml import ElementTree as ET
+                sections = []
+                with ZipFile(path) as archive:
+                    for member in style_inventory._sections(archive):
+                        root = ET.fromstring(archive.read(member))
+                        items = []
+                        style_inventory._walk(root, "본문", items)
+                        sections.append({"name": member, "paragraphs": [[_tree(p), ctx] for p, ctx in items]})
+                cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "body_walk"}, "expected": {"sections": sections}})
+                cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "header"}, "expected": {"definitions": expected["definitions"]}})
                 cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "header"}, "expected": {"definitions": expected["definitions"]}})
             except Exception as exc:
                 print(f"skip {path.name}: {exc}", file=sys.stderr)
@@ -358,15 +369,50 @@ def main():
             actual = json.loads(ctypes.string_at(ptr).decode("utf-8"))
         finally:
             lib.hwpx_free(ptr)
-        compared = {key: actual.get(key) for key in case["expected"]} if ns.function == "analyze_style_inventory" else actual
-        if json.dumps(compared, ensure_ascii=False, sort_keys=True) == json.dumps(case["expected"], ensure_ascii=False, sort_keys=True):
+        if ns.function == "analyze_style_inventory" and stage == "body_walk":
+            def normalize_json(value):
+                if isinstance(value, dict): return {k: normalize_json(v) for k, v in value.items() if k not in ("text", "tail")}
+                if isinstance(value, list): return [normalize_json(v) for v in value]
+                return value
+            compared = {"sections": normalize_json(actual.get("sections", []))}
+            expected_value = {"sections": normalize_json(case["expected"].get("sections", []))}
+        else:
+            compared = {key: actual.get(key) for key in case["expected"]} if ns.function == "analyze_style_inventory" else actual
+            expected_value = case["expected"]
+        if json.dumps(compared, ensure_ascii=False, sort_keys=True) == json.dumps(expected_value, ensure_ascii=False, sort_keys=True):
             matches += 1
         else:
             differences += 1
             if not ns.quiet_diff:
-                print(json.dumps({"case": case["file"], "member": case["member"],
-                              "input": case["input"], "python": case["expected"], "rust": actual},
-                             ensure_ascii=False))
+                detail = {"case": case["file"], "member": case["member"],
+                "input": case["input"]}
+                if ns.function == "analyze_style_inventory" and stage == "body_walk":
+                    py_sections = case["expected"].get("sections", [])
+                    rs_sections = actual.get("sections", [])
+                    detail = {"case": case["file"], "python_sections": len(py_sections), "rust_sections": len(rs_sections),
+                              "python_paragraphs": sum(len(s["paragraphs"]) for s in py_sections),
+                              "rust_paragraphs": sum(len(s["paragraphs"]) for s in rs_sections)}
+                    for ps, rs in zip(py_sections, rs_sections):
+                        for index, (pp, rp) in enumerate(zip(ps["paragraphs"], rs["paragraphs"])):
+                            if normalize_json(pp) != normalize_json(rp):
+                                import difflib
+                                def paths(a, b, prefix=""):
+                                    if type(a) is not type(b): return [prefix or "$type"]
+                                    if isinstance(a, dict):
+                                        out=[]
+                                        for key in sorted(set(a)|set(b)):
+                                            if key not in a or key not in b: out.append(prefix+"."+key)
+                                            else: out.extend(paths(a[key],b[key],prefix+"."+key))
+                                        return out
+                                    if isinstance(a, list):
+                                        out=[]
+                                        for i,(x,y) in enumerate(zip(a,b)): out.extend(paths(x,y,f"{prefix}[{i}]"))
+                                        if len(a)!=len(b): out.append(prefix+".length")
+                                        return out
+                                    return [] if a==b else [prefix]
+                                detail["first_mismatch"] = {"index": index, "paths": paths(pp,rp)[:10]}
+                                break
+                print(json.dumps(detail, ensure_ascii=False))
     print(json.dumps({"function": ns.function, "cases": len(cases), "matches": matches,
                       "differences": differences, "errors": errors}, ensure_ascii=False))
     return 0 if differences == 0 and errors == 0 else 1

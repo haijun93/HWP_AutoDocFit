@@ -2,14 +2,29 @@ use serde_json::{json, Value};
 use std::{fs::File, io::Read, path::Path};
 use zip::ZipArchive;
 
-fn tree(node: &Value) -> Value {
-    if let Some(obj)=node.as_object() {
-        let mut out=serde_json::Map::new();
-        for key in ["tag","text","tail","attrib","children"] { out.insert(key.into(),obj.get(key).cloned().unwrap_or(Value::Null)); }
-        Value::Object(out)
-    } else { node.clone() }
+fn tree(node: &Value) -> Value { node.clone() }
+
+fn normalize_tree(node: &Value) -> Value {
+    let mut out=tree(node);
+    if let Some(obj)=out.as_object_mut(){
+        if obj.get("text")==Some(&Value::Null){obj.remove("text");}
+        if obj.get("tail")==Some(&Value::Null){obj.remove("tail");}
+        if let Some(children)=obj.get_mut("children").and_then(Value::as_array_mut){for child in children.iter_mut(){*child=normalize_tree(child);}}
+    }
+    out
 }
-fn xml_tag(name: &str) -> String { name.to_string() }
+fn xml_tag(name: &str, namespace: &str) -> String { format!("{{{namespace}}}{}", name.split(':').last().unwrap_or(name)) }
+fn ns_uri(prefix: &str) -> &'static str {
+    match prefix {
+        "ha" => "http://www.hancom.co.kr/hwpml/2011/app", "hc" => "http://www.hancom.co.kr/hwpml/2011/core",
+        "hh" => "http://www.hancom.co.kr/hwpml/2011/head", "hhs" => "http://www.hancom.co.kr/hwpml/2011/history",
+        "hm" => "http://www.hancom.co.kr/hwpml/2011/master-page", "hp" => "http://www.hancom.co.kr/hwpml/2011/paragraph",
+        "hpf" => "http://www.hancom.co.kr/schema/2011/hpf", "hs" => "http://www.hancom.co.kr/hwpml/2011/section",
+        "opf" => "http://www.idpf.org/2007/opf/", "dc" => "http://purl.org/dc/elements/1.1/",
+        "epub" => "http://www.idpf.org/2007/ops", "config" => "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+        _ => "http://www.hancom.co.kr/hwpml/2011/head",
+    }
+}
 
 fn parse(bytes: &[u8]) -> Result<Value, String> {
     let mut reader = quick_xml::Reader::from_reader(bytes);
@@ -20,7 +35,8 @@ fn parse(bytes: &[u8]) -> Result<Value, String> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Start(e)) => {
-                let tag = format!("{{http://www.hancom.co.kr/hwpml/2011/head}}{}", e.name().as_ref().split(':').last().unwrap_or(e.name().as_ref()));
+                let qname=e.name(); let prefix=qname.as_ref().split(':').next().unwrap_or(""); let ns=ns_uri(prefix);
+                let tag = xml_tag(qname.as_ref(), ns);
                 let mut attrib = serde_json::Map::new();
                 for a in e.attributes().with_checks(false).flatten() {
                     let raw_key=a.key.as_ref();
@@ -33,7 +49,8 @@ fn parse(bytes: &[u8]) -> Result<Value, String> {
                 if stack.is_empty(){root=node.clone();stack.push(node)}else{stack.push(node)}
             }
             Ok(quick_xml::events::Event::Empty(e)) => {
-                let tag = format!("{{http://www.hancom.co.kr/hwpml/2011/head}}{}", e.name().as_ref().split(':').last().unwrap_or(e.name().as_ref()));
+                let qname=e.name(); let prefix=qname.as_ref().split(':').next().unwrap_or(""); let ns=ns_uri(prefix);
+                let tag = xml_tag(qname.as_ref(), ns);
                 let mut attrib = serde_json::Map::new();
                 for a in e.attributes().with_checks(false).flatten() {
                     let raw_key=a.key.as_ref();
@@ -45,10 +62,10 @@ fn parse(bytes: &[u8]) -> Result<Value, String> {
                 let node=json!({"tag":tag,"attrib":attrib,"children":[]});
                 if let Some(parent)=stack.last_mut(){parent["children"].as_array_mut().unwrap().push(node)}else{root=node}
             }
-            Ok(quick_xml::events::Event::End(_)) => if stack.len()>1 {let node=stack.pop().unwrap();stack.last_mut().unwrap()["children"].as_array_mut().unwrap().push(node)},
+            Ok(quick_xml::events::Event::End(_)) => if stack.len()>1 {let node=stack.pop().unwrap();let mut node=normalize_tree(&node);if let Some(text)=node.get("text").and_then(Value::as_str){if let Some(parent)=stack.last_mut(){if let Some(children)=parent.get_mut("children").and_then(Value::as_array_mut){if let Some(prev)=children.last_mut(){prev["tail"]=Value::String(text.to_string());}}}}stack.last_mut().unwrap()["children"].as_array_mut().unwrap().push(node)},
             Ok(quick_xml::events::Event::Text(e)) => {
                 let text=quick_xml::escape::unescape(e.as_ref()).map_err(|err|err.to_string())?.into_owned();
-                if !text.trim().is_empty(){if let Some(node)=stack.last_mut(){node["text"]=Value::String(text)}}
+                if !text.trim().is_empty() { if let Some(node)=stack.last_mut(){node["text"]=Value::String(text);} }
             }
             Ok(quick_xml::events::Event::DocType(_)) => return Err("DOCTYPE forbidden".into()),
             Ok(quick_xml::events::Event::Eof) => break,
@@ -73,7 +90,7 @@ pub fn analyze(path: &Path, stage: &str) -> Result<Value,String> {
         .filter(|n|n.starts_with("Contents/section")&&n.ends_with(".xml")).collect::<Vec<_>>();
     names.sort_by_key(|n|n.trim_end_matches(".xml").trim_start_matches("Contents/section").parse::<u32>().unwrap_or(u32::MAX));
     let mut sections=Vec::new();
-    for name in names { let root=tree(&read_member(&mut z,&name)?);sections.push(json!({"name":name,"tree":root,"paragraphs":crate::style_inventory::walk::walk(&root,"본문")})); }
+    for name in names { let root=read_member(&mut z,&name)?;let mut paras=crate::style_inventory::walk::walk(&root,"본문");if let Some(items)=paras.as_array_mut(){for item in items{item[0]=normalize_tree(&item[0]);}}sections.push(json!({"name":name,"paragraphs":paras})); }
     if stage=="body_walk" { return Ok(json!({"sections":sections})); }
     Err(format!("analyze stage not implemented: {stage}"))
 }
