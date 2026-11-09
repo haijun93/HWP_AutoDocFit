@@ -43,6 +43,8 @@ def collect(fixtures: Path, fn_name: str):
                         sections.append({"name": member, "paragraphs": [[_tree(p), ctx] for p, ctx in items]})
                 cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "body_walk"}, "expected": {"sections": sections}})
                 cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "header"}, "expected": {"definitions": expected["definitions"]}})
+                aggregate = {k: expected[k] for k in ("summary", "page", "used_fonts", "char_usage", "para_usage", "style_usage", "border_fill_usage", "combos", "types", "shade_colors", "inline_effects", "tables")}
+                cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "aggregate"}, "expected": aggregate})
                 cases.append({"file": path.name, "member": "", "input": {"path": str(path), "stage": "header"}, "expected": {"definitions": expected["definitions"]}})
             except Exception as exc:
                 print(f"skip {path.name}: {exc}", file=sys.stderr)
@@ -342,6 +344,7 @@ def main():
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
     ap.add_argument("--quiet-diff", action="store_true", help="suppress per-case JSON differences")
+    ap.add_argument("--dump", action="store_true", help="print differing result paths and Python/Rust values for each mismatch")
     ns = ap.parse_args()
     cases = collect(ns.fixtures, ns.function)
     if ns.cases:
@@ -376,16 +379,54 @@ def main():
                 return value
             compared = {"sections": normalize_json(actual.get("sections", []))}
             expected_value = {"sections": normalize_json(case["expected"].get("sections", []))}
+        elif ns.function == "analyze_style_inventory" and stage == "aggregate":
+            compared = actual
+            expected_value = json.loads(json.dumps(case["expected"], ensure_ascii=False))
         else:
             compared = {key: actual.get(key) for key in case["expected"]} if ns.function == "analyze_style_inventory" else actual
             expected_value = case["expected"]
-        if json.dumps(compared, ensure_ascii=False, sort_keys=True) == json.dumps(expected_value, ensure_ascii=False, sort_keys=True):
+        def stable_json(value):
+            if isinstance(value, dict): return "{" + ",".join(json.dumps(str(k), ensure_ascii=False)+":"+stable_json(value[k]) for k in sorted(value, key=lambda x: str(x))) + "}"
+            if isinstance(value, list): return "[" + ",".join(stable_json(v) for v in value) + "]"
+            return json.dumps(value, ensure_ascii=False, sort_keys=True)
+        if stable_json(compared) == stable_json(expected_value):
             matches += 1
         else:
             differences += 1
+            if ns.dump and ns.function == "analyze_style_inventory" and stage == "aggregate":
+                def value_differences(py, rs, prefix=""):
+                    if type(py) is not type(rs):
+                        return [(prefix or "$", py, rs)]
+                    if isinstance(py, dict):
+                        out = []
+                        for key in sorted(set(py) | set(rs), key=str):
+                            path = f"{prefix}.{key}" if prefix else str(key)
+                            if key not in py:
+                                out.append((path, "<missing>", rs[key]))
+                            elif key not in rs:
+                                out.append((path, py[key], "<missing>"))
+                            else:
+                                out.extend(value_differences(py[key], rs[key], path))
+                        return out
+                    if isinstance(py, list):
+                        out = []
+                        for index in range(max(len(py), len(rs))):
+                            path = f"{prefix}[{index}]"
+                            if index >= len(py): out.append((path, "<missing>", rs[index]))
+                            elif index >= len(rs): out.append((path, py[index], "<missing>"))
+                            else: out.extend(value_differences(py[index], rs[index], path))
+                        return out
+                    return [] if py == rs else [(prefix or "$", py, rs)]
+
+                for path, py_value, rust_value in value_differences(expected_value, actual):
+                    print(json.dumps({"case": case["file"], "path": path,
+                                      "python": py_value, "rust": rust_value}, ensure_ascii=False))
             if not ns.quiet_diff:
                 detail = {"case": case["file"], "member": case["member"],
                 "input": case["input"]}
+                if ns.function == "analyze_style_inventory" and stage == "aggregate":
+                    detail = {"case": case["file"], "expected_keys": list(case["expected"]), "actual_keys": list(actual),
+                              "summary": actual.get("summary"), "expected_summary": case["expected"].get("summary")}
                 if ns.function == "analyze_style_inventory" and stage == "body_walk":
                     py_sections = case["expected"].get("sections", [])
                     rs_sections = actual.get("sections", [])
