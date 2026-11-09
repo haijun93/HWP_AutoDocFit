@@ -35,3 +35,6 @@ One pass over the first 20 files in sorted `tests/fixtures` order. Python calls 
 - `cargo test --manifest-path hierarchy/Cargo.toml`: 40 passed.
 - Python hierarchy, page-fit wire, style hierarchy, time-machine content search, and document review modules: 90 passed, 4 platform skips.
 - DLL corpus comparison: 29 documents, 549 paragraphs, 0 differences.
+## 기본 켜기 판정
+
+**기본 켜기 가능: 아니오.** 이번 단일 측정에서 DLL 경로는 0.041494초, Python은 0.017401초로 DLL이 약 2.38배 걸렸습니다. 회귀는 모두 일치하지만 이 측정만으로 기본 활성화를 권하기 어렵습니다. 설정 기본값은 변경하지 않았습니다.
