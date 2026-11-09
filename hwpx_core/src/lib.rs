@@ -18,6 +18,9 @@ mod style_inventory {
     pub mod parse_numbering;
     pub mod parse_tab;
     pub mod parse_header;
+    pub mod sections;
+    pub mod walk;
+    pub mod paragraph_runs;
 }
 
 const MAX_ARCHIVE: u64 = 128 * 1024 * 1024;
@@ -146,6 +149,21 @@ fn call(fn_name: &str, json_in: &str) -> Result<String, String> {
             let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
             let tree = value.get("tree").ok_or("parse_header expects tree")?;
             Ok(serde_json::to_string(&style_inventory::parse_header::parse_header(tree)).unwrap())
+        }
+        "_sections" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            Ok(serde_json::to_string(&style_inventory::sections::sections(&value)).unwrap())
+        }
+        "_walk" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_walk expects {\"tree\": ..., \"context\": ...}")?;
+            let context = value.get("context").and_then(serde_json::Value::as_str).unwrap_or("본문");
+            Ok(serde_json::to_string(&style_inventory::walk::walk(tree, context)).unwrap())
+        }
+        "_paragraph_runs" => {
+            let value: serde_json::Value = serde_json::from_str(json_in).map_err(|e| e.to_string())?;
+            let tree = value.get("tree").ok_or("_paragraph_runs expects {\"tree\": ...}")?;
+            Ok(serde_json::to_string(&style_inventory::paragraph_runs::paragraph_runs(tree)).unwrap())
         }
         _ => Err(format!("unknown function: {fn_name}")),
     }

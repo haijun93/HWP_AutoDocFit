@@ -33,6 +33,11 @@ def collect(fixtures: Path, fn_name: str):
         from defusedxml import ElementTree as ET
 
         with ZipFile(path) as archive:
+            if fn_name == "_sections":
+                cases.append({"file": path.name, "member": "",
+                              "input": {"names": archive.namelist()},
+                              "expected": style_inventory._sections(archive)})
+                continue
             for member in sorted(n for n in archive.namelist() if n.startswith("Contents/") and n.endswith(".xml")):
                 try:
                     root = ET.fromstring(archive.read(member))
@@ -90,6 +95,18 @@ def collect(fixtures: Path, fn_name: str):
                     cases.append({"file": path.name, "member": member,
                                   "input": {"tree": _tree(root)},
                                   "expected": style_inventory.parse_header(root)})
+                elif fn_name == "_walk":
+                    items = []
+                    style_inventory._walk(root, "본문", items)
+                    cases.append({"file": path.name, "member": member,
+                                  "input": {"tree": _tree(root), "context": "본문"},
+                                  "expected": [[_tree(p), ctx] for p, ctx in items]})
+                elif fn_name == "_paragraph_runs":
+                    for element in root.iter():
+                        if style_inventory._tag(element) == "p":
+                            cases.append({"file": path.name, "member": member,
+                                          "input": {"tree": _tree(element)},
+                                          "expected": [_tree(r) for r in style_inventory._paragraph_runs(element)]})
                 elif fn_name == "_shade":
                     values = {e.get("shadeColor") for e in root.iter() if e.get("shadeColor") is not None}
                     for value in sorted(values):
@@ -118,12 +135,28 @@ def collect(fixtures: Path, fn_name: str):
             cases.append({"file": "<edge>", "member": "",
                           "input": {"tree": None, "cast": cast_name},
                           "expected": style_inventory._lang_values(None, cast)})
+    if fn_name == "_sections":
+        class _MockZip:
+            def __init__(self, names):
+                self._names = names
+            def namelist(self):
+                return self._names
+
+        for idx, edge in enumerate([
+            ["Contents/section10.xml", "Contents/section2.xml", "Contents/section1.xml", "Contents/section0.xml", "Contents/header.xml", "settings.xml"],
+            [],
+            ["Contents/sectionA.xml", "Contents/section_1.xml", "section1.xml", "Contents/section.xml"],
+            ["Contents/section0.xml", "Contents/section1.xml", "Contents/section01.xml", "Contents/section2.xml"],
+        ]):
+            cases.append({"file": f"<edge_{idx}>", "member": "",
+                          "input": {"names": edge},
+                          "expected": style_inventory._sections(_MockZip(edge))})
     return cases
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header"))
+    ap.add_argument("function", choices=("_tag", "_first", "_mm", "_text_of", "_run_text", "_parse_fonts", "_lang_values", "_shade", "_parse_char", "_parse_para", "_parse_border_fill", "_parse_numbering", "_parse_tab", "parse_header", "_sections", "_walk", "_paragraph_runs"))
     ap.add_argument("--fixtures", type=Path, default=ROOT / "tests" / "fixtures")
     ap.add_argument("--dll", type=Path, default=ROOT / "hwpx_core" / "target" / "release" / "hwpx_core.dll")
     ap.add_argument("--cases", type=Path, help="write collected inputs and expected Python values")
