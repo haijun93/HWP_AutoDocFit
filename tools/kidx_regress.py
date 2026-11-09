@@ -12,10 +12,17 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from docfit_core.timemachine.extractors import extract_document
+from docfit_core.timemachine.extractors import ExtractionRecord
+from docfit_core.timemachine.extractors_text import extract_plain_text
+from docfit_core.timemachine.extractors_hwpx import extract_hwpx
 
 
 def python_records(path: Path) -> list[dict]:
+    try:
+        records = extract_hwpx(path) if path.suffix.lower() == ".hwpx" else extract_plain_text(path)
+    except Exception as exc:
+        code = getattr(exc, "reason_code", "extract_failed")
+        return [{"error": code}]
     return [
         {
             "text": r.text,
@@ -28,7 +35,7 @@ def python_records(path: Path) -> list[dict]:
             "style_name": r.style_name,
             "outline_level": r.outline_level,
         }
-        for r in extract_document(path)
+        for r in records
     ]
 
 
@@ -38,7 +45,11 @@ def rust_records(path: Path, exe: Path) -> list[dict]:
         capture_output=True, text=True, encoding="utf-8",
     )
     if result.returncode:
-        raise RuntimeError(result.stderr.strip() or f"klib exited {result.returncode}")
+        error = result.stderr.strip() or f"klib exited {result.returncode}"
+        code = error.split(":", 1)[0]
+        if code in {"empty", "corrupt", "encrypted", "unsupported", "decode_error"}:
+            return [{"error": code}]
+        raise RuntimeError(error)
     data = json.loads(result.stdout)
     return data["paragraphs"] if isinstance(data, dict) else data
 
