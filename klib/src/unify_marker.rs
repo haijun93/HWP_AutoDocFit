@@ -48,6 +48,7 @@ fn marker_class(marker: &str) -> String {
     }
     let chars: Vec<char> = marker.chars().collect();
     let numeric = chars.iter().all(|c| c.is_ascii_digit())
+        || (chars.last().is_some_and(|c| matches!(c, '.' | '．')) && chars[..chars.len()-1].iter().all(|c| c.is_ascii_digit()))
         || (chars.len() >= 2 && chars[0] == '(' && chars.last() == Some(&')') && chars[1..chars.len()-1].iter().all(|c| c.is_ascii_digit()));
     if numeric && chars.iter().any(|c| c.is_ascii_digit()) {
         if chars.iter().any(|c| *c == ')') { return "1)".into(); }
