@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 const LEVELS: [&str; 3] = ["□", "ㅇ", "-"];
-const OFFICIAL: [(&str, &str); 4] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ")];
+const OFFICIAL: [(&str, &str); 5] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ"), ("-", "-")];
 const NOTES: [&str; 3] = ["*", "**", "※"];
 const LEGACY: &str = "◦☞•·∙‧⋅ㆍ";
 const HANGUL: &str = "가나다라마바사아자차카타파하";
@@ -159,9 +159,9 @@ pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let found: Vec<(&String, Option<(String,usize)>)> = body.iter().copied().filter(|t| !label_re().is_match(t).unwrap_or(false)).map(|t| (t, if t.trim_start().chars().next().map(|c| BLACK_CIRCLED.contains(c)).unwrap_or(false) {None} else {classify_marker(t)})).collect();
     let occupied: Vec<String> = found.iter().filter_map(|(_,m)| m.as_ref().and_then(|(f,_)| OFFICIAL.iter().find(|(k,_)| k==f).map(|(_,v)|v.to_string()))).collect();
     let has_box = occupied.iter().any(|x| x == "□");
-    let order = ["1.", "가.", "1)", "가)", "(1)", "(가)", "Ⅰ", "Ⅱ"];
+    let order = ["1.", "가.", "1)", "가)", "(1)", "(가)", "①", "㉮"];
     let mut ordinals: HashMap<String,Vec<Option<Vec<i64>>>> = HashMap::new(); let mut candidates=Vec::new();
-    for (text, marker) in &found { let Some((family,end))=marker else {continue}; let token_end = char_to_byte(text, *end); if family == "-" || OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if family == "1." && text.trim_start()[..token_end - (text.len()-text.trim_start().len())].chars().take_while(|c| c.is_ascii_digit()).count() >= 4 { continue; } if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅰ.","Ⅱ","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..token_end]); ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
+    for (text, marker) in &found { let Some((family,end))=marker else {continue}; let token_end = char_to_byte(text, *end); if OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅰ.","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..token_end]); ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
     let sequential: Vec<String> = ordinals.iter().filter(|(_,v)| v.windows(2).any(|w| matches!((&w[0],&w[1]),(Some(a),Some(b)) if a.len()==b.len() && a[..a.len()-1]==b[..b.len()-1] && b.last()==a.last().map(|x|x+1).as_ref()))).map(|(f,_)|f.clone()).collect();
     let mut eligible=sequential.clone(); for (f,v) in &ordinals { if v.first().map(Option::is_none).unwrap_or(false) || f.starts_with("1.1") || f.starts_with("1-1") { if !eligible.contains(f){eligible.push(f.clone());} } }
     let ranks:Vec<Option<usize>>=ordinals.keys().map(|f|order.iter().position(|x|*x==f)).collect(); let official_chain=ranks.len()>1&&ranks.iter().all(Option::is_some)&&ranks.windows(2).all(|w|w[0]<w[1]);
@@ -170,7 +170,7 @@ pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let mut levels=HashMap::new(); let mut stack:Vec<(String,usize)>=Vec::new(); let available=LEVELS.iter().position(|x|!occupied.contains(&x.to_string())).map(|i|i+1).unwrap_or(3);
     for (text,family,_) in candidates { if !eligible.contains(&family){continue;} let indent=text.len()-text.trim_start().len(); let indent=text[..indent].chars().map(|c|if c=='\t'{4}else{1}).sum::<usize>();
         if levels.contains_key(&family) { stack.retain(|(f,_)| levels[f] < levels[&family]); }
-        else { if stack.last().map(|x|indent<x.1).unwrap_or(false) {while stack.last().map(|x|indent<=x.1).unwrap_or(false){stack.pop();}} else if stack.last().map(|x|indent==x.1&&indent>0).unwrap_or(false) {let rank=order.iter().position(|x|*x==family); while stack.last().map(|(f,n)|indent==*n&&rank.map(|r|r<=order.iter().position(|x|*x==f).unwrap_or(0)).unwrap_or(false)).unwrap_or(false){stack.pop();}}
+        else { if stack.last().map(|x|indent<x.1).unwrap_or(false) {while stack.last().map(|x|indent<=x.1).unwrap_or(false){stack.pop();}} else if stack.last().map(|x|indent==x.1&&indent>0).unwrap_or(false) {let rank=order.iter().position(|x|*x==family); if let Some(r)=rank { while stack.last().map(|(f,n)|indent==*n&&order.iter().position(|x|*x==f).map(|prev_r|r<=prev_r).unwrap_or(false)).unwrap_or(false){stack.pop();} } }
             let mut proposed=stack.last().map(|x|levels[&x.0]+1).unwrap_or(available); while proposed<3&&occupied.contains(&LEVELS[proposed-1].to_string()){proposed+=1;} levels.insert(family.clone(),proposed); }
         stack.push((family,indent));
     }
@@ -187,4 +187,39 @@ pub fn scheme_json(s: &MarkerScheme) -> Value { json!({"decimal":s.decimal,"symb
 fn find_attachment_blocks(texts:&[String])->Vec<usize>{let mut out=Vec::new();let mut i=0;while i<texts.len(){if !texts[i].starts_with("붙임"){i+=1;continue;}let mut end=None;for j in i..texts.len().min(i+30){let t=&texts[j];if t.trim().is_empty()||!(t.trim_end().ends_with('.')||is_numbered(t)){break;}if t.trim_end().ends_with("끝."){end=Some(j);break;}}if let Some(e)=end{out.extend(i..=e);i=e+1;}else{i+=1;}}out}
 fn is_numbered(t:&str)->bool{re(r"^[ \t\u{00a0}\u{3000}]*\d+\.(?=\s|$|[^0-9])").is_match(t).unwrap_or(false)||re(r"^\s*붙임\s*[:：]?\s*\d+\.").is_match(t).unwrap_or(false)}
 
-#[cfg(test)] mod tests { use super::*; #[test] fn scheme_smoke(){let s=detect_scheme(&["1. 첫".into(),"2. 둘".into(),"가. 하위".into(),"나. 다음".into()]);assert!(!s.is_empty());assert!(s.canonical("1. 첫").is_some());} }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scheme_smoke() {
+        let s = detect_scheme(&["1. 첫".into(), "2. 둘".into(), "가. 하위".into(), "나. 다음".into()]);
+        assert!(!s.is_empty());
+        assert!(s.canonical("1. 첫").is_some());
+    }
+
+    #[test]
+    fn scheme_matches_python_golden_differences_zero() {
+        let texts = vec![
+            "□ 기본 원칙".to_string(),
+            "ㅇ 첫 항목".to_string(),
+            "- 세부 내용".to_string(),
+            "2026. 11. 04. 시행계획 안내".to_string(),
+            "■ 검토 항목".to_string(),
+            "1. 첫째".to_string(),
+            "2. 둘째".to_string(),
+            "(1) 괄호 번호".to_string(),
+            "1) 괄호 없는 번호".to_string(),
+            "① 원문자 항목".to_string(),
+            "② 다음 원문자".to_string(),
+            "㉮ 한글 원문자".to_string(),
+        ];
+        let s = detect_scheme(&texts);
+        assert_eq!(s.family_levels.get("1."), Some(&3));
+        assert_eq!(s.family_levels.get("■"), Some(&4));
+        assert_eq!(s.family_levels.get("(1)"), Some(&4));
+        assert_eq!(s.family_levels.get("1)"), Some(&5));
+        assert_eq!(s.family_levels.get("①"), Some(&6));
+        assert_eq!(s.family_levels.get("㉮"), Some(&7));
+    }
+}
