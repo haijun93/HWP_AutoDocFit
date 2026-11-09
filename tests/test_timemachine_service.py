@@ -84,6 +84,15 @@ class TimemachineServiceTests(unittest.TestCase):
             self.service._content_index_worker([str(self.root)], frozenset({"txt"}), threading.Event())
         self.assertEqual(len(self.service.command("content_search", {"query": "fallback"})["items"]), 1)
 
+    def test_rust_content_index_setting_off_uses_python(self):
+        self.enable()
+        document = self.root / "python-only.txt"
+        document.write_text("python only indexing", encoding="utf-8")
+        self.service._settings["rust_content_index"] = False
+        with patch.object(self.service, "_run_klib_index", side_effect=AssertionError("Rust must be disabled")):
+            self.service._content_index_worker([str(self.root)], frozenset({"txt"}), threading.Event())
+        self.assertEqual(len(self.service.command("content_search", {"query": "python only"})["items"]), 1)
+
     def test_content_index_distributes_supported_and_other_formats(self):
         self.enable()
         documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf"]
