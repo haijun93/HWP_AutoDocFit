@@ -422,6 +422,11 @@ mod tests {
     const HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
     #[test]
+    fn splash_title_matches_csharp_convention() {
+        assert_eq!(SPLASH_TITLE, "한글편집 후처리 (HWP_AutoDocFit) - 실행 준비");
+    }
+
+    #[test]
     fn cache_path_matches_csharp_launcher_convention() {
         let root = Path::new(r"C:\Users\sample\AppData\Local");
         assert_eq!(cache_path(root, "1.80.10 Alpha 1", HASH), PathBuf::from(r"C:\Users\sample\AppData\Local\HWP_AutoDocFit\app_v1.80.10_Alpha_1_0123456789ab"));
