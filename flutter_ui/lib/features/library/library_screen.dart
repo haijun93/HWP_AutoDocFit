@@ -1522,20 +1522,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
         if (_statusMessage != null) Text(_statusMessage!, key: const ValueKey('libraryStatus')),
         if (_selectedIds.isNotEmpty) _buildSelectionBar(),
         Expanded(child: LayoutBuilder(builder: (context, constraints) {
-          final maxRight = math.max(120.0, constraints.maxWidth - 220);
-          final rightWidth = _rightPaneWidth.clamp(120.0, math.min(640.0, maxRight)).toDouble();
+          // 4분할에서도 각 카드 영역이 카드 폭보다 충분히 넓도록 오른쪽 패널을 제한한다.
+          final minCanvasWidth = _paneCount == 4 ? 2 * (_cardWidth + 32) : _cardWidth + 32;
+          final maxRight = constraints.maxWidth - minCanvasWidth - 8;
+          final showRightPane = maxRight >= 120;
+          final rightWidth = showRightPane
+              ? _rightPaneWidth.clamp(120.0, math.min(640.0, maxRight)).toDouble()
+              : 0.0;
           return Row(children: [
             Expanded(child: _viewMode == LibraryViewMode.explorer ? _buildExplorer() : _buildQuadrants()),
-            MouseRegion(
-              key: const ValueKey('libraryPaneResizeHandle'),
-              cursor: SystemMouseCursors.resizeColumn,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragUpdate: (details) => _resizeRightPane(details.delta.dx, constraints.maxWidth),
-                child: const SizedBox(width: 8, child: Center(child: VerticalDivider(width: 1, indent: 4, endIndent: 4))),
+            if (showRightPane) ...[
+              MouseRegion(
+                key: const ValueKey('libraryPaneResizeHandle'),
+                cursor: SystemMouseCursors.resizeColumn,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragUpdate: (details) => _resizeRightPane(details.delta.dx, constraints.maxWidth),
+                  child: const SizedBox(width: 8, child: Center(child: VerticalDivider(width: 1, indent: 4, endIndent: 4))),
+                ),
               ),
-            ),
-            SizedBox(key: const ValueKey('libraryRightPane'), width: rightWidth, child: const Center(child: Text('상세 / 미리보기'))),
+              SizedBox(key: const ValueKey('libraryRightPane'), width: rightWidth, child: const Center(child: Text('상세 / 미리보기'))),
+            ],
           ]);
         })),
       ]);
@@ -1843,8 +1850,7 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
         Padding(
           padding: const EdgeInsets.all(6),
           child: Row(children: [
-            Text(widget.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const Spacer(),
+            Expanded(child: Text(widget.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold))),
             Text('${items.length}개'),
             const SizedBox(width: 4),
             Tooltip(

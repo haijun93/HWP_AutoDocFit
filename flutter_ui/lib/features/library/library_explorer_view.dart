@@ -282,8 +282,25 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
   bool _infoScheduled = false;
   String? _lastClickKey;
   DateTime _lastClickAt = DateTime.fromMillisecondsSinceEpoch(0);
+  int? _resizePointer;
+  double? _resizeLastX;
 
   LibraryExplorerController get _c => widget.controller;
+
+  void _resizeFromPointer(PointerEvent event, LibraryExplorerColumn column) {
+    if (event is PointerDownEvent && event.buttons & kPrimaryButton != 0) {
+      _resizePointer = event.pointer;
+      _resizeLastX = event.position.dx;
+    } else if (event.pointer == _resizePointer && event is PointerMoveEvent) {
+      final previousX = _resizeLastX ?? event.position.dx;
+      _resizeLastX = event.position.dx;
+      final delta = event.position.dx - previousX;
+      if (delta != 0) setState(() => _c.resize(column, delta));
+    } else if (event.pointer == _resizePointer && (event is PointerUpEvent || event is PointerCancelEvent)) {
+      _resizePointer = null;
+      _resizeLastX = null;
+    }
+  }
 
   @override
   void didUpdateWidget(covariant LibraryExplorerView oldWidget) {
@@ -981,10 +998,13 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                 // 머리글 오른쪽 끝을 끌어 열 폭을 바꾼다.
                 MouseRegion(
                   cursor: SystemMouseCursors.resizeColumn,
-                  child: GestureDetector(
+                  child: Listener(
                     key: ValueKey('libraryExplorerResize-${column.name}'),
                     behavior: HitTestBehavior.opaque,
-                    onHorizontalDragUpdate: (d) => setState(() => _c.resize(column, d.delta.dx)),
+                    onPointerDown: (event) => _resizeFromPointer(event, column),
+                    onPointerMove: (event) => _resizeFromPointer(event, column),
+                    onPointerUp: (event) => _resizeFromPointer(event, column),
+                    onPointerCancel: (event) => _resizeFromPointer(event, column),
                     child: const SizedBox(width: 8, height: 30, child: VerticalDivider(width: 8, indent: 6, endIndent: 6)),
                   ),
                 ),
