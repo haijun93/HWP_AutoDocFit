@@ -74,8 +74,12 @@ def _paragraph_margins(para_pr: ET.Element) -> tuple[int | None, int | None]:
                     values[key] = int(child.get("value", ""))
                 except (TypeError, ValueError):
                     return None, None
-        if "left" in values and "intent" in values:
-            return values["left"], values["intent"]
+        # HWPX에서 기본 문단 모양은 left/intent 항목을 생략할 수 있으며,
+        # 생략된 두 값은 한/글 기본값 0으로 해석한다.
+        return values.get("left", 0), values.get("intent", 0)
+    # 기본 paraPr(0)은 여백 항목을 생략하는 HWPX가 있어 기본값 0으로 읽는다.
+    if para_pr.get("id") == "0":
+        return 0, 0
     return None, None
 
 
@@ -104,7 +108,15 @@ def inspect_hanging_indent(path: str | Path, reference_path: str | Path | None =
         seen_texts: dict[str, int] = {}
         for section_name in section_names:
             section = ET.fromstring(archive.read(section_name))
-            for paragraph in section.findall(".//hp:p", NS):
+            section_paragraphs = section.findall(".//hp:p", NS)
+            section_texts = [_text(paragraph) for paragraph in section_paragraphs]
+            from .attachment_block import find_trailing_numbered_blocks
+            trailing_attachment_indexes = {
+                index
+                for start, end in find_trailing_numbered_blocks(section_texts)
+                for index in range(start, end + 1)
+            }
+            for paragraph_index, paragraph in enumerate(section_paragraphs):
                 text = _text(paragraph)
                 all_paragraphs.append((text, paragraph, paragraph.get("paraPrIDRef", "")))
                 if not text.strip() or not MARKER.match(text):
@@ -134,6 +146,17 @@ def inspect_hanging_indent(path: str | Path, reference_path: str | Path | None =
                             findings.append(ParagraphFinding(text, para_id, left, indent, "pass"))
                         else:
                             findings.append(ParagraphFinding(text, para_id, left, indent, "fail", "top-level ㅁ/□ heading must have no paragraph indent"))
+                    elif paragraph_index in trailing_attachment_indexes:
+                        if left == 0 and indent == 0:
+                            findings.append(ParagraphFinding(
+                                text, para_id, left, indent, "pass",
+                                "number alignment is represented by normalized leading spaces",
+                            ))
+                        else:
+                            findings.append(ParagraphFinding(
+                                text, para_id, left, indent, "fail",
+                                "trailing attachment list must use body margin and text-space alignment",
+                            ))
                     elif indent < 0 and left >= 0:
                         findings.append(ParagraphFinding(text, para_id, left, indent, "pass"))
                     else:
@@ -144,6 +167,17 @@ def inspect_hanging_indent(path: str | Path, reference_path: str | Path | None =
                     else:
                         findings.append(ParagraphFinding(
                             text, para_id, left, indent, "fail", "top-level ㅁ/□ heading must have no paragraph indent"))
+                elif paragraph_index in trailing_attachment_indexes:
+                    if left == 0 and indent == 0:
+                        findings.append(ParagraphFinding(
+                            text, para_id, left, indent, "pass",
+                            "number alignment is represented by normalized leading spaces",
+                        ))
+                    else:
+                        findings.append(ParagraphFinding(
+                            text, para_id, left, indent, "fail",
+                            "trailing attachment list must use body margin and text-space alignment",
+                        ))
                 elif indent >= 0:
                     findings.append(ParagraphFinding(text, para_id, left, indent, "fail", "required hanging indent is missing"))
                 elif left < 0:

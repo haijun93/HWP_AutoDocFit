@@ -42,7 +42,9 @@ class PipelineReviewTest(unittest.TestCase):
         settings = {
             'hwp': doc, '작업_모드': 'format', '표준서식_사용': False,
             '준말_등록표': {}, '쪽범위_요청': (2, 2), '검수_사용': False,
-            '선택_세부작업': {'style_unify': False}, '작업_반복횟수': 1,
+            '선택_세부작업': {'style_unify': False, 'page_group': False,
+                            'word_check': False, 'control_word_check': False},
+            '작업_반복횟수': 1,
             '중단_요청됨': lambda: False, '로그': Mock(), '상태': Mock(),
             '단계초기화': Mock(), '단계표시': Mock(),
             'validate_hwpx': Mock(return_value={'entry_count': 1, 'total_uncompressed_size': 1}),
@@ -229,6 +231,11 @@ class PipelineReviewTest(unittest.TestCase):
         self.assertEqual(word.call_count, 2)
         self.assertEqual(set(result), {'style_unify', 'page_group', 'word_check', 'control_word_check'})
 
+    def test_selected_result_rules_run_even_when_deep_integrity_check_is_off(self):
+        result, reopened, _, _, _, _ = self._audit(검수_사용=False)
+        reopened.assert_called_once()
+        self.assertEqual(set(result), {'style_unify', 'page_group', 'word_check', 'control_word_check'})
+
     def test_table_audit_runs_without_body_profile(self):
         result, reopened, style, table, _, _ = self._audit(
             작업_모드='unify', _서식통일_문서대표프로필={})
@@ -247,7 +254,10 @@ class PipelineReviewTest(unittest.TestCase):
         table.assert_called_once()
 
     def test_no_enabled_checks_do_not_reopen(self):
-        result, reopened, *_ = self._audit(검수_사용=False, 선택_세부작업={'style_unify': False})
+        result, reopened, *_ = self._audit(검수_사용=False, 선택_세부작업={
+            'style_unify': False, 'page_group': False,
+            'word_check': False, 'control_word_check': False,
+        })
         self.assertEqual(result, {})
         reopened.assert_not_called()
 

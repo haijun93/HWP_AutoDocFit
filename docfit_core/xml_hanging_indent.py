@@ -869,16 +869,21 @@ def apply_xml_hanging_indent(
         attach_size = float(circle_rule[3]) if circle_rule else 15.0
 
         # 끝 번호 붙임 목록의 첫 번호('1.') 가로 기준폭 계산
-        anchor_widths: dict[int, int] = {}
+        anchor_spaces: dict[int, int] = {}
         for start, _ in trailing_blocks:
             first_text = raw_texts[start] or ""
             num_off = numbered_item_offset(first_text)
             size_for_anchor = attach_size if format_markers else _char_size_pt(header, paragraphs[start], attach_size)
-            anchor_widths[start] = (
+            anchor_width = (
                 prefix_width_hwpunit(first_text, num_off, size_pt=size_for_anchor, ratio=ratio)
                 if num_off is not None
                 else 0
             )
+            space_width = prefix_width_hwpunit(" ", 1, size_pt=size_for_anchor, ratio=ratio)
+            # 사용자가 수정한 기준 결과는 첫 '붙임: 1.' 문단을 여백에 두고,
+            # 다음 번호를 첫 번호 위치에 공백으로 맞춘다. TXT의 선행 공백 개수에
+            # 종속되지 않도록 첫 번호의 실제 폭을 같은 글꼴의 일반 공백 수로 환산한다.
+            anchor_spaces[start] = round(anchor_width / space_width) if space_width else 0
 
         tracker = ParagraphSpacingTracker()
 
@@ -924,18 +929,17 @@ def apply_xml_hanging_indent(
                 )
             elif idx in trailing_map:
                 anchor_idx = trailing_map[idx]
-                anchor_w = anchor_widths.get(anchor_idx, 0)
                 if format_markers:
                     font_name = attach_font
                     font_type = DEFAULT_FONT_TYPES.get(attach_font, "TTF")
                     size_pt = attach_size
-                effective_size = size_pt or _char_size_pt(header, paragraph, attach_size)
-                indent_pair = attachment_numbered_pair(
-                    formatted,
-                    anchor_w,
-                    size_pt=effective_size,
-                    ratio=ratio,
-                )
+                if idx == anchor_idx:
+                    formatted = readable.lstrip()
+                else:
+                    formatted = " " * anchor_spaces.get(anchor_idx, 0) + readable.lstrip()
+                # 붙임 번호의 공백 정렬은 글자 내용으로 보존하고 문단 내어쓰기는 제거한다.
+                # 이렇게 하면 첫 항목은 본문 여백에서 시작하고 다음 번호는 첫 번호와 나란히 선다.
+                indent_pair = (0, 0)
                 marker_label = "붙임번호"
             else:
                 if idx in attach_indices and format_markers:

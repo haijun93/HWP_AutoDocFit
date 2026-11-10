@@ -1101,14 +1101,16 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                 # 표만 있는 문서도 검수한다. 본문 대표값 유무·검사 실패와 독립이다.
                 if 작업_모드 == 'unify' and stage_enabled(선택_세부작업, 'table_unify', 작업_모드):
                     검사들['table_unify'] = lambda: 서식통일_표_전체_적용(검증만=True)
-            if 검수_사용:
-                if 작업_모드 in ('format', 'all') and stage_enabled(선택_세부작업, 'page_group'):
-                    검사들['page_group'] = 문단글_캐시_구간(보고서_페이지배치_최종검사)
-                if 작업_모드 in ('spacing', 'all'):
-                    if stage_enabled(선택_세부작업, 'word_check'):
-                        검사들['word_check'] = 문단글_캐시_구간(보고서_단어분리_최종검사)
-                    if stage_enabled(선택_세부작업, 'control_word_check'):
-                        검사들['control_word_check'] = 문단글_캐시_구간(lambda: 보고서_단어분리_최종검사(컨트롤=True))
+            # 선택 작업의 결과 규칙 검사는 상세 무결성 진단 옵션과 분리한다.
+            # 사용자가 page_group/word_check를 선택했다면 그 실행 결과를 반드시 검증해야 하며,
+            # 검수_사용은 본문·표·이미지·섹션 비교처럼 더 비싼 심층 무결성 검사만 제어한다.
+            if 작업_모드 in ('format', 'all') and stage_enabled(선택_세부작업, 'page_group'):
+                검사들['page_group'] = 문단글_캐시_구간(보고서_페이지배치_최종검사)
+            if 작업_모드 in ('spacing', 'all'):
+                if stage_enabled(선택_세부작업, 'word_check'):
+                    검사들['word_check'] = 문단글_캐시_구간(보고서_단어분리_최종검사)
+                if stage_enabled(선택_세부작업, 'control_word_check'):
+                    검사들['control_word_check'] = 문단글_캐시_구간(lambda: 보고서_단어분리_최종검사(컨트롤=True))
             if 중단_요청됨():
                 return False
             if 검사들:

@@ -7,7 +7,7 @@ import unittest
 from defusedxml import ElementTree as ET
 
 from docfit_core.batch_format import plain_text, tag
-from docfit_core.release_format_audit import inspect_hanging_indent
+from docfit_core.release_format_audit import _paragraph_margins, inspect_hanging_indent
 from docfit_core.xml_hanging_indent import (
     apply_xml_hanging_indent,
     attachment_numbered_pair,
@@ -226,7 +226,29 @@ class XmlHangingIndentUnitTests(unittest.TestCase):
         self.assertEqual(attachment_numbered_pair(first, anchor, size_pt=15.0), (7500, -7500))
         self.assertEqual(attachment_numbered_pair(second, anchor, size_pt=15.0), (7500, -4500))
 
-    def test_sample_text_audit_rejects_legacy_estimated_attachment_geometry(self):
+    def test_trailing_attachment_matches_user_edited_margin_and_number_spacing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            source_text = folder / "attachment.txt"
+            source_hwpx = folder / "source.hwpx"
+            result_hwpx = folder / "result.hwpx"
+            source_text.write_text(
+                "보고서 제목\n붙임: 1. 세부 시행계획 1부.\n        2. 스케줄표 1부.  끝.\n",
+                encoding="utf-8",
+            )
+            build_hwpx_from_text_file(source_text, source_hwpx)
+            apply_xml_hanging_indent(source_hwpx, result_hwpx)
+            header, section = roots(result_hwpx)
+            paragraphs = [p for p in section if tag(p) == "p" and plain_text(p) and plain_text(p).strip()]
+            self.assertEqual(plain_text(paragraphs[-2]), "붙임: 1. 세부 시행계획 1부.")
+            self.assertEqual(plain_text(paragraphs[-1]), "      2. 스케줄표 1부.  끝.")
+            self.assertEqual(inspect_hanging_indent(result_hwpx)["status"], "pass")
+            styles = shapes(header, "paraPr")
+            for paragraph in paragraphs[-2:]:
+                para = styles[paragraph.get("paraPrIDRef")]
+                self.assertEqual(_paragraph_margins(para), (0, 0))
+
+    def test_sample_text_audit_accepts_normalized_attachment_geometry(self):
         with tempfile.TemporaryDirectory() as folder:
             txt_path = Path(folder) / "sample.txt"
             raw_hwpx = Path(folder) / "raw.hwpx"
@@ -238,14 +260,11 @@ class XmlHangingIndentUnitTests(unittest.TestCase):
             self.assertEqual(res.applied, 12)
 
             audit = inspect_hanging_indent(out_hwpx)
-            # 첫 줄 = LeftMargin이므로 구 XML 추정값은 붙임 시작(7500)과 번호 원점(12750/9750)이 어긋난다.
-            self.assertEqual(audit["status"], "fail")
-            self.assertEqual(audit["failed_count"], 2)
-            self.assertEqual(audit["checked_count"], 13)
-            failures = [item for item in audit["findings"] if item["status"] == "fail"]
-            self.assertEqual((failures[0]["left"], failures[0]["indent"]), (7500, -7500))
-            self.assertIn("must start with 붙임 at the body margin", failures[0]["reason"])
-            self.assertIn("attachment numbers are not vertically aligned: 12750, 9750", failures[1]["reason"])
+            # 붙임 제목은 본문 여백, 후속 번호는 첫 번호의 폭만큼 공백을 정규화해 맞춘다.
+            self.assertEqual(audit["status"], "pass")
+            self.assertEqual(audit["failed_count"], 0)
+            self.assertEqual(audit["checked_count"], 11)
+            self.assertTrue(all(item["status"] == "pass" for item in audit["findings"]))
 
             header, section = roots(out_hwpx)
             para_map = shapes(header, "paraPr")
