@@ -467,6 +467,11 @@ class ContentSearchIndex:
         if self.path != ":memory:":
             os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         self.db = sqlite3.connect(self.path, check_same_thread=False)
+        try:
+            self.db.execute("PRAGMA journal_mode=WAL;")
+            self.db.execute("PRAGMA busy_timeout=5000;")
+        except sqlite3.OperationalError:
+            pass
         self._lock = threading.RLock()
         self._closed = False
         self.db.row_factory = sqlite3.Row
@@ -571,6 +576,9 @@ class ContentSearchIndex:
                 self.migration_error = str(migration_exc)
                 raise RuntimeError("본문 색인 스키마 이전에 실패했습니다. 본문 재색인이 필요합니다.") from migration_exc
         self.purge_excluded()
+        with self._lock:
+            if getattr(self.db, "in_transaction", False):
+                self.db.commit()
 
     def purge_excluded(self):
         """이전 버전이 색인한 제외 대상(#IEeEE…) 문서를 모든 본문 표에서 지운다. 지운 경로 목록."""
@@ -726,7 +734,11 @@ class ContentSearchIndex:
         """색인된 경로 목록. 전달된 루트 안의 문서만 돌려준다."""
         with self._lock:
             self.purge_excluded()
+            if getattr(self.db, "in_transaction", False):
+                self.db.commit()
             rows = self.db.execute("SELECT path FROM content_meta").fetchall()
+            if getattr(self.db, "in_transaction", False):
+                self.db.commit()
         allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
         return [os.path.abspath(row["path"]) for row in rows if not excluded_name(os.path.basename(row["path"])) and (allowed is None or any(
             os.path.commonpath((os.path.normcase(os.path.abspath(row["path"])), root)) == root

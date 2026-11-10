@@ -461,6 +461,7 @@ class TimemachineServiceTests(unittest.TestCase):
     def test_close_cancels_and_joins_content_index(self):
         self.developer_mode = True
         self.enable()
+        self.service._settings["rust_content_index"] = False
         entered, release = threading.Event(), threading.Event()
         original = self.service.content_index.index_file
         def blocked(path):
