@@ -862,6 +862,11 @@ final Map<String, SettingGuide> settingGuides = {
     '개발자 모드',
     '자세한 문서 처리 완료 안내를 표시해요.',
   ),
+  'freeze_tracing': SettingGuide(
+    'dev',
+    '오류추적',
+    '메인 화면·Tk 응답이 3초 넘게 멈추면 스레드 상태와 최근 API 요청을 기록해요. 기록은 이 PC에만 저장됩니다.',
+  ),
 };
 
 /// 항목기호 글꼴(symbol_fonts.□.size 등)은 기호마다 같은 모양의 안내를 만든다.
