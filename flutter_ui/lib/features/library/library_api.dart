@@ -434,7 +434,7 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
       return LibraryOpenResult(ok: false, code: 'ERROR', message: '$error');
     }
     if (result is! Map) {
-      return const LibraryOpenResult(ok: false, code: 'ERROR', message: '자료함 브리지 응답 형식이 잘못되었습니다.');
+      return const LibraryOpenResult(ok: false, code: 'ERROR', message: '가상 폴더 브리지 응답 형식이 잘못되었습니다.');
     }
     if (result['ok'] == true && result['opened'] != false) return const LibraryOpenResult(ok: true);
     return LibraryOpenResult(
@@ -483,7 +483,7 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
       <String, Object?>{'cmd': cmd, ...args},
     ]);
 
-    if (result is! Map) throw StateError('자료함 브리지 응답 형식이 잘못되었습니다.');
+    if (result is! Map) throw StateError('가상 폴더 브리지 응답 형식이 잘못되었습니다.');
 
     final response = Map<String, Object?>.from(result);
 
@@ -494,7 +494,7 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
   }
 
   int _id(Object? value) =>
-      int.tryParse('$value') ?? (throw FormatException('잘못된 자료함 ID: $value'));
+      int.tryParse('$value') ?? (throw FormatException('잘못된 가상 폴더 ID: $value'));
 
   String _string(Object? value) => value?.toString() ?? '';
 
@@ -855,7 +855,7 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
     final trimmed = name.trim();
 
     if (trimmed.isEmpty) {
-      throw ArgumentError('자료함 이름은 비어 있을 수 없습니다.');
+      throw ArgumentError('가상 폴더 이름은 비어 있을 수 없습니다.');
     }
 
     _boxSequence++;
@@ -910,7 +910,7 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
     String? text,
   }) async {
     if (!_boxes.containsKey(boxId)) {
-      throw StateError('자료함이 존재하지 않습니다: $boxId');
+      throw StateError('가상 폴더가 존재하지 않습니다: $boxId');
     }
 
     _itemSequence++;
@@ -961,11 +961,11 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
     }
 
     if (!_boxes.containsKey(existing.boxId)) {
-      throw StateError('항목이 속한 자료함이 존재하지 않습니다: ${existing.boxId}');
+      throw StateError('항목이 속한 가상 폴더가 존재하지 않습니다: ${existing.boxId}');
     }
 
     if (existing.boxId != boxId) {
-      throw StateError('항목이 요청한 자료함에 속하지 않습니다: $boxId');
+      throw StateError('항목이 요청한 가상 폴더에 속하지 않습니다: $boxId');
     }
 
     final updated = existing.copyWith(space: space, x: x, y: y);
@@ -1003,7 +1003,7 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
     }
 
     if (fromItem.boxId != boxId || toItem.boxId != boxId) {
-      throw StateError('다른 자료함의 항목과는 관계를 맺을 수 없습니다.');
+      throw StateError('다른 가상 폴더의 항목과는 관계를 맺을 수 없습니다.');
     }
 
     if (fromItem.space != LibrarySpace.core ||
@@ -1050,7 +1050,7 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
   Future<void> renameBox(String boxId, String name) async {
     final b = _boxes[boxId];
 
-    if (b == null) throw StateError('자료함 없음');
+    if (b == null) throw StateError('가상 폴더 없음');
 
     _boxes[boxId] = LibraryBox(id: boxId, name: name.trim());
   }
@@ -1130,7 +1130,7 @@ class InMemoryLibraryApi implements LibraryApi, LibraryMemoApi {
 
   @override
   Future<int> exportBox(String boxId, String targetDirectory) async =>
-      throw UnsupportedError('InMemory 자료함 내보내기를 지원하지 않습니다.');
+      throw UnsupportedError('InMemory 가상 폴더 내보내기를 지원하지 않습니다.');
 
   @override
   Future<List<LibrarySearchResult>> searchContent(

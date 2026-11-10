@@ -67,7 +67,7 @@ class LibraryStore:
     def create(self, name, description=""):
         name, description = str(name).strip(), str(description).strip()
         if not name or len(name) > 100 or len(description) > 1000:
-            raise ValueError("자료함 이름은 1~100자, 설명은 1,000자 이내로 입력해 주세요.")
+            raise ValueError("가상 폴더 이름은 1~100자, 설명은 1,000자 이내로 입력해 주세요.")
         with self._lock:
             cur = self._db.execute(
                 "INSERT INTO libraries(name,description,created_at) VALUES(?,?,?)",
@@ -93,7 +93,7 @@ class LibraryStore:
         key = path_key(path)
         with self._lock:
             if not self.get(library_id):
-                raise ValueError("자료함을 찾을 수 없습니다.")
+                raise ValueError("가상 폴더를 찾을 수 없습니다.")
             self._db.execute("INSERT OR IGNORE INTO roots(library_id,path,path_key) VALUES(?,?,?)",
                              (int(library_id), os.path.abspath(path), key))
             row = self._db.execute("SELECT * FROM roots WHERE library_id=? AND path_key=?",

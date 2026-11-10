@@ -259,7 +259,7 @@ class BridgeNotebookApi implements NotebookApi {
   @override
   Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId) async {
     final id = int.tryParse(itemId.trim());
-    if (id == null) throw StateError('잘못된 자료함 항목 id입니다: $itemId');
+    if (id == null) throw StateError('잘못된 가상 폴더 항목 id입니다: $itemId');
     final r = await _request('nb_source_from_item', {'notebook_id': notebookId, 'item_id': id});
     return NbItemSourceResult(sourceId: _int(r['id']), reused: r['reused'] == true);
   }
@@ -273,7 +273,7 @@ class BridgeNotebookApi implements NotebookApi {
       boxId: r['box_id'] == null ? null : _str(r['box_id']),
       itemId: r['item_id'] == null ? null : _str(r['item_id']),
       displayName: _str(r['display_name']),
-      reason: found ? '' : (r['reason'] == null ? '자료함 항목을 찾을 수 없습니다.' : _str(r['reason'])),
+      reason: found ? '' : (r['reason'] == null ? '가상 폴더 항목을 찾을 수 없습니다.' : _str(r['reason'])),
     );
   }
 
@@ -517,7 +517,7 @@ class InMemoryNotebookApi implements NotebookApi {
 
   Future<LibraryItem?> _libraryItem(String itemId) async {
     final lib = library;
-    if (lib == null) throw StateError('자료함이 연결되지 않았습니다.');
+    if (lib == null) throw StateError('가상 폴더가 연결되지 않았습니다.');
     for (final box in await lib.listBoxes()) {
       final item = (await lib.listItems(box.id)).where((i) => i.id == itemId).firstOrNull;
       if (item != null) return item;
@@ -558,9 +558,9 @@ class InMemoryNotebookApi implements NotebookApi {
       throw StateError('출처를 찾을 수 없습니다.');
     }
     final itemId = _sourceItems[sourceId];
-    if (itemId == null) return const NbSourceItemLink(found: false, reason: '자료함 항목과 연결되지 않은 출처입니다.');
+    if (itemId == null) return const NbSourceItemLink(found: false, reason: '가상 폴더 항목과 연결되지 않은 출처입니다.');
     final item = await _libraryItem(itemId);
-    if (item == null) return NbSourceItemLink(found: false, itemId: itemId, reason: '자료함 항목이 삭제되었습니다.');
+    if (item == null) return NbSourceItemLink(found: false, itemId: itemId, reason: '가상 폴더 항목이 삭제되었습니다.');
     return NbSourceItemLink(found: true, boxId: item.boxId, itemId: item.id, displayName: item.title);
   }
 

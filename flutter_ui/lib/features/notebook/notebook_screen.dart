@@ -355,7 +355,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     final boxId = found.boxId;
     final itemId = found.itemId;
     if (!found.found || boxId == null || itemId == null) {
-      setState(() => _status = found.reason.isEmpty ? '자료함 항목을 찾을 수 없습니다.' : found.reason);
+      setState(() => _status = found.reason.isEmpty ? '가상 폴더 항목을 찾을 수 없습니다.' : found.reason);
       return;
     }
     final open = widget.openLibraryItem ?? _defaultOpenLibraryItem;
@@ -365,13 +365,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
   Future<void> _defaultOpenLibraryItem(BuildContext context, String boxId, String itemId) async {
     final library = widget.library;
     if (library == null) {
-      setState(() => _status = '자료함을 열 수 없습니다.');
+      setState(() => _status = '가상 폴더를 열 수 없습니다.');
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => HostClosablePage(
-          title: '자료함',
+          title: '가상 폴더',
           backLabel: '노트북으로',
           child: LibraryScreen(api: library, notebookApi: widget.api, initialBoxId: boxId, initialItemId: itemId),
         ),
@@ -756,7 +756,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
           if (widget.library != null)
             IconButton(
               key: const ValueKey('nb-source-library'),
-              tooltip: '자료함에서 가져오기',
+              tooltip: '가상 폴더에서 가져오기',
               onPressed: _busy ? null : _importFromLibrary,
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
             ),
@@ -829,7 +829,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                             if (s.itemId != null && (widget.library != null || widget.openLibraryItem != null))
                               IconButton(
                                 key: ValueKey('nb-source-in-library-${s.id}'),
-                                tooltip: '자료함에서 보기',
+                                tooltip: '가상 폴더에서 보기',
                                 icon: const Icon(Icons.inventory_2_outlined, size: 18),
                                 onPressed: _busy ? null : () => _showInLibrary(s),
                               ),
@@ -1501,7 +1501,7 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('자료함에서 가져오기'),
+      title: const Text('가상 폴더에서 가져오기'),
       content: SizedBox(
         width: 460,
         height: 360,
@@ -1527,9 +1527,9 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             Expanded(
               child: !_loading && _boxes.isEmpty
-                  ? const Center(child: Text('자료함이 없습니다.'))
+                  ? const Center(child: Text('가상 폴더가 없습니다.'))
                   : !_loading && _files.isEmpty
-                  ? const Center(child: Text('이 자료함에는 파일 자료가 없습니다.'))
+                  ? const Center(child: Text('이 가상 폴더에는 파일 자료가 없습니다.'))
                   : ListView(
                       children: [
                         for (final item in _files)

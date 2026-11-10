@@ -300,7 +300,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final paths = await drops.takeDroppedPaths();
     if (paths.isEmpty || !mounted) return;
     if (_selectedBox == null) {
-      setState(() => _statusMessage = '먼저 자료함을 고르거나 만든 뒤 파일을 놓아 주세요.');
+      setState(() => _statusMessage = '먼저 가상 폴더를 고르거나 만든 뒤 파일을 놓아 주세요.');
       return;
     }
     var added = 0;
@@ -314,7 +314,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         if (mounted) setState(() => _statusMessage = '추가하지 못했습니다: $error');
       }
     }
-    if (mounted && added > 0) setState(() => _statusMessage = '파일 $added개를 자료함에 넣었습니다.');
+    if (mounted && added > 0) setState(() => _statusMessage = '파일 $added개를 가상 폴더에 넣었습니다.');
   }
 
   LibrarySpace get _defaultDropSpace => _librarySpacePriority[_paneCount - 1];
@@ -454,8 +454,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
       boxes = await widget.api.listBoxes();
     } catch (error) {
       if (!mounted) return;
-      final message = error.toString().contains('klib') || error.toString().contains('자료함 엔진')
-          ? '자료함 엔진(klib.exe)이 없습니다'
+      final message = error.toString().contains('klib') || error.toString().contains('가상 폴더 엔진') || error.toString().contains('자료함 엔진')
+          ? '가상 폴더 엔진(klib.exe)이 없습니다'
           : error.toString();
       setState(() => _statusMessage = message);
       return;
@@ -468,7 +468,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       if (targetBox != null) _selectedBox = targetBox;
       _selectedBox ??= boxes.isEmpty ? null : boxes.first;
       if (target != null && targetBox == null) {
-        _statusMessage = '자료함을 찾을 수 없습니다(삭제되었을 수 있습니다).';
+        _statusMessage = '가상 폴더를 찾을 수 없습니다(삭제되었을 수 있습니다).';
       }
     });
     _pendingFocusBoxId = null;
@@ -481,7 +481,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       setState(() {
         _highlightedItemId = item?.id;
         _statusMessage = item == null
-            ? '자료함 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).'
+            ? '가상 폴더 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).'
             : '“${item.title}” 항목입니다.';
       });
     }
@@ -582,7 +582,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (box == null) return;
     final controller = TextEditingController(text: box.name);
     final name = await showDialog<String>(context: context, builder: (context) => AlertDialog(
-      title: const Text('자료함 이름 바꾸기'),
+      title: const Text('가상 폴더 이름 바꾸기'),
       content: TextField(controller: controller, autofocus: true, key: const ValueKey('libraryRenameBoxInput')),
       actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
         TextButton(onPressed: () => Navigator.pop(context, controller.text.trim()), child: const Text('저장'))],
@@ -600,7 +600,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final box = _selectedBox;
     if (box == null) return;
     final confirm = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-      title: const Text('자료함 삭제'), content: Text('“${box.name}” 자료함과 등록된 자료를 삭제할까요?'),
+      title: const Text('가상 폴더 삭제'), content: Text('“${box.name}” 가상 폴더와 등록된 자료를 삭제할까요?'),
       actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
         TextButton(key: const ValueKey('libraryConfirmDeleteBox'), onPressed: () => Navigator.pop(context, true), child: const Text('삭제'))],
     ));
@@ -631,7 +631,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       count = await widget.api.exportBox(box.id, directory);
     } catch (error) {
       if (mounted) {
-        final message = '자료함을 내보내지 못했습니다: ${_errorText(error)}';
+        final message = '가상 폴더를 내보내지 못했습니다: ${_errorText(error)}';
         setState(() => _statusMessage = message);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       }
@@ -666,7 +666,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     var confirmed = false;
     if (!isWeb && _riskyOpenPath.hasMatch(path)) {
       if (itemId == null) {
-        return const LibraryOpenResult(ok: false, code: 'BLOCKED', message: '자료함에 등록되지 않은 실행 파일은 열 수 없습니다.');
+        return const LibraryOpenResult(ok: false, code: 'BLOCKED', message: '가상 폴더에 등록되지 않은 실행 파일은 열 수 없습니다.');
       }
       confirmed = await _confirmRiskyOpen(path);
       if (!confirmed) return null;
@@ -785,7 +785,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               text: doc.markdown,
             );
           },
-          saveLabel: '자료함에 저장',
+          saveLabel: '가상 폴더에 저장',
           hint: "작성한 메모를 저장하면 '${_spaceNames[LibrarySpace.core]}'에 텍스트 자료로 들어갑니다.",
           editorBackend: _memoApi?.memoEditorBackend,
         ),
@@ -794,7 +794,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!mounted || saved == null) return;
     setState(() {
       _memoDraft = null;
-      _statusMessage = '메모를 자료함에 넣었습니다.';
+      _statusMessage = '메모를 가상 폴더에 넣었습니다.';
     });
     if (_selectedBox?.id == box.id) await _loadBoxContent(box.id);
   }
@@ -888,7 +888,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _deleteItem(LibraryItem item) async {
     final yes = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
-      title: const Text('자료 삭제'), content: Text('“${item.title}” 자료를 자료함에서 삭제할까요?'),
+      title: const Text('자료 삭제'), content: Text('“${item.title}” 자료를 가상 폴더에서 삭제할까요?'),
       actions: [TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
         TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('삭제'))],
     ));
@@ -1150,7 +1150,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final yes = await showDialog<bool>(context: context, builder: (context) => AlertDialog(
       key: const ValueKey('libraryConfirmBatchDelete'),
       title: const Text('자료 삭제'),
-      content: Text('고른 자료 ${items.length}개를 자료함에서 삭제할까요?\n원본 파일은 지우지 않습니다.'),
+      content: Text('고른 자료 ${items.length}개를 가상 폴더에서 삭제할까요?\n원본 파일은 지우지 않습니다.'),
       actions: [
         TextButton(autofocus: true, onPressed: () => Navigator.pop(context, false), child: const Text('취소')),
         TextButton(key: const ValueKey('libraryConfirmBatchDeleteYes'), onPressed: () => Navigator.pop(context, true), child: Text('${items.length}개 삭제')),
@@ -1324,7 +1324,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     await _reload();
     if (!mounted) return;
     final done = copyable.length - failed;
-    final where = target.id == current.id ? _spaceNames[space]! : '“${target.name}” 자료함 ${_spaceNames[space]}';
+    final where = target.id == current.id ? _spaceNames[space]! : '“${target.name}” 가상 폴더 ${_spaceNames[space]}';
     setState(() => _statusMessage = '자료 $done개를 $where(으)로 ${removeOriginals ? '옮겼습니다' : '복사했습니다'}'
         '${failed > 0 ? ', $failed개는 옮기지 못했습니다' : ''}'
         '${skipped > 0 ? ', $skipped개는 원본 경로나 내용이 없어 제외했습니다' : ''}.');
@@ -1373,13 +1373,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('자료함', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const Text('가상 폴더', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             const SizedBox(height: 12),
             Row(children: [
               Expanded(child: TextField(
                 key: const ValueKey('libraryAddBoxName'),
                 controller: _newBoxController,
-                decoration: const InputDecoration(hintText: '자료함 이름', isDense: true, border: OutlineInputBorder()),
+                decoration: const InputDecoration(hintText: '가상 폴더 이름', isDense: true, border: OutlineInputBorder()),
                 onSubmitted: (_) => _createBox(),
               )),
               const SizedBox(width: 6),
@@ -1387,7 +1387,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ]),
             const Divider(),
             Expanded(child: _boxes.isEmpty
-                ? const Center(child: Text('자료함이 없습니다.\n새 자료함을 만드세요.', textAlign: TextAlign.center))
+                ? const Center(child: Text('가상 폴더가 없습니다.\n새 가상 폴더를 만드세요.', textAlign: TextAlign.center))
                 : ListView(children: [for (final box in _boxes) ListTile(
                     key: ValueKey('libraryBox-${box.id}'),
                     title: Text(box.name),
@@ -1399,12 +1399,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
 
   Widget _buildEmptyState() => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Text('자료함을 선택하거나 새로 만드세요.'),
+        const Text('가상 폴더를 선택하거나 새로 만드세요.'),
         const SizedBox(height: 12),
         ElevatedButton(
           key: const ValueKey('libraryEmptyStateCta'),
-          onPressed: () { _newBoxController.text = '새 자료함'; _createBox(); },
-          child: const Text('새 자료함 만들기'),
+          onPressed: () { _newBoxController.text = '새 가상 폴더'; _createBox(); },
+          child: const Text('새 가상 폴더 만들기'),
         ),
       ]));
 
@@ -1418,7 +1418,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
             )),
             if (MediaQuery.sizeOf(context).width < 760) IconButton(
               key: const ValueKey('libraryCompactAddBox'),
-              tooltip: '새 자료함',
+              tooltip: '새 가상 폴더',
               onPressed: _createBox,
               icon: const Icon(Icons.create_new_folder_outlined),
             ),
@@ -1477,8 +1477,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
               onSelectionChanged: (counts) => _setPaneCount(counts.single),
             ),
             Text(_selectedBox!.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-            IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '자료함 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Icons.edit_outlined)),
-            IconButton(key: const ValueKey('libraryDeleteBox'), tooltip: '자료함 삭제', onPressed: _deleteBox, icon: const Icon(Icons.delete_outline)),
+            IconButton(key: const ValueKey('libraryRenameBox'), tooltip: '가상 폴더 이름 바꾸기', onPressed: _renameBox, icon: const Icon(Icons.edit_outlined)),
+            IconButton(key: const ValueKey('libraryDeleteBox'), tooltip: '가상 폴더 삭제', onPressed: _deleteBox, icon: const Icon(Icons.delete_outline)),
             OutlinedButton(key: const ValueKey('libraryExportBox'), onPressed: _exportBox, child: const Text('물리 폴더로 전환')),
             if (_scanApi != null)
               OutlinedButton(
@@ -1716,14 +1716,14 @@ class _TransferDialogState extends State<_TransferDialog> {
         key: const ValueKey('libraryTransferDialog'),
         title: Text('자료 ${widget.count}개 이동·복사'),
         content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('보낼 자료함'),
+          const Text('보낼 가상 폴더'),
           DropdownButton<LibraryBox>(
             key: const ValueKey('libraryTransferBox'),
             isExpanded: true,
             value: _box,
             items: [
               for (final b in widget.boxes)
-                DropdownMenuItem(value: b, child: Text(b.id == widget.current.id ? '${b.name}(현재 자료함)' : b.name, overflow: TextOverflow.ellipsis)),
+                DropdownMenuItem(value: b, child: Text(b.id == widget.current.id ? '${b.name}(현재 가상 폴더)' : b.name, overflow: TextOverflow.ellipsis)),
             ],
             onChanged: (b) { if (b != null) setState(() => _box = b); },
           ),
@@ -1737,7 +1737,7 @@ class _TransferDialogState extends State<_TransferDialog> {
             onChanged: (s) { if (s != null) setState(() => _space = s); },
           ),
           const SizedBox(height: 8),
-          const Text('원본 파일은 옮기거나 복사하지 않고 자료함 등록만 바뀝니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          const Text('원본 파일은 옮기거나 복사하지 않고 가상 폴더 등록만 바뀝니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
