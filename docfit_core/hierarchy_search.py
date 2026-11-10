@@ -96,6 +96,9 @@ def expand_context(index: dict, candidates: list[dict], query_tokens: list[str])
     # version 1 저장 인덱스도 원본을 다시 열지 않고 읽는다.
     if not by_id:
         by_id = {record["id"]: record for record in index.get("records", [])}
+    children = {}
+    for node in by_id.values():
+        children.setdefault(node.get("parent_id"), []).append(node["id"])
 
     def summary(node):
         return {key: copy.deepcopy(node.get(key)) for key in
@@ -116,7 +119,7 @@ def expand_context(index: dict, candidates: list[dict], query_tokens: list[str])
             parent_id = parent.get("parent_id")
         ancestors.reverse()
         result["parent_nodes"] = ancestors
-        result["child_nodes"] = [summary(by_id[x]) for x in node.get("child_ids", []) if x in by_id]
+        result["child_nodes"] = [summary(by_id[x]) for x in node.get("child_ids", children.get(node["id"], [])) if x in by_id]
         result["ancestor_ids"] = [x["id"] for x in ancestors]
         result["matched_terms"] = list(dict.fromkeys(t for t in query_tokens if t in result["tokens"]))
         body = set(_tokens(result["text"]))

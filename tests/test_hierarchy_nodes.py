@@ -54,6 +54,17 @@ class HierarchyNodesTests(unittest.TestCase):
         r = normalize_document({"paragraphs": [{"text": "표 내용", "is_table_cell": True}]})
         self.assertEqual(r["diagnostics"][0]["code"], "table_identity_unavailable")
 
+    def test_left_margin_context_and_distinct_sheets(self):
+        r = normalize_document({"paragraphs": [
+            {"text": "□ 계획", "paragraph_style": {"left_margin": 0}},
+            {"text": "추진내용", "paragraph_style": {"left_margin": 100}}]})
+        node = next(n for n in r["nodes"] if n["id"] == r["source_ids"][0])
+        self.assertEqual(node["role"], "square")
+        r = normalize_document({"paragraphs": [
+            {"text": "표1", "table_order": 1, "sheet": "가"},
+            {"text": "표2", "table_order": 1, "sheet": "나"}]})
+        self.assertEqual(len([n for n in r["nodes"] if n["kind"] == "table"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

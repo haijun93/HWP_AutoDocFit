@@ -62,6 +62,9 @@ class HierarchySearchTest(unittest.TestCase):
             {"id": 1, "parent_id": None, "role": "body", "level": 2,
              "text": "검색", "tokens": ["검색"], "path": ["검색"]}]}
         self.assertEqual(search(legacy, "검색")[0]["id"], 1)
+        legacy["records"].append({"id": 2, "parent_id": 1, "role": "body", "level": 3,
+                                  "text": "세부", "tokens": ["세부"], "path": ["검색", "세부"]})
+        self.assertEqual(search(legacy, "검색")[0]["child_nodes"][0]["id"], 2)
         index = build_index({"paragraphs": [{"id": 1, "text": "검색", "level": "body"},
                                             {"id": "a", "text": "검색", "level": "body"}]})
         self.assertEqual(len(search(index, "검색")), 2)

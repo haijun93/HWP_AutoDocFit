@@ -13,6 +13,11 @@ KIND = {"title": "document", "document_title": "document", "chapter": "chapter",
 _MARKER = re.compile(r"^\s*(□|ㅇ|○|-|[Ⅰ-Ⅿ]+|[IVXLCDM]+[.)]?|\d+(?:\.\d+)*[.)]?|[가-하][.)])(?:\s|$)")
 
 
+def _indent(p):
+    style = p.get("paragraph_style") or {}
+    return p.get("indent", style.get("left", style.get("left_margin")))
+
+
 def _proposal(p, previous, following):
     """기호는 후보일 뿐: 스타일 또는 인접 문단의 들여쓰기 근거를 요구한다."""
     match = _MARKER.match(p.get("text", p.get("body", "")))
@@ -24,11 +29,10 @@ def _proposal(p, previous, following):
     style = p.get("paragraph_style") or {}
     name = str(p.get("style_name", style.get("name", ""))).casefold()
     styled = p.get("outline_level") is not None or any(x in name for x in ("heading", "제목", "개요"))
-    indent = p.get("indent", style.get("left", style.get("left_margin")))
+    indent = _indent(p)
     neighbors = [x for x in (previous, following) if x]
     context = indent is not None and any(
-        x.get("indent", (x.get("paragraph_style") or {}).get("left")) is not None
-        and x.get("indent", (x.get("paragraph_style") or {}).get("left")) != indent
+        _indent(x) is not None and _indent(x) != indent
         for x in neighbors)
     evidence = [x for x, ok in (("paragraph_style", styled), ("neighbor_indent", context)) if ok]
     if not evidence:
@@ -120,7 +124,7 @@ def normalize_document(document: dict, *, document_name: str = "") -> dict:
         table = p.get("table_id", p.get("table_order"))
         p["table_id"] = None
         if table is not None:
-            key = (p.get("section"), table)
+            key = (p.get("section"), position.get("sheet"), table)
             if key not in tables:
                 tables[key] = {"id": fresh("table"), "kind": "table", "text": f"표 {table}",
                                "parent_id": p["parent_id"], "position": position, "synthetic": True}
