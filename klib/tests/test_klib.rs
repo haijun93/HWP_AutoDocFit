@@ -1180,3 +1180,162 @@ fn test_prepare_pipe_returns_managed_paths_and_distinct_missing_codes() {
     let unknown = call(r#"{"cmd":"item_prepare","id":999999}"#.into());
     assert_eq!(unknown.str("code"), Some("NOT_REGISTERED"));
 }
+
+// REL2255B: independent cases, normal test-thread stack, no panic-catching.
+fn rel2255b_copy_fixture(ctx: &TestContext) -> PathBuf {
+    let source = ctx.dir.join("source");
+    fs::create_dir(&source).unwrap();
+    fs::write(source.join("document.txt"), "original").unwrap();
+    source
+}
+
+fn rel2255b_assert_copy_rejected(source: &Path, target: &Path) {
+    let error = db::copy_dir_recursive(source, target).expect_err("unsafe copy must be rejected before traversal");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{error}");
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+#[test]
+fn test_rel2255b_copy_target_inside_source() {
+    let ctx = TestContext::new("rel2255b_copy_child");
+    let source = rel2255b_copy_fixture(&ctx);
+    rel2255b_assert_copy_rejected(&source, &source.join("new/child"));
+    assert!(!source.join("new").exists());
+}
+
+#[test]
+fn test_rel2255b_copy_source_inside_target() {
+    let ctx = TestContext::new("rel2255b_copy_parent");
+    let source = rel2255b_copy_fixture(&ctx);
+    rel2255b_assert_copy_rejected(&source, &ctx.dir);
+    assert!(!ctx.dir.join("document.txt").exists());
+}
+
+#[test]
+fn test_rel2255b_copy_same_path() {
+    let ctx = TestContext::new("rel2255b_copy_same");
+    let source = rel2255b_copy_fixture(&ctx);
+    rel2255b_assert_copy_rejected(&source, &source);
+    assert_eq!(fs::read_dir(&source).unwrap().count(), 1);
+}
+
+#[test]
+fn test_rel2255b_copy_similar_prefix_is_sibling() {
+    let ctx = TestContext::new("rel2255b_copy_prefix");
+    for (from, to) in [("source", "source-backup"), ("archive-backup", "archive")] {
+        let source = ctx.dir.join(from);
+        let target = ctx.dir.join(to);
+        fs::create_dir(&source).unwrap();
+        fs::write(source.join("document.txt"), "original").unwrap();
+        db::copy_dir_recursive(&source, &target).expect("component-distinct siblings are safe");
+        assert_eq!(fs::read_to_string(target.join("document.txt")).unwrap(), "original");
+        assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+    }
+}
+
+fn rel2255b_export_fixture(ctx: &TestContext) -> (Database, i64, PathBuf) {
+    let database = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = database.box_create("REL2255B", "").unwrap();
+    let source = rel2255b_copy_fixture(ctx);
+    database.item_add(bid, "folder", source.to_str().unwrap(), "folder", "core", 0., 0., None).unwrap();
+    (database, bid, source)
+}
+
+#[test]
+fn test_rel2255b_export_target_inside_original() {
+    let ctx = TestContext::new("rel2255b_export_child");
+    let (database, bid, source) = rel2255b_export_fixture(&ctx);
+    let error = database.box_export(bid, source.join("new/export").to_str().unwrap()).expect_err("original descendant must be rejected");
+    assert!(error.contains("폴더"), "{error}");
+    assert!(!source.join("new").exists());
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+#[test]
+fn test_rel2255b_export_same_as_original() {
+    let ctx = TestContext::new("rel2255b_export_same");
+    let (database, bid, source) = rel2255b_export_fixture(&ctx);
+    let error = database.box_export(bid, source.to_str().unwrap()).expect_err("same original must be rejected");
+    assert!(error.contains("폴더"), "{error}");
+    assert_eq!(fs::read_dir(&source).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+// Windows junctions need no Developer Mode/symlink privilege; no silent skip.
+fn rel2255b_directory_alias(target: &Path, alias: &Path) {
+    #[cfg(windows)]
+    {
+        let status = std::process::Command::new("cmd.exe")
+            .args(["/c", "mklink", "/J"]).arg(alias).arg(target).status().unwrap();
+        assert!(status.success(), "junction fixture must be created");
+    }
+    #[cfg(not(windows))]
+    std::os::unix::fs::symlink(target, alias).unwrap();
+    assert!(util::is_or_has_reparse_point(alias));
+}
+
+fn rel2255b_remove_alias(alias: &Path) {
+    #[cfg(windows)]
+    fs::remove_dir(alias).unwrap();
+    #[cfg(not(windows))]
+    fs::remove_file(alias).unwrap();
+}
+
+#[test]
+fn test_rel2255b_copy_target_through_directory_alias() {
+    let ctx = TestContext::new("rel2255b_copy_alias");
+    let source = rel2255b_copy_fixture(&ctx);
+    let alias = ctx.dir.join("alias");
+    rel2255b_directory_alias(&source, &alias);
+    let result = db::copy_dir_recursive(&source, &alias.join("new/child"));
+    rel2255b_remove_alias(&alias);
+    let error = result.expect_err("alias descendant must be rejected before traversal");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    assert!(!source.join("new").exists());
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+#[test]
+fn test_rel2255b_export_target_through_directory_alias() {
+    let ctx = TestContext::new("rel2255b_export_alias");
+    let (database, bid, source) = rel2255b_export_fixture(&ctx);
+    let alias = ctx.dir.join("alias");
+    rel2255b_directory_alias(&source, &alias);
+    let result = database.box_export(bid, alias.join("new/export").to_str().unwrap());
+    rel2255b_remove_alias(&alias);
+    let error = result.expect_err("alias export must be rejected before traversal");
+    assert!(error.contains("링크") || error.contains("정션"), "{error}");
+    assert!(!source.join("new").exists());
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+#[test]
+fn test_rel2255b_export_original_inside_target() {
+    let ctx = TestContext::new("rel2255b_export_parent");
+    let database = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = database.box_create("REL2255B parent", "").unwrap();
+    let target = ctx.dir.join("original-parent");
+    let source = target.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("document.txt"), "original").unwrap();
+    database.item_add(bid, "folder", source.to_str().unwrap(), "folder", "core", 0., 0., None).unwrap();
+    let error = database.box_export(bid, target.to_str().unwrap()).expect_err("original ancestor must be rejected");
+    assert!(error.contains("원본") || error.contains("상위"), "must reject overlap before generic nonempty check: {error}");
+    assert_eq!(fs::read_dir(&target).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+#[test]
+fn test_rel2255b_copy_source_through_directory_alias() {
+    let ctx = TestContext::new("rel2255b_copy_source_alias");
+    let source = rel2255b_copy_fixture(&ctx);
+    let alias = ctx.dir.join("alias");
+    let target = ctx.dir.join("output");
+    rel2255b_directory_alias(&source, &alias);
+    let result = db::copy_dir_recursive(&alias, &target);
+    rel2255b_remove_alias(&alias);
+    let error = result.expect_err("source alias must be rejected");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    assert!(!target.exists());
+    assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
