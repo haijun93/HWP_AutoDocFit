@@ -12,3 +12,7 @@
 | 색인 | `ContentSearchIndex.index_file` | 레코드 텍스트를 문단 FTS와 전체 본문 FTS에 저장하고, 날짜/검색 보조 인덱스를 갱신한다. |
 
 비교 기준은 변환 출력 레코드의 텍스트, 순서, 위치 종류/라벨, 분류 위계다. kordoc 런타임 부재·시간 초과·암호화·손상·빈 본문은 각 정규화 오류로 반환한다. 기준값을 완화하지 않는다.
+
+Rust는 별도 `extract_hwp` 함수에서 앱 배포 kordoc 4.24.9 런타임으로 같은 Markdown 변환을 수행한 뒤 동일 분할 규칙을 적용한다. HWP 색인 위계는 `legacy_records::classify_texts` 공통 호환 분류기를 사용한다. `legacy_records::run` 자체는 HWPX ZIP/XML 전용이므로 바이너리 HWP5 파일을 직접 열지 않는다. HWPX·DOCX 추출 함수와 색인 분기 동작은 변경하지 않았다.
+
+`tests/fixtures/KIDX13_reference.hwp`는 공개 법령 첨부 문서의 사본으로, 원본은 수정하지 않았다. 표의 Markdown 출력과 본문 검색을 함께 검증한다.

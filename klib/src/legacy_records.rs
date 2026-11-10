@@ -29,3 +29,17 @@ fn walk(n:&Node, table:bool, styles:&HashMap<String,String>, out:&mut Vec<Value>
 pub fn run(path:&Path)->Result<Vec<Value>,String>{let f=File::open(path).map_err(|e|e.to_string())?;let mut z=ZipArchive::new(f).map_err(|e|e.to_string())?;let mut names:Vec<String>=(0..z.len()).filter_map(|i|z.by_index(i).ok().and_then(|x|x.name().ok().map(|n|n.into_owned()))).collect();names.sort_by_key(|n|{let tail=n.split("section").nth(1).unwrap_or("");tail.chars().take_while(char::is_ascii_digit).collect::<String>().parse::<usize>().unwrap_or(0)});let mut styles=HashMap::new();if names.iter().any(|n|n=="Contents/header.xml"){let mut b=Vec::new();z.by_name("Contents/header.xml").map_err(|e|e.to_string())?.read_to_end(&mut b).map_err(|e|e.to_string())?;let h=parse(&b)?;fn scan(n:&Node,s:&mut HashMap<String,String>){if tag(n)=="style"{if let(Some(i),Some(v))=(n.attrs.get("id"),n.attrs.get("name")){s.insert(i.clone(),v.clone());}}for c in children(n){scan(c,s)}}scan(&h,&mut styles)}let mut out=Vec::new();for name in names.into_iter().filter(|n|n.starts_with("Contents/section")&&n.ends_with(".xml")){let mut b=Vec::new();z.by_name(&name).map_err(|e|e.to_string())?.read_to_end(&mut b).map_err(|e|e.to_string())?;walk(&parse(&b)?,false,&styles,&mut out)}let texts:Vec<String>=out.iter().map(|p|p.str("text").unwrap_or("").to_owned()).collect();let scheme=hierarchy::compat::marker_scheme::detect_scheme(&texts);let classified=crate::classify_levels::classify_with_scheme(&out,7,&scheme);for (record,level) in out.iter_mut().zip(classified){if let Value::Obj(fields)=record{let level=match level{Value::Str(s)=>s,_=>"body".to_owned()};for (key,value) in fields.iter_mut(){if key=="level"{*value=Value::Str(level.clone())}else if key=="level_rank"{*value=Value::from(rank(&level))}}}}Ok(out)}
 
 fn rank(level:&str)->i64{match level{"document_title"=>0,"chapter"=>1,"section"=>2,"topic"=>3,"square"=>4,"circle"=>5,"dash"=>6,"asterisk"=>7,_=>8}}
+
+/// Apply the same legacy-compatible level classifier to text-only formats such as HWP5.
+pub fn classify_texts(texts: &[String]) -> Vec<String> {
+    let paragraphs: Vec<crate::extract::Paragraph> = texts.iter().enumerate().map(|(index, text)| {
+        crate::extract::Paragraph {
+            text: text.clone(), location_kind: "paragraph".into(),
+            location_label: format!("문단 {}", index + 1), sequence: index + 1,
+            section: None, hierarchy_level: None, is_table_cell: false,
+            style_name: None, outline_level: None,
+        }
+    }).collect();
+    let scheme = hierarchy::compat::marker_scheme::detect_scheme(texts);
+    crate::classify_levels::classify_extracted(&paragraphs, &scheme)
+}
