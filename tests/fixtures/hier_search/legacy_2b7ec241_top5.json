@@ -1,0 +1,62 @@
+{
+  "source": "2b7ec241:docfit_core/hierarchy_search.py",
+  "k": 5,
+  "queries": {
+    "pdf-body": [
+      {
+        "id": "pdf/body",
+        "score": 1.819438
+      }
+    ],
+    "number-body": [
+      {
+        "id": "number/body",
+        "score": 1.819438
+      }
+    ],
+    "table-body": [
+      {
+        "id": "table/body",
+        "score": 2.444095
+      }
+    ],
+    "tab-body": [
+      {
+        "id": "tab/body",
+        "score": 1.979202
+      },
+      {
+        "id": "tab/noise",
+        "score": 1.689226
+      }
+    ],
+    "hanging-detail": [
+      {
+        "id": "hanging/detail",
+        "score": 2.086007
+      }
+    ],
+    "mixed-context": [
+      {
+        "id": "table/body",
+        "score": 3.42347
+      },
+      {
+        "id": "table/document",
+        "score": 2.909562
+      },
+      {
+        "id": "table/heading",
+        "score": 2.236893
+      },
+      {
+        "id": "pdf/body",
+        "score": 1.473361
+      },
+      {
+        "id": "table/noise",
+        "score": 1.444268
+      }
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<hs:sec xmlns:hs="urn:docfit:test:section" xmlns:hp="urn:docfit:test:paragraph">
+  <hp:p paraPrIDRef="incomplete"><hp:run><hp:t>□<hp:tab/>작업구역 출입통제 기준</hp:t></hp:run></hp:p>
+  <hp:p paraPrIDRef="incomplete"><hp:run><hp:t>ㅇ<hp:tab/>현장안내 게시</hp:t></hp:run></hp:p>
+</hs:sec>

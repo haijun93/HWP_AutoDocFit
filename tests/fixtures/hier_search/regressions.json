@@ -1,0 +1,56 @@
+{
+  "description": "공개 가능한 합성 추출 노드. 실제 PDF/HWPX를 파싱한 결과가 아니며 원본 파일을 읽지 않는다.",
+  "unsupported": ["이미지 전용 PDF OCR 및 레이아웃 추출은 이 도구에서 수행하지 않음", "원본 HWP/HWPX/PDF/DOCX/XLSX 직접 입력은 미지원; 등록 때 추출한 JSON만 입력"],
+  "unverified": ["실문서 대규모 Recall 및 지연", "Rust/Tantivy 통합 성능 및 native 메모리/RSS", "한/글 COM 및 실제 kordoc 변환; tab 회귀는 별도 XML 테스트와 구분"],
+  "documents": [
+    {
+      "id": "pdf", "name": "목차 없는 안내시설 보고서.pdf", "format": "pdf", "fixture_kind": "synthetic extracted nodes; no TOC",
+      "nodes": [
+        {"id": "heading", "role": "chapter", "level": 2, "text": "안내시설 유지관리", "parent_id": null, "page": 2, "paragraph": 0},
+        {"id": "body", "role": "paragraph", "level": 5, "text": "안내판 철거 전 전기시설 분리발주 검토", "parent_id": "heading", "page": 2, "paragraph": 1},
+        {"id": "noise", "role": "paragraph", "level": 5, "text": "조경시설 정기점검 보고", "parent_id": "heading", "page": 3, "paragraph": 2}
+      ]
+    },
+    {
+      "id": "number", "name": "잘못된 번호 계획.docx", "format": "docx", "fixture_kind": "synthetic extracted nodes; engine hierarchy wins over numbering",
+      "nodes": [
+        {"id": "heading", "role": "chapter", "level": 2, "text": "Ⅳ 예산집행", "parent_id": null, "paragraph": 0},
+        {"id": "subheading", "role": "section", "level": 3, "text": "1.9.2 공사계약", "parent_id": "heading", "paragraph": 1},
+        {"id": "body", "role": "paragraph", "level": 5, "text": "가. 선금 지급보증 검토", "parent_id": "subheading", "paragraph": 2, "indent": 0},
+        {"id": "noise", "role": "paragraph", "level": 5, "text": "99. 번호가 커져도 상위 장으로 승격하지 않는다", "parent_id": "subheading", "paragraph": 3}
+      ]
+    },
+    {
+      "id": "table", "name": "표 제목 예산.xlsx", "format": "xlsx", "fixture_kind": "synthetic extracted table heading and cells",
+      "nodes": [
+        {"id": "heading", "role": "section", "level": 3, "text": "공원 조성예산", "parent_id": null, "table_order": 1, "sheet": "예산", "cell": "A1"},
+        {"id": "body", "role": "paragraph", "level": 5, "text": "전기시설 철거비 산출내역", "parent_id": "heading", "table_order": 1, "sheet": "예산", "cell": "B2"},
+        {"id": "noise", "role": "paragraph", "level": 5, "text": "수목 구입비 산출내역", "parent_id": "heading", "table_order": 1, "sheet": "예산", "cell": "B3"}
+      ]
+    },
+    {
+      "id": "tab", "name": "kordoc 탭 추출.hwpx", "format": "hwpx", "fixture_kind": "synthetic extracted text where hp:tab is a tab; XML parser not exercised",
+      "nodes": [
+        {"id": "heading", "role": "section", "level": 3, "text": "시설물 해체계획", "parent_id": null, "paragraph": 0},
+        {"id": "body", "role": "square", "level": 5, "text": "□\t작업구역 출입통제 기준", "parent_id": "heading", "paragraph": 1, "paragraph_style": {"left_margin": 0, "indent": -100}},
+        {"id": "noise", "role": "circle", "level": 6, "text": "ㅇ\t현장안내 게시", "parent_id": "body", "paragraph": 2}
+      ]
+    },
+    {
+      "id": "hanging", "name": "불완전 내어쓰기.hwp", "format": "hwp", "fixture_kind": "synthetic extracted nodes; incomplete hanging indent",
+      "nodes": [
+        {"id": "heading", "role": "chapter", "level": 2, "text": "산업안전 관리", "parent_id": null, "paragraph": 0},
+        {"id": "body", "role": "circle", "level": 6, "text": "ㅇ (안전조치) 감전예방 작업절차", "parent_id": "heading", "paragraph": 1, "indent": 0, "paragraph_style": {"indent": null}},
+        {"id": "detail", "role": "dash", "level": 7, "text": "- 차단기 잠금 확인", "parent_id": "body", "paragraph": 2, "indent": 0}
+      ]
+    }
+  ],
+  "queries": [
+    {"id": "pdf-body", "group": "no_toc_pdf", "query": "분리발주", "relevant": ["pdf/body"], "expected_context": ["안내시설 유지관리"]},
+    {"id": "number-body", "group": "malformed_numbering", "query": "지급보증", "relevant": ["number/body"], "expected_context": ["Ⅳ 예산집행", "1.9.2 공사계약"]},
+    {"id": "table-body", "group": "title_in_table", "query": "철거비", "relevant": ["table/body"], "expected_context": ["공원 조성예산"]},
+    {"id": "tab-body", "group": "kordoc_hp_tab", "query": "출입통제", "relevant": ["tab/body"], "expected_context": ["시설물 해체계획"]},
+    {"id": "hanging-detail", "group": "incomplete_hanging_indent", "query": "차단기", "relevant": ["hanging/detail"], "expected_context": ["산업안전 관리", "감전예방 작업절차"]},
+    {"id": "mixed-context", "group": "cross_document_context", "query": "예산 전기시설", "relevant": ["table/body"], "expected_context": ["공원 조성예산"]}
+  ]
+}
