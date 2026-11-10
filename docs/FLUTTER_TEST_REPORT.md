@@ -59,7 +59,7 @@
 Linux 시험에서 실제 Tk/TkDND·pywebview·defusedxml을 사용하도록 변경했다. Windows registry는 키 미존재로 표현하며 GUI 시험 파일은 임시 폴더로 격리한다. 경로 fixture를 플랫폼 독립적으로 고쳤다.
 
 - 원래 실패·오류 22시험: 실제 Xvfb/Tk에서 22개 전부 통과, skip 0.
-- 전체: 986개 중 983통과, 실패/오류 0, 기존 skip(Windows 절전/PowerShell).
+- 전체: 986개 중 983통과, 실패/오류 0, 기존 skip 3.
 - 관련 78시험의 headless 실행: 62통과, GUI skip 16, 실패/오류 0.
 - Flutter 소스는 이번 변경에서 수정하지 않았다. 앞서 수행한 analyze/25위젯 시험 통과 기록을 유지한다.
 - Windows COM·WebView2·EXE 및 새 GitHub GUI CI 실행 결과는 확인하지 않았다.

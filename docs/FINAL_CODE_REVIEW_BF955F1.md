@@ -97,7 +97,7 @@ Windows COM·WebView2 X/Alt+F4·EXE 실기기 검증은 별도이며 아래 내�
 - 생산 Python 87개 AST/compile 및 runpy import_check 통과. 본체 CRLF 3,323줄 유지.
 - Python 전체 1,132개: 통과 1,129개, 조건부 제외 3개, 실패/오류 0개.
   실제 Tk/Xvfb를 사용하고 Windows 전용 모듈만 대체했다.
-  제외는 실제 Windows PowerShell·절전 API 시험이다.
+
 - dart analyze --fatal-infos 지적 0개. Flutter 전체 49개, 흐름도 모델 6개 통과.
 - 현재 빌드된 Flutter 웹/iframe + 실제 Python 저장소의 저장·재열기·삭제·PNG 통과.
   지연 저장 ACK 중 추가 입력 유지 및 뒤로 이동 시 미저장 확인 통과. 두 브라우저 시험의 페이지 오류 0건.

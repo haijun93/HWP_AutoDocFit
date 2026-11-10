@@ -81,7 +81,7 @@ after = [[0, 9434], [0, 9434]]
 
 - Python AST/compile 87개, import_check 통과(Windows 전용 임포트 대체). 본체 CRLF 3,323줄 유지.
 - Python 전체 1,120개: 통과 1,117개, 조건부 제외 3개, 실패/오류 0개.
-  실제 Tk/Xvfb 사용. 제외는 실제 Windows PowerShell·절전 API 시험이다.
+  실제 Tk/Xvfb 사용.
 - Flutter 전체 48개, 일반 흐름도 모델 6개 통과.
 - Flutter/dart 분석은 R1의 오류 4개로 실패. 기존 단위 시험 통과는 빌드 가능성이나 새 경계 조건의 정확성을 뜻하지 않는다.
 - 추가 위젯 재현은 R3의 기대 25mm/실제 20mm로 실패함을 확인했다. 임시 파일은 기존 시험 스위트에 남기지 않았다.

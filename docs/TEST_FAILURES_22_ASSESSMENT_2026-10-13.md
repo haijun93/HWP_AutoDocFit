@@ -83,6 +83,6 @@ Windows는 기존 `python -m unittest discover -s tests`를 사용한다. 이번
 | 전체 986시험 (실제 GUI) | 983통과, 실패/오류 0, skip 3 | 176.239초 |
 | 관련 78시험 (디스플레이 없음) | 62통과, 실패/오류 0, GUI skip 16 | 38.200초 |
 
-전체 시험의 skip은 Windows 절전 방지, 실제 Windows PowerShell 시험이다. 원래 문제 22건에는 skip이 없다. 실제 Tk/TkDND 창·변수·Treeview·Listbox·확인/취소와 저장 시험을 실행했다. WebView2 브라우저 자체와 한/글 COM 실동작·EXE 검증은 미실시다.
+원래 문제 22건에는 skip이 없다. 실제 Tk/TkDND 창·변수·Treeview·Listbox·확인/취소와 저장 시험을 실행했다. WebView2 브라우저 자체와 한/글 COM 실동작·EXE 검증은 미실시다.
 
 최종 로그: `/tmp/docfit-alpha4-original22-tests.log`, `/tmp/docfit-alpha4-final-tests.log`, `/tmp/docfit-alpha4-headless-tests.log`.

@@ -16,7 +16,7 @@
 ## 최종 검증
 
 - 환경: Linux Python 3.12, 저장소 `.venv/bin/python`, UTF-8, 실제 Tk/Xvfb. Windows COM/winreg만 시험 대역 사용.
-- Python 전체: **1,070개 실행, 1,067개 통과, 조건부 건너뜀(Windows 절전 방지·PowerShell), 실패·오류 0개**. GUI 필수 모드로 실행해 화면 부재로 인한 숨은 건너뜀 방지.
+- Python 전체: **1,070개 실행, 1,067개 통과, 조건부 건너뜀 3개, 실패·오류 0개**. GUI 필수 모드로 실행해 화면 부재로 인한 숨은 건너뜀 방지.
 - 모듈 compile 및 Linux import_check 통과. 본체 CRLF 3,310개, 단독 LF 0개.
 - Flutter 전체: **39개 통과**, native 계약 시험 포함. analyze: **No issues found**.
 - Flutter 웹 Release 빌드 통과(98.9초). 로컬 자산·폰트 라이선스 포함 검증 통과. 생성 번들은 기존 배포 정책에 따라 Git 추적하지 않으며 Windows 빌드에서 다시 생성함.

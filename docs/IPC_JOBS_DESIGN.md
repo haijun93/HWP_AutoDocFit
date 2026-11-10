@@ -265,7 +265,7 @@ KIND = {
 |---|---|---|
 | JobManager 단위 | 등록부 충돌 판정, `singleton`, `result_max`, 오류 매핑, 사건 스키마 | `tests/test_jobs.py`(17건) 확장. 기존 kind의 동작이 등록부 도입 전과 같음을 먼저 고정 |
 | 전송 | 느린 가짜 `dispatch` 중 `get_events`/`cancel_job` 지연, 같은 연결 직렬, 취소→종료 사건, 연결 끊김→재시작 후 `ORPHANED_JOB`, `request_id` 재사용 거절 | `tests/test_native_ipc.py`(실제 서브프로세스) 확장 |
-| 계약 | 발행되는 모든 사건을 5.4·5.5의 스키마로 검사(검증기는 새 의존성 없이 손으로 작성; 앱 필수 의존성이 아님). 대표 사건 골든 JSON | 신규 `tests/test_job_events_contract.py` |
+| 계약 | 발행되는 모든 사건을 5.4·5.5의 스키마로 검사(검증기는 새 의존성 없이 손으로 작성). 대표 사건 골든 JSON | 신규 `tests/test_job_events_contract.py` |
 | 호환 | 기존 동기 메서드(`table_units copy` 등)의 응답이 이관 전후 동일, `start`/`stop`/`get_state` 응답 형태 불변 | 이관 PR마다 스냅샷 |
 | 소비자(Dart) | 가짜 소켓 서버로 `JobClient`: 폴링 주기, `gap` 재동기화, 중복 `seq`, 취소, 타임아웃이 job을 취소하지 않음 | `flutter_ui/test` 신규 |
 | 성능 | 활성 job 중 `get_events` p95, 유휴 폴링 CPU, 사건 2,000건 초과 시 `gap` | 이관 전후 같은 PC 비교(추정 금지, 측정값만 기재) |

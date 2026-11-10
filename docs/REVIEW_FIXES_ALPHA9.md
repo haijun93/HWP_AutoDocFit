@@ -28,7 +28,7 @@
 
 - AST/compile: 본체·브리지·패키지 및 spec 86개 검사 통과. 본체 CRLF 3,320줄 유지.
 - import_check 및 전체 소스 부트스트랩 --self-test: 통과. Windows 전용 임포트 대체, 80개 패키지/모듈과 부트스트랩 심볼 6개 확인.
-- Python 전체: 1,085개 실행, 1,082개 통과, 조건부 제외, 실패/오류 0. 제외는 실제 Windows PowerShell·절전 API 시험이다. 실제 Tk 시험은 제외하지 않았다.
+- Python 전체: 1,085개 실행, 1,082개 통과, 조건부 제외 3개, 실패/오류 0. 실제 Tk 시험은 제외하지 않았다.
 - 마지막 set 복제 보완 후 RunContext 집중 시험 5개 재실행 통과.
 - Flutter 전체: 44개 통과. Flutter analyze: 지적 사항 0개.
 - 일반 흐름도 모델: 6개 통과.
