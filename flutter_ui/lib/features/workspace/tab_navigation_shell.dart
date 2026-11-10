@@ -16,7 +16,7 @@ const kSidebarCollapsedWidth = 56.0;
 const kSidebarExpandedWidth = 200.0;
 const kSidebarAutoExpandWidth = 900.0;
 
-/// 개발자 모드의 자료함·노트북. 다른 메뉴처럼 오른쪽 실행창 안에 연다(사용자 요청 2026-11-07:
+/// 개발자 모드의 자료함·업무자료함. 다른 메뉴처럼 오른쪽 실행창 안에 연다(사용자 요청 2026-11-07:
 /// 열어도 사이드메뉴가 사라지지 않게). 열려 있는 동안에만 화면을 만들어 끌어 놓기 감시가
 /// 화면을 열 때 시작하고 다른 메뉴로 옮기면 멈춘다.
 enum WorkspaceExtraPage { library, notebook }
@@ -106,7 +106,7 @@ class TabNavigationShell extends StatefulWidget {
   final Set<int> hiddenTabs;
   final bool developerMode;
   final Widget? libraryScreen;
-  /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
+  /// 개발자 모드 전용 업무자료함 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
   /// 개발자 모드 전용 외부 프로그램(사진첩·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
   final ExternalAppOpener? onOpenExternalApp;
@@ -133,12 +133,12 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   bool _sidebarTouched = false;
   bool _built = false;
 
-  /// 오른쪽 실행창에 연 자료함·노트북(null이면 [_index] 탭).
+  /// 오른쪽 실행창에 연 자료함·업무자료함(null이면 [_index] 탭).
   WorkspaceExtraPage? _extra;
 
 
   void _openExtra(WorkspaceExtraPage page) {
-    if (_extra == page) return; // 자료함·노트북은 일반 모드에서도 연다(사용자 지시 2026-11-08).
+    if (_extra == page) return; // 자료함·업무자료함은 일반 모드에서도 연다(사용자 지시 2026-11-08).
     setState(() => _extra = page);
   }
 
@@ -260,7 +260,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
         ? null
         : HostClosablePage(
             key: ValueKey('workspace-extra-${_extra!.name}'),
-            title: _extra == WorkspaceExtraPage.library ? '자료함' : '노트북',
+            title: _extra == WorkspaceExtraPage.library ? '자료함' : '업무자료함',
             onBack: _goHome,
             child: extraChild,
           );
@@ -315,7 +315,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        // 자료함·노트북을 열어도 탭 화면(편집 중인 내용)은 그대로 둔다.
+                        // 자료함·업무자료함을 열어도 탭 화면(편집 중인 내용)은 그대로 둔다.
                         Offstage(
                           offstage: extraPage != null,
                           child: TickerMode(
@@ -388,7 +388,7 @@ class WorkspaceTabBar extends StatelessWidget {
   final VoidCallback? onToggleExpanded;
   final bool developerMode;
   final Widget? libraryScreen;
-  /// 개발자 모드 전용 노트북 화면(자료함 버튼 옆).
+  /// 개발자 모드 전용 업무자료함 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
   /// 개발자 모드 전용 외부 프로그램 실행(별도 프로그램). 선택 표시는 하지 않는다.
   final ExternalAppOpener? onOpenExternalApp;
@@ -396,10 +396,10 @@ class WorkspaceTabBar extends StatelessWidget {
   final VoidCallback? onPreviewCancel;
   final bool showToggle;
 
-  /// 오른쪽 실행창에 열린 자료함·노트북. 있으면 그 항목만 선택 표시한다.
+  /// 오른쪽 실행창에 열린 자료함·업무자료함. 있으면 그 항목만 선택 표시한다.
   final WorkspaceExtraPage? selectedExtra;
 
-  /// 자료함·노트북을 실행창 안에 연다. 없으면(메뉴만 따로 쓸 때) 예전처럼 새 화면으로 띄운다.
+  /// 자료함·업무자료함을 실행창 안에 연다. 없으면(메뉴만 따로 쓸 때) 예전처럼 새 화면으로 띄운다.
   final ValueChanged<WorkspaceExtraPage>? onOpenExtra;
   final ValueChanged<WorkspaceExtraPage>? onPreviewExtra;
 
@@ -477,14 +477,14 @@ class WorkspaceTabBar extends StatelessWidget {
                   if (notebookScreen != null)
                     _TabPill(
                       key: const ValueKey('notebook-open'),
-                      label: '노트북',
+                      label: '업무자료함',
                       icon: Icons.menu_book_outlined,
                       selected: selectedExtra == WorkspaceExtraPage.notebook,
                       color: color,
                       expanded: expanded,
                       onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.notebook),
                       onPreviewCancel: onPreviewCancel,
-                      onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '노트북', notebookScreen!),
+                      onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '업무자료함', notebookScreen!),
                     ),
                   // 외부 프로그램(사진첩·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
                   // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
@@ -623,7 +623,7 @@ class _TabPill extends StatelessWidget {
   }
 }
 
-/// 자료함·노트북처럼 위에 띄운 화면. 저장할 편집이 없으므로 앱을 닫을 때
+/// 자료함·업무자료함처럼 위에 띄운 화면. 저장할 편집이 없으므로 앱을 닫을 때
 /// 스스로 닫혀 종료를 막지 않는다(사용자 보고 2026-11-07: X를 눌러도 안 닫힘).
 class HostClosablePage extends StatefulWidget {
   const HostClosablePage({

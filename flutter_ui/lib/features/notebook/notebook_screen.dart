@@ -12,7 +12,7 @@ import '../library/library_screen.dart';
 import '../workspace/tab_navigation_shell.dart' show HostClosablePage;
 import 'notebook_api.dart';
 
-/// 노트북 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
+/// 업무자료함 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
 /// 폭이 [kNotebookWideWidth] 미만이면 세 칸을 탭으로 바꾼다.
 const kNotebookWideWidth = 1000.0;
 
@@ -33,7 +33,7 @@ const kNotebookNotesMax = 560.0;
 const kNotebookMiddleMin = 320.0;
 const kNotebookHandleWidth = 8.0;
 
-/// 마지막으로 정한 칸 폭. 앱을 켜 둔 동안 노트북을 다시 열어도 유지한다(파일 저장은 후속).
+/// 마지막으로 정한 칸 폭. 앱을 켜 둔 동안 업무자료함을 다시 열어도 유지한다(파일 저장은 후속).
 double _savedSourcesWidth = kNotebookSourcesWidth;
 double _savedNotesWidth = kNotebookNotesWidth;
 
@@ -103,7 +103,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   String? _tagFilter;
   String? _status;
 
-  /// '+메모 추가' 편집기의 자동 저장 초안(출처로 저장하거나 삭제하면 비운다). 노트북 화면이 열려 있는 동안 유지된다.
+  /// '+메모 추가' 편집기의 자동 저장 초안(출처로 저장하거나 삭제하면 비운다). 업무자료함 화면이 열려 있는 동안 유지된다.
   MemoDocument? _memoDraft;
   bool _busy = false;
   bool _loaded = false;
@@ -169,7 +169,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     });
   }
 
-  /// 노트북의 태그와 노트 수(많은 순, 같으면 이름순).
+  /// 업무자료함의 태그와 노트 수(많은 순, 같으면 이름순).
   List<(String, int)> get _tagCounts {
     final counts = <String, int>{};
     for (final note in _notes) {
@@ -219,18 +219,18 @@ class _NotebookScreenState extends State<NotebookScreen> {
 
   Future<void> _createNotebook() async {
     final name = await _askText(
-      title: '새 노트북',
-      label: '노트북 이름',
+      title: '새 업무자료함',
+      label: '업무자료함 이름',
       fieldKey: 'nb-create-name',
       okKey: 'nb-create-ok',
-      initial: '새 노트북',
+      initial: '새 업무자료함',
     );
     if (name == null || name.trim().isEmpty) return;
     await _run(() async {
       final id = await widget.api.createNotebook(name.trim());
       _notebook = Notebook(id: id, name: name.trim());
       await _loadNotebooks();
-    }, done: '노트북을 만들었습니다.');
+    }, done: '업무자료함을 만들었습니다.');
   }
 
   Future<void> _addSource() async {
@@ -284,7 +284,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     final targets = paths.map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
     if (targets.isEmpty) return;
     if (nb == null) {
-      setState(() => _status = '먼저 노트북을 만들거나 고르세요.');
+      setState(() => _status = '먼저 업무자료함을 만들거나 고르세요.');
       return;
     }
     final failed = <String>[];
@@ -310,7 +310,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     });
   }
 
-  /// 창에 끌어 놓은 파일을 가져와 지금 노트북의 출처로 넣는다.
+  /// 창에 끌어 놓은 파일을 가져와 지금 업무자료함의 출처로 넣는다.
   Future<void> _takeDrops() async {
     if (!mounted) return;
     try {
@@ -372,12 +372,12 @@ class _NotebookScreenState extends State<NotebookScreen> {
       MaterialPageRoute<void>(
         builder: (_) => HostClosablePage(
           title: '자료함',
-          backLabel: '노트북으로',
+          backLabel: '업무자료함으로',
           child: LibraryScreen(api: library, notebookApi: widget.api, initialBoxId: boxId, initialItemId: itemId),
         ),
       ),
     );
-    // 자료함에서 이 노트북에 출처를 더 넣었을 수 있다.
+    // 자료함에서 이 업무자료함에 출처를 더 넣었을 수 있다.
     if (mounted) await _run(_loadNotebookContent);
   }
 
@@ -583,7 +583,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('노트북'),
+        title: const Text('업무자료함'),
         actions: [
           if (_notebooks.isNotEmpty)
             Padding(
@@ -601,7 +601,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
             ),
           IconButton(
             key: const ValueKey('nb-create'),
-            tooltip: '새 노트북',
+            tooltip: '새 업무자료함',
             onPressed: _busy ? null : _createNotebook,
             icon: const Icon(Icons.create_new_folder_outlined),
           ),
@@ -632,13 +632,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('노트북이 없습니다. 여러 문서를 모아 근거를 찾고 노트를 써 보세요.'),
+                  const Text('업무자료함이 없습니다. 여러 문서를 모아 근거를 찾고 노트를 써 보세요.'),
                   const SizedBox(height: 12),
                   FilledButton.icon(
                     key: const ValueKey('nb-create-empty'),
                     onPressed: _busy ? null : _createNotebook,
                     icon: const Icon(Icons.add),
-                    label: const Text('새 노트북 만들기'),
+                    label: const Text('새 업무자료함 만들기'),
                   ),
                 ],
               )

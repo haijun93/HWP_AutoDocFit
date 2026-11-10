@@ -148,10 +148,10 @@ class LibraryScreen extends StatefulWidget {
   /// 탐색기 형식의 크기·수정한 날짜 조회. 생략하면 `api`가 `LibraryFileInfoApi`일 때 그것을 쓴다.
   final LibraryFileInfoApi? fileInfoApi;
 
-  /// 있으면 항목 메뉴에 '노트북에 출처로 추가'가 나타난다.
+  /// 있으면 항목 메뉴에 '업무자료함에 출처로 추가'가 나타난다.
   final NotebookApi? notebookApi;
 
-  /// 처음 열 때 고를 자료함과 강조할 항목(노트북 출처의 '자료함에서 보기').
+  /// 처음 열 때 고를 자료함과 강조할 항목(업무자료함 출처의 '자료함에서 보기').
   final String? initialBoxId;
   final String? initialItemId;
 
@@ -491,12 +491,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
   late String? _pendingFocusBoxId = widget.initialBoxId;
   late String? _pendingFocusItemId = widget.initialItemId;
 
-  /// 항목을 노트북 출처로 넣는다. 노트북을 고르게 하고, 이미 출처면 그렇다고 알린다.
+  /// 항목을 업무자료함 출처로 넣는다. 업무자료함을 고르게 하고, 이미 출처면 그렇다고 알린다.
   Future<void> _addToNotebook(LibraryItem item) async {
     final notebooks = widget.notebookApi;
     if (notebooks == null) return;
     if ((item.source ?? '').trim().isEmpty) {
-      setState(() => _statusMessage = '파일 경로가 있는 자료만 노트북 출처로 추가할 수 있습니다.');
+      setState(() => _statusMessage = '파일 경로가 있는 자료만 업무자료함 출처로 추가할 수 있습니다.');
       return;
     }
     final notebook = await showDialog<Notebook>(
@@ -508,10 +508,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final result = await notebooks.addSourceFromItem(notebook.id, item.id);
       if (!mounted) return;
       setState(() => _statusMessage = result.reused
-          ? '이미 “${notebook.name}” 노트북 출처에 있습니다.'
-          : '“${item.title}”을(를) “${notebook.name}” 노트북 출처로 추가했습니다.');
+          ? '이미 “${notebook.name}” 업무자료함 출처에 있습니다.'
+          : '“${item.title}”을(를) “${notebook.name}” 업무자료함 출처로 추가했습니다.');
     } catch (error) {
-      if (mounted) setState(() => _statusMessage = '노트북에 추가하지 못했습니다: ${_errorText(error)}');
+      if (mounted) setState(() => _statusMessage = '업무자료함에 추가하지 못했습니다: ${_errorText(error)}');
     }
   }
 
@@ -756,7 +756,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ],
       ));
 
-  /// '+메모': 메모 편집기(노트북 '+메모 추가'와 같은 것)를 열고, 저장하면 핵심자료에 텍스트 자료로 넣는다.
+  /// '+메모': 메모 편집기(업무자료함 '+메모 추가'와 같은 것)를 열고, 저장하면 핵심자료에 텍스트 자료로 넣는다.
   /// 저장하지 않고 닫으면 초안이 남고, 휴지통을 누르면 초안을 버린다.
   Future<void> _addMemo() async {
     final box = _selectedBox;
@@ -2078,7 +2078,7 @@ class _LibraryCard extends StatelessWidget {
       if (onOpen != null)
         const PopupMenuItem(key: ValueKey('libraryMenuOpen'), value: 'open', child: Text('열기')),
       if (onAddToNotebook != null)
-        const PopupMenuItem(key: ValueKey('libraryMenuAddToNotebook'), value: 'notebook', child: Text('노트북에 출처로 추가')),
+        const PopupMenuItem(key: ValueKey('libraryMenuAddToNotebook'), value: 'notebook', child: Text('업무자료함에 출처로 추가')),
       const PopupMenuItem(value: 'rename', child: Text('이름 바꾸기')), const PopupMenuItem(value: 'delete', child: Text('삭제')),
       const PopupMenuItem(value: 'core', child: Text('핵심자료로 이동')), const PopupMenuItem(value: 'basis', child: Text('기초자료로 이동')),
       const PopupMenuItem(value: 'reference', child: Text('참고자료로 이동')), const PopupMenuItem(value: 'temp', child: Text('임시저장소로 이동')),
@@ -2117,7 +2117,7 @@ class _RelationPainter extends CustomPainter {
       oldDelegate.relations != relations || oldDelegate.items != items;
 }
 
-/// '노트북에 출처로 추가'에서 노트북을 고르는 창. 노트북이 없으면 이름을 넣어 새로 만들 수 있다.
+/// '업무자료함에 출처로 추가'에서 업무자료함을 고르는 창. 업무자료함이 없으면 이름을 넣어 새로 만들 수 있다.
 class _NotebookPickDialog extends StatefulWidget {
   const _NotebookPickDialog({required this.api, required this.itemTitle});
   final NotebookApi api;
@@ -2128,7 +2128,7 @@ class _NotebookPickDialog extends StatefulWidget {
 }
 
 class _NotebookPickDialogState extends State<_NotebookPickDialog> {
-  final _nameController = TextEditingController(text: '새 노트북');
+  final _nameController = TextEditingController(text: '새 업무자료함');
   List<Notebook> _notebooks = [];
   bool _loading = true;
   String? _error;
@@ -2169,18 +2169,18 @@ class _NotebookPickDialogState extends State<_NotebookPickDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        title: const Text('노트북에 출처로 추가'),
+        title: const Text('업무자료함에 출처로 추가'),
         content: SizedBox(
           width: 400,
           height: 300,
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Text('“${widget.itemTitle}”을(를) 넣을 노트북을 고르세요.', maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text('“${widget.itemTitle}”을(를) 넣을 업무자료함을 고르세요.', maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 8),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
             if (_error != null) Text(_error!, key: const ValueKey('libraryNbPickError'), style: const TextStyle(color: Colors.red)),
             Expanded(
               child: !_loading && _notebooks.isEmpty
-                  ? const Center(child: Text('노트북이 없습니다. 아래에서 새로 만드세요.'))
+                  ? const Center(child: Text('업무자료함이 없습니다. 아래에서 새로 만드세요.'))
                   : ListView(children: [
                       for (final nb in _notebooks)
                         ListTile(
@@ -2196,7 +2196,7 @@ class _NotebookPickDialogState extends State<_NotebookPickDialog> {
               Expanded(child: TextField(
                 key: const ValueKey('libraryNbPickNewName'),
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: '새 노트북 이름', isDense: true),
+                decoration: const InputDecoration(labelText: '새 업무자료함 이름', isDense: true),
                 onSubmitted: (_) => _create(),
               )),
               const SizedBox(width: 8),
