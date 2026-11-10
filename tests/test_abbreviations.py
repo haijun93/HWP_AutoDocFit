@@ -249,6 +249,51 @@ class DocumentConversionTest(unittest.TestCase):
         self.assertEqual((table.get('rowCnt'), table.get('colCnt')), ('2', '2'))
         self.assertEqual(ns['제목_문자열'](ns['제목_셀들'](table)[0]), '지구 침공계획(안) 보고')
 
+    def test_distributed_demo_report_preserves_body_and_builds_title_overview(self):
+        """배포하는 실제 TXT 전체를 읽어 준말 분석·서식 표 생성과 본문 보존을 확인한다."""
+        from collections import Counter
+        from html import escape
+        from docfit_core.abbreviations import merge_with_defaults
+        from docfit_core.style_hierarchy import leading_marker
+
+        ns = self.ns
+        asset = Path(__file__).resolve().parents[1] / 'release-assets' / '보고서 예시 파일(한번에 적용).txt'
+        raw = asset.read_bytes()
+        self.assertFalse(raw.startswith(b'\xef\xbb\xbf'))
+        self.assertNotIn(b'\r', raw)
+        text = ns['텍스트파일_읽기'](asset)
+        lines = text.splitlines()
+        self.assertEqual(len(lines), 95)
+        self.assertEqual(sum(bool(line.strip()) for line in lines), 46)
+        self.assertEqual(Counter(leading_marker(line)[0] for line in lines if leading_marker(line)[0]),
+                         {'□': 6, 'ㅇ': 18, '-': 12, '*': 3, '**': 2, '※': 1, '2.': 1})
+        title = '삼체 문명 존속을 위한, 지구 이주·점령 계획(안) 보고'
+        overview = ('삼체 행성의 항성계 불안정에 따른 문명 파괴 위기를 극복하고자, 지구 확보를 위한 '
+                    '「선(先) 기초과학 봉쇄–후(後) 함대 일괄 점령」 3단계 침공·이주 전략을 보고드림.')
+        self.assertEqual(lines[0], '제목: ' + title)
+        self.assertEqual(lines[2], '개요: ' + overview)
+        found, count, header, section = self._convert(
+            ''.join(self._p(escape(line)) for line in lines), registry=merge_with_defaults({}))
+        self.assertEqual(found, {'Contents/section0.xml': [(0, '제목1', title), (2, '개요', overview)]})
+        self.assertEqual(count, 2)
+        tables = [t for t in section.iter() if self.name(t) == 'tbl']
+        self.assertEqual([(t.get('rowCnt'), t.get('colCnt')) for t in tables], [('2', '2'), ('1', '1')])
+        title_cell = ns['제목_셀들'](tables[0])[0]
+        self.assertEqual([ns['제목_문자열'](p) for p in ns['제목_문단들'](title_cell)],
+                         ['삼체 문명 존속을 위한', '지구 이주·점령 계획(안) 보고'])
+        self.assertEqual(ns['제목_문자열'](tables[1]), overview)
+        # 제목·개요 주변 빈 줄 3개는 앱 규칙대로 삭제하며 나머지 빈 줄·본문은 보존한다.
+        actual = self._texts(section)
+        self.assertEqual(len(actual), len(lines) - 3)
+        self.assertEqual(actual[2:], lines[5:])
+        self.assertEqual(actual[-2:], ['붙임: 1. 지구 침공 세부 시행계획 1부.', '      2. 스케줄표 1부.  끝.'])
+        chars = {c.get('id'): c for c in header.iter() if self.name(c) == 'charPr'}
+        for table, height in zip(tables, ('2700', '1500')):
+            cell = ns['제목_셀들'](table)[0]
+            heights = {chars[r.get('charPrIDRef')].get('height') for r in cell.iter()
+                       if self.name(r) == 'run' and ns['제목_문자열'](r).strip()}
+            self.assertIn(height, heights)
+
     def test_title2_splits_subtitle_at_comma_and_centers_all_title_text(self):
         ns = self.ns
         body = (self._p('제목2: 희망2023 나눔캠페인, ‘사랑의 온도탑’ 제막행사 검토보고')
