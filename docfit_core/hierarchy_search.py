@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
+from .hierarchy_nodes import normalize_document
 
 _TOKEN = re.compile(r"[0-9A-Za-z가-힣一-龥]+")
 
@@ -24,15 +25,16 @@ def build_index(document: dict, *, document_name: str = "") -> dict:
     형태를 모두 허용한다. 원본 XML을 다시 읽지 않으며 입력 딕셔너리를
     변경하지 않는다.
     """
-    structure = document.get("document_structure", document)
-    nodes = [dict(node) for node in structure.get("nodes", [])]
-    by_id = {node.get("id"): node for node in nodes}
+    normalized = normalize_document(document, document_name=document_name)
+    by_id = {node["id"]: node for node in normalized["nodes"]}
+    nodes = [by_id[node_id] for node_id in normalized["source_ids"]]
     records = []
     for node in nodes:
         chain = []
         parent = by_id.get(node.get("parent_id"))
         while parent is not None:
-            chain.append(parent)
+            if not parent.get("synthetic"):
+                chain.append(parent)
             parent = by_id.get(parent.get("parent_id"))
         chain.reverse()
         path = [*(item.get("text", "") for item in chain), node.get("text", "")]
@@ -44,9 +46,19 @@ def build_index(document: dict, *, document_name: str = "") -> dict:
             "breadcrumb": " > ".join(x for x in path if x),
             "tokens": _tokens(text), "section": node.get("section"),
             "paragraph": node.get("paragraph"),
+            "kind": node["kind"], "rank": node["rank"],
+            "position": node["position"], "page_ids": node["page_ids"],
+            "table_id": node["table_id"], "child_ids": node["child_ids"],
+            "normalized_parent_id": node["parent_id"],
         })
-    return {"version": 1, "document_name": document_name,
-            "records": records, "token_count": sum(len(r["tokens"]) for r in records)}
+    # 기존 루트 parent_id=None 계약을 유지한다.
+    for record in records:
+        if record["parent_id"] == normalized["document_id"]:
+            record["parent_id"] = None
+    return {"version": 2, "document_name": document_name,
+            "records": records, "token_count": sum(len(r["tokens"]) for r in records),
+            "nodes": normalized["nodes"], "document_id": normalized["document_id"],
+            "diagnostics": normalized["diagnostics"], "limitations": normalized["limitations"]}
 
 
 def search(index: dict, query: str, *, limit: int = 20) -> list[dict]:
