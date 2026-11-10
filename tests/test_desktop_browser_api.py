@@ -4,8 +4,9 @@ import unittest
 import tempfile
 from pathlib import Path
 from unittest import mock
+from types import SimpleNamespace
 
-from desktop_web_ui import DesktopWebBridge, _BrowserApi
+from desktop_web_ui import DesktopWebBridge, _BrowserApi, _cancel_before_edit
 from docfit_core.stage_selection import stages_for_mode
 
 
@@ -149,6 +150,49 @@ class BrowserApiTests(unittest.TestCase):
         self.assertNotIn('request_close', public)
         self.assertEqual(api.get_state, bridge.get_state)
         self.assertEqual(api.window_control, bridge.window_control)
+
+    def test_eight_gui_independent_calls_skip_tk_dispatch(self):
+        gui = _FakeGui()
+        gui._준말_서비스 = lambda: SimpleNamespace(settings=SimpleNamespace(
+            read=lambda: {}, _path=Path(tempfile.gettempdir()) / "settings.json"))
+        gui._flutter_dialog = {"id": "dialog", "kind": "confirm"}
+        bridge = DesktopWebBridge(gui)
+        bridge._settings_snapshot = lambda: {"values": {"developer_mode": False}}
+        bridge._tk = Mock(side_effect=AssertionError("unexpected Tk round trip"))
+        bridge.get_state = Mock(return_value={"ok": True})
+
+        # 실제 파일 열기 분기를 타되 OS 앱은 호출하지 않는다.
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source.hwp"
+            result = Path(directory) / "result.hwp"
+            source.touch()
+            result.touch()
+            gui.files = [str(source)]
+            gui._결과목록 = [{"원본": str(source), "결과": str(result)}]
+            gui._경로_열기 = Mock()
+            with mock.patch("desktop_web_ui.subprocess.Popen") as popen:
+                settings = bridge.get_settings()
+                self.assertTrue(settings["ok"])
+                self.assertEqual(settings["developer_mode"], False)
+                self.assertEqual(bridge.get_pending_dialog()["id"], "dialog")
+                bridge.start_zero_click("dummy-token")
+                bridge.cancel_zero_click()
+                bridge.open_source_file(0)
+                bridge.show_source_file(0)
+                bridge.open_result_source(0)
+                bridge.show_result(0)
+                bridge.open_result(0)
+                self.assertEqual(gui._경로_열기.call_count, 3)
+                self.assertEqual(popen.call_count, 2)
+        bridge._tk.assert_not_called()
+    def test_cancel_before_edit_invalidates_token_without_tk_round_trip(self):
+        bridge = DesktopWebBridge(_FakeGui())
+        bridge._ux_data = SimpleNamespace(zero_click={"token": "stale"})
+        bridge._tk = Mock(side_effect=AssertionError("unexpected Tk round trip"))
+        method = _cancel_before_edit(lambda self: "edited")
+        self.assertEqual(method(bridge), "edited")
+        self.assertEqual(bridge._ux_data.zero_click, {})
+        bridge._tk.assert_not_called()
 
     def test_window_control_maximizes_and_restores_native_window(self):
         bridge = DesktopWebBridge(object())

@@ -172,12 +172,12 @@ class DesktopWebBridge:
         return {"pending": False}
 
     def cancel_zero_click(self):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop()
         return self.get_state()
 
     def start_zero_click(self, token):
         # 이전 프런트엔드나 저장 설정에서 온 지연 실행 요청도 무시한다.
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop()
         return self.get_state()
 
     def set_profile_drop_bounds(self, bounds):
@@ -217,7 +217,7 @@ class DesktopWebBridge:
     def drop_format_file(self, path):
         return self.quick_register_and_activate_profile(path)
 
-    def _tk(self, callback, timeout=120, front=False):
+    def _tk(self, callback, timeout=5, front=False):
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
@@ -294,8 +294,8 @@ class DesktopWebBridge:
                 if cancelled:
                     self._requests.discard(result)
             if not cancelled:
-                raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
-            raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
+                raise RuntimeError("바쁨: 명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
+            raise RuntimeError("바쁨: 앱에서 다른 작업을 처리하고 있습니다. 잠시 뒤 다시 시도해 주세요.") from exc
 
     def _stages(self, mode):
         choices = self.gui.stage_choices.get(mode, {})
@@ -1305,7 +1305,7 @@ class DesktopWebBridge:
         return snapshot
 
     def get_settings(self):
-        result = self._tk(lambda: response(self._settings_snapshot))
+        result = response(self._settings_snapshot)
         if isinstance(result, dict) and result.get('ok') is True and isinstance(result.get('data'), dict):
             result['developer_mode'] = result['data'].get('values', {}).get('developer_mode', False)
         return result
@@ -1405,7 +1405,7 @@ class DesktopWebBridge:
         ) if key in pending}
 
     def get_pending_dialog(self):
-        return self._tk(self._pending_dialog)
+        return self._pending_dialog()
 
     def enable_close_guard(self):
         with self._close_lock:
@@ -2614,7 +2614,7 @@ class DesktopWebBridge:
             else:
                 self.gui.status_var.set("결과 파일을 찾을 수 없습니다. 옮기거나 지우지 않았는지 확인해 주세요.")
 
-        self._tk(open_one, timeout=None, front=True)
+        open_one()
         return self.get_state()
 
     def _reveal(self, path, missing):
@@ -2639,12 +2639,12 @@ class DesktopWebBridge:
 
     def open_source_file(self, index):
         """파일변환 화면 오른쪽 버튼 메뉴: 올린 파일을 연결된 프로그램으로 연다(2.0.7)."""
-        self._tk(lambda: self._open_path(self._source_path(index), "파일을 찾을 수 없습니다."), timeout=None, front=True)
+        self._open_path(self._source_path(index), "파일을 찾을 수 없습니다.")
         return self.get_state()
 
     def show_source_file(self, index):
         """올린 파일을 탐색기에서 골라 보인다(2.0.7)."""
-        self._tk(lambda: self._reveal(self._source_path(index), "파일 폴더를 찾을 수 없습니다."), timeout=None, front=True)
+        self._reveal(self._source_path(index), "파일 폴더를 찾을 수 없습니다.")
         return self.get_state()
 
     def open_result_source(self, index):
@@ -2654,7 +2654,7 @@ class DesktopWebBridge:
                 return getattr(self.gui, "_결과목록", [])[int(index)].get("원본", "")
             except (IndexError, TypeError, ValueError, AttributeError):
                 return ""
-        self._tk(lambda: self._open_path(source(), "원본 파일을 찾을 수 없습니다."), timeout=None, front=True)
+        self._open_path(source(), "원본 파일을 찾을 수 없습니다.")
         return self.get_state()
 
     def show_result(self, index):
@@ -2668,7 +2668,7 @@ class DesktopWebBridge:
             else:
                 self.gui.status_var.set("결과 폴더를 찾을 수 없습니다.")
 
-        self._tk(reveal, timeout=None, front=True)
+        reveal()
         return self.get_state()
 
     def open_diff(self, index=0):
@@ -3084,11 +3084,11 @@ class DesktopWebBridge:
 
 
 def _cancel_before_edit(method):
-    """설정·문서·서식 변경은 같은 Tk 큐에서 예약 토큰을 먼저 무효화한다."""
+    """설정·문서·서식 변경 전에 브리지의 예약 토큰을 직접 무효화한다."""
     from functools import wraps
     @wraps(method)
     def call(self, *args, **kwargs):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop()
         return method(self, *args, **kwargs)
     return call
 
