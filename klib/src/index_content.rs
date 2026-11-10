@@ -32,7 +32,7 @@ pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
 fn collect(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if path.is_file() {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx") {
+        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "hwp") {
             let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e|e.to_string())?.join(path) };
             files.push(absolute);
         }
@@ -71,7 +71,11 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
     let paragraphs = crate::extract::extract_for_index(Path::new(&path))?;
     let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
     let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
-    let levels = crate::classify_levels::classify_extracted(&paragraphs, &scheme);
+    let levels = if ext == "hwp" {
+        crate::legacy_records::classify_texts(&texts)
+    } else {
+        crate::classify_levels::classify_extracted(&paragraphs, &scheme)
+    };
     let body = paragraphs.iter().map(|p|p.text.as_str()).collect::<Vec<_>>().join("\n");
     let date = extract_date(&body);
     let tx = db.transaction().map_err(|e|e.to_string())?;
