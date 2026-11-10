@@ -1,3 +1,6 @@
 hwp-auto-docfit.py text eol=crlf
 diagram_editor/index.html text eol=lf
 flutter_ui/assets/flow_editor/index.html text eol=lf
+
+release-assets/** text eol=lf
+release-assets/* text eol=lf
