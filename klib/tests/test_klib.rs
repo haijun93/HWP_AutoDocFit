@@ -962,4 +962,12 @@ fn test_extract_pdf_errors() {
     fs::write(&corrupt_file, b"invalid pdf garbage content").unwrap();
     let err_corrupt = extract::extract(&corrupt_file).unwrap_err();
     assert!(err_corrupt.starts_with("corrupt") || err_corrupt.starts_with("runtime_unavailable"));
+
+    let sample_pdf = Path::new("../tests/fixtures/timemachine_extract/sample.pdf");
+    if sample_pdf.is_file() {
+        let records = extract::extract(sample_pdf).unwrap();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].text, "TimeMachine PDF Page 1 Content");
+        assert_eq!(records[0].location_label, "1쪽");
+    }
 }

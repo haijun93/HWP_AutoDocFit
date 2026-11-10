@@ -1,7 +1,7 @@
 //! Text and HWPX paragraph extraction shared by the CLI and index pipeline.
 use crate::json::Value;
 use encoding_rs::EUC_KR;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::io::Read;
 use zip::ZipArchive;
 
@@ -113,26 +113,205 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     }
 }
 
+type FpdfDocument = *mut std::ffi::c_void;
+type FpdfPage = *mut std::ffi::c_void;
+type FpdfTextPage = *mut std::ffi::c_void;
+
+#[repr(C)]
+struct FpdfLibraryConfig {
+    version: std::ffi::c_int,
+    user_font_paths: *const *const std::ffi::c_char,
+    isolate: *mut std::ffi::c_void,
+    v8_embedder_slot: std::ffi::c_uint,
+}
+
+struct NativePdfium {
+    _lib: libloading::Library,
+    fpdf_load_mem_document: unsafe extern "C" fn(*const u8, std::ffi::c_int, *const std::ffi::c_char) -> FpdfDocument,
+    fpdf_close_document: unsafe extern "C" fn(FpdfDocument),
+    fpdf_get_page_count: unsafe extern "C" fn(FpdfDocument) -> std::ffi::c_int,
+    fpdf_load_page: unsafe extern "C" fn(FpdfDocument, std::ffi::c_int) -> FpdfPage,
+    fpdf_close_page: unsafe extern "C" fn(FpdfPage),
+    fpdftext_load_page: unsafe extern "C" fn(FpdfPage) -> FpdfTextPage,
+    fpdftext_close_page: unsafe extern "C" fn(FpdfTextPage),
+    fpdftext_count_chars: unsafe extern "C" fn(FpdfTextPage) -> std::ffi::c_int,
+    fpdftext_get_text: unsafe extern "C" fn(FpdfTextPage, std::ffi::c_int, std::ffi::c_int, *mut u16) -> std::ffi::c_int,
+    fpdf_get_last_error: Option<unsafe extern "C" fn() -> std::ffi::c_ulong>,
+}
+
+unsafe impl Send for NativePdfium {}
+unsafe impl Sync for NativePdfium {}
+
+static PDFIUM_API: std::sync::OnceLock<Result<NativePdfium, String>> = std::sync::OnceLock::new();
+
+fn find_pdfium_library_path() -> Result<PathBuf, String> {
+    let mut candidates = Vec::new();
+    for var in ["PDFIUM_DLL", "PDFIUM_DYLIB", "PDFIUM_LIB"] {
+        if let Some(p) = std::env::var_os(var) {
+            candidates.push(PathBuf::from(p));
+        }
+    }
+
+    let lib_names = ["pdfium.dll", "libpdfium.dylib", "pdfium.dylib", "libpdfium.so", "pdfium.so"];
+
+    fn add_venv_candidates(candidates: &mut Vec<PathBuf>, venv: &Path, lib_names: &[&str]) {
+        for name in lib_names {
+            candidates.push(venv.join("Lib/site-packages/pypdfium2_raw").join(name));
+            candidates.push(venv.join("lib/site-packages/pypdfium2_raw").join(name));
+            if let Ok(entries) = std::fs::read_dir(venv.join("lib")) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() && entry.file_name().to_string_lossy().starts_with("python") {
+                        candidates.push(p.join("site-packages/pypdfium2_raw").join(name));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(v) = std::env::var_os("VIRTUAL_ENV") {
+        add_venv_candidates(&mut candidates, Path::new(&v), &lib_names);
+    }
+
+    let mut base_dirs = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            base_dirs.push(dir.to_path_buf());
+            base_dirs.extend(dir.ancestors().skip(1).take(5).map(Path::to_path_buf));
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        base_dirs.push(cwd.clone());
+        base_dirs.extend(cwd.ancestors().take(5).map(Path::to_path_buf));
+    }
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let h = Path::new(&home);
+        base_dirs.push(h.join("work"));
+        base_dirs.push(h.to_path_buf());
+    }
+
+    for dir in &base_dirs {
+        for name in &lib_names {
+            candidates.push(dir.join(name));
+            candidates.push(dir.join("resources").join(name));
+            candidates.push(dir.join("pypdfium2_raw").join(name));
+        }
+        for venv_name in [".venv", "venv", "venv314", "mapo-agent-1/.venv"] {
+            add_venv_candidates(&mut candidates, &dir.join(venv_name), &lib_names);
+        }
+    }
+
+    if let Some(root) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
+        for name in &lib_names {
+            candidates.push(Path::new(&root).join("HwpAutoDocFit/pypdfium2_raw").join(name));
+            candidates.push(Path::new(&root).join("HwpAutoDocFit").join(name));
+        }
+    }
+
+    candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| {
+        "runtime_unavailable: PDFium 라이브러리(pdfium.dll / libpdfium.dylib)를 찾을 수 없음".to_string()
+    })
+}
+
+fn get_pdfium_api() -> Result<&'static NativePdfium, &'static str> {
+    PDFIUM_API.get_or_init(|| {
+        let lib_path = find_pdfium_library_path()?;
+        unsafe {
+            let lib = libloading::Library::new(&lib_path)
+                .map_err(|e| format!("runtime_unavailable: PDFium 라이브러리 로드 실패 ({:?}): {e}", lib_path))?;
+
+            if let Ok(init_with_config) = lib.get::<unsafe extern "C" fn(*const FpdfLibraryConfig)>(b"FPDF_InitLibraryWithConfig") {
+                let config = FpdfLibraryConfig {
+                    version: 2,
+                    user_font_paths: std::ptr::null(),
+                    isolate: std::ptr::null_mut(),
+                    v8_embedder_slot: 0,
+                };
+                init_with_config(&config);
+            } else if let Ok(init) = lib.get::<unsafe extern "C" fn()>(b"FPDF_InitLibrary") {
+                init();
+            }
+
+            let fpdf_load_mem_document = *lib.get(b"FPDF_LoadMemDocument")
+                .map_err(|e| format!("runtime_unavailable: FPDF_LoadMemDocument 심볼 누락: {e}"))?;
+            let fpdf_close_document = *lib.get(b"FPDF_CloseDocument")
+                .map_err(|e| format!("runtime_unavailable: FPDF_CloseDocument 심볼 누락: {e}"))?;
+            let fpdf_get_page_count = *lib.get(b"FPDF_GetPageCount")
+                .map_err(|e| format!("runtime_unavailable: FPDF_GetPageCount 심볼 누락: {e}"))?;
+            let fpdf_load_page = *lib.get(b"FPDF_LoadPage")
+                .map_err(|e| format!("runtime_unavailable: FPDF_LoadPage 심볼 누락: {e}"))?;
+            let fpdf_close_page = *lib.get(b"FPDF_ClosePage")
+                .map_err(|e| format!("runtime_unavailable: FPDF_ClosePage 심볼 누락: {e}"))?;
+            let fpdftext_load_page = *lib.get(b"FPDFText_LoadPage")
+                .map_err(|e| format!("runtime_unavailable: FPDFText_LoadPage 심볼 누락: {e}"))?;
+            let fpdftext_close_page = *lib.get(b"FPDFText_ClosePage")
+                .map_err(|e| format!("runtime_unavailable: FPDFText_ClosePage 심볼 누락: {e}"))?;
+            let fpdftext_count_chars = *lib.get(b"FPDFText_CountChars")
+                .map_err(|e| format!("runtime_unavailable: FPDFText_CountChars 심볼 누락: {e}"))?;
+            let fpdftext_get_text = *lib.get(b"FPDFText_GetText")
+                .map_err(|e| format!("runtime_unavailable: FPDFText_GetText 심볼 누락: {e}"))?;
+            let fpdf_get_last_error = lib.get(b"FPDF_GetLastError").ok().map(|s| *s);
+
+            Ok(NativePdfium {
+                _lib: lib,
+                fpdf_load_mem_document,
+                fpdf_close_document,
+                fpdf_get_page_count,
+                fpdf_load_page,
+                fpdf_close_page,
+                fpdftext_load_page,
+                fpdftext_close_page,
+                fpdftext_count_chars,
+                fpdftext_get_text,
+                fpdf_get_last_error,
+            })
+        }
+    }).as_ref().map_err(|s| s.as_str())
+}
+
 /// Extract one trimmed text record per non-empty PDF page using the same PDFium engine as Python.
 pub fn extract_pdf(path: &Path) -> Result<Vec<Paragraph>, String> {
     let raw = std::fs::read(path).map_err(|e| format!("corrupt: PDF 파일을 읽을 수 없음: {e}"))?;
     if raw.is_empty() { return Err("empty: PDF 파일 내용이 비어 있음".into()); }
-    let pdfium = bind_pdfium().map_err(|e| format!("runtime_unavailable: PDFium DLL을 찾을 수 없음: {e}"))?;
-    let document = pdfium.load_pdf_from_byte_vec(raw, None).map_err(|e| {
-        let message = e.to_string();
-        let lower = message.to_lowercase();
-        let code = if ["password", "encrypted", "암호"].iter().any(|x| lower.contains(x)) { "encrypted" } else { "corrupt" };
-        format!("{code}: PDF를 열 수 없음: {message}")
-    })?;
+    let api = get_pdfium_api().map_err(|e| e.to_string())?;
+
+    let doc = unsafe {
+        (api.fpdf_load_mem_document)(raw.as_ptr(), raw.len() as std::ffi::c_int, std::ptr::null())
+    };
+    if doc.is_null() {
+        let err_code = api.fpdf_get_last_error.map(|f| unsafe { f() }).unwrap_or(0);
+        if err_code == 4 || err_code == 5 {
+            return Err("encrypted: 암호화된 PDF 문서".into());
+        }
+        return Err("corrupt: 손상되었거나 열 수 없는 PDF".into());
+    }
+
+    let page_count = unsafe { (api.fpdf_get_page_count)(doc) };
     let mut records = Vec::new();
-    for (index, page) in document.pages().iter().enumerate() {
-        let text = page.text().map_err(|e| format!("corrupt: PDF 페이지 텍스트를 읽을 수 없음: {e}"))?.all();
+    for i in 0..page_count {
+        let page = unsafe { (api.fpdf_load_page)(doc, i) };
+        if page.is_null() { continue; }
+        let textpage = unsafe { (api.fpdftext_load_page)(page) };
+        let mut text = String::new();
+        if !textpage.is_null() {
+            let count = unsafe { (api.fpdftext_count_chars)(textpage) };
+            if count > 0 {
+                let mut buf = vec![0u16; (count + 2) as usize];
+                let written = unsafe { (api.fpdftext_get_text)(textpage, 0, count, buf.as_mut_ptr()) };
+                if written > 1 {
+                    text = String::from_utf16_lossy(&buf[..(written - 1) as usize]);
+                }
+            }
+            unsafe { (api.fpdftext_close_page)(textpage) };
+        }
+        unsafe { (api.fpdf_close_page)(page) };
+
         let stripped = text.trim();
         if !stripped.is_empty() {
             records.push(Paragraph {
                 text: stripped.to_owned(),
                 location_kind: "page".into(),
-                location_label: format!("{}쪽", index + 1),
+                location_label: format!("{}쪽", i + 1),
                 sequence: records.len() + 1,
                 section: None,
                 hierarchy_level: None,
@@ -142,46 +321,12 @@ pub fn extract_pdf(path: &Path) -> Result<Vec<Paragraph>, String> {
             });
         }
     }
-    if records.is_empty() { return Err("empty: 추출 가능한 PDF 텍스트가 없음".into()); }
-    Ok(records)
-}
+    unsafe { (api.fpdf_close_document)(doc) };
 
-fn bind_pdfium() -> Result<pdfium_render::prelude::Pdfium, pdfium_render::prelude::PdfiumError> {
-    use pdfium_render::prelude::*;
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os("PDFIUM_DLL") { candidates.push(Path::new(&path).to_path_buf()); }
-    if let Some(venv) = std::env::var_os("VIRTUAL_ENV") {
-        candidates.push(Path::new(&venv).join("Lib/site-packages/pypdfium2_raw/pdfium.dll"));
-        candidates.push(Path::new(&venv).join("lib/site-packages/pypdfium2_raw/pdfium.dll"));
+    if records.is_empty() {
+        return Err("empty: 추출 가능한 PDF 텍스트가 없음".into());
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.extend([dir.join("pdfium.dll"), dir.join("resources/pdfium.dll"), dir.join("pypdfium2_raw/pdfium.dll")]);
-            for ancestor in dir.ancestors().skip(1).take(5) {
-                candidates.extend([
-                    ancestor.join("pdfium.dll"),
-                    ancestor.join("resources/pdfium.dll"),
-                    ancestor.join("pypdfium2_raw/pdfium.dll"),
-                    ancestor.join(".venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
-                ]);
-            }
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        for ancestor in cwd.ancestors().take(5) {
-            candidates.extend([
-                ancestor.join(".venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
-                ancestor.join("mapo-agent-1/.venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
-            ]);
-        }
-    }
-    if let Some(root) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
-        candidates.push(Path::new(&root).join("HwpAutoDocFit/pypdfium2_raw/pdfium.dll"));
-        candidates.push(Path::new(&root).join("HwpAutoDocFit/pdfium.dll"));
-    }
-    let path = candidates.into_iter().find(|p| p.is_file());
-    let bindings = if let Some(path) = path { Pdfium::bind_to_library(path)? } else { Pdfium::bind_to_system_library()? };
-    Ok(Pdfium::new(bindings))
+    Ok(records)
 }
 
 /// Extract HWP5 through the same bundled kordoc Markdown conversion used by Python.

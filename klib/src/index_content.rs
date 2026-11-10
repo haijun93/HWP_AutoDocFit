@@ -1,8 +1,18 @@
-use rusqlite::{params, Connection, OptionalExtension};
+use rayon::prelude::*;
+use rusqlite::{params, Connection};
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 const HIERARCHY_VERSION: i64 = 1;
+
+struct PreparedContent {
+    paragraphs: Vec<crate::extract::Paragraph>,
+    levels: Vec<String>,
+    body: String,
+    date: Option<String>,
+    grams: HashSet<String>,
+}
 
 pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
     let mut files = Vec::new();
@@ -10,16 +20,121 @@ pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
     files.sort(); files.dedup();
     let mut db = Connection::open(db_path).map_err(|e| e.to_string())?;
     initialize(&mut db)?;
-    let total = files.len();
-    for (i, path) in files.iter().enumerate() {
-        let result = index_one(&mut db, path);
-        let (state, count, error) = match result {
-            Ok((false, count)) => ("skipped", count, None),
-            Ok((true, count)) => ("indexed", count, None),
-            Err(error) => ("error", 0, Some(error)),
+
+    let mut cached_meta: HashMap<String, (i64, f64, i64, usize)> = HashMap::new();
+    if let Ok(mut stmt) = db.prepare(
+        "SELECT m.path, m.size, m.mtime, m.hierarchy_schema_version, COUNT(p.path)
+         FROM content_meta m
+         LEFT JOIN content_paragraph_fts p ON p.path = m.path
+         GROUP BY m.path"
+    ) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let size: i64 = row.get(1)?;
+            let mtime: f64 = row.get(2)?;
+            let version: i64 = row.get(3)?;
+            let count: i64 = row.get(4)?;
+            Ok((path, (size, mtime, version, count as usize)))
+        }) {
+            for item in rows.flatten() {
+                cached_meta.insert(item.0, item.1);
+            }
+        }
+    }
+
+    let work_items: Vec<_> = files.into_iter().map(|path| {
+        let meta = std::fs::metadata(&path);
+        let path_str = path.to_string_lossy().into_owned();
+        let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_owned();
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
+        (path, path_str, name, ext, meta)
+    }).collect();
+
+    let prepared: Vec<_> = work_items.into_par_iter().map(|(path, path_str, name, ext, meta_res)| {
+        let meta = match meta_res {
+            Ok(m) => m,
+            Err(e) => return (path, path_str, name, ext, 0, 0.0, 0.0, Err(e.to_string())),
         };
+        let size = meta.len() as i64;
+        let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+        let ctime = meta.created().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0);
+
+        if let Some(&(s, m, v, count)) = cached_meta.get(&path_str) {
+            if s == size && m == mtime && v >= HIERARCHY_VERSION && count > 0 {
+                return (path, path_str, name, ext, size, mtime, ctime, Ok(None));
+            }
+        }
+
+        let content_res = (|| -> Result<PreparedContent, String> {
+            let paragraphs = crate::extract::extract_for_index(&path)?;
+            let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
+            let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
+            let levels = if ext == "hwp" {
+                crate::legacy_records::classify_texts(&texts)
+            } else {
+                crate::classify_levels::classify_extracted(&paragraphs, &scheme)
+            };
+            let body = paragraphs.iter().map(|p| p.text.as_str()).collect::<Vec<_>>().join("\n");
+            let date = extract_date(&body);
+            let chars: Vec<char> = body.to_lowercase().chars().collect();
+            let grams: HashSet<String> = chars.windows(2)
+                .map(|pair| pair.iter().collect::<String>()).collect();
+
+            Ok(PreparedContent {
+                paragraphs,
+                levels,
+                body,
+                date,
+                grams,
+            })
+        })();
+
+        (path, path_str, name, ext, size, mtime, ctime, content_res.map(Some))
+    }).collect();
+
+    let total = prepared.len();
+    for (i, (_path, path_str, name, ext, size, mtime, ctime, res)) in prepared.into_iter().enumerate() {
+        let (state, count, error) = match res {
+            Ok(None) => {
+                let count = cached_meta.get(&path_str).map(|c| c.3).unwrap_or(0);
+                ("skipped", count, None)
+            }
+            Ok(Some(content)) => {
+                let save_res = (|| -> Result<usize, String> {
+                    let tx = db.transaction().map_err(|e| e.to_string())?;
+                    for table in ["content_paragraph_fts", "content_fts", "content_short_grams", "content_meta", "content_errors"] {
+                        tx.execute(&format!("DELETE FROM {table} WHERE path=?"), [&path_str]).map_err(|e| e.to_string())?;
+                    }
+                    for (idx, p) in content.paragraphs.iter().enumerate() {
+                        let level = content.levels.get(idx).map(String::as_str).unwrap_or("body");
+                        let rank = level_rank(level);
+                        tx.execute(
+                            "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section) VALUES(?,?,?,?,?,?,?,?)",
+                            params![path_str, name, idx as i64, level, rank, p.text, p.location_label, p.section],
+                        ).map_err(|e| e.to_string())?;
+                    }
+                    tx.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", params![path_str, name, content.body]).map_err(|e| e.to_string())?;
+                    for gram in content.grams {
+                        tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)", params![gram, path_str]).map_err(|e| e.to_string())?;
+                    }
+                    tx.execute(
+                        "INSERT OR REPLACE INTO content_meta(path,size,mtime,ctime,reference_date,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",
+                        params![path_str, size, mtime, ctime, content.date, name, ext, HIERARCHY_VERSION],
+                    ).map_err(|e| e.to_string())?;
+                    tx.commit().map_err(|e| e.to_string())?;
+                    Ok(content.paragraphs.len())
+                })();
+
+                match save_res {
+                    Ok(len) => ("indexed", len, None),
+                    Err(e) => ("error", 0, Some(e)),
+                }
+            }
+            Err(e) => ("error", 0, Some(e)),
+        };
+
         let output = crate::json::Value::obj(vec![
-            ("path", path.to_string_lossy().to_string().into()),
+            ("path", path_str.into()),
             ("status", state.into()), ("paragraphs", count.into()),
             ("completed", (i + 1).into()), ("total", total.into()),
             ("error", error.map(crate::json::Value::Str).unwrap_or(crate::json::Value::Null)),
@@ -55,48 +170,6 @@ fn initialize(db: &mut Connection) -> Result<(), String> {
         CREATE INDEX IF NOT EXISTS content_short_grams_path ON content_short_grams(path);") .map_err(|e| e.to_string())
 }
 
-fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> {
-    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
-    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-    let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_owned();
-    let path = path.to_string_lossy().into_owned();
-    let size = meta.len() as i64;
-    let mtime = meta.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs_f64()).unwrap_or(0.0);
-    let old: Option<(i64,f64,i64)> = db.query_row("SELECT size,mtime,hierarchy_schema_version FROM content_meta WHERE path=?", [&path], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(|e| e.to_string())?;
-    let cached = old.is_some_and(|(s,m,v)| s==size && m==mtime && v>=HIERARCHY_VERSION);
-    if cached {
-        let count: i64 = db.query_row("SELECT count(*) FROM content_paragraph_fts WHERE path=?", [&path], |r|r.get(0)).map_err(|e|e.to_string())?;
-        if count > 0 { return Ok((false,count as usize)); }
-    }
-    let paragraphs = crate::extract::extract_for_index(Path::new(&path))?;
-    let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
-    let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
-    let levels = if ext == "hwp" {
-        crate::legacy_records::classify_texts(&texts)
-    } else {
-        crate::classify_levels::classify_extracted(&paragraphs, &scheme)
-    };
-    let body = paragraphs.iter().map(|p|p.text.as_str()).collect::<Vec<_>>().join("\n");
-    let date = extract_date(&body);
-    let tx = db.transaction().map_err(|e|e.to_string())?;
-    for table in ["content_paragraph_fts","content_fts","content_short_grams","content_meta","content_errors"] {
-        tx.execute(&format!("DELETE FROM {table} WHERE path=?"), [&path]).map_err(|e|e.to_string())?;
-    }
-    for (i,p) in paragraphs.iter().enumerate() {
-        let level = levels.get(i).map(String::as_str).unwrap_or("body");
-        let rank = level_rank(level);
-        tx.execute("INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section) VALUES(?,?,?,?,?,?,?,?)",
-            params![path,name,i as i64,level,rank,p.text,p.location_label,p.section]).map_err(|e|e.to_string())?;
-    }
-    tx.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", params![path,name,body]).map_err(|e|e.to_string())?;
-    let chars: Vec<char> = body.to_lowercase().chars().collect();
-    let grams: std::collections::HashSet<String> = chars.windows(2)
-        .map(|pair| pair.iter().collect::<String>()).collect();
-    for gram in grams { tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",params![gram,path]).map_err(|e|e.to_string())?; }
-    tx.execute("INSERT OR REPLACE INTO content_meta(path,size,mtime,ctime,reference_date,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",params![path,size,mtime,meta.created().ok().and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|d.as_secs_f64()).unwrap_or(0.0),date,name,ext,HIERARCHY_VERSION]).map_err(|e|e.to_string())?;
-    tx.commit().map_err(|e|e.to_string())?;
-    Ok((true,paragraphs.len()))
-}
 
 fn level_rank(level:&str)->i64 { match level {"document_title"=>0,"chapter"=>1,"section"=>2,"topic"=>3,"square"=>4,"circle"=>5,"dash"=>6,"asterisk"=>7,_=>8} }
 fn extract_date(text:&str)->Option<String> {

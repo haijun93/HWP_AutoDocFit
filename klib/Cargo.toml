@@ -20,7 +20,9 @@ windows-sys = { version = "0.59", features = [
 tantivy = "0.27"
 md5 = "0.7"
 regex = "1"
+rayon = "1"
 pdfium-render = { version = "0.9.5", default-features = false, features = ["pdfium_5961"] }
+libloading = "0.9"
 encoding_rs = "0.8"
 quick-xml = "0.38"
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
