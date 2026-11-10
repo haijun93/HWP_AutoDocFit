@@ -61,6 +61,23 @@ pub fn preview(request: &Value) -> Value {
                     if uuid_name.is_match(&stem) { stem = val("text", ""); }
                 },
                 "clear" => stem.clear(),
+                "digits_keep" => {
+                    let re = regex::Regex::new(r"\d+").unwrap();
+                    stem = re.find_iter(&stem).map(|m| m.as_str()).collect();
+                },
+                "digits_delete" => {
+                    stem = regex::Regex::new(r"\d+").unwrap().replace_all(&stem, "").into_owned();
+                },
+                "digits_pad" => {
+                    let re = regex::Regex::new(r"\d+").unwrap();
+                    let matches: Vec<_> = re.find_iter(&stem).collect();
+                    let picked = if val("which", "last") == "first" { matches.first() } else { matches.last() };
+                    if let Some(m) = picked {
+                        let width = rule.get("digits").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(3);
+                        let padded = format!("{:0>width$}", m.as_str(), width=width);
+                        stem.replace_range(m.start()..m.end(), &padded);
+                    }
+                },
                 "del_pos" => {
                     let start = rule.get("start").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(1).max(1);
                     let end = rule.get("end").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(start).max(start);
