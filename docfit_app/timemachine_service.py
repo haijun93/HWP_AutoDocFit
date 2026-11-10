@@ -161,10 +161,15 @@ class TimemachineService:
 
     def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True):
         cancel_event = cancel_event or self._content_cancel
+        # An instance-level index_file override is an injected indexer (for callers
+        # and tests); keep it on the Python path instead of bypassing it with klib.
+        if "index_file" in getattr(self.content_index, "__dict__", {}):
+            use_rust = False
         seen = indexed = errors = 0
         rules = Rules(extensions=extensions, extra_extensions=extensions)  # 본문 색인 확장자(예: txt)는 타임라인 종류에 없어도 색인한다
         try:
             rust_paths, python_paths = [], []
+            skipped_paths = []
             for root in roots:
                 for folder, dirs, files in os.walk(root, followlinks=False):
                     if cancel_event.is_set(): break
@@ -174,7 +179,7 @@ class TimemachineService:
                             break
                         ext = Path(name).suffix.lower().lstrip(".")
                         if excluded_name(name):
-                            self.content_index.remove_file(os.path.join(folder, name))
+                            skipped_paths.append(os.path.join(folder, name))
                             continue
                         if ext not in extensions:
                             continue
@@ -191,7 +196,7 @@ class TimemachineService:
                             # index_file 호출을 건너뛰어 오류 및 처리 카운트를 증가시키지 않는다.
                             continue
                         if rules.skip_file(name):
-                            self.content_index.remove_file(path)
+                            skipped_paths.append(path)
                             continue
                         if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx", "docx", "hwp"}:
                             rust_paths.append(path)
@@ -212,13 +217,16 @@ class TimemachineService:
                 errors += bool(result["error"])
                 with self._content_lock:
                     self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+            if not cancel_event.is_set():
+                for path in skipped_paths:
+                    self.content_index.remove_file(path)
             # 연결이 끊긴 드라이브의 문서는 지워진 것으로 보지 않는다.
             available = [os.path.normcase(os.path.abspath(root)) + os.sep for root in roots if os.path.isdir(root)]
             active_roots = [os.path.normcase(os.path.abspath(root)) + os.sep
                             for root in self._settings["roots"] if os.path.isdir(root)]
             with self._content_lock:
                 pending = tuple(self._content_pending_roots or ())
-            for path in pending:
+            for path in (() if cancel_event.is_set() else pending):
                 if cancel_event.is_set():
                     break
                 normalized = os.path.normcase(os.path.abspath(path))
