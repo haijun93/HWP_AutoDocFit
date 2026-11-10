@@ -261,8 +261,11 @@ impl Database {
     }
 
     fn create_copy(&self, box_id: i64, space: &str, kind: &str, source: &str, name: &str, content: Option<&str>) -> std::result::Result<PathBuf, String> {
-        let dir = self.area_dir(box_id, space)?;
         let src = Path::new(source);
+        if content.is_none() && src.is_dir() && normalized_path(&library_root().join(box_id.to_string()).join(space))?.starts_with(normalized_path(src)?) {
+            return Err("자료함 저장 폴더를 포함하는 원본 폴더는 추가할 수 없습니다.".into());
+        }
+        let dir = self.area_dir(box_id, space)?;
         let mut filename = if matches!(kind, "file" | "folder") || (content.is_none() && src.is_file()) {
             sanitize_filename(src.file_name().and_then(|n| n.to_str()).unwrap_or(name))
         } else {
@@ -339,7 +342,14 @@ impl Database {
         let path = self.create_copy(it.box_id, &it.space, &it.kind, &old, &it.display_name, None)?;
         let managed = path.to_string_lossy().into_owned();
         let origin = if Path::new(&old).exists() { old } else { String::new() };
-        match self.conn.execute("UPDATE item SET source_path=?1, managed_path=?1, origin_path=?2 WHERE id=?3 AND managed_path=''", params![managed, origin, id]) {
+        let updated: Result<usize> = (|| {
+            let tx = self.conn.unchecked_transaction()?;
+            let affected = tx.execute("UPDATE item SET source_path=?1, managed_path=?1, origin_path=?2 WHERE id=?3 AND managed_path=''", params![managed, origin, id])?;
+            if affected == 1 { tx.execute("UPDATE nb_source SET origin=?1 WHERE item_id=?2", params![managed, id])?; }
+            tx.commit()?;
+            Ok(affected)
+        })();
+        match updated {
             Ok(1) => {},
             Ok(_) => { remove_copy(&path); return self.item_prepare(id); },
             Err(e) => { remove_copy(&path); return Err(e.to_string()); }
