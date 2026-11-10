@@ -21,7 +21,8 @@ def fixture(root: Path, count: int):
     for i in range(count):
         folder = root / f"set{i % 7}"
         folder.mkdir(exist_ok=True)
-        path = folder / f"IMG_{i:04d} test {i % 11}.JPG"
+        suffix = ".JPG" if i % 10 else ""
+        path = folder / f"IMG_{i:04d} test {i % 11}{suffix}"
         path.write_bytes(b"rename-regression-fixture")
         entries.append(Entry.from_path(str(path), f"id{i:05d}"))
     # Existing unlisted targets exercise on-disk conflict detection.
@@ -37,7 +38,7 @@ def python_preview(entries, rules, options):
     return result
 
 
-def compare(count: int, klib: Path, rules: list[dict], options: dict):
+def compare(count: int, klib: Path, rules: list[dict], options: dict, dump: int = 0):
     with tempfile.TemporaryDirectory(prefix="rename-regress-") as temp:
         root = Path(temp)
         entries = fixture(root, count)
@@ -78,8 +79,11 @@ def compare(count: int, klib: Path, rules: list[dict], options: dict):
             elif a != b:
                 diffs.append({"field": path, "python": a, "rust": b})
         walk(py, rust)
-        return {"count": count, "differences": len(diffs), "python_ms": round(py_ms, 3),
-                "rust_ms": round(rust_ms, 3), "samples": diffs[:20]}
+        result = {"count": count, "differences": len(diffs), "python_ms": round(py_ms, 3),
+                  "rust_ms": round(rust_ms, 3), "samples": diffs[:20]}
+        if dump:
+            result["dump"] = diffs[:dump]
+        return result
 
 
 def main():
@@ -87,12 +91,14 @@ def main():
     parser.add_argument("--klib", type=Path, required=True)
     parser.add_argument("--count", type=int, default=1000)
     parser.add_argument("--rules-json", type=Path)
+    parser.add_argument("--dump", type=int, nargs="?", const=5, default=0,
+                        help="print up to N differing fields (default: 5)")
     args = parser.parse_args()
     if args.rules_json:
         rules = json.loads(args.rules_json.read_text(encoding="utf-8"))
     else:
         rules = [{"kind": "add", "text": "x", "position": "suffix", "sep": "_"}]
-    result = compare(args.count, args.klib.resolve(), rules, {"on_conflict": "block"})
+    result = compare(args.count, args.klib.resolve(), rules, {"on_conflict": "block"}, args.dump)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["differences"] == 0 else 1
 

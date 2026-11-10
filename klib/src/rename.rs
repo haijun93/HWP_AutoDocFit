@@ -196,17 +196,19 @@ pub fn preview(request: &Value) -> Value {
         let new_path = parent.join(&new_name).to_string_lossy().replace('/', "\\");
         let fp = vec![Value::Num(number("size")), Value::Num((number("mtime") * 1000.0).trunc())];
         let old_name = match get("name") { Some(Value::Str(s)) => s.as_str(), _ => "" };
-        let status = if new_name == old_name { "unchanged" } else { "ok" };
+        let invalid_reason = if new_name.trim().is_empty() { Some("이름이 비어 있습니다.") } else { None };
+        let status = if invalid_reason.is_some() { "invalid" } else if new_name == old_name { "unchanged" } else { "ok" };
         let mut warnings: Vec<Value> = Vec::new();
         if title_unsupported { warnings.push(Value::from("title_unsupported")); }
         if names_short { warnings.push(Value::from("names_short")); }
         let folder = matches!(get("is_folder"), Some(Value::Bool(true)));
-        if !folder && new_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() != old_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() { warnings.push(Value::from("ext_changed")); }
-        plan_parts.push(Value::Arr(vec![Value::from(path.clone()), Value::from(new_path.clone()), Value::from(status), Value::Arr(fp.clone())]));
+        if !folder && split_name(&new_name).1.to_lowercase() != split_name(old_name).1.to_lowercase() { warnings.push(Value::from("ext_changed")); }
+        let new_path_value = if invalid_reason.is_some() { Value::Null } else { Value::from(new_path.clone()) };
+        plan_parts.push(Value::Arr(vec![Value::from(path.clone()), new_path_value.clone(), Value::from(status), Value::Arr(fp.clone())]));
         Value::obj(vec![
             ("id", string("id")), ("old_path", Value::from(path)), ("old_name", string("name")),
-            ("new_name", Value::from(new_name)), ("new_path", Value::from(new_path)), ("status", Value::from(status)),
-            ("reason", Value::Null), ("warnings", Value::Arr(warnings)), ("overridden", Value::Bool(false)),
+            ("new_name", Value::from(new_name)), ("new_path", new_path_value), ("status", Value::from(status)),
+            ("reason", invalid_reason.map(Value::from).unwrap_or(Value::Null)), ("warnings", Value::Arr(warnings)), ("overridden", Value::Bool(false)),
             ("fingerprint", Value::Arr(fp)),
             ("is_folder", Value::Bool(boolean("is_folder"))),
         ])
