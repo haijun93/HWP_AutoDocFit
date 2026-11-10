@@ -2422,14 +2422,14 @@ class DesktopWebBridge:
                     return {"ok": False, "message": "item_ids 목록이 필요합니다."}
                 return {"ok": True, "items": library_item_stats(self._get_library_bridge().request, ids)}
             if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
-                # 자료함 '+메모' 편집기도 노트북과 같은 통로(경로 인자 거절)를 쓴다.
+                # 자료함 '+메모' 편집기도 업무자료함과 같은 통로(경로 인자 거절)를 쓴다.
                 return self._memo_editor_request(request)
             return self._get_library_bridge().request(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
 
     def _memo_editor_request(self, request):
-        """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 노트북 '+메모 추가'와 자료함 '+메모'가 쓴다.
+        """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 업무자료함 '+메모 추가'와 자료함 '+메모'가 쓴다.
 
         파일 경로 인자(path)는 받지 않는다: 화면에서 임의 경로를 열거나 덮어쓰는 통로가 되지 않게 막는다.
         텍스트 파일 열기·다른 이름으로 저장은 호스트의 파일 대화상자를 거친다:
@@ -2470,15 +2470,15 @@ class DesktopWebBridge:
             return {"ok": False, "message": str(exc)}
 
     def notebook(self, request):
-        """노트북 요청(개발자 모드 전용). 자료함과 같은 klib 브리지를 쓴다.
+        """업무자료함 요청(개발자 모드 전용). 자료함과 같은 klib 브리지를 쓴다.
 
         출처 추가는 klib가 직접 추출하고, klib가 못 읽는 구형 hwp·pdf만 NotebookService가 Python으로 추출해 넣는다.
-        nb_drop_watch(창에 끌어 놓은 파일을 노트북으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
+        nb_drop_watch(창에 끌어 놓은 파일을 업무자료함으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
         """
         if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
             return self._memo_editor_request(request)
         if not isinstance(request, dict) or not str(request.get("cmd", "")).startswith("nb_"):
-            return {"ok": False, "message": "허용되지 않은 노트북 명령입니다."}
+            return {"ok": False, "message": "허용되지 않은 업무자료함 명령입니다."}
         cmd = request["cmd"]
         try:
             if cmd == "nb_drop_watch":
@@ -2525,7 +2525,7 @@ class DesktopWebBridge:
         return {"ok": True, "pending": len(pending)}
 
     def _notebook_drop_watch(self, active):
-        """노트북 화면이 열려 있는 동안 창에 놓은 파일을 노트북 출처로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
+        """업무자료함 화면이 열려 있는 동안 창에 놓은 파일을 업무자료함 출처로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
         current = getattr(self, "drop_target", "documents")
         if active:
             if current != "notebook":
@@ -2536,7 +2536,7 @@ class DesktopWebBridge:
         return {"ok": True, "drop_target": self.drop_target}
 
     def _receive_notebook_paths(self, paths):
-        """노트북에 끌어 놓은 파일: 경로를 맡겨 두고 화면에 알린다(화면이 nb_take_drop으로 가져가 출처로 추가)."""
+        """업무자료함에 끌어 놓은 파일: 경로를 맡겨 두고 화면에 알린다(화면이 nb_take_drop으로 가져가 출처로 추가)."""
         pending = list(getattr(self, "_notebook_drop", None) or [])
         pending.extend(str(p) for p in (paths or [])[:200] if str(p).strip())
         self._notebook_drop = pending
@@ -2811,7 +2811,7 @@ class DesktopWebBridge:
                     else "여기에 놓으면 그림판 배경 사진으로 넣습니다" if target == "paint_image"
                     else "여기에 파일을 놓으면 파일변환 목록에 추가됩니다" if target == "conversion"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
-                    else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
+                    else "여기에 놓으면 업무자료함 출처로 추가합니다" if target == "notebook"
                     else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
                     else "여기에 놓으면 문서 목록에 추가됩니다")
             try:
