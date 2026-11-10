@@ -722,8 +722,11 @@ impl Database {
         for it in self.item_search(Some(box_id), "").map_err(|e| e.to_string())? {
             if it.kind == "folder" {
                 for source in [&it.source_path, &it.origin_path, &it.managed_path] {
-                    if !source.is_empty() && normalized_target.starts_with(normalized_path(Path::new(source))?) {
-                        return Err("자료 원본이나 복사본 폴더 안으로는 내보낼 수 없습니다.".into());
+                    if !source.is_empty() {
+                        let normalized_source = normalized_path(Path::new(source))?;
+                        if normalized_target.starts_with(&normalized_source) || normalized_source.starts_with(&normalized_target) {
+                            return Err("자료 원본이나 복사본 폴더 안이나 상위 폴더로는 내보낼 수 없습니다.".into());
+                        }
                     }
                 }
             }
@@ -938,10 +941,40 @@ impl Database {
 }
 
 fn normalized_path(path: &Path) -> std::result::Result<PathBuf, String> {
-    let full = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    resolved_path(path).map_err(|e| format!("경로 정규화 실패 ({}): {e}", path.display()))
+}
+
+// 없는 대상도 기존 상위 경로는 실제 경로로 해석한다. 링크 뒤의 ..는 해석 후 처리한다.
+fn resolved_path(path: &Path) -> std::io::Result<PathBuf> {
+    let full = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
     let mut out = PathBuf::new();
     for part in full.components() {
-        match part { std::path::Component::ParentDir => { out.pop(); }, std::path::Component::CurDir => {}, _ => out.push(part.as_os_str()) }
+        match part {
+            std::path::Component::ParentDir => { out.pop(); },
+            std::path::Component::CurDir => {},
+            std::path::Component::Normal(_) => {
+                out.push(part.as_os_str());
+                match out.canonicalize() {
+                    Ok(real) => {
+                        out = real;
+                        #[cfg(windows)]
+                        {
+                            // canonicalize의 verbatim 접두사를 다음 구성요소에 전파하면
+                            // Win32의 끝 점·공백 별칭 해석이 꺼지므로 일반 경로로 되돌린다.
+                            let text = out.to_string_lossy();
+                            out = if let Some(unc) = text.strip_prefix("\\\\?\\UNC\\") {
+                                PathBuf::from(format!("\\\\{unc}"))
+                            } else {
+                                PathBuf::from(text.strip_prefix("\\\\?\\").unwrap_or(&text))
+                            };
+                        }
+                    },
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
+                    Err(e) => return Err(e),
+                }
+            },
+            _ => out.push(part.as_os_str()),
+        }
     }
     #[cfg(windows)]
     {
@@ -1005,39 +1038,43 @@ fn unique_path(dir: &Path, filename: &str) -> PathBuf {
 
 /// 디렉터리 재귀 복사 (링크·정션 발견 시 명시적 오류 반환, 내부 파일명 충돌 회피, 복사 실패 에러 전파)
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if is_or_has_reparse_point(src) {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {}", src.display()),
-        ));
-    }
-    if let (Ok(norm_src), Ok(norm_dst)) = (normalized_path(src), normalized_path(dst)) {
-        if norm_dst.starts_with(&norm_src) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("자신의 하위 디렉터리로 복사할 수 없습니다: {}", dst.display()),
-            ));
-        }
-    }
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let path = entry.path();
-        if is_or_has_reparse_point(&path) {
+    // 호출 스택 대신 작업 목록으로 순회하고, 각 폴더를 만들기 전에 검사한다.
+    let mut pending = vec![(src.to_path_buf(), dst.to_path_buf())];
+    while let Some((src, dst)) = pending.pop() {
+        if is_or_has_reparse_point(&src) || is_or_has_reparse_point(&dst) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {}", path.display()),
+                format!("심볼릭 링크나 정션은 복사할 수 없습니다: {} -> {}", src.display(), dst.display()),
             ));
         }
-        let file_name = entry.file_name();
-        let name_str = file_name.to_string_lossy();
-        let safe_name = sanitize_filename(&name_str);
-        if path.is_dir() {
-            let dest_child = unique_path(dst, &safe_name);
-            copy_dir_recursive(&path, &dest_child)?;
-        } else {
-            let dest_child = unique_path(dst, &safe_name);
-            copy_file_verified(&path, &dest_child)?;
+        // 정규화 실패는 검사 생략 사유가 아니다. 원본과 대상의 겹침을 생성 전에 거부한다.
+        let norm_src = resolved_path(&src)?;
+        let norm_dst = resolved_path(&dst)?;
+        if norm_dst.starts_with(&norm_src) || norm_src.starts_with(&norm_dst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("원본과 같거나 포함 관계인 폴더로 복사할 수 없습니다: {}", dst.display()),
+            ));
+        }
+        fs::create_dir_all(&dst)?;
+        for entry in fs::read_dir(&src)? {
+            let entry = entry?;
+            let path = entry.path();
+            if is_or_has_reparse_point(&path) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {}", path.display()),
+                ));
+            }
+            let safe_name = sanitize_filename(&entry.file_name().to_string_lossy());
+            let dest_child = unique_path(&dst, &safe_name);
+            if path.is_dir() {
+                // 먼저 예약해 같은 이름으로 정규화되는 형제 폴더도 충돌을 피한다.
+                fs::create_dir(&dest_child)?;
+                pending.push((path, dest_child));
+            } else {
+                copy_file_verified(&path, &dest_child)?;
+            }
         }
     }
     Ok(())
