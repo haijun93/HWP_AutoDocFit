@@ -581,14 +581,14 @@ impl Database {
             Some(bid) => (
                 "SELECT id, box_id, kind, source_path, display_name, space, x, y, created_at, origin_path, managed_path
                  FROM item
-                 WHERE box_id = ?1 AND (display_name LIKE ?2 COLLATE NOCASE OR source_path LIKE ?2 COLLATE NOCASE)
+                 WHERE box_id = ?1 AND (display_name LIKE ?2 COLLATE NOCASE OR source_path LIKE ?2 COLLATE NOCASE OR origin_path LIKE ?2 COLLATE NOCASE)
                  ORDER BY id DESC",
                 vec![bid.into(), pattern.into()],
             ),
             None => (
                 "SELECT id, box_id, kind, source_path, display_name, space, x, y, created_at, origin_path, managed_path
                  FROM item
-                 WHERE display_name LIKE ?1 COLLATE NOCASE OR source_path LIKE ?1 COLLATE NOCASE
+                 WHERE display_name LIKE ?1 COLLATE NOCASE OR source_path LIKE ?1 COLLATE NOCASE OR origin_path LIKE ?1 COLLATE NOCASE
                  ORDER BY id DESC",
                 vec![pattern.into()],
             ),
@@ -710,9 +710,14 @@ impl Database {
         if is_or_has_reparse_point(target) { return Err("내보내기 대상에 링크나 정션이 있습니다.".into()); }
         let absolute_target = if target.is_absolute() { target.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(target) };
         let normalized_target = normalized_path(&absolute_target)?;
-        let managed_root = normalized_path(&library_root().join(box_id.to_string()))?;
-        if normalized_target.starts_with(&managed_root) || managed_root.starts_with(&normalized_target) {
-            return Err("자료함 저장 폴더 안이나 상위 폴더로는 내보낼 수 없습니다.".into());
+        // 다른 상자의 저장 폴더도 제외한다. 물리 전환 결과가 상자 삭제 때 함께 지워지면 안 된다.
+        for b in self.box_list().map_err(|e| e.to_string())? {
+            for root in [library_root().join(b.id.to_string()), library_root().join("boxes").join(b.id.to_string())] {
+                let managed_root = normalized_path(&root)?;
+                if normalized_target.starts_with(&managed_root) || managed_root.starts_with(&normalized_target) {
+                    return Err("자료함 저장 폴더 안이나 상위 폴더로는 내보낼 수 없습니다.".into());
+                }
+            }
         }
         for it in self.item_search(Some(box_id), "").map_err(|e| e.to_string())? {
             if it.kind == "folder" {
@@ -932,7 +937,6 @@ impl Database {
     }
 }
 
-/// 파일명 충돌 회피: 동일 파일명이 존재할 경우 "이름 (1).ext", "이름 (2).ext" 형태로 새 경로 반환.
 fn normalized_path(path: &Path) -> std::result::Result<PathBuf, String> {
     let full = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
     let mut out = PathBuf::new();
@@ -940,7 +944,12 @@ fn normalized_path(path: &Path) -> std::result::Result<PathBuf, String> {
         match part { std::path::Component::ParentDir => { out.pop(); }, std::path::Component::CurDir => {}, _ => out.push(part.as_os_str()) }
     }
     #[cfg(windows)]
-    { return Ok(PathBuf::from(out.to_string_lossy().to_lowercase())); }
+    {
+        let text = out.to_string_lossy().replace('/', "\\").to_lowercase();
+        let text = if let Some(unc) = text.strip_prefix("\\\\?\\unc\\") { format!("\\\\{unc}") }
+            else { text.strip_prefix("\\\\?\\").unwrap_or(&text).to_string() };
+        return Ok(PathBuf::from(text));
+    }
     #[cfg(not(windows))]
     Ok(out)
 }
@@ -974,6 +983,7 @@ fn copy_to_open_file(src: &Path, output: &mut fs::File) -> std::io::Result<()> {
     Ok(())
 }
 
+/// 파일명 충돌 회피: 동일 파일명이 존재할 경우 "이름 (1).ext", "이름 (2).ext" 형태로 새 경로 반환.
 fn unique_path(dir: &Path, filename: &str) -> PathBuf {
     let target = dir.join(filename);
     if !target.exists() {

@@ -500,6 +500,23 @@ fn nb_source_add(val: &Value, db: &Mutex<Database>) -> Value {
     }
 }
 
+// 경로가 실제 바뀐 최초 이전·영역 이동 때만 기존 본문 색인을 교체한다.
+fn sync_item_index(old: Option<&str>, it: &crate::db::ItemRow) -> Option<String> {
+    if old == Some(it.source_path.as_str()) || !matches!(it.kind.as_str(), "file" | "text" | "rich_text" | "note") { return None; }
+    (|| {
+        let ix = crate::search_index()?;
+        if let Some(old) = old { crate::content::remove_file(ix, old)?; }
+        crate::content::index_file(ix, &it.source_path, &it.display_name, it.box_id)
+    })().err()
+}
+
+fn prepare_library_item(db: &Database, id: i64) -> Result<crate::db::ItemRow, String> {
+    let old = db.item_get(id).map_err(|e| e.to_string())?.ok_or("해당 자료 항목을 찾을 수 없습니다.")?;
+    let it = db.item_prepare(id)?;
+    let _ = sync_item_index(Some(&old.source_path), &it);
+    Ok(it)
+}
+
 /// 자료함 항목을 노트북 출처로 추가한다. 같은 항목이 이미 출처면 새로 만들지 않고 그 출처를 돌려준다(reused:true).
 /// klib가 못 읽는 구형 hwp·pdf는 요청의 paragraphs(Python 추출)가 필요하다.
 fn nb_source_from_item(val: &Value, db: &Mutex<Database>) -> Value {
@@ -508,7 +525,7 @@ fn nb_source_from_item(val: &Value, db: &Mutex<Database>) -> Value {
     let item = {
         let g = db.lock().unwrap();
         if !g.connection().query_row("SELECT EXISTS(SELECT 1 FROM notebook WHERE id=?1)", [nb], |r| r.get::<_, bool>(0)).unwrap_or(false) { return err_val("노트북을 찾을 수 없습니다."); }
-        match g.item_get(item_id).map_err(|e| e.to_string()).and_then(|row| row.map(|_| g.item_prepare(item_id)).transpose()) { Ok(Some(it)) => it, Ok(None) => return err_val("해당 자료 항목을 찾을 수 없습니다."), Err(e) => return err_val(&e.to_string()) }
+        match g.item_get(item_id).map_err(|e| e.to_string()).and_then(|row| row.map(|_| prepare_library_item(&g, item_id)).transpose()) { Ok(Some(it)) => it, Ok(None) => return err_val("해당 자료 항목을 찾을 수 없습니다."), Err(e) => return err_val(&e.to_string()) }
     };
     {
         let g = db.lock().unwrap();
@@ -541,7 +558,7 @@ fn nb_source_item(val: &Value, db: &Mutex<Database>) -> Value {
     let g = db.lock().unwrap();
     let linked = match crate::notebook::source_item_id(g.connection(), nb, sid) { Ok(Some(l)) => l, Ok(None) => return err_val("출처를 찾을 수 없습니다."), Err(e) => return err_val(&e.to_string()) };
     let Some(item_id) = linked else { return ok_val(vec![("found", false.into()), ("reason", "자료함 항목과 연결되지 않은 출처입니다.".into())]) };
-    match g.item_get(item_id).map_err(|e| e.to_string()).and_then(|row| row.map(|_| g.item_prepare(item_id)).transpose()) {
+    match g.item_get(item_id).map_err(|e| e.to_string()).and_then(|row| row.map(|_| prepare_library_item(&g, item_id)).transpose()) {
         Ok(Some(it)) => ok_val(vec![("found", true.into()), ("item_id", it.id.into()), ("box_id", it.box_id.into()), ("display_name", it.display_name.into()), ("source_path", it.source_path.into())]),
         Ok(None) => ok_val(vec![("found", false.into()), ("item_id", item_id.into()), ("reason", "자료함 항목이 삭제되었습니다.".into())]),
         Err(e) => err_val(&e.to_string()),
@@ -1136,9 +1153,12 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
             let db_guard = db.lock().unwrap();
 
+            let old_source = if cmd == "item_prepare" { db_guard.item_get(id).ok().flatten().map(|it| it.source_path) } else { None };
             match if cmd == "item_prepare" { db_guard.item_prepare(id).map(Some).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::other(e)))) } else { db_guard.item_get(id) } {
 
-                Ok(Some(it)) => ok_val(vec![
+                Ok(Some(it)) => {
+                    let warning = if cmd == "item_prepare" { sync_item_index(old_source.as_deref(), &it) } else { None };
+                    let mut fields = vec![
 
                     ("id", it.id.into()),
 
@@ -1160,7 +1180,10 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
                     ("created_at", it.created_at.into()),
 
-                ]),
+                    ];
+                    if let Some(warning) = warning { fields.push(("index_warning", warning.into())); }
+                    ok_val(fields)
+                },
 
                 Ok(None) => err_val("해당 자료 항목을 찾을 수 없습니다."),
 
@@ -1217,7 +1240,11 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
             };
 
-            match db.lock().unwrap().item_text_get(id) {
+            let result = {
+                let guard = db.lock().unwrap();
+                prepare_library_item(&guard, id).and_then(|_| guard.item_text_get(id))
+            };
+            match result {
 
                 Ok((it, content)) => ok_val(vec![
 
@@ -1251,7 +1278,10 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
             };
 
-            let result = db.lock().unwrap().item_text_set(id, content, val.str("display_name"));
+            let result = {
+                let guard = db.lock().unwrap();
+                prepare_library_item(&guard, id).and_then(|_| guard.item_text_set(id, content, val.str("display_name")))
+            };
 
             match result {
 
@@ -1296,13 +1326,11 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
             match db_guard.item_move(id, space, x, y) {
 
                 Ok(true) => {
-                    let warning = (|| {
-                        let it = db_guard.item_get(id).map_err(|e| e.to_string())?.ok_or("항목 없음")?;
-                        if !matches!(it.kind.as_str(), "file" | "text" | "rich_text" | "note") { return Ok(()); }
-                        let ix = crate::search_index()?;
-                        if let Some(ref old) = old { crate::content::remove_file(ix, old)?; }
-                        crate::content::index_file(ix, &it.source_path, &it.display_name, it.box_id).map_err(|e| e.to_string())
-                    })().err();
+                    let warning = match db_guard.item_get(id) {
+                        Ok(Some(it)) => sync_item_index(old.as_deref(), &it),
+                        Ok(None) => Some("항목 없음".to_string()),
+                        Err(e) => Some(e.to_string()),
+                    };
                     ok_val(warning.map(|w| vec![("index_warning", w.into())]).unwrap_or_default())
                 },
 
@@ -1612,7 +1640,13 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
                 let db_guard = db.lock().unwrap();
 
-                match db_guard.box_export(box_id, target_dir) {
+                let before = db_guard.item_search(Some(box_id), "").unwrap_or_default();
+                let result = db_guard.box_export(box_id, target_dir);
+                // 실패한 export도 그 전에 완료된 안전한 항목 이전은 유지되므로 변경된 경로만 동기화한다.
+                for old in before {
+                    if let Ok(Some(it)) = db_guard.item_get(old.id) { let _ = sync_item_index(Some(&old.source_path), &it); }
+                }
+                match result {
 
                     Ok(count) => ok_val(vec![("count", count.into())]),
 
