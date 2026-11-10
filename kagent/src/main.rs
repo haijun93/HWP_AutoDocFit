@@ -1281,8 +1281,8 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             }
             // 디스크 파일이 이미 새것이어도 실행 중인 프로세스는 구버전일 수 있다.
             // 같은 버전으로 다시 빌드한 기존 배포판도 파일 차이로 감지한다.
-            let stale = old.as_deref() != Some(current.as_slice()) ||
-                (was_running && status.as_ref().and_then(|s| s.str("version")) != Some(VERSION));
+            let stale = lifecycle::stale(old.as_deref() != Some(current.as_slice()), was_running,
+                status.as_ref().and_then(|s| s.str("version")), VERSION);
             let mut runtime = NativeLifecycle { root: &root, target: &target, current: &current, old: old.as_deref(), pending: None };
             match lifecycle::update(&mut runtime, was_running, stale, command == "--enable") {
                 Ok((upgraded, restarted)) => {
@@ -1365,6 +1365,28 @@ mod lifecycle_tests {
         let _ = std::fs::remove_dir_all(root);
         unsafe { std::env::remove_var("KAGENT_TEST_ROOT"); }
         unsafe { std::env::remove_var("KAGENT_DATA"); }
+    }
+
+    #[test]
+    fn atomic_replacement_preserves_history_and_settings() {
+        let root = std::env::temp_dir().join(format!("kagent-atomic-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let target = root.join("kagent.exe");
+        std::fs::write(root.join("clip.db"), b"encrypted history").unwrap();
+        std::fs::write(root.join("settings.json"), b"settings").unwrap();
+        atomic_agent_write(&target, b"old").unwrap();
+        // Windows 실행 파일 공유 잠금과 같은 교체 거부를 재현한다.
+        use std::os::windows::fs::OpenOptionsExt;
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(1).open(&target).unwrap();
+        assert!(atomic_agent_write(&target, b"new").is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), b"old");
+        drop(lock);
+        atomic_agent_write(&target, b"new").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read(root.join("clip.db")).unwrap(), b"encrypted history");
+        assert_eq!(std::fs::read(root.join("settings.json")).unwrap(), b"settings");
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 3);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

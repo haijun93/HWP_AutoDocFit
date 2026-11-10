@@ -114,7 +114,7 @@ class KClipService:
         if exe is None:
             return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
         try:
-            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=20)
+            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=60)
             result = json.loads(completed.stdout.strip().splitlines()[-1])
             if completed.returncode or not isinstance(result, dict):
                 raise ValueError("invalid lifecycle response")
