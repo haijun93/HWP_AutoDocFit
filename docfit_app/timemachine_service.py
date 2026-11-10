@@ -88,6 +88,9 @@ class TimemachineService:
         executable = self._klib_executable()
         if not executable or not paths:
             return paths, seen, indexed, errors
+        with self.content_index._lock:
+            if getattr(self.content_index.db, "in_transaction", False):
+                self.content_index.db.commit()
         process = None
         outcomes = {}
         try:
