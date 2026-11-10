@@ -8,6 +8,7 @@
 #![windows_subsystem = "windows"]
 
 mod category;
+mod lifecycle;
 mod clip;
 mod crypt;
 mod memo;
@@ -1104,10 +1105,141 @@ fn main() {
     open_item::cleanup(&app().dir);
 }
 
+struct LifecycleLock(windows_sys::Win32::Foundation::HANDLE);
+impl LifecycleLock {
+    fn acquire(root: &std::path::Path) -> Result<Self, String> {
+        use windows_sys::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+        let hash = root.to_string_lossy().encode_utf16().fold(0xcbf29ce484222325u64,
+            |h, c| (h ^ c as u64).wrapping_mul(0x100000001b3));
+        let name = wide(&format!("Local\\HwpAutoDocFit.kagent.update.{hash:016x}"));
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        if handle.is_null() { return Err("update mutex".into()); }
+        let result = unsafe { WaitForSingleObject(handle, 15000) };
+        if result != 0 && result != 0x80 {
+            unsafe { CloseHandle(handle); }
+            return Err("update busy".into());
+        }
+        Ok(Self(handle))
+    }
+}
+impl Drop for LifecycleLock {
+    fn drop(&mut self) {
+        unsafe {
+            windows_sys::Win32::System::Threading::ReleaseMutex(self.0);
+            CloseHandle(self.0);
+        }
+    }
+}
+
+fn lifecycle_status(root: &std::path::Path) -> Option<crate::json::Value> {
+    std::fs::read_to_string(root.join("status.json")).ok().and_then(|s| crate::json::parse(&s))
+}
+fn lifecycle_alive(status: &crate::json::Value) -> bool {
+    use windows_sys::Win32::System::Threading::{OpenProcess, GetExitCodeProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    let Some(pid) = status.num("pid").filter(|n| *n > 0.0 && *n <= u32::MAX as f64) else { return false; };
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid as u32);
+        if handle.is_null() { return GetLastError() == 5; } // 접근 거부는 실행 중으로 취급한다.
+        let mut code = 0;
+        let queried = GetExitCodeProcess(handle, &mut code);
+        CloseHandle(handle);
+        queried == 0 || code == 259
+    }
+}
+fn lifecycle_error(root: &std::path::Path, error: &str) -> crate::json::Value {
+    use std::io::Write;
+    eprintln!("kagent update: {error}");
+    if let Ok(mut log) = std::fs::OpenOptions::new().create(true).append(true).open(root.join("upgrade.log")) {
+        let _ = writeln!(log, "{} {error}", util::now());
+    }
+    crate::json::Value::obj(vec![("ok", false.into()), ("upgraded", false.into()), ("reason", error.into())])
+}
+
+struct NativeLifecycle<'a> {
+    root: &'a std::path::Path,
+    target: &'a std::path::Path,
+    current: &'a [u8],
+    old: Option<&'a [u8]>,
+    pending: Option<std::process::Child>,
+}
+fn atomic_agent_write(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    let temp = target.with_extension(format!("{}.new", std::process::id()));
+    let result = (|| {
+        std::fs::create_dir_all(target.parent().unwrap()).map_err(|e| e.to_string())?;
+        std::fs::write(&temp, bytes).map_err(|e| e.to_string())?;
+        for attempt in 0..21 {
+            match std::fs::rename(&temp, target) {
+                Ok(()) => return Ok(()),
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied && attempt < 20 =>
+                    std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        unreachable!()
+    })();
+    let _ = std::fs::remove_file(temp);
+    result
+}
+impl lifecycle::Runtime for NativeLifecycle<'_> {
+    fn quit_and_wait(&mut self) -> Result<(), String> {
+        let status = lifecycle_status(self.root).filter(lifecycle_alive);
+        if status.is_none() {
+            if let Some(child) = self.pending.as_mut() {
+                if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+                    return Err("new agent has no status; previous binary kept in kagent.previous".into());
+                }
+            }
+            return Ok(());
+        }
+        let status = status.unwrap();
+        let Some(pipe) = status.str("pipe").filter(|p| p.starts_with(r"\\.\pipe\HwpAutoDocFit.kagent.")) else {
+            return Err("invalid agent pipe".into());
+        };
+        // 종료 요청만 보낸다. 무응답 프로세스를 강제로 죽이지 않는다.
+        let pipe = pipe.to_owned();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let request = crate::json::Value::obj(vec![("cmd", "quit".into())]);
+            let _ = tx.send(lifecycle_pipe_request(&pipe, &request));
+        });
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+        for _ in 0..150 {
+            if !lifecycle_alive(&status) { return Ok(()); }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        Err("still_running".into())
+    }
+    fn install(&mut self) -> Result<(), String> {
+        // 종료·복구가 불가능한 경우에도 이전 실행 파일을 별도 보존한다.
+        if let Some(old) = self.old { atomic_agent_write(&self.root.join("kagent.previous"), old)?; }
+        atomic_agent_write(self.target, self.current)
+    }
+    fn start_and_wait(&mut self) -> Result<(), String> {
+        let mut child = std::process::Command::new(self.target).spawn().map_err(|e| e.to_string())?;
+        for _ in 0..150 {
+            if let Some(status) = lifecycle_status(self.root) {
+                if status.num("pid") == Some(child.id() as f64) && lifecycle_alive(&status) { return Ok(()); }
+            }
+            if let Some(code) = child.try_wait().map_err(|e| e.to_string())? { return Err(format!("agent exited: {code}")); }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        self.pending = Some(child);
+        Err("agent start timeout".into())
+    }
+    fn rollback(&mut self) -> Result<(), String> {
+        if let Some(old) = self.old { atomic_agent_write(self.target, old) }
+        else { std::fs::remove_file(self.target).map_err(|e| e.to_string()) }
+    }
+}
+
 fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
     use crate::json::Value;
     let root = std::env::var("KAGENT_DATA").ok().map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(util::data_dir()));
+    let _guard = match LifecycleLock::acquire(&root) {
+        Ok(guard) => guard,
+        Err(error) => return lifecycle_error(&root, &error),
+    };
     let target = root.join("kagent.exe");
     let source = std::env::current_exe().ok();
     let bundled = source.as_deref().filter(|p| p.is_file());
@@ -1115,7 +1247,7 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
         "--status" => {
             let mut status = std::fs::read_to_string(root.join("status.json")).ok()
                 .and_then(|s| crate::json::parse(&s)).unwrap_or_else(|| Value::obj(vec![]));
-            let running = status.get("pid").and_then(|v| if let Value::Num(n)=v {Some(*n>0.0)} else {None}).unwrap_or(false);
+            let running = lifecycle_alive(&status);
             let pause = pause_until();
             if pause > 0.0 { if let Value::Obj(ref mut fields)=status { fields.retain(|(k,_)| k!="paused" && k!="pause_until"); fields.push(("paused".into(), true.into())); fields.push(("pause_until".into(), pause.into())); } }
             let consent = "몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. 기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. 암호 관리자가 보내는 '기록 제외' 신호는 따릅니다. 언제든 일시정지·끄기·모두 지우기를 할 수 있습니다.";
@@ -1130,31 +1262,44 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             let hash_sidecar = source.with_file_name(format!("{}.sha256", source.file_name().unwrap().to_string_lossy()));
             if let Ok(expected) = std::fs::read_to_string(hash_sidecar) {
                 if sha256_file(source).as_deref() != Some(expected.trim().to_ascii_lowercase().as_str()) {
-                    return Value::obj(vec![("ok", false.into()), ("reason", "integrity".into())]);
+                    return lifecycle_error(&root, "integrity");
                 }
             }
-            let current = std::fs::read(source).ok();
-            let old = std::fs::read(&target).ok();
-            let stale = current != old;
-            if command == "--upgrade-if-stale" && old.is_none() { return Value::obj(vec![("ok", true.into()), ("upgraded", false.into()), ("reason", "not_installed".into())]); }
-            let was_running = std::fs::read_to_string(root.join("status.json")).ok().and_then(|s| crate::json::parse(&s))
-                .and_then(|v| v.num("pid")).is_some();
-            if was_running && (command == "--enable" || (command == "--upgrade-if-stale" && stale)) {
-                let _ = std::process::Command::new(&target).arg("--quit").spawn();
-                for _ in 0..150 { if !root.join("status.json").exists() { break; } std::thread::sleep(std::time::Duration::from_millis(20)); }
-                if root.join("status.json").exists() { return Value::obj(vec![("ok", false.into()), ("upgraded", false.into()), ("reason", "still_running".into())]); }
+            let current = match std::fs::read(source) {
+                Ok(bytes) => bytes,
+                Err(error) => return lifecycle_error(&root, &error.to_string()),
+            };
+            let old = match std::fs::read(&target) {
+                Ok(bytes) => Some(bytes),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => return lifecycle_error(&root, &error.to_string()),
+            };
+            let status = lifecycle_status(&root);
+            let was_running = status.as_ref().is_some_and(lifecycle_alive);
+            if command == "--upgrade-if-stale" && old.is_none() && !was_running {
+                return Value::obj(vec![("ok", true.into()), ("upgraded", false.into()), ("reason", "not_installed".into())]);
             }
-            if command != "--upgrade-if-stale" || stale {
-                if let Err(e) = std::fs::create_dir_all(&root).and_then(|_| std::fs::copy(source, &target).map(|_| ())) {
-                    return Value::obj(vec![("ok", false.into()), ("reason", e.to_string().into())]);
+            // 디스크 파일이 이미 새것이어도 실행 중인 프로세스는 구버전일 수 있다.
+            // 같은 버전으로 다시 빌드한 기존 배포판도 파일 차이로 감지한다.
+            let stale = old.as_deref() != Some(current.as_slice()) ||
+                (was_running && status.as_ref().and_then(|s| s.str("version")) != Some(VERSION));
+            let mut runtime = NativeLifecycle { root: &root, target: &target, current: &current, old: old.as_deref(), pending: None };
+            match lifecycle::update(&mut runtime, was_running, stale, command == "--enable") {
+                Ok((upgraded, restarted)) => {
+                    let _ = std::fs::remove_file(root.join("kagent.previous"));
+                    if command == "--enable" {
+                        if let Err(error) = set_autostart(args.iter().any(|a| a == "--autostart")) {
+                            return lifecycle_error(&root, &error);
+                        }
+                    }
+                    Value::obj(vec![("ok", true.into()), ("upgraded", upgraded.into()),
+                        ("restarted", restarted.into()), ("installed", target.to_string_lossy().into_owned().into()),
+                        ("version", VERSION.into())])
                 }
+                Err(error) => lifecycle_error(&root, &error),
             }
-            if command == "--enable" { let _ = std::process::Command::new(&target).spawn(); if args.iter().any(|a| a == "--autostart") { let _ = set_autostart(true); } }
-            if command == "--upgrade-if-stale" && stale && was_running { let _ = std::process::Command::new(&target).spawn(); }
-            let mut result = vec![("ok", true.into()), ("upgraded", stale.into()), ("installed", target.to_string_lossy().into_owned().into())];
-            if command == "--upgrade-if-stale" { result.push(("restarted", (stale && was_running).into())); }
-            return Value::obj(result);
         }
+
         "--disable" => {
             let consent = "몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. 기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. 암호 관리자가 보내는 '기록 제외' 신호는 따릅니다. 언제든 일시정지·끄기·모두 지우기를 할 수 있습니다.";
             if std::env::var_os("KAGENT_TEST_ROOT").is_none() { let _ = std::process::Command::new(&target).arg("--quit").spawn(); }

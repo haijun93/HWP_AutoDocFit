@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import threading
 import os
 import sys
 import tempfile
@@ -15,6 +17,9 @@ import webbrowser
 from pathlib import Path
 
 from . import kagent_client as kc
+
+_UPGRADE_LOCK = threading.RLock()
+_log = logging.getLogger(__name__)
 
 CONSENT = ("몽땅클립보드는 이 PC에서 복사(Ctrl+C)한 글·그림·파일 경로를 기록해 다시 붙여넣을 수 있게 합니다. "
            "기록은 이 PC의 사용자 폴더에만 암호화해 저장하고 밖으로 보내지 않습니다. "
@@ -38,7 +43,7 @@ class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
                  bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep,
-                 command_runner=None, ffi_library=None):
+                 command_runner=None, ffi_library=None, version_reader=None):
         self._excel_service = excel
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
@@ -49,6 +54,7 @@ class KClipService:
         self._autostart_status = autostart_status
         self._bundled = bundled
         self._installed = installed
+        self._version_reader = version_reader or (lambda: self._lifecycle("--version").get("version"))
         self._runner = command_runner or subprocess.run
         self._ffi_library = (Path(ffi_library) if ffi_library is not None else
                              Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "resources" / "kclip_ffi.dll")
@@ -133,7 +139,10 @@ class KClipService:
                 for _ in range(100):
                     if self.client.running(): break
                     self._sleep(0.02)
-            else: self.upgrade_if_stale()
+            else:
+                result = self.upgrade_if_stale()
+                if not result.get("ok"):
+                    return result
             try: self._autostart(payload.get("autostart", True) is True)
             except OSError: pass
             return self.status()
@@ -143,32 +152,89 @@ class KClipService:
         return self._lifecycle("--enable", *args)
 
     def upgrade_if_stale(self):
-        """앱을 업데이트한 뒤에도 **예전 kagent.exe가 계속 실행되는** 문제를 막는다(2026-11-09).
+        """앱 시작·켜기 때 번들과 실행 중인 버전을 확인한다. 데이터·설정은 건드리지 않는다."""
+        with _UPGRADE_LOCK:
+            if not self._injected_client:
+                result = self._lifecycle("--upgrade-if-stale")
+            else:
+                try:
+                    result = self._upgrade_injected()
+                except (OSError, ValueError, kc.KAgentError) as error:
+                    result = dict(ok=False, upgraded=False, reason=str(error))
+            if not result.get("ok"):
+                _log.warning("몽땅클립보드 에이전트 갱신 실패: %s", result)
+            return result
 
-        kagent.exe는 사용자 데이터 폴더에 복사해 두고 Windows 로그인 때 그 파일로 자동 실행한다. 그런데 복사는
-        '켜기' 때 에이전트가 꺼져 있을 때만 했으므로, 한 번 켜 둔 사용자는 앱을 업데이트해도 예전 에이전트가
-        그대로 떠 있어 에이전트 쪽 수정(빠른 목록 등)이 영영 반영되지 않았다. 앱을 시작할 때 이 함수를 불러,
-        설치된 파일이 앱에 들어 있는 파일과 다르면 에이전트를 끄고 새 파일로 바꾼 뒤 (켜져 있었다면) 다시 켠다.
-        한 번도 켠 적이 없으면(설치된 파일 없음) 아무것도 하지 않는다."""
-        if self._injected_client:
-            exe = self._bundled()
-            if exe is None: return dict(ok=True, upgraded=False, reason="no_bundle")
-            installed = Path(self._installed())
-            if not installed.is_file(): return dict(ok=True, upgraded=False, reason="not_installed")
-            if installed.read_bytes() == exe.read_bytes(): return dict(ok=True, upgraded=False, reason="current")
-            was_running = self.client.running()
+    def _wait_running(self, expected):
+        for _ in range(150):
+            if bool(self.client.running()) == expected:
+                return True
+            self._sleep(0.02)
+        return bool(self.client.running()) == expected
+
+    def _upgrade_injected(self):
+        exe = self._bundled()
+        if exe is None:
+            return dict(ok=True, upgraded=False, reason="no_bundle")
+        installed = Path(self._installed())
+        was_running = self.client.running()
+        if not installed.is_file() and not was_running:
+            return dict(ok=True, upgraded=False, reason="not_installed")
+        import hashlib
+        sidecar = exe.with_name(exe.name + ".sha256")
+        current = exe.read_bytes()
+        if sidecar.exists() and hashlib.sha256(current).hexdigest() != sidecar.read_text(encoding="ascii").strip().lower():
+            return dict(ok=False, upgraded=False, reason="integrity")
+        bundled_version = self._version_reader()
+        if not isinstance(bundled_version, str) or not bundled_version.strip():
+            return dict(ok=False, upgraded=False, reason="version_unavailable")
+        old = installed.read_bytes() if installed.is_file() else None
+        running_version = (self.client.status_file() or {}).get("version") if was_running else None
+        stale = old != current or (was_running and running_version != bundled_version)
+        if not stale:
+            return dict(ok=True, upgraded=False, reason="current")
+        if was_running:
+            try:
+                self.client.request("quit")
+            except kc.KAgentError:
+                pass
+            if not self._wait_running(False):
+                return dict(ok=False, upgraded=False, reason="still_running")
+        try:
+            target = self._install(exe)
+        except (OSError, kc.KAgentError) as error:
             if was_running:
-                try: self.client.request("quit")
-                except kc.KAgentError: pass
-                for _ in range(150):
-                    if not self.client.running(): break
-                    self._sleep(0.02)
-                if self.client.running(): return dict(ok=False, upgraded=False, reason="still_running")
-            try: target = self._install(exe)
-            except kc.KAgentError as error: return dict(ok=False, upgraded=False, reason=str(error))
-            if was_running: self._start(target)
-            return dict(ok=True, upgraded=True, restarted=was_running)
-        return self._lifecycle("--upgrade-if-stale")
+                try:
+                    self._start(installed)
+                except (OSError, kc.KAgentError):
+                    _log.exception("이전 에이전트 재시작 실패")
+            return dict(ok=False, upgraded=False, reason=str(error))
+        if was_running:
+            try:
+                self._start(target)
+                if not self._wait_running(True):
+                    raise kc.KAgentError("agent start timeout")
+            except (OSError, kc.KAgentError) as error:
+                # 새 프로세스가 응답하지 않으면 종료 확인 없이 덮어쓰지 않는다.
+                if self.client.running():
+                    try:
+                        self.client.request("quit")
+                    except kc.KAgentError:
+                        pass
+                if self._wait_running(False):
+                    try:
+                        if old is not None:
+                            with tempfile.TemporaryDirectory() as folder:
+                                backup = Path(folder) / "kagent.exe"
+                                backup.write_bytes(old)
+                                kc.install(backup, installed.parent)
+                            self._start(installed)
+                        else:
+                            installed.unlink(missing_ok=True)
+                    except (OSError, kc.KAgentError):
+                        _log.exception("이전 에이전트 복구 실패")
+                return dict(ok=False, upgraded=False, reason=str(error))
+        return dict(ok=True, upgraded=True, restarted=was_running)
 
     def disable(self, payload):
         if self._injected_client:
