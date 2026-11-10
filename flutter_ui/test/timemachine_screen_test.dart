@@ -27,20 +27,20 @@ void main() {
     expect(find.textContaining('오늘 ·'),findsOneWidget);
   });
 
-  testWidgets('일반 모드에서도 본문검색·연관검색 진입과 요청이 가능하다', (tester) async {
+  testWidgets('일반 모드에서도 본문검색·위계검색 진입과 요청이 가능하다', (tester) async {
     final api = _FakeApi(enabled: true, developerMode: false);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     expect(find.text('파일명'), findsOneWidget);
     expect(find.text('본문검색'), findsAtLeastNWidgets(1));
-    expect(find.text('연관검색'), findsOneWidget);
+    expect(find.text('위계검색'), findsOneWidget);
     await tester.tap(find.text('본문검색'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('tm-content-sort-dropdown')), findsOneWidget);
-    await tester.tap(find.text('연관검색'));
+    await tester.tap(find.text('위계검색'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '사업');
     await tester.pump(const Duration(milliseconds: 400));
@@ -48,7 +48,7 @@ void main() {
     expect(api.calls.any((c) => c.$1 == 'related_search'), true);
   });
 
-  testWidgets('일반 모드에서 검색 후 개발자 모드를 꺼도 본문검색·연관검색이 유지된다', (tester) async {
+  testWidgets('일반 모드에서 검색 후 개발자 모드를 꺼도 본문검색·위계검색이 유지된다', (tester) async {
     final api = _FakeApi(enabled: true, developerMode: false);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
@@ -65,7 +65,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1100));
     await tester.pumpAndSettle();
     expect(find.text('본문검색'), findsAtLeastNWidgets(1));
-    expect(find.text('연관검색'), findsOneWidget);
+    expect(find.text('위계검색'), findsOneWidget);
   });
 
   testWidgets('상단 메뉴는 여러 창 너비에서 잘리지 않고 좁으면 접힌다', (tester) async {
