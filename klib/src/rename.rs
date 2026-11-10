@@ -63,6 +63,40 @@ pub fn preview(request: &Value) -> Value {
                     if uuid_name.is_match(&stem) { stem = val("text", ""); }
                 },
                 "clear" => stem.clear(),
+                "date" => {
+                    let source = val("source", "mtime");
+                    let timestamp = if source == "ctime" { number("ctime") } else { number("mtime") };
+                    let moment = time::OffsetDateTime::from_unix_timestamp_nanos((timestamp * 1_000_000_000.0).round() as i128)
+                        .unwrap_or(time::OffsetDateTime::UNIX_EPOCH);
+                    let local = moment.to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC));
+                    let fields = [
+                        ("YYYY", format!("{:04}", local.year())), ("YY", format!("{:02}", local.year().rem_euclid(100))),
+                        ("MM", format!("{:02}", u8::from(local.month()))), ("DD", format!("{:02}", local.day())),
+                        ("hh", format!("{:02}", local.hour())), ("mm", format!("{:02}", local.minute())),
+                        ("ss", format!("{:02}", local.second())),
+                    ];
+                    let pattern = val("format", "YYYYMMDD");
+                    let mut formatted = String::new();
+                    let mut rest = pattern.as_str();
+                    while !rest.is_empty() {
+                        if let Some((token, value)) = fields.iter().find(|(token, _)| rest.starts_with(token)) {
+                            formatted.push_str(value);
+                            rest = &rest[token.len()..];
+                        } else {
+                            let ch = rest.chars().next().unwrap(); formatted.push(ch); rest = &rest[ch.len_utf8()..];
+                        }
+                    }
+                    let position = val("position", "prefix");
+                    let delimiter = val("delimiter", "_");
+                    let (date_text, separator) = if delimiter == "()" || matches!(val("sep", "" ).as_str(), "()" | "bracket" | "paren") {
+                        (format!("({formatted})"), String::new())
+                    } else { (formatted, val("sep", "_")) };
+                    stem = match position.as_str() {
+                        "suffix" => format!("{stem}{}{date_text}", if stem.is_empty() { "" } else { &separator }),
+                        "replace" => date_text,
+                        _ => format!("{date_text}{}{stem}", if stem.is_empty() { "" } else { &separator }),
+                    };
+                },
                 "digits_keep" => {
                     let re = regex::Regex::new(r"\d+").unwrap();
                     stem = re.find_iter(&stem).map(|m| m.as_str()).collect();
