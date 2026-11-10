@@ -10,7 +10,7 @@ pub fn preview(request: &Value) -> Value {
     };
     let mut plan_parts = Vec::new();
     let existing: std::collections::HashSet<String> = match request.get("existing_paths") { Some(Value::Arr(v)) => v.iter().filter_map(|x| if let Value::Str(s)=x {Some(path_key(s))} else {None}).collect(), _ => std::collections::HashSet::new() };
-    let mut items: Vec<Value> = entries.iter().map(|entry| {
+    let mut items: Vec<Value> = entries.iter().enumerate().map(|(position, entry)| {
         let get = |key: &str| entry.get(key);
         let string = |key: &str| match get(key) { Some(Value::Str(s)) => Value::Str(s.clone()), _ => Value::Null };
         let number = |key: &str| match get(key) { Some(Value::Num(n)) => *n, _ => 0.0 };
@@ -76,6 +76,40 @@ pub fn preview(request: &Value) -> Value {
                         let width = rule.get("digits").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(3);
                         let padded = format!("{:0>width$}", m.as_str(), width=width);
                         stem.replace_range(m.start()..m.end(), &padded);
+                    }
+                },
+                "number" => {
+                    let start = rule.get("start").and_then(|v| if let Value::Num(n)=v {Some(*n as i64)} else {None}).unwrap_or(1);
+                    let step = rule.get("step").and_then(|v| if let Value::Num(n)=v {Some(*n as i64)} else {None}).unwrap_or(1);
+                    let digits = rule.get("digits").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(3);
+                    let ordinal = if matches!(rule.get("per_folder"), Some(Value::Bool(true))) {
+                        let current_parent = std::path::Path::new(&path).parent().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default();
+                        entries[..position].iter().filter(|prior| {
+                            match prior.get("path") { Some(Value::Str(p)) => std::path::Path::new(p).parent().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default() == current_parent, _ => false }
+                        }).count()
+                    } else { position };
+                    let n = start + ordinal as i64 * step;
+                    let number = format!("{:0>width$}", n, width=digits);
+                    let sep = val("sep", "_");
+                    match val("position", "suffix").as_str() {
+                        "prefix" => stem = format!("{number}{}{stem}", if stem.is_empty() {""} else {&sep}),
+                        "replace" => stem = number,
+                        _ => stem = format!("{stem}{}{number}", if stem.is_empty() {""} else {&sep}),
+                    }
+                },
+                "number_shift" => {
+                    let re = regex::Regex::new(r"\d+").unwrap();
+                    let matches: Vec<_> = re.find_iter(&stem).collect();
+                    let picked = if val("which", "first") == "last" {matches.last()} else {matches.first()};
+                    if let Some(m) = picked {
+                        let delta = rule.get("delta").and_then(|v| if let Value::Num(n)=v {Some(*n as i64)} else {None}).unwrap_or(1);
+                        let value = m.as_str().parse::<i64>().unwrap_or(0) + delta;
+                        if value >= 0 {
+                            let keep = !matches!(rule.get("keep_width"), Some(Value::Bool(false)));
+                            let width = if keep || m.as_str().starts_with('0') {m.as_str().len()} else {1};
+                            let shifted = format!("{:0>width$}", value, width=width);
+                            stem.replace_range(m.start()..m.end(), &shifted);
+                        }
                     }
                 },
                 "del_pos" => {
