@@ -68,7 +68,7 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
         let count: i64 = db.query_row("SELECT count(*) FROM content_paragraph_fts WHERE path=?", [&path], |r|r.get(0)).map_err(|e|e.to_string())?;
         if count > 0 { return Ok((false,count as usize)); }
     }
-    let paragraphs = crate::extract::extract(Path::new(&path))?;
+    let paragraphs = crate::extract::extract_for_index(Path::new(&path))?;
     let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
     let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
     let levels = crate::classify_levels::classify_extracted(&paragraphs, &scheme);

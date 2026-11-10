@@ -102,17 +102,18 @@ fn extract_text(path: &Path) -> Result<Vec<Paragraph>, String> {
 pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "txt" | "md" => extract_text(path),
+        "hwpx" => extract_hwpx(path),
+        "docx" => extract_docx(path),
+        ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
+    }
+}
+
+/// Extraction used by content indexing, retaining HWPX metadata from the legacy index walker.
+pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
+    match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "hwpx" => {
             let mut records = extract_hwpx(path)?;
-            // Match Python extract_paragraphs(): legacy HWPX records are fed
-            // to extract_hwpx positionally (only emitted, non-cell paragraphs
-            // advance the cursor), then their metadata is attached by text FIFO.
-            // The positional pass is observable for table-first documents: the
-            // first body paragraph receives the first legacy cell record.
             let legacy = crate::legacy_records::run(path)?;
-            // Positional HWPX pairing replaces the paragraph text and metadata
-            // from the legacy list; table-cell paragraphs themselves are omitted.
-            // Reproduce the Python walker cursor semantics directly.
             for (idx, item) in legacy.iter().enumerate() {
                 if let Some(record) = records.get_mut(idx) {
                     let legacy_text = item.str("text").unwrap_or("").trim();
@@ -126,9 +127,52 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
                 }
             }
             Ok(records)
-        },
-        "docx" => extract_docx(path),
-        ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
+        }
+        "docx" => {
+            let mut records = extract_docx(path)?;
+            let file = std::fs::File::open(path).map_err(|e| format!("corrupt: DOCX 파일 열기 실패: {e}"))?;
+            let mut zip = ZipArchive::new(file).map_err(|e| format!("corrupt: DOCX ZIP 열기 실패: {e}"))?;
+            let mut xml = Vec::new();
+            zip.by_name("word/document.xml").map_err(|e| format!("corrupt: DOCX 본문 읽기 실패: {e}"))?.read_to_end(&mut xml).map_err(|e| format!("corrupt: DOCX 본문 읽기 실패: {e}"))?;
+            let root = parse_xml_tree(&xml, "DOCX 본문", "word/document.xml")?;
+            fn walk(node: &XmlNode, in_table: bool, out: &mut Vec<Paragraph>) {
+                if node.name == "tc" {
+                    for child in child_nodes(node) { walk(child, true, out); }
+                    return;
+                }
+                if node.name == "p" {
+                    let text = iter_text(node).trim().to_owned();
+                    if !text.is_empty() {
+                        let mut style = None;
+                        let mut outline = None;
+                        for ppr in child_nodes(node).filter(|n| n.name == "pPr") {
+                            for child in child_nodes(ppr) {
+                                if child.name == "pStyle" { style = child.attrs.get("val").cloned(); }
+                                if child.name == "outlineLvl" { outline = child.attrs.get("val").and_then(|v| v.parse().ok()); }
+                            }
+                        }
+                        out.push(Paragraph { text, location_kind: "paragraph".into(), location_label: String::new(), sequence: out.len()+1,
+                            section: None, hierarchy_level: None, is_table_cell: in_table, style_name: style, outline_level: outline });
+                    }
+                    for child in child_nodes(node) { walk(child, in_table, out); }
+                    return;
+                }
+                for child in child_nodes(node) { walk(child, in_table, out); }
+            }
+            let mut metadata = Vec::new();
+            walk(&root, false, &mut metadata);
+            let mut by_text: std::collections::HashMap<String, std::collections::VecDeque<Paragraph>> = std::collections::HashMap::new();
+            for item in metadata { by_text.entry(item.text.trim().to_owned()).or_default().push_back(item); }
+            for record in &mut records {
+                if let Some(item) = by_text.get_mut(record.text.trim()).and_then(|items| items.pop_front()) {
+                    record.is_table_cell = item.is_table_cell;
+                    record.style_name = item.style_name;
+                    record.outline_level = item.outline_level;
+                }
+            }
+            Ok(records)
+        }
+        _ => extract(path),
     }
 }
 
@@ -239,7 +283,7 @@ fn extract_hwpx(path: &Path) -> Result<Vec<Paragraph>, String> {
 }
 
 #[derive(Default, Clone)]
-struct XmlNode { name: String, content: Vec<XmlContent> }
+struct XmlNode { name: String, attrs: std::collections::HashMap<String, String>, content: Vec<XmlContent> }
 #[derive(Clone)]
 enum XmlContent { Text(String), Node(XmlNode) }
 
@@ -253,11 +297,20 @@ fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, 
         match reader.read_event() {
             Ok(Event::Start(e)) => {
                 let qname = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
-                stack.push(XmlNode { name: qname, ..Default::default() });
+                let mut node = XmlNode { name: qname, ..Default::default() };
+                for attr in e.attributes().with_checks(false).flatten() {
+                    let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned();
+                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) { node.attrs.insert(key, value.into_owned()); }
+                }
+                stack.push(node);
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
-                let node = XmlNode { name, ..Default::default() };
+                let mut node = XmlNode { name, ..Default::default() };
+                for attr in e.attributes().with_checks(false).flatten() {
+                    let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned();
+                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) { node.attrs.insert(key, value.into_owned()); }
+                }
                 if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
             }
             Ok(Event::Text(e)) => {
@@ -294,7 +347,42 @@ fn child_nodes(node: &XmlNode) -> impl Iterator<Item=&XmlNode> {
 }
 
 fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
-    let root = parse_xml_tree(xml, "HWPX 섹션", section)?;
+    use quick_xml::events::Event;
+    let mut reader = quick_xml::Reader::from_reader(xml);
+    reader.config_mut().trim_text(false);
+    let mut stack: Vec<XmlNode> = Vec::new();
+    let mut root = XmlNode::default();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e)) => {
+                let qname = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                stack.push(XmlNode { name: qname, ..Default::default() });
+            }
+            Ok(Event::Empty(e)) => {
+                let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
+                let node = XmlNode { name, ..Default::default() };
+                if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
+            }
+            Ok(Event::Text(e)) => {
+                let decoded = e.decode().map_err(|e| format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}"))?;
+                if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
+            }
+            Ok(Event::CData(e)) => {
+                let decoded = e.decode().map_err(|e| format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}"))?;
+                if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
+            }
+            Ok(Event::GeneralRef(_)) => return Err(format!("corrupt: XML 엔티티 참조 거부 ({section})")),
+            Ok(Event::DocType(_)) => return Err(format!("corrupt: DTD 및 외부 엔티티 거부 ({section})")),
+            Ok(Event::End(_)) => {
+                let node = stack.pop().ok_or_else(|| format!("corrupt: 잘못된 XML 구조 ({section})"))?;
+                if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(e) => return Err(format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}")),
+        }
+    }
+    if !stack.is_empty() { return Err(format!("corrupt: 닫히지 않은 XML 태그 ({section})")); }
     fn walk(node: &XmlNode, in_table: bool, out: &mut Vec<String>) {
         // Python extractors_hwpx.walk: cell descendants are traversed only to
         // reach the cell and then skipped altogether.
@@ -330,6 +418,12 @@ fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
             } },
         }
     }
+    fn iter_text(node: &XmlNode) -> String {
+        let mut out = String::new();
+        for item in &node.content { match item { XmlContent::Text(t) => out.push_str(t), XmlContent::Node(c) => out.push_str(&iter_text(c)) } }
+        out
+    }
+    fn child_nodes(node: &XmlNode) -> impl Iterator<Item=&XmlNode> { node.content.iter().filter_map(|c| if let XmlContent::Node(n) = c { Some(n) } else { None }) }
     let mut out = Vec::new();
     for child in child_nodes(&root) { walk(child, false, &mut out); }
     Ok(out)
