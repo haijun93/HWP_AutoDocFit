@@ -86,6 +86,8 @@ class HierarchySearchTest(unittest.TestCase):
             self.assertEqual(result["page"], 2)
             self.assertIn("시설 정비", result["full_breadcrumb"])
             self.assertEqual(result["level"], "body")
+            self.assertEqual(result["id"], 1)
+            self.assertEqual(search(index, "점검", candidate_ids=[1])[0]["id"], 1)
             self.assertEqual(database.read_bytes(), before)
 
 

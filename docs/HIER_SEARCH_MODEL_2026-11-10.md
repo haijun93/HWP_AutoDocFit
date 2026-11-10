@@ -5,6 +5,9 @@
 Rust `feature/klib-index-rust`의 `klib/src/index_content.rs`에서 저장하는
 `body, level, paragraph_index, location_label, section` 이름을 그대로 받는다.
 별도 브랜치를 병합하거나 그 색인의 위계를 다시 판정하지 않는다.
+`build_index_from_content_db()`는 읽기 전용 스냅숏에서 한 문서의 행을 가져오며
+paragraph_index를 검색 id로 사용한다. `search(..., candidate_ids=[문단번호])`로
+기존 로컬 전문색인의 후보를 제한해 같은 문단에 문맥을 붙일 수 있다.
 
 ## 모델
 

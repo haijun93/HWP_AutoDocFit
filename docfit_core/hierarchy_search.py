@@ -184,7 +184,7 @@ def build_index_from_content_db(database, document_path: str) -> dict:
             "FROM content_paragraph_fts WHERE path=? ORDER BY CAST(paragraph_index AS INTEGER)",
             (document_path,)).fetchall()
         meta = connection.execute("SELECT name FROM content_meta WHERE path=?", (document_path,)).fetchone()
-    result = build_index({"paragraphs": [dict(row) for row in rows]},
+    result = build_index({"paragraphs": [{**dict(row), "id": int(row["paragraph_index"])} for row in rows]},
                          document_name=meta["name"] if meta else "")
     result["source"] = {"kind": "content_paragraph_fts", "document_path": document_path}
     return result
