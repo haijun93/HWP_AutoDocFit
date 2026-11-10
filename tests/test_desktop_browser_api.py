@@ -181,6 +181,66 @@ class BrowserApiTests(unittest.TestCase):
         # pywebview 창 핸들을 얻지 못하면 마지막으로 바꾼 상태를 돌려준다.
         self.assertTrue(bridge._window_is_maximized(object()))
 
+    def test_always_on_top_uses_nonblocking_win32_path(self):
+        from threading import Event, Thread
+
+        class Window:
+            native = object()
+
+            # Accessing this property would enter pywebview's synchronous
+            # WinForms Invoke path. Treat it as a regression if called.
+            @property
+            def on_top(self):
+                raise AssertionError("pywebview on_top setter must not be used")
+
+            @on_top.setter
+            def on_top(self, enabled):
+                raise AssertionError("pywebview on_top setter must not be used")
+
+        bridge = DesktopWebBridge.__new__(DesktopWebBridge)
+        bridge.window = Window()
+        bridge.gui = Mock(running=False)
+        bridge._configuration = Mock(return_value=Mock(snapshot=Mock(return_value={
+            "values": {"developer_mode": True}
+        })))
+        bridge.gui._준말_서비스.return_value.settings.update = Mock()
+
+        entered = Event()
+        release = Event()
+        calls = []
+
+        class NativeWindow:
+            def __init__(self, window):
+                pass
+
+            def handle(self):
+                return 17
+
+        class Win32:
+            def window_rect(self, hwnd):
+                return (1, 2, 300, 200)
+
+            def set_window_pos(self, *args):
+                calls.append(args)
+                entered.set()
+                release.wait(2)
+                return True
+
+        from unittest.mock import patch
+        with patch("desktop_web_ui._PyWebViewWindow", NativeWindow), patch(
+            "desktop_web_ui._Win32WindowApi", Win32
+        ), patch.object(bridge, "_tk", side_effect=lambda callback: callback()):
+            worker = Thread(target=lambda: bridge.always_on_top(True), daemon=True)
+            worker.start()
+            worker.join(1)
+            self.assertFalse(worker.is_alive(), "always_on_top blocked on native UI")
+            self.assertTrue(entered.wait(1), "native topmost call did not start")
+            # Simulate the WebView UI thread being occupied: the bridge call
+            # must finish without waiting for the native/UI operation.
+            self.assertTrue(entered.is_set())
+            self.assertEqual(calls, [(17, 1, 2, 300, 200, True)])
+            release.set()
+
     def test_show_format_example_calls_app(self):
         # '서식 예시 확인': 지금 고른 서식을 입힌 예시 보고서를 앱이 만들어 연다.
         gui = _FakeGui()
