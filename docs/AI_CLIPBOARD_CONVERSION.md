@@ -1,6 +1,6 @@
 # AI 웹 답변 → 개조식 공문서 (1.74 Alpha 4 설계)
 
-입력은 Gemini/ChatGPT/Claude 웹서비스에서 복사한 **텍스트**다. 서비스 API·MCP 호출 없이 로컬에서 처리한다. Flutter/WebView2를 유지한다.
+입력은 Gemini/ChatGPT/Claude 웹서비스에서 복사한 **텍스트**다. 서비스 API 호출 없이 로컬에서 처리한다. Flutter/WebView2를 유지한다.
 
 ## 처리 단계
 

@@ -181,4 +181,4 @@ T20~T22는 G29로 이관 완료이며 후속 Windows 실기기 회귀 검증에 
 - 기본 Flutter 경로는 DIFF_BACKEND_NOT_READY 오류를 반환하며 Tk 창을 만들지 않는다. ui_tk_fallback=true는 기존 비교창_준비 호출과 상태를 유지하고 ok/tk_fallback 응답으로 명시적 폴백 수락을 알린다. 레거시 Tk 창 본문·문구는 변경하지 않았다.
 - 후속 범위: 독립 OLE 비교 프로세스와 선택 결과 경로 연결, 사본·읽기 전용 문서 보호, 프로세스 종료·오류 처리 및 Windows 실기기 검증. 7장의 T17 잔여 범위는 계속 유효하다.
 - Flutter 시험은 420px에서 스크롤 후 실제 버튼 호출을 검증한다. 기본 브리지의 미완료 오류·별칭 우회 차단 및 명시적 Tk 폴백을 Python 시험으로 검증한다.
-- C26 최종 검증: Python 전체 1,656개 실패·오류 0(선택 MCP SDK 미설치로 기존 조건부 제외 1), 집중 4개 PASS; Flutter 151개 PASS(기존 제외 1), analyze 0. formatter 병합 기본 3종 COM 재연 불일치 0/0/0.
+- C26 최종 검증: Python 전체 1,656개 실패·오류 0, 집중 4개 PASS; Flutter 151개 PASS(기존 제외 1), analyze 0. formatter 병합 기본 3종 COM 재연 불일치 0/0/0.

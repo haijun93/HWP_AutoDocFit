@@ -33,7 +33,7 @@
 
 대체 실행 명령: `python scripts/linux_stub_test_runner.py discover -s tests`. 변경 전후 FAIL/ERROR 항목 이름을 비교해 **동일한 7개 실패/15개 오류**임을 확인했다. Tk MagicMock 동작, Windows 경로 비교, 실행기가 mock한 `webview`의 `webview.dom` 부재 때문이다. file drop는 실제 pywebview 의존성을 쓰는 집중 실행에서 5개가 모두 통과한다. 전체 대체 실행이 성공했다고 표현하지 않는다.
 
-표준 명령의 128개 오류는 `winreg` 127건·`pythoncom` 1건 모듈 부재다. 2개 실패는 Windows 경로를 POSIX Path로 비교하는 기존 테스트다. Linux에는 Windows COM 모듈을 설치할 수 없다. Tk 화면 및 optional MCP SDK 시험 일부는 건너뛰었다. **Windows 표준 전체 시험 통과를 주장하지 않는다.** MCP SDK를 새로 설치/활성화하거나 사용자 연결 기능을 추가하지 않았다.
+표준 명령의 128개 오류는 `winreg` 127건·`pythoncom` 1건 모듈 부재다. 2개 실패는 Windows 경로를 POSIX Path로 비교하는 기존 테스트다. Linux에는 Windows COM 모듈을 설치할 수 없다. Tk 화면 시험 일부는 건너뛰었다. **Windows 표준 전체 시험 통과를 주장하지 않는다.**
 
 로그: `/tmp/docfit-alpha-before.log`, `/tmp/docfit-final-python-tests.log`, `/tmp/docfit-native-python-tests.log`, `/tmp/docfit-final-focused.log`, `/tmp/docfit-final-browser-api.log`, `/tmp/docfit-final-flutter-tests.log`, `/tmp/docfit-final-analyze.log`, `/tmp/docfit-final-flutter-build.log` (현재 세션용, Git에는 넣지 않음).
 
@@ -59,7 +59,7 @@
 Linux 시험에서 실제 Tk/TkDND·pywebview·defusedxml을 사용하도록 변경했다. Windows registry는 키 미존재로 표현하며 GUI 시험 파일은 임시 폴더로 격리한다. 경로 fixture를 플랫폼 독립적으로 고쳤다.
 
 - 원래 실패·오류 22시험: 실제 Xvfb/Tk에서 22개 전부 통과, skip 0.
-- 전체: 986개 중 983통과, 실패/오류 0, 기존 skip 3(선택 MCP SDK·Windows 절전/PowerShell).
+- 전체: 986개 중 983통과, 실패/오류 0, 기존 skip(Windows 절전/PowerShell).
 - 관련 78시험의 headless 실행: 62통과, GUI skip 16, 실패/오류 0.
 - Flutter 소스는 이번 변경에서 수정하지 않았다. 앞서 수행한 analyze/25위젯 시험 통과 기록을 유지한다.
 - Windows COM·WebView2·EXE 및 새 GitHub GUI CI 실행 결과는 확인하지 않았다.

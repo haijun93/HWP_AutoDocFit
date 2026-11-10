@@ -2,7 +2,7 @@
 
 ## 신규 준말 API v1
 
-호출: 기존 `docfitCall(method, JSON.stringify(args))`/pywebview 로컬 bridge. HTTP API·MCP가 아니다. `_BrowserApi`에 아래 명령만 추가한다.
+호출: 기존 `docfitCall(method, JSON.stringify(args))`/pywebview 로컬 bridge. HTTP API가 아니다. `_BrowserApi`에 아래 명령만 추가한다.
 
 | 명령 | 위치 인자 | 성공 data |
 |---|---|---|

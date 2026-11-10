@@ -28,7 +28,7 @@
 
 - AST/compile: 본체·브리지·패키지 및 spec 86개 검사 통과. 본체 CRLF 3,320줄 유지.
 - import_check 및 전체 소스 부트스트랩 --self-test: 통과. Windows 전용 임포트 대체, 80개 패키지/모듈과 부트스트랩 심볼 6개 확인.
-- Python 전체: 1,085개 실행, 1,082개 통과, 조건부 제외 3개, 실패/오류 0. 제외는 선택형 MCP SDK 미설치와 실제 Windows PowerShell·절전 API 시험이다. 실제 Tk 시험은 제외하지 않았다.
+- Python 전체: 1,085개 실행, 1,082개 통과, 조건부 제외, 실패/오류 0. 제외는 실제 Windows PowerShell·절전 API 시험이다. 실제 Tk 시험은 제외하지 않았다.
 - 마지막 set 복제 보완 후 RunContext 집중 시험 5개 재실행 통과.
 - Flutter 전체: 44개 통과. Flutter analyze: 지적 사항 0개.
 - 일반 흐름도 모델: 6개 통과.
@@ -44,4 +44,4 @@
 - Windows 한/글 COM, WebView2 및 PyInstaller EXE 실행은 이 환경에서 수행하지 못했다. CI에는 동결 EXE 검사와 JSON 결과 검사를 추가했으며 실제 CI 성공을 확인하기 전에는 성공으로 단정하지 않는다.
 - EXE smoke timeout은 최초 onefile 압축 해제를 고려한 30초다. 시작 3초 보장이나 성능 개선률은 주장하지 않는다.
 - 웹 빌드에는 미사용 CupertinoIcons 글꼴 탐색 경고가 남는다(앱 코드 참조 없음). 필요한 MaterialIcons와 한글 글꼴·로컬 CanvasKit 검사는 통과했다.
-- 네이티브 엔진 시제품의 engine_ready=false, tldraw 사용권/배포 정책, MCP 전용 오메가 과제는 이번 수정 완료 범위와 별도다.
+- 네이티브 엔진 시제품의 engine_ready=false, tldraw 사용권/배포 정책은 이번 수정 완료 범위와 별도다.

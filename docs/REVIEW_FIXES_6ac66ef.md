@@ -30,7 +30,7 @@
 - AST/compile: 본체·브리지·도메인/엔진/UI/앱/인프라·시험·미리보기 빌드 스크립트 242개 통과.
 - import_check 통과(Windows 전용 임포트만 대체), 본체 CRLF 3,323줄 유지.
 - Python 전체 1,132개: 통과 1,129·조건부 제외 3·실패/오류 0. 실제 Tk/Xvfb 사용.
-  제외는 선택형 MCP SDK 및 실제 Windows PowerShell·절전 API 시험이다.
+  제외는 실제 Windows PowerShell·절전 API 시험이다.
 - Flutter 전체 49개 통과. dart analyze --fatal-infos 및 flutter analyze --no-pub 지적 사항 0개.
 - Flutter 운영 웹 release 빌드 및 entrypoint/한글 글꼴/사용권/로컬 CanvasKit 검사 통과.
 - 흐름도 모델 시험 6개 통과.

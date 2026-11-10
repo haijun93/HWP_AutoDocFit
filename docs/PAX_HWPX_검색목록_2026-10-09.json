@@ -35,7 +35,7 @@
                        },
                        {
                            "id":  "ea2bce110972762e",
-                           "title":  "공공기관 규정 MCP 생성기",
+                           "title":  "공공기관 규정 생성기",
                            "link":  "https://github.com/koul777/Public-Regulation-MCP-Builder",
                            "case_url":  null,
                            "mirror_url":  "https://gitlab.aigov.go.kr/kyci/public-regulation-mcp-builder",
@@ -83,7 +83,7 @@
                        },
                        {
                            "id":  "83bb0ac0ed9f576d",
-                           "title":  "OpenDART 전자공시 MCP — 83개 API를 15개 도구로",
+                           "title":  "OpenDART 전자공시 — 83개 API를 15개 도구로",
                            "link":  "https://github.com/chrisryugj/korean-dart-mcp",
                            "case_url":  null,
                            "mirror_url":  "https://gitlab.aigov.go.kr/chrisryugj/korean-dart-mcp",
@@ -171,7 +171,7 @@
                        },
                        {
                            "id":  "fa5ac519aca439f4",
-                           "title":  "학교정보 MCP — 학교 이름 하나로 급식·수행평가·학사일정을 모아 보는 도구",
+                           "title":  "학교정보 — 학교 이름 하나로 급식·수행평가·학사일정을 모아 보는 도구",
                            "link":  "https://www.threads.com/@chris_gomdori/post/DZwc6oCiQj0",
                            "case_url":  "https://school.gomdori.app/",
                            "mirror_url":  "https://github.com/chrisryugj/schoolinfo-mcp",
@@ -371,7 +371,7 @@
                        },
                        {
                            "id":  "bd4f97e0b96cb04d",
-                           "title":  "korean-report-hwpx — 메모를 기관 서식 공문서(보고서·보도자료) HWPX로 만드는 MCP",
+                           "title":  "korean-report-hwpx — 메모를 기관 서식 공문서(보고서·보도자료) HWPX로 만드는 도구",
                            "link":  "https://github.com/UpstageAI/korean-report-hwpx",
                            "case_url":  null,
                            "mirror_url":  null,

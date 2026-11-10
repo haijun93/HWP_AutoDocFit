@@ -247,7 +247,7 @@ Windows 네이티브 별도 시제품은 여전히 `engine_ready=false`이며 Wi
 2026-10-14 개발판 **1.74 Alpha 7**: 파일포맷 선택을 앱 내부의 별도 플로팅 도넛 창으로 변경했다. HWPX→PDF는 기존 필수 환경인 한/글 COM의 내장 저장을 직접 사용하며 Node.js/kordoc/Pandoc/PDF 프린터를 추가 설치하지 않는다. 다른 입력·출력의 도구 의존성은 별도다. 준비 상태 조회는 Tk 밖에서 수행하고 30초 캐시한다. [구현·검증 기록](docs/ALPHA7_FLOATING_CONVERSION_2026-10-14.md)을 먼저 확인한다. Flutter 변경 후 생성 자산을 다시 빌드해야 실행 화면에 반영된다. 전체 설정 화면은 Flutter지만 프로필 상세·일부 문서 도구 및 네이티브 COM 이관은 여전히 별도 잔여 작업이다.
 
 2026-10-13 안정화 작업: 개발판 **1.74 Alpha 6**, 공개 베타 **1.74 Beta 1**.
-Flutter UI를 유지하고 MCP 기능은 이번 변경에서 확대·활성화하지 않았다.
+Flutter UI를 유지했다.
 Alpha 5는 숫자/코드/문의 본문 보존, 공통 원자 설정 저장, ZIP 입력 제한 및 직함·이름 의미단위를 보완했다.
 결과: [Alpha 5 개선 기록](docs/ALPHA5_IMPROVEMENTS_2026-10-13.md) — 최종 997시험 실패/오류 0.
 Alpha 4는 실제 Tk/TkDND·pywebview를 쓰는 Linux 시험과 플랫폼 경로 시험을 보완했다.
@@ -258,7 +258,7 @@ GUI 시험은 실제 디스플레이/Xvfb가 필요하며 COM만 stub으로 대�
 Alpha 6 네이티브 시제품은 Windows runner·독립 백엔드·인증 IPC를 추가했다. COM 연결 및 Windows 검증은 미완료다.
 [네이티브 계획](docs/FLUTTER_NATIVE_MIGRATION_PLAN.md)과 [시험 기록](docs/FLUTTER_NATIVE_TEST_REPORT.md)을 확인한다.
 Alpha 6 후속 보안 수정 전체 Python 1,014시험 실패·오류 0(기존 skip 3), Flutter 28시험·웹 Release 통과.
-MCP 출력 경쟁 조건·예약 장치 이름, HWPX 중복 ZIP 항목을 보완했다. [전체 보안 검토](docs/FULL_CODE_SECURITY_REVIEW_ALPHA6_2026-10-13.md)를 확인한다.
+HWPX 중복 ZIP 항목을 보완했다. [전체 보안 검토](docs/FULL_CODE_SECURITY_REVIEW_ALPHA6_2026-10-13.md)를 확인한다.
 최신 확인 사항은 [Flutter 시험 보고서](docs/FLUTTER_TEST_REPORT.md), [전환 계획](docs/FLUTTER_MIGRATION_PLAN.md)을 본다.
 `docfit_app`은 UI 독립 서비스이며 기존 문서 처리/COM 파이프라인은 재작성하지 않았다.
 EXE 빌드는 Flutter 검사·자산 검증 실패 시 중단한다. 런타임 비상 Tk 경로는 유지한다.

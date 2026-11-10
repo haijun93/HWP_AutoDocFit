@@ -1,6 +1,6 @@
 # v1.74 Beta 1 리뷰 및 Alpha 3 안정화
 
-기준 코드: Beta 1 `016b6be`, 작업 시작 Alpha 2 `4e1c391`. 기존 alpha 이력을 보존했다. 1.75.1/1.75.2 및 백업 브랜치를 병합하지 않았다. 사용자 확인에 따라 Flutter 제거와 MCP 기능 확대·기본 활성화는 제외했다.
+기준 코드: Beta 1 `016b6be`, 작업 시작 Alpha 2 `4e1c391`. 기존 alpha 이력을 보존했다. 1.75.1/1.75.2 및 백업 브랜치를 병합하지 않았다. 사용자 확인에 따라 Flutter 제거는 제외했다.
 
 | 우선순위 | 발견 사항 | 영향·확인 | Alpha 3 조치 |
 |---|---|---|---|
@@ -17,6 +17,6 @@
 
 현재 `DesktopWebBridge`는 Tk 변수와 GUI 메서드에 직접 의존한다. 주요 화면에 Flutter가 있어도 전체 설정·서식 요소 편집·문서 검토·승인·보조 도구는 Tk 화면을 연다. 단일 `main.dart`와 약 26,000줄 Python 앱의 상태/엔진/UI 결합이 전체 전환의 핵심 부담이다.
 
-이번 변경은 `docfit_app`의 UI 독립 준말/설정 서비스와 Flutter `core/api`, `core/models`, `features/abbreviations`를 도입한 첫 단계다. Tk 비상 경로를 삭제하지 않고 같은 서비스에 연결했다. 전체 설정 저장기·작업/파일/프로필 상태·진행 이벤트는 아직 이전하지 않았다. 기존 COM 처리 알고리즘을 재작성하거나 MCP·외부 IPC를 붙이지 않았다.
+이번 변경은 `docfit_app`의 UI 독립 준말/설정 서비스와 Flutter `core/api`, `core/models`, `features/abbreviations`를 도입한 첫 단계다. Tk 비상 경로를 삭제하지 않고 같은 서비스에 연결했다. 전체 설정 저장기·작업/파일/프로필 상태·진행 이벤트는 아직 이전하지 않았다. 기존 COM 처리 알고리즘을 재작성하거나 외부 IPC를 붙이지 않았다.
 
 최종 합격은 Linux 단위 테스트만으로 판단할 수 없다. Windows+한/글 2020에서 실제 문서 사본·설정·준말/프로필·중단/종료·Flutter 자산/EXE를 검증해야 한다. 실제 결과와 미실시 항목은 [시험 보고서](FLUTTER_TEST_REPORT.md), 기능별 다음 작업은 [조사표](FLUTTER_MIGRATION_AUDIT.md)와 [전환 계획](FLUTTER_MIGRATION_PLAN.md)에 기록한다.

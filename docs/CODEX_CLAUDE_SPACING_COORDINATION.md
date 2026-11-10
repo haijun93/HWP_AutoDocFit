@@ -513,7 +513,7 @@ Claude가 조사해 00:50 이후 Codex 카드 C1로 낸다.
 - G33 수정 후 진입점 채택: 기본 Flutter 경로 Tk 창 0, 독립 OLE 비교 백엔드 미구현은 오류 응답과 V2_PARITY_TABLE에 명시. 기존 Tk 본문·문구 보존.
 - dev/2.0.0-split(ab3e0fe)을 dev/2.0.0에 병합. 8개 모듈·358함수 AST 불일치 0, 유효 patch 3회 및 컨텍스트 2개 분리 PASS.
 - 전체 Python·Flutter·analyze 및 COM 잠금 기본 3종 사본 재연 결과는 C26.md에 최종 기록한다. C10 메모와 C22 잠금 기록 모두 보존.
-- C26 최종: Python 전체 1,656개 실패·오류 0(선택 MCP SDK 부재 1개 제외), T17 집중 4개 PASS. Flutter 151개 PASS(기존 제외 1), analyze 0. 기본 3종 재연 불일치 0/0/0, 원본 7개 SHA-256 동일·COM 잠금 해제. 보고: C:\HWP_AUTODOCFIT\v1803\reports\C26.md.
+- C26 최종: Python 전체 1,656개 실패·오류 0, T17 집중 4개 PASS. Flutter 151개 PASS(기존 제외 1), analyze 0. 기본 3종 재연 불일치 0/0/0, 원본 7개 SHA-256 동일·COM 잠금 해제. 보고: C:\HWP_AUTODOCFIT\v1803\reports\C26.md.
 
 ### V2 Core Contracts (2026-10-26, Codex 수석 개발자)
 - 산출물: docfit_core/session 3개 모듈, Flutter 6탭 내비게이션 셸 및 6개 어댑터, docs/V2_CORE_CONTRACTS.md, docs/TEAM_ORGANIZATION_AND_WORKFLOW.md.
