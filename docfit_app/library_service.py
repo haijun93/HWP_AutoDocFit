@@ -64,7 +64,7 @@ class LibraryService:
 
         if not self._lock.acquire(blocking=False):
 
-            raise RuntimeError("자료함 색인이 이미 진행 중입니다.")
+            raise RuntimeError("가상 폴더 색인이 이미 진행 중입니다.")
 
         indexed, removed, skipped, errors = 0, 0, 0, []
 
@@ -72,7 +72,7 @@ class LibraryService:
 
             if not self.store.get(library_id):
 
-                raise ValueError("자료함을 찾을 수 없습니다.")
+                raise ValueError("가상 폴더를 찾을 수 없습니다.")
 
             for root_row in self.store.roots(library_id):
 
@@ -226,7 +226,7 @@ class LibraryService:
 
         if not isinstance(payload, dict):
 
-            raise ValueError("자료함 요청 형식이 올바르지 않습니다.")
+            raise ValueError("가상 폴더 요청 형식이 올바르지 않습니다.")
 
         if action == "list":
 
@@ -242,7 +242,7 @@ class LibraryService:
 
         if isinstance(library_id, bool) or not isinstance(library_id, int):
 
-            raise ValueError("자료함을 선택해 주세요.")
+            raise ValueError("가상 폴더를 선택해 주세요.")
 
         if action == "add_folder":
 
@@ -286,7 +286,7 @@ class LibraryService:
 
             return {"ok": True, "item": self.store.add_item(payload["library_id"], path=str(path), name=payload.get("name", path.name))}
 
-        raise ValueError("지원하지 않는 자료함 명령입니다.")
+        raise ValueError("지원하지 않는 가상 폴더 명령입니다.")
 
     def _save_blob(self, payload, data, suffix):
 
@@ -298,7 +298,7 @@ class LibraryService:
 
         if type(box_id) is not int or not self.store.get(box_id):
 
-            raise ValueError("자료함을 찾을 수 없습니다.")
+            raise ValueError("가상 폴더를 찾을 수 없습니다.")
 
         folder = Path(self.store._path).parent / "boxes" / str(box_id) / "items"
 

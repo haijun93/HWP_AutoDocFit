@@ -1,4 +1,4 @@
-// 자료함 '+메모'와 글 자료 더블클릭 고치기(노트북과 같은 메모 편집기 재사용).
+// 자료함 '+메모'와 글 자료 더블클릭 고치기(업무자료함과 같은 메모 편집기 재사용).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -88,7 +88,7 @@ void main() {
     await _save(tester);
 
     expect(_page, findsNothing);
-    expect(find.text('메모를 자료함에 넣었습니다.'), findsOneWidget);
+    expect(find.text('메모를 가상 폴더에 넣었습니다.'), findsOneWidget);
     final item = (await api.listItems(box.id)).single;
     expect((item.kind, item.space, item.title), (LibraryItemKind.text, LibrarySpace.core, '회의 정리'));
     expect(item.text, contains('예산 확정'));

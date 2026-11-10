@@ -50,7 +50,7 @@ class _UnavailableLibraryApi implements LibraryApi {
 
   }) async => [];
 
-  Future<T> _missing<T>() async => throw StateError('자료함 엔진(klib.exe)이 없습니다');
+  Future<T> _missing<T>() async => throw StateError('가상 폴더 엔진(klib.exe)이 없습니다');
 
   @override
 
@@ -151,7 +151,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('자료함 엔진(klib.exe)이 없습니다'), findsOneWidget);
+    expect(find.text('가상 폴더 엔진(klib.exe)이 없습니다'), findsOneWidget);
 
   });
 
@@ -259,7 +259,7 @@ void main() {
 
     // 자동 자료함 생성 없음, 빈 안내 문구와 새로 만들기 CTA 확인
 
-    expect(find.text('자료함을 선택하거나 새로 만드세요.'), findsOneWidget);
+    expect(find.text('가상 폴더를 선택하거나 새로 만드세요.'), findsOneWidget);
 
     expect(find.byKey(const ValueKey('libraryEmptyStateCta')), findsOneWidget);
 
@@ -1045,8 +1045,14 @@ void libraryScanTests() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
     await tester.pumpAndSettle();
-    expect(api.exportedTo, r'C:\\LibraryOut');
+    expect(api.exportedTo, isNull);
+    expect(find.textContaining('영역별 복사본을 복사합니다'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('libraryExportFolderName')), '내보낸 자료');
+    await tester.tap(find.byKey(const ValueKey('libraryExportConfirm')));
+    await tester.pumpAndSettle();
+    expect(api.exportedTo, r'C:\\LibraryOut\내보낸 자료');
     expect(find.textContaining('자료 3개를 내보냈습니다'), findsOneWidget);
+    expect((await api.listBoxes()).single.name, '자료함');
   });
 
   testWidgets('폴더 선택 오류를 SnackBar로 안내한다', (tester) async {
@@ -1068,7 +1074,28 @@ void libraryScanTests() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('자료함을 내보내지 못했습니다'), findsWidgets);
+    await tester.tap(find.byKey(const ValueKey('libraryExportConfirm')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('가상 폴더를 내보내지 못했습니다'), findsWidgets);
+  });
+
+  testWidgets('전환 이름의 경로 이탈을 막고 취소하면 복사하지 않는다', (tester) async {
+    final api = _ExportApi();
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(home: LibraryScreen(api: api, folderPicker: () async => 'E:/격리')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('libraryExportFolderName')), '../원본');
+    await tester.tap(find.byKey(const ValueKey('libraryExportConfirm')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('libraryExportDialog')), findsOneWidget);
+    expect(api.exportedTo, isNull);
+    await tester.tap(find.text('취소'));
+    await tester.pumpAndSettle();
+    expect(api.exportedTo, isNull);
+    expect(find.byKey(const ValueKey('libraryExportDialog')), findsNothing);
   });
 
   testWidgets('폴더 스캔 진행률을 보이고 취소 단추로 멈춘다', (tester) async {

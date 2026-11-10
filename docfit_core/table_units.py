@@ -1639,12 +1639,8 @@ def resize_table(tbl_element, plan, row_count=None, col_count=None, *, id_roots=
 
 def _load(template_id, catalog_path):
     value = str(template_id)
-    if value.startswith("tpl8:"):
-        source = catalog.default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
-        local_id = value[len("tpl8:"):]
-    else:
-        source = Path(catalog_path or catalog.default_catalog_path())
-        local_id = value
+    source = Path(catalog_path or catalog.default_catalog_path())
+    local_id = value
     record = catalog._find_template(catalog._scan(source), local_id)
     with catalog._safe_archive(source) as archive:
         root = ET.fromstring(archive.read(record["section"]))

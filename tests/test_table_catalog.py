@@ -31,53 +31,18 @@ class TableCatalogTests(unittest.TestCase):
         ids = [template["id"] for item in catalog["categories"] for template in item["templates"]]
         self.assertEqual(len(ids), len(set(ids)))
 
-    def test_tpl8_catalog_dimensions_units_and_template_labels(self):
-        tpl8 = default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
-        catalog = list_catalog(tpl8)
-        expected = {
-            "신구조문대비표": (4, 3, None),
-            "비목별 세부 예산 산출내역표": (4, 6, "(단위: 원)"),
-            "사업 추진 단계별 공정표": (4, 7, None),
-            "민원 접수 및 처리대장": (4, 7, None),
-            "물품·용역 적격심사 세부평가표": (4, 6, "(단위: 점)"),
-            "보조금 집행내역 및 정산총괄표": (4, 6, "(단위: 원)"),
-            "기관 경영목표 성과지표 총괄표": (4, 6, None),
-            "시설물 안전점검 및 조치결과표": (4, 6, None),
+    def test_tpl8_templates_are_not_in_bundled_catalog(self):
+        catalog = list_catalog()
+        self.assertGreaterEqual(catalog["category_count"], 16)
+        self.assertGreaterEqual(catalog["template_count"], 34)
+        removed = {
+            "\uc2e0\uad6c\uc870\ubb38\ub300\ube44\ud45c", "\ube44\ubaa9\ubcc4 \uc138\ubd80 \uc608\uc0b0 \uc0b0\ucd9c\ub0b4\uc5ed\ud45c",
+            "\uc0ac\uc5c5 \ucd94\uc9c4 \ub2e8\uacc4\ubcc4 \uacf5\uc815\ud45c", "\ubbfc\uc6d0 \uc811\uc218 \ubc0f \ucc98\ub9ac\ub300\uc7a5",
+            "\ubb3c\ud488\xb7\uc6a9\uc5ed \uc801\uaca9\uc2ec\uc0ac \uc138\ubd80\ud3c9\uac00\ud45c", "\ubcf4\uc870\uae08 \uc9d1\ud589\ub0b4\uc5ed \ubc0f \uc815\uc0b0\ucd1d\uad04\ud45c",
+            "\uae30\uad00 \uacbd\uc601\ubaa9\ud45c \uc131\uacfc\uc9c0\ud45c \ucd1d\uad04\ud45c", "\uc2dc\uc124\ubb3c \uc548\uc804\uc810\uac80 \ubc0f \uc870\uce58\uacb0\uacfc\ud45c",
         }
-        self.assertEqual(catalog["template_count"], 8)
-        for category in catalog["categories"]:
-            template = category["templates"][0]
-            rows, cols, unit = expected[category["name"]]
-            self.assertEqual((template["rows"], template["cols"]), (rows, cols))
-            self.assertTrue(all("김민수" not in cell and "이영희" not in cell for row in template["cells"] for cell in row))
-            self.assertEqual(sum(unit in cell for row in template["cells"] for cell in row) if unit else 0, 0)
-            if category["name"] == "비목별 세부 예산 산출내역표":
-                self.assertIn("860,000", " ".join(sum(template["cells"][1:], [])))
-            if category["name"] == "보조금 집행내역 및 정산총괄표":
-                self.assertIn("955,970", " ".join(sum(template["cells"][1:], [])))
         names = {category["name"] for category in catalog["categories"]}
-        self.assertEqual(names, set(expected))
-
-    def test_tpl8_unit_captions_only_on_numeric_tables_and_right_aligned(self):
-        tpl8 = default_catalog_path().with_name("표 서식모음 TPL8.hwpx")
-        with zipfile.ZipFile(tpl8) as archive:
-            root = ET.fromstring(archive.read("Contents/section0.xml"))
-            header = ET.fromstring(archive.read("Contents/header.xml"))
-        labels = {}
-        for paragraph in root.findall(HP + "p"):
-            text = _text(paragraph)
-            if text.startswith("#"):
-                current = text[1:]
-            elif text.startswith("(단위:"):
-                align_id = paragraph.get("paraPrIDRef")
-                paras = [node for node in header.iter("{http://www.hancom.co.kr/hwpml/2011/head}paraPr") if node.get("id") == align_id]
-                align = paras[0].find("{http://www.hancom.co.kr/hwpml/2011/head}align") if paras else None
-                labels[current] = (text, align.get("horizontal") if align is not None else None)
-        self.assertEqual(labels, {
-            "비목별 세부 예산 산출내역표": ("(단위: 원)", "RIGHT"),
-            "물품·용역 적격심사 세부평가표": ("(단위: 점)", "RIGHT"),
-            "보조금 집행내역 및 정산총괄표": ("(단위: 원)", "RIGHT"),
-        })
+        self.assertTrue(removed.isdisjoint(names))
 
     def test_export_preserves_exact_table_xml_and_contains_only_selected_table(self):
         catalog_path = default_catalog_path()

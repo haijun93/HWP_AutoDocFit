@@ -251,7 +251,7 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.delete);
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('libraryConfirmBatchDelete')), findsOneWidget);
-      expect(find.textContaining('2개를 자료함에서 삭제할까요'), findsOneWidget);
+      expect(find.textContaining('2개를 가상 폴더에서 삭제할까요'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('libraryConfirmBatchDeleteYes')));
       await tester.pumpAndSettle();
       expect((await api.listItems(box.id)).map((i) => i.title), ['남김']);

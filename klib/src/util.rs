@@ -81,11 +81,15 @@ pub fn sanitize_filename(name: &str) -> String {
             _ => c,
         })
         .collect();
-    let trimmed = cleaned.trim().trim_matches('.');
+    let trimmed = cleaned.trim().trim_matches('.').trim_end();
     if trimmed.is_empty() || trimmed == "." || trimmed == ".." {
         "unnamed".to_string()
     } else {
-        trimmed.to_string()
+        let stem = trimmed.split('.').next().unwrap_or("").to_ascii_uppercase();
+        let device = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") ||
+            (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit());
+        let bounded: String = trimmed.chars().take(160).collect();
+        if device { format!("_{bounded}") } else { bounded }
     }
 }
 

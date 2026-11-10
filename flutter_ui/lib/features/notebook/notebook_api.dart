@@ -1,4 +1,4 @@
-/// 노트북(개발자 모드) 화면용 API. klib의 nb_* 명령을 Python 'notebook' 브리지로 부른다.
+/// 업무자료함(개발자 모드) 화면용 API. klib의 nb_* 명령을 Python 'notebook' 브리지로 부른다.
 library;
 
 import '../editor/markdown_format.dart' show markdownToPlainParagraphs;
@@ -191,7 +191,7 @@ abstract class NotebookApi {
   /// 사용자가 취소하면 null, 저장하면 저장한 경로를 돌려준다(제목·태그·본문·인용·출처 비교 표).
   Future<String?> exportHwpx(int notebookId, int noteId, {String? compareQuery, List<int>? compareSourceIds});
 
-  /// 창에 끌어 놓은 파일을 노트북 출처로 받기 켜기·끄기(노트북 화면이 열려 있는 동안 켠다).
+  /// 창에 끌어 놓은 파일을 업무자료함 출처로 받기 켜기·끄기(업무자료함 화면이 열려 있는 동안 켠다).
   Future<void> watchDrops(bool active);
 
   /// 창에 끌어 놓아 맡겨 둔 파일 경로를 가져간다(가져가면 비워진다).
@@ -226,10 +226,10 @@ class BridgeNotebookApi implements NotebookApi {
     final result = await _call('notebook', [
       <String, Object?>{'cmd': cmd, ...args},
     ]);
-    if (result is! Map) throw StateError('노트북 브리지 응답 형식이 잘못되었습니다.');
+    if (result is! Map) throw StateError('업무자료함 브리지 응답 형식이 잘못되었습니다.');
     final response = Map<String, Object?>.from(result);
     if (response['ok'] != true) {
-      throw StateError('${response['message'] ?? '노트북 요청이 실패했습니다.'}');
+      throw StateError('${response['message'] ?? '업무자료함 요청이 실패했습니다.'}');
     }
     return response;
   }
@@ -259,7 +259,7 @@ class BridgeNotebookApi implements NotebookApi {
   @override
   Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId) async {
     final id = int.tryParse(itemId.trim());
-    if (id == null) throw StateError('잘못된 자료함 항목 id입니다: $itemId');
+    if (id == null) throw StateError('잘못된 가상 폴더 항목 id입니다: $itemId');
     final r = await _request('nb_source_from_item', {'notebook_id': notebookId, 'item_id': id});
     return NbItemSourceResult(sourceId: _int(r['id']), reused: r['reused'] == true);
   }
@@ -273,7 +273,7 @@ class BridgeNotebookApi implements NotebookApi {
       boxId: r['box_id'] == null ? null : _str(r['box_id']),
       itemId: r['item_id'] == null ? null : _str(r['item_id']),
       displayName: _str(r['display_name']),
-      reason: found ? '' : (r['reason'] == null ? '자료함 항목을 찾을 수 없습니다.' : _str(r['reason'])),
+      reason: found ? '' : (r['reason'] == null ? '가상 폴더 항목을 찾을 수 없습니다.' : _str(r['reason'])),
     );
   }
 
@@ -429,7 +429,7 @@ class BridgeNotebookApi implements NotebookApi {
 
   @override
   EditorBackend get memoEditorBackend => (request) async {
-    // 노트북 브리지가 edit_* 명령을 klib에 그대로 넘긴다(Python desktop_web_ui.notebook). 실패도 ok:false 응답으로 온다.
+    // 업무자료함 브리지가 edit_* 명령을 klib에 그대로 넘긴다(Python desktop_web_ui.notebook). 실패도 ok:false 응답으로 온다.
     final result = await _call('notebook', [request]);
     if (result is! Map) return const {'ok': false, 'message': '편집기 브리지 응답 형식이 잘못되었습니다.'};
     return Map<String, Object?>.from(result);
@@ -464,7 +464,7 @@ class InMemoryNotebookApi implements NotebookApi {
   @override
   Future<int> createNotebook(String name) async {
     final id = _next++;
-    _notebooks.add(Notebook(id: id, name: name.trim().isEmpty ? '새 노트북' : name.trim()));
+    _notebooks.add(Notebook(id: id, name: name.trim().isEmpty ? '새 업무자료함' : name.trim()));
     return id;
   }
 
@@ -492,7 +492,7 @@ class InMemoryNotebookApi implements NotebookApi {
 
   @override
   Future<int> addMemoSource(int notebookId, {required String title, required String markdown}) async {
-    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('노트북을 찾을 수 없습니다.');
+    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('업무자료함을 찾을 수 없습니다.');
     final plain = markdownToPlainParagraphs(markdown);
     if (plain.isEmpty) throw StateError('메모에 내용이 없습니다.');
     final id = _next++;
@@ -517,7 +517,7 @@ class InMemoryNotebookApi implements NotebookApi {
 
   Future<LibraryItem?> _libraryItem(String itemId) async {
     final lib = library;
-    if (lib == null) throw StateError('자료함이 연결되지 않았습니다.');
+    if (lib == null) throw StateError('가상 폴더가 연결되지 않았습니다.');
     for (final box in await lib.listBoxes()) {
       final item = (await lib.listItems(box.id)).where((i) => i.id == itemId).firstOrNull;
       if (item != null) return item;
@@ -527,7 +527,7 @@ class InMemoryNotebookApi implements NotebookApi {
 
   @override
   Future<NbItemSourceResult> addSourceFromItem(int notebookId, String itemId) async {
-    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('노트북을 찾을 수 없습니다.');
+    if (!_notebooks.any((n) => n.id == notebookId)) throw StateError('업무자료함을 찾을 수 없습니다.');
     final item = await _libraryItem(itemId);
     if (item == null) throw StateError('해당 자료 항목을 찾을 수 없습니다.');
     for (final s in _sources[notebookId] ?? const <NbSource>[]) {
@@ -558,9 +558,9 @@ class InMemoryNotebookApi implements NotebookApi {
       throw StateError('출처를 찾을 수 없습니다.');
     }
     final itemId = _sourceItems[sourceId];
-    if (itemId == null) return const NbSourceItemLink(found: false, reason: '자료함 항목과 연결되지 않은 출처입니다.');
+    if (itemId == null) return const NbSourceItemLink(found: false, reason: '가상 폴더 항목과 연결되지 않은 출처입니다.');
     final item = await _libraryItem(itemId);
-    if (item == null) return NbSourceItemLink(found: false, itemId: itemId, reason: '자료함 항목이 삭제되었습니다.');
+    if (item == null) return NbSourceItemLink(found: false, itemId: itemId, reason: '가상 폴더 항목이 삭제되었습니다.');
     return NbSourceItemLink(found: true, boxId: item.boxId, itemId: item.id, displayName: item.title);
   }
 
@@ -673,7 +673,7 @@ class InMemoryNotebookApi implements NotebookApi {
     return buffer.toString();
   }
 
-  /// HWPX 내보내기 기록(시험 확인용): (노트북, 노트, 비교 검색어).
+  /// HWPX 내보내기 기록(시험 확인용): (업무자료함, 노트, 비교 검색어).
   final hwpxExports = <(int, int, String?)>[];
 
   /// 다음 HWPX 내보내기에서 저장 대화상자를 취소한 것처럼 한다(시험용).

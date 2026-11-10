@@ -3,14 +3,14 @@ import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// 자료함·노트북 화면(사용자 보고 2026-11-07):
+/// 자료함·업무자료함 화면(사용자 보고 2026-11-07):
 /// 처음 화면으로 돌아가는 단추가 있고, 앱을 닫을 때 종료를 막지 않는다.
 void main() {
   Future<NavigatorState> open(WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Text('home'))));
     final nav = tester.state<NavigatorState>(find.byType(Navigator));
     nav.push(MaterialPageRoute<void>(
-      builder: (_) => const HostClosablePage(title: '자료함', child: Scaffold(body: Text('library'))),
+      builder: (_) => const HostClosablePage(title: '가상 폴더', child: Scaffold(body: Text('library'))),
     ));
     await tester.pumpAndSettle();
     return nav;

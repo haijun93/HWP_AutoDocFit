@@ -12,7 +12,7 @@ import '../library/library_screen.dart';
 import '../workspace/tab_navigation_shell.dart' show HostClosablePage;
 import 'notebook_api.dart';
 
-/// 노트북 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
+/// 업무자료함 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
 /// 폭이 [kNotebookWideWidth] 미만이면 세 칸을 탭으로 바꾼다.
 const kNotebookWideWidth = 1000.0;
 
@@ -33,7 +33,7 @@ const kNotebookNotesMax = 560.0;
 const kNotebookMiddleMin = 320.0;
 const kNotebookHandleWidth = 8.0;
 
-/// 마지막으로 정한 칸 폭. 앱을 켜 둔 동안 노트북을 다시 열어도 유지한다(파일 저장은 후속).
+/// 마지막으로 정한 칸 폭. 앱을 켜 둔 동안 업무자료함을 다시 열어도 유지한다(파일 저장은 후속).
 double _savedSourcesWidth = kNotebookSourcesWidth;
 double _savedNotesWidth = kNotebookNotesWidth;
 
@@ -103,7 +103,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   String? _tagFilter;
   String? _status;
 
-  /// '+메모 추가' 편집기의 자동 저장 초안(출처로 저장하거나 삭제하면 비운다). 노트북 화면이 열려 있는 동안 유지된다.
+  /// '+메모 추가' 편집기의 자동 저장 초안(출처로 저장하거나 삭제하면 비운다). 업무자료함 화면이 열려 있는 동안 유지된다.
   MemoDocument? _memoDraft;
   bool _busy = false;
   bool _loaded = false;
@@ -169,7 +169,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     });
   }
 
-  /// 노트북의 태그와 노트 수(많은 순, 같으면 이름순).
+  /// 업무자료함의 태그와 노트 수(많은 순, 같으면 이름순).
   List<(String, int)> get _tagCounts {
     final counts = <String, int>{};
     for (final note in _notes) {
@@ -219,18 +219,18 @@ class _NotebookScreenState extends State<NotebookScreen> {
 
   Future<void> _createNotebook() async {
     final name = await _askText(
-      title: '새 노트북',
-      label: '노트북 이름',
+      title: '새 업무자료함',
+      label: '업무자료함 이름',
       fieldKey: 'nb-create-name',
       okKey: 'nb-create-ok',
-      initial: '새 노트북',
+      initial: '새 업무자료함',
     );
     if (name == null || name.trim().isEmpty) return;
     await _run(() async {
       final id = await widget.api.createNotebook(name.trim());
       _notebook = Notebook(id: id, name: name.trim());
       await _loadNotebooks();
-    }, done: '노트북을 만들었습니다.');
+    }, done: '업무자료함을 만들었습니다.');
   }
 
   Future<void> _addSource() async {
@@ -284,7 +284,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     final targets = paths.map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
     if (targets.isEmpty) return;
     if (nb == null) {
-      setState(() => _status = '먼저 노트북을 만들거나 고르세요.');
+      setState(() => _status = '먼저 업무자료함을 만들거나 고르세요.');
       return;
     }
     final failed = <String>[];
@@ -310,7 +310,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     });
   }
 
-  /// 창에 끌어 놓은 파일을 가져와 지금 노트북의 출처로 넣는다.
+  /// 창에 끌어 놓은 파일을 가져와 지금 업무자료함의 출처로 넣는다.
   Future<void> _takeDrops() async {
     if (!mounted) return;
     try {
@@ -355,7 +355,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
     final boxId = found.boxId;
     final itemId = found.itemId;
     if (!found.found || boxId == null || itemId == null) {
-      setState(() => _status = found.reason.isEmpty ? '자료함 항목을 찾을 수 없습니다.' : found.reason);
+      setState(() => _status = found.reason.isEmpty ? '가상 폴더 항목을 찾을 수 없습니다.' : found.reason);
       return;
     }
     final open = widget.openLibraryItem ?? _defaultOpenLibraryItem;
@@ -365,19 +365,19 @@ class _NotebookScreenState extends State<NotebookScreen> {
   Future<void> _defaultOpenLibraryItem(BuildContext context, String boxId, String itemId) async {
     final library = widget.library;
     if (library == null) {
-      setState(() => _status = '자료함을 열 수 없습니다.');
+      setState(() => _status = '가상 폴더를 열 수 없습니다.');
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => HostClosablePage(
-          title: '자료함',
-          backLabel: '노트북으로',
+          title: '가상 폴더',
+          backLabel: '업무자료함으로',
           child: LibraryScreen(api: library, notebookApi: widget.api, initialBoxId: boxId, initialItemId: itemId),
         ),
       ),
     );
-    // 자료함에서 이 노트북에 출처를 더 넣었을 수 있다.
+    // 자료함에서 이 업무자료함에 출처를 더 넣었을 수 있다.
     if (mounted) await _run(_loadNotebookContent);
   }
 
@@ -583,7 +583,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('노트북'),
+        title: const Text('업무자료함'),
         actions: [
           if (_notebooks.isNotEmpty)
             Padding(
@@ -601,7 +601,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
             ),
           IconButton(
             key: const ValueKey('nb-create'),
-            tooltip: '새 노트북',
+            tooltip: '새 업무자료함',
             onPressed: _busy ? null : _createNotebook,
             icon: const Icon(Icons.create_new_folder_outlined),
           ),
@@ -632,13 +632,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
             ? Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('노트북이 없습니다. 여러 문서를 모아 근거를 찾고 노트를 써 보세요.'),
+                  const Text('업무자료함이 없습니다. 여러 문서를 모아 근거를 찾고 노트를 써 보세요.'),
                   const SizedBox(height: 12),
                   FilledButton.icon(
                     key: const ValueKey('nb-create-empty'),
                     onPressed: _busy ? null : _createNotebook,
                     icon: const Icon(Icons.add),
-                    label: const Text('새 노트북 만들기'),
+                    label: const Text('새 업무자료함 만들기'),
                   ),
                 ],
               )
@@ -756,7 +756,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
           if (widget.library != null)
             IconButton(
               key: const ValueKey('nb-source-library'),
-              tooltip: '자료함에서 가져오기',
+              tooltip: '가상 폴더에서 가져오기',
               onPressed: _busy ? null : _importFromLibrary,
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
             ),
@@ -829,7 +829,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                             if (s.itemId != null && (widget.library != null || widget.openLibraryItem != null))
                               IconButton(
                                 key: ValueKey('nb-source-in-library-${s.id}'),
-                                tooltip: '자료함에서 보기',
+                                tooltip: '가상 폴더에서 보기',
                                 icon: const Icon(Icons.inventory_2_outlined, size: 18),
                                 onPressed: _busy ? null : () => _showInLibrary(s),
                               ),
@@ -1501,7 +1501,7 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('자료함에서 가져오기'),
+      title: const Text('가상 폴더에서 가져오기'),
       content: SizedBox(
         width: 460,
         height: 360,
@@ -1527,9 +1527,9 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
             if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
             Expanded(
               child: !_loading && _boxes.isEmpty
-                  ? const Center(child: Text('자료함이 없습니다.'))
+                  ? const Center(child: Text('가상 폴더가 없습니다.'))
                   : !_loading && _files.isEmpty
-                  ? const Center(child: Text('이 자료함에는 파일 자료가 없습니다.'))
+                  ? const Center(child: Text('이 가상 폴더에는 파일 자료가 없습니다.'))
                   : ListView(
                       children: [
                         for (final item in _files)

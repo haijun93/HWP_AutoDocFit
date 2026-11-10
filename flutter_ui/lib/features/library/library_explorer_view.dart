@@ -30,7 +30,7 @@ const libraryExplorerColumnNames = {
   LibraryExplorerColumn.kind: '종류',
   LibraryExplorerColumn.size: '크기',
   LibraryExplorerColumn.modified: '수정한 날짜',
-  LibraryExplorerColumn.source: '원본 경로',
+  LibraryExplorerColumn.source: '자료 경로',
   LibraryExplorerColumn.space: '영역',
 };
 
@@ -575,7 +575,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       items: [
         PopupMenuItem(key: const ValueKey('libraryExplorerMenuOpen'), value: 'open', child: Text(count > 1 ? '열기($count개)' : '열기')),
         if (widget.onAddToNotebook != null && count == 1)
-          const PopupMenuItem(key: ValueKey('libraryExplorerMenuNotebook'), value: 'notebook', child: Text('노트북에 출처로 추가')),
+          const PopupMenuItem(key: ValueKey('libraryExplorerMenuNotebook'), value: 'notebook', child: Text('업무자료함에 출처로 추가')),
         if (count == 1)
           const PopupMenuItem(key: ValueKey('libraryExplorerMenuRename'), value: 'rename', child: Text('이름 바꾸기(F2)')),
         const PopupMenuItem(key: ValueKey('libraryExplorerMenuCopyPath'), value: 'path', child: Text('경로 복사')),
@@ -843,7 +843,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       libraryKindLabel(item),
       if (info?.size != null) formatLibrarySize(info!.size),
       if (info?.modified != null) '수정한 날짜 ${formatLibraryDate(info!.modified)}',
-      if (info?.missing ?? false) '원본 파일 없음',
+      if (info?.missing ?? false) item.managedPath?.isNotEmpty == true ? '복사본 없음' : '원본 파일 없음',
     ].join(', ');
   }
 
@@ -864,8 +864,10 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       )),
       if (missing) ...[
         const SizedBox(width: 4),
-        Tooltip(
-          message: '원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).',
+          Tooltip(
+            message: item.managedPath?.isNotEmpty == true
+                ? '자료함의 복사본을 찾을 수 없습니다.'
+                : '원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).',
           child: Icon(Icons.warning_amber_rounded, key: ValueKey('libraryExplorerMissing-${item.id}'), size: 16, color: Colors.orange),
         ),
       ],

@@ -14,7 +14,7 @@ Future<void> _setSize(WidgetTester tester, double width) async {
   addTearDown(tester.view.reset);
 }
 
-/// 자료함 1개(파일 항목 1개·글 항목 1개)와 노트북 1개.
+/// 자료함 1개(파일 항목 1개·글 항목 1개)와 업무자료함 1개.
 Future<(InMemoryLibraryApi, InMemoryNotebookApi, int)> _fixture() async {
   final library = InMemoryLibraryApi(
     initialBoxes: const [LibraryBox(id: 'box_1', name: '예산 자료'), LibraryBox(id: 'box_2', name: '다른 자료함')],
@@ -58,7 +58,7 @@ Future<void> _addViaMenu(WidgetTester tester, String itemId, int nbId, {bool rig
 }
 
 void main() {
-  group('자료함 → 노트북 출처로 추가', () {
+  group('자료함 → 업무자료함 출처로 추가', () {
     testWidgets('카드 단추 메뉴로 추가하고, 다시 추가하면 이미 있음을 알린다', (tester) async {
       await _setSize(tester, 1280);
       final (library, notebooks, nbId) = await _fixture();
@@ -66,7 +66,7 @@ void main() {
       await tester.pumpAndSettle();
 
       await _addViaMenu(tester, 'item_1', nbId);
-      expect(_status(tester), '“예산보고.txt”을(를) “예산 연구” 노트북 출처로 추가했습니다.');
+      expect(_status(tester), '“예산보고.txt”을(를) “예산 연구” 업무자료함 출처로 추가했습니다.');
       final sources = await notebooks.listSources(nbId);
       expect(sources, hasLength(1));
       expect(sources.single.itemId, 'item_1');
@@ -74,11 +74,11 @@ void main() {
 
       // 오른쪽 클릭 메뉴로 같은 항목을 또 넣으면 새 출처를 만들지 않는다.
       await _addViaMenu(tester, 'item_1', nbId, rightClick: true);
-      expect(_status(tester), '이미 “예산 연구” 노트북 출처에 있습니다.');
+      expect(_status(tester), '이미 “예산 연구” 업무자료함 출처에 있습니다.');
       expect(await notebooks.listSources(nbId), hasLength(1));
     });
 
-    testWidgets('파일 경로가 없는 글 자료는 노트북을 고르기 전에 막는다', (tester) async {
+    testWidgets('파일 경로가 없는 글 자료는 업무자료함을 고르기 전에 막는다', (tester) async {
       await _setSize(tester, 1280);
       final (library, notebooks, nbId) = await _fixture();
       await tester.pumpWidget(MaterialApp(home: LibraryScreen(api: library, notebookApi: notebooks)));
@@ -89,11 +89,11 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('libraryMenuAddToNotebook')));
       await tester.pumpAndSettle();
       expect(find.byKey(ValueKey('libraryNbPick-$nbId')), findsNothing);
-      expect(_status(tester), '파일 경로가 있는 자료만 노트북 출처로 추가할 수 있습니다.');
+      expect(_status(tester), '파일 경로가 있는 자료만 업무자료함 출처로 추가할 수 있습니다.');
       expect(await notebooks.listSources(nbId), isEmpty);
     });
 
-    testWidgets('노트북이 없으면 고르기 창에서 새로 만들어 넣는다', (tester) async {
+    testWidgets('업무자료함이 없으면 고르기 창에서 새로 만들어 넣는다', (tester) async {
       await _setSize(tester, 1280);
       final library = InMemoryLibraryApi(
         initialBoxes: const [LibraryBox(id: 'box_1', name: '예산 자료')],
@@ -110,7 +110,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('libraryMenuAddToNotebook')));
       await tester.pumpAndSettle();
-      expect(find.text('노트북이 없습니다. 아래에서 새로 만드세요.'), findsOneWidget);
+      expect(find.text('업무자료함이 없습니다. 아래에서 새로 만드세요.'), findsOneWidget);
       await tester.enterText(find.byKey(const ValueKey('libraryNbPickNewName')), '새 연구');
       await tester.tap(find.byKey(const ValueKey('libraryNbPickCreate')));
       await tester.pumpAndSettle();
@@ -118,10 +118,10 @@ void main() {
       final created = (await notebooks.listNotebooks()).single;
       expect(created.name, '새 연구');
       expect((await notebooks.listSources(created.id)).single.itemId, 'item_1');
-      expect(_status(tester), contains('“새 연구” 노트북 출처로 추가했습니다.'));
+      expect(_status(tester), contains('“새 연구” 업무자료함 출처로 추가했습니다.'));
     });
 
-    testWidgets('노트북 API가 없으면 메뉴에 항목이 없다', (tester) async {
+    testWidgets('업무자료함 API가 없으면 메뉴에 항목이 없다', (tester) async {
       await _setSize(tester, 1280);
       final (library, _, _) = await _fixture();
       await tester.pumpWidget(MaterialApp(home: LibraryScreen(api: library)));
@@ -133,7 +133,7 @@ void main() {
     });
   });
 
-  group('노트북 출처 → 자료함에서 보기', () {
+  group('업무자료함 출처 → 자료함에서 보기', () {
     testWidgets('자료함 화면을 열어 그 자료함을 고르고 항목을 강조한다', (tester) async {
       await _setSize(tester, 1280);
       final (library, notebooks, nbId) = await _fixture();
@@ -150,7 +150,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byType(LibraryScreen), findsOneWidget);
-      expect(find.text('노트북으로'), findsOneWidget);
+      expect(find.text('업무자료함으로'), findsOneWidget);
       // 첫 자료함(box_1)이 아니라 항목이 든 box_2가 골라져 있다.
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_2'))).selected, isTrue);
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_1'))).selected, isFalse);
@@ -160,7 +160,7 @@ void main() {
       );
       expect((card.shape as RoundedRectangleBorder).side.color, Colors.blue);
 
-      // 돌아가면 노트북 화면이 그대로 있다.
+      // 돌아가면 업무자료함 화면이 그대로 있다.
       await tester.tap(find.byKey(const ValueKey('host-page-back')));
       await tester.pumpAndSettle();
       expect(find.byType(LibraryScreen), findsNothing);
@@ -178,7 +178,7 @@ void main() {
       await tester.tap(find.byKey(ValueKey('nb-source-in-library-${linked.sourceId}')));
       await tester.pumpAndSettle();
       expect(find.byType(LibraryScreen), findsNothing);
-      expect(find.text('자료함 항목이 삭제되었습니다.'), findsOneWidget);
+      expect(find.text('가상 폴더 항목이 삭제되었습니다.'), findsOneWidget);
     });
 
     testWidgets('openLibraryItem을 주면 그것으로 자료함·항목 id를 넘긴다', (tester) async {
@@ -207,7 +207,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_1'))).selected, isTrue);
-      expect(_status(tester), '자료함을 찾을 수 없습니다(삭제되었을 수 있습니다).');
+      expect(_status(tester), '가상 폴더를 찾을 수 없습니다(삭제되었을 수 있습니다).');
     });
 
     testWidgets('자료함은 있으나 항목이 없으면 그렇게 알린다', (tester) async {
@@ -218,7 +218,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_2'))).selected, isTrue);
-      expect(_status(tester), '자료함 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).');
+      expect(_status(tester), '가상 폴더 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).');
     });
   });
 
@@ -246,7 +246,7 @@ void main() {
           'nb_source_item' when request['source_id'] == 1 => {
             'ok': true, 'found': true, 'item_id': 5, 'box_id': 3, 'display_name': '예산보고.txt', 'source_path': _path,
           },
-          'nb_source_item' => {'ok': true, 'found': false, 'item_id': 6, 'reason': '자료함 항목이 삭제되었습니다.'},
+          'nb_source_item' => {'ok': true, 'found': false, 'item_id': 6, 'reason': '가상 폴더 항목이 삭제되었습니다.'},
           'nb_source_list' => {
             'ok': true,
             'sources': [
@@ -260,7 +260,7 @@ void main() {
       final found = await api.sourceItem(2, 1);
       expect((found.found, found.boxId, found.itemId, found.displayName), (true, '3', '5', '예산보고.txt'));
       final gone = await api.sourceItem(2, 9);
-      expect((gone.found, gone.reason), (false, '자료함 항목이 삭제되었습니다.'));
+      expect((gone.found, gone.reason), (false, '가상 폴더 항목이 삭제되었습니다.'));
       final sources = await api.listSources(2);
       expect(sources.map((s) => s.itemId), ['5', null]);
     });

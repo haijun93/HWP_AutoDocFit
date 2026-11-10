@@ -1,4 +1,4 @@
-/// 메모 편집 화면(전체 화면 경로): [MemoEditor] + 저장 단추. 노트북 '+메모 추가'와 자료함 '+메모'·글 자료 고치기가 같이 쓴다.
+/// 메모 편집 화면(전체 화면 경로): [MemoEditor] + 저장 단추. 업무자료함 '+메모 추가'와 자료함 '+메모'·글 자료 고치기가 같이 쓴다.
 ///
 /// 저장할 곳은 모른다: [MemoEditorPage.onSave]가 저장하고 돌려준 값으로 화면을 닫는다(`Navigator.pop`).
 /// 저장이 실패하면 화면을 닫지 않고 아래 안내 줄에 오류를 보여 준다.
@@ -56,7 +56,7 @@ class _MemoEditorPageState<T> extends State<MemoEditorPage<T>> {
 
   Future<void> _save() async {
     if (_controller.isLargeFile) {
-      // 큰 파일은 글 전체를 화면으로 가져오지 않으므로 메모(노트북·자료함)로 넣지 않는다.
+      // 큰 파일은 글 전체를 화면으로 가져오지 않으므로 메모(업무자료함·자료함)로 넣지 않는다.
       setState(() => _error = "큰 파일 보기 중입니다. 도구줄의 '다른 이름으로 저장'으로 파일에 저장하세요.");
       return;
     }

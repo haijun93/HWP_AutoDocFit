@@ -121,6 +121,8 @@ class DesktopWebBridge:
         self._close_protocol = False
         self._close_request = None
         self._close_timer = None
+        self._freeze_tracer = None
+        self._tk_heartbeat_after = None
 
     def _shutdown(self):
         """Tk 종료 시 대기·실행 중 요청의 호출자를 종료 오류로 해제한다."""
@@ -130,6 +132,10 @@ class DesktopWebBridge:
         if manager is not None:
             threading.Thread(target=manager.shutdown, daemon=True).start()
         self._file_dialogs.close()
+        if self._freeze_tracer is not None:
+            self._freeze_tracer.stop()
+            self._freeze_tracer = None
+        self._stop_tk_heartbeat()
         self._cancel_pending_drop()
         with self._request_lock:
             self._closed = True
@@ -145,6 +151,30 @@ class DesktopWebBridge:
         if not hasattr(self, "_ux_data"):
             self._ux_data = self.gui.state if isinstance(getattr(self.gui, "state", None), AppState) else AppState()
         return self._ux_data
+
+    def start_tk_heartbeat(self):
+        if self._freeze_tracer is None or self._tk_heartbeat_after is not None:
+            return
+        def tick():
+            self._tk_heartbeat_after = None
+            tracer = self._freeze_tracer
+            if tracer is None:
+                return
+            tracer.tk_heartbeat()
+            try:
+                self._tk_heartbeat_after = self.gui.root.after(250, tick)
+            except Exception:
+                pass
+        tick()
+
+    def _stop_tk_heartbeat(self):
+        after_id = self._tk_heartbeat_after
+        self._tk_heartbeat_after = None
+        if after_id is not None:
+            try:
+                self.gui.root.after_cancel(after_id)
+            except Exception:
+                pass
 
     def _quick_option(self, name):
         variable = getattr(self.gui, QUICK_OPTIONS[name], None)
@@ -218,6 +248,9 @@ class DesktopWebBridge:
         return self.quick_register_and_activate_profile(path)
 
     def _tk(self, callback, timeout=120, front=False):
+        tracer = self._freeze_tracer
+        tk_token = tracer.begin_tk(getattr(callback, '__name__', type(callback).__name__)) if tracer else None
+        started_at = time.monotonic()
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
@@ -264,6 +297,8 @@ class DesktopWebBridge:
             except BaseException as exc:
                 complete(error=exc)
             finally:
+                if tracer:
+                    tracer.end_tk(tk_token)
                 if temporary_host:
                     try:
                         self.gui.root.withdraw()
@@ -284,8 +319,15 @@ class DesktopWebBridge:
             complete(error=RuntimeError("앱이 종료 중입니다."))
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
-            return result.result(timeout=timeout)
+            value = result.result(timeout=timeout)
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, 'ok')
+            return value
         except TimeoutError as exc:
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, 'timeout')
             # callback 자체가 낸 TimeoutError를 큐 응답 시간 초과로 바꾸지 않는다.
             with self._request_lock:
                 if result.done():
@@ -296,6 +338,18 @@ class DesktopWebBridge:
             if not cancelled:
                 raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
             raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
+        except Exception as exc:
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, type(exc).__name__)
+            raise
+
+    def freeze_logs_open(self):
+        tracer = self._freeze_tracer
+        if tracer is None:
+            from docfit_app.freeze_tracer import FreezeTracer
+            tracer = FreezeTracer()
+        return response(tracer.open_folder)
 
     def _stages(self, mode):
         choices = self.gui.stage_choices.get(mode, {})
@@ -1313,6 +1367,8 @@ class DesktopWebBridge:
     def save_settings(self, values, revision):
         def save():
             self._configuration().save(values, revision, running=self.gui.running)
+            if 'freeze_tracing' in values:
+                self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
                 from docfit_app.shell_menu import register, unregister, launch_command
                 if values['shell_menu']:
@@ -1325,6 +1381,18 @@ class DesktopWebBridge:
                 self._saved_window['topmost'] = bool(values['always_on_top'])
             return self._settings_snapshot()
         return self._tk(lambda: response(save))
+
+    def _set_freeze_tracing(self, enabled):
+        from docfit_app.freeze_tracer import FreezeTracer, _is_hung
+        if enabled:
+            if self._freeze_tracer is None:
+                self._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
+            self._freeze_tracer.start(self.window)
+            self.start_tk_heartbeat()
+        elif self._freeze_tracer is not None:
+            self._stop_tk_heartbeat()
+            self._freeze_tracer.stop()
+            self._freeze_tracer = None
 
     def _tk_fallback_enabled(self):
         var = getattr(self.gui, "ui_tk_fallback_var", None)
@@ -2275,7 +2343,7 @@ class DesktopWebBridge:
         import math
         valid_spaces = {"core", "basis", "reference", "temp"}
         if space is not None and space not in valid_spaces:
-            return {"ok": False, "message": "자료함 공간이 올바르지 않습니다."}
+            return {"ok": False, "message": "가상 폴더 공간이 올바르지 않습니다."}
         try:
             if isinstance(x, bool) or isinstance(y, bool):
                 raise ValueError("bool")
@@ -2292,7 +2360,7 @@ class DesktopWebBridge:
                 raise ValueError("type")
             box = int(box_id.strip() if isinstance(box_id, str) else box_id)
         except ValueError:
-            return {"ok": False, "message": "자료함 번호가 올바르지 않습니다."}
+            return {"ok": False, "message": "가상 폴더 번호가 올바르지 않습니다."}
         added, skipped, failed = [], [], []
         if paths is None:
             items = []
@@ -2361,7 +2429,7 @@ class DesktopWebBridge:
     def _library_open_item(self, request):
         """자료함 자료를 연결 앱·탐색기·브라우저로 연다(더블클릭).
 
-        item_id가 있으면 klib에 저장된 경로(kind·source_path)만 쓴다(화면이 보낸 경로는 무시).
+        item_id가 있으면 klib에서 이전·검증한 복사본 경로만 쓴다(화면이 보낸 경로는 무시).
         item_id가 없으면(내보낸 폴더·검색 결과) 실행 파일은 차단한다.
         실행기는 self._library_opener / self._library_browser로 바꿔 시험한다.
         """
@@ -2376,14 +2444,18 @@ class DesktopWebBridge:
         registered = item_id not in (None, "")
         if registered:
             try:
-                stored = self._get_library_bridge().request({"cmd": "item_get", "id": int(item_id)})
+                stored = self._get_library_bridge().request({"cmd": "item_prepare", "id": int(item_id)})
             except (TypeError, ValueError):
                 return {"ok": False, "code": "INVALID_PATH", "message": "잘못된 자료 ID입니다."}
             if not isinstance(stored, dict) or not stored.get("ok"):
                 message = stored.get("message") if isinstance(stored, dict) else None
-                return {"ok": False, "code": "NOT_REGISTERED", "message": message or "자료함에서 자료를 찾을 수 없습니다."}
+                code = stored.get("code", "NOT_REGISTERED") if isinstance(stored, dict) else "NOT_REGISTERED"
+                return {"ok": False, "code": code, "message": message or "가상 폴더에서 자료를 찾을 수 없습니다."}
             target["kind"] = stored.get("kind") or target["kind"]
-            target["source_path"] = str(stored.get("source_path") or "")
+            target["managed_path"] = str(stored.get("managed_path") or "")
+            target["source_path"] = str(stored.get("managed_path") or stored.get("source_path") or "")
+            if target["kind"] != "link" and not stored.get("managed_path"):
+                return {"ok": False, "code": "MANAGED_MISSING", "message": "자료 복사본을 준비하지 못했습니다."}
         try:
             opened = open_library_item(
                 target,
@@ -2422,14 +2494,14 @@ class DesktopWebBridge:
                     return {"ok": False, "message": "item_ids 목록이 필요합니다."}
                 return {"ok": True, "items": library_item_stats(self._get_library_bridge().request, ids)}
             if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
-                # 자료함 '+메모' 편집기도 노트북과 같은 통로(경로 인자 거절)를 쓴다.
+                # 자료함 '+메모' 편집기도 업무자료함과 같은 통로(경로 인자 거절)를 쓴다.
                 return self._memo_editor_request(request)
             return self._get_library_bridge().request(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
 
     def _memo_editor_request(self, request):
-        """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 노트북 '+메모 추가'와 자료함 '+메모'가 쓴다.
+        """메모 편집기 코어(klib edit_*)로 그대로 넘긴다. 업무자료함 '+메모 추가'와 자료함 '+메모'가 쓴다.
 
         파일 경로 인자(path)는 받지 않는다: 화면에서 임의 경로를 열거나 덮어쓰는 통로가 되지 않게 막는다.
         텍스트 파일 열기·다른 이름으로 저장은 호스트의 파일 대화상자를 거친다:
@@ -2470,15 +2542,15 @@ class DesktopWebBridge:
             return {"ok": False, "message": str(exc)}
 
     def notebook(self, request):
-        """노트북 요청(개발자 모드 전용). 자료함과 같은 klib 브리지를 쓴다.
+        """업무자료함 요청(개발자 모드 전용). 자료함과 같은 klib 브리지를 쓴다.
 
         출처 추가는 klib가 직접 추출하고, klib가 못 읽는 구형 hwp·pdf만 NotebookService가 Python으로 추출해 넣는다.
-        nb_drop_watch(창에 끌어 놓은 파일을 노트북으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
+        nb_drop_watch(창에 끌어 놓은 파일을 업무자료함으로 받기 켜기·끄기)와 nb_take_drop(놓은 경로 가져가기)은 여기서 처리한다.
         """
         if isinstance(request, dict) and str(request.get("cmd", "")).startswith("edit_"):
             return self._memo_editor_request(request)
         if not isinstance(request, dict) or not str(request.get("cmd", "")).startswith("nb_"):
-            return {"ok": False, "message": "허용되지 않은 노트북 명령입니다."}
+            return {"ok": False, "message": "허용되지 않은 업무자료함 명령입니다."}
         cmd = request["cmd"]
         try:
             if cmd == "nb_drop_watch":
@@ -2525,7 +2597,7 @@ class DesktopWebBridge:
         return {"ok": True, "pending": len(pending)}
 
     def _notebook_drop_watch(self, active):
-        """노트북 화면이 열려 있는 동안 창에 놓은 파일을 노트북 출처로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
+        """업무자료함 화면이 열려 있는 동안 창에 놓은 파일을 업무자료함 출처로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
         current = getattr(self, "drop_target", "documents")
         if active:
             if current != "notebook":
@@ -2536,7 +2608,7 @@ class DesktopWebBridge:
         return {"ok": True, "drop_target": self.drop_target}
 
     def _receive_notebook_paths(self, paths):
-        """노트북에 끌어 놓은 파일: 경로를 맡겨 두고 화면에 알린다(화면이 nb_take_drop으로 가져가 출처로 추가)."""
+        """업무자료함에 끌어 놓은 파일: 경로를 맡겨 두고 화면에 알린다(화면이 nb_take_drop으로 가져가 출처로 추가)."""
         pending = list(getattr(self, "_notebook_drop", None) or [])
         pending.extend(str(p) for p in (paths or [])[:200] if str(p).strip())
         self._notebook_drop = pending
@@ -2811,8 +2883,8 @@ class DesktopWebBridge:
                     else "여기에 놓으면 그림판 배경 사진으로 넣습니다" if target == "paint_image"
                     else "여기에 파일을 놓으면 파일변환 목록에 추가됩니다" if target == "conversion"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
-                    else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
-                    else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
+                    else "여기에 놓으면 업무자료함 출처로 추가합니다" if target == "notebook"
+                    else "여기에 놓으면 가상 폴더 항목으로 추가합니다" if target == "library"
                     else "여기에 놓으면 문서 목록에 추가됩니다")
             try:
                 window.run_js(f"window.docfitDropText = {text!r};")
@@ -3123,13 +3195,35 @@ def _file_size(path):
 
 
 def _set_window_on_top(window, enabled):
-    """앱 창 '항상 위'. pywebview 6은 set_on_top 대신 on_top 속성을 쓴다
-    (사용자 보고 2026-11-07: '항상 위' 단추가 AttributeError로 동작하지 않음)."""
-    setter = getattr(window, "set_on_top", None)
-    if callable(setter):
-        setter(bool(enabled))
-    else:
-        window.on_top = bool(enabled)
+    """Set topmost directly from the caller without waiting for the WebView UI thread.
+
+    pywebview's ``on_top`` setter calls WinForms ``Invoke`` synchronously. The
+    bridge can run on a Tk worker while the WinForms UI thread is waiting for
+    a callback from that worker, so use Win32 SetWindowPos on the native HWND.
+    """
+    # Non-pywebview adapters and test doubles retain their small synchronous
+    # interface. The real pywebview Window exposes ``native`` after show().
+    if not hasattr(window, "native"):
+        setter = getattr(window, "set_on_top", None)
+        if callable(setter):
+            setter(bool(enabled))
+        else:
+            window.on_top = bool(enabled)
+        return True
+
+    enabled = bool(enabled)
+
+    def apply():
+        try:
+            hwnd = _PyWebViewWindow(window).handle()
+            win32 = _Win32WindowApi()
+            x, y, width, height = win32.window_rect(hwnd)
+            win32.set_window_pos(hwnd, x, y, width, height, enabled)
+        except Exception:
+            logging.getLogger(__name__).warning("항상 위 창 상태 적용 실패", exc_info=True)
+
+    threading.Thread(target=apply, name="window-topmost", daemon=True).start()
+    return True
 
 
 def _initial_window_settings(bridge):
@@ -3357,7 +3451,7 @@ class _BrowserApi:
             "cancel_zero_click", "start_zero_click", "quick_register_and_activate_profile", "drop_format_file", "set_profile_drop_bounds",
             "get_state", "add_files", "add_folder", "add_paths", "remove_file",
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
-            "open_settings", "get_settings", "save_settings", "text_input", "open_stages", "open_log", "get_log", "clear_log",
+            "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
             "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
@@ -3702,6 +3796,17 @@ def run_webview(gui):
 
     def initialize_webview(web_window):
         _dismiss_splash()
+        try:
+            from docfit_app.configuration_service import ConfigurationService
+            from docfit_app.freeze_tracer import FreezeTracer, _is_hung
+            settings = bridge._tk(lambda: ConfigurationService(gui._준말_서비스().settings).snapshot(
+                running=gui.running).get('values', {}), timeout=5)
+            if settings.get('freeze_tracing'):
+                bridge._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
+                bridge._freeze_tracer.start(web_window)
+                bridge.start_tk_heartbeat()
+        except Exception:
+            logging.getLogger(__name__).exception("Could not initialize freeze tracer")
         # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
         try:
             from docfit_app.kagent_app_service import start_background

@@ -19,8 +19,8 @@ class FakeBridge:
 
     def request(self, request):
         self.calls.append(request)
-        if request["cmd"] == "item_get":
-            return dict(self.item, ok=True) if getattr(self, "item", None) else {"ok": False}
+        if request["cmd"] == "item_prepare":
+            return dict(self.item, managed_path=self.item.get("managed_path", self.item.get("source_path")), ok=True) if getattr(self, "item", None) else {"ok": False}
         if request["cmd"] == "nb_source_from_item":
             return {"ok": True, "id": 9, "paragraph_count": len(request.get("paragraphs") or []), "reused": getattr(self, "reused", False)}
         if request["cmd"] == "nb_source_add":
@@ -181,8 +181,9 @@ class NotebookServiceTests(unittest.TestCase):
         service = NotebookService(bridge)
         service.handle({"cmd": "nb_search", "notebook_id": 1, "query": "예산"})
         self.assertEqual(bridge.calls[-1]["cmd"], "nb_search")
-        with self.assertRaises(LibraryBridgeError):
+        with self.assertRaises(LibraryBridgeError) as ctx:
             service.handle({"cmd": "box_list"})
+        self.assertIn("허용되지 않은 업무자료함 명령입니다.", str(ctx.exception))
 
     def test_memo_markdown_to_plain_paragraphs(self):
         markdown = ("# 회의 메모\n\n**복지 예산** 확대와 *도로* 정비\n- 첫째 `항목`\n1. 둘째\n> 인용 [자료](https://a.kr)\n"
@@ -237,7 +238,9 @@ class DesktopNotebookTests(unittest.TestCase):
             result = bridge.notebook({"cmd": "nb_list"})
         self.assertTrue(result["ok"])
         self.assertEqual(fake.calls[0]["cmd"], "nb_list")
-        self.assertFalse(bridge.notebook({"cmd": "box_list"})["ok"])
+        res = bridge.notebook({"cmd": "box_list"})
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["message"], "허용되지 않은 업무자료함 명령입니다.")
 
     def test_drop_watch_routes_drops_to_notebook_and_restores(self):
         bridge = make_desktop_bridge()
@@ -267,7 +270,7 @@ class DesktopNotebookTests(unittest.TestCase):
         self.assertEqual(bridge.library({"cmd": "lib_drop_watch", "active": False})["drop_target"], "documents")
 
     def test_item_link_requests_from_flutter_reach_klib(self):
-        """자료함↔노트북 화면이 보내는 요청 모양(BridgeNotebookApi)이 notebook 브리지를 거쳐 klib에 그대로 간다."""
+        """자료함↔업무자료함 화면이 보내는 요청 모양(BridgeNotebookApi)이 notebook 브리지를 거쳐 klib에 그대로 간다."""
         bridge = make_desktop_bridge()
         fake = FakeBridge()
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,7 +283,7 @@ class DesktopNotebookTests(unittest.TestCase):
                 bridge.notebook(look)
         # '이미 출처에 있음' 표시는 klib의 reused 값을 그대로 쓴다.
         self.assertEqual((added["ok"], added["id"], added["reused"]), (True, 9, True))
-        self.assertEqual([c["cmd"] for c in fake.calls], ["item_get", "nb_source_from_item", "nb_source_item"])
+        self.assertEqual([c["cmd"] for c in fake.calls], ["item_prepare", "nb_source_from_item", "nb_source_item"])
         self.assertEqual(fake.calls[1], add)
         self.assertEqual(fake.calls[2], look)
 

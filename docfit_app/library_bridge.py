@@ -18,7 +18,7 @@ ALLOWED_COMMANDS = frozenset({
 
     "ping", "box_create", "box_list", "box_get", "box_update", "box_rename", "box_delete",
 
-    "item_add", "item_get", "item_update", "item_rename", "item_move", "item_delete", "item_search",
+    "item_add", "item_get", "item_prepare", "item_update", "item_rename", "item_move", "item_delete", "item_search",
 
     "item_text_get", "item_text_set",  # 글 자료 사본 읽기·고치기(자료함 메모 편집기). 경로 인자 없음.
 
@@ -99,13 +99,13 @@ class LibraryBridge:
 
         if not isinstance(request, dict):
 
-            raise LibraryBridgeError("자료함 요청은 JSON 객체여야 합니다.")
+            raise LibraryBridgeError("가상 폴더 요청은 JSON 객체여야 합니다.")
 
         command = request.get("cmd")
 
         if command not in ALLOWED_COMMANDS:
 
-            raise LibraryBridgeError("허용되지 않은 자료함 명령입니다.")
+            raise LibraryBridgeError("허용되지 않은 가상 폴더 명령입니다.")
 
         try:
 
@@ -113,11 +113,11 @@ class LibraryBridge:
 
         except (TypeError, ValueError) as exc:
 
-            raise LibraryBridgeError("자료함 요청을 JSON으로 인코딩할 수 없습니다.") from exc
+            raise LibraryBridgeError("가상 폴더 요청을 JSON으로 인코딩할 수 없습니다.") from exc
 
         if len(encoded) > MAX_REQUEST_BYTES:
 
-            raise LibraryBridgeError("자료함 요청이 64 KiB를 초과했습니다.")
+            raise LibraryBridgeError("가상 폴더 요청이 64 KiB를 초과했습니다.")
 
         last_error = None
 
@@ -275,7 +275,7 @@ def _current_user_pipe_name():
 
         return rf"\\.\pipe\HwpAutoDocFit.klib{suffix}.{sid}"
 
-    raise LibraryBridgeError("자료함 파이프는 Windows에서만 사용할 수 있습니다.")
+    raise LibraryBridgeError("가상 폴더 파이프는 Windows에서만 사용할 수 있습니다.")
 
 def _open_pipe(name):
 
@@ -309,7 +309,7 @@ def open_library_item(item, *, opener=None, browser=None, allow_risky=None):
     """
 
     kind = str(item.get("kind") or "")
-    source = str(item.get("source_path") or "").strip()
+    source = str(item.get("managed_path") or item.get("source_path") or "").strip()
     if any(ch in source for ch in ("\n", "\r", "\0")):
         raise LibraryOpenError("INVALID_PATH", "줄바꿈이나 제어 문자가 든 경로는 열 수 없습니다.")
     if not source:
@@ -331,10 +331,12 @@ def open_library_item(item, *, opener=None, browser=None, allow_risky=None):
     if "://" in source or lowered.startswith(("file:", "javascript:", "shell:", "ms-")):
         raise LibraryOpenError("BLOCKED", "파일·폴더 경로나 http/https 주소만 열 수 있습니다.")
     if not os.path.exists(source):
+        if item.get("managed_path"):
+            raise LibraryOpenError("MANAGED_MISSING", "자료 복사본을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).")
         raise LibraryOpenError("SOURCE_MISSING", "원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).")
     if not os.path.isdir(source) and is_risky_open_path(source):
         if allow_risky is False:
-            raise LibraryOpenError("BLOCKED", "자료함에 등록되지 않은 실행 파일은 열 수 없습니다.")
+            raise LibraryOpenError("BLOCKED", "가상 폴더에 등록되지 않은 실행 파일은 열 수 없습니다.")
         if not item.get("confirmed"):
             raise LibraryOpenError("CONFIRM_REQUIRED", "실행 파일입니다. 실행할지 확인이 필요합니다.")
     if opener is None:
@@ -373,7 +375,7 @@ def library_item_stats(request_fn, item_ids, *, limit=ITEM_STAT_LIMIT):
         if not isinstance(stored, dict) or not stored.get("ok"):
             entry["exists"] = False
             continue
-        source = str(stored.get("source_path") or "").strip()
+        source = str(stored.get("managed_path") or stored.get("source_path") or "").strip()
         lowered = source.lower()
         if (not source or any(ch in source for ch in ("\n", "\r", "\0"))
                 or "://" in source or lowered.startswith(("file:", "javascript:", "shell:", "ms-"))):

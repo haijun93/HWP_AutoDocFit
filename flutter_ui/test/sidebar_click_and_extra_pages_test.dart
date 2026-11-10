@@ -12,7 +12,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// 사용자 요청 2026-11-07:
 /// ① 사이드메뉴는 기본으로 클릭해야 실행화면을 부르고, 마우스 올림 자동 호출은 개발자 모드에서만.
-/// ② 노트북·자료함을 열어도 사이드메뉴가 남고 오른쪽 실행창 안에 열린다.
+/// ② 업무자료함·자료함을 열어도 사이드메뉴가 남고 오른쪽 실행창 안에 열린다.
 class _DropLibraryApi extends InMemoryLibraryApi implements LibraryDropApi {
   _DropLibraryApi() : super(initialBoxes: const [LibraryBox(id: 'box_1', name: '보고서')]);
   final watched = <bool>[];
@@ -123,7 +123,7 @@ void main() {
     expect(find.text('표템플릿 화면'), findsOneWidget);
   });
 
-  testWidgets('자료함·노트북은 사이드메뉴를 남긴 채 실행창 안에 열리고 전환된다', (tester) async {
+  testWidgets('자료함·업무자료함은 사이드메뉴를 남긴 채 실행창 안에 열리고 전환된다', (tester) async {
     await _size(tester);
     final library = _DropLibraryApi();
     final notebooks = InMemoryNotebookApi();
@@ -139,7 +139,7 @@ void main() {
       }),
     ));
     await tester.pumpAndSettle();
-    // 문서편집 화면의 상태를 바꿔 두고 자료함·노트북을 다녀와도 그대로인지 본다.
+    // 문서편집 화면의 상태를 바꿔 두고 자료함·업무자료함을 다녀와도 그대로인지 본다.
     await tester.tap(find.text('count:0'));
     await tester.pump();
     expect(library.watched, isEmpty);
@@ -155,7 +155,7 @@ void main() {
     expect(_pillSelected(tester, const Key('workspaceTab-0')), isFalse);
     expect(library.watched, [true], reason: '자료함을 열면 끌어 놓기 감시 시작');
 
-    // 노트북으로 바꾸면 자료함 감시는 멈추고 노트북 감시가 시작된다.
+    // 업무자료함으로 바꾸면 자료함 감시는 멈추고 업무자료함 감시가 시작된다.
     await tester.tap(find.byKey(const ValueKey('notebook-open')));
     await tester.pumpAndSettle();
     expect(find.byType(LibraryScreen), findsNothing);
@@ -167,7 +167,7 @@ void main() {
     expect(notebookWatching, isTrue);
     expect(notebooks.watchingDrops, isTrue);
 
-    // 다른 메뉴를 누르면 자연스럽게 전환되고 노트북 감시도 멈춘다.
+    // 다른 메뉴를 누르면 자연스럽게 전환되고 업무자료함 감시도 멈춘다.
     await tester.tap(find.byKey(const Key('workspaceTab-1')));
     await tester.pumpAndSettle();
     expect(find.byType(NotebookScreen), findsNothing);
@@ -217,7 +217,7 @@ void main() {
     expect(find.byType(WorkspaceTabBar), findsOneWidget);
   });
 
-  testWidgets('자료함·노트북은 일반 모드에서도 메뉴에 있고 열린다(2026-11-08)', (tester) async {
+  testWidgets('자료함·업무자료함은 일반 모드에서도 메뉴에 있고 열린다(2026-11-08)', (tester) async {
     await _size(tester);
     final library = LibraryScreen(api: InMemoryLibraryApi(), watchDropEvents: (_) => () {});
     await tester.pumpWidget(_app(developerMode: true, library: library));

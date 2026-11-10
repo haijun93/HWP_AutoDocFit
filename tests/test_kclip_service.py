@@ -14,12 +14,13 @@ class FakeClient:
     def __init__(self):
         self.on = False
         self.requests = []
+        self.version = "0.1.1"
 
     def running(self):
         return self.on
 
     def status_file(self):
-        return {"pid": 1, "items": 3, "pipe": "\\\\.\\pipe\\HwpAutoDocFit.kagent.S-1"} if self.on else None
+        return {"version": self.version, "pid": 1, "items": 3, "pipe": "\\\\.\\pipe\\HwpAutoDocFit.kagent.S-1"} if self.on else None
 
     def request(self, cmd, **payload):
         if not self.on:
@@ -46,6 +47,7 @@ class KClipServiceTests(unittest.TestCase):
         self.service = KClipService(self.client, installer=lambda exe: self.calls.append(("install", exe)) or exe,
                                     starter=start, autostart=lambda on: self.calls.append(("autostart", on)),
                                     bundled=lambda: self.exe, installed=lambda: self.installed, sleep=lambda _s: None,
+                                    version_reader=lambda: "0.1.1",
                                     ffi_library=Path(self.tmp.name) / "missing-kclip-ffi.dll")
 
     def tearDown(self):
@@ -109,6 +111,100 @@ class KClipServiceTests(unittest.TestCase):
         self.service.command("enable", {"consent": True})
         self.assertIn("install", [c[0] for c in self.calls])
         self.assertIn("start", [c[0] for c in self.calls])
+
+    def test_old_running_version_restarts_even_when_disk_binary_is_current(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.version = "0.1.0"
+        self.client.on = True
+        self.assertTrue(self.service.upgrade_if_stale()["restarted"])
+        self.assertEqual(self.client.requests, [("quit", {})])
+        self.assertEqual([c[0] for c in self.calls], ["install", "start"])
+
+    def test_missing_running_version_is_migrated(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.version = None
+        self.client.on = True
+        self.assertTrue(self.service.upgrade_if_stale()["restarted"])
+
+    def test_unknown_bundle_version_fails_without_stopping(self):
+        self.installed.write_bytes(b"old")
+        self.client.on = True
+        self.service._version_reader = lambda: None
+        with self.assertLogs("docfit_app.kclip_service", level="WARNING"):
+            result = self.service.upgrade_if_stale()
+        self.assertEqual(result["reason"], "version_unavailable")
+        self.assertEqual(self.client.requests, [])
+        self.assertEqual(self.calls, [])
+
+    def test_startup_integrity_failure_does_not_stop_agent(self):
+        self.installed.write_bytes(b"old")
+        self.client.on = True
+        self.exe.with_name("kagent.exe.sha256").write_text("00" * 32, encoding="ascii")
+        self.assertEqual(self.service.upgrade_if_stale()["reason"], "integrity")
+        self.assertEqual(self.client.requests, [])
+        self.assertEqual(self.calls, [])
+
+    def test_enable_propagates_quit_failure_and_preserves_autostart(self):
+        self.installed.write_bytes(b"old")
+        self.client.on = True
+        self.client.request = lambda cmd, **p: {"ok": False}
+        with self.assertLogs("docfit_app.kclip_service", level="WARNING"):
+            result = self.service.enable({"consent": True})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "still_running")
+        self.assertEqual(self.installed.read_bytes(), b"old")
+        self.assertEqual(self.calls, [])
+
+    def test_install_failure_restarts_previous_agent_and_preserves_data(self):
+        self.installed.write_bytes(b"old")
+        data = Path(self.tmp.name) / "clip.db"
+        settings = Path(self.tmp.name) / "settings.json"
+        data.write_bytes(b"encrypted history")
+        settings.write_bytes(b'{"paused":true}')
+        self.client.on = True
+        def fail(exe):
+            raise OSError("disk full")
+        self.service._install = fail
+        with self.assertLogs("docfit_app.kclip_service", level="WARNING"):
+            result = self.service.upgrade_if_stale()
+        self.assertFalse(result["ok"])
+        self.assertTrue(self.client.on)
+        self.assertEqual(self.installed.read_bytes(), b"old")
+        self.assertEqual(data.read_bytes(), b"encrypted history")
+        self.assertEqual(settings.read_bytes(), b'{"paused":true}')
+        self.assertEqual(self.calls, [("start", self.installed)])
+
+    def test_start_failure_restores_previous_binary(self):
+        self.installed = Path(self.tmp.name) / "data" / "kagent.exe"
+        self.installed.parent.mkdir()
+        self.installed.write_bytes(b"old")
+        self.client.on = True
+        self.service._installed = lambda: self.installed
+        self.service._install = lambda exe: kc.install(exe, self.installed.parent)
+        starts = []
+        def start(exe):
+            starts.append(Path(exe).read_bytes())
+            if len(starts) == 1:
+                raise OSError("cannot start new agent")
+            self.client.on = True
+        self.service._start = start
+        result = self.service.upgrade_if_stale()
+        self.assertFalse(result["ok"])
+        self.assertEqual(starts, [self.exe.read_bytes(), b"old"])
+        self.assertEqual(self.installed.read_bytes(), b"old")
+        self.assertTrue(self.client.on)
+
+    def test_production_upgrade_uses_native_lifecycle_and_reports_error(self):
+        import subprocess
+        calls = []
+        def runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.CompletedProcess(args, 0, '{"ok":false,"reason":"still_running"}')
+        service = KClipService(bundled=lambda: self.exe, command_runner=runner)
+        with self.assertLogs("docfit_app.kclip_service", level="WARNING"):
+            result = service.upgrade_if_stale()
+        self.assertEqual(result["reason"], "still_running")
+        self.assertEqual(calls, [[str(self.exe), "--upgrade-if-stale"]])
 
     def test_enable_requires_consent_then_installs_starts_autostarts(self):
         self.assertEqual(self.service.command("enable", {})["code"], "KCLIP_CONSENT")
