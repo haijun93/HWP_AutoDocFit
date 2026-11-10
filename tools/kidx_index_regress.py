@@ -15,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 QUERIES = ["행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
-SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp"}
+SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx"}
+FIXTURE_QUERIES = ["노트북", "운반비", "슬라이드", "설명"]
 
 
 def rows(db: Path) -> dict[str, list[tuple[int, str, str]]]:
@@ -35,7 +36,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path, help="files or folders; defaults to supported fixtures")
     parser.add_argument("--exe", type=Path, default=ROOT / "klib" / "target" / "debug" / "klib.exe")
-    parser.add_argument("--queries", nargs=10, default=QUERIES, help="exactly ten query terms")
+    parser.add_argument("--queries", nargs="+", default=QUERIES + FIXTURE_QUERIES, help="search terms; defaults include the ten legacy terms and OOXML fixture terms")
     parser.add_argument("--dump", action="store_true", help="print differing paragraph numbers and fields")
     args = parser.parse_args()
     files = sorted({p.resolve() for item in (args.paths or [ROOT / "tests" / "fixtures"])
