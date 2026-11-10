@@ -787,8 +787,33 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (query.isEmpty && category == 'about') {
       return AppInfoPanel(version: snapshot?['version'] as String?);
     }
+    if (query.isEmpty && category == 'dev') {
+      return _developerTools(visible, locked, snapshot?['values']?['developer_mode'] == true);
+    }
     return _list(visible, locked, query);
   }
+
+  Widget _developerTools(List<Map> visible, bool locked, bool developerMode) => ListView(
+    padding: const EdgeInsets.only(bottom: 16),
+    children: [
+      for (final field in visible)
+        if (field['key'] != 'freeze_tracing' || developerMode) _card(field, locked),
+      if (developerMode) const SizedBox(height: 8),
+      if (developerMode) OutlinedButton.icon(
+        key: const ValueKey('open-freeze-log-folder'),
+        onPressed: busy ? null : () async {
+          try {
+            final result = await request('freeze_logs_open', []);
+            if (result['ok'] != true) throw Exception(result['error'] ?? '기록 폴더를 열지 못했어요.');
+          } catch (e) {
+            if (mounted) setState(() => error = '$e');
+          }
+        },
+        icon: const Icon(Icons.folder_open_outlined),
+        label: const Text('오류추적 기록 폴더 열기'),
+      ),
+    ],
+  );
 
   Widget _list(List<Map> visible, bool locked, String query) {
     if (visible.isEmpty) {
