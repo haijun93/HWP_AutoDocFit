@@ -1,0 +1,8 @@
+﻿[package]
+name = "kidx16_pdf_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+lopdf = "0.35"
+pdf-extract = "0.10"
