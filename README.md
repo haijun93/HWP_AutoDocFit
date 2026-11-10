@@ -1,10 +1,10 @@
 <h1 align="center">한글편집 후처리</h1>
 
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.56</h2>
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.57</h2>
 
 | 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
 |:---:|:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.56/HWP_AutoDocFit_v2.2.56_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.56/HWP_AutoDocFit_v2.2.56_Portable.exe) |
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.57/HWP_AutoDocFit_v2.2.57_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.57/HWP_AutoDocFit_v2.2.57_Portable.exe) |
 
 **설치형**은 설치 후 시작 메뉴에서 실행하고, **포터블**은 설치 없이 파일을 바로 실행합니다. Windows 10·11용이며, 문서 편집 기능에는 한컴오피스 한/글이 필요합니다.
 
@@ -251,6 +251,6 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.56**입니다.
+현재 공개 버전은 **v2.2.57**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.
