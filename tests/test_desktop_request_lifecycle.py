@@ -39,10 +39,64 @@ class RequestLifecycleTests(unittest.TestCase):
 
     def test_timed_out_queued_command_never_runs_later(self):
         callback = Mock()
-        with self.assertRaisesRegex(RuntimeError, "초과"):
+        with self.assertRaisesRegex(RuntimeError, "바쁨"):
             self.bridge._tk(callback, timeout=0)
         self.root.callbacks.get_nowait()()
         callback.assert_not_called()
+
+    def test_default_timeout_is_five_seconds_and_reports_busy(self):
+        class ImmediateTimeout(Future):
+            def result(self, timeout=None):
+                type(self).last_timeout = timeout
+                raise TimeoutError()
+
+        with patch("desktop_web_ui.Future", ImmediateTimeout):
+            with self.assertRaisesRegex(RuntimeError, "바쁨.*다시 시도"):
+                self.bridge._tk(Mock())
+        self.assertEqual(ImmediateTimeout.last_timeout, 5)
+        self.assertEqual(self.bridge._requests, set())
+        self.root.callbacks.get_nowait()()
+
+    def test_running_request_reports_busy_but_callback_continues(self):
+        entered, release = Event(), Event()
+        calls = []
+
+        class TimeoutAfterStart(Future):
+            def result(self, timeout=None):
+                if timeout is not None:
+                    self.asserted_timeout = timeout
+                    if not entered.wait(2):
+                        raise AssertionError("callback did not start")
+                    raise TimeoutError()
+                return super().result(timeout=timeout)
+
+        def callback():
+            entered.set()
+            release.wait(2)
+            calls.append("finished")
+
+        outcome = Future()
+
+        def call():
+            try:
+                outcome.set_result(self.bridge._tk(callback))
+            except BaseException as exc:
+                outcome.set_exception(exc)
+
+        with patch("desktop_web_ui.Future", TimeoutAfterStart):
+            thread = Thread(target=call, daemon=True)
+            thread.start()
+            dispatch = self.root.callbacks.get(timeout=2)
+            tk_thread = Thread(target=dispatch, daemon=True)
+            tk_thread.start()
+            with self.assertRaisesRegex(RuntimeError, "이미 실행 중"):
+                outcome.result(timeout=2)
+            self.assertTrue(tk_thread.is_alive())
+            release.set()
+            tk_thread.join(2)
+            thread.join(2)
+        self.assertEqual(calls, ["finished"])
+        self.assertEqual(self.bridge._requests, set())
 
     def test_shutdown_releases_indefinite_wait_and_rejects_new_requests(self):
         callback = Mock()
