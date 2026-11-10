@@ -955,7 +955,20 @@ fn resolved_path(path: &Path) -> std::io::Result<PathBuf> {
             std::path::Component::Normal(_) => {
                 out.push(part.as_os_str());
                 match out.canonicalize() {
-                    Ok(real) => out = real,
+                    Ok(real) => {
+                        out = real;
+                        #[cfg(windows)]
+                        {
+                            // canonicalize의 verbatim 접두사를 다음 구성요소에 전파하면
+                            // Win32의 끝 점·공백 별칭 해석이 꺼지므로 일반 경로로 되돌린다.
+                            let text = out.to_string_lossy();
+                            out = if let Some(unc) = text.strip_prefix("\\\\?\\UNC\\") {
+                                PathBuf::from(format!("\\\\{unc}"))
+                            } else {
+                                PathBuf::from(text.strip_prefix("\\\\?\\").unwrap_or(&text))
+                            };
+                        }
+                    },
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {},
                     Err(e) => return Err(e),
                 }
