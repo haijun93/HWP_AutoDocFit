@@ -95,7 +95,7 @@ class TimemachineServiceTests(unittest.TestCase):
 
     def test_content_index_distributes_supported_and_other_formats(self):
         self.enable()
-        documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf"]
+        documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf", self.root / "d.docx"]
         for document in documents:
             document.write_text("distribution probe", encoding="utf-8")
         rust_batches, python_calls = [], []
@@ -108,9 +108,27 @@ class TimemachineServiceTests(unittest.TestCase):
             return original(path)
         with patch.object(self.service, "_run_klib_index", side_effect=fake_rust), \
              patch.object(self.service.content_index, "index_file", side_effect=record_python):
-            self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf"}), threading.Event())
-        self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md"})
-        self.assertCountEqual(python_calls, [".txt", ".md", ".pdf"])
+            self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf", "docx"}), threading.Event())
+        self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md", ".docx"})
+        self.assertCountEqual(python_calls, [".txt", ".md", ".pdf", ".docx"])
+
+    def test_content_index_indexes_docx_via_rust(self):
+        self.enable()
+        docx_file = self.root / "sample.docx"
+        from zipfile import ZipFile
+        with ZipFile(docx_file, "w") as arc:
+            arc.writestr("word/document.xml", '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>워드 본문 색인 시험</w:t></w:r></w:p></w:body></w:document>')
+        called_rust = []
+        original_run_klib = self.service._run_klib_index
+        def record_klib(paths, cancel_event, seen, indexed, errors):
+            called_rust.extend(paths)
+            return original_run_klib(paths, cancel_event, seen, indexed, errors)
+        with patch.object(self.service, "_run_klib_index", side_effect=record_klib):
+            self.service._content_index_worker([str(self.root)], frozenset({"docx"}), threading.Event())
+        self.assertIn(str(docx_file), called_rust)
+        items = self.service.command("content_search", {"query": "워드"})["items"]
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["name"], "sample.docx")
 
     def test_content_index_cancel_terminates_klib_process(self):
         self.enable()
