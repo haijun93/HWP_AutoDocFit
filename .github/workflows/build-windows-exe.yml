@@ -50,11 +50,11 @@ on:
       - release/2.2.13
       - release/2.2.14
       - release/2.2.15
-      - release/2.2.16
       - claude/affectionate-goldberg-ggln7c
     paths-ignore:
       - 'README.md'
       - '.github/README.md'
+      - 'TODO.md'
       - 'HANDOVER.md'
       - 'releases/**'
   workflow_dispatch: {}
@@ -64,6 +64,8 @@ permissions:
 
 jobs:
   build:
+    # 2.2.16 is obsolete; never build it, including a manual dispatch.
+    if: github.ref != 'refs/heads/release/2.2.16' && github.sha != '7b7b12bc28585d2c22acdce5d686cc416965cc77'
     runs-on: windows-latest
     env:
       PYTHONIOENCODING: utf-8
