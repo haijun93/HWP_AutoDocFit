@@ -205,13 +205,14 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             return 결과
         return bind_function(한글_폰트_목록, _docfit_namespace)
     if _docfit_symbol == '한컴_번들_폰트_폴더_목록':
-        def 한컴_번들_폰트_폴더_목록():
+        def 한컴_번들_폰트_폴더_목록(후보들=None):
             """설치 경로 후보들 아래에서 .hft(한컴오피스 전용 번들 글꼴) 파일이 있는
             폴더를 모두 찾는다. 폴더 이름이 'Fonts'가 아니어도 실제 .hft 파일 위치를
             직접 뒤져서 찾으므로, 배포판마다 다른 폴더 이름에 흔들리지 않는다."""
             폴더집합 = set()
-            후보들 = list(_hwp_설치폴더_후보_레지스트리()) + list(_hwp_설치폴더_후보_공통경로())
-            후보들.append(Path(r"C:\Program Files (x86)\Hnc\Office 2020\HOffice110\Shared\Fonts"))
+            if 후보들 is None:
+                후보들 = list(_hwp_설치폴더_후보_레지스트리()) + list(_hwp_설치폴더_후보_공통경로())
+                후보들.append(Path(r"C:\Program Files (x86)\Hnc\Office 2020\HOffice110\Shared\Fonts"))
             검사한 = set()
             for 시작 in 후보들:
                 try:
@@ -231,10 +232,19 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         def 한글_폰트_목록_전체(폴더):
             """사용자가 지정한 글꼴 폴더 목록에, 자동으로 찾은 한컴오피스 전용
             번들(HFT) 글꼴 폴더의 글꼴을 더해 합친 전체 글꼴 이름 목록을 돌려준다."""
+            from docfit_engine.font_catalog_cache import load as _폰트캐시_불러오기, store as _폰트캐시_저장
+
+            후보들 = list(_hwp_설치폴더_후보_레지스트리()) + list(_hwp_설치폴더_후보_공통경로())
+            후보들.append(Path(r"C:\Program Files (x86)\Hnc\Office 2020\HOffice110\Shared\Fonts"))
+            캐시목록 = _폰트캐시_불러오기(폴더, 후보들)
+            if 캐시목록 is not None:
+                return 캐시목록
+
             결과 = list(한글_폰트_목록(폴더))
             본적있음 = set(결과)
             폴더_문자열 = str(Path(폴더)) if 폴더 else ""
-            for 번들폴더 in 한컴_번들_폰트_폴더_목록():
+            번들폴더들 = 한컴_번들_폰트_폴더_목록(후보들)
+            for 번들폴더 in 번들폴더들:
                 if str(번들폴더) == 폴더_문자열:
                     continue
                 for 이름 in 한글_폰트_목록(str(번들폴더)):
@@ -242,6 +252,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                         본적있음.add(이름)
                         결과.append(이름)
             결과.sort(key=lambda s: (0 if re.match(r'^[A-Za-z]', s) else 1, s))
+            _폰트캐시_저장(폴더, 후보들, [폴더, *번들폴더들], 결과)
             return 결과
         return bind_function(한글_폰트_목록_전체, _docfit_namespace)
     if _docfit_symbol == '서식_기본값_전역_복원':
