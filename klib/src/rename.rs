@@ -61,6 +61,42 @@ pub fn preview(request: &Value) -> Value {
                     if uuid_name.is_match(&stem) { stem = val("text", ""); }
                 },
                 "clear" => stem.clear(),
+                "del_pos" => {
+                    let start = rule.get("start").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(1).max(1);
+                    let end = rule.get("end").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(start).max(start);
+                    let chars: Vec<char> = stem.chars().collect();
+                    let (lo, hi) = if val("origin", "start") == "end" {
+                        (chars.len().saturating_sub(end), chars.len().saturating_sub(start.saturating_sub(1)))
+                    } else { (start.saturating_sub(1), end) };
+                    stem = chars.iter().take(lo).chain(chars.iter().skip(hi)).collect();
+                },
+                "del_between" => {
+                    let opener = val("open", "(");
+                    let closer = val("close", ")");
+                    let mut spans: Vec<(usize, usize, usize)> = Vec::new();
+                    let mut stack: Vec<usize> = Vec::new();
+                    let mut i = 0;
+                    while i < stem.len() {
+                        if stem.is_char_boundary(i) && stem[i..].starts_with(&opener) && (opener != closer || stack.is_empty()) {
+                            stack.push(i); i += opener.len(); continue;
+                        }
+                        if stem.is_char_boundary(i) && stem[i..].starts_with(&closer) && !stack.is_empty() {
+                            let begin = stack.pop().unwrap();
+                            spans.push((begin, i + closer.len(), stack.len()));
+                            i += closer.len(); continue;
+                        }
+                        i += stem[i..].chars().next().map(char::len_utf8).unwrap_or(1);
+                    }
+                    let inner = val("nest", "outer") == "inner";
+                    let mut chosen: Vec<(usize, usize)> = spans.iter().filter_map(|(b,e,d)| {
+                        let select = if inner { !spans.iter().any(|(b2,e2,_)| b2 < b && e < e2) } else { *d == 0 };
+                        if select {Some((*b,*e))} else {None}
+                    }).collect();
+                    chosen.sort_unstable_by(|a,b| b.0.cmp(&a.0));
+                    let marks = matches!(rule.get("keep_marks"), Some(Value::Bool(true)));
+                    for (b,e) in chosen { let replacement = if marks {format!("{opener}{closer}")} else {String::new()}; stem.replace_range(b..e, &replacement); }
+                    stem = regex::Regex::new(r" {2,}").unwrap().replace_all(stem.trim(), " ").into_owned();
+                },
                 "ext_del" => ext.clear(),
                 "ext_add" => { stem.push_str(&ext); ext=val("ext", ""); },
                 "ext_replace" => ext=val("ext", ""),
