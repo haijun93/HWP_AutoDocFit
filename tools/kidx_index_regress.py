@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 QUERIES = ["행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
-SUPPORTED = {".txt", ".md", ".hwpx"}
+SUPPORTED = {".txt", ".md", ".hwpx", ".docx"}
 
 
 def rows(db: Path) -> dict[str, list[tuple[int, str, str]]]:
