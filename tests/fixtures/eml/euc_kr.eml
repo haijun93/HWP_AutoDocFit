@@ -1,0 +1,21 @@
+From: sender@example.com
+To: receiver@example.com
+Subject: ?? EUC-KR ??
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============5976307378129978700=="
+
+--===============5976307378129978700==
+Content-Transfer-Encoding: base64
+Content-Type: text/plain; charset="euc-kr"
+
+Pz8gPz8/ID8/ID8/PyA/Pz8/Lgo/PyA/Pz8gPz8/Pz8u
+
+--===============5976307378129978700==
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+MIME-Version: 1.0
+
+Pz8gPz8=
+
+--===============5976307378129978700==--

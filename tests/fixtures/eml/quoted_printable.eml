@@ -1,0 +1,22 @@
+From: sender@example.com
+To: receiver@example.com
+Subject: ?? ?? quoted printable
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============7529394692623975939=="
+
+--===============7529394692623975939==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+?? quoted-printable ??
+?? ??? ?????.
+
+--===============7529394692623975939==
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+MIME-Version: 1.0
+
+cGF5bG9hZA==
+
+--===============7529394692623975939==--

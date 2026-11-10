@@ -1,0 +1,21 @@
+From: sender@example.com
+To: receiver@example.com
+Subject: ?? ?? ??? base64
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="===============0295073577681637734=="
+
+--===============0295073577681637734==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: base64
+
+Pz8gPz8/IGJhc2U2NCA/Pz8/Py4NCj8xPyA/Pw0KPz8/PyA/Pz8gPz8/PyA/Pz8/Py4NCg==
+
+--===============0295073577681637734==
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+MIME-Version: 1.0
+
+Pz8gPz8=
+
+--===============0295073577681637734==--

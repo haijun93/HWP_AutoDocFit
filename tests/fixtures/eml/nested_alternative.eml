@@ -1,0 +1,37 @@
+From: sender@example.com
+To: receiver@example.com
+Subject: ?? ?? ??
+Content-Type: multipart/mixed; boundary="===============2030184578006312177=="
+
+--===============2030184578006312177==
+From: sender@example.com
+To: receiver@example.com
+Subject: ?? ?? ??
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="===============7747719744626622632=="
+
+--===============7747719744626622632==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+??? plain ??
+
+--===============7747719744626622632==
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+MIME-Version: 1.0
+
+<html><body>?? HTML ?????.</body></html>
+
+--===============7747719744626622632==--
+
+--===============2030184578006312177==
+Content-Type: application/octet-stream
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment;
+MIME-Version: 1.0
+
+aWdub3Jl
+
+--===============2030184578006312177==--

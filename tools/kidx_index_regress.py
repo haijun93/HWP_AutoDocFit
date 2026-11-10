@@ -15,8 +15,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 QUERIES = ["행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
-SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx"}
-FIXTURE_QUERIES = ["노트북", "운반비", "슬라이드", "설명"]
+SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml"}
+FIXTURE_QUERIES = ["노트북", "운반비", "슬라이드", "설명", "행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
 
 
 def rows(db: Path) -> dict[str, list[tuple[int, str, str]]]:

@@ -17,6 +17,7 @@ from docfit_core.timemachine.extractors_text import extract_plain_text
 from docfit_core.timemachine.extractors_hwp import extract_hwp
 from docfit_core.timemachine.extractors_hwpx import extract_hwpx
 from docfit_core.timemachine.extractors_ooxml import extract_docx, extract_pptx, extract_xlsx
+from docfit_core.timemachine.extractors_eml import extract_eml
 
 
 def python_records(path: Path) -> list[dict]:
@@ -32,6 +33,8 @@ def python_records(path: Path) -> list[dict]:
             records = extract_xlsx(path)
         elif ext == ".hwp":
             records = extract_hwp(path)
+        elif ext == ".eml":
+            records = extract_eml(path)
         else:
             records = extract_plain_text(path)
     except Exception as exc:
@@ -76,7 +79,7 @@ def main() -> int:
     args = parser.parse_args()
     paths = args.paths or [ROOT / "tests" / "fixtures"]
     files = sorted({p.resolve() for item in paths for p in (item.rglob("*") if item.is_dir() else [item])
-                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx"}})
+                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml"}})
     failures = 0
     for path in files:
         try:
