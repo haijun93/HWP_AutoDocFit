@@ -9,6 +9,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 import tempfile
 import threading
 import uuid
@@ -16,6 +17,7 @@ from pathlib import Path
 
 from docfit_core.file_rename import (Entry, History, PlanStaleError, RuleError, build_plan, execute_plan,
                                      natural_key, undo, validate_rules)
+from docfit_core.file_rename.check import EXECUTABLE_EXTS, LONG_PATH_WARN, MAX_PATH, _mark_conflicts, _plan_id, invalid_name_reason
 
 MAX_ENTRIES = 10000
 SYSTEM_DIRS = ("windows", "program files", "program files (x86)", "programdata", "$recycle.bin",
@@ -51,11 +53,12 @@ def _in_system_folder(path):
 
 
 class FileRenameService:
-    def __init__(self, settings_root, *, dialogs=None, validate_path=None):
+    def __init__(self, settings_root, *, dialogs=None, validate_path=None, settings=None):
         self.folder = Path(settings_root) / "file_rename"
         self.history = History(self.folder / "history.jsonl")
         self._dialogs = dialogs
         self._validate = validate_path or self._default_validate
+        self._settings = settings
         self._lock = threading.RLock()
         self._entries = {}
         self._order = []
@@ -227,13 +230,98 @@ class FileRenameService:
             entries = [self._entries[i] for i in self._order]
             try:
                 on_conflict = "number" if payload.get("on_conflict") == "number" else "block"
-                plan = build_plan(entries, rules, overrides=overrides, excluded=excluded, on_conflict=on_conflict)
+                validate_rules(rules)
+                plan = None
+                if self._rust_preview_enabled() and not overrides and not excluded and on_conflict == "block":
+                    try:
+                        rust = self._run_rust_preview(entries, rules)
+                        if rust is not None:
+                            plan = self._plan_from_rust(entries, rust)
+                    except Exception:
+                        # Rust는 미리보기 가속 경로다. 실행·응답 오류는 기존 Python 계획기로 처리한다.
+                        plan = None
+                if plan is None:
+                    plan = build_plan(entries, rules, overrides=overrides, excluded=excluded, on_conflict=on_conflict)
             except RuleError as error:
                 raise RenameServiceError("RENAME_INVALID_RULE", str(error)) from None
             self._plan = plan
         items = [dict(id=i["id"], new_name=i["new_name"], status=i["status"], reason=i["reason"],
                       warnings=i["warnings"], overridden=i["overridden"]) for i in plan["items"]]
         return dict(ok=True, plan_id=plan["plan_id"], items=items, summary=plan["summary"])
+
+    def _rust_preview_enabled(self):
+        if self._settings is None:
+            return True
+        try:
+            return self._settings.read().get("rust_rename_preview", True) is True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _run_rust_preview(entries, rules):
+        from .library_bridge import LibraryBridge
+        bridge = LibraryBridge()
+        if not bridge.available() or not bridge.executable.is_file():
+            return None
+        request = {"cmd": "rename_preview", "rules": rules, "on_conflict": "block", "overrides": {}, "excluded": [],
+                   "entries": [dict(id=e.id, path=e.path, name=e.name, size=e.size, mtime=e.mtime,
+                                    ctime=e.ctime, is_folder=e.is_folder) for e in entries],
+                   "existing_paths": []}
+        with tempfile.TemporaryDirectory(prefix="rename-preview-") as temp:
+            path = Path(temp) / "request.json"
+            path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+            result = subprocess.run([str(bridge.executable), "--rename-preview-json", f"@{path}"],
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30,
+                                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if result.returncode != 0:
+            raise RuntimeError("klib rename preview failed")
+        response = json.loads(result.stdout)
+        if not isinstance(response, dict) or not isinstance(response.get("items"), list):
+            raise ValueError("invalid klib rename preview response")
+        return response
+
+    @staticmethod
+    def _plan_from_rust(entries, response):
+        rows = response["items"]
+        if len(rows) != len(entries):
+            raise ValueError("klib rename preview item count mismatch")
+        items = []
+        for entry, row in zip(entries, rows):
+            if not isinstance(row, dict) or row.get("id") != entry.id:
+                raise ValueError("klib rename preview item order mismatch")
+            name = row.get("new_name")
+            reason = row.get("reason") if row.get("status") == "invalid" else None
+            if reason is None and not isinstance(name, str):
+                raise ValueError("klib rename preview omitted a name")
+            reason = reason or invalid_name_reason(name)
+            item = dict(id=entry.id, old_path=entry.path, old_name=entry.name, new_name=name, new_path=None,
+                        status="invalid" if reason else "ok", reason=reason,
+                        warnings=sorted(set(row.get("warnings", []))), overridden=False,
+                        fingerprint=list(entry.fingerprint()), is_folder=entry.is_folder)
+            if reason:
+                item["warnings"] = [w for w in item["warnings"] if w != "ext_changed"]
+            else:
+                item["new_path"] = os.path.join(entry.folder, name)
+                if name == entry.name:
+                    item["status"] = "unchanged"
+                elif len(item["new_path"]) > MAX_PATH:
+                    item.update(status="invalid", reason="경로가 너무 깁니다.", new_path=None)
+                elif len(item["new_path"]) >= LONG_PATH_WARN:
+                    item["warnings"].append("long_path")
+                if not entry.is_folder:
+                    old_ext, new_ext = entry.ext.lower(), os.path.splitext(name)[1].lower()
+                    if old_ext != new_ext:
+                        item["warnings"].append("ext_changed")
+                    if old_ext in EXECUTABLE_EXTS or new_ext in EXECUTABLE_EXTS:
+                        item["warnings"].append("executable")
+            item["warnings"] = sorted(set(item["warnings"]))
+            items.append(item)
+        _mark_conflicts(items, os.path.lexists)
+        summary = {status: 0 for status in ("ok", "unchanged", "conflict", "invalid", "skipped")}
+        for item in items:
+            summary[item["status"]] += 1
+        summary["executables"] = sum("executable" in item["warnings"] for item in items if item["status"] == "ok")
+        return dict(plan_id=_plan_id(items), items=items, summary=summary)
 
     def _check_apply(self, payload):
         plan = self._plan
