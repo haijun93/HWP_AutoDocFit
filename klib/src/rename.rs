@@ -21,6 +21,7 @@ pub fn preview(request: &Value) -> Value {
         let (stem0, ext0) = split_name(&name);
         let (mut stem, mut ext) = (stem0.to_string(), ext0.to_string());
         let mut title_unsupported = false;
+        let mut names_short = false;
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(""));
         for rule in match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] } {
             if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
@@ -136,6 +137,18 @@ pub fn preview(request: &Value) -> Value {
                 "doc_title" => {
                     if ext.to_lowercase() != ".hwpx" { title_unsupported = true; }
                 },
+                "names_list" => {
+                    let lines: Vec<String> = match rule.get("names") {
+                        Some(Value::Str(s)) => s.replace('\r', "").split('\n').map(|line| line.trim().to_string()).collect(),
+                        _ => Vec::new(),
+                    };
+                    if let Some(line) = lines.get(position).filter(|line| !line.is_empty()) {
+                        if matches!(rule.get("keep_ext"), Some(Value::Bool(false))) {
+                            let (new_stem, new_ext) = split_name(line);
+                            stem = new_stem.to_string(); ext = new_ext.to_string();
+                        } else { stem = line.clone(); }
+                    } else { names_short = true; }
+                },
                 "del_pos" => {
                     let start = rule.get("start").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(1).max(1);
                     let end = rule.get("end").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(start).max(start);
@@ -186,6 +199,7 @@ pub fn preview(request: &Value) -> Value {
         let status = if new_name == old_name { "unchanged" } else { "ok" };
         let mut warnings: Vec<Value> = Vec::new();
         if title_unsupported { warnings.push(Value::from("title_unsupported")); }
+        if names_short { warnings.push(Value::from("names_short")); }
         let folder = matches!(get("is_folder"), Some(Value::Bool(true)));
         if !folder && new_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() != old_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() { warnings.push(Value::from("ext_changed")); }
         plan_parts.push(Value::Arr(vec![Value::from(path.clone()), Value::from(new_path.clone()), Value::from(status), Value::Arr(fp.clone())]));
