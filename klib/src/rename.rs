@@ -1,6 +1,9 @@
 //! Batch rename preview scaffold. This module never mutates the filesystem.
 use crate::json::Value;
 use sha2::{Digest, Sha256};
+use std::io::Read;
+use zip::ZipArchive;
+use unicode_normalization::UnicodeNormalization;
 
 pub fn preview(request: &Value) -> Value {
     let empty = Vec::new();
@@ -22,6 +25,8 @@ pub fn preview(request: &Value) -> Value {
         let (mut stem, mut ext) = (stem0.to_string(), ext0.to_string());
         let mut title_unsupported = false;
         let mut names_short = false;
+        let mut exif_missing = false;
+        let mut title_error: Option<&str> = None;
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(""));
         for rule in match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] } {
             if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
@@ -170,6 +175,58 @@ pub fn preview(request: &Value) -> Value {
                 },
                 "doc_title" => {
                     if ext.to_lowercase() != ".hwpx" { title_unsupported = true; }
+                    else if let Ok(Some(title)) = read_hwpx_title(&path) {
+                        let title = sanitize_title(&title);
+                        let max_len = rule.get("max_length").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(60);
+                        let title: String = title.chars().take(max_len).collect();
+                        let title = title.trim_end_matches(['.', ' ']);
+                        if title.is_empty() { title_error = Some("문서 제목이 비어 있습니다."); }
+                        else {
+                            let position = val("position", "replace"); let sep = val("sep", "_");
+                            stem = place(&stem, title, &position, &sep);
+                        }
+                    } else if title_error.is_none() { title_error = Some("문서 제목을 읽지 못했습니다."); }
+                },
+                "exif_date" => {
+                    if let Some(moment) = read_exif_datetime(&path, &ext) {
+                        let formatted = format_date(moment, &val("format", "YYYYMMDD"));
+                        let position = val("position", "prefix");
+                        let sep = if matches!(val("delimiter", "").as_str(), "()" | "bracket" | "paren") || matches!(val("sep", "").as_str(), "()" | "bracket" | "paren") {
+                            String::new()
+                        } else { val("sep", "_") };
+                        let text = if sep.is_empty() { format!("({formatted})") } else { formatted };
+                        stem = place(&stem, &text, &position, &sep);
+                    } else { exif_missing = true; }
+                },
+                "cleanup" => {
+                    let nfc = !matches!(rule.get("nfc"), Some(Value::Bool(false)));
+                    if nfc { stem = stem.nfc().collect(); ext = ext.nfc().collect(); }
+                    let width = val("width", "keep");
+                    stem = map_width(&stem, &width);
+                    match val("underscore", "keep").as_str() { "to_space" => stem = stem.replace('_', " "), "from_space" => stem = stem.replace(' ', "_"), _ => {} }
+                    if !matches!(rule.get("collapse_spaces"), Some(Value::Bool(false))) {
+                        stem = regex::Regex::new(r" {2,}").unwrap().replace_all(&stem, " ").into_owned();
+                        stem = regex::Regex::new(r"_{2,}").unwrap().replace_all(&stem, "_").into_owned();
+                    }
+                    if !matches!(rule.get("strip"), Some(Value::Bool(false))) { stem = stem.trim_matches([' ', '_', '-']).to_string(); }
+                },
+                "template" => {
+                    let template = val("template", "{date}_{dept}_{title}");
+                    let raw_title = if ext.eq_ignore_ascii_case(".hwpx") { read_hwpx_title(&path) } else { Ok(None) };
+                    let title = if ext.eq_ignore_ascii_case(".hwpx") { raw_title.as_ref().ok().and_then(|x| x.as_deref()).map(sanitize_title) }
+                               else { if template.contains("{title}") { title_unsupported = true; } None };
+                    if ext.eq_ignore_ascii_case(".hwpx") && raw_title.is_err() { title_error = Some("문서 제목을 읽지 못했습니다."); }
+                    let title = title.unwrap_or_else(|| stem.clone());
+                    let max_len = rule.get("max_length").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(60);
+                    let title: String = title.chars().take(max_len).collect();
+                    let timestamp = number("mtime");
+                    let moment = time::OffsetDateTime::from_unix_timestamp_nanos((timestamp * 1_000_000_000.0).round() as i128).unwrap_or(time::OffsetDateTime::UNIX_EPOCH)
+                        .to_offset(time::UtcOffset::current_local_offset().unwrap_or(time::UtcOffset::UTC));
+                    let date = format_date(moment, "YYYYMMDD");
+                    let n = format!("{:0>width$}", position + 1, width=rule.get("digits").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(1));
+                    let mut output = template.replace("{date}", &date).replace("{title}", title.trim_end_matches(['.', ' '])).replace("{orig}", &stem).replace("{dept}", &val("dept", "")).replace("{n}", &n);
+                    output = output.chars().take(255).collect();
+                    stem = output;
                 },
                 "names_list" => {
                     let lines: Vec<String> = match rule.get("names") {
@@ -230,18 +287,21 @@ pub fn preview(request: &Value) -> Value {
         let new_path = parent.join(&new_name).to_string_lossy().replace('/', "\\");
         let fp = vec![Value::Num(number("size")), Value::Num((number("mtime") * 1000.0).trunc())];
         let old_name = match get("name") { Some(Value::Str(s)) => s.as_str(), _ => "" };
-        let invalid_reason = if new_name.trim().is_empty() { Some("이름이 비어 있습니다.") } else { None };
+        let invalid_reason = if let Some(reason) = title_error { Some(reason) }
+            else if new_name.trim().is_empty() { Some("이름이 비어 있습니다.") } else { None };
         let status = if invalid_reason.is_some() { "invalid" } else if new_name == old_name { "unchanged" } else { "ok" };
         let mut warnings: Vec<Value> = Vec::new();
         if title_unsupported { warnings.push(Value::from("title_unsupported")); }
+        if exif_missing { warnings.push(Value::from("exif_missing")); }
         if names_short { warnings.push(Value::from("names_short")); }
         let folder = matches!(get("is_folder"), Some(Value::Bool(true)));
         if !folder && split_name(&new_name).1.to_lowercase() != split_name(old_name).1.to_lowercase() { warnings.push(Value::from("ext_changed")); }
         let new_path_value = if invalid_reason.is_some() { Value::Null } else { Value::from(new_path.clone()) };
+        let new_name_value = if title_error.is_some() { Value::Null } else { Value::from(new_name.clone()) };
         plan_parts.push(Value::Arr(vec![Value::from(path.clone()), new_path_value.clone(), Value::from(status), Value::Arr(fp.clone())]));
         Value::obj(vec![
             ("id", string("id")), ("old_path", Value::from(path)), ("old_name", string("name")),
-            ("new_name", Value::from(new_name)), ("new_path", new_path_value), ("status", Value::from(status)),
+            ("new_name", new_name_value), ("new_path", new_path_value), ("status", Value::from(status)),
             ("reason", invalid_reason.map(Value::from).unwrap_or(Value::Null)), ("warnings", Value::Arr(warnings)), ("overridden", Value::Bool(false)),
             ("fingerprint", Value::Arr(fp)),
             ("is_folder", Value::Bool(boolean("is_folder"))),
@@ -306,6 +366,112 @@ fn set_conflict(item: &mut Value, reason: &str) { if let Value::Obj(fields)=item
 
 fn split_name(name: &str) -> (&str, &str) {
     match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name, "") }
+}
+
+fn place(stem: &str, text: &str, position: &str, sep: &str) -> String {
+    if text.is_empty() { return stem.to_string(); }
+    match position {
+        "prefix" => format!("{text}{}{stem}", if stem.is_empty() { "" } else { sep }),
+        "suffix" => format!("{stem}{}{text}", if stem.is_empty() { "" } else { sep }),
+        _ => text.to_string(),
+    }
+}
+
+fn map_width(text: &str, width: &str) -> String {
+    text.chars().map(|c| match width {
+        "half" if c == '\u{3000}' => ' ',
+        "half" if ('\u{ff01}'..='\u{ff5e}').contains(&c) => char::from_u32(c as u32 - 0xfee0).unwrap_or(c),
+        "full" if c == ' ' => '\u{3000}',
+        "full" if ('!'..='~').contains(&c) => char::from_u32(c as u32 + 0xfee0).unwrap_or(c),
+        _ => c,
+    }).collect()
+}
+
+fn format_date(moment: time::OffsetDateTime, pattern: &str) -> String {
+    let fields = [
+        ("YYYY", format!("{:04}", moment.year())), ("YY", format!("{:02}", moment.year().rem_euclid(100))),
+        ("MM", format!("{:02}", u8::from(moment.month()))), ("DD", format!("{:02}", moment.day())),
+        ("hh", format!("{:02}", moment.hour())), ("mm", format!("{:02}", moment.minute())), ("ss", format!("{:02}", moment.second())),
+    ];
+    let mut out = String::new(); let mut rest = pattern;
+    while !rest.is_empty() {
+        if let Some((token, value)) = fields.iter().find(|(token, _)| rest.starts_with(token)) {
+            out.push_str(value); rest = &rest[token.len()..];
+        } else { let ch = rest.chars().next().unwrap(); out.push(ch); rest = &rest[ch.len_utf8()..]; }
+    }
+    out
+}
+
+fn read_hwpx_title(path: &str) -> Result<Option<String>, ()> {
+    let file = std::fs::File::open(path).map_err(|_| ())?;
+    let mut zip = ZipArchive::new(file).map_err(|_| ())?;
+    let mut names: Vec<String> = (0..zip.len()).filter_map(|i| zip.by_index(i).ok().and_then(|f| f.name().ok().map(|n| n.to_string())))
+        .filter(|name| name.starts_with("Contents/section") && name.ends_with(".xml"))
+        .filter(|name| name[16..name.len()-4].chars().all(|c| c.is_ascii_digit()))
+        .collect();
+    names.sort_by_key(|name| name[16..name.len()-4].parse::<usize>().unwrap_or(usize::MAX));
+    let name = match names.first() { Some(name) => name, None => return Err(()) };
+    let mut xml = String::new(); zip.by_name(name).map_err(|_| ())?.read_to_string(&mut xml).map_err(|_| ())?;
+    let mut paragraphs = Vec::new();
+    let mut rest = xml.as_str();
+    while let Some(start) = rest.find("<hp:p") {
+        rest = &rest[start..]; let Some(open_end) = rest.find('>') else { break; }; rest = &rest[open_end + 1..];
+        let Some(end) = rest.find("</hp:p>") else { break; };
+        let paragraph = &rest[..end]; rest = &rest[end + 7..];
+        let text = xml_text(paragraph).trim().to_string(); if !text.is_empty() { paragraphs.push(text); }
+    }
+    Ok(Some(paragraphs.into_iter().next().unwrap_or_default()))
+}
+
+fn xml_text(xml: &str) -> String {
+    let mut out = String::new(); let mut in_tag = false; let mut entity = String::new(); let mut in_entity = false;
+    for ch in xml.chars() {
+        if in_tag { if ch == '>' { in_tag = false; } continue; }
+        if ch == '<' { in_tag = true; continue; }
+        if in_entity {
+            if ch == ';' { out.push(match entity.as_str() { "amp" => '&', "lt" => '<', "gt" => '>', "quot" => '"', "apos" => '\'', _ => ' ' }); entity.clear(); in_entity = false; }
+            else if entity.len() < 12 { entity.push(ch); }
+        } else if ch == '&' { in_entity = true; } else { out.push(ch); }
+    }
+    out
+}
+
+fn read_exif_datetime(path: &str, ext: &str) -> Option<time::OffsetDateTime> {
+    if !matches!(ext.to_ascii_lowercase().as_str(), ".jpg" | ".jpeg" | ".tif" | ".tiff" | ".png" | ".webp" | ".heic") { return None; }
+    let data = std::fs::read(path).ok()?;
+    let tiff = data.windows(6).position(|w| w == b"Exif\0\0").map(|p| p + 6).unwrap_or(0);
+    let little = data.get(tiff..tiff + 2)? == b"II";
+    if !little && data.get(tiff..tiff + 2)? != b"MM" { return None; }
+    let u16at = |p: usize| -> Option<u16> { let b: [u8; 2] = data.get(p..p+2)?.try_into().ok()?; Some(if little {u16::from_le_bytes(b)} else {u16::from_be_bytes(b)}) };
+    let u32at = |p: usize| -> Option<u32> { let b: [u8; 4] = data.get(p..p+4)?.try_into().ok()?; Some(if little {u32::from_le_bytes(b)} else {u32::from_be_bytes(b)}) };
+    if u16at(tiff + 2)? != 42 { return None; }
+    let ifd0 = tiff + u32at(tiff + 4)? as usize;
+    let count = u16at(ifd0)? as usize;
+    let mut exif_ifd = None; let mut datetime = None;
+    for i in 0..count {
+        let p = ifd0 + 2 + i * 12;
+        match u16at(p)? { 0x8769 => exif_ifd = Some(tiff + u32at(p + 8)? as usize), 0x0132 => datetime = Some((p, false)), _ => {} }
+    }
+    if let Some(dir) = exif_ifd {
+        let n = u16at(dir)? as usize;
+        for i in 0..n { let p = dir + 2 + i * 12; if u16at(p)? == 0x9003 { datetime = Some((p, true)); break; } }
+    }
+    let (entry, _is_exif) = datetime?;
+    let kind = u16at(entry + 2)?;
+    let count = u32at(entry + 4)? as usize;
+    if kind != 2 || count < 19 { return None; }
+    let value = u32at(entry + 8)? as usize;
+    let start = if count <= 4 { entry + 8 } else { tiff + value };
+    let raw = std::str::from_utf8(data.get(start..start + 19)?).ok()?;
+    let digits: Vec<i32> = raw.split(|c: char| !c.is_ascii_digit()).filter(|v| !v.is_empty()).map(|v| v.parse().ok()).collect::<Option<_>>()?;
+    if digits.len() != 6 { return None; }
+    let date = time::Date::from_calendar_date(digits[0], time::Month::try_from(digits[1] as u8).ok()?, digits[2] as u8).ok()?;
+    let time = time::Time::from_hms(digits[3] as u8, digits[4] as u8, digits[5] as u8).ok()?;
+    Some(time::PrimitiveDateTime::new(date, time).assume_utc())
+}
+
+fn sanitize_title(title: &str) -> String {
+    regex::Regex::new(r#"[\\/:*?"<>|\x00-\x1f]"#).unwrap().replace_all(title, "_").trim_end_matches(['.', ' ']).trim().to_string()
 }
 
 fn json_compact(value: &Value) -> String {
