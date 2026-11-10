@@ -53,6 +53,8 @@ class DelayableFakeIndexer:
 
 class TimemachineContentIndexLifecycleTests(unittest.TestCase):
     def setUp(self):
+        self._original_klib_executable = TimemachineService._klib_executable
+        TimemachineService._klib_executable = lambda _service: None
         self.temp = tempfile.TemporaryDirectory()
         self.temp_path = Path(self.temp.name)
         self.root = self.temp_path / "문서"
@@ -77,6 +79,7 @@ class TimemachineContentIndexLifecycleTests(unittest.TestCase):
     def tearDown(self):
         self.service.close()
         self.temp.cleanup()
+        TimemachineService._klib_executable = self._original_klib_executable
 
     def test_normal_completion_reports_final_counts(self):
         for i in range(1, 4):

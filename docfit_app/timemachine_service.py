@@ -193,7 +193,7 @@ class TimemachineService:
                         if rules.skip_file(name):
                             stale_paths.append(path)
                             continue
-                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx", "docx"}:
+                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx", "docx", "hwp"}:
                             rust_paths.append(path)
                         else:
                             python_paths.append(path)

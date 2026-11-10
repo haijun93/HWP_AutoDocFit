@@ -47,7 +47,7 @@ LABELS = {
  'all_cell_image_to_bg':'한 번에 적용: 표 셀 내 그림을 배경으로 변경',
 }
 EXCLUDED = {'ui_tk_fallback', 'hierarchy_engine', 'abbreviations', 'abbreviation_source', 'active_format_profile',
-            'rust_rename_preview'} | {k for k in DEFAULTS if k.endswith('_rev')}
+            'rust_rename_preview', 'rust_timemachine_scan'} | {k for k in DEFAULTS if k.endswith('_rev')}
 
 
 def leaves(values, prefix=''):

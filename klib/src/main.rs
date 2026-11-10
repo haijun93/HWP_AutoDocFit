@@ -18,6 +18,7 @@ mod unify_marker;
 mod classify_levels;
 mod legacy_records;
 mod rename;
+mod tm_scan;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -77,6 +78,12 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "tm-scan") {
+        let Some(root) = args.get(1) else { eprintln!("usage: klib tm-scan <root> [request-json]"); std::process::exit(2); };
+        let request = args.get(2).and_then(|s| crate::json::parse(s)).unwrap_or_else(|| crate::json::Value::obj(vec![]));
+        match tm_scan::run(root, &request) { Ok(value) => println!("{}", crate::json::to_string(&value)), Err(e) => { eprintln!("{e}"); std::process::exit(1); } }
+        return;
+    }
     let has = |flag: &str| args.iter().any(|a| a == flag);
 
     if args.first().is_some_and(|a| a == "legacy-records") {

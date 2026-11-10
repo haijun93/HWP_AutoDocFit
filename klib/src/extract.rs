@@ -103,9 +103,119 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "txt" | "md" => extract_text(path),
         "hwpx" => extract_hwpx(path),
+        "hwp" => extract_hwp(path),
         "docx" => extract_docx(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
+}
+
+/// Extract HWP5 through the same bundled kordoc Markdown conversion used by Python.
+/// HWPX and DOCX retain their independent XML extraction paths above.
+fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
+    use std::{process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::{Duration, Instant}};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    let app_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
+    let mut roots = Vec::new();
+    if let Some(dir) = app_dir {
+        roots.push(dir.join("kordoc-runtime").join("4.24.9"));
+        for ancestor in dir.ancestors().skip(1).take(5) {
+            roots.push(ancestor.join("kordoc-runtime").join("4.24.9"));
+        }
+    }
+    if let Some(base) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
+        roots.push(Path::new(&base).join("HwpAutoDocFit").join("kordoc-runtime").join("4.24.9"));
+    }
+    let runtime = roots.into_iter().find_map(|root| {
+        let manifest = std::fs::read_to_string(root.join("runtime.json")).ok()?;
+        if crate::json::parse(&manifest)?.str("kordoc") != Some("4.24.9") { return None; }
+        let node = [root.join("node/node.exe"), root.join("node/node")].into_iter().find(|p| p.is_file())?;
+        let cli = root.join("app/node_modules/kordoc/dist/cli.js");
+        cli.is_file().then_some((root, node, cli))
+    }).ok_or_else(|| "runtime_unavailable: kordoc HWP 변환 런타임을 찾을 수 없음".to_owned())?;
+
+    let temp_root = std::env::temp_dir();
+    let (temp_dir, target) = loop {
+        let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let candidate = temp_root.join(format!("kidx-hwp-{}-{id}", std::process::id()));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => break (candidate.clone(), candidate.join("output.md")),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("corrupt: HWP 임시 폴더 생성 실패: {e}")),
+        }
+    };
+    let mut child = Command::new(&runtime.1)
+        .arg(&runtime.2).arg(path).arg("--format").arg("markdown")
+        .arg("-o").arg(&target).arg("--silent")
+        .env("KORDOC_OFFLINE", "1")
+        .env("ORT_DISABLE_TELEMETRY", "1")
+        .env("npm_config_offline", "true")
+        .env("npm_config_update_notifier", "false")
+        .env("NO_UPDATE_NOTIFIER", "1")
+        .env("KORDOC_MODEL_CACHE", runtime.0.join("models"))
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped())
+        .spawn().map_err(|e| format!("runtime_unavailable: kordoc 실행 실패: {e}"))?;
+    let started = Instant::now();
+    while child.try_wait().map_err(|e| format!("extract_failed: kordoc 상태 확인 실패: {e}"))?.is_none() {
+        if started.elapsed() > Duration::from_secs(600) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err("extract_failed: kordoc 문서 변환 시간 초과".into());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let output = child.wait_with_output().map_err(|e| format!("extract_failed: kordoc 결과 읽기 실패: {e}"))?;
+    if !output.status.success() && output.status.code() != Some(2) {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let lower = message.to_lowercase();
+        let code = if ["암호", "password", "encrypted", "protect"].iter().any(|x| lower.contains(x)) { "encrypted" }
+            else if ["손상", "corrupt", "damaged", "invalid", "형식 오류"].iter().any(|x| lower.contains(x)) { "corrupt" }
+            else { "extract_failed" };
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        return Err(format!("{code}: HWP 문서 변환 실패: {message}"));
+    }
+    let raw = std::fs::read(&target).map_err(|e| {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        format!("extract_failed: kordoc 변환 결과를 읽을 수 없음: {e}")
+    })?;
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    let content = String::from_utf8(raw).map_err(|e| format!("decode_error: 변환된 마크다운 디코딩 실패: {e}"))?;
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    if normalized.trim().is_empty() { return Err("empty: HWP 본문 텍스트가 없음".into()); }
+
+    let page_marker = regex::Regex::new(r"(?i)(?:\x0c|<!--\s*page(?:\s*[:#]?\s*(\d+)|\s*break)?\s*-->)").unwrap();
+    let matches: Vec<_> = page_marker.find_iter(&normalized).collect();
+    let mut records = Vec::new();
+    if !matches.is_empty() {
+        let mut segments: Vec<(usize, &str)> = Vec::new();
+        let mut page = 1usize;
+        let mut last_end = 0usize;
+        for marker in &matches {
+            let chunk = &normalized[last_end..marker.start()];
+            if !(last_end == 0 && chunk.trim().is_empty()) { segments.push((page, chunk)); page += 1; }
+            if let Some(number) = page_marker.captures(marker.as_str()).and_then(|m| m.get(1)).and_then(|m| m.as_str().parse::<usize>().ok()) { page = number; }
+            last_end = marker.end();
+        }
+        segments.push((page, &normalized[last_end..]));
+        for (page, chunk) in segments {
+            for line in chunk.lines().map(str::trim).filter(|line| !line.is_empty()) {
+                records.push(hwp_record(line.to_owned(), "page", format!("{page}쪽"), records.len() + 1));
+            }
+        }
+    } else {
+        let split = regex::Regex::new(r"\n\s*\n").unwrap();
+        for (index, para) in split.split(&normalized).map(str::trim).filter(|p| !p.is_empty()).enumerate() {
+            records.push(hwp_record(para.to_owned(), "paragraph", format!("문단 {}", index + 1), records.len() + 1));
+        }
+    }
+    if records.is_empty() { return Err("empty: 추출 가능한 HWP 본문이 없음".into()); }
+    Ok(records)
+}
+
+fn hwp_record(text: String, kind: &str, label: String, sequence: usize) -> Paragraph {
+    Paragraph { text, location_kind: kind.into(), location_label: label, sequence,
+        section: None, hierarchy_level: None, is_table_cell: false, style_name: None, outline_level: None }
 }
 
 /// Extraction used by content indexing, retaining HWPX metadata from the legacy index walker.
@@ -128,6 +238,7 @@ pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
             Ok(records)
         }
+        "hwp" => extract_hwp(path),
         "docx" => {
             let mut records = extract_docx(path)?;
             let file = std::fs::File::open(path).map_err(|e| format!("corrupt: DOCX 파일 열기 실패: {e}"))?;
