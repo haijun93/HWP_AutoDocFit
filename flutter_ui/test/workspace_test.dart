@@ -252,7 +252,7 @@ void main() {
     });
   }
 
-  testWidgets('four work-mode cards use distinct soft theme colors', (
+  testWidgets('three work-mode cards use distinct soft theme colors', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1280, 900);
@@ -274,8 +274,10 @@ void main() {
       'spacing': const Color(0xffe3edff),
       'unify': const Color(0xffeff8f5),
       'all': const Color(0xfffff7eb),
-      'pagefit': const Color(0xfff4f1ff),
     };
+    // '페이지 맞춤' 카드는 작업 방식 화면에서 뺐다(2026-11-10). 쪽 맞춤은 세부 작업으로만 남는다.
+    expect(find.byKey(const Key('modeCard-pagefit')), findsNothing);
+    expect(find.text('페이지 맞춤'), findsNothing);
     final actual = <Color>{};
     for (final entry in expected.entries) {
       final card = tester.widget<Material>(
@@ -288,7 +290,7 @@ void main() {
         expect(card.color, entry.value);
       }
     }
-    expect(actual.length, 4);
+    expect(actual.length, 3);
     await tester.pumpWidget(const SizedBox());
   });
 
