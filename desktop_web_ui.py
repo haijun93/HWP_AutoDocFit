@@ -121,6 +121,8 @@ class DesktopWebBridge:
         self._close_protocol = False
         self._close_request = None
         self._close_timer = None
+        self._freeze_tracer = None
+        self._tk_heartbeat_after = None
 
     def _shutdown(self):
         """Tk 종료 시 대기·실행 중 요청의 호출자를 종료 오류로 해제한다."""
@@ -130,6 +132,10 @@ class DesktopWebBridge:
         if manager is not None:
             threading.Thread(target=manager.shutdown, daemon=True).start()
         self._file_dialogs.close()
+        if self._freeze_tracer is not None:
+            self._freeze_tracer.stop()
+            self._freeze_tracer = None
+        self._stop_tk_heartbeat()
         self._cancel_pending_drop()
         with self._request_lock:
             self._closed = True
@@ -145,6 +151,30 @@ class DesktopWebBridge:
         if not hasattr(self, "_ux_data"):
             self._ux_data = self.gui.state if isinstance(getattr(self.gui, "state", None), AppState) else AppState()
         return self._ux_data
+
+    def start_tk_heartbeat(self):
+        if self._freeze_tracer is None or self._tk_heartbeat_after is not None:
+            return
+        def tick():
+            self._tk_heartbeat_after = None
+            tracer = self._freeze_tracer
+            if tracer is None:
+                return
+            tracer.tk_heartbeat()
+            try:
+                self._tk_heartbeat_after = self.gui.root.after(250, tick)
+            except Exception:
+                pass
+        tick()
+
+    def _stop_tk_heartbeat(self):
+        after_id = self._tk_heartbeat_after
+        self._tk_heartbeat_after = None
+        if after_id is not None:
+            try:
+                self.gui.root.after_cancel(after_id)
+            except Exception:
+                pass
 
     def _quick_option(self, name):
         variable = getattr(self.gui, QUICK_OPTIONS[name], None)
@@ -218,6 +248,9 @@ class DesktopWebBridge:
         return self.quick_register_and_activate_profile(path)
 
     def _tk(self, callback, timeout=120, front=False):
+        tracer = self._freeze_tracer
+        tk_token = tracer.begin_tk(getattr(callback, '__name__', type(callback).__name__)) if tracer else None
+        started_at = time.monotonic()
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
@@ -264,6 +297,8 @@ class DesktopWebBridge:
             except BaseException as exc:
                 complete(error=exc)
             finally:
+                if tracer:
+                    tracer.end_tk(tk_token)
                 if temporary_host:
                     try:
                         self.gui.root.withdraw()
@@ -284,8 +319,15 @@ class DesktopWebBridge:
             complete(error=RuntimeError("앱이 종료 중입니다."))
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
-            return result.result(timeout=timeout)
+            value = result.result(timeout=timeout)
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, 'ok')
+            return value
         except TimeoutError as exc:
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, 'timeout')
             # callback 자체가 낸 TimeoutError를 큐 응답 시간 초과로 바꾸지 않는다.
             with self._request_lock:
                 if result.done():
@@ -296,6 +338,18 @@ class DesktopWebBridge:
             if not cancelled:
                 raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
             raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
+        except Exception as exc:
+            if tracer:
+                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
+                                  time.monotonic() - started_at, type(exc).__name__)
+            raise
+
+    def freeze_logs_open(self):
+        tracer = self._freeze_tracer
+        if tracer is None:
+            from docfit_app.freeze_tracer import FreezeTracer
+            tracer = FreezeTracer()
+        return response(tracer.open_folder)
 
     def _stages(self, mode):
         choices = self.gui.stage_choices.get(mode, {})
@@ -1313,6 +1367,8 @@ class DesktopWebBridge:
     def save_settings(self, values, revision):
         def save():
             self._configuration().save(values, revision, running=self.gui.running)
+            if 'freeze_tracing' in values:
+                self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
                 from docfit_app.shell_menu import register, unregister, launch_command
                 if values['shell_menu']:
@@ -1325,6 +1381,18 @@ class DesktopWebBridge:
                 self._saved_window['topmost'] = bool(values['always_on_top'])
             return self._settings_snapshot()
         return self._tk(lambda: response(save))
+
+    def _set_freeze_tracing(self, enabled):
+        from docfit_app.freeze_tracer import FreezeTracer, _is_hung
+        if enabled:
+            if self._freeze_tracer is None:
+                self._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
+            self._freeze_tracer.start(self.window)
+            self.start_tk_heartbeat()
+        elif self._freeze_tracer is not None:
+            self._stop_tk_heartbeat()
+            self._freeze_tracer.stop()
+            self._freeze_tracer = None
 
     def _tk_fallback_enabled(self):
         var = getattr(self.gui, "ui_tk_fallback_var", None)
@@ -3357,7 +3425,7 @@ class _BrowserApi:
             "cancel_zero_click", "start_zero_click", "quick_register_and_activate_profile", "drop_format_file", "set_profile_drop_bounds",
             "get_state", "add_files", "add_folder", "add_paths", "remove_file",
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
-            "open_settings", "get_settings", "save_settings", "text_input", "open_stages", "open_log", "get_log", "clear_log",
+            "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
             "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
@@ -3702,6 +3770,17 @@ def run_webview(gui):
 
     def initialize_webview(web_window):
         _dismiss_splash()
+        try:
+            from docfit_app.configuration_service import ConfigurationService
+            from docfit_app.freeze_tracer import FreezeTracer, _is_hung
+            settings = bridge._tk(lambda: ConfigurationService(gui._준말_서비스().settings).snapshot(
+                running=gui.running).get('values', {}), timeout=5)
+            if settings.get('freeze_tracing'):
+                bridge._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
+                bridge._freeze_tracer.start(web_window)
+                bridge.start_tk_heartbeat()
+        except Exception:
+            logging.getLogger(__name__).exception("Could not initialize freeze tracer")
         # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
         try:
             from docfit_app.kagent_app_service import start_background
