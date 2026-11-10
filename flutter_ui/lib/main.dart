@@ -48,6 +48,15 @@ const _blueSoft = Color(0xffedf3ff);
 const _mint = Color(0xff287c72);
 const _mintSoft = Color(0xfff3f8f7);
 
+@visibleForTesting
+String commandFailureMessage(Object error) {
+  final message = '$error';
+  if (message.contains('바쁨')) {
+    return '앱이 바쁩니다. 진행 중인 작업이 끝난 뒤 다시 시도해 주세요.';
+  }
+  return '작업을 실행하지 못했어요: $message';
+}
+
 ({Color surface, Color selectedSurface, Color accent}) _modeColors(
   String mode,
 ) => switch (mode) {
@@ -817,7 +826,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('작업을 실행하지 못했어요: $e')));
+        ).showSnackBar(SnackBar(content: Text(commandFailureMessage(e))));
       }
     } finally {
       if (mounted) setState(() => busy = false);
