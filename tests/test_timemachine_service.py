@@ -103,11 +103,11 @@ class TimemachineServiceTests(unittest.TestCase):
             rust_batches.extend(paths)
             return paths, seen, indexed, errors
         original = self.service.content_index.index_file
-        def record_python(path):
+        def record_python(_index, path):
             python_calls.append(Path(path).suffix.lower())
             return original(path)
         with patch.object(self.service, "_run_klib_index", side_effect=fake_rust), \
-             patch.object(self.service.content_index, "index_file", side_effect=record_python):
+             patch.object(type(self.service.content_index), "index_file", autospec=True, side_effect=record_python):
             self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf", "docx", "xlsx", "pptx"}), threading.Event())
         self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md", ".docx", ".xlsx", ".pptx"})
         self.assertCountEqual(python_calls, [".txt", ".md", ".pdf", ".docx", ".xlsx", ".pptx"])
