@@ -296,7 +296,12 @@ fn test_physical_folder_export_reparse_point_rolls_back() {
     fs::write(&link_target, "링크 대상").unwrap();
     symlink_file(&link_target, source_dir.join("하위링크.txt")).unwrap();
 
-    db.item_add(b1, "folder", source_dir.to_str().unwrap(), "원본폴더", "core", 0.0, 0.0, None).unwrap();
+    assert!(db.item_add(b1, "folder", source_dir.to_str().unwrap(), "원본폴더", "core", 0.0, 0.0, None).is_err());
+    assert!(db.item_search(Some(b1), "").unwrap().is_empty());
+    fs::remove_file(source_dir.join("하위링크.txt")).unwrap();
+    let iid = db.item_add(b1, "folder", source_dir.to_str().unwrap(), "원본폴더", "core", 0.0, 0.0, None).unwrap();
+    let managed = db.item_get(iid).unwrap().unwrap().managed_path;
+    symlink_file(&link_target, Path::new(&managed).join("하위링크.txt")).unwrap();
 
     let export_dir = ctx.dir.join("불완전전환");
     let error = db.box_export(b1, export_dir.to_str().unwrap()).unwrap_err();
@@ -453,10 +458,11 @@ fn test_export_non_empty_rejection_and_rollback() {
     // 유효하지 않은 원본 경로를 가진 아이템을 강제로 DB에 넣어 내보내기 실패 유발
     let bad_b = db.box_create("오류자료함", "").unwrap();
     let phantom_file = ctx.dir.join("phantom.txt");
-    // 파일 생성 후 등록, 그 뒤 파일 삭제하여 내보내기 시 원본 누락 에러 유발
+    // 원본은 보존하고 관리 사본만 없애 내보내기 시 사본 누락 에러 유발.
     fs::write(&phantom_file, "삭제예정").unwrap();
-    db.item_add(bad_b, "file", phantom_file.to_str().unwrap(), "phantom.txt", "core", 0.0, 0.0, None).unwrap();
-    let _ = fs::remove_file(&phantom_file);
+    let iid = db.item_add(bad_b, "file", phantom_file.to_str().unwrap(), "phantom.txt", "core", 0.0, 0.0, None).unwrap();
+    fs::remove_file(db.item_get(iid).unwrap().unwrap().managed_path).unwrap();
+    assert_eq!(fs::read_to_string(&phantom_file).unwrap(), "삭제예정");
 
     let target_fail = ctx.dir.join("fail_export_dir");
     let fail_res = db.box_export(bad_b, target_fail.to_str().unwrap());
@@ -486,7 +492,15 @@ fn test_export_folder_reparse_point_rejection_and_rollback() {
 
     if link_created {
         assert!(util::is_or_has_reparse_point(&link_child));
-        db.item_add(b1, "folder", src_dir.to_str().unwrap(), "parent_folder", "core", 0.0, 0.0, None).unwrap();
+        assert!(db.item_add(b1, "folder", src_dir.to_str().unwrap(), "parent_folder", "core", 0.0, 0.0, None).is_err());
+        assert!(db.item_search(Some(b1), "").unwrap().is_empty());
+        fs::remove_file(&link_child).unwrap();
+        let iid = db.item_add(b1, "folder", src_dir.to_str().unwrap(), "parent_folder", "core", 0.0, 0.0, None).unwrap();
+        let managed = db.item_get(iid).unwrap().unwrap().managed_path;
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&target_file, Path::new(&managed).join("link_child.txt")).unwrap();
+        #[cfg(not(windows))]
+        std::os::unix::fs::symlink(&target_file, Path::new(&managed).join("link_child.txt")).unwrap();
 
         let export_dir = ctx.dir.join("export_reparse_output");
         let res = db.box_export(b1, export_dir.to_str().unwrap());
@@ -699,13 +713,26 @@ fn test_nb_source_from_item_reuse_and_back_link() {
     let md = ctx.dir.join("계획.md");
     fs::write(&md, "# 추진 계획\n본문\n").unwrap();
     let b = db.lock().unwrap().box_create("자료함", "").unwrap();
-    let item = db.lock().unwrap().item_add(b, "file", md.to_str().unwrap(), "계획.md", "basis", 0.0, 0.0, None).unwrap();
+    // 원본 경로만 있던 기존 항목과 그 본문 색인을 재현한다.
+    let item = {
+        let guard = db.lock().unwrap();
+        guard.connection().execute("INSERT INTO item(box_id,kind,source_path,display_name,space,x,y,created_at) VALUES(?1,'file',?2,'계획.md','basis',0,0,0)", rusqlite::params![b, md.to_str().unwrap()]).unwrap();
+        guard.connection().last_insert_rowid()
+    };
+    content::index_file(search_index().unwrap(), md.to_str().unwrap(), "계획.md", b).unwrap();
+    assert!(search_index().unwrap().search_box(b, "추진", 20).unwrap().iter().any(|hit| hit.path == md.to_str().unwrap()));
 
     // 처음 추가하면 새 출처, 다시 추가하면 같은 출처를 재사용한다.
     let first = call(format!(r#"{{"cmd":"nb_source_from_item","notebook_id":{nb},"item_id":{item}}}"#));
     assert_eq!(first.bool("ok"), Some(true), "{first:?}");
     assert_eq!(first.bool("reused"), Some(false));
     let sid = first.i64("id").unwrap();
+    let migrated = db.lock().unwrap().item_get(item).unwrap().unwrap();
+    assert!(!migrated.managed_path.is_empty());
+    let hits = search_index().unwrap().search_box(b, "추진", 20).unwrap();
+    assert!(hits.iter().any(|hit| hit.path == migrated.managed_path));
+    assert!(hits.iter().all(|hit| hit.path != md.to_str().unwrap()));
+    assert_eq!(fs::read_to_string(&md).unwrap(), "# 추진 계획\n본문\n");
     let again = call(format!(r#"{{"cmd":"nb_source_from_item","notebook_id":{nb},"item_id":{item}}}"#));
     assert_eq!(again.i64("id"), Some(sid));
     assert_eq!(again.bool("reused"), Some(true));
@@ -940,4 +967,162 @@ fn test_edit_stage3_large_file_and_encoding_save() {
     let lc = call(format!(r#"{{"cmd":"edit_char_to_line_col","doc":{doc},"char":0}}"#));
     assert_eq!((lc.i64("line"), lc.i64("col")), (Some(1), Some(1)));
     ok(&call(format!(r#"{{"cmd":"edit_close","doc":{doc}}}"#)));
+}
+
+#[test]
+fn test_managed_area_copies_preserve_origin_move_delete_and_collision() {
+    let ctx = TestContext::new("managed_copies");
+    let db = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = db.box_create("복사본", "").unwrap();
+    let original = ctx.dir.join("보고서.txt");
+    fs::write(&original, b"original").unwrap();
+    let before = fs::metadata(&original).unwrap().modified().unwrap();
+    let first = db.item_add(bid, "file", original.to_str().unwrap(), "보고서.txt", "core", 0., 0., None).unwrap();
+    let second = db.item_add(bid, "file", original.to_str().unwrap(), "보고서.txt", "core", 0., 0., None).unwrap();
+    let one = db.item_get(first).unwrap().unwrap();
+    let two = db.item_get(second).unwrap().unwrap();
+    assert_eq!(one.origin_path, original.to_str().unwrap());
+    assert_eq!(one.source_path, one.managed_path);
+    assert_eq!(Path::new(&one.managed_path).parent().unwrap(), ctx.dir.join(bid.to_string()).join("core"));
+    assert_ne!(one.managed_path, two.managed_path);
+    assert!(two.managed_path.ends_with("보고서 (1).txt"));
+    assert_eq!(db.item_search(Some(bid), original.to_str().unwrap()).unwrap().len(), 2);
+    fs::write(&one.managed_path, b"edited copy").unwrap();
+    db.item_move(first, "basis", 2., 3.).unwrap();
+    let moved = db.item_get(first).unwrap().unwrap();
+    assert!(!Path::new(&one.managed_path).exists());
+    assert_eq!(fs::read(&moved.managed_path).unwrap(), b"edited copy");
+    assert_eq!(Path::new(&moved.managed_path).parent().unwrap(), ctx.dir.join(bid.to_string()).join("basis"));
+    assert!(db.item_delete(first).unwrap());
+    assert!(!Path::new(&moved.managed_path).exists());
+    assert_eq!(fs::read(&original).unwrap(), b"original");
+    assert_eq!(fs::metadata(&original).unwrap().modified().unwrap(), before);
+    assert!(db.box_delete(bid).unwrap());
+    assert!(!ctx.dir.join(bid.to_string()).exists());
+    assert!(original.exists());
+}
+
+#[test]
+fn test_legacy_prepare_is_lazy_and_missing_copy_never_restores_original() {
+    let ctx = TestContext::new("legacy_prepare");
+    let path = ctx.dir.join("library.db");
+    // 이전 버전 DB에는 새 열이 없다.
+    let old = rusqlite::Connection::open(&path).unwrap();
+    old.execute_batch("CREATE TABLE item(id INTEGER PRIMARY KEY, box_id INTEGER NOT NULL, kind TEXT NOT NULL, source_path TEXT NOT NULL, display_name TEXT NOT NULL, space TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, created_at REAL NOT NULL)").unwrap();
+    drop(old);
+    let db = Database::open(path.to_str().unwrap()).unwrap();
+    let bid = db.box_create("기존", "").unwrap();
+    let original = ctx.dir.join("legacy.txt");
+    fs::write(&original, "unchanged").unwrap();
+    db.connection().execute("INSERT INTO item VALUES (1,?1,'file',?2,'legacy.txt','reference',0,0,0,'','')", rusqlite::params![bid, original.to_str().unwrap()]).unwrap();
+    assert!(db.item_get(1).unwrap().unwrap().managed_path.is_empty());
+    assert!(!ctx.dir.join(bid.to_string()).exists());
+    let nb = db.notebook_create("기존 출처", "").unwrap();
+    let sid = notebook::add_source(db.connection(), nb, "txt", original.to_str().unwrap(), "기존 파일").unwrap();
+    db.connection().execute("UPDATE nb_source SET item_id=1 WHERE id=?1", [sid]).unwrap();
+    let prepared = db.item_prepare(1).unwrap();
+    assert_eq!(notebook::source_by_id(db.connection(), sid).unwrap().unwrap().origin, prepared.managed_path);
+    assert_eq!(fs::read_to_string(&prepared.managed_path).unwrap(), "unchanged");
+    assert_eq!(prepared.origin_path, original.to_str().unwrap());
+    assert_eq!(db.item_prepare(1).unwrap().managed_path, prepared.managed_path);
+    let backup: String = db.connection().query_row("SELECT source_path FROM item_path_backup WHERE item_id=1", [], |r| r.get(0)).unwrap();
+    assert_eq!(backup, original.to_str().unwrap());
+    fs::remove_file(&prepared.managed_path).unwrap();
+    assert!(db.item_prepare(1).is_err());
+    assert!(!Path::new(&prepared.managed_path).exists());
+    assert_eq!(fs::read_to_string(&original).unwrap(), "unchanged");
+    db.connection().execute("INSERT INTO item VALUES (2,?1,'file',?2,'missing.txt','temp',0,0,0,'','')", rusqlite::params![bid, ctx.dir.join("missing.txt").to_str().unwrap()]).unwrap();
+    assert!(db.item_prepare(2).is_err());
+    assert!(db.item_get(2).unwrap().unwrap().managed_path.is_empty());
+}
+
+#[test]
+fn test_export_uses_edited_managed_folder_and_rejects_unsafe_targets() {
+    let ctx = TestContext::new("managed_export");
+    let db = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = db.box_create("내보내기", "").unwrap();
+    let original = ctx.dir.join("folder");
+    fs::create_dir_all(original.join("nested")).unwrap();
+    fs::write(original.join("nested/document.txt"), "original").unwrap();
+    let iid = db.item_add(bid, "folder", original.to_str().unwrap(), "자료폴더", "core", 0., 0., None).unwrap();
+    let it = db.item_get(iid).unwrap().unwrap();
+    fs::write(Path::new(&it.managed_path).join("nested/document.txt"), "managed edit").unwrap();
+    assert!(db.box_export(bid, original.join("export").to_str().unwrap()).is_err());
+    assert!(db.box_export(bid, Path::new(&it.managed_path).join("export").to_str().unwrap()).is_err());
+    #[cfg(windows)]
+    assert!(db.box_export(bid, Path::new(&it.managed_path).canonicalize().unwrap().join("export").to_str().unwrap()).is_err());
+    let other = db.box_create("다른 상자", "").unwrap();
+    assert!(db.box_export(bid, ctx.dir.join(other.to_string()).join("temp/export").to_str().unwrap()).is_err());
+    assert!(db.box_export(bid, ctx.dir.join("boxes").join(other.to_string()).join("export").to_str().unwrap()).is_err());
+    // 원본을 옮겨도 전환은 이미 보관된 사본만 읽는다.
+    fs::rename(&original, ctx.dir.join("origin_moved")).unwrap();
+    let export = ctx.dir.join("export");
+    // test root는 storage root이므로 별도 형제 폴더로 내보낸다.
+    let export = export.with_file_name(format!("vfcopy-export-{}", std::process::id()));
+    let export = ctx.dir.parent().unwrap().join(export.file_name().unwrap());
+    let _ = fs::remove_dir_all(&export);
+    assert_eq!(db.box_export(bid, export.to_str().unwrap()).unwrap(), 1);
+    assert_eq!(fs::read_to_string(export.join("1_핵심자료/자료폴더/nested/document.txt")).unwrap(), "managed edit");
+    assert!(Path::new(&it.managed_path).exists());
+    assert_eq!(fs::read_to_string(ctx.dir.join("origin_moved/nested/document.txt")).unwrap(), "original");
+    for area in ["1_핵심자료", "2_기초자료", "3_참고자료", "4_임시저장소"] { assert!(export.join(area).is_dir()); }
+    fs::remove_dir_all(export).unwrap();
+}
+
+#[test]
+fn test_managed_path_tampering_missing_delete_and_origin_clone() {
+    let ctx = TestContext::new("copy_validation");
+    let db = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = db.box_create("검증", "").unwrap();
+    let original = ctx.dir.join("원본.txt");
+    fs::write(&original, "original").unwrap();
+    let iid = db.item_add(bid, "file", original.to_str().unwrap(), "원본.txt", "core", 0., 0., None).unwrap();
+    let one = db.item_prepare(iid).unwrap();
+    let next_box = db.box_create("다른 상자", "").unwrap();
+    let cloned = db.item_add(next_box, "file", &one.managed_path, "다른 복사본", "temp", 0., 0., None).unwrap();
+    assert_eq!(db.item_get(cloned).unwrap().unwrap().origin_path, original.to_str().unwrap());
+    db.connection().execute("UPDATE item SET space='../..',source_path=?1,managed_path=?1 WHERE id=?2", rusqlite::params![original.to_str().unwrap(), iid]).unwrap();
+    assert!(db.item_prepare(iid).is_err());
+    assert!(db.item_delete(iid).is_err());
+    assert_eq!(fs::read_to_string(&original).unwrap(), "original");
+    db.connection().execute("UPDATE item SET space='core',source_path=?1,managed_path=?1 WHERE id=?2", rusqlite::params![one.managed_path, iid]).unwrap();
+    fs::remove_file(&one.managed_path).unwrap();
+    assert!(db.item_delete(iid).unwrap());
+    assert!(original.exists());
+}
+
+#[test]
+fn test_prepare_pipe_returns_managed_paths_and_distinct_missing_codes() {
+    let ctx = TestContext::new("prepare_contract");
+    let database = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = database.box_create("이전 열기", "").unwrap();
+    let origin = ctx.dir.join("original.png");
+    fs::write(&origin, b"image bytes").unwrap();
+    database.connection().execute("INSERT INTO item(box_id,kind,source_path,display_name,space,x,y,created_at) VALUES(?1,'image',?2,'사진','reference',0,0,0)", rusqlite::params![bid, origin.to_str().unwrap()]).unwrap();
+    let iid = database.connection().last_insert_rowid();
+    let db = Mutex::new(database);
+    let running = AtomicBool::new(true);
+    let call = |request: String| json::parse(&pipe::handle_request(&request, &db, &running)).unwrap();
+    let before = call(format!(r#"{{"cmd":"item_get","id":{iid}}}"#));
+    assert_eq!(before.str("managed_path"), Some(""));
+    let prepared = call(format!(r#"{{"cmd":"item_prepare","id":{iid}}}"#));
+    assert_eq!(prepared.bool("ok"), Some(true), "{prepared:?}");
+    assert_eq!(prepared.str("origin_path"), origin.to_str());
+    assert_eq!(prepared.str("source_path"), prepared.str("managed_path"));
+    let managed = prepared.str("managed_path").unwrap();
+    assert_ne!(managed, origin.to_str().unwrap());
+    assert_eq!(fs::read(managed).unwrap(), b"image bytes");
+    fs::remove_file(managed).unwrap();
+    let missing = call(format!(r#"{{"cmd":"item_prepare","id":{iid}}}"#));
+    assert_eq!(missing.bool("ok"), Some(false));
+    assert_eq!(missing.str("code"), Some("MANAGED_MISSING"));
+    assert_eq!(fs::read(&origin).unwrap(), b"image bytes");
+    {
+        let guard = db.lock().unwrap();
+        guard.connection().execute("UPDATE item SET source_path=?1,managed_path='',origin_path='' WHERE id=?2", rusqlite::params![ctx.dir.join("missing.png").to_str().unwrap(), iid]).unwrap();
+    }
+    let missing = call(format!(r#"{{"cmd":"item_prepare","id":{iid}}}"#));
+    assert_eq!(missing.str("code"), Some("SOURCE_MISSING"));
+    let unknown = call(r#"{"cmd":"item_prepare","id":999999}"#.into());
+    assert_eq!(unknown.str("code"), Some("NOT_REGISTERED"));
 }

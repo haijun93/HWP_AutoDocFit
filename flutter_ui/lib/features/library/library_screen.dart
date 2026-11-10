@@ -626,6 +626,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     if (directory == null || !mounted) return;
+    final parent = directory;
+    final name = await showDialog<String>(context: context,
+        builder: (_) => _ExportFolderDialog(parent: parent, name: box.name));
+    if (name == null || !mounted) return;
+    final separator = parent.contains('\\') ? '\\' : '/';
+    directory = '${parent.replaceFirst(RegExp(r'[\\/]+$'), '')}$separator$name';
     int count;
     try {
       count = await widget.api.exportBox(box.id, directory);
@@ -638,7 +644,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       return;
     }
     if (!mounted) return;
-    setState(() => _statusMessage = '$directory 에 자료 $count개를 내보냈습니다.');
+    setState(() => _statusMessage = '$directory 에 자료 $count개를 내보냈습니다. 자료함의 복사본을 유지합니다.');
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text('저장 위치: $directory'),
@@ -699,6 +705,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   String _openFailureReason(LibraryOpenResult result) => switch (result.code) {
         'SOURCE_MISSING' => '원본 파일을 찾을 수 없습니다. 옮겨졌거나 삭제되었을 수 있습니다.',
+        'MANAGED_MISSING' => '자료함의 복사본을 찾을 수 없습니다. 원본에서 다시 추가해 주세요.',
         'NO_APP' => '이 형식에 연결된 앱이 없습니다. Windows 설정에서 연결 프로그램을 지정해 주세요.',
         'NO_SOURCE' => '원본 파일 경로가 없는 자료입니다.',
         _ => result.message.isEmpty ? '알 수 없는 이유로 열지 못했습니다.' : result.message,
@@ -836,7 +843,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       await _editTextItem(item, memoApi);
       return;
     }
-    final source = (item.source ?? '').trim();
+    final source = (item.managedPath ?? item.source ?? '').trim();
     if (source.isEmpty && _textKinds.contains(item.kind)) {
       await _showTextItem(item);
       return;
@@ -1196,7 +1203,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     var skipped = 0;
     final failures = <String>[];
     for (final item in items) {
-      final source = (item.source ?? '').trim();
+      final source = (item.managedPath ?? item.source ?? '').trim();
       if (source.isEmpty) {
         skipped++;
         continue;
@@ -1255,7 +1262,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   /// 복사(또는 다른 자료함으로 이동 = 복사 뒤 원본 등록 삭제). 실패하면 만든 사본을 지워 처음 상태로 돌린다.
-  /// 원본 파일은 건드리지 않고 자료함 등록만 늘린다. 같은 자료함 안 복사는 이름 뒤에 '(사본)'을 붙인다.
+  /// 영역의 복사본을 새로 복사한다. 같은 자료함 안 복사는 이름 뒤에 '(사본)'을 붙인다.
   /// 관계선은 복사하지 않는다(다른 자료함으로 옮기면 원래 관계선은 원본 등록과 함께 지워진다).
   Future<void> _copyItems(List<LibraryItem> items, LibraryBox target, LibrarySpace space, {required bool removeOriginals}) async {
     final current = _selectedBox;
@@ -1282,6 +1289,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final created = <String, String>{}; // 원본 id → 사본 id
     try {
       for (final item in copyable) {
+        final ready = widget.api is LibraryPrepareApi
+            ? await (widget.api as LibraryPrepareApi).prepareItem(item.id) : item;
         final p = LibraryLayout.freeSlot(_displayOf(item), placed, width: _spaceWidths[space]);
         placed.add(LibraryLayout.rectAt(p));
         final copy = await widget.api.addItem(
@@ -1291,8 +1300,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
           space: space,
           x: p.dx,
           y: p.dy,
-          source: item.source,
-          text: item.text,
+          source: ready.managedPath ?? ready.source,
+          text: ready.text,
         );
         created[item.id] = copy.id;
       }
@@ -1506,9 +1515,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
               label: Text(_memoDraft == null ? '+메모' : '+메모(초안)'),
             ),
             OutlinedButton(key: const ValueKey('libraryPaste'), onPressed: _paste, child: const Text('붙여넣기')),
-            Text(_viewMode == LibraryViewMode.canvas
+            Tooltip(
+              key: const ValueKey('libraryManagedCopyNotice'),
+              message: '추가한 파일은 영역별로 복사하며, 열기와 수정은 복사본에 적용됩니다.',
+              child: Text(_viewMode == LibraryViewMode.canvas
                 ? '각 공간에 파일을 끌어 놓으세요. Ctrl+클릭으로 여러 개를 고릅니다.'
                 : '더블클릭으로 열고, Ctrl·Shift+클릭으로 여러 개를 고릅니다. 왼쪽 폴더에 끌어 놓으면 이동(Ctrl: 복사)합니다.'),
+            ),
           ]),
         ),
         if (_showSearchResults && _searchResults.isNotEmpty) SizedBox(height: 72, child: ListView.builder(
@@ -1690,6 +1703,57 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 }
 
+class _ExportFolderDialog extends StatefulWidget {
+  const _ExportFolderDialog({required this.parent, required this.name});
+  final String parent;
+  final String name;
+
+  @override
+  State<_ExportFolderDialog> createState() => _ExportFolderDialogState();
+}
+
+class _ExportFolderDialogState extends State<_ExportFolderDialog> {
+  late final _name = TextEditingController(text: widget.name);
+  String? _error;
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _name.text.trim();
+    if (name.isEmpty || name == '.' || name == '..' || name.endsWith('.') ||
+        RegExp(r'[\\/:*?"<>|\x00-\x1f]').hasMatch(name) ||
+        RegExp(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)', caseSensitive: false).hasMatch(name)) {
+      setState(() => _error = '경로 구분자나 예약 이름이 없는 새 폴더 이름을 입력해 주세요.');
+      return;
+    }
+    Navigator.pop(context, name);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    key: const ValueKey('libraryExportDialog'),
+    title: const Text('물리 폴더로 전환'),
+    content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('선택한 위치에 새 폴더를 만들고 영역별 복사본을 복사합니다. 자료함과 원본은 그대로 유지됩니다.'),
+      const SizedBox(height: 12),
+      SelectableText(widget.parent),
+      const SizedBox(height: 12),
+      TextField(key: const ValueKey('libraryExportFolderName'), controller: _name, autofocus: true,
+        onSubmitted: (_) => _submit(),
+        decoration: InputDecoration(labelText: '새 폴더 이름', errorText: _error,
+          helperText: '같은 이름의 폴더가 있으면 비어 있어야 합니다.')),
+    ]),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+      TextButton(key: const ValueKey('libraryExportConfirm'), onPressed: _submit, child: const Text('복사')),
+    ],
+  );
+}
+
 class _TransferRequest {
   const _TransferRequest({required this.box, required this.space, required this.copy});
   final LibraryBox box;
@@ -1737,7 +1801,7 @@ class _TransferDialogState extends State<_TransferDialog> {
             onChanged: (s) { if (s != null) setState(() => _space = s); },
           ),
           const SizedBox(height: 8),
-          const Text('원본 파일은 옮기거나 복사하지 않고 가상 폴더 등록만 바뀝니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          const Text('가상 폴더의 복사본을 옮기거나 새로 복사합니다. 원본 파일은 그대로 유지됩니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),

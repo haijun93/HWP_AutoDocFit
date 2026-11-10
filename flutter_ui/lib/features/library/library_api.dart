@@ -46,6 +46,10 @@ class LibraryItem {
 
     this.source,
 
+    this.originPath,
+
+    this.managedPath,
+
     this.text,
   });
 
@@ -63,7 +67,11 @@ class LibraryItem {
 
   final double y;
 
-  final String? source; // 파일 경로 또는 URL 참조. 파일 원본의 복사/이동 금지.
+  final String? source; // 복사본 경로 또는 URL. 이전 전 항목은 호스트에서 복사본을 준비한다.
+
+  final String? originPath;
+
+  final String? managedPath;
 
   final String? text; // 사용자 입력 텍스트 자료 내용.
 
@@ -84,6 +92,10 @@ class LibraryItem {
 
     String? source,
 
+    String? originPath,
+
+    String? managedPath,
+
     String? text,
   }) {
     return LibraryItem(
@@ -102,6 +114,10 @@ class LibraryItem {
       y: y ?? this.y,
 
       source: source ?? this.source,
+
+      originPath: originPath ?? this.originPath,
+
+      managedPath: managedPath ?? this.managedPath,
 
       text: text ?? this.text,
     );
@@ -310,6 +326,11 @@ abstract interface class LibraryDropApi {
   Future<List<String>> takeDroppedPaths();
 }
 
+/// 기존 항목도 복사본을 준비한 후 경로를 전달한다.
+abstract interface class LibraryPrepareApi {
+  Future<LibraryItem> prepareItem(String itemId);
+}
+
 abstract interface class LibraryScanApi {
   /// klib 요청: box_scan {box_id, path}
   Future<void> startScan(String boxId, String path);
@@ -357,7 +378,7 @@ abstract interface class LibraryMemoApi {
   EditorBackend? get memoEditorBackend;
 }
 
-/// 탐색기 형식 보기의 크기·수정한 날짜·원본 있음 여부. 값이 없는 칸(메모·웹 주소 등)은 null.
+/// 탐색기 형식 보기의 크기·수정한 날짜·작업 파일 있음 여부. 값이 없는 칸은 null.
 class LibraryFileInfo {
   const LibraryFileInfo({this.exists, this.isDirectory = false, this.size, this.modified});
 
@@ -373,7 +394,7 @@ class LibraryFileInfo {
     );
   }
 
-  /// true=원본 있음, false=원본이 없어짐, null=확인 대상 아님(경로 없는 자료·웹 주소).
+  /// true=작업 파일 있음, false=없어짐, null=확인 대상 아님(경로 없는 자료·웹 주소).
   final bool? exists;
   final bool isDirectory;
   final int? size;
@@ -382,7 +403,7 @@ class LibraryFileInfo {
   bool get missing => exists == false;
 }
 
-/// 저장된 원본 경로의 파일 정보를 읽는다(Python `library({"cmd":"item_stat"})`). 화면은 보이는 줄만 묻는다.
+/// 저장된 복사본(이전 전에는 원본)의 파일 정보를 읽는다. 화면은 보이는 줄만 묻는다.
 abstract interface class LibraryFileInfoApi {
   Future<Map<String, LibraryFileInfo>> fileInfo(List<String> itemIds);
 }
@@ -392,7 +413,7 @@ typedef LibraryBridgeCall =
 
 /// Adapts screen models to klib's command and response schema.
 
-class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, LibraryOpenApi, LibraryMemoApi, LibraryFileInfoApi {
+class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, LibraryOpenApi, LibraryMemoApi, LibraryFileInfoApi, LibraryPrepareApi {
   BridgeLibraryApi(this._call);
 
   final LibraryBridgeCall _call;
@@ -498,6 +519,15 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
 
   String _string(Object? value) => value?.toString() ?? '';
 
+  String _workingPath(Map value) => _string(value['managed_path']).isNotEmpty
+      ? _string(value['managed_path']) : _string(value['source_path']);
+
+  LibraryItem _responseItem(Map value) => _item(value['item'] is Map ? value['item'] as Map : value);
+
+  @override
+  Future<LibraryItem> prepareItem(String itemId) async =>
+      _responseItem(await _request('item_prepare', {'id': _id(itemId)}));
+
   LibraryItem _item(Map value) => LibraryItem(
     id: _string(value['id']),
 
@@ -511,9 +541,13 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
 
     title: _string(value['display_name']),
 
-    source: _string(value['source_path']).isEmpty
+    source: _workingPath(value).isEmpty
         ? null
-        : _string(value['source_path']),
+        : _workingPath(value),
+
+    originPath: _string(value['origin_path']).isEmpty ? null : _string(value['origin_path']),
+
+    managedPath: _string(value['managed_path']).isEmpty ? null : _string(value['managed_path']),
 
     space: LibrarySpace.values.firstWhere(
       (e) => e.name == value['space'],
@@ -622,25 +656,9 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
       'content': ?text,
     });
 
-    return LibraryItem(
-      id: _string(r['id']),
-
-      boxId: boxId,
-
-      kind: kind,
-
-      title: title,
-
-      space: space,
-
-      x: x,
-
-      y: y,
-
-      source: source,
-
-      text: text,
-    );
+    // 추가 결과의 경로는 호스트가 정한 영역 복사본으로 다시 읽는다.
+    final saved = await _request('item_get', {'id': _id(r['id'])});
+    return _responseItem(saved).copyWith(text: text);
   }
 
   @override
@@ -773,7 +791,7 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
             final m = e as Map;
 
             return LibrarySearchResult(
-              path: _string(m['source_path']),
+              path: _workingPath(m),
 
               name: _string(m['display_name']),
 

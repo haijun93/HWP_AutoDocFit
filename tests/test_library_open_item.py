@@ -92,7 +92,7 @@ class DesktopOpenItemTests(unittest.TestCase):
         class FakeLibrary:
             def request(self, request):
                 requests.append(request)
-                return stored
+                return dict(stored, managed_path=stored.get("managed_path", stored.get("source_path")))
 
         bridge = DesktopWebBridge.__new__(DesktopWebBridge)
         bridge._library_bridge = FakeLibrary()
@@ -105,7 +105,7 @@ class DesktopOpenItemTests(unittest.TestCase):
         bridge, requests = self._bridge({"ok": True, "id": 7, "kind": "file", "source_path": self.doc})
         result = bridge.library({"cmd": "open_item", "item_id": 7, "kind": "file", "source_path": "C:/다른/경로.exe"})
         self.assertEqual(result, {"ok": True, "opened": True, "path": self.doc})
-        self.assertEqual(requests, [{"cmd": "item_get", "id": 7}])
+        self.assertEqual(requests, [{"cmd": "item_prepare", "id": 7}])
         self.assertEqual(bridge._library_opener.calls, [self.doc])
 
     def test_open_item_reports_reason_and_path(self):
@@ -113,7 +113,7 @@ class DesktopOpenItemTests(unittest.TestCase):
         bridge, _ = self._bridge({"ok": True, "id": 3, "kind": "file", "source_path": missing})
         result = bridge.library({"cmd": "open_item", "item_id": "3"})
         self.assertFalse(result["ok"])
-        self.assertEqual(result["code"], "SOURCE_MISSING")
+        self.assertEqual(result["code"], "MANAGED_MISSING")
         self.assertEqual(result["path"], missing)
         self.assertEqual(bridge._library_opener.calls, [])
 

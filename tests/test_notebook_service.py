@@ -19,8 +19,8 @@ class FakeBridge:
 
     def request(self, request):
         self.calls.append(request)
-        if request["cmd"] == "item_get":
-            return dict(self.item, ok=True) if getattr(self, "item", None) else {"ok": False}
+        if request["cmd"] == "item_prepare":
+            return dict(self.item, managed_path=self.item.get("managed_path", self.item.get("source_path")), ok=True) if getattr(self, "item", None) else {"ok": False}
         if request["cmd"] == "nb_source_from_item":
             return {"ok": True, "id": 9, "paragraph_count": len(request.get("paragraphs") or []), "reused": getattr(self, "reused", False)}
         if request["cmd"] == "nb_source_add":
@@ -283,7 +283,7 @@ class DesktopNotebookTests(unittest.TestCase):
                 bridge.notebook(look)
         # '이미 출처에 있음' 표시는 klib의 reused 값을 그대로 쓴다.
         self.assertEqual((added["ok"], added["id"], added["reused"]), (True, 9, True))
-        self.assertEqual([c["cmd"] for c in fake.calls], ["item_get", "nb_source_from_item", "nb_source_item"])
+        self.assertEqual([c["cmd"] for c in fake.calls], ["item_prepare", "nb_source_from_item", "nb_source_item"])
         self.assertEqual(fake.calls[1], add)
         self.assertEqual(fake.calls[2], look)
 

@@ -311,8 +311,12 @@ class NotebookService:
 
     def add_source_from_item(self, request):
         """자료함 항목을 출처로 추가. 구형 hwp·pdf 항목은 Python으로 추출해 넘기고, 이미 출처면 klib가 재사용해 알려 준다."""
-        item = self.bridge.request({"cmd": "item_get", "id": request.get("item_id")})
-        path = item.get("source_path") if isinstance(item, dict) else None
+        item = self.bridge.request({"cmd": "item_prepare", "id": request.get("item_id")})
+        if not isinstance(item, dict) or not item.get("ok"):
+            return item if isinstance(item, dict) else {"ok": False, "message": "자료 복사본을 준비하지 못했습니다."}
+        path = item.get("managed_path")
+        if item.get("kind") != "link" and not path:
+            return {"ok": False, "code": "MANAGED_MISSING", "message": "자료 복사본을 준비하지 못했습니다."}
         if not (item.get("ok") and isinstance(path, str) and path and needs_python_extraction(path)):
             return self.bridge.request(request)
         path = os.path.abspath(os.fspath(path))
