@@ -2361,7 +2361,7 @@ class DesktopWebBridge:
     def _library_open_item(self, request):
         """자료함 자료를 연결 앱·탐색기·브라우저로 연다(더블클릭).
 
-        item_id가 있으면 klib에 저장된 경로(kind·source_path)만 쓴다(화면이 보낸 경로는 무시).
+        item_id가 있으면 klib에서 이전·검증한 복사본 경로만 쓴다(화면이 보낸 경로는 무시).
         item_id가 없으면(내보낸 폴더·검색 결과) 실행 파일은 차단한다.
         실행기는 self._library_opener / self._library_browser로 바꿔 시험한다.
         """
@@ -2376,14 +2376,18 @@ class DesktopWebBridge:
         registered = item_id not in (None, "")
         if registered:
             try:
-                stored = self._get_library_bridge().request({"cmd": "item_get", "id": int(item_id)})
+                stored = self._get_library_bridge().request({"cmd": "item_prepare", "id": int(item_id)})
             except (TypeError, ValueError):
                 return {"ok": False, "code": "INVALID_PATH", "message": "잘못된 자료 ID입니다."}
             if not isinstance(stored, dict) or not stored.get("ok"):
                 message = stored.get("message") if isinstance(stored, dict) else None
-                return {"ok": False, "code": "NOT_REGISTERED", "message": message or "자료함에서 자료를 찾을 수 없습니다."}
+                code = stored.get("code", "NOT_REGISTERED") if isinstance(stored, dict) else "NOT_REGISTERED"
+                return {"ok": False, "code": code, "message": message or "자료함에서 자료를 찾을 수 없습니다."}
             target["kind"] = stored.get("kind") or target["kind"]
-            target["source_path"] = str(stored.get("source_path") or "")
+            target["managed_path"] = str(stored.get("managed_path") or "")
+            target["source_path"] = str(stored.get("managed_path") or stored.get("source_path") or "")
+            if target["kind"] != "link" and not stored.get("managed_path"):
+                return {"ok": False, "code": "MANAGED_MISSING", "message": "자료 복사본을 준비하지 못했습니다."}
         try:
             opened = open_library_item(
                 target,
