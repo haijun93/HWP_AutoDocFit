@@ -1,4 +1,4 @@
-"""노트북 노트 → 한/글 HWPX 내보내기: 생성 파일을 defusedxml로 다시 읽어 구조를 확인한다(COM 없음)."""
+"""업무자료함 노트 → 한/글 HWPX 내보내기: 생성 파일을 defusedxml로 다시 읽어 구조를 확인한다(COM 없음)."""
 import hashlib
 import tempfile
 import unittest
@@ -50,7 +50,7 @@ class NotebookHwpxTests(unittest.TestCase):
         parsed = read_notebook_hwpx(path)
         paragraphs = parsed["paragraphs"]
         self.assertEqual(paragraphs[0], "복지 예산 검토 노트")
-        self.assertIn("노트북: 2027 예산", paragraphs)
+        self.assertIn("업무자료함: 2027 예산", paragraphs)
         self.assertIn("태그: #예산 #복지", paragraphs)
         self.assertIn("첫째 줄 <요약> & 정리", paragraphs)
         self.assertIn("둘째 줄", paragraphs)          # 제어 문자는 빠진다
