@@ -1515,10 +1515,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
               label: Text(_memoDraft == null ? '+메모' : '+메모(초안)'),
             ),
             OutlinedButton(key: const ValueKey('libraryPaste'), onPressed: _paste, child: const Text('붙여넣기')),
-            Text(_viewMode == LibraryViewMode.canvas
+            Tooltip(
+              key: const ValueKey('libraryManagedCopyNotice'),
+              message: '추가한 파일은 영역별로 복사하며, 열기와 수정은 복사본에 적용됩니다.',
+              child: Text(_viewMode == LibraryViewMode.canvas
                 ? '각 공간에 파일을 끌어 놓으세요. Ctrl+클릭으로 여러 개를 고릅니다.'
                 : '더블클릭으로 열고, Ctrl·Shift+클릭으로 여러 개를 고릅니다. 왼쪽 폴더에 끌어 놓으면 이동(Ctrl: 복사)합니다.'),
-            const Text('추가한 파일은 영역별로 복사하며, 열기와 수정은 복사본에 적용됩니다.', key: ValueKey('libraryManagedCopyNotice')),
+            ),
           ]),
         ),
         if (_showSearchResults && _searchResults.isNotEmpty) SizedBox(height: 72, child: ListView.builder(

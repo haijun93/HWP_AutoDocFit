@@ -545,9 +545,9 @@ class BridgeLibraryApi implements LibraryApi, LibraryScanApi, LibraryDropApi, Li
         ? null
         : _workingPath(value),
 
-    originPath: value['origin_path'] as String?,
+    originPath: _string(value['origin_path']).isEmpty ? null : _string(value['origin_path']),
 
-    managedPath: value['managed_path'] as String?,
+    managedPath: _string(value['managed_path']).isEmpty ? null : _string(value['managed_path']),
 
     space: LibrarySpace.values.firstWhere(
       (e) => e.name == value['space'],
