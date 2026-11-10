@@ -1,4 +1,4 @@
-"""노트북(출처·본문검색·노트) 요청 중계: 기본은 klib가 직접 추출하고, klib가 못 읽는 형식만 Python이 추출한다.
+"""업무자료함(출처·본문검색·노트) 요청 중계: 기본은 klib가 직접 추출하고, klib가 못 읽는 형식만 Python이 추출한다.
 
 - klib nb_source_add가 txt·md·hwpx·docx·pptx·xlsx를 직접 읽는다(hwpx·docx는 개요 수준·표 행 포함).
 - 구형 hwp·pdf는 타임머신 content_search 추출기로 문단을 만든 뒤 nb_source_add(첫 묶음)·nb_index(나머지 묶음)로 넣는다.
@@ -210,7 +210,7 @@ class NotebookService:
         result = self.bridge.request(request)
         if not isinstance(result, dict) or not result.get("ok"):
             message = result.get("message") if isinstance(result, dict) else None
-            raise LibraryBridgeError(message or "노트북 정보를 읽지 못했습니다.")
+            raise LibraryBridgeError(message or "업무자료함 정보를 읽지 못했습니다.")
         return result
 
     def export_document(self, notebook_id, note_id, *, compare_query=None, compare_source_ids=None, per_source=3):
@@ -295,12 +295,12 @@ class NotebookService:
     def handle(self, request):
         """notebook(request) 진입점: hwp·pdf 출처 추가는 Python 추출, 나머지 nb_* 명령은 klib로 그대로 보낸다."""
         if not isinstance(request, dict):
-            raise LibraryBridgeError("노트북 요청은 JSON 객체여야 합니다.")
+            raise LibraryBridgeError("업무자료함 요청은 JSON 객체여야 합니다.")
         cmd = request.get("cmd")
         if cmd == "nb_memo_add":
             return self.add_memo(request)
         if cmd not in NOTEBOOK_COMMANDS:
-            raise LibraryBridgeError("허용되지 않은 노트북 명령입니다.")
+            raise LibraryBridgeError("허용되지 않은 업무자료함 명령입니다.")
         path = request.get("source_path")
         if (cmd == "nb_source_add" and isinstance(path, str) and "paragraphs" not in request
                 and needs_python_extraction(path)):

@@ -2,7 +2,7 @@
 ///
 /// 입력은 Flutter `TextField`가 그대로 받고(한글 IME 조합 포함), 서식·실행취소·찾기·평문 변환은 [EditorCore]에 맡긴다.
 /// 코어는 klib의 Rust 편집 코어([KlibEditorCore])가 기본이고, 없으면 [DartEditorCore]로 폴백한다.
-/// 저장 위치는 모른다: 자동 저장은 [MemoEditor.onAutoSave], 확정 저장은 쓰는 쪽(예: 노트북)이 [MemoEditorController]로 꺼내 간다.
+/// 저장 위치는 모른다: 자동 저장은 [MemoEditor.onAutoSave], 확정 저장은 쓰는 쪽(예: 업무자료함)이 [MemoEditorController]로 꺼내 간다.
 ///
 /// 메모장처럼: Ctrl+F 찾기, Ctrl+H 바꾸기, F3/Shift+F3 다음/이전, Ctrl+휠·Ctrl+= / Ctrl+- / Ctrl+0 확대·축소,
 /// 아래 상태 표시줄에 줄·열, 글자 수, 확대 비율, 줄바꿈, 인코딩.

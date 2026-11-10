@@ -1,4 +1,4 @@
-// 자료함 '+메모'와 글 자료 더블클릭 고치기(노트북과 같은 메모 편집기 재사용).
+// 자료함 '+메모'와 글 자료 더블클릭 고치기(업무자료함과 같은 메모 편집기 재사용).
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 

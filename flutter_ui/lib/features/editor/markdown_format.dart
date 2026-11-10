@@ -1,7 +1,7 @@
 /// 메모 편집기의 Markdown 서식 규칙(순수 함수). 위젯·플랫폼에 의존하지 않아 Rust 편집 코어로 옮길 때 기준이 된다.
 ///
 /// 본문은 Markdown 원문 그대로 입력 칸에 두고, 도구줄 명령은 원문에 서식 기호를 넣거나 뺀다.
-/// (서식을 직접 그리는 편집기는 한글 IME 조합·접근성 위험 때문에 후속 검토 — TODO.md 노트북 개선 (3) 참고)
+/// (서식을 직접 그리는 편집기는 한글 IME 조합·접근성 위험 때문에 후속 검토 — TODO.md 업무자료함 개선 (3) 참고)
 library;
 
 import 'package:flutter/services.dart' show TextEditingValue, TextSelection;

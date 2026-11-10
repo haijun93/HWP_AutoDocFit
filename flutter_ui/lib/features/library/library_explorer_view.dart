@@ -575,7 +575,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       items: [
         PopupMenuItem(key: const ValueKey('libraryExplorerMenuOpen'), value: 'open', child: Text(count > 1 ? '열기($count개)' : '열기')),
         if (widget.onAddToNotebook != null && count == 1)
-          const PopupMenuItem(key: ValueKey('libraryExplorerMenuNotebook'), value: 'notebook', child: Text('노트북에 출처로 추가')),
+          const PopupMenuItem(key: ValueKey('libraryExplorerMenuNotebook'), value: 'notebook', child: Text('업무자료함에 출처로 추가')),
         if (count == 1)
           const PopupMenuItem(key: ValueKey('libraryExplorerMenuRename'), value: 'rename', child: Text('이름 바꾸기(F2)')),
         const PopupMenuItem(key: ValueKey('libraryExplorerMenuCopyPath'), value: 'path', child: Text('경로 복사')),

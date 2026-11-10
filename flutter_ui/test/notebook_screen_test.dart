@@ -682,4 +682,39 @@ void main() {
     expect(await api.addMemoSource(2, title: '메모', markdown: '**본문**'), 11);
     expect(calls.single, {'cmd': 'nb_memo_add', 'notebook_id': 2, 'title': '메모', 'markdown': '**본문**'});
   });
+
+  testWidgets('ui displays 업무자료함 in app bar, dialogs, empty state and sidebar', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: WorkspaceTabBar(
+            labels: const ['문서편집'],
+            icons: const [Icons.description],
+            selectedIndex: 0,
+            onSelected: (_) {},
+            scrollController: ScrollController(),
+            developerMode: true,
+            notebookScreen: NotebookScreen(api: api),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.descendant(of: find.byKey(const ValueKey('notebook-open')), matching: find.text('업무자료함')), findsOneWidget);
+
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byType(AppBar), matching: find.text('업무자료함')), findsOneWidget);
+    expect(find.text('업무자료함이 없습니다. 여러 문서를 모아 근거를 찾고 노트를 써 보세요.'), findsOneWidget);
+    expect(find.text('새 업무자료함 만들기'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('nb-create-empty')));
+    await tester.pumpAndSettle();
+    expect(find.text('새 업무자료함'), findsNWidgets(2));
+    expect(find.text('업무자료함 이름'), findsOneWidget);
+    await tester.tap(find.text('취소'));
+    await tester.pumpAndSettle();
+  });
 }

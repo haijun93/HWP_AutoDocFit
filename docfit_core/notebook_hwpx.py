@@ -1,6 +1,6 @@
-"""노트북 노트를 한/글 HWPX 문서로 만든다(COM 없이 파일만 생성).
+"""업무자료함 노트를 한/글 HWPX 문서로 만든다(COM 없이 파일만 생성).
 
-문서 구성: 제목 → (노트북 이름) → 태그 줄 → 노트 본문 → 인용(인용 문단 + 출처 파일명·위치) → 출처 비교 표.
+문서 구성: 제목 → (업무자료함 이름) → 태그 줄 → 노트 본문 → 인용(인용 문단 + 출처 파일명·위치) → 출처 비교 표.
 바탕 문서는 앱 내장 '기본 서식.hwpx'(쪽 여백·글꼴 목록)이고, 글자·문단·표 서식은 표 생성기
 (docfit_core.table_builder)의 서식 풀·표 XML 함수를 그대로 쓴다. 만든 파일은 임시 파일에 쓴 뒤
 defusedxml로 다시 읽어 구조를 확인하고 나서 대상 경로로 옮긴다. XML 파싱은 defusedxml만 쓴다.
@@ -42,7 +42,7 @@ _INVALID = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 
 
 class NotebookHwpxError(ValueError):
-    """노트북 내보내기 자료가 올바르지 않거나 만든 문서 검증에 실패했다."""
+    """업무자료함 내보내기 자료가 올바르지 않거나 만든 문서 검증에 실패했다."""
 
 
 def clean_text(value, limit=MAX_TEXT) -> str:
@@ -220,7 +220,7 @@ def build_notebook_hwpx(doc, base_path, target_path) -> Path:
     title_run = _element(first, "run", charPrIDRef=chars["title"])
     _element(title_run, "t").text = doc["title"]
     if doc["notebook"]:
-        _paragraph(section, "노트북: " + doc["notebook"], pool.center_para(), chars["meta"])
+        _paragraph(section, "업무자료함: " + doc["notebook"], pool.center_para(), chars["meta"])
     if doc["tags"]:
         _paragraph(section, "태그: " + " ".join("#" + t for t in doc["tags"]), body_para, chars["tags"])
     _paragraph(section, "", body_para, chars["body"])
