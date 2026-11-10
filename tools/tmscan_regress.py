@@ -8,6 +8,9 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from docfit_core.timemachine.rules import Rules
 from docfit_core.timemachine.scan import scan_roots
@@ -81,16 +84,24 @@ def compare(py, rs, root):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--count", type=int, default=10_000)
-    parser.add_argument("--klib", type=Path, default=Path(__file__).resolve().parents[1] / "klib" / "target" / "debug" / "klib.exe")
+    parser.add_argument("--klib", type=Path, default=Path(__file__).resolve().parents[1] / "klib" / "target" / "release" / "klib.exe")
     parser.add_argument("--dump", action="store_true")
     args = parser.parse_args()
     if not args.klib.is_file():
-        parser.error(f"debug klib executable not found: {args.klib}")
+        parser.error(f"release klib executable not found: {args.klib}; run cargo build --release in klib first")
     with tempfile.TemporaryDirectory(prefix="tms1-regress-") as temp:
         base = Path(temp)
         root = make_tree(base, args.count)
         rules = Rules(extensions=["txt"])
-        py, py_s, py_stats = python_scan(root, base / "python.sqlite", rules)
+        previous_flag = os.environ.get("DOCFIT_RUST_TIMEMACHINE_SCAN")
+        os.environ["DOCFIT_RUST_TIMEMACHINE_SCAN"] = "0"
+        try:
+            py, py_s, py_stats = python_scan(root, base / "python.sqlite", rules)
+        finally:
+            if previous_flag is None:
+                os.environ.pop("DOCFIT_RUST_TIMEMACHINE_SCAN", None)
+            else:
+                os.environ["DOCFIT_RUST_TIMEMACHINE_SCAN"] = previous_flag
         rs, rs_s, rs_stats = rust_scan(args.klib, root, rules)
         diff = compare(py, rs, root)
         print(json.dumps({"count": args.count, "python_seconds": py_s, "rust_seconds": rs_s,
