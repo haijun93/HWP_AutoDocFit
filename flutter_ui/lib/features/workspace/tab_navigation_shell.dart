@@ -260,7 +260,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
         ? null
         : HostClosablePage(
             key: ValueKey('workspace-extra-${_extra!.name}'),
-            title: _extra == WorkspaceExtraPage.library ? '자료함' : '노트북',
+            title: _extra == WorkspaceExtraPage.library ? '가상 폴더' : '노트북',
             onBack: _goHome,
             child: extraChild,
           );
@@ -465,14 +465,14 @@ class WorkspaceTabBar extends StatelessWidget {
                   if (libraryScreen != null)
                     _TabPill(
                       key: const ValueKey('library-open'),
-                      label: '자료함',
+                      label: '가상 폴더',
                       icon: Icons.dashboard_customize_outlined,
                       selected: selectedExtra == WorkspaceExtraPage.library,
                       color: color,
                       expanded: expanded,
                       onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.library),
                       onPreviewCancel: onPreviewCancel,
-                      onTap: () => _openExtra(context, WorkspaceExtraPage.library, '자료함', libraryScreen!),
+                      onTap: () => _openExtra(context, WorkspaceExtraPage.library, '가상 폴더', libraryScreen!),
                     ),
                   if (notebookScreen != null)
                     _TabPill(

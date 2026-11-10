@@ -50,7 +50,7 @@ class _UnavailableLibraryApi implements LibraryApi {
 
   }) async => [];
 
-  Future<T> _missing<T>() async => throw StateError('자료함 엔진(klib.exe)이 없습니다');
+  Future<T> _missing<T>() async => throw StateError('가상 폴더 엔진(klib.exe)이 없습니다');
 
   @override
 
@@ -151,7 +151,7 @@ void main() {
 
     await tester.pumpAndSettle();
 
-    expect(find.text('자료함 엔진(klib.exe)이 없습니다'), findsOneWidget);
+    expect(find.text('가상 폴더 엔진(klib.exe)이 없습니다'), findsOneWidget);
 
   });
 
@@ -259,7 +259,7 @@ void main() {
 
     // 자동 자료함 생성 없음, 빈 안내 문구와 새로 만들기 CTA 확인
 
-    expect(find.text('자료함을 선택하거나 새로 만드세요.'), findsOneWidget);
+    expect(find.text('가상 폴더를 선택하거나 새로 만드세요.'), findsOneWidget);
 
     expect(find.byKey(const ValueKey('libraryEmptyStateCta')), findsOneWidget);
 
@@ -1068,7 +1068,7 @@ void libraryScanTests() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('libraryExportBox')));
     await tester.pumpAndSettle();
-    expect(find.textContaining('자료함을 내보내지 못했습니다'), findsWidgets);
+    expect(find.textContaining('가상 폴더를 내보내지 못했습니다'), findsWidgets);
   });
 
   testWidgets('폴더 스캔 진행률을 보이고 취소 단추로 멈춘다', (tester) async {

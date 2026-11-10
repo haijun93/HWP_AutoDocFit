@@ -85,7 +85,7 @@ class FolderScanService:
     # ---- 시작·상태·취소 ----------------------------------------------
     def start(self, box_id, path):
         if type(box_id) is not int:
-            raise ValueError("자료함을 선택해 주세요.")
+            raise ValueError("가상 폴더를 선택해 주세요.")
         root = _normalize_root(path)
         if not root:
             raise ValueError("스캔할 폴더를 지정해 주세요.")
@@ -109,7 +109,7 @@ class FolderScanService:
         service = self._fallback_service()
         name = f"box-{box_id}"
         library = next((x for x in service.store.list_libraries() if x["name"] == name), None) \
-            or service.create(name, "klib 없이 스캔한 자료함 폴더")
+            or service.create(name, "klib 없이 스캔한 가상 폴더")
         service.add_folder(library["id"], root)   # 폴더가 아니거나 링크면 ValueError
         self._py_cancel.clear()
         started = time.monotonic()
@@ -184,7 +184,7 @@ class FolderScanService:
     # ---- 결과 파일 목록 ------------------------------------------------
     def files(self, box_id, path):
         if type(box_id) is not int:
-            raise ValueError("자료함을 선택해 주세요.")
+            raise ValueError("가상 폴더를 선택해 주세요.")
         root = _normalize_root(path)
         if self._active == "klib":
             bridge = self._bridge()

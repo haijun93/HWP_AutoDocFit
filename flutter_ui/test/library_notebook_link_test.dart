@@ -178,7 +178,7 @@ void main() {
       await tester.tap(find.byKey(ValueKey('nb-source-in-library-${linked.sourceId}')));
       await tester.pumpAndSettle();
       expect(find.byType(LibraryScreen), findsNothing);
-      expect(find.text('자료함 항목이 삭제되었습니다.'), findsOneWidget);
+      expect(find.text('가상 폴더 항목이 삭제되었습니다.'), findsOneWidget);
     });
 
     testWidgets('openLibraryItem을 주면 그것으로 자료함·항목 id를 넘긴다', (tester) async {
@@ -207,7 +207,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_1'))).selected, isTrue);
-      expect(_status(tester), '자료함을 찾을 수 없습니다(삭제되었을 수 있습니다).');
+      expect(_status(tester), '가상 폴더를 찾을 수 없습니다(삭제되었을 수 있습니다).');
     });
 
     testWidgets('자료함은 있으나 항목이 없으면 그렇게 알린다', (tester) async {
@@ -218,7 +218,7 @@ void main() {
       ));
       await tester.pumpAndSettle();
       expect(tester.widget<ListTile>(find.byKey(const ValueKey('libraryBox-box_2'))).selected, isTrue);
-      expect(_status(tester), '자료함 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).');
+      expect(_status(tester), '가상 폴더 항목을 찾을 수 없습니다(삭제되었을 수 있습니다).');
     });
   });
 
@@ -246,7 +246,7 @@ void main() {
           'nb_source_item' when request['source_id'] == 1 => {
             'ok': true, 'found': true, 'item_id': 5, 'box_id': 3, 'display_name': '예산보고.txt', 'source_path': _path,
           },
-          'nb_source_item' => {'ok': true, 'found': false, 'item_id': 6, 'reason': '자료함 항목이 삭제되었습니다.'},
+          'nb_source_item' => {'ok': true, 'found': false, 'item_id': 6, 'reason': '가상 폴더 항목이 삭제되었습니다.'},
           'nb_source_list' => {
             'ok': true,
             'sources': [
@@ -260,7 +260,7 @@ void main() {
       final found = await api.sourceItem(2, 1);
       expect((found.found, found.boxId, found.itemId, found.displayName), (true, '3', '5', '예산보고.txt'));
       final gone = await api.sourceItem(2, 9);
-      expect((gone.found, gone.reason), (false, '자료함 항목이 삭제되었습니다.'));
+      expect((gone.found, gone.reason), (false, '가상 폴더 항목이 삭제되었습니다.'));
       final sources = await api.listSources(2);
       expect(sources.map((s) => s.itemId), ['5', null]);
     });

@@ -99,13 +99,13 @@ class LibraryBridge:
 
         if not isinstance(request, dict):
 
-            raise LibraryBridgeError("자료함 요청은 JSON 객체여야 합니다.")
+            raise LibraryBridgeError("가상 폴더 요청은 JSON 객체여야 합니다.")
 
         command = request.get("cmd")
 
         if command not in ALLOWED_COMMANDS:
 
-            raise LibraryBridgeError("허용되지 않은 자료함 명령입니다.")
+            raise LibraryBridgeError("허용되지 않은 가상 폴더 명령입니다.")
 
         try:
 
@@ -113,11 +113,11 @@ class LibraryBridge:
 
         except (TypeError, ValueError) as exc:
 
-            raise LibraryBridgeError("자료함 요청을 JSON으로 인코딩할 수 없습니다.") from exc
+            raise LibraryBridgeError("가상 폴더 요청을 JSON으로 인코딩할 수 없습니다.") from exc
 
         if len(encoded) > MAX_REQUEST_BYTES:
 
-            raise LibraryBridgeError("자료함 요청이 64 KiB를 초과했습니다.")
+            raise LibraryBridgeError("가상 폴더 요청이 64 KiB를 초과했습니다.")
 
         last_error = None
 
@@ -275,7 +275,7 @@ def _current_user_pipe_name():
 
         return rf"\\.\pipe\HwpAutoDocFit.klib{suffix}.{sid}"
 
-    raise LibraryBridgeError("자료함 파이프는 Windows에서만 사용할 수 있습니다.")
+    raise LibraryBridgeError("가상 폴더 파이프는 Windows에서만 사용할 수 있습니다.")
 
 def _open_pipe(name):
 
@@ -334,7 +334,7 @@ def open_library_item(item, *, opener=None, browser=None, allow_risky=None):
         raise LibraryOpenError("SOURCE_MISSING", "원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).")
     if not os.path.isdir(source) and is_risky_open_path(source):
         if allow_risky is False:
-            raise LibraryOpenError("BLOCKED", "자료함에 등록되지 않은 실행 파일은 열 수 없습니다.")
+            raise LibraryOpenError("BLOCKED", "가상 폴더에 등록되지 않은 실행 파일은 열 수 없습니다.")
         if not item.get("confirmed"):
             raise LibraryOpenError("CONFIRM_REQUIRED", "실행 파일입니다. 실행할지 확인이 필요합니다.")
     if opener is None:

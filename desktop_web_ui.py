@@ -2343,7 +2343,7 @@ class DesktopWebBridge:
         import math
         valid_spaces = {"core", "basis", "reference", "temp"}
         if space is not None and space not in valid_spaces:
-            return {"ok": False, "message": "자료함 공간이 올바르지 않습니다."}
+            return {"ok": False, "message": "가상 폴더 공간이 올바르지 않습니다."}
         try:
             if isinstance(x, bool) or isinstance(y, bool):
                 raise ValueError("bool")
@@ -2360,7 +2360,7 @@ class DesktopWebBridge:
                 raise ValueError("type")
             box = int(box_id.strip() if isinstance(box_id, str) else box_id)
         except ValueError:
-            return {"ok": False, "message": "자료함 번호가 올바르지 않습니다."}
+            return {"ok": False, "message": "가상 폴더 번호가 올바르지 않습니다."}
         added, skipped, failed = [], [], []
         if paths is None:
             items = []
@@ -2449,7 +2449,7 @@ class DesktopWebBridge:
                 return {"ok": False, "code": "INVALID_PATH", "message": "잘못된 자료 ID입니다."}
             if not isinstance(stored, dict) or not stored.get("ok"):
                 message = stored.get("message") if isinstance(stored, dict) else None
-                return {"ok": False, "code": "NOT_REGISTERED", "message": message or "자료함에서 자료를 찾을 수 없습니다."}
+                return {"ok": False, "code": "NOT_REGISTERED", "message": message or "가상 폴더에서 자료를 찾을 수 없습니다."}
             target["kind"] = stored.get("kind") or target["kind"]
             target["source_path"] = str(stored.get("source_path") or "")
         try:
@@ -2880,7 +2880,7 @@ class DesktopWebBridge:
                     else "여기에 파일을 놓으면 파일변환 목록에 추가됩니다" if target == "conversion"
                     else "여기에 파일을 놓으면 이름 목록에 추가됩니다" if target == "rename_files"
                     else "여기에 놓으면 노트북 출처로 추가합니다" if target == "notebook"
-                    else "여기에 놓으면 자료함 항목으로 추가합니다" if target == "library"
+                    else "여기에 놓으면 가상 폴더 항목으로 추가합니다" if target == "library"
                     else "여기에 놓으면 문서 목록에 추가됩니다")
             try:
                 window.run_js(f"window.docfitDropText = {text!r};")

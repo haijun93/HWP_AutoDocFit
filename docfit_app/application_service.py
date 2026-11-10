@@ -41,7 +41,7 @@ class ApplicationService:
         if kind == 'library_index':
             library_id = params.get('library_id')
             if isinstance(library_id, bool) or not isinstance(library_id, int):
-                raise ServiceError('INVALID_INPUT', '자료함을 선택해 주세요.')
+                raise ServiceError('INVALID_INPUT', '가상 폴더를 선택해 주세요.')
             service = self._library()
             identifier = self.jobs.begin(kind, {'library_id': library_id})
             return self.jobs.start(kind, {'library_id': library_id}, service.index_runner(library_id), job_id=identifier)

@@ -88,7 +88,7 @@ void main() {
     await _save(tester);
 
     expect(_page, findsNothing);
-    expect(find.text('메모를 자료함에 넣었습니다.'), findsOneWidget);
+    expect(find.text('메모를 가상 폴더에 넣었습니다.'), findsOneWidget);
     final item = (await api.listItems(box.id)).single;
     expect((item.kind, item.space, item.title), (LibraryItemKind.text, LibrarySpace.core, '회의 정리'));
     expect(item.text, contains('예산 확정'));
