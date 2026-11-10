@@ -25,7 +25,41 @@ pub fn preview(request: &Value) -> Value {
             if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
             let val = |k: &str, d: &str| match rule.get(k) { Some(Value::Str(x)) => x.clone(), _ => d.to_string() };
             match val("kind", "").as_str() {
-                "add" => { let text=val("text", ""); let sep=val("sep", ""); if !text.is_empty() { if val("position", "prefix")=="suffix" { stem=format!("{stem}{sep}{text}"); } else { stem=format!("{text}{sep}{stem}"); } } },
+                "replace" => {
+                    let find = val("find", "");
+                    let to = val("to", "");
+                    let scope = val("scope", "stem");
+                    let regex_mode = matches!(rule.get("regex"), Some(Value::Bool(true)));
+                    let case_sensitive = !matches!(rule.get("case"), Some(Value::Bool(false)));
+                    let first = val("count", "all") == "first";
+                    let replace_text = |input: &str| -> String {
+                        let pattern = if regex_mode { find.clone() } else { regex::escape(&find) };
+                        let pattern = if case_sensitive { pattern } else { format!("(?i:{pattern})") };
+                        match regex::Regex::new(&pattern) {
+                            Ok(re) => {
+                                let replacement = regex::NoExpand(&to);
+                                if first { re.replacen(input, 1, replacement).into_owned() }
+                                else { re.replace_all(input, replacement).into_owned() }
+                            }
+                            Err(_) => input.to_string(),
+                        }
+                    };
+                    match scope.as_str() {
+                        "ext" => ext = replace_text(&ext),
+                        "name" => {
+                            let whole = replace_text(&format!("{stem}{ext}"));
+                            let (new_stem, new_ext) = split_name(&whole);
+                            stem = new_stem.to_string();
+                            ext = new_ext.to_string();
+                        }
+                        _ => stem = replace_text(&stem),
+                    }
+                },
+                "add" => { let text=val("text", ""); let sep=val("sep", ""); if !text.is_empty() { if val("position", "prefix")=="suffix" { stem=format!("{stem}{}{text}", if stem.is_empty() { "" } else { &sep }); } else { stem=format!("{text}{}{stem}", if stem.is_empty() { "" } else { &sep }); } } },
+                "uuid_replace" => {
+                    let uuid_name = regex::Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").unwrap();
+                    if uuid_name.is_match(&stem) { stem = val("text", ""); }
+                },
                 "clear" => stem.clear(),
                 "ext_del" => ext.clear(),
                 "ext_add" => { stem.push_str(&ext); ext=val("ext", ""); },
