@@ -20,6 +20,7 @@ pub fn preview(request: &Value) -> Value {
         let path = path.replace('/', "\\");
         let (stem0, ext0) = split_name(&name);
         let (mut stem, mut ext) = (stem0.to_string(), ext0.to_string());
+        let mut title_unsupported = false;
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(""));
         for rule in match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] } {
             if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
@@ -112,6 +113,29 @@ pub fn preview(request: &Value) -> Value {
                         }
                     }
                 },
+                "case" => {
+                    stem = match val("mode", "lower").as_str() {
+                        "upper" => stem.to_uppercase(),
+                        "title" => {
+                            let mut out = String::new(); let mut start = true;
+                            for ch in stem.chars() { if start { out.extend(ch.to_uppercase()); } else { out.push(ch); } start = !ch.is_alphanumeric(); }
+                            out
+                        },
+                        "capitalize" => { let mut chars=stem.chars(); chars.next().map(|c| c.to_uppercase().collect::<String>() + chars.as_str()).unwrap_or_default() },
+                        "sentence" => { let mut chars=stem.chars(); chars.next().map(|c| c.to_uppercase().collect::<String>() + &chars.as_str().to_lowercase()).unwrap_or_default() },
+                        _ => stem.to_lowercase(),
+                    };
+                },
+                "strip_result_suffix" => {
+                    let to = val("to", "");
+                    for suffix in ["(자간조정)","(일괄적용)","(서식통일)","(서식적용)","(최종검수)","(쪽맞춤)","(서식복사)"] {
+                        stem = stem.replace(suffix, &to);
+                    }
+                    stem = stem.trim().to_string();
+                },
+                "doc_title" => {
+                    if ext.to_lowercase() != ".hwpx" { title_unsupported = true; }
+                },
                 "del_pos" => {
                     let start = rule.get("start").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(1).max(1);
                     let end = rule.get("end").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(start).max(start);
@@ -161,6 +185,7 @@ pub fn preview(request: &Value) -> Value {
         let old_name = match get("name") { Some(Value::Str(s)) => s.as_str(), _ => "" };
         let status = if new_name == old_name { "unchanged" } else { "ok" };
         let mut warnings: Vec<Value> = Vec::new();
+        if title_unsupported { warnings.push(Value::from("title_unsupported")); }
         let folder = matches!(get("is_folder"), Some(Value::Bool(true)));
         if !folder && new_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() != old_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() { warnings.push(Value::from("ext_changed")); }
         plan_parts.push(Value::Arr(vec![Value::from(path.clone()), Value::from(new_path.clone()), Value::from(status), Value::Arr(fp.clone())]));
