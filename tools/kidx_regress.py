@@ -57,7 +57,7 @@ def rust_records(path: Path, exe: Path) -> list[dict]:
     if result.returncode:
         error = result.stderr.strip() or f"klib exited {result.returncode}"
         code = error.split(":", 1)[0]
-        if code in {"empty", "corrupt", "encrypted", "unsupported", "decode_error"}:
+        if code in {"empty", "corrupt", "encrypted", "unsupported", "decode_error", "runtime_unavailable", "extract_failed"}:
             return [{"error": code}]
         raise RuntimeError(error)
     data = json.loads(result.stdout)
