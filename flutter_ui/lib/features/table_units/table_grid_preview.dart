@@ -36,6 +36,7 @@ class CellShape {
     this.line,
     this.text = '',
     this.src,
+    this.preserveAspectRatio = false,
   });
 
   final String kind;
@@ -50,6 +51,7 @@ class CellShape {
 
   /// 그림 개체의 실제 그림(data:image/…;base64,…). 있으면 회색 상자 대신 그 그림을 그린다(화살표 그림 등).
   final String? src;
+  final bool preserveAspectRatio;
 
   /// src의 그림 바이트(없거나 잘못되면 null).
   Uint8List? get imageBytes {
@@ -75,6 +77,7 @@ class CellShape {
     line: json['line'] as String?,
     text: '${json['text'] ?? ''}',
     src: json['src'] as String?,
+    preserveAspectRatio: json['preserveAspectRatio'] == true,
   );
 
   Map<String, dynamic> toJson() => {
@@ -88,6 +91,7 @@ class CellShape {
     if (line != null) 'line': line,
     if (text.isNotEmpty) 'text': text,
     if (src != null) 'src': src,
+    if (preserveAspectRatio) 'preserveAspectRatio': true,
   };
 }
 
@@ -323,7 +327,9 @@ class TableGridPreview extends StatelessWidget {
                           child: Image.memory(
                             shape.imageBytes!,
                             key: Key('tableShapeImage_${cell.row}_${cell.col}'),
-                            fit: BoxFit.fill,
+                            fit: shape.preserveAspectRatio
+                                ? BoxFit.contain
+                                : BoxFit.fill,
                             gaplessPlayback: true,
                           ),
                         ),
