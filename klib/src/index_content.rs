@@ -32,7 +32,7 @@ pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
 fn collect(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if path.is_file() {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "hwp" | "xlsx" | "pptx" | "eml") {
+        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "hwp" | "xlsx" | "pptx" | "eml" | "pdf") {
             let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e|e.to_string())?.join(path) };
             files.push(absolute);
         }
@@ -100,7 +100,8 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
 
 fn level_rank(level:&str)->i64 { match level {"document_title"=>0,"chapter"=>1,"section"=>2,"topic"=>3,"square"=>4,"circle"=>5,"dash"=>6,"asterisk"=>7,_=>8} }
 fn extract_date(text:&str)->Option<String> {
-    let re=regex::Regex::new(r"(20\d{2})[-./년 ]\s*(\d{1,2})[-./월 ]\s*(\d{1,2})").ok()?;
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r"(20\d{2})[-./년 ]\s*(\d{1,2})[-./월 ]\s*(\d{1,2})").unwrap());
     for cap in re.captures_iter(text) { let (y,m,d)=(cap[1].parse::<u32>().ok()?,cap[2].parse::<u32>().ok()?,cap[3].parse::<u32>().ok()?); if let Some(date)=valid_date(y,m,d) { return Some(date); } }
     None
 }

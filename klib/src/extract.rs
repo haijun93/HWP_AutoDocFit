@@ -104,12 +104,84 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
         "txt" | "md" => extract_text(path),
         "hwpx" => extract_hwpx(path),
         "hwp" => extract_hwp(path),
+        "pdf" => extract_pdf(path),
         "docx" => extract_docx(path),
         "xlsx" => extract_xlsx(path),
         "pptx" => extract_pptx(path),
         "eml" => extract_eml(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
+}
+
+/// Extract one trimmed text record per non-empty PDF page using the same PDFium engine as Python.
+pub fn extract_pdf(path: &Path) -> Result<Vec<Paragraph>, String> {
+    let raw = std::fs::read(path).map_err(|e| format!("corrupt: PDF 파일을 읽을 수 없음: {e}"))?;
+    if raw.is_empty() { return Err("empty: PDF 파일 내용이 비어 있음".into()); }
+    let pdfium = bind_pdfium().map_err(|e| format!("runtime_unavailable: PDFium DLL을 찾을 수 없음: {e}"))?;
+    let document = pdfium.load_pdf_from_byte_vec(raw, None).map_err(|e| {
+        let message = e.to_string();
+        let lower = message.to_lowercase();
+        let code = if ["password", "encrypted", "암호"].iter().any(|x| lower.contains(x)) { "encrypted" } else { "corrupt" };
+        format!("{code}: PDF를 열 수 없음: {message}")
+    })?;
+    let mut records = Vec::new();
+    for (index, page) in document.pages().iter().enumerate() {
+        let text = page.text().map_err(|e| format!("corrupt: PDF 페이지 텍스트를 읽을 수 없음: {e}"))?.all();
+        let stripped = text.trim();
+        if !stripped.is_empty() {
+            records.push(Paragraph {
+                text: stripped.to_owned(),
+                location_kind: "page".into(),
+                location_label: format!("{}쪽", index + 1),
+                sequence: records.len() + 1,
+                section: None,
+                hierarchy_level: None,
+                is_table_cell: false,
+                style_name: None,
+                outline_level: None,
+            });
+        }
+    }
+    if records.is_empty() { return Err("empty: 추출 가능한 PDF 텍스트가 없음".into()); }
+    Ok(records)
+}
+
+fn bind_pdfium() -> Result<pdfium_render::prelude::Pdfium, pdfium_render::prelude::PdfiumError> {
+    use pdfium_render::prelude::*;
+    let mut candidates = Vec::new();
+    if let Some(path) = std::env::var_os("PDFIUM_DLL") { candidates.push(Path::new(&path).to_path_buf()); }
+    if let Some(venv) = std::env::var_os("VIRTUAL_ENV") {
+        candidates.push(Path::new(&venv).join("Lib/site-packages/pypdfium2_raw/pdfium.dll"));
+        candidates.push(Path::new(&venv).join("lib/site-packages/pypdfium2_raw/pdfium.dll"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.extend([dir.join("pdfium.dll"), dir.join("resources/pdfium.dll"), dir.join("pypdfium2_raw/pdfium.dll")]);
+            for ancestor in dir.ancestors().skip(1).take(5) {
+                candidates.extend([
+                    ancestor.join("pdfium.dll"),
+                    ancestor.join("resources/pdfium.dll"),
+                    ancestor.join("pypdfium2_raw/pdfium.dll"),
+                    ancestor.join(".venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
+                ]);
+            }
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        for ancestor in cwd.ancestors().take(5) {
+            candidates.extend([
+                ancestor.join(".venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
+                ancestor.join("mapo-agent-1/.venv/Lib/site-packages/pypdfium2_raw/pdfium.dll"),
+            ]);
+        }
+    }
+    if let Some(root) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
+        candidates.push(Path::new(&root).join("HwpAutoDocFit/pypdfium2_raw/pdfium.dll"));
+        candidates.push(Path::new(&root).join("HwpAutoDocFit/pdfium.dll"));
+    }
+    let path = candidates.into_iter().find(|p| p.is_file());
+    let bindings = if let Some(path) = path { Pdfium::bind_to_library(path)? } else { Pdfium::bind_to_system_library()? };
+    Ok(Pdfium::new(bindings))
 }
 
 /// Extract HWP5 through the same bundled kordoc Markdown conversion used by Python.
@@ -288,6 +360,7 @@ pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
             Ok(records)
         }
         "xlsx" | "pptx" => extract(path),
+        "pdf" => extract_pdf(path),
         _ => extract(path),
     }
 }

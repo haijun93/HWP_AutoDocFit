@@ -20,6 +20,10 @@ fn number_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); 
 fn korean_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[가나다라마바사아자차카타파하][.．)]|\([가나다라마바사아자차카타파하]\))(?=\s|$)")) }
 fn roman_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[Ⅰ-Ⅿ]+[.．]?|(?:[IVX]|[IVXLCDM]{2,})[.．])(?=\s|$)")) }
 fn letter_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"(?:[A-Za-z][.．)]|\([A-Za-z]\))(?=\s|$)")) }
+fn date_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"^[0-9]{4}[.．][0-9]{1,2}[.．][0-9]{1,2}[.．]?(?=\s|$)")) }
+fn digits_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"[0-9]+")) }
+fn num_lead_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"^[ \t\u{00a0}\u{3000}]*\d+\.(?=\s|$|[^0-9])")) }
+fn attach_lead_re() -> &'static Regex { static R: OnceLock<Regex> = OnceLock::new(); R.get_or_init(|| re(r"^\s*붙임\s*[:：]?\s*\d+\.")) }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MarkerScheme {
@@ -60,7 +64,7 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
     let lead_bytes = text.len() - stripped.len();
     let lead = text[..lead_bytes].chars().count();
     if let Some(m) = multi_re().find(stripped).ok().flatten().filter(|m| m.start() == 0) {
-        let date = re(r"^[0-9]{4}[.．][0-9]{1,2}[.．][0-9]{1,2}[.．]?(?=\s|$)");
+        let date = date_re();
         if date.is_match(stripped).ok()? { return None; }
         let full = m.as_str();
         let trimmed = full.trim_end_matches(['.', '．']);
@@ -123,7 +127,7 @@ fn unicode_category(c: char) -> char {
 
 pub fn ordinal(family: &str, token: &str) -> Option<Vec<i64>> {
     let token = token.trim().replace('．', ".");
-    if family.starts_with('1') || family == "(1)" { return Some(re(r"[0-9]+").find_iter(&token).filter_map(|m| m.ok()?.as_str().parse::<i64>().ok()).collect()); }
+    if family.starts_with('1') || family == "(1)" { return Some(digits_re().find_iter(&token).filter_map(|m| m.ok()?.as_str().parse::<i64>().ok()).collect()); }
     if family.contains('가') { return HANGUL.find(token.trim_matches(['.', '(', ')'])).map(|i| vec![(i / 3) as i64]); }
     if ["①", "㉠", "㉮"].contains(&family) { let base = family.chars().next()? as i64; return token.chars().next().map(|c| vec![c as i64 - base]); }
     if family.starts_with('Ⅰ') { return unicode_roman_value(&token).map(|v| vec![v]); }
@@ -185,6 +189,6 @@ fn char_to_byte(text: &str, char_count: usize) -> usize {
 
 pub fn scheme_json(s: &MarkerScheme) -> Value { json!({"decimal":s.decimal,"symbols":s.symbols,"excluded":s.excluded,"paragraph_count":s.paragraph_count,"family_levels":s.family_levels,"summary":s.summary()}) }
 fn find_attachment_blocks(texts:&[String])->Vec<usize>{let mut out=Vec::new();let mut i=0;while i<texts.len(){if !texts[i].starts_with("붙임"){i+=1;continue;}let mut end=None;for j in i..texts.len().min(i+30){let t=&texts[j];if t.trim().is_empty()||!(t.trim_end().ends_with('.')||is_numbered(t)){break;}if t.trim_end().ends_with("끝."){end=Some(j);break;}}if let Some(e)=end{out.extend(i..=e);i=e+1;}else{i+=1;}}out}
-fn is_numbered(t:&str)->bool{re(r"^[ \t\u{00a0}\u{3000}]*\d+\.(?=\s|$|[^0-9])").is_match(t).unwrap_or(false)||re(r"^\s*붙임\s*[:：]?\s*\d+\.").is_match(t).unwrap_or(false)}
+fn is_numbered(t:&str)->bool{num_lead_re().is_match(t).unwrap_or(false)||attach_lead_re().is_match(t).unwrap_or(false)}
 
 #[cfg(test)] mod tests { use super::*; #[test] fn scheme_smoke(){let s=detect_scheme(&["1. 첫".into(),"2. 둘".into(),"가. 하위".into(),"나. 다음".into()]);assert!(!s.is_empty());assert!(s.canonical("1. 첫").is_some());} }

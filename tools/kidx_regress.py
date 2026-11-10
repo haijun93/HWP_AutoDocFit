@@ -18,6 +18,7 @@ from docfit_core.timemachine.extractors_hwp import extract_hwp
 from docfit_core.timemachine.extractors_hwpx import extract_hwpx
 from docfit_core.timemachine.extractors_ooxml import extract_docx, extract_pptx, extract_xlsx
 from docfit_core.timemachine.extractors_eml import extract_eml
+from docfit_core.timemachine.extractors_pdf import extract_pdf
 
 
 def python_records(path: Path) -> list[dict]:
@@ -35,6 +36,8 @@ def python_records(path: Path) -> list[dict]:
             records = extract_hwp(path)
         elif ext == ".eml":
             records = extract_eml(path)
+        elif ext == ".pdf":
+            records = extract_pdf(path)
         else:
             records = extract_plain_text(path)
     except Exception as exc:
@@ -76,10 +79,16 @@ def main() -> int:
     parser.add_argument("paths", nargs="*", type=Path, help="files or directories; defaults to tests/fixtures")
     parser.add_argument("--exe", type=Path, default=ROOT / "klib" / "target" / "debug" / "klib.exe")
     parser.add_argument("--dump", action="store_true", help="print differing paragraph numbers and values")
+    parser.add_argument("--exclude", action="append", type=Path, default=[], help="explicitly exclude a file (reported; no automatic exclusions)")
     args = parser.parse_args()
     paths = args.paths or [ROOT / "tests" / "fixtures"]
     files = sorted({p.resolve() for item in paths for p in (item.rglob("*") if item.is_dir() else [item])
-                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml"}})
+                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml", ".pdf"}})
+    excluded = {p.resolve() for p in args.exclude}
+    for path in files:
+        if path in excluded:
+            print(f"EXCLUDED {path}")
+    files = [p for p in files if p not in excluded]
     failures = 0
     for path in files:
         try:

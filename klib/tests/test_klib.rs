@@ -949,3 +949,17 @@ fn test_edit_stage3_large_file_and_encoding_save() {
     assert_eq!((lc.i64("line"), lc.i64("col")), (Some(1), Some(1)));
     ok(&call(format!(r#"{{"cmd":"edit_close","doc":{doc}}}"#)));
 }
+
+#[test]
+fn test_extract_pdf_errors() {
+    let ctx = TestContext::new("extract_pdf_errors");
+    let empty_file = ctx.dir.join("empty.pdf");
+    fs::write(&empty_file, b"").unwrap();
+    let err_empty = extract::extract(&empty_file).unwrap_err();
+    assert!(err_empty.starts_with("empty"));
+
+    let corrupt_file = ctx.dir.join("corrupt.pdf");
+    fs::write(&corrupt_file, b"invalid pdf garbage content").unwrap();
+    let err_corrupt = extract::extract(&corrupt_file).unwrap_err();
+    assert!(err_corrupt.starts_with("corrupt") || err_corrupt.starts_with("runtime_unavailable"));
+}

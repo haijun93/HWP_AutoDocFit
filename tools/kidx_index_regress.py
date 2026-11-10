@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 QUERIES = ["행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
-SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml"}
+SUPPORTED = {".txt", ".md", ".hwpx", ".docx", ".hwp", ".xlsx", ".pptx", ".eml", ".pdf"}
 FIXTURE_QUERIES = ["노트북", "운반비", "슬라이드", "설명", "행정", "주민", "제1장", "목적", "사업", "지원", "신청", "기준", "계획", "제출"]
 
 
@@ -38,10 +38,16 @@ def main() -> int:
     parser.add_argument("--exe", type=Path, default=ROOT / "klib" / "target" / "debug" / "klib.exe")
     parser.add_argument("--queries", nargs="+", default=QUERIES + FIXTURE_QUERIES, help="search terms; defaults include the ten legacy terms and OOXML fixture terms")
     parser.add_argument("--dump", action="store_true", help="print differing paragraph numbers and fields")
+    parser.add_argument("--exclude", action="append", type=Path, default=[], help="explicitly exclude a file (reported; no automatic exclusions)")
     args = parser.parse_args()
     files = sorted({p.resolve() for item in (args.paths or [ROOT / "tests" / "fixtures"])
                     for p in (item.rglob("*") if item.is_dir() else [item])
                     if p.is_file() and p.suffix.lower() in SUPPORTED})
+    excluded = {p.resolve() for p in args.exclude}
+    for path in files:
+        if path in excluded:
+            print(f"EXCLUDED {path}")
+    files = [p for p in files if p not in excluded]
     if not files:
         parser.error("no supported fixture files found")
     os.environ["PYTHONIOENCODING"] = "utf-8"
@@ -100,6 +106,8 @@ def main() -> int:
                     if sig(a) != sig(b):
                         search_diffs += 1
                         print(f"SEARCH_DIFF {query!r}: Python={len(a)} Rust={len(b)}")
+                        if args.dump:
+                            print(f"  Python: {sig(a)!r}\n  Rust:   {sig(b)!r}")
             finally:
                 rs.close()
             print(f"Compared {len(files)} files, {sum(map(len, py_rows.values()))} Python paragraphs, {sum(map(len, rs_rows.values()))} Rust paragraphs; document diffs={doc_diffs}; level diffs={level_diffs}; body diffs={body_diffs}; query diffs={search_diffs}")
