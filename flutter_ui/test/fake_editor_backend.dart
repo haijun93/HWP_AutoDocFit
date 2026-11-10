@@ -118,7 +118,7 @@ class FakeEditorBackend {
 
   Map<String, Object?> _handle(Map<String, Object?> req) {
     if (maxRequestBytes != null && utf8.encode(jsonEncode(req)).length > maxRequestBytes!) {
-      throw StateError('자료함 요청이 64 KiB를 초과했습니다.');
+      throw StateError('가상 폴더 요청이 64 KiB를 초과했습니다.');
     }
     final cmd = req['cmd'] as String;
     if (cmd == 'edit_select_file') {

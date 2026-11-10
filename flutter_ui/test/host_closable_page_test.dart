@@ -10,7 +10,7 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: Text('home'))));
     final nav = tester.state<NavigatorState>(find.byType(Navigator));
     nav.push(MaterialPageRoute<void>(
-      builder: (_) => const HostClosablePage(title: '자료함', child: Scaffold(body: Text('library'))),
+      builder: (_) => const HostClosablePage(title: '가상 폴더', child: Scaffold(body: Text('library'))),
     ));
     await tester.pumpAndSettle();
     return nav;

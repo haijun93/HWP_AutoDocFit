@@ -270,8 +270,8 @@ class LibrarySearchTests(unittest.TestCase):
         desktop = self._desktop_bridge([FakePipe(b'{"ok":false,"message":"x"}\n')])
         self.assertEqual(desktop.library({"cmd": "search", "query": "a"}), {"ok": False, "message": "x"})
         denied = desktop.library({"cmd": "search_all"})
-        self.assertEqual(denied, {"ok": False, "message": "허용되지 않은 자료함 명령입니다."})
-        self.assertEqual(desktop.library("search"), {"ok": False, "message": "자료함 요청은 JSON 객체여야 합니다."})
+        self.assertEqual(denied, {"ok": False, "message": "허용되지 않은 가상 폴더 명령입니다."})
+        self.assertEqual(desktop.library("search"), {"ok": False, "message": "가상 폴더 요청은 JSON 객체여야 합니다."})
 
     def test_library_export_copies_without_mutating_sources(self):
         import shutil

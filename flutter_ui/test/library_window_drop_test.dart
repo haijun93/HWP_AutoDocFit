@@ -43,7 +43,7 @@ void main() {
     await tester.pumpAndSettle();
     final items = await api.listItems('box_1');
     expect(items.map((e) => e.title), containsAll(['계획.hwpx', '실적.xlsx']));
-    expect(find.text('파일 2개를 자료함에 넣었습니다.'), findsOneWidget);
+    expect(find.text('파일 2개를 가상 폴더에 넣었습니다.'), findsOneWidget);
 
     await tester.pumpWidget(const SizedBox());
     expect(api.watched, [true, false]);
