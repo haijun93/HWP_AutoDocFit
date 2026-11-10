@@ -105,6 +105,8 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
         "hwpx" => extract_hwpx(path),
         "hwp" => extract_hwp(path),
         "docx" => extract_docx(path),
+        "xlsx" => extract_xlsx(path),
+        "pptx" => extract_pptx(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
 }
@@ -283,6 +285,7 @@ pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
             Ok(records)
         }
+        "xlsx" | "pptx" => extract(path),
         _ => extract(path),
     }
 }
@@ -557,6 +560,180 @@ fn check_ole_encrypted(path: &Path) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// XLSX 고유 시트·행 추출. DOCX 경로는 변경하지 않고 Python 추출 계약을 따른다.
+fn extract_xlsx(path: &Path) -> Result<Vec<Paragraph>, String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| format!("corrupt: XLSX 파일 열기 실패: {e}"))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| format!("corrupt: 올바른 ZIP XLSX 문서가 아님: {e}"))?;
+    if zip.len() > MAX_ENTRIES { return Err(format!("corrupt: 압축 항목 수 초과: {}", zip.len())); }
+    let mut names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0u64;
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| format!("corrupt: XLSX 압축 항목 읽기 실패: {e}"))?;
+        let name = entry.name().map_err(|e| format!("corrupt: XLSX 압축 항목 이름 읽기 실패: {e}"))?.into_owned();
+        let safe = safe_member_name(&name)?;
+        if !seen.insert(safe.clone()) { return Err(format!("corrupt: 중복된 압축 항목: {name}")); }
+        if entry.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) { return Err(format!("corrupt: 심볼릭 링크 압축 항목 거부: {name}")); }
+        if entry.encrypted() { return Err(format!("encrypted: 암호화된 ZIP 항목: {name}")); }
+        if entry.size() > MAX_FILE_SIZE { return Err(format!("corrupt: 단일 파일 크기 초과: {name}")); }
+        total = total.saturating_add(entry.size());
+        if total > MAX_TOTAL_SIZE { return Err(format!("corrupt: 총 압축 해제 크기 초과: {total}")); }
+        if entry.compressed_size() > 0 && entry.size() / entry.compressed_size() > MAX_COMPRESSION_RATIO { return Err(format!("corrupt: 비정상 압축률 감지: {name}")); }
+        names.push(name);
+    }
+    let name_set: std::collections::HashSet<String> = names.iter().cloned().collect();
+    let read_xml = |zip: &mut ZipArchive<std::fs::File>, name: &str| -> Result<XmlNode, String> {
+        let mut entry = zip.by_name(name).map_err(|e| format!("corrupt: XLSX XML 읽기 실패 ({name}): {e}"))?;
+        let mut bytes = Vec::new();
+        entry.read_to_end(&mut bytes).map_err(|e| format!("corrupt: XLSX XML 읽기 실패 ({name}): {e}"))?;
+        parse_xml_tree(&bytes, "XLSX", name)
+    };
+    let mut shared = Vec::<String>::new();
+    if name_set.contains("xl/sharedStrings.xml") {
+        let root = read_xml(&mut zip, "xl/sharedStrings.xml")?;
+        fn visit_si(node: &XmlNode, out: &mut Vec<String>) {
+            if node.name == "si" {
+                fn collect_t(node: &XmlNode, s: &mut String) {
+                    if node.name == "t" { s.push_str(&iter_text(node)); return; }
+                    for c in child_nodes(node) { collect_t(c, s); }
+                }
+                let mut value = String::new(); collect_t(node, &mut value); out.push(value); return;
+            }
+            for c in child_nodes(node) { visit_si(c, out); }
+        }
+        visit_si(&root, &mut shared);
+    }
+    let mut rels = std::collections::HashMap::<String, String>::new();
+    if name_set.contains("xl/_rels/workbook.xml.rels") {
+        let root = read_xml(&mut zip, "xl/_rels/workbook.xml.rels")?;
+        fn collect_rels(node: &XmlNode, out: &mut std::collections::HashMap<String, String>) -> Result<(), String> {
+            if node.name == "Relationship" {
+                if let (Some(id), Some(target)) = (node.attrs.get("Id"), node.attrs.get("Target")) {
+                    let target = target.replace('\\', "/");
+                    let resolved = if target.starts_with('/') { target.trim_start_matches('/').to_owned() }
+                        else { format!("xl/{target}") };
+                    let mut parts = Vec::new();
+                    for part in resolved.split('/') { match part { "" | "." => {}, ".." => { if parts.pop().is_none() { return Err(format!("corrupt: 허용되지 않는 상대 경로 탈출: {target}")); } }, _ => parts.push(part) } }
+                    out.insert(id.clone(), parts.join("/"));
+                }
+            }
+            for c in child_nodes(node) { collect_rels(c, out)?; }
+            Ok(())
+        }
+        collect_rels(&root, &mut rels)?;
+    }
+    let mut sheets = Vec::<(String, String)>::new();
+    if name_set.contains("xl/workbook.xml") {
+        let root = read_xml(&mut zip, "xl/workbook.xml")?;
+        fn collect_sheets(node: &XmlNode, rels: &std::collections::HashMap<String, String>, names: &std::collections::HashSet<String>, out: &mut Vec<(String, String)>) {
+            if node.name == "sheet" {
+                let name = node.attrs.get("name").cloned().unwrap_or_else(|| "Sheet".into());
+                if let Some(target) = node.attrs.get("id").and_then(|id| rels.get(id)).filter(|target| names.contains(*target)) { out.push((name, target.clone())); }
+            }
+            for c in child_nodes(node) { collect_sheets(c, rels, names, out); }
+        }
+        collect_sheets(&root, &rels, &name_set, &mut sheets);
+    }
+    if sheets.is_empty() {
+        let mut ws: Vec<_> = names.iter().filter(|n| n.starts_with("xl/worksheets/sheet") && n.ends_with(".xml")).cloned().collect();
+        ws.sort_by_key(|n| n.split("sheet").last().unwrap_or("").trim_end_matches(".xml").parse::<usize>().unwrap_or(0));
+        for name in ws {
+            let idx = name.split("sheet").last().unwrap_or("").trim_end_matches(".xml");
+            sheets.push((format!("Sheet{idx}"), name));
+        }
+    }
+    if sheets.is_empty() { return Err("empty: XLSX 워크시트를 찾을 수 없음".into()); }
+    let mut records = Vec::new();
+    for (sheet_name, sheet_path) in sheets {
+        let root = read_xml(&mut zip, &sheet_path)?;
+        fn collect_rows(node: &XmlNode, rows: &mut Vec<XmlNode>) {
+            if node.name == "row" { rows.push(node.clone()); return; }
+            for c in child_nodes(node) { collect_rows(c, rows); }
+        }
+        let mut rows = Vec::new(); collect_rows(&root, &mut rows);
+        let mut row_counter = 1usize;
+        for row in rows {
+            let row_num = row.attrs.get("r").and_then(|v| v.parse::<usize>().ok()).unwrap_or(row_counter);
+            row_counter = row_num + 1;
+            let mut cells = Vec::new();
+            for cell in child_nodes(&row).filter(|n| n.name == "c") {
+                let kind = cell.attrs.get("t").map(String::as_str).unwrap_or("");
+                let mut value = String::new();
+                if kind == "s" {
+                    if let Some(idx) = child_nodes(cell).find(|n| n.name == "v").and_then(|n| iter_text(n).trim().parse::<usize>().ok()) {
+                        if let Some(shared_value) = shared.get(idx) { value = shared_value.trim().to_owned(); }
+                    }
+                } else if kind == "inlineStr" {
+                    fn collect_t(node: &XmlNode, s: &mut String) {
+                        if node.name == "t" { s.push_str(&iter_text(node)); return; }
+                        for c in child_nodes(node) { collect_t(c, s); }
+                    }
+                    if let Some(is) = child_nodes(cell).find(|n| n.name == "is") { collect_t(is, &mut value); }
+                    value = value.trim().to_owned();
+                } else if let Some(v) = child_nodes(cell).find(|n| n.name == "v") { value = iter_text(v).trim().to_owned(); }
+                if !value.is_empty() { cells.push(value); }
+            }
+            if !cells.is_empty() {
+                let sequence = records.len() + 1;
+                records.push(Paragraph { text: cells.join(" "), location_kind: "sheet_row".into(), location_label: format!("{sheet_name} {row_num}행"), sequence,
+                    section: Some(sheet_name.clone()), hierarchy_level: None, is_table_cell: false, style_name: None, outline_level: None });
+            }
+        }
+    }
+    if records.is_empty() { return Err("empty: 추출 가능한 XLSX 데이터가 없음".into()); }
+    Ok(records)
+}
+
+/// PPTX 고유 슬라이드·문단 추출. DOCX 추출 구현과 독립된 경로다.
+fn extract_pptx(path: &Path) -> Result<Vec<Paragraph>, String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| format!("corrupt: PPTX 파일 열기 실패: {e}"))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| format!("corrupt: 올바른 ZIP PPTX 문서가 아님: {e}"))?;
+    if zip.len() > MAX_ENTRIES { return Err(format!("corrupt: 압축 항목 수 초과: {}", zip.len())); }
+    let mut slide_names = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut total = 0u64;
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| format!("corrupt: PPTX 압축 항목 읽기 실패: {e}"))?;
+        let name = entry.name().map_err(|e| format!("corrupt: PPTX 압축 항목 이름 읽기 실패: {e}"))?.into_owned();
+        let safe = safe_member_name(&name)?;
+        if !seen.insert(safe) { return Err(format!("corrupt: 중복된 압축 항목: {name}")); }
+        if entry.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) { return Err(format!("corrupt: 심볼릭 링크 압축 항목 거부: {name}")); }
+        if entry.encrypted() { return Err(format!("encrypted: 암호화된 ZIP 항목: {name}")); }
+        if entry.size() > MAX_FILE_SIZE { return Err(format!("corrupt: 단일 파일 크기 초과: {name}")); }
+        total = total.saturating_add(entry.size());
+        if total > MAX_TOTAL_SIZE { return Err(format!("corrupt: 총 압축 해제 크기 초과: {total}")); }
+        if entry.compressed_size() > 0 && entry.size() / entry.compressed_size() > MAX_COMPRESSION_RATIO { return Err(format!("corrupt: 비정상 압축률 감지: {name}")); }
+        if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") { slide_names.push(name); }
+    }
+    slide_names.sort_by_key(|name| name.strip_prefix("ppt/slides/slide").unwrap_or("").strip_suffix(".xml").unwrap_or("").parse::<usize>().unwrap_or(0));
+    if slide_names.is_empty() { return Err("empty: PPTX에 슬라이드가 없음".into()); }
+    let mut records = Vec::new();
+    for slide in slide_names {
+        let slide_num = slide.strip_prefix("ppt/slides/slide").unwrap_or("").strip_suffix(".xml").unwrap_or("").parse::<usize>().unwrap_or(0);
+        let mut entry = zip.by_name(&slide).map_err(|e| format!("corrupt: PPTX 슬라이드 XML 읽기 실패 ({slide}): {e}"))?;
+        let mut bytes = Vec::new(); entry.read_to_end(&mut bytes).map_err(|e| format!("corrupt: PPTX 슬라이드 읽기 실패 ({slide}): {e}"))?;
+        let root = parse_xml_tree(&bytes, "PPTX", &slide)?;
+        fn collect_paragraphs(node: &XmlNode, out: &mut Vec<String>) {
+            if node.name == "p" {
+                let text = iter_text(node).trim().to_owned();
+                if !text.is_empty() { out.push(text); }
+                return;
+            }
+            for c in child_nodes(node) { collect_paragraphs(c, out); }
+        }
+        let mut texts = Vec::new(); collect_paragraphs(&root, &mut texts);
+        for (idx, text) in texts.into_iter().enumerate() {
+            let sequence = records.len() + 1;
+            records.push(Paragraph { text, location_kind: "paragraph".into(), location_label: format!("슬라이드 {slide_num} 문단 {}", idx + 1), sequence,
+                section: Some(format!("슬라이드 {slide_num}")), hierarchy_level: None, is_table_cell: false, style_name: None, outline_level: None });
+        }
+    }
+    if records.is_empty() { return Err("empty: 추출 가능한 PPTX 텍스트가 없음".into()); }
+    Ok(records)
 }
 
 fn extract_docx(path: &Path) -> Result<Vec<Paragraph>, String> {
