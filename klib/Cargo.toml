@@ -22,7 +22,7 @@ md5 = "0.7"
 sha2 = "0.10"
 regex = "1"
 encoding_rs = "0.8"
-quick-xml = "0.38"
+quick-xml = "0.41"
 time = { version = "0.3.55", features = ["local-offset"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 unicode-normalization = "0.1"
