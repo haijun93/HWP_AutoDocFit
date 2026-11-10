@@ -43,4 +43,41 @@ void main() {
     expect(painter.painter, isNotNull);
     expect(find.text('⇑'), findsNothing); // Cell text is rendered by the verified CustomPainter.
   });
+  testWidgets('background cell images keep their source aspect ratio', (
+    tester,
+  ) async {
+    const png =
+        'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADUlEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: TableGridPreview(
+            rows: 1,
+            cols: 1,
+            cellMeta: [
+              [CellMeta(row: 0, col: 0, width: 1, height: 1)],
+            ],
+            shapes: {
+              '0,0': [
+                CellShape(src: png, preserveAspectRatio: true),
+              ],
+            },
+            maxWidth: 160,
+            maxHeight: 80,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    final image = tester.widget<Image>(
+      find.byKey(const Key('tableShapeImage_0_0')),
+    );
+    expect(image.fit, BoxFit.contain);
+    expect(
+      CellShape.fromJson(const {'preserveAspectRatio': true})
+          .preserveAspectRatio,
+      isTrue,
+    );
+  });
+
 }
