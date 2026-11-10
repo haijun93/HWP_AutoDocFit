@@ -25,6 +25,14 @@ mod notebook;
 mod nb_transform;
 #[path = "../src/content.rs"]
 mod content;
+#[path = "../src/extract.rs"]
+mod extract;
+#[path = "../src/legacy_records.rs"]
+mod legacy_records;
+#[path = "../src/classify_levels.rs"]
+mod classify_levels;
+#[path = "../src/unify_marker.rs"]
+mod unify_marker;
 
 static SEARCH_INDEX: std::sync::OnceLock<Result<search::SearchIndex, String>> = std::sync::OnceLock::new();
 fn search_index() -> Result<&'static search::SearchIndex, String> {

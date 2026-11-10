@@ -471,11 +471,11 @@ fn nb_source_add(val: &Value, db: &Mutex<Database>) -> Value {
     let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     let paragraphs = match val.arr("paragraphs") {
         Some(rows) => {
-            if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "hwp" | "docx" | "pdf" | "pptx" | "xlsx") { return err_val(&format!("지원하지 않는 출처 형식입니다: {ext}")); }
+            if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "hwp" | "docx" | "pdf" | "pptx" | "xlsx" | "eml") { return err_val(&format!("지원하지 않는 출처 형식입니다: {ext}")); }
             match nb_paragraphs_from_json(rows) { Ok(p) => p, Err(e) => return err_val(&e) }
         }
         None => {
-            if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return err_val(&format!("지원하지 않는 출처 형식입니다: {ext}")); }
+            if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx" | "eml") { return err_val(&format!("지원하지 않는 출처 형식입니다: {ext}")); }
             match crate::content::extract_blocks(path, &ext) {
                 Ok(blocks) => blocks.into_iter().enumerate().map(|(i, b)| crate::notebook::Paragraph { source_id: 0, ordinal: i as i64, location: String::new(), level: b.level, kind: if b.table { "table" } else { "text" }.into(), body: b.text }).collect(),
                 Err(e) => return err_val(&e),

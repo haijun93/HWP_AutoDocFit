@@ -8,7 +8,7 @@ use crate::search::{Paragraph, SearchIndex};
 pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
     let p = Path::new(path);
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-    if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(()); }
+    if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx" | "eml") { return Ok(()); }
     let body = extract_text(p, &ext)?;
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
@@ -20,6 +20,7 @@ pub fn remove_file(index: &SearchIndex, path: &str) -> Result<(), String> {
 }
 
 pub(crate) fn extract_text(path: &Path, ext: &str) -> Result<String, String> {
+    if ext == "eml" { return crate::extract::extract_eml_for_content(path); }
     if matches!(ext, "txt" | "md") {
         return fs::read_to_string(path).or_else(|_| fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned())).map_err(|e| e.to_string());
     }
@@ -57,6 +58,9 @@ pub struct Block { pub level: i64, pub table: bool, pub text: String }
 /// 노트북 출처용 구조 추출. hwpx·docx는 개요 수준과 표 행을 살리고, 나머지는 줄 단위로 나눈다.
 /// 명시 수준이 없는 본문 문단은 공문서 기호(Ⅰ. 1. □ ○ - *)로 수준을 붙인다.
 pub(crate) fn extract_blocks(path: &Path, ext: &str) -> Result<Vec<Block>, String> {
+    if ext == "eml" {
+        return crate::extract::extract_for_index(path).map(|records| records.into_iter().map(|r| Block { level: 0, table: false, text: r.text }).collect());
+    }
     let mut blocks = match ext {
         "hwpx" => {
             let header = read_entries(path, |n| n == "Contents/header.xml")?;
