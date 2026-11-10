@@ -296,26 +296,35 @@ pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
 fn extract_eml(path: &Path) -> Result<Vec<Paragraph>, String> {
     let raw = std::fs::read(path).map_err(|e| format!("corrupt: 파일을 읽을 수 없음: {e}"))?;
     if raw.iter().all(u8::is_ascii_whitespace) { return Err("empty: 이메일 파일이 비어 있음".into()); }
-    let source = if raw.starts_with(&[0xef, 0xbb, 0xbf]) {
-        std::str::from_utf8(&raw[3..]).map_err(|e| format!("decode_error: EML UTF-8 디코딩 실패: {e}"))?.to_owned()
-    } else if let Ok(s) = std::str::from_utf8(&raw) { s.to_owned() }
-    else { let (s, _, bad) = EUC_KR.decode(&raw); if bad { return Err("decode_error: EML 인코딩 디코딩 실패".into()); } s.into_owned() };
+    // MIME 경계/헤더는 ASCII로 읽되 본문 바이트는 charset 판정 전까지 보존한다.
+    let source: String = raw.iter().map(|&b| char::from(b)).collect();
+    fn wire_bytes(text: &str) -> Vec<u8> { text.chars().map(|c| c as u8).collect() }
+    fn decode_charset(bytes: &[u8], charset: &str) -> Result<String, String> {
+        let label = charset.trim().to_ascii_lowercase();
+        match label.as_str() {
+            "utf-8" | "utf8" => Ok(String::from_utf8_lossy(bytes).into_owned()),
+            "ascii" | "us-ascii" => Ok(bytes.iter().map(|&b| if b < 128 { char::from(b) } else { '\u{fffd}' }).collect()),
+            "latin-1" | "latin1" | "iso-8859-1" => Ok(bytes.iter().map(|&b| char::from(b)).collect()),
+            _ => encoding_rs::Encoding::for_label(label.as_bytes())
+                .map(|encoding| encoding.decode_without_bom_handling(bytes).0.into_owned())
+                .ok_or_else(|| format!("decode_error: 알 수 없는 MIME charset: {charset}")),
+        }
+    }
 
     fn decode_header(value: &str) -> String {
         let re = regex::Regex::new(r"=\?([^?]+)\?([bBqQ])\?([^?]*)\?=").unwrap();
         let mut out = String::new(); let mut last = 0;
         for cap in re.captures_iter(value) {
-            let m = cap.get(0).unwrap(); out.push_str(&value[last..m.start()]);
+            let m = cap.get(0).unwrap();
+            let gap = &value[last..m.start()];
+            if last == 0 || !gap.trim().is_empty() { out.push_str(&String::from_utf8_lossy(&wire_bytes(gap))); }
             let bytes = if cap[2].eq_ignore_ascii_case("b") {
                 decode_base64(cap[3].as_bytes()).unwrap_or_default()
             } else { decode_qp(&cap[3].replace('_', " ").into_bytes()) };
-            let charset = cap[1].to_ascii_lowercase();
-            let decoded = if charset == "utf-8" || charset == "us-ascii" { String::from_utf8_lossy(&bytes).into_owned() }
-                else if charset == "euc-kr" || charset == "ks_c_5601-1987" || charset == "x-windows-949" { EUC_KR.decode(&bytes).0.into_owned() }
-                else { String::from_utf8_lossy(&bytes).into_owned() };
+            let decoded = decode_charset(&bytes, &cap[1]).unwrap_or_else(|_| String::from_utf8_lossy(&bytes).into_owned());
             out.push_str(&decoded); last = m.end();
         }
-        out.push_str(&value[last..]); out.trim().to_owned()
+        out.push_str(&String::from_utf8_lossy(&wire_bytes(&value[last..]))); out.trim().to_owned()
     }
     fn decode_base64(input: &[u8]) -> Option<Vec<u8>> {
         let mut out = Vec::new(); let mut acc = 0u32; let mut bits = 0u8;
@@ -327,14 +336,14 @@ fn extract_eml(path: &Path) -> Result<Vec<Paragraph>, String> {
     fn decode_qp(input: &[u8]) -> Vec<u8> {
         let mut out = Vec::new(); let mut i = 0;
         while i < input.len() { if input[i] == b'=' { if i+2 < input.len() && input[i+1] == b'\r' && input[i+2] == b'\n' { i+=3; continue; }
+            if input.get(i+1) == Some(&b'\n') { i+=2; continue; }
+            if input.get(i+1) == Some(&b'=') { out.push(b'='); i+=2; continue; }
             if i+2 < input.len() { if let (Some(a),Some(b)) = ((input[i+1] as char).to_digit(16),(input[i+2] as char).to_digit(16)) { out.push((a*16+b) as u8); i+=3; continue; } } }
             out.push(input[i]); i+=1; } out
     }
     fn decode_body(bytes: &[u8], charset: &str, transfer: &str) -> Result<String, String> {
         let decoded = match transfer.trim().to_ascii_lowercase().as_str() { "base64" => decode_base64(bytes).ok_or("decode_error: 잘못된 MIME base64")?, "quoted-printable" => decode_qp(bytes), _ => bytes.to_vec() };
-        if charset.eq_ignore_ascii_case("euc-kr") || charset.eq_ignore_ascii_case("ks_c_5601-1987") || charset.eq_ignore_ascii_case("x-windows-949") {
-            Ok(EUC_KR.decode(&decoded).0.into_owned())
-        } else { String::from_utf8(decoded).map_err(|e| format!("decode_error: 이메일 텍스트 디코딩 실패: {e}")) }
+        decode_charset(&decoded, charset)
     }
 
     let normalized = source.replace("\r\n", "\n").replace('\r', "\n");
@@ -345,7 +354,6 @@ fn extract_eml(path: &Path) -> Result<Vec<Paragraph>, String> {
     let mut records = Vec::new();
     for (key,label) in [("subject","제목"),("from","발신"),("to","수신")] { if let Some((_,value)) = headers.iter().find(|(k,_)| k==key) {
         let value=decode_header(value); if !value.is_empty() { records.push(Paragraph { text:value, location_kind:"message".into(), location_label:label.into(), sequence:records.len()+1, section:Some("헤더".into()), hierarchy_level:None,is_table_cell:false,style_name:None,outline_level:None }); } } }
-    let boundary = headers.iter().find(|(k,_)| k=="content-type").and_then(|(_,v)| regex::Regex::new(r#"boundary\s*=\s*(?:"([^"]+)"|([^;\s]+))"#).unwrap().captures(v).map(|c| c.get(1).or_else(||c.get(2)).unwrap().as_str().to_owned()));
     let mut plain: Option<String> = None; let mut html: Option<String> = None;
     // Folded headers were parsed above; recursively follow each MIME container in wire order.
     let top_type=headers.iter().find(|(k,_)|k=="content-type").map(|(_,v)|v.as_str()).unwrap_or("text/plain");
@@ -366,12 +374,15 @@ fn extract_eml(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
         } else { out.push((ctype.to_owned(),disposition.to_owned(),transfer.to_owned(),body.to_owned(),String::new())); }
     }
-    collect_parts(body,top_type,"","",&mut raw_parts);
-    for (ctype,disposition,transfer,part_body,part_headers) in raw_parts {
+    let top_disp=headers.iter().find(|(k,_)|k=="content-disposition").map(|(_,v)|v.as_str()).unwrap_or("");
+    let top_transfer=headers.iter().find(|(k,_)|k=="content-transfer-encoding").map(|(_,v)|v.as_str()).unwrap_or("");
+    collect_parts(body,top_type,top_disp,top_transfer,&mut raw_parts);
+    for (ctype,disposition,transfer,part_body,_part_headers) in raw_parts {
         if disposition.to_ascii_lowercase().starts_with("attachment") { continue; }
         let typ=ctype.split(';').next().unwrap_or("").trim().to_ascii_lowercase(); if typ!="text/plain" && typ!="text/html" {continue;}
-        let charset=regex::Regex::new(r#"(?i)charset\s*=\s*(?:"([^"]+)"|([^;\s]+))"#).unwrap().captures(&ctype).and_then(|c|c.get(1).or_else(||c.get(2))).map(|m|m.as_str()).or_else(|| if !part_headers.is_empty(){Some("utf-8")}else{None}).unwrap_or("us-ascii");
-        let text=decode_body(part_body.trim_end_matches('\n').as_bytes(),charset,&transfer)?;
+        if (typ=="text/plain" && plain.is_some()) || (typ=="text/html" && html.is_some()) { continue; }
+        let charset=regex::Regex::new(r#"(?i)charset\s*=\s*(?:"([^"]+)"|([^;\s]+))"#).unwrap().captures(&ctype).and_then(|c|c.get(1).or_else(||c.get(2))).map(|m|m.as_str()).unwrap_or("us-ascii");
+        let text=decode_body(&wire_bytes(part_body.trim_end_matches('\n')),charset,&transfer)?;
         if typ=="text/plain" && plain.is_none(){plain=Some(text)} else if typ=="text/html" && html.is_none(){html=Some(text)}
     }
     let body=plain.or(html).unwrap_or_default();
@@ -382,6 +393,33 @@ fn extract_eml(path: &Path) -> Result<Vec<Paragraph>, String> {
 
 pub(crate) fn extract_eml_for_content(path: &Path) -> Result<String, String> {
     extract_eml(path).map(|records| records.into_iter().map(|r| r.text).collect::<Vec<_>>().join("\n"))
+}
+
+#[cfg(test)]
+mod eml_decode_tests {
+    use super::*;
+    #[test]
+    fn mime_bytes_transfer_charset_and_replacement() {
+        let dir = std::env::temp_dir().join(format!("hierx-eml-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("decode.eml");
+        for (charset, transfer, bytes, expected) in [
+            ("utf-8", "quoted-printable", b"=ED=95=\n=9C=EA=B8=80".as_slice(), "한글"),
+            ("utf-8", "quoted-printable", b"=ED=95=\r\n=9C=EA=B8=80".as_slice(), "한글"),
+            ("euc-kr", "8bit", b"\xc7\xd1\xb1\xdb".as_slice(), "한글"),
+            ("euc-kr", "base64", b"x9Gx2w==".as_slice(), "한글"),
+            ("utf-8", "8bit", b"bad\xff".as_slice(), "bad\u{fffd}"),
+            ("iso-8859-1", "quoted-printable", b"caf=E9".as_slice(), "café"),
+        ] {
+            let mut raw = format!("Content-Type: text/plain; charset={charset}\r\nContent-Transfer-Encoding: {transfer}\r\n\r\n").into_bytes();
+            raw.extend_from_slice(bytes);
+            std::fs::write(&path, raw).unwrap();
+            assert_eq!(extract_eml(&path).unwrap()[0].text, expected);
+        }
+        std::fs::write(&path, b"Content-Type: text/plain; charset=unknown-charset\n\nx").unwrap();
+        assert!(extract_eml(&path).unwrap_err().starts_with("decode_error:"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 /// Rust equivalent of Python `_apply_hierarchy`: match normalized text with

@@ -1,21 +1,23 @@
 From: sender@example.com
 To: receiver@example.com
-Subject: ?? EUC-KR ??
+Subject: =?utf-8?b?7ZWc6rWt7Ja0IOygnOuqqQ==?= EUC-KR
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="===============5976307378129978700=="
+Content-Type: multipart/mixed; boundary="===============8861744074204350700=="
 
---===============5976307378129978700==
-Content-Transfer-Encoding: base64
+--===============8861744074204350700==
 Content-Type: text/plain; charset="euc-kr"
+Content-Transfer-Encoding: base64
 
-Pz8gPz8/ID8/ID8/PyA/Pz8/Lgo/PyA/Pz8gPz8/Pz8u
+wK+9w8TJwMy+yyC6u7muIMfRsdvA1LTPtNkuDQrAzsTatfnAuyDBpMiuyPcgyK7AzsfVtM+02S4N
+Cg==
 
---===============5976307378129978700==
+--===============8861744074204350700==
 Content-Type: application/octet-stream
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment;
+ filename*=utf-8''%EC%8B%9C%ED%97%98%20%EC%B2%A8%EB%B6%80.bin
 MIME-Version: 1.0
 
-Pz8gPz8=
+aWdub3JlZA==
 
---===============5976307378129978700==--
+--===============8861744074204350700==--

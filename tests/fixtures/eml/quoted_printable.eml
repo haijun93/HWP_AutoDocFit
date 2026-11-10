@@ -1,22 +1,25 @@
 From: sender@example.com
 To: receiver@example.com
-Subject: ?? ?? quoted printable
+Subject: =?utf-8?b?7J247JqpIOy2nOugpSDsnbjsvZTrlKkg7Iuc7ZeY?=
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="===============7529394692623975939=="
+Content-Type: multipart/mixed; boundary="===============8945111236305856942=="
 
---===============7529394692623975939==
+--===============8945111236305856942==
 Content-Type: text/plain; charset="utf-8"
 Content-Transfer-Encoding: quoted-printable
 
-?? quoted-printable ??
-?? ??? ?????.
+=EC=9D=B8=EC=9A=A9 =EC=B6=9C=EB=A0=A5 =EB=B3=B8=EB=AC=B8=EC=9E=85=EB=8B=88=EB=
+=8B=A4.
+=ED=95=9C=EA=B8=80 =EB=AC=B8=EC=9E=A5=EA=B3=BC quoted-printable =EC=8B=9C=ED=
+=97=98=EC=9E=85=EB=8B=88=EB=8B=A4.
 
---===============7529394692623975939==
+--===============8945111236305856942==
 Content-Type: application/octet-stream
 Content-Transfer-Encoding: base64
 Content-Disposition: attachment;
+ filename*=utf-8''%EA%B2%80%ED%86%A0%20%EC%9E%90%EB%A3%8C.bin
 MIME-Version: 1.0
 
-cGF5bG9hZA==
+YXR0YWNobWVudCBwYXlsb2Fk
 
---===============7529394692623975939==--
+--===============8945111236305856942==--

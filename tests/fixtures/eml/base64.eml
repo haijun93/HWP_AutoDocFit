@@ -1,21 +1,23 @@
 From: sender@example.com
 To: receiver@example.com
-Subject: ?? ?? ??? base64
+Subject: =?utf-8?b?6riw67O4NjQg7J247L2U65SpIOuzuOusuCDsi5ztl5g=?=
 MIME-Version: 1.0
-Content-Type: multipart/mixed; boundary="===============0295073577681637734=="
+Content-Type: multipart/mixed; boundary="===============8549230591372622633=="
 
---===============0295073577681637734==
+--===============8549230591372622633==
 Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: base64
+Content-Transfer-Encoding: 8bit
 
-Pz8gPz8/IGJhc2U2NCA/Pz8/Py4NCj8xPyA/Pw0KPz8/PyA/Pz8gPz8/PyA/Pz8/Py4NCg==
+안녕하세요. base64 본문입니다.
+첨부 파일명도 색인에서 제외합니다.
 
---===============0295073577681637734==
-Content-Type: application/octet-stream
-Content-Transfer-Encoding: base64
+--===============8549230591372622633==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
 Content-Disposition: attachment;
+ filename*=utf-8''%ED%95%9C%EA%B8%80%20%EC%B2%A8%EB%B6%80.txt
 MIME-Version: 1.0
 
-Pz8gPz8=
+첨부 내용
 
---===============0295073577681637734==--
+--===============8549230591372622633==--
