@@ -6,12 +6,63 @@ Windows의 os.scandir는 디렉터리 목록과 함께 stat 정보를 주므로 
 from __future__ import annotations
 
 import os
+import json
+import subprocess
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
-from .rules import Rules, cloud_only
+from .rules import EXCLUDED_DIRS, EXCLUDED_NAMES, EXT_KIND, Rules, cloud_only
 from .store import path_key
 
 CHUNK = 500
+
+
+def _rust_klib():
+    repository = Path(__file__).resolve().parents[2]
+    base = Path(getattr(sys, "_MEIPASS", repository))
+    name = "klib.exe" if os.name == "nt" else "klib"
+    for candidate in (base / "resources" / name, repository / "klib" / "target" / "release" / name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _rust_enabled():
+    if os.environ.get("DOCFIT_RUST_TIMEMACHINE_SCAN", "1").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    try:
+        appdata = os.environ.get("APPDATA") or os.environ.get("LOCALAPPDATA")
+        settings_path = Path(appdata) / "HwpAutoDocFit" / "settings.json" if appdata else None
+        if settings_path and settings_path.is_file():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            return bool(settings.get("rust_timemachine_scan", True))
+    except (OSError, ValueError, TypeError):
+        pass
+    return True
+
+
+def _scan_rust(root, rules):
+    executable = _rust_klib()
+    if executable is None:
+        return None
+    base_extensions = {"." + ext: kind for ext, kind in EXT_KIND.items()}
+    request = {
+        "extensions": [ext.lstrip(".") for ext, kind in rules.extensions.items() if base_extensions.get(ext) == kind],
+        "extra_extensions": [ext.lstrip(".") for ext, kind in rules.extensions.items() if base_extensions.get(ext) != kind],
+        "extra_dirs": sorted(rules.dirs - EXCLUDED_DIRS),
+        "extra_names": [name for name in rules.names if name not in {x.casefold() for x in EXCLUDED_NAMES}],
+        "time_mode": rules.time_mode, "include_hidden": rules.include_hidden,
+    }
+    try:
+        completed = subprocess.run([str(executable), "tm-scan", root, json.dumps(request, ensure_ascii=False)],
+                                   capture_output=True, text=True, encoding="utf-8", timeout=120, check=True)
+        value = json.loads(completed.stdout)
+        if not isinstance(value, dict) or not isinstance(value.get("rows"), list):
+            return None
+        return value
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 @dataclass
@@ -41,6 +92,30 @@ def scan_root(store, root, rules=None, *, cancel=None, progress=None, chunk=CHUN
     known = store.known(root)
     seen_keys = set()
     pending = []
+    native = _scan_rust(root, rules) if _rust_enabled() and not (cancel and cancel()) else None
+    if native is not None:
+        result.skipped_dirs = int(native.get("skipped_dirs", 0))
+        result.errors.extend(tuple(error) for error in native.get("errors", []))
+        for row in native["rows"]:
+            key = path_key(row["path"])
+            seen_keys.add(key)
+            result.seen += 1
+            if not recalculate and known.get(key) == (row["size"], row["mtime"], row["ctime"]):
+                continue
+            pending.append({k: row[k] for k in ("path", "root", "name", "kind", "size", "mtime", "ctime", "work_time", "flags", "cloud")})
+            if len(pending) >= chunk:
+                result.written += store.upsert_many(pending)
+                pending = []
+                if progress:
+                    progress(result)
+        result.written += store.upsert_many(pending)
+        if not result.cancelled:
+            gone = [key for key in known if key not in seen_keys]
+            result.removed = store.delete_keys(gone) if gone else 0
+            store.set_meta("time_mode", rules.time_mode)
+        if progress:
+            progress(result)
+        return result
     stack = [root]
     while stack:
         if cancel and cancel():
