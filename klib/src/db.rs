@@ -938,9 +938,26 @@ impl Database {
 }
 
 fn normalized_path(path: &Path) -> std::result::Result<PathBuf, String> {
-    let full = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(path) };
+    let full = std::path::absolute(path).map_err(|e| e.to_string())?;
+    let mut existing = full.as_path();
+    let mut missing = Vec::new();
+    // Resolve the nearest existing ancestor, including Windows short names,
+    // trailing-dot aliases and junctions, before adding a not-yet-created suffix.
+    let resolved = loop {
+        match existing.canonicalize() {
+            Ok(resolved) => break resolved,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                let part = existing.components().next_back().ok_or_else(|| e.to_string())?;
+                missing.push(part.as_os_str().to_os_string());
+                existing = existing.parent().ok_or_else(|| e.to_string())?;
+            },
+            Err(e) => return Err(e.to_string()),
+        }
+    };
+    let mut combined = resolved;
+    for part in missing.into_iter().rev() { combined.push(part); }
     let mut out = PathBuf::new();
-    for part in full.components() {
+    for part in combined.components() {
         match part { std::path::Component::ParentDir => { out.pop(); }, std::path::Component::CurDir => {}, _ => out.push(part.as_os_str()) }
     }
     #[cfg(windows)]
@@ -1005,19 +1022,19 @@ fn unique_path(dir: &Path, filename: &str) -> PathBuf {
 
 /// 디렉터리 재귀 복사 (링크·정션 발견 시 명시적 오류 반환, 내부 파일명 충돌 회피, 복사 실패 에러 전파)
 pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    if is_or_has_reparse_point(src) {
+    if is_or_has_reparse_point(src) || is_or_has_reparse_point(dst) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {}", src.display()),
         ));
     }
-    if let (Ok(norm_src), Ok(norm_dst)) = (normalized_path(src), normalized_path(dst)) {
-        if norm_dst.starts_with(&norm_src) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("자신의 하위 디렉터리로 복사할 수 없습니다: {}", dst.display()),
-            ));
-        }
+    let norm_src = normalized_path(src).map_err(std::io::Error::other)?;
+    let norm_dst = normalized_path(dst).map_err(std::io::Error::other)?;
+    if norm_dst.starts_with(&norm_src) || norm_src.starts_with(&norm_dst) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("원본과 같거나 포함 관계인 폴더로 복사할 수 없습니다: {}", dst.display()),
+        ));
     }
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {

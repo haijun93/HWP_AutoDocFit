@@ -1037,6 +1037,60 @@ fn test_legacy_prepare_is_lazy_and_missing_copy_never_restores_original() {
 }
 
 #[test]
+fn test_copy_dir_rejects_overlapping_targets_before_creation() {
+    let ctx = TestContext::new("copy_overlap");
+    let src = ctx.dir.join("source");
+    fs::create_dir_all(src.join("nested")).unwrap();
+    fs::write(src.join("nested/document.txt"), "preserved").unwrap();
+    for dst in [src.clone(), src.join("export"), src.join("nested/../export"), ctx.dir.clone()] {
+        assert_eq!(db::copy_dir_recursive(&src, &dst).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    }
+    assert!(!src.join("export").exists());
+    assert_eq!(fs::read_to_string(src.join("nested/document.txt")).unwrap(), "preserved");
+    // A sibling sharing only a string prefix is safe.
+    let sibling = ctx.dir.join("source-copy");
+    db::copy_dir_recursive(&src, &sibling).unwrap();
+    assert_eq!(fs::read_to_string(sibling.join("nested/document.txt")).unwrap(), "preserved");
+}
+
+#[cfg(windows)]
+#[test]
+fn test_copy_and_export_reject_windows_path_aliases() {
+    let ctx = TestContext::new("copy_windows_alias");
+    let src = ctx.dir.join("source");
+    fs::create_dir_all(&src).unwrap();
+    fs::write(src.join("document.txt"), "preserved").unwrap();
+    // Win32 trailing-dot aliases, like 8.3 names, differ lexically but identify
+    // the same directory. The old comparison would copy into its own output.
+    let alias = ctx.dir.join("source.");
+    assert_eq!(alias.canonicalize().unwrap(), src.canonicalize().unwrap());
+    assert!(db::copy_dir_recursive(&alias, &src.join("export")).is_err());
+    assert!(!src.join("export").exists());
+
+    let database = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let bid = database.box_create("alias", "").unwrap();
+    let iid = database.item_add(bid, "folder", src.to_str().unwrap(), "folder", "core", 0., 0., None).unwrap();
+    let item = database.item_get(iid).unwrap().unwrap();
+    let alias_root = ctx.dir.with_file_name(format!("{}.", ctx.dir.file_name().unwrap().to_str().unwrap()));
+    let dst = alias_root.join(Path::new(&item.managed_path).strip_prefix(&ctx.dir).unwrap()).join("export");
+    assert!(database.box_export(bid, dst.to_str().unwrap()).is_err());
+    assert!(!Path::new(&item.managed_path).join("export").exists());
+    assert_eq!(database.box_get(bid).unwrap().unwrap().0.export_path, None);
+
+    let link = ctx.dir.join("symlink");
+    std::os::windows::fs::symlink_dir(&src, &link).unwrap();
+    let junction = ctx.dir.join("junction");
+    let created = std::process::Command::new("cmd.exe").args(["/C", "mklink", "/J"])
+        .arg(&junction).arg(&src).output().unwrap();
+    assert!(created.status.success(), "{created:?}");
+    for alias in [&link, &junction] {
+        assert!(db::copy_dir_recursive(&src, &alias.join("export")).is_err());
+        assert!(database.box_export(bid, alias.join("export").to_str().unwrap()).is_err());
+    }
+    assert!(!src.join("export").exists());
+}
+
+#[test]
 fn test_export_uses_edited_managed_folder_and_rejects_unsafe_targets() {
     let ctx = TestContext::new("managed_export");
     let db = Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap();
