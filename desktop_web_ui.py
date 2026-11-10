@@ -3131,6 +3131,22 @@ def _set_window_on_top(window, enabled):
         window.on_top = bool(enabled)
 
 
+def _initial_window_settings(bridge):
+    """Read startup-only window preferences without waiting for the Tk proxy."""
+    if isinstance(bridge.gui, PendingGui):
+        try:
+            settings_path = vars(bridge.gui).get('_settings_path')
+            if settings_path is None:
+                return {}
+            from docfit_app.configuration_service import ConfigurationService
+            from docfit_app.settings_service import SettingsService
+            store = SettingsService(settings_path)
+            return ConfigurationService(store).snapshot().get('values', {})
+        except Exception:
+            return {}
+    return bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
+
+
 class _Win32WindowApi:
     """Monitor work-area and SetWindowPos wrapper; isolated for fake-driven tests."""
     SPI_GETWORKAREA = 0x0030
@@ -3624,7 +3640,7 @@ def run_webview(gui):
     bridge.window = window
     bridge._saved_window = {'x': x, 'y': y, 'width': width, 'height': height, 'topmost': False}
     try:
-        initial_settings = bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
+        initial_settings = _initial_window_settings(bridge)
         _set_window_on_top(window, bool(initial_settings.get('always_on_top', False)))
         bridge._saved_window['topmost'] = bool(initial_settings.get('always_on_top', False))
     except Exception:

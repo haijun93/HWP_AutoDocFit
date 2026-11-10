@@ -3486,6 +3486,7 @@ def main():
         desktop_web_ui.STAGE_ORDER = 진행단계_순서
         desktop_web_ui.APP_ICON = str(번들_앱아이콘_찾기() or "")
         화면 = desktop_web_ui.PendingGui(준비됨, 보관)
+        object.__setattr__(화면, "_settings_path", 설정_파일_경로())
         if not desktop_web_ui.run_webview(화면):
             tk_준비_확인()
             _닫기_스플래시()

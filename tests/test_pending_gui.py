@@ -66,3 +66,25 @@ class PendingGuiBridgeTest(unittest.TestCase):
         ready.set()
         bridge = DesktopWebBridge(PendingGui(ready, holder))
         self.assertIsInstance(bridge._table_units_hwp(), _App)
+
+    def test_webview_initial_settings_do_not_wait_for_pending_tk(self):
+        import sys
+        from pathlib import Path
+        from unittest.mock import Mock, patch
+        import desktop_web_ui
+        from desktop_web_ui import DesktopWebBridge
+
+        ready = threading.Event()
+        pending = PendingGui(ready, {})
+        object.__setattr__(pending, '_settings_path', Path(__file__).with_name('missing-cold-start-settings.json'))
+        bridge = DesktopWebBridge(pending)
+        class EventHook:
+            def __iadd__(self, callback):
+                return self
+        class Window:
+            events = SimpleNamespace(closing=EventHook())
+        window = Window()
+        fake_webview = SimpleNamespace(screens=[SimpleNamespace(width=1280, height=900)])
+        settings = desktop_web_ui._initial_window_settings(bridge)
+        self.assertTrue(settings['always_on_top'])
+        self.assertFalse(ready.is_set())
