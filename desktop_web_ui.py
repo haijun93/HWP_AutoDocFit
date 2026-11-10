@@ -3123,13 +3123,35 @@ def _file_size(path):
 
 
 def _set_window_on_top(window, enabled):
-    """앱 창 '항상 위'. pywebview 6은 set_on_top 대신 on_top 속성을 쓴다
-    (사용자 보고 2026-11-07: '항상 위' 단추가 AttributeError로 동작하지 않음)."""
-    setter = getattr(window, "set_on_top", None)
-    if callable(setter):
-        setter(bool(enabled))
-    else:
-        window.on_top = bool(enabled)
+    """Set topmost directly from the caller without waiting for the WebView UI thread.
+
+    pywebview's ``on_top`` setter calls WinForms ``Invoke`` synchronously. The
+    bridge can run on a Tk worker while the WinForms UI thread is waiting for
+    a callback from that worker, so use Win32 SetWindowPos on the native HWND.
+    """
+    # Non-pywebview adapters and test doubles retain their small synchronous
+    # interface. The real pywebview Window exposes ``native`` after show().
+    if not hasattr(window, "native"):
+        setter = getattr(window, "set_on_top", None)
+        if callable(setter):
+            setter(bool(enabled))
+        else:
+            window.on_top = bool(enabled)
+        return True
+
+    enabled = bool(enabled)
+
+    def apply():
+        try:
+            hwnd = _PyWebViewWindow(window).handle()
+            win32 = _Win32WindowApi()
+            x, y, width, height = win32.window_rect(hwnd)
+            win32.set_window_pos(hwnd, x, y, width, height, enabled)
+        except Exception:
+            logging.getLogger(__name__).warning("항상 위 창 상태 적용 실패", exc_info=True)
+
+    threading.Thread(target=apply, name="window-topmost", daemon=True).start()
+    return True
 
 
 def _initial_window_settings(bridge):
