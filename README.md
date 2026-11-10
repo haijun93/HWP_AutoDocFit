@@ -15,6 +15,11 @@
 <p align="center"><img src="docs/media/cardnews/02-work-modes.png" alt="문서 편집 작업 방식 선택" width="860"></p>
 
 <!-- DEMO:START -->
+## 시연 영상
+
+<video src="docs/media/demo.mp4" controls muted width="100%"></video>
+
+[![시연 영상](docs/media/demo-poster.png)](docs/media/demo.mp4)
 <!-- DEMO:END -->
 
 ## 개발 배경
