@@ -32,7 +32,7 @@ pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
 fn collect(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if path.is_file() {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "hwp") {
+        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "hwp" | "xlsx" | "pptx") {
             let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e|e.to_string())?.join(path) };
             files.push(absolute);
         }

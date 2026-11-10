@@ -95,7 +95,7 @@ class TimemachineServiceTests(unittest.TestCase):
 
     def test_content_index_distributes_supported_and_other_formats(self):
         self.enable()
-        documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf", self.root / "d.docx"]
+        documents = [self.root / "a.txt", self.root / "b.md", self.root / "c.pdf", self.root / "d.docx", self.root / "e.xlsx", self.root / "f.pptx"]
         for document in documents:
             document.write_text("distribution probe", encoding="utf-8")
         rust_batches, python_calls = [], []
@@ -108,9 +108,9 @@ class TimemachineServiceTests(unittest.TestCase):
             return original(path)
         with patch.object(self.service, "_run_klib_index", side_effect=fake_rust), \
              patch.object(self.service.content_index, "index_file", side_effect=record_python):
-            self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf", "docx"}), threading.Event())
-        self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md", ".docx"})
-        self.assertCountEqual(python_calls, [".txt", ".md", ".pdf", ".docx"])
+            self.service._content_index_worker([str(self.root)], frozenset({"txt", "md", "pdf", "docx", "xlsx", "pptx"}), threading.Event())
+        self.assertEqual({Path(path).suffix.lower() for path in rust_batches}, {".txt", ".md", ".docx", ".xlsx", ".pptx"})
+        self.assertCountEqual(python_calls, [".txt", ".md", ".pdf", ".docx", ".xlsx", ".pptx"])
 
     def test_content_index_indexes_docx_via_rust(self):
         self.enable()
