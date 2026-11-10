@@ -2,8 +2,24 @@
 use crate::json::Value;
 use sha2::{Digest, Sha256};
 use std::io::Read;
+use std::sync::LazyLock;
 use zip::ZipArchive;
 use unicode_normalization::UnicodeNormalization;
+
+static UUID_NAME_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").unwrap());
+static DIGITS_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"\d+").unwrap());
+static COLLAPSE_SPACES_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r" {2,}").unwrap());
+static COLLAPSE_UNDERSCORES_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r"_{2,}").unwrap());
+static INVALID_TITLE_CHARS_RE: LazyLock<regex::Regex> = LazyLock::new(|| regex::Regex::new(r#"[\\/:*?"<>|\x00-\x1f]"#).unwrap());
+
+fn compile_replace_pattern(rule: &Value) -> Option<regex::Regex> {
+    let find = match rule.get("find") { Some(Value::Str(s)) => s.as_str(), _ => "" };
+    let regex_mode = matches!(rule.get("regex"), Some(Value::Bool(true)));
+    let case_sensitive = !matches!(rule.get("case"), Some(Value::Bool(false)));
+    let pattern = if regex_mode { find.to_string() } else { regex::escape(find) };
+    let pattern = if case_sensitive { pattern } else { format!("(?i:{pattern})") };
+    regex::Regex::new(&pattern).ok()
+}
 
 pub fn preview(request: &Value) -> Value {
     let empty = Vec::new();
@@ -11,6 +27,13 @@ pub fn preview(request: &Value) -> Value {
         Some(Value::Arr(items)) => items,
         _ => &empty,
     };
+    let rules = match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] };
+    // User-supplied patterns are compiled once per preview request, not once per file.
+    let replace_patterns: Vec<Option<regex::Regex>> = rules.iter().map(|rule| {
+        if matches!(rule.get("kind"), Some(Value::Str(kind)) if kind == "replace") {
+            compile_replace_pattern(rule)
+        } else { None }
+    }).collect();
     let mut plan_parts = Vec::new();
     let existing: std::collections::HashSet<String> = match request.get("existing_paths") { Some(Value::Arr(v)) => v.iter().filter_map(|x| if let Value::Str(s)=x {Some(path_key(s))} else {None}).collect(), _ => std::collections::HashSet::new() };
     let mut items: Vec<Value> = entries.iter().enumerate().map(|(position, entry)| {
@@ -28,27 +51,22 @@ pub fn preview(request: &Value) -> Value {
         let mut exif_missing = false;
         let mut title_error: Option<&str> = None;
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(""));
-        for rule in match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] } {
+        for (rule_index, rule) in rules.iter().enumerate() {
             if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
             let val = |k: &str, d: &str| match rule.get(k) { Some(Value::Str(x)) => x.clone(), _ => d.to_string() };
             match val("kind", "").as_str() {
                 "replace" => {
-                    let find = val("find", "");
                     let to = val("to", "");
                     let scope = val("scope", "stem");
-                    let regex_mode = matches!(rule.get("regex"), Some(Value::Bool(true)));
-                    let case_sensitive = !matches!(rule.get("case"), Some(Value::Bool(false)));
                     let first = val("count", "all") == "first";
                     let replace_text = |input: &str| -> String {
-                        let pattern = if regex_mode { find.clone() } else { regex::escape(&find) };
-                        let pattern = if case_sensitive { pattern } else { format!("(?i:{pattern})") };
-                        match regex::Regex::new(&pattern) {
-                            Ok(re) => {
+                        match replace_patterns[rule_index].as_ref() {
+                            Some(re) => {
                                 let replacement = regex::NoExpand(&to);
                                 if first { re.replacen(input, 1, replacement).into_owned() }
                                 else { re.replace_all(input, replacement).into_owned() }
                             }
-                            Err(_) => input.to_string(),
+                            None => input.to_string(),
                         }
                     };
                     match scope.as_str() {
@@ -64,8 +82,7 @@ pub fn preview(request: &Value) -> Value {
                 },
                 "add" => { let text=val("text", ""); let sep=val("sep", ""); if !text.is_empty() { if val("position", "prefix")=="suffix" { stem=format!("{stem}{}{text}", if stem.is_empty() { "" } else { &sep }); } else { stem=format!("{text}{}{stem}", if stem.is_empty() { "" } else { &sep }); } } },
                 "uuid_replace" => {
-                    let uuid_name = regex::Regex::new(r"(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$").unwrap();
-                    if uuid_name.is_match(&stem) { stem = val("text", ""); }
+                    if UUID_NAME_RE.is_match(&stem) { stem = val("text", ""); }
                 },
                 "clear" => stem.clear(),
                 "date" => {
@@ -103,15 +120,13 @@ pub fn preview(request: &Value) -> Value {
                     };
                 },
                 "digits_keep" => {
-                    let re = regex::Regex::new(r"\d+").unwrap();
-                    stem = re.find_iter(&stem).map(|m| m.as_str()).collect();
+                    stem = DIGITS_RE.find_iter(&stem).map(|m| m.as_str()).collect();
                 },
                 "digits_delete" => {
-                    stem = regex::Regex::new(r"\d+").unwrap().replace_all(&stem, "").into_owned();
+                    stem = DIGITS_RE.replace_all(&stem, "").into_owned();
                 },
                 "digits_pad" => {
-                    let re = regex::Regex::new(r"\d+").unwrap();
-                    let matches: Vec<_> = re.find_iter(&stem).collect();
+                    let matches: Vec<_> = DIGITS_RE.find_iter(&stem).collect();
                     let picked = if val("which", "last") == "first" { matches.first() } else { matches.last() };
                     if let Some(m) = picked {
                         let width = rule.get("digits").and_then(|v| if let Value::Num(n)=v {Some(*n as usize)} else {None}).unwrap_or(3);
@@ -139,8 +154,7 @@ pub fn preview(request: &Value) -> Value {
                     }
                 },
                 "number_shift" => {
-                    let re = regex::Regex::new(r"\d+").unwrap();
-                    let matches: Vec<_> = re.find_iter(&stem).collect();
+                    let matches: Vec<_> = DIGITS_RE.find_iter(&stem).collect();
                     let picked = if val("which", "first") == "last" {matches.last()} else {matches.first()};
                     if let Some(m) = picked {
                         let delta = rule.get("delta").and_then(|v| if let Value::Num(n)=v {Some(*n as i64)} else {None}).unwrap_or(1);
@@ -205,8 +219,8 @@ pub fn preview(request: &Value) -> Value {
                     stem = map_width(&stem, &width);
                     match val("underscore", "keep").as_str() { "to_space" => stem = stem.replace('_', " "), "from_space" => stem = stem.replace(' ', "_"), _ => {} }
                     if !matches!(rule.get("collapse_spaces"), Some(Value::Bool(false))) {
-                        stem = regex::Regex::new(r" {2,}").unwrap().replace_all(&stem, " ").into_owned();
-                        stem = regex::Regex::new(r"_{2,}").unwrap().replace_all(&stem, "_").into_owned();
+                        stem = COLLAPSE_SPACES_RE.replace_all(&stem, " ").into_owned();
+                        stem = COLLAPSE_UNDERSCORES_RE.replace_all(&stem, "_").into_owned();
                     }
                     if !matches!(rule.get("strip"), Some(Value::Bool(false))) { stem = stem.trim_matches([' ', '_', '-']).to_string(); }
                 },
@@ -274,7 +288,7 @@ pub fn preview(request: &Value) -> Value {
                     chosen.sort_unstable_by(|a,b| b.0.cmp(&a.0));
                     let marks = matches!(rule.get("keep_marks"), Some(Value::Bool(true)));
                     for (b,e) in chosen { let replacement = if marks {format!("{opener}{closer}")} else {String::new()}; stem.replace_range(b..e, &replacement); }
-                    stem = regex::Regex::new(r" {2,}").unwrap().replace_all(stem.trim(), " ").into_owned();
+                    stem = COLLAPSE_SPACES_RE.replace_all(stem.trim(), " ").into_owned();
                 },
                 "ext_del" => ext.clear(),
                 "ext_add" => { stem.push_str(&ext); ext=val("ext", ""); },
@@ -287,8 +301,9 @@ pub fn preview(request: &Value) -> Value {
         let new_path = parent.join(&new_name).to_string_lossy().replace('/', "\\");
         let fp = vec![Value::Num(number("size")), Value::Num((number("mtime") * 1000.0).trunc())];
         let old_name = match get("name") { Some(Value::Str(s)) => s.as_str(), _ => "" };
-        let invalid_reason = if let Some(reason) = title_error { Some(reason) }
-            else if new_name.trim().is_empty() { Some("이름이 비어 있습니다.") } else { None };
+        let invalid_reason = title_error.map(str::to_string)
+            .or_else(|| invalid_rename_reason(&new_name))
+            .or_else(|| (new_path.chars().count() > 32767).then(|| "경로가 너무 깁니다.".to_string()));
         let status = if invalid_reason.is_some() { "invalid" } else if new_name == old_name { "unchanged" } else { "ok" };
         let mut warnings: Vec<Value> = Vec::new();
         if title_unsupported { warnings.push(Value::from("title_unsupported")); }
@@ -366,6 +381,31 @@ fn set_conflict(item: &mut Value, reason: &str) { if let Value::Obj(fields)=item
 
 fn split_name(name: &str) -> (&str, &str) {
     match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name, "") }
+}
+
+fn invalid_rename_reason(name: &str) -> Option<String> {
+    if name.is_empty() || name.trim().is_empty() {
+        return Some("이름이 비어 있습니다.".into());
+    }
+    if name.chars().any(|c| "\\/:*?\"<>|".contains(c)) {
+        return Some("쓸 수 없는 글자(\\ / : * ? \" < > |)가 있습니다.".into());
+    }
+    if name.chars().any(|c| (c as u32) < 32) {
+        return Some("제어 문자가 있습니다.".into());
+    }
+    let reserved = name.split('.').next().unwrap_or("").trim_end_matches(' ').to_uppercase();
+    if matches!(reserved.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (1..=9).any(|n| reserved == format!("COM{n}") || reserved == format!("LPT{n}"))
+    {
+        return Some("Windows 예약 이름(CON·NUL·COM1 등)입니다.".into());
+    }
+    if matches!(name.chars().last(), Some('.' | ' ')) {
+        return Some("이름 끝에 마침표나 공백을 쓸 수 없습니다.".into());
+    }
+    if name.encode_utf16().count() > 255 {
+        return Some("이름이 UTF-16 기준 255단위를 넘습니다(일부 이모지는 2단위로 계산됩니다).".into());
+    }
+    None
 }
 
 fn place(stem: &str, text: &str, position: &str, sep: &str) -> String {
@@ -471,7 +511,7 @@ fn read_exif_datetime(path: &str, ext: &str) -> Option<time::OffsetDateTime> {
 }
 
 fn sanitize_title(title: &str) -> String {
-    regex::Regex::new(r#"[\\/:*?"<>|\x00-\x1f]"#).unwrap().replace_all(title, "_").trim_end_matches(['.', ' ']).trim().to_string()
+    INVALID_TITLE_CHARS_RE.replace_all(title, "_").trim_end_matches(['.', ' ']).trim().to_string()
 }
 
 fn json_compact(value: &Value) -> String {
@@ -487,5 +527,20 @@ fn json_compact(value: &Value) -> String {
         },
         Value::Arr(items) => format!("[{}]", items.iter().map(json_compact).collect::<Vec<_>>().join(",")),
         Value::Obj(items) => format!("{{{}}}", items.iter().map(|(k,v)| format!("{}:{}", crate::json::to_string(&Value::Str(k.clone())), json_compact(v))).collect::<Vec<_>>().join(",")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::invalid_rename_reason;
+
+    #[test]
+    fn rename_name_validation_matches_windows_filename_rules() {
+        assert_eq!(invalid_rename_reason(""), Some("이름이 비어 있습니다.".into()));
+        assert_eq!(invalid_rename_reason("name "), Some("이름 끝에 마침표나 공백을 쓸 수 없습니다.".into()));
+        assert_eq!(invalid_rename_reason("CON.txt"), Some("Windows 예약 이름(CON·NUL·COM1 등)입니다.".into()));
+        assert_eq!(invalid_rename_reason("a/b"), Some("쓸 수 없는 글자(\\ / : * ? \" < > |)가 있습니다.".into()));
+        assert_eq!(invalid_rename_reason(&"a".repeat(256)), Some("이름이 UTF-16 기준 255단위를 넘습니다(일부 이모지는 2단위로 계산됩니다).".into()));
+        assert_eq!(invalid_rename_reason("report.jpg"), None);
     }
 }
