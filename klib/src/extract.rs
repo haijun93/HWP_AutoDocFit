@@ -127,6 +127,7 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
             Ok(records)
         },
+        "docx" => extract_docx(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
 }
@@ -242,7 +243,7 @@ struct XmlNode { name: String, content: Vec<XmlContent> }
 #[derive(Clone)]
 enum XmlContent { Text(String), Node(XmlNode) }
 
-fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
+fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, String> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_reader(xml);
     reader.config_mut().trim_text(false);
@@ -260,25 +261,40 @@ fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
                 if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
             }
             Ok(Event::Text(e)) => {
-                let decoded = e.decode().map_err(|e| format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}"))?;
+                let decoded = e.decode().map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
                 if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
             }
             Ok(Event::CData(e)) => {
-                let decoded = e.decode().map_err(|e| format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}"))?;
+                let decoded = e.decode().map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
                 if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
             }
-            Ok(Event::GeneralRef(_)) => return Err(format!("corrupt: XML 엔티티 참조 거부 ({section})")),
-            Ok(Event::DocType(_)) => return Err(format!("corrupt: DTD 및 외부 엔티티 거부 ({section})")),
+            Ok(Event::GeneralRef(_)) => return Err(format!("corrupt: XML 엔티티 참조 거부 ({context})")),
+            Ok(Event::DocType(_)) => return Err(format!("corrupt: DTD 및 외부 엔티티 거부 ({context})")),
             Ok(Event::End(_)) => {
-                let node = stack.pop().ok_or_else(|| format!("corrupt: 잘못된 XML 구조 ({section})"))?;
+                let node = stack.pop().ok_or_else(|| format!("corrupt: 잘못된 XML 구조 ({context})"))?;
                 if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
-            Err(e) => return Err(format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}")),
+            Err(e) => return Err(format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}")),
         }
     }
-    if !stack.is_empty() { return Err(format!("corrupt: 닫히지 않은 XML 태그 ({section})")); }
+    if !stack.is_empty() { return Err(format!("corrupt: 닫히지 않은 XML 태그 ({context})")); }
+    Ok(root)
+}
+
+fn iter_text(node: &XmlNode) -> String {
+    let mut out = String::new();
+    for item in &node.content { match item { XmlContent::Text(t) => out.push_str(t), XmlContent::Node(c) => out.push_str(&iter_text(c)) } }
+    out
+}
+
+fn child_nodes(node: &XmlNode) -> impl Iterator<Item=&XmlNode> {
+    node.content.iter().filter_map(|c| if let XmlContent::Node(n) = c { Some(n) } else { None })
+}
+
+fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
+    let root = parse_xml_tree(xml, "HWPX 섹션", section)?;
     fn walk(node: &XmlNode, in_table: bool, out: &mut Vec<String>) {
         // Python extractors_hwpx.walk: cell descendants are traversed only to
         // reach the cell and then skipped altogether.
@@ -314,13 +330,169 @@ fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
             } },
         }
     }
-    fn iter_text(node: &XmlNode) -> String {
-        let mut out = String::new();
-        for item in &node.content { match item { XmlContent::Text(t) => out.push_str(t), XmlContent::Node(c) => out.push_str(&iter_text(c)) } }
-        out
-    }
-    fn child_nodes(node: &XmlNode) -> impl Iterator<Item=&XmlNode> { node.content.iter().filter_map(|c| if let XmlContent::Node(n) = c { Some(n) } else { None }) }
     let mut out = Vec::new();
     for child in child_nodes(&root) { walk(child, false, &mut out); }
     Ok(out)
+}
+
+const OLE_HEADER: &[u8] = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1";
+
+fn check_ole_encrypted(path: &Path) -> Result<(), String> {
+    if let Ok(mut f) = std::fs::File::open(path) {
+        let mut header = [0u8; 512];
+        if let Ok(n) = f.read(&mut header) {
+            let slice = &header[..n];
+            if slice.starts_with(OLE_HEADER) {
+                let has_encrypted_package = slice.windows(b"EncryptedPackage".len()).any(|w| w == b"EncryptedPackage");
+                let has_encryption_info = slice.windows(b"EncryptionInfo".len()).any(|w| w == b"EncryptionInfo");
+                if has_encrypted_package || has_encryption_info {
+                    return Err("encrypted: 암호화된 Office 복합 문서(OLE)".into());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn extract_docx(path: &Path) -> Result<Vec<Paragraph>, String> {
+    if !path.is_file() {
+        return Err(format!("corrupt: 파일을 찾을 수 없음: {}", path.display()));
+    }
+    check_ole_encrypted(path)?;
+
+    let file = std::fs::File::open(path).map_err(|e| format!("corrupt: 압축 파일 열기 실패: {e}"))?;
+    let mut zip = ZipArchive::new(file).map_err(|e| format!("corrupt: 올바른 ZIP 오피스 문서가 아님: {e}"))?;
+    if zip.len() > MAX_ENTRIES {
+        return Err(format!("corrupt: 압축 항목 수 초과: {}", zip.len()));
+    }
+
+    let mut names = Vec::new();
+    let mut unique = std::collections::HashSet::new();
+    let mut total = 0u64;
+
+    for i in 0..zip.len() {
+        let entry = zip.by_index(i).map_err(|e| format!("corrupt: DOCX 항목 읽기 실패: {e}"))?;
+        let raw_name = entry.name().map_err(|e| format!("corrupt: DOCX 항목 이름 읽기 실패: {e}"))?;
+        let name = safe_member_name(&raw_name)?;
+        if !unique.insert(name.clone()) {
+            return Err(format!("corrupt: 중복된 압축 항목: {raw_name}"));
+        }
+        if entry.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) {
+            return Err(format!("corrupt: 심볼릭 링크 압축 항목 거부: {raw_name}"));
+        }
+        if entry.encrypted() {
+            return Err(format!("encrypted: 암호화된 ZIP 항목: {raw_name}"));
+        }
+        let size = entry.size();
+        if size > MAX_FILE_SIZE {
+            return Err(format!("corrupt: 단일 파일 크기 초과: {raw_name}"));
+        }
+        total = total.saturating_add(size);
+        if total > MAX_TOTAL_SIZE {
+            return Err(format!("corrupt: 총 압축 해제 크기 초과: {total}"));
+        }
+        let compressed = entry.compressed_size();
+        if compressed > 0 && size / compressed > MAX_COMPRESSION_RATIO {
+            return Err(format!("corrupt: 비정상 압축률 감지: {raw_name}"));
+        }
+        names.push(name);
+    }
+
+    if !names.iter().any(|n| n == "word/document.xml") {
+        return Err("corrupt: DOCX 필수 파일(word/document.xml) 누락".into());
+    }
+
+    let mut records = Vec::new();
+    let mut seq = 1;
+
+    // 1. 본문 문단 추출
+    {
+        let mut entry = zip.by_name("word/document.xml").map_err(|e| format!("corrupt: DOCX 본문 XML 파싱 실패: {e}"))?;
+        let mut xml = Vec::new();
+        entry.read_to_end(&mut xml).map_err(|e| format!("corrupt: DOCX 본문 읽기 실패: {e}"))?;
+        let doc_root = parse_xml_tree(&xml, "DOCX 본문", "word/document.xml")?;
+        let mut body_texts = Vec::new();
+        collect_docx_p_texts(&doc_root, &mut body_texts);
+        let mut p_num = 1;
+        for text in body_texts {
+            records.push(Paragraph {
+                text,
+                location_kind: "paragraph".into(),
+                location_label: format!("문단 {p_num}"),
+                sequence: seq,
+                section: Some("본문".into()),
+                hierarchy_level: None,
+                is_table_cell: false,
+                style_name: None,
+                outline_level: None,
+            });
+            p_num += 1;
+            seq += 1;
+        }
+    }
+
+    // 2. 머리글/바닥글 문단 추출
+    let mut hf_names: Vec<String> = names.iter().filter(|n| {
+        (n.starts_with("word/header") || n.starts_with("word/footer")) && n.ends_with(".xml")
+    }).cloned().collect();
+
+    hf_names.sort_by_key(|n| {
+        let is_footer = if n.contains("footer") { 1 } else { 0 };
+        let num: u64 = n.chars().filter(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(0);
+        (is_footer, num)
+    });
+
+    for hf_name in hf_names {
+        let stem = Path::new(&hf_name).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        let is_header = stem.contains("header");
+        let section_label = if is_header { "머리글" } else { "바닥글" };
+        let hf_index: String = stem.chars().filter(|c| c.is_ascii_digit()).collect();
+        let label_prefix = if hf_index.is_empty() {
+            section_label.to_owned()
+        } else {
+            format!("{section_label} {hf_index}")
+        };
+
+        let mut entry = zip.by_name(&hf_name).map_err(|e| format!("corrupt: DOCX 머리글/바닥글 XML 파싱 실패 ({hf_name}): {e}"))?;
+        let mut xml = Vec::new();
+        entry.read_to_end(&mut xml).map_err(|e| format!("corrupt: DOCX 머리글/바닥글 읽기 실패 ({hf_name}): {e}"))?;
+        let hf_root = parse_xml_tree(&xml, "DOCX 머리글/바닥글", &hf_name)?;
+        let mut hf_texts = Vec::new();
+        collect_docx_p_texts(&hf_root, &mut hf_texts);
+        let mut hf_p_num = 1;
+        for text in hf_texts {
+            records.push(Paragraph {
+                text,
+                location_kind: "paragraph".into(),
+                location_label: format!("{label_prefix} 문단 {hf_p_num}"),
+                sequence: seq,
+                section: Some(label_prefix.clone()),
+                hierarchy_level: None,
+                is_table_cell: false,
+                style_name: None,
+                outline_level: None,
+            });
+            hf_p_num += 1;
+            seq += 1;
+        }
+    }
+
+    if records.is_empty() {
+        return Err("empty: 추출 가능한 DOCX 본문 텍스트가 없음".into());
+    }
+
+    Ok(records)
+}
+
+fn collect_docx_p_texts(node: &XmlNode, out: &mut Vec<String>) {
+    if node.name == "p" {
+        let text = iter_text(node);
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            out.push(trimmed.to_owned());
+        }
+    }
+    for child in child_nodes(node) {
+        collect_docx_p_texts(child, out);
+    }
 }
