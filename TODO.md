@@ -14,7 +14,10 @@
 - [ ] **4. 색인 갱신의 전체 훑기 제거**: `index_file`이 변경 없는 파일도 `SELECT 1 FROM content_paragraph_fts WHERE path=?`로 확인한다(건당 64ms, 3,000개면 바뀐 것이 없어도 약 3분). `DELETE ... WHERE path=?`도 건당 57ms씩 두 번이다. 대응 표를 두거나 `content_meta`만 믿고 확인을 생략한다.
 - [ ] **5. 근접 검색(`near`)의 조합 폭발 막기**: 낱말 위치의 모든 조합을 `itertools.product`로 만든다. 위치를 정렬해 창을 미는 방식으로 바꾼다. 후보 문서마다 본문을 읽는 조회도 `path=?` 전체 훑기다.
 - [ ] **6. 색인 시 문서당 고정 비용 줄이기**: `analyze_levels`가 파일마다 `settings.json`을 읽고 DLL을 다시 연다(`docfit_app/hierarchy_bridge.py`). 파일마다 트랜잭션을 따로 커밋한다. `content_short_grams`는 2글자 조각마다 전체 경로 문자열을 저장한다(3,000문서에서 44.5만 행) — 정수 문서 번호로 바꾼다.
-- [ ] **7. Rust 쪽(klib 자료함 검색) 정리**: `hierarchy/src/search.rs`의 `aggregate`가 후보마다 문서를 선형 탐색한다(후보 4,000건이면 최대 1,600만 번 비교) — `HashMap`으로 바꾼다. 정렬 기준이 점수 우선이라 위계 수준은 점수가 완전히 같을 때만 쓰이는데, Python 쪽은 위계 수준이 1순위다. 두 검색의 순위 정책 차이가 의도인지 사용자에게 확인한다. `rank_documents`는 호출하는 곳이 없다.
+- [x] **7-가. klib 자료함 검색 순위를 위계 우선으로 (사용자 결정, 2026-11-10: "둘 다 위계 우선")**: `hierarchy/src/search.rs`의 `aggregate` 정렬을 위계 수준 → 언급 수 → 최신 → 점수 순으로 바꿨다(Python `hierarchy_relevance`와 같은 순서, 본문은 모든 위계 수준 뒤). hierarchy 시험 40건 통과, klib는 `cargo check --tests`만 통과(Linux에서는 Win32 링크가 안 돼 klib 시험 실행은 Windows CI에서 확인).
+- [ ] **7-나. klib 색인에 위계 수준 넣기 (7-가가 실제로 효과를 내려면 필요)**: `klib/src/content.rs`의 `index_file`이 모든 문단을 `level: 0`(본문)으로 색인한다. 그래서 자료함 검색에서는 위계 수준이 전부 같아 순위가 언급 수·최신·점수로만 정해진다. `extract_blocks`가 이미 hwpx·docx의 개요 수준을 뽑으므로 이를 색인에 넣는다. 기존 색인은 다시 만들어야 하므로 Rust 리뷰 절의 스키마 정리와 함께 한다.
+- [ ] **7-다. klib 검색이 파일 단위로 묶이지 않음**: `klib/src/search.rs`의 `search`가 `aggregate`에 문단마다 다른 `document` 번호(후보 순번)를 넘긴다. 그래서 언급 수가 항상 1이고 같은 파일이 결과에 여러 번 나올 수 있다. 경로 기준으로 문서 번호를 매긴다. 결과 모양이 바뀌므로 화면 쪽 영향을 확인한다.
+- [ ] **7-라. `aggregate` 선형 탐색 제거 등**: 후보마다 문서를 선형 탐색한다(후보 4,000건이면 최대 1,600만 번 비교) — `HashMap`으로 바꾼다. `rank_documents`는 호출하는 곳이 없다(쓰거나 지운다). 노트북 검색(`search_notebook`)은 점수 순 그대로다 — 위계 우선을 여기에도 적용할지는 사용자 확인 뒤 정한다.
 
 ### 본문검색 (`keyword_search`)
 측정: "행정복지센터"(드문 말) 166ms, "주민센터"(흔한 말, 전 문서) 13,724ms, 같은 검색 2쪽(`offset=100`) 14,183ms, `limit=1` 3,282ms, "예산"(흔한 2글자) 8,569ms. 14초 구성: 결과별 위치 조회 105ms × 100건 ≈ 10.5초, SQL 세 번 약 1.1초(일치 문단 12.6만 건 읽기 424ms, 본문 합치기 282ms, 문단 다시 읽기 397ms), Python 처리 약 2.2초.

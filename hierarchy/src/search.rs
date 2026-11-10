@@ -61,11 +61,13 @@ pub fn aggregate(candidates: &[Candidate], limit: usize) -> Vec<DocumentAggregat
             });
         }
     }
+    // 위계 우선(사용자 결정, 2026-11-10): Python 위계검색(`hierarchy_relevance`)과 같은 순서로
+    // 위계 수준 → 언급 수 → 최신 → 점수. 본문(rank 0)은 모든 위계 수준 뒤에 온다.
     out.sort_by(|a, b| {
-        b.best_score.total_cmp(&a.best_score)
-            .then_with(|| rank_key(a.best_rank).cmp(&rank_key(b.best_rank)))
+        rank_key(a.best_rank).cmp(&rank_key(b.best_rank))
             .then_with(|| b.mentions.cmp(&a.mentions))
             .then_with(|| b.newest.cmp(&a.newest))
+            .then_with(|| b.best_score.total_cmp(&a.best_score))
             .then_with(|| a.document.cmp(&b.document))
     });
     out.truncate(limit);
@@ -91,8 +93,9 @@ mod tests {
             Candidate { document: 2, score: 3.0, hierarchy_rank: 1, recency: 500 },
         ];
         let rows = aggregate(&hits, 20);
-        assert_eq!(rows.iter().map(|r| r.document).collect::<Vec<_>>(), [1, 0, 2]);
-        assert_eq!((rows[1].best_rank, rows[1].mentions, rows[1].newest), (1, 2, 200));
+        // 위계 우선: 수준 1인 문서 0(언급 2회)·2가 먼저, 점수가 가장 높아도 본문뿐인 문서 1은 마지막.
+        assert_eq!(rows.iter().map(|r| r.document).collect::<Vec<_>>(), [0, 2, 1]);
+        assert_eq!((rows[0].best_rank, rows[0].mentions, rows[0].newest), (1, 2, 200));
     }
 
     #[test]
