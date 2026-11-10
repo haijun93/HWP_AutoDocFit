@@ -66,7 +66,7 @@ const _mintSoft = Color(0xfff3f8f7);
     selectedSurface: const Color(0xffffedcf),
     accent: const Color(0xffa86a1f),
   ),
-  'file_format' || 'pagefit' => (
+  'file_format' => (
     surface: const Color(0xfff4f1ff),
     selectedSurface: const Color(0xffeae4ff),
     accent: const Color(0xff7656a8),
@@ -474,14 +474,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       Icons.auto_awesome_rounded,
       '일괄적용',
     ),
-    // 파일 변환은 '파일변환' 탭으로 옮겼다. 페이지 맞춤은 쪽 맞춤만 하는 작업(2026-10-30 사용자 지시).
-    (
-      'pagefit',
-      '페이지 맞춤',
-      '내용은 그대로 두고 여백·문단 간격·줄 간격만 다듬어 쪽 수를 맞춰요. 마지막 쪽에 조금 남은 내용을 앞쪽으로 당겨요.',
-      Icons.fit_screen_rounded,
-      '페이지맞춤',
-    ),
+    // 파일 변환은 '파일변환' 탭으로 옮겼다(2026-10-30). '페이지 맞춤' 카드는 화면에서 뺐다(2026-11-10).
+    // 쪽 맞춤은 자간 정리 카드의 '페이지 맞춤 제외' 스위치와 세부 작업(page_fit)으로 계속 쓴다.
   ];
 
   @override
@@ -1832,7 +1826,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       LayoutBuilder(
         builder: (context, box) {
           final columns = box.maxWidth >= 1200
-              ? 4
+              ? modes.length
               : box.maxWidth >= 620
               ? 2
               : 1;
