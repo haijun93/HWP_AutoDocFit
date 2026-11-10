@@ -102,7 +102,7 @@ def normalize_document(document: dict, *, document_name: str = "") -> dict:
             stack.append(p)
         p.setdefault("paragraph", p.get("paragraph_index", p.get("sequence", i)))
         position = copy.deepcopy(p.get("position") or {})
-        for key in ("page", "sheet", "row", "section", "paragraph", "table_order", "location_kind", "location_label"):
+        for key in ("page", "sheet", "row", "cell", "section", "paragraph", "table_order", "location_kind", "location_label"):
             position.setdefault(key, p.get(key))
         # 위치 라벨에 명시된 페이지 번호만 채택한다.
         page_match = re.search(r"(\d+)쪽", str(position.get("location_label") or ""))
