@@ -721,7 +721,7 @@ impl Database {
         }
         for it in self.item_search(Some(box_id), "").map_err(|e| e.to_string())? {
             if it.kind == "folder" {
-                for source in [&it.source_path, &it.origin_path] {
+                for source in [&it.source_path, &it.origin_path, &it.managed_path] {
                     if !source.is_empty() && normalized_target.starts_with(normalized_path(Path::new(source))?) {
                         return Err("자료 원본이나 복사본 폴더 안으로는 내보낼 수 없습니다.".into());
                     }
@@ -1010,6 +1010,14 @@ pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> 
             std::io::ErrorKind::InvalidData,
             format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {}", src.display()),
         ));
+    }
+    if let (Ok(norm_src), Ok(norm_dst)) = (normalized_path(src), normalized_path(dst)) {
+        if norm_dst.starts_with(&norm_src) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("자신의 하위 디렉터리로 복사할 수 없습니다: {}", dst.display()),
+            ));
+        }
     }
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
