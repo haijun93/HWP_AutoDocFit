@@ -262,7 +262,7 @@ class _RelatedDocumentsDialogState extends State<RelatedDocumentsDialog> {
   Widget build(BuildContext context) {
     final items = sortRelatedItems(_rows(_response['items']), _sort);
     return AlertDialog(
-      title: const Text('연관 문서'),
+      title: const Text('위계검색'),
       scrollable: true,
       content: SizedBox(
         width: 620,

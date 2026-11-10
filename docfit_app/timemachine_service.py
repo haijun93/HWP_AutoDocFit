@@ -535,7 +535,7 @@ class TimemachineService:
                 name="timemachine-content-index", daemon=True)
             self._content_thread.start()
 
-    # 본문검색과 연관검색은 일반 모드에서도 허용한다.
+    # 본문검색과 위계검색은 일반 모드에서도 허용한다.
     DEVELOPER_ONLY_ACTIONS = frozenset()
 
     def _command(self, action, payload):

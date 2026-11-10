@@ -1,4 +1,4 @@
-"""정기 문서 계열 키 추출과 연관검색 series 필드 시험."""
+"""정기 문서 계열 키 추출과 위계검색 series 필드 시험."""
 import tempfile
 import unittest
 from pathlib import Path

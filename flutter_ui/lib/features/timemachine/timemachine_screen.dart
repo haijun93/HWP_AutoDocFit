@@ -1440,7 +1440,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       spacing: 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(_relatedMode ? '연관검색' : '본문검색', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+        Text(_relatedMode ? '위계검색' : '본문검색', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
         if (_contentIndexRunning) ...[
           const SizedBox(width: 80, child: LinearProgressIndicator()),
           Text('${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건', style: const TextStyle(fontSize: 12)),
@@ -1516,7 +1516,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final modes = <(String, String)>[
       ('file', '파일명'),
       ('content', '본문검색'),
-      ('related', '연관검색'),
+      ('related', '위계검색'),
     ];
     final selected = _relatedMode ? 'related' : _contentMode ? 'content' : 'file';
     if (collapsed) {
