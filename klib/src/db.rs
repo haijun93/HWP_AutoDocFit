@@ -697,6 +697,22 @@ impl Database {
 
         // 2. 대상 폴더 검증 (지적 3 반영: 이미 존재하는 폴더인 경우 빈 폴더인지 검증)
         let target = Path::new(target_dir);
+        if is_or_has_reparse_point(target) { return Err("내보내기 대상에 링크나 정션이 있습니다.".into()); }
+        let absolute_target = if target.is_absolute() { target.to_path_buf() } else { std::env::current_dir().map_err(|e| e.to_string())?.join(target) };
+        let normalized_target = normalized_path(&absolute_target)?;
+        let managed_root = normalized_path(&library_root().join(box_id.to_string()))?;
+        if normalized_target.starts_with(&managed_root) || managed_root.starts_with(&normalized_target) {
+            return Err("자료함 저장 폴더 안이나 상위 폴더로는 내보낼 수 없습니다.".into());
+        }
+        for it in self.item_search(Some(box_id), "").map_err(|e| e.to_string())? {
+            if it.kind == "folder" {
+                for source in [&it.source_path, &it.origin_path] {
+                    if !source.is_empty() && normalized_target.starts_with(normalized_path(Path::new(source))?) {
+                        return Err("자료 원본이나 복사본 폴더 안으로는 내보낼 수 없습니다.".into());
+                    }
+                }
+            }
+        }
         let target_existed = target.exists();
         if target_existed {
             if !target.is_dir() {
@@ -734,36 +750,22 @@ impl Database {
             }
         }
 
-        let mut item_stmt = self.conn.prepare(
-            "SELECT id, kind, source_path, display_name, space FROM item WHERE box_id = ?1",
-        ).map_err(|e| {
-            cleanup_export();
-            e.to_string()
-        })?;
-
-        let rows = item_stmt.query_map(params![box_id], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
-        }).map_err(|e| {
-            cleanup_export();
-            e.to_string()
-        })?;
+        let items = match self.item_search(Some(box_id), "") {
+            Ok(items) => items,
+            Err(e) => { cleanup_export(); return Err(e.to_string()); }
+        };
 
         let mut exported_count = 0;
 
-        for item_res in rows {
-            let (_id, kind, source_path, display_name, space) = match item_res {
-                Ok(data) => data,
-                Err(e) => {
-                    cleanup_export();
-                    return Err(e.to_string());
-                }
+        for item in items {
+            let it = match self.item_prepare(item.id) {
+                Ok(it) => it,
+                Err(e) => { cleanup_export(); return Err(e); }
             };
+            let kind = it.kind;
+            let source_path = it.source_path;
+            let display_name = it.display_name;
+            let space = it.space;
 
             let dest_folder = match space.as_str() {
                 "core" => &core_dir,
@@ -793,7 +795,7 @@ impl Database {
                         cleanup_export();
                         return Err(format!("잘못된 대상 파일 경로입니다: {}", dest_path.display()));
                     }
-                    if let Err(e) = fs::copy(src, &dest_path) {
+                    if let Err(e) = copy_file_verified(src, &dest_path) {
                         cleanup_export();
                         return Err(format!("파일 복사 실패 ({source_path}): {e}"));
                     }
@@ -841,13 +843,13 @@ impl Database {
                     let src = Path::new(&source_path);
                     if kind == "rich_text" && src.is_file() {
                         if is_or_has_reparse_point(src) { cleanup_export(); return Err("reparse point".into()); }
-                        if let Err(e) = fs::copy(src, &dest_path) { cleanup_export(); return Err(format!("HTML export failed: {e}")); }
+                        if let Err(e) = copy_file_verified(src, &dest_path) { cleanup_export(); return Err(format!("HTML export failed: {e}")); }
                     } else if src.is_file() {
                         if is_or_has_reparse_point(src) {
                             cleanup_export();
                             return Err(format!("심볼릭 링크나 정션은 내보낼 수 없습니다: {source_path}"));
                         }
-                        if let Err(e) = fs::copy(src, &dest_path) {
+                        if let Err(e) = copy_file_verified(src, &dest_path) {
                             cleanup_export();
                             return Err(format!("글 사본 복사 실패: {e}"));
                         }
@@ -878,7 +880,7 @@ impl Database {
                         cleanup_export();
                         return Err(format!("원본 이미지 파일을 찾을 수 없습니다: {source_path}"));
                     }
-                    if let Err(e) = fs::copy(src, &dest_path) {
+                    if let Err(e) = copy_file_verified(src, &dest_path) {
                         cleanup_export();
                         return Err(format!("이미지 복사 실패: {e}"));
                     }
