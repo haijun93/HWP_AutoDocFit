@@ -76,10 +76,14 @@ class TimemachineService:
         return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True}
 
     def _klib_executable(self):
+        env_exe = os.environ.get("KLIB_EXE")
+        if env_exe and os.path.isfile(env_exe):
+            return Path(env_exe)
         candidates = []
         if getattr(__import__('sys'), "frozen", False):
             candidates.append(Path(__import__('sys')._MEIPASS) / "resources" / "klib.exe")
         candidates.extend((Path(__file__).resolve().parents[1] / "resources" / "klib.exe",
+                           Path(__file__).resolve().parents[1] / "klib" / "target" / "debug" / "klib.exe",
                            Path(__file__).resolve().parents[1] / "klib" / "target" / "release" / "klib.exe"))
         return next((path for path in candidates if path.is_file()), None)
 
@@ -189,7 +193,7 @@ class TimemachineService:
                         if rules.skip_file(name):
                             stale_paths.append(path)
                             continue
-                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx"}:
+                        if use_rust and self._settings.get("rust_content_index", True) and ext in {"txt", "md", "hwpx", "docx"}:
                             rust_paths.append(path)
                         else:
                             python_paths.append(path)

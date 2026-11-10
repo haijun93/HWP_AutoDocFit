@@ -32,7 +32,7 @@ pub fn run(db_path: &str, inputs: &[String]) -> Result<(), String> {
 fn collect(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
     if path.is_file() {
         let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "txt" | "md" | "hwpx") {
+        if matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx") {
             let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().map_err(|e|e.to_string())?.join(path) };
             files.push(absolute);
         }
@@ -68,7 +68,7 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
         let count: i64 = db.query_row("SELECT count(*) FROM content_paragraph_fts WHERE path=?", [&path], |r|r.get(0)).map_err(|e|e.to_string())?;
         if count > 0 { return Ok((false,count as usize)); }
     }
-    let paragraphs = crate::extract::extract(Path::new(&path))?;
+    let paragraphs = crate::extract::extract_for_index(Path::new(&path))?;
     let texts: Vec<String> = paragraphs.iter().map(|p| p.text.clone()).collect();
     let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
     let levels = crate::classify_levels::classify_extracted(&paragraphs, &scheme);

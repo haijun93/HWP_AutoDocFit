@@ -15,11 +15,18 @@ sys.path.insert(0, str(ROOT))
 from docfit_core.timemachine.extractors import ExtractionRecord
 from docfit_core.timemachine.extractors_text import extract_plain_text
 from docfit_core.timemachine.extractors_hwpx import extract_hwpx
+from docfit_core.timemachine.extractors_ooxml import extract_docx
 
 
 def python_records(path: Path) -> list[dict]:
     try:
-        records = extract_hwpx(path) if path.suffix.lower() == ".hwpx" else extract_plain_text(path)
+        ext = path.suffix.lower()
+        if ext == ".hwpx":
+            records = extract_hwpx(path)
+        elif ext == ".docx":
+            records = extract_docx(path)
+        else:
+            records = extract_plain_text(path)
     except Exception as exc:
         code = getattr(exc, "reason_code", "extract_failed")
         return [{"error": code}]
@@ -62,7 +69,7 @@ def main() -> int:
     args = parser.parse_args()
     paths = args.paths or [ROOT / "tests" / "fixtures"]
     files = sorted({p.resolve() for item in paths for p in (item.rglob("*") if item.is_dir() else [item])
-                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx"}})
+                    if p.is_file() and p.suffix.lower() in {".txt", ".md", ".hwpx", ".docx"}})
     failures = 0
     for path in files:
         try:
