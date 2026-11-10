@@ -789,7 +789,7 @@ class ContentSearchTests(unittest.TestCase):
         elapsed = time.perf_counter() - start
         print(f"\n[성능 측정] 3000건 본문검색: {elapsed:.4f}초", flush=True)
         self.assertEqual(len(result), 100)
-        self.assertLess(elapsed, 2.0, f"3000건 검색: {elapsed:.3f}s")
+        self.assertLess(elapsed, 1.0, f"3000건 검색: {elapsed:.3f}s")
 
 
 if __name__ == "__main__":
