@@ -1940,8 +1940,9 @@ class DesktopWebBridge:
         service = getattr(self, "_rename_service", None)
         if service is None:
             from docfit_app.file_rename_service import FileRenameService
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
-            service = self._rename_service = FileRenameService(folder, dialogs=self._file_dialogs)
+            settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+            service = self._rename_service = FileRenameService(settings._path.parent, dialogs=self._file_dialogs,
+                                                               settings=settings)
         return service
 
     def _timemachine_service(self):

@@ -1124,50 +1124,6 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
         }
 
-        "search" => {
-            let query = val.str("query").unwrap_or("");
-            let box_id = val.i64("box_id");
-            let limit = val.i64("limit").unwrap_or(20).clamp(1, 200) as usize;
-            match crate::search_index().and_then(|ix| ix.search(query, crate::search::SearchOptions { limit: limit.saturating_mul(20).min(4000) }).map_err(|e| e.to_string())) {
-                Ok(hits) => {
-                    let mut filtered: Vec<Value> = hits.into_iter()
-                        .filter(|hit| box_id.map_or(true, |id| hit.box_ids.contains(&id.to_string())))
-                        .map(|hit| {
-                            let snippets: Vec<Value> = hit.snippets.iter().map(|s| s.clone().into()).collect();
-                            let highlights: Vec<Value> = hit.highlighted.iter().map(|s| s.clone().into()).collect();
-                            let pages: Vec<Value> = hit.hit_pages.iter()
-                                .map(|p| p.map(|v| (v as i64).into()).unwrap_or(Value::Null)).collect();
-                            Value::obj(vec![
-                                ("path", hit.path.into()), ("name", hit.name.into()),
-                                ("snippet", snippets.first().cloned().unwrap_or(Value::Str(String::new()))),
-                                ("highlights", Value::Arr(highlights)), ("hits", (hit.paragraph_count as i64).into()),
-                                ("page", hit.page.map(|p| (p as i64).into()).unwrap_or(Value::Null)),
-                                ("pages", Value::Arr(pages)), ("score", (hit.score as f64).into()),
-                            ])
-                        }).collect();
-                    filtered.truncate(limit);
-                    ok_val(vec![("results", Value::Arr(filtered))])
-                }
-                Err(e) => err_val(&e),
-            }
-        }
-
-        "index_file" => {
-            let path = val.str("path").unwrap_or("");
-            let name = val.str("name").unwrap_or_else(|| std::path::Path::new(path).file_name().and_then(|v| v.to_str()).unwrap_or(""));
-            let Some(box_id) = val.i64("box_id") else { return json::to_string(&err_val("box_id가 필요합니다.")); };
-            match crate::search_index().and_then(|ix| crate::content::index_file(ix, path, name, box_id).map_err(|e| e.to_string())) {
-                Ok(()) => ok_val(vec![]), Err(e) => err_val(&e)
-            }
-        }
-
-        "remove_file" => {
-            let path = val.str("path").unwrap_or("");
-            match crate::search_index().and_then(|ix| crate::content::remove_file(ix, path).map_err(|e| e.to_string())) {
-                Ok(()) => ok_val(vec![]), Err(e) => err_val(&e)
-            }
-        }
-
         "item_get" => {
 
             let Some(id) = val.i64("id") else {

@@ -83,7 +83,7 @@ class ApplicationService:
     def _rename(self):
         if getattr(self, '_rename_service', None) is None:
             from .file_rename_service import FileRenameService
-            self._rename_service = FileRenameService(self.store._path.parent)
+            self._rename_service = FileRenameService(self.store._path.parent, settings=self.store)
         return self._rename_service
 
     def job_status(self, job_id):
@@ -272,7 +272,7 @@ class ApplicationService:
         if method=='file_rename':
             if getattr(self, '_rename_service', None) is None:
                 from .file_rename_service import FileRenameService
-                self._rename_service = FileRenameService(self.store._path.parent)
+                self._rename_service = FileRenameService(self.store._path.parent, settings=self.store)
             if args and args[0] == 'sendto_set':
                 from .file_rename_service import FileRenameService
                 enabled = bool(args[1].get('enabled')) if len(args) > 1 and isinstance(args[1], dict) else False

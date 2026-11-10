@@ -17,6 +17,7 @@ mod index_content;
 mod unify_marker;
 mod classify_levels;
 mod legacy_records;
+mod rename;
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -112,7 +113,6 @@ fn main() {
         if let Err(error) = index_content::run(&args[1], &args[2..]) { eprintln!("{error}"); std::process::exit(1); }
         return;
     }
-
     if args.first().is_some_and(|a| a == "extract") {
         let Some(path) = args.get(1) else { eprintln!("extract requires a path"); std::process::exit(2); };
         match extract::extract(std::path::Path::new(path)) {
@@ -124,6 +124,18 @@ fn main() {
         }
         return;
     }
+    if let Some(pos) = args.iter().position(|a| a == "--rename-preview-json") {
+        if let Some(request) = args.get(pos + 1) {
+            let request = if let Some(path) = request.strip_prefix('@') {
+                std::fs::read_to_string(path).unwrap_or_else(|_| std::process::exit(2))
+            } else { request.clone() };
+            let Some(value) = json::parse(&request) else { std::process::exit(2) };
+            println!("{}", json::to_string(&rename::preview(&value)));
+            return;
+        }
+        std::process::exit(2);
+    }
+    let has = |flag: &str| args.iter().any(|a| a == flag);
 
     if let Some(pos) = args.iter().position(|a| a == "--request-json") {
         if let Some(request) = args.get(pos + 1) {
