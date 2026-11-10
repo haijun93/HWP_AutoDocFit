@@ -23,4 +23,4 @@
 - `cf68e026` Rename timeline related search to hierarchy search (Python 단위)
 - `09543838` Show hierarchy search label in timeline (Flutter 단위)
 
-푸시 결과는 브랜치 push 후 아래에 기록합니다.
+`github/feature/rename-related-search`로 push 완료. 원격 HEAD: `aca8f0e7`.
