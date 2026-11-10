@@ -935,6 +935,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+    // 인스턴스 mutex·트레이·DB를 열기 전에 번들 버전만 조회한다.
+    if has("--version") {
+        println!("{}", crate::json::to_string(&crate::json::Value::obj(vec![
+            ("ok", true.into()), ("version", VERSION.into()),
+        ])));
+        return;
+    }
     if let Some(command) = args.iter().find(|a| ["--install", "--upgrade-if-stale", "--status", "--enable", "--disable"].contains(&a.as_str())) {
         let result = lifecycle_command(command, &args);
         println!("{}", crate::json::to_string(&result));
