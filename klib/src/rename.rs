@@ -9,7 +9,8 @@ pub fn preview(request: &Value) -> Value {
         _ => &empty,
     };
     let mut plan_parts = Vec::new();
-    let items = entries.iter().map(|entry| {
+    let existing: std::collections::HashSet<String> = match request.get("existing_paths") { Some(Value::Arr(v)) => v.iter().filter_map(|x| if let Value::Str(s)=x {Some(path_key(s))} else {None}).collect(), _ => std::collections::HashSet::new() };
+    let mut items: Vec<Value> = entries.iter().map(|entry| {
         let get = |key: &str| entry.get(key);
         let string = |key: &str| match get(key) { Some(Value::Str(s)) => Value::Str(s.clone()), _ => Value::Null };
         let number = |key: &str| match get(key) { Some(Value::Num(n)) => *n, _ => 0.0 };
@@ -17,26 +18,98 @@ pub fn preview(request: &Value) -> Value {
         let path = match get("path") { Some(Value::Str(s)) => s.clone(), _ => String::new() };
         let name = match get("name") { Some(Value::Str(s)) => s.clone(), _ => String::new() };
         let path = path.replace('/', "\\");
+        let (stem0, ext0) = split_name(&name);
+        let (mut stem, mut ext) = (stem0.to_string(), ext0.to_string());
         let parent = std::path::Path::new(&path).parent().unwrap_or(std::path::Path::new(""));
-        let new_path = parent.join(&name).to_string_lossy().replace('/', "\\");
+        for rule in match request.get("rules") { Some(Value::Arr(v)) => v.as_slice(), _ => &[] } {
+            if matches!(rule.get("enabled"), Some(Value::Bool(false))) { continue; }
+            let val = |k: &str, d: &str| match rule.get(k) { Some(Value::Str(x)) => x.clone(), _ => d.to_string() };
+            match val("kind", "").as_str() {
+                "add" => { let text=val("text", ""); let sep=val("sep", ""); if !text.is_empty() { if val("position", "prefix")=="suffix" { stem=format!("{stem}{sep}{text}"); } else { stem=format!("{text}{sep}{stem}"); } } },
+                "clear" => stem.clear(),
+                "ext_del" => ext.clear(),
+                "ext_add" => { stem.push_str(&ext); ext=val("ext", ""); },
+                "ext_replace" => ext=val("ext", ""),
+                "ext_case" => ext=if val("mode", "lower")=="upper" { ext.to_uppercase() } else { ext.to_lowercase() },
+                _ => {}
+            }
+        }
+        let new_name = format!("{stem}{ext}");
+        let new_path = parent.join(&new_name).to_string_lossy().replace('/', "\\");
         let fp = vec![Value::Num(number("size")), Value::Num((number("mtime") * 1000.0).trunc())];
-        plan_parts.push(Value::Arr(vec![Value::from(path.clone()), Value::from(new_path.clone()), Value::from("unchanged"), Value::Arr(fp.clone())]));
+        let old_name = match get("name") { Some(Value::Str(s)) => s.as_str(), _ => "" };
+        let status = if new_name == old_name { "unchanged" } else { "ok" };
+        let mut warnings: Vec<Value> = Vec::new();
+        let folder = matches!(get("is_folder"), Some(Value::Bool(true)));
+        if !folder && new_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() != old_name.to_lowercase().rsplit_once('.').map(|x| format!(".{}", x.1)).unwrap_or_default() { warnings.push(Value::from("ext_changed")); }
+        plan_parts.push(Value::Arr(vec![Value::from(path.clone()), Value::from(new_path.clone()), Value::from(status), Value::Arr(fp.clone())]));
         Value::obj(vec![
-            ("id", string("id")), ("old_path", Value::from(path)), ("old_name", Value::from(name.clone())),
-            ("new_name", Value::from(name)), ("new_path", Value::from(new_path)), ("status", Value::from("unchanged")),
-            ("reason", Value::Null), ("warnings", Value::Arr(vec![])), ("overridden", Value::Bool(false)),
+            ("id", string("id")), ("old_path", Value::from(path)), ("old_name", string("name")),
+            ("new_name", Value::from(new_name)), ("new_path", Value::from(new_path)), ("status", Value::from(status)),
+            ("reason", Value::Null), ("warnings", Value::Arr(warnings)), ("overridden", Value::Bool(false)),
             ("fingerprint", Value::Arr(fp)),
             ("is_folder", Value::Bool(boolean("is_folder"))),
         ])
     }).collect();
+    mark_conflicts(&mut items, &existing);
     let payload = json_compact(&Value::Arr(plan_parts));
     let digest = Sha256::digest(payload.as_bytes());
     let plan_id = digest.iter().take(16).map(|b| format!("{b:02x}")).collect::<String>();
+    let mut summary = vec![("ok", 0_i64), ("unchanged", 0_i64), ("conflict", 0_i64), ("invalid", 0_i64), ("skipped", 0_i64), ("executables", 0_i64)];
+    for row in &items { if let Some(Value::Str(status)) = row.get("status") { if let Some((_, n)) = summary.iter_mut().find(|(k, _)| *k == status) { *n += 1; } } }
     Value::obj(vec![
         ("plan_id", Value::from(plan_id)),
         ("items", Value::Arr(items)),
-        ("summary", Value::obj(vec![("ok", 0_i64.into()), ("unchanged", entries.len().into()), ("conflict", 0_i64.into()), ("invalid", 0_i64.into()), ("skipped", 0_i64.into()), ("executables", 0_i64.into())])),
+        ("summary", Value::obj(summary.into_iter().map(|(k,v)|(k,Value::from(v))).collect())),
     ])
+}
+
+fn mark_conflicts(items: &mut [Value], existing: &std::collections::HashSet<String>) {
+    loop {
+        let mut changed = false;
+        let moving: std::collections::HashSet<String> = items.iter()
+            .filter(|item| status(item) == "ok")
+            .filter_map(|item| string_field(item, "old_path").map(path_key)).collect();
+        let staying: std::collections::HashSet<String> = items.iter()
+            .filter(|item| status(item) != "ok")
+            .filter_map(|item| string_field(item, "old_path").map(path_key)).collect();
+        let mut targets: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+        for (index, item) in items.iter().enumerate() {
+            if status(item) == "ok" {
+                if let Some(path) = string_field(item, "new_path") {
+                    targets.entry(path_key(path)).or_default().push(index);
+                }
+            }
+        }
+        for (key, group) in targets {
+            if group.len() > 1 {
+                for index in group {
+                    set_conflict(&mut items[index], "목록 안에서 새 이름이 겹칩니다.");
+                }
+                changed = true;
+                continue;
+            }
+            let index = group[0];
+            let old_key = string_field(&items[index], "old_path").map(path_key).unwrap_or_default();
+            if key == old_key { continue; } // 대소문자만 바뀌는 이름은 임시 이름 경유로 처리한다.
+            if staying.contains(&key) || ( !moving.contains(&key) && existing.contains(&key)) {
+                set_conflict(&mut items[index], "같은 이름의 파일이 이미 있습니다.");
+                changed = true;
+            }
+        }
+        if !changed { break; }
+    }
+}
+
+fn status(item: &Value) -> &str { string_field(item, "status").unwrap_or("") }
+fn string_field<'a>(item: &'a Value, key: &str) -> Option<&'a str> {
+    match item.get(key) { Some(Value::Str(value)) => Some(value.as_str()), _ => None }
+}
+fn path_key(path: &str) -> String { path.replace('/', "\\").to_lowercase() }
+fn set_conflict(item: &mut Value, reason: &str) { if let Value::Obj(fields)=item { for (k,v) in fields { if k=="status" {*v=Value::from("conflict")} else if k=="reason" {*v=Value::from(reason)} } } }
+
+fn split_name(name: &str) -> (&str, &str) {
+    match name.rfind('.') { Some(i) if i > 0 => (&name[..i], &name[i..]), _ => (name, "") }
 }
 
 fn json_compact(value: &Value) -> String {

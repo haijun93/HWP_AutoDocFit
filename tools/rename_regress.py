@@ -53,8 +53,6 @@ def compare(count: int, klib: Path, rules: list[dict], options: dict):
         t0 = time.perf_counter()
         py = python_preview(entries, rules, options)
         py_ms = (time.perf_counter() - t0) * 1000
-        # Paths differ between independent processes only if fixture root differs; both
-        # previews share this fixture, so plan_id should be identical.
         t0 = time.perf_counter()
         proc = subprocess.run([str(klib), "--rename-preview-json", f"@{request_file}"],
                               capture_output=True, text=True, encoding="utf-8", check=True)
@@ -93,8 +91,8 @@ def main():
     if args.rules_json:
         rules = json.loads(args.rules_json.read_text(encoding="utf-8"))
     else:
-        rules = []
-    result = compare(args.count, args.klib.resolve(), rules, {"on_conflict": "number"})
+        rules = [{"kind": "add", "text": "x", "position": "suffix", "sep": "_"}]
+    result = compare(args.count, args.klib.resolve(), rules, {"on_conflict": "block"})
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["differences"] == 0 else 1
 
