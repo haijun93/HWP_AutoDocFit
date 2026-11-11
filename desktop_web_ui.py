@@ -2316,7 +2316,7 @@ class DesktopWebBridge:
         try:
             if action == "copy" and self.gui.running:
                 return {"ok": False, "message": "문서 작업이 끝난 뒤 다시 눌러 주세요."}
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             if action == "take_drop":
                 dropped, self._sketch_drop = getattr(self, "_sketch_drop", None), None
                 return dropped or {"ok": False, "message": "놓은 그림이 없습니다."}
@@ -2660,7 +2660,7 @@ class DesktopWebBridge:
             if action in ("copy", "thumbnails") and self.gui.running:
                 raise ServiceError("JOB_RUNNING", "문서 작업이 끝난 뒤 다시 눌러 주세요.")
             if action not in ("copy", "thumbnails"):
-                settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                settings = self._settings_store()
                 return TableUnitsService(settings=settings).command(action, payload)
             # 스냅샷 생성 중에 복사가 겹치면 한/글·클립보드가 엉키므로 한 번에 하나만 한다.
             if not _TABLE_UNITS_COM_LOCK.acquire(blocking=False):
@@ -2669,7 +2669,7 @@ class DesktopWebBridge:
             try:
                 pythoncom.CoInitialize()
                 try:
-                    settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                    settings = self._settings_store()
                     return TableUnitsService(self._table_units_hwp, settings=settings).command(action, payload)
                 finally:
                     pythoncom.CoUninitialize()
@@ -3267,7 +3267,9 @@ def _initial_window_settings(bridge):
             return ConfigurationService(store).snapshot().get('values', {})
         except Exception:
             return {}
-    return bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
+    # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+    bridge._raise_if_closing()
+    return bridge._configuration().snapshot(running=bridge.gui.running).get('values', {})
 
 
 class _Win32WindowApi:
@@ -3827,8 +3829,9 @@ def run_webview(gui):
         try:
             from docfit_app.configuration_service import ConfigurationService
             from docfit_app.freeze_tracer import FreezeTracer, _is_hung
-            settings = bridge._tk(lambda: ConfigurationService(gui._준말_서비스().settings).snapshot(
-                running=gui.running).get('values', {}), timeout=5)
+            # 스레드 안전: 설정 저장소 읽기(경로별 RLock)라 Tk를 기다리지 않는다.
+            settings = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
             if settings.get('freeze_tracing'):
                 bridge._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
                 bridge._freeze_tracer.start(web_window)

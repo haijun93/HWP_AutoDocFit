@@ -200,6 +200,27 @@ class SettingsStoreTests(unittest.TestCase):
         self.assertIn(self.store.read()["n"], range(1, 21))
         self.assertEqual(self.round_trips, [])
 
+    def test_table_sketch_and_table_units_read_the_store_without_tk(self):
+        from unittest.mock import patch
+        self.bridge._sketch_drop = {"ok": True, "kind": "png"}
+        self.assertEqual(self.bridge.table_sketch("take_drop"), {"ok": True, "kind": "png"})
+        with patch("docfit_app.table_units_service.TableUnitsService") as service:
+            service.return_value.command.return_value = {"items": []}
+            result = self.bridge._table_units_command("list", {})
+        service.assert_called_once_with(settings=self.store)
+        self.assertIs(result["ok"], True)
+        self.assertEqual(self.round_trips, [])
+
+    def test_initial_window_settings_are_read_without_tk(self):
+        from desktop_web_ui import _initial_window_settings
+        self.store.update(lambda current: current.update({"always_on_top": True}))
+        values = _initial_window_settings(self.bridge)
+        self.assertIs(values["always_on_top"], True)
+        self.assertEqual(self.round_trips, [])
+        self.bridge._closed = True
+        with self.assertRaisesRegex(RuntimeError, "종료"):
+            _initial_window_settings(self.bridge)
+
 
 if __name__ == "__main__":
     unittest.main()
