@@ -614,6 +614,48 @@ void main() {
     expect(tester.getTopLeft(path).dy, lessThan(tester.getTopLeft(find.text('위치 발췌문')).dy));
   });
 
+  testWidgets('같은 절에서 여러 곳인 묶음만 최대 두 개 표시한다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {
+        'id': 54, 'file_name': '절묶음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '절 묶음 발췌',
+        'sections': [
+          {'parent_text': '제1절 목적', 'count': 4},
+          {'parent_text': '제2절 적용', 'count': 2},
+          {'parent_text': '제3절 제외', 'count': 8},
+        ],
+      },
+      {
+        'id': 55, 'file_name': '절없음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '묶음 없는 발췌',
+        'sections': [],
+      },
+      {
+        'id': 56, 'file_name': '한곳.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '한 곳 발췌',
+        'sections': [
+          {'parent_text': '제4절 한 곳뿐', 'count': 1},
+          {'parent_text': '', 'count': 3},
+        ],
+      },
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '절');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('「제1절 목적」에서 4곳'), findsOneWidget);
+    expect(find.text('「제2절 적용」에서 2곳'), findsOneWidget);
+    expect(find.text('「제3절 제외」에서 8곳'), findsNothing);
+    expect(find.text('「제4절 한 곳뿐」에서 1곳'), findsNothing);
+    expect(find.text('절 묶음 발췌'), findsOneWidget);
+    expect(find.text('묶음 없는 발췌'), findsOneWidget);
+    expect(find.text('한 곳 발췌'), findsOneWidget);
+  });
+
   testWidgets('위계 경로를 발췌문 위에 표시하고 경로가 비면 표시하지 않는다', (tester) async {
     final api = _FakeApi(enabled: true, contentSearchResults: [
       {
