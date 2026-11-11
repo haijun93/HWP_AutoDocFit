@@ -448,7 +448,8 @@ pub fn update_settings(new: &json::Value) -> Settings {
     save_settings();
     let _ = a.store.lock().unwrap().enforce(&snapshot, now());
     refresh_recent();
-    unsafe { PostMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
+    // 잠금을 모두 놓은 뒤 창 스레드의 등록 결과까지 기다린다(타이머·폴링 없음).
+    unsafe { SendMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
     snapshot
 }
 
