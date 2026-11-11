@@ -6,6 +6,25 @@ from scripts.eval_hierarchy_search import canonical_path, score_ranked_results
 
 
 class HierarchySearchScoringTests(unittest.TestCase):
+    def test_regression_expectations_include_title_and_shorten_long_breadcrumbs(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from scripts.eval_hierarchy_search import generate_corpus
+        from docfit_core.timemachine.hierarchy_path import shorten
+
+        with TemporaryDirectory() as temp:
+            documents, _, _, groups = generate_corpus(Path(temp), document_count=100)
+            numbered = documents[groups["번호 체계 오류"][0]]
+            title = Path(numbered["path"]).read_text(encoding="utf-8").splitlines()[0][2:]
+            self.assertEqual(numbered["breadcrumb"], [title, "제3장 관리", "7.4.9 계획", "나) 세부 기준"])
+
+            long_title = documents[groups["아주 긴 제목"][0]]
+            self.assertEqual(long_title["breadcrumb"], [
+                shorten(part) for part in long_title["breadcrumb"]
+            ])
+            self.assertTrue(all(len(part) <= 60 for part in long_title["breadcrumb"]))
+
     def test_recall_and_mrr_use_ranked_document_paths(self):
         q = "예산"
         relevant = ["a.txt", "c.txt", "z.txt"]
