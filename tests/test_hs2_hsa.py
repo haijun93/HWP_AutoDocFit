@@ -9,7 +9,7 @@ from docfit_core.timemachine.content_search import ContentSearchIndex
 
 class AncestorSearchTests(unittest.TestCase):
     def test_split_heading_and_body_selects_body_after_direct_match(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = ContentSearchIndex(root / "index.sqlite")
             try:
@@ -34,7 +34,7 @@ class AncestorSearchTests(unittest.TestCase):
                 index.close()
 
     def test_full_ancestor_text_multiple_levels_and_sibling_boundary(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = ContentSearchIndex(root / "index.sqlite")
             try:
@@ -63,7 +63,7 @@ class AncestorSearchTests(unittest.TestCase):
                 index.close()
 
     def test_direct_match_ranking_unchanged_when_context_candidate_added(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = ContentSearchIndex(root / "index.sqlite")
             try:

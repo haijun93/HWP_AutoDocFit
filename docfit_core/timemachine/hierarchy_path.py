@@ -102,6 +102,12 @@ def breadcrumb(rows: Sequence[dict], paragraph_index: int) -> list[dict]:
     for index in ancestors(ranks, position):
         row = ordered[index]
         text = shorten(row["body"])
+        if (row["level_rank"] == 0 and "table_cell_id" in row.keys()
+                and row["table_cell_id"] is not None):
+            text = shorten(" ".join(str(item["body"] or "").strip() for item in ordered
+                                    if "table_cell_id" in item.keys()
+                                    and item["table_cell_id"] == row["table_cell_id"]
+                                    and any(c.isalpha() for c in str(item["body"] or ""))))
         if not text:
             continue
         path.append({

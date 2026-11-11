@@ -10,7 +10,7 @@ from scripts.hs2_d2_probe import CASES
 
 class NumberedHeadingTests(unittest.TestCase):
     def levels(self, lines, suffix=".txt"):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / ("sample" + suffix)
             path.write_text("\n".join(lines), encoding="utf-8")
             with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value=None):
@@ -53,7 +53,7 @@ class NumberedHeadingTests(unittest.TestCase):
             "isolated": ["body"] * 3,
             "body_list": ["body"] * 7,
         }
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             index = ContentSearchIndex(root / "content.sqlite")
             try:

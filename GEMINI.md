@@ -2,6 +2,8 @@
 
 이 저장소에서 작업하기 전에 **`HANDOVER.md`를 먼저 읽으세요.** 개발 환경, 코드 구조, 작업 규칙, 배포 절차, 알려진 함정이 모두 정리되어 있습니다.
 
+**팀 운영 규칙은 `docs/TEAM_OPERATING_RULES.md`(2026-11-12 사용자 확정)를 따른다.**
+
 꼭 지킬 것:
 - Windows + 한/글 2020 COM 환경의 Python(`.venv\Scripts\python.exe`) 앱입니다. 테스트: `python -m unittest discover -s tests`
 - **★ 2026-11-11 사용자 지시: GitLab(`origin`) 저장소는 별도 명령 때까지 절대 건드리지 않는다(푸시·태그·삭제·릴리스·downloads·API 모두 금지). 푸시는 `github`에만. 이 PC·맥의 git 설정과 pre-push 훅이 GitLab 푸시를 막고 있으며 되돌리거나 우회하지 말 것.**
