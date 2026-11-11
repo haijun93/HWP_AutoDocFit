@@ -846,8 +846,8 @@ class ContentSearchIndex:
                 try:
                     aggregate_rows = self.db.execute(f"""
                         WITH scored AS MATERIALIZED (
-                            SELECT path, paragraph_index, level, level_rank, body, lower(body) AS body_folded,
-                                   bm25(content_paragraph_fts) AS bm25_rank
+                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level, level_rank, body,
+                                   lower(body) AS body_folded, bm25(content_paragraph_fts) AS bm25_rank
                             FROM content_paragraph_fts
                             WHERE content_paragraph_fts MATCH ?
                               AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
@@ -859,7 +859,9 @@ class ContentSearchIndex:
                                    MIN(CAST(paragraph_index AS INTEGER)) AS first_match_index
                             FROM matched GROUP BY path
                         ), chosen AS (
-                            SELECT m.path, MIN(CAST(m.paragraph_index AS INTEGER)) AS chosen_paragraph_index
+                            -- MIN 하나만 있는 집계에서는 SQLite가 그 최솟값 행의 다른 열을 돌려준다.
+                            SELECT m.path, MIN(CAST(m.paragraph_index AS INTEGER)) AS chosen_paragraph_index,
+                                   m.paragraph_rowid AS chosen_rowid
                             FROM matched m JOIN best b ON b.path=m.path AND b.best_level_rank=COALESCE(m.level_rank, 8)
                             GROUP BY m.path
                         ), counts AS (
@@ -867,7 +869,7 @@ class ContentSearchIndex:
                             FROM matched GROUP BY path
                         )
                         SELECT b.path, c.matched_paragraphs, b.best_level_rank, b.best_bm25,
-                               ch.chosen_paragraph_index, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
+                               ch.chosen_paragraph_index, ch.chosen_rowid, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
                         FROM best b JOIN counts c ON c.path=b.path JOIN chosen ch ON ch.path=b.path
                         ORDER BY c.matched_paragraphs DESC LIMIT 100000
                     """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms,
@@ -968,6 +970,8 @@ class ContentSearchIndex:
                 "path": path,
                 "name": file_name,
                 "_chosen_paragraph_index": aggregate["chosen_paragraph_index"],
+                "_chosen_rowid": aggregate["chosen_rowid"] if "chosen_rowid" in aggregate.keys() else None,
+                "_raw_path": aggregate["path"],
                 "score": total_matches,
                 "match_counts": match_counts,
                 "total_matches": total_matches,
@@ -981,11 +985,33 @@ class ContentSearchIndex:
         # 5. 정렬 및 순위 부여
         _sort_hierarchy_results(prepared, sort=sort)
         final_items = prepared[:lim]
+        for item in prepared[lim:]:
+            item.pop("_chosen_rowid", None); item.pop("_raw_path", None)
         with self._lock:
+            # 발췌문은 결과마다 path로 표 전체를 훑지 않고 한 번에 읽는다.
+            # rowid를 아는 결과는 rowid로, 모르는 결과(2글자·예비 경로)는 경로 묶음 조회 한 번으로 읽는다.
+            by_rowid, by_position = {}, {}
+            rowids = sorted({int(item["_chosen_rowid"]) for item in final_items if item["_chosen_rowid"] is not None})
+            for start in range(0, len(rowids), 500):
+                chunk = rowids[start:start + 500]
+                for row in self.db.execute(
+                        "SELECT rowid AS paragraph_rowid, body, level FROM content_paragraph_fts WHERE rowid IN ("
+                        + ",".join("?" for _ in chunk) + ")", chunk):
+                    by_rowid[row["paragraph_rowid"]] = row
+            scan_paths = {item["_raw_path"] for item in final_items if item["_chosen_rowid"] is None}
+            if scan_paths:
+                for row in self._select_for_paths(
+                        "SELECT path, paragraph_index, body, level FROM content_paragraph_fts"
+                        " WHERE path IN ({paths})", scan_paths):
+                    by_position.setdefault((row["path"], int(row["paragraph_index"])), row)
             for item in final_items:
                 chosen = item.pop("_chosen_paragraph_index")
-                row = self.db.execute("SELECT body,level FROM content_paragraph_fts WHERE path=? AND CAST(paragraph_index AS INTEGER)=? ORDER BY CAST(paragraph_index AS INTEGER) LIMIT 1",
-                                      (item["path"], chosen)).fetchone()
+                chosen_rowid = item.pop("_chosen_rowid")
+                raw_path = item.pop("_raw_path")
+                if chosen_rowid is not None:
+                    row = by_rowid.get(int(chosen_rowid))
+                else:
+                    row = by_position.get((raw_path, int(chosen))) if chosen is not None else None
                 item["_target_body"] = (row["body"] if row else "") or ""
                 if row and row["level"] == "table_cell":
                     item["best_level"] = LEVEL_LABELS["table_cell"]
