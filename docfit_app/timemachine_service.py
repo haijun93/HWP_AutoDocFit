@@ -54,6 +54,8 @@ class TimemachineService:
         self._scan_lock = threading.Lock()
         self._content_lock = threading.RLock()
         self._content_cancel = threading.Event()
+        self._closing = False
+        self._scan_thread = None
         self._content_thread = None
         self._content_process = None
         self._content_pending_roots = None
@@ -153,7 +155,14 @@ class TimemachineService:
                 self._content_process = None
 
     def close(self):
-        self.cancel_content_index(wait=True)
+        with self._content_lock:
+            self._closing = True
+        self.cancel_content_index(wait=False)
+        with self._scan_lock:
+            scan_worker = self._scan_thread
+        for worker in (scan_worker, self._content_thread):
+            if worker and worker is not threading.current_thread():
+                worker.join()
         self.content_index.close()
         self.store.close()
 
@@ -240,6 +249,8 @@ class TimemachineService:
 
     def _start_content_index(self):
         with self._content_lock:
+            if self._closing:
+                return self._error("TM_INDEX_FAILED", "?? ??? ???? ?????.")
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
                 return {"ok": True, **dict(self._content_state)}
             self._content_pending_roots = set(self.content_index.indexed_paths(roots=self._settings["roots"]))
@@ -501,6 +512,8 @@ class TimemachineService:
         if agent_ready is None:
             agent_ready = self._sync_agent()
         with self._scan_lock:
+            if self._closing:
+                return self._error("TM_SCAN_FAILED", "?? ??? ???? ?????.")
             if self._scan_state["running"]:
                 # 진행 중인 훑기는 예전 폴더 목록이므로 설정이 바뀌었으면 끝난 뒤 한 번 더 훑는다.
                 self._rescan = self._rescan or restart
@@ -512,6 +525,7 @@ class TimemachineService:
             roots, mode = list(self._settings["roots"]), self._settings["time_mode"]
             worker = threading.Thread(target=self._scan_worker, args=(roots, mode),
                                       name="timemachine-scan", daemon=True)
+            self._scan_thread = worker
             try:
                 worker.start()
             except Exception as exc:
@@ -522,6 +536,8 @@ class TimemachineService:
 
     def _refresh_content_index_async(self):
         with self._content_lock:
+            if self._closing:
+                return
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
                 return
             # 본문 색인을 쓴 적이 없으면(색인이 비어 있으면) 자동으로 시작하지 않는다.
