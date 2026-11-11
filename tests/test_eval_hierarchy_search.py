@@ -27,6 +27,25 @@ class HierarchySearchScoringTests(unittest.TestCase):
         self.assertEqual(score["context_accuracy"], 0.5)
         self.assertEqual(score["context_evaluated"], 2)
 
+    def test_corpus_uses_markdown_hierarchy_and_unique_body_words(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+
+        from scripts.eval_hierarchy_search import generate_corpus
+
+        with TemporaryDirectory() as temp:
+            documents, _, _, _ = generate_corpus(Path(temp), document_count=100)
+            self.assertEqual(len(documents), 100)
+            for item in documents.values():
+                path = Path(item["path"])
+                self.assertEqual(path.suffix, ".md")
+                lines = path.read_text(encoding="utf-8").splitlines()
+                self.assertTrue(lines[0].startswith("# "))
+                self.assertTrue(any(line.startswith("## ") for line in lines))
+                self.assertTrue(any(line.startswith("### ") for line in lines))
+                self.assertIn(item["unique_word"], lines[-1])
+                self.assertNotIn(item["unique_word"], "\n".join(lines[:-1]))
+
     def test_empty_relevance_and_missing_context_have_defined_values(self):
         score = score_ranked_results({"q": []}, {"q": []})
         self.assertEqual(score["q"]["recall_at_5"], 0.0)

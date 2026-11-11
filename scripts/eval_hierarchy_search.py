@@ -31,7 +31,7 @@ def _mean(values):
 
 
 def score_ranked_results(ranked_results, relevant_by_query, expected_breadcrumbs=None):
-    """순위별 검색 결과로 Recall@5/10, MRR, 문맥 정확도를 계산한다.
+    """순위별 검색 결과로 Recall@5/10과 MRR을 계산한다.
 
     expected_breadcrumbs는 query별 path별 정확한 breadcrumb 문자열 목록이다.
     문맥 정확도는 검색된 정답 문서 중 breadcrumb 전체가 일치하는 비율이다.
@@ -44,21 +44,20 @@ def score_ranked_results(ranked_results, relevant_by_query, expected_breadcrumbs
         first_rank = next((rank for rank, path in enumerate(ranked_paths, 1) if path in relevant), None)
         found_at_5 = set(ranked_paths[:5]) & relevant
         found_at_10 = set(ranked_paths[:10]) & relevant
-        context_expected = expected_breadcrumbs.get(query, {})
+        expected = expected_breadcrumbs.get(query, {})
         relevant_rows = [row for row in rows if canonical_path(row["path"]) in relevant]
+        evaluated = [row for row in relevant_rows if canonical_path(row["path"]) in expected]
         context_matches = sum(
-            list(row.get("breadcrumb", [])) == list(context_expected.get(canonical_path(row["path"]), ()))
-            for row in relevant_rows
-            if canonical_path(row["path"]) in context_expected
+            list(row.get("breadcrumb", [])) == list(expected[canonical_path(row["path"])])
+            for row in evaluated
         )
-        context_count = sum(canonical_path(row["path"]) in context_expected for row in relevant_rows)
         per_query[query] = {
             "recall_at_5": len(found_at_5) / len(relevant) if relevant else 0.0,
             "recall_at_10": len(found_at_10) / len(relevant) if relevant else 0.0,
             "mrr": 1.0 / first_rank if first_rank else 0.0,
-            "context_accuracy": context_matches / context_count if context_count else None,
             "relevant_count": len(relevant),
-            "context_evaluated": context_count,
+            "context_accuracy": context_matches / len(evaluated) if evaluated else None,
+            "context_evaluated": len(evaluated),
         }
     for metric in ("recall_at_5", "recall_at_10", "mrr"):
         per_query["mean_" + metric] = _mean([item[metric] for item in per_query.values() if isinstance(item, dict)])
@@ -84,31 +83,31 @@ def generate_corpus(root: Path, seed: int = SEED, document_count: int = DOCUMENT
         title_term = number % 3 != 0
         doc_id = f"문서_{number + 1:03d}"
         title = f"{term} 운영 지침 {number + 1:03d}" if title_term else f"공통 운영 지침 {number + 1:03d}"
-        chapter = f"제1장 {term} 관리"
-        section = f"1.1 {term} 계획"
-        topic = f"가. {term} 세부 기준"
-        body = f"본문에서는 {term} 관련 세부 절차와 담당 기준을 설명한다. " + "자료 검토와 실행 결과를 기록한다. " * 3
-        lines = [title, chapter, section, topic, body]
+        chapter = f"{term} 관리"
+        section = f"{term} 계획"
+        topic = f"{term} 세부 기준"
+        unique_word = f"고유어_{number + 1:04d}"
+        body = f"본문에서는 {unique_word} 관련 세부 절차와 담당 기준을 설명한다. " + "자료 검토와 실행 결과를 기록한다. " * 3
+        lines = [f"# {title}", f"## {chapter}", f"### {section}", f"#### {topic}", "", body]
         expected = [chapter, section, topic]
         if group == "목차 없음":
-            lines = [title, chapter, section, topic, body]
+            lines = [f"# {title}", f"## {chapter}", f"### {section}", f"#### {topic}", "", body]
             expected = [chapter, section, topic]
         elif group == "번호 체계 오류":
-            lines[2] = f"제3장 {term} 관리"
-            lines[3] = f"7.4.9 {term} 계획"
-            lines[4] = f"나) {term} 세부 기준"
-            expected = [lines[2], lines[3], lines[4]]
+            lines[1] = "## 제3장 관리"
+            lines[2] = "### 7.4.9 계획"
+            lines[3] = "#### 나) 세부 기준"
+            expected = ["제3장 관리", "7.4.9 계획", "나) 세부 기준"]
         elif group == "표 안 제목":
-            lines = [title, chapter, f"| 구분 | {term} 제목 |", "| --- | --- |", "| 설명 | 표 안에서 다루는 내용 |", section, body]
+            lines = [f"# {title}", f"## {chapter}", f"| 구분 | {term} 제목 |", "| --- | --- |", "| 설명 | 표 안에서 다루는 내용 |", f"### {section}", f"#### {topic}", "", body]
         elif group == "아주 긴 제목":
             title = f"{term} " + "매우 긴 운영 기준과 세부 적용 절차 " * 12
-            lines[0] = title
-        extension = ".md" if number % 2 == 0 else ".txt"
-        path = root / f"{doc_id}{extension}"
+            lines[0] = f"# {title}"
+        path = root / f"{doc_id}.md"
         text = "\n".join(lines)
         path.write_text(text, encoding="utf-8")
         documents[canonical_path(path)] = {
-            "query": term, "title_match": title_term, "group": group,
+            "query": term, "title_match": title_term, "group": group, "unique_word": unique_word,
             "breadcrumb": expected, "path": str(path),
         }
         if group:
@@ -133,6 +132,24 @@ def _measure_method(index, method_name, queries, relevant_by_query, expected_bre
         all_results[query] = method(query, limit=500)
         timings.append((time.perf_counter() - started) * 1000)
     overall = score_ranked_results(all_results, relevant_by_query, expected_breadcrumbs)
+    context_matches = 0
+    context_first_result = None
+    for path, item in documents.items():
+        query = item["unique_word"]
+        started = time.perf_counter()
+        rows = method(query, limit=1)
+        timings.append((time.perf_counter() - started) * 1000)
+        if context_first_result is None:
+            context_first_result = {
+                "query": query,
+                "actual_breadcrumb": rows[0].get("breadcrumb", []) if rows else None,
+                "expected_breadcrumb": item["breadcrumb"],
+            }
+        if rows and list(rows[0].get("breadcrumb", [])) == list(item["breadcrumb"]):
+            context_matches += 1
+    overall["context_accuracy"] = context_matches / len(documents) if documents else None
+    overall["context_evaluated"] = len(documents)
+    overall["context_first_result"] = context_first_result
     group_scores = {}
     for group, paths in groups.items():
         subset = {query: [row for row in rows if canonical_path(row["path"]) in paths]
@@ -141,13 +158,27 @@ def _measure_method(index, method_name, queries, relevant_by_query, expected_bre
         crumbs = {query: {path: expected_breadcrumbs[query][path] for path in qrels[query]}
                   for query in queries}
         group_result = score_ranked_results(subset, qrels, crumbs)
+        # 평균은 해당 회귀군에 정답 문서가 있는 질의만 대상으로 계산한다.
+        eligible = [query for query in queries if qrels[query]]
+        for metric in ("recall_at_5", "recall_at_10", "mrr"):
+            group_result["mean_" + metric] = _mean([group_result[q][metric] for q in eligible])
+        group_context_expected = {
+            item["unique_word"]: item["breadcrumb"]
+            for path, item in documents.items() if path in paths
+        }
+        group_context_correct = 0
+        for context_query, expected_breadcrumb in group_context_expected.items():
+            context_rows = method(context_query, limit=1)
+            if context_rows and canonical_path(context_rows[0]["path"]) in paths and list(context_rows[0].get("breadcrumb", [])) == expected_breadcrumb:
+                group_context_correct += 1
+        group_result["mean_context_accuracy"] = group_context_correct / len(paths) if paths else None
         # 해당 회귀군의 관련 문서 순위는 전체 결과에서 보존한 채 분모를 군 정답 수로 둔다.
         group_result["document_count"] = len(paths)
         group_scores[group] = group_result
     return {
         "metrics": overall, "regression_groups": group_scores,
         "latency_ms": {"median": statistics.median(timings) if timings else 0.0,
-                       "max": max(timings, default=0.0), "per_query": dict(zip(queries, timings))},
+                       "max": max(timings, default=0.0), "per_query": dict(zip(queries, timings[:len(queries)]))},
     }
 
 
@@ -175,8 +206,7 @@ def run_evaluation(output_dir: Path, seed: int = SEED, document_count: int = DOC
         result = {
             "seed": seed, "document_count": document_count, "indexed_count": indexed,
             "query_count": len(QUERIES), "queries": list(QUERIES),
-            "corpus_format_counts": {"md": sum(Path(d["path"]).suffix == ".md" for d in documents.values()),
-                                     "txt": sum(Path(d["path"]).suffix == ".txt" for d in documents.values())},
+            "context_query_count": len(documents), "corpus_format_counts": {"md": sum(Path(d["path"]).suffix == ".md" for d in documents.values()), "txt": 0},
             "indexing_seconds": index_seconds, "index_file_bytes": index_size,
             "index_file_size_mib": index_size / (1024 * 1024),
             "hierarchy_search": hierarchy, "keyword_search": keyword,
@@ -189,10 +219,11 @@ def markdown_report(result):
     lines = ["# HS2-B 위계검색 품질 기준선 (2026-11-12)", "",
              "## 측정 조건", "",
              f"- 고정 시드: `{result['seed']}`; 문서: {result['document_count']}개 (MD {result['corpus_format_counts']['md']}, TXT {result['corpus_format_counts']['txt']})",
-             f"- 질의: {result['query_count']}개; 색인 완료: {result['indexed_count']}개; 색인 시간: {result['indexing_seconds']:.3f}초",
+             f"- Recall/MRR 질의: {result['query_count']}개; 문맥 정확도 고유어 질의: {result['context_query_count']}개; 색인 완료: {result['indexed_count']}개; 색인 시간: {result['indexing_seconds']:.3f}초",
              f"- SQLite 색인 파일: {result['index_file_bytes']:,}바이트 ({result['index_file_size_mib']:.3f} MiB)",
              "- Recall은 정답 제목 문서 중 상위 k개에 든 비율의 질의 평균이며, MRR은 첫 정답 문서의 역순위 평균입니다.",
-             "- 문맥 정확도는 검색된 정답 문서 결과의 `breadcrumb` 전체가 생성 시 기대 경로와 일치한 비율입니다.", "",
+             "- 문맥 정확도는 문서별 고유어 질의로 `search()` 또는 `keyword_search()`한 첫 결과의 breadcrumb가 기대 장·절 breadcrumb 전체와 일치한 비율입니다.",
+             "- 합성 문서는 모두 Markdown이며, 문서 제목은 `#`, 장은 `##`, 절은 `###`로 표시하고 본문에만 문서별 고유어를 둡니다.", "",
              "## 전체 점수", "",
              "| 검색 방식 | Recall@5 | Recall@10 | MRR | 문맥 정확도 | 지연 중앙값 (ms) | 지연 최댓값 (ms) |",
              "|---|---:|---:|---:|---:|---:|---:|"]
@@ -201,19 +232,25 @@ def markdown_report(result):
         metrics = item["metrics"]
         def pct(value): return "N/A" if value is None else f"{value:.3f}"
         lines.append(f"| {label} | {metrics['mean_recall_at_5']:.3f} | {metrics['mean_recall_at_10']:.3f} | {metrics['mean_mrr']:.3f} | {pct(metrics['mean_context_accuracy'])} | {item['latency_ms']['median']:.3f} | {item['latency_ms']['max']:.3f} |")
-    lines.extend(["", "## 회귀군", "", "검색 결과를 회귀군 문서로 제한하고, 해당 군의 정답 문서 수를 분모로 계산합니다. 군별 문서는 각각 9~12개입니다. 이번 저장 기준선에서는 군별 순위 원자료가 없어 점수를 산출하지 않았습니다.", "",
+    lines.extend(["", "## 회귀군", "", "Recall@5/10은 해당 회귀군 정답 문서 수를 분모로 하며 MRR은 그 군 정답의 첫 순위로 계산합니다. 군별 문서는 각각 9~12개입니다.", "",
                   "| 문서군 | 문서 수 | 검색 방식 | Recall@5 | Recall@10 | MRR | 문맥 정확도 |", "|---|---:|---|---:|---:|---:|---:|"])
     for group in REGRESSION_GROUPS:
         for label, key in (("위계", "hierarchy_search"), ("일반", "keyword_search")):
             metrics = result[key]["regression_groups"][group]
             def show(value): return "N/A" if value is None else f"{value:.3f}"
             lines.append(f"| {group} | {metrics['document_count']} | {label} | {show(metrics['mean_recall_at_5'])} | {show(metrics['mean_recall_at_10'])} | {show(metrics['mean_mrr'])} | {pct(metrics['mean_context_accuracy'])} |")
-    lines.extend(["", "## 질의별 결과", "", "| 질의 | 방식 | Recall@5 | Recall@10 | MRR | 문맥 정확도 | 지연 (ms) |", "|---|---|---:|---:|---:|---:|---:|"])
+    lines.extend(["", "## 문맥 정확도 점검 사례", "", "| 방식 | 고유어 질의 | 실제 첫 결과 breadcrumb | 기대 breadcrumb |", "|---|---|---|---|"])
+    for label, key in (("위계 검색", "hierarchy_search"), ("일반 본문 검색", "keyword_search")):
+        sample = result[key]["metrics"]["context_first_result"]
+        actual = " → ".join(sample["actual_breadcrumb"] or [])
+        expected = " → ".join(sample["expected_breadcrumb"] or [])
+        lines.append(f"| {label} | `{sample['query']}` | {actual} | {expected} |")
+    lines.extend(["", "## 질의별 결과", "", "| 질의 | 방식 | Recall@5 | Recall@10 | MRR | 지연 (ms) |", "|---|---|---:|---:|---:|---:|"])
     for query in QUERIES:
         for label, key in (("위계", "hierarchy_search"), ("일반", "keyword_search")):
             item = result[key]
             metrics = item["metrics"][query]
-            lines.append(f"| {query} | {label} | {metrics['recall_at_5']:.3f} | {metrics['recall_at_10']:.3f} | {metrics['mrr']:.3f} | {pct(metrics['context_accuracy'])} | {item['latency_ms']['per_query'][query]:.3f} |")
+            lines.append(f"| {query} | {label} | {metrics['recall_at_5']:.3f} | {metrics['recall_at_10']:.3f} | {metrics['mrr']:.3f} | {item['latency_ms']['per_query'][query]:.3f} |")
     lines.extend(["", "## JSON 원자료", "", "전체 세부 점수와 질의별 지연은 함께 저장된 JSON 파일을 참조합니다.", ""])
     return "\n".join(lines)
 
