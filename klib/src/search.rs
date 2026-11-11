@@ -703,6 +703,9 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     let batch=t.elapsed();
     assert_eq!(ix.search("ext:txt 서울",SearchOptions{limit:n}).unwrap().len(),n);
     println!("BENCH batch n={n} ms={} segments={}",batch.as_millis(),ix.segment_count());
+    let t=std::time::Instant::now();
+    for _ in 0..100 { std::hint::black_box(ix.search("서울 예산",SearchOptions{limit:20}).unwrap()); }
+    println!("BENCH search repeats=100 ms={}",t.elapsed().as_millis());
     drop(ix); let _=std::fs::remove_dir_all(dir);
  }
  #[test] fn single_writes_are_visible_immediately_with_reused_writer(){
