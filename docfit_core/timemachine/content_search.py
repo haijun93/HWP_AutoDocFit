@@ -172,6 +172,38 @@ def _sort_hierarchy_results(items: list[dict], *, sort: str) -> None:
         items.sort(key=lambda item: (-item.get("score", 0), item.get("name", "").casefold()))
 
 
+def _plain_numbered_levels(paragraphs):
+    """TXT/MD 번호 계열의 연속성과 첫 등장 순서를 확인한다."""
+    from ..marker_scheme import classify_marker, _ordinal
+
+    candidates, groups = {}, {}
+    for position, paragraph in enumerate(paragraphs):
+        text = paragraph.text.strip()
+        if paragraph.is_table_cell or len(text) > 60:
+            continue
+        chapter = re.match(r"^제([0-9]+)장\s+\S", text)
+        marker = classify_marker(text)
+        if chapter:
+            family, ordinal = "제N장", (int(chapter.group(1)),)
+        elif marker and marker[0] in {"Ⅰ.", "I.", "1.", "가."} and text[marker[1]:].strip():
+            family = "Ⅰ." if marker[0] == "I." else marker[0]
+            ordinal = _ordinal(marker[0], text[:marker[1]])
+        else:
+            continue
+        candidates[position] = family
+        groups.setdefault(family, []).append((position, ordinal))
+    confirmed = []
+    for family, rows in groups.items():
+        first = rows[0][0]
+        # 일반 본문 바로 뒤에서 시작한 번호 묶음은 본문 목록으로 유지한다.
+        follows_body = (first > 0 and first - 1 not in candidates
+                        and not _MARKDOWN_HEADING.match(paragraphs[first - 1].text.strip()))
+        if not follows_body and any(b[1][0] == a[1][0] + 1 for a, b in zip(rows, rows[1:])):
+            confirmed.append(family)
+    return {family: ("chapter", "section", "topic")[min(depth, 2)]
+            for depth, family in enumerate(confirmed)}
+
+
 def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
     if not paragraphs:
         return []
@@ -188,6 +220,8 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     from ..style_unify import unify_marker
 
     texts = [p.text for p in paragraphs]
+    plain_levels = (_plain_numbered_levels(paragraphs)
+                    if Path(path).suffix.lower() in {".txt", ".md"} else None)
     scheme = detect_scheme(texts)
     numbered_levels = {family: _NUMBERED_FAMILY_LEVELS[family]
                        for family in scheme.family_levels if family in _NUMBERED_FAMILY_LEVELS}
@@ -249,6 +283,9 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
             marker_info = classify_marker(text)
             family = marker_info[0] if marker_info else None
+            if level is None and plain_levels is not None and family in {"Ⅰ.", "I."}:
+                plain_family = "Ⅰ." if family == "I." else family
+                level = plain_levels.get(plain_family, "body") if len(text) <= 60 else "body"
             if level is None and scheme and family in numbered_levels:
                 level = {1: "chapter", 2: "section", 3: "topic", 4: "body"}[numbered_levels[family]]
             if level is None and scheme:
