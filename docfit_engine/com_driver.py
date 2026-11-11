@@ -60,6 +60,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '_업데이트_HTTP_GET':
         def _업데이트_HTTP_GET(url, headers, timeout, _남은_리디렉션=5):
             """검증된 GitLab·GitHub HTTPS URL만 직접 HTTPS 연결로 조회한다(리디렉션도 매번 검증)."""
+            import http.client
+            import ssl
             parsed = urllib.parse.urlparse(_업데이트_URL_검증(url))
             연결 = http.client.HTTPSConnection(  # nosemgrep
                 parsed.hostname, parsed.port or 443, timeout=timeout,

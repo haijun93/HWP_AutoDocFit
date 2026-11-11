@@ -249,8 +249,6 @@ import hashlib
 import difflib
 import urllib.error
 import urllib.parse
-import http.client
-import ssl
 import webbrowser
 from defusedxml import ElementTree as ET
 from collections import Counter, defaultdict, deque
