@@ -1395,6 +1395,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             global _알파_일괄서식_문서, _표준서식_XML텍스트, _표준서식_XML간격
             if not 알파_일괄서식_가능():
                 return {} if target is None else 0
+            from docfit_core.batch_format import apply_batch, ParagraphStyle, BatchUnsupported
+            from docfit_core.fidelity.package import UnsupportedPackage
             from docfit_core.marker_scheme import detect_hwpx_scheme
             scheme = detect_hwpx_scheme(source)
             globals()['활성_항목기호_체계'] = scheme

@@ -1,0 +1,159 @@
+{
+  "measurement_scope": "source module import only; application main() and GUI not run",
+  "interpreter_to_entry_ms": 1449.19,
+  "importtime_top_30_cumulative": [
+    {
+      "name": "site",
+      "self_us": 4747,
+      "cumulative_us": 85476
+    },
+    {
+      "name": "http.client",
+      "self_us": 3903,
+      "cumulative_us": 84495
+    },
+    {
+      "name": "__editable___govflow_python_worker_0_1_0_finder",
+      "self_us": 6590,
+      "cumulative_us": 66552
+    },
+    {
+      "name": "traceback",
+      "self_us": 4049,
+      "cumulative_us": 62383
+    },
+    {
+      "name": "docfit_engine.runtime",
+      "self_us": 2766,
+      "cumulative_us": 50142
+    },
+    {
+      "name": "tkinter",
+      "self_us": 9321,
+      "cumulative_us": 47593
+    },
+    {
+      "name": "_colorize",
+      "self_us": 14679,
+      "cumulative_us": 46413
+    },
+    {
+      "name": "docfit_core.batch_format",
+      "self_us": 4857,
+      "cumulative_us": 46402
+    },
+    {
+      "name": "win32com.client",
+      "self_us": 3059,
+      "cumulative_us": 46367
+    },
+    {
+      "name": "docfit_core.korean_proofread",
+      "self_us": 45172,
+      "cumulative_us": 45172
+    },
+    {
+      "name": "pathlib",
+      "self_us": 2971,
+      "cumulative_us": 44999
+    },
+    {
+      "name": "email.parser",
+      "self_us": 4229,
+      "cumulative_us": 42464
+    },
+    {
+      "name": "docfit_engine.context",
+      "self_us": 2401,
+      "cumulative_us": 39778
+    },
+    {
+      "name": "_tkinter",
+      "self_us": 35962,
+      "cumulative_us": 35962
+    },
+    {
+      "name": "email.feedparser",
+      "self_us": 3377,
+      "cumulative_us": 35662
+    },
+    {
+      "name": "defusedxml.ElementTree",
+      "self_us": 5650,
+      "cumulative_us": 35383
+    },
+    {
+      "name": "glob",
+      "self_us": 2320,
+      "cumulative_us": 34287
+    },
+    {
+      "name": "dataclasses",
+      "self_us": 3867,
+      "cumulative_us": 31735
+    },
+    {
+      "name": "email._policybase",
+      "self_us": 2721,
+      "cumulative_us": 29228
+    },
+    {
+      "name": "inspect",
+      "self_us": 7840,
+      "cumulative_us": 27869
+    },
+    {
+      "name": "shutil",
+      "self_us": 3082,
+      "cumulative_us": 27212
+    },
+    {
+      "name": "pythoncom",
+      "self_us": 18391,
+      "cumulative_us": 27035
+    },
+    {
+      "name": "docfit_core",
+      "self_us": 2359,
+      "cumulative_us": 20121
+    },
+    {
+      "name": "win32com.client.gencache",
+      "self_us": 2833,
+      "cumulative_us": 19304
+    },
+    {
+      "name": "hashlib",
+      "self_us": 2836,
+      "cumulative_us": 19002
+    },
+    {
+      "name": "docfit_core.writing_aids",
+      "self_us": 6651,
+      "cumulative_us": 18522
+    },
+    {
+      "name": "docfit_core.document_review",
+      "self_us": 4003,
+      "cumulative_us": 17964
+    },
+    {
+      "name": "email.header",
+      "self_us": 2985,
+      "cumulative_us": 17949
+    },
+    {
+      "name": "docfit_core.fidelity.package",
+      "self_us": 43,
+      "cumulative_us": 16779
+    },
+    {
+      "name": "docfit_core.fidelity",
+      "self_us": 1497,
+      "cumulative_us": 16737
+    }
+  ],
+  "importtime_entry_count": 294,
+  "python": "C:\\HWP_AUTODOCFIT\\v1803\\exfile\\.venv\\Scripts\\python.exe",
+  "source": "E:\\docfit-tmp\\startup\\hwp-auto-docfit.py"
+}
