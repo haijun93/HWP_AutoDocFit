@@ -46,6 +46,8 @@ class HierarchyFfi {
     _probed = true;
     for (final path in [
       '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}hierarchy.dll',
+      // 배포본(설치형·포터블)은 실행 파일 옆 resources 폴더에 DLL을 둔다. 작업 폴더와 무관하게 찾는다.
+      '${File(Platform.resolvedExecutable).parent.path}${Platform.pathSeparator}resources${Platform.pathSeparator}hierarchy.dll',
       '${Directory.current.path}${Platform.pathSeparator}resources${Platform.pathSeparator}hierarchy.dll',
     ]) {
       // Try each packaged location, then gracefully use the backend.
