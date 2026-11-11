@@ -6,13 +6,43 @@ use std::time::UNIX_EPOCH;
 use crate::search::{Paragraph, SearchIndex};
 
 pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
+    index_file_in_boxes(index, path, name, &[box_id.to_string()])
+}
+
+/// 같은 파일이 여러 자료함에 들어 있을 때 자료함 id를 한 문서에 모두 싣는다(색인 다시 만들기에서 쓴다).
+pub fn index_file_in_boxes(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<(), String> {
     let p = Path::new(path);
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(()); }
-    let body = extract_text(p, &ext)?;
+    // hwpx·docx는 문단마다 개요 수준을 싣는다. 수준 정보가 없는 형식(txt·md·pptx·xlsx)은 모두 본문(0)이다.
+    let blocks = if matches!(ext.as_str(), "hwpx" | "docx") { Some(leveled_blocks(p, &ext)?) } else { None };
+    let body = if blocks.is_some() { String::new() } else { extract_text(p, &ext)? };
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
-    index.add_or_update(&Paragraph { path: path.to_string(), box_ids: vec![box_id.to_string()], name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None }).map_err(|e| e.to_string())
+    let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None };
+    match blocks {
+        Some(blocks) => index.add_or_update_blocks(&paragraph, &blocks),
+        None => index.add_or_update(&paragraph),
+    }.map_err(|e| e.to_string())
+}
+
+/// 본문 색인용 문단과 위계 수준. `extract_blocks`의 수준(0=본문, 1이 가장 위, 클수록 아래)을 그대로 쓴다.
+/// 이 체계는 `hierarchy::search::aggregate`의 순위(0=본문, 작은 양수일수록 위)와 같다.
+/// docx의 머리글·바닥글은 `extract_blocks`가 읽지 않으므로 본문 수준으로 덧붙인다(예전 색인도 검색 대상이었다).
+fn leveled_blocks(path: &Path, ext: &str) -> Result<Vec<(u8, String)>, String> {
+    let mut out: Vec<(u8, String)> = match extract_blocks(path, ext) {
+        Ok(blocks) => blocks.into_iter().map(|b| (b.level.clamp(0, u8::MAX as i64) as u8, b.text)).collect(),
+        // 본문은 비었어도 머리글·바닥글에 글이 있을 수 있다.
+        Err(_) if ext == "docx" => Vec::new(),
+        Err(e) => return Err(e),
+    };
+    if ext == "docx" {
+        for (_, xml) in read_entries(path, |n| (n.starts_with("word/header") || n.starts_with("word/footer")) && n.ends_with(".xml"))? {
+            out.extend(structured_blocks(&xml, &|_| None, &|_, _| None).into_iter().map(|b| (0, b.text)));
+        }
+    }
+    if out.is_empty() { return Err("파일 본문에서 텍스트를 추출하지 못했습니다.".into()); }
+    Ok(out)
 }
 
 pub fn remove_file(index: &SearchIndex, path: &str) -> Result<(), String> {
@@ -295,6 +325,66 @@ mod block_tests {
         let _ = fs::remove_file(&path);
         let got: Vec<(i64, bool, &str)> = blocks.iter().map(|b| (b.level, b.table, b.text.as_str())).collect();
         assert_eq!(got, vec![(1, false, "Ⅰ 개요 상자"), (1, false, "추진 배경"), (2, false, "현황 & 문제"), (3, false, "□ 예산 현황"), (0, true, "구분\t금액"), (0, true, "예산\t1,250만원 (증액)"), (0, false, "본문 문장")]);
+    }
+
+    fn set_mtime(path: &Path, secs: u64) {
+        fs::File::options().write(true).open(path).unwrap().set_modified(UNIX_EPOCH + std::time::Duration::from_secs(secs)).unwrap();
+    }
+
+    /// 제목 수준에 검색어가 있는 문서가 본문에만 있는 문서보다 앞에 나온다.
+    /// 두 문서의 일치 문단은 글이 같아 점수가 같고, 본문 쪽을 더 최신으로 두고 먼저 색인한다.
+    /// 그러므로 위계 수준이 색인에 없으면 본문 쪽이 앞선다(같은 글의 txt 쌍이 그 대조군이다).
+    #[test]
+    fn heading_hit_ranks_before_body_only_hit() {
+        use crate::search::SearchOptions;
+        let dir = std::env::temp_dir().join(format!("klib-blocks-{}-level-index", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let index = SearchIndex::open_or_create(&dir).unwrap();
+        let styles = r#"<w:styles xmlns:w="w"><w:style w:type="paragraph" w:styleId="1"><w:name w:val="heading 1"/></w:style></w:styles>"#;
+        let docx = |heading: bool| format!(r#"<w:document xmlns:w="w"><w:body><w:p>{}<w:r><w:t>마포 예산 편성</w:t></w:r></w:p><w:p><w:r><w:t>그 밖의 설명 문장</w:t></w:r></w:p></w:body></w:document>"#, if heading { r#"<w:pPr><w:pStyle w:val="1"/></w:pPr>"# } else { "" });
+        let header = r#"<hh:head xmlns:hh="h"><hh:paraPr id="0"/><hh:paraPr id="7"><hh:heading type="OUTLINE" idRef="0" level="0"/></hh:paraPr></hh:head>"#;
+        let hwpx = |heading: bool| format!(r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p paraPrIDRef="{}"><hp:run><hp:t>성산 도서관 건립</hp:t></hp:run></hp:p><hp:p paraPrIDRef="0"><hp:run><hp:t>그 밖의 설명 문장</hp:t></hp:run></hp:p></hs:sec>"#, if heading { 7 } else { 0 });
+        let files = [
+            (zip_file("level-body.docx", &[("word/styles.xml", styles), ("word/document.xml", &docx(false))]), 1_700_000_000),
+            (zip_file("level-title.docx", &[("word/styles.xml", styles), ("word/document.xml", &docx(true))]), 1_600_000_000),
+            (zip_file("level-body.hwpx", &[("Contents/header.xml", header), ("Contents/section0.xml", &hwpx(false))]), 1_700_000_000),
+            (zip_file("level-title.hwpx", &[("Contents/header.xml", header), ("Contents/section0.xml", &hwpx(true))]), 1_600_000_000),
+        ];
+        let txt = |name: &str, secs: u64| { let p = std::env::temp_dir().join(format!("klib-blocks-{}-{name}", std::process::id())); fs::write(&p, "공덕 청사 이전\n그 밖의 설명 문장\n").unwrap(); (p, secs) };
+        let controls = [txt("level-new.txt", 1_700_000_000), txt("level-old.txt", 1_600_000_000)];
+        for (i, (path, secs)) in files.iter().chain(&controls).enumerate() {
+            set_mtime(path, *secs);
+            index_file(&index, path.to_str().unwrap(), &format!("file-{i}"), 1).unwrap();
+        }
+        let order = |query: &str| {
+            let hits = index.search(query, SearchOptions { limit: 10 }).unwrap();
+            assert_eq!(hits.len(), 2, "{query}");
+            assert_eq!(hits[0].score, hits[1].score, "{query}: 점수가 같아야 위계 수준으로 갈린다");
+            hits.into_iter().map(|h| Path::new(&h.path).file_name().unwrap().to_str().unwrap().rsplit_once("-level-").unwrap().1.to_string()).collect::<Vec<_>>()
+        };
+        assert_eq!(order("마포 예산"), ["title.docx", "body.docx"]);
+        assert_eq!(order("성산 도서관"), ["title.hwpx", "body.hwpx"]);
+        // 수준이 없는 형식은 지금처럼 모두 본문이라 최신 문서가 앞선다.
+        assert_eq!(order("공덕 청사"), ["new.txt", "old.txt"]);
+        drop(index);
+        for (path, _) in files.iter().chain(&controls) { let _ = fs::remove_file(path); }
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// docx 머리글·바닥글은 본문 수준으로 색인에 남는다.
+    #[test]
+    fn docx_header_text_stays_searchable() {
+        use crate::search::SearchOptions;
+        let dir = std::env::temp_dir().join(format!("klib-blocks-{}-header-index", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let index = SearchIndex::open_or_create(&dir).unwrap();
+        let path = zip_file("header.docx", &[("word/document.xml", r#"<w:document xmlns:w="w"><w:body><w:p><w:r><w:t>본문 문장</w:t></w:r></w:p></w:body></w:document>"#), ("word/header1.xml", r#"<w:hdr xmlns:w="w"><w:p><w:r><w:t>대외비 머리글</w:t></w:r></w:p></w:hdr>"#)]);
+        index_file(&index, path.to_str().unwrap(), "header.docx", 1).unwrap();
+        assert_eq!(index.search("대외비", SearchOptions { limit: 5 }).unwrap().len(), 1);
+        assert_eq!(index.search("본문 문장", SearchOptions { limit: 5 }).unwrap().len(), 1);
+        drop(index);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

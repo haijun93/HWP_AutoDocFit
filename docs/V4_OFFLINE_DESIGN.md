@@ -226,3 +226,22 @@ klib.exe 안에 Tantivy(Rust 전문검색 라이브러리)를 넣어 자료함 �
 - 오타 허용: 결과가 적을 때(상위 점수 낮음) 자모 분해 필드에서 편집거리 1(4자모 이하 낱말은 0) 퍼지 질의로 보강, 가중 0.5.
 - 결과: 문서별 묶음(최고 문단 점수 + 일치 문단 수 보정), 상위 문서만 강조 스니펫 3곳.
 - 검증: 업무 검색어 30개 정답 문서로 nDCG@10을 FTS5 방식과 비교, 나아질 때만 타임머신에 적용.
+
+### 색인 스키마 버전과 자동 재색인 (2026-11-11, 스키마 버전 4)
+
+위 필드 목록은 처음 설계다. 지금 구현(`klib/src/search.rs`의 `schema()`)은 다음과 같다.
+
+- 저장(문서에서 되읽음): `body`(발췌·강조용 원문), `name`, `title`, `box_ids`, 노트북용 `notebook_id`·`source_id`·`paragraph_ordinal`·`location`, 예약 필드 `sheet`·`row`.
+- 색인만(저장 안 함): `body_bi`(2글자 조각), `body_jamo`, `body_cho`, `name_cho`, `doc_id`.
+- `body_ko`는 없앴다. ko-dic(형태소 분석)을 다시 넣기 전까지 `body_bi`와 같은 토크나이저로 같은 글을 색인하던 중복이었다. 질의 가중치는 `body_bi`에 합쳤다(1.0+0.4=1.4, 노트북 검색은 1+1=2). 점수·순서는 그대로다. 형태소 분석을 다시 넣을 때는 `body_ko`를 되살리고 가중치를 1.0/0.4로 나눈 뒤 스키마 버전을 올린다.
+- FAST 필드(열 저장, 저장 문서에는 없음): `path`, `level`, `mtime`(범위 필터용 색인도 함께), `page`, `ext`. 순위 계산은 후보 문단(최대 4,000건)의 저장 문서를 풀지 않고 이 열만 읽고, 저장 문서는 결과로 나갈 문서의 대표 문단만 푼다.
+- `level`(위계 수준): 0 = 본문, 1이 가장 위이고 클수록 아래. `hierarchy::search::aggregate`의 순위와 같은 체계다. hwpx·docx는 `content::extract_blocks`로 문단마다 개요 수준(없으면 공문서 기호 Ⅰ. 1. □ ○ - ※로 정한 수준)을 싣고, txt·md·pptx·xlsx는 모두 0이다.
+
+재색인 절차:
+
+1. 색인 폴더(`tantivy\`)의 `klib_schema_version` 파일에 색인이 온전히 만들어진 스키마 버전을 적는다(`search::SCHEMA_VERSION`). 옛 프로그램이 만든 색인에는 이 파일이 없다.
+2. `SearchIndex::open_or_create`가 열 때 색인이 있는데 버전이 다르거나 없으면, 또는 `klib_rebuild_pending` 파일이 남아 있으면: `klib_rebuild.lock`을 잡고 → `klib_rebuild_pending`을 쓰고 → 폴더 바로 아래의 옛 색인 파일을 지우고(`synonyms.tsv`와 하위 폴더는 남김) → 빈 색인을 새 스키마로 만든다. 잠금을 다른 프로세스가 쥐고 있으면 건드리지 않고 오류를 낸다.
+3. 첫 요청 때 `reindex::kick`이 배경 스레드(`klib-reindex`)를 띄운다. DB(`library.db`)를 읽기 전용으로 따로 열어 자료함 항목(`item`의 file·text·rich_text·note, 같은 경로는 한 번, 자료함 id는 모두)과 노트북 출처(`nb_source`·`nb_paragraph`)를 200건씩 묶음 커밋(`batch()`)으로 다시 색인한다. 원본이 없어진 파일은 건너뛰고 수만 센다.
+4. 다 끝나면 `finish_rebuild`가 남은 변경을 커밋한 뒤 `klib_schema_version`을 쓰고 `klib_rebuild_pending`과 잠금을 지운다. 버전 표시는 끝난 뒤에만 쓰므로, 중간에 죽으면 다음 실행 때 2번부터 처음부터 다시 한다(이어 하지 않는다).
+5. 재색인 중 검색: 오류 없이 그때까지 커밋된 문서로 답하되 응답에 `indexing: true`, `index_done`, `index_total`을 싣는다(빈 결과를 "없음"으로 읽지 말 것). `{"cmd":"index_status"}`는 `state`(`ready`·`rebuilding`·`failed`), `done`, `total`, `failed`(읽지 못한 원본 수), `error`, `schema_version`을 돌려준다. 재색인 중에는 유휴 자동 종료를 하지 않고, 한 번 실행 방식(`--request-json`)은 응답을 출력한 뒤 재색인이 끝날 때까지 기다린다.
+6. 스키마(필드·옵션)나 색인에 넣는 내용(문단 나누기·수준)을 바꾸면 `SCHEMA_VERSION`을 올린다. 그것만으로 사용자 색인이 다음 실행 때 다시 만들어진다.

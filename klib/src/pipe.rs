@@ -725,6 +725,8 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
     }
 
     let cmd = val.str("cmd").unwrap_or("");
+    // 본문 색인의 스키마가 바뀌었으면 배경에서 다시 만든다(프로세스에서 한 번만 확인).
+    crate::reindex::kick(db);
 
     let resp = match cmd {
 
@@ -1092,7 +1094,11 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
                     filtered.truncate(limit);
 
-                    ok_val(vec![("results", Value::Arr(filtered))])
+                    // 색인을 다시 만드는 중이면 결과가 아직 덜 찼다는 것을 함께 알린다(빈 결과를 '없음'으로 읽지 않게).
+                    let (state, done, total, _, _) = crate::reindex::status();
+                    let mut fields = vec![("results", Value::Arr(filtered))];
+                    if state == "rebuilding" { fields.extend([("indexing", true.into()), ("index_done", (done as i64).into()), ("index_total", (total as i64).into())]); }
+                    ok_val(fields)
 
                 }
 
@@ -1597,6 +1603,12 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
             }
         }
         "box_scan_status" => scan_status_val(),
+        // 본문 색인 상태: state는 "ready" | "rebuilding"(스키마가 바뀌어 다시 만드는 중) | "failed".
+        "index_status" => {
+            let (state, done, total, failed, error) = crate::reindex::status();
+            ok_val(vec![("state", state.into()), ("indexing", (state == "rebuilding").into()), ("done", (done as i64).into()), ("total", (total as i64).into()),
+                ("failed", (failed as i64).into()), ("error", error.into()), ("schema_version", (crate::search::SCHEMA_VERSION as i64).into())])
+        }
         "box_scan_files" => {
             let Some(box_id) = val.i64("box_id") else { return json::to_string(&err_val("box_id가 필요합니다.")); };
             let offset = val.i64("offset").unwrap_or(0).max(0);
