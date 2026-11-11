@@ -28,6 +28,15 @@ from docfit_core.file_conversion import HANCOM_PDF_DIRECT, IMAGE_FORMATS, SAME_F
 
 _TABLE_UNITS_COM_LOCK = threading.Lock()
 
+# 무기한 대기(timeout=None) 명령이 Tk 스레드에서 시작되기를 기다리는 한도(초). 넘기면 요청을 취소하고
+# TkBusyError를 낸다. 이미 시작한 명령(창을 닫을 때까지 기다리는 Tk 창 등)은 끝까지 기다린다.
+_TK_START_TIMEOUT = 5.0
+_TK_START_DEFAULT = object()
+
+
+class TkBusyError(RuntimeError):
+    """Tk 스레드가 바빠 명령을 시작하지 못했다(명령은 실행되지 않았고 나중에도 실행되지 않는다)."""
+
 # 화면에서 바로 켜고 끄는 공통 설정(이름 → 앱의 Tk 변수 속성). 값을 바꾸면 앱이 설정 파일에 저장한다.
 def _format_coverage(analysis):
     try:
@@ -260,7 +269,15 @@ class DesktopWebBridge:
     def drop_format_file(self, path):
         return self.quick_register_and_activate_profile(path)
 
-    def _tk(self, callback, timeout=120, front=False):
+    def _tk(self, callback, timeout=120, front=False, start_timeout=_TK_START_DEFAULT):
+        """callback을 Tk 스레드에서 실행하고 결과를 기다린다.
+
+        timeout은 전체 대기 한도(None = 무기한). start_timeout은 실행이 시작되기까지의 한도로, 지정하지 않으면
+        무기한 대기 명령에만 _TK_START_TIMEOUT을 쓴다. 한도 안에 시작하지 못하면 요청을 취소하고 TkBusyError를
+        낸다(쓰기 명령은 실행되거나, 실행되지 않고 오류가 나거나 둘 중 하나다). None이면 시작도 무기한 기다린다.
+        """
+        if start_timeout is _TK_START_DEFAULT:
+            start_timeout = _TK_START_TIMEOUT if timeout is None else None
         tracer = self._freeze_tracer
         callback_name = getattr(callback, '__name__', type(callback).__name__)
         # 오류추적이 켜져 있을 때만: 어느 브리지 명령의 왕복인지 알 수 있게 호출한 메서드 이름을 붙인다.
@@ -355,7 +372,23 @@ class DesktopWebBridge:
             traced('not_scheduled')
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
-            value = result.result(timeout=timeout)
+            if start_timeout is not None and (timeout is None or timeout > start_timeout):
+                try:
+                    value = result.result(timeout=start_timeout)
+                except TimeoutError as exc:
+                    with self._request_lock:
+                        # 아직 시작하지 않았으면 취소한다(run이 나중에 큐에서 꺼내도 실행하지 않는다).
+                        busy = not result.done() and result.cancel()
+                        if busy:
+                            self._requests.discard(result)
+                    if busy:
+                        raise TkBusyError(
+                            "앱이 다른 작업을 처리하고 있어 요청을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                        ) from exc
+                    # 이미 시작했거나 끝났다: 원래 한도(없으면 무기한)만큼 마저 기다린다.
+                    value = result.result(timeout=None if timeout is None else timeout - start_timeout)
+            else:
+                value = result.result(timeout=timeout)
             traced('ok')
             return value
         except TimeoutError as exc:
@@ -1590,7 +1623,8 @@ class DesktopWebBridge:
                     closed = True  # Tk commands no longer exist after destroy.
                 return {"accepted": closed or bool(getattr(self.gui, "closing", False))}
             try:
-                return self._tk(finish_close, timeout=None)
+                # 종료 승인은 시작 대기도 제한하지 않는다(_close_unanswered·_force_close가 따로 감시).
+                return self._tk(finish_close, timeout=None, start_timeout=None)
             except RuntimeError:
                 if self.tk_stopped is not None and self.tk_stopped.is_set():
                     return {"accepted": True}
@@ -3194,7 +3228,8 @@ class DesktopWebBridge:
 
         # 작업 중이면 종료 확인 창이 떠서 사용자의 답을 기다린다.
         try:
-            return self._tk(close, timeout=None, front=True)
+            # 닫기 이벤트에서 '바쁨' 오류를 내면 창이 닫히지 않을 수 있어 시작 대기를 제한하지 않는다.
+            return self._tk(close, timeout=None, front=True, start_timeout=None)
         except RuntimeError:
             # 종료 callback이 root.destroy를 호출하면 자신의 Future도 종료된다.
             if self.tk_stopped is not None and self.tk_stopped.is_set():
