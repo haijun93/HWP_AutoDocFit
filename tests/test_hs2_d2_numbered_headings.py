@@ -4,7 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from docfit_core.timemachine.content_search import extract_paragraphs
+from docfit_core.timemachine.content_search import ContentSearchIndex, extract_paragraphs
+from scripts.hs2_d2_probe import CASES
 
 
 class NumberedHeadingTests(unittest.TestCase):
@@ -45,3 +46,27 @@ class NumberedHeadingTests(unittest.TestCase):
 
     def test_exactly_sixty_characters(self):
         self.assertEqual(self.levels(["가. " + "기" * 57, "나. 추가 기준"]), ["chapter", "chapter"])
+
+    def test_three_synthetic_documents_are_indexed_with_python_levels(self):
+        expected = {
+            "consistent": ["section", "topic", "topic", "topic", "topic", "section"],
+            "isolated": ["body"] * 3,
+            "body_list": ["body"] * 7,
+        }
+        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+            root = Path(tmp)
+            index = ContentSearchIndex(root / "content.sqlite")
+            try:
+                with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value=None):
+                    for name, content in CASES.items():
+                        path = root / (name + ".txt")
+                        path.write_text(content, encoding="utf-8")
+                        self.assertTrue(index.index_file(path)["indexed"])
+                        rows = index.db.execute(
+                            "SELECT body,level FROM content_paragraph_fts WHERE path=? ORDER BY paragraph_index",
+                            (str(path.resolve()),),
+                        ).fetchall()
+                        # 복원한 장 계열의 미해결 동작을 신규 기대값으로 고정하지 않는다.
+                        self.assertEqual([row[1] for row in rows if not row[0].startswith("제")], expected[name])
+            finally:
+                index.close()
