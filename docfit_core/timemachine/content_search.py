@@ -767,10 +767,19 @@ class ContentSearchIndex:
                 return []
 
         if candidates is None:
-            # 2글자 이하 검색어: LIKE로 후보 경로 조회
+            # 2글자 이하 검색어: 2글자는 조각 표(content_short_grams)로, 나머지는 LIKE로 후보 경로 조회.
+            # 조각 표가 없는 옛 색인 문서가 하나라도 있으면 결과가 빠지지 않게 LIKE를 쓴다.
+            with self._lock:
+                grams_complete = self.db.execute(
+                    "SELECT 1 FROM content_meta m WHERE NOT EXISTS"
+                    " (SELECT 1 FROM content_short_grams g WHERE g.path=m.path) LIMIT 1").fetchone() is None
             for term in terms:
                 with self._lock:
-                    found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
+                    if grams_complete and len(term) == 2:
+                        found = {r[0] for r in self.db.execute(
+                            "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
+                    else:
+                        found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
                 candidates = found if candidates is None else candidates & found
                 if not candidates:
                     return []

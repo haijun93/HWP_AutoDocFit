@@ -396,6 +396,24 @@ class ContentSearchTests(unittest.TestCase):
         short = self.index.keyword_search("문단", limit=5)
         self.assertEqual(len(short), 5)
 
+    def test_hierarchy_two_character_search_same_with_and_without_short_grams(self):
+        # 2글자 위계검색은 조각 표로 후보를 좁혀도 결과·발췌문이 LIKE 전체 훑기와 같아야 한다.
+        documents = [(f"gram{i}.txt", [f"머리말 {i}", f"올해 예산 편성 {i}" if i % 3 else "해당 없음", "예산 끝" if i % 5 == 0 else "끝"])
+                     for i in range(40)]
+        self._insert_keyword_documents(documents)
+
+        def summary(rows):
+            return [(row["name"], row["snippet"], row["total_matches"], row["best_level"], row["relevance_rank"]) for row in rows]
+
+        with_grams = summary(self.index.search("예산", limit=500))
+        expected_names = {name for name, paragraphs in documents if any("예산" in text for text in paragraphs)}
+        self.assertEqual({row[0] for row in with_grams}, expected_names)
+        self.assertTrue(all("예산" in row[1] for row in with_grams))
+        # 조각 표가 비어 있는 옛 색인(조각 표 도입 전)에서는 LIKE 경로로 같은 결과를 낸다.
+        with self.index._lock, self.index.db:
+            self.index.db.execute("DELETE FROM content_short_grams")
+        self.assertEqual(summary(self.index.search("예산", limit=500)), with_grams)
+
     def test_keyword_query_syntax_filters_and_extension_aliases(self):
         root = self.root / "폴더"
         root.mkdir()
