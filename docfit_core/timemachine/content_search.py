@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
 from .rules import excluded_name
 import re
@@ -62,6 +63,8 @@ MARKER_CLASS_TO_LEVEL: dict[str, str] = {
     "－": "dash",
 }
 CURRENT_HIERARCHY_SCHEMA_VERSION = 1
+# 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
+KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
 _EXTRACTED_LOCATIONS_LOCK = threading.RLock()
 
@@ -503,6 +506,7 @@ class ContentSearchIndex:
             pass
         self._lock = threading.RLock()
         self._closed = False
+        self._keyword_rank_cache = None
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS content_meta(
@@ -1213,6 +1217,12 @@ class ContentSearchIndex:
             expression = " AND ".join(quote(term) for term in positive if len(term) >= 3)
         return expression
 
+    def _keyword_rank_stamp(self):
+        """본문검색 순위 보관이 아직 유효한지 판단하는 값(다른 연결의 쓰기, 문단 수, 가장 큰 rowid)."""
+        with self._lock:
+            return (self.db.execute("PRAGMA data_version").fetchone()[0],
+                    self._paragraph_fts_row_count(), self._paragraph_fts_max_rowid())
+
     def _select_for_paths(self, sql, paths, params=()):
         """경로 목록으로 거르는 조회를 임시 표로 실행한다.
 
@@ -1305,191 +1315,202 @@ class ContentSearchIndex:
         for phrase in parsed["phrases"]:
             clauses.append("body LIKE ?"); params.append("%" + phrase + "%")
         where_positive = " AND ".join(clauses)
-        with self._lock:
-            # Short terms use the gram table only to narrow candidates; LIKE remains the
-            # final substring check, preserving the old exact matching behavior.
-            if short_positive:
-                short_candidates = None
-                for term in short_positive:
-                    if len(term) == 2:
-                        found = {r[0] for r in self.db.execute(
-                            "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
-                    else:
-                        found = {r[0] for r in self.db.execute(
-                            "SELECT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
-                    short_candidates = found if short_candidates is None else short_candidates & found
-                if short_candidates is not None:
-                    candidate_paths = short_candidates
-                    if candidate_paths is not None and not candidate_paths:
-                        return []
-            if short_positive and candidate_paths is not None:
-                long_predicates = []
-                long_params = []
-                for term in parsed["terms"]:
-                    if len(term) >= 3:
+        # 쪽 넘김: 같은 검색어·범위의 순위 목록을 잠깐 보관해 다음 쪽은 위치 조회만 한다.
+        rank_key = (query, tuple(allowed) if allowed is not None else None)
+        rank_stamp = self._keyword_rank_stamp()
+        cached = self._keyword_rank_cache
+        if (cached is not None and cached[0] == rank_key and cached[1] == rank_stamp
+                and time.monotonic() - cached[2] < KEYWORD_RANK_CACHE_SECONDS):
+            ranked, valid_indices_by_path = cached[3], cached[4]
+        else:
+            cached = None
+        if cached is None:
+            with self._lock:
+                # Short terms use the gram table only to narrow candidates; LIKE remains the
+                # final substring check, preserving the old exact matching behavior.
+                if short_positive:
+                    short_candidates = None
+                    for term in short_positive:
+                        if len(term) == 2:
+                            found = {r[0] for r in self.db.execute(
+                                "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
+                        else:
+                            found = {r[0] for r in self.db.execute(
+                                "SELECT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
+                        short_candidates = found if short_candidates is None else short_candidates & found
+                    if short_candidates is not None:
+                        candidate_paths = short_candidates
+                        if candidate_paths is not None and not candidate_paths:
+                            return []
+                if short_positive and candidate_paths is not None:
+                    long_predicates = []
+                    long_params = []
+                    for term in parsed["terms"]:
+                        if len(term) >= 3:
+                            long_predicates.append("{body} LIKE ?")
+                            long_params.append("%" + term + "%")
+                    for phrase in parsed["phrases"]:
                         long_predicates.append("{body} LIKE ?")
-                        long_params.append("%" + term + "%")
-                for phrase in parsed["phrases"]:
-                    long_predicates.append("{body} LIKE ?")
-                    long_params.append("%" + phrase + "%")
-                # 후보 문서가 적으면 rowid로, 많으면 전체 훑기 한 번으로 읽는다(대응 표와 FTS를 조인하지 않는다:
-                # 조인은 문단 FTS 전체 × 대응 표 전체로 풀려 수십 초가 걸렸다).
-                scored_rows = self._select_paragraphs_for_paths(
-                    "path,name,level_rank,body,0.0 AS rank", candidate_paths,
-                    " AND ".join(long_predicates), long_params)
-            else:
-                scored_rows = self.db.execute(f"""
-                    SELECT path, name, level_rank, body,
-                           bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0) AS rank
-                    FROM content_paragraph_fts WHERE {where_positive}
-                    ORDER BY rank ASC
-                """, params).fetchall()
-            if candidate_paths is not None:
-                scored_rows = [r for r in scored_rows if r["path"] in candidate_paths]
-        # FTS5 bm25 weights: filename=3, body=1. Add a hierarchy boost to the
-        # paragraph score for levels 0..3, then proximity/phrase boosts per document.
-        doc_scores = {}
-        for scored in scored_rows:
-            path = scored["path"]
-            rank = float(scored["rank"])
-            name_folded = (scored["name"] or "").casefold()
-            # Filename is UNINDEXED in this legacy FTS5 schema, so apply the exact
-            # requested 3:1 field weight as an explicit weighted occurrence count.
-            body_term_count = sum((scored["body"] or "").casefold().count(term.casefold()) for term in positive)
-            filename_term_count = sum(term.casefold() in name_folded for term in positive)
-            rank -= 0.001 * (body_term_count + 3.0 * filename_term_count)
-            level_rank = int(scored["level_rank"] if scored["level_rank"] is not None else LEVEL_ORDER.index("body"))
-            if level_rank <= 3:
-                rank -= 0.002 * (4 - level_rank)
-            prior = doc_scores.get(path)
-            doc_scores[path] = min(rank, prior) if prior is not None else rank
-        if short_positive and candidate_paths is not None:
-            for candidate_path in candidate_paths:
-                doc_scores.setdefault(candidate_path, 0.0)
-        rows = [{"path": path, "best_bm25": score} for path, score in doc_scores.items()]
-        if short_positive and candidate_paths is not None:
-            rows = [row for row in rows if row["path"] in candidate_paths]
-        rows = rows[:100000]
-        excluded = set()
-        excluded_short = []
-        with self._lock:
-            for term in parsed["exclude"]:
-                if len(term) < 3:
-                    excluded_short.append(term)
-                if len(term) >= 3:
-                    expr = '"' + term.replace('"', '""') + '"'
-                    try:
-                        excluded.update(row[0] for row in self.db.execute(
-                            "SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expr,)))
-                    except sqlite3.OperationalError:
-                        # MATCH를 못 쓸 때만 LIKE로 전체를 훑는다. 성공했으면 같은 말을 다시 찾지 않는다.
-                        excluded.update(row[0] for row in self.db.execute(
-                            "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
-                # 2글자 이하 제외어는 아래에서 후보 문서 본문(candidate_texts)으로 걸러낸다(전체 훑기 불필요).
-            metas ={row["path"]: row for row in self._select_for_paths(
-                "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
-                (row["path"] for row in rows))} if rows else {}
-        ranked = []
-        valid_indices_by_path = {}
-        candidate_path_set = {r["path"] for r in rows}
-        # 후보 문서의 문단을 한 번만 읽어, 합친 본문(candidate_texts)과 문단별 검사에 함께 쓴다.
-        paragraph_rows_by_path = {}
-        with self._lock:
-            if candidate_path_set:
-                for paragraph_row in self._select_paragraphs_for_paths(
-                        "path,paragraph_index,body,level_rank", candidate_path_set):
-                    paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
-        # 문서의 모든 문단을 저장 순서(rowid 순)대로 줄바꿈으로 잇는다. 예전 group_concat과 같게 NULL 본문은 뺀다.
-        candidate_texts = {path: "\n".join(p["body"] for p in paragraphs if p["body"] is not None)
-                           for path, paragraphs in paragraph_rows_by_path.items()}
-        rows = [row for row in rows if all(term.casefold() in candidate_texts.get(row["path"], "").casefold()
-                                           for term in parsed["terms"]) and all(
-                phrase.casefold() in candidate_texts.get(row["path"], "").replace('"', '').casefold()
-                for phrase in parsed["phrases"]) and not any(
-                term.casefold() in candidate_texts.get(row["path"], "").casefold()
-                for term in [*parsed["exclude"], *excluded_short])]
-        paragraph_rows_by_path = {row["path"]: paragraph_rows_by_path[row["path"]] for row in rows
-                                  if row["path"] in paragraph_rows_by_path}
-        # 근접 검색은 동일 문단 내 양성 용어 사이의 단어 간격으로 제한한다.
-        if parsed["near"] is not None and len(positive) > 1:
-            near = parsed["near"]
-            filtered = []
+                        long_params.append("%" + phrase + "%")
+                    # 후보 문서가 적으면 rowid로, 많으면 전체 훑기 한 번으로 읽는다(대응 표와 FTS를 조인하지 않는다:
+                    # 조인은 문단 FTS 전체 × 대응 표 전체로 풀려 수십 초가 걸렸다).
+                    scored_rows = self._select_paragraphs_for_paths(
+                        "path,name,level_rank,body,0.0 AS rank", candidate_paths,
+                        " AND ".join(long_predicates), long_params)
+                else:
+                    scored_rows = self.db.execute(f"""
+                        SELECT path, name, level_rank, body,
+                               bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0) AS rank
+                        FROM content_paragraph_fts WHERE {where_positive}
+                        ORDER BY rank ASC
+                    """, params).fetchall()
+                if candidate_paths is not None:
+                    scored_rows = [r for r in scored_rows if r["path"] in candidate_paths]
+            # FTS5 bm25 weights: filename=3, body=1. Add a hierarchy boost to the
+            # paragraph score for levels 0..3, then proximity/phrase boosts per document.
+            doc_scores = {}
+            for scored in scored_rows:
+                path = scored["path"]
+                rank = float(scored["rank"])
+                name_folded = (scored["name"] or "").casefold()
+                # Filename is UNINDEXED in this legacy FTS5 schema, so apply the exact
+                # requested 3:1 field weight as an explicit weighted occurrence count.
+                body_term_count = sum((scored["body"] or "").casefold().count(term.casefold()) for term in positive)
+                filename_term_count = sum(term.casefold() in name_folded for term in positive)
+                rank -= 0.001 * (body_term_count + 3.0 * filename_term_count)
+                level_rank = int(scored["level_rank"] if scored["level_rank"] is not None else LEVEL_ORDER.index("body"))
+                if level_rank <= 3:
+                    rank -= 0.002 * (4 - level_rank)
+                prior = doc_scores.get(path)
+                doc_scores[path] = min(rank, prior) if prior is not None else rank
+            if short_positive and candidate_paths is not None:
+                for candidate_path in candidate_paths:
+                    doc_scores.setdefault(candidate_path, 0.0)
+            rows = [{"path": path, "best_bm25": score} for path, score in doc_scores.items()]
+            if short_positive and candidate_paths is not None:
+                rows = [row for row in rows if row["path"] in candidate_paths]
+            rows = rows[:100000]
+            excluded = set()
+            excluded_short = []
+            with self._lock:
+                for term in parsed["exclude"]:
+                    if len(term) < 3:
+                        excluded_short.append(term)
+                    if len(term) >= 3:
+                        expr = '"' + term.replace('"', '""') + '"'
+                        try:
+                            excluded.update(row[0] for row in self.db.execute(
+                                "SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expr,)))
+                        except sqlite3.OperationalError:
+                            # MATCH를 못 쓸 때만 LIKE로 전체를 훑는다. 성공했으면 같은 말을 다시 찾지 않는다.
+                            excluded.update(row[0] for row in self.db.execute(
+                                "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
+                    # 2글자 이하 제외어는 아래에서 후보 문서 본문(candidate_texts)으로 걸러낸다(전체 훑기 불필요).
+                metas ={row["path"]: row for row in self._select_for_paths(
+                    "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
+                    (row["path"] for row in rows))} if rows else {}
+            ranked = []
+            valid_indices_by_path = {}
+            candidate_path_set = {r["path"] for r in rows}
+            # 후보 문서의 문단을 한 번만 읽어, 합친 본문(candidate_texts)과 문단별 검사에 함께 쓴다.
+            paragraph_rows_by_path = {}
+            with self._lock:
+                if candidate_path_set:
+                    for paragraph_row in self._select_paragraphs_for_paths(
+                            "path,paragraph_index,body,level_rank", candidate_path_set):
+                        paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
+            # 문서의 모든 문단을 저장 순서(rowid 순)대로 줄바꿈으로 잇는다. 예전 group_concat과 같게 NULL 본문은 뺀다.
+            candidate_texts = {path: "\n".join(p["body"] for p in paragraphs if p["body"] is not None)
+                               for path, paragraphs in paragraph_rows_by_path.items()}
+            rows = [row for row in rows if all(term.casefold() in candidate_texts.get(row["path"], "").casefold()
+                                               for term in parsed["terms"]) and all(
+                    phrase.casefold() in candidate_texts.get(row["path"], "").replace('"', '').casefold()
+                    for phrase in parsed["phrases"]) and not any(
+                    term.casefold() in candidate_texts.get(row["path"], "").casefold()
+                    for term in [*parsed["exclude"], *excluded_short])]
+            paragraph_rows_by_path = {row["path"]: paragraph_rows_by_path[row["path"]] for row in rows
+                                      if row["path"] in paragraph_rows_by_path}
+            # 근접 검색은 동일 문단 내 양성 용어 사이의 단어 간격으로 제한한다.
+            if parsed["near"] is not None and len(positive) > 1:
+                near = parsed["near"]
+                filtered = []
+                for row in rows:
+                    paragraphs_for_near = paragraph_rows_by_path.get(row["path"], [])
+                    proximity_terms = [*parsed["terms"]]
+                    if len(proximity_terms) < 2:
+                        proximity_terms = positive
+                    if any(_terms_are_near(paragraph["body"] or "", proximity_terms, near) for paragraph in paragraphs_for_near):
+                        filtered.append(row)
+                rows = filtered
             for row in rows:
-                paragraphs_for_near = paragraph_rows_by_path.get(row["path"], [])
-                proximity_terms = [*parsed["terms"]]
-                if len(proximity_terms) < 2:
-                    proximity_terms = positive
-                if any(_terms_are_near(paragraph["body"] or "", proximity_terms, near) for paragraph in paragraphs_for_near):
-                    filtered.append(row)
-            rows = filtered
-        for row in rows:
-            path = row["path"]
-            para_candidates = paragraph_rows_by_path.get(path, [])
-            valid_para_indices = {int(p["paragraph_index"]) for p in para_candidates
-                if all(term.casefold() in (p["body"] or "").casefold() for term in parsed["terms"])
-                and all(phrase.casefold() in (p["body"] or "").casefold() for phrase in parsed["phrases"])}
-            if not valid_para_indices:
-                continue
-            meta = metas.get(path)
-            if not meta or path in excluded or os.path.abspath(path) in excluded:
-                continue
-            if excluded_name(meta["name"] or "") or excluded_name(os.path.basename(path)):
-                continue
-            normalized = os.path.normcase(os.path.abspath(path))
-            if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
-                continue
-            if allowed is not None and not any(os.path.commonpath((normalized, root)) == root for root in allowed
-                    if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(normalized)[0].casefold()):
-                continue
-            ext = (meta["extension"] or Path(path).suffix.lstrip(".")).lower()
-            if parsed["ext"] and ext not in parsed["ext"]:
-                continue
-            if parsed["path"] and not all(value.casefold() in path.casefold() for value in parsed["path"]):
-                continue
-            ref_date = meta["reference_date"] or ""
-            if ref_date and len(ref_date) == 4:
-                ref_date += "-01-01"
-            elif ref_date and len(ref_date) == 7:
-                ref_date += "-01"
-            if not ref_date and meta["mtime"]:
-                ref_date = date.fromtimestamp(meta["mtime"]).isoformat()
-            text_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", candidate_texts.get(path, ""))
-            if text_date:
-                ref_date = text_date.group(1)
-            after = parsed["after"]
-            before = parsed["before"]
-            if after and len(after) == 4: after += "-01-01"
-            elif after and len(after) == 7: after += "-01"
-            if before and len(before) == 4: before += "-12-31"
-            elif before and len(before) == 7: before += "-31"
-            if after and (not ref_date or ref_date < after):
-                continue
-            if before and (not ref_date or ref_date > before):
-                continue
-            # Proximity bonus: reward the closest pair of positive terms in a single
-            # paragraph. Explicit quoted phrases also get a phrase-match bonus.
-            proximity_bonus = 0.0
-            phrase_bonus = 0.0
-            if parsed["near"] is None or len(positive) > 1 or parsed["phrases"]:
-                proximity_paragraphs = para_candidates
-            else:
-                proximity_paragraphs = ()
-            for paragraph in proximity_paragraphs:
-                text = paragraph["body"] or ""
-                if all(term.casefold() in text.casefold() for term in positive):
-                    terms_for_distance = parsed["terms"] or positive
-                    words = [m.group().casefold() for m in re.finditer(r"\S+", text)]
-                    positions = [[i for i, word in enumerate(words) if term.casefold() in word]
-                                 for term in terms_for_distance]
-                    if positions and all(positions):
-                        distance = _min_position_span(positions)
-                        proximity_bonus = max(proximity_bonus, 0.20 / (1 + distance))
-                    if parsed["phrases"] and all(p.casefold() in text.casefold() for p in parsed["phrases"]):
-                        phrase_bonus = max(phrase_bonus, 0.35)
-            filename_bonus = 0.0
-            ranked.append((float(row["best_bm25"]) - proximity_bonus - phrase_bonus - filename_bonus, path, meta))
-            valid_indices_by_path[path] = valid_para_indices
-        ranked.sort(key=lambda value: (value[0], value[1].casefold()))
+                path = row["path"]
+                para_candidates = paragraph_rows_by_path.get(path, [])
+                valid_para_indices = {int(p["paragraph_index"]) for p in para_candidates
+                    if all(term.casefold() in (p["body"] or "").casefold() for term in parsed["terms"])
+                    and all(phrase.casefold() in (p["body"] or "").casefold() for phrase in parsed["phrases"])}
+                if not valid_para_indices:
+                    continue
+                meta = metas.get(path)
+                if not meta or path in excluded or os.path.abspath(path) in excluded:
+                    continue
+                if excluded_name(meta["name"] or "") or excluded_name(os.path.basename(path)):
+                    continue
+                normalized = os.path.normcase(os.path.abspath(path))
+                if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
+                    continue
+                if allowed is not None and not any(os.path.commonpath((normalized, root)) == root for root in allowed
+                        if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(normalized)[0].casefold()):
+                    continue
+                ext = (meta["extension"] or Path(path).suffix.lstrip(".")).lower()
+                if parsed["ext"] and ext not in parsed["ext"]:
+                    continue
+                if parsed["path"] and not all(value.casefold() in path.casefold() for value in parsed["path"]):
+                    continue
+                ref_date = meta["reference_date"] or ""
+                if ref_date and len(ref_date) == 4:
+                    ref_date += "-01-01"
+                elif ref_date and len(ref_date) == 7:
+                    ref_date += "-01"
+                if not ref_date and meta["mtime"]:
+                    ref_date = date.fromtimestamp(meta["mtime"]).isoformat()
+                text_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", candidate_texts.get(path, ""))
+                if text_date:
+                    ref_date = text_date.group(1)
+                after = parsed["after"]
+                before = parsed["before"]
+                if after and len(after) == 4: after += "-01-01"
+                elif after and len(after) == 7: after += "-01"
+                if before and len(before) == 4: before += "-12-31"
+                elif before and len(before) == 7: before += "-31"
+                if after and (not ref_date or ref_date < after):
+                    continue
+                if before and (not ref_date or ref_date > before):
+                    continue
+                # Proximity bonus: reward the closest pair of positive terms in a single
+                # paragraph. Explicit quoted phrases also get a phrase-match bonus.
+                proximity_bonus = 0.0
+                phrase_bonus = 0.0
+                if parsed["near"] is None or len(positive) > 1 or parsed["phrases"]:
+                    proximity_paragraphs = para_candidates
+                else:
+                    proximity_paragraphs = ()
+                for paragraph in proximity_paragraphs:
+                    text = paragraph["body"] or ""
+                    if all(term.casefold() in text.casefold() for term in positive):
+                        terms_for_distance = parsed["terms"] or positive
+                        words = [m.group().casefold() for m in re.finditer(r"\S+", text)]
+                        positions = [[i for i, word in enumerate(words) if term.casefold() in word]
+                                     for term in terms_for_distance]
+                        if positions and all(positions):
+                            distance = _min_position_span(positions)
+                            proximity_bonus = max(proximity_bonus, 0.20 / (1 + distance))
+                        if parsed["phrases"] and all(p.casefold() in text.casefold() for p in parsed["phrases"]):
+                            phrase_bonus = max(phrase_bonus, 0.35)
+                filename_bonus = 0.0
+                ranked.append((float(row["best_bm25"]) - proximity_bonus - phrase_bonus - filename_bonus, path, meta))
+                valid_indices_by_path[path] = valid_para_indices
+            ranked.sort(key=lambda value: (value[0], value[1].casefold()))
+            self._keyword_rank_cache = (rank_key, rank_stamp, time.monotonic(), ranked, valid_indices_by_path)
         selected = ranked[offset:offset + limit]
         results = []
         # 위치 조회는 결과마다 표를 훑지 않고 선택된 문서 전체를 한 번에 읽어 문서별 상위 3개를 고른다.

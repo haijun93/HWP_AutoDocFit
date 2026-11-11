@@ -409,6 +409,31 @@ class ContentSearchTests(unittest.TestCase):
                          {"loc_a.txt": [2], "loc_b.txt": [0], "loc_c.txt": [1]})
         self.assertTrue(all("위치시험낱말" in row["snippet"] for row in found.values()))
 
+    def test_keyword_paging_reuses_ranking_and_drops_it_when_index_changes(self):
+        self._insert_keyword_documents([(f"page{i:03d}.txt", [f"쪽넘김시험낱말 본문 {i}"]) for i in range(30)])
+        whole = self.index.keyword_search("쪽넘김시험낱말", limit=30)
+        first = self.index.keyword_search("쪽넘김시험낱말", limit=10)
+        ranked_object = self.index._keyword_rank_cache[3]
+        second = self.index.keyword_search("쪽넘김시험낱말", limit=10, offset=10)
+        third = self.index.keyword_search("쪽넘김시험낱말", limit=10, offset=20)
+        # 다음 쪽은 보관한 순위 목록을 그대로 쓴다(같은 객체).
+        self.assertIs(self.index._keyword_rank_cache[3], ranked_object)
+        strip = lambda rows: [(row["name"], row["snippet"], row["score"]) for row in rows]
+        self.assertEqual(strip(first + second + third), strip(whole))
+        self.assertEqual([row["relevance_rank"] for row in second], list(range(11, 21)))
+        # 다른 검색어·범위는 섞이지 않는다.
+        self.assertEqual(self.index.keyword_search("없는낱말없는낱말"), [])
+        self.assertEqual(self.index.keyword_search("쪽넘김시험낱말", roots=[str(self.root / "elsewhere")]), [])
+        # 색인이 바뀌면 보관한 목록을 버리고 새 문서가 보인다.
+        self._insert_keyword_documents([("page_new.txt", ["쪽넘김시험낱말 새 문서"])])
+        self.assertEqual(len(self.index.keyword_search("쪽넘김시험낱말", limit=100)), 31)
+        extra = self.root / "real.txt"
+        extra.write_text("쪽넘김시험낱말 실제 파일", encoding="utf-8")
+        self.index.index_file(extra)
+        self.assertEqual(len(self.index.keyword_search("쪽넘김시험낱말", limit=100)), 32)
+        self.index.remove_file(extra)
+        self.assertEqual(len(self.index.keyword_search("쪽넘김시험낱말", limit=100)), 31)
+
     def test_keyword_exclusion_terms_of_any_length_remove_documents(self):
         self._insert_keyword_documents([
             ("keep.txt", ["제외시험낱말 본문", "다른 문단"]),
