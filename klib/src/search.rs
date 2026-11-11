@@ -13,9 +13,11 @@ use tantivy::query::{BooleanQuery, Occur, Query, QueryParser};
 use tantivy::schema::{Field, IndexRecordOption, Schema, TextFieldIndexing, TextOptions, Value};
 use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
-use tantivy::{doc, Index, IndexReader, ReloadPolicy, Score, TantivyDocument};
+use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Score, TantivyDocument};
 
 const TOKENIZER: &str = "ko_bigram";
+/// writer 힙 예산. writer는 처음 쓸 때 한 번만 만들고 계속 재사용한다.
+const WRITER_HEAP: usize = 50_000_000;
 
 #[derive(Clone)]
 pub struct Paragraph {
@@ -66,6 +68,32 @@ pub struct SearchIndex {
     fields: Fields,
     path: PathBuf,
     synonyms: Mutex<SynonymCache>,
+    /// 하나뿐인 writer와 묶음 상태. 잠금 순서: (DB 잠금 →) writer. 이 잠금을 쥔 채 DB·synonyms 잠금을 잡지 않는다.
+    writer: Mutex<WriterState>,
+}
+
+#[derive(Default)]
+struct WriterState {
+    writer: Option<IndexWriter<TantivyDocument>>,
+    /// 묶음을 연 스레드와 중첩 깊이. 다른 스레드의 쓰기는 묶음과 무관하게 바로 커밋한다.
+    batch: Option<(std::thread::ThreadId, usize)>,
+    /// 커밋하지 않은 변경이 있는지.
+    dirty: bool,
+}
+
+/// 여러 건을 연달아 넣을 때 커밋을 묶음 끝으로 미루는 범위. 버려질 때(오류·패닉 포함) 커밋한다.
+pub struct BatchGuard<'a> { index: &'a SearchIndex, active: bool, _not_send: std::marker::PhantomData<*const ()> }
+impl BatchGuard<'_> {
+    /// 묶음을 끝내고 커밋 결과를 돌려준다.
+    pub fn finish(mut self) -> tantivy::Result<()> {
+        if std::mem::replace(&mut self.active, false) { self.index.end_batch() } else { Ok(()) }
+    }
+}
+impl Drop for BatchGuard<'_> {
+    fn drop(&mut self) { if self.active { let _ = self.index.end_batch(); } }
+}
+impl Drop for SearchIndex {
+    fn drop(&mut self) { let _ = self.flush(); }
 }
 
 #[derive(Default)]
@@ -139,8 +167,50 @@ fn schema() -> (Schema, Fields) {
 fn id(path: &str) -> String { format!("{:x}", md5::compute(path.to_lowercase().as_bytes())) }
 
 impl SearchIndex {
+    fn state(&self) -> std::sync::MutexGuard<'_, WriterState> { self.writer.lock().unwrap_or_else(|e| e.into_inner()) }
+    fn commit_locked(&self, st: &mut WriterState) -> tantivy::Result<()> {
+        let result = (|| { if let Some(w) = st.writer.as_mut() { w.commit()?; } self.reader.reload() })();
+        // 실패한 writer는 버린다(커밋 안 된 변경은 예전처럼 사라지고 다음 호출이 새 writer를 만든다).
+        if result.is_err() { st.writer = None; }
+        st.dirty = false;
+        result
+    }
+    /// 재사용 writer로 변경을 넣는다. 묶음 밖이면 돌아오기 전에 커밋·reload해 바로 검색에 보인다.
+    fn write<R>(&self, f: impl FnOnce(&mut IndexWriter<TantivyDocument>) -> tantivy::Result<R>) -> tantivy::Result<R> {
+        let mut st = self.state();
+        if st.writer.is_none() { st.writer = Some(self.index.writer::<TantivyDocument>(WRITER_HEAP)?); }
+        let value = match f(st.writer.as_mut().expect("writer")) {
+            Ok(value) => value,
+            Err(e) => { st.writer = None; st.dirty = false; return Err(e); }
+        };
+        let batched = matches!(st.batch, Some((owner, _)) if owner == std::thread::current().id());
+        if batched { st.dirty = true; } else { self.commit_locked(&mut st)?; }
+        Ok(value)
+    }
+    /// 묶음을 연다. 같은 스레드에서 중첩할 수 있고, 가장 바깥 묶음이 끝날 때 한 번만 커밋한다.
+    pub fn batch(&self) -> BatchGuard<'_> {
+        let mut st = self.state();
+        let me = std::thread::current().id();
+        let active = match st.batch.as_mut() {
+            Some((owner, depth)) if *owner == me => { *depth += 1; true }
+            Some(_) => false,
+            None => { st.batch = Some((me, 1)); true }
+        };
+        BatchGuard { index: self, active, _not_send: std::marker::PhantomData }
+    }
+    fn end_batch(&self) -> tantivy::Result<()> {
+        let mut st = self.state();
+        if let Some((_, depth)) = st.batch.as_mut() { if *depth > 1 { *depth -= 1; return Ok(()); } }
+        st.batch = None;
+        if st.dirty { self.commit_locked(&mut st) } else { Ok(()) }
+    }
+    /// 커밋하지 않은 변경이 있으면 커밋한다(종료 직전 등).
+    pub fn flush(&self) -> tantivy::Result<()> {
+        let mut st = self.state();
+        if st.dirty { self.commit_locked(&mut st) } else { Ok(()) }
+    }
     pub fn replace_notebook_source(&self, notebook_id:i64, source:&crate::notebook::Source, paragraphs:&[crate::notebook::Paragraph])->tantivy::Result<()> {
-        let mut writer=self.index.writer::<TantivyDocument>(50_000_000)?;
+        self.write(|writer| {
         writer.delete_term(tantivy::Term::from_field_u64(self.fields.source_id,source.id as u64));
         for p in paragraphs {
             let path=format!("notebook/{notebook_id}/source/{}",source.id);
@@ -155,17 +225,13 @@ impl SearchIndex {
                 self.fields.paragraph_ordinal=>p.ordinal as u64,self.fields.location=>p.location.clone());
             writer.add_document(doc)?;
         }
-        writer.commit()?;self.reader.reload()?;Ok(())
+        Ok(()) })
     }
     pub fn remove_notebook_source(&self,source_id:i64)->tantivy::Result<()> {
-        let mut writer=self.index.writer::<TantivyDocument>(50_000_000)?;
-        writer.delete_term(tantivy::Term::from_field_u64(self.fields.source_id,source_id as u64));
-        writer.commit()?;self.reader.reload()?;Ok(())
+        self.write(|writer| { writer.delete_term(tantivy::Term::from_field_u64(self.fields.source_id,source_id as u64)); Ok(()) })
     }
     pub fn remove_notebook(&self,notebook_id:i64)->tantivy::Result<()> {
-        let mut writer=self.index.writer::<TantivyDocument>(50_000_000)?;
-        writer.delete_term(tantivy::Term::from_field_u64(self.fields.notebook_id,notebook_id as u64));
-        writer.commit()?;self.reader.reload()?;Ok(())
+        self.write(|writer| { writer.delete_term(tantivy::Term::from_field_u64(self.fields.notebook_id,notebook_id as u64)); Ok(()) })
     }
     pub fn search_notebook(&self,notebook_id:i64,query:&str,source_ids:Option<&[i64]>,limit:usize)->tantivy::Result<Vec<crate::notebook::Hit>> {
         if query.trim().is_empty(){return Ok(Vec::new())}
@@ -196,11 +262,13 @@ impl SearchIndex {
         let index=if path.join("meta.json").exists() { Index::open_in_dir(&path)? } else { Index::create_in_dir(&path, schema)? };
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default())})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default())})
     }
     pub fn index_path(&self) -> &Path { &self.path }
+    /// 검색에 쓰이는 세그먼트 수(측정·점검용).
+    pub fn segment_count(&self) -> usize { self.reader.searcher().segment_readers().len() }
     pub fn add_or_update(&self, p: &Paragraph) -> tantivy::Result<()> {
-        let mut w=self.index.writer::<TantivyDocument>(50_000_000)?;
+        self.write(|w| {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
         for part in p.body.split_inclusive(['\n','\r']) {
             let text=part.trim(); if text.is_empty() { continue; }
@@ -213,11 +281,10 @@ impl SearchIndex {
             if let Some(row)=p.row { d.add_u64(self.fields.row,row); }
             w.add_document(d)?;
         }
-        w.commit()?; self.reader.reload()?; Ok(())
+        Ok(()) })
     }
     pub fn delete_path(&self, path: &str) -> tantivy::Result<()> {
-        let mut w=self.index.writer::<TantivyDocument>(50_000_000)?;
-        w.delete_term(tantivy::Term::from_field_text(self.fields.path,path)); w.commit()?; self.reader.reload()?; Ok(())
+        self.write(|w| { w.delete_term(tantivy::Term::from_field_text(self.fields.path,path)); Ok(()) })
     }
     pub fn search_box(&self, box_id: i64, query: &str, limit: usize) -> tantivy::Result<Vec<SearchHit>> {
         let hits = self.search(query, SearchOptions { limit: limit.max(1).min(200).saturating_mul(20) })?;
@@ -385,5 +452,60 @@ mod tests {
     let _=std::fs::remove_dir_all(dir);
  }
  #[test] fn notebook_index_reuses_search_index_with_exact_scope_and_rank(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();let source=|id|crate::notebook::Source{id,notebook_id:7,kind:"txt".into(),origin:"".into(),display_name:format!("자료{id}"),status:"ready".into(),reason:"".into(),paragraph_count:1,original_size:0,original_mtime:0};let a=source(31);let b=source(32);ix.replace_notebook_source(7,&a,&[crate::notebook::Paragraph{source_id:31,ordinal:0,location:"1".into(),level:0,kind:"text".into(),body:"서울 예산".into()}]).unwrap();ix.replace_notebook_source(7,&b,&[crate::notebook::Paragraph{source_id:32,ordinal:0,location:"2".into(),level:0,kind:"text".into(),body:"서울 서울 예산 예산".into()}]).unwrap();let all=ix.search_notebook(7,"서울 예산",None,10).unwrap();assert_eq!(all.len(),2);assert!(all[0].score>=all[1].score);assert!(ix.search_notebook(7,"서울 예산",Some(&[31]),10).unwrap().iter().all(|h|h.source_id==31));assert!(ix.search_notebook(8,"서울 예산",None,10).unwrap().is_empty());ix.remove_notebook(7).unwrap();assert!(ix.search_notebook(7,"서울",None,10).unwrap().is_empty());let _=std::fs::remove_dir_all(dir);}
+ /// 측정용: `cargo test --release bench_many_files -- --ignored --nocapture`
+ #[test] #[ignore] fn bench_many_files(){
+    let n:usize=std::env::var("KLIB_BENCH_N").ok().and_then(|v|v.parse().ok()).unwrap_or(200);
+    let body=|i:usize|(0..20).map(|l|format!("서울 예산 정책 자료 {i} 문단 {l} 행정복지센터 운영 계획")).collect::<Vec<_>>().join("
+");
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let t=std::time::Instant::now();
+    for i in 0..n { ix.add_or_update(&paragraph(&format!("single-{i:04}.txt"),&body(i))).unwrap(); }
+    let single=t.elapsed();
+    assert_eq!(ix.search("ext:txt 서울",SearchOptions{limit:n}).unwrap().len(),n);
+    println!("BENCH single n={n} ms={} segments={}",single.as_millis(),ix.segment_count());
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let t=std::time::Instant::now();
+    { let b=ix.batch(); for i in 0..n { ix.add_or_update(&paragraph(&format!("batch-{i:04}.txt"),&body(i))).unwrap(); } b.finish().unwrap(); }
+    let batch=t.elapsed();
+    assert_eq!(ix.search("ext:txt 서울",SearchOptions{limit:n}).unwrap().len(),n);
+    println!("BENCH batch n={n} ms={} segments={}",batch.as_millis(),ix.segment_count());
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn single_writes_are_visible_immediately_with_reused_writer(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap(); let count=|q:&str|ix.search(q,SearchOptions{limit:50}).unwrap().len();
+    for n in 0..5 { ix.add_or_update(&paragraph(&format!("s-{n}.txt"),"서울 예산")).unwrap(); assert_eq!(count("서울"),n+1); }
+    ix.add_or_update(&paragraph("s-0.txt","부산 계획")).unwrap(); assert_eq!(count("서울"),4); assert_eq!(count("부산"),1);
+    ix.delete_path("s-1.txt").unwrap(); assert_eq!(count("서울"),3);
+    drop(ix); let again=SearchIndex::open_or_create(&dir).unwrap(); assert_eq!(again.search("서울",SearchOptions{limit:50}).unwrap().len(),3);
+    drop(again); let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn batch_commits_once_at_the_end(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap(); let count=|q:&str|ix.search(q,SearchOptions{limit:50}).unwrap().len();
+    ix.add_or_update(&paragraph("old.txt","서울 예산")).unwrap();
+    { let outer=ix.batch();
+      for n in 0..10 { ix.add_or_update(&paragraph(&format!("b-{n}.txt"),"서울 예산")).unwrap(); }
+      { let _inner=ix.batch(); ix.delete_path("old.txt").unwrap(); ix.add_or_update(&paragraph("b-0.txt","부산 계획")).unwrap(); }
+      assert_eq!(count("서울"),1); assert_eq!(count("부산"),0);
+      outer.finish().unwrap(); }
+    assert_eq!(count("서울"),9); assert_eq!(count("부산"),1);
+    ix.add_or_update(&paragraph("after.txt","서울 예산")).unwrap(); assert_eq!(count("서울"),10);
+    let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn dropped_batch_and_index_drop_do_not_lose_writes(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    { let _b=ix.batch(); ix.add_or_update(&paragraph("d-1.txt","서울 예산")).unwrap(); }
+    assert_eq!(ix.search("서울",SearchOptions{limit:50}).unwrap().len(),1);
+    let b=ix.batch(); ix.add_or_update(&paragraph("d-2.txt","서울 예산")).unwrap(); std::mem::forget(b);
+    drop(ix); let again=SearchIndex::open_or_create(&dir).unwrap(); assert_eq!(again.search("서울",SearchOptions{limit:50}).unwrap().len(),2);
+    drop(again); let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn other_thread_write_is_not_deferred_by_batch(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let b=ix.batch(); ix.add_or_update(&paragraph("t-1.txt","서울 예산")).unwrap();
+    std::thread::scope(|s|{ s.spawn(||{ ix.add_or_update(&paragraph("t-2.txt","서울 예산")).unwrap(); assert_eq!(ix.search("서울",SearchOptions{limit:50}).unwrap().len(),2); }); });
+    b.finish().unwrap(); assert_eq!(ix.search("서울",SearchOptions{limit:50}).unwrap().len(),2);
+    let _=std::fs::remove_dir_all(dir);
+ }
  #[test] fn chosung_and_fuzzy_helpers(){assert_eq!(cho_text("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}"),"\u{314E}\u{3148}\u{3142}\u{3148}\u{3145}\u{314C}");assert!(is_chosung_query("\u{314E}\u{3148}\u{3142}\u{3148}"));assert!(fuzzy_query("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}",schema().1.body_jamo).is_some());}
 }
