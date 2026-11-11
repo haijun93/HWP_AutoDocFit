@@ -3,7 +3,6 @@ name: Build Windows exe
 on:
   push:
     branches:
-      - alpha
       - release/v2.2.40-int
       - release/v2.2.41-int
       - release/v2.2.42-int
