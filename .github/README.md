@@ -20,7 +20,7 @@
 <!-- DEMO:START -->
 ## 시연 영상
 
-<video src="../docs/media/%5B시연영상%5D_마포구청_공혁준.mp4" controls muted width="100%"></video>
+https://github.com/user-attachments/assets/ed8a6b89-70c6-4459-8cff-bebefb8c4d54
 
 [![시연 영상](../docs/media/demo-poster.png)](../docs/media/%5B시연영상%5D_마포구청_공혁준.mp4)
 <!-- DEMO:END -->

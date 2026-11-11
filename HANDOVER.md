@@ -428,7 +428,8 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 ## 5. 작업 규칙 (반드시 지킬 것)
 
 1. **새 기능은 `alpha` 브랜치에서** 개발하고, 사용자가 "베타에 적용"이라고 하면 `main`으로 합쳐 배포합니다.
-2. **푸시 순서**: `github` 먼저, 그다음 같은 ref를 `origin`(GitLab)에 미러링. GitLab 쪽에서 개발하거나 충돌을 풀지 마세요.
+2. **★ 2026-11-11 사용자 지시: GitLab(`origin`) 저장소는 별도 명령 때까지 절대 건드리지 않는다(푸시·태그·삭제·릴리스·downloads·API 모두 금지). 푸시는 `github`에만. 이 PC·맥의 git 설정과 pre-push 훅이 GitLab 푸시를 막고 있으며 되돌리거나 우회하지 말 것.** (아래 문서 곳곳의 `git push origin …` 단계는 재개 지시가 있을 때까지 건너뛴다.)
+   **푸시 순서(재개 후)**: `github` 먼저, 그다음 같은 ref를 `origin`(GitLab)에 미러링. GitLab 쪽에서 개발하거나 충돌을 풀지 마세요.
 3. **GitLab 보안 검사(Semgrep 등)가 푸시를 거부할 수 있습니다.** 특히 새로 만들거나 바꾼 파일에서 표준 `xml` 모듈을 import하면 `use-defused-xml` 규칙에 걸립니다. XML 파싱은 `defusedxml`만 쓰고, 새 모듈에는 표준 `xml`을 넣지 마세요(검사 우회용 주석이 아니라 실제로 고칠 것). 옛 태그 `v1.64`는 이 문제로 GitHub에만 있습니다.
 4. `hwp-auto-docfit.py`는 **CRLF**입니다. 파일 전체를 LF로 바꾸는 편집을 하지 마세요(diff가 수만 줄로 불어남). 바이트 단위로 읽고 쓰거나 줄바꿈을 보존하세요.
 5. 코드 스타일: 주변 코드처럼 한국어 식별자·한국어 주석, 주석 밀도도 맞춥니다.
