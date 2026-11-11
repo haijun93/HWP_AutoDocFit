@@ -121,6 +121,7 @@ class ParagraphRecord:
     is_table_cell: bool
     style_name: str | None = None
     outline_level: int | None = None
+    table_cell_id: int | None = None
 
 
 @dataclass
@@ -369,6 +370,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 is_table_cell=p.is_table_cell,
                 style_name=p.style_name,
                 outline_level=p.outline_level,
+                table_cell_id=p.table_cell_id,
             )
         )
     return _fallback_document_title(path, classified)
@@ -407,7 +409,7 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             paragraph_index=paragraph.paragraph_index, text=paragraph.text, level=level,
             level_rank=LEVEL_RANKS.get(level, LEVEL_RANKS["body"]),
             is_table_cell=paragraph.is_table_cell, style_name=paragraph.style_name,
-            outline_level=paragraph.outline_level,
+            outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id,
         ))
     return converted
 
@@ -435,6 +437,9 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
         is_table_cell=record.is_table_cell,
         style_name=record.style_name,
         outline_level=record.outline_level,
+        table_cell_id=(hierarchy_records[record.sequence - 1].table_cell_id
+                       if ext == "hwpx" and record.sequence <= len(hierarchy_records)
+                       and hierarchy_records[record.sequence - 1].text == record.text else None),
     ) for record in extracted]
     return classify_paragraph_levels(path, paragraphs)
 
@@ -458,12 +463,15 @@ def extract_paragraphs_legacy(path, ext):
             section_names = sorted((n for n in names if n.startswith("Contents/section") and n.endswith(".xml")),
                                    key=lambda n: int(re.search(r"section(\d+)", n).group(1)) if re.search(r"section(\d+)", n) else 0)
             index = 0
-            def walk(node, in_table=False):
-                nonlocal index
+            cell_counter = 0
+            def walk(node, in_table=False, cell_id=None):
+                nonlocal index, cell_counter
                 tag = _tag_name(node)
                 if tag in ("tc", "cell"):
+                    cell_counter += 1
+                    current_cell = cell_counter
                     for child in node:
-                        walk(child, True)
+                        walk(child, True, current_cell)
                     return
                 if tag == "p":
                     chunks = []
@@ -487,13 +495,13 @@ def extract_paragraphs_legacy(path, ext):
                                 outline = outline or child.attrib.get("outlineLevel") or child.attrib.get("outline_level")
                         records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table,
                             style_map.get(style_id) if style_id else node.attrib.get("styleName"),
-                            int(outline) if outline and outline.isdigit() else None))
+                            int(outline) if outline and outline.isdigit() else None, cell_id))
                         index += 1
                     for child in node:
-                        walk(child, in_table)
+                        walk(child, in_table, cell_id)
                     return
                 for child in node:
-                    walk(child, in_table)
+                    walk(child, in_table, cell_id)
             for name in section_names:
                 walk(ET.fromstring(archive.read(name)))
     elif ext == "docx":
@@ -644,6 +652,10 @@ class ContentSearchIndex:
         self._keyword_rank_cache = None
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS content_table_cells(
+                path TEXT, paragraph_index INTEGER, cell_id INTEGER,
+                PRIMARY KEY(path, paragraph_index)
+            );
             CREATE TABLE IF NOT EXISTS content_meta(
                 path TEXT PRIMARY KEY,
                 size INTEGER,
@@ -853,6 +865,7 @@ class ContentSearchIndex:
         self.db.execute(
             "DELETE FROM content_paragraph_fts WHERE rowid IN"
             " (SELECT para_rowid FROM content_paragraph_map WHERE path=?)", (path,))
+        self.db.execute("DELETE FROM content_table_cells WHERE path=?", (path,))
         removed = self.db.execute("DELETE FROM content_paragraph_map WHERE path=?", (path,)).rowcount
         if removed:
             self._map_rows_changed(-removed)
@@ -1072,6 +1085,9 @@ class ContentSearchIndex:
                         (path, name, int(p.paragraph_index), p.level, int(p.level_rank), p.text, *location)
                     ).lastrowid
                     map_rows.append((path, int(p.paragraph_index), para_rowid))
+                    if p.table_cell_id is not None:
+                        self.db.execute("INSERT INTO content_table_cells VALUES(?,?,?)",
+                                        (path, int(p.paragraph_index), p.table_cell_id))
                 self.db.executemany(
                     "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid) VALUES(?,?,?)", map_rows)
                 self._map_rows_changed(len(map_rows))
@@ -1455,8 +1471,7 @@ class ContentSearchIndex:
             crumb_paths = {item["_crumb"][0] for item in final_items if item["_crumb"][1] is not None}
             crumb_rows = {}
             if crumb_paths:
-                for row in self._select_paragraphs_for_paths(
-                        "path, paragraph_index, level, level_rank, body", crumb_paths):
+                for row in self._breadcrumb_rows(crumb_paths):
                     crumb_rows.setdefault(row["path"], []).append(row)
             for item in final_items:
                 raw_path, chosen = item.pop("_crumb")
@@ -1572,6 +1587,22 @@ class ContentSearchIndex:
             finally:
                 if opened_here and self.db.in_transaction:
                     self.db.commit()
+
+    def _breadcrumb_rows(self, paths):
+        """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다."""
+        paths = list(paths)
+        rows = self._select_paragraphs_for_paths(
+            "path,paragraph_index,body,level,level_rank", paths)
+        cells = {}
+        for start in range(0, len(paths), 500):
+            batch = paths[start:start + 500]
+            marks = ",".join("?" for _ in batch)
+            with self._lock:
+                for row in self.db.execute(
+                        f"SELECT path,paragraph_index,cell_id FROM content_table_cells WHERE path IN ({marks})", batch):
+                    cells[(row["path"], int(row["paragraph_index"]))] = row["cell_id"]
+        return [dict(row, table_cell_id=cells.get((row["path"], int(row["paragraph_index"]))))
+                for row in rows]
 
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
@@ -1840,9 +1871,7 @@ class ContentSearchIndex:
             # Fetch each displayed document's paragraph hierarchy in one batched
             # lookup. The rank cache remains limited to ranking and valid indices.
             with self._lock:
-                for row in self._select_paragraphs_for_paths(
-                        "path,paragraph_index,body,level,level_rank",
-                        (path for _, path, _ in selected)):
+                for row in self._breadcrumb_rows(path for _, path, _ in selected):
                     breadcrumb_by_path.setdefault(row["path"], []).append(row)
         for score, path, meta in selected:
             # 위치는 그 문서 자신의 일치 문단으로 거른다(마지막으로 처리한 문서의 집합을 쓰면 안 된다).
