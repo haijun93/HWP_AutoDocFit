@@ -708,7 +708,7 @@ class ContentSearchTests(unittest.TestCase):
 
         found = self.index.search("표순위검색")
         self.assertEqual([item["name"] for item in found], [table_doc.name, body_doc.name])
-        self.assertEqual([item["best_level"] for item in found], ["표 칸", "본문"])
+        self.assertEqual([item["best_level"] for item in found], ["문서 제목", "본문"])
         self.assertEqual([item["total_matches"] for item in found], [2, 1])
 
     def test_hierarchy_order_same_level_same_mentions_newer_document_first(self):
@@ -904,7 +904,7 @@ class ContentSearchTests(unittest.TestCase):
         records = extract_paragraphs(path)
         self.assertEqual(records[0].level, "body")
         self.assertFalse(records[0].is_table_cell)
-        self.assertEqual(records[1].level, "table_cell")
+        self.assertEqual(records[1].level, "document_title")
         self.assertTrue(records[1].is_table_cell)
         self.assertEqual(records[2].level, "table_cell")
         self.assertTrue(records[2].is_table_cell)

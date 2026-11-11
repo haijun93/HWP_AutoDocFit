@@ -122,6 +122,7 @@ class ParagraphRecord:
     style_name: str | None = None
     outline_level: int | None = None
     table_cell_id: int | None = None
+    table_id: int | None = None
 
 
 @dataclass
@@ -396,7 +397,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 is_table_cell=p.is_table_cell,
                 style_name=p.style_name,
                 outline_level=p.outline_level,
-                table_cell_id=p.table_cell_id,
+                table_cell_id=p.table_cell_id, table_id=p.table_id,
             )
         )
     return _fallback_document_title(path, classified)
@@ -408,6 +409,22 @@ def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[Pa
         return paragraphs
     ext = Path(path).suffix.lower()
     candidate = None
+    if ext == ".hwpx":
+        first = next((i for i, p in enumerate(paragraphs) if p.is_table_cell), None)
+        if (first is not None and first < 3
+                and paragraphs[first].table_id in (None, 1)):
+            rows = [{"paragraph_index": p.paragraph_index, "body": p.text,
+                     "level": p.level, "level_rank": p.level_rank,
+                     "table_cell_id": p.table_cell_id} for p in paragraphs[first:]
+                    if paragraphs[first].table_id is None or p.table_id == paragraphs[first].table_id]
+            title_row = hierarchy_path._document_title_row(rows)
+            if title_row is not None:
+                cell_id = title_row["table_cell_id"]
+                return [replace(p, level="document_title", level_rank=0)
+                        if (p.is_table_cell and
+                            (p.table_cell_id == cell_id if cell_id is not None else
+                             p.paragraph_index == title_row["paragraph_index"])) else p
+                        for p in paragraphs]
     if ext in {".txt", ".md"}:
         candidate = next((i for i, p in enumerate(paragraphs)
                           if p.text.strip().startswith(("제목1:", "제목:"))), None)
@@ -435,7 +452,7 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             paragraph_index=paragraph.paragraph_index, text=paragraph.text, level=level,
             level_rank=LEVEL_RANKS.get(level, LEVEL_RANKS["body"]),
             is_table_cell=paragraph.is_table_cell, style_name=paragraph.style_name,
-            outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id,
+            outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id, table_id=paragraph.table_id,
         ))
     return converted
 
@@ -466,6 +483,8 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
         table_cell_id=(hierarchy_records[record.sequence - 1].table_cell_id
                        if ext == "hwpx" and record.sequence <= len(hierarchy_records)
                        and hierarchy_records[record.sequence - 1].text == record.text else None),
+        table_id=(hierarchy_records[record.sequence - 1].table_id
+                  if ext == "hwpx" and record.sequence <= len(hierarchy_records) else None),
     ) for record in extracted]
     return classify_paragraph_levels(path, paragraphs)
 
@@ -490,14 +509,18 @@ def extract_paragraphs_legacy(path, ext):
                                    key=lambda n: int(re.search(r"section(\d+)", n).group(1)) if re.search(r"section(\d+)", n) else 0)
             index = 0
             cell_counter = 0
-            def walk(node, in_table=False, cell_id=None):
-                nonlocal index, cell_counter
+            table_counter = 0
+            def walk(node, in_table=False, cell_id=None, table_id=None):
+                nonlocal index, cell_counter, table_counter
                 tag = _tag_name(node)
+                if tag in ("tbl", "table"):
+                    table_counter += 1
+                    table_id = table_counter
                 if tag in ("tc", "cell"):
                     cell_counter += 1
                     current_cell = cell_counter
                     for child in node:
-                        walk(child, True, current_cell)
+                        walk(child, True, current_cell, table_id)
                     return
                 if tag == "p":
                     chunks = []
@@ -521,13 +544,13 @@ def extract_paragraphs_legacy(path, ext):
                                 outline = outline or child.attrib.get("outlineLevel") or child.attrib.get("outline_level")
                         records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table,
                             style_map.get(style_id) if style_id else node.attrib.get("styleName"),
-                            int(outline) if outline and outline.isdigit() else None, cell_id))
+                            int(outline) if outline and outline.isdigit() else None, cell_id, table_id))
                         index += 1
                     for child in node:
-                        walk(child, in_table, cell_id)
+                        walk(child, in_table, cell_id, table_id)
                     return
                 for child in node:
-                    walk(child, in_table, cell_id)
+                    walk(child, in_table, cell_id, table_id)
             for name in section_names:
                 walk(ET.fromstring(archive.read(name)))
     elif ext == "docx":
