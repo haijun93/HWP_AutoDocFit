@@ -5692,6 +5692,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 모인_로그:
                     self.로그_여러줄_표시(모인_로그)
 
+                if gui_queue.empty():
+                    from docfit_app.jobs import prepare_legacy
+                    prepare_legacy(self)
+
                 try:
                     self._queue_after_id = self.root.after(20 if not gui_queue.empty() else 100, self.queue_처리)
                 except tk.TclError:

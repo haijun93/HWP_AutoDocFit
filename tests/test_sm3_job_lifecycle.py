@@ -74,11 +74,13 @@ class LifecycleSymptomsTests(LifecycleFixture):
             self.manager.begin('spacing')
         self.assertEqual(caught.exception.code, 'JOB_RUNNING')
 
-    def test_current_dead_worker_remains_running(self):
+    def test_dead_worker_is_failed_and_unlocks_gui(self):
         self.dead_worker()
         prepare_legacy(self.gui)
-        self.assertTrue(self.gui.running)
-        self.assertEqual(self.manager.status(self.identifier)['state'], 'running')
+        self.assertFalse(self.gui.running)
+        self.assertEqual(self.manager.status(self.identifier)['state'], 'failed')
+        self.assertEqual(job_phase(self.gui, self.manager), 'failed')
+        self.assertEqual(self.manager.job_status(self.identifier)['error']['code'], 'JOB_INTERRUPTED')
 
 
 class LifecyclePhaseTests(LifecycleFixture):
