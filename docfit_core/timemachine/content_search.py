@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from .rules import excluded_name
 import re
 from dataclasses import dataclass
@@ -65,13 +66,41 @@ _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
 _EXTRACTED_LOCATIONS_LOCK = threading.RLock()
 
 
+def _min_position_span(position_lists) -> int | None:
+    """낱말마다 위치를 하나씩 골랐을 때 (가장 뒤 - 가장 앞)의 최솟값. 빈 목록이 있으면 None.
+
+    모든 조합을 만드는 대신(낱말 수만큼 곱으로 늘어남) 위치를 한 줄로 정렬해 창을 밀며 구한다.
+    결과는 itertools.product로 구한 최솟값과 같다.
+    """
+    lists = [list(found) for found in position_lists]
+    if not lists or any(not found for found in lists):
+        return None
+    merged = sorted((position, index) for index, found in enumerate(lists) for position in found)
+    counts = [0] * len(lists)
+    covered = 0
+    best = None
+    left = 0
+    for position, index in merged:
+        counts[index] += 1
+        if counts[index] == 1:
+            covered += 1
+        while covered == len(lists):
+            span = position - merged[left][0]
+            if best is None or span < best:
+                best = span
+            left_index = merged[left][1]
+            counts[left_index] -= 1
+            if counts[left_index] == 0:
+                covered -= 1
+            left += 1
+    return best
+
+
 def _terms_are_near(text: str, terms: list[str], distance: int) -> bool:
     words = [match.group().casefold() for match in re.finditer(r"\S+", text)]
     positions = [[index for index, word in enumerate(words) if term.casefold() in word] for term in terms]
-    if any(not found for found in positions):
-        return False
-    import itertools
-    return any(max(combo) - min(combo) <= distance + 1 for combo in itertools.product(*positions))
+    span = _min_position_span(positions)
+    return span is not None and span <= distance + 1
 
 
 @dataclass(frozen=True)
@@ -575,10 +604,116 @@ class ContentSearchIndex:
             except sqlite3.Error as migration_exc:
                 self.migration_error = str(migration_exc)
                 raise RuntimeError("본문 색인 스키마 이전에 실패했습니다. 본문 재색인이 필요합니다.") from migration_exc
+        # (경로, 문단 번호) → 문단 FTS rowid 대응 표. path가 UNINDEXED라 path 조건은 표 전체를 훑기 때문에
+        # 경로로 문단을 찾을 때는 이 표에서 rowid를 얻어 rowid로 읽는다. 문서 재색인 없이 FTS에서 채운다.
+        self._map_stamp = None
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS content_paragraph_map("
+            "path TEXT NOT NULL, paragraph_index INTEGER NOT NULL, para_rowid INTEGER NOT NULL,"
+            " PRIMARY KEY(path, paragraph_index, para_rowid)) WITHOUT ROWID")
+        # 대응 표의 행 수·가장 큰 rowid. 행 수를 세는 것(24만 문단에서 수백 ms)을 피하려고 따로 적어 둔다.
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS content_paragraph_map_state("
+            "id INTEGER PRIMARY KEY CHECK(id=1), row_count INTEGER NOT NULL, max_rowid INTEGER NOT NULL)")
+        self.db.execute("INSERT OR IGNORE INTO content_paragraph_map_state(id, row_count, max_rowid) VALUES(1, -1, -1)")
         self.purge_excluded()
         with self._lock:
             if getattr(self.db, "in_transaction", False):
                 self.db.commit()
+
+    def _map_state(self):
+        """이 연결·다른 연결의 쓰기를 알아채는 값. 같으면 그 사이에 표가 바뀌지 않았다."""
+        return (self.db.execute("PRAGMA data_version").fetchone()[0], self.db.total_changes)
+
+    @contextmanager
+    def _map_kept(self):
+        """대응 표와 문단 FTS를 함께 고치는(또는 둘 다 건드리지 않는) 쓰기를 감싼다.
+
+        쓰기 전에 일치가 확인된 상태였다면 쓰기 뒤에도 확인된 상태로 남겨, 다음 확인을 건너뛰게 한다.
+        self._lock을 잡은 채로 쓴다.
+        """
+        kept = self._map_stamp is not None and self._map_stamp == self._map_state()
+        try:
+            yield
+        finally:
+            if kept:
+                self._map_stamp = self._map_state()
+
+    def _paragraph_fts_max_rowid(self):
+        try:
+            return self.db.execute("SELECT MAX(id) FROM content_paragraph_fts_docsize").fetchone()[0] or 0
+        except sqlite3.OperationalError:
+            return self.db.execute("SELECT MAX(rowid) FROM content_paragraph_fts").fetchone()[0] or 0
+
+    def _paragraph_fts_row_count(self):
+        """문단 FTS의 행 수. 열린 트랜잭션이 없으면 FTS5가 적어 둔 전체 행 수(읽기 1번)를 쓴다."""
+        if not self.db.in_transaction:
+            # FTS5 평균 기록(_data의 id=1)은 전체 행 수(varint)로 시작하고 커밋 때 갱신된다.
+            try:
+                row = self.db.execute("SELECT block FROM content_paragraph_fts_data WHERE id=1").fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            block = bytes(row[0]) if row and row[0] else b""
+            value = 0
+            for position, byte in enumerate(block[:9]):
+                if position == 8:
+                    return (value << 8) | byte
+                value = (value << 7) | (byte & 0x7F)
+                if byte < 0x80:
+                    return value
+        try:
+            return self.db.execute("SELECT COUNT(*) FROM content_paragraph_fts_docsize").fetchone()[0]
+        except sqlite3.OperationalError:
+            return self.db.execute("SELECT COUNT(*) FROM content_paragraph_fts").fetchone()[0]
+
+    def _ensure_paragraph_map(self):
+        """대응 표가 문단 FTS와 어긋났으면 비우고 다시 채운다(전체 훑기 1회). 다시 채웠으면 True.
+
+        색인 함수는 대응 표를 함께 고치지만, 옛 색인이나 문단 FTS에 직접 넣은 행은 대응 표에 없다.
+        행 수·가장 큰 rowid·그 rowid의 경로를 견줘 어긋남을 찾는다. 바뀐 것이 없으면 견주지도 않는다.
+        """
+        with self._lock:
+            if self._map_stamp is not None and self._map_stamp == self._map_state():
+                return False
+            state = self.db.execute(
+                "SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone()
+            fts_max = self._paragraph_fts_max_rowid()
+            same = state is not None and tuple(state) == (self._paragraph_fts_row_count(), fts_max)
+            if same and fts_max:
+                last = self.db.execute(
+                    "SELECT path, CAST(paragraph_index AS INTEGER) FROM content_paragraph_fts WHERE rowid=?",
+                    (fts_max,)).fetchone()
+                same = last is not None and self.db.execute(
+                    "SELECT 1 FROM content_paragraph_map WHERE path=? AND paragraph_index=? AND para_rowid=?",
+                    (last[0] if last[0] is not None else "", last[1] or 0, fts_max)).fetchone() is not None
+            if not same:
+                with self.db:
+                    self.db.execute("DELETE FROM content_paragraph_map")
+                    filled = self.db.execute(
+                        "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid)"
+                        " SELECT COALESCE(path, ''), COALESCE(CAST(paragraph_index AS INTEGER), 0), rowid"
+                        " FROM content_paragraph_fts").rowcount
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO content_paragraph_map_state(id, row_count, max_rowid) VALUES(1, ?, ?)",
+                        (filled, self._paragraph_fts_max_rowid()))
+            self._map_stamp = self._map_state()
+            return not same
+
+    def _map_rows_changed(self, delta):
+        """대응 표 행 수 기록을 고친다. 대응 표와 문단 FTS를 함께 고친 같은 트랜잭션 안에서 부른다."""
+        self.db.execute(
+            "UPDATE content_paragraph_map_state SET row_count=row_count+?, max_rowid=? WHERE id=1",
+            (delta, self._paragraph_fts_max_rowid()))
+
+    def _delete_paragraphs(self, path):
+        """한 문서의 문단을 대응 표의 rowid로 지운다(path 조건의 전체 훑기 없음). 대응 표 행도 지운다."""
+        self.db.execute(
+            "DELETE FROM content_paragraph_fts WHERE rowid IN"
+            " (SELECT para_rowid FROM content_paragraph_map WHERE path=?)", (path,))
+        removed = self.db.execute("DELETE FROM content_paragraph_map WHERE path=?", (path,)).rowcount
+        if removed:
+            self._map_rows_changed(-removed)
+        return removed
 
     def purge_excluded(self):
         """이전 버전이 색인한 제외 대상(#IEeEE…) 문서를 모든 본문 표에서 지운다. 지운 경로 목록."""
@@ -594,9 +729,11 @@ class ContentSearchIndex:
                 paths.update(row[0] for row in rows
                              if excluded_name(os.path.basename(row[0] or "")) or excluded_name(row[1] or ""))
             if paths:
-                with self.db:
+                self._ensure_paragraph_map()
+                with self._map_kept(), self.db:
                     for path in paths:
-                        for table in ("content_paragraph_fts", "content_fts", "content_short_grams",
+                        self._delete_paragraphs(path)
+                        for table in ("content_fts", "content_short_grams",
                                       "content_meta", "content_errors"):
                             try:
                                 self.db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
@@ -638,9 +775,10 @@ class ContentSearchIndex:
     def needs_reindex_count(self, roots=None) -> int:
         """위계 정보가 없거나 오래된 스키마 버전의 색인 문서 수."""
         with self._lock:
+            self._ensure_paragraph_map()
             rows = self.db.execute("""
                 SELECT m.path, m.hierarchy_schema_version,
-                       (SELECT COUNT(*) FROM content_paragraph_fts p WHERE p.path = m.path) AS para_count
+                       (SELECT COUNT(*) FROM content_paragraph_map p WHERE p.path = m.path) AS para_count
                 FROM content_meta m
             """).fetchall()
         allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
@@ -669,6 +807,7 @@ class ContentSearchIndex:
         size = stat.st_size
         try:
             with self._lock:
+                self._ensure_paragraph_map()
                 old = self.db.execute(
                     "SELECT size, mtime, hierarchy_schema_version FROM content_meta WHERE path=?",
                     (path,)
@@ -679,7 +818,7 @@ class ContentSearchIndex:
                     and old["mtime"] == mtime
                     and (old["hierarchy_schema_version"] or 0) >= CURRENT_HIERARCHY_SCHEMA_VERSION
                 ):
-                    has_para = self.db.execute("SELECT 1 FROM content_paragraph_fts WHERE path=? LIMIT 1", (path,)).fetchone()
+                    has_para = self.db.execute("SELECT 1 FROM content_paragraph_map WHERE path=? LIMIT 1", (path,)).fetchone()
                     if has_para:
                         return {"indexed": False, "error": None}
 
@@ -691,17 +830,24 @@ class ContentSearchIndex:
             name = os.path.basename(path)
             ext = Path(path).suffix.lower().lstrip(".")
 
-            with self._lock, self.db:
-                self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+            with self._lock:
+                self._ensure_paragraph_map()
+            with self._lock, self._map_kept(), self.db:
+                self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
+                map_rows = []
                 for p in paragraphs:
                     location = _EXTRACTED_LOCATIONS.get(path, {}).get(p.paragraph_index,
                         (f"문단 {p.paragraph_index + 1}", None))
-                    self.db.execute(
+                    para_rowid = self.db.execute(
                         "INSERT INTO content_paragraph_fts(path, name, paragraph_index, level, level_rank, body, location_label, section) VALUES(?,?,?,?,?,?,?,?)",
                         (path, name, int(p.paragraph_index), p.level, int(p.level_rank), p.text, *location)
-                    )
+                    ).lastrowid
+                    map_rows.append((path, int(p.paragraph_index), para_rowid))
+                self.db.executemany(
+                    "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid) VALUES(?,?,?)", map_rows)
+                self._map_rows_changed(len(map_rows))
                 self.db.execute("INSERT INTO content_fts(path, name, body) VALUES(?,?,?)", (path, name, body))
                 grams = {body[i:i + 2].casefold() for i in range(max(0, len(body) - 1))}
                 self.db.executemany("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",
@@ -714,8 +860,10 @@ class ContentSearchIndex:
             return {"indexed": True, "error": None}
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
-            with self._lock, self.db:
-                self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+            with self._lock:
+                self._ensure_paragraph_map()
+            with self._lock, self._map_kept(), self.db:
+                self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
@@ -723,8 +871,10 @@ class ContentSearchIndex:
 
     def remove_file(self, path):
         path = os.path.abspath(os.fspath(path))
-        with self._lock, self.db:
-            self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+        with self._lock:
+            self._ensure_paragraph_map()
+        with self._lock, self._map_kept(), self.db:
+            self._delete_paragraphs(path)
             self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
@@ -745,6 +895,7 @@ class ContentSearchIndex:
             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row["path"]))[0].casefold()))]
 
     def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance"):
+        self._ensure_paragraph_map()
         parsed = self.parse_query(query)
         terms = parsed["terms"] + parsed["phrases"]
         if not terms:
@@ -767,10 +918,19 @@ class ContentSearchIndex:
                 return []
 
         if candidates is None:
-            # 2글자 이하 검색어: LIKE로 후보 경로 조회
+            # 2글자 이하 검색어: 2글자는 조각 표(content_short_grams)로, 나머지는 LIKE로 후보 경로 조회.
+            # 조각 표가 없는 옛 색인 문서가 하나라도 있으면 결과가 빠지지 않게 LIKE를 쓴다.
+            with self._lock:
+                grams_complete = self.db.execute(
+                    "SELECT 1 FROM content_meta m WHERE NOT EXISTS"
+                    " (SELECT 1 FROM content_short_grams g WHERE g.path=m.path) LIMIT 1").fetchone() is None
             for term in terms:
                 with self._lock:
-                    found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
+                    if grams_complete and len(term) == 2:
+                        found = {r[0] for r in self.db.execute(
+                            "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
+                    else:
+                        found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
                 candidates = found if candidates is None else candidates & found
                 if not candidates:
                     return []
@@ -846,8 +1006,8 @@ class ContentSearchIndex:
                 try:
                     aggregate_rows = self.db.execute(f"""
                         WITH scored AS MATERIALIZED (
-                            SELECT path, paragraph_index, level, level_rank, body, lower(body) AS body_folded,
-                                   bm25(content_paragraph_fts) AS bm25_rank
+                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level, level_rank, body,
+                                   lower(body) AS body_folded, bm25(content_paragraph_fts) AS bm25_rank
                             FROM content_paragraph_fts
                             WHERE content_paragraph_fts MATCH ?
                               AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
@@ -859,7 +1019,9 @@ class ContentSearchIndex:
                                    MIN(CAST(paragraph_index AS INTEGER)) AS first_match_index
                             FROM matched GROUP BY path
                         ), chosen AS (
-                            SELECT m.path, MIN(CAST(m.paragraph_index AS INTEGER)) AS chosen_paragraph_index
+                            -- MIN 하나만 있는 집계에서는 SQLite가 그 최솟값 행의 다른 열을 돌려준다.
+                            SELECT m.path, MIN(CAST(m.paragraph_index AS INTEGER)) AS chosen_paragraph_index,
+                                   m.paragraph_rowid AS chosen_rowid
                             FROM matched m JOIN best b ON b.path=m.path AND b.best_level_rank=COALESCE(m.level_rank, 8)
                             GROUP BY m.path
                         ), counts AS (
@@ -867,7 +1029,7 @@ class ContentSearchIndex:
                             FROM matched GROUP BY path
                         )
                         SELECT b.path, c.matched_paragraphs, b.best_level_rank, b.best_bm25,
-                               ch.chosen_paragraph_index, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
+                               ch.chosen_paragraph_index, ch.chosen_rowid, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
                         FROM best b JOIN counts c ON c.path=b.path JOIN chosen ch ON ch.path=b.path
                         ORDER BY c.matched_paragraphs DESC LIMIT 100000
                     """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms,
@@ -944,15 +1106,13 @@ class ContentSearchIndex:
             # N 근접도 검사
             if parsed["near"] is not None and len(terms) > 1:
                 with self._lock:
-                    near_rows = self.db.execute("SELECT body FROM content_paragraph_fts WHERE path=? ORDER BY CAST(paragraph_index AS INTEGER)", (path,)).fetchall()
+                    near_rows = self.db.execute("SELECT body FROM content_paragraph_fts WHERE rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path=?) ORDER BY CAST(paragraph_index AS INTEGER)", (path,)).fetchall()
                 combined_matched_text = "\n".join(r["body"] or "" for r in near_rows)
                 word_spans = [(m.group().casefold(), m.start(), m.end()) for m in re.finditer(r"\S+", combined_matched_text)]
                 term_positions = [[i for i, (word, _, _) in enumerate(word_spans) if term.casefold() in word]
                                   for term in terms]
-                if any(not pos for pos in term_positions):
-                    continue
-                if not any(max(combo) - min(combo) <= parsed["near"] + 1
-                           for combo in __import__('itertools').product(*term_positions)):
+                span = _min_position_span(term_positions)
+                if span is None or span > parsed["near"] + 1:
                     continue
 
             # 언급 횟수 집계
@@ -968,6 +1128,8 @@ class ContentSearchIndex:
                 "path": path,
                 "name": file_name,
                 "_chosen_paragraph_index": aggregate["chosen_paragraph_index"],
+                "_chosen_rowid": aggregate["chosen_rowid"] if "chosen_rowid" in aggregate.keys() else None,
+                "_raw_path": aggregate["path"],
                 "score": total_matches,
                 "match_counts": match_counts,
                 "total_matches": total_matches,
@@ -981,11 +1143,31 @@ class ContentSearchIndex:
         # 5. 정렬 및 순위 부여
         _sort_hierarchy_results(prepared, sort=sort)
         final_items = prepared[:lim]
+        for item in prepared[lim:]:
+            item.pop("_chosen_rowid", None); item.pop("_raw_path", None)
         with self._lock:
+            # 발췌문은 결과마다 path로 표 전체를 훑지 않고 한 번에 읽는다.
+            # rowid를 아는 결과는 rowid로, 모르는 결과(2글자·예비 경로)는 경로 묶음 조회 한 번으로 읽는다.
+            by_rowid, by_position = {}, {}
+            rowids = sorted({int(item["_chosen_rowid"]) for item in final_items if item["_chosen_rowid"] is not None})
+            for start in range(0, len(rowids), 500):
+                chunk = rowids[start:start + 500]
+                for row in self.db.execute(
+                        "SELECT rowid AS paragraph_rowid, body, level FROM content_paragraph_fts WHERE rowid IN ("
+                        + ",".join("?" for _ in chunk) + ")", chunk):
+                    by_rowid[row["paragraph_rowid"]] = row
+            scan_paths = {item["_raw_path"] for item in final_items if item["_chosen_rowid"] is None}
+            if scan_paths:
+                for row in self._select_paragraphs_for_paths("path, paragraph_index, body, level", scan_paths):
+                    by_position.setdefault((row["path"], int(row["paragraph_index"])), row)
             for item in final_items:
                 chosen = item.pop("_chosen_paragraph_index")
-                row = self.db.execute("SELECT body,level FROM content_paragraph_fts WHERE path=? AND CAST(paragraph_index AS INTEGER)=? ORDER BY CAST(paragraph_index AS INTEGER) LIMIT 1",
-                                      (item["path"], chosen)).fetchone()
+                chosen_rowid = item.pop("_chosen_rowid")
+                raw_path = item.pop("_raw_path")
+                if chosen_rowid is not None:
+                    row = by_rowid.get(int(chosen_rowid))
+                else:
+                    row = by_position.get((raw_path, int(chosen))) if chosen is not None else None
                 item["_target_body"] = (row["body"] if row else "") or ""
                 if row and row["level"] == "table_cell":
                     item["best_level"] = LEVEL_LABELS["table_cell"]
@@ -1031,8 +1213,70 @@ class ContentSearchIndex:
             expression = " AND ".join(quote(term) for term in positive if len(term) >= 3)
         return expression
 
+    def _select_for_paths(self, sql, paths, params=()):
+        """경로 목록으로 거르는 조회를 임시 표로 실행한다.
+
+        `path IN (?, ?, …)`는 경로가 SQL 변수 한도(기본 32,766)를 넘으면 실패한다.
+        sql의 `{paths}` 자리에 임시 표 조회를 넣어 경로 수와 무관하게 동작하게 한다.
+        """
+        with self._lock:
+            opened_here = not self.db.in_transaction
+            try:
+                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS keyword_path_filter(path TEXT PRIMARY KEY)")
+                self.db.execute("DELETE FROM keyword_path_filter")
+                self.db.executemany("INSERT OR IGNORE INTO keyword_path_filter(path) VALUES(?)",
+                                    ((path,) for path in paths))
+                return self.db.execute(
+                    sql.format(paths="SELECT path FROM temp.keyword_path_filter"), tuple(params)).fetchall()
+            finally:
+                # 임시 표 쓰기로 열린 트랜잭션을 남겨 두면 이후 조회가 옛 스냅숏을 본다.
+                if opened_here and self.db.in_transaction:
+                    self.db.commit()
+
+    # 후보 문단이 전체의 이 비율(1/4)을 넘으면 rowid 조회보다 전체 훑기 한 번이 빠르다.
+    # 24만 문단 측정: rowid 조회는 문단당 약 4.5µs(8만 문단 0.39초), 전체 훑기는 0.2~0.7초로 8만 문단 근처에서 뒤집힌다.
+    _PARAGRAPH_SCAN_RATIO = 4
+
+    def _select_paragraphs_for_paths(self, columns, paths, where="", params=()):
+        """경로 목록에 속한 문단을 rowid 순으로 읽는다.
+
+        후보가 적으면 대응 표(content_paragraph_map)에서 rowid를 얻어 rowid로 읽고,
+        후보가 많으면(전체의 1/4 초과) 문단 FTS를 한 번 훑는다. 결과와 순서는 두 방식이 같다.
+        where는 `{body} LIKE ?`처럼 본문 열을 `{body}`로 적은 추가 조건이다. rowid 조회에서는
+        LIKE가 FTS5로 넘어가 rowid마다 3글자 색인을 다시 찾지 않도록 `+body`로 바꿔 넣는다.
+        MATCH 조건은 rowid 조회와 함께 쓰면 rowid마다 MATCH를 다시 실행하므로 여기에 넣지 않는다.
+        """
+        with self._lock:
+            opened_here = not self.db.in_transaction
+            try:
+                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS keyword_path_filter(path TEXT PRIMARY KEY)")
+                self.db.execute("DELETE FROM keyword_path_filter")
+                self.db.executemany("INSERT OR IGNORE INTO keyword_path_filter(path) VALUES(?)",
+                                    ((path,) for path in paths))
+                source = "SELECT path FROM temp.keyword_path_filter"
+                state = self.db.execute("SELECT row_count FROM content_paragraph_map_state WHERE id=1").fetchone()
+                total = state[0] if state else -1
+                # 후보 문단 수는 분기점을 넘는지만 알면 되므로 거기까지만 센다(24만 문단에서 최대 약 20ms).
+                ceiling = total // self._PARAGRAPH_SCAN_RATIO if total >= 0 and self._PARAGRAPH_SCAN_RATIO else max(total, 0)
+                wanted = self.db.execute(
+                    f"SELECT COUNT(*) FROM (SELECT 1 FROM content_paragraph_map WHERE path IN ({source}) LIMIT ?)",
+                    (ceiling + 1,)).fetchone()[0]
+                if total >= 0 and wanted <= ceiling:
+                    condition = f"rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path IN ({source}))"
+                    extra = where.format(body="+body")
+                else:
+                    condition = f"path IN ({source})"
+                    extra = where.format(body="body")
+                return self.db.execute(
+                    f"SELECT {columns} FROM content_paragraph_fts WHERE {condition}"
+                    + (f" AND {extra}" if extra else "") + " ORDER BY rowid", tuple(params)).fetchall()
+            finally:
+                if opened_here and self.db.in_transaction:
+                    self.db.commit()
+
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
+        self._ensure_paragraph_map()
         parsed = self.parse_query(query)
         positive = [*parsed["terms"], *parsed["phrases"]]
         if not positive:
@@ -1079,26 +1323,20 @@ class ContentSearchIndex:
                     if candidate_paths is not None and not candidate_paths:
                         return []
             if short_positive and candidate_paths is not None:
-                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS keyword_candidate_paths(path TEXT PRIMARY KEY)")
-                self.db.execute("DELETE FROM keyword_candidate_paths")
-                self.db.executemany("INSERT INTO keyword_candidate_paths(path) VALUES(?)",
-                                    ((path,) for path in candidate_paths))
                 long_predicates = []
                 long_params = []
                 for term in parsed["terms"]:
                     if len(term) >= 3:
-                        long_predicates.append("p.body LIKE ?")
+                        long_predicates.append("{body} LIKE ?")
                         long_params.append("%" + term + "%")
                 for phrase in parsed["phrases"]:
-                    long_predicates.append("p.body LIKE ?")
+                    long_predicates.append("{body} LIKE ?")
                     long_params.append("%" + phrase + "%")
-                predicate = " AND ".join(long_predicates) if long_predicates else "1"
-                scored_rows = self.db.execute(f"""
-                    SELECT p.path,p.name,p.level_rank,p.body,0.0 AS rank
-                    FROM keyword_candidate_paths c
-                    JOIN content_paragraph_fts p ON p.path=c.path
-                    WHERE {predicate}
-                """, long_params).fetchall()
+                # 후보 문서가 적으면 rowid로, 많으면 전체 훑기 한 번으로 읽는다(대응 표와 FTS를 조인하지 않는다:
+                # 조인은 문단 FTS 전체 × 대응 표 전체로 풀려 수십 초가 걸렸다).
+                scored_rows = self._select_paragraphs_for_paths(
+                    "path,name,level_rank,body,0.0 AS rank", candidate_paths,
+                    " AND ".join(long_predicates), long_params)
             else:
                 scored_rows = self.db.execute(f"""
                     SELECT path, name, level_rank, body,
@@ -1144,41 +1382,33 @@ class ContentSearchIndex:
                         excluded.update(row[0] for row in self.db.execute(
                             "SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expr,)))
                     except sqlite3.OperationalError:
-                        pass
-                excluded.update(row[0] for row in self.db.execute(
-                    "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
-            metas = {row["path"]: row for row in self.db.execute(
-                "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN (" +
-                ",".join("?" for _ in rows) + ")", tuple(row["path"] for row in rows))} if rows else {}
+                        # MATCH를 못 쓸 때만 LIKE로 전체를 훑는다. 성공했으면 같은 말을 다시 찾지 않는다.
+                        excluded.update(row[0] for row in self.db.execute(
+                            "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
+                # 2글자 이하 제외어는 아래에서 후보 문서 본문(candidate_texts)으로 걸러낸다(전체 훑기 불필요).
+            metas ={row["path"]: row for row in self._select_for_paths(
+                "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
+                (row["path"] for row in rows))} if rows else {}
         ranked = []
         candidate_path_set = {r["path"] for r in rows}
-        candidate_texts = {}
+        # 후보 문서의 문단을 한 번만 읽어, 합친 본문(candidate_texts)과 문단별 검사에 함께 쓴다.
+        paragraph_rows_by_path = {}
         with self._lock:
             if candidate_path_set:
-                marks = ",".join("?" for _ in candidate_path_set)
-                if short_positive and candidate_paths is not None:
-                    candidate_texts = {r["path"]: r["body"] or "" for r in self.db.execute(
-                        f"SELECT path, body FROM content_paragraph_fts WHERE path IN ({marks})",
-                        tuple(candidate_path_set))}
-                else:
-                    candidate_texts = {r["path"]: r["body"] or "" for r in self.db.execute(
-                        f"SELECT path, group_concat(body, char(10)) AS body FROM content_paragraph_fts WHERE path IN ({marks}) GROUP BY path",
-                        tuple(candidate_path_set))}
+                for paragraph_row in self._select_paragraphs_for_paths(
+                        "path,paragraph_index,body,level_rank", candidate_path_set):
+                    paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
+        # 문서의 모든 문단을 저장 순서(rowid 순)대로 줄바꿈으로 잇는다. 예전 group_concat과 같게 NULL 본문은 뺀다.
+        candidate_texts = {path: "\n".join(p["body"] for p in paragraphs if p["body"] is not None)
+                           for path, paragraphs in paragraph_rows_by_path.items()}
         rows = [row for row in rows if all(term.casefold() in candidate_texts.get(row["path"], "").casefold()
                                            for term in parsed["terms"]) and all(
                 phrase.casefold() in candidate_texts.get(row["path"], "").replace('"', '').casefold()
                 for phrase in parsed["phrases"]) and not any(
                 term.casefold() in candidate_texts.get(row["path"], "").casefold()
                 for term in [*parsed["exclude"], *excluded_short])]
-        paragraph_rows_by_path = {}
-        candidate_path_set = {row["path"] for row in rows}
-        with self._lock:
-            if candidate_path_set:
-                marks = ",".join("?" for _ in candidate_path_set)
-                for paragraph_row in self.db.execute(
-                    f"SELECT path,paragraph_index,body,level_rank FROM content_paragraph_fts WHERE path IN ({marks})",
-                    tuple(candidate_path_set)):
-                    paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
+        paragraph_rows_by_path = {row["path"]: paragraph_rows_by_path[row["path"]] for row in rows
+                                  if row["path"] in paragraph_rows_by_path}
         # 근접 검색은 동일 문단 내 양성 용어 사이의 단어 간격으로 제한한다.
         if parsed["near"] is not None and len(positive) > 1:
             near = parsed["near"]
@@ -1251,8 +1481,7 @@ class ContentSearchIndex:
                     positions = [[i for i, word in enumerate(words) if term.casefold() in word]
                                  for term in terms_for_distance]
                     if positions and all(positions):
-                        import itertools
-                        distance = min(max(combo) - min(combo) for combo in itertools.product(*positions))
+                        distance = _min_position_span(positions)
                         proximity_bonus = max(proximity_bonus, 0.20 / (1 + distance))
                     if parsed["phrases"] and all(p.casefold() in text.casefold() for p in parsed["phrases"]):
                         phrase_bonus = max(phrase_bonus, 0.35)
@@ -1261,36 +1490,43 @@ class ContentSearchIndex:
         ranked.sort(key=lambda value: (value[0], value[1].casefold()))
         selected = ranked[offset:offset + limit]
         results = []
-        for score, path, meta in selected:
-            conditions, match_params = [], []
-            if match and not parsed["phrases"]:
-                conditions.append("content_paragraph_fts MATCH ?"); match_params.append(match)
-            else:
-                for term in parsed["terms"]:
-                    if len(term) >= 3:
-                        conditions.append("content_paragraph_fts MATCH ?")
-                        match_params.append('"' + term.replace('"', '""') + '"')
-                    else:
-                        conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
-                for phrase in parsed["phrases"]:
-                    conditions.append("body LIKE ?"); match_params.append("%" + phrase.replace('"', '""') + "%")
-            for term in short_positive:
-                conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
-            match_where = " AND ".join(conditions)
-            with self._lock:
-                if short_positive:
-                    paragraphs = self.db.execute(f"""
-                        SELECT paragraph_index, body, location_label, section, 0.0 AS rank
-                        FROM content_paragraph_fts WHERE path=? AND {match_where}
-                        ORDER BY CAST(paragraph_index AS INTEGER) ASC LIMIT 3
-                    """, [path, *match_params]).fetchall()
+        # 위치 조회는 결과마다 표를 훑지 않고 선택된 문서 전체를 한 번에 읽어 문서별 상위 3개를 고른다.
+        conditions, match_params = [], []
+        if match and not parsed["phrases"]:
+            conditions.append("content_paragraph_fts MATCH ?"); match_params.append(match)
+        else:
+            for term in parsed["terms"]:
+                if len(term) >= 3:
+                    conditions.append("content_paragraph_fts MATCH ?")
+                    match_params.append('"' + term.replace('"', '""') + '"')
                 else:
-                    paragraphs = self.db.execute(f"""
-                        SELECT paragraph_index, body, location_label, section,
-                               bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0) AS rank
-                        FROM content_paragraph_fts WHERE path=? AND {match_where}
-                        ORDER BY rank ASC, CAST(paragraph_index AS INTEGER) ASC LIMIT 3
-                    """, [path, *match_params]).fetchall()
+                    conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
+            for phrase in parsed["phrases"]:
+                conditions.append("body LIKE ?"); match_params.append("%" + phrase.replace('"', '""') + "%")
+        for term in short_positive:
+            conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
+        match_where = " AND ".join(conditions)
+        rank_column = ("0.0" if short_positive
+                       else "bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0)")
+        located_by_path = {}
+        if selected:
+            if any("MATCH" in condition for condition in conditions):
+                # MATCH(와 bm25)는 rowid 조회와 함께 쓰면 rowid마다 다시 실행되므로 MATCH로 찾고 경로로 거른다.
+                located_rows = self._select_for_paths(
+                    f"SELECT path, paragraph_index, body, location_label, section, {rank_column} AS rank"
+                    f" FROM content_paragraph_fts WHERE {match_where} AND path IN ({{paths}})",
+                    (path for _, path, _ in selected), match_params)
+            else:
+                located_rows = self._select_paragraphs_for_paths(
+                    f"path, paragraph_index, body, location_label, section, {rank_column} AS rank",
+                    (path for _, path, _ in selected),
+                    " AND ".join(condition.replace("body LIKE", "{body} LIKE") for condition in conditions),
+                    match_params)
+            for located in located_rows:
+                located_by_path.setdefault(located["path"], []).append(located)
+        for score, path, meta in selected:
+            paragraphs = sorted(located_by_path.get(path, ()),
+                                key=lambda p: (float(p["rank"]), int(p["paragraph_index"])))[:3]
             paragraphs = [p for p in paragraphs if int(p["paragraph_index"]) in valid_para_indices]
             locations = []
             for paragraph in paragraphs:

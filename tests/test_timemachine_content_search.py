@@ -357,6 +357,75 @@ class ContentSearchTests(unittest.TestCase):
         self.assertLess(gram_seconds, before_seconds)
         self.assertLess(after_seconds, 2.5)
 
+    def _insert_keyword_documents(self, documents):
+        """(이름, [문단…]) 목록을 색인 표에 직접 넣는다. 넣은 경로 목록을 돌려준다."""
+        paths = []
+        with self.index._lock, self.index.db:
+            for name, paragraphs in documents:
+                path = f"{self.root}/{name}"
+                paths.append(path)
+                body = "\n".join(paragraphs)
+                self.index.db.executemany(
+                    "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section) VALUES(?,?,?,?,?,?,?,?)",
+                    [(path, name, i, "body", 8, text, f"문단 {i + 1}", None) for i, text in enumerate(paragraphs)])
+                self.index.db.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", (path, name, body))
+                self.index.db.execute(
+                    "INSERT INTO content_meta(path,size,mtime,ctime,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?)",
+                    (path, 1, 1.0, 1.0, name, "txt", CURRENT_HIERARCHY_SCHEMA_VERSION))
+                self.index.db.executemany(
+                    "INSERT OR IGNORE INTO content_short_grams(gram,path) VALUES(?,?)",
+                    [(gram, path) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
+        return paths
+
+    def test_keyword_two_character_term_found_when_only_in_first_paragraph(self):
+        # 2글자 검색어가 마지막 문단이 아닌 곳에만 있어도 문서가 빠지면 안 된다.
+        self._insert_keyword_documents(
+            [(f"first{i}.txt", [f"감사 결과 보고 {i}", "둘째 문단 내용", "마지막 문단 내용"]) for i in range(30)])
+        found = self.index.keyword_search("감사")
+        self.assertEqual(len(found), 30)
+        self.assertTrue(all(row["locations"] and row["locations"][0]["paragraph_index"] == 0 for row in found))
+        # 두 검색어가 서로 다른 문단에 있으면 예전처럼 결과에 넣지 않는다(같은 문단 조건 유지).
+        self.assertEqual(self.index.keyword_search("감사 둘째"), [])
+
+    def test_keyword_search_survives_more_candidates_than_sql_variable_limit(self):
+        # 후보 문서가 SQL 변수 한도(기본 32,766)보다 많아도 실패하지 않는다.
+        count = 40000
+        self._insert_keyword_documents([(f"many{i}.txt", ["한도초과검색어 문단"]) for i in range(count)])
+        found = self.index.keyword_search("한도초과검색어", limit=5)
+        self.assertEqual(len(found), 5)
+        short = self.index.keyword_search("문단", limit=5)
+        self.assertEqual(len(short), 5)
+
+    def test_keyword_exclusion_terms_of_any_length_remove_documents(self):
+        self._insert_keyword_documents([
+            ("keep.txt", ["제외시험낱말 본문", "다른 문단"]),
+            ("drop_long.txt", ["제외시험낱말 본문", "빼야할긴말 포함"]),
+            ("drop_short.txt", ["제외시험낱말 본문", "여기 감사 포함"]),
+        ])
+        names = lambda query: sorted(row["name"] for row in self.index.keyword_search(query))
+        self.assertEqual(names("제외시험낱말"), ["drop_long.txt", "drop_short.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -빼야할긴말"), ["drop_short.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -감사"), ["drop_long.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -빼야할긴말 -감사"), ["keep.txt"])
+
+    def test_hierarchy_two_character_search_same_with_and_without_short_grams(self):
+        # 2글자 위계검색은 조각 표로 후보를 좁혀도 결과·발췌문이 LIKE 전체 훑기와 같아야 한다.
+        documents = [(f"gram{i}.txt", [f"머리말 {i}", f"올해 예산 편성 {i}" if i % 3 else "해당 없음", "예산 끝" if i % 5 == 0 else "끝"])
+                     for i in range(40)]
+        self._insert_keyword_documents(documents)
+
+        def summary(rows):
+            return [(row["name"], row["snippet"], row["total_matches"], row["best_level"], row["relevance_rank"]) for row in rows]
+
+        with_grams = summary(self.index.search("예산", limit=500))
+        expected_names = {name for name, paragraphs in documents if any("예산" in text for text in paragraphs)}
+        self.assertEqual({row[0] for row in with_grams}, expected_names)
+        self.assertTrue(all("예산" in row[1] for row in with_grams))
+        # 조각 표가 비어 있는 옛 색인(조각 표 도입 전)에서는 LIKE 경로로 같은 결과를 낸다.
+        with self.index._lock, self.index.db:
+            self.index.db.execute("DELETE FROM content_short_grams")
+        self.assertEqual(summary(self.index.search("예산", limit=500)), with_grams)
+
     def test_keyword_query_syntax_filters_and_extension_aliases(self):
         root = self.root / "폴더"
         root.mkdir()
@@ -790,6 +859,200 @@ class ContentSearchTests(unittest.TestCase):
         print(f"\n[성능 측정] 3000건 본문검색: {elapsed:.4f}초", flush=True)
         self.assertEqual(len(result), 100)
         self.assertLess(elapsed, 1.0, f"3000건 검색: {elapsed:.3f}s")
+
+    def _assert_map_matches_fts(self):
+        db = self.index.db
+        fts = [tuple(r) for r in db.execute(
+            "SELECT path, CAST(paragraph_index AS INTEGER), rowid FROM content_paragraph_fts ORDER BY rowid")]
+        mapped = [tuple(r) for r in db.execute(
+            "SELECT path, paragraph_index, para_rowid FROM content_paragraph_map ORDER BY para_rowid")]
+        self.assertEqual(mapped, fts)
+        state = tuple(db.execute("SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone())
+        self.assertEqual(state, (len(fts), max((r[2] for r in fts), default=0)))
+
+    def test_paragraph_map_self_heals_when_empty_or_stale(self):
+        first = self.root / "heal_a.txt"
+        second = self.root / "heal_b.txt"
+        first.write_text("청사 방호 계획\n둘째 줄", encoding="utf-8")
+        second.write_text("도서관 운영 계획", encoding="utf-8")
+        self.index.index_file(first)
+        self.index.index_file(second)
+        self._assert_map_matches_fts()
+        expected = [r["path"] for r in self.index.keyword_search("계획")]
+        self.assertEqual(len(expected), 2)
+
+        # 대응 표가 빈 옛 색인
+        with self.index._lock, self.index.db:
+            self.index.db.execute("DELETE FROM content_paragraph_map")
+            self.index.db.execute("UPDATE content_paragraph_map_state SET row_count=-1, max_rowid=-1")
+        self.assertEqual([r["path"] for r in self.index.keyword_search("계획")], expected)
+        self._assert_map_matches_fts()
+
+        # 문단 FTS에 직접 넣은 행(시험·측정 스크립트 방식)
+        raw = str(first.resolve())
+        with self.index._lock, self.index.db:
+            self.index.db.execute(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section)"
+                " VALUES(?,?,?,?,?,?,?,?)", (raw, first.name, 2, "body", 8, "직접 넣은 수영장 문단", "문단 3", None))
+        found = self.index.keyword_search("수영장")
+        self.assertEqual([r["path"] for r in found], [raw])
+        self.assertEqual(found[0]["locations"][0]["paragraph_index"], 2)
+        self.assertEqual([r["path"] for r in self.index.search("수영장")], [raw])
+        self._assert_map_matches_fts()
+
+        # 문단 FTS에서 직접 지운 행, 그리고 행 수는 같지만 내용이 어긋난 대응 표
+        with self.index._lock, self.index.db:
+            self.index.db.execute("DELETE FROM content_paragraph_fts WHERE body LIKE '%수영장%'")
+        self.assertEqual(self.index.keyword_search("수영장"), [])
+        self._assert_map_matches_fts()
+        with self.index._lock, self.index.db:
+            self.index.db.execute("UPDATE content_paragraph_map SET path='없는 경로'"
+                                  " WHERE para_rowid=(SELECT MAX(para_rowid) FROM content_paragraph_map)")
+        self.assertEqual([r["path"] for r in self.index.keyword_search("계획")], expected)
+        self._assert_map_matches_fts()
+
+    def test_paragraph_map_self_heals_for_writes_from_another_connection(self):
+        path = self.root / "other_conn.txt"
+        path.write_text("공원 정비 계획", encoding="utf-8")
+        self.index.index_file(path)
+        self.assertEqual(len(self.index.keyword_search("정비")), 1)
+        other = sqlite3.connect(self.root / "content.sqlite")
+        try:
+            with other:
+                other.execute(
+                    "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section)"
+                    " VALUES(?,?,?,?,?,?,?,?)",
+                    (str(path.resolve()), path.name, 1, "body", 8, "다른 연결이 넣은 놀이터 문단", "문단 2", None))
+        finally:
+            other.close()
+        self.assertEqual(len(self.index.keyword_search("놀이터")), 1)
+        self._assert_map_matches_fts()
+
+    def test_paragraph_map_stays_one_to_one_through_index_lifecycle(self):
+        keep = self.root / "keep.txt"
+        path = self.root / "life.txt"
+        keep.write_text("남는 문서\n둘째 줄", encoding="utf-8")
+        path.write_text("줄 1\n줄 2\n줄 3", encoding="utf-8")
+        self.index.index_file(keep)
+        self.index.index_file(path)
+        self._assert_map_matches_fts()
+        raw = str(path.resolve())
+        count = lambda: self.index.db.execute(
+            "SELECT COUNT(*) FROM content_paragraph_map WHERE path=?", (raw,)).fetchone()[0]
+        self.assertEqual(count(), 3)
+
+        path.write_text("바뀐 줄 1\n바뀐 줄 2\n바뀐 줄 3\n바뀐 줄 4\n바뀐 줄 5", encoding="utf-8")
+        self.assertTrue(self.index.index_file(path)["indexed"])
+        self._assert_map_matches_fts()
+        self.assertEqual(count(), 5)
+
+        path.write_text("한 줄만", encoding="utf-8")
+        self.assertTrue(self.index.index_file(path)["indexed"])
+        self._assert_map_matches_fts()
+        self.assertEqual(count(), 1)
+
+        self.index.remove_file(path)
+        self._assert_map_matches_fts()
+        self.assertEqual(count(), 0)
+        self.assertEqual(self.index.db.execute("SELECT COUNT(*) FROM content_paragraph_map").fetchone()[0], 2)
+        # 일치가 유지됐으므로 다음 확인은 다시 채우지 않는다.
+        self.assertFalse(self.index._ensure_paragraph_map())
+
+    def test_unchanged_file_reindex_does_not_scan_paragraph_table(self):
+        import re
+        path = self.root / "unchanged.txt"
+        path.write_text("고정 내용\n둘째 줄", encoding="utf-8")
+        self.assertTrue(self.index.index_file(path)["indexed"])
+        statements = []
+        self.index.db.set_trace_callback(statements.append)
+        try:
+            self.assertFalse(self.index.index_file(path)["indexed"])
+            # 다른 연결이 쓴 뒤(일치 확인을 다시 해야 하는 경우)에도 전체 훑기는 없어야 한다.
+            other = sqlite3.connect(self.root / "content.sqlite")
+            try:
+                with other:
+                    other.execute("CREATE TABLE IF NOT EXISTS unrelated_probe(x)")
+            finally:
+                other.close()
+            self.assertFalse(self.index.index_file(path)["indexed"])
+        finally:
+            self.index.db.set_trace_callback(None)
+        self.assertTrue(statements)
+        for sql in statements:
+            # 그림자 표(_docsize, _data, _content)의 키 조회와 rowid 한 건 조회만 허용한다.
+            if re.search(r"content_paragraph_fts(?!_)", sql):
+                self.assertRegex(sql, r"WHERE rowid=", sql)
+            self.assertNotRegex(sql, r"COUNT\(\*\) FROM", sql)
+        plan = " ".join(row[3] for row in self.index.db.execute(
+            "EXPLAIN QUERY PLAN SELECT 1 FROM content_paragraph_map WHERE path=? LIMIT 1", ("x",)))
+        self.assertIn("SEARCH", plan)
+        self.assertNotIn("SCAN", plan)
+
+    def test_paragraph_lookup_by_rowid_and_by_scan_give_same_results(self):
+        for doc in range(6):
+            lines = [f"문서{doc} 머리말 2024-0{doc + 1}-15 예산 편성", f"주민센터 운영 계획 {doc}",
+                     f"예산 집행 결과와 주민센터 민원 {doc}", f"맺음말 {doc}"]
+            path = self.root / f"both{doc}.txt"
+            path.write_text("\n".join(lines[:2 + doc % 3]), encoding="utf-8")
+            self.index.index_file(path)
+        queries = [("예산", {}), ("주민센터 예산", {}), ("주민센터", {"limit": 2, "offset": 1}), ('"운영 계획"', {}),
+                   ("예산 -민원", {}), ("주민센터 예산 near:3", {}), ("예산 after:2024-03", {})]
+
+        def run():
+            keyword = [self.index.keyword_search(q, **kw) for q, kw in queries]
+            hierarchy = [self.index.search(q) for q, _ in queries[:2]]
+            return keyword, hierarchy
+
+        with patch.object(ContentSearchIndex, "_PARAGRAPH_SCAN_RATIO", 0):
+            by_rowid = run()
+        with patch.object(ContentSearchIndex, "_PARAGRAPH_SCAN_RATIO", 10 ** 9):
+            by_scan = run()
+        self.assertEqual(by_rowid, by_scan)
+        self.assertEqual(by_rowid, run())
+        self.assertTrue(by_rowid[0][0])
+
+    def test_combined_candidate_text_matches_group_concat_order(self):
+        path = self.root / "concat.txt"
+        path.write_text("첫 줄\n둘째 줄\n셋째 줄", encoding="utf-8")
+        self.index.index_file(path)
+        raw = str(path.resolve())
+        with self.index._lock, self.index.db:
+            # 문단 번호와 저장 순서가 다른 행, 본문이 NULL인 행
+            self.index.db.executemany(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                [(raw, path.name, 9, "body", 8, "아홉째 줄", None, None), (raw, path.name, 4, "body", 8, None, None, None),
+                 (raw, path.name, 3, "body", 8, "넷째 줄", None, None)])
+        self.index._ensure_paragraph_map()
+        grouped = self.index.db.execute(
+            "SELECT group_concat(body, char(10)) FROM content_paragraph_fts WHERE path=? GROUP BY path", (raw,)).fetchone()[0]
+        for ratio in (0, 10 ** 9):
+            with patch.object(ContentSearchIndex, "_PARAGRAPH_SCAN_RATIO", ratio):
+                rows = self.index._select_paragraphs_for_paths("path,paragraph_index,body,level_rank", [raw])
+            self.assertEqual("\n".join(r["body"] for r in rows if r["body"] is not None), grouped)
+        self.assertEqual(grouped, "첫 줄\n둘째 줄\n셋째 줄\n아홉째 줄\n넷째 줄")
+
+
+
+
+class MinPositionSpanTests(unittest.TestCase):
+    def test_matches_brute_force_product(self):
+        import itertools
+        import random
+        from docfit_core.timemachine.content_search import _min_position_span
+        rnd = random.Random(20261111)
+        for _ in range(2000):
+            lists = [[rnd.randrange(40) for _ in range(rnd.randrange(0, 6))] for _ in range(rnd.randrange(1, 5))]
+            expected = (min(max(c) - min(c) for c in itertools.product(*lists))
+                        if all(lists) else None)
+            self.assertEqual(_min_position_span(lists), expected, lists)
+
+    def test_many_positions_do_not_explode(self):
+        from docfit_core.timemachine.content_search import _min_position_span
+        lists = [list(range(i, 60000, 4)) for i in range(4)]   # 조합으로는 15,000^4가지
+        start = time.perf_counter()
+        self.assertEqual(_min_position_span(lists), 3)
+        self.assertLess(time.perf_counter() - start, 2.0)
 
 
 if __name__ == "__main__":
