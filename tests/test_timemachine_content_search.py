@@ -1093,11 +1093,45 @@ class MinPositionSpanTests(unittest.TestCase):
         self.assertLess(time.perf_counter() - start, 2.0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class BatchIndexTests(unittest.TestCase):
+    TABLES = ("content_meta", "content_fts", "content_short_grams", "content_paragraph_fts",
+              "content_paragraph_map", "content_errors")
+    COLUMNS = {
+        "content_paragraph_map": "path, paragraph_index",
+        "content_paragraph_fts": "path, paragraph_index, level, body",
+        "content_fts": "path, name, body",
+        "content_meta": "path, name, extension, size",
+    }
+
+    def _write_files(self, folder, count, prefix="doc"):
+        paths = []
+        for i in range(count):
+            path = Path(folder) / f"{prefix}_{i:03d}.txt"
+            path.write_text(f"공통낱말 문서{i} alpha{i}\n둘째 문단 beta{i} 예산", encoding="utf-8")
+            paths.append(path)
+        return paths
+
+    def _dump(self, index):
+        return {
+            table: sorted(tuple(row) for row in index.db.execute(
+                f"SELECT {self.COLUMNS.get(table, '*')} FROM {table}"))
+            for table in self.TABLES
+        }
+
+    def _assert_one_to_one(self, index):
+        db = index.db
+        self.assertFalse(db.in_transaction)
+        para = {row[0] for row in db.execute("SELECT rowid FROM content_paragraph_fts")}
+        mapped = [row[0] for row in db.execute("SELECT para_rowid FROM content_paragraph_map")]
+        self.assertEqual(len(mapped), len(set(mapped)))
+        self.assertEqual(set(mapped), para)
+        state = tuple(db.execute("SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone())
+        self.assertEqual(state, (len(para), max(para, default=0)))
+        meta = {row[0] for row in db.execute("SELECT path FROM content_meta")}
+        for table in ("content_fts", "content_short_grams", "content_paragraph_fts"):
+            self.assertEqual({row[0] for row in db.execute(f"SELECT DISTINCT path FROM {table}")}, meta, table)
+        self.assertFalse(index._ensure_paragraph_map())
+
     def test_batch_and_rollback(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "sample.txt"
@@ -1115,4 +1149,188 @@ class BatchIndexTests(unittest.TestCase):
             self.assertEqual(len(index.search("gamma")), 0)
             self.assertEqual(index.db.execute("SELECT count(*) FROM content_paragraph_map").fetchone()[0],
                              index.db.execute("SELECT count(*) FROM content_paragraph_fts").fetchone()[0])
+            self._assert_one_to_one(index)
             index.close()
+
+    def test_batch_result_equals_per_file_indexing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 12)
+            (Path(tmp) / "empty.txt").write_text("", encoding="utf-8")
+            paths.append(Path(tmp) / "empty.txt")
+            single = ContentSearchIndex(Path(tmp) / "single.sqlite")
+            for path in paths:
+                single.index_file(path)
+            batched = ContentSearchIndex(Path(tmp) / "batched.sqlite")
+            with batched.batch(max_files=5):
+                results = [batched.index_file(path) for path in paths]
+            self.assertEqual(sum(bool(r["indexed"]) for r in results), 12)
+            self.assertEqual(sum(bool(r["error"]) for r in results), 1)
+            self.assertEqual(self._dump(batched), self._dump(single))
+            self._assert_one_to_one(batched)
+            for query in ("공통낱말", "예산", "alpha3", "둘째"):
+                self.assertEqual([r["path"] for r in batched.keyword_search(query)],
+                                 [r["path"] for r in single.keyword_search(query)], query)
+                self.assertEqual([r["path"] for r in batched.search(query)],
+                                 [r["path"] for r in single.search(query)], query)
+            self.assertEqual(len(batched.keyword_search("공통낱말")), 12)
+            # 묶음 밖에서는 파일마다 커밋한다. 다른 연결이 바로 볼 수 있어야 한다.
+            extra = self._write_files(tmp, 1, prefix="extra")[0]
+            batched.index_file(extra)
+            other = sqlite3.connect(Path(tmp) / "batched.sqlite")
+            try:
+                self.assertEqual(other.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0], 13)
+            finally:
+                other.close()
+            single.close()
+            batched.close()
+
+    def test_batch_commits_in_bounded_chunks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 7)
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            other = sqlite3.connect(Path(tmp) / "index.sqlite")
+            visible = []
+            try:
+                with index.batch(max_files=3, max_seconds=60):
+                    for path in paths:
+                        index.index_file(path)
+                        visible.append(other.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0])
+                self.assertEqual(visible, [0, 0, 3, 3, 3, 6, 6])
+                self.assertEqual(other.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0], 7)
+            finally:
+                other.close()
+            self._assert_one_to_one(index)
+            index.close()
+
+    def test_exception_mid_batch_keeps_tables_one_to_one(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 8)
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            index.index_file(paths[0])
+            paths[0].write_text("고쳐 쓴 문서 omega 입니다", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                with index.batch(max_files=3, max_seconds=60):
+                    for number, path in enumerate(paths):
+                        if number == 5:
+                            raise RuntimeError("abort")
+                        index.index_file(path)
+            # 3개째에서 커밋된 조각은 남고, 그 뒤 2개(미커밋)는 되돌려진다.
+            self.assertEqual(index.db.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0], 3)
+            self._assert_one_to_one(index)
+            self.assertEqual(len(index.keyword_search("omega")), 1)
+            self.assertEqual(len(index.keyword_search("alpha4")), 0)
+            # 되돌려진 파일은 다시 색인된다.
+            with index.batch():
+                results = [index.index_file(path) for path in paths]
+            self.assertEqual(sum(bool(r["indexed"]) for r in results), 5)
+            self.assertEqual(index.db.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0], 8)
+            self._assert_one_to_one(index)
+            index.close()
+
+    def test_write_failure_inside_batch_drops_only_that_file(self):
+        import docfit_core.timemachine.content_search as module
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 4)
+            bad = os.path.abspath(paths[1])
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            index.index_file(paths[1])
+            original = module.extract_paragraphs
+
+            def broken(path):
+                records = original(path)
+                if os.path.abspath(path) == bad:
+                    # 마지막 문단에서 SQLite 바인딩이 실패한다(짝 없는 대리 문자).
+                    records.append(ParagraphRecord(len(records), "깨진 문단 \ud800", "body", 8, False))
+                return records
+
+            paths[1].write_text("고친 문서 zeta\n둘째 문단", encoding="utf-8")
+            with patch.object(module, "extract_paragraphs", broken):
+                with index.batch(max_files=100, max_seconds=60):
+                    results = [index.index_file(path) for path in paths]
+                    # 실패한 파일의 쓰다 만 행이 묶음 안에 남지 않는다.
+                    self.assertTrue(index.db.in_transaction)
+                    self.assertEqual(index.db.execute(
+                        "SELECT COUNT(*) FROM content_paragraph_fts WHERE path=?", (bad,)).fetchone()[0], 0)
+            self.assertEqual([bool(r["indexed"]) for r in results], [True, False, True, True])
+            self.assertIn("UnicodeEncodeError", results[1]["error"])
+            self.assertEqual(index.db.execute("SELECT COUNT(*) FROM content_meta").fetchone()[0], 3)
+            self.assertEqual([row[0] for row in index.db.execute("SELECT path FROM content_errors")], [bad])
+            self._assert_one_to_one(index)
+            self.assertEqual(len(index.keyword_search("공통낱말")), 3)
+            self.assertEqual(len(index.keyword_search("zeta")), 0)
+            index.close()
+
+    def test_failed_write_block_inside_batch_keeps_earlier_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 3)
+            first = os.path.abspath(paths[0])
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            with index.batch():
+                index.index_file(paths[0])
+                index.index_file(paths[1])
+                with self.assertRaises(RuntimeError):
+                    with index._lock, index._map_kept(), index._index_transaction(first):
+                        index._delete_paragraphs(first)
+                        index.db.execute(
+                            "INSERT INTO content_paragraph_fts(path, name, paragraph_index, level, level_rank, body)"
+                            " VALUES(?,?,?,?,?,?)", (first, "doc_000.txt", 0, "body", 8, "쓰다 만 문단"))
+                        raise RuntimeError("write failed")
+                index.index_file(paths[2])
+            self.assertEqual(sorted(row[0] for row in index.db.execute("SELECT path FROM content_meta")),
+                             sorted(os.path.abspath(p) for p in paths[1:]))
+            self._assert_one_to_one(index)
+            index.close()
+
+    def test_keyword_search_from_other_thread_returns_during_batch(self):
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self._write_files(tmp, 6)
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            index.index_file(paths[0])
+            midway, resume = threading.Event(), threading.Event()
+            failures = []
+
+            def worker():
+                try:
+                    with index.batch(max_files=100, max_seconds=60):
+                        for number, path in enumerate(paths):
+                            index.index_file(path)
+                            if number == 2:
+                                midway.set()
+                                if not resume.wait(timeout=20):
+                                    failures.append("resume timeout")
+                except BaseException as exc:  # noqa: BLE001 - 시험 스레드의 실패를 본 스레드로 옮긴다
+                    failures.append(repr(exc))
+
+            thread = threading.Thread(target=worker)
+            thread.start()
+            try:
+                self.assertTrue(midway.wait(timeout=20))
+                self.assertTrue(index.db.in_transaction)
+                started = time.perf_counter()
+                keyword_rows = index.keyword_search("공통낱말")
+                keyword_elapsed = time.perf_counter() - started
+                started = time.perf_counter()
+                hierarchy_rows = index.search("공통낱말")
+                count = index.needs_reindex_count()
+                other_elapsed = time.perf_counter() - started
+                # 검색이 묶음의 미커밋 변경을 대신 커밋하지 않는다.
+                still_open = index.db.in_transaction
+            finally:
+                resume.set()
+                thread.join(timeout=30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(failures, [])
+            self.assertTrue(still_open)
+            self.assertLess(keyword_elapsed, 2.0)
+            self.assertLess(other_elapsed, 2.0)
+            self.assertEqual(len(keyword_rows), 3)
+            self.assertEqual(len(hierarchy_rows), 3)
+            self.assertEqual(count, 0)
+            self.assertEqual(len(index.keyword_search("공통낱말")), 6)
+            self._assert_one_to_one(index)
+            index.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
