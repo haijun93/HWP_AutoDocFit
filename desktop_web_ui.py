@@ -553,6 +553,7 @@ class DesktopWebBridge:
         rename_open = self._drain_rename_paths()
 
         def snapshot():
+            from docfit_app.jobs import job_phase
             gui = self.gui
             mode = gui.selected_mode.get()
             if mode == "spacing" and getattr(self, "_page_fit_card", False):
@@ -566,6 +567,7 @@ class DesktopWebBridge:
                 self._quick_watch = None
             return {
                 "job": self._jobs().latest(),
+                "job_phase": job_phase(gui, self._jobs()),
                 "_open_completed_result": False,
                 "files": [
                     {"name": Path(path).name, "path": path, "folder": str(Path(path).parent),

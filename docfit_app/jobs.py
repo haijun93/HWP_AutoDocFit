@@ -270,6 +270,33 @@ def prepare_legacy(gui):
     return manager
 
 
+def job_phase(gui, manager):
+    """Tk snapshot 안에서 호출하는 읽기 전용 문서 작업 관측 값."""
+    with manager._lock:
+        identifier = getattr(gui, '_job_id', None)
+        job = manager._jobs.get(identifier)
+        if job is None or job['kind'] in LIGHT_KINDS:
+            job = next((j for j in reversed(list(manager._jobs.values()))
+                        if j['kind'] not in LIGHT_KINDS), None)
+        running = bool(gui.running)
+        worker = job.get('thread') if job else getattr(gui, 'worker', None)
+        alive = _alive(worker)
+        state = job['state'] if job else None
+        if getattr(gui, 'closing', False) and (running or alive):
+            return 'closing'
+        if alive and (not running or state in TERMINAL):
+            return 'finishing'
+        if worker is not None and not alive and (running or state == 'running'):
+            return 'dead'
+        if state in TERMINAL:
+            return 'failed' if state == 'failed' else 'finished'
+        if job and (job['cancel_requested'] or job['stop'].is_set()):
+            return 'stop_requested'
+        if state == 'queued':
+            return 'starting'
+        return 'running' if running or state == 'running' else 'idle'
+
+
 def legacy_event(manager, identifier, item):
     """튜플을 JSON 가능한 값만 가진 사건으로 변환한다. 콜백/Event는 전송하지 않는다."""
     if not identifier:
