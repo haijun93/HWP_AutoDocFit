@@ -16,6 +16,26 @@ class TimemachineScreen extends StatefulWidget {
 }
 
 class _TimemachineScreenState extends State<TimemachineScreen> {
+  List<Widget> _sectionMatchLabels(List<Map<String, Object?>> sections) {
+    final matches = sections.where((section) {
+      final parentText = '${section['parent_text'] ?? ''}'.trim();
+      final count = int.tryParse('${section['count'] ?? ''}') ?? 0;
+      return parentText.isNotEmpty && count >= 2;
+    }).take(2);
+    return [
+      for (final section in matches)
+        Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            '「${'${section['parent_text']}'.trim()}」에서 ${int.parse('${section['count']}')}곳',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11, color: Colors.black54),
+          ),
+        ),
+    ];
+  }
+
   static const _kinds = {'hwpx':'hwp', 'docx':'doc', 'xlsx':'sheet', 'ppt':'slide', 'PDF':'pdf', '이미지':'image'};
   late final TimemachineApi _api = TimemachineApi(widget.api);
   late final TimemachineThumbnailLoader _thumbnails = TimemachineThumbnailLoader(_api);
@@ -1034,6 +1054,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                   const SizedBox(height: 4),
                 ],
                 _markedTerms(result.snippet, keywords, maxLines: 3, style: Theme.of(context).textTheme.bodyMedium),
+                ..._sectionMatchLabels(result.sections),
                 const SizedBox(height: 6),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
