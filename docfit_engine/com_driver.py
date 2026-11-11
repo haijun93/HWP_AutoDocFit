@@ -269,6 +269,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
 
             hwp = 한글_COM_인스턴스_생성(독립=True)
+            # 개발용 COM 계측(DOCFIT_COM_PERF=1일 때만 대리 객체로 감싼다. 평소에는 그대로).
+            from docfit_core.com_perf import wrap_if_enabled as _com_perf_wrap
+            hwp = _com_perf_wrap(hwp)
             hwp.XHwpWindows.Item(0).Visible = True
             로그("한글 창 표시 성공")
 
