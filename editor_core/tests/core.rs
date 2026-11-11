@@ -470,3 +470,30 @@ fn api_session_flow() {
     assert_eq!(call(&mut e, &format!(r#"{{"cmd":"edit_close","doc":{doc}}}"#)).bool("ok"), Some(true));
     assert_eq!(call(&mut e, &format!(r#"{{"cmd":"edit_text","doc":{doc}}}"#)).bool("ok"), Some(false));
 }
+
+/// 이미 파싱한 값을 넘기는 진입점(handle_value)은 같은 요청 문자열을 handle에 넘긴 것과 응답이 같아야 한다.
+#[test]
+fn handle_value_matches_handle() {
+    let requests = [
+        r#"{"cmd":"edit_ping"}"#,
+        r#"{"cmd":"edit_open","text":"가나다\nabc😀\n","line_ending":"CRLF"}"#,
+        r#"{"cmd":"edit_insert","doc":1,"pos":0,"text":"붙여넣기 \"따옴표\"\t\u00e9\ud83d\ude00\n"}"#,
+        r#"{"cmd":"edit_text","doc":1}"#,
+        r#"{"cmd":"edit_line_range","doc":1,"start_line":0,"count":10}"#,
+        r#"{"cmd":"edit_find_all","doc":1,"query":"가","case_sensitive":true}"#,
+        r#"{"cmd":"edit_delete","doc":1,"start":0,"end":3}"#,
+        r#"{"cmd":"edit_undo","doc":1}"#,
+        r#"{"cmd":"edit_insert","doc":1,"pos":-1,"text":"x"}"#,
+        r#"{"cmd":"edit_insert","doc":1.5,"pos":0,"text":"x"}"#,
+        r#"{"cmd":"edit_text","doc":99}"#,
+        r#"{"cmd":"edit_nope"}"#,
+        r#"{"doc":1}"#,
+        r#"[1,2]"#,
+        r#"{"cmd":"edit_close","doc":1}"#,
+    ];
+    let (mut by_text, mut by_value) = (Engine::new(), Engine::new());
+    for request in requests {
+        let parsed = editor_core::json::parse(request).unwrap();
+        assert_eq!(by_value.handle_value(&parsed), by_text.handle(request), "{request}");
+    }
+}
