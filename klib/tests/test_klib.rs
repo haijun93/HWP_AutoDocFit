@@ -1339,3 +1339,228 @@ fn test_rel2255b_copy_source_through_directory_alias() {
     assert!(!target.exists());
     assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
 }
+
+// ---- 파이프 서버(T1111-PIPE): 이벤트 대기 읽기, 한 연결 여러 요청, 대기 인스턴스 ----
+
+#[test]
+fn test_pipe_take_line_limits() {
+    use pipe::{Line, take_line};
+    let mut data = b"{\"cmd\":\"ping\"}\n{\"cmd\":".to_vec();
+    assert_eq!(take_line(&mut data), Line::Ready("{\"cmd\":\"ping\"}".into()));
+    assert_eq!(data, b"{\"cmd\":");
+    assert_eq!(take_line(&mut data), Line::More);
+    // 줄바꿈 전 길이가 정확히 64 KiB면 허용, 1바이트 넘으면 거부.
+    let mut exact = vec![b'a'; 64 * 1024];
+    assert_eq!(take_line(&mut exact), Line::More);
+    exact.push(b'\n');
+    assert!(matches!(take_line(&mut exact), Line::Ready(s) if s.len() == 64 * 1024));
+    let mut over = vec![b'a'; 64 * 1024 + 1];
+    assert_eq!(take_line(&mut over), Line::Reject);
+    over.push(b'\n');
+    assert_eq!(take_line(&mut over), Line::Reject);
+    // UTF-8이 아닌 요청은 거부.
+    let mut bad = vec![0xff, 0xfe, b'\n'];
+    assert_eq!(take_line(&mut bad), Line::Reject);
+    let mut empty = b"\nx".to_vec();
+    assert_eq!(take_line(&mut empty), Line::Ready(String::new()));
+}
+
+/// 시험용 파이프 서버. 사용자 파이프와 겹치지 않는 이름으로 serve_on을 스레드에 띄운다.
+struct PipeServer {
+    name: String,
+    running: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PipeServer {
+    fn start(ctx: &TestContext, tag: &str) -> Self {
+        let name = format!("\\\\.\\pipe\\HwpAutoDocFit.klib.test.pipew-{tag}-{}.{}", std::process::id(), pipe::user_sid());
+        let db = Arc::new(Mutex::new(Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+        let running = Arc::new(AtomicBool::new(true));
+        let (n, r) = (name.clone(), running.clone());
+        let thread = std::thread::spawn(move || {
+            let last_activity = std::sync::atomic::AtomicU64::new(0);
+            pipe::serve_on(&n, &db, &r, &last_activity);
+        });
+        PipeServer { name, running, thread: Some(thread) }
+    }
+    fn connect(&self) -> fs::File {
+        for _ in 0..400 {
+            if let Ok(f) = fs::OpenOptions::new().read(true).write(true).open(&self.name) { return f; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("파이프에 연결하지 못했습니다: {}", self.name);
+    }
+    /// 기존 클라이언트 방식: 연결 → 요청 1개 → 응답 1줄 → 닫기.
+    fn once(&self, request: &str) -> String {
+        let mut f = self.connect();
+        pipe_send(&mut f, request);
+        pipe_read_line(&mut f).expect("응답 한 줄")
+    }
+}
+
+impl Drop for PipeServer {
+    fn drop(&mut self) {
+        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() { let _ = t.join(); }
+    }
+}
+
+fn pipe_send(f: &mut fs::File, request: &str) {
+    use std::io::Write;
+    f.write_all(format!("{request}\n").as_bytes()).unwrap();
+}
+
+/// 응답 한 줄(줄바꿈 제외). 서버가 연결을 끊으면 None.
+fn pipe_read_line(f: &mut fs::File) -> Option<String> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let mut b = [0u8; 1];
+    loop {
+        match f.read(&mut b) {
+            Ok(1) if b[0] == b'\n' => return String::from_utf8(out).ok(),
+            Ok(1) => out.push(b[0]),
+            _ => return None,
+        }
+    }
+}
+
+#[test]
+fn test_pipe_server_legacy_client_roundtrip_without_polling_delay() {
+    let ctx = TestContext::new("pipe_legacy");
+    let server = PipeServer::start(&ctx, "legacy");
+    let direct = { let db = Mutex::new(Database::open(ctx.dir.join("direct.db").to_str().unwrap()).unwrap()); pipe::handle_request(r#"{"cmd":"ping"}"#, &db, &AtomicBool::new(true)) };
+    assert_eq!(server.once(r#"{"cmd":"ping"}"#), direct);
+    let mut times = Vec::new();
+    for _ in 0..60 {
+        let t = std::time::Instant::now();
+        assert_eq!(server.once(r#"{"cmd":"ping"}"#), direct);
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = times[times.len() / 2];
+    println!("파이프 왕복(연결마다 1요청) 중앙값 {median:.3} ms, 최대 {:.3} ms", times[times.len() - 1]);
+    // 예전 폴링(요청마다 sleep 20ms, 실제 약 31ms)이 되살아나면 걸린다.
+    assert!(median < 10.0, "왕복 중앙값 {median:.3} ms");
+    // 잘못된 요청도 예전과 같은 응답 한 줄.
+    assert_eq!(json::parse(&server.once("not json")).unwrap().bool("ok"), Some(false));
+}
+
+#[test]
+fn test_pipe_server_many_requests_on_one_connection() {
+    let ctx = TestContext::new("pipe_keep");
+    let server = PipeServer::start(&ctx, "keep");
+    let mut f = server.connect();
+    pipe_send(&mut f, r#"{"cmd":"box_create","name":"한 연결","description":""}"#);
+    let created = json::parse(&pipe_read_line(&mut f).unwrap()).unwrap();
+    let id = created.i64("id").unwrap();
+    for i in 0..20 {
+        pipe_send(&mut f, &format!(r#"{{"cmd":"box_update","id":{id},"name":"이름{i}","description":"d"}}"#));
+        assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().bool("ok"), Some(true));
+    }
+    // 두 요청을 한 번에 써도 응답 두 줄이 차례로 온다.
+    pipe_send(&mut f, &format!("{{\"cmd\":\"ping\"}}\n{{\"cmd\":\"box_get\",\"id\":{id}}}"));
+    assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().str("message"), Some("pong"));
+    let got = json::parse(&pipe_read_line(&mut f).unwrap()).unwrap();
+    assert_eq!(got.get("box").and_then(|b| b.str("name")), Some("이름19"));
+    // 요청을 나눠 써도(줄바꿈이 나중에 와도) 한 요청으로 처리한다.
+    {
+        use std::io::Write;
+        f.write_all(b"{\"cmd\":").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        f.write_all(b"\"ping\"}\n").unwrap();
+    }
+    assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_second_client_while_first_stays_connected() {
+    let ctx = TestContext::new("pipe_two");
+    let server = PipeServer::start(&ctx, "two");
+    let mut first = server.connect();
+    pipe_send(&mut first, r#"{"cmd":"ping"}"#);
+    assert!(pipe_read_line(&mut first).is_some());
+    // 첫 연결이 열린 채(요청을 쓰다 만 상태 포함)여도 다른 클라이언트가 바로 처리된다.
+    { use std::io::Write; first.write_all(b"{\"cmd\":\"pi").unwrap(); }
+    let t = std::time::Instant::now();
+    for _ in 0..5 {
+        assert_eq!(json::parse(&server.once(r#"{"cmd":"ping"}"#)).unwrap().str("message"), Some("pong"));
+    }
+    assert!(t.elapsed().as_millis() < 2000, "두 번째 클라이언트가 막혔습니다: {:?}", t.elapsed());
+    { use std::io::Write; first.write_all(b"ng\"}\n").unwrap(); }
+    assert_eq!(json::parse(&pipe_read_line(&mut first).unwrap()).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_survives_broken_and_oversized_clients() {
+    let ctx = TestContext::new("pipe_bad");
+    let server = PipeServer::start(&ctx, "bad");
+    // 줄바꿈 없이 끊은 클라이언트.
+    { use std::io::Write; let mut f = server.connect(); f.write_all(b"{\"cmd\":\"ping\"").unwrap(); }
+    // 연결만 하고 끊은 클라이언트.
+    drop(server.connect());
+    // 64 KiB를 넘는 요청: 응답 없이 끊긴다.
+    {
+        use std::io::Write;
+        let mut f = server.connect();
+        let big = format!("{{\"cmd\":\"ping\",\"pad\":\"{}\"}}\n", "a".repeat(70 * 1024));
+        let _ = f.write_all(big.as_bytes());
+        assert_eq!(pipe_read_line(&mut f), None);
+    }
+    // UTF-8이 아닌 요청: 응답 없이 끊긴다.
+    {
+        use std::io::Write;
+        let mut f = server.connect();
+        f.write_all(&[0xff, 0xfe, b'\n']).unwrap();
+        assert_eq!(pipe_read_line(&mut f), None);
+    }
+    assert_eq!(json::parse(&server.once(r#"{"cmd":"ping"}"#)).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_quit_replies_then_stops() {
+    let ctx = TestContext::new("pipe_quit");
+    let mut server = PipeServer::start(&ctx, "quit");
+    let idle = server.connect(); // 열려만 있는 다른 연결이 종료를 막지 않아야 한다
+    let reply = json::parse(&server.once(r#"{"cmd":"quit"}"#)).unwrap();
+    assert_eq!(reply.bool("ok"), Some(true));
+    let t = std::time::Instant::now();
+    server.thread.take().unwrap().join().unwrap();
+    assert!(t.elapsed().as_millis() < 3000, "quit 뒤 서버가 끝나지 않았습니다");
+    assert!(!server.running.load(std::sync::atomic::Ordering::Relaxed));
+    drop(idle);
+}
+
+/// edit_* 명령은 klib가 파싱한 값을 그대로 편집 코어에 넘긴다(이중 파싱 제거). 응답은 요청 문자열을 코어에 직접 넘긴 것과 같아야 한다.
+#[test]
+fn test_edit_requests_reuse_parsed_value_same_response() {
+    let ctx = TestContext::new("edit_parsed");
+    let db = Mutex::new(Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap());
+    let running = AtomicBool::new(true);
+    let mut core = editor_core::api::Engine::new();
+    let open = r#"{"cmd":"edit_open","text":"가나다\nabc😀\n","line_ending":"CRLF"}"#;
+    let via_pipe = json::parse(&pipe::handle_request(open, &db, &running)).unwrap().i64("doc").unwrap();
+    let via_core = json::parse(&core.handle(open)).unwrap().i64("doc").unwrap();
+    let big = "붙여넣기 큰 글 ".repeat(2500);
+    let templates = [
+        r#"{"cmd":"edit_ping"}"#.to_string(),
+        r#"{"cmd":"edit_insert","doc":DOC,"pos":0,"text":"\"따옴표\"\t\\ \/ é😀\u0000\n"}"#.to_string(),
+        format!(r#"{{"cmd":"edit_insert","doc":DOC,"pos":0,"text":"{big}"}}"#),
+        r#" { "cmd" : "edit_text" , "doc" : DOC } "#.to_string(),
+        r#"{"cmd":"edit_line_range","doc":DOC,"start_line":0,"count":1e1}"#.to_string(),
+        r#"{"cmd":"edit_find_all","doc":DOC,"query":"가","case_sensitive":true,"whole_word":false}"#.to_string(),
+        r#"{"cmd":"edit_delete","doc":DOC,"start":0,"end":3.0}"#.to_string(),
+        r#"{"cmd":"edit_delete","doc":DOC,"start":-0,"end":1.5}"#.to_string(),
+        r#"{"cmd":"edit_undo","doc":DOC,"cmd":"edit_redo"}"#.to_string(),
+        r#"{"cmd":"edit_status","doc":DOC,"pos":0,"extra":[1,{"a":null},[]]}"#.to_string(),
+        r#"{"cmd":"edit_text","doc":999999}"#.to_string(),
+        r#"{"cmd":"edit_nope","doc":DOC}"#.to_string(),
+        r#"{"cmd":"edit_text"}"#.to_string(),
+        r#"{"cmd":"edit_close","doc":DOC}"#.to_string(),
+    ];
+    for t in templates {
+        let a = pipe::handle_request(&t.replace("DOC", &via_pipe.to_string()), &db, &running);
+        let b = core.handle(&t.replace("DOC", &via_core.to_string()));
+        assert_eq!(a.replace(&format!("문서 {via_pipe}"), "문서 N"), b.replace(&format!("문서 {via_core}"), "문서 N"), "{}", t.chars().take(80).collect::<String>());
+    }
+}

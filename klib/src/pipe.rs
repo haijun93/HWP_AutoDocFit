@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use windows_sys::Win32::Foundation::{
 
-    CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE,
+    CloseHandle, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HLOCAL,
 
-    LocalFree, WAIT_OBJECT_0,
+    INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0, WAIT_TIMEOUT,
 
 };
 
@@ -30,11 +30,11 @@ use windows_sys::Win32::Storage::FileSystem::{
 
 };
 
-use windows_sys::Win32::System::IO::{CancelIo, OVERLAPPED};
+use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
 use windows_sys::Win32::System::Pipes::{
 
-    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PeekNamedPipe, PIPE_READMODE_BYTE,
+    ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
 
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_WAIT,
 
@@ -42,7 +42,7 @@ use windows_sys::Win32::System::Pipes::{
 
 use windows_sys::Win32::System::Threading::{
 
-    CreateEventW, GetCurrentProcess, OpenProcessToken, WaitForSingleObject,
+    CreateEventW, GetCurrentProcess, OpenProcessToken, WaitForMultipleObjects,
 
 };
 
@@ -120,330 +120,298 @@ pub fn pipe_name() -> String {
 
 }
 
-pub fn serve(db: Arc<Mutex<Database>>, running: Arc<AtomicBool>, last_activity: Arc<AtomicU64>) {
+/// 동시에 열어 두는 파이프 인스턴스 수(연결된 클라이언트 + 다음 연결을 기다리는 1개). CreateNamedPipeW의 최대 인스턴스 수와 같다.
+const MAX_CONNS: usize = 4;
 
-    let sid = user_sid();
+/// 한 요청(줄)이 다 오기까지 기다리는 한도. 넘기면 연결을 끊는다.
+const LINE_TIMEOUT_MS: u64 = 30_000;
 
-    if sid.is_empty() {
+const READ_CHUNK: usize = 4096;
 
-        return;
+/// 받은 바이트에서 요청 한 줄을 꺼낸 결과.
+#[derive(Debug, PartialEq)]
+pub enum Line {
+    /// 줄바꿈까지 온 요청 한 줄(줄바꿈 제외). 버퍼에서는 줄바꿈까지 지워진다.
+    Ready(String),
+    /// 아직 줄바꿈이 오지 않았다.
+    More,
+    /// 64 KiB 초과 또는 UTF-8이 아닌 요청: 응답 없이 연결을 끊는다.
+    Reject,
+}
 
+/// 줄바꿈 전 요청 길이 기준 64 KiB 제한(지적 9 반영). 한 연결에서 여러 줄이 이어 올 수 있어 남은 바이트는 버퍼에 둔다.
+pub fn take_line(data: &mut Vec<u8>) -> Line {
+    match data.iter().position(|&b| b == b'\n') {
+        Some(pos) if pos > MAX_REQUEST => Line::Reject,
+        Some(pos) => {
+            let line = String::from_utf8(data[..pos].to_vec());
+            data.drain(..=pos);
+            line.map(Line::Ready).unwrap_or(Line::Reject)
+        }
+        None if data.len() > MAX_REQUEST => Line::Reject,
+        None => Line::More,
     }
+}
 
-    let sddl = wide(&format!("D:P(A;;GA;;;{sid})(A;;GA;;;SY)"));
+/// 서버 루프가 연결마다 넘겨 쓰는 공용 상태. 요청은 이 스레드 하나에서 차례로만 처리한다.
+struct Ctx<'a> {
+    db: &'a Mutex<Database>,
+    running: &'a AtomicBool,
+    last_activity: &'a AtomicU64,
+    /// 응답 쓰기용 이벤트(쓰기는 끝날 때까지 기다리므로 연결들이 함께 쓴다).
+    write_event: HANDLE,
+}
 
-    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+/// 파이프 인스턴스 하나. OVERLAPPED와 읽기 버퍼는 입출력이 걸려 있는 동안 주소가 바뀌면 안 되므로 Box에 둔다.
+struct Conn {
+    h: HANDLE,
+    event: HANDLE,
+    ov: Box<OVERLAPPED>,
+    buf: Box<[u8; READ_CHUNK]>,
+    data: Vec<u8>,
+    /// false면 클라이언트 연결을 기다리는 중(ConnectNamedPipe).
+    connected: bool,
+    /// 끝나지 않은 겹친 입출력(연결 대기 또는 읽기)이 있다.
+    pending: bool,
+    /// 응답을 하나라도 썼다(종료 때 클라이언트가 읽을 때까지 비운다).
+    replied: bool,
+    /// 지금 기다리는 요청 줄의 시작 시각(연결 시각 또는 직전 응답 시각).
+    line_start: u64,
+}
 
-    if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) } == 0 {
-
-        return;
-
-    }
-
-    let sa = SECURITY_ATTRIBUTES {
-
-        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-
-        lpSecurityDescriptor: sd,
-
-        bInheritHandle: 0,
-
-    };
-
-    let name = wide(&pipe_name());
-
-    while running.load(Ordering::Relaxed) {
-
-        // 비동기 OVERLAPPED 파이프 생성 (지적 7 반영)
-
+impl Conn {
+    /// 새 인스턴스를 만들고 연결 대기를 건다. 이미 붙은 클라이언트가 있으면 connected=true로 돌려준다.
+    fn listen(name: &[u16], sa: &SECURITY_ATTRIBUTES) -> Option<Conn> {
         let h = unsafe {
-
             CreateNamedPipeW(
-
                 name.as_ptr(),
-
                 PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-
                 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-
-                4,
-
+                MAX_CONNS as u32,
                 65536,
-
                 65536,
-
                 0,
-
-                &sa,
-
+                sa,
             )
-
         };
-
         if h == INVALID_HANDLE_VALUE {
-
-            std::thread::sleep(std::time::Duration::from_millis(100));
-
-            continue;
-
+            return None;
         }
-
         let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
-
-        let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
-
-        overlapped.hEvent = event;
-
-        let connect_res = unsafe { ConnectNamedPipe(h, &mut overlapped) };
-
-        let mut connected = false;
-
-        if connect_res != 0 {
-
-            connected = true;
-
+        if event.is_null() {
+            unsafe { CloseHandle(h) };
+            return None;
+        }
+        let mut ov: Box<OVERLAPPED> = Box::new(unsafe { std::mem::zeroed() });
+        ov.hEvent = event;
+        let mut conn = Conn { h, event, ov, buf: Box::new([0u8; READ_CHUNK]), data: Vec::new(), connected: false, pending: false, replied: false, line_start: now_ms() };
+        if unsafe { ConnectNamedPipe(h, &mut *conn.ov) } != 0 {
+            conn.connected = true;
         } else {
-
-            let err = unsafe { GetLastError() };
-
-            if err == ERROR_PIPE_CONNECTED {
-
-                connected = true;
-
-            } else if err == ERROR_IO_PENDING {
-
-                // 대기 중 종료 신호(running == false)를 200ms 주기로 점검 (지적 7 반영)
-
-                while running.load(Ordering::Relaxed) {
-
-                    let wait_res = unsafe { WaitForSingleObject(event, 200) };
-
-                    if wait_res == WAIT_OBJECT_0 {
-
-                        connected = true;
-
-                        break;
-
-                    }
-
+            match unsafe { GetLastError() } {
+                ERROR_PIPE_CONNECTED => conn.connected = true,
+                ERROR_IO_PENDING => conn.pending = true,
+                _ => {
+                    conn.close(false);
+                    return None;
                 }
-
-                if !connected {
-
-                    // 서버 종료 요청으로 대기 취소 및 정상 정리
-
-                    unsafe {
-
-                        CancelIo(h);
-
-                        CloseHandle(event);
-
-                        CloseHandle(h);
-
-                    }
-
-                    break;
-
-                }
-
             }
-
         }
-
-        if connected {
-
-            last_activity.store(now_ms(), Ordering::Relaxed);
-
-            if let Some(req_line) = read_line(h, &last_activity, &running) {
-
-                last_activity.store(now_ms(), Ordering::Relaxed);
-
-                let resp = handle_request(&req_line, &db, &running);
-
-                let mut out = resp.into_bytes();
-
-                out.push(b'\n');
-
-                write_all(h, &out);
-
-                unsafe { FlushFileBuffers(h) };
-
-                last_activity.store(now_ms(), Ordering::Relaxed);
-
-            }
-
-            unsafe { DisconnectNamedPipe(h) };
-
-        }
-
-        unsafe {
-
-            CloseHandle(event);
-
-            CloseHandle(h);
-
-        }
-
+        Some(conn)
     }
 
-    unsafe {
-
-        LocalFree(sd as HLOCAL);
-
-    }
-
-}
-
-/// 개행 전 요청 길이 기준 64 KiB 제한 및 연결 읽기 타임아웃/활동 갱신 (지적 8, 9 반영)
-
-fn read_line(h: HANDLE, last_activity: &AtomicU64, running: &AtomicBool) -> Option<String> {
-
-    let mut data = Vec::new();
-
-    let mut buf = [0u8; 4096];
-
-    let start_time = now_ms();
-
-    loop {
-
-        if !running.load(Ordering::Relaxed) {
-
-            return None;
-
-        }
-
-        // 이미 읽은 버퍼에 개행이 있는지 검사 (개행 전 길이 기준으로만 64 KiB 제한)
-
-        if let Some(pos) = data.iter().position(|&b| b == b'\n') {
-
-            if pos > MAX_REQUEST {
-
-                return None;
-
-            }
-
-            return String::from_utf8(data[..pos].to_vec()).ok();
-
-        }
-
-        // 개행이 아직 없는데 누적 데이터가 이미 64 KiB를 초과한 경우 거부
-
-        if data.len() > MAX_REQUEST {
-
-            return None;
-
-        }
-
-        // 파이프 수신 버퍼 가용 상태 확인
-
-        let mut avail = 0u32;
-
-        let peek_ok = unsafe {
-
-            PeekNamedPipe(
-
-                h,
-
-                std::ptr::null_mut(),
-
-                0,
-
-                std::ptr::null_mut(),
-
-                &mut avail,
-
-                std::ptr::null_mut(),
-
-            )
-
-        };
-
-        if peek_ok == 0 {
-
-            // 파이프 연결 끊김 또는 오류
-
-            break;
-
-        }
-
-        if avail == 0 {
-
-            // 읽기 타임아웃 (30초 동안 아무 데이터도 안 오면 연결 해제)
-
-            if now_ms().saturating_sub(start_time) > 30_000 {
-
-                return None;
-
-            }
-
-            std::thread::sleep(std::time::Duration::from_millis(20));
-
-            continue;
-
-        }
-
-        let to_read = (buf.len() as u32).min(avail);
-
+    /// 이벤트가 켜진 연결의 겹친 입출력 결과를 받아 처리한다. false면 연결을 닫아야 한다.
+    fn service(&mut self, ctx: &Ctx) -> bool {
         let mut n = 0u32;
-
-        if unsafe { ReadFile(h, buf.as_mut_ptr(), to_read, &mut n, std::ptr::null_mut()) } == 0 || n == 0 {
-
-            break;
-
+        if unsafe { GetOverlappedResult(self.h, &*self.ov, &mut n, 0) } == 0 {
+            if unsafe { GetLastError() } == ERROR_IO_INCOMPLETE {
+                return true;
+            }
+            self.pending = false;
+            return false;
         }
+        self.pending = false;
+        if !self.connected {
+            self.connected = true;
+            self.line_start = now_ms();
+            ctx.last_activity.store(self.line_start, Ordering::Relaxed);
+            return self.read_more(ctx);
+        }
+        n != 0 && self.on_bytes(n as usize, ctx) && self.read_more(ctx)
+    }
 
+    /// 다음 읽기를 건다. 바로 끝난 읽기는 이어서 처리하고, 대기로 넘어가면 돌아온다(폴링 없음). false면 연결을 닫아야 한다.
+    fn read_more(&mut self, ctx: &Ctx) -> bool {
+        loop {
+            if !ctx.running.load(Ordering::Relaxed) {
+                return true;
+            }
+            if unsafe { ReadFile(self.h, self.buf.as_mut_ptr(), READ_CHUNK as u32, std::ptr::null_mut(), &mut *self.ov) } == 0 {
+                if unsafe { GetLastError() } == ERROR_IO_PENDING {
+                    self.pending = true;
+                    return true;
+                }
+                return false;
+            }
+            let mut n = 0u32;
+            if unsafe { GetOverlappedResult(self.h, &*self.ov, &mut n, 0) } == 0 || n == 0 {
+                return false;
+            }
+            if !self.on_bytes(n as usize, ctx) {
+                return false;
+            }
+        }
+    }
+
+    /// 방금 읽은 n바이트를 쌓고, 완성된 요청 줄을 차례로 처리해 응답한다. false면 연결을 닫아야 한다.
+    fn on_bytes(&mut self, n: usize, ctx: &Ctx) -> bool {
         // 활동 시각 갱신 (지적 8 반영)
-
-        last_activity.store(now_ms(), Ordering::Relaxed);
-
-        data.extend_from_slice(&buf[..n as usize]);
-
-        if let Some(pos) = data.iter().position(|&b| b == b'\n') {
-
-            if pos > MAX_REQUEST {
-
-                return None;
-
+        ctx.last_activity.store(now_ms(), Ordering::Relaxed);
+        self.data.extend_from_slice(&self.buf[..n]);
+        while ctx.running.load(Ordering::Relaxed) {
+            match take_line(&mut self.data) {
+                Line::Ready(req_line) => {
+                    let resp = handle_request(&req_line, ctx.db, ctx.running);
+                    let mut out = resp.into_bytes();
+                    out.push(b'\n');
+                    self.replied = true;
+                    let written = write_all(self.h, ctx.write_event, &out);
+                    self.line_start = now_ms();
+                    ctx.last_activity.store(self.line_start, Ordering::Relaxed);
+                    if !written {
+                        return false;
+                    }
+                }
+                Line::More => break,
+                Line::Reject => return false,
             }
-
-            return String::from_utf8(data[..pos].to_vec()).ok();
-
         }
-
+        true
     }
 
-    if let Some(pos) = data.iter().position(|&b| b == b'\n') {
-
-        if pos <= MAX_REQUEST {
-
-            return String::from_utf8(data[..pos].to_vec()).ok();
-
+    /// 걸린 입출력을 취소하고 핸들을 닫는다. flush면 보낸 응답을 클라이언트가 읽을 때까지 기다린 뒤 끊는다(서버 종료 때).
+    fn close(self, flush: bool) {
+        unsafe {
+            if self.pending {
+                CancelIo(self.h);
+                let mut n = 0u32;
+                GetOverlappedResult(self.h, &*self.ov, &mut n, 1);
+            }
+            if flush && self.replied {
+                FlushFileBuffers(self.h);
+            }
+            if self.connected {
+                DisconnectNamedPipe(self.h);
+            }
+            CloseHandle(self.event);
+            CloseHandle(self.h);
         }
-
     }
-
-    None
-
 }
 
-fn write_all(h: HANDLE, mut data: &[u8]) {
+pub fn serve(db: Arc<Mutex<Database>>, running: Arc<AtomicBool>, last_activity: Arc<AtomicU64>) {
+    serve_on(&pipe_name(), &db, &running, &last_activity);
+}
 
-    while !data.is_empty() {
-
-        let mut n = 0u32;
-
-        let chunk = data.len().min(1 << 20) as u32;
-
-        if unsafe { WriteFile(h, data.as_ptr(), chunk, &mut n, std::ptr::null_mut()) } == 0 || n == 0 {
-
-            return;
-
-        }
-
-        data = &data[n as usize..];
-
+/// 이름을 받아 파이프 서버를 돈다(시험은 사용자 파이프와 겹치지 않는 이름으로 직접 띄운다).
+/// 스레드 하나가 여러 연결의 이벤트를 함께 기다린다: 요청은 한 번에 하나씩만 처리하므로 상태 경합이 없고,
+/// 긴 요청 중에도 대기 인스턴스가 있어 다음 클라이언트가 연결해 차례를 기다릴 수 있다.
+pub fn serve_on(name: &str, db: &Mutex<Database>, running: &AtomicBool, last_activity: &AtomicU64) {
+    let sid = user_sid();
+    if sid.is_empty() {
+        return;
     }
+    let sddl = wide(&format!("D:P(A;;GA;;;{sid})(A;;GA;;;SY)"));
+    let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+    if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) } == 0 {
+        return;
+    }
+    let sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: sd,
+        bInheritHandle: 0,
+    };
+    let name = wide(name);
+    let write_event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    let ctx = Ctx { db, running, last_activity, write_event };
+    let mut conns: Vec<Conn> = Vec::new();
+    while !write_event.is_null() && running.load(Ordering::Relaxed) {
+        // 연결을 기다리는 인스턴스를 항상 하나 둔다(자리가 있을 때).
+        if conns.len() < MAX_CONNS {
+            match Conn::listen(&name, &sa) {
+                Some(mut conn) => {
+                    if conn.connected {
+                        last_activity.store(now_ms(), Ordering::Relaxed);
+                        if !conn.read_more(&ctx) {
+                            conn.close(false);
+                            continue;
+                        }
+                    }
+                    conns.push(conn);
+                    continue;
+                }
+                None if conns.is_empty() => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                None => {}
+            }
+        }
+        // 종료 신호(running == false)와 읽기 시간 초과는 200ms 주기로 점검한다 (지적 7 반영)
+        let events: Vec<HANDLE> = conns.iter().map(|c| c.event).collect();
+        let waited = unsafe { WaitForMultipleObjects(events.len() as u32, events.as_ptr(), 0, 200) };
+        let index = waited.wrapping_sub(WAIT_OBJECT_0) as usize;
+        if index < conns.len() {
+            // 처리한 연결은 맨 뒤로 보내 다른 연결이 굶지 않게 한다.
+            let mut conn = conns.remove(index);
+            if conn.service(&ctx) {
+                conns.push(conn);
+            } else {
+                conn.close(false);
+            }
+        } else if waited == WAIT_TIMEOUT {
+            // 읽기 타임아웃 (30초 동안 요청 한 줄이 완성되지 않으면 연결 해제).
+            // 기다리는 이벤트가 하나도 없을 때만 본다: 긴 요청 뒤에 이미 도착해 있는 요청을 끊지 않기 위해서다.
+            let now = now_ms();
+            let mut i = 0;
+            while i < conns.len() {
+                if conns[i].connected && now.saturating_sub(conns[i].line_start) > LINE_TIMEOUT_MS {
+                    conns.remove(i).close(false);
+                } else {
+                    i += 1;
+                }
+            }
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    for conn in conns {
+        conn.close(true);
+    }
+    unsafe {
+        if !write_event.is_null() {
+            CloseHandle(write_event);
+        }
+        LocalFree(sd as HLOCAL);
+    }
+}
 
+/// OVERLAPPED로 연 핸들에 응답을 끝까지 쓴다. 클라이언트가 읽지 않아 밀리면 끝날 때까지 기다린다. 실패하면 false.
+fn write_all(h: HANDLE, event: HANDLE, mut data: &[u8]) -> bool {
+    while !data.is_empty() {
+        let mut ov: OVERLAPPED = unsafe { std::mem::zeroed() };
+        ov.hEvent = event;
+        let chunk = data.len().min(1 << 20) as u32;
+        if unsafe { WriteFile(h, data.as_ptr(), chunk, std::ptr::null_mut(), &mut ov) } == 0 && unsafe { GetLastError() } != ERROR_IO_PENDING {
+            return false;
+        }
+        let mut n = 0u32;
+        if unsafe { GetOverlappedResult(h, &ov, &mut n, 1) } == 0 || n == 0 {
+            return false;
+        }
+        data = &data[n as usize..];
+    }
+    true
 }
 
 /// 노트북 출처 문단을 JSON 행에서 만든다(Python 추출 경로). text·level·table(또는 kind="table")·location(또는 page).
@@ -722,10 +690,26 @@ fn err_val(msg: &str) -> Value {
 /// 메모 편집기 코어(editor_core) 문서들. klib 프로세스 수명 동안 유지되며 자료함 DB 잠금과 무관하다.
 static EDITOR: OnceLock<Mutex<editor_core::api::Engine>> = OnceLock::new();
 
-/// edit_* 명령을 편집 코어에 넘긴다. 응답은 코어가 만든 한 줄 JSON 그대로다(ok·message 규약 동일).
-fn editor_request(req_str: &str) -> String {
+/// klib가 파싱한 값을 편집 코어의 JSON 값으로 옮긴다(문자열은 복사하지 않고 넘겨준다).
+/// klib 파서가 받아들이는 요청은 코어 파서도 같은 값으로 읽으므로(klib 쪽이 더 엄격하다) 원문을 다시 파싱한 것과 결과가 같다.
+fn editor_json(val: Value) -> editor_core::json::Json {
+    use editor_core::json::Json;
+    match val {
+        Value::Null => Json::Null,
+        Value::Bool(b) => Json::Bool(b),
+        Value::Num(n) => Json::Num(n),
+        Value::Str(s) => Json::Str(s),
+        Value::Arr(items) => Json::Arr(items.into_iter().map(editor_json).collect()),
+        Value::Obj(items) => Json::Obj(items.into_iter().map(|(k, v)| (k, editor_json(v))).collect()),
+    }
+}
+
+/// edit_* 명령을 편집 코어에 넘긴다. 이미 파싱한 값을 넘겨 큰 text가 실린 요청(붙여넣기)을 두 번 파싱하지 않는다.
+/// 응답은 코어가 만든 한 줄 JSON 그대로다(ok·message 규약 동일).
+fn editor_request(val: Value) -> String {
+    let request = editor_json(val);
     let engine = EDITOR.get_or_init(|| Mutex::new(editor_core::api::Engine::new()));
-    engine.lock().unwrap_or_else(|e| e.into_inner()).handle(req_str)
+    engine.lock().unwrap_or_else(|e| e.into_inner()).handle_value(&request)
 }
 
 pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool) -> String {
@@ -737,7 +721,7 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
     };
 
     if val.str("cmd").is_some_and(|c| c.starts_with("edit_")) {
-        return editor_request(req_str);
+        return editor_request(val);
     }
 
     let cmd = val.str("cmd").unwrap_or("");

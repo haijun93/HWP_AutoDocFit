@@ -34,7 +34,17 @@ impl Engine {
 
     /// 한 줄 JSON 요청을 처리해 한 줄 JSON 응답을 돌려준다.
     pub fn handle(&mut self, request: &str) -> String {
-        let resp = match json::parse(request).and_then(|req| self.exec(&req)) {
+        Self::respond(json::parse(request).and_then(|req| self.exec(&req)))
+    }
+
+    /// 이미 파싱한 요청을 처리한다. 호출 쪽(klib 파이프)이 명령 이름을 보려고 한 번 파싱했을 때 다시 파싱하지 않기 위한 진입점이다.
+    /// 응답은 같은 요청 문자열을 [`Engine::handle`]에 넘겼을 때와 같다.
+    pub fn handle_value(&mut self, request: &Json) -> String {
+        Self::respond(self.exec(request))
+    }
+
+    fn respond(result: Res<Json>) -> String {
+        let resp = match result {
             Ok(Json::Obj(mut items)) => {
                 items.insert(0, ("ok".into(), Json::Bool(true)));
                 Json::Obj(items)
