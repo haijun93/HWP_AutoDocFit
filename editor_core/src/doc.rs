@@ -314,20 +314,12 @@ impl Document {
 
     pub fn byte_to_utf16(&mut self, pos: usize) -> Res<usize> {
         self.check_pos(pos)?;
-        Ok(self.buf.as_str()[..pos].chars().map(char::len_utf16).sum())
+        Ok(self.buf.byte_to_utf16(pos))
     }
     pub fn utf16_to_byte(&mut self, unit: usize) -> Res<usize> {
-        let mut u = 0;
-        for (i, c) in self.buf.as_str().char_indices() {
-            if u == unit {
-                return Ok(i);
-            }
-            if u > unit {
-                return Err("UTF-16 위치가 대리 쌍 한가운데입니다.".into());
-            }
-            u += c.len_utf16();
-        }
-        if u == unit { Ok(self.buf.len()) } else { Err("UTF-16 위치가 범위를 벗어났습니다.".into()) }
+        self.buf.utf16_to_byte(unit).map_err(|mid| {
+            if mid { "UTF-16 위치가 대리 쌍 한가운데입니다.".to_string() } else { "UTF-16 위치가 범위를 벗어났습니다.".to_string() }
+        })
     }
 
     fn check_pos(&self, pos: usize) -> Res<()> {
