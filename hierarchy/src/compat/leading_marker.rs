@@ -38,7 +38,7 @@ pub fn leading_marker_with_scheme(text: &str, scheme: Option<&MarkerScheme>) -> 
     }
 
     let roman = ROMAN_MARKER.get_or_init(|| {
-        Regex::new(r"(?:[IVX]|[IVXLCDM]{2,})[.．](?=\s|$)").unwrap()
+        Regex::new(r"^(?:(?:[IVX]|[IVXLCDM]{2,})[.．](?=\s|$))").unwrap()
     });
     if let Some(marker) = is_match_at_start(roman, stripped) {
         return (marker, "중제목".into());
@@ -57,7 +57,7 @@ pub fn leading_marker_with_scheme(text: &str, scheme: Option<&MarkerScheme>) -> 
     }
 
     let circled = CIRCLED_MARKER.get_or_init(|| {
-        Regex::new(r"[①-⑳㉠-㉻❶-❿➊-➓](?=\s|$)").unwrap()
+        Regex::new(r"^(?:[①-⑳㉠-㉻❶-❿➊-➓](?=\s|$))").unwrap()
     });
     if let Some(marker) = is_match_at_start(circled, stripped) {
         return (marker, String::new());
@@ -66,7 +66,7 @@ pub fn leading_marker_with_scheme(text: &str, scheme: Option<&MarkerScheme>) -> 
     let regexes = MARKER_REGEXES.get_or_init(|| {
         MARKERS
             .iter()
-            .map(|(_, pattern)| Regex::new(pattern).unwrap())
+            .map(|(_, pattern)| Regex::new(&format!("^(?:{pattern})")).unwrap())
             .collect()
     });
     for ((role, _), regex) in MARKERS.iter().zip(regexes) {

@@ -184,7 +184,8 @@ fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     if normalized.trim().is_empty() { return Err("empty: HWP 본문 텍스트가 없음".into()); }
 
-    let page_marker = regex::Regex::new(r"(?i)(?:\x0c|<!--\s*page(?:\s*[:#]?\s*(\d+)|\s*break)?\s*-->)").unwrap();
+    static PAGE_MARKER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:|<!--\s*page(?:\s*[:#]?\s*(\d+)|\s*break)?\s*-->)").unwrap());
+    let page_marker = &*PAGE_MARKER;
     let matches: Vec<_> = page_marker.find_iter(&normalized).collect();
     let mut records = Vec::new();
     if !matches.is_empty() {
@@ -204,7 +205,8 @@ fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
         }
     } else {
-        let split = regex::Regex::new(r"\n\s*\n").unwrap();
+        static PARA_SPLIT: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"\n\s*\n").unwrap());
+        let split = &*PARA_SPLIT;
         for (index, para) in split.split(&normalized).map(str::trim).filter(|p| !p.is_empty()).enumerate() {
             records.push(hwp_record(para.to_owned(), "paragraph", format!("문단 {}", index + 1), records.len() + 1));
         }
