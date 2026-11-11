@@ -65,13 +65,41 @@ _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
 _EXTRACTED_LOCATIONS_LOCK = threading.RLock()
 
 
+def _min_position_span(position_lists) -> int | None:
+    """낱말마다 위치를 하나씩 골랐을 때 (가장 뒤 - 가장 앞)의 최솟값. 빈 목록이 있으면 None.
+
+    모든 조합을 만드는 대신(낱말 수만큼 곱으로 늘어남) 위치를 한 줄로 정렬해 창을 밀며 구한다.
+    결과는 itertools.product로 구한 최솟값과 같다.
+    """
+    lists = [list(found) for found in position_lists]
+    if not lists or any(not found for found in lists):
+        return None
+    merged = sorted((position, index) for index, found in enumerate(lists) for position in found)
+    counts = [0] * len(lists)
+    covered = 0
+    best = None
+    left = 0
+    for position, index in merged:
+        counts[index] += 1
+        if counts[index] == 1:
+            covered += 1
+        while covered == len(lists):
+            span = position - merged[left][0]
+            if best is None or span < best:
+                best = span
+            left_index = merged[left][1]
+            counts[left_index] -= 1
+            if counts[left_index] == 0:
+                covered -= 1
+            left += 1
+    return best
+
+
 def _terms_are_near(text: str, terms: list[str], distance: int) -> bool:
     words = [match.group().casefold() for match in re.finditer(r"\S+", text)]
     positions = [[index for index, word in enumerate(words) if term.casefold() in word] for term in terms]
-    if any(not found for found in positions):
-        return False
-    import itertools
-    return any(max(combo) - min(combo) <= distance + 1 for combo in itertools.product(*positions))
+    span = _min_position_span(positions)
+    return span is not None and span <= distance + 1
 
 
 @dataclass(frozen=True)
@@ -960,10 +988,8 @@ class ContentSearchIndex:
                 word_spans = [(m.group().casefold(), m.start(), m.end()) for m in re.finditer(r"\S+", combined_matched_text)]
                 term_positions = [[i for i, (word, _, _) in enumerate(word_spans) if term.casefold() in word]
                                   for term in terms]
-                if any(not pos for pos in term_positions):
-                    continue
-                if not any(max(combo) - min(combo) <= parsed["near"] + 1
-                           for combo in __import__('itertools').product(*term_positions)):
+                span = _min_position_span(term_positions)
+                if span is None or span > parsed["near"] + 1:
                     continue
 
             # 언급 횟수 집계
@@ -1301,8 +1327,7 @@ class ContentSearchIndex:
                     positions = [[i for i, word in enumerate(words) if term.casefold() in word]
                                  for term in terms_for_distance]
                     if positions and all(positions):
-                        import itertools
-                        distance = min(max(combo) - min(combo) for combo in itertools.product(*positions))
+                        distance = _min_position_span(positions)
                         proximity_bonus = max(proximity_bonus, 0.20 / (1 + distance))
                     if parsed["phrases"] and all(p.casefold() in text.casefold() for p in parsed["phrases"]):
                         phrase_bonus = max(phrase_bonus, 0.35)

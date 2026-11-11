@@ -861,5 +861,27 @@ class ContentSearchTests(unittest.TestCase):
         self.assertLess(elapsed, 1.0, f"3000건 검색: {elapsed:.3f}s")
 
 
+
+
+class MinPositionSpanTests(unittest.TestCase):
+    def test_matches_brute_force_product(self):
+        import itertools
+        import random
+        from docfit_core.timemachine.content_search import _min_position_span
+        rnd = random.Random(20261111)
+        for _ in range(2000):
+            lists = [[rnd.randrange(40) for _ in range(rnd.randrange(0, 6))] for _ in range(rnd.randrange(1, 5))]
+            expected = (min(max(c) - min(c) for c in itertools.product(*lists))
+                        if all(lists) else None)
+            self.assertEqual(_min_position_span(lists), expected, lists)
+
+    def test_many_positions_do_not_explode(self):
+        from docfit_core.timemachine.content_search import _min_position_span
+        lists = [list(range(i, 60000, 4)) for i in range(4)]   # 조합으로는 15,000^4가지
+        start = time.perf_counter()
+        self.assertEqual(_min_position_span(lists), 3)
+        self.assertLess(time.perf_counter() - start, 2.0)
+
+
 if __name__ == "__main__":
     unittest.main()
