@@ -63,6 +63,11 @@ MARKER_CLASS_TO_LEVEL: dict[str, str] = {
     "−": "dash",
     "－": "dash",
 }
+_MARKDOWN_HEADING = re.compile(r"^(#{1,3})(?:\s+|$)(.*)$")
+_NUMBERED_FAMILY_LEVELS = {
+    "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
+    "㉠": 4, "㉮": 4,
+}
 CURRENT_HIERARCHY_SCHEMA_VERSION = 1
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
@@ -184,9 +189,35 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
     texts = [p.text for p in paragraphs]
     scheme = detect_scheme(texts)
+    numbered_levels = {family: _NUMBERED_FAMILY_LEVELS[family]
+                       for family in scheme.family_levels if family in _NUMBERED_FAMILY_LEVELS}
+    if numbered_levels:
+        present_number_families = {}
+        for text in texts:
+            found = classify_marker(text)
+            if found and found[0] in _NUMBERED_FAMILY_LEVELS:
+                present_number_families.setdefault(found[0], []).append(text)
+        observed = [family for family in _NUMBERED_FAMILY_LEVELS if family in present_number_families]
+        if len(observed) >= 2 and all(_NUMBERED_FAMILY_LEVELS[a] < _NUMBERED_FAMILY_LEVELS[b]
+                                      for a, b in zip(observed, observed[1:])):
+            indents = {}
+            for family in observed:
+                rows = present_number_families[family]
+                indents[family] = min(len(row) - len(row.lstrip()) for row in rows)
+            if all(indents[a] <= indents[b] for a, b in zip(observed, observed[1:])):
+                numbered_levels.update({family: _NUMBERED_FAMILY_LEVELS[family]
+                                        for family in observed
+                                        if family in {"(1)", "①", "㉠", "㉮"}})
+
+    # 단일 # 문서는 제목 하나로 취급한다. # 제목이 여럿이면 첫 #은 문서 제목,
+    # 이후 #은 장으로 보며 ##/###는 문서 수와 무관하게 절/주제로 유지한다.
+    markdown_headings = [_MARKDOWN_HEADING.match(text.strip()) for text in texts]
+    top_heading_count = sum(bool(match and len(match.group(1)) == 1) for match in markdown_headings)
+    first_top_heading = next((i for i, match in enumerate(markdown_headings)
+                              if match and len(match.group(1)) == 1), None)
 
     classified: list[ParagraphRecord] = []
-    for p in paragraphs:
+    for paragraph_position, p in enumerate(paragraphs):
         text = p.text.strip()
         style_name = (p.style_name or "").lower()
         outline_lvl = p.outline_level
@@ -199,13 +230,37 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             # 1. HWPX 명시 제목/heading 스타일과 outline level
             if any(w in style_name for w in ("문서제목", "문서 제목", "title")) or style_name == "제목" or outline_lvl == 0:
                 level = "document_title"
-            elif any(w in style_name for w in ("heading 1", "개요 1", "개요1")) or outline_lvl == 1:
+            elif any(w in style_name for w in ("heading 1", "heading1", "제목 1", "제목1", "개요 1", "개요1")) or outline_lvl == 1:
                 level = "chapter"
-            elif any(w in style_name for w in ("heading 2", "개요 2", "개요2")) or outline_lvl == 2:
+            elif any(w in style_name for w in ("heading 2", "heading2", "제목 2", "제목2", "개요 2", "개요2")) or outline_lvl == 2:
                 level = "section"
-            elif any(w in style_name for w in ("heading 3", "개요 3", "개요3")) or outline_lvl == 3:
+            elif any(w in style_name for w in ("heading 3", "heading3", "제목 3", "제목3", "개요 3", "개요3")) or outline_lvl == 3:
                 level = "topic"
 
+            if level is None:
+                heading = markdown_headings[paragraph_position]
+                if heading:
+                    depth = len(heading.group(1))
+                    if depth == 1:
+                        level = ("document_title" if top_heading_count == 1 or paragraph_position == first_top_heading
+                                 else "chapter")
+                    else:
+                        level = {2: "section", 3: "topic"}[depth]
+
+            marker_info = classify_marker(text)
+            family = marker_info[0] if marker_info else None
+            if level is None and scheme and family in numbered_levels:
+                level = {1: "chapter", 2: "section", 3: "topic", 4: "body"}[numbered_levels[family]]
+            if level is None and scheme:
+                marker_level = scheme.family_levels.get(family)
+                if marker_level == 1:
+                    level = "chapter"
+                elif marker_level == 2:
+                    level = "section"
+                elif marker_level == 3:
+                    level = "topic"
+
+            # 번호 기호는 문서 안에서 계열·순서·들여쓰기로 체계가 확인된 경우에만 위계로 인정한다.
             if level is None:
                 # [지적 3 반영] 저장소의 기존 기호 위계 판정 코드(leading_marker, unify_marker) 재사용 및 직접 매핑
                 marker, role = leading_marker(text, scheme)
@@ -387,6 +442,22 @@ def extract_paragraphs_legacy(path, ext):
             if "word/document.xml" not in archive.namelist():
                 return []
             root = ET.fromstring(archive.read("word/document.xml"))
+            style_names = {}
+            default_style_names = {
+                "Heading1": "Heading 1", "Heading2": "Heading 2", "Heading3": "Heading 3",
+                "Title": "Title", "제목1": "제목 1", "제목2": "제목 2", "제목3": "제목 3",
+            }
+            if "word/styles.xml" in archive.namelist():
+                styles_root = ET.fromstring(archive.read("word/styles.xml"))
+                for style in styles_root.iter():
+                    if _tag_name(style) != "style":
+                        continue
+                    style_id = next((value for key, value in style.attrib.items()
+                                     if key.rsplit("}", 1)[-1] == "styleId"), None)
+                    style_name = next((child.attrib.get("val") for child in style
+                                       if _tag_name(child) == "name"), None)
+                    if style_id and style_name:
+                        style_names[style_id] = style_name
             index = 0
             def walk(node, in_table=False):
                 nonlocal index
@@ -411,11 +482,14 @@ def extract_paragraphs_legacy(path, ext):
                         for ppr in node:
                             if _tag_name(ppr) == "pPr":
                                 for child in ppr:
-                                    if _tag_name(child) == "pStyle": style = next(iter(child.attrib.values()), None)
+                                    if _tag_name(child) == "pStyle":
+                                        style = next((value for key, value in child.attrib.items()
+                                                      if key.rsplit("}", 1)[-1] == "val"), None)
                                     if _tag_name(child) == "outlineLvl":
                                         value = next(iter(child.attrib.values()), None)
                                         outline = int(value) if value and value.isdigit() else None
-                        records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table, style, outline))
+                        records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table,
+                                                       style_names.get(style, default_style_names.get(style, style)), outline))
                         index += 1
                     for child in node:
                         walk(child, in_table)

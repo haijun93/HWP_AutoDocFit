@@ -733,6 +733,54 @@ class ContentSearchTests(unittest.TestCase):
         self.assertEqual(records[0].level_rank, records[1].level_rank)
         self.assertEqual(records[1].level, "body")
 
+    def test_markdown_and_txt_heading_hierarchy_uses_document_context(self):
+        cases = {
+            "one.md": ("# 단일 제목\n## 절\n### 주제\n", ["document_title", "section", "topic"]),
+            "many.md": ("# 계획 제목\n# Ⅰ. 시설물 정비\n## 관광안내판 철거\n### 대상 위치\n",
+                        ["document_title", "chapter", "section", "topic"]),
+            "same.txt": ("# 시설물 정비\n## 관광안내판 철거\n### 대상 위치\n",
+                         ["document_title", "section", "topic"]),
+        }
+        for name, (content, expected) in cases.items():
+            with self.subTest(name=name):
+                path = self.root / name
+                path.write_text(content, encoding="utf-8")
+                self.assertEqual([item.level for item in extract_paragraphs(path)], expected)
+
+    def test_docx_heading_styles_are_resolved_from_styles_part(self):
+        path = self.root / "styled.docx"
+        with ZipFile(path, "w") as archive:
+            archive.writestr("word/document.xml", """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>
+              <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>시설물 정비</w:t></w:r></w:p>
+              <w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>관광안내판 철거</w:t></w:r></w:p>
+              <w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr><w:r><w:t>대상 위치</w:t></w:r></w:p>
+              <w:sectPr/></w:body></w:document>""")
+            archive.writestr("word/styles.xml", """<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/></w:style>
+              <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/></w:style>
+              <w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/></w:style>
+              </w:styles>""")
+        records = extract_paragraphs(path)
+        self.assertEqual([r.style_name for r in records], ["Heading 1", "Heading 2", "Heading 3"])
+        self.assertEqual([r.level for r in records], ["chapter", "section", "topic"])
+
+    def test_numbered_hierarchy_requires_consistent_document_sequence(self):
+        path = self.root / "numbered.txt"
+        path.write_text("Ⅰ. 총칙\nⅡ. 운영\n1. 적용 범위\n2. 실행 방법\n가. 대상\n나. 담당 부서\n(1) 세부 기준\n(2) 일정\n① 예외\n② 추가 예외\n"
+                        "일반 문장 본문\nⅡ. 운영\n  1. 실행 방법\n    가. 담당 부서\n      (1) 일정\n        ② 참고\n",
+                        encoding="utf-8")
+        records = extract_paragraphs(path)
+        levels = [r.level for r in records]
+        self.assertEqual(levels[0], "chapter")
+        self.assertIn("section", levels)
+        self.assertIn("topic", levels)
+        self.assertEqual(levels[6:10], ["topic", "topic", "body", "body"])
+        self.assertEqual(levels[10], "body")
+        self.assertEqual(levels[11], "chapter")
+        isolated = self.root / "isolated.txt"
+        isolated.write_text("가. 일반 문장처럼 보이는 번호", encoding="utf-8")
+        self.assertEqual(extract_paragraphs(isolated)[0].level, "body")
+
     def test_table_cell_records_keep_table_level_and_order(self):
         path = self.root / "table.hwpx"
         write_hwpx_paragraphs(path, [
