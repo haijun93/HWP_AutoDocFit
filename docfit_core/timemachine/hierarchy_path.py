@@ -58,6 +58,25 @@ def shorten(text: str, limit: int = MAX_HEADING_CHARS) -> str:
     return cleaned if len(cleaned) <= limit else cleaned[: limit - 1].rstrip() + "…"
 
 
+def _document_title_row(rows: Sequence[dict]):
+    """문서 맨 앞 표에서 위계 변경 없이 표시할 제목을 찾는다."""
+    if any(row["level_rank"] is not None and int(row["level_rank"]) == 0 for row in rows):
+        return None
+    for row in sorted(rows, key=lambda row: int(row["paragraph_index"])):
+        if "level" not in row.keys() or row["level"] != "table_cell":
+            break
+        text = str(row["body"] or "").strip()
+        if 4 <= len(text) <= MAX_HEADING_CHARS:
+            return row
+    return None
+
+
+def document_title_text(rows: Sequence[dict]) -> str | None:
+    """문서 맨 앞 표에서 위계 변경 없이 표시할 제목을 찾는다."""
+    row = _document_title_row(rows)
+    return str(row["body"]).strip() if row is not None else None
+
+
 def breadcrumb(rows: Sequence[dict], paragraph_index: int) -> list[dict]:
     """한 문서의 문단 행에서 paragraph_index 문단의 상위 경로를 만든다.
 
@@ -82,6 +101,14 @@ def breadcrumb(rows: Sequence[dict], paragraph_index: int) -> list[dict]:
             "level_rank": int(row["level_rank"]) if row["level_rank"] is not None else BODY_RANK,
             "text": text,
         })
+    if not any(step["level_rank"] == 0 for step in path):
+        title = document_title_text(ordered)
+        if title is not None:
+            title_row = _document_title_row(ordered)
+            title_index = int(title_row["paragraph_index"])
+            if title_index != int(paragraph_index):
+                path.insert(0, {"level": "document_title", "level_rank": 0,
+                                "text": title, "paragraph_index": title_index})
     return path
 
 

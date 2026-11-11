@@ -60,6 +60,43 @@ class HierarchyPathTest(unittest.TestCase):
         self.assertEqual(["1장 시설"], [s["text"] for s in hp.breadcrumb(doc, 1)])
         self.assertEqual("#해시태그", hp.shorten("#해시태그"))
 
+    def test_leading_table_title_is_display_only(self):
+        doc = rows((8, "table_cell", "구분"), (8, "table_cell", "삼체 문명 존속을 위한"),
+                   (4, "square", "□ 추진 배경"), (8, "body", "구분"))
+        before = [dict(row) for row in doc]
+        self.assertEqual("삼체 문명 존속을 위한", hp.document_title_text(list(reversed(doc))))
+        self.assertEqual([
+            {"level": "document_title", "level_rank": 0, "text": "삼체 문명 존속을 위한", "paragraph_index": 1},
+            {"level": "square", "level_rank": 4, "text": "□ 추진 배경", "paragraph_index": 2},
+        ], hp.breadcrumb(doc, 3))
+        self.assertEqual(before, doc)
+
+    def test_document_without_leading_table_has_no_title(self):
+        self.assertIsNone(hp.document_title_text(rows((8, "body", "다음 제목"))))
+        self.assertIsNone(hp.document_title_text([]))
+
+    def test_middle_table_is_not_document_title(self):
+        doc = rows((8, "body", "구분"), (8, "table_cell", "앞쪽 표 제목"))
+        self.assertIsNone(hp.document_title_text(doc))
+        self.assertEqual([], hp.breadcrumb(doc, 1))
+
+    def test_existing_document_title_prevents_table_fallback(self):
+        doc = rows((8, "table_cell", "앞쪽 표 제목"), (0, "document_title", "기존 문서 제목"),
+                   (8, "body", "구분"))
+        self.assertIsNone(hp.document_title_text(doc))
+        self.assertEqual(["기존 문서 제목"], [s["text"] for s in hp.breadcrumb(doc, 2)])
+
+    def test_selected_title_cell_does_not_include_itself(self):
+        doc = rows((8, "table_cell", "앞쪽 표 제목"), (8, "body", "구분"))
+        self.assertEqual([], hp.breadcrumb(doc, 0))
+
+    def test_table_title_length_boundaries_and_first_match(self):
+        for length in (4, 60):
+            doc = rows((8, "table_cell", "가" * length), (8, "table_cell", "다음 제목"))
+            self.assertEqual("가" * length, hp.document_title_text(doc))
+        doc = rows((8, "table_cell", "가" * 61), (8, "table_cell", "구분"), (8, "body", "구분"))
+        self.assertIsNone(hp.document_title_text(doc))
+
     def test_search_results_carry_breadcrumb(self):
         from docfit_core.timemachine.content_search import ContentSearchIndex, LEVEL_RANKS
         self.assertEqual(hp.BODY_RANK, LEVEL_RANKS["body"])
