@@ -1005,6 +1005,15 @@ class ContentSearchIndex:
         # ranking; use the minimum matching paragraph rank and first top-level
         # paragraph for the established hierarchy tie break.
         with self._lock:
+            # 집계 대상을 1·2단계에서 남은 후보 문서로 좁힌다. 후보가 아닌 문서의 문단은 어차피
+            # 아래에서 버려지므로 결과는 같고, 본문 복사·소문자 변환·그룹 집계만 줄어든다.
+            opened_here = not self.db.in_transaction
+            self.db.execute("CREATE TEMP TABLE IF NOT EXISTS hierarchy_candidate_paths(path TEXT PRIMARY KEY)")
+            self.db.execute("DELETE FROM hierarchy_candidate_paths")
+            self.db.executemany("INSERT OR IGNORE INTO hierarchy_candidate_paths(path) VALUES(?)",
+                                ((row["path"],) for row in {id(m): m for m in valid_meta.values()}.values()))
+            if opened_here and self.db.in_transaction:
+                self.db.commit()
             if fts_terms:
                 match_expr = " OR ".join('"' + t.replace('"', '""') + '"' for t in fts_terms)
                 try:
@@ -1014,7 +1023,7 @@ class ContentSearchIndex:
                                    lower(body) AS body_folded, bm25(content_paragraph_fts) AS bm25_rank
                             FROM content_paragraph_fts
                             WHERE content_paragraph_fts MATCH ?
-                              AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                              AND path IN (SELECT path FROM temp.hierarchy_candidate_paths)
                         ), matched AS (
                             SELECT * FROM scored WHERE ({match_any})
                         ), best AS (
@@ -1036,7 +1045,7 @@ class ContentSearchIndex:
                                ch.chosen_paragraph_index, ch.chosen_rowid, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
                         FROM best b JOIN counts c ON c.path=b.path JOIN chosen ch ON ch.path=b.path
                         ORDER BY c.matched_paragraphs DESC LIMIT 100000
-                    """, (match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms,
+                    """, (match_expr, *terms,
                           *[v for _, t in count_terms for v in (t, t, t)])).fetchall()
                 except sqlite3.OperationalError:
                     aggregate_rows = self.db.execute(f"""
@@ -1047,12 +1056,12 @@ class ContentSearchIndex:
                                {count_columns}
                         FROM content_paragraph_fts
                         WHERE content_paragraph_fts MATCH ?
-                          AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                          AND path IN (SELECT path FROM temp.hierarchy_candidate_paths)
                           AND ({match_any})
                         GROUP BY path
                         ORDER BY SUM(CASE WHEN ({match_any}) THEN 1 ELSE 0 END) DESC
                         LIMIT 100000
-                    """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], match_expr, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms, *terms)).fetchall()
+                    """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], match_expr, *terms, *terms)).fetchall()
             else:
                 aggregate_rows = self.db.execute(f"""
                     SELECT path, COUNT(*) AS matched_paragraphs,
@@ -1063,11 +1072,11 @@ class ContentSearchIndex:
                     FROM (SELECT content_paragraph_fts.*, lower(body) AS body_folded
                           FROM content_paragraph_fts)
                     WHERE ({match_any})
-                      AND path IN (SELECT path FROM content_meta WHERE hierarchy_schema_version >= ?)
+                      AND path IN (SELECT path FROM temp.hierarchy_candidate_paths)
                     GROUP BY path
                     ORDER BY SUM(CASE WHEN ({match_any}) THEN 1 ELSE 0 END) DESC
                     LIMIT 100000
-                """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], *terms, CURRENT_HIERARCHY_SCHEMA_VERSION, *terms)).fetchall()
+                """, (*terms, *terms, *[v for _, t in count_terms for v in (t, t, t)], *terms, *terms)).fetchall()
 
         # 4. SQL 집계 결과로 문서 AND·근접 조건을 판정한다.
 
