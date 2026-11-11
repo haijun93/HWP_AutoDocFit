@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import shutil
+import sys
 import threading
 import time
 import tempfile
@@ -261,13 +262,31 @@ class DesktopWebBridge:
 
     def _tk(self, callback, timeout=120, front=False):
         tracer = self._freeze_tracer
-        tk_token = tracer.begin_tk(getattr(callback, '__name__', type(callback).__name__)) if tracer else None
+        callback_name = getattr(callback, '__name__', type(callback).__name__)
+        # 오류추적이 켜져 있을 때만: 어느 브리지 명령의 왕복인지 알 수 있게 호출한 메서드 이름을 붙인다.
+        tk_name = f"{sys._getframe(1).f_code.co_name}:{callback_name}" if tracer else callback_name
         started_at = time.monotonic()
+        timing = {}   # run_started·run_ended(Tk 스레드가 기록, 오류추적용)
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
                 raise RuntimeError("앱이 종료 중입니다.")
             self._requests.add(result)
+        tk_token = tracer.begin_tk(tk_name) if tracer else None
+
+        def traced(outcome):
+            """오류추적: 이 왕복의 큐 대기·실행·전체 시간을 남긴다."""
+            if not tracer:
+                return
+            now = time.monotonic()
+            run_started, run_ended = timing.get('run_started'), timing.get('run_ended')
+            if run_started is None:
+                # 실행되지 않은 요청(시간 초과·종료)은 대기 목록에서 지운다. 실행 중이면 run이 끝날 때 지운다.
+                tracer.end_tk(tk_token)
+            tracer.record_api(callback_name, now - started_at, outcome)
+            tracer.record_tk(tk_name, (now if run_started is None else run_started) - started_at,
+                             None if run_started is None or run_ended is None else run_ended - run_started,
+                             now - started_at, outcome)
 
         def complete(value=None, error=None):
             with self._request_lock:
@@ -288,6 +307,7 @@ class DesktopWebBridge:
                 if not result.set_running_or_notify_cancel():
                     self._requests.discard(result)
                     return
+                timing['run_started'] = time.monotonic()
             temporary_host = False
             if front:
                 try:
@@ -305,8 +325,11 @@ class DesktopWebBridge:
                 except Exception:
                     pass
             try:
-                complete(value=callback())
+                value = callback()
+                timing['run_ended'] = time.monotonic()   # 호출자가 깨어나기 전에 실행 시간을 확정한다.
+                complete(value=value)
             except BaseException as exc:
+                timing.setdefault('run_ended', time.monotonic())
                 complete(error=exc)
             finally:
                 if tracer:
@@ -329,31 +352,27 @@ class DesktopWebBridge:
                 self.gui.root.after(0, run)
         except Exception as exc:
             complete(error=RuntimeError("앱이 종료 중입니다."))
+            traced('not_scheduled')
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
             value = result.result(timeout=timeout)
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'ok')
+            traced('ok')
             return value
         except TimeoutError as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'timeout')
             # callback 자체가 낸 TimeoutError를 큐 응답 시간 초과로 바꾸지 않는다.
             with self._request_lock:
-                if result.done():
-                    return result.result()
-                cancelled = result.cancel()
+                finished = result.done()
+                cancelled = False if finished else result.cancel()
                 if cancelled:
                     self._requests.discard(result)
+            traced('timeout' if finished or cancelled else 'timeout_running')
+            if finished:
+                return result.result()
             if not cancelled:
                 raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
             raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
         except Exception as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, type(exc).__name__)
+            traced(type(exc).__name__)
             raise
 
     def freeze_logs_open(self):
