@@ -424,7 +424,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       };
       final response = await _api.command('preview', payload);
       final ffiHierarchy = HierarchyFfi.instance.analyze([
-        {'text': result.snippet, 'indent': 0, 'font_size': 12},
+        {'text': result.snippet, 'left': 0, 'indent': 0, 'font': '', 'size_pt': 12},
       ]);
       final previewResponse = Map<String, Object?>.from(response as Map);
       if (ffiHierarchy != null) previewResponse['hierarchy_ffi'] = ffiHierarchy;
@@ -1123,7 +1123,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                           if (_preview?['hierarchy_ffi'] is Map) ...[
                             const SizedBox(height: 8),
                             Text('위계 분석 (로컬 엔진)', style: Theme.of(context).textTheme.labelSmall),
-                            Text('${(_preview!['hierarchy_ffi'] as Map)['results']?.firstOrNull?['kind'] ?? ''} · ${(_preview!['hierarchy_ffi'] as Map)['results']?.firstOrNull?['role'] ?? ''}'),
+                            Text(hierarchySummaryLine(_preview!['hierarchy_ffi'])),
                           ],
                         ],
                       ),

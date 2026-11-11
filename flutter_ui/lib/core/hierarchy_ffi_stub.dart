@@ -3,5 +3,6 @@ class HierarchyFfi {
   HierarchyFfi._();
   static final HierarchyFfi instance = HierarchyFfi._();
   bool get available => false;
+  bool load(String path) => false;
   Map<String, Object?>? analyze(List<Map<String, Object?>> paragraphs) => null;
 }
