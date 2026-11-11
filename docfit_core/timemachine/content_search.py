@@ -1031,6 +1031,26 @@ class ContentSearchIndex:
             expression = " AND ".join(quote(term) for term in positive if len(term) >= 3)
         return expression
 
+    def _select_for_paths(self, sql, paths):
+        """경로 목록으로 거르는 조회를 임시 표로 실행한다.
+
+        `path IN (?, ?, …)`는 경로가 SQL 변수 한도(기본 32,766)를 넘으면 실패한다.
+        sql의 `{paths}` 자리에 임시 표 조회를 넣어 경로 수와 무관하게 동작하게 한다.
+        """
+        with self._lock:
+            opened_here = not self.db.in_transaction
+            try:
+                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS keyword_path_filter(path TEXT PRIMARY KEY)")
+                self.db.execute("DELETE FROM keyword_path_filter")
+                self.db.executemany("INSERT OR IGNORE INTO keyword_path_filter(path) VALUES(?)",
+                                    ((path,) for path in paths))
+                return self.db.execute(
+                    sql.format(paths="SELECT path FROM temp.keyword_path_filter")).fetchall()
+            finally:
+                # 임시 표 쓰기로 열린 트랜잭션을 남겨 두면 이후 조회가 옛 스냅숏을 본다.
+                if opened_here and self.db.in_transaction:
+                    self.db.commit()
+
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
         parsed = self.parse_query(query)
@@ -1147,23 +1167,18 @@ class ContentSearchIndex:
                         pass
                 excluded.update(row[0] for row in self.db.execute(
                     "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
-            metas = {row["path"]: row for row in self.db.execute(
-                "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN (" +
-                ",".join("?" for _ in rows) + ")", tuple(row["path"] for row in rows))} if rows else {}
+            metas = {row["path"]: row for row in self._select_for_paths(
+                "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
+                (row["path"] for row in rows))} if rows else {}
         ranked = []
         candidate_path_set = {r["path"] for r in rows}
         candidate_texts = {}
         with self._lock:
             if candidate_path_set:
-                marks = ",".join("?" for _ in candidate_path_set)
-                if short_positive and candidate_paths is not None:
-                    candidate_texts = {r["path"]: r["body"] or "" for r in self.db.execute(
-                        f"SELECT path, body FROM content_paragraph_fts WHERE path IN ({marks})",
-                        tuple(candidate_path_set))}
-                else:
-                    candidate_texts = {r["path"]: r["body"] or "" for r in self.db.execute(
-                        f"SELECT path, group_concat(body, char(10)) AS body FROM content_paragraph_fts WHERE path IN ({marks}) GROUP BY path",
-                        tuple(candidate_path_set))}
+                # 문서의 모든 문단을 합쳐야 한다. 문단마다 사전에 덮어쓰면 마지막 문단만 남는다.
+                candidate_texts = {r["path"]: r["body"] or "" for r in self._select_for_paths(
+                    "SELECT path, group_concat(body, char(10)) AS body FROM content_paragraph_fts"
+                    " WHERE path IN ({paths}) GROUP BY path", candidate_path_set)}
         rows = [row for row in rows if all(term.casefold() in candidate_texts.get(row["path"], "").casefold()
                                            for term in parsed["terms"]) and all(
                 phrase.casefold() in candidate_texts.get(row["path"], "").replace('"', '').casefold()
@@ -1174,10 +1189,9 @@ class ContentSearchIndex:
         candidate_path_set = {row["path"] for row in rows}
         with self._lock:
             if candidate_path_set:
-                marks = ",".join("?" for _ in candidate_path_set)
-                for paragraph_row in self.db.execute(
-                    f"SELECT path,paragraph_index,body,level_rank FROM content_paragraph_fts WHERE path IN ({marks})",
-                    tuple(candidate_path_set)):
+                for paragraph_row in self._select_for_paths(
+                        "SELECT path,paragraph_index,body,level_rank FROM content_paragraph_fts"
+                        " WHERE path IN ({paths})", candidate_path_set):
                     paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
         # 근접 검색은 동일 문단 내 양성 용어 사이의 단어 간격으로 제한한다.
         if parsed["near"] is not None and len(positive) > 1:

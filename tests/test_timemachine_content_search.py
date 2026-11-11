@@ -357,6 +357,45 @@ class ContentSearchTests(unittest.TestCase):
         self.assertLess(gram_seconds, before_seconds)
         self.assertLess(after_seconds, 2.5)
 
+    def _insert_keyword_documents(self, documents):
+        """(이름, [문단…]) 목록을 색인 표에 직접 넣는다. 넣은 경로 목록을 돌려준다."""
+        paths = []
+        with self.index._lock, self.index.db:
+            for name, paragraphs in documents:
+                path = f"{self.root}/{name}"
+                paths.append(path)
+                body = "\n".join(paragraphs)
+                self.index.db.executemany(
+                    "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label,section) VALUES(?,?,?,?,?,?,?,?)",
+                    [(path, name, i, "body", 8, text, f"문단 {i + 1}", None) for i, text in enumerate(paragraphs)])
+                self.index.db.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)", (path, name, body))
+                self.index.db.execute(
+                    "INSERT INTO content_meta(path,size,mtime,ctime,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?)",
+                    (path, 1, 1.0, 1.0, name, "txt", CURRENT_HIERARCHY_SCHEMA_VERSION))
+                self.index.db.executemany(
+                    "INSERT OR IGNORE INTO content_short_grams(gram,path) VALUES(?,?)",
+                    [(gram, path) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
+        return paths
+
+    def test_keyword_two_character_term_found_when_only_in_first_paragraph(self):
+        # 2글자 검색어가 마지막 문단이 아닌 곳에만 있어도 문서가 빠지면 안 된다.
+        self._insert_keyword_documents(
+            [(f"first{i}.txt", [f"감사 결과 보고 {i}", "둘째 문단 내용", "마지막 문단 내용"]) for i in range(30)])
+        found = self.index.keyword_search("감사")
+        self.assertEqual(len(found), 30)
+        self.assertTrue(all(row["locations"] and row["locations"][0]["paragraph_index"] == 0 for row in found))
+        # 두 검색어가 서로 다른 문단에 있으면 예전처럼 결과에 넣지 않는다(같은 문단 조건 유지).
+        self.assertEqual(self.index.keyword_search("감사 둘째"), [])
+
+    def test_keyword_search_survives_more_candidates_than_sql_variable_limit(self):
+        # 후보 문서가 SQL 변수 한도(기본 32,766)보다 많아도 실패하지 않는다.
+        count = 40000
+        self._insert_keyword_documents([(f"many{i}.txt", ["한도초과검색어 문단"]) for i in range(count)])
+        found = self.index.keyword_search("한도초과검색어", limit=5)
+        self.assertEqual(len(found), 5)
+        short = self.index.keyword_search("문단", limit=5)
+        self.assertEqual(len(short), 5)
+
     def test_keyword_query_syntax_filters_and_extension_aliases(self):
         root = self.root / "폴더"
         root.mkdir()
