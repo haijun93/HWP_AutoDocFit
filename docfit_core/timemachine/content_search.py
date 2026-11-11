@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import threading
+from contextlib import contextmanager
 from .rules import excluded_name
 import re
 from dataclasses import dataclass
@@ -603,10 +604,116 @@ class ContentSearchIndex:
             except sqlite3.Error as migration_exc:
                 self.migration_error = str(migration_exc)
                 raise RuntimeError("본문 색인 스키마 이전에 실패했습니다. 본문 재색인이 필요합니다.") from migration_exc
+        # (경로, 문단 번호) → 문단 FTS rowid 대응 표. path가 UNINDEXED라 path 조건은 표 전체를 훑기 때문에
+        # 경로로 문단을 찾을 때는 이 표에서 rowid를 얻어 rowid로 읽는다. 문서 재색인 없이 FTS에서 채운다.
+        self._map_stamp = None
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS content_paragraph_map("
+            "path TEXT NOT NULL, paragraph_index INTEGER NOT NULL, para_rowid INTEGER NOT NULL,"
+            " PRIMARY KEY(path, paragraph_index, para_rowid)) WITHOUT ROWID")
+        # 대응 표의 행 수·가장 큰 rowid. 행 수를 세는 것(24만 문단에서 수백 ms)을 피하려고 따로 적어 둔다.
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS content_paragraph_map_state("
+            "id INTEGER PRIMARY KEY CHECK(id=1), row_count INTEGER NOT NULL, max_rowid INTEGER NOT NULL)")
+        self.db.execute("INSERT OR IGNORE INTO content_paragraph_map_state(id, row_count, max_rowid) VALUES(1, -1, -1)")
         self.purge_excluded()
         with self._lock:
             if getattr(self.db, "in_transaction", False):
                 self.db.commit()
+
+    def _map_state(self):
+        """이 연결·다른 연결의 쓰기를 알아채는 값. 같으면 그 사이에 표가 바뀌지 않았다."""
+        return (self.db.execute("PRAGMA data_version").fetchone()[0], self.db.total_changes)
+
+    @contextmanager
+    def _map_kept(self):
+        """대응 표와 문단 FTS를 함께 고치는(또는 둘 다 건드리지 않는) 쓰기를 감싼다.
+
+        쓰기 전에 일치가 확인된 상태였다면 쓰기 뒤에도 확인된 상태로 남겨, 다음 확인을 건너뛰게 한다.
+        self._lock을 잡은 채로 쓴다.
+        """
+        kept = self._map_stamp is not None and self._map_stamp == self._map_state()
+        try:
+            yield
+        finally:
+            if kept:
+                self._map_stamp = self._map_state()
+
+    def _paragraph_fts_max_rowid(self):
+        try:
+            return self.db.execute("SELECT MAX(id) FROM content_paragraph_fts_docsize").fetchone()[0] or 0
+        except sqlite3.OperationalError:
+            return self.db.execute("SELECT MAX(rowid) FROM content_paragraph_fts").fetchone()[0] or 0
+
+    def _paragraph_fts_row_count(self):
+        """문단 FTS의 행 수. 열린 트랜잭션이 없으면 FTS5가 적어 둔 전체 행 수(읽기 1번)를 쓴다."""
+        if not self.db.in_transaction:
+            # FTS5 평균 기록(_data의 id=1)은 전체 행 수(varint)로 시작하고 커밋 때 갱신된다.
+            try:
+                row = self.db.execute("SELECT block FROM content_paragraph_fts_data WHERE id=1").fetchone()
+            except sqlite3.OperationalError:
+                row = None
+            block = bytes(row[0]) if row and row[0] else b""
+            value = 0
+            for position, byte in enumerate(block[:9]):
+                if position == 8:
+                    return (value << 8) | byte
+                value = (value << 7) | (byte & 0x7F)
+                if byte < 0x80:
+                    return value
+        try:
+            return self.db.execute("SELECT COUNT(*) FROM content_paragraph_fts_docsize").fetchone()[0]
+        except sqlite3.OperationalError:
+            return self.db.execute("SELECT COUNT(*) FROM content_paragraph_fts").fetchone()[0]
+
+    def _ensure_paragraph_map(self):
+        """대응 표가 문단 FTS와 어긋났으면 비우고 다시 채운다(전체 훑기 1회). 다시 채웠으면 True.
+
+        색인 함수는 대응 표를 함께 고치지만, 옛 색인이나 문단 FTS에 직접 넣은 행은 대응 표에 없다.
+        행 수·가장 큰 rowid·그 rowid의 경로를 견줘 어긋남을 찾는다. 바뀐 것이 없으면 견주지도 않는다.
+        """
+        with self._lock:
+            if self._map_stamp is not None and self._map_stamp == self._map_state():
+                return False
+            state = self.db.execute(
+                "SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone()
+            fts_max = self._paragraph_fts_max_rowid()
+            same = state is not None and tuple(state) == (self._paragraph_fts_row_count(), fts_max)
+            if same and fts_max:
+                last = self.db.execute(
+                    "SELECT path, CAST(paragraph_index AS INTEGER) FROM content_paragraph_fts WHERE rowid=?",
+                    (fts_max,)).fetchone()
+                same = last is not None and self.db.execute(
+                    "SELECT 1 FROM content_paragraph_map WHERE path=? AND paragraph_index=? AND para_rowid=?",
+                    (last[0] if last[0] is not None else "", last[1] or 0, fts_max)).fetchone() is not None
+            if not same:
+                with self.db:
+                    self.db.execute("DELETE FROM content_paragraph_map")
+                    filled = self.db.execute(
+                        "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid)"
+                        " SELECT COALESCE(path, ''), COALESCE(CAST(paragraph_index AS INTEGER), 0), rowid"
+                        " FROM content_paragraph_fts").rowcount
+                    self.db.execute(
+                        "INSERT OR REPLACE INTO content_paragraph_map_state(id, row_count, max_rowid) VALUES(1, ?, ?)",
+                        (filled, self._paragraph_fts_max_rowid()))
+            self._map_stamp = self._map_state()
+            return not same
+
+    def _map_rows_changed(self, delta):
+        """대응 표 행 수 기록을 고친다. 대응 표와 문단 FTS를 함께 고친 같은 트랜잭션 안에서 부른다."""
+        self.db.execute(
+            "UPDATE content_paragraph_map_state SET row_count=row_count+?, max_rowid=? WHERE id=1",
+            (delta, self._paragraph_fts_max_rowid()))
+
+    def _delete_paragraphs(self, path):
+        """한 문서의 문단을 대응 표의 rowid로 지운다(path 조건의 전체 훑기 없음). 대응 표 행도 지운다."""
+        self.db.execute(
+            "DELETE FROM content_paragraph_fts WHERE rowid IN"
+            " (SELECT para_rowid FROM content_paragraph_map WHERE path=?)", (path,))
+        removed = self.db.execute("DELETE FROM content_paragraph_map WHERE path=?", (path,)).rowcount
+        if removed:
+            self._map_rows_changed(-removed)
+        return removed
 
     def purge_excluded(self):
         """이전 버전이 색인한 제외 대상(#IEeEE…) 문서를 모든 본문 표에서 지운다. 지운 경로 목록."""
@@ -622,9 +729,11 @@ class ContentSearchIndex:
                 paths.update(row[0] for row in rows
                              if excluded_name(os.path.basename(row[0] or "")) or excluded_name(row[1] or ""))
             if paths:
-                with self.db:
+                self._ensure_paragraph_map()
+                with self._map_kept(), self.db:
                     for path in paths:
-                        for table in ("content_paragraph_fts", "content_fts", "content_short_grams",
+                        self._delete_paragraphs(path)
+                        for table in ("content_fts", "content_short_grams",
                                       "content_meta", "content_errors"):
                             try:
                                 self.db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
@@ -666,9 +775,10 @@ class ContentSearchIndex:
     def needs_reindex_count(self, roots=None) -> int:
         """위계 정보가 없거나 오래된 스키마 버전의 색인 문서 수."""
         with self._lock:
+            self._ensure_paragraph_map()
             rows = self.db.execute("""
                 SELECT m.path, m.hierarchy_schema_version,
-                       (SELECT COUNT(*) FROM content_paragraph_fts p WHERE p.path = m.path) AS para_count
+                       (SELECT COUNT(*) FROM content_paragraph_map p WHERE p.path = m.path) AS para_count
                 FROM content_meta m
             """).fetchall()
         allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
@@ -697,6 +807,7 @@ class ContentSearchIndex:
         size = stat.st_size
         try:
             with self._lock:
+                self._ensure_paragraph_map()
                 old = self.db.execute(
                     "SELECT size, mtime, hierarchy_schema_version FROM content_meta WHERE path=?",
                     (path,)
@@ -707,7 +818,7 @@ class ContentSearchIndex:
                     and old["mtime"] == mtime
                     and (old["hierarchy_schema_version"] or 0) >= CURRENT_HIERARCHY_SCHEMA_VERSION
                 ):
-                    has_para = self.db.execute("SELECT 1 FROM content_paragraph_fts WHERE path=? LIMIT 1", (path,)).fetchone()
+                    has_para = self.db.execute("SELECT 1 FROM content_paragraph_map WHERE path=? LIMIT 1", (path,)).fetchone()
                     if has_para:
                         return {"indexed": False, "error": None}
 
@@ -719,17 +830,24 @@ class ContentSearchIndex:
             name = os.path.basename(path)
             ext = Path(path).suffix.lower().lstrip(".")
 
-            with self._lock, self.db:
-                self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+            with self._lock:
+                self._ensure_paragraph_map()
+            with self._lock, self._map_kept(), self.db:
+                self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
+                map_rows = []
                 for p in paragraphs:
                     location = _EXTRACTED_LOCATIONS.get(path, {}).get(p.paragraph_index,
                         (f"문단 {p.paragraph_index + 1}", None))
-                    self.db.execute(
+                    para_rowid = self.db.execute(
                         "INSERT INTO content_paragraph_fts(path, name, paragraph_index, level, level_rank, body, location_label, section) VALUES(?,?,?,?,?,?,?,?)",
                         (path, name, int(p.paragraph_index), p.level, int(p.level_rank), p.text, *location)
-                    )
+                    ).lastrowid
+                    map_rows.append((path, int(p.paragraph_index), para_rowid))
+                self.db.executemany(
+                    "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid) VALUES(?,?,?)", map_rows)
+                self._map_rows_changed(len(map_rows))
                 self.db.execute("INSERT INTO content_fts(path, name, body) VALUES(?,?,?)", (path, name, body))
                 grams = {body[i:i + 2].casefold() for i in range(max(0, len(body) - 1))}
                 self.db.executemany("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",
@@ -742,8 +860,10 @@ class ContentSearchIndex:
             return {"indexed": True, "error": None}
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
-            with self._lock, self.db:
-                self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+            with self._lock:
+                self._ensure_paragraph_map()
+            with self._lock, self._map_kept(), self.db:
+                self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
@@ -751,8 +871,10 @@ class ContentSearchIndex:
 
     def remove_file(self, path):
         path = os.path.abspath(os.fspath(path))
-        with self._lock, self.db:
-            self.db.execute("DELETE FROM content_paragraph_fts WHERE path=?", (path,))
+        with self._lock:
+            self._ensure_paragraph_map()
+        with self._lock, self._map_kept(), self.db:
+            self._delete_paragraphs(path)
             self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
@@ -773,6 +895,7 @@ class ContentSearchIndex:
             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row["path"]))[0].casefold()))]
 
     def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance"):
+        self._ensure_paragraph_map()
         parsed = self.parse_query(query)
         terms = parsed["terms"] + parsed["phrases"]
         if not terms:
@@ -983,7 +1106,7 @@ class ContentSearchIndex:
             # N 근접도 검사
             if parsed["near"] is not None and len(terms) > 1:
                 with self._lock:
-                    near_rows = self.db.execute("SELECT body FROM content_paragraph_fts WHERE path=? ORDER BY CAST(paragraph_index AS INTEGER)", (path,)).fetchall()
+                    near_rows = self.db.execute("SELECT body FROM content_paragraph_fts WHERE rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path=?) ORDER BY CAST(paragraph_index AS INTEGER)", (path,)).fetchall()
                 combined_matched_text = "\n".join(r["body"] or "" for r in near_rows)
                 word_spans = [(m.group().casefold(), m.start(), m.end()) for m in re.finditer(r"\S+", combined_matched_text)]
                 term_positions = [[i for i, (word, _, _) in enumerate(word_spans) if term.casefold() in word]
@@ -1037,7 +1160,7 @@ class ContentSearchIndex:
             if scan_paths:
                 for row in self._select_for_paths(
                         "SELECT path, paragraph_index, body, level FROM content_paragraph_fts"
-                        " WHERE path IN ({paths})", scan_paths):
+                        " WHERE rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path IN ({paths}))", scan_paths):
                     by_position.setdefault((row["path"], int(row["paragraph_index"])), row)
             for item in final_items:
                 chosen = item.pop("_chosen_paragraph_index")
@@ -1114,6 +1237,7 @@ class ContentSearchIndex:
 
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
+        self._ensure_paragraph_map()
         parsed = self.parse_query(query)
         positive = [*parsed["terms"], *parsed["phrases"]]
         if not positive:
@@ -1177,7 +1301,8 @@ class ContentSearchIndex:
                 scored_rows = self.db.execute(f"""
                     SELECT p.path,p.name,p.level_rank,p.body,0.0 AS rank
                     FROM keyword_candidate_paths c
-                    JOIN content_paragraph_fts p ON p.path=c.path
+                    JOIN content_paragraph_map m ON m.path=c.path
+                    JOIN content_paragraph_fts p ON p.rowid=m.para_rowid
                     WHERE {predicate}
                 """, long_params).fetchall()
             else:
@@ -1253,7 +1378,7 @@ class ContentSearchIndex:
             if candidate_path_set:
                 for paragraph_row in self._select_for_paths(
                         "SELECT path,paragraph_index,body,level_rank FROM content_paragraph_fts"
-                        " WHERE path IN ({paths})", candidate_path_set):
+                        " WHERE rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path IN ({paths}))", candidate_path_set):
                     paragraph_rows_by_path.setdefault(paragraph_row["path"], []).append(paragraph_row)
         # 근접 검색은 동일 문단 내 양성 용어 사이의 단어 간격으로 제한한다.
         if parsed["near"] is not None and len(positive) > 1:
