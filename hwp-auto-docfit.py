@@ -314,8 +314,7 @@ from docfit_core.table_style import HeaderPool as 표서식_저장소, apply_tab
 from docfit_core.table_style import learn_from_table as 표서식_한표학습, valid_style as 표서식_유효
 from docfit_core.table_style import has_unit_caption as 단위캡션표인가, is_user_designed_table as 사용자표인가, protected_tables as 보호표_목록
 from docfit_core.text_table import find_box_tables
-from docfit_core import writing_aids, ai_prompts
-from docfit_core.writing_aids import refresh_dates as 날짜_현행화
+from docfit_core import ai_prompts
 
 
 XML_네임스페이스_등록 = _engine_resolve('docfit_engine.com_driver', 'XML_네임스페이스_등록', globals())
