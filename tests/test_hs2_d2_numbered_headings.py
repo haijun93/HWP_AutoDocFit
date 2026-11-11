@@ -27,3 +27,10 @@ class NumberedHeadingTests(unittest.TestCase):
     def test_roman_sequence(self):
         self.check_family("Ⅰ. 추진 배경", "Ⅱ. 운영 배경")
         self.check_family("I. 추진 배경", "II. 운영 배경")
+
+    def test_numeric_sequence(self):
+        self.check_family("1. 추진 계획", "2. 운영 계획")
+
+    def test_numeric_before_roman(self):
+        self.assertEqual(self.levels(["1. 추진 계획", "Ⅰ. 추진 배경", "Ⅱ. 운영 배경", "2. 실행 계획"]),
+                         ["chapter", "section", "section", "chapter"])

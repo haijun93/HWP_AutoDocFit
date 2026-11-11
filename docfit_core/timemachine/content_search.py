@@ -283,7 +283,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
             marker_info = classify_marker(text)
             family = marker_info[0] if marker_info else None
-            if level is None and plain_levels is not None and family in {"Ⅰ.", "I."}:
+            if level is None and plain_levels is not None and family in {"Ⅰ.", "I.", "1."}:
                 plain_family = "Ⅰ." if family == "I." else family
                 level = plain_levels.get(plain_family, "body") if len(text) <= 60 else "body"
             if level is None and scheme and family in numbered_levels:
