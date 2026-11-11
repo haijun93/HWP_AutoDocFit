@@ -204,14 +204,15 @@ class TimemachineService:
             if not cancel_event.is_set() and rust_paths:
                 fallback, seen, indexed, errors = self._run_klib_index(rust_paths, cancel_event, seen, indexed, errors)
                 python_paths.extend(fallback)
-            for path in python_paths:
-                if cancel_event.is_set(): break
-                result = self.content_index.index_file(path)
-                seen += 1
-                indexed += bool(result["indexed"])
-                errors += bool(result["error"])
-                with self._content_lock:
-                    self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+            with self.content_index.batch():
+                for path in python_paths:
+                    if cancel_event.is_set(): break
+                    result = self.content_index.index_file(path)
+                    seen += 1
+                    indexed += bool(result["indexed"])
+                    errors += bool(result["error"])
+                    with self._content_lock:
+                        self._content_state.update(seen=seen, indexed=indexed, errors=errors)
             # 취소가 끝나기 전에 건너뛴 파일을 지우지 않도록 색인 완료 후 정리한다.
             if not cancel_event.is_set():
                 for path in stale_paths:

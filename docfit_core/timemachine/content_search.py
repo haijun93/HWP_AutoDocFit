@@ -505,6 +505,7 @@ class ContentSearchIndex:
         except sqlite3.OperationalError:
             pass
         self._lock = threading.RLock()
+        self._batch_state = None
         self._closed = False
         self._keyword_rank_cache = None
         self.db.row_factory = sqlite3.Row
@@ -799,6 +800,50 @@ class ContentSearchIndex:
                 count += 1
         return count
 
+    @contextmanager
+    def batch(self, *, max_files=50, max_seconds=2.0):
+        """Commit bounded chunks; roll back the unfinished chunk on exceptions."""
+        if max_files < 1 or max_seconds <= 0:
+            raise ValueError("batch limits must be positive")
+        with self._lock:
+            if self._batch_state is not None:
+                raise RuntimeError("nested batches are unsupported")
+            self.db.commit()
+            self._batch_state = [0, time.monotonic(), max_files, max_seconds]
+            try:
+                yield self
+                self.db.commit()
+            except BaseException:
+                self.db.rollback()
+                self._map_stamp = None
+                raise
+            finally:
+                self._batch_state = None
+
+    @contextmanager
+    def _index_transaction(self):
+        if self._batch_state is None:
+            with self.db:
+                yield
+            return
+        if not self.db.in_transaction:
+            self.db.execute("BEGIN")
+        self.db.execute("SAVEPOINT index_file")
+        try:
+            yield
+        except BaseException:
+            self.db.execute("ROLLBACK TO index_file")
+            self.db.execute("RELEASE index_file")
+            self._map_stamp = None
+            raise
+        else:
+            self.db.execute("RELEASE index_file")
+            state = self._batch_state
+            state[0] += 1
+            if state[0] >= state[2] or time.monotonic() - state[1] >= state[3]:
+                self.db.commit()
+                state[0:2] = [0, time.monotonic()]
+
     def index_file(self, path):
         path = os.path.abspath(os.fspath(path))
         from .rules import excluded_name
@@ -836,7 +881,7 @@ class ContentSearchIndex:
 
             with self._lock:
                 self._ensure_paragraph_map()
-            with self._lock, self._map_kept(), self.db:
+            with self._lock, self._map_kept(), self._index_transaction():
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
@@ -866,10 +911,11 @@ class ContentSearchIndex:
             reason = f"{type(exc).__name__}: {exc}"
             with self._lock:
                 self._ensure_paragraph_map()
-            with self._lock, self._map_kept(), self.db:
+            with self._lock, self._map_kept(), self._index_transaction():
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
+                self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
             return {"indexed": False, "error": reason}
 
@@ -877,7 +923,7 @@ class ContentSearchIndex:
         path = os.path.abspath(os.fspath(path))
         with self._lock:
             self._ensure_paragraph_map()
-        with self._lock, self._map_kept(), self.db:
+        with self._lock, self._map_kept(), self._index_transaction():
             self._delete_paragraphs(path)
             self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))

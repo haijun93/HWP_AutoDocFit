@@ -1095,3 +1095,24 @@ class MinPositionSpanTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BatchIndexTests(unittest.TestCase):
+    def test_batch_and_rollback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.txt"
+            path.write_text("alpha beta", encoding="utf-8")
+            index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+            with index.batch():
+                self.assertTrue(index.index_file(path)["indexed"])
+            self.assertEqual(len(index.search("alpha")), 1)
+            other = Path(tmp) / "other.txt"
+            other.write_text("gamma delta", encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                with index.batch():
+                    index.index_file(other)
+                    raise RuntimeError("abort")
+            self.assertEqual(len(index.search("gamma")), 0)
+            self.assertEqual(index.db.execute("SELECT count(*) FROM content_paragraph_map").fetchone()[0],
+                             index.db.execute("SELECT count(*) FROM content_paragraph_fts").fetchone()[0])
+            index.close()
