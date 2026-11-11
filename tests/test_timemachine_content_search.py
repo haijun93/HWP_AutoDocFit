@@ -155,7 +155,8 @@ class ContentSearchTests(unittest.TestCase):
                     {"text": "다음 칸", "is_table_cell": True},
                 ])
                 records = extract_paragraphs(path)
-                self.assertEqual(records[count].level, "table_cell")
+                # 2026-11-12 사용자 결정: 맨 앞(본문 3개 미만 뒤) 제목 표의 첫 칸은 문서 제목.
+                self.assertEqual(records[count].level, "document_title" if count < 3 else "table_cell")
                 self.assertTrue(records[count].is_table_cell)
                 self.assertEqual(records[count + 1].level, "table_cell")
 
@@ -642,7 +643,8 @@ class ContentSearchTests(unittest.TestCase):
         migrated = ContentSearchIndex(path)
         # 구형 색인 상태이므로 재색인 필요 카운트 1, 검색 결과에는 미노출
         self.assertEqual(migrated.needs_reindex_count(), 1)
-        self.assertEqual(migrated.search("검색"), [])
+        # 2026-11-12 사용자 결정: 재색인 전에도 예전 결과는 계속 검색된다(자동 재색인이 배경에서 돈다).
+        self.assertEqual(migrated.search("검색")[0]["name"], "old.txt")
         # 재색인 수행 후 정상 검색
         self.assertTrue(migrated.index_file(old_file)["indexed"])
         self.assertEqual(migrated.needs_reindex_count(), 0)

@@ -47,7 +47,8 @@ class TitleCellTests(unittest.TestCase):
                 self.assertTrue(result["indexed"], result)
                 levels = [tuple(row) for row in index.db.execute(
                     "SELECT level,level_rank FROM content_paragraph_fts ORDER BY rowid")]
-                self.assertEqual([("table_cell", 8)] * 3 + [("body", 8)], levels)
+                # 2026-11-12 사용자 결정: 맨 앞 제목 표의 제목 칸은 문서 제목 위계로 친다.
+                self.assertEqual([("document_title", 0)] * 2 + [("table_cell", 8), ("body", 8)], levels)
                 after = index.keyword_search("삼체 행성")
                 index.db.execute("DELETE FROM content_table_cells")
                 before = index.keyword_search("삼체 행성")
