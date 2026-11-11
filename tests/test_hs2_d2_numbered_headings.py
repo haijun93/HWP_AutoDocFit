@@ -34,3 +34,14 @@ class NumberedHeadingTests(unittest.TestCase):
     def test_numeric_before_roman(self):
         self.assertEqual(self.levels(["1. 추진 계획", "Ⅰ. 추진 배경", "Ⅱ. 운영 배경", "2. 실행 계획"]),
                          ["chapter", "section", "section", "chapter"])
+
+    def test_hangul_sequence(self):
+        self.check_family("가. 세부 기준", "나. 추가 기준")
+
+    def test_hangul_before_numeric_and_roman(self):
+        self.assertEqual(self.levels(["가. 세부 기준", "1. 추진 계획", "Ⅰ. 추진 배경",
+                                      "Ⅱ. 운영 배경", "2. 실행 계획", "나. 추가 기준"]),
+                         ["chapter", "section", "topic", "topic", "section", "chapter"])
+
+    def test_exactly_sixty_characters(self):
+        self.assertEqual(self.levels(["가. " + "기" * 57, "나. 추가 기준"]), ["chapter", "chapter"])
