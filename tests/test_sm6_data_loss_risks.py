@@ -57,34 +57,65 @@ class PreservedResultWindowTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _create(self, new_pid):
-        """DispatchEx 경로: 생성 전후 tasklist 차이를 소유로 등록한다(C:225~236)."""
+        """작업 한/글 시작(한글_시작, C:263~): DispatchEx 전후 tasklist 차이를 소유로 등록하고(C:225~236)
+        그 PID를 작업 COM 객체에 묶는다. 같은 namespace를 _detach/_close가 이어 쓴다."""
         def dispatch_ex(prog_id):
             self.tasks.alive.add(new_pid)
-            return NS(pid=new_pid)
+            app = Mock(name=f'hwp{new_pid}')
+            app.RegisterModule.return_value = True
+            return app
         win32 = NS(DispatchEx=dispatch_ex, Dispatch=Mock(side_effect=AssertionError('fallback')))
-        create = com_driver._install(_docfit_namespace={'win32': win32}, _docfit_symbol='한글_COM_인스턴스_생성')
-        return create()
+        self.ns = ns = {'win32': win32, '로그': Mock(), 'pythoncom': Mock(), '비교보기_사용': False,
+                        '_표시중인_최상위창_목록': Mock(), '작업창_임베드': Mock(),
+                        'REGISTER_MODULE_NAME': 'm', 'REGISTER_MODULE_VALUE': 'v',
+                        'hwp': None, '작업_hwp_hwnd': 0, '창_임베드_해제': Mock()}
+        ns['한글_COM_인스턴스_생성'] = com_driver._install(_docfit_namespace=ns, _docfit_symbol='한글_COM_인스턴스_생성')
+        start = com_driver._install(_docfit_namespace=ns, _docfit_symbol='한글_시작')
+        return start()
 
     def _detach(self):
-        """자동닫기 끔의 작업 끝 처리(P:869~870)와 같은 작업창_분리."""
-        ns = {'hwp': NS(), '작업_hwp_hwnd': 0, '창_임베드_해제': Mock()}
-        detach = com_driver._install(_docfit_namespace=ns, _docfit_symbol='작업창_분리')
+        """자동닫기 끔의 작업 끝 처리(P:869~870)와 같은 작업창_분리 — 창을 사용자에게 넘긴다."""
+        detach = com_driver._install(_docfit_namespace=self.ns, _docfit_symbol='작업창_분리')
         detach()
-        return ns
+        return self.ns
 
-    def test_detach_currently_keeps_preserved_window_owned(self):
-        self._create(101)
+    def test_detach_releases_preserved_window_from_ownership(self):
+        # SM6 전: 분리 뒤에도 {101}이 소유로 남았다. SM7 (가) 수정 뒤: 넘긴 창은 소유가 아니다.
+        app = self._create(101)
         self.assertEqual(hp.owned_pids(), {101})
         self._detach()
-        # 창은 사용자에게 넘겼지만 소유 목록에서 빠지지 않는다(H.forget 호출부 없음).
-        self.assertEqual(hp.owned_pids(), {101})
+        self.assertEqual(hp.owned_pids(), set())
+        self.assertIsNone(self.ns['hwp'])
+        self.assertEqual(hp.hand_over(app), set())   # 두 번 넘겨도 아무 일 없음
 
-    def test_stop_grace_of_next_job_currently_kills_preserved_result_window(self):
+    def test_auto_close_keeps_window_owned_when_quit_fails(self):
+        """자동닫기 켬(작업창_닫기)은 창을 넘기지 않는다: Quit 실패로 남은 창은 계속 정리 대상."""
+        app = self._create(101)
+        app.Quit.side_effect = RuntimeError('quit failed')
+        com_driver._install(_docfit_namespace=self.ns, _docfit_symbol='작업창_닫기')()
+        self.assertEqual(hp.owned_pids(), {101})
+        self.assertEqual(hp.kill_owned(), [101])
+
+    def test_working_window_not_yet_handed_over_stays_owned(self):
+        """아직 넘기지 않은 작업 중인 한/글은 지금처럼 정리 대상이다."""
+        self._create(101)
+        self.assertEqual(hp.kill_owned(), [101])
+
+    def test_stale_registration_on_same_thread_is_not_bound_to_job_window(self):
+        """같은 스레드의 다른 한/글 생성(예: 분석용) 등록이 작업 창 묶음에 섞이지 않는다."""
+        hp.register_owned({303})      # 앞서 이 스레드가 만든 다른 앱 소유 한/글
+        self.tasks.alive.add(303)
+        self._create(101)
+        self._detach()
+        self.assertEqual(hp.owned_pids(), {303})   # 303은 넘기지 않았으므로 소유로 남는다
+
+    def test_stop_grace_of_next_job_spares_preserved_result_window(self):
+        # SM6 전: killed == [101, 202](보존 결과 창까지 강제 종료). SM7 (가) 뒤: [202]만.
         self._create(101)          # 작업 1: 결과 창(사용자가 계속 편집)
-        self._detach()             # 자동닫기 끔 → 창 보존
+        self._detach()             # 자동닫기 끔 → 창 보존(사용자에게 넘김)
         self.tasks.alive.add(555)  # 사용자가 직접 연 한/글(소유 아님)
         self._create(202)          # 작업 2 시작
-        self.assertEqual(hp.owned_pids(), {101, 202})
+        self.assertEqual(hp.owned_pids(), {202})
 
         app = NS(root=Mock(), worker=Mock(), running=True, closing=False,
                  stop_button=Mock(), status_var=Mock(), 로그표시=Mock())
@@ -94,11 +125,13 @@ class PreservedResultWindowTests(unittest.TestCase):
         app.root.after.assert_called_once()
         self.gui._중단_유예_확인(app)              # 10초 뒤 유예 확인(L:4889~4896)
 
-        self.assertEqual(sorted(self.tasks.killed), [101, 202])  # 작업 1 결과 창까지 강제 종료
+        self.assertEqual(self.tasks.killed, [202])               # 멈춘 작업 2만 강제 종료
+        self.assertIn(101, self.tasks.alive)                      # 넘긴 결과 창은 무사
         self.assertIn(555, self.tasks.alive)                      # 사용자 소유 창은 무사
         self.assertIn('강제로 종료', app.status_var.set.call_args.args[0])
 
-    def test_app_close_deadline_currently_kills_preserved_result_window(self):
+    def test_app_close_deadline_spares_preserved_result_window(self):
+        # SM6 전: killed == [101, 202]. SM7 (가) 뒤: [202]만.
         self._create(101)
         self._detach()
         self._create(202)
@@ -108,7 +141,8 @@ class PreservedResultWindowTests(unittest.TestCase):
         with patch('time.monotonic', side_effect=[100, 110]):
             self.gui.worker_종료확인(app)   # 종료 시작
             self.gui.worker_종료확인(app)   # 10초 경과(L:5749~5751)
-        self.assertEqual(sorted(self.tasks.killed), [101, 202])
+        self.assertEqual(self.tasks.killed, [202])
+        self.assertIn(101, self.tasks.alive)
 
     def test_preserved_window_without_new_job_is_not_killed_by_idle_close(self):
         """막는 경로 확인: 작업이 없을 때의 정상 종료는 강제 정리를 부르지 않는다(L:5734~5735)."""
