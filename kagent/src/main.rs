@@ -1454,6 +1454,35 @@ mod tests {
     }
 
     #[test]
+    fn hotkey_notice_transitions() {
+        let (state, notify) = hotkey_failure_notice(None, "Ctrl+Shift+V", false);
+        assert!(notify);
+        let (state, notify) = hotkey_failure_notice(state.as_deref(), "Ctrl+Shift+V", false);
+        assert!(!notify);
+        let (state, notify) = hotkey_failure_notice(state.as_deref(), "Ctrl+Alt+F11", false);
+        assert!(notify);
+        let (state, notify) = hotkey_failure_notice(state.as_deref(), "Ctrl+Shift+V", false);
+        assert!(notify);
+        let (state, notify) = hotkey_failure_notice(state.as_deref(), "Ctrl+Shift+V", true);
+        assert!(!notify);
+        assert!(state.is_none());
+        assert!(hotkey_failure_notice(state.as_deref(), "Ctrl+Shift+V", false).1);
+        assert_eq!(hotkey_failure_notice(None, "Ctrl+Shift+V", true), (None, false));
+    }
+
+    #[test]
+    fn invalid_hotkey_notice_reason_and_deduplication() {
+        for text in ["V", "Ctrl+Space"] {
+            assert!(parse_hotkey(text).is_none());
+            let (state, notify) = hotkey_failure_notice(None, text, false);
+            assert!(notify);
+            assert!(!hotkey_failure_notice(state.as_deref(), text, false).1);
+            assert!(hotkey_failure_body(text, false).starts_with(&format!("{text}는 쓸 수 없는 조합입니다.")));
+        }
+        assert!(hotkey_failure_body("Ctrl+Shift+V", true).starts_with("Ctrl+Shift+V는 다른 프로그램이 이미 쓰고 있습니다."));
+    }
+
+    #[test]
     fn hotkeys() {
         assert_eq!(parse_hotkey("Ctrl+Shift+V"), Some((MOD_NOREPEAT | MOD_CONTROL | MOD_SHIFT, 'V' as u32)));
         assert_eq!(parse_hotkey("Alt+F2"), Some((MOD_NOREPEAT | MOD_ALT, 0x71)));
