@@ -516,6 +516,7 @@ class DesktopWebBridge:
             results=[{"source": Path(item.get("원본", "")).name, "name": Path(item.get("결과", "")).name}
                      for item in getattr(gui, "_결과목록", [])],
             failures=getattr(gui, "_실패목록", {}),
+            conversion_summary=getattr(gui, "_변환_요약", None),
             target=self.conversion_target,
             elapsed=elapsed,
         )

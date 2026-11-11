@@ -140,6 +140,23 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
   });
 
+  testWidgets('결과가 없으면 건너뜀과 실패를 구분해 요약한다', (tester) async {
+    await _pump(tester, {
+      'mode': 'file_format', 'name': '파일 변환', 'icon': 'convert',
+      'title': '변환된 파일이 없어요 — 건너뜀 1, 실패 1', 'finished': true, 'running': false,
+      'message': '', 'steps': [], 'doc': {'index': 2, 'total': 2},
+      'queue': [
+        {'name': '같은.pdf', 'state': 'skipped', 'note': '같은 형식'},
+        {'name': '오류.txt', 'state': 'failed', 'note': '변환기 오류'},
+      ],
+      'conversion_summary': {'success': 0, 'failed': 1, 'skipped': 1},
+      'ratio': 1.0, 'tips': [], 'elapsed': 2, 'target': 'PDF',
+    });
+    expect(find.text('변환된 파일이 없어요 — 건너뜀 1, 실패 1'), findsWidgets);
+    expect(find.text('같은 형식 · 건너뛰었어요'), findsOneWidget);
+    expect(find.text('변환기 오류 · 원본은 그대로예요'), findsOneWidget);
+  });
+
   testWidgets('좁은 화면에서도 넘치지 않는다', (tester) async {
     await _pump(tester, _spacing(), width: 420);
     expect(tester.takeException(), isNull);

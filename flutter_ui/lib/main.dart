@@ -728,6 +728,16 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         final seq = event['seq'];
         if (seq is num && seq.toInt() > jobEventSeq) jobEventSeq = seq.toInt();
         final data = event['data'] as Map? ?? const {};
+        if (event['type'] == 'item_done' || event['type'] == 'item_failed') {
+          final queue = List<Map>.from((live['queue'] as List? ?? const []).map((item) => Map.from(item as Map)));
+          final source = '${data['source'] ?? ''}'.replaceAll('\\', '/').split('/').last;
+          final index = queue.indexWhere((item) => item['name'] == source);
+          if (index >= 0) {
+            queue[index]['state'] = data['status'] == 'skipped' ? 'skipped' : data['status'] == 'converted' ? 'done' : 'failed';
+            queue[index]['note'] = data['output'] ?? data['reason'] ?? '';
+          }
+          live['queue'] = queue;
+        }
         if (event['type'] == 'progress') {
           final percent = (data['percent'] as num?)?.toDouble();
           if (percent != null) live['ratio'] = (percent / 100).clamp(0.0, 1.0);
@@ -753,6 +763,17 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         } else if (event['type'] == 'done' || event['type'] == 'failed') {
           live['running'] = false;
           live['finished'] = event['type'] == 'done';
+          if (event['type'] == 'done' && data['outcome'] != null) {
+            live['conversion_summary'] = data;
+            live['title'] = data['success'] == 0
+                ? '변환된 파일이 없어요 — 건너뜀 ${data['skipped'] ?? 0}, 실패 ${data['failed'] ?? 0}'
+                : live['title'];
+            live['queue'] = [for (final item in (data['results'] as List? ?? const [])) {
+              'name': '${item['source']}'.replaceAll('\\', '/').split('/').last,
+              'state': item['status'] == 'converted' ? 'done' : item['status'],
+              'note': item['output'] ?? item['reason'] ?? '',
+            }];
+          }
           activeJobId = null;
         }
       }
