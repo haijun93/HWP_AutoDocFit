@@ -60,7 +60,8 @@ class TimemachineService:
         self._content_process = None
         self._content_pending_roots = None
         self._content_state = {"running": False, "seen": 0, "indexed": 0, "errors": 0,
-                               "cancelled": False, "started_at": None, "finished_at": None}
+                               "cancelled": False, "started_at": None, "finished_at": None,
+                               "phase": "idle", "failure_reason": None}
         self._scan_state = {"running": False, "seen": 0, "written": 0, "removed": 0,
                             "errors": [], "started_at": None, "finished_at": None}
         self._rescan = False
@@ -156,19 +157,30 @@ class TimemachineService:
 
     def close(self):
         with self._content_lock:
+            if self._closing:
+                return
             self._closing = True
         self.cancel_content_index(wait=False)
         with self._scan_lock:
             scan_worker = self._scan_thread
         for worker in (scan_worker, self._content_thread):
-            if worker and worker is not threading.current_thread():
+            if worker and worker.ident is not None and worker is not threading.current_thread():
                 worker.join()
         self.content_index.close()
         self.store.close()
 
+    def content_status(self):
+        """시작·취소·조회가 공유하는 작업 상태와 저장 상태 응답."""
+        with self._content_lock:
+            state = dict(self._content_state)
+        return {"ok": True, **state,
+                **self.content_index.status_summary(roots=self._settings["roots"])}
+
     def _finish_content_index(self, cancel_event):
         with self._content_lock:
-            self._content_state.update(running=False, cancelled=cancel_event.is_set(), finished_at=time.time())
+            self._content_state.update(running=False, cancelled=cancel_event.is_set(), finished_at=time.time(),
+                                       phase="failed" if self._content_state.get("failure_reason") else
+                                       "cancelled" if cancel_event.is_set() else "finished")
 
     def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True):
         cancel_event = cancel_event or self._content_cancel
@@ -244,37 +256,45 @@ class TimemachineService:
                 extension_allowed = Path(path).suffix.lower().lstrip(".") in self._settings["extensions"]
                 if in_scan_roots and (not in_active_roots or not extension_allowed or not os.path.exists(path)):
                     self.content_index.remove_file(path)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("타임머신 본문 색인 실패")
+            with self._content_lock:
+                self._content_state.update(phase="failed", failure_reason=f"{type(exc).__name__}: {exc}")
         finally:
             self._finish_content_index(cancel_event)
 
     def _start_content_index(self):
         with self._content_lock:
             if self._closing:
-                return self._error("TM_INDEX_FAILED", "?? ??? ???? ?????.")
+                return self._error("TM_INDEX_FAILED", "색인 작업을 시작하지 못했습니다.")
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
-                return {"ok": True, **dict(self._content_state)}
+                return self.content_status()
             self._content_pending_roots = set(self.content_index.indexed_paths(roots=self._settings["roots"]))
             cancel_event = threading.Event()
             self._content_cancel = cancel_event
             self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
-                                   "cancelled": False, "started_at": time.time(), "finished_at": None}
+                                   "cancelled": False, "started_at": time.time(), "finished_at": None,
+                                   "phase": "reindexing" if self._content_pending_roots else "indexing",
+                                   "failure_reason": None}
             self._content_thread = threading.Thread(target=self._content_index_worker,
                 args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event),
                 name="timemachine-content-index", daemon=True)
             try:
                 self._content_thread.start()
             except Exception as exc:
-                self._content_state.update(running=False, finished_at=time.time())
-                return self._error("TM_INDEX_FAILED", f"색인 작업을 시작하지 못했습니다: {exc}")
-            return {"ok": True, **dict(self._content_state)}
+                self._content_state.update(running=False, finished_at=time.time(), phase="failed",
+                                           failure_reason=f"{type(exc).__name__}: {exc}")
+                return {**self.content_status(), **self._error("TM_INDEX_FAILED", f"색인 작업을 시작하지 못했습니다: {exc}")}
+            return self.content_status()
 
     def cancel_content_index(self, *, wait=False, timeout=2.0):
         with self._content_lock:
             cancel_event = self._content_cancel
             worker = self._content_thread
             if not self._content_state["running"]:
-                return {"ok": True, **dict(self._content_state)}
+                return self.content_status()
             cancel_event.set()
+            self._content_state["phase"] = "cancel_requested"
             process = self._content_process
         if process and process.poll() is None:
             process.terminate()
@@ -282,9 +302,10 @@ class TimemachineService:
             worker.join(timeout=max(0.0, timeout))
             if worker.is_alive():
                 with self._content_lock:
-                    return {"ok": False, "code": "TM_CANCEL_TIMEOUT", "message": "색인 작업 취소 대기 시간이 초과되었습니다.", **dict(self._content_state)}
+                    return {**self.content_status(), "ok": False, "code": "TM_CANCEL_TIMEOUT",
+                            "message": "색인 작업 취소 대기 시간이 초과되었습니다."}
         with self._content_lock:
-            return {"ok": True, **dict(self._content_state)}
+            return self.content_status()
 
     def _load_settings(self):
         defaults = self._defaults()
@@ -513,7 +534,7 @@ class TimemachineService:
             agent_ready = self._sync_agent()
         with self._scan_lock:
             if self._closing:
-                return self._error("TM_SCAN_FAILED", "?? ??? ???? ?????.")
+                return self._error("TM_SCAN_FAILED", "색인 작업을 시작하지 못했습니다.")
             if self._scan_state["running"]:
                 # 진행 중인 훑기는 예전 폴더 목록이므로 설정이 바뀌었으면 끝난 뒤 한 번 더 훑는다.
                 self._rescan = self._rescan or restart
@@ -548,11 +569,17 @@ class TimemachineService:
             cancel_event = threading.Event()
             self._content_cancel = cancel_event
             self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
-                                   "cancelled": False, "started_at": time.time(), "finished_at": None}
+                                   "cancelled": False, "started_at": time.time(), "finished_at": None,
+                                   "phase": "reindexing", "failure_reason": None}
             self._content_thread = threading.Thread(target=self._content_index_worker,
                 args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event, False),
                 name="timemachine-content-index", daemon=True)
-            self._content_thread.start()
+            try:
+                self._content_thread.start()
+            except Exception as exc:
+                self._content_state.update(running=False, finished_at=time.time(), phase="failed",
+                                           failure_reason=f"{type(exc).__name__}: {exc}")
+                logging.getLogger(__name__).exception("타임머신 본문 자동 색인 시작 실패")
 
     # 본문검색과 위계검색은 일반 모드에서도 허용한다.
     DEVELOPER_ONLY_ACTIONS = frozenset()
@@ -604,13 +631,7 @@ class TimemachineService:
         if action in ("content_index_all", "content_index_start"):
             return self._start_content_index()
         if action in ("content_index_status", "content_index_progress"):
-            with self._content_lock:
-                state = dict(self._content_state)
-            reindex_cnt = self.content_index.needs_reindex_count(roots=self._settings["roots"])
-            state["needs_reindex_count"] = reindex_cnt
-            state["needs_reindex"] = reindex_cnt > 0
-            state["reindex_guide"] = "기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다." if reindex_cnt > 0 else None
-            return {"ok": True, **state}
+            return self.content_status()
         if action == "content_index_cancel":
             return self.cancel_content_index(wait=bool(payload.get("wait", False)), timeout=float(payload.get("timeout", 2.0)))
         if action == "content_search":

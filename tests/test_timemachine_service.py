@@ -98,6 +98,111 @@ class TimemachineServiceTests(unittest.TestCase):
         self.assertFalse(closer.is_alive())
         self.assertTrue(closed.is_set())
 
+    def test_content_status_retains_legacy_fields_and_reports_storage_summary(self):
+        self.enable()
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "idle")
+        self.assertIsNone(state["failure_reason"])
+        for key in ("running", "seen", "indexed", "errors", "cancelled", "started_at", "finished_at"):
+            self.assertIn(key, state)
+        file = self.root / "summary.txt"
+        file.write_text("summary", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        self.service.content_index.db.execute("UPDATE content_meta SET hierarchy_schema_version=1")
+        self.service.content_index.db.execute("INSERT INTO content_errors VALUES(?,?,?,?)",
+                                             (str(self.root / "bad.txt"), "failure", 0, 0))
+        self.service.content_index.db.commit()
+        outside = Path(self.temp.name) / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+        self.service.content_index.index_file(outside)
+        self.service.content_index.db.execute("INSERT INTO content_errors VALUES(?,?,?,?)",
+                                             (str(outside), "outside failure", 0, 0))
+        self.service.content_index.db.commit()
+        with patch("os.stat", side_effect=AssertionError("status must not inspect files")):
+            state = self.service.command("content_index_status")
+        self.assertTrue(state["has_index"])
+        self.assertEqual(state["indexed_document_count"], 1)
+        self.assertEqual(state["needs_reindex_count"], 1)
+        self.assertTrue(state["needs_reindex"])
+        self.assertEqual(state["persistent_error_count"], 1)
+        self.assertEqual(state["errors"], 0)
+        self.assertEqual(self.service.command("content_index_cancel"), state)
+        self.assertEqual(self.service.command("content_index_progress"), state)
+
+    def test_content_phase_indexing_cancel_requested_cancelled(self):
+        entered, release = threading.Event(), threading.Event()
+        def work(roots, extensions, cancel_event):
+            entered.set()
+            release.wait(5)
+            self.service._finish_content_index(cancel_event)
+        with patch.object(self.service, "_content_index_worker", side_effect=work):
+            try:
+                start = self.service.command("content_index_start")
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(start["phase"], "indexing")
+                self.assertEqual(self.service.command("content_index_start")["phase"], "indexing")
+                cancel = self.service.command("content_index_cancel")
+                self.assertEqual(cancel["phase"], "cancel_requested")
+                self.assertTrue(cancel["running"])
+            finally:
+                release.set()
+                self.service._content_thread.join(5)
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "cancelled")
+        self.assertTrue(state["cancelled"])
+        self.assertFalse(state["running"])
+
+    def test_content_worker_exception_records_failed_reason(self):
+        with patch("docfit_app.timemachine_service.os.walk", side_effect=OSError("walk failed")):
+            with self.assertLogs("docfit_app.timemachine_service", level="ERROR"):
+                self.service._content_index_worker([str(self.root)], frozenset({"txt"}))
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "failed")
+        self.assertEqual(state["failure_reason"], "OSError: walk failed")
+        self.assertIsNotNone(state["finished_at"])
+        self.assertFalse(state["running"])
+
+    def test_manual_and_automatic_thread_start_failure_records_failed(self):
+        self.enable()
+        file = self.root / "start.txt"
+        file.write_text("start", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        with patch("docfit_app.timemachine_service.threading.Thread.start", side_effect=RuntimeError("start failed")):
+            state = self.service.command("content_index_start")
+            self.assertFalse(state["ok"])
+            self.assertEqual(state["code"], "TM_INDEX_FAILED")
+            self.assertEqual(state["phase"], "failed")
+            self.assertEqual(state["failure_reason"], "RuntimeError: start failed")
+            with self.assertLogs("docfit_app.timemachine_service", level="ERROR"):
+                self.service._refresh_content_index_async()
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "failed")
+        self.assertFalse(state["running"])
+        self.assertEqual(state["failure_reason"], "RuntimeError: start failed")
+
+    def test_automatic_refresh_phase_reindexing_then_finished(self):
+        self.enable()
+        file = self.root / "refresh.txt"
+        file.write_text("refresh", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        entered, release = threading.Event(), threading.Event()
+        original = self.service.content_index.index_file
+        def blocked(path):
+            entered.set()
+            release.wait(5)
+            return original(path)
+        with patch.object(self.service.content_index, "index_file", side_effect=blocked):
+            try:
+                self.service._refresh_content_index_async()
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(self.service.content_status()["phase"], "reindexing")
+            finally:
+                release.set()
+                self.service._content_thread.join(5)
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "finished")
+        self.assertIsNone(state["failure_reason"])
+
     def test_settings_defaults_disabled_and_default_roots(self):
         settings = self.service.command("settings_get")["settings"]
         self.assertEqual(settings["time_mode"], "max")
