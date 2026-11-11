@@ -18,9 +18,9 @@
     "md": 180,
     "txt": 0
   },
-  "indexing_seconds": 44.29147820000071,
-  "index_file_bytes": 3551232,
-  "index_file_size_mib": 3.38671875,
+  "indexing_seconds": 22.244668200000888,
+  "index_file_bytes": 3555328,
+  "index_file_size_mib": 3.390625,
   "hierarchy_search": {
     "metrics": {
       "예산": {
@@ -90,17 +90,19 @@
       "mean_recall_at_5": 0.3170386904761905,
       "mean_recall_at_10": 0.6424107142857143,
       "mean_mrr": 1.0,
-      "mean_context_accuracy": 0.0,
-      "context_accuracy": 0.0,
+      "mean_context_accuracy": 1.0,
+      "context_accuracy": 1.0,
       "context_evaluated": 180,
       "context_first_result": {
         "query": "고유어_0001",
         "actual_breadcrumb": [
           "공통 운영 지침 001",
           "품질 관리",
-          "품질 계획"
+          "품질 계획",
+          "품질 세부 기준"
         ],
         "expected_breadcrumb": [
+          "공통 운영 지침 001",
           "품질 관리",
           "품질 계획",
           "품질 세부 기준"
@@ -176,7 +178,8 @@
         "mean_recall_at_5": 0.625,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 12
       },
       "번호 체계 오류": {
@@ -247,7 +250,8 @@
         "mean_recall_at_5": 0.625,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       },
       "표 안 제목": {
@@ -318,7 +322,8 @@
         "mean_recall_at_5": 0.7142857142857143,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       },
       "아주 긴 제목": {
@@ -389,22 +394,23 @@
         "mean_recall_at_5": 0.42857142857142855,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       }
     },
     "latency_ms": {
-      "median": 1.6708999974071048,
-      "max": 24.31300000171177,
+      "median": 1.8982499896083027,
+      "max": 26.139399997191504,
       "per_query": {
-        "예산": 11.336800002027303,
-        "안전": 5.443100002594292,
-        "인력": 5.893699999433011,
-        "조달": 5.416200001491234,
-        "보안": 4.5368999999482185,
-        "품질": 6.101499995565973,
-        "교육": 4.943700012518093,
-        "기록": 24.31300000171177
+        "예산": 9.833699994487688,
+        "안전": 5.8895999973174185,
+        "인력": 5.56930000311695,
+        "조달": 5.716300001950003,
+        "보안": 4.927100002532825,
+        "품질": 5.969199992250651,
+        "교육": 5.355799992685206,
+        "기록": 26.139399997191504
       }
     }
   },
@@ -477,17 +483,19 @@
       "mean_recall_at_5": 0.3253720238095238,
       "mean_recall_at_10": 0.6507440476190476,
       "mean_mrr": 1.0,
-      "mean_context_accuracy": 0.0,
-      "context_accuracy": 0.0,
+      "mean_context_accuracy": 1.0,
+      "context_accuracy": 1.0,
       "context_evaluated": 180,
       "context_first_result": {
         "query": "고유어_0001",
         "actual_breadcrumb": [
           "공통 운영 지침 001",
           "품질 관리",
-          "품질 계획"
+          "품질 계획",
+          "품질 세부 기준"
         ],
         "expected_breadcrumb": [
+          "공통 운영 지침 001",
           "품질 관리",
           "품질 계획",
           "품질 세부 기준"
@@ -563,7 +571,8 @@
         "mean_recall_at_5": 0.625,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 12
       },
       "번호 체계 오류": {
@@ -634,7 +643,8 @@
         "mean_recall_at_5": 0.625,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       },
       "표 안 제목": {
@@ -705,7 +715,8 @@
         "mean_recall_at_5": 0.7142857142857143,
         "mean_recall_at_10": 1.0,
         "mean_mrr": 1.0,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       },
       "아주 긴 제목": {
@@ -776,22 +787,23 @@
         "mean_recall_at_5": 0.42857142857142855,
         "mean_recall_at_10": 0.8571428571428571,
         "mean_mrr": 0.5,
-        "mean_context_accuracy": 0.0,
+        "mean_context_accuracy": 1.0,
+        "context_example": null,
         "document_count": 11
       }
     },
     "latency_ms": {
-      "median": 1.4451999959419481,
-      "max": 79.847900007735,
+      "median": 1.1532000062288716,
+      "max": 42.59779999847524,
       "per_query": {
-        "예산": 10.756599993328564,
-        "안전": 11.64680000510998,
-        "인력": 10.811800006194972,
-        "조달": 9.665699995821342,
-        "보안": 13.36270000319928,
-        "품질": 20.5732999893371,
-        "교육": 10.291099999449216,
-        "기록": 79.847900007735
+        "예산": 10.173300004680641,
+        "안전": 9.3835999869043,
+        "인력": 8.624899986898527,
+        "조달": 8.058499995968305,
+        "보안": 8.770799991907552,
+        "품질": 8.685000007972121,
+        "교육": 7.410000005620532,
+        "기록": 42.59779999847524
       }
     }
   },
