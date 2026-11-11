@@ -1,0 +1,944 @@
+{
+  "dll": {
+    "calls": 1000,
+    "variants": [
+      {
+        "count": 586,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "C형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "내용",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 2,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다.",
+            "2번째 6단계에 앞선 5단계가 없습니다."
+          ]
+        }
+      },
+      {
+        "count": 414,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "B형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "중제목",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "indent_hwpunit": 30,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_hwpunit": null,
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다."
+          ]
+        }
+      }
+    ]
+  },
+  "exe": {
+    "calls": 1000,
+    "variants": [
+      {
+        "count": 451,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "B형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "중제목",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "indent_hwpunit": 30,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_hwpunit": null,
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다."
+          ]
+        }
+      },
+      {
+        "count": 549,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "C형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "내용",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 2,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다.",
+            "2번째 6단계에 앞선 5단계가 없습니다."
+          ]
+        }
+      }
+    ]
+  },
+  "python": {
+    "calls": 1000,
+    "variants": [
+      {
+        "count": 1000,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "C형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "내용",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": 0,
+              "marker": "□",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": 0,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 2,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": 0,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": 0,
+              "marker": "□",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": 0,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": 0,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": 0,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다.",
+            "2번째 6단계에 앞선 5단계가 없습니다."
+          ]
+        }
+      }
+    ]
+  },
+  "before_dll": {
+    "calls": 1000,
+    "variants": [
+      {
+        "count": 470,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "B형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "중제목",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "indent_hwpunit": 30,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "가",
+              "prev_spacing_hwpunit": null,
+              "role": "중제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "1.",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다."
+          ]
+        }
+      },
+      {
+        "count": 530,
+        "result": {
+          "ambiguous_marker_roles": {
+            "원문자": [
+              "본문",
+              "내용",
+              "부연설명"
+            ]
+          },
+          "auxiliary": "prev_spacing",
+          "document_type": "C형",
+          "indent_levels_hwpunit": [
+            0,
+            10,
+            20,
+            30
+          ],
+          "page_policy": {
+            "body_with_contents": true,
+            "explanation_with_parent": true,
+            "optional_explanations_after_subheading": true,
+            "subheading_with_bodies": true
+          },
+          "priority": [
+            "indentation",
+            "font",
+            "size",
+            "marker"
+          ],
+          "role_sequence": [
+            "소제목",
+            "내용",
+            "본문",
+            "내용"
+          ],
+          "styles": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "indent_hwpunit": 0,
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "indent_hwpunit": 20,
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 2,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "indent_hwpunit": 10,
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_typical": null,
+              "prev_spacing_values": [],
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "variants": [
+            {
+              "count": 1,
+              "first_line_hwpunit": 0,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "□",
+              "prev_spacing_hwpunit": null,
+              "role": "소제목",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 20,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "ㅇ",
+              "prev_spacing_hwpunit": null,
+              "role": "본문",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 10,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            },
+            {
+              "count": 1,
+              "first_line_hwpunit": 30,
+              "font": null,
+              "kind": "비반복",
+              "left_hwpunit": null,
+              "marker": "-",
+              "prev_spacing_hwpunit": null,
+              "role": "내용",
+              "size_pt": null
+            }
+          ],
+          "version": 1,
+          "warnings": [
+            "1번째 4단계 아래에 5단계가 없습니다.",
+            "2번째 6단계에 앞선 5단계가 없습니다."
+          ]
+        }
+      }
+    ]
+  }
+}
