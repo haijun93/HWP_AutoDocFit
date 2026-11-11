@@ -44,7 +44,7 @@ class PlainChapterTests(unittest.TestCase):
             ["제1장 시설", "제2장 운영"], engine={"levels": [8, 8]}))
 
     def test_real_txt_and_md_index(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             index = ContentSearchIndex(Path(tmp) / "content.sqlite3")
             try:
                 for suffix in (".txt", ".md"):

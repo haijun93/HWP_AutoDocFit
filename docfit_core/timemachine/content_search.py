@@ -68,7 +68,7 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 1
+CURRENT_HIERARCHY_SCHEMA_VERSION = 2
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
@@ -122,6 +122,7 @@ class ParagraphRecord:
     style_name: str | None = None
     outline_level: int | None = None
     table_cell_id: int | None = None
+    table_id: int | None = None
 
 
 @dataclass
@@ -396,7 +397,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 is_table_cell=p.is_table_cell,
                 style_name=p.style_name,
                 outline_level=p.outline_level,
-                table_cell_id=p.table_cell_id,
+                table_cell_id=p.table_cell_id, table_id=p.table_id,
             )
         )
     return _fallback_document_title(path, classified)
@@ -408,6 +409,22 @@ def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[Pa
         return paragraphs
     ext = Path(path).suffix.lower()
     candidate = None
+    if ext == ".hwpx":
+        first = next((i for i, p in enumerate(paragraphs) if p.is_table_cell), None)
+        if (first is not None and first < 3
+                and paragraphs[first].table_id in (None, 1)):
+            rows = [{"paragraph_index": p.paragraph_index, "body": p.text,
+                     "level": p.level, "level_rank": p.level_rank,
+                     "table_cell_id": p.table_cell_id} for p in paragraphs[first:]
+                    if paragraphs[first].table_id is None or p.table_id == paragraphs[first].table_id]
+            title_row = hierarchy_path._document_title_row(rows)
+            if title_row is not None:
+                cell_id = title_row["table_cell_id"]
+                return [replace(p, level="document_title", level_rank=0)
+                        if (p.is_table_cell and
+                            (p.table_cell_id == cell_id if cell_id is not None else
+                             p.paragraph_index == title_row["paragraph_index"])) else p
+                        for p in paragraphs]
     if ext in {".txt", ".md"}:
         candidate = next((i for i, p in enumerate(paragraphs)
                           if p.text.strip().startswith(("제목1:", "제목:"))), None)
@@ -435,7 +452,7 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             paragraph_index=paragraph.paragraph_index, text=paragraph.text, level=level,
             level_rank=LEVEL_RANKS.get(level, LEVEL_RANKS["body"]),
             is_table_cell=paragraph.is_table_cell, style_name=paragraph.style_name,
-            outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id,
+            outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id, table_id=paragraph.table_id,
         ))
     return converted
 
@@ -466,6 +483,8 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
         table_cell_id=(hierarchy_records[record.sequence - 1].table_cell_id
                        if ext == "hwpx" and record.sequence <= len(hierarchy_records)
                        and hierarchy_records[record.sequence - 1].text == record.text else None),
+        table_id=(hierarchy_records[record.sequence - 1].table_id
+                  if ext == "hwpx" and record.sequence <= len(hierarchy_records) else None),
     ) for record in extracted]
     return classify_paragraph_levels(path, paragraphs)
 
@@ -490,14 +509,18 @@ def extract_paragraphs_legacy(path, ext):
                                    key=lambda n: int(re.search(r"section(\d+)", n).group(1)) if re.search(r"section(\d+)", n) else 0)
             index = 0
             cell_counter = 0
-            def walk(node, in_table=False, cell_id=None):
-                nonlocal index, cell_counter
+            table_counter = 0
+            def walk(node, in_table=False, cell_id=None, table_id=None):
+                nonlocal index, cell_counter, table_counter
                 tag = _tag_name(node)
+                if tag in ("tbl", "table"):
+                    table_counter += 1
+                    table_id = table_counter
                 if tag in ("tc", "cell"):
                     cell_counter += 1
                     current_cell = cell_counter
                     for child in node:
-                        walk(child, True, current_cell)
+                        walk(child, True, current_cell, table_id)
                     return
                 if tag == "p":
                     chunks = []
@@ -521,13 +544,13 @@ def extract_paragraphs_legacy(path, ext):
                                 outline = outline or child.attrib.get("outlineLevel") or child.attrib.get("outline_level")
                         records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table,
                             style_map.get(style_id) if style_id else node.attrib.get("styleName"),
-                            int(outline) if outline and outline.isdigit() else None, cell_id))
+                            int(outline) if outline and outline.isdigit() else None, cell_id, table_id))
                         index += 1
                     for child in node:
-                        walk(child, in_table, cell_id)
+                        walk(child, in_table, cell_id, table_id)
                     return
                 for child in node:
-                    walk(child, in_table, cell_id)
+                    walk(child, in_table, cell_id, table_id)
             for name in section_names:
                 walk(ET.fromstring(archive.read(name)))
     elif ext == "docx":
@@ -793,6 +816,18 @@ class ContentSearchIndex:
             "CREATE TABLE IF NOT EXISTS content_paragraph_map_state("
             "id INTEGER PRIMARY KEY CHECK(id=1), row_count INTEGER NOT NULL, max_rowid INTEGER NOT NULL)")
         self.db.execute("INSERT OR IGNORE INTO content_paragraph_map_state(id, row_count, max_rowid) VALUES(1, -1, -1)")
+        # 문단 색인 이전의 DB는 옛 전체 본문을 임시 본문 문단으로 검색한다.
+        # 규칙 버전은 올리지 않아 실제 파일의 배경 재색인 대상에 남겨 둔다.
+        self._ensure_paragraph_map()
+        self.db.execute("""
+            INSERT INTO content_paragraph_fts(
+                path,name,paragraph_index,level,level_rank,body,location_label,section)
+            SELECT f.path,f.name,0,'body',8,f.body,'문단 1',NULL
+            FROM content_fts f JOIN content_meta m ON m.path=f.path
+            WHERE COALESCE(m.hierarchy_schema_version,0)=0
+              AND NOT EXISTS (SELECT 1 FROM content_paragraph_map p WHERE p.path=f.path)
+              AND length(f.body)>0
+        """)
         self.purge_excluded()
         with self._lock:
             if getattr(self.db, "in_transaction", False):
@@ -976,6 +1011,23 @@ class ContentSearchIndex:
             if (r["hierarchy_schema_version"] or 0) < CURRENT_HIERARCHY_SCHEMA_VERSION or (r["para_count"] or 0) == 0:
                 count += 1
         return count
+
+    def status_summary(self, roots=None):
+        """저장된 색인의 상태만 요약한다. 파일의 stat/본문 재검사는 하지 않는다."""
+        with self._lock:
+            count = self.needs_reindex_count(roots=roots)
+            rows = self.db.execute("SELECT path FROM content_meta").fetchall()
+            allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
+            paths = [os.path.normcase(os.path.abspath(row["path"])) for row in rows
+                     if not excluded_name(os.path.basename(row["path"]))]
+            if allowed is not None:
+                paths = [path for path in paths if any(
+                    os.path.commonpath((path, root)) == root for root in allowed
+                    if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(path)[0].casefold())]
+            return {"needs_reindex_count": count, "needs_reindex": count > 0,
+                    "reindex_guide": "기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다." if count else None,
+                    "has_index": bool(paths), "indexed_document_count": len(paths),
+                    "persistent_error_count": len(self.errors(roots))}
 
     @contextmanager
     def batch(self, *, max_files=50, max_seconds=2.0):
@@ -1205,22 +1257,21 @@ class ContentSearchIndex:
                 if not candidates:
                     return []
 
-        # 2. 메타데이터 조회 및 필터링 (구형 스키마 버전 문서는 제외)
+        # 2. 재색인 대기 중인 구형 문서도 저장된 문단으로 계속 검색한다.
         with self._lock:
             if len(candidates) <= 500:
                 marks = ",".join("?" for _ in candidates)
                 meta_rows = self.db.execute(f"""
                     SELECT path, name, extension, mtime, ctime, reference_date, hierarchy_schema_version
                     FROM content_meta
-                    WHERE hierarchy_schema_version >= ? AND path IN ({marks})
-                """, (CURRENT_HIERARCHY_SCHEMA_VERSION, *candidates)).fetchall()
+                    WHERE path IN ({marks})
+                """, tuple(candidates)).fetchall()
             else:
                 c_set = set(candidates)
                 all_meta = self.db.execute("""
                     SELECT path, name, extension, mtime, ctime, reference_date, hierarchy_schema_version
                     FROM content_meta
-                    WHERE hierarchy_schema_version >= ?
-                """, (CURRENT_HIERARCHY_SCHEMA_VERSION,)).fetchall()
+                """).fetchall()
                 meta_rows = [r for r in all_meta if r["path"] in c_set or os.path.abspath(r["path"]) in c_set]
 
         allowed = [os.path.normcase(os.path.abspath(r)) for r in roots] if roots else None
@@ -1675,9 +1726,12 @@ class ContentSearchIndex:
                 # Short terms use the gram table only to narrow candidates; LIKE remains the
                 # final substring check, preserving the old exact matching behavior.
                 if short_positive:
+                    grams_complete = self.db.execute(
+                        "SELECT 1 FROM content_meta m WHERE NOT EXISTS"
+                        " (SELECT 1 FROM content_short_grams g WHERE g.path=m.path) LIMIT 1").fetchone() is None
                     short_candidates = None
                     for term in short_positive:
-                        if len(term) == 2:
+                        if len(term) == 2 and grams_complete:
                             found = {r[0] for r in self.db.execute(
                                 "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
                         else:
@@ -1941,6 +1995,7 @@ class ContentSearchIndex:
                             "mtime": meta["mtime"], "folder_path": os.path.dirname(path),
                             "folder_name": os.path.basename(os.path.dirname(path)),
                             "locations": locations, "breadcrumb": primary_breadcrumb,
+                            "sections": hierarchy_path.group_by_parent(crumbs, valid_para_indices),
                             "breadcrumb_text": primary_breadcrumb_text,
                             "snippet": locations[0]["snippet"] if locations else "",
                             "highlights": locations[0]["highlights"] if locations else [],

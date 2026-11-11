@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import shutil
+import sys
 import threading
 import time
 import tempfile
@@ -26,6 +27,15 @@ from docfit_core.file_conversion import CONVERSION_INPUTS as SUPPORTED_INPUT_EXT
 from docfit_core.file_conversion import HANCOM_PDF_DIRECT, IMAGE_FORMATS, SAME_FORMAT_SUFFIXES
 
 _TABLE_UNITS_COM_LOCK = threading.Lock()
+
+# 무기한 대기(timeout=None) 명령이 Tk 스레드에서 시작되기를 기다리는 한도(초). 넘기면 요청을 취소하고
+# TkBusyError를 낸다. 이미 시작한 명령(창을 닫을 때까지 기다리는 Tk 창 등)은 끝까지 기다린다.
+_TK_START_TIMEOUT = 5.0
+_TK_START_DEFAULT = object()
+
+
+class TkBusyError(RuntimeError):
+    """Tk 스레드가 바빠 명령을 시작하지 못했다(명령은 실행되지 않았고 나중에도 실행되지 않는다)."""
 
 # 화면에서 바로 켜고 끄는 공통 설정(이름 → 앱의 Tk 변수 속성). 값을 바꾸면 앱이 설정 파일에 저장한다.
 def _format_coverage(analysis):
@@ -183,6 +193,18 @@ class DesktopWebBridge:
     def _cancel_pending_drop(self):
         self._ux().zero_click = {}
 
+    def _raise_if_closing(self):
+        """Tk 왕복 없이 처리하는 명령도 종료 중에는 _tk와 같은 오류로 거절한다."""
+        # 속성 읽기뿐이라 잠금이 필요 없다(시험용으로 __init__ 없이 만든 브리지에도 동작).
+        stopped = getattr(self, "tk_stopped", None)
+        if getattr(self, "_closed", False) or (stopped is not None and stopped.is_set()):
+            raise RuntimeError("앱이 종료 중입니다.")
+
+    def _cancel_pending_drop_direct(self):
+        # 스레드 안전: zero_click에는 항상 같은 값 {}만 넣는 속성 대입 한 번이라 Tk 큐 순서와 무관하다.
+        self._raise_if_closing()
+        self._cancel_pending_drop()
+
     def _update_document_hints(self):
         from docfit_core.doc_inspector import inspect_documents
         ux = self._ux()
@@ -202,12 +224,12 @@ class DesktopWebBridge:
         return {"pending": False}
 
     def cancel_zero_click(self):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def start_zero_click(self, token):
         # 이전 프런트엔드나 저장 설정에서 온 지연 실행 요청도 무시한다.
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def set_profile_drop_bounds(self, bounds):
@@ -247,15 +269,41 @@ class DesktopWebBridge:
     def drop_format_file(self, path):
         return self.quick_register_and_activate_profile(path)
 
-    def _tk(self, callback, timeout=120, front=False):
+    def _tk(self, callback, timeout=120, front=False, start_timeout=_TK_START_DEFAULT):
+        """callback을 Tk 스레드에서 실행하고 결과를 기다린다.
+
+        timeout은 전체 대기 한도(None = 무기한). start_timeout은 실행이 시작되기까지의 한도로, 지정하지 않으면
+        무기한 대기 명령에만 _TK_START_TIMEOUT을 쓴다. 한도 안에 시작하지 못하면 요청을 취소하고 TkBusyError를
+        낸다(쓰기 명령은 실행되거나, 실행되지 않고 오류가 나거나 둘 중 하나다). None이면 시작도 무기한 기다린다.
+        """
+        if start_timeout is _TK_START_DEFAULT:
+            start_timeout = _TK_START_TIMEOUT if timeout is None else None
         tracer = self._freeze_tracer
-        tk_token = tracer.begin_tk(getattr(callback, '__name__', type(callback).__name__)) if tracer else None
+        callback_name = getattr(callback, '__name__', type(callback).__name__)
+        # 오류추적이 켜져 있을 때만: 어느 브리지 명령의 왕복인지 알 수 있게 호출한 메서드 이름을 붙인다.
+        tk_name = f"{sys._getframe(1).f_code.co_name}:{callback_name}" if tracer else callback_name
         started_at = time.monotonic()
+        timing = {}   # run_started·run_ended(Tk 스레드가 기록, 오류추적용)
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
                 raise RuntimeError("앱이 종료 중입니다.")
             self._requests.add(result)
+        tk_token = tracer.begin_tk(tk_name) if tracer else None
+
+        def traced(outcome):
+            """오류추적: 이 왕복의 큐 대기·실행·전체 시간을 남긴다."""
+            if not tracer:
+                return
+            now = time.monotonic()
+            run_started, run_ended = timing.get('run_started'), timing.get('run_ended')
+            if run_started is None:
+                # 실행되지 않은 요청(시간 초과·종료)은 대기 목록에서 지운다. 실행 중이면 run이 끝날 때 지운다.
+                tracer.end_tk(tk_token)
+            tracer.record_api(callback_name, now - started_at, outcome)
+            tracer.record_tk(tk_name, (now if run_started is None else run_started) - started_at,
+                             None if run_started is None or run_ended is None else run_ended - run_started,
+                             now - started_at, outcome)
 
         def complete(value=None, error=None):
             with self._request_lock:
@@ -276,6 +324,7 @@ class DesktopWebBridge:
                 if not result.set_running_or_notify_cancel():
                     self._requests.discard(result)
                     return
+                timing['run_started'] = time.monotonic()
             temporary_host = False
             if front:
                 try:
@@ -293,8 +342,11 @@ class DesktopWebBridge:
                 except Exception:
                     pass
             try:
-                complete(value=callback())
+                value = callback()
+                timing['run_ended'] = time.monotonic()   # 호출자가 깨어나기 전에 실행 시간을 확정한다.
+                complete(value=value)
             except BaseException as exc:
+                timing.setdefault('run_ended', time.monotonic())
                 complete(error=exc)
             finally:
                 if tracer:
@@ -317,31 +369,43 @@ class DesktopWebBridge:
                 self.gui.root.after(0, run)
         except Exception as exc:
             complete(error=RuntimeError("앱이 종료 중입니다."))
+            traced('not_scheduled')
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
-            value = result.result(timeout=timeout)
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'ok')
+            if start_timeout is not None and (timeout is None or timeout > start_timeout):
+                try:
+                    value = result.result(timeout=start_timeout)
+                except TimeoutError as exc:
+                    with self._request_lock:
+                        # 아직 시작하지 않았으면 취소한다(run이 나중에 큐에서 꺼내도 실행하지 않는다).
+                        busy = not result.done() and result.cancel()
+                        if busy:
+                            self._requests.discard(result)
+                    if busy:
+                        raise TkBusyError(
+                            "앱이 다른 작업을 처리하고 있어 요청을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                        ) from exc
+                    # 이미 시작했거나 끝났다: 원래 한도(없으면 무기한)만큼 마저 기다린다.
+                    value = result.result(timeout=None if timeout is None else timeout - start_timeout)
+            else:
+                value = result.result(timeout=timeout)
+            traced('ok')
             return value
         except TimeoutError as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'timeout')
             # callback 자체가 낸 TimeoutError를 큐 응답 시간 초과로 바꾸지 않는다.
             with self._request_lock:
-                if result.done():
-                    return result.result()
-                cancelled = result.cancel()
+                finished = result.done()
+                cancelled = False if finished else result.cancel()
                 if cancelled:
                     self._requests.discard(result)
+            traced('timeout' if finished or cancelled else 'timeout_running')
+            if finished:
+                return result.result()
             if not cancelled:
                 raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
             raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
         except Exception as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, type(exc).__name__)
+            traced(type(exc).__name__)
             raise
 
     def freeze_logs_open(self):
@@ -485,7 +549,7 @@ class DesktopWebBridge:
             return False
 
     def get_state(self):
-        # 파일명 서비스를 처음 만들 때 Tk 호출을 기다리므로 Tk 스레드 밖에서 처리한다.
+        # 파일명 서비스의 목록 추가(파일 I/O)는 Tk 스레드 밖에서 처리한다.
         rename_open = self._drain_rename_paths()
 
         def snapshot():
@@ -1179,7 +1243,9 @@ class DesktopWebBridge:
 
     def cancel_job(self, job_id):
         state = self._jobs().cancel(job_id)
-        if self._tk(lambda: getattr(self.gui, '_job_id', None)) == job_id:
+        # 스레드 안전: _job_id는 속성 읽기 한 번이고, 실제 중단은 Tk 스레드의 작업중단이 running을 다시 본다.
+        self._raise_if_closing()
+        if getattr(self.gui, '_job_id', None) == job_id:
             self._tk(self.gui.작업중단)
         return state
 
@@ -1213,7 +1279,9 @@ class DesktopWebBridge:
 
         if mode == "file_format":
             # 화면은 준비되지 않은 형식의 시작 버튼을 끄지만, 늦게 온 요청도 여기서 막는다.
-            files = self._tk(lambda: list(self.gui.files))
+            # 스레드 안전: 리스트 한 번 복사(원자적)이고, 시작은 아래 Tk 호출이 running을 다시 확인한다.
+            self._raise_if_closing()
+            files = list(self.gui.files)
             target = getattr(self, '_single_conversion_target', self.conversion_target) if single_file else self.conversion_target
             targets = {item["format"]: item for item in self._conversion_targets(files)}
             chosen = targets.get(target)
@@ -1342,6 +1410,12 @@ class DesktopWebBridge:
             self._tk(self.gui.작업중단)
         return self.get_state()
 
+    def _settings_store(self):
+        """설정 저장소(SettingsService)를 Tk 왕복 없이 얻는다."""
+        # 스레드 안전: SettingsService는 경로별 RLock으로 read/update를 직렬화하고 Tk 객체를 갖지 않는다.
+        self._raise_if_closing()
+        return self.gui._준말_서비스().settings
+
     def _configuration(self):
         from docfit_app.configuration_service import ConfigurationService
         return ConfigurationService(self.gui._준말_서비스().settings)
@@ -1359,7 +1433,9 @@ class DesktopWebBridge:
         return snapshot
 
     def get_settings(self):
-        result = self._tk(lambda: response(self._settings_snapshot))
+        # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+        self._raise_if_closing()
+        result = response(self._settings_snapshot)
         if isinstance(result, dict) and result.get('ok') is True and isinstance(result.get('data'), dict):
             result['developer_mode'] = result['data'].get('values', {}).get('developer_mode', False)
         return result
@@ -1473,7 +1549,9 @@ class DesktopWebBridge:
         ) if key in pending}
 
     def get_pending_dialog(self):
-        return self._tk(self._pending_dialog)
+        # 스레드 안전: _flutter_dialog는 다 만든 사전을 속성에 넣고, 여기서는 참조를 한 번 잡아 고정 키만 복사한다.
+        self._raise_if_closing()
+        return self._pending_dialog()
 
     def enable_close_guard(self):
         with self._close_lock:
@@ -1545,7 +1623,8 @@ class DesktopWebBridge:
                     closed = True  # Tk commands no longer exist after destroy.
                 return {"accepted": closed or bool(getattr(self.gui, "closing", False))}
             try:
-                return self._tk(finish_close, timeout=None)
+                # 종료 승인은 시작 대기도 제한하지 않는다(_close_unanswered·_force_close가 따로 감시).
+                return self._tk(finish_close, timeout=None, start_timeout=None)
             except RuntimeError:
                 if self.tk_stopped is not None and self.tk_stopped.is_set():
                     return {"accepted": True}
@@ -1681,7 +1760,7 @@ class DesktopWebBridge:
                 return result
             return service.command(name, payload)
         if name != "add_text":
-            folder = self._tk(lambda: self.gui._준말_서비스().settings._path.parent)
+            folder = self._settings_store()._path.parent
             return response(lambda: DocumentToolsService(folder).command(name, payload))
         return self._tk(lambda: response(execute))
 
@@ -1964,7 +2043,9 @@ class DesktopWebBridge:
             return status(False, "지원하지 않는 명령입니다.")
         if running:
             return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
-        if self._tk(lambda: self.gui.running):
+        # 스레드 안전: running은 속성 읽기 한 번이다(table_sketch의 같은 검사도 Tk 밖에서 읽는다).
+        self._raise_if_closing()
+        if self.gui.running:
             return status(False, "다른 문서 작업이 끝난 뒤 시작해 주세요.")
         roots, passwords = payload.get("roots"), payload.get("passwords") or []
         if (not isinstance(roots, list) or not 1 <= len(roots) <= 20 or not isinstance(passwords, list)
@@ -2008,7 +2089,7 @@ class DesktopWebBridge:
         service = getattr(self, "_rename_service", None)
         if service is None:
             from docfit_app.file_rename_service import FileRenameService
-            settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+            settings = self._settings_store()
             service = self._rename_service = FileRenameService(settings._path.parent, dialogs=self._file_dialogs,
                                                                settings=settings)
         return service
@@ -2017,7 +2098,7 @@ class DesktopWebBridge:
         service = getattr(self, "_timemachine_service_instance", None)
         if service is None:
             from docfit_app.timemachine_service import TimemachineService
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             service = self._timemachine_service_instance = TimemachineService(
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
@@ -2085,7 +2166,7 @@ class DesktopWebBridge:
             _set_window_on_top(window, bool(enabled))
 
         try:
-            store = self._tk(lambda: self.gui._준말_서비스().settings)
+            store = self._settings_store()
             return kclip_window_state.command(store, action, payload, apply_topmost)
         except Exception as exc:
             logging.getLogger(__name__).warning("몽땅클립보드 관리창 처리 실패", exc_info=True)
@@ -2099,7 +2180,7 @@ class DesktopWebBridge:
             service = getattr(self, "_external_apps_service", None)
             if service is None:
                 from docfit_app.external_apps_service import ExternalAppsService
-                settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+                settings = self._settings_store()
                 service = self._external_apps_service = ExternalAppsService(settings, dialogs=self._file_dialogs)
             return service.command(action, payload)
         except Exception as exc:
@@ -2288,7 +2369,7 @@ class DesktopWebBridge:
         try:
             if action == "copy" and self.gui.running:
                 return {"ok": False, "message": "문서 작업이 끝난 뒤 다시 눌러 주세요."}
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             if action == "take_drop":
                 dropped, self._sketch_drop = getattr(self, "_sketch_drop", None), None
                 return dropped or {"ok": False, "message": "놓은 그림이 없습니다."}
@@ -2632,7 +2713,7 @@ class DesktopWebBridge:
             if action in ("copy", "thumbnails") and self.gui.running:
                 raise ServiceError("JOB_RUNNING", "문서 작업이 끝난 뒤 다시 눌러 주세요.")
             if action not in ("copy", "thumbnails"):
-                settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                settings = self._settings_store()
                 return TableUnitsService(settings=settings).command(action, payload)
             # 스냅샷 생성 중에 복사가 겹치면 한/글·클립보드가 엉키므로 한 번에 하나만 한다.
             if not _TABLE_UNITS_COM_LOCK.acquire(blocking=False):
@@ -2641,7 +2722,7 @@ class DesktopWebBridge:
             try:
                 pythoncom.CoInitialize()
                 try:
-                    settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                    settings = self._settings_store()
                     return TableUnitsService(self._table_units_hwp, settings=settings).command(action, payload)
                 finally:
                     pythoncom.CoUninitialize()
@@ -3147,7 +3228,8 @@ class DesktopWebBridge:
 
         # 작업 중이면 종료 확인 창이 떠서 사용자의 답을 기다린다.
         try:
-            return self._tk(close, timeout=None, front=True)
+            # 닫기 이벤트에서 '바쁨' 오류를 내면 창이 닫히지 않을 수 있어 시작 대기를 제한하지 않는다.
+            return self._tk(close, timeout=None, front=True, start_timeout=None)
         except RuntimeError:
             # 종료 callback이 root.destroy를 호출하면 자신의 Future도 종료된다.
             if self.tk_stopped is not None and self.tk_stopped.is_set():
@@ -3156,11 +3238,11 @@ class DesktopWebBridge:
 
 
 def _cancel_before_edit(method):
-    """설정·문서·서식 변경은 같은 Tk 큐에서 예약 토큰을 먼저 무효화한다."""
+    """설정·문서·서식 변경 전에 예약 토큰을 먼저 무효화한다(Tk 왕복 없이: 값이 항상 {}라 순서와 무관)."""
     from functools import wraps
     @wraps(method)
     def call(self, *args, **kwargs):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return method(self, *args, **kwargs)
     return call
 
@@ -3239,7 +3321,9 @@ def _initial_window_settings(bridge):
             return ConfigurationService(store).snapshot().get('values', {})
         except Exception:
             return {}
-    return bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
+    # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+    bridge._raise_if_closing()
+    return bridge._configuration().snapshot(running=bridge.gui.running).get('values', {})
 
 
 class _Win32WindowApi:
@@ -3799,8 +3883,9 @@ def run_webview(gui):
         try:
             from docfit_app.configuration_service import ConfigurationService
             from docfit_app.freeze_tracer import FreezeTracer, _is_hung
-            settings = bridge._tk(lambda: ConfigurationService(gui._준말_서비스().settings).snapshot(
-                running=gui.running).get('values', {}), timeout=5)
+            # 스레드 안전: 설정 저장소 읽기(경로별 RLock)라 Tk를 기다리지 않는다.
+            settings = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
             if settings.get('freeze_tracing'):
                 bridge._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
                 bridge._freeze_tracer.start(web_window)

@@ -102,6 +102,12 @@ def breadcrumb(rows: Sequence[dict], paragraph_index: int) -> list[dict]:
     for index in ancestors(ranks, position):
         row = ordered[index]
         text = shorten(row["body"])
+        if (row["level_rank"] == 0 and "table_cell_id" in row.keys()
+                and row["table_cell_id"] is not None):
+            text = shorten(" ".join(str(item["body"] or "").strip() for item in ordered
+                                    if "table_cell_id" in item.keys()
+                                    and item["table_cell_id"] == row["table_cell_id"]
+                                    and any(c.isalpha() for c in str(item["body"] or ""))))
         if not text:
             continue
         path.append({
@@ -123,6 +129,39 @@ def breadcrumb(rows: Sequence[dict], paragraph_index: int) -> list[dict]:
 
 def breadcrumb_text(path: Iterable[dict], separator: str = " > ") -> str:
     return separator.join(item["text"] for item in path if item.get("text"))
+
+
+def group_by_parent(rows: Sequence[dict], paragraph_indexes: Iterable[int]) -> list[dict]:
+    """일치 문단을 실제 위계의 가장 가까운 부모로 묶는다.
+
+    묶음과 구성 문단은 첫 일치 문단의 문서 순서로 반환한다. 중복 번호는
+    한 번만 세고, rows에 없는 번호는 무시한다. 부모 없는 묶음의 표시는 빈 문자열이다.
+    """
+    ordered = sorted(rows, key=lambda row: int(row["paragraph_index"]))
+    parent_positions = parents([row["level_rank"] for row in ordered])
+    selected = {int(index) for index in paragraph_indexes}
+    groups = {}
+    for position, row in enumerate(ordered):
+        index = int(row["paragraph_index"])
+        if index not in selected:
+            continue
+        parent_position = parent_positions[position]
+        parent = ordered[parent_position] if parent_position is not None else None
+        parent_index = int(parent["paragraph_index"]) if parent is not None else None
+        if parent_index not in groups:
+            text = shorten(parent["body"]) if parent is not None else ""
+            trail = breadcrumb(ordered, parent_index) if parent is not None else []
+            groups[parent_index] = {
+                "parent_paragraph_index": parent_index,
+                "parent_text": text,
+                "breadcrumb_text": breadcrumb_text(trail + [{"text": text}]),
+                "paragraph_indexes": [],
+                "count": 0,
+            }
+        group = groups[parent_index]
+        group["paragraph_indexes"].append(index)
+        group["count"] += 1
+    return list(groups.values())
 
 
 def context_term_hits(path: Iterable[dict], terms: Iterable[str]) -> int:
