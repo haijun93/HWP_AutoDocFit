@@ -1,5 +1,7 @@
 """위계 엔진(hierarchy 실행 파일) 호출 브리지. 설정 hierarchy_engine이 켜졌을 때만 사용한다."""
 import json
+import os
+from threading import Lock
 import ctypes
 import subprocess
 import sys
@@ -8,6 +10,50 @@ from pathlib import Path
 TIMEOUT_SECONDS = 5.0
 _NAME = "hierarchy.exe" if sys.platform == "win32" else "hierarchy"
 _DLL_NAME = "hierarchy.dll" if sys.platform == "win32" else "libhierarchy.so"
+
+
+_LIBRARY_LOCK = Lock()
+_LIBRARIES = {}
+_SETTINGS_LOCK = Lock()
+_SETTINGS_CACHE = None
+
+
+def _load_library(library):
+    key = os.path.normcase(str(Path(library).resolve()))
+    with _LIBRARY_LOCK:
+        if key not in _LIBRARIES:
+            dll = ctypes.CDLL(key)
+            dll.hierarchy_analyze_json.argtypes = [ctypes.c_char_p]
+            dll.hierarchy_analyze_json.restype = ctypes.c_void_p
+            dll.hierarchy_json_free.argtypes = [ctypes.c_void_p]
+            dll.hierarchy_json_free.restype = None
+            _LIBRARIES[key] = dll
+        return _LIBRARIES[key]
+
+
+def _read_settings():
+    from docfit_app.settings_schema import DEFAULTS
+    from docfit_app.settings_service import SettingsService
+    global _SETTINGS_CACHE
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return dict(DEFAULTS)
+    path = Path(appdata) / "HwpAutoDocFit" / "settings.json"
+    with _SETTINGS_LOCK:
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            signature = None
+        key = (os.path.normcase(str(path.resolve())), signature)
+        if _SETTINGS_CACHE is not None and _SETTINGS_CACHE[0] == key:
+            return _SETTINGS_CACHE[1]
+        settings = SettingsService(path).read()
+        if "hierarchy_engine" not in settings:
+            settings = {**DEFAULTS, **settings}
+        # If replaced during the read, the old signature forces a reload next call.
+        _SETTINGS_CACHE = (key, settings)
+        return settings
 
 
 def find_executable():
@@ -36,11 +82,7 @@ def find_library():
 def run_library(library, paragraphs):
     """Invoke the C ABI and return its native Python-result-shaped JSON."""
     try:
-        dll = ctypes.CDLL(str(library))
-        dll.hierarchy_analyze_json.argtypes = [ctypes.c_char_p]
-        dll.hierarchy_analyze_json.restype = ctypes.c_void_p
-        dll.hierarchy_json_free.argtypes = [ctypes.c_void_p]
-        dll.hierarchy_json_free.restype = None
+        dll = _load_library(library)
         payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False).encode("utf-8")
         ptr = dll.hierarchy_analyze_json(payload)
         if not ptr:
@@ -76,13 +118,7 @@ def analyze_levels(paragraphs, settings=None, executable=None, timeout=TIMEOUT_S
     if settings is None:
         # Keep the engine usable in core callers without importing UI/bootstrap modules.
         try:
-            import os
-            from docfit_app.settings_schema import DEFAULTS
-            from docfit_app.settings_service import SettingsService
-            appdata = os.environ.get("APPDATA")
-            settings = SettingsService(Path(appdata) / "HwpAutoDocFit" / "settings.json").read() if appdata else {}
-            if "hierarchy_engine" not in settings:
-                settings = {**DEFAULTS, **settings}
+            settings = _read_settings()
         except Exception:
             settings = {}
     if not (settings or {}).get("hierarchy_engine", False):
