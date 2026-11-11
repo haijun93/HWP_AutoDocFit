@@ -1720,6 +1720,7 @@ class ContentSearchIndex:
         rank_column = ("0.0" if short_positive
                        else "bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0)")
         located_by_path = {}
+        breadcrumb_by_path = {}
         if selected:
             if any("MATCH" in condition for condition in conditions):
                 # MATCH(와 bm25)는 rowid 조회와 함께 쓰면 rowid마다 다시 실행되므로 MATCH로 찾고 경로로 거른다.
@@ -1735,6 +1736,13 @@ class ContentSearchIndex:
                     match_params)
             for located in located_rows:
                 located_by_path.setdefault(located["path"], []).append(located)
+            # Fetch each displayed document's paragraph hierarchy in one batched
+            # lookup. The rank cache remains limited to ranking and valid indices.
+            with self._lock:
+                for row in self._select_paragraphs_for_paths(
+                        "path,paragraph_index,body,level,level_rank",
+                        (path for _, path, _ in selected)):
+                    breadcrumb_by_path.setdefault(row["path"], []).append(row)
         for score, path, meta in selected:
             # 위치는 그 문서 자신의 일치 문단으로 거른다(마지막으로 처리한 문서의 집합을 쓰면 안 된다).
             valid_para_indices = valid_indices_by_path.get(path, ())
@@ -1742,6 +1750,7 @@ class ContentSearchIndex:
                                  if int(p["paragraph_index"]) in valid_para_indices),
                                 key=lambda p: (float(p["rank"]), int(p["paragraph_index"])))[:3]
             paragraphs = [p for p in paragraphs if int(p["paragraph_index"]) in valid_para_indices]
+            crumbs = breadcrumb_by_path.get(path, ())
             locations = []
             for paragraph in paragraphs:
                 text = paragraph["body"] or ""
@@ -1764,13 +1773,20 @@ class ContentSearchIndex:
                     location["sheet"], location["row"] = row_match.group(1), int(row_match.group(2))
                 elif line_match:
                     location["row"] = int(line_match.group(1))
+                trail = hierarchy_path.breadcrumb(crumbs, int(paragraph["paragraph_index"]))
                 locations.append({"paragraph_index": int(paragraph["paragraph_index"]), "snippet": snippet,
-                                  "highlights": highlights, "position": location})
+                                  "highlights": highlights, "position": location,
+                                  "breadcrumb": [step["text"] for step in trail],
+                                  "breadcrumb_text": hierarchy_path.breadcrumb_text(trail)})
+            primary_breadcrumb = locations[0]["breadcrumb"] if locations else []
+            primary_breadcrumb_text = locations[0]["breadcrumb_text"] if locations else ""
             results.append({"path": path, "name": meta["name"] or os.path.basename(path),
                             "extension": meta["extension"] or Path(path).suffix.lstrip("."),
                             "mtime": meta["mtime"], "folder_path": os.path.dirname(path),
                             "folder_name": os.path.basename(os.path.dirname(path)),
-                            "locations": locations, "snippet": locations[0]["snippet"] if locations else "",
+                            "locations": locations, "breadcrumb": primary_breadcrumb,
+                            "breadcrumb_text": primary_breadcrumb_text,
+                            "snippet": locations[0]["snippet"] if locations else "",
                             "highlights": locations[0]["highlights"] if locations else [],
                             "position": locations[0]["position"] if locations else {"page": None, "sheet": None, "row": None},
                             "score": score, "relevance_rank": offset + len(results) + 1})

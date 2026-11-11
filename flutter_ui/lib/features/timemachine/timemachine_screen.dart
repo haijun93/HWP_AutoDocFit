@@ -1030,12 +1030,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                 Text('${_formatEpochDate(result.mtime)} · ${result.kind.toUpperCase()}', style: Theme.of(context).textTheme.labelSmall),
                 const SizedBox(height: 6),
                 if (result.breadcrumbText.isNotEmpty) ...[
-                  Text(
-                    result.breadcrumbText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
-                  ),
+                  _HierarchyBreadcrumb(text: result.breadcrumbText),
                   const SizedBox(height: 4),
                 ],
                 _markedTerms(result.snippet, keywords, maxLines: 3, style: Theme.of(context).textTheme.bodyMedium),
@@ -1774,6 +1769,20 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       ],
     ),
   );
+}
+
+class _HierarchyBreadcrumb extends StatelessWidget {
+  const _HierarchyBreadcrumb({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+      );
 }
 
 class _TimelineEntry {

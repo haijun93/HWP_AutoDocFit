@@ -236,6 +236,34 @@ class ContentSearchTests(unittest.TestCase):
         result = next(row for row in self.index.keyword_search("세위치검색") if row["name"] == many.name)
         self.assertLessEqual(len(result["locations"]), 3)
 
+    def test_keyword_search_adds_breadcrumbs_only_for_selected_locations(self):
+        path = self.root / "breadcrumb.txt"
+        raw = str(path.resolve())
+        with self.index._lock, self.index.db:
+            self.index.db.execute(
+                "INSERT INTO content_meta(path,name,extension,mtime,ctime,hierarchy_schema_version)"
+                " VALUES(?,?,?,?,?,?)", (raw, path.name, "txt", 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION))
+            self.index.db.execute(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label)"
+                " VALUES(?,?,?,?,?,?,?)", (raw, path.name, 0, "chapter", 1, "제1장 경로", "문단 1"))
+            self.index.db.execute(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label)"
+                " VALUES(?,?,?,?,?,?,?)", (raw, path.name, 1, "body", 8, "경로검색 본문", "문단 2"))
+            self.index.db.execute(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label)"
+                " VALUES(?,?,?,?,?,?,?)", (raw, path.name, 2, "section", 2, "제1절 다른 경로", "문단 3"))
+            self.index.db.execute(
+                "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body,location_label)"
+                " VALUES(?,?,?,?,?,?,?)", (raw, path.name, 3, "body", 8, "경로검색 두번째 위치", "문단 4"))
+
+        result = self.index.keyword_search("경로검색", limit=1, offset=0)[0]
+        locations = result["locations"]
+        self.assertEqual(locations[0]["breadcrumb"], ["제1장 경로"])
+        self.assertEqual(locations[0]["breadcrumb_text"], "제1장 경로")
+        self.assertEqual(locations[1]["breadcrumb"], ["제1장 경로", "제1절 다른 경로"])
+        self.assertEqual(result["breadcrumb"], locations[0]["breadcrumb"])
+        self.assertEqual(result["breadcrumb_text"], locations[0]["breadcrumb_text"])
+
     def test_keyword_filename_field_weight_three_changes_rank(self):
         named = self.root / "가중치검색.txt"
         body = self.root / "other.txt"

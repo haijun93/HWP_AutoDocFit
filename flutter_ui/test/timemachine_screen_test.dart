@@ -598,6 +598,22 @@ void main() {
     expect(find.text('썸네일 캐시를 지웠습니다.'), findsOneWidget);
   });
 
+  testWidgets('본문검색 경로 표시는 발췌문 위에 놓인다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {'id': 53, 'file_name': '본문경로.txt', 'folder_path': r'C:\Docs', 'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '위치 발췌문', 'breadcrumb': ['제1장'], 'breadcrumb_text': '제1장'},
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '본문경로');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    final path = find.text('제1장');
+    expect(path, findsOneWidget);
+    expect(tester.getTopLeft(path).dy, lessThan(tester.getTopLeft(find.text('위치 발췌문')).dy));
+  });
+
   testWidgets('위계 경로를 발췌문 위에 표시하고 경로가 비면 표시하지 않는다', (tester) async {
     final api = _FakeApi(enabled: true, contentSearchResults: [
       {
