@@ -205,16 +205,40 @@ def _plain_numbered_levels(paragraphs):
             for depth, family in enumerate(confirmed)}
 
 
+def _plain_chapter_levels(path, paragraphs):
+    """표시 없는 TXT/MD 장 제목은 짧은 연속 번호 두 개 이상을 근거로 삼는다."""
+    if Path(path).suffix.lower() not in {".txt", ".md"}:
+        return {}
+    candidates = {}
+    for position, paragraph in enumerate(paragraphs):
+        if paragraph.is_table_cell or paragraph.style_name or paragraph.outline_level is not None:
+            continue
+        text = paragraph.text.strip()
+        match = re.match(r"^제([0-9]+)장(?:\s|$)", text)
+        if match:
+            number = int(match.group(1)) if len(text) <= 60 and text[match.end():].strip() else None
+            candidates[position] = number
+    numbers = [number for number in candidates.values() if number is not None]
+    confirmed = any(b == a + 1 for a, b in zip(numbers, numbers[1:]))
+    return {position: "chapter" if confirmed and number is not None else "body"
+            for position, number in candidates.items()}
+
+
 def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
     if not paragraphs:
         return []
     from docfit_app.hierarchy_bridge import analyze_levels
 
+    plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
         [{"text": p.text, "indent": 0, "font_size": 0} for p in paragraphs]
     )
     if engine_levels is not None:
-        return _fallback_document_title(path, convert_engine_levels_to_records(paragraphs, engine_levels))
+        converted = convert_engine_levels_to_records(paragraphs, engine_levels)
+        for position, level in plain_chapters.items():
+            if position < len(converted):
+                converted[position] = replace(converted[position], level=level, level_rank=LEVEL_RANKS[level])
+        return _fallback_document_title(path, converted)
 
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
@@ -289,6 +313,8 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
             marker_info = classify_marker(text)
             family = marker_info[0] if marker_info else None
+            if level is None and paragraph_position in plain_chapters:
+                level = plain_chapters[paragraph_position]
             if level is None and plain_levels is not None and family in {"Ⅰ.", "I.", "1.", "가."}:
                 plain_family = "Ⅰ." if family == "I." else family
                 level = plain_levels.get(plain_family, "body") if len(text) <= 60 else "body"
