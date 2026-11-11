@@ -111,9 +111,9 @@ def main() -> int:
     # 처리 사본 이름이 모두 source.hwpx라 계측 파일이 덮어써지지 않도록 실행 폴더별로 읽는다.
     reports = []
     for index, document in enumerate(args.documents, 1):
-        source = perf_dir / f"run{index:02d}" / "source.comperf.json"
-        if source.is_file():
-            report = json.loads(source.read_text(encoding="utf-8"))
+        found = sorted((perf_dir / f"run{index:02d}").glob("*.comperf.json"))
+        if found:
+            report = json.loads(found[0].read_text(encoding="utf-8"))
             report["file"] = document.name
             reports.append(report)
     summary = summarize(reports)
