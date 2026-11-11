@@ -101,37 +101,47 @@ struct SynonymCache { modified: Option<(SystemTime, u64)>, loaded: bool, file: O
 
 #[derive(Clone)]
 struct KoBigram;
-struct BigramStream { tokens: Vec<Token>, cursor: usize }
+struct BigramStream<'a> {
+    chars: std::iter::Peekable<std::str::CharIndices<'a>>,
+    previous: Option<(usize,char)>,
+    paired: bool,
+    token: Token,
+    position: usize,
+}
 impl Tokenizer for KoBigram {
-    type TokenStream<'a> = BigramStream;
+    type TokenStream<'a> = BigramStream<'a>;
     fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
-        let chars: Vec<(usize, char)> = text.char_indices().collect();
-        let mut tokens = Vec::new();
-        let mut run = Vec::new();
-        let flush = |run: &mut Vec<(usize, char)>, tokens: &mut Vec<Token>| {
-            if run.len() == 1 {
-                let (offset, ch) = run[0];
-                tokens.push(Token { offset_from: offset, offset_to: offset + ch.len_utf8(), text: ch.to_string(), position: 0, position_length: 1 });
-            } else {
-                for pair in run.windows(2) {
-                    let (start, a) = pair[0]; let (end, b) = pair[1];
-                    tokens.push(Token { offset_from: start, offset_to: end + b.len_utf8(), text: format!("{a}{b}"), position: 0, position_length: 1 });
-                }
-            }
-            run.clear();
-        };
-        for (offset, ch) in chars {
-            if ch.is_alphanumeric() { run.push((offset, ch)); } else { flush(&mut run, &mut tokens); }
-        }
-        flush(&mut run, &mut tokens);
-        for (position, token) in tokens.iter_mut().enumerate() { token.position = position; }
-        BigramStream { tokens, cursor: 0 }
+        BigramStream { chars:text.char_indices().peekable(),previous:None,paired:false,token:Token::default(),position:0 }
     }
 }
-impl TokenStream for BigramStream {
-    fn advance(&mut self) -> bool { if self.cursor >= self.tokens.len() { false } else { self.cursor += 1; true } }
-    fn token(&self) -> &Token { &self.tokens[self.cursor - 1] }
-    fn token_mut(&mut self) -> &mut Token { &mut self.tokens[self.cursor - 1] }
+impl TokenStream for BigramStream<'_> {
+    fn advance(&mut self) -> bool {
+        loop {
+            let (start,a)=match self.previous.take().or_else(||self.chars.next()) { Some(v)=>v,None=>return false };
+            if !a.is_alphanumeric() { self.paired=false; continue; }
+            self.token.text.clear();
+            self.token.text.push(a);
+            self.token.offset_from=start;
+            self.token.offset_to=start+a.len_utf8();
+            if let Some(&(end,b))=self.chars.peek() {
+                if b.is_alphanumeric() {
+                    self.chars.next();
+                    self.previous=Some((end,b));
+                    self.paired=true;
+                    self.token.text.push(b);
+                    self.token.offset_to=end+b.len_utf8();
+                } else {
+                    if self.paired { self.paired=false; continue; }
+                }
+            } else if self.paired { self.paired=false; return false; }
+            self.token.position=self.position;
+            self.token.position_length=1;
+            self.position+=1;
+            return true;
+        }
+    }
+    fn token(&self)->&Token { &self.token }
+    fn token_mut(&mut self)->&mut Token { &mut self.token }
 }
 
 fn text_options(tokenizer: &str) -> TextOptions {
@@ -531,14 +541,14 @@ fn cho_char(c: char) -> char {
 }
 fn cho_text(s:&str)->String { s.chars().map(cho_char).collect() }
 fn is_chosung_query(s:&str)->bool { !s.is_empty() && s.chars().all(|c| matches!(c,'ㄱ'..='ㅎ'|'ㄲ'|'ㄸ'|'ㅃ'|'ㅆ'|'ㅉ')) }
-fn jamo_char(c:char)->String {
+fn jamo_char(c:char, out:&mut String) {
     const C:[char;19]=['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
     const V:[char;21]=['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
     const T:[char;28]=[' ','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
     let n=c as u32;
-    if (0xAC00..=0xD7A3).contains(&n) { let x=n-0xAC00; format!("{}{}{}",C[(x/588) as usize],V[((x%588)/28) as usize],T[(x%28) as usize]).replace(" ","") } else { c.to_string() }
+    if (0xAC00..=0xD7A3).contains(&n) { let x=n-0xAC00; out.push(C[(x/588) as usize]); out.push(V[((x%588)/28) as usize]); if x%28!=0 { out.push(T[(x%28) as usize]); } } else { out.push(c); }
 }
-fn jamo_text(s:&str)->String { s.chars().map(jamo_char).collect::<String>().to_lowercase() }
+fn jamo_text(s:&str)->String { { let mut out=String::with_capacity(s.len()); for c in s.chars() { jamo_char(c,&mut out); } out.to_lowercase() } }
 fn fuzzy_query(query:&str, field:Field)->Option<Box<dyn Query>> {
     let terms:Vec<String>=query.split_whitespace().map(|s|jamo_text(s).replace(" ","")).filter(|s|s.chars().count()>4).collect();
     let mut clauses=Vec::new();
@@ -563,13 +573,68 @@ fn parse_directives(input:&str)->Parsed {
 #[cfg(test)]
 mod tests {
  use super::*;
+#[derive(Clone)]
+struct ReferenceBigram;
+struct ReferenceBigramStream { tokens: Vec<Token>, cursor: usize }
+impl Tokenizer for ReferenceBigram {
+    type TokenStream<'a> = ReferenceBigramStream;
+    fn token_stream<'a>(&'a mut self, text: &'a str) -> Self::TokenStream<'a> {
+        let chars: Vec<(usize, char)> = text.char_indices().collect();
+        let mut tokens = Vec::new();
+        let mut run = Vec::new();
+        let flush = |run: &mut Vec<(usize, char)>, tokens: &mut Vec<Token>| {
+            if run.len() == 1 {
+                let (offset, ch) = run[0];
+                tokens.push(Token { offset_from: offset, offset_to: offset + ch.len_utf8(), text: ch.to_string(), position: 0, position_length: 1 });
+            } else {
+                for pair in run.windows(2) {
+                    let (start, a) = pair[0]; let (end, b) = pair[1];
+                    tokens.push(Token { offset_from: start, offset_to: end + b.len_utf8(), text: format!("{a}{b}"), position: 0, position_length: 1 });
+                }
+            }
+            run.clear();
+        };
+        for (offset, ch) in chars {
+            if ch.is_alphanumeric() { run.push((offset, ch)); } else { flush(&mut run, &mut tokens); }
+        }
+        flush(&mut run, &mut tokens);
+        for (position, token) in tokens.iter_mut().enumerate() { token.position = position; }
+        ReferenceBigramStream { tokens, cursor: 0 }
+    }
+}
+impl TokenStream for ReferenceBigramStream {
+    fn advance(&mut self) -> bool { if self.cursor >= self.tokens.len() { false } else { self.cursor += 1; true } }
+    fn token(&self) -> &Token { &self.tokens[self.cursor - 1] }
+    fn token_mut(&mut self) -> &mut Token { &mut self.tokens[self.cursor - 1] }
+}
+
+fn reference_jamo_char(c:char)->String {
+    const C:[char;19]=['ㄱ','ㄲ','ㄴ','ㄷ','ㄸ','ㄹ','ㅁ','ㅂ','ㅃ','ㅅ','ㅆ','ㅇ','ㅈ','ㅉ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+    const V:[char;21]=['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ','ㅚ','ㅛ','ㅜ','ㅝ','ㅞ','ㅟ','ㅠ','ㅡ','ㅢ','ㅣ'];
+    const T:[char;28]=[' ','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
+    let n=c as u32;
+    if (0xAC00..=0xD7A3).contains(&n) { let x=n-0xAC00; format!("{}{}{}",C[(x/588) as usize],V[((x%588)/28) as usize],T[(x%28) as usize]).replace(" ","") } else { c.to_string() }
+}
+fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).collect::<String>().to_lowercase() }
+ #[test] fn tokenization_matches_original() {
+    let all_hangul:String=(0xAC00..=0xD7A3).map(|n|char::from_u32(n).unwrap()).collect();
+    for text in ["", "가", "가나다 라 마바사", "서울 예산! 정책,자료", "ABC abc 123 9", "😀가나🚀a1💖", " ㄱㅏ 한글 English 2026\n끝.", "İΣ ΟΣ", &all_hangul] {
+        let mut new_tokenizer=KoBigram; let mut old_tokenizer=ReferenceBigram;
+        let mut new=new_tokenizer.token_stream(text); let mut old=old_tokenizer.token_stream(text);
+        loop { let a=new.advance(); let b=old.advance(); assert_eq!(a,b,"{text:?}"); if !a { break; }
+            let a=new.token(); let b=old.token();
+            assert_eq!((&a.text,a.position,a.position_length,a.offset_from,a.offset_to),(&b.text,b.position,b.position_length,b.offset_from,b.offset_to));
+        }
+        assert_eq!(jamo_text(text),reference_jamo_text(text));
+    }
+ }
  fn temp()->PathBuf { use std::sync::atomic::{AtomicU64,Ordering}; static N:AtomicU64=AtomicU64::new(0); let p=std::env::temp_dir().join(format!("klib-search-{}-{}",std::process::id(),N.fetch_add(1,Ordering::Relaxed))); std::fs::create_dir_all(&p).unwrap();p }
  fn paragraph(path:&str,body:&str)->Paragraph {Paragraph{path:path.into(),box_ids:vec!["box-a".into()],name:"\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}".into(),title:"\u{ac80}\u{c0c9} \u{c81c}\u{baa9}".into(),level:2,body:body.into(),ext:"txt".into(),mtime:100,page:Some(1),sheet:None,row:None}}
  #[test] fn schema_has_reserved_fields(){let(s,_)=schema();for n in ["doc_id","path","box_ids","name","name_cho","title","level","body_ko","body_bi","body_jamo","body_cho","ext","mtime","page","sheet","row","body"]{assert!(s.get_field(n).is_ok());}}
- #[test] fn bigrams_preserve_korean(){let mut s=KoBigram.token_stream("\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{d55c}\u{ad6d}","\u{ad6d}\u{c5b4}","\u{bb38}\u{c11c}"]);}
- #[test] fn bigram_single_char(){let mut s=KoBigram.token_stream("\u{ac00}");assert!(s.advance());assert_eq!(s.token().text,"\u{ac00}");}
- #[test] fn bigram_splits_punctuation(){let mut s=KoBigram.token_stream("\u{ac00}\u{b098},\u{b2e4}\u{b77c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{ac00}\u{b098}","\u{b2e4}\u{b77c}"]);}
- #[test] fn tokenizer_utf8_offsets(){let mut s=KoBigram.token_stream("\u{ac00}\u{b098}\u{b2e4}");s.advance();assert_eq!(&"\u{ac00}\u{b098}\u{b2e4}"[s.token().offset_from..s.token().offset_to],"\u{ac00}\u{b098}");}
+ #[test] fn bigrams_preserve_korean(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{d55c}\u{ad6d}","\u{ad6d}\u{c5b4}","\u{bb38}\u{c11c}"]);}
+ #[test] fn bigram_single_char(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}");assert!(s.advance());assert_eq!(s.token().text,"\u{ac00}");}
+ #[test] fn bigram_splits_punctuation(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}\u{b098},\u{b2e4}\u{b77c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{ac00}\u{b098}","\u{b2e4}\u{b77c}"]);}
+ #[test] fn tokenizer_utf8_offsets(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}\u{b098}\u{b2e4}");s.advance();assert_eq!(&"\u{ac00}\u{b098}\u{b2e4}"[s.token().offset_from..s.token().offset_to],"\u{ac00}\u{b098}");}
  #[test] fn directives_extract_filters(){let p=parse_directives("\u{d55c}\u{ad6d}\u{c5b4} ext:txt path:abc");assert_eq!(p.text,"\u{d55c}\u{ad6d}\u{c5b4}");assert_eq!(p.filters.len(),2);}
  #[test] fn add_and_search(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();ix.add_or_update(&paragraph("a.txt","\u{d55c}\u{ad6d}\u{c5b4} \u{ac80}\u{c0c9} \u{bb38}\u{b2e8}")).unwrap();assert_eq!(ix.search("\u{d55c}\u{ad6d}\u{c5b4}",SearchOptions{limit:10}).unwrap().len(),1);let _=std::fs::remove_dir_all(dir);}
  #[test] fn search_groups_matching_paragraphs_by_path_before_limit(){
