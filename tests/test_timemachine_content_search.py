@@ -396,6 +396,18 @@ class ContentSearchTests(unittest.TestCase):
         short = self.index.keyword_search("문단", limit=5)
         self.assertEqual(len(short), 5)
 
+    def test_keyword_exclusion_terms_of_any_length_remove_documents(self):
+        self._insert_keyword_documents([
+            ("keep.txt", ["제외시험낱말 본문", "다른 문단"]),
+            ("drop_long.txt", ["제외시험낱말 본문", "빼야할긴말 포함"]),
+            ("drop_short.txt", ["제외시험낱말 본문", "여기 감사 포함"]),
+        ])
+        names = lambda query: sorted(row["name"] for row in self.index.keyword_search(query))
+        self.assertEqual(names("제외시험낱말"), ["drop_long.txt", "drop_short.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -빼야할긴말"), ["drop_short.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -감사"), ["drop_long.txt", "keep.txt"])
+        self.assertEqual(names("제외시험낱말 -빼야할긴말 -감사"), ["keep.txt"])
+
     def test_hierarchy_two_character_search_same_with_and_without_short_grams(self):
         # 2글자 위계검색은 조각 표로 후보를 좁혀도 결과·발췌문이 LIKE 전체 훑기와 같아야 한다.
         documents = [(f"gram{i}.txt", [f"머리말 {i}", f"올해 예산 편성 {i}" if i % 3 else "해당 없음", "예산 끝" if i % 5 == 0 else "끝"])

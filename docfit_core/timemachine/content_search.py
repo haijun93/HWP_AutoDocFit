@@ -1199,10 +1199,11 @@ class ContentSearchIndex:
                         excluded.update(row[0] for row in self.db.execute(
                             "SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expr,)))
                     except sqlite3.OperationalError:
-                        pass
-                excluded.update(row[0] for row in self.db.execute(
-                    "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
-            metas = {row["path"]: row for row in self._select_for_paths(
+                        # MATCH를 못 쓸 때만 LIKE로 전체를 훑는다. 성공했으면 같은 말을 다시 찾지 않는다.
+                        excluded.update(row[0] for row in self.db.execute(
+                            "SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",)))
+                # 2글자 이하 제외어는 아래에서 후보 문서 본문(candidate_texts)으로 걸러낸다(전체 훑기 불필요).
+            metas ={row["path"]: row for row in self._select_for_paths(
                 "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
                 (row["path"] for row in rows))} if rows else {}
         ranked = []
