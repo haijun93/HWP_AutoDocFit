@@ -8,7 +8,7 @@ import time
 from contextlib import contextmanager
 from .rules import excluded_name
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
 from defusedxml import ElementTree as ET
@@ -213,7 +213,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         [{"text": p.text, "indent": 0, "font_size": 0} for p in paragraphs]
     )
     if engine_levels is not None:
-        return convert_engine_levels_to_records(paragraphs, engine_levels)
+        return _fallback_document_title(path, convert_engine_levels_to_records(paragraphs, engine_levels))
 
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
@@ -371,7 +371,24 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 outline_level=p.outline_level,
             )
         )
-    return classified
+    return _fallback_document_title(path, classified)
+
+
+def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
+    """명시적 제목이 없을 때만 텍스트 제목 준말을 보완한다."""
+    if any(p.level == "document_title" for p in paragraphs):
+        return paragraphs
+    ext = Path(path).suffix.lower()
+    candidate = None
+    if ext in {".txt", ".md"}:
+        candidate = next((i for i, p in enumerate(paragraphs)
+                          if p.text.strip().startswith(("제목1:", "제목:"))), None)
+    if candidate is None:
+        return paragraphs
+    updated = list(paragraphs)
+    updated[candidate] = replace(paragraphs[candidate], level="document_title",
+                                 level_rank=LEVEL_RANKS["document_title"])
+    return updated
 
 
 def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: dict) -> list[ParagraphRecord]:

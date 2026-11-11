@@ -93,6 +93,59 @@ class ContentSearchTests(unittest.TestCase):
             result = classify_paragraph_levels("dummy.txt", records)
         self.assertEqual(result[0].level, "square")
 
+    def test_title_fallback_text_labels_and_existing_title(self):
+        for suffix in ("txt", "md"):
+            for prefix in ("제목1:", "제목:"):
+                with self.subTest(suffix=suffix, prefix=prefix):
+                    path = self.root / ("title." + suffix)
+                    path.write_text(prefix + " 삼체 계획\n제목: 두 번째\n삼체 행성", encoding="utf-8")
+                    records = extract_paragraphs(path)
+                    self.assertEqual([p.level for p in records], ["document_title", "body", "body"])
+                    self.assertEqual(records[0].text, prefix + " 삼체 계획")
+        path = self.root / "existing.md"
+        path.write_text("# 명시적 제목\n제목: 준말", encoding="utf-8")
+        self.assertEqual([p.level for p in extract_paragraphs(path)], ["document_title", "body"])
+
+    def test_title_fallback_keeps_hwpx_table_levels_after_rule_revert(self):
+        for count in (0, 2, 3):
+            with self.subTest(preceding_body=count):
+                path = self.root / f"table{count}.hwpx"
+                write_hwpx_paragraphs(path, [
+                    *[{"text": "일반 본문 문장"} for _ in range(count)],
+                    {"text": "", "is_table_cell": True},
+                    {"text": "삼체 계획", "is_table_cell": True},
+                    {"text": "다음 칸", "is_table_cell": True},
+                ])
+                # helper는 항목마다 별도 표를 만든다. 빈 첫 표는 제목 후보가 아니다.
+                self.assertFalse(any(p.level == "document_title" for p in extract_paragraphs(path)))
+                write_hwpx_paragraphs(path, [
+                    *[{"text": "일반 본문 문장"} for _ in range(count)],
+                    {"text": "삼체 계획", "is_table_cell": True},
+                    {"text": "다음 칸", "is_table_cell": True},
+                ])
+                records = extract_paragraphs(path)
+                self.assertEqual(records[count].level, "table_cell")
+                self.assertTrue(records[count].is_table_cell)
+                self.assertEqual(records[count + 1].level, "table_cell")
+
+    def test_title_label_reaches_keyword_search_breadcrumb(self):
+        path = self.root / "labeled.txt"
+        path.write_text("제목1: 삼체 문명 대응 계획\n□ 추진 배경\n삼체 행성 상황", encoding="utf-8")
+        self.assertTrue(self.index.index_file(path)["indexed"])
+        result = self.index.keyword_search("삼체 행성")
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["breadcrumb"], ["제목1: 삼체 문명 대응 계획", "□ 추진 배경"])
+
+    def test_title_fallback_preserves_engine_title_and_applies_after_engine(self):
+        records = [ParagraphRecord(0, "제목1: 삼체 계획", "body", 8, False),
+                   ParagraphRecord(1, "별도 제목", "body", 8, False)]
+        with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value={"levels": [8, 0]}):
+            self.assertEqual([p.level for p in classify_paragraph_levels("a.txt", records)],
+                             ["body", "document_title"])
+        with patch("docfit_app.hierarchy_bridge.analyze_levels", return_value={"levels": [8, 8]}):
+            self.assertEqual([p.level for p in classify_paragraph_levels("a.txt", records)],
+                             ["document_title", "body"])
+
     def test_txt_search_snippet_and_incremental_update(self):
         path = self.root / "보고서.txt"
         path.write_text("분기별 업무 실적 검색 대상 문장", encoding="utf-8")
