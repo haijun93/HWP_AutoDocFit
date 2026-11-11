@@ -22,7 +22,7 @@ class TitleCellTests(unittest.TestCase):
         self.assertEqual(before, rows)
 
     def test_index_persists_cell_groups_without_changing_ranking(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "plan.hwpx"
             with ZipFile(path, "w") as archive:

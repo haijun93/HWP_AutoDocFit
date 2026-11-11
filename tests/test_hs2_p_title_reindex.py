@@ -30,7 +30,7 @@ class TitlePromotionTests(unittest.TestCase):
         self.assertEqual("table_cell", self.classify(explicit=True)[0].level)
 
     def test_only_first_table_is_considered(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "tables.hwpx"
             write_hwpx_paragraphs(path, [{"text": "1234", "is_table_cell": True},
                                         {"text": "삼체 문명", "is_table_cell": True}])
@@ -53,7 +53,7 @@ class TitlePromotionTests(unittest.TestCase):
 
 class RuleReindexTests(unittest.TestCase):
     def test_old_rule_search_survives_reopen_and_reindex(self):
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             path = root / "plan.hwpx"
             write_hwpx_paragraphs(path, [{"text": "삼체 문명 계획", "is_table_cell": True},
@@ -79,7 +79,7 @@ class RuleReindexTests(unittest.TestCase):
 
     def test_whole_body_legacy_index_remains_searchable(self):
         import sqlite3
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "content.sqlite"
             conn = sqlite3.connect(db)
             conn.executescript("CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED,name UNINDEXED,body);"
@@ -104,7 +104,7 @@ class RuleReindexTests(unittest.TestCase):
         import threading
         from docfit_app.timemachine_service import TimemachineService
         from tests.test_timemachine_service import FakeAgent
-        with tempfile.TemporaryDirectory(dir="E:/docfit-tmp") as tmp:
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             docs = root / "docs"
             docs.mkdir()
