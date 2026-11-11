@@ -22,7 +22,7 @@ class LifecycleFixture(unittest.TestCase):
     def tearDown(self):
         self.manager.report(self.identifier, 'cancelled', {})
 
-    def lost_stop(self):
+    def lost_stop(self, preserve=False):
         self.manager.cancel(self.identifier)
         # 작업_실행 전체(COM 포함) 대신 실제 소스의 초기화 문장만 실행한다.
         source = Path(__file__).resolve().parents[1] / 'docfit_engine' / 'pipeline.py'
@@ -33,9 +33,12 @@ class LifecycleFixture(unittest.TestCase):
                   and isinstance(node.value.func.value, ast.Name)
                   and node.value.func.value.id == '중단_event'
                   and node.value.func.attr == 'clear']
-        self.assertEqual(len(clears), 1)
+        self.assertEqual(len(clears), 0)
         exec(compile(ast.Module(body=clears, type_ignores=[]), str(source), 'exec'),
              {'중단_event': self.stop})
+        if not preserve:
+            # 읽기 전용 관측 시험의 소실된 Event 입력은 계속 유지한다.
+            self.stop.clear()
 
     def cleanup_window(self):
         release = threading.Event()
@@ -60,9 +63,9 @@ class LifecycleFixture(unittest.TestCase):
 
 
 class LifecycleSymptomsTests(LifecycleFixture):
-    def test_current_stop_is_cleared_but_manager_reports_cancelled(self):
-        self.lost_stop()
-        self.assertFalse(self.stop.is_set())
+    def test_stop_survives_pipeline_initialization(self):
+        self.lost_stop(preserve=True)
+        self.assertTrue(self.stop.is_set())
         self.assertTrue(self.manager.status(self.identifier)['cancel_requested'])
         legacy_event(self.manager, self.identifier, ('finished', 1, 0))
         self.assertEqual(self.manager.status(self.identifier)['state'], 'cancelled')
@@ -75,6 +78,18 @@ class LifecycleSymptomsTests(LifecycleFixture):
         self.assertEqual(job_phase(self.gui, self.manager), 'finished')
         second = self.manager.begin('spacing')
         self.manager.report(second, 'done', {})
+
+    def test_new_job_clears_previous_stop_but_rejected_start_preserves_stop(self):
+        self.manager.cancel(self.identifier)
+        with self.assertRaises(ServiceError):
+            self.manager.begin('spacing', stop_event=self.stop)
+        self.assertTrue(self.stop.is_set())
+        legacy_event(self.manager, self.identifier, ('stopped',))
+        second = self.manager.begin('spacing', stop_event=self.stop)
+        self.assertFalse(self.stop.is_set())
+        self.manager.cancel(second)
+        self.assertTrue(self.stop.is_set())
+        self.manager.report(second, 'cancelled', {})
 
     def test_current_finished_worker_still_blocks_restart(self):
         self.cleanup_window()

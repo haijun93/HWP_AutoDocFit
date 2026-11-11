@@ -79,6 +79,8 @@ class JobManager:
                     j['kind'] not in LIGHT_KINDS and (j['state'] not in TERMINAL or
                     _alive(j.get('thread'))) for j in self._jobs.values()):
                 raise ServiceError('JOB_RUNNING', '문서 작업이 끝난 뒤 다시 실행해 주세요.')
+            if stop_event is not None:
+                stop_event.clear()
             identifier = str(uuid.uuid4())
             self._jobs[identifier] = dict(id=identifier, job_id=identifier, kind=kind,
                 params=deepcopy(params or {}), state='queued', progress={'file':0, 'total':0, 'stage':'', 'percent':0},

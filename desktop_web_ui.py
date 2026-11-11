@@ -1003,7 +1003,6 @@ class DesktopWebBridge:
         gui._flutter_format_review = {}
         gui.running = True
         gui.closing = False
-        stop_event.clear()
         gui.selected_mode.set('file_format')
         gui._결과_초기화(결과목록도_지우기=True)
         gui._안내키, gui._안내지남 = None, set()
@@ -1333,7 +1332,6 @@ class DesktopWebBridge:
                     manager.report(identifier, 'started', {})
                     gui.running = True
                     gui.closing = False
-                    중단_event.clear()
                     gui.selected_mode.set('file_format')
                     gui._결과_초기화(결과목록도_지우기=True)
                     gui._안내키, gui._안내지남 = None, set()
