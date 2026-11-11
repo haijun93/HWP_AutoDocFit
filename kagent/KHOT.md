@@ -10,7 +10,7 @@
 
 ## 검증 명령
 
-PowerShell에서 PATH 앞에 `$env:LOCALAPPDATA/DocFitTools/mingw64/bin`, `C:/Users/haiju/.cargo/bin`을 추가하고 TEMP/TMP를 `E:/docfit-tmp`로 지정한다. 빌드와 시험은 하나씩 실행한다.
+PowerShell에서 PATH 앞에 `$env:LOCALAPPDATA/DocFitTools/mingw64/bin`, `$env:USERPROFILE/.cargo/bin`을 추가하고 TEMP/TMP를 `E:/docfit-tmp`로 지정한다. 빌드와 시험은 하나씩 실행한다.
 
 ```powershell
 cd kagent

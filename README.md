@@ -1,12 +1,18 @@
-<h1 align="center">한글편집 후처리</h1>
+<!-- DOWNLOAD:START -->
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.58</h2>
 
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.57</h2>
+| 내려받는 곳 | 다운로드 안내 |
+|:---:|:---:|
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Setup.exe) · [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Portable.exe) |
+| GitLab | [GitLab 내려받기(압축 파일 목록)](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/tree/downloads) |
+| 기능시연용 예시문서 | [예시문서 내려받기](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/raw/downloads/%5B%EB%AA%A8%EC%9D%98%EB%8D%B0%EC%9D%B4%ED%84%B0%5D%EB%AC%B8%EC%84%9C%ED%8E%B8%EC%A7%91_%EC%9E%91%EC%97%85%EB%B0%A9%EC%8B%9D%28%ED%95%9C%EB%B2%88%EC%97%90%EC%A0%81%EC%9A%A9%29%20%EA%B8%B0%EB%8A%A5%EC%8B%9C%EC%97%B0%EC%9A%A9%EB%AC%B8%EC%84%9C.txt?inline=false) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) |
 
-| 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
-|:---:|:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.57/HWP_AutoDocFit_v2.2.57_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.57/HWP_AutoDocFit_v2.2.57_Portable.exe) |
+원하는 종류(설치형 또는 포터블)의 압축 파일(`.zip`, `.z01`, `.z02`)을 모두 같은 폴더에 받은 뒤 `.zip` 하나만 압축을 풀면 실행 파일이 나옵니다. 합치는 명령은 필요 없으며, 반디집·알집·7-Zip 같은 압축 프로그램을 써 주세요(서버 용량 제한으로 80MB 단위로 나눠 압축했습니다).
+
+실행 파일과 함께 **기능시연용 예시문서**도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
 **설치형**은 설치 후 시작 메뉴에서 실행하고, **포터블**은 설치 없이 파일을 바로 실행합니다. Windows 10·11용이며, 문서 편집 기능에는 한컴오피스 한/글이 필요합니다.
+<!-- DOWNLOAD:END -->
 
 <h1 align="center">한글 보고서 작업의 반복 업무를 줄이는 오프라인 행정업무 지원 도구</h1>
 
@@ -17,9 +23,11 @@
 <!-- DEMO:START -->
 ## 시연 영상
 
-<video src="docs/media/demo.mp4" controls muted width="100%"></video>
+![시연 영상](docs/media/%5B시연영상%5D_마포구청_공혁준.mp4)
 
-[![시연 영상](docs/media/demo-poster.png)](docs/media/demo.mp4)
+[![시연 영상](docs/media/demo-poster.png)](docs/media/%5B시연영상%5D_마포구청_공혁준.mp4)
+
+새로 만든 약 3분 영상입니다. 「한 번에 적용」으로 문서를 정리하는 과정부터 표 템플릿·표그림판, 다이어그램·마인드맵, 파일명 일괄 변경, 타임머신·위계검색, 파일 변환, 가상 폴더, 업무자료함, 몽땅클립보드까지 자막과 음성 해설로 차례로 보여 줍니다. 영상 마지막에는 문서 편집 자동화, 표·그림 편집, 파일 변환·정리, 검색·자료 관리, 주요 특징을 슬라이드와 음성 설명으로 정리했습니다.
 <!-- DEMO:END -->
 
 ## 개발 배경
@@ -66,6 +74,8 @@
 - 예시 보고서 기반 서식 분석 및 등록
 
 예시 보고서를 프로그램에 끌어 놓으면 제목표, 개요표, 장·절·소제목, 본문, 표 등 문서 구조와 서식을 분석하여 사용자 서식 프로파일로 등록할 수 있습니다.
+
+처음 사용할 때는 함께 제공되는 예시 보고서 `[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`로 「한 번에 적용」을 바로 체험해 볼 수 있습니다. v2.2.57부터 이 예시는 시연 영상에 쓰인 보고서와 같습니다.
 
 </details>
 
@@ -156,6 +166,8 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 위계검색은 문서의 목차와 구조를 분석하여 검색 결과의 우선순위를 정하는 기능입니다.
 
+타임머신의 타임라인에서 선택한 문서와 관련된 문서를 찾는 기능도 같은 이름인 「위계검색」으로 제공합니다.
+
 <details>
 <summary>세부 기능과 사용 방법</summary>
 
@@ -192,11 +204,19 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 여러 문서를 참고해 하나의 보고서를 작성할 때 원본 파일을 별도 폴더에 복사하지 않고, 원본에 대한 참조만 가상 폴더에 모아 관리할 수 있습니다.
 
+<p align="center"><img src="docs/media/cardnews/11-virtual-folder.png" alt="가상 폴더 화면: 핵심자료·기초자료·참고자료·임시저장소 영역" width="860"></p>
+
+
 이 기능을 사용하면 원본과 복사본이 뒤섞이는 문제를 줄일 수 있습니다. 필요한 경우 가상 폴더의 자료를 실제 물리 폴더로 전환할 수도 있습니다.
 
 ### 10. 오프라인 노트북
 
 Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기능입니다.
+
+프로그램에서는 「업무자료함」 메뉴로 제공합니다.
+
+<p align="center"><img src="docs/media/cardnews/12-work-library.png" alt="업무자료함 화면: 출처 목록, 본문검색, 노트" width="860"></p>
+
 
 업무 관련 법령, 매뉴얼, 과거 보고서, 참고자료 등을 주제별 정보 묶음으로 관리하고, 해당 자료 안에서만 검색하여 필요한 내용을 빠르게 찾을 수 있습니다.
 
@@ -206,7 +226,7 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 복사한 문장을 기록해 두었다가 필요할 때 다시 불러올 수 있습니다.
 
-<p align="center"><img src="docs/media/cardnews/10-mongttang-clipboard.png" alt="몽땅클립보드 복사 기록" width="860"></p>
+<p align="center"><img src="docs/media/cardnews/10-mongttang-clipboard.png" alt="몽땅클립보드 복사 기록" width="460"></p>
 
 `Ctrl+Shift+V`를 사용하면 이전에 복사한 여러 문장과 자료를 다시 선택하여 붙여 넣을 수 있어 반복적인 자료 수집과 문서 작성에 유용합니다.
 
@@ -251,6 +271,6 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.57**입니다.
+현재 공개 버전은 **v2.2.58**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.
