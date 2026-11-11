@@ -85,6 +85,7 @@ mod tests {
 
     #[test]
     fn test_root_is_the_private_data_directory_and_changes_instance_name() {
+        let _env = TestEnvironment::lock();
         let root = std::env::temp_dir().join(format!("kagent-root-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         unsafe { std::env::set_var("KAGENT_TEST_ROOT", &root); }
@@ -115,5 +116,30 @@ mod tests {
         assert_eq!(super::unbase64("Z==g"), None); // 패딩 위치
         assert_eq!(super::unbase64("Zg==Zg=="), None); // 중간 패딩
         assert_eq!(super::unbase64("Zm9v YmFy"), None);
+    }
+}
+
+// Environment variables are process-wide; restore them even when a test panics.
+#[cfg(test)]
+static TEST_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(test)]
+pub struct TestEnvironment {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+#[cfg(test)]
+impl TestEnvironment {
+    pub fn lock() -> Self {
+        let guard = TEST_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        Self { _guard: guard, saved: ["KAGENT_TEST_ROOT", "KAGENT_DATA"].into_iter()
+            .map(|key| (key, std::env::var_os(key))).collect() }
+    }
+}
+#[cfg(test)]
+impl Drop for TestEnvironment {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            unsafe { match value { Some(v) => std::env::set_var(key, v), None => std::env::remove_var(key) } }
+        }
     }
 }

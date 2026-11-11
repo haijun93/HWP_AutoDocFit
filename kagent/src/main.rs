@@ -401,8 +401,35 @@ pub fn refresh_recent() {
 }
 
 /// 상태 파일: 앱이 파이프 없이도 읽을 수 있게 변경 때만 쓴다.
+static STATUS_WRITE: Mutex<Option<(std::path::PathBuf, String)>> = Mutex::new(None);
+
+/// Serialize snapshot creation and replacement; cache only successfully published content.
+fn publish_status(path: &std::path::Path, snapshot: impl FnOnce() -> json::Value) -> std::io::Result<bool> {
+    let mut last = STATUS_WRITE.lock().unwrap();
+    let mut value = snapshot();
+    let content = json::to_string(&value);
+    if last.as_ref().is_some_and(|(p, text)| p == path && text == &content) {
+        return Ok(false);
+    }
+    if let json::Value::Obj(ref mut fields) = value {
+        fields.push(("updated".into(), now().into()));
+    }
+    let temp = path.with_extension("json.tmp");
+    let result = (|| {
+        std::fs::write(&temp, json::to_string(&value))?;
+        // std::fs::rename uses MoveFileExW(REPLACE_EXISTING) on Windows.
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&temp); }
+    result?;
+    *last = Some((path.to_owned(), content));
+    Ok(true)
+}
+
 pub fn write_status() {
     let a = app();
+    let path = std::path::Path::new(&a.dir).join("status.json");
+    let _ = publish_status(&path, || {
     let (items, total) = {
         let s = a.store.lock().unwrap();
         (s.count().unwrap_or(0), s.total_bytes().unwrap_or(0))
@@ -422,13 +449,9 @@ pub fn write_status() {
         ("screenshots", screenshots.as_str().into()),
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
-        ("updated", now().into()),
     ]);
-    let path = format!("{}\\status.json", a.dir);
-    let temp = format!("{path}.tmp");
-    if std::fs::write(&temp, json::to_string(&v)).is_ok() {
-        let _ = std::fs::rename(&temp, &path);
-    }
+    v
+    });
 }
 
 pub fn save_settings() {
@@ -1385,6 +1408,7 @@ mod lifecycle_tests {
     use super::*;
     #[test]
     fn lifecycle_installs_upgrades_and_never_touches_registry_in_test_root() {
+        let _env = util::TestEnvironment::lock();
         let root = std::env::temp_dir().join(format!("kagent-lifecycle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -1436,6 +1460,43 @@ mod lifecycle_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn concurrent_status_is_atomic_and_unchanged_content_is_skipped() {
+        let root = std::env::temp_dir().join(format!("kagent-status-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("status.json");
+        publish_status(&path, || json::Value::obj(vec![("text", "initial".into())])).unwrap();
+        let running = AtomicBool::new(true);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while running.load(Ordering::Relaxed) {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let parsed = json::parse(&text).expect("complete JSON during replacement");
+                    assert!(parsed.str("text").is_some());
+                    assert_eq!(json::to_string(&parsed), text);
+                }
+            });
+            let workers: Vec<_> = (0..8).map(|worker| {
+                let path = &path;
+                scope.spawn(move || {
+                    for i in 0..300 {
+                        let text = format!("{worker}:{i}:{}", "x".repeat((i % 100) * 13));
+                        assert!(publish_status(path, || json::Value::obj(vec![("text", text.into())])).unwrap());
+                    }
+                })
+            }).collect();
+            for worker in workers { worker.join().unwrap(); }
+            running.store(false, Ordering::Relaxed);
+        });
+        assert!(publish_status(&path, || json::Value::obj(vec![("text", "final".into())])).unwrap());
+        let before = std::fs::read(&path).unwrap();
+        assert!(!publish_status(&path, || json::Value::obj(vec![("text", "final".into())])).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn sample(id: i64) -> Summary {
         Summary { id, kind: "text".into(), preview: format!("항목 {id}"), pinned: false, used: 1.0, size: 1,
