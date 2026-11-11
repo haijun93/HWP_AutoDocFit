@@ -183,6 +183,18 @@ class DesktopWebBridge:
     def _cancel_pending_drop(self):
         self._ux().zero_click = {}
 
+    def _raise_if_closing(self):
+        """Tk 왕복 없이 처리하는 명령도 종료 중에는 _tk와 같은 오류로 거절한다."""
+        # 속성 읽기뿐이라 잠금이 필요 없다(시험용으로 __init__ 없이 만든 브리지에도 동작).
+        stopped = getattr(self, "tk_stopped", None)
+        if getattr(self, "_closed", False) or (stopped is not None and stopped.is_set()):
+            raise RuntimeError("앱이 종료 중입니다.")
+
+    def _cancel_pending_drop_direct(self):
+        # 스레드 안전: zero_click에는 항상 같은 값 {}만 넣는 속성 대입 한 번이라 Tk 큐 순서와 무관하다.
+        self._raise_if_closing()
+        self._cancel_pending_drop()
+
     def _update_document_hints(self):
         from docfit_core.doc_inspector import inspect_documents
         ux = self._ux()
@@ -202,12 +214,12 @@ class DesktopWebBridge:
         return {"pending": False}
 
     def cancel_zero_click(self):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def start_zero_click(self, token):
         # 이전 프런트엔드나 저장 설정에서 온 지연 실행 요청도 무시한다.
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def set_profile_drop_bounds(self, bounds):
@@ -3156,11 +3168,11 @@ class DesktopWebBridge:
 
 
 def _cancel_before_edit(method):
-    """설정·문서·서식 변경은 같은 Tk 큐에서 예약 토큰을 먼저 무효화한다."""
+    """설정·문서·서식 변경 전에 예약 토큰을 먼저 무효화한다(Tk 왕복 없이: 값이 항상 {}라 순서와 무관)."""
     from functools import wraps
     @wraps(method)
     def call(self, *args, **kwargs):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return method(self, *args, **kwargs)
     return call
 
