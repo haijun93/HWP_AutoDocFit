@@ -69,7 +69,7 @@ pub struct SearchIndex {
 }
 
 #[derive(Default)]
-struct SynonymCache { modified: Option<(SystemTime, u64)>, loaded: bool, groups: Vec<Vec<String>> }
+struct SynonymCache { modified: Option<(SystemTime, u64)>, loaded: bool, file: Option<PathBuf>, groups: std::sync::Arc<Vec<Vec<String>>> }
 
 #[derive(Clone)]
 struct KoBigram;
@@ -309,7 +309,10 @@ impl SearchIndex {
         Ok(out)
     }
 
-    fn load_synonyms(&self) -> Vec<Vec<String>> {
+    fn load_synonyms(&self) -> std::sync::Arc<Vec<Vec<String>>> {
+        let mut cache=self.synonyms.lock().unwrap_or_else(|e|e.into_inner());
+        if cache.loaded { if let Some(f)=cache.file.clone() { if let Some(m)=std::fs::metadata(&f).ok().and_then(|m|m.modified().ok().map(|t|(t,m.len()))) { if Some(m)==cache.modified { return cache.groups.clone(); } } } }
+        drop(cache);
         let executable_data=std::env::current_exe().ok().and_then(|p|p.parent().map(|d|d.join("data/synonyms.tsv")));
         let candidates=[executable_data.unwrap_or_default(),self.path.join("data/synonyms.tsv"), self.path.join("synonyms.tsv"), self.path.parent().unwrap_or(&self.path).join("data/synonyms.tsv")];
         let file=candidates.iter().find(|p|p.exists()).cloned().unwrap_or_else(||self.path.join("data/synonyms.tsv"));
@@ -319,7 +322,7 @@ impl SearchIndex {
             let contents=std::fs::read_to_string(&file).unwrap_or_else(|_|include_str!("../data/synonyms.tsv").to_string());
             let mut groups=contents.lines().filter_map(|line| {let row:Vec<String>=line.trim_start_matches('\u{feff}').split('\t').map(str::trim).filter(|x|!x.is_empty()&&!x.starts_with('#')).map(str::to_string).collect();(row.len()>1).then_some(row)}).collect::<Vec<_>>();
             if groups.is_empty() { groups=vec![vec!["동주민센터".into(),"행정복지센터".into()],vec!["TF".into(),"전담팀".into()],vec!["주민센터".into(),"행정센터".into()]]; }
-            cache.modified=modified; cache.loaded=true; cache.groups=groups;
+            cache.modified=modified; cache.loaded=true; cache.file=Some(file.clone()); cache.groups=std::sync::Arc::new(groups);
         }
         cache.groups.clone()
     }

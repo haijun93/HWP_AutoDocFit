@@ -100,7 +100,8 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
 
 fn level_rank(level:&str)->i64 { match level {"document_title"=>0,"chapter"=>1,"section"=>2,"topic"=>3,"square"=>4,"circle"=>5,"dash"=>6,"asterisk"=>7,_=>8} }
 fn extract_date(text:&str)->Option<String> {
-    let re=regex::Regex::new(r"(20\d{2})[-./년 ]\s*(\d{1,2})[-./월 ]\s*(\d{1,2})").ok()?;
+    static DATE_RE: std::sync::LazyLock<Option<regex::Regex>> = std::sync::LazyLock::new(|| regex::Regex::new(r"(20\d{2})[-./년 ]\s*(\d{1,2})[-./월 ]\s*(\d{1,2})").ok());
+    let re=DATE_RE.as_ref()?;
     for cap in re.captures_iter(text) { let (y,m,d)=(cap[1].parse::<u32>().ok()?,cap[2].parse::<u32>().ok()?,cap[3].parse::<u32>().ok()?); if let Some(date)=valid_date(y,m,d) { return Some(date); } }
     None
 }

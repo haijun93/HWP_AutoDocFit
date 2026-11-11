@@ -16,3 +16,7 @@ serde_json = "1"
 [[bin]]
 name = "hierarchy"
 path = "src/bin/hierarchy.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
