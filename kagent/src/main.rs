@@ -41,7 +41,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
 };
 use windows_sys::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIIF_WARNING, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -691,11 +691,42 @@ fn parse_hotkey(text: &str) -> Option<(u32, u32)> {
     (vk != 0 && mods != MOD_NOREPEAT).then_some((mods, vk))
 }
 
+/// 성공하면 실패 기억을 초기화하고, 같은 조합의 연속 실패는 한 번만 알린다.
+fn hotkey_failure_notice(previous: Option<&str>, text: &str, ok: bool) -> (Option<String>, bool) {
+    if ok { (None, false) } else { (Some(text.to_string()), previous != Some(text)) }
+}
+
+fn hotkey_failure_body(text: &str, valid: bool) -> String {
+    let reason = if valid { "다른 프로그램이 이미 쓰고 있습니다" } else { "쓸 수 없는 조합입니다" };
+    format!("{text}는 {reason}. 트레이 아이콘을 눌러 열 수 있고, 설정에서 다른 단축키로 바꿀 수 있습니다.")
+}
+
+fn notify_hotkey_failure(hwnd: HWND, text: &str, valid: bool) {
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = 1;
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_WARNING;
+        for (dst, unit) in nid.szInfoTitle.iter_mut().take(63).zip("몽땅클립보드 단축키를 쓸 수 없습니다".encode_utf16()) { *dst = unit; }
+        for (dst, unit) in nid.szInfo.iter_mut().take(255).zip(hotkey_failure_body(text, valid).encode_utf16()) { *dst = unit; }
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
 fn register_hotkey(hwnd: HWND) {
     unsafe { UnregisterHotKey(hwnd, HOTKEY_ID) };
     let text = app().settings.lock().unwrap().hotkey.clone();
-    let ok = parse_hotkey(&text).map(|(m, vk)| unsafe { RegisterHotKey(hwnd, HOTKEY_ID, m, vk) } != 0).unwrap_or(false);
+    let parsed = parse_hotkey(&text);
+    let ok = parsed.map(|(m, vk)| unsafe { RegisterHotKey(hwnd, HOTKEY_ID, m, vk) } != 0).unwrap_or(false);
     app().hotkey_ok.store(ok, Ordering::Relaxed);
+    static LAST_FAILURE: Mutex<Option<String>> = Mutex::new(None);
+    let mut previous = LAST_FAILURE.lock().unwrap();
+    let (next, notify) = hotkey_failure_notice(previous.as_deref(), &text, ok);
+    *previous = next;
+    drop(previous);
+    if notify { notify_hotkey_failure(hwnd, &text, parsed.is_some()); }
 }
 
 fn set_listening(hwnd: HWND, on: bool) {
@@ -1087,10 +1118,11 @@ fn main() {
             save_settings();
             popup::show();
         }
+        tray(hwnd, NIM_ADD);
         register_hotkey(hwnd);
         let paused = app().settings.lock().unwrap().paused;
         set_listening(hwnd, !paused);
-        tray(hwnd, NIM_ADD);
+        tray(hwnd, NIM_MODIFY);
         restart_watchers();
         write_status();
         pipe::start();
