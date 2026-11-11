@@ -51,6 +51,10 @@ def ancestors(level_ranks: Sequence[int], position: int) -> list[int]:
 def shorten(text: str, limit: int = MAX_HEADING_CHARS) -> str:
     """제목 한 줄을 화면용으로 줄인다(줄바꿈·연속 공백 정리)."""
     cleaned = " ".join(str(text or "").split())
+    # Markdown 제목 표시(#, ##…)는 경로에 보일 필요가 없다.
+    stripped = cleaned.lstrip("#")
+    if stripped != cleaned and stripped.startswith(" "):
+        cleaned = stripped.strip()
     return cleaned if len(cleaned) <= limit else cleaned[: limit - 1].rstrip() + "…"
 
 

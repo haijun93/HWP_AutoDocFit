@@ -55,6 +55,11 @@ class HierarchyPathTest(unittest.TestCase):
         self.assertTrue(trail[0]["text"].endswith("…"))
         self.assertEqual(1, hp.context_term_hits(hp.breadcrumb(DOC, 4), ["분리발주", "예산"]))
 
+    def test_markdown_heading_marks_are_removed_from_path(self):
+        doc = rows((1, "chapter", "## 1장 시설"), (8, "body", "본문"), (1, "chapter", "#해시태그"))
+        self.assertEqual(["1장 시설"], [s["text"] for s in hp.breadcrumb(doc, 1)])
+        self.assertEqual("#해시태그", hp.shorten("#해시태그"))
+
     def test_search_results_carry_breadcrumb(self):
         from docfit_core.timemachine.content_search import ContentSearchIndex, LEVEL_RANKS
         self.assertEqual(hp.BODY_RANK, LEVEL_RANKS["body"])
