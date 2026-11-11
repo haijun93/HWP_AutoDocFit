@@ -43,7 +43,7 @@ class ParentSectionsTests(unittest.TestCase):
                  paragraph_indexes=[1, 2], count=2)])
 
     def test_keyword_sections_all_matches_selected_only_and_existing_fields(self):
-        with tempfile.TemporaryDirectory(dir='E:/docfit-tmp') as folder:
+        with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             index = ContentSearchIndex(root / 'index.sqlite')
             try:
