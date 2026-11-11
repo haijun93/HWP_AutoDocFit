@@ -1191,7 +1191,9 @@ class DesktopWebBridge:
 
     def cancel_job(self, job_id):
         state = self._jobs().cancel(job_id)
-        if self._tk(lambda: getattr(self.gui, '_job_id', None)) == job_id:
+        # 스레드 안전: _job_id는 속성 읽기 한 번이고, 실제 중단은 Tk 스레드의 작업중단이 running을 다시 본다.
+        self._raise_if_closing()
+        if getattr(self.gui, '_job_id', None) == job_id:
             self._tk(self.gui.작업중단)
         return state
 
@@ -1225,7 +1227,9 @@ class DesktopWebBridge:
 
         if mode == "file_format":
             # 화면은 준비되지 않은 형식의 시작 버튼을 끄지만, 늦게 온 요청도 여기서 막는다.
-            files = self._tk(lambda: list(self.gui.files))
+            # 스레드 안전: 리스트 한 번 복사(원자적)이고, 시작은 아래 Tk 호출이 running을 다시 확인한다.
+            self._raise_if_closing()
+            files = list(self.gui.files)
             target = getattr(self, '_single_conversion_target', self.conversion_target) if single_file else self.conversion_target
             targets = {item["format"]: item for item in self._conversion_targets(files)}
             chosen = targets.get(target)
@@ -1371,7 +1375,9 @@ class DesktopWebBridge:
         return snapshot
 
     def get_settings(self):
-        result = self._tk(lambda: response(self._settings_snapshot))
+        # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+        self._raise_if_closing()
+        result = response(self._settings_snapshot)
         if isinstance(result, dict) and result.get('ok') is True and isinstance(result.get('data'), dict):
             result['developer_mode'] = result['data'].get('values', {}).get('developer_mode', False)
         return result
@@ -1485,7 +1491,9 @@ class DesktopWebBridge:
         ) if key in pending}
 
     def get_pending_dialog(self):
-        return self._tk(self._pending_dialog)
+        # 스레드 안전: _flutter_dialog는 다 만든 사전을 속성에 넣고, 여기서는 참조를 한 번 잡아 고정 키만 복사한다.
+        self._raise_if_closing()
+        return self._pending_dialog()
 
     def enable_close_guard(self):
         with self._close_lock:
@@ -1976,7 +1984,9 @@ class DesktopWebBridge:
             return status(False, "지원하지 않는 명령입니다.")
         if running:
             return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
-        if self._tk(lambda: self.gui.running):
+        # 스레드 안전: running은 속성 읽기 한 번이다(table_sketch의 같은 검사도 Tk 밖에서 읽는다).
+        self._raise_if_closing()
+        if self.gui.running:
             return status(False, "다른 문서 작업이 끝난 뒤 시작해 주세요.")
         roots, passwords = payload.get("roots"), payload.get("passwords") or []
         if (not isinstance(roots, list) or not 1 <= len(roots) <= 20 or not isinstance(passwords, list)
