@@ -25,6 +25,8 @@ mod notebook;
 mod nb_transform;
 #[path = "../src/content.rs"]
 mod content;
+#[path = "../src/reindex.rs"]
+mod reindex;
 
 static SEARCH_INDEX: std::sync::OnceLock<Result<search::SearchIndex, String>> = std::sync::OnceLock::new();
 fn search_index() -> Result<&'static search::SearchIndex, String> {

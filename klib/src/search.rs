@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
@@ -18,6 +19,15 @@ use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Score, Tantivy
 const TOKENIZER: &str = "ko_bigram";
 /// writer 힙 예산. writer는 처음 쓸 때 한 번만 만들고 계속 재사용한다.
 const WRITER_HEAP: usize = 50_000_000;
+/// 색인 스키마 버전. 스키마나 색인에 넣는 내용이 바뀌면 올린다. 색인 폴더의 표시와 다르면 열 때 옛 색인을 버리고 다시 만든다.
+/// 1(표시 없음): 본문 필드를 모두 저장, `body_ko`·`body_bi` 중복. 2: 저장은 `body`만, `body_ko` 제거.
+pub const SCHEMA_VERSION: u32 = 2;
+/// 색인이 온전히 만들어진 스키마 버전(다시 만들 때는 다 끝난 뒤에만 쓴다).
+const VERSION_FILE: &str = "klib_schema_version";
+/// 다시 만드는 중이라는 표시. 남아 있으면 중간에 죽은 것이므로 다음에 열 때 처음부터 다시 한다.
+const PENDING_FILE: &str = "klib_rebuild_pending";
+/// 다시 만드는 프로세스가 쥐는 잠금 파일(공유 없이 열어 둔다. 프로세스가 죽으면 저절로 풀린다).
+const LOCK_FILE: &str = "klib_rebuild.lock";
 
 #[derive(Clone)]
 pub struct Paragraph {
@@ -56,7 +66,7 @@ pub struct SearchHit {
 #[derive(Clone)]
 struct Fields {
     doc_id: Field, path: Field, box_ids: Field, name: Field, name_cho: Field, title: Field,
-    level: Field, body_ko: Field, body_bi: Field, body_jamo: Field,
+    level: Field, body_bi: Field, body_jamo: Field,
     body_cho: Field, ext: Field, mtime: Field, page: Field, sheet: Field,
     row: Field, body: Field, notebook_id: Field, source_id: Field,
     paragraph_ordinal: Field, location: Field,
@@ -70,6 +80,12 @@ pub struct SearchIndex {
     synonyms: Mutex<SynonymCache>,
     /// 하나뿐인 writer와 묶음 상태. 잠금 순서: (DB 잠금 →) writer. 이 잠금을 쥔 채 DB·synonyms 잠금을 잡지 않는다.
     writer: Mutex<WriterState>,
+    /// 옛 스키마 색인을 버려서 DB의 원본 목록으로 다시 채워야 하는 상태(`reindex::rebuild`가 끝내면 꺼진다).
+    rebuild: AtomicBool,
+    rebuild_lock: Mutex<Option<std::fs::File>>,
+    /// 시험 전용: 옛(버전 1) 스키마로 연 색인의 `body_ko` 필드.
+    #[cfg(test)]
+    legacy_body_ko: Option<Field>,
 }
 
 #[derive(Default)]
@@ -144,35 +160,86 @@ impl TokenStream for BigramStream<'_> {
     fn token_mut(&mut self)->&mut Token { &mut self.token }
 }
 
-fn text_options(tokenizer: &str) -> TextOptions {
+/// 검색용 글 필드. 결과에 보여 주려고 문서에서 되읽는 필드(`name`·`title`)만 저장한다.
+fn text_options(tokenizer: &str, stored: bool) -> TextOptions {
     let indexing = TextFieldIndexing::default().set_index_option(IndexRecordOption::WithFreqsAndPositions)
         .set_tokenizer(tokenizer);
-    TextOptions::default().set_indexing_options(indexing).set_stored()
+    let options = TextOptions::default().set_indexing_options(indexing);
+    if stored { options.set_stored() } else { options }
 }
-fn schema() -> (Schema, Fields) {
+fn schema() -> Schema {
     let mut b = Schema::builder();
-    let doc_id=b.add_text_field("doc_id", tantivy::schema::STRING | tantivy::schema::STORED);
-    let path=b.add_text_field("path", tantivy::schema::STRING | tantivy::schema::STORED);
-    let box_ids=b.add_text_field("box_ids", tantivy::schema::STRING | tantivy::schema::STORED);
-    let name=b.add_text_field("name", text_options(TOKENIZER));
-    let name_cho=b.add_text_field("name_cho", text_options("default"));
-    let title=b.add_text_field("title", text_options(TOKENIZER));
-    let level=b.add_u64_field("level", tantivy::schema::INDEXED | tantivy::schema::STORED);
-    let body_ko=b.add_text_field("body_ko", text_options(TOKENIZER));
-    let body_bi=b.add_text_field("body_bi", text_options(TOKENIZER));
-    let body_jamo=b.add_text_field("body_jamo", text_options("default"));
-    let body_cho=b.add_text_field("body_cho", text_options("default"));
-    let ext=b.add_text_field("ext", tantivy::schema::STRING | tantivy::schema::STORED);
-    let mtime=b.add_i64_field("mtime", tantivy::schema::INDEXED | tantivy::schema::STORED);
-    let page=b.add_u64_field("page", tantivy::schema::STORED);
-    let sheet=b.add_text_field("sheet", tantivy::schema::STRING | tantivy::schema::STORED);
-    let row=b.add_u64_field("row", tantivy::schema::STORED);
-    let body=b.add_text_field("body", tantivy::schema::STORED);
-    let notebook_id=b.add_u64_field("notebook_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
-    let source_id=b.add_u64_field("source_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
-    let paragraph_ordinal=b.add_u64_field("paragraph_ordinal",tantivy::schema::INDEXED|tantivy::schema::STORED);
-    let location=b.add_text_field("location",tantivy::schema::STRING|tantivy::schema::STORED);
-    (b.build(), Fields {doc_id,path,box_ids,name,name_cho,title,level,body_ko,body_bi,body_jamo,body_cho,ext,mtime,page,sheet,row,body,notebook_id,source_id,paragraph_ordinal,location})
+    b.add_text_field("doc_id", tantivy::schema::STRING);
+    b.add_text_field("path", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_text_field("box_ids", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_text_field("name", text_options(TOKENIZER, true));
+    b.add_text_field("name_cho", text_options("default", false));
+    b.add_text_field("title", text_options(TOKENIZER, true));
+    b.add_u64_field("level", tantivy::schema::INDEXED | tantivy::schema::STORED);
+    // 본문 검색 필드는 색인만 한다. 본문 글은 `body` 한 곳에만 저장한다.
+    // (`body_ko`는 형태소 분석을 넣기 전까지 `body_bi`와 같은 색인이라 없앴다. 질의의 가중치는 `body_bi`에 합쳤다.)
+    b.add_text_field("body_bi", text_options(TOKENIZER, false));
+    b.add_text_field("body_jamo", text_options("default", false));
+    b.add_text_field("body_cho", text_options("default", false));
+    b.add_text_field("ext", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_i64_field("mtime", tantivy::schema::INDEXED | tantivy::schema::STORED);
+    b.add_u64_field("page", tantivy::schema::STORED);
+    b.add_text_field("sheet", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_u64_field("row", tantivy::schema::STORED);
+    b.add_text_field("body", tantivy::schema::STORED);
+    b.add_u64_field("notebook_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_u64_field("source_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_u64_field("paragraph_ordinal",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_text_field("location",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.build()
+}
+/// 필드를 이름으로 찾는다(스키마에 없는 이름이면 오류).
+fn fields_of(schema: &Schema) -> tantivy::Result<Fields> {
+    let f = |name: &str| schema.get_field(name);
+    Ok(Fields {doc_id:f("doc_id")?,path:f("path")?,box_ids:f("box_ids")?,name:f("name")?,name_cho:f("name_cho")?,title:f("title")?,level:f("level")?,body_bi:f("body_bi")?,body_jamo:f("body_jamo")?,body_cho:f("body_cho")?,ext:f("ext")?,mtime:f("mtime")?,page:f("page")?,sheet:f("sheet")?,row:f("row")?,body:f("body")?,notebook_id:f("notebook_id")?,source_id:f("source_id")?,paragraph_ordinal:f("paragraph_ordinal")?,location:f("location")?})
+}
+fn io_error(e: std::io::Error) -> tantivy::TantivyError { tantivy::TantivyError::InternalError(e.to_string()) }
+/// 다시 만들기 잠금을 잡는다. 다른 프로세스가 쥐고 있으면 None.
+fn rebuild_lock(dir: &Path) -> Option<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new().write(true).create(true).truncate(false).share_mode(0).open(dir.join(LOCK_FILE)).ok()
+}
+/// 색인 폴더 바로 아래의 색인 파일을 지운다. 사용자 동의어 파일과 하위 폴더(data)는 남긴다.
+fn wipe_index_files(dir: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if !entry.file_type()?.is_file() || [PENDING_FILE, LOCK_FILE, "synonyms.tsv"].iter().any(|keep| name.to_str() == Some(keep)) { continue; }
+        std::fs::remove_file(entry.path())?;
+    }
+    Ok(())
+}
+/// 시험 전용: 버전 1(옛) 스키마. 자동 재색인·결과 동일성 시험에서 옛 색인을 만드는 데 쓴다.
+#[cfg(test)]
+fn legacy_schema() -> Schema {
+    let mut b = Schema::builder();
+    b.add_text_field("doc_id", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_text_field("path", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_text_field("box_ids", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_text_field("name", text_options(TOKENIZER, true));
+    b.add_text_field("name_cho", text_options("default", true));
+    b.add_text_field("title", text_options(TOKENIZER, true));
+    b.add_u64_field("level", tantivy::schema::INDEXED | tantivy::schema::STORED);
+    b.add_text_field("body_ko", text_options(TOKENIZER, true));
+    b.add_text_field("body_bi", text_options(TOKENIZER, true));
+    b.add_text_field("body_jamo", text_options("default", true));
+    b.add_text_field("body_cho", text_options("default", true));
+    b.add_text_field("ext", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_i64_field("mtime", tantivy::schema::INDEXED | tantivy::schema::STORED);
+    b.add_u64_field("page", tantivy::schema::STORED);
+    b.add_text_field("sheet", tantivy::schema::STRING | tantivy::schema::STORED);
+    b.add_u64_field("row", tantivy::schema::STORED);
+    b.add_text_field("body", tantivy::schema::STORED);
+    b.add_u64_field("notebook_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_u64_field("source_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_u64_field("paragraph_ordinal",tantivy::schema::INDEXED|tantivy::schema::STORED);
+    b.add_text_field("location",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.build()
 }
 fn id(path: &str) -> String { format!("{:x}", md5::compute(path.to_lowercase().as_bytes())) }
 
@@ -227,7 +294,7 @@ impl SearchIndex {
             let doc=doc!(self.fields.doc_id=>format!("{notebook_id}:{}:{}",source.id,p.ordinal),
                 self.fields.path=>path,self.fields.box_ids=>format!("notebook:{notebook_id}"),
                 self.fields.name=>source.display_name.clone(),self.fields.title=>source.display_name.clone(),
-                self.fields.level=>p.level.max(0) as u64,self.fields.body_ko=>p.body.clone(),
+                self.fields.level=>p.level.max(0) as u64,
                 self.fields.body_bi=>p.body.clone(),self.fields.body_jamo=>jamo_text(&p.body),
                 self.fields.body_cho=>cho_text(&p.body),self.fields.ext=>"nb".to_string(),
                 self.fields.mtime=>source.original_mtime,self.fields.body=>p.body.clone(),
@@ -245,7 +312,9 @@ impl SearchIndex {
     }
     pub fn search_notebook(&self,notebook_id:i64,query:&str,source_ids:Option<&[i64]>,limit:usize)->tantivy::Result<Vec<crate::notebook::Hit>> {
         if query.trim().is_empty(){return Ok(Vec::new())}
-        let parser=QueryParser::for_index(&self.index,vec![self.fields.name,self.fields.body_ko,self.fields.body_bi]);
+        let mut parser=QueryParser::for_index(&self.index,vec![self.fields.name,self.fields.body_bi]);
+        // 예전에는 같은 색인인 body_ko·body_bi를 둘 다 물어 점수가 두 배였다. 점수를 그대로 두려고 가중치로 합친다.
+        parser.set_field_boost(self.fields.body_bi,2.0);
         let parsed=parser.parse_query(query).unwrap_or_else(|_|Box::new(tantivy::query::EmptyQuery));
         let mut clauses:Vec<(Occur,Box<dyn Query>)>=vec![
             (Occur::Must,Box::new(tantivy::query::TermQuery::new(tantivy::Term::from_field_u64(self.fields.notebook_id,notebook_id as u64),IndexRecordOption::Basic))),
@@ -265,14 +334,58 @@ impl SearchIndex {
             score,body:d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("").into()});}
         Ok(hits)
     }
+    /// 색인을 연다. 색인 폴더의 스키마 버전 표시가 지금과 다르거나(옛 색인은 표시가 없다) 다시 만들다 만 표시가 있으면
+    /// 옛 색인 파일을 버리고 빈 색인으로 시작하며 `needs_rebuild()`가 켜진다. 채우는 일은 `reindex::rebuild`가 한다.
     pub fn open_or_create(path: impl AsRef<Path>) -> tantivy::Result<Self> {
         let path=path.as_ref().to_path_buf();
-        std::fs::create_dir_all(&path).map_err(|e| tantivy::TantivyError::InternalError(e.to_string()))?;
-        let (schema, fields)=schema();
-        let index=if path.join("meta.json").exists() { Index::open_in_dir(&path)? } else { Index::create_in_dir(&path, schema)? };
+        std::fs::create_dir_all(&path).map_err(io_error)?;
+        let schema=schema();
+        let current=std::fs::read_to_string(path.join(VERSION_FILE)).ok().and_then(|v|v.trim().parse::<u32>().ok())==Some(SCHEMA_VERSION);
+        let mut lock=None;
+        if path.join(PENDING_FILE).exists() || (path.join("meta.json").exists() && !current) {
+            // 다른 프로세스가 다시 만드는 중이면 그 색인을 건드리지 않는다.
+            lock=Some(rebuild_lock(&path).ok_or_else(|| tantivy::TantivyError::InternalError("다른 프로세스가 본문 색인을 다시 만드는 중입니다.".into()))?);
+            // 표시를 먼저 남기고 지운다. 지우다 죽어도 다음에 열 때 다시 지운다.
+            std::fs::write(path.join(PENDING_FILE), SCHEMA_VERSION.to_string()).map_err(io_error)?;
+            let _=std::fs::remove_file(path.join(VERSION_FILE));
+            wipe_index_files(&path).map_err(io_error)?;
+        }
+        let rebuild=lock.is_some();
+        let index=if path.join("meta.json").exists() { Index::open_in_dir(&path)? } else {
+            let index=Index::create_in_dir(&path, schema)?;
+            // 새로 만든 빈 색인은 이미 지금 스키마다. 다시 만드는 중이면 다 채운 뒤(finish_rebuild)에 쓴다.
+            if !rebuild { std::fs::write(path.join(VERSION_FILE), SCHEMA_VERSION.to_string()).map_err(io_error)?; }
+            index
+        };
+        let fields=fields_of(&index.schema())?;
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default())})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(rebuild), rebuild_lock: Mutex::new(lock), #[cfg(test)] legacy_body_ko: None})
+    }
+    /// 시험 전용: 버전 1(옛) 스키마 색인을 버전 표시 없이 만든다(옛 프로그램이 남긴 색인 폴더와 같다).
+    #[cfg(test)]
+    pub(crate) fn open_legacy_for_test(path: impl AsRef<Path>) -> tantivy::Result<Self> {
+        let path=path.as_ref().to_path_buf();
+        std::fs::create_dir_all(&path).map_err(io_error)?;
+        let index=Index::create_in_dir(&path, legacy_schema())?;
+        let fields=fields_of(&index.schema())?;
+        let legacy_body_ko=Some(index.schema().get_field("body_ko")?);
+        index.tokenizers().register(TOKENIZER, KoBigram);
+        let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(false), rebuild_lock: Mutex::new(None), legacy_body_ko})
+    }
+    /// 옛 색인을 버려서 원본으로 다시 채워야 하는지.
+    pub fn needs_rebuild(&self) -> bool { self.rebuild.load(Ordering::SeqCst) }
+    /// 다시 채우기가 끝났음을 기록한다: 남은 변경을 커밋한 뒤에 버전 표시를 쓰고 '다시 만드는 중' 표시와 잠금을 지운다.
+    pub fn finish_rebuild(&self) -> tantivy::Result<()> {
+        self.flush()?;
+        if !self.needs_rebuild() { return Ok(()); }
+        std::fs::write(self.path.join(VERSION_FILE), SCHEMA_VERSION.to_string()).map_err(io_error)?;
+        let _=std::fs::remove_file(self.path.join(PENDING_FILE));
+        *self.rebuild_lock.lock().unwrap_or_else(|e|e.into_inner())=None;
+        let _=std::fs::remove_file(self.path.join(LOCK_FILE));
+        self.rebuild.store(false,Ordering::SeqCst);
+        Ok(())
     }
     pub fn index_path(&self) -> &Path { &self.path }
     /// 검색에 쓰이는 세그먼트 수(측정·점검용).
@@ -282,8 +395,10 @@ impl SearchIndex {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
         for part in p.body.split_inclusive(['\n','\r']) {
             let text=part.trim(); if text.is_empty() { continue; }
-            let d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>p.title.clone(), self.fields.level=>p.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_ko=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string());
+            let d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>p.title.clone(), self.fields.level=>p.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string());
             let mut d=d;
+            #[cfg(test)]
+            if let Some(body_ko)=self.legacy_body_ko { d.add_text(body_ko,text); }
             for box_id in &p.box_ids { d.add_text(self.fields.box_ids, box_id); }
             d.add_text(self.fields.name_cho,cho_text(&p.name));
             if let Some(page)=p.page { d.add_u64(self.fields.page,page); }
@@ -313,7 +428,8 @@ impl SearchIndex {
     }
     fn search_inner(&self, query: &str, options: SearchOptions, box_id: Option<i64>) -> tantivy::Result<Vec<SearchHit>> {
         let parsed=parse_directives(query);
-        let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_ko,1.0),(self.fields.body_bi,0.4)];
+        // 본문 가중치 1.4 = 예전 body_ko 1.0 + body_bi 0.4(두 필드는 같은 색인이었으므로 점수·순서가 그대로다).
+        let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_bi,1.4)];
         let mut parser=QueryParser::for_index(&self.index, fields.iter().map(|(f,_)|*f).collect());
         for (f,w) in fields { parser.set_field_boost(f,w); }
         let groups=self.load_synonyms();
@@ -425,7 +541,11 @@ impl SearchIndex {
     #[cfg(test)]
     fn reference_search(&self, query: &str, options: SearchOptions) -> tantivy::Result<Vec<SearchHit>> {
         let parsed=parse_directives(query);
-        let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_ko,1.0),(self.fields.body_bi,0.4)];
+        // 옛 색인에서는 옛 질의(body_ko 1.0 + body_bi 0.4) 그대로 묻는다.
+        let fields=match self.legacy_body_ko {
+            Some(body_ko)=>vec![(self.fields.name,3.0),(self.fields.title,2.5),(body_ko,1.0),(self.fields.body_bi,0.4)],
+            None=>vec![(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_bi,1.4)],
+        };
         let mut parser=QueryParser::for_index(&self.index, fields.iter().map(|(f,_)|*f).collect());
         for (f,w) in fields { parser.set_field_boost(f,w); }
         let groups=self.load_synonyms();
@@ -629,8 +749,13 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     }
  }
  fn temp()->PathBuf { use std::sync::atomic::{AtomicU64,Ordering}; static N:AtomicU64=AtomicU64::new(0); let p=std::env::temp_dir().join(format!("klib-search-{}-{}",std::process::id(),N.fetch_add(1,Ordering::Relaxed))); std::fs::create_dir_all(&p).unwrap();p }
+ fn dir_size(p:&Path)->u64 { std::fs::read_dir(p).map(|d|d.filter_map(Result::ok).map(|e|{let m=e.metadata().unwrap(); if m.is_dir(){dir_size(&e.path())}else{m.len()}}).sum()).unwrap_or(0) }
  fn paragraph(path:&str,body:&str)->Paragraph {Paragraph{path:path.into(),box_ids:vec!["box-a".into()],name:"\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}".into(),title:"\u{ac80}\u{c0c9} \u{c81c}\u{baa9}".into(),level:2,body:body.into(),ext:"txt".into(),mtime:100,page:Some(1),sheet:None,row:None}}
- #[test] fn schema_has_reserved_fields(){let(s,_)=schema();for n in ["doc_id","path","box_ids","name","name_cho","title","level","body_ko","body_bi","body_jamo","body_cho","ext","mtime","page","sheet","row","body"]{assert!(s.get_field(n).is_ok());}}
+ #[test] fn schema_has_reserved_fields(){let s=schema();for n in ["doc_id","path","box_ids","name","name_cho","title","level","body_bi","body_jamo","body_cho","ext","mtime","page","sheet","row","body"]{assert!(s.get_field(n).is_ok());}
+    // 저장은 결과에 되읽는 필드만. 본문 글은 body 한 곳에만 저장하고, body_bi와 같던 body_ko는 없다.
+    assert!(s.get_field("body_ko").is_err());
+    for n in ["body_bi","body_jamo","body_cho","name_cho","doc_id"]{assert!(!s.get_field_entry(s.get_field(n).unwrap()).is_stored(),"{n}");}
+    for n in ["body","name","title"]{assert!(s.get_field_entry(s.get_field(n).unwrap()).is_stored(),"{n}");}}
  #[test] fn bigrams_preserve_korean(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{d55c}\u{ad6d}","\u{ad6d}\u{c5b4}","\u{bb38}\u{c11c}"]);}
  #[test] fn bigram_single_char(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}");assert!(s.advance());assert_eq!(s.token().text,"\u{ac00}");}
  #[test] fn bigram_splits_punctuation(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}\u{b098},\u{b2e4}\u{b77c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{ac00}\u{b098}","\u{b2e4}\u{b77c}"]);}
@@ -706,7 +831,7 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     let t=std::time::Instant::now();
     for _ in 0..100 { std::hint::black_box(ix.search("서울 예산",SearchOptions{limit:20}).unwrap()); }
     println!("BENCH search repeats=100 ms={}",t.elapsed().as_millis());
-    drop(ix); let _=std::fs::remove_dir_all(dir);
+    drop(ix); println!("BENCH index_bytes n={n} bytes={}",dir_size(&dir)); let _=std::fs::remove_dir_all(dir);
  }
  #[test] fn single_writes_are_visible_immediately_with_reused_writer(){
     let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap(); let count=|q:&str|ix.search(q,SearchOptions{limit:50}).unwrap().len();
@@ -743,5 +868,61 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     b.finish().unwrap(); assert_eq!(ix.search("서울",SearchOptions{limit:50}).unwrap().len(),2);
     let _=std::fs::remove_dir_all(dir);
  }
- #[test] fn chosung_and_fuzzy_helpers(){assert_eq!(cho_text("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}"),"\u{314E}\u{3148}\u{3142}\u{3148}\u{3145}\u{314C}");assert!(is_chosung_query("\u{314E}\u{3148}\u{3142}\u{3148}"));assert!(fuzzy_query("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}",schema().1.body_jamo).is_some());}
+ #[test] fn fresh_index_is_current_and_reopens_without_rebuild(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    assert!(!ix.needs_rebuild()); assert_eq!(std::fs::read_to_string(dir.join(VERSION_FILE)).unwrap(),SCHEMA_VERSION.to_string());
+    ix.add_or_update(&paragraph("f.txt","서울 예산")).unwrap(); drop(ix);
+    let again=SearchIndex::open_or_create(&dir).unwrap(); assert!(!again.needs_rebuild());
+    assert_eq!(again.search("서울",SearchOptions{limit:5}).unwrap().len(),1);
+    drop(again); let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn old_schema_index_is_discarded_and_marked_only_after_rebuild(){
+    let dir=temp();
+    { let old=SearchIndex::open_legacy_for_test(&dir).unwrap(); old.add_or_update(&paragraph("old.txt","서울 예산")).unwrap(); assert_eq!(old.reference_search("서울",SearchOptions{limit:5}).unwrap().len(),1); }
+    std::fs::write(dir.join("synonyms.tsv"),"가\t나\n").unwrap();
+    assert!(!dir.join(VERSION_FILE).exists());
+    let ix=SearchIndex::open_or_create(&dir).unwrap();
+    assert!(ix.needs_rebuild()); assert!(dir.join(PENDING_FILE).exists()); assert!(!dir.join(VERSION_FILE).exists());
+    assert!(dir.join("synonyms.tsv").exists(),"사용자 동의어 파일은 남긴다");
+    assert!(ix.index.schema().get_field("body_ko").is_err());
+    assert!(ix.search("서울",SearchOptions{limit:5}).unwrap().is_empty());
+    // 다시 만드는 동안 다른 곳에서 열면 건드리지 않고 오류로 알린다.
+    assert!(SearchIndex::open_or_create(&dir).is_err());
+    // 채우다 죽은 경우: 버전 표시가 없으므로 다음에 열 때 처음부터 다시 한다.
+    ix.add_or_update(&paragraph("half.txt","서울 예산")).unwrap(); drop(ix);
+    let ix=SearchIndex::open_or_create(&dir).unwrap();
+    assert!(ix.needs_rebuild()); assert!(ix.search("서울",SearchOptions{limit:5}).unwrap().is_empty());
+    ix.add_or_update(&paragraph("new.txt","서울 예산")).unwrap(); ix.finish_rebuild().unwrap();
+    assert!(!ix.needs_rebuild()); assert!(!dir.join(PENDING_FILE).exists());
+    assert_eq!(std::fs::read_to_string(dir.join(VERSION_FILE)).unwrap(),SCHEMA_VERSION.to_string()); drop(ix);
+    let ix=SearchIndex::open_or_create(&dir).unwrap(); assert!(!ix.needs_rebuild());
+    assert_eq!(ix.search("서울",SearchOptions{limit:5}).unwrap().iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["new.txt"]);
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
+ /// 스키마 변경 전후 비교: 같은 자료를 옛 스키마 색인(옛 질의)과 새 색인에 넣고 같은 질의의 결과 문서·순서·발췌가 같은지 본다.
+ /// 위계 수준은 모두 같게(본문) 둔다. 후보 자르기(limit×20)에 걸리지 않게 문단 수를 60개 아래로 둔다
+ /// (점수가 같은 문단 중 무엇이 잘리는지는 세그먼트 배치에 달려 있어 색인마다 다를 수 있다).
+ #[test] fn schema_change_keeps_result_set_and_order_for_flat_levels(){
+    let (old_dir,new_dir)=(temp(),temp());
+    let old=SearchIndex::open_legacy_for_test(&old_dir).unwrap(); let new=SearchIndex::open_or_create(&new_dir).unwrap();
+    let bodies=["서울 예산 정책\n서울 행정복지센터 운영","서울 운영 계획","부산 예산 편성 지침과 서울 사례","행정복지센터 TF 구성\n동주민센터 예산","마포구 주민 참여 예산 제도 안내"];
+    for ix in [&old,&new] { let batch=ix.batch();
+      for n in 0..40i64 { let mut p=paragraph(&format!("flat-{n:02}.txt"),bodies[(n%5) as usize]); p.level=0; p.mtime=n*86_400_000; p.name=format!("자료 {n} {}",if n%7==0 {"예산서"} else {"문서"}); p.page=Some((n%4) as u64+1); p.box_ids=vec![(n%2).to_string()]; ix.add_or_update(&p).unwrap(); }
+      batch.finish().unwrap(); }
+    let mut compared=0;
+    for query in ["서울","서울 예산","서을 예산","예산","ㅅㅇ","TF","행정복지센터","없는검색어","서울 ext:txt","서울 path:flat-1","예산 after:1970-01-10","예산 before:1970-01-20"] {
+      for limit in [3,20,50] {
+        let before=old.reference_search(query,SearchOptions{limit}).unwrap(); let after=new.search(query,SearchOptions{limit}).unwrap();
+        let strip=|hits:&[SearchHit]|hits.iter().map(|h|{let mut h=h.clone(); h.score=0.0; format!("{h:?}")}).collect::<Vec<_>>();
+        assert_eq!(strip(&after),strip(&before),"query={query} limit={limit}");
+        for (a,b) in after.iter().zip(&before) { assert!((a.score-b.score).abs()<=b.score.abs()*1e-5,"query={query} limit={limit} {} != {}",a.score,b.score); }
+        compared+=after.len();
+      }
+    }
+    assert!(compared>200,"비교한 결과가 너무 적다: {compared}");
+    for box_id in [0,1] { let expected:Vec<_>=old.reference_search("예산",SearchOptions{limit:200}).unwrap().into_iter().filter(|h|h.box_ids.iter().any(|id|*id==box_id.to_string())).map(|h|h.path).collect();
+      assert_eq!(new.search_box(box_id,"예산",200).unwrap().into_iter().map(|h|h.path).collect::<Vec<_>>(),expected); }
+    drop(old); drop(new); let _=std::fs::remove_dir_all(old_dir); let _=std::fs::remove_dir_all(new_dir);
+ }
+ #[test] fn chosung_and_fuzzy_helpers(){assert_eq!(cho_text("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}"),"\u{314E}\u{3148}\u{3142}\u{3148}\u{3145}\u{314C}");assert!(is_chosung_query("\u{314E}\u{3148}\u{3142}\u{3148}"));assert!(fuzzy_query("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}",fields_of(&schema()).unwrap().body_jamo).is_some());}
 }

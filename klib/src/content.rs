@@ -6,13 +6,18 @@ use std::time::UNIX_EPOCH;
 use crate::search::{Paragraph, SearchIndex};
 
 pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
+    index_file_in_boxes(index, path, name, &[box_id.to_string()])
+}
+
+/// 같은 파일이 여러 자료함에 들어 있을 때 자료함 id를 한 문서에 모두 싣는다(색인 다시 만들기에서 쓴다).
+pub fn index_file_in_boxes(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<(), String> {
     let p = Path::new(path);
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(()); }
     let body = extract_text(p, &ext)?;
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
-    index.add_or_update(&Paragraph { path: path.to_string(), box_ids: vec![box_id.to_string()], name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None }).map_err(|e| e.to_string())
+    index.add_or_update(&Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None }).map_err(|e| e.to_string())
 }
 
 pub fn remove_file(index: &SearchIndex, path: &str) -> Result<(), String> {

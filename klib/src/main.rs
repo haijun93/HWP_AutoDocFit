@@ -9,6 +9,7 @@ mod pipe;
 mod util;
 mod search;
 mod content;
+mod reindex;
 mod notebook;
 mod nb_transform;
 mod scan;
@@ -157,9 +158,12 @@ fn main() {
             if is_scan && reply.contains("\"started\":true") {
                 while scan::is_running() { std::thread::sleep(std::time::Duration::from_millis(10)); }
                 println!("{}", pipe::handle_request(r#"{"cmd":"box_scan_status"}"#, &db, &running));
+                reindex::wait();
                 return;
             }
             println!("{reply}");
+            // 색인을 다시 만드는 중이면 끝까지 기다린다(여기서 끝내면 다음 실행이 처음부터 다시 해야 한다).
+            reindex::wait();
             return;
         }
         eprintln!("--request-json requires one JSON request argument");
@@ -214,7 +218,7 @@ fn main() {
         .spawn(move || {
             while r_clone.load(Ordering::Relaxed) {
                 std::thread::sleep(Duration::from_millis(500));
-                if scan::is_running() { act_clone.store(now_ms(), Ordering::Relaxed); } // 스캔 중에는 유휴 종료하지 않음
+                if scan::is_running() || reindex::is_running() { act_clone.store(now_ms(), Ordering::Relaxed); } // 스캔·색인 다시 만들기 중에는 유휴 종료하지 않음
                 let elapsed = (now_ms().saturating_sub(act_clone.load(Ordering::Relaxed))) / 1000;
                 if elapsed >= idle_limit_secs {
                     r_clone.store(false, Ordering::Relaxed);
