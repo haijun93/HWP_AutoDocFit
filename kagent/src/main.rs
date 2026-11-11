@@ -794,9 +794,10 @@ fn tray(hwnd: HWND, op: u32) {
         nid.uCallbackMessage = WM_TRAY;
         nid.hIcon = make_icon(paused);
         let tip = if paused {
-            "몽땅클립보드 — 일시정지".to_string()
+            if app().hotkey_ok.load(Ordering::Relaxed) { "몽땅클립보드 — 일시정지".to_string() } else { "몽땅클립보드 — 일시정지 · 단축키 사용 불가".to_string() }
         } else {
             let hotkey = app().settings.lock().unwrap().hotkey.clone();
+            let hotkey = if app().hotkey_ok.load(Ordering::Relaxed) { hotkey.as_str() } else { "단축키 사용 불가" };
             format!("몽땅클립보드 — 기록 중 ({count}개) · {hotkey}")
         };
         for (i, u) in tip.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
