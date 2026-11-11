@@ -1029,6 +1029,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                 const SizedBox(height: 3),
                 Text('${_formatEpochDate(result.mtime)} · ${result.kind.toUpperCase()}', style: Theme.of(context).textTheme.labelSmall),
                 const SizedBox(height: 6),
+                if (result.breadcrumbText.isNotEmpty) ...[
+                  Text(
+                    result.breadcrumbText,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 _markedTerms(result.snippet, keywords, maxLines: 3, style: Theme.of(context).textTheme.bodyMedium),
                 const SizedBox(height: 6),
                 Row(

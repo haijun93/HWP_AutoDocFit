@@ -598,6 +598,50 @@ void main() {
     expect(find.text('썸네일 캐시를 지웠습니다.'), findsOneWidget);
   });
 
+  testWidgets('위계 경로를 발췌문 위에 표시하고 경로가 비면 표시하지 않는다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {
+        'id': 51,
+        'file_name': '경로있음.hwpx',
+        'folder_path': 'C:\\문서',
+        'kind': 'hwpx',
+        'mtime': 1791000000.0,
+        'snippet': '첫 번째 발췌문',
+        'breadcrumb': ['제2장 총칙', '제3절 적용', '제1항 범위'],
+        'breadcrumb_text': '제2장 총칙 > 제3절 적용 > 제1항 범위',
+        'context_hits': ['총칙'],
+        'hierarchy': '제2장 총칙',
+      },
+      {
+        'id': 52,
+        'file_name': '경로없음.hwpx',
+        'folder_path': 'C:\\문서',
+        'kind': 'hwpx',
+        'mtime': 1791000000.0,
+        'snippet': '두 번째 발췌문',
+        'breadcrumb': [],
+        'breadcrumb_text': '',
+        'context_hits': [],
+      },
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '범위');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    final pathFinder = find.text('제2장 총칙 > 제3절 적용 > 제1항 범위');
+    expect(pathFinder, findsOneWidget);
+    expect(find.text('제2장 총칙'), findsWidgets); // 기존 가장 높은 위계 표시 유지
+    final pathY = tester.getTopLeft(pathFinder).dy;
+    final excerptY = tester.getTopLeft(find.text('첫 번째 발췌문')).dy;
+    expect(pathY, lessThan(excerptY));
+    expect(find.text('경로없음.hwpx'), findsOneWidget);
+    expect(find.text('두 번째 발췌문'), findsOneWidget);
+  });
+
   testWidgets('본문 검색 신형 응답의 폴더, 전체 경로, 횟수, 위치, 위계를 표시한다', (tester) async {
     final api = _FakeApi(enabled: true, contentSearchResults: [
       {'id':42,'file_name':'예산안.hwpx','folder_name':'기획팀','folder_path':'C:\\문서\\기획팀','path':'C:\\문서\\기획팀\\예산안.hwpx','kind':'hwpx','size':10240,'mtime':1791000000.0,'ctime':1789000000.0,'snippet':'2026년 예산 집행 보고','match_counts':{'예산':12,'집행':5},'total_matches':17,'page':3,'hierarchy':'제2장 예산','hierarchy_rank':1,'bm25':0.82}
