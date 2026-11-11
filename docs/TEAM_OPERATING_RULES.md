@@ -2,17 +2,26 @@
 
 총괄과 모든 워커(Claude·Codex·Gemini·맥 워커)가 따른다. 다른 문서와 다르면 이 문서와 사용자 최신 지시가 우선한다.
 
+## 0. 작업의 대원칙 (2026-11-12 사용자 지시, 항상 준수)
+> "Find all of the implicit state machines in my app. Make the best decision that will elevate all three: the user experience (UX), developer experience (DX), and agent experience (AX) always, without breaking anything."
+
+- 앱 안의 **암묵적 상태 기계**(여러 변수·플래그·호출 순서에 흩어져 있어 "지금 어떤 상태인지"가 코드에 드러나지 않는 흐름: 작업 실행·중단·종료, 색인 중·재색인, 업데이트, 한/글 연결, 화면 전환, 워커 카드 진행 등)를 찾아 드러낸다.
+- 결정할 때마다 **사용자 경험(UX)·개발자 경험(DX)·에이전트 경험(AX) 셋을 모두** 올리는 쪽을 고른다. 하나를 올리려고 다른 것을 낮추지 않는다.
+- **아무것도 깨뜨리지 않는다.** 기존 동작·시험·결과 문서를 유지하고, 바뀌어야 하면 사용자 결정을 받는다.
+- 카드를 쓸 때: 건드리는 코드에 암묵적 상태가 있으면 상태 이름·전이·불가능한 전이를 먼저 적게 하고, 상태를 한곳에서 읽을 수 있게 만든다(화면에는 진행 상태 표시, 코드에는 명시적 상태 값, 에이전트에게는 읽을 수 있는 상태 파일·로그).
+
 ## 1. 팀 구성과 배분
-- 총괄(PM): Claude haijun93. 일을 쪼개 카드로 만들고 판정·병합·게시·사용자 보고만 한다.
+- 총괄(PM): Claude haijun2be(2026-11-12 08시경부터, 사용자 확정. 그 전은 haijun93). 일을 쪼개 카드로 만들고 판정·병합·게시·사용자 보고만 한다.
 
 | 워커 | 맡기는 일 | 맡기지 않는 일 |
 |---|---|---|
-| Claude ngaytot9·haijun2be(낮은 effort) | 어려운 과제: 설계가 필요한 수정, 최적화, 다중 파일 구조 변경 | 기계 작업 |
+| Claude ngaytot9·haijun93(낮은 effort, 설정 폴더 `.claude-ngaytot9`·`.claude-haijun93`) | 어려운 과제: 설계가 필요한 수정, 최적화, 다중 파일 구조 변경 | 기계 작업 |
 | Codex ngaytot9(상위 모델, 낮은 effort) | 범위가 분명한 구현, 작게 나눈 단계별 수정 | 범위가 열린 분석 |
 | Codex haijun93(기본 모델, 낮은 effort) | 시험 추가, 화면 표시, 문서, 측정 도구 | 분석·최적화 |
 | Gemini Flash, 맥 워커 | 한/글이 필요 없는 단순 구현·검토 | 한/글 COM 시험 |
 
 - 위임할 때마다 카드 머리에 `[워커 · 모델 · effort] 과제 (이유)` 한 줄을 적는다.
+- Codex 계정은 haijun93·ngaytot9 두 개뿐이다(haijun2be는 Codex 계정이 없다). haijun2be는 Claude 총괄 세션으로만 쓴다.
 - 쉬는 워커가 없게 하되 같은 파일을 두 워커에게 동시에 맡기지 않는다.
 
 ## 2. 총괄이 직접 하는 일과 하지 않는 일
