@@ -1390,6 +1390,7 @@ class ContentSearchIndex:
                 "SELECT path,name,extension,mtime,reference_date FROM content_meta WHERE path IN ({paths})",
                 (row["path"] for row in rows))} if rows else {}
         ranked = []
+        valid_indices_by_path = {}
         candidate_path_set = {r["path"] for r in rows}
         # 후보 문서의 문단을 한 번만 읽어, 합친 본문(candidate_texts)과 문단별 검사에 함께 쓴다.
         paragraph_rows_by_path = {}
@@ -1487,6 +1488,7 @@ class ContentSearchIndex:
                         phrase_bonus = max(phrase_bonus, 0.35)
             filename_bonus = 0.0
             ranked.append((float(row["best_bm25"]) - proximity_bonus - phrase_bonus - filename_bonus, path, meta))
+            valid_indices_by_path[path] = valid_para_indices
         ranked.sort(key=lambda value: (value[0], value[1].casefold()))
         selected = ranked[offset:offset + limit]
         results = []
@@ -1525,7 +1527,10 @@ class ContentSearchIndex:
             for located in located_rows:
                 located_by_path.setdefault(located["path"], []).append(located)
         for score, path, meta in selected:
-            paragraphs = sorted(located_by_path.get(path, ()),
+            # 위치는 그 문서 자신의 일치 문단으로 거른다(마지막으로 처리한 문서의 집합을 쓰면 안 된다).
+            valid_para_indices = valid_indices_by_path.get(path, ())
+            paragraphs = sorted((p for p in located_by_path.get(path, ())
+                                 if int(p["paragraph_index"]) in valid_para_indices),
                                 key=lambda p: (float(p["rank"]), int(p["paragraph_index"])))[:3]
             paragraphs = [p for p in paragraphs if int(p["paragraph_index"]) in valid_para_indices]
             locations = []

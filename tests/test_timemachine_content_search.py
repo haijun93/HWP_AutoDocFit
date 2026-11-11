@@ -396,6 +396,19 @@ class ContentSearchTests(unittest.TestCase):
         short = self.index.keyword_search("문단", limit=5)
         self.assertEqual(len(short), 5)
 
+    def test_keyword_locations_use_each_documents_own_matching_paragraphs(self):
+        # 문서마다 검색어가 있는 문단 번호가 달라도 각 문서의 위치(발췌문)가 나와야 한다.
+        self._insert_keyword_documents([
+            ("loc_a.txt", ["머리말", "둘째 문단", "위치시험낱말 셋째"]),
+            ("loc_b.txt", ["위치시험낱말 첫째", "둘째 문단"]),
+            ("loc_c.txt", ["머리말", "위치시험낱말 둘째", "꼬리말"]),
+        ])
+        found = {row["name"]: row for row in self.index.keyword_search("위치시험낱말")}
+        self.assertEqual(sorted(found), ["loc_a.txt", "loc_b.txt", "loc_c.txt"])
+        self.assertEqual({name: [loc["paragraph_index"] for loc in row["locations"]] for name, row in found.items()},
+                         {"loc_a.txt": [2], "loc_b.txt": [0], "loc_c.txt": [1]})
+        self.assertTrue(all("위치시험낱말" in row["snippet"] for row in found.values()))
+
     def test_keyword_exclusion_terms_of_any_length_remove_documents(self):
         self._insert_keyword_documents([
             ("keep.txt", ["제외시험낱말 본문", "다른 문단"]),
