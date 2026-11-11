@@ -184,7 +184,7 @@ fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     if normalized.trim().is_empty() { return Err("empty: HWP 본문 텍스트가 없음".into()); }
 
-    static PAGE_MARKER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:|<!--\s*page(?:\s*[:#]?\s*(\d+)|\s*break)?\s*-->)").unwrap());
+    static PAGE_MARKER: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| regex::Regex::new(r"(?i)(?:\x0c|<!--\s*page(?:\s*[:#]?\s*(\d+)|\s*break)?\s*-->)").unwrap());
     let page_marker = &*PAGE_MARKER;
     let matches: Vec<_> = page_marker.find_iter(&normalized).collect();
     let mut records = Vec::new();
