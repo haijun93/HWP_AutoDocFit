@@ -132,5 +132,74 @@ class DirectStateReadTests(unittest.TestCase):
                 call()
 
 
+class SettingsStoreTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        from docfit_app.settings_service import SettingsService
+        folder = tempfile.TemporaryDirectory(prefix="docfit-tk0-")
+        self.addCleanup(folder.cleanup)
+        self.folder = Path(folder.name).resolve()
+        self.store = SettingsService(self.folder / "settings.json")
+        gui = SimpleNamespace(running=False, _준말_서비스=lambda: SimpleNamespace(settings=self.store))
+        self.bridge, self.round_trips = _counting_bridge(gui)
+
+    def test_store_is_fetched_without_tk(self):
+        self.assertIs(self.bridge._settings_store(), self.store)
+        self.assertEqual(self.round_trips, [])
+
+    def test_lazy_services_are_built_without_tk(self):
+        rename = self.bridge._file_rename_service()
+        self.assertIs(self.bridge._file_rename_service(), rename)
+        machine = self.bridge._timemachine_service()
+        self.assertIs(self.bridge._timemachine_service(), machine)
+        self.assertEqual(self.round_trips, [])
+
+    def test_kclip_window_uses_the_shared_store_without_tk(self):
+        from unittest.mock import patch
+        with patch("docfit_app.kclip_window_state.command", return_value={"ok": True}) as command:
+            self.assertEqual(self.bridge.kclip_window("get"), {"ok": True})
+        self.assertIs(command.call_args.args[0], self.store)
+        self.assertEqual(self.round_trips, [])
+
+    def test_document_tool_reads_the_settings_folder_without_tk(self):
+        from unittest.mock import patch
+        with patch("docfit_app.document_tools_service.DocumentToolsService") as service:
+            service.return_value.command.return_value = {"done": True}
+            result = self.bridge.document_tool("list", {})
+        service.assert_called_once_with(self.folder)
+        self.assertIs(result["ok"], True)
+        self.assertEqual(result["data"], {"done": True})
+        self.assertEqual(self.round_trips, [])
+
+    def test_closing_app_is_reported_through_existing_error_paths(self):
+        self.bridge._closed = True
+        with self.assertRaisesRegex(RuntimeError, "종료"):
+            self.bridge._settings_store()
+        with self.assertLogs("desktop_web_ui", level="WARNING"):
+            result = self.bridge.kclip_window("get")
+        self.assertFalse(result["ok"])
+        self.assertIn("종료", result["message"])
+
+    def test_concurrent_readers_and_writer_never_see_a_torn_file(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self.store.update(lambda current: current.update({"n": 0, "pad": "가" * 2000}))
+
+        def write(index):
+            self.bridge._settings_store().update(lambda current: current.update({"n": index}))
+
+        def read(_):
+            return self.bridge._settings_store().read()["pad"]
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            writes = [pool.submit(write, index) for index in range(1, 21)]
+            reads = [pool.submit(read, index) for index in range(60)]
+            for future in writes:
+                future.result(timeout=30)
+            self.assertTrue(all(future.result(timeout=30) == "가" * 2000 for future in reads))
+        self.assertIn(self.store.read()["n"], range(1, 21))
+        self.assertEqual(self.round_trips, [])
+
+
 if __name__ == "__main__":
     unittest.main()

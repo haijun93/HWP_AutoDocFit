@@ -497,7 +497,7 @@ class DesktopWebBridge:
             return False
 
     def get_state(self):
-        # 파일명 서비스를 처음 만들 때 Tk 호출을 기다리므로 Tk 스레드 밖에서 처리한다.
+        # 파일명 서비스의 목록 추가(파일 I/O)는 Tk 스레드 밖에서 처리한다.
         rename_open = self._drain_rename_paths()
 
         def snapshot():
@@ -1358,6 +1358,12 @@ class DesktopWebBridge:
             self._tk(self.gui.작업중단)
         return self.get_state()
 
+    def _settings_store(self):
+        """설정 저장소(SettingsService)를 Tk 왕복 없이 얻는다."""
+        # 스레드 안전: SettingsService는 경로별 RLock으로 read/update를 직렬화하고 Tk 객체를 갖지 않는다.
+        self._raise_if_closing()
+        return self.gui._준말_서비스().settings
+
     def _configuration(self):
         from docfit_app.configuration_service import ConfigurationService
         return ConfigurationService(self.gui._준말_서비스().settings)
@@ -1701,7 +1707,7 @@ class DesktopWebBridge:
                 return result
             return service.command(name, payload)
         if name != "add_text":
-            folder = self._tk(lambda: self.gui._준말_서비스().settings._path.parent)
+            folder = self._settings_store()._path.parent
             return response(lambda: DocumentToolsService(folder).command(name, payload))
         return self._tk(lambda: response(execute))
 
@@ -2030,7 +2036,7 @@ class DesktopWebBridge:
         service = getattr(self, "_rename_service", None)
         if service is None:
             from docfit_app.file_rename_service import FileRenameService
-            settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+            settings = self._settings_store()
             service = self._rename_service = FileRenameService(settings._path.parent, dialogs=self._file_dialogs,
                                                                settings=settings)
         return service
@@ -2039,7 +2045,7 @@ class DesktopWebBridge:
         service = getattr(self, "_timemachine_service_instance", None)
         if service is None:
             from docfit_app.timemachine_service import TimemachineService
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             service = self._timemachine_service_instance = TimemachineService(
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
@@ -2107,7 +2113,7 @@ class DesktopWebBridge:
             _set_window_on_top(window, bool(enabled))
 
         try:
-            store = self._tk(lambda: self.gui._준말_서비스().settings)
+            store = self._settings_store()
             return kclip_window_state.command(store, action, payload, apply_topmost)
         except Exception as exc:
             logging.getLogger(__name__).warning("몽땅클립보드 관리창 처리 실패", exc_info=True)
@@ -2121,7 +2127,7 @@ class DesktopWebBridge:
             service = getattr(self, "_external_apps_service", None)
             if service is None:
                 from docfit_app.external_apps_service import ExternalAppsService
-                settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+                settings = self._settings_store()
                 service = self._external_apps_service = ExternalAppsService(settings, dialogs=self._file_dialogs)
             return service.command(action, payload)
         except Exception as exc:
