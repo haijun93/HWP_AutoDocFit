@@ -505,6 +505,7 @@ class ContentSearchIndex:
         except sqlite3.OperationalError:
             pass
         self._lock = threading.RLock()
+        self._batch_state = None
         self._closed = False
         self._keyword_rank_cache = None
         self.db.row_factory = sqlite3.Row
@@ -639,7 +640,11 @@ class ContentSearchIndex:
         kept = self._map_stamp is not None and self._map_stamp == self._map_state()
         try:
             yield
-        finally:
+        except BaseException:
+            # 쓰다 만 상태일 수 있으니 다음에 다시 견준다.
+            self._map_stamp = None
+            raise
+        else:
             if kept:
                 self._map_stamp = self._map_state()
 
@@ -799,6 +804,88 @@ class ContentSearchIndex:
                 count += 1
         return count
 
+    @contextmanager
+    def batch(self, *, max_files=50, max_seconds=2.0):
+        """여러 파일의 색인 커밋을 묶는다(max_files개 또는 max_seconds초마다 한 번).
+
+        잠금(self._lock)은 묶음 내내 쥐지 않는다. 파일 하나를 고치는 동안만 잡고 커밋만 미루므로
+        다른 스레드의 검색·상태 조회가 파일 사이에 끼어들 수 있다. 잠금이 풀린 시점의 미커밋 변경은
+        항상 '파일 단위로 끝난' 변경뿐이라, 끼어든 쪽이 먼저 커밋해도 표들은 어긋나지 않는다.
+        예외가 나면 아직 커밋하지 않은 조각만 되돌린다(그 전에 커밋된 조각은 남는다).
+        이미 묶음이 열려 있으면(다른 스레드 포함) 그 묶음에 얹혀 간다.
+        """
+        if max_files < 1 or max_seconds <= 0:
+            raise ValueError("batch limits must be positive")
+        with self._lock:
+            owner = self._batch_state is None
+            if owner:
+                if self.db.in_transaction:
+                    self.db.commit()
+                # [미커밋 파일 수, 조각을 연 시각, 파일 수 한도, 시간 한도]
+                self._batch_state = [0, time.monotonic(), max_files, max_seconds]
+        if not owner:
+            yield self
+            return
+        try:
+            yield self
+        except BaseException:
+            with self._lock:
+                self._batch_state = None
+                if not self._closed:
+                    if self.db.in_transaction:
+                        self.db.rollback()
+                    self._map_stamp = None
+            raise
+        else:
+            with self._lock:
+                self._batch_state = None
+                if not self._closed and self.db.in_transaction:
+                    self.db.commit()
+
+    def _batch_flush_if_due(self, *, count=0):
+        """묶음의 한도(파일 수·시간)를 넘었으면 커밋한다. self._lock을 잡은 채로 부른다."""
+        state = self._batch_state
+        if state is None:
+            return
+        if not self.db.in_transaction:
+            # 다른 스레드가 먼저 커밋했거나 아직 쓴 것이 없다. 조각을 새로 센다.
+            state[0:2] = [0, time.monotonic()]
+            return
+        state[0] += count
+        if state[0] >= state[2] or time.monotonic() - state[1] >= state[3]:
+            self.db.commit()
+            state[0:2] = [0, time.monotonic()]
+
+    @contextmanager
+    def _index_transaction(self, path):
+        """파일 하나(path)의 쓰기를 감싼다. self._lock을 잡은 채로 쓴다."""
+        if self._batch_state is None:
+            with self.db:
+                yield
+            return
+        if not self.db.in_transaction:
+            self.db.execute("BEGIN")
+            self._batch_state[0:2] = [0, time.monotonic()]
+        try:
+            yield
+        except BaseException:
+            # 파일마다 SAVEPOINT를 두면 묶음의 이득이 절반으로 준다(300개 측정). 대신 실패한 파일의
+            # 쓰다 만 행만 잠금을 쥔 채로 지워, 묶음의 앞선 파일들은 살리고 표들은 1:1로 남긴다.
+            try:
+                self._map_stamp = None
+                self._ensure_paragraph_map()
+                self._delete_paragraphs(path)
+                for table in ("content_fts", "content_short_grams", "content_meta"):
+                    self.db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
+            except BaseException:
+                # 정리마저 실패하면 미커밋 조각을 통째로 되돌린다.
+                if self.db.in_transaction:
+                    self.db.rollback()
+            self._map_stamp = None
+            raise
+        else:
+            self._batch_flush_if_due(count=1)
+
     def index_file(self, path):
         path = os.path.abspath(os.fspath(path))
         from .rules import excluded_name
@@ -811,6 +898,8 @@ class ContentSearchIndex:
         size = stat.st_size
         try:
             with self._lock:
+                # 본문 추출이 오래 걸릴 수 있으니, 그 전에 시간 한도를 넘긴 묶음 조각을 커밋해 둔다.
+                self._batch_flush_if_due()
                 self._ensure_paragraph_map()
                 old = self.db.execute(
                     "SELECT size, mtime, hierarchy_schema_version FROM content_meta WHERE path=?",
@@ -836,7 +925,7 @@ class ContentSearchIndex:
 
             with self._lock:
                 self._ensure_paragraph_map()
-            with self._lock, self._map_kept(), self.db:
+            with self._lock, self._map_kept(), self._index_transaction(path):
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
@@ -866,10 +955,11 @@ class ContentSearchIndex:
             reason = f"{type(exc).__name__}: {exc}"
             with self._lock:
                 self._ensure_paragraph_map()
-            with self._lock, self._map_kept(), self.db:
+            with self._lock, self._map_kept(), self._index_transaction(path):
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
+                self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
             return {"indexed": False, "error": reason}
 
@@ -877,7 +967,7 @@ class ContentSearchIndex:
         path = os.path.abspath(os.fspath(path))
         with self._lock:
             self._ensure_paragraph_map()
-        with self._lock, self._map_kept(), self.db:
+        with self._lock, self._map_kept(), self._index_transaction(path):
             self._delete_paragraphs(path)
             self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
