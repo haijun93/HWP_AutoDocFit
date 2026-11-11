@@ -1256,9 +1256,12 @@ class ContentSearchIndex:
                 source = "SELECT path FROM temp.keyword_path_filter"
                 state = self.db.execute("SELECT row_count FROM content_paragraph_map_state WHERE id=1").fetchone()
                 total = state[0] if state else -1
+                # 후보 문단 수는 분기점을 넘는지만 알면 되므로 거기까지만 센다(24만 문단에서 최대 약 20ms).
+                ceiling = total // self._PARAGRAPH_SCAN_RATIO if total >= 0 and self._PARAGRAPH_SCAN_RATIO else max(total, 0)
                 wanted = self.db.execute(
-                    f"SELECT COUNT(*) FROM content_paragraph_map WHERE path IN ({source})").fetchone()[0]
-                if total >= 0 and wanted * self._PARAGRAPH_SCAN_RATIO <= total:
+                    f"SELECT COUNT(*) FROM (SELECT 1 FROM content_paragraph_map WHERE path IN ({source}) LIMIT ?)",
+                    (ceiling + 1,)).fetchone()[0]
+                if total >= 0 and wanted <= ceiling:
                     condition = f"rowid IN (SELECT para_rowid FROM content_paragraph_map WHERE path IN ({source}))"
                     extra = where.format(body="+body")
                 else:
