@@ -505,8 +505,11 @@ fn sync_item_index(old: Option<&str>, it: &crate::db::ItemRow) -> Option<String>
     if old == Some(it.source_path.as_str()) || !matches!(it.kind.as_str(), "file" | "text" | "rich_text" | "note") { return None; }
     (|| {
         let ix = crate::search_index()?;
+        // 옛 경로 삭제와 새 경로 색인을 한 번에 커밋한다(오류로 빠져나가도 묶음이 버려지며 커밋).
+        let batch = ix.batch();
         if let Some(old) = old { crate::content::remove_file(ix, old)?; }
-        crate::content::index_file(ix, &it.source_path, &it.display_name, it.box_id)
+        crate::content::index_file(ix, &it.source_path, &it.display_name, it.box_id)?;
+        batch.finish().map_err(|e| e.to_string())
     })().err()
 }
 
@@ -1643,9 +1646,12 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
                 let before = db_guard.item_search(Some(box_id), "").unwrap_or_default();
                 let result = db_guard.box_export(box_id, target_dir);
                 // 실패한 export도 그 전에 완료된 안전한 항목 이전은 유지되므로 변경된 경로만 동기화한다.
+                // 여러 항목의 색인 교체를 묶어 끝에서 한 번만 커밋한다.
+                let index_batch = if before.is_empty() { None } else { crate::search_index().ok().map(|ix| ix.batch()) };
                 for old in before {
                     if let Ok(Some(it)) = db_guard.item_get(old.id) { let _ = sync_item_index(Some(&old.source_path), &it); }
                 }
+                drop(index_batch);
                 match result {
 
                     Ok(count) => ok_val(vec![("count", count.into())]),
