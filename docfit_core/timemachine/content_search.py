@@ -1066,7 +1066,7 @@ class ContentSearchIndex:
             expression = " AND ".join(quote(term) for term in positive if len(term) >= 3)
         return expression
 
-    def _select_for_paths(self, sql, paths):
+    def _select_for_paths(self, sql, paths, params=()):
         """경로 목록으로 거르는 조회를 임시 표로 실행한다.
 
         `path IN (?, ?, …)`는 경로가 SQL 변수 한도(기본 32,766)를 넘으면 실패한다.
@@ -1080,7 +1080,7 @@ class ContentSearchIndex:
                 self.db.executemany("INSERT OR IGNORE INTO keyword_path_filter(path) VALUES(?)",
                                     ((path,) for path in paths))
                 return self.db.execute(
-                    sql.format(paths="SELECT path FROM temp.keyword_path_filter")).fetchall()
+                    sql.format(paths="SELECT path FROM temp.keyword_path_filter"), tuple(params)).fetchall()
             finally:
                 # 임시 표 쓰기로 열린 트랜잭션을 남겨 두면 이후 조회가 옛 스냅숏을 본다.
                 if opened_here and self.db.in_transaction:
@@ -1310,36 +1310,34 @@ class ContentSearchIndex:
         ranked.sort(key=lambda value: (value[0], value[1].casefold()))
         selected = ranked[offset:offset + limit]
         results = []
-        for score, path, meta in selected:
-            conditions, match_params = [], []
-            if match and not parsed["phrases"]:
-                conditions.append("content_paragraph_fts MATCH ?"); match_params.append(match)
-            else:
-                for term in parsed["terms"]:
-                    if len(term) >= 3:
-                        conditions.append("content_paragraph_fts MATCH ?")
-                        match_params.append('"' + term.replace('"', '""') + '"')
-                    else:
-                        conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
-                for phrase in parsed["phrases"]:
-                    conditions.append("body LIKE ?"); match_params.append("%" + phrase.replace('"', '""') + "%")
-            for term in short_positive:
-                conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
-            match_where = " AND ".join(conditions)
-            with self._lock:
-                if short_positive:
-                    paragraphs = self.db.execute(f"""
-                        SELECT paragraph_index, body, location_label, section, 0.0 AS rank
-                        FROM content_paragraph_fts WHERE path=? AND {match_where}
-                        ORDER BY CAST(paragraph_index AS INTEGER) ASC LIMIT 3
-                    """, [path, *match_params]).fetchall()
+        # 위치 조회는 결과마다 표를 훑지 않고 선택된 문서 전체를 한 번에 읽어 문서별 상위 3개를 고른다.
+        conditions, match_params = [], []
+        if match and not parsed["phrases"]:
+            conditions.append("content_paragraph_fts MATCH ?"); match_params.append(match)
+        else:
+            for term in parsed["terms"]:
+                if len(term) >= 3:
+                    conditions.append("content_paragraph_fts MATCH ?")
+                    match_params.append('"' + term.replace('"', '""') + '"')
                 else:
-                    paragraphs = self.db.execute(f"""
-                        SELECT paragraph_index, body, location_label, section,
-                               bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0) AS rank
-                        FROM content_paragraph_fts WHERE path=? AND {match_where}
-                        ORDER BY rank ASC, CAST(paragraph_index AS INTEGER) ASC LIMIT 3
-                    """, [path, *match_params]).fetchall()
+                    conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
+            for phrase in parsed["phrases"]:
+                conditions.append("body LIKE ?"); match_params.append("%" + phrase.replace('"', '""') + "%")
+        for term in short_positive:
+            conditions.append("body LIKE ?"); match_params.append("%" + term + "%")
+        match_where = " AND ".join(conditions)
+        rank_column = ("0.0" if short_positive
+                       else "bm25(content_paragraph_fts, 0.0, 3.0, 2.0, 1.0, 0.0, 0.0, 1.0)")
+        located_by_path = {}
+        if selected:
+            for located in self._select_for_paths(
+                    f"SELECT path, paragraph_index, body, location_label, section, {rank_column} AS rank"
+                    f" FROM content_paragraph_fts WHERE {match_where} AND path IN ({{paths}})",
+                    (path for _, path, _ in selected), match_params):
+                located_by_path.setdefault(located["path"], []).append(located)
+        for score, path, meta in selected:
+            paragraphs = sorted(located_by_path.get(path, ()),
+                                key=lambda p: (float(p["rank"]), int(p["paragraph_index"])))[:3]
             paragraphs = [p for p in paragraphs if int(p["paragraph_index"]) in valid_para_indices]
             locations = []
             for paragraph in paragraphs:
