@@ -353,7 +353,12 @@ impl SearchIndex {
             let box_ids=d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect();
             candidates.push((path,score,level,recency,page,name,title,box_ids,addr));
         }
-        let compact: Vec<_> = candidates.iter().enumerate().map(|(i,c)| hierarchy::search::Candidate {document:i,score:c.1,hierarchy_rank:c.2,recency:c.3}).collect();
+        // Use the first (highest-scoring) paragraph as each path's representative.
+        let mut documents = HashMap::new();
+        let compact: Vec<_> = candidates.iter().enumerate().map(|(i,c)| {
+            let document = *documents.entry(c.0.as_str()).or_insert(i);
+            hierarchy::search::Candidate {document,score:c.1,hierarchy_rank:c.2,recency:c.3}
+        }).collect();
         let ranked=hierarchy::search::aggregate(&compact, options.limit.max(1));
         let mut groups: HashMap<usize,SearchHit> = HashMap::new();
         let ranked_len=ranked.len();
@@ -368,7 +373,9 @@ impl SearchIndex {
                 hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
                 hit.snippets.push(snippet.fragment().to_string());
             }
-            hit.hit_pages.push(c.4);
+        }
+        for (c, candidate) in candidates.iter().zip(&compact) {
+            if let Some(hit) = groups.get_mut(&candidate.document) { hit.hit_pages.push(c.4); }
         }
         let mut out: Vec<_>=Vec::with_capacity(ranked_len);
         // Search-policy output order comes from hierarchy::search::aggregate.
@@ -443,6 +450,22 @@ mod tests {
  #[test] fn tokenizer_utf8_offsets(){let mut s=KoBigram.token_stream("\u{ac00}\u{b098}\u{b2e4}");s.advance();assert_eq!(&"\u{ac00}\u{b098}\u{b2e4}"[s.token().offset_from..s.token().offset_to],"\u{ac00}\u{b098}");}
  #[test] fn directives_extract_filters(){let p=parse_directives("\u{d55c}\u{ad6d}\u{c5b4} ext:txt path:abc");assert_eq!(p.text,"\u{d55c}\u{ad6d}\u{c5b4}");assert_eq!(p.filters.len(),2);}
  #[test] fn add_and_search(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();ix.add_or_update(&paragraph("a.txt","\u{d55c}\u{ad6d}\u{c5b4} \u{ac80}\u{c0c9} \u{bb38}\u{b2e8}")).unwrap();assert_eq!(ix.search("\u{d55c}\u{ad6d}\u{c5b4}",SearchOptions{limit:10}).unwrap().len(),1);let _=std::fs::remove_dir_all(dir);}
+ #[test] fn search_groups_matching_paragraphs_by_path_before_limit(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    ix.add_or_update(&paragraph("multi.txt","\u{c11c}\u{c6b8} budget\n\u{c11c}\u{c6b8} plan\n\u{c11c}\u{c6b8} policy")).unwrap();
+    ix.add_or_update(&paragraph("other.txt","\u{c11c}\u{c6b8} data")).unwrap();
+    let hits=ix.search("\u{c11c}\u{c6b8}",SearchOptions{limit:2}).unwrap();
+    assert_eq!(hits.len(),2);
+    let multi=hits.iter().find(|h|h.path=="multi.txt").unwrap();
+    assert_eq!(multi.paragraph_count,3); assert_eq!(multi.hit_pages,vec![Some(1);3]);
+    assert_eq!(multi.snippets.len(),1); assert!(!multi.snippets[0].is_empty());
+    assert_eq!(multi.page,Some(1)); assert_eq!(multi.box_ids,vec!["box-a"]);
+    assert_eq!(hits.iter().filter(|h|h.path=="other.txt").count(),1);
+    let limited=ix.search("\u{c11c}\u{c6b8}",SearchOptions{limit:1}).unwrap();
+    assert_eq!(limited.len(),1);
+    assert_eq!(limited[0].paragraph_count,hits.iter().find(|h|h.path==limited[0].path).unwrap().paragraph_count);
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
  #[test] fn hierarchy_aggregation_keeps_top_twenty_order_and_snippets(){
     let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
     for n in 0..25 { let mut p=paragraph(&format!("doc-{n:02}.txt"),&format!("서울 예산 정책 자료 {n}")); p.level=if n<20 {1}else{0}; p.mtime=n as i64; ix.add_or_update(&p).unwrap(); }
