@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 
@@ -42,12 +43,20 @@ class ComCounter:
         self.by_stage: dict[str, list] = {}
         # 호출 이름(예: "HAction.Run") -> [호출 수, 초]
         self.by_call: dict[str, list] = {}
+        # (단계 이름, 호출한 우리 함수 이름) -> [호출 수, 초]
+        self.by_caller: dict[tuple, list] = {}
         self._depth = 0
 
     def set_stage(self, name):
         self.stage = str(name) if name else _NO_STAGE
 
-    def record(self, call_name: str, seconds: float):
+    def record(self, call_name: str, seconds: float, caller: str = ""):
+        if caller:
+            item = self.by_caller.get((self.stage, caller))
+            if item is None:
+                item = self.by_caller[(self.stage, caller)] = [0, 0.0]
+            item[0] += 1
+            item[1] += seconds
         stage = self.by_stage.get(self.stage)
         if stage is None:
             stage = self.by_stage[self.stage] = [0, 0.0]
@@ -70,7 +79,7 @@ class ComCounter:
             elapsed = self._clock() - started
             self._depth -= 1
             # 안쪽 호출 시간은 바깥 호출 시간에 이미 들어 있으므로 횟수만 센다.
-            self.record(call_name, elapsed if outermost else 0.0)
+            self.record(call_name, elapsed if outermost else 0.0, _caller_name())
 
     @property
     def total_calls(self) -> int:
@@ -79,6 +88,17 @@ class ComCounter:
     @property
     def total_seconds(self) -> float:
         return sum(item[1] for item in self.by_stage.values())
+
+
+_THIS_FILE = __file__
+
+
+def _caller_name() -> str:
+    """COM을 부른 우리 코드의 함수 이름(이 모듈 밖에서 가장 가까운 함수)."""
+    frame = sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename == _THIS_FILE:
+        frame = frame.f_back
+    return frame.f_code.co_name if frame is not None else ""
 
 
 def _is_com_object(value) -> bool:
@@ -233,6 +253,7 @@ def build_report(file_name: str, stage_table: dict | None, top: int = 25) -> dic
         })
     calls = sorted(_counter.by_call.items(), key=lambda item: -item[1][1])[:top]
     com_total = _counter.total_seconds
+    callers = sorted(_counter.by_caller.items(), key=lambda item: -item[1][1])[:top * 2]
     return {
         "file": file_name,
         "total_seconds": round(total, 4),
@@ -241,6 +262,10 @@ def build_report(file_name: str, stage_table: dict | None, top: int = 25) -> dic
         "python_seconds": round(max(total - com_total, 0.0), 4),
         "com_share": round(com_total / total, 4) if total > 0 else None,
         "stages": stages,
+        "top_callers": [
+            {"stage": stage, "function": function, "calls": int(count), "seconds": round(float(seconds), 4)}
+            for (stage, function), (count, seconds) in callers
+        ],
         "top_calls": [
             {"name": name, "calls": int(count), "seconds": round(float(seconds), 4)}
             for name, (count, seconds) in calls

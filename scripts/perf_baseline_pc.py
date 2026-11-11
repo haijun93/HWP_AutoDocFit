@@ -68,6 +68,10 @@ def to_markdown(summary: dict, reports: list[dict], mode: str, version: str) -> 
     lines += ["", "## 단계별(오래 걸린 순)", "", "| 단계 | 시간(초) | COM 호출 | COM(초) | 파이썬(초) |", "|---|---:|---:|---:|---:|"]
     for stage in summary["stages"][:25]:
         lines.append("| {name} | {seconds:.1f} | {com_calls:,} | {com_seconds:.1f} | {python_seconds:.1f} |".format(**stage))
+    lines += ["", "## 단계·함수별(오래 걸린 순, 문서별 상위)", "", "| 문서 | 단계 | 함수 | COM 호출 | COM(초) |", "|---|---|---|---:|---:|"]
+    for report in reports:
+        for item in report.get("top_callers", [])[:30]:
+            lines.append("| {file} | {stage} | `{function}` | {calls:,} | {seconds:.1f} |".format(file=report["file"][:20], **item))
     lines += ["", "## COM 호출별(오래 걸린 순)", "", "| 호출 | 횟수 | 시간(초) |", "|---|---:|---:|"]
     for call in summary["top_calls"][:25]:
         lines.append("| `{name}` | {calls:,} | {seconds:.1f} |".format(**call))
