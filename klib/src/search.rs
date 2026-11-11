@@ -287,11 +287,133 @@ impl SearchIndex {
         self.write(|w| { w.delete_term(tantivy::Term::from_field_text(self.fields.path,path)); Ok(()) })
     }
     pub fn search_box(&self, box_id: i64, query: &str, limit: usize) -> tantivy::Result<Vec<SearchHit>> {
-        let hits = self.search(query, SearchOptions { limit: limit.max(1).min(200).saturating_mul(20) })?;
-        Ok(hits.into_iter().filter(|hit| hit.box_ids.iter().any(|id| id == &box_id.to_string()))
-            .take(limit.max(1).min(200)).collect())
+        // 기존 오타 확장 기준과 집계 후보 수를 유지한다.
+        let limit=limit.max(1).min(200);
+        if !self.index.schema().get_field_entry(self.fields.box_ids).is_indexed() {
+            let id=box_id.to_string();
+            return Ok(self.search(query,SearchOptions{limit:limit.saturating_mul(20)})?.into_iter()
+                .filter(|hit|hit.box_ids.iter().any(|value|value==&id)).take(limit).collect());
+        }
+        let mut hits=self.search_inner(query, SearchOptions { limit: limit.saturating_mul(20) }, Some(box_id))?;
+        hits.truncate(limit);
+        Ok(hits)
     }
     pub fn search(&self, query: &str, options: SearchOptions) -> tantivy::Result<Vec<SearchHit>> {
+        self.search_inner(query, options, None)
+    }
+    fn search_inner(&self, query: &str, options: SearchOptions, box_id: Option<i64>) -> tantivy::Result<Vec<SearchHit>> {
+        let parsed=parse_directives(query);
+        let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_ko,1.0),(self.fields.body_bi,0.4)];
+        let mut parser=QueryParser::for_index(&self.index, fields.iter().map(|(f,_)|*f).collect());
+        for (f,w) in fields { parser.set_field_boost(f,w); }
+        let groups=self.load_synonyms();
+        let mut synonym_terms=Vec::new();
+        for term in parsed.text.split_whitespace() {
+            if let Some(group)=groups.iter().find(|g|g.iter().any(|s|s.eq_ignore_ascii_case(term))) {
+                synonym_terms.extend(group.iter().filter(|s|!s.eq_ignore_ascii_case(term)).cloned());
+            }
+        }
+        let base=parser.parse_query(&parsed.text).unwrap_or_else(|_| Box::new(tantivy::query::EmptyQuery));
+        let mut query_clauses: Vec<(Occur, Box<dyn Query>)>=vec![(Occur::Should,base)];
+        if !synonym_terms.is_empty() {
+            let syn=parser.parse_query(&synonym_terms.join(" ")).unwrap_or_else(|_| Box::new(tantivy::query::EmptyQuery));
+            query_clauses.push((Occur::Should,Box::new(tantivy::query::BoostQuery::new(syn,0.8))));
+        }
+        let mut q: Box<dyn Query>=Box::new(BooleanQuery::new(query_clauses));
+        if is_chosung_query(&parsed.text) {
+            let cho=cho_text(&parsed.text);
+            let cq=Box::new(tantivy::query::RegexQuery::from_pattern(&format!("{}.*",regex::escape(&cho)),self.fields.body_cho)?);
+            let nq=Box::new(tantivy::query::RegexQuery::from_pattern(&format!("{}.*",regex::escape(&cho)),self.fields.name_cho)?);
+            let cho_clauses: Vec<(Occur, Box<dyn Query>)>=vec![(Occur::Should, Box::new(tantivy::query::BoostQuery::new(cq,1.0))),(Occur::Should,Box::new(tantivy::query::BoostQuery::new(nq,3.0))),(Occur::Should,q)];
+            q=Box::new(BooleanQuery::new(cho_clauses));
+        }
+        let searcher=self.reader.searcher();
+        let candidate_limit=options.limit.max(1).saturating_mul(20).min(4000);
+        let fuzzy=fuzzy_query(&parsed.text,self.fields.body_jamo);
+        let probe_limit=if parsed.filters.is_empty() && box_id.is_none() { candidate_limit.max(options.limit.max(1)) } else { options.limit.max(1) };
+        let initial=if fuzzy.is_some() { Some(searcher.search(&q,&TopDocs::with_limit(probe_limit).order_by_score())?) } else { None };
+        let mut expanded=false;
+        if initial.as_ref().is_some_and(|top|top.len()<options.limit.max(1)) {
+            if let Some(fuzzy)=fuzzy {
+                q=Box::new(BooleanQuery::new(vec![(Occur::Should,q),(Occur::Should,Box::new(tantivy::query::BoostQuery::new(fuzzy,0.5)))]));
+                expanded=true;
+            }
+        }
+        let mut cached=HashMap::new();
+        let mut reusable=initial.is_some() && !expanded && parsed.filters.is_empty() && box_id.is_none();
+        if reusable {
+            for &(_,addr) in initial.as_ref().unwrap().iter().take(candidate_limit) {
+                let d=searcher.doc::<TantivyDocument>(addr)?;
+                if d.get_first(self.fields.ext).and_then(|v|v.as_str())==Some("nb") { reusable=false; }
+                cached.insert(addr,d);
+                if !reusable { break; }
+            }
+        }
+        let mut clauses=vec![
+            (Occur::Must,q),
+            (Occur::MustNot,Box::new(tantivy::query::TermQuery::new(tantivy::Term::from_field_text(self.fields.ext,"nb"),IndexRecordOption::Basic)) as Box<dyn Query>),
+        ];
+        if let Some(box_id)=box_id {
+            clauses.push((Occur::Must,Box::new(tantivy::query::ConstScoreQuery::new(Box::new(tantivy::query::TermQuery::new(tantivy::Term::from_field_text(self.fields.box_ids,&box_id.to_string()),IndexRecordOption::Basic)),0.0))));
+        }
+        for filter in parsed.filters {
+            if let Some((field,value))=filter.strip_prefix("ext:").map(|v|(self.fields.ext,v)) {
+                clauses.push((Occur::Must, Box::new(tantivy::query::TermQuery::new(tantivy::Term::from_field_text(field,value),IndexRecordOption::Basic))));
+            } else if let Some((field,value))=filter.strip_prefix("path:").map(|v|(self.fields.path,v)) {
+                clauses.push((Occur::Must, Box::new(tantivy::query::RegexQuery::from_pattern(&format!(".*{}.*",regex::escape(value)),field)?)));
+            } else if let Some(value)=filter.strip_prefix("after:").and_then(parse_date_epoch) {
+                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value)), std::ops::Bound::Unbounded))));
+            } else if let Some(value)=filter.strip_prefix("before:").and_then(parse_date_epoch) {
+                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
+            }
+        }
+        q=Box::new(BooleanQuery::new(clauses));
+        let top=if reusable { initial.unwrap().into_iter().take(candidate_limit).collect() } else { searcher.search(&q,&TopDocs::with_limit(candidate_limit).order_by_score())? };
+        // 발췌문에도 이미 해제한 문서를 재사용한다.
+        let mut candidates: Vec<(String, Score, u8, i64, Option<u64>, String, String, Vec<String>, TantivyDocument)> = Vec::with_capacity(top.len());
+        for (score,addr) in top {
+            let d=match cached.remove(&addr) { Some(d)=>d, None=>searcher.doc::<TantivyDocument>(addr)? };
+            let path=d.get_first(self.fields.path).and_then(|v|v.as_str()).unwrap_or("").to_string();
+            let page=d.get_first(self.fields.page).and_then(|v|v.as_u64());
+            let level=d.get_first(self.fields.level).and_then(|v|v.as_u64()).unwrap_or(0).min(255) as u8;
+            let recency=d.get_first(self.fields.mtime).and_then(|v|v.as_i64()).unwrap_or(0);
+            let name=d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string();
+            let title=d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string();
+            let box_ids=d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect();
+            candidates.push((path,score,level,recency,page,name,title,box_ids,d));
+        }
+        // Use the first (highest-scoring) paragraph as each path's representative.
+        let mut documents = HashMap::new();
+        let compact: Vec<_> = candidates.iter().enumerate().map(|(i,c)| {
+            let document = *documents.entry(c.0.as_str()).or_insert(i);
+            hierarchy::search::Candidate {document,score:c.1,hierarchy_rank:c.2,recency:c.3}
+        }).collect();
+        let ranked=hierarchy::search::aggregate(&compact, options.limit.max(1));
+        let mut groups: HashMap<usize,SearchHit> = HashMap::new();
+        let ranked_len=ranked.len();
+        let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
+        for row in &ranked {
+            let c=&candidates[row.document];
+            let hit=groups.entry(row.document).or_insert_with(||SearchHit{path:c.0.clone(),name:c.5.clone(),title:c.6.clone(),score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,box_ids:c.7.clone(),hit_pages:Vec::new(),highlighted:Vec::new()});
+            let d=&c.8;
+            let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
+            let snippet=generator.snippet(body);
+            if hit.snippets.is_empty() {
+                hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
+                hit.snippets.push(snippet.fragment().to_string());
+            }
+        }
+        for (c, candidate) in candidates.iter().zip(&compact) {
+            if let Some(hit) = groups.get_mut(&candidate.document) { hit.hit_pages.push(c.4); }
+        }
+        let mut out: Vec<_>=Vec::with_capacity(ranked_len);
+        // Search-policy output order comes from hierarchy::search::aggregate.
+        for row in ranked { if let Some(hit)=groups.remove(&row.document) { out.push(hit); } }
+        Ok(out)
+    }
+
+    #[cfg(test)]
+    fn reference_search(&self, query: &str, options: SearchOptions) -> tantivy::Result<Vec<SearchHit>> {
         let parsed=parse_directives(query);
         let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_ko,1.0),(self.fields.body_bi,0.4)];
         let mut parser=QueryParser::for_index(&self.index, fields.iter().map(|(f,_)|*f).collect());
@@ -476,6 +598,29 @@ mod tests {
  }
  #[test] fn notebook_index_reuses_search_index_with_exact_scope_and_rank(){let dir=temp();let ix=SearchIndex::open_or_create(&dir).unwrap();let source=|id|crate::notebook::Source{id,notebook_id:7,kind:"txt".into(),origin:"".into(),display_name:format!("자료{id}"),status:"ready".into(),reason:"".into(),paragraph_count:1,original_size:0,original_mtime:0};let a=source(31);let b=source(32);ix.replace_notebook_source(7,&a,&[crate::notebook::Paragraph{source_id:31,ordinal:0,location:"1".into(),level:0,kind:"text".into(),body:"서울 예산".into()}]).unwrap();ix.replace_notebook_source(7,&b,&[crate::notebook::Paragraph{source_id:32,ordinal:0,location:"2".into(),level:0,kind:"text".into(),body:"서울 서울 예산 예산".into()}]).unwrap();let all=ix.search_notebook(7,"서울 예산",None,10).unwrap();assert_eq!(all.len(),2);assert!(all[0].score>=all[1].score);assert!(ix.search_notebook(7,"서울 예산",Some(&[31]),10).unwrap().iter().all(|h|h.source_id==31));assert!(ix.search_notebook(8,"서울 예산",None,10).unwrap().is_empty());ix.remove_notebook(7).unwrap();assert!(ix.search_notebook(7,"서울",None,10).unwrap().is_empty());let _=std::fs::remove_dir_all(dir);}
  /// 측정용: `cargo test --release bench_many_files -- --ignored --nocapture`
+ #[test] fn search_matches_original_order_scores_and_snippets() {
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    { let batch=ix.batch();
+      for n in 0..35 {
+        let mut p=paragraph(&format!("rank-{n:02}.txt"),if n%3==0 {"서울 예산 정책\n서울 행정복지센터"} else {"서울 운영 계획"});
+        p.level=(n%5) as u8; p.mtime=n*86_400_000; p.box_ids=vec![(n%2).to_string()];
+        ix.add_or_update(&p).unwrap();
+      }
+      batch.finish().unwrap();
+    }
+    for include_notebook in [false,true] {
+    if include_notebook { let mut notebook=paragraph("notebook.txt","서울 예산"); notebook.ext="nb".into(); ix.add_or_update(&notebook).unwrap(); }
+    for query in ["서울", "서울 예산", "서을 예산", "ㅅㅇ", "TF", "없는검색어", "서울 ext:txt", "서울 path:rank-1", "서울 after:1970-01-02", "서울 before:1970-01-20"] {
+      for limit in [1,3,20,50] {
+        assert_eq!(format!("{:?}",ix.search(query,SearchOptions{limit}).unwrap()),format!("{:?}",ix.reference_search(query,SearchOptions{limit}).unwrap()),"query={query} limit={limit}");
+      }
+    }
+    }
+    let expected:Vec<_>=ix.reference_search("서울",SearchOptions{limit:200}).unwrap().into_iter().filter(|h|h.box_ids.iter().any(|id|id=="1")).collect();
+    assert_eq!(format!("{:?}",ix.search_box(1,"서울",200).unwrap()),format!("{expected:?}"));
+    assert!(ix.search_box(99,"서울",20).unwrap().is_empty());
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
  #[test] #[ignore] fn bench_many_files(){
     let n:usize=std::env::var("KLIB_BENCH_N").ok().and_then(|v|v.parse().ok()).unwrap_or(200);
     let body=|i:usize|(0..20).map(|l|format!("서울 예산 정책 자료 {i} 문단 {l} 행정복지센터 운영 계획")).collect::<Vec<_>>().join("
