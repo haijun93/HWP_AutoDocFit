@@ -76,6 +76,37 @@ class ContentSearchTests(unittest.TestCase):
         self.index.close()
         self.tmp.cleanup()
 
+    def test_context_search_results_match_across_all_synthetic_queries(self):
+        """10개 기준 질의의 전체 결과 필드(정렬·문단·경로·문맥)가 유지된다."""
+        with self.index._lock, self.index.db:
+            for doc in range(300):
+                path = f"{self.root}/doc{doc:03}.md"
+                paragraphs = [(0, "document_title", 0, "# 시설 사업"),
+                              (1, "chapter", 1, f"## 관광안내판 구역{doc % 10:03}")]
+                paragraphs.extend((p + 2, "body", 8,
+                                   f"해체공사 공정{p % 10:03} 시행 계획과 안전관리 {p}")
+                                  for p in range(38))
+                self.index.db.execute(
+                    "INSERT INTO content_meta(path,name,extension,mtime,ctime,hierarchy_schema_version) "
+                    "VALUES(?,?,?,?,?,?)",
+                    (path, Path(path).name, "md", 1, 1, CURRENT_HIERARCHY_SCHEMA_VERSION))
+                for paragraph_index, level, rank, body in paragraphs:
+                    self.index.db.execute(
+                        "INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body) "
+                        "VALUES(?,?,?,?,?,?)",
+                        (path, Path(path).name, paragraph_index, level, rank, body))
+        queries = [f"관광안내판 해체공사 구역{i:03}" for i in range(5)]
+        queries += [f"해체공사 공정{i:03}" for i in range(5)]
+        for query in queries:
+            results = self.index.search(query, limit=500)
+            self.assertTrue(results, query)
+            self.assertEqual([row["relevance_rank"] for row in results], list(range(1, len(results) + 1)))
+            self.assertEqual(len(results), 300 if query.startswith("해체공사 공정") else 30)
+            for row in results:
+                self.assertEqual(row["breadcrumb"], ["시설 사업", row["name"] and f"관광안내판 구역{int(row['name'][3:6]) % 10:03}"])
+                self.assertIn("context_hits", row)
+                self.assertIn("snippet", row)
+
     def test_engine_enabled_converts_levels_for_index(self):
         from unittest.mock import patch
         from docfit_core.timemachine.content_search import classify_paragraph_levels
