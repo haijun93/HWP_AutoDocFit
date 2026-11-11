@@ -79,6 +79,42 @@ class LifecycleSymptomsTests(LifecycleFixture):
         second = self.manager.begin('spacing')
         self.manager.report(second, 'done', {})
 
+    def test_pending_terminal_is_consumed_before_recovery(self):
+        self.dead_worker()
+        prepare_legacy(self.gui, pending=lambda: True)
+        self.assertTrue(self.gui.running)
+        self.assertEqual(self.manager.status(self.identifier)['state'], 'running')
+        legacy_event(self.manager, self.identifier, ('finished', 1, 0))
+        prepare_legacy(self.gui, pending=lambda: False)
+        self.assertEqual(job_phase(self.gui, self.manager), 'finished')
+
+    def test_unstarted_worker_is_not_reaped(self):
+        worker = threading.Thread(target=lambda: None)
+        self.manager.attach(self.identifier, worker)
+        prepare_legacy(self.gui)
+        self.assertTrue(self.gui.running)
+        self.assertEqual(self.manager.status(self.identifier)['state'], 'running')
+
+    def test_live_worker_is_not_reaped_and_dead_failure_notifies_once(self):
+        self.cleanup_window()
+        self.gui.running = True
+        prepare_legacy(self.gui)
+        self.assertTrue(self.gui.running)
+        self.dead_worker()
+        # 별도 작업의 terminal 없는 종료도 화면 잠금 해제는 한 번만 한다.
+        other = JobManager()
+        identifier = other.begin('spacing')
+        other.report(identifier, 'started', {})
+        other.attach(identifier, self.gui.worker)
+        calls = []
+        gui = SimpleNamespace(running=True, _job_manager=other, _job_id=identifier)
+        setattr(gui, '버튼_대기중', lambda: calls.append('idle'))
+        prepare_legacy(gui)
+        prepare_legacy(gui)
+        self.assertEqual(calls, ['idle'])
+        self.assertEqual(job_phase(gui, other), 'failed')
+        self.assertEqual(len([e for e in other.events()['events'] if e['type'] == 'failed']), 1)
+
     def test_new_job_clears_previous_stop_but_rejected_start_preserves_stop(self):
         self.manager.cancel(self.identifier)
         with self.assertRaises(ServiceError):

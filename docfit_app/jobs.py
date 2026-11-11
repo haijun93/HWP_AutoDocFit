@@ -262,13 +262,15 @@ def manager_for(gui):
         return gui._job_manager
 
 
-def prepare_legacy(gui):
-    """GUI가 대기로 복귀했는데 종료 튜플이 빠진 기존 worker를 실패로 회수한다."""
+def prepare_legacy(gui, *, pending=None):
+    """종료 사건을 먼저 소비한 뒤 실제로 끝난 worker의 상태를 회수한다."""
     manager = manager_for(gui)
     identifier = getattr(gui, '_job_id', None)
     if identifier:
         worker = manager.thread(identifier)
         if worker is not None and worker.ident is not None and not _alive(worker):
+            if pending is not None and pending():
+                return manager
             if manager.status(identifier)['state'] not in TERMINAL:
                 manager.report(identifier, 'failed', {'code':'JOB_INTERRUPTED', 'message':'작업 종료 알림 없이 실행이 끝났습니다.'})
             if gui.running:
