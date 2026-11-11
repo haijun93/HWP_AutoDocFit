@@ -1941,6 +1941,7 @@ class ContentSearchIndex:
                             "mtime": meta["mtime"], "folder_path": os.path.dirname(path),
                             "folder_name": os.path.basename(os.path.dirname(path)),
                             "locations": locations, "breadcrumb": primary_breadcrumb,
+                            "sections": hierarchy_path.group_by_parent(crumbs, valid_para_indices),
                             "breadcrumb_text": primary_breadcrumb_text,
                             "snippet": locations[0]["snippet"] if locations else "",
                             "highlights": locations[0]["highlights"] if locations else [],
