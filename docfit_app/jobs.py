@@ -329,11 +329,20 @@ def legacy_event(manager, identifier, item):
         total, n = progress['total'], progress['file']
         manager.report(identifier, 'progress', {'percent':100 * (max(0, n - 1) + fraction) / total if total else 0})
     elif event in ('saved', 'document_error'):
-        manager.report(identifier, 'item_done' if event == 'saved' else 'item_failed',
-                       {'source':str(values[0]), 'output' if event == 'saved' else 'message':str(values[1])})
+        if event == 'saved':
+            manager.report(identifier, 'item_done', {'source':str(values[0]), 'status':'converted', 'output':str(values[1])})
+        else:
+            from docfit_core.file_conversion import is_same_format
+            source, reason = str(values[0]), str(values[1])
+            skipped = is_same_format(source, manager._get(identifier)['params'].get('target'))
+            manager.report(identifier, 'item_done' if skipped else 'item_failed',
+                           {'source':source, 'status':'skipped' if skipped else 'failed', 'reason':reason, 'output':None})
         manager.report(identifier, 'progress', {'percent':100 * progress['file'] / progress['total'] if progress['total'] else 0})
     elif event in ('finished', 'file_conversion_finished'):
-        manager.report(identifier, 'done', {'success':values[0], 'failed':values[1]})
+        data = {'success':values[0], 'failed':values[1]}
+        if len(values) > 2 and isinstance(values[2], dict):
+            data.update(values[2])
+        manager.report(identifier, 'done', data)
     elif event in ('stopped', 'file_conversion_stopped'):
         manager.report(identifier, 'cancelled', {})
     elif event in ('fatal_error', 'conversion_error'):

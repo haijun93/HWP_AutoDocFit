@@ -30,6 +30,8 @@ def start_conversion_job(manager, files, target, output_dir=None, *, job_id=None
         adapter = Adapter()
         def emit(item):
             legacy_event(adapter, 'conversion', item)
+            if item[0] == 'file_conversion_finished' and len(item) > 3:
+                adapter.terminal = ('done', {'success':item[1], 'failed':item[2], **item[3]})
             if progress:
                 progress(item)
         results = run_conversion(files, target, output_dir,
@@ -37,7 +39,12 @@ def start_conversion_job(manager, files, target, output_dir=None, *, job_id=None
         if adapter.terminal:
             report(*adapter.terminal)
         return results
-    return manager.start('file_format', {'target':target}, runner, job_id=job_id)
+    params = {'target':target}
+    if job_id is None:
+        job_id = manager.begin('file_format', params)
+    else:
+        manager._get(job_id)['params'].update(params)
+    return manager.start('file_format', params, runner, job_id=job_id)
 
 
 def _runtime():
@@ -211,7 +218,15 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                 successes = 0   # 중단하면 합본을 만들지 않으므로 성공으로 세지 않는다
             gui_queue.put(("file_conversion_stopped", successes, failures))
         else:
-            gui_queue.put(("file_conversion_finished", successes, failures))
+            skipped = sum(result['status'] == 'skipped' for result in results)
+            outcome = 'ok' if successes and not failures else 'partial' if successes else 'nothing_saved'
+            gui_queue.put(("file_conversion_finished", successes, failures, {
+                'outcome': outcome, 'skipped': skipped, 'results': [
+                    {'source': result['source'], 'status': {'success':'converted','skipped':'skipped','failed':'failed'}[result['status']],
+                     'reason': result['error'], 'output': result['output']}
+                    for result in results if result['source'] is not None
+                ]
+            }))
     except Exception as exc:
         gui_queue.put(("fatal_error", str(exc)))
     finally:
