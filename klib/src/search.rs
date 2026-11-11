@@ -22,7 +22,8 @@ const WRITER_HEAP: usize = 50_000_000;
 /// 색인 스키마 버전. 스키마나 색인에 넣는 내용이 바뀌면 올린다. 색인 폴더의 표시와 다르면 열 때 옛 색인을 버리고 다시 만든다.
 /// 1(표시 없음): 본문 필드를 모두 저장, `body_ko`·`body_bi` 중복. 2: 저장은 `body`만, `body_ko` 제거.
 /// 3: hwpx·docx를 문단 단위로 나눠 위계 수준(`level`)과 함께 색인.
-pub const SCHEMA_VERSION: u32 = 3;
+/// 4: 순위 계산에 쓰는 `path`·`level`·`mtime`·`page`와 `ext`를 FAST 필드로(저장 문서에서는 뺌).
+pub const SCHEMA_VERSION: u32 = 4;
 /// 색인이 온전히 만들어진 스키마 버전(다시 만들 때는 다 끝난 뒤에만 쓴다).
 const VERSION_FILE: &str = "klib_schema_version";
 /// 다시 만드는 중이라는 표시. 남아 있으면 중간에 죽은 것이므로 다음에 열 때 처음부터 다시 한다.
@@ -171,20 +172,21 @@ fn text_options(tokenizer: &str, stored: bool) -> TextOptions {
 fn schema() -> Schema {
     let mut b = Schema::builder();
     b.add_text_field("doc_id", tantivy::schema::STRING);
-    b.add_text_field("path", tantivy::schema::STRING | tantivy::schema::STORED);
+    // 순위 계산(문서 묶기·위계 수준·최신·쪽)에 쓰는 값은 FAST 필드로 둔다. 후보 문단(최대 4,000건)의 저장 문서를 풀지 않고 읽는다.
+    b.add_text_field("path", tantivy::schema::STRING | tantivy::schema::FAST);
     b.add_text_field("box_ids", tantivy::schema::STRING | tantivy::schema::STORED);
     b.add_text_field("name", text_options(TOKENIZER, true));
     b.add_text_field("name_cho", text_options("default", false));
     b.add_text_field("title", text_options(TOKENIZER, true));
-    b.add_u64_field("level", tantivy::schema::INDEXED | tantivy::schema::STORED);
+    b.add_u64_field("level", tantivy::schema::FAST);
     // 본문 검색 필드는 색인만 한다. 본문 글은 `body` 한 곳에만 저장한다.
     // (`body_ko`는 형태소 분석을 넣기 전까지 `body_bi`와 같은 색인이라 없앴다. 질의의 가중치는 `body_bi`에 합쳤다.)
     b.add_text_field("body_bi", text_options(TOKENIZER, false));
     b.add_text_field("body_jamo", text_options("default", false));
     b.add_text_field("body_cho", text_options("default", false));
-    b.add_text_field("ext", tantivy::schema::STRING | tantivy::schema::STORED);
-    b.add_i64_field("mtime", tantivy::schema::INDEXED | tantivy::schema::STORED);
-    b.add_u64_field("page", tantivy::schema::STORED);
+    b.add_text_field("ext", tantivy::schema::STRING | tantivy::schema::FAST);
+    b.add_i64_field("mtime", tantivy::schema::INDEXED | tantivy::schema::FAST);
+    b.add_u64_field("page", tantivy::schema::FAST);
     b.add_text_field("sheet", tantivy::schema::STRING | tantivy::schema::STORED);
     b.add_u64_field("row", tantivy::schema::STORED);
     b.add_text_field("body", tantivy::schema::STORED);
@@ -198,6 +200,38 @@ fn schema() -> Schema {
 fn fields_of(schema: &Schema) -> tantivy::Result<Fields> {
     let f = |name: &str| schema.get_field(name);
     Ok(Fields {doc_id:f("doc_id")?,path:f("path")?,box_ids:f("box_ids")?,name:f("name")?,name_cho:f("name_cho")?,title:f("title")?,level:f("level")?,body_bi:f("body_bi")?,body_jamo:f("body_jamo")?,body_cho:f("body_cho")?,ext:f("ext")?,mtime:f("mtime")?,page:f("page")?,sheet:f("sheet")?,row:f("row")?,body:f("body")?,notebook_id:f("notebook_id")?,source_id:f("source_id")?,paragraph_ordinal:f("paragraph_ordinal")?,location:f("location")?})
+}
+/// 한 세그먼트의 FAST 열 묶음. 값이 하나도 없는 열은 세그먼트에 없을 수 있어 Option이다.
+struct Columns {
+    path: Option<tantivy::columnar::StrColumn>,
+    ext: Option<tantivy::columnar::StrColumn>,
+    /// 이 세그먼트 `ext` 사전에서 "nb"(노트북 문단)의 번호.
+    notebook_ord: Option<u64>,
+    level: Option<tantivy::columnar::Column<u64>>,
+    mtime: Option<tantivy::columnar::Column<i64>>,
+    page: Option<tantivy::columnar::Column<u64>>,
+}
+impl Columns {
+    fn open(searcher: &tantivy::Searcher) -> tantivy::Result<Vec<Columns>> {
+        searcher.segment_readers().iter().map(|reader| {
+            let fast=reader.fast_fields();
+            let ext=fast.str("ext")?;
+            let notebook_ord=match &ext { Some(column)=>column.dictionary().term_ord("nb")?, None=>None };
+            Ok(Columns {path:fast.str("path")?, ext, notebook_ord, level:fast.column_opt("level")?, mtime:fast.column_opt("mtime")?, page:fast.column_opt("page")?})
+        }).collect()
+    }
+    fn path_ord(&self, doc: tantivy::DocId) -> Option<u64> { self.path.as_ref().and_then(|c|c.term_ords(doc).next()) }
+    fn path(&self, doc: tantivy::DocId) -> tantivy::Result<String> {
+        let mut out=String::new();
+        if let (Some(column),Some(ord))=(&self.path,self.path_ord(doc)) { column.ord_to_str(ord,&mut out)?; }
+        Ok(out)
+    }
+    fn is_notebook(&self, doc: tantivy::DocId) -> bool {
+        match (&self.ext,self.notebook_ord) { (Some(column),Some(nb))=>column.term_ords(doc).next()==Some(nb), _=>false }
+    }
+    fn level(&self, doc: tantivy::DocId) -> u8 { self.level.as_ref().and_then(|c|c.first(doc)).unwrap_or(0).min(255) as u8 }
+    fn recency(&self, doc: tantivy::DocId) -> i64 { self.mtime.as_ref().and_then(|c|c.first(doc)).unwrap_or(0) }
+    fn page(&self, doc: tantivy::DocId) -> Option<u64> { self.page.as_ref().and_then(|c|c.first(doc)) }
 }
 fn io_error(e: std::io::Error) -> tantivy::TantivyError { tantivy::TantivyError::InternalError(e.to_string()) }
 /// 다시 만들기 잠금을 잡는다. 다른 프로세스가 쥐고 있으면 None.
@@ -475,15 +509,11 @@ impl SearchIndex {
                 expanded=true;
             }
         }
-        let mut cached=HashMap::new();
+        // 순위 계산에 쓰는 값은 FAST 열에서 읽는다. 저장 문서는 결과로 나갈 문서만 푼다.
+        let columns=Columns::open(&searcher)?;
         let mut reusable=initial.is_some() && !expanded && parsed.filters.is_empty() && box_id.is_none();
         if reusable {
-            for &(_,addr) in initial.as_ref().unwrap().iter().take(candidate_limit) {
-                let d=searcher.doc::<TantivyDocument>(addr)?;
-                if d.get_first(self.fields.ext).and_then(|v|v.as_str())==Some("nb") { reusable=false; }
-                cached.insert(addr,d);
-                if !reusable { break; }
-            }
+            reusable=!initial.as_ref().unwrap().iter().take(candidate_limit).any(|&(_,addr)|columns[addr.segment_ord as usize].is_notebook(addr.doc_id));
         }
         let mut clauses=vec![
             (Occur::Must,q),
@@ -497,50 +527,53 @@ impl SearchIndex {
                 clauses.push((Occur::Must, Box::new(tantivy::query::TermQuery::new(tantivy::Term::from_field_text(field,value),IndexRecordOption::Basic))));
             } else if let Some((field,value))=filter.strip_prefix("path:").map(|v|(self.fields.path,v)) {
                 clauses.push((Occur::Must, Box::new(tantivy::query::RegexQuery::from_pattern(&format!(".*{}.*",regex::escape(value)),field)?)));
+            // 날짜 필터는 역색인 범위 질의로 고정한다. mtime이 FAST 필드라 RangeQuery에 맡기면 열 기반 경로를 타는데,
+            // 그 경로는 세그먼트 전체가 범위 안일 때 점수 가산이 달라 세그먼트 배치에 따라 순위가 흔들린다.
             } else if let Some(value)=filter.strip_prefix("after:").and_then(parse_date_epoch) {
-                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value)), std::ops::Bound::Unbounded))));
+                clauses.push((Occur::Must, Box::new(tantivy::query::InvertedIndexRangeQuery::new(std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value)), std::ops::Bound::Unbounded))));
             } else if let Some(value)=filter.strip_prefix("before:").and_then(parse_date_epoch) {
-                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
+                clauses.push((Occur::Must, Box::new(tantivy::query::InvertedIndexRangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
             }
         }
         q=Box::new(BooleanQuery::new(clauses));
         let top=if reusable { initial.unwrap().into_iter().take(candidate_limit).collect() } else { searcher.search(&q,&TopDocs::with_limit(candidate_limit).order_by_score())? };
-        // 발췌문에도 이미 해제한 문서를 재사용한다.
-        let mut candidates: Vec<(String, Score, u8, i64, Option<u64>, String, String, Vec<String>, TantivyDocument)> = Vec::with_capacity(top.len());
-        for (score,addr) in top {
-            let d=match cached.remove(&addr) { Some(d)=>d, None=>searcher.doc::<TantivyDocument>(addr)? };
-            let path=d.get_first(self.fields.path).and_then(|v|v.as_str()).unwrap_or("").to_string();
-            let page=d.get_first(self.fields.page).and_then(|v|v.as_u64());
-            let level=d.get_first(self.fields.level).and_then(|v|v.as_u64()).unwrap_or(0).min(255) as u8;
-            let recency=d.get_first(self.fields.mtime).and_then(|v|v.as_i64()).unwrap_or(0);
-            let name=d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string();
-            let title=d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string();
-            let box_ids=d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect();
-            candidates.push((path,score,level,recency,page,name,title,box_ids,d));
+        // 후보: (문서 대표 번호, 점수, 위계 수준, 수정 시각, 쪽, 주소). 같은 경로의 문단은 가장 먼저 나온(점수가 가장 높은) 문단을 대표로 묶는다.
+        // 경로 글자열은 세그먼트의 사전 번호마다 한 번만 푼다.
+        let mut by_ord: HashMap<(u32,u64),usize> = HashMap::new();
+        let mut by_path: HashMap<String,usize> = HashMap::new();
+        let mut candidates: Vec<(usize, Score, u8, i64, Option<u64>, tantivy::DocAddress)> = Vec::with_capacity(top.len());
+        for (i,(score,addr)) in top.into_iter().enumerate() {
+            let column=&columns[addr.segment_ord as usize];
+            let document=match column.path_ord(addr.doc_id) {
+                Some(ord)=>match by_ord.get(&(addr.segment_ord,ord)) {
+                    Some(&document)=>document,
+                    None=>{ let document=*by_path.entry(column.path(addr.doc_id)?).or_insert(i); by_ord.insert((addr.segment_ord,ord),document); document }
+                },
+                None=>*by_path.entry(String::new()).or_insert(i),
+            };
+            candidates.push((document,score,column.level(addr.doc_id),column.recency(addr.doc_id),column.page(addr.doc_id),addr));
         }
-        // Use the first (highest-scoring) paragraph as each path's representative.
-        let mut documents = HashMap::new();
-        let compact: Vec<_> = candidates.iter().enumerate().map(|(i,c)| {
-            let document = *documents.entry(c.0.as_str()).or_insert(i);
-            hierarchy::search::Candidate {document,score:c.1,hierarchy_rank:c.2,recency:c.3}
-        }).collect();
+        let compact: Vec<_> = candidates.iter().map(|c| hierarchy::search::Candidate {document:c.0,score:c.1,hierarchy_rank:c.2,recency:c.3}).collect();
         let ranked=hierarchy::search::aggregate(&compact, options.limit.max(1));
         let mut groups: HashMap<usize,SearchHit> = HashMap::new();
         let ranked_len=ranked.len();
         let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
         for row in &ranked {
             let c=&candidates[row.document];
-            let hit=groups.entry(row.document).or_insert_with(||SearchHit{path:c.0.clone(),name:c.5.clone(),title:c.6.clone(),score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,box_ids:c.7.clone(),hit_pages:Vec::new(),highlighted:Vec::new()});
-            let d=&c.8;
+            let d=searcher.doc::<TantivyDocument>(c.5)?;
+            let mut hit=SearchHit{path:columns[c.5.segment_ord as usize].path(c.5.doc_id)?,
+                name:d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string(),
+                title:d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string(),
+                score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,
+                box_ids:d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect(),hit_pages:Vec::new(),highlighted:Vec::new()};
             let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
             let snippet=generator.snippet(body);
-            if hit.snippets.is_empty() {
-                hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
-                hit.snippets.push(snippet.fragment().to_string());
-            }
+            hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
+            hit.snippets.push(snippet.fragment().to_string());
+            groups.insert(row.document,hit);
         }
-        for (c, candidate) in candidates.iter().zip(&compact) {
-            if let Some(hit) = groups.get_mut(&candidate.document) { hit.hit_pages.push(c.4); }
+        for c in &candidates {
+            if let Some(hit) = groups.get_mut(&c.0) { hit.hit_pages.push(c.4); }
         }
         let mut out: Vec<_>=Vec::with_capacity(ranked_len);
         // Search-policy output order comes from hierarchy::search::aggregate.
@@ -595,21 +628,26 @@ impl SearchIndex {
             } else if let Some((field,value))=filter.strip_prefix("path:").map(|v|(self.fields.path,v)) {
                 clauses.push((Occur::Must, Box::new(tantivy::query::RegexQuery::from_pattern(&format!(".*{}.*",regex::escape(value)),field)?)));
             } else if let Some(value)=filter.strip_prefix("after:").and_then(parse_date_epoch) {
-                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value)), std::ops::Bound::Unbounded))));
+                clauses.push((Occur::Must, Box::new(tantivy::query::InvertedIndexRangeQuery::new(std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value)), std::ops::Bound::Unbounded))));
             } else if let Some(value)=filter.strip_prefix("before:").and_then(parse_date_epoch) {
-                clauses.push((Occur::Must, Box::new(tantivy::query::RangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
+                clauses.push((Occur::Must, Box::new(tantivy::query::InvertedIndexRangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
             }
         }
         q=Box::new(BooleanQuery::new(clauses));
         let top=searcher.search(&q,&TopDocs::with_limit(options.limit.max(1).saturating_mul(20).min(4000)).order_by_score())?;
         // First pass stores only compact metadata, not paragraph bodies or snippets.
+        // 옛(버전 1) 색인은 저장 필드에서, 지금 색인은 FAST 열에서 문단마다 따로 읽는다(묶음·캐시 없는 기준 구현).
+        let columns=if self.legacy_body_ko.is_none() { Some(Columns::open(&searcher)?) } else { None };
         let mut candidates: Vec<(String, Score, u8, i64, Option<u64>, String, String, Vec<String>, tantivy::DocAddress)> = Vec::with_capacity(top.len());
         for (score,addr) in top {
             let d=searcher.doc::<TantivyDocument>(addr)?;
-            let path=d.get_first(self.fields.path).and_then(|v|v.as_str()).unwrap_or("").to_string();
-            let page=d.get_first(self.fields.page).and_then(|v|v.as_u64());
-            let level=d.get_first(self.fields.level).and_then(|v|v.as_u64()).unwrap_or(0).min(255) as u8;
-            let recency=d.get_first(self.fields.mtime).and_then(|v|v.as_i64()).unwrap_or(0);
+            let (path,page,level,recency)=match &columns {
+                Some(columns)=>{ let c=&columns[addr.segment_ord as usize]; (c.path(addr.doc_id)?,c.page(addr.doc_id),c.level(addr.doc_id),c.recency(addr.doc_id)) }
+                None=>(d.get_first(self.fields.path).and_then(|v|v.as_str()).unwrap_or("").to_string(),
+                    d.get_first(self.fields.page).and_then(|v|v.as_u64()),
+                    d.get_first(self.fields.level).and_then(|v|v.as_u64()).unwrap_or(0).min(255) as u8,
+                    d.get_first(self.fields.mtime).and_then(|v|v.as_i64()).unwrap_or(0)),
+            };
             let name=d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string();
             let title=d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string();
             let box_ids=d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect();
@@ -765,7 +803,9 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     // 저장은 결과에 되읽는 필드만. 본문 글은 body 한 곳에만 저장하고, body_bi와 같던 body_ko는 없다.
     assert!(s.get_field("body_ko").is_err());
     for n in ["body_bi","body_jamo","body_cho","name_cho","doc_id"]{assert!(!s.get_field_entry(s.get_field(n).unwrap()).is_stored(),"{n}");}
-    for n in ["body","name","title"]{assert!(s.get_field_entry(s.get_field(n).unwrap()).is_stored(),"{n}");}}
+    for n in ["body","name","title"]{assert!(s.get_field_entry(s.get_field(n).unwrap()).is_stored(),"{n}");}
+    // 순위 계산용 값은 FAST 필드이고 저장 문서에는 넣지 않는다.
+    for n in ["path","level","mtime","page","ext"]{let e=s.get_field_entry(s.get_field(n).unwrap());assert!(e.is_fast()&&!e.is_stored(),"{n}");}}
  #[test] fn bigrams_preserve_korean(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{d55c}\u{ad6d}","\u{ad6d}\u{c5b4}","\u{bb38}\u{c11c}"]);}
  #[test] fn bigram_single_char(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}");assert!(s.advance());assert_eq!(s.token().text,"\u{ac00}");}
  #[test] fn bigram_splits_punctuation(){let mut tokenizer=KoBigram;let mut s=tokenizer.token_stream("\u{ac00}\u{b098},\u{b2e4}\u{b77c}");let mut v=vec![];while s.advance(){v.push(s.token().text.clone())}assert_eq!(v,["\u{ac00}\u{b098}","\u{b2e4}\u{b77c}"]);}
@@ -933,6 +973,19 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     for box_id in [0,1] { let expected:Vec<_>=old.reference_search("예산",SearchOptions{limit:200}).unwrap().into_iter().filter(|h|h.box_ids.iter().any(|id|*id==box_id.to_string())).map(|h|h.path).collect();
       assert_eq!(new.search_box(box_id,"예산",200).unwrap().into_iter().map(|h|h.path).collect::<Vec<_>>(),expected); }
     drop(old); drop(new); let _=std::fs::remove_dir_all(old_dir); let _=std::fs::remove_dir_all(new_dir);
+ }
+ /// FAST 열 읽기: 쪽이 없는 문단은 None, 쪽이 있으면 그 값. 따로 커밋해 세그먼트가 갈린 색인에서도 경로별로 하나로 묶인다.
+ #[test] fn fast_columns_handle_missing_pages_and_multiple_segments(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let mut no_page=paragraph("no-page.txt","서울 예산\n서울 계획"); no_page.page=None; no_page.level=0; ix.add_or_update(&no_page).unwrap();
+    assert_eq!(ix.search("서울",SearchOptions{limit:5}).unwrap()[0].hit_pages,vec![None,None]);
+    for n in 0..6u64 { let mut p=paragraph(&format!("seg-{n}.txt"),"서울 예산\n서울 계획\n서울 정책"); p.page=Some(n+1); p.mtime=n as i64; ix.add_or_update(&p).unwrap(); }
+    assert!(ix.segment_count()>1,"세그먼트가 여럿이어야 한다");
+    let hits=ix.search("서울",SearchOptions{limit:20}).unwrap();
+    assert_eq!(hits.len(),7);
+    for h in &hits { if h.path=="no-page.txt" { assert_eq!((h.page,h.paragraph_count,&h.hit_pages),(None,2,&vec![None,None])); } else { let n:u64=h.path[4..5].parse().unwrap(); assert_eq!((h.page,h.paragraph_count,&h.hit_pages),(Some(n+1),3,&vec![Some(n+1);3]),"{}",h.path); } }
+    assert_eq!(format!("{hits:?}"),format!("{:?}",ix.reference_search("서울",SearchOptions{limit:20}).unwrap()));
+    drop(ix); let _=std::fs::remove_dir_all(dir);
  }
  #[test] fn chosung_and_fuzzy_helpers(){assert_eq!(cho_text("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}"),"\u{314E}\u{3148}\u{3142}\u{3148}\u{3145}\u{314C}");assert!(is_chosung_query("\u{314E}\u{3148}\u{3142}\u{3148}"));assert!(fuzzy_query("\u{d589}\u{c815}\u{bcf5}\u{c9c0}\u{c13c}\u{d130}",fields_of(&schema()).unwrap().body_jamo).is_some());}
 }
