@@ -1566,3 +1566,22 @@ fn test_edit_requests_reuse_parsed_value_same_response() {
         assert_eq!(a.replace(&format!("문서 {via_pipe}"), "문서 N"), b.replace(&format!("문서 {via_core}"), "문서 N"), "{}", t.chars().take(80).collect::<String>());
     }
 }
+
+/// 색인을 다시 만들 일이 없으면 상태는 ready이고, 검색 응답에 '색인 중' 표시가 붙지 않는다.
+#[test]
+fn test_index_status_ready_and_search_without_indexing_flag() {
+    let ctx = TestContext::new("index_status");
+    let db = Arc::new(Mutex::new(Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: &str| json::parse(&pipe::handle_request(req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"index_status"}"#);
+    assert_eq!(status.bool("ok"), Some(true), "{status:?}");
+    assert_eq!(status.str("state"), Some("ready"), "{status:?}");
+    assert_eq!(status.bool("indexing"), Some(false));
+    assert_eq!(status.i64("schema_version"), Some(search::SCHEMA_VERSION as i64));
+    let found = call(r#"{"cmd":"search","query":"없는검색어xyz"}"#);
+    assert_eq!(found.bool("ok"), Some(true), "{found:?}");
+    assert!(found.get("indexing").is_none(), "{found:?}");
+    reindex::wait();
+    assert_eq!(call(r#"{"cmd":"index_status"}"#).str("state"), Some("ready"));
+}

@@ -89,7 +89,7 @@ pub fn kick(db: &Mutex<crate::db::Database>) {
     ONCE.call_once(|| {
         let path = db.lock().ok().and_then(|g| g.connection().path().map(str::to_string)).unwrap_or_default();
         if path.is_empty() { return; }
-        // 색인을 열어 판단하기 전까지도 '색인 중'으로 알린다(막 버린 색인의 빈 결과를 정상 결과로 오해하지 않게).
+        // 배경 스레드가 도는 동안은 유휴 종료·한 번 실행 종료를 미룬다(`is_running`·`wait`).
         RUNNING.store(true, Ordering::SeqCst);
         let spawned = std::thread::Builder::new().name("klib-reindex".into()).spawn(move || {
             let result = (|| {
@@ -111,10 +111,16 @@ pub fn is_running() -> bool { RUNNING.load(Ordering::SeqCst) }
 /// 한 번 실행 방식(`--request-json`)에서 끝나기 전에 기다린다(중간에 끝나면 다음 실행이 처음부터 다시 해야 한다).
 pub fn wait() { while is_running() { std::thread::sleep(std::time::Duration::from_millis(20)); } }
 
-/// (상태, 끝낸 수, 전체 수, 읽지 못한 수, 마지막 오류). 상태: "rebuilding" | "failed" | "ready".
+/// (상태, 끝낸 수, 전체 수, 읽지 못한 수, 마지막 오류).
+/// 상태: "rebuilding"(옛 색인을 버리고 다시 채우는 중) | "failed"(색인을 열지 못했거나 다시 만들다 실패) | "ready".
+/// 색인을 실제로 열어 보고 판단한다(배경 스레드가 아직 확인 중일 때 '색인 중'으로 잘못 알리지 않게).
 pub fn status() -> (&'static str, usize, usize, usize, String) {
-    let error = LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let state = if is_running() { "rebuilding" } else if !error.is_empty() { "failed" } else { "ready" };
+    let mut error = LAST_ERROR.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let pending = match crate::search_index() {
+        Ok(index) => index.needs_rebuild(),
+        Err(e) => { if error.is_empty() { error = e; } false }
+    };
+    let state = if !error.is_empty() { "failed" } else if pending { "rebuilding" } else { "ready" };
     (state, DONE.load(Ordering::Relaxed), TOTAL.load(Ordering::Relaxed), FAILED.load(Ordering::Relaxed), error)
 }
 
