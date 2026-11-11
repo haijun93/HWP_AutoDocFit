@@ -763,11 +763,11 @@ class ContentSearchTests(unittest.TestCase):
 
     def test_markdown_and_txt_heading_hierarchy_uses_document_context(self):
         cases = {
-            "one.md": ("# 단일 제목\n## 절\n### 주제\n", ["document_title", "section", "topic"]),
+            "one.md": ("# 단일 제목\n## 절\n### 주제\n", ["document_title", "chapter", "section"]),
             "many.md": ("# 계획 제목\n# Ⅰ. 시설물 정비\n## 관광안내판 철거\n### 대상 위치\n",
                         ["document_title", "chapter", "section", "topic"]),
             "same.txt": ("# 시설물 정비\n## 관광안내판 철거\n### 대상 위치\n",
-                         ["document_title", "section", "topic"]),
+                         ["document_title", "chapter", "section"]),
         }
         for name, (content, expected) in cases.items():
             with self.subTest(name=name):

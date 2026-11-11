@@ -63,7 +63,7 @@ MARKER_CLASS_TO_LEVEL: dict[str, str] = {
     "−": "dash",
     "－": "dash",
 }
-_MARKDOWN_HEADING = re.compile(r"^(#{1,3})(?:\s+|$)(.*)$")
+_MARKDOWN_HEADING = re.compile(r"^(#{1,4})(?:\s+|$)(.*)$")
 _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
@@ -279,7 +279,12 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                         level = ("document_title" if top_heading_count == 1 or paragraph_position == first_top_heading
                                  else "chapter")
                     else:
-                        level = {2: "section", 3: "topic"}[depth]
+                        # #가 하나뿐이면(문서 제목) 아래 세 단계를 장·절·주제에 차례로 대응시킨다.
+                        # #가 여럿이면 #이 장을 차지하므로 ##·###가 절·주제이고 ####는 본문이다.
+                        if top_heading_count <= 1:
+                            level = {2: "chapter", 3: "section", 4: "topic"}[depth]
+                        else:
+                            level = {2: "section", 3: "topic"}.get(depth)
 
             marker_info = classify_marker(text)
             family = marker_info[0] if marker_info else None

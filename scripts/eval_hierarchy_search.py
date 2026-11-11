@@ -89,10 +89,10 @@ def generate_corpus(root: Path, seed: int = SEED, document_count: int = DOCUMENT
         unique_word = f"고유어_{number + 1:04d}"
         body = f"본문에서는 {unique_word} 관련 세부 절차와 담당 기준을 설명한다. " + "자료 검토와 실행 결과를 기록한다. " * 3
         lines = [f"# {title}", f"## {chapter}", f"### {section}", f"#### {topic}", "", body]
-        expected = [chapter, section, topic]
+        expected = [title, chapter, section, topic]
         if group == "목차 없음":
             lines = [f"# {title}", f"## {chapter}", f"### {section}", f"#### {topic}", "", body]
-            expected = [chapter, section, topic]
+            expected = [title, chapter, section, topic]
         elif group == "번호 체계 오류":
             lines[1] = "## 제3장 관리"
             lines[2] = "### 7.4.9 계획"
