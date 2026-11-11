@@ -1,3 +1,54 @@
+## [할 일·성능] 위계검색·본문검색 속도 최적화 (2026-11-10)
+
+2026-11-10 코드 분석과 측정 결과다. 대상은 `docfit_core/timemachine/content_search.py`의 `ContentSearchIndex.search`(위계검색)와 `keyword_search`(본문검색)다. 측정은 합성 색인(3,000문서 × 80문단 = 24만 문단, Linux, SQLite 3.53.1)에서 했고 실제 PC에서는 절대값이 달라진다. 공통 원인: `content_paragraph_fts`의 `path`가 `UNINDEXED`라 `WHERE path=?`가 표 전체를 훑는다(건당 57~105ms). 권장 순서: 오류 2건 → 스키마 변경 없는 것(위계 1·2, 본문 1·3·4·6) → 대응 표 추가(스키마 변경, 자동 재색인 포함).
+
+### 먼저 고칠 오류
+- [ ] **(오류) 본문검색 2글자 검색어에서 문서 누락**: `keyword_search`의 2글자 경로가 후보 문서 본문을 `{경로: 본문}` 사전에 문단 단위로 덮어써서 문서마다 마지막 문단만 남는다(`candidate_texts`, 3글자 이상 경로는 `group_concat`으로 합쳐 정상). 이후 "검색어가 본문에 있는가" 확인이 그 한 문단에만 적용된다. 재현: "감사"가 30문서의 첫 문단에만 있을 때 결과 0건. 회귀 시험을 함께 추가한다.
+- [ ] **(오류) 본문검색 후보 문서가 많을 때 SQL 변수 한도 초과 가능**: 후보 경로를 `path IN (?, ?, …)`에 하나씩 넣는 쿼리가 세 곳(`metas`, `candidate_texts`, `paragraph_rows_by_path`)이다. 변수 4만 개에서 "too many SQL variables"로 실패함을 확인했다(기본 한도 32,766). 위계검색은 500개 기준으로 분기하지만 본문검색에는 분기가 없다. 임시 표 조인으로 바꾼다.
+
+### 위계검색 (`search`)
+측정: "행정복지센터"(드문 말, 60문서) 3,449ms, "예산"(2글자) 6,537ms, 발췌용 문단 1건 조회 57ms, 같은 조회를 rowid로 하면 0.1ms 미만.
+- [ ] **1. 발췌문 조회를 rowid로**: 결과 1건마다 `WHERE path=? AND CAST(paragraph_index AS INTEGER)=?`로 표 전체를 훑는다(60건 × 57ms ≈ 3.4초, 측정값과 일치). 집계 쿼리의 `chosen` 단계에서 rowid를 함께 뽑아 `WHERE rowid IN (...)` 한 번으로 읽는다. 스키마 변경 없음. 계산상 드문 말 검색이 수십 ms로 내려간다.
+- [ ] **2. 2글자 검색어에 `content_short_grams` 쓰기**: 이 표는 `keyword_search`만 쓰고 위계검색은 `body LIKE '%말%'`로 전체를 훑는다. 공문서 검색어는 2글자가 많아 가장 흔한 경로다.
+- [ ] **3. 집계를 후보 문서로 제한**: 1단계에서 검색어별 교집합(AND) 후보를 구하고도 3단계 집계는 OR로 걸린 모든 문단을 대상으로 `body`와 `lower(body)`를 복사하고 그룹 집계를 세 번 한 뒤, 한 낱말만 있는 문서는 Python에서 버린다. 후보 경로를 임시 표에 넣어 집계 대상을 줄이고 소문자 본문은 색인할 때 저장한다.
+- [ ] **4. 색인 갱신의 전체 훑기 제거**: `index_file`이 변경 없는 파일도 `SELECT 1 FROM content_paragraph_fts WHERE path=?`로 확인한다(건당 64ms, 3,000개면 바뀐 것이 없어도 약 3분). `DELETE ... WHERE path=?`도 건당 57ms씩 두 번이다. 대응 표를 두거나 `content_meta`만 믿고 확인을 생략한다.
+- [ ] **5. 근접 검색(`near`)의 조합 폭발 막기**: 낱말 위치의 모든 조합을 `itertools.product`로 만든다. 위치를 정렬해 창을 미는 방식으로 바꾼다. 후보 문서마다 본문을 읽는 조회도 `path=?` 전체 훑기다.
+- [ ] **6. 색인 시 문서당 고정 비용 줄이기**: `analyze_levels`가 파일마다 `settings.json`을 읽고 DLL을 다시 연다(`docfit_app/hierarchy_bridge.py`). 파일마다 트랜잭션을 따로 커밋한다. `content_short_grams`는 2글자 조각마다 전체 경로 문자열을 저장한다(3,000문서에서 44.5만 행) — 정수 문서 번호로 바꾼다.
+- [x] **7-가. klib 자료함 검색 순위를 위계 우선으로 (사용자 결정, 2026-11-10: "둘 다 위계 우선")**: `hierarchy/src/search.rs`의 `aggregate` 정렬을 위계 수준 → 언급 수 → 최신 → 점수 순으로 바꿨다(Python `hierarchy_relevance`와 같은 순서, 본문은 모든 위계 수준 뒤). hierarchy 시험 40건 통과, klib는 `cargo check --tests`만 통과(Linux에서는 Win32 링크가 안 돼 klib 시험 실행은 Windows CI에서 확인).
+- [ ] **7-나. klib 색인에 위계 수준 넣기 (7-가가 실제로 효과를 내려면 필요)**: `klib/src/content.rs`의 `index_file`이 모든 문단을 `level: 0`(본문)으로 색인한다. 그래서 자료함 검색에서는 위계 수준이 전부 같아 순위가 언급 수·최신·점수로만 정해진다. `extract_blocks`가 이미 hwpx·docx의 개요 수준을 뽑으므로 이를 색인에 넣는다. 기존 색인은 다시 만들어야 하므로 Rust 리뷰 절의 스키마 정리와 함께 한다.
+- [ ] **7-다. klib 검색이 파일 단위로 묶이지 않음**: `klib/src/search.rs`의 `search`가 `aggregate`에 문단마다 다른 `document` 번호(후보 순번)를 넘긴다. 그래서 언급 수가 항상 1이고 같은 파일이 결과에 여러 번 나올 수 있다. 경로 기준으로 문서 번호를 매긴다. 결과 모양이 바뀌므로 화면 쪽 영향을 확인한다.
+- [ ] **7-라. `aggregate` 선형 탐색 제거 등**: 후보마다 문서를 선형 탐색한다(후보 4,000건이면 최대 1,600만 번 비교) — `HashMap`으로 바꾼다. `rank_documents`는 호출하는 곳이 없다(쓰거나 지운다). 노트북 검색(`search_notebook`)은 점수 순 그대로다 — 위계 우선을 여기에도 적용할지는 사용자 확인 뒤 정한다.
+
+### 본문검색 (`keyword_search`)
+측정: "행정복지센터"(드문 말) 166ms, "주민센터"(흔한 말, 전 문서) 13,724ms, 같은 검색 2쪽(`offset=100`) 14,183ms, `limit=1` 3,282ms, "예산"(흔한 2글자) 8,569ms. 14초 구성: 결과별 위치 조회 105ms × 100건 ≈ 10.5초, SQL 세 번 약 1.1초(일치 문단 12.6만 건 읽기 424ms, 본문 합치기 282ms, 문단 다시 읽기 397ms), Python 처리 약 2.2초.
+- [ ] **1. 결과별 위치 조회를 한 번으로 합치기**: 결과마다 `WHERE path=? AND MATCH`를 실행해 전체 일치 문단을 매번 훑은 뒤 경로로 걸러낸다. 일치 문단은 1단계에서 이미 읽으므로 그때 문단 번호·위치 표시를 함께 읽어 문서별 상위 3개를 메모리에 둔다. 계산상 14초 → 3초대.
+- [ ] **2. 같은 본문을 세 번 읽지 않기**: 일치 문단, 후보 문서 전체 본문(합친 것), 후보 문서 전체 문단을 차례로 읽고 뒤 두 번은 `path IN (…)` 전체 훑기다. 문서 단위 AND 확인은 이미 있는 문서용 FTS 표 `content_fts`에 `"말1" AND "말2"`로 한 번 묻는다. 메모리 사용도 함께 줄어든다.
+- [ ] **3. 순위 계산을 필요한 만큼만**: 일치 문단 전부에 대해 Python에서 소문자 변환과 낱말 세기를 한다. 근접 가산점은 후보 문서의 모든 문단에 `itertools.product`를 쓴다(창 밀기로 교체). 날짜 추출 정규식을 후보 문서마다 전체 본문에 돌린다(색인 시 저장한 `reference_date` 사용).
+- [ ] **4. 쪽 넘김 결과 재사용**: 2쪽 요청이 1쪽과 같은 시간이 걸린다. 같은 검색어·범위의 순위 목록을 잠깐 보관해 다음 쪽은 위치 조회만 한다.
+- [ ] **5. 2글자 경로의 전체 훑기 줄이기**: `content_short_grams`로 후보를 좁힌 뒤에도 후보와 문단을 `path`로 조인하고 결과마다 `path=? AND body LIKE`를 실행한다. 아래 대응 표로 해결한다.
+- [ ] **6. 제외어 처리의 중복 제거**: 제외어가 3글자 이상이면 `MATCH`로 찾은 뒤 같은 말을 `LIKE`로 한 번 더 전체에서 찾는다(`else` 없이 항상 실행). 3글자 이상은 `MATCH`만, 2글자는 `content_short_grams`로 좁힌다.
+- [ ] **7. 파일 이름 검색 캐시**: `search_files`가 주석과 달리 호출마다 `content_meta` 전체를 정렬해 읽고 행마다 경로를 정규화한다. 3,000문서에서 11ms라 지금은 문제없고, 문서 수만 건이 되면 실제 캐시를 둔다.
+
+### 공통 (스키마 변경)
+- [ ] **`(경로, 문단 번호) → rowid` 대응 표 추가**: 위계검색의 발췌문 조회·근접 검색·색인 갱신 확인과 본문검색의 위치 조회·2글자 경로를 함께 해결한다. 대응 표로 rowid를 찾는 조회는 0.1ms 미만으로 측정됐다. `CURRENT_HIERARCHY_SCHEMA_VERSION`을 올려 자동 재색인되게 하고, 재색인 중 검색 동작을 정한다.
+- [ ] **고친 뒤 재측정**: 같은 합성 색인으로 전후 시간을 재서 이 절에 기록하고, 검색 결과가 고치기 전과 같은지(오류 수정 항목 제외) 회귀 시험으로 확인한다.
+
+## [할 일·성능] Rust 실행속도·코드 최적화 리뷰 반영 (2026-11-10)
+
+2026-11-10 코드리뷰(Rust 크레이트 editor_core·klib·hierarchy·kagent와 Python·Flutter 연동) 결과다. Windows 전용 코드(파이프·Tantivy 색인)는 Linux에서 실행하지 못해 코드 읽기로만 판단했고, editor_core·hierarchy는 릴리스 빌드로 측정했다. 권장 순서: 1 → 2 → 7 → 8 → 3·4(색인 재생성이 따르므로 버전을 정해 함께) → 5 → 6.
+- [ ] **(심각) Flutter의 Rust 위계 엔진 FFI 연결 복구**: `flutter_ui/lib/core/hierarchy_ffi_native.dart:28`은 `hierarchy_analyze_json(ptr, len)`과 `hierarchy_free_string`을 찾지만, 실제 DLL이 내보내는 것은 `hierarchy/src/lib.rs`의 `hierarchy_analyze_json(char*)`과 `hierarchy_json_free`다(빌드 후 `nm`으로 확인). `hierarchy/src/ffi.rs`는 `lib.rs`에 `mod ffi`가 없어 컴파일되지 않는 죽은 코드다. 첫 호출에서 `_analyze`만 채워진 채 예외가 나 두 번째부터 `available`이 true가 되고, NUL 종료 없는 버퍼를 C 문자열로 넘겨 버퍼 밖을 읽으며, 결과 문자열은 해제하지 못해 호출마다 누수된다. 결과는 항상 null이라 기존 백엔드로 돌아간다. 할 일: Dart를 `lib.rs` 규약(NUL 종료 문자열, `hierarchy_json_free`)에 맞추거나 `ffi.rs`를 정식 모듈로 넣고 심볼 이름을 정리한다. 두 심볼이 모두 찾아진 뒤에만 필드를 채운다. Python(`docfit_app/hierarchy_bridge.py`)은 `lib.rs`와 맞으므로 그 규약을 깨지 않는다. 응답 모양(`results` 대 `role_sequence`)도 함께 맞춘다.
+- [ ] **(심각) klib 파이프 서버의 요청당 대기 제거**: `klib/src/pipe.rs`의 `read_line`이 데이터가 없으면 `PeekNamedPipe` 후 `sleep(20ms)`로 폴링한다(Windows 기본 타이머에서는 약 31ms). 요청마다 파이프 생성→연결→응답→해제를 반복하고 한 번에 한 요청만 처리한다. 편집기 `edit_*` 명령이 키 입력마다 이 경로를 타므로 체감 지연을 파이프가 결정한다. 긴 요청(색인·추출) 중에는 파이프 인스턴스가 없어 Python 쪽이 50ms 간격 재시도(최대 8회, `docfit_app/library_bridge.py`)에 걸린다. 할 일: 이미 OVERLAPPED로 연 핸들이므로 이벤트 대기 읽기로 바꾸고(OVERLAPPED 핸들에 OVERLAPPED 없이 `ReadFile`을 부르는 것도 함께 고친다), 연결을 유지해 여러 줄을 처리하는 방안을 검토한다. 고친 뒤 실제 Windows에서 요청 왕복 시간을 재서 전후를 기록한다.
+- [ ] **(심각) Tantivy writer 재사용·묶음 커밋**: `klib/src/search.rs:202`의 `add_or_update`가 파일마다 50MB 힙의 `IndexWriter`를 새로 만들고 커밋한 뒤 reader를 다시 읽는다. `delete_path`, `replace_notebook_source`, `remove_notebook_source`, `remove_notebook`도 같다. 여러 파일을 넣으면 작은 세그먼트가 파일 수만큼 생기고, writer를 바로 버려 병합이 끝나기 전에 중단될 수 있다. 할 일: writer를 `SearchIndex`에 하나 두고 재사용하며 묶음 단위로 커밋한다.
+- [ ] **(심각) 색인 스키마의 중복 저장·중복 색인 제거**: `klib/src/search.rs`의 `text_options`가 항상 `set_stored()`라 `body_ko`·`body_bi`·`body_jamo`·`body_cho`·`body`가 모두 저장된다(읽는 것은 `body`뿐). `body_ko`와 `body_bi`는 같은 토크나이저(`KoBigram`)로 같은 글을 색인한다. 할 일: 저장은 `body`만 하고, 형태소 분석을 넣기 전까지 `body_ko`의 중복 색인을 없앤다. 스키마 변경이므로 기존 색인 재생성 절차(버전 표시, 자동 재색인)를 함께 만든다.
+- [ ] **(중간) 검색의 이중 실행과 문서 과다 조회 줄이기**: `klib/src/search.rs`의 `search`가 오타 보정 여부를 정하려고 먼저 한 번 검색한 뒤 본 검색을 다시 한다. 순위 계산용 메타데이터(경로·수준·수정 시각)를 얻으려고 `limit×20`(최대 4,000)건의 저장 문서를 통째로 풀고, 발췌문을 만들 때 또 꺼낸다. `search_box`는 자료함 필터를 쿼리에 넣지 않고 결과에서 걸러낸다. 할 일: 메타데이터를 fast field로 읽고, `box_ids`를 `TermQuery`로 쿼리에 넣는다.
+- [ ] **(중간) 색인 토큰화의 글자당 할당 줄이기**: `klib/src/search.rs`의 `KoBigram`이 바이그램 토큰마다 `format!`으로 `String`을 만들고, `jamo_char`는 한글 한 글자마다 `format!` + `replace`로 두 번 할당한다. writer 재사용을 고친 뒤 대량 색인의 다음 병목이 된다.
+- [ ] **(중간) 위계 기호 정규식을 문두에 고정**: `hierarchy/src/compat/leading_marker.rs:20`의 `is_match_at_start`가 고정되지 않은 `find` 후 `start == 0`을 확인해 문단 전체를 훑는다. 패턴 앞에 `^`를 붙이면 결과는 같다. 측정: 5,000문단 248ms → 82ms(약 3배). `docfit_core/style_hierarchy.py`와 결과가 같은지 `tools/hier_regress.py`로 확인한다.
+- [ ] **(중간) `edit_*` 요청의 JSON 이중 파싱 제거**: `klib/src/pipe.rs`의 `handle_request`가 한 번 파싱해 `cmd`를 본 뒤 원문을 `editor_core`의 `Engine::handle`에 넘겨 다시 파싱한다. 붙여넣기처럼 큰 `text`가 실린 요청에서 두 배가 든다.
+- [ ] **(경미) `byte_to_utf16`·`utf16_to_byte`가 갭 버퍼 이점을 없앰**: `editor_core/src/doc.rs`. 문서 처음부터 세고 갭을 끝으로 옮긴다. 측정(100만 글자, 가운데 입력 200회): 입력만 0.5ms, 입력 + `byte_to_utf16` 422ms, 입력 + `byte_to_char` 0.6ms. 지금은 이 명령을 부르는 클라이언트가 없어 잠재 문제다. 줄 앞 글자 수 캐시와 같은 방식으로 바꾸거나, 키 입력 경로에서 쓰지 않는다고 문서에 적는다.
+- [ ] **(경미) `hierarchy` 릴리스 프로필 추가**: `hierarchy/Cargo.toml`에 `[profile.release]`가 없다. 다른 크레이트처럼 `lto = true`, `codegen-units = 1`을 넣는다(DLL·exe를 직접 배포할 때 해당. klib에 링크될 때는 klib 프로필을 따른다).
+- [ ] **(경미) 자잘한 것**: `nb_source_list`가 출처마다 `item_id`를 따로 조회한다(N+1, `klib/src/pipe.rs`). `klib/src/scan.rs`의 삭제 루프가 행마다 SQL을 다시 준비한다(`prepare_cached` 미사용). `load_synonyms`가 검색마다 파일 존재 확인 4회와 그룹 전체 복제를 한다. `klib/src/extract.rs:187`·`:207`과 `klib/src/index_content.rs:103`은 호출마다 정규식을 컴파일한다.
+- 문제없다고 확인한 것(손대지 않는다): editor_core는 100만 글자에서 가운데 입력 한 번에 약 2.5µs, 전체 찾기는 대소문자 구분 2~3ms·무시 7~15ms. 폴더 스캔(`klib/src/scan.rs`)은 증분 비교와 1,000건 단위 트랜잭션으로 되어 있다.
+
 ## [개발 중·2.2.x] 2.2.x 안정화 및 표 기능 개선 (2026-11-05)
 
 사용자 결정: 아래 오류·표 기능·작업 안전성 개선은 2.2.x 유지보수 트랙에서 개발한다. 3.x/4.x 로드맵과 분리한다.

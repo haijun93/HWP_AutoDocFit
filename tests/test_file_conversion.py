@@ -387,5 +387,39 @@ class FileConversionTests(unittest.TestCase):
                 convert_to_images(self._pdf_app(1), source, target)
 
 
+class TxtPlainConversionTests(unittest.TestCase):
+    def test_txt_lines_are_kept_verbatim_without_markdown_or_engine(self):
+        import html, re, tempfile, zipfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from docfit_core import file_conversion
+        lines = ["제목: 가, 나", "", " ㅇ (상황) 50% 증가; A/B=C?", "   - 들여쓴 줄 'x' \"y\"", "      * 부연: 설명", "     ** 둘째 @home ^_^ \\"]
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "예시.txt"; target = Path(folder) / "예시.hwpx"
+            source.write_bytes("\r\n".join(lines).encode("utf-8"))
+            with patch("docfit_core.kordoc_bridge.generate_hwpx", side_effect=AssertionError("TXT는 변환 엔진을 쓰지 않는다")):
+                file_conversion.convert_input_to_hwpx(source, target)
+            xml = zipfile.ZipFile(target).read("Contents/section0.xml").decode("utf-8")
+        texts = [html.unescape("".join(re.findall(r"<hp:t>(.*?)</hp:t>", p, re.S)))
+                 for p in re.findall(r"<hp:p\b.*?</hp:p>", xml, re.S)]
+        self.assertEqual(texts[:len(lines)], lines)
+
+    def test_publish_falls_back_to_copy_when_hard_links_are_unsupported(self):
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from docfit_core import file_conversion
+        with tempfile.TemporaryDirectory() as folder:
+            temporary = Path(folder) / "t.pdf"; target = Path(folder) / "out.pdf"
+            temporary.write_bytes(b"%PDF-1.7 data")
+            with patch("os.link", side_effect=OSError(1, "Incorrect function")):
+                file_conversion._publish_without_overwrite(temporary, target)
+            self.assertEqual(target.read_bytes(), b"%PDF-1.7 data")
+            with patch("os.link", side_effect=OSError(1, "Incorrect function")):
+                with self.assertRaises(FileExistsError):
+                    file_conversion._publish_without_overwrite(temporary, target)
+            self.assertEqual(target.read_bytes(), b"%PDF-1.7 data")
+
+
 if __name__ == "__main__":
     unittest.main()
