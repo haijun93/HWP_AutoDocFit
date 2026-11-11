@@ -1,0 +1,776 @@
+{
+  "seed": 20261112,
+  "document_count": 180,
+  "indexed_count": 180,
+  "query_count": 8,
+  "queries": [
+    "예산",
+    "안전",
+    "인력",
+    "조달",
+    "보안",
+    "품질",
+    "교육",
+    "기록"
+  ],
+  "corpus_format_counts": {
+    "md": 90,
+    "txt": 90
+  },
+  "indexing_seconds": 24.83245229999011,
+  "index_file_bytes": 3391488,
+  "index_file_size_mib": 3.234375,
+  "hierarchy_search": {
+    "metrics": {
+      "예산": {
+        "recall_at_5": 0.3333333333333333,
+        "recall_at_10": 0.6666666666666666,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "안전": {
+        "recall_at_5": 0.3333333333333333,
+        "recall_at_10": 0.6666666666666666,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "인력": {
+        "recall_at_5": 0.3125,
+        "recall_at_10": 0.625,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 16,
+        "context_evaluated": 16
+      },
+      "조달": {
+        "recall_at_5": 0.3333333333333333,
+        "recall_at_10": 0.6666666666666666,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "보안": {
+        "recall_at_5": 0.26666666666666666,
+        "recall_at_10": 0.5333333333333333,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "품질": {
+        "recall_at_5": 0.3333333333333333,
+        "recall_at_10": 0.6666666666666666,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "교육": {
+        "recall_at_5": 0.35714285714285715,
+        "recall_at_10": 0.7142857142857143,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 14,
+        "context_evaluated": 14
+      },
+      "기록": {
+        "recall_at_5": 0.3333333333333333,
+        "recall_at_10": 0.6666666666666666,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "mean_recall_at_5": 0.3253720238095238,
+      "mean_recall_at_10": 0.6507440476190476,
+      "mean_mrr": 1.0,
+      "mean_context_accuracy": 0.0
+    },
+    "regression_groups": {
+      "목차 없음": {
+        "예산": {
+          "recall_at_5": 0.375,
+          "recall_at_10": 0.75,
+          "mrr": 1.0,
+          "context_accuracy": 0.0,
+          "relevant_count": 8,
+          "context_evaluated": 8
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "번호 체계 오류": {
+        "예산": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.25,
+          "recall_at_10": 0.5,
+          "mrr": 0.5,
+          "context_accuracy": 0.0,
+          "relevant_count": 8,
+          "context_evaluated": 8
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "표 안 제목": {
+        "예산": {
+          "recall_at_5": 0.2857142857142857,
+          "recall_at_10": 0.5714285714285714,
+          "mrr": 0.3333333333333333,
+          "context_accuracy": 0.0,
+          "relevant_count": 7,
+          "context_evaluated": 7
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "아주 긴 제목": {
+        "예산": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.2857142857142857,
+          "recall_at_10": 0.5714285714285714,
+          "mrr": 1.0,
+          "context_accuracy": 0.0,
+          "relevant_count": 7,
+          "context_evaluated": 7
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 9,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      }
+    },
+    "latency_ms": {
+      "median": 4.830900004890282,
+      "max": 17.678899996099062,
+      "per_query": {
+        "예산": 17.23909999418538,
+        "안전": 6.995100004132837,
+        "인력": 5.2220000070519745,
+        "조달": 4.439800002728589,
+        "보안": 4.079099991940893,
+        "품질": 3.7702999979956076,
+        "교육": 4.3735999934142455,
+        "기록": 17.678899996099062
+      }
+    }
+  },
+  "keyword_search": {
+    "metrics": {
+      "예산": {
+        "recall_at_5": 0.2,
+        "recall_at_10": 0.4,
+        "mrr": 0.5,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "안전": {
+        "recall_at_5": 0.2,
+        "recall_at_10": 0.4666666666666667,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "인력": {
+        "recall_at_5": 0.25,
+        "recall_at_10": 0.4375,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 16,
+        "context_evaluated": 16
+      },
+      "조달": {
+        "recall_at_5": 0.2,
+        "recall_at_10": 0.4,
+        "mrr": 0.5,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "보안": {
+        "recall_at_5": 0.2,
+        "recall_at_10": 0.4666666666666667,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "품질": {
+        "recall_at_5": 0.26666666666666666,
+        "recall_at_10": 0.4666666666666667,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "교육": {
+        "recall_at_5": 0.21428571428571427,
+        "recall_at_10": 0.42857142857142855,
+        "mrr": 0.5,
+        "context_accuracy": 0.0,
+        "relevant_count": 14,
+        "context_evaluated": 14
+      },
+      "기록": {
+        "recall_at_5": 0.2,
+        "recall_at_10": 0.4666666666666667,
+        "mrr": 1.0,
+        "context_accuracy": 0.0,
+        "relevant_count": 15,
+        "context_evaluated": 15
+      },
+      "mean_recall_at_5": 0.21636904761904763,
+      "mean_recall_at_10": 0.4415922619047619,
+      "mean_mrr": 0.8125,
+      "mean_context_accuracy": 0.0
+    },
+    "regression_groups": {
+      "목차 없음": {
+        "예산": {
+          "recall_at_5": 0.25,
+          "recall_at_10": 0.375,
+          "mrr": 0.3333333333333333,
+          "context_accuracy": 0.0,
+          "relevant_count": 8,
+          "context_evaluated": 8
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "번호 체계 오류": {
+        "예산": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.25,
+          "recall_at_10": 0.5,
+          "mrr": 1.0,
+          "context_accuracy": 0.0,
+          "relevant_count": 8,
+          "context_evaluated": 8
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "표 안 제목": {
+        "예산": {
+          "recall_at_5": 0.14285714285714285,
+          "recall_at_10": 0.42857142857142855,
+          "mrr": 0.5,
+          "context_accuracy": 0.0,
+          "relevant_count": 7,
+          "context_evaluated": 7
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 12,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      },
+      "아주 긴 제목": {
+        "예산": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "안전": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "인력": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "조달": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "보안": {
+          "recall_at_5": 0.14285714285714285,
+          "recall_at_10": 0.42857142857142855,
+          "mrr": 0.25,
+          "context_accuracy": 0.0,
+          "relevant_count": 7,
+          "context_evaluated": 7
+        },
+        "품질": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "교육": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "기록": {
+          "recall_at_5": 0.0,
+          "recall_at_10": 0.0,
+          "mrr": 0.0,
+          "context_accuracy": null,
+          "relevant_count": 0,
+          "context_evaluated": 0
+        },
+        "mean_recall_at_5": null,
+        "mean_recall_at_10": null,
+        "mean_mrr": null,
+        "mean_context_accuracy": null,
+        "document_count": 9,
+        "scoring_status": "? ?? ??? ???? ?? ?? ?? ??"
+      }
+    },
+    "latency_ms": {
+      "median": 5.879999996977858,
+      "max": 29.47929999209009,
+      "per_query": {
+        "예산": 7.393799998681061,
+        "안전": 5.626500002108514,
+        "인력": 5.9157999930903316,
+        "조달": 5.844200000865385,
+        "보안": 6.137900010799058,
+        "품질": 5.5130000109784305,
+        "교육": 5.332500004442409,
+        "기록": 29.47929999209009
+      }
+    }
+  },
+  "measurement_note": "?? ?? 1?. ?? ??? ???? ??. ?? ?? ??? ??? ????? ???????? ?? ?? ?? ??."
+}
