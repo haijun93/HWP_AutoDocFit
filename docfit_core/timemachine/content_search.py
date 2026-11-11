@@ -1596,10 +1596,14 @@ class ContentSearchIndex:
         with self._lock: rows = self.db.execute("SELECT path,name,size,mtime,extension FROM content_meta ORDER BY name COLLATE NOCASE").fetchall()
         out = []
         for r in rows:
+            # 이름이 맞지 않는 행은 경로 정규화·제외 판정을 하지 않고 넘어간다(결과는 같다).
+            name_folded = (r["name"] or "").casefold()
+            if not all(w in name_folded for w in words):
+                continue
             p = os.path.abspath(r["path"])
             if excluded_name(r["name"] or "") or excluded_name(os.path.basename(p)):
                 continue
-            if all(w in (r["name"] or "").casefold() for w in words) and (allowed is None or any(os.path.commonpath((os.path.normcase(p), root)) == root for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold())):
+            if (allowed is None or any(os.path.commonpath((os.path.normcase(p), root)) == root for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold())):
                 out.append({"path": p, "name": r["name"] or Path(p).name, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
                 if len(out) >= limit: break
         return out
