@@ -1012,6 +1012,23 @@ class ContentSearchIndex:
                 count += 1
         return count
 
+    def status_summary(self, roots=None):
+        """저장된 색인의 상태만 요약한다. 파일의 stat/본문 재검사는 하지 않는다."""
+        with self._lock:
+            count = self.needs_reindex_count(roots=roots)
+            rows = self.db.execute("SELECT path FROM content_meta").fetchall()
+            allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
+            paths = [os.path.normcase(os.path.abspath(row["path"])) for row in rows
+                     if not excluded_name(os.path.basename(row["path"]))]
+            if allowed is not None:
+                paths = [path for path in paths if any(
+                    os.path.commonpath((path, root)) == root for root in allowed
+                    if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(path)[0].casefold())]
+            return {"needs_reindex_count": count, "needs_reindex": count > 0,
+                    "reindex_guide": "기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다." if count else None,
+                    "has_index": bool(paths), "indexed_document_count": len(paths),
+                    "persistent_error_count": len(self.errors(roots))}
+
     @contextmanager
     def batch(self, *, max_files=50, max_seconds=2.0):
         """여러 파일의 색인 커밋을 묶는다(max_files개 또는 max_seconds초마다 한 번).

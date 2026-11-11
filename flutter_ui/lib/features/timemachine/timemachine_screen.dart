@@ -312,13 +312,12 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Future<void> _contentSearch(String query, {String? sort}) async {
     final searchRev = ++_contentSearchRevision;
+    await _readContentStatus();
+    if (!mounted || searchRev != _contentSearchRevision) return;
     if (query.isEmpty) {
       if (mounted) {
         setState(() {
           _contentResults = [];
-          _contentNeedsReindex = false;
-          _contentNeedsReindexCount = 0;
-          _contentReindexGuide = null;
           _selectedContentResult = null;
           _contentSort = sort ?? (_relatedMode ? 'hierarchy_relevance' : 'relevance');
           _preview = null;
@@ -343,10 +342,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (!mounted || searchRev != _contentSearchRevision || query != _search.text.trim() || relatedMode != _relatedMode) return;
       setState(() {
          _contentSort = activeSort;
-         _contentNeedsReindex = response['needs_reindex'] == true;
-         _contentReindexDismissed = false;
-         _contentNeedsReindexCount = (response['needs_reindex_count'] as num?)?.toInt() ?? 0;
-         _contentReindexGuide = response['reindex_guide'] as String?;
          _contentResults = relatedMode
              ? _sortContentResults(items, 'hierarchy_relevance')
              : activeSort == 'relevance' ? items : _sortContentResults(items, activeSort);
@@ -489,6 +484,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Future<void> _runFileSearch(String query) async {
     if (!_fileSearchSupported) return;
     final rev = ++_fileSearchRevision;
+    await _readContentStatus();
+    if (!mounted || rev != _fileSearchRevision) return;
     if (query.trim().isEmpty) {
       // 검색어가 없으면 빈 file_search 결과 대신 현재 기간의 타임라인 항목을 표로 보여준다.
       if (!mounted) return;
@@ -523,26 +520,43 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
   }
 
+  // 모든 상태 응답은 이곳에서 화면 상태로 해석한다. 구형 서비스의 running도 지원한다.
+  void _applyContentStatus(Map<String, Object?> status) {
+    if (!mounted || (status['ok'] == false && !status.containsKey('phase'))) return;
+    final phase = status['phase'];
+    final running = phase is String
+        ? const {'indexing', 'reindexing', 'cancel_requested'}.contains(phase)
+        : status['running'] == true;
+    setState(() {
+      _contentProgress = status;
+      _contentIndexRunning = running;
+      _contentNeedsReindex = status['needs_reindex'] == true;
+      _contentNeedsReindexCount = (status['needs_reindex_count'] as num?)?.toInt() ?? 0;
+      _contentReindexGuide = status['reindex_guide'] as String?;
+      if (!_contentNeedsReindex) _contentReindexDismissed = false;
+    });
+    _contentPoll?.cancel();
+    if (running) _pollContentIndex();
+  }
+
+  Future<void> _readContentStatus() async {
+    try {
+      _applyContentStatus(await _api.command('content_index_status'));
+    } catch (_) {
+      // 통신 실패는 작업 완료가 아니므로 마지막 상태를 유지하고 다시 확인한다.
+      if (mounted && _contentIndexRunning) _pollContentIndex();
+    }
+  }
+
   Future<void> _startContentIndex() async {
-    final response = await _api.command('content_index_start');
-    if (!mounted) return;
-    setState(() { _contentProgress = response; _contentIndexRunning = response['running'] == true; });
-    if (_contentIndexRunning) _pollContentIndex();
+    _applyContentStatus(await _api.command('content_index_start'));
   }
   void _pollContentIndex() {
     _contentPoll?.cancel();
-    _contentPoll = Timer(const Duration(seconds: 1), () async {
-      try {
-        final status = await _api.command('content_index_status');
-        if (!mounted) return;
-        setState(() { _contentProgress = status; _contentIndexRunning = status['running'] == true; });
-        if (_contentIndexRunning) _pollContentIndex();
-      } catch (_) { if (mounted) setState(() => _contentIndexRunning = false); }
-    });
+    _contentPoll = Timer(const Duration(seconds: 1), _readContentStatus);
   }
   Future<void> _cancelContentIndex() async {
-    final status = await _api.command('content_index_cancel');
-    if (mounted) setState(() { _contentProgress = status; _contentIndexRunning = status['running'] == true; });
+    _applyContentStatus(await _api.command('content_index_cancel'));
   }
   void _toggleContentMode(bool value) {
     setState(() {
@@ -559,6 +573,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       _fileSearchResults = [];
       _fileSearchActive = false;
     });
+    if (value) _readContentStatus();
     if (!value) { _filtersChanged(); }
   }
 
@@ -614,6 +629,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
     setState(() { _settings = loaded; _developerMode = developerMode; _watchByAgent = status['watch'] == 'agent';
       if (status['ok'] != true) _error = '${status['message'] ?? '상태를 불러오지 못했습니다.'}'; });
+    await _readContentStatus();
+    if (!mounted) return;
     if (loaded['enabled'] == true) {
       // 에이전트가 없으면 앱을 열 때 증분 색인한다(사용자 결정 6). 에이전트가 있으면 폴더 설정만 맞춘다.
       if (firstOpen) { try { await _requestScan(); } catch (_) {} if (!mounted) return; }
