@@ -271,10 +271,8 @@ import win32com.client as win32
 import win32gui
 import win32con
 from defusedxml.ElementTree import fromstring as safe_xml_fromstring
-from docfit_core.batch_format import apply_batch, ParagraphStyle, BatchUnsupported
 from docfit_core.updater import (expected_sha256 as 업데이트_예상해시, install_script as 업데이트_교체스크립트, launch_environment as 업데이트_실행환경,
                                  leftover_files as 업데이트_잔여파일, verify_download as 업데이트_파일검증)
-from docfit_core.fidelity.package import UnsupportedPackage
 from docfit_core.style_hierarchy import DOT_MARKERS, DOCUMENT_TYPES, analyze_hierarchy, display_role, document_type as 문서유형_판정, hierarchy_summary, leading_marker, normalize_leading_dot, stored_role
 from docfit_core.style_unify import complement_ranges as 서식통일_범위분리, merge_adjacent as 서식통일_범위병합, parenthetical_spans as 서식통일_부연괄호, representative as 서식통일_최빈값
 from docfit_core.style_unify import dominant as 서식통일_우세값, hierarchy_levels as 서식통일_계층순서, looks_like_cover as 서식통일_표지판정, unify_marker as 서식통일_항목기호, vocabulary_fallback as 서식통일_문서어휘_대표
