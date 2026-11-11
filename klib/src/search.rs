@@ -21,7 +21,8 @@ const TOKENIZER: &str = "ko_bigram";
 const WRITER_HEAP: usize = 50_000_000;
 /// 색인 스키마 버전. 스키마나 색인에 넣는 내용이 바뀌면 올린다. 색인 폴더의 표시와 다르면 열 때 옛 색인을 버리고 다시 만든다.
 /// 1(표시 없음): 본문 필드를 모두 저장, `body_ko`·`body_bi` 중복. 2: 저장은 `body`만, `body_ko` 제거.
-pub const SCHEMA_VERSION: u32 = 2;
+/// 3: hwpx·docx를 문단 단위로 나눠 위계 수준(`level`)과 함께 색인.
+pub const SCHEMA_VERSION: u32 = 3;
 /// 색인이 온전히 만들어진 스키마 버전(다시 만들 때는 다 끝난 뒤에만 쓴다).
 const VERSION_FILE: &str = "klib_schema_version";
 /// 다시 만드는 중이라는 표시. 남아 있으면 중간에 죽은 것이므로 다음에 열 때 처음부터 다시 한다.
@@ -390,12 +391,21 @@ impl SearchIndex {
     pub fn index_path(&self) -> &Path { &self.path }
     /// 검색에 쓰이는 세그먼트 수(측정·점검용).
     pub fn segment_count(&self) -> usize { self.reader.searcher().segment_readers().len() }
+    /// 본문을 줄 단위 문단으로 나눠 넣는다. 모든 문단의 위계 수준은 `p.level`이다.
     pub fn add_or_update(&self, p: &Paragraph) -> tantivy::Result<()> {
+        self.put(p, p.body.split_inclusive(['\n','\r']).map(|part|(p.level,part)))
+    }
+    /// 문단마다 위계 수준이 다른 문서를 넣는다(수준, 글). `p.body`·`p.level`은 쓰지 않는다.
+    /// 수준은 `hierarchy::search::aggregate`의 순위와 같다: 0은 본문, 1이 가장 위이고 클수록 아래.
+    pub fn add_or_update_blocks(&self, p: &Paragraph, blocks: &[(u8,String)]) -> tantivy::Result<()> {
+        self.put(p, blocks.iter().map(|(level,text)|(*level,text.as_str())))
+    }
+    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=(u8,&'a str)>) -> tantivy::Result<()> {
         self.write(|w| {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
-        for part in p.body.split_inclusive(['\n','\r']) {
+        for (level,part) in parts {
             let text=part.trim(); if text.is_empty() { continue; }
-            let d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>p.title.clone(), self.fields.level=>p.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string());
+            let d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>p.title.clone(), self.fields.level=>level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string());
             let mut d=d;
             #[cfg(test)]
             if let Some(body_ko)=self.legacy_body_ko { d.add_text(body_ko,text); }
