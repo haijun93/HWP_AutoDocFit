@@ -1207,6 +1207,11 @@ class ContentSearchIndex:
                 f"ELSE 0 END) AS match_count_{idx}"
             )
         count_columns = ", ".join(aggregate_sql)
+        # 기존 문서 순위/집계는 유지하고, 직접 AND 일치가 없는 문서만 문맥을 조사한다.
+        direct_condition = " AND ".join(
+            "instr(body_folded, lower('" + term.replace("'", "''") + "')) > 0"
+            for term in terms)
+        count_columns += f", MAX(CASE WHEN {direct_condition} THEN 1 ELSE 0 END) AS direct_match"
         match_any = " OR ".join("instr(body_folded, lower(?)) > 0" for _ in terms)
         # FTS BM25 is constant per query result document in this path's legacy
         # ranking; use the minimum matching paragraph rank and first top-level
@@ -1249,7 +1254,7 @@ class ContentSearchIndex:
                             FROM matched GROUP BY path
                         )
                         SELECT b.path, c.matched_paragraphs, b.best_level_rank, b.best_bm25,
-                               ch.chosen_paragraph_index, ch.chosen_rowid, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
+                               ch.chosen_paragraph_index, ch.chosen_rowid, c.direct_match, {", ".join(f"c.match_count_{i}" for i in range(len(count_terms)))}
                         FROM best b JOIN counts c ON c.path=b.path JOIN chosen ch ON ch.path=b.path
                         ORDER BY c.matched_paragraphs DESC LIMIT 100000
                     """, (match_expr, *terms,
@@ -1350,6 +1355,7 @@ class ContentSearchIndex:
                 "_chosen_paragraph_index": aggregate["chosen_paragraph_index"],
                 "_chosen_rowid": aggregate["chosen_rowid"] if "chosen_rowid" in aggregate.keys() else None,
                 "_raw_path": aggregate["path"],
+                "_direct_match": bool(aggregate["direct_match"]),
                 "score": total_matches,
                 "match_counts": match_counts,
                 "total_matches": total_matches,
@@ -1360,8 +1366,44 @@ class ContentSearchIndex:
                 "_bm25_score": best_bm25,
             })
 
-        # 5. 정렬 및 순위 부여
+        # 직접 일치가 없는 후보만 읽는다. 조상은 표시용으로 줄이지 않은 원문을 사용한다.
+        context_paths = {item["_raw_path"] for item in prepared if not item["_direct_match"]}
+        context_rows = {}
+        if context_paths:
+            for row in self._select_paragraphs_for_paths(
+                    "rowid AS paragraph_rowid, path, paragraph_index, level_rank, body", context_paths):
+                context_rows.setdefault(row["path"], []).append(row)
+        folded_terms = {term.casefold() for term in terms}
+        for item in prepared:
+            item["_context_match"] = False
+            if item.pop("_direct_match"):
+                continue
+            rows = sorted(context_rows.get(item["_raw_path"], ()), key=lambda r: int(r["paragraph_index"]))
+            parent_positions = hierarchy_path.parents([row["level_rank"] for row in rows])
+            heading_terms = []
+            best = None
+            for position, row in enumerate(rows):
+                body_terms = {term for term in folded_terms if term in (row["body"] or "").casefold()}
+                parent = parent_positions[position]
+                ancestor_terms = heading_terms[parent] if parent is not None else set()
+                heading_terms.append(ancestor_terms | body_terms)
+                # 조상에만 있는 질의로 무관한 본문까지 일치시키지 않는다.
+                if not body_terms or not folded_terms <= body_terms | ancestor_terms:
+                    continue
+                missing = len(folded_terms - body_terms)
+                key = (missing, int(row["level_rank"] or 0), int(row["paragraph_index"]))
+                if best is None or key < best[0]:
+                    best = (key, row, len(ancestor_terms))
+            if best is not None:
+                item["_context_match"] = True
+                item["_chosen_paragraph_index"] = best[1]["paragraph_index"]
+                item["_chosen_rowid"] = best[1]["paragraph_rowid"]
+                item["_context_hits"] = best[2]
+                item["best_level"] = LEVEL_LABELS[LEVEL_ORDER[int(best[1]["level_rank"])]]
+
+        # 5. 정렬 및 순위 부여. 직접 일치가 있는 기존 결과의 상대 순위는 그대로다.
         _sort_hierarchy_results(prepared, sort=sort)
+        prepared.sort(key=lambda item: item.pop("_context_match"))
         final_items = prepared[:lim]
         for item in prepared[lim:]:
             item.pop("_chosen_rowid", None); item.pop("_raw_path", None)
@@ -1404,7 +1446,7 @@ class ContentSearchIndex:
                 trail = hierarchy_path.breadcrumb(crumb_rows.get(raw_path, ()), chosen) if chosen is not None else []
                 item["breadcrumb"] = [step["text"] for step in trail]
                 item["breadcrumb_text"] = hierarchy_path.breadcrumb_text(trail)
-                item["context_hits"] = hierarchy_path.context_term_hits(trail, terms)
+                item["context_hits"] = item.pop("_context_hits", hierarchy_path.context_term_hits(trail, terms))
         for idx, item in enumerate(final_items):
             # 스니펫·하이라이트는 화면에 보일 상위 결과에만 만든다(N214B 속도 개선, 결과 동일)
             target_para_body = item.pop("_target_body")
