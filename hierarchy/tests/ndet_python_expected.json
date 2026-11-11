@@ -1,0 +1,124 @@
+{
+  "version": 1,
+  "priority": [
+    "indentation",
+    "font",
+    "size",
+    "marker"
+  ],
+  "auxiliary": "prev_spacing",
+  "indent_levels_hwpunit": [
+    0,
+    10,
+    20,
+    30
+  ],
+  "ambiguous_marker_roles": {
+    "원문자": [
+      "본문",
+      "내용",
+      "부연설명"
+    ]
+  },
+  "styles": [
+    {
+      "role": "소제목",
+      "marker": "□",
+      "count": 1,
+      "font": null,
+      "size_pt": null,
+      "indent_hwpunit": 0,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 0,
+      "prev_spacing_values": [],
+      "prev_spacing_typical": null
+    },
+    {
+      "role": "본문",
+      "marker": "ㅇ",
+      "count": 1,
+      "font": null,
+      "size_pt": null,
+      "indent_hwpunit": 20,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 20,
+      "prev_spacing_values": [],
+      "prev_spacing_typical": null
+    },
+    {
+      "role": "내용",
+      "marker": "-",
+      "count": 2,
+      "font": null,
+      "size_pt": null,
+      "indent_hwpunit": 10,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 10,
+      "prev_spacing_values": [],
+      "prev_spacing_typical": null
+    }
+  ],
+  "variants": [
+    {
+      "role": "소제목",
+      "marker": "□",
+      "count": 1,
+      "kind": "비반복",
+      "font": null,
+      "size_pt": null,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 0,
+      "prev_spacing_hwpunit": null
+    },
+    {
+      "role": "본문",
+      "marker": "ㅇ",
+      "count": 1,
+      "kind": "비반복",
+      "font": null,
+      "size_pt": null,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 20,
+      "prev_spacing_hwpunit": null
+    },
+    {
+      "role": "내용",
+      "marker": "-",
+      "count": 1,
+      "kind": "비반복",
+      "font": null,
+      "size_pt": null,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 10,
+      "prev_spacing_hwpunit": null
+    },
+    {
+      "role": "내용",
+      "marker": "-",
+      "count": 1,
+      "kind": "비반복",
+      "font": null,
+      "size_pt": null,
+      "left_hwpunit": 0,
+      "first_line_hwpunit": 30,
+      "prev_spacing_hwpunit": null
+    }
+  ],
+  "role_sequence": [
+    "소제목",
+    "내용",
+    "본문",
+    "내용"
+  ],
+  "document_type": "C형",
+  "warnings": [
+    "1번째 4단계 아래에 5단계가 없습니다.",
+    "2번째 6단계에 앞선 5단계가 없습니다."
+  ],
+  "page_policy": {
+    "subheading_with_bodies": true,
+    "optional_explanations_after_subheading": true,
+    "body_with_contents": true,
+    "explanation_with_parent": true
+  }
+}
