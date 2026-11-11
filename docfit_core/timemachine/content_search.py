@@ -15,6 +15,7 @@ from defusedxml import ElementTree as ET
 from ..hwpx import open_hwpx_safely, open_zip_safely
 from .extract_text import extract_text as _extract_text_by_format
 from .extractors import ExtractionError, extract_document
+from . import hierarchy_path
 
 SUPPORTED = {"hwpx", "hwp", "txt", "md", "docx", "pptx", "xlsx", "xls", "pdf", "eml"}
 
@@ -1274,6 +1275,20 @@ class ContentSearchIndex:
                 item["_target_body"] = (row["body"] if row else "") or ""
                 if row and row["level"] == "table_cell":
                     item["best_level"] = LEVEL_LABELS["table_cell"]
+                item["_crumb"] = (raw_path, chosen)
+            # 상위 경로(장 > 절 > 항): 결과 문서의 문단 위계를 한 번에 읽어 고른 문단의 조상 제목을 붙인다.
+            crumb_paths = {item["_crumb"][0] for item in final_items if item["_crumb"][1] is not None}
+            crumb_rows = {}
+            if crumb_paths:
+                for row in self._select_paragraphs_for_paths(
+                        "path, paragraph_index, level, level_rank, body", crumb_paths):
+                    crumb_rows.setdefault(row["path"], []).append(row)
+            for item in final_items:
+                raw_path, chosen = item.pop("_crumb")
+                trail = hierarchy_path.breadcrumb(crumb_rows.get(raw_path, ()), chosen) if chosen is not None else []
+                item["breadcrumb"] = [step["text"] for step in trail]
+                item["breadcrumb_text"] = hierarchy_path.breadcrumb_text(trail)
+                item["context_hits"] = hierarchy_path.context_term_hits(trail, terms)
         for idx, item in enumerate(final_items):
             # 스니펫·하이라이트는 화면에 보일 상위 결과에만 만든다(N214B 속도 개선, 결과 동일)
             target_para_body = item.pop("_target_body")
