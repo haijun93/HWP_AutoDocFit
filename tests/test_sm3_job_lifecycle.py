@@ -67,6 +67,15 @@ class LifecycleSymptomsTests(LifecycleFixture):
         legacy_event(self.manager, self.identifier, ('finished', 1, 0))
         self.assertEqual(self.manager.status(self.identifier)['state'], 'cancelled')
 
+    def test_finished_dead_worker_allows_restart_despite_running_flag(self):
+        self.dead_worker()
+        legacy_event(self.manager, self.identifier, ('finished', 1, 0))
+        prepare_legacy(self.gui)
+        self.assertFalse(self.gui.running)
+        self.assertEqual(job_phase(self.gui, self.manager), 'finished')
+        second = self.manager.begin('spacing')
+        self.manager.report(second, 'done', {})
+
     def test_current_finished_worker_still_blocks_restart(self):
         self.cleanup_window()
         self.assertEqual(self.manager.status(self.identifier)['state'], 'done')

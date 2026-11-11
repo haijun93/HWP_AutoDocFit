@@ -269,7 +269,7 @@ def prepare_legacy(gui):
         if worker is not None and worker.ident is not None and not _alive(worker):
             if manager.status(identifier)['state'] not in TERMINAL:
                 manager.report(identifier, 'failed', {'code':'JOB_INTERRUPTED', 'message':'작업 종료 알림 없이 실행이 끝났습니다.'})
-            if gui.running and manager.status(identifier)['state'] == 'failed':
+            if gui.running:
                 gui.running = False
                 if hasattr(gui, '버튼_대기중'):
                     gui.버튼_대기중()
