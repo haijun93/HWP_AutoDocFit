@@ -63,6 +63,8 @@ class TimemachineService:
                             "errors": [], "started_at": None, "finished_at": None}
         self._rescan = False
         self._settings = self._load_settings()
+        if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
+            self._refresh_content_index_async()
 
     @staticmethod
     def _open_file(path):
