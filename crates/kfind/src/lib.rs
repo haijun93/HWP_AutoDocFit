@@ -1,5 +1,6 @@
 pub mod install;
 pub mod pipe;
+pub mod service;
 pub const SERVICE_NAME: &str = "HwpAutoDocFit.Index";
 pub const DISPLAY_NAME: &str = "HwpAutoDocFit 색인 서비스";
 pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";

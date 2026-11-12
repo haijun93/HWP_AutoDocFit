@@ -143,3 +143,7 @@ main 반영(2026-11-12): 검색 결과 상위 경로(문서 제목 > 장 > 절 >
 - [ ] 환경 설정에서 허용 도메인에 `gitlab.aigov.go.kr` 추가(클라우드 환경 메뉴 → Edit → Network access). 이 도메인은 우리 GitLab
       백업 푸시(`origin`)에도 필요하다. 단, 비공개 저장소는 인증 정보(토큰)도 필요 — 토큰은 대화에 붙여 넣지 말고 환경 시크릿으로 설정.
 - [ ] 또는 PC에서 4개를 받아(`git clone --depth 1 <주소>`) 압축해서 올리거나 VS Code에서 직접 검토. 업무 문서·개인정보가 든 파일은 올리지 않는다.
+
+## T4 색인 서비스 1단계 (2026-11-13, feature/kfind-service)
+- crates/kfind: SCM 명령·SID별 kfind-core 검색 파이프·설치 차단 시 대체 방식 기억 구현. 검증 기록: docs/T4_KFIND_SERVICE_2026-11-13.md.
+- 후속: 사용자별 게시·ACL·MFT/USN·작업 프로세스·VM SCM/예약 작업 시험·업데이트/되돌리기. 푸시 금지, GitLab 접근 금지 유지.
