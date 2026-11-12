@@ -270,9 +270,16 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
-        [{"text": p.text, "indent": 0, "font_size": 0} for p in paragraphs]
+        [{"text": p.text, "indent": 0, "font_size": 0,
+          "source_path": os.fspath(path), "paragraph_index": p.paragraph_index,
+          "is_table_cell": p.is_table_cell, "style_name": p.style_name,
+          "outline_level": p.outline_level, "table_cell_id": p.table_cell_id,
+          "table_id": p.table_id} for p in paragraphs]
     )
-    if engine_levels is not None:
+    if (engine_levels is not None
+            and isinstance(engine_levels.get("search_levels"), list)
+            and len(engine_levels["search_levels"]) == len(paragraphs)
+            and all(level in LEVEL_RANKS for level in engine_levels["search_levels"])):
         converted = convert_engine_levels_to_records(paragraphs, engine_levels)
         for position, level in plain_chapters.items():
             if position < len(converted):
@@ -482,13 +489,15 @@ def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[Pa
 
 def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: dict) -> list[ParagraphRecord]:
     """엔진의 정수 레벨을 본문 검색 색인 레코드로 변환한다."""
-    levels = result.get("levels", [])
+    levels = result.get("search_levels", result.get("levels", result.get("role_sequence", [])))
     converted = []
     for paragraph, engine_level in zip(paragraphs, levels):
         level = {0: "document_title", 1: "chapter", 2: "section", 3: "topic",
                  4: "square", 5: "circle", 6: "dash", 7: "asterisk", 8: "body",
                  9: "table_cell", 10: "body"}.get(engine_level)
-        if paragraph.is_table_cell:
+        if engine_level in LEVEL_RANKS:
+            level = engine_level
+        if paragraph.is_table_cell and level != "document_title":
             level = "table_cell"
         if level not in LEVEL_ORDER and level != "table_cell":
             level = "body"
