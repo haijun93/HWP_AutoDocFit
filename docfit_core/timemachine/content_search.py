@@ -69,7 +69,7 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 3
+CURRENT_HIERARCHY_SCHEMA_VERSION = 4
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
@@ -234,6 +234,28 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     if not paragraphs:
         return []
     from docfit_app.hierarchy_bridge import analyze_levels
+    from ..ai_answer import _LABEL_BY_MARKER
+
+    marker_by_label = {label: marker for marker, label in _LABEL_BY_MARKER.items()}
+    marker_by_label["주석1"] = marker_by_label["주석"]
+    label_levels = {}
+    normalized = []
+    for position, paragraph in enumerate(paragraphs):
+        match = re.match(r"^\s*([^:：]+?)\s*[:：]\s*(\S.*)$", paragraph.text)
+        label = match.group(1) if match else None
+        if not paragraph.is_table_cell and label in marker_by_label:
+            marker = marker_by_label[label]
+            level = {"□": "square", "ㅇ": "circle", "-": "dash"}.get(marker, "asterisk")
+            label_levels[position] = level
+            paragraph = replace(paragraph, text=f"{marker} {match.group(2)}")
+        elif not paragraph.is_table_cell and label == "개요":
+            label_levels[position] = "asterisk"
+        normalized.append(paragraph)
+    paragraphs = normalized
+
+    def apply_label_levels(records):
+        return [replace(record, level=label_levels[i], level_rank=LEVEL_RANKS[label_levels[i]])
+                if i in label_levels else record for i, record in enumerate(records)]
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
@@ -244,7 +266,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         for position, level in plain_chapters.items():
             if position < len(converted):
                 converted[position] = replace(converted[position], level=level, level_rank=LEVEL_RANKS[level])
-        return _fallback_document_title(path, converted)
+        return _fallback_document_title(path, apply_label_levels(converted))
 
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
@@ -411,7 +433,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 table_cell_id=p.table_cell_id, table_id=p.table_id,
             )
         )
-    return _fallback_document_title(path, classified)
+    return _fallback_document_title(path, apply_label_levels(classified))
 
 
 def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
