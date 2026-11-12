@@ -542,6 +542,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         def _문서_편집_시도():
             global _문서_편집_세대
             _문서_편집_세대 += 1
+            if '_줄검사_기억_편집발생' in globals():
+                globals()['_줄검사_기억_편집발생']()
         return bind_function(_문서_편집_시도, _docfit_namespace)
     if _docfit_symbol == 'hwp_run':
         def hwp_run(command):

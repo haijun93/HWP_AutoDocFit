@@ -326,6 +326,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         def 색상_적용_현재선택():
             global 자간_변경_횟수
             자간_변경_횟수 += 1
+            if '_줄검사_기억_편집발생' in globals():
+                globals()['_줄검사_기억_편집발생']()
             try:
                 if hwp is not None:
                     자간_변경문단.add(tuple(hwp.GetPos()[:2]))
