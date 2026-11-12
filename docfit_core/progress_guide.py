@@ -179,7 +179,7 @@ def plan_keys(mode, selection=None):
 
 
 def progress_view(mode, key=None, visited=(), *, selection=None, running=False, files=(), doc=None,
-                  results=(), failures=None, target=None, elapsed=None):
+                  results=(), failures=None, target=None, elapsed=None, conversion_summary=None):
     """진행 화면 한 장에 필요한 값(기능별 제목·단계·문서 대기열·안내 문구)을 만든다(순수 함수).
 
     files: 작업 문서 경로 목록, doc: (지금 문서 순번 1부터, 전체 수) 또는 None,
@@ -189,15 +189,26 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
     files = [str(f) for f in files or ()]
     failures = {_file_name(path): reason for path, reason in dict(failures or {}).items()}
     results = list(results or ())
+    if not conversion_summary and mode == "file_format" and not running and (results or failures):
+        conversion_summary = {
+            'success': len(results), 'failed': len(failures), 'skipped': 0,
+            'results': [{'source':item.get('source', ''), 'status':'converted',
+                         'output':item.get('name'), 'reason':None} for item in results],
+        }
     total = len(files)
     index = (doc[0] if doc else 0) or 0
-    finished = (not running) and bool(results or failures)
+    conversion_summary = dict(conversion_summary or {})
+    finished = (not running) and (bool(conversion_summary) if mode == "file_format" else bool(results or failures))
 
     queue = []
     for number, path in enumerate(files, 1):
         name = _file_name(path)
         result = next((item.get("name") for item in results if str(item.get("source")) == name), None)
-        if name in failures:
+        summary_item = next((item for item in conversion_summary.get('results', ())
+                             if _file_name(item.get('source', '')) == name), None)
+        if summary_item and summary_item.get('status') == 'skipped':
+            state, note = "skipped", str(summary_item.get('reason') or "건너뛰었어요")
+        elif name in failures:
             reason = str(failures[name] or "").strip().splitlines()
             state, note = "failed", (reason[0][:80] if reason else "처리하지 못했어요")
         elif result is not None:
@@ -207,7 +218,7 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
         else:
             state, note = "waiting", ""
         queue.append({"name": name, "state": state, "note": note})
-    settled = sum(1 for item in queue if item["state"] in ("done", "failed"))
+    settled = sum(1 for item in queue if item["state"] in ("done", "failed", "skipped"))
 
     steps, current = [], None
     if mode != "file_format":
@@ -250,7 +261,10 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
         "mode": mode,
         "name": meta["name"],
         "icon": meta["icon"],
-        "title": (meta["finished"] if finished else meta["running"]).format(count=total, target=label),
+        "title": ((f"변환된 파일이 없어요 — 건너뜀 {conversion_summary.get('skipped', 0)}, 실패 {conversion_summary.get('failed', 0)}"
+                   if mode == "file_format" and conversion_summary and not conversion_summary.get('success', 0)
+                   else meta["finished"].format(count=total, target=label)) if finished
+                  else meta["running"].format(count=total, target=label)),
         "finished": finished,
         "running": bool(running),
         "message": message,
@@ -260,6 +274,7 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
         "doc": {"index": index, "total": total,
                 "name": queue[index - 1]["name"] if 0 < index <= total else ""},
         "queue": queue,
+        "conversion_summary": conversion_summary,
         "ratio": round(ratio, 4),
         "tips": list(TIPS.get(mode, TIPS["all"])),
         "elapsed": int(elapsed) if elapsed is not None else None,

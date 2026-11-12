@@ -60,6 +60,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '_업데이트_HTTP_GET':
         def _업데이트_HTTP_GET(url, headers, timeout, _남은_리디렉션=5):
             """검증된 GitLab·GitHub HTTPS URL만 직접 HTTPS 연결로 조회한다(리디렉션도 매번 검증)."""
+            import http.client
+            import ssl
             parsed = urllib.parse.urlparse(_업데이트_URL_검증(url))
             연결 = http.client.HTTPSConnection(  # nosemgrep
                 parsed.hostname, parsed.port or 443, timeout=timeout,
@@ -268,10 +270,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
 
             이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
 
+            from docfit_core import hwp_process
+            hwp_process.take_registered()   # 같은 스레드의 이전 등록이 섞이지 않게 비운다
             hwp = 한글_COM_인스턴스_생성(독립=True)
             # 개발용 COM 계측(DOCFIT_COM_PERF=1일 때만 대리 객체로 감싼다. 평소에는 그대로).
             from docfit_core.com_perf import wrap_if_enabled as _com_perf_wrap
             hwp = _com_perf_wrap(hwp)
+            # 이 작업 창의 PID를 객체에 묶어 둔다 → 작업창_분리 때 소유를 정확히 풀 수 있다(SM7 가)
+            hwp_process.bind_owner(hwp, hwp_process.take_registered())
             hwp.XHwpWindows.Item(0).Visible = True
             로그("한글 창 표시 성공")
 
@@ -504,6 +510,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             global hwp, 작업_hwp_hwnd
             if 작업_hwp_hwnd:
                 창_임베드_해제(작업_hwp_hwnd)
+            # 창을 사용자에게 넘긴다: 앱 소유에서 빼 이후 강제 정리(kill_owned)가 닫지 않게 한다(SM7 가).
+            from docfit_core import hwp_process
+            hwp_process.hand_over(hwp)
             hwp = None
             작업_hwp_hwnd = None
         return bind_function(작업창_분리, _docfit_namespace)
@@ -527,6 +536,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             if hwp is None:
                 return
             창_임베드_해제(작업_hwp_hwnd)
+            from docfit_core import hwp_process
+            hwp_process.unbind_owner(hwp)   # 넘기지 않으므로 PID는 소유로 남는다(Quit 실패 시 정리 대상)
             try:
                 hwp.Quit()
             except Exception:

@@ -1,6 +1,7 @@
 """별도 SQLite FTS5 문서 본문 색인 및 로컬 텍스트 추출."""
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import threading
@@ -1190,6 +1191,63 @@ class ContentSearchIndex:
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
             return {"indexed": False, "error": reason}
+
+    def stale_hierarchy_paths(self, paths):
+        """주어진 문서 중 본문 행은 있으나 위계 판정 버전이 현재 규칙보다 낮은 문서.
+
+        hierarchy_schema_version == CURRENT_HIERARCHY_SCHEMA_VERSION 이 "위계를 현재 Python 규칙으로
+        판정했다"는 유일한 표지다. klib index-content(Rust)는 낮은 버전을 쓰므로 여기서 걸린다.
+        """
+        stale = []
+        with self._lock:
+            for path in paths:
+                row = self.db.execute("SELECT hierarchy_schema_version FROM content_meta WHERE path=?",
+                                      (os.path.abspath(os.fspath(path)),)).fetchone()
+                if row is not None and (row[0] or 0) < CURRENT_HIERARCHY_SCHEMA_VERSION:
+                    stale.append(path)
+        return stale
+
+    def relevel_file(self, path):
+        """다른 색인기(klib index-content)가 쓴 본문 행은 두고 위계만 현재 Python 규칙으로 다시 매긴다.
+
+        level·level_rank·표 칸 번호(content_table_cells)를 Python 색인 경로와 같게 만들고 위계 버전을 올린다.
+        txt·md·hwp는 Python 추출 기록에 문단 메타데이터가 없으므로 저장된 본문으로 바로 판정한다.
+        hwpx·docx는 Python 추출로 메타데이터를 얻고, 문단 목록이 저장된 본문과 다르면 Python 전체 색인으로 대체한다.
+        추출에 실패하면 이미 쓰인 본문 행은 지우지 않고 그대로 둔다(버전이 낮아 다음 색인 때 다시 시도).
+        """
+        path = os.path.abspath(os.fspath(path))
+        with self._lock:
+            self._ensure_paragraph_map()
+            rows = self.db.execute(
+                "SELECT m.para_rowid, m.paragraph_index, f.body FROM content_paragraph_map m"
+                " JOIN content_paragraph_fts f ON f.rowid = m.para_rowid"
+                " WHERE m.path=? ORDER BY m.paragraph_index", (path,)).fetchall()
+        if not rows:
+            return {**self.index_file(path), "mode": "reindexed"}
+        ext = Path(path).suffix.lower()
+        try:
+            if ext in {".hwpx", ".docx"}:
+                records = extract_paragraphs(path)
+                if [p.text for p in records] != [row["body"] for row in rows]:
+                    return {**self.index_file(path), "mode": "reindexed"}
+            else:
+                records = classify_paragraph_levels(path, [
+                    ParagraphRecord(paragraph_index=int(row["paragraph_index"]), text=row["body"], level="body",
+                                    level_rank=LEVEL_RANKS["body"], is_table_cell=False) for row in rows])
+        except Exception as exc:
+            logging.getLogger(__name__).warning("위계 재판정 실패(본문 행 유지): %s: %s", path, exc)
+            return {"indexed": False, "error": None, "mode": "kept"}
+        with self._lock, self._map_kept(), self._index_transaction(path):
+            self.db.execute("DELETE FROM content_table_cells WHERE path=?", (path,))
+            for row, record in zip(rows, records):
+                self.db.execute("UPDATE content_paragraph_fts SET level=?, level_rank=? WHERE rowid=?",
+                                (record.level, int(record.level_rank), row["para_rowid"]))
+                if record.table_cell_id is not None:
+                    self.db.execute("INSERT INTO content_table_cells VALUES(?,?,?)",
+                                    (path, int(row["paragraph_index"]), record.table_cell_id))
+            self.db.execute("UPDATE content_meta SET hierarchy_schema_version=? WHERE path=?",
+                            (CURRENT_HIERARCHY_SCHEMA_VERSION, path))
+        return {"indexed": True, "error": None, "mode": "relevelled"}
 
     def remove_file(self, path):
         path = os.path.abspath(os.fspath(path))

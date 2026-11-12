@@ -267,6 +267,21 @@ class CliTests(unittest.TestCase):
         self.assertEqual(results[0]['status'], 'success')
         convert.assert_called_once()
 
+    def test_conversion_status_summary_reproduces_skip_and_missing_output(self):
+        events = []
+        same = self.file('same.hwpx')
+        skipped = run_conversion([same], 'hwpx', runtime_factory=Mock(side_effect=AssertionError('no COM')), progress=events.append)
+        self.assertEqual(skipped[0]['status'], 'skipped')
+        self.assertEqual(events[1][0], 'document_error')
+        self.assertEqual(events[-1][:3], ('file_conversion_finished', 0, 1))
+        source = self.file('failed.txt')
+        events.clear()
+        with patch('docfit_core.file_conversion.convert_to_pandoc_format', side_effect=RuntimeError('fake converter failure')):
+            failed = run_conversion([source], 'docx', progress=events.append)
+        self.assertEqual(failed[0]['status'], 'failed')
+        self.assertFalse(any(Path(item['output']).exists() for item in failed if item['output']))
+        self.assertEqual(events[-1][0], 'file_conversion_finished')
+
     def test_security_failure_is_reported_and_com_released(self):
         app, com = Mock(), Mock()
         app.RegisterModule.return_value = False

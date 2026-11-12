@@ -787,6 +787,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
     if _docfit_symbol == 'AI답변_개조식_변환':
         def AI답변_개조식_변환(텍스트, 라벨형식=False, 마크다운문서=False):
             """AI 답변으로 보이면 (변환한 글, True), 아니면 (원문, False). 라벨형식=True면 제목:/개요:/네모:/원: 라벨 글로 바꾼다."""
+            from docfit_core.ai_answer import ai_answer_to_labeled_text, ai_answer_to_outline_text, looks_like_ai_answer
             if (not 마크다운문서 and not 알파_AI답변변환_사용) or not looks_like_ai_answer(텍스트, markdown_document=마크다운문서):
                 return 텍스트, False
             try:

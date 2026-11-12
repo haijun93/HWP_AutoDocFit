@@ -9,7 +9,7 @@ from .api_contract import ServiceError
 from .job_envelope import job_error, fit_result
 
 TERMINAL = {'done', 'failed', 'cancelled'}
-EVENT_TYPES = TERMINAL | {'started', 'progress', 'item_done', 'item_failed', 'log', 'dialog'}
+EVENT_TYPES = TERMINAL | {'started', 'progress', 'item_done', 'item_failed', 'log', 'dialog', 'conversion_summary'}
 LIGHT_KINDS = {'inspect', 'preview', 'catalog', 'library_index', 'file_rename_apply', 'file_rename_undo'}
 # 같은 kind는 동시에 하나만(문서 슬롯은 쓰지 않음). 위반 시 JOB_RUNNING.
 SINGLETON_KINDS = {'library_index', 'file_rename_apply', 'file_rename_undo'}
@@ -79,6 +79,8 @@ class JobManager:
                     j['kind'] not in LIGHT_KINDS and (j['state'] not in TERMINAL or
                     _alive(j.get('thread'))) for j in self._jobs.values()):
                 raise ServiceError('JOB_RUNNING', '문서 작업이 끝난 뒤 다시 실행해 주세요.')
+            if stop_event is not None:
+                stop_event.clear()
             identifier = str(uuid.uuid4())
             self._jobs[identifier] = dict(id=identifier, job_id=identifier, kind=kind,
                 params=deepcopy(params or {}), state='queued', progress={'file':0, 'total':0, 'stage':'', 'percent':0},
@@ -260,14 +262,54 @@ def manager_for(gui):
         return gui._job_manager
 
 
-def prepare_legacy(gui):
-    """GUI가 대기로 복귀했는데 종료 튜플이 빠진 기존 worker를 실패로 회수한다."""
+def prepare_legacy(gui, *, pending=None):
+    """종료 사건을 먼저 소비한 뒤 실제로 끝난 worker의 상태를 회수한다."""
     manager = manager_for(gui)
     identifier = getattr(gui, '_job_id', None)
-    if identifier and not gui.running and manager.status(identifier)['state'] not in TERMINAL:
-        if not _alive(manager.thread(identifier)):
-            manager.report(identifier, 'failed', {'code':'JOB_INTERRUPTED', 'message':'작업 종료 알림 없이 실행이 끝났습니다.'})
+    if identifier:
+        worker = manager.thread(identifier)
+        if worker is not None and worker.ident is not None and not _alive(worker):
+            if pending is not None and pending():
+                return manager
+            if manager.status(identifier)['state'] not in TERMINAL:
+                manager.report(identifier, 'failed', {'code':'JOB_INTERRUPTED', 'message':'작업 종료 알림 없이 실행이 끝났습니다.'})
+            if gui.running:
+                gui.running = False
+                if hasattr(gui, '버튼_대기중'):
+                    gui.버튼_대기중()
+                if manager.status(identifier)['state'] == 'failed':
+                    if hasattr(gui, 'status_var'):
+                        gui.status_var.set('오류 발생 · 처리 기록을 확인해 주세요')
+                    if hasattr(gui, '로그표시'):
+                        gui.로그표시(manager.job_status(identifier)['error']['message'])
     return manager
+
+
+def job_phase(gui, manager):
+    """Tk snapshot 안에서 호출하는 읽기 전용 문서 작업 관측 값."""
+    with manager._lock:
+        identifier = getattr(gui, '_job_id', None)
+        job = manager._jobs.get(identifier)
+        if job is None or job['kind'] in LIGHT_KINDS:
+            job = next((j for j in reversed(list(manager._jobs.values()))
+                        if j['kind'] not in LIGHT_KINDS), None)
+        running = bool(gui.running)
+        worker = job.get('thread') if job else getattr(gui, 'worker', None)
+        alive = _alive(worker)
+        state = job['state'] if job else None
+        if getattr(gui, 'closing', False) and (running or alive):
+            return 'closing'
+        if alive and (not running or state in TERMINAL):
+            return 'finishing'
+        if worker is not None and not alive and (running or state == 'running'):
+            return 'dead'
+        if state in TERMINAL:
+            return 'failed' if state == 'failed' else 'finished'
+        if job and (job['cancel_requested'] or job['stop'].is_set()):
+            return 'stop_requested'
+        if state == 'queued':
+            return 'starting'
+        return 'running' if running or state == 'running' else 'idle'
 
 
 def legacy_event(manager, identifier, item):
@@ -286,11 +328,16 @@ def legacy_event(manager, identifier, item):
         fraction = max(0, min(100, float(values[0]))) / 100
         total, n = progress['total'], progress['file']
         manager.report(identifier, 'progress', {'percent':100 * (max(0, n - 1) + fraction) / total if total else 0})
-    elif event in ('saved', 'document_error'):
-        manager.report(identifier, 'item_done' if event == 'saved' else 'item_failed',
-                       {'source':str(values[0]), 'output' if event == 'saved' else 'message':str(values[1])})
+    elif event == 'document_error':
+        manager.report(identifier, 'log', {'message':str(values[1]), 'source':str(values[0]), 'legacy_event':'document_error', 'legacy_values':[str(values[0]), str(values[1])]})
+    elif event == 'saved':
+        manager.report(identifier, 'item_done', {'source':str(values[0]), 'status':'converted', 'output':str(values[1])})
         manager.report(identifier, 'progress', {'percent':100 * progress['file'] / progress['total'] if progress['total'] else 0})
-    elif event in ('finished', 'file_conversion_finished'):
+    elif event == 'file_conversion_summary':
+        manager.report(identifier, 'conversion_summary', values[0])
+    elif event == 'file_conversion_finished':
+        manager.report(identifier, 'done', {'success':values[0], 'failed':values[1]})
+    elif event == 'finished':
         manager.report(identifier, 'done', {'success':values[0], 'failed':values[1]})
     elif event in ('stopped', 'file_conversion_stopped'):
         manager.report(identifier, 'cancelled', {})
