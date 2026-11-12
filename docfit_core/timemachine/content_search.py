@@ -855,6 +855,9 @@ class ContentSearchIndex:
             "CREATE TABLE IF NOT EXISTS content_paragraph_map("
             "path TEXT NOT NULL, paragraph_index INTEGER NOT NULL, para_rowid INTEGER NOT NULL,"
             " PRIMARY KEY(path, paragraph_index, para_rowid)) WITHOUT ROWID")
+        # 검색어 후보 문서를 rowid로 찾을 때 쓴다(_matching_paths). FTS 본문 행을 읽지 않고 경로를 얻는다.
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS content_paragraph_map_rowid ON content_paragraph_map(para_rowid, path)")
         # 대응 표의 행 수·가장 큰 rowid. 행 수를 세는 것(24만 문단에서 수백 ms)을 피하려고 따로 적어 둔다.
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS content_paragraph_map_state("
@@ -1337,7 +1340,7 @@ class ContentSearchIndex:
             expression = '"' + term.replace('"', '""') + '"'
             try:
                 with self._lock:
-                    found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expression,))}
+                    found = self._matching_paths(expression)
             except sqlite3.OperationalError:
                 with self._lock:
                     found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
@@ -1734,6 +1737,16 @@ class ContentSearchIndex:
     # 후보 문단이 전체의 이 비율(1/4)을 넘으면 rowid 조회보다 전체 훑기 한 번이 빠르다.
     # 24만 문단 측정: rowid 조회는 문단당 약 4.5µs(8만 문단 0.39초), 전체 훑기는 0.2~0.7초로 8만 문단 근처에서 뒤집힌다.
     _PARAGRAPH_SCAN_RATIO = 4
+
+    def _matching_paths(self, expression):
+        """FTS MATCH 식에 맞는 문단이 있는 문서 경로 집합.
+
+        FTS에서 path 열을 꺼내면 일치 문단마다 본문 행을 읽는다. 일치 rowid만 얻고 경로는
+        대응 표(content_paragraph_map, search 시작 때 맞춰 둔다)의 rowid 색인에서 읽어 같은 집합을 더 싸게 얻는다.
+        """
+        return {r[0] for r in self.db.execute(
+            "SELECT DISTINCT path FROM content_paragraph_map WHERE para_rowid IN"
+            " (SELECT rowid FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?)", (expression,))}
 
     def _select_paragraphs_for_paths(self, columns, paths, where="", params=()):
         """경로 목록에 속한 문단을 rowid 순으로 읽는다.
