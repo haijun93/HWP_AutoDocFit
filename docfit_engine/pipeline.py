@@ -60,6 +60,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 표:
                     for 줄 in 단계시간_요약줄(표, Path(파일).name):
                         로그(줄)
+                    from docfit_core import com_perf
+                    com_perf.finish_document(Path(파일).name, 표, log=로그, source_path=파일)
         return bind_function(문서_처리, _docfit_namespace)
     if _docfit_symbol == '_문서_처리_본체':
         def _문서_처리_본체(파일, index, total, 문장부호기능=True):
