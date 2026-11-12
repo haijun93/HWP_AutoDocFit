@@ -25,7 +25,7 @@ class KvfClientTests(unittest.TestCase):
     def test_status_does_not_enable(self):
         client, runner = self.client()
         self.assertTrue(client.command('status')['ok'])
-        self.assertEqual(runner.call_args.args[0], ['bundle\\kvf.exe', '--status'])
+        self.assertEqual(runner.call_args.args[0], [str(Path('bundle/kvf.exe')), '--status'])
 
     def test_enable_default_autostart_then_refresh(self):
         client, runner = self.client()
