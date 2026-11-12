@@ -1,0 +1,5 @@
+pub mod install;
+pub const SERVICE_NAME: &str = "HwpAutoDocFit.Index";
+pub const DISPLAY_NAME: &str = "HwpAutoDocFit 색인 서비스";
+pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";
+pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
