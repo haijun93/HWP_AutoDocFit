@@ -1,6 +1,6 @@
 """Stop-timing tests for file conversion using a fake converter (no real Hancom COM)."""
 import hashlib
-import importlib.util
+import sys
 import tempfile
 import threading
 import unittest
@@ -138,7 +138,8 @@ class PendingTempTests(unittest.TestCase):
             self.assertTrue(other.exists())
             self.assertEqual(fc._PENDING_TEMP_PDFS, set())
 
-    @unittest.skipUnless(importlib.util.find_spec('winreg'), 'winreg 없음(Windows 전용 hwp-auto-docfit.py) — PC에서 확인')
+    # find_spec('winreg')는 리눅스 시험 실행기가 넣은 가짜 winreg(MagicMock, __spec__ 없음)에서 ValueError를 낸다.
+    @unittest.skipUnless(sys.platform == 'win32', 'winreg 없음(Windows 전용 hwp-auto-docfit.py) — PC에서 확인')
     def test_force_exit_cleans_pending_temp(self):
         import runpy
         ns = runpy.run_path(str(Path(__file__).resolve().parents[1] / 'hwp-auto-docfit.py'))
