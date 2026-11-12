@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 const LEVELS: [&str; 3] = ["□", "ㅇ", "-"];
-const OFFICIAL: [(&str, &str); 4] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ")];
+const OFFICIAL: [(&str, &str); 5] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ"), ("-", "-")];
 const NOTES: [&str; 3] = ["*", "**", "※"];
 const LEGACY: &str = "◦☞•·∙‧⋅ㆍ";
 const HANGUL: &str = "가나다라마바사아자차카타파하";
@@ -92,9 +92,7 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
             } else if std::ptr::eq(rx, number_re()) && token.ends_with(')') && !token.starts_with('(') {
                 "1)".to_owned()
             } else {
-                let mut out = token.clone();
-                for c in token.chars() { if c.is_ascii_digit() || HANGUL.contains(c) { out = out.replace(c, rep); } }
-                out
+                re(r"[0-9]+|[가나다라마바사아자차카타파하]").replace_all(&token, rep).into_owned()
             };
             return Some((family, lead + stripped[..m.end()].chars().count()));
         }
@@ -115,10 +113,21 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
 }
 
 fn unicode_category(c: char) -> char {
-    let n = c as u32;
-    if matches!(n, 0x0021..=0x002F | 0x003A..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x007E | 0x00A1..=0x00BF | 0x2000..=0x206F | 0x2E00..=0x2E7F | 0x3001..=0x303F | 0xFE10..=0xFE1F | 0xFE30..=0xFE6F | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 | 0xFF3B..=0xFF40 | 0xFF5B..=0xFF65) { 'P' }
-    else if matches!(n, 0x0024..=0x002B | 0x003C..=0x003E | 0x005E..=0x005E | 0x0060..=0x0060 | 0x007C..=0x007E | 0x00A2..=0x00A9 | 0x20A0..=0x20CF | 0x2100..=0x214F | 0x2190..=0x2BFF | 0x1F000..=0x1FAFF) { 'S' }
-    else { 'O' }
+    // Python accepts So, Sm and Po, not all punctuation (Pd/Ps/Pe/Sc).
+    static CATEGORY: OnceLock<regex::Regex> = OnceLock::new();
+    if CATEGORY.get_or_init(|| regex::Regex::new(r"^[\p{So}\p{Sm}\p{Po}]$").unwrap()).is_match(&c.to_string()) { 'P' } else { 'O' }
+}
+
+#[cfg(test)]
+mod lexical_parity_tests {
+    use super::*;
+    #[test]
+    fn unicode_categories_and_multi_digit_families() {
+        assert_eq!(classify_marker("・ 내용").map(|x|x.0), Some("・".into()));
+        assert_eq!(classify_marker("－ 내용"), None);
+        assert_eq!(classify_marker("- 내용").map(|x|x.0), Some("-".into()));
+        assert_eq!(classify_marker("12. 제목").map(|x|x.0), Some("1.".into()));
+    }
 }
 
 pub fn ordinal(family: &str, token: &str) -> Option<Vec<i64>> {
