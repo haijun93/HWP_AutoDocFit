@@ -7,6 +7,10 @@ import 'timemachine_api.dart';
 import 'timemachine_thumbnails.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
+import '../../core/instant_search.dart';
+
+/// 본문·위계검색 한 번의 결과(정렬을 함께 넘겨 화면 정렬 표시와 맞춘다).
+typedef _ContentSearchOutcome = ({String sort, List<TimemachineContentResult> items});
 
 class TimemachineScreen extends StatefulWidget {
   const TimemachineScreen({super.key, required this.api});
@@ -50,7 +54,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   final Set<String> _expandedHours = {};
   final List<TimemachineItem> _items = [];
   final ScrollController _scroll = ScrollController();
-  final TextEditingController _search = TextEditingController();
+  // 검색창 하나를 파일명·본문검색·위계검색 탭이 함께 쓴다(ISUI1). 탭 이름은 'file'·'content'·'related'.
+  late final InstantSearchController<_ContentSearchOutcome?> _searchBox = InstantSearchController(
+    initialTab: 'file',
+    search: _runSearch,
+    onResult: _applySearchResult,
+    onCleared: _searchCleared,
+    onError: _searchFailed,
+  );
+  TextEditingController get _search => _searchBox.text;
   final Set<String> _selectedKinds = {};
   String _query = '';
   bool _contentMode = false, _contentIndexRunning = false;
@@ -95,13 +107,12 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   int _filterRevision = 0;
   int _requestSerial = 0;
   int _calendarRevision = 0;
-  Timer? _debounce;
   static const _extensions = ['hwpx','hwp','docx','pptx','xlsx','pdf','txt'];
 
   @override
   void initState() { super.initState(); _load(firstOpen: true); _scroll.addListener(_onScroll); _pollDeveloperMode(); }
   @override
-  void dispose() { _debounce?.cancel(); _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _search.dispose(); _previewFind.dispose(); super.dispose(); }
+  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _previewFind.dispose(); super.dispose(); }
 
   void _pollDeveloperMode() {
     _developerModePoll?.cancel();
@@ -306,49 +317,80 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     _preview = null;
     _showOperatorHelp = false;
     _contentNeedsReindex = false;
-    _search.clear();
     _query = '';
+    _searchBox.reset(tab: 'file');
   }
 
-  Future<void> _contentSearch(String query, {String? sort}) async {
-    final searchRev = ++_contentSearchRevision;
-    await _readContentStatus();
-    if (!mounted || searchRev != _contentSearchRevision) return;
-    if (query.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _contentResults = [];
-          _selectedContentResult = null;
-          _contentSort = sort ?? (_relatedMode ? 'hierarchy_relevance' : 'relevance');
-          _preview = null;
-        });
-      }
-      return;
+  /// 2글자 미만(또는 Enter로 1글자)일 때 그 탭이 검색하지 않는 기준. 열 보기·종류 필터 재검색이 함께 쓴다.
+  String get _activeQuery => _searchBox.phase == InstantSearchPhase.empty ? '' : _searchBox.query;
+
+  String _defaultContentSort(String tab) => tab == 'related' ? 'hierarchy_relevance' : 'relevance';
+
+  /// 검색 컨트롤러가 부르는 실제 검색. 늦게 온 응답은 컨트롤러가 요청 번호로 버린다.
+  Future<_ContentSearchOutcome?> _runSearch(InstantSearchRequest request) async {
+    final query = request.query;
+    if (request.tab == 'file') {
+      _query = query;
+      unawaited(_filtersChanged());
+      if (_fileTableView || _fileSearchActive) await _runFileSearch(query);
+      return null;
     }
+    final relatedMode = request.tab == 'related';
+    // 정렬 단추로 다시 찾을 때만 고른 정렬을 쓰고, 새 입력·탭 전환은 기본 정렬로 돌아간다.
+    final chosen = request.options;
+    final activeSort = chosen is String ? chosen : _defaultContentSort(request.tab);
+    ++_contentSearchRevision;
+    await _readContentStatus();
+    if (!mounted || request.id != _searchBox.requestId) return null;
     setState(() {
-      _contentSort = sort ?? (_relatedMode ? 'hierarchy_relevance' : 'relevance');
+      _contentSort = activeSort;
       _selectedContentResult = null;
       _preview = null;
     });
-    try {
-       final activeSort = sort ?? (_relatedMode ? 'hierarchy_relevance' : _contentSort);
-       final relatedMode = _relatedMode;
-       final response = await _api.command(relatedMode ? 'related_search' : 'content_search', {
-         'query': query, 'limit': 100,
-         if (relatedMode) 'sort': 'hierarchy_relevance' else 'sort': activeSort == 'relevance' ? 'relevance' : activeSort,
-       });
-       final rawItems = response['items'];
-       final items = rawItems is List ? rawItems.map((raw) => TimemachineContentResult.fromJson(Map<String, Object?>.from(raw as Map), query: query)).toList() : <TimemachineContentResult>[];
-      if (!mounted || searchRev != _contentSearchRevision || query != _search.text.trim() || relatedMode != _relatedMode) return;
-      setState(() {
-         _contentSort = activeSort;
-         _contentResults = relatedMode
-             ? _sortContentResults(items, 'hierarchy_relevance')
-             : activeSort == 'relevance' ? items : _sortContentResults(items, activeSort);
-      });
-    } catch (_) {
-      if (mounted) setState(() => _error = '본문 검색을 수행하지 못했습니다.');
+    final response = await _api.command(relatedMode ? 'related_search' : 'content_search', {
+      'query': query, 'limit': 100,
+      if (relatedMode) 'sort': 'hierarchy_relevance' else 'sort': activeSort,
+    });
+    final rawItems = response['items'];
+    final items = rawItems is List ? rawItems.map((raw) => TimemachineContentResult.fromJson(Map<String, Object?>.from(raw as Map), query: query)).toList() : <TimemachineContentResult>[];
+    return (
+      sort: activeSort,
+      items: relatedMode
+          ? _sortContentResults(items, 'hierarchy_relevance')
+          : activeSort == 'relevance' ? items : _sortContentResults(items, activeSort),
+    );
+  }
+
+  void _applySearchResult(InstantSearchRequest request, _ContentSearchOutcome? outcome) {
+    if (outcome == null || !mounted) return;
+    setState(() {
+      _contentSort = outcome.sort;
+      _contentResults = outcome.items;
+    });
+  }
+
+  void _searchFailed(InstantSearchRequest request, Object error) {
+    if (!mounted || request.tab == 'file') return;
+    setState(() => _error = '본문 검색을 수행하지 못했습니다.');
+  }
+
+  /// 검색어가 기준 미만이 되면 그 탭의 결과를 비운다(파일명 탭은 기간 전체 타임라인으로 돌아간다).
+  void _searchCleared(String tab, String query) {
+    if (!mounted) return;
+    if (tab == 'file') {
+      _query = '';
+      unawaited(_filtersChanged());
+      if (_fileTableView || _fileSearchActive) unawaited(_runFileSearch(''));
+      return;
     }
+    ++_contentSearchRevision; // 열려 있던 미리보기 응답도 버린다.
+    setState(() {
+      _contentResults = [];
+      _selectedContentResult = null;
+      _preview = null;
+      _contentSort = _defaultContentSort(tab);
+    });
+    unawaited(_readContentStatus());
   }
 
   Future<void> _exportMarkdown() async {
@@ -465,22 +507,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
   }
 
-  Future<void> _setContentMode(bool related) async {
-    setState(() {
-      _relatedMode = related;
-      _contentMode = true;
-      _contentResults = [];
-      _selectedContentResult = null;
-      _preview = null;
-      _search.clear();
-      _query = '';
-      _showOperatorHelp = false;
-      _contentSort = related ? 'hierarchy_relevance' : 'relevance';
-      _fileSearchResults = [];
-      _fileSearchActive = false;
-    });
-    await _contentSearch('', sort: _contentSort);
-  }
   Future<void> _runFileSearch(String query) async {
     if (!_fileSearchSupported) return;
     final rev = ++_fileSearchRevision;
@@ -558,39 +584,22 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Future<void> _cancelContentIndex() async {
     _applyContentStatus(await _api.command('content_index_cancel'));
   }
-  void _toggleContentMode(bool value) {
+  /// 검색 방식(탭) 전환. 검색어는 지우지 않고, 바뀐 탭이 그 검색어로 곧바로 찾는다(ISUI1).
+  /// 검색어가 2글자 미만이면 바뀐 탭의 결과를 비운다(파일명 탭은 기간 전체 타임라인).
+  void _selectSearchMode(String mode) {
+    if (mode == _searchBox.tab) return;
     setState(() {
-      _contentMode = value;
-      _relatedMode = false;
+      _relatedMode = mode == 'related';
+      _contentMode = mode != 'file';
       _contentResults = [];
       _selectedContentResult = null;
       _preview = null;
-
-      _search.clear();
-      _query = '';
       _showOperatorHelp = false;
-      _contentSort = 'relevance';
+      _contentSort = _defaultContentSort(mode);
       _fileSearchResults = [];
       _fileSearchActive = false;
     });
-    if (value) _readContentStatus();
-    if (!value) { _filtersChanged(); }
-  }
-
-  void _toggleRelatedMode(bool value) {
-    setState(() {
-      _relatedMode = value;
-      _contentMode = value;
-      _contentResults = [];
-      _selectedContentResult = null;
-      _preview = null;
-      _search.clear();
-      _query = '';
-      _contentSort = 'relevance';
-      _fileSearchResults = [];
-      _fileSearchActive = false;
-    });
-    if (!value) _filtersChanged();
+    _searchBox.selectTab(mode);
   }
 
   Future<void> _load({bool firstOpen = false}) async {
@@ -999,7 +1008,15 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_search.text.trim().isEmpty ? '본문 검색어를 입력해 주세요.' : '일치하는 본문 검색 결과가 없습니다.'),
+          child: ListenableBuilder(
+            listenable: _searchBox,
+            builder: (context, _) => Text(switch (_searchBox.phase) {
+              _ when _searchBox.query.isEmpty => '본문 검색어를 입력해 주세요.',
+              InstantSearchPhase.empty => '2글자 이상 입력하면 바로 찾습니다(Enter는 1글자도 찾음).',
+              InstantSearchPhase.typing || InstantSearchPhase.searching => '찾는 중…',
+              _ => '일치하는 본문 검색 결과가 없습니다.',
+            }, key: const ValueKey('tm-content-empty-message')),
+          ),
         ),
       );
     }
@@ -1511,9 +1528,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                 const DropdownMenuItem(value: 'name', child: Text('이름순')),
               ],
               onChanged: (val) {
-                if (val != null) {
-                    _contentSearch(_search.text.trim(), sort: val);
-                }
+                if (val == null) return;
+                setState(() => _contentSort = val);
+                _searchBox.refresh(options: val);
               },
             ),
           ],
@@ -1538,18 +1555,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   void _toggleKind(String kind, bool value) {
     setState(() => value ? _selectedKinds.add(kind) : _selectedKinds.remove(kind));
     _filtersChanged();
-    if (_fileTableView && _fileSearchSupported) _runFileSearch(_search.text.trim());
-  }
-
-  void _selectSearchMode(String mode) {
-    if (mode == 'related') {
-      _setContentMode(true);
-    } else if (mode == 'content') {
-      _setContentMode(false);
-    } else {
-      _toggleRelatedMode(false);
-      _toggleContentMode(false);
-    }
+    if (_fileTableView && _fileSearchSupported) _runFileSearch(_activeQuery);
   }
 
   Widget _searchModeSelector({required bool collapsed}) {
@@ -1606,7 +1612,26 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     );
   }
 
-  Widget _filtersBar() => Padding(padding:const EdgeInsets.fromLTRB(12,8,12,4),child:LayoutBuilder(builder:(context, constraints){
+  /// 파일명·본문검색·위계검색이 함께 쓰는 검색창. 2글자부터 입력하는 대로 찾고 Enter는 바로 찾는다.
+  /// 오른쪽 표시는 컨트롤러 상태(검색 중 모래시계)를 그대로 보여준다.
+  Widget _searchField() => ListenableBuilder(
+    listenable: _searchBox,
+    builder: (context, _) => TextField(
+      key: const ValueKey('tm-file-search'),
+      controller: _search,
+      decoration: InputDecoration(
+        prefixIcon: const Icon(Icons.search),
+        suffixIcon: _searchBox.isSearching
+            ? const Tooltip(message: '찾는 중', child: Icon(Icons.hourglass_top, key: ValueKey('tm-search-busy'), size: 16))
+            : null,
+        hintText: _relatedMode ? '위계 검색' : _contentMode ? '본문 검색' : '이름 찾기',
+        isDense: true,
+      ),
+      onSubmitted: (_) => _searchBox.submit(),
+    ),
+  );
+
+  Widget _filtersBar() =>Padding(padding:const EdgeInsets.fromLTRB(12,8,12,4),child:LayoutBuilder(builder:(context, constraints){
     final width = constraints.maxWidth;
     final compact = width < tmToolsCollapseWidth;
     final narrow = width < tmKindsCollapseWidth;
@@ -1621,7 +1646,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     else for(final entry in _kinds.entries) FilterChip(label:Text(entry.key),selected:_selectedKinds.contains(entry.value),onSelected:(value)=>_toggleKind(entry.value, value)),
     _searchModeSelector(collapsed: width < tmModeCollapseWidth),
     // 좁은 창에서는 검색창을 넓히되 오른쪽 아이콘 두 개(도움말/열 보기, 더보기)가 같은 줄에 남게 한다.
-    SizedBox(width:narrow ? max(120.0, width - 120) : 180,child:TextField(key:const ValueKey('tm-file-search'),controller:_search,decoration:InputDecoration(prefixIcon:const Icon(Icons.search),hintText:_contentMode?'본문 검색':'이름 찾기',isDense:true),onChanged:(value){_debounce?.cancel();_debounce=Timer(const Duration(milliseconds:300),(){final trimmed=value.trim();if(_contentMode){_contentSearch(trimmed);}else{_query=trimmed;_filtersChanged();if(_fileTableView || _fileSearchActive){_runFileSearch(trimmed);}}});})),
+    SizedBox(width:narrow ? max(120.0, width - 120) : 180,child:_searchField()),
     if (_contentMode && !_relatedMode)
       IconButton(
         icon: const Icon(Icons.help_outline),
@@ -1636,7 +1661,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
           if (!_fileSearchSupported) return;
           setState(() => _fileTableView = !_fileTableView);
           if (_fileTableView) {
-            _runFileSearch(_search.text.trim());
+            _runFileSearch(_activeQuery);
           }
         },
       ),
