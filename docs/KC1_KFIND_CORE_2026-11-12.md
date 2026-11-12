@@ -82,6 +82,13 @@ Rust `kfind_core::fold`와 Python 기준 구현 `kfind/core/tools/fold_ref.py`�
 - 대기 문장이 20만(기본)을 넘으면 스스로 커밋한다(메모리 상한).
 - 합치기는 비트맵을 다시 만들지 않고 문장 번호만 옮긴다(조각 사전들을 fst 합집합으로 훑음). 정책(`MergePolicy`): 조각 수 > 8이면 합치고, 지운 문장 비율 > 30%인 조각은 다시 쓴다. 합치기는 한 번에 하나.
 - 불가능한 전이: 합치는 중 또 `plan_merge`(None), 다른 합치기의 결과로 `apply_merge`(`Error::Invalid`), 두 번째 `Writer`(`Error::Locked`).
+- KB4: 메모리 사본으로 연 작은 조각은 제 이름을 얻은 직후 배경 스레드가 파일을 한 번 열고 닫는다(새 파일 첫 열기 비용을 커밋 나머지와 겹쳐 미리 내, 읽는 쪽 `reload`가 기다리지 않게).
+
+### 질의 이력 캐시(KB4, 기본 꺼짐, `Index::set_query_cache`)
+- 담는 것: 해석한 질의(낱말 + 나눈 조각, 낱말 순서 무시)마다, 조각 파일(번호 + 본문 해시)마다 지운 문장을 빼기 전 일치·붙어 있는 일치 비트맵. 순위는 담지 않고 매번 다시 매긴다.
+- 새 세대(`reload`): 남은 조각은 캐시에서 가져와 그 세대의 지운 문장만 빼고, 새 조각(바뀐 문서)만 판정한다. 목록에서 빠진 조각의 판정은 버린다.
+- 좁히기: 앞 질의 낱말마다 그것을 함의하는 새 낱말이 있으면(글자 추가·낱말 추가, 조각이 생겨 넓어질 수 있는 경우는 제외 — `qcache.rs` `implies`) 앞 일치 비트맵 안에서만 판정한다.
+- 상태: 없음 → 담김 → (조각 빠짐) 줄어듦 → 버림. 버림 규칙: 바이트 합 > `max_bytes`(기본 32MB) 또는 질의 수 > `max_queries`(기본 256)면 가장 오래 안 쓴 질의부터. 한 질의가 상한의 절반을 넘으면 담지 않는다. 시간 초과·취소로 멈춘 질의는 담지 않는다. 상태 값은 `Index::query_cache_stats()`(담은 질의·바이트, 재사용·좁히기·새 판정 조각 수, 버린 수).
 
 ## 5. 견고성
 
@@ -183,6 +190,8 @@ let c = index.count("예산집행", &opts)?;                            // c.tot
 let all = index.rank("예산집행", &SearchOptions { top: 0, ..opts })?;  // all.result.hits(미리보기 비어 있음)
 let preview = all.sentences(&index, 0, 3)?;                         // 첫 문서의 일치 문장 3개
 index.reload()?;                                                    // 새 세대로
+index.set_query_cache(Some(QueryCacheOptions::default()));          // KB4: 질의 이력 캐시(기본 꺼짐)
+let stats = index.query_cache_stats();                              // Some(QueryCacheStats)
 ```
 문서 ID(u64)·날짜(i64)·문단 번호·위계 순위(u8, 작을수록 높음)는 호출하는 쪽이 정한다. 문장 나누기는 엔진 밖(계획 S5 `sentence.rs`)이다.
 

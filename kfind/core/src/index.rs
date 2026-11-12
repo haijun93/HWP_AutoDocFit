@@ -1,12 +1,13 @@
 //! 읽기 쪽: 목록 파일의 한 세대를 열어 질의한다. 쓰는 쪽이 목록을 바꿔도 이미 연 세대는 그대로 유효하다.
 use crate::manifest::Manifest;
+use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
 use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
 use roaring::RoaringBitmap;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
@@ -214,11 +215,12 @@ fn strict(seg: &Segment, w: &str, restrict: Option<&RoaringBitmap>, budget: &mut
     Ok(out)
 }
 
-/// 조각 하나에서 (일치 문장, 붙어 있는 일치 문장). 두 번째가 None이면 첫 번째와 같다.
-fn eval(view: &SegView, words: &[QueryWord], budget: &mut Budget) -> Result<(RoaringBitmap, Option<RoaringBitmap>)> {
-    let seg = &*view.seg;
+/// 조각 하나에서 (일치 문장, 붙어 있는 일치 문장)을 지운 문장을 빼기 전 상태로. 두 번째가 None이면 첫 번째와 같다.
+/// `restrict`가 있으면 그 안에서만 판정한다: 정답 일치가 `restrict` 안에 있을 때(질의 이력 캐시의 좁히기) 결과는
+/// 제한 없이 판정한 것과 같다(모든 단계가 교집합·합집합이고 붙어 있는 일치는 일치의 부분집합이다).
+fn eval_seg(seg: &Segment, words: &[QueryWord], restrict: Option<&RoaringBitmap>, budget: &mut Budget) -> Result<SegSets> {
     let is_short = |w: &QueryWord| w.pieces.is_none() && w.text.chars().count() <= 3;
-    let mut acc: Option<RoaringBitmap> = None;
+    let mut acc: Option<RoaringBitmap> = restrict.cloned();
     // 1. 2·3글자 낱말: 작은 비트맵부터 교집합.
     let mut short: Vec<RoaringBitmap> = Vec::new();
     for w in words.iter().filter(|w| is_short(w)) {
@@ -267,14 +269,26 @@ fn eval(view: &SegView, words: &[QueryWord], budget: &mut Budget) -> Result<(Roa
             }
         }
     }
-    let mut matched = acc.unwrap_or_default();
+    Ok((acc.unwrap_or_default(), strict_acc))
+}
+
+/// 조각 판정에서 그 세대의 지운 문장을 뺀다.
+fn remove_deleted(view: &SegView, mut sets: SegSets) -> SegSets {
     if !view.deleted.is_empty() {
-        matched -= &view.deleted;
-        if let Some(sa) = strict_acc.as_mut() {
+        sets.0 -= &view.deleted;
+        if let Some(sa) = sets.1.as_mut() {
             *sa -= &view.deleted;
         }
     }
-    Ok((matched, strict_acc))
+    sets
+}
+
+/// 캐시에 담긴 판정에서 지운 문장을 뺀 사본.
+fn live_copy(view: &SegView, sets: &SegSets) -> SegSets {
+    if view.deleted.is_empty() {
+        return sets.clone();
+    }
+    (&sets.0 - &view.deleted, sets.1.as_ref().map(|sa| sa - &view.deleted))
 }
 
 struct Agg {
@@ -390,6 +404,13 @@ pub struct Index {
     generation: u64,
     views: Vec<SegView>,
     ranks: OnceLock<StaticRank>,
+    /// 질의 이력 캐시(켜면). 세대가 바뀌어도(`reload`) 같은 것을 쓴다.
+    cache: Option<Arc<Mutex<QueryCache>>>,
+}
+
+/// 캐시 잠금. 잠근 채 패닉이 났더라도 캐시 상태는 늘 일관되므로(담기·버리기가 끝난 뒤에만 바뀐다) 그대로 쓴다.
+fn lock_cache(c: &Mutex<QueryCache>) -> std::sync::MutexGuard<'_, QueryCache> {
+    c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 impl Index {
@@ -403,7 +424,7 @@ impl Index {
 
     fn from_parts(dir: &Path, manifest: Manifest, segs: Vec<Arc<Segment>>) -> Index {
         let views = segs.into_iter().zip(manifest.segs).map(|(seg, e)| SegView { seg, deleted: e.deleted }).collect();
-        Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new() }
+        Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new(), cache: None }
     }
 
     /// 문서 고정 순위표(처음 부를 때 만든다).
@@ -457,7 +478,13 @@ impl Index {
         if manifest.generation == self.generation {
             return Ok(false);
         }
+        let cache = self.cache.take();
         *self = Index::from_parts(&dir, manifest, segs);
+        if let Some(c) = &cache {
+            let live: Vec<SegKey> = self.views.iter().map(|v| (v.seg.id, v.seg.body_hash)).collect();
+            lock_cache(c).retain_segments(&live);
+        }
+        self.cache = cache;
         Ok(true)
     }
 
@@ -551,13 +578,54 @@ impl Index {
         Ok(parsed)
     }
 
-    fn eval_all(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<(RoaringBitmap, Option<RoaringBitmap>)>> {
-        let mut out = Vec::with_capacity(self.views.len());
-        for v in &self.views {
+    fn eval_all(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<SegSets>> {
+        if parsed.words.is_empty() {
             budget.check()?;
-            out.push(if parsed.words.is_empty() { (RoaringBitmap::new(), None) } else { eval(v, &parsed.words, budget)? });
+            return Ok(self.views.iter().map(|_| (RoaringBitmap::new(), None)).collect());
         }
+        let Some(cache) = &self.cache else {
+            let mut out = Vec::with_capacity(self.views.len());
+            for v in &self.views {
+                budget.check()?;
+                out.push(remove_deleted(v, eval_seg(&v.seg, &parsed.words, None, budget)?));
+            }
+            return Ok(out);
+        };
+        // 질의 이력 캐시: 판정 방법은 잠근 채 정하고, 판정은 잠금 없이 하고, 새 판정은 다 끝난 뒤에만 담는다
+        // (시간 초과·취소로 멈춘 질의는 아무것도 담지 않는다).
+        let key = query_key(&parsed.words);
+        let seg_keys: Vec<SegKey> = self.views.iter().map(|v| (v.seg.id, v.seg.body_hash)).collect();
+        let plans = lock_cache(cache).plan(&key, &parsed.words, &seg_keys);
+        let mut out = Vec::with_capacity(self.views.len());
+        let mut fresh = Vec::new();
+        for ((v, plan), sk) in self.views.iter().zip(plans).zip(&seg_keys) {
+            budget.check()?;
+            let raw = match plan {
+                Plan::Reuse(s) => {
+                    out.push(live_copy(v, &s));
+                    continue;
+                }
+                Plan::Narrow(prev) => eval_seg(&v.seg, &parsed.words, Some(&prev.0), budget)?,
+                Plan::Fresh => eval_seg(&v.seg, &parsed.words, None, budget)?,
+            };
+            let raw = Arc::new(raw);
+            out.push(live_copy(v, &raw));
+            fresh.push((*sk, raw));
+        }
+        lock_cache(cache).store(&key, &parsed.words, fresh);
         Ok(out)
+    }
+
+    /// 질의 이력 캐시를 켜거나(`Some`) 끈다(`None`). 켜면 같은 질의·좁히는 질의·새 세대의 같은 질의가 남은 조각의
+    /// 판정을 다시 쓴다(결과는 캐시 없이 낸 것과 같다). `reload`해도 유지되고, 목록에서 빠진 조각의 판정은 버린다.
+    /// 기본은 꺼짐.
+    pub fn set_query_cache(&mut self, opts: Option<QueryCacheOptions>) {
+        self.cache = opts.map(|o| Arc::new(Mutex::new(QueryCache::new(o))));
+    }
+
+    /// 질의 이력 캐시 상태(꺼져 있으면 None).
+    pub fn query_cache_stats(&self) -> Option<QueryCacheStats> {
+        self.cache.as_ref().map(|c| lock_cache(c).stats())
     }
 
     /// 문장 단위 검색. 같은 문장에 모든 낱말이 있는 문장을 찾아 문서별로 모으고 순위를 매겨 상위 `opts.top`건을 돌려준다.
