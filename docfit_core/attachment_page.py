@@ -162,11 +162,23 @@ def table_paragraph_indices(paragraphs) -> set[int]:
     return {i for i, p in enumerate(paragraphs) if any(_local(x) == "tbl" for x in _objects(p))}
 
 
-def pull_up_blocked(last_page: int | None, boundaries) -> bool:
-    """마지막 쪽이 붙임 쪽 경계로 시작하면 True(앞쪽 간격을 줄여도 그 줄은 앞 쪽으로 올라올 수 없다).
+def pull_up_blocked(last_page: int | None, boundary_page: int | None, page_break: bool,
+                    lines_before: int | None, max_lines: int) -> bool:
+    """마지막 쪽 줄을 앞 쪽으로 당기는 쪽 수 맞춤이 처음부터 불가능한지.
 
-    boundaries: (붙임 시작 문단의 쪽, 그 문단이 새 쪽 첫머리인가) 목록.
+    마지막 쪽이 쪽 나눔(page_break)으로 시작하는 붙임 쪽이면 그 줄은 간격을 줄여도 앞 쪽으로 올라오지
+    않는다. 쪽 수가 줄려면 붙임 앞 내용이 한 쪽을 통째로 비워야 하는데, 붙임 앞 쪽에 걸린 줄
+    (lines_before)이 당겨올 기준(max_lines)보다 많으면 불가능으로 본다. 줄 수를 모르면(None) 판정하지 않는다.
+    쪽 나눔이 없는 붙임은 간격을 줄이면 함께 올라오므로 막지 않는다.
     """
-    if not last_page:
-        return False
-    return any(page == last_page and starts_page for page, starts_page in boundaries)
+    return bool(last_page and boundary_page == last_page and page_break
+                and lines_before is not None and lines_before > max_lines)
+
+
+def report_fit_impossible(target_pages: int, page_break_starts: int) -> bool:
+    """보고서를 target_pages쪽 안에 담는 것이 처음부터 불가능한지.
+
+    보고서 첫머리(제목) 뒤에서 쪽 나눔으로 새 쪽을 시작하는 붙임이 page_break_starts개면 보고서는
+    붙임 앞 내용 1쪽 + 붙임마다 1쪽 이상을 차지한다(간격·줄간격을 줄여도 쪽 나눔은 남는다).
+    """
+    return page_break_starts > 0 and 1 + page_break_starts > max(1, int(target_pages or 1))

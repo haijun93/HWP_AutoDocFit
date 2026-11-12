@@ -284,6 +284,10 @@ from docfit_core.stage_selection import TABLE_STAGE_KEYS as 표작업_키목록,
 from docfit_core.stage_selection import without_page_fit as 페이지맞춤_제외
 from docfit_core.page_fit_search import level_amounts as 쪽맞춤_레벨_줄임량, search_level as 쪽맞춤_레벨_탐색
 from docfit_core.page_fit_search import classify_reports as 쪽맞춤_문서유형_판정
+from docfit_core.attachment_page import (body_paragraphs as 붙임쪽_본문문단, find_attachment_starts as 붙임쪽_시작찾기,
+                                         is_attachment_label as 붙임쪽_표시인가, pull_up_blocked as 붙임쪽_당김불가,
+                                         report_fit_impossible as 붙임쪽_보고서_불가,
+                                         table_paragraph_indices as 붙임쪽_표문단번호)
 from docfit_core.stage_selection import CARD_OPTION_STAGES as 카드옵션_세부작업, card_option_from_stages as 카드옵션_판정
 from docfit_core.stage_selection import card_option_off_keys as 카드옵션_끈작업, card_option_stage_values as 카드옵션_세부작업값
 from docfit_core.stage_selection import card_option_turns_off as 카드옵션_끄는값
@@ -2693,6 +2697,18 @@ _문단_줄시작들 = _engine_resolve('docfit_engine.page_fit', '_문단_줄시
 
 
 보고서_새쪽_시작인가 = _engine_resolve('docfit_engine.page_fit', '보고서_새쪽_시작인가', globals())
+
+
+붙임쪽_경계_목록 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_경계_목록', globals())
+
+
+_붙임쪽_화면종류 = _engine_resolve('docfit_engine.page_fit', '_붙임쪽_화면종류', globals())
+
+
+붙임쪽_마지막쪽_막힘 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_마지막쪽_막힘', globals())
+
+
+붙임쪽_보고서_쪽나눔수 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_보고서_쪽나눔수', globals())
 
 
 _대표_줄간격 = _engine_resolve('docfit_engine.page_fit', '_대표_줄간격', globals())
