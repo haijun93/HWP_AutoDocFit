@@ -70,6 +70,31 @@ class _줄검사기억:
             self.상태 = "편집후"
             self.기억.clear()
 
+    def 줄바꿈_검사(self, 시작, 끝, 읽기, 진단로그_fn=None):
+        """줄범위 인자가 달라도 동일한 경계의 이동·선택·본문 읽기는 묶는다.
+
+        편집 전의 정확히 같은 두 위치만 재사용한다. 화면줄 시작 위치를
+        다른 인자의 별칭으로 기억하지 않는다(자동 줄바꿈 경계 보호).
+        호출자는 검사 뒤 커서를 읽지 않고 결과를 반환하거나 SetPos한다.
+        """
+        key_pos = (tuple(시작), tuple(끝))
+        적중, 결과 = self.재사용('줄바꿈', key_pos)
+        if 적중:
+            return 결과
+        결과 = 읽기(시작, 끝)
+        if self.활성 and self.상태 == '편집전':
+            key = ('줄바꿈', key_pos)
+            self.호출 += 1
+            if key in self.기억:
+                if self.기억[key] == 결과:
+                    self.적중 += 1
+                else:
+                    self.불일치 += 1
+                    if callable(진단로그_fn):
+                        진단로그_fn(f'[줄검사 기억 불일치] 줄바꿈({key_pos})')
+            self.기억[key] = 결과
+        return 결과
+
     def 검증_줄범위(self, pos, actual, 진단로그_fn=None):
         if not self.활성 or self.상태 != "편집전":
             return
@@ -480,7 +505,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     # MoveLineBegin은 첫 글자 뒤 위치를 돌려주는 한글 COM 사례가 있다.
                     # 이를 next_start로 쓰면 '맞춤|형'의 '형'을 건너뛰어 분리를 놓친다.
                     # 실제 줄바꿈 문자가 있을 때만 그 문자를 포함한 next_start를 쓴다.
-                    if 두_위치_사이_줄바꿈_문자인가(raw_end, next_start):
+                    if 기억 is not None:
+                        줄바꿈 = 기억.줄바꿈_검사(raw_end, next_start,
+                            두_위치_사이_줄바꿈_문자인가, globals().get('진단로그'))
+                    else:
+                        줄바꿈 = 두_위치_사이_줄바꿈_문자인가(raw_end, next_start)
+                    if 줄바꿈:
                         결과 = (start, next_start)
                     else:
                         결과 = (start, raw_end)
