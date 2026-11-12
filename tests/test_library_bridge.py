@@ -129,8 +129,11 @@ class LibraryBridgeTests(unittest.TestCase):
             file_path = os.path.join(root, "a.txt")
             open(file_path, "wb").close()
             missing = os.path.join(root, "없는파일.txt")
+            # Windows 경로는 대소문자를 구분하지 않으므로 대문자 경로가 같은 파일이다.
+            # 리눅스는 대소문자를 구분해 대문자 경로가 없는 파일이 되므로, 같은 파일을 가리키는 다른 표기를 쓴다.
+            duplicate = file_path.upper() if os.name == "nt" else os.path.join(root, ".", "a.txt")
             bridge, requests = self._drop_bridge([{"ok": True}])
-            result = bridge.library_drop([file_path, missing, file_path.upper()], 0.1, 0.1, 1)
+            result = bridge.library_drop([file_path, missing, duplicate], 0.1, 0.1, 1)
             self.assertFalse(result["ok"])
             self.assertEqual(len(requests), 1)
             self.assertEqual(len(result["failed"]), 1)
