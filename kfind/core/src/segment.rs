@@ -2,23 +2,27 @@
 //!
 //! 파일 배치(모두 리틀 엔디언):
 //! ```text
-//! 머리글 184바이트
+//! 머리글 216바이트
 //!   0  magic "KFSEG\r\n\x1a"      8  형식 버전 u32     12  비교형 규칙 버전 u32
 //!   16 조각 번호 u64              24 문장 수 u32       28  문서 수 u32
 //!   32 본문 해시 u64(FNV-1a 64, 머리글 뒤 전체)        40  파일 길이 u64
-//!   48 구역 표 8 × (위치 u64, 길이 u64)                176 머리글 해시 u64(0..176)
+//!   48 구역 표 10 × (위치 u64, 길이 u64)               208 머리글 해시 u64(0..208)
 //! 구역
 //!   POST     조각·낱말별 문장 번호 roaring 비트맵(표준 직렬화)을 이어 붙임
 //!   DICT     fst: 열쇠 → POST 안 위치. 열쇠 = 2·3글자 조각의 UTF-8, 또는 0x00 + 낱말(어절) UTF-8
-//!   TEXT     문장 비교형 UTF-8을 이어 붙임(4글자 이상 낱말 확인용)
-//!   TEXT_OFF (문장 수 + 1) × u64: 문장의 TEXT 안 시작 위치
+//!   TEXT     문장 비교형을 조각 글자 표 번호로 부호화해 이어 붙임(4글자 이상 낱말 확인용, `textcode` 참고)
+//!   TEXT_OFF (문장 수 + 1) × u32: 문장의 TEXT 안 시작 위치
 //!   PARA     문장 수 × u32: 문단 번호
 //!   LEVEL    문장 수 × u8: 위계 순위(작을수록 높음)
 //!   DOC_OF   문장 수 × u32: 조각 안 문서 번호
 //!   DOCS     문서 수 × (문서 ID u64, 날짜 i64, 첫 문장 번호 u32, 문장 수 u32)
+//!   ALPHA    글자 수 × (글자 u32, 빈도 u64): 번호 순서(빈도 많은 순). 합칠 때 빈도를 더해 새 표를 만든다.
+//!   ALPHA_IX 글자 수 × (글자 u32, 번호 u32): 글자 오름차순(검색어 부호화용 이진 탐색, 열 때 표를 만들지 않는다)
 //! ```
+//! 형식 v1(KC1)과 다른 점: TEXT를 UTF-8 대신 조각 글자 표 부호로, TEXT_OFF를 u64 대신 u32로 쓴다(KB2, 디스크 축소).
 //! 한 문서의 문장은 조각 안에서 이어져 있고, 문서 안 순번 = 문장 번호 - 첫 문장 번호.
 use crate::fold::FOLD_RULE_VERSION;
+use crate::textcode::{Alphabet, MAX_CODES, decode_codes, put_code};
 use crate::{Error, FNV_SEED, Result, corrupt, fnv64};
 use memmap2::Mmap;
 use roaring::RoaringBitmap;
@@ -29,10 +33,11 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub const FORMAT_VERSION: u32 = 1;
+pub const FORMAT_VERSION: u32 = 2;
 const MAGIC: &[u8; 8] = b"KFSEG\r\n\x1a";
-const HEADER_LEN: usize = 184;
-const N_SECTIONS: usize = 8;
+const HEADER_LEN: usize = 216;
+const HEADER_HASH: usize = HEADER_LEN - 8;
+const N_SECTIONS: usize = 10;
 const POST: usize = 0;
 const DICT: usize = 1;
 const TEXT: usize = 2;
@@ -41,7 +46,11 @@ const PARA: usize = 4;
 const LEVEL: usize = 5;
 const DOC_OF: usize = 6;
 const DOCS: usize = 7;
+const ALPHA: usize = 8;
+const ALPHA_IX: usize = 9;
 const DOC_REC: usize = 24;
+const ALPHA_REC: usize = 12;
+const ALPHA_IX_REC: usize = 8;
 /// 낱말(어절) 사전에 넣는 낱말의 최대 길이(바이트). 더 긴 어절은 나누기 후보가 되지 않는다.
 pub(crate) const MAX_WORD_BYTES: usize = 96;
 /// 낱말 열쇠의 머리 바이트. 비교형 글에는 0x00이 없어 조각 열쇠와 겹치지 않는다.
@@ -116,15 +125,19 @@ struct SegWriter {
     pos: u64,
     sec: [(u64, u64); N_SECTIONS],
     dict: Option<fst::MapBuilder<Vec<u8>>>,
-    text_off: Vec<u64>,
+    text_off: Vec<u32>,
     para: Vec<u32>,
     level: Vec<u8>,
     doc_of: Vec<u32>,
     buf: Vec<u8>,
+    alpha: Alphabet,
 }
 
 impl SegWriter {
-    fn create(tmp: &Path) -> Result<SegWriter> {
+    fn create(tmp: &Path, alpha: Alphabet) -> Result<SegWriter> {
+        if alpha.chars.len() as u64 >= MAX_CODES as u64 {
+            return Err(Error::Invalid("too many distinct characters in one segment".into()));
+        }
         let mut out = BufWriter::with_capacity(1 << 20, File::create(tmp)?);
         out.write_all(&[0u8; HEADER_LEN])?;
         Ok(SegWriter {
@@ -139,6 +152,7 @@ impl SegWriter {
             level: Vec::new(),
             doc_of: Vec::new(),
             buf: Vec::new(),
+            alpha,
         })
     }
 
@@ -176,12 +190,24 @@ impl SegWriter {
         Ok(())
     }
 
-    fn sentence(&mut self, text: &[u8], para: u32, level: u8, doc_local: u32) -> Result<()> {
-        self.text_off.push(self.pos - self.sec[TEXT].0);
+    /// 문장 하나(비교형 글)를 조각 글자 표로 부호화해 쓴다.
+    fn sentence(&mut self, text: &str, para: u32, level: u8, doc_local: u32) -> Result<()> {
+        let off = self.pos - self.sec[TEXT].0;
+        if off >= u32::MAX as u64 {
+            return Err(Error::Invalid("sentence text of one segment exceeds 4 GiB".into()));
+        }
+        self.text_off.push(off as u32);
         self.para.push(para);
         self.level.push(level);
         self.doc_of.push(doc_local);
-        self.put(text)
+        let mut buf = std::mem::take(&mut self.buf);
+        buf.clear();
+        if !self.alpha.encode_into(text, &mut buf) {
+            return Err(Error::Invalid("character missing from the segment alphabet".into()));
+        }
+        self.put(&buf)?;
+        self.buf = buf;
+        Ok(())
     }
 
     fn finish(mut self, id: u64, docs: &[DocRec], final_path: &Path) -> Result<SegMeta> {
@@ -190,12 +216,15 @@ impl SegWriter {
             return Err(Error::Invalid("too many sentences in one segment".into()));
         }
         self.sec[TEXT].1 = self.pos - self.sec[TEXT].0;
-        self.text_off.push(self.sec[TEXT].1);
+        if self.sec[TEXT].1 >= u32::MAX as u64 {
+            return Err(Error::Invalid("sentence text of one segment exceeds 4 GiB".into()));
+        }
+        self.text_off.push(self.sec[TEXT].1 as u32);
         let section = |w: &mut SegWriter, idx: usize, bytes: &[u8]| -> Result<()> {
             w.sec[idx] = (w.pos, bytes.len() as u64);
             w.put(bytes)
         };
-        let mut b: Vec<u8> = Vec::with_capacity((n_sent + 1) * 8);
+        let mut b: Vec<u8> = Vec::with_capacity((n_sent + 1) * 4);
         for v in &self.text_off {
             b.extend_from_slice(&v.to_le_bytes());
         }
@@ -220,6 +249,20 @@ impl SegWriter {
             b.extend_from_slice(&d.n_sent.to_le_bytes());
         }
         section(&mut self, DOCS, &b)?;
+        b.clear();
+        for (c, n) in &self.alpha.chars {
+            b.extend_from_slice(&(*c as u32).to_le_bytes());
+            b.extend_from_slice(&n.to_le_bytes());
+        }
+        section(&mut self, ALPHA, &b)?;
+        let mut ix: Vec<(u32, u32)> = self.alpha.chars.iter().enumerate().map(|(code, (c, _))| (*c as u32, code as u32)).collect();
+        ix.sort_unstable();
+        b.clear();
+        for (c, code) in ix {
+            b.extend_from_slice(&c.to_le_bytes());
+            b.extend_from_slice(&code.to_le_bytes());
+        }
+        section(&mut self, ALPHA_IX, &b)?;
 
         let mut h = [0u8; HEADER_LEN];
         h[0..8].copy_from_slice(MAGIC);
@@ -234,8 +277,8 @@ impl SegWriter {
             h[48 + i * 16..56 + i * 16].copy_from_slice(&off.to_le_bytes());
             h[56 + i * 16..64 + i * 16].copy_from_slice(&len.to_le_bytes());
         }
-        let hh = fnv64(FNV_SEED, &h[..176]);
-        h[176..184].copy_from_slice(&hh.to_le_bytes());
+        let hh = fnv64(FNV_SEED, &h[..HEADER_HASH]);
+        h[HEADER_HASH..HEADER_LEN].copy_from_slice(&hh.to_le_bytes());
         self.out.seek(SeekFrom::Start(0))?;
         self.out.write_all(&h)?;
         self.out.flush()?;
@@ -267,6 +310,7 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
     let mut grams: FxMap<u64, RoaringBitmap> = FxMap::default();
     let mut words: HashMap<Box<[u8]>, RoaringBitmap> = HashMap::new();
     let mut cps: Vec<u64> = Vec::new();
+    let mut char_counts: FxMap<u64, u64> = FxMap::default();
     let mut sid: u32 = 0;
     for d in docs.clone() {
         let mut start = 0usize;
@@ -276,6 +320,9 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
             let s = &d.text[start..end];
             cps.clear();
             cps.extend(s.chars().map(|c| c as u64));
+            for &c in &cps {
+                *char_counts.entry(c).or_default() += 1;
+            }
             for i in 0..cps.len().saturating_sub(1) {
                 let k2 = cps[i] | (cps[i + 1] << 21);
                 // 같은 문장 안 중복 조각은 try_push가 거부한다(문장 번호가 늘어나는 순서로만 들어온다).
@@ -320,8 +367,9 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
     }
     entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
+    let alpha = Alphabet::from_counts(char_counts.into_iter().filter_map(|(c, n)| Some((char::from_u32(c as u32)?, n))));
     let name = seg_file_name(id);
-    let mut w = SegWriter::create(&dir.join(format!("{name}.tmp")))?;
+    let mut w = SegWriter::create(&dir.join(format!("{name}.tmp")), alpha)?;
     for (k, bm) in &entries {
         w.posting(k, bm)?;
     }
@@ -333,7 +381,7 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
         recs.push(DocRec { doc_id: d.doc_id, date: d.date, first_sid: sid, n_sent: d.sent_end.len() as u32 });
         let mut start = 0usize;
         for (i, &end) in d.sent_end.iter().enumerate() {
-            w.sentence(&d.text.as_bytes()[start..end as usize], d.para[i], d.level[i], local as u32)?;
+            w.sentence(&d.text[start..end as usize], d.para[i], d.level[i], local as u32)?;
             start = end as usize;
             sid += 1;
         }
@@ -389,7 +437,7 @@ impl Segment {
         if format != FORMAT_VERSION {
             return Err(Error::FormatVersion { found: format, expected: FORMAT_VERSION });
         }
-        if fnv64(FNV_SEED, &b[..176]) != u64_at(b, 176) {
+        if fnv64(FNV_SEED, &b[..HEADER_HASH]) != u64_at(b, HEADER_HASH) {
             return corrupt(format!("{}: header checksum", path.display()));
         }
         let rule = u32_at(b, 12);
@@ -413,8 +461,15 @@ impl Segment {
             *s = (off as usize, len as usize);
         }
         let n = n_sent as usize;
-        let sizes_ok = sec[TEXT_OFF].1 == (n + 1) * 8 && sec[PARA].1 == n * 4 && sec[LEVEL].1 == n && sec[DOC_OF].1 == n * 4 && sec[DOCS].1 == n_docs as usize * DOC_REC;
-        if !sizes_ok || u64_at(b, sec[TEXT_OFF].0 + n * 8) != sec[TEXT].1 as u64 {
+        let n_chars = sec[ALPHA].1 / ALPHA_REC;
+        let sizes_ok = sec[TEXT_OFF].1 == (n + 1) * 4
+            && sec[PARA].1 == n * 4
+            && sec[LEVEL].1 == n
+            && sec[DOC_OF].1 == n * 4
+            && sec[DOCS].1 == n_docs as usize * DOC_REC
+            && sec[ALPHA].1 % ALPHA_REC == 0
+            && sec[ALPHA_IX].1 == n_chars * ALPHA_IX_REC;
+        if !sizes_ok || u32_at(b, sec[TEXT_OFF].0 + n * 4) as usize != sec[TEXT].1 {
             return corrupt(format!("{}: section sizes do not match counts", path.display()));
         }
         let map = Arc::new(map);
@@ -451,18 +506,74 @@ impl Segment {
         RoaringBitmap::deserialize_unchecked_from(&post[off as usize..]).map_err(|e| Error::Corrupt(format!("segment {}: posting: {e}", self.id)))
     }
 
-    /// 문장의 비교형 글.
+    /// 문장의 비교형 글(조각 글자 표로 부호화한 바이트). 찾을 낱말은 `encode_word`로 같은 부호로 바꿔 비교한다.
     pub(crate) fn text(&self, sid: u32) -> Result<&[u8]> {
         if sid >= self.n_sent {
             return corrupt(format!("segment {}: sentence {sid} out of range", self.id));
         }
         let offs = self.section(TEXT_OFF);
-        let a = u64_at(offs, sid as usize * 8) as usize;
-        let b = u64_at(offs, sid as usize * 8 + 8) as usize;
+        let a = u32_at(offs, sid as usize * 4) as usize;
+        let b = u32_at(offs, sid as usize * 4 + 4) as usize;
         match self.section(TEXT).get(a..b) {
             Some(t) => Ok(t),
             None => corrupt(format!("segment {}: text range of sentence {sid}", self.id)),
         }
+    }
+
+    /// 낱말을 이 조각의 부호로 바꾼다. 조각에 없는 글자가 있으면 None(그 낱말은 이 조각 어느 문장에도 없다).
+    pub(crate) fn encode_word(&self, w: &str) -> Option<Vec<u8>> {
+        let ix = self.section(ALPHA_IX);
+        let n = ix.len() / ALPHA_IX_REC;
+        let mut out = Vec::with_capacity(w.len());
+        for c in w.chars() {
+            let c = c as u32;
+            // 글자 오름차순 표에서 이진 탐색.
+            let (mut lo, mut hi) = (0usize, n);
+            let mut code = None;
+            while lo < hi {
+                let mid = (lo + hi) / 2;
+                match u32_at(ix, mid * ALPHA_IX_REC).cmp(&c) {
+                    std::cmp::Ordering::Less => lo = mid + 1,
+                    std::cmp::Ordering::Greater => hi = mid,
+                    std::cmp::Ordering::Equal => {
+                        code = Some(u32_at(ix, mid * ALPHA_IX_REC + 4));
+                        break;
+                    }
+                }
+            }
+            // 깨진 표의 큰 번호는 잘라 쓴다(틀린 결과는 날 수 있어도 패닉·메모리 문제는 없다).
+            put_code(code?.min(MAX_CODES - 1), &mut out);
+        }
+        Some(out)
+    }
+
+    /// 문장의 비교형 글을 UTF-8로 되돌린다(합치기용).
+    fn decode_text(&self, sid: u32, out: &mut String) -> Result<()> {
+        out.clear();
+        let alpha = self.section(ALPHA);
+        let n = alpha.len() / ALPHA_REC;
+        let ok = decode_codes(self.text(sid)?, |code| {
+            let code = code as usize;
+            if code >= n {
+                return false;
+            }
+            match char::from_u32(u32_at(alpha, code * ALPHA_REC)) {
+                Some(c) => {
+                    out.push(c);
+                    true
+                }
+                None => false,
+            }
+        });
+        if ok.is_none() {
+            return corrupt(format!("segment {}: text of sentence {sid}", self.id));
+        }
+        Ok(())
+    }
+
+    /// 조각 글자 표의 (글자, 빈도). 깨진 글자는 건너뛴다.
+    fn alphabet_counts(&self) -> impl Iterator<Item = (char, u64)> + '_ {
+        self.section(ALPHA).chunks_exact(ALPHA_REC).filter_map(|r| Some((char::from_u32(u32_at(r, 0))?, u64_at(r, 4))))
     }
 
     fn check_sid(&self, sid: u32) -> Result<usize> {
@@ -573,8 +684,14 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
     if next == 0 {
         return Ok((None, out_sources));
     }
+    let mut counts: HashMap<char, u64> = HashMap::new();
+    for (seg, _) in sources {
+        for (c, n) in seg.alphabet_counts() {
+            *counts.entry(c).or_default() += n;
+        }
+    }
     let name = seg_file_name(new_id);
-    let mut w = SegWriter::create(&dir.join(format!("{name}.tmp")))?;
+    let mut w = SegWriter::create(&dir.join(format!("{name}.tmp")), Alphabet::from_counts(counts))?;
     {
         let mut op = fst::map::OpBuilder::new();
         for (seg, _) in sources {
@@ -608,6 +725,7 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
     }
     w.end_postings()?;
     let mut recs: Vec<DocRec> = Vec::new();
+    let mut text = String::new();
     for (i, (seg, _)) in sources.iter().enumerate() {
         let remap = &remaps[i];
         for local in 0..seg.n_docs {
@@ -622,7 +740,8 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
                 if remap[sid as usize] == GONE {
                     return corrupt(format!("segment {}: document {} is partly deleted", seg.id, d.doc_id));
                 }
-                w.sentence(seg.text(sid)?, seg.para(sid)?, seg.level(sid)?, new_local)?;
+                seg.decode_text(sid, &mut text)?;
+                w.sentence(&text, seg.para(sid)?, seg.level(sid)?, new_local)?;
             }
         }
     }

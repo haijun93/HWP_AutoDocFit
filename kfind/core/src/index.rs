@@ -190,8 +190,10 @@ fn strict(seg: &Segment, w: &str, restrict: Option<&RoaringBitmap>, budget: &mut
         cand &= p;
     }
     budget.check()?;
-    // 후보 문장의 비교형 글에서 실제로 이어져 있는지 확인.
-    let finder = memchr::memmem::Finder::new(w.as_bytes());
+    // 후보 문장의 비교형 글에서 실제로 이어져 있는지 확인. 글은 조각 글자 표로 부호화돼 있어 낱말도 같은 부호로 바꾼다
+    // (자기 동기 부호라 바이트 찾기가 글자 경계에서만 맞는다). 조각에 없는 글자가 있으면 어느 문장에도 없다.
+    let Some(code) = seg.encode_word(w) else { return Ok(RoaringBitmap::new()) };
+    let finder = memchr::memmem::Finder::new(&code);
     let mut out = RoaringBitmap::new();
     for sid in cand {
         budget.tick()?;

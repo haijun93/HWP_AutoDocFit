@@ -13,6 +13,7 @@ mod index;
 mod manifest;
 mod query;
 mod segment;
+mod textcode;
 mod writer;
 
 pub use fold::{FOLD_RULE_VERSION, UNICODE_VERSION, fold, fold_into, tokens};
