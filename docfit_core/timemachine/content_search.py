@@ -503,7 +503,7 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             level = engine_level
         elif isinstance(engine_level, str):
             level = {"제목": "document_title", **ROLE_TO_LEVEL}.get(engine_level, "body")
-        if paragraph.is_table_cell and level != "document_title":
+        if paragraph.is_table_cell and not ("search_levels" in result and level == "document_title"):
             level = "table_cell"
         if level not in LEVEL_ORDER and level != "table_cell":
             level = "body"

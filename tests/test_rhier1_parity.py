@@ -27,6 +27,9 @@ class SearchResponseTests(unittest.TestCase):
         rows = [ParagraphRecord(0, 'ordinary', 'body', 8, False)]
         with patch('docfit_app.hierarchy_bridge.analyze_levels', return_value={'levels': [5]}):
             self.assertEqual(classify_paragraph_levels('x.txt', rows)[0].level, 'circle')
+        cells = [ParagraphRecord(0, 'table', 'body', 8, True)]
+        with patch('docfit_app.hierarchy_bridge.analyze_levels', return_value={'levels': [0]}):
+            self.assertEqual(classify_paragraph_levels('x.docx', cells)[0].level, 'table_cell')
 
     def test_search_levels_preserve_title_cell_and_metadata(self):
         rows = [ParagraphRecord(0, '제목 칸', 'body', 8, True, table_cell_id=3, table_id=1)]
@@ -48,13 +51,13 @@ class NativeParityTests(unittest.TestCase):
         if not exe.is_file():
             self.skipTest('build hierarchy or set HIERARCHY_EXE')
         rows = [ParagraphRecord(i, text, 'body', 8, False)
-                for i, text in enumerate(['# 문서', '## 장', '네모: 항목', '원: 내용', '| 표 |'])]
+                for i, text in enumerate(['# 문서', '## 장', '네모: 항목', '원: 내용', '| 표 |', '|', '||'])]
         with patch.object(hb, '_read_settings', return_value={'hierarchy_engine': True}), \
                 patch.object(hb, 'find_library', return_value=None), \
                 patch.object(hb, 'find_executable', return_value=exe):
             result = classify_paragraph_levels('bridge.md', rows)
         self.assertEqual([p.level for p in result],
-                         ['document_title', 'chapter', 'square', 'circle', 'table_cell'])
+                         ['document_title', 'chapter', 'square', 'circle', 'table_cell', 'dash', 'table_cell'])
 
     def test_synthetic_corpus(self):
         from scripts.rhier1_diff import compare
