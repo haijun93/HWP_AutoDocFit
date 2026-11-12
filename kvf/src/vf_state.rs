@@ -19,11 +19,11 @@ impl Default for Model {fn default()->Self {Self{view:View::Hidden,seq:0,sticky:
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Event {
     Call(Caller), Loaded{seq:u64,result:ReadResult}, Query(String), Escape, Close, Outside,
     Minimize, ChangeBox(i64), ChangeSpace(Option<String>), Select(Option<i64>), Refresh,
-    Open, Opened{seq:u64,result:Result<(),String>}, SetSticky(bool),
+    LocateCopy, LocateOrigin, Open, Opened{seq:u64,result:Result<(),String>}, SetSticky(bool),
 }
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Effect {
     Show, Foreground, Hide, ClearItems, Read{seq:u64,context:Context}, Draw, Filter,
-    Open{seq:u64,item_id:i64}, Notice(String),
+    Locate{seq:u64,item_id:i64,origin:bool}, Open{seq:u64,item_id:i64}, Notice(String),
 }
 fn loading(mut m:Model,c:Context,mut effects:Vec<Effect>)->(Model,Vec<Effect>) {
     m.seq+=1; m.pending_open=None; m.view=View::Loading(c.clone());
@@ -77,6 +77,9 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
         },
         Event::Open if matches!(m.view,View::List(_)|View::Search(_)) && m.pending_open.is_none()=>{
             if let Some(item_id)=m.view.context().unwrap().selection {m.seq+=1;m.pending_open=Some(m.seq);let seq=m.seq;(m,vec![Effect::Open{seq,item_id}])}else{(m,vec![])}
+        },
+        Event::LocateCopy|Event::LocateOrigin if matches!(m.view,View::List(_)|View::Search(_)) && m.pending_open.is_none()=>{
+            if let Some(item_id)=m.view.context().unwrap().selection {m.seq+=1;m.pending_open=Some(m.seq);let seq=m.seq;(m,vec![Effect::Locate{seq,item_id,origin:matches!(event,Event::LocateOrigin)}])}else{(m,vec![])}
         },
         Event::Opened{seq,result} if m.pending_open==Some(seq) && matches!(m.view,View::List(_)|View::Search(_))=>{
             m.pending_open=None;
@@ -143,4 +146,10 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
 #[cfg(test)]mod window_extension_tests{
  use super::*;
  #[test]fn empty_box_retains_id_and_can_switch(){let(load,_)=step(&Model::default(),Event::Call(Caller::Tray));let(empty,_)=step(&load,Event::Loaded{seq:load.seq,result:ReadResult::EmptyBox{box_id:2,reason:"빈 상자".into()}});assert_eq!(empty.view.context().unwrap().box_id,Some(2));assert_eq!(step(&empty,Event::Open).0,empty);let(next,e)=step(&empty,Event::ChangeBox(1));assert!(matches!(next.view,View::Loading(_)));assert!(matches!(e[0],Effect::Read{..}));}
+}
+
+#[cfg(test)]mod locate_state_tests{
+ use super::*;
+ #[test]fn locations_require_selection_and_complete_through_step(){let c=Context{box_id:Some(1),selection:Some(5),..Default::default()};let m=Model{view:View::List(c),..Default::default()};for(event,origin)in[(Event::LocateCopy,false),(Event::LocateOrigin,true)]{let(n,e)=step(&m,event);assert_eq!(e,vec![Effect::Locate{seq:1,item_id:5,origin}]);assert_eq!(step(&n,Event::LocateCopy).0,n);assert_eq!(step(&n,Event::Opened{seq:1,result:Ok(())}).0.view,View::Hidden);}}
+ #[test]fn impossible_locations_in_unusable_views(){for view in [View::Hidden,View::Loading(Context::default()),View::Empty{reason:String::new(),context:Context::default()},View::Failed{error:String::new(),context:Context::default()},View::Minimized(Box::new(View::Hidden))]{let m=Model{view,..Default::default()};for e in[Event::LocateCopy,Event::LocateOrigin]{assert_eq!(step(&m,e),(m.clone(),vec![]));}}}
 }

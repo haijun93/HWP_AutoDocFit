@@ -7,6 +7,7 @@
 #[path = "../../kagent/src/frame.rs"] mod frame;
 #[path = "../../kagent/src/hotkey.rs"] mod hotkey;
 #[path = "../../kagent/src/open_rules.rs"] mod open_rules;
+mod open;
 mod window;
 mod settings;
 mod tray;
@@ -20,12 +21,12 @@ const SHOW: u32 = WM_APP + 1;
 const RELOAD: u32 = WM_APP + 2;
 static TRAY: Mutex<Option<tray::Tray>> = Mutex::new(None);
 static RUNTIME: Mutex<(State, &'static str)> = Mutex::new((State::NotRunning,"hidden"));
-fn status(view: &str) -> std::io::Result<()> {
+fn status(_view: &str) -> std::io::Result<()> {
     let dir = paths::data_dir();
     std::fs::create_dir_all(&dir)?;
     let tray=TRAY.lock().unwrap();let t=tray.as_ref();
     let (actual,box_id,items,error)=window::snapshot();
-    let view=if actual=="hidden" && view=="loading" {"loading"} else {actual.as_str()};
+    let view=actual.as_str();
     let body=json::to_string(&json::Value::obj(vec![
       ("version",env!("CARGO_PKG_VERSION").into()),("pid",(std::process::id() as i64).into()),
       ("hotkey",t.map(|t|t.settings.hotkey.as_str()).unwrap_or("Win+Shift+F").into()),
@@ -46,18 +47,18 @@ fn dispatch(event: Event) -> bool {
             _ => {}
         }
     }
-    true
+    runtime.0 == State::Resident
 }
 unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
     match msg {
         SHOW => { if dispatch(Event::Show){window::call(vf_state::Caller::SecondRun);} 0 }
-        RELOAD => { dispatch(Event::Reload); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings); let _=status(&window::snapshot().0); 0 }
+        RELOAD => { if !dispatch(Event::Reload){return 0;} if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings); let _=status(&window::snapshot().0); 0 }
         WM_HOTKEY => { if dispatch(Event::Show){window::call(vf_state::Caller::Hotkey);} 0 }
-        tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { window::call(vf_state::Caller::Tray); } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{window::call(vf_state::Caller::Tray);},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
+        tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { if dispatch(Event::Show){window::call(vf_state::Caller::Tray);} } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{if dispatch(Event::Show){window::call(vf_state::Caller::Tray);}},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
         WM_CLOSE => { dispatch(Event::Quit); unsafe { DestroyWindow(hwnd); } 0 }
         WM_QUERYENDSESSION => 1,
         WM_ENDSESSION if w != 0 => { dispatch(Event::EndSession); unsafe { DestroyWindow(hwnd); } 0 }
-        WM_DESTROY => { window::close(); window::destroy(); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); unsafe { PostQuitMessage(0); } 0 }
+        WM_DESTROY => { window::close(); window::destroy(); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); let _=std::fs::remove_file(paths::data_dir().join("status.json")); unsafe { PostQuitMessage(0); } 0 }
         _ => unsafe { DefWindowProcW(hwnd,msg,w,l) }
     }
 }
@@ -72,6 +73,7 @@ fn run() -> Result<(),String> {
     let name = util::wide(&paths::object_name("Local\\HwpAutoDocFit.kvf",root.as_deref()));
     dispatch(Event::Start);
     unsafe {
+        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let mutex = CreateMutexW(std::ptr::null(),0,name.as_ptr());
         if mutex.is_null() { dispatch(Event::Failed); return Err("뮤텍스 생성 실패".into()); }
         struct Handle(HANDLE);
@@ -121,4 +123,12 @@ fn main() { if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
 mod vf_data;
 mod vf_state;
 
-fn notice(hwnd: HWND, body: &str){if let Some(t)=TRAY.lock().unwrap().as_ref(){unsafe{if t.settings.tray || !t.error.is_empty(){t.notice(hwnd,"가상 폴더",body);}else{MessageBoxW(hwnd,util::wide(body).as_ptr(),util::wide("가상 폴더").as_ptr(),MB_OK|MB_ICONINFORMATION);}}}}
+fn notice(hwnd: HWND, body: &str){
+    let visible=TRAY.lock().unwrap().as_ref().map(|t|t.settings.tray||!t.error.is_empty());
+    match visible {
+        Some(true)=>{if let Some(t)=TRAY.lock().unwrap().as_ref(){unsafe{t.notice(hwnd,"가상 폴더",body);}}},
+        // 메시지 상자는 창 사건을 재진입시키므로 TRAY 잠금을 잡은 채 열지 않는다.
+        Some(false)=>unsafe{MessageBoxW(hwnd,util::wide(body).as_ptr(),util::wide("가상 폴더").as_ptr(),MB_OK|MB_ICONINFORMATION);},
+        None=>{}
+    }
+}

@@ -10,29 +10,30 @@ thread_local!{static UI:RefCell<Ui>=RefCell::new(Ui::default());}
 fn with<R>(f:impl FnOnce(&Ui)->R)->R{UI.with(|s|f(&s.borrow()))}
 fn edit<R>(f:impl FnOnce(&mut Ui)->R)->R{UI.with(|s|f(&mut s.borrow_mut()))}
 pub fn snapshot()->(String,Option<i64>,usize,String){with(|s|(s.model.view.name().into(),s.model.view.context().and_then(|c|c.box_id),s.filtered.len(),match &s.model.view{View::Failed{error,..}=>error.clone(),_=>String::new()}))}
-pub fn configure(owner:HWND,settings:&Settings){edit(|s|s.owner=owner);event(Event::SetSticky(settings.sticky));}
+pub fn configure(owner:HWND,settings:&Settings){edit(|s|s.owner=owner);event(Event::SetSticky(settings.sticky));let h=with(|s|s.hwnd);if !h.is_null(){topmost(h);draw_later();}}
 pub fn call(caller:Caller){event(Event::Call(caller));}
 pub fn close(){event(Event::Close);}
 pub fn destroy(){let h=with(|s|s.hwnd);if !h.is_null(){unsafe{DestroyWindow(h);}}}
 fn notify(body:&str){let owner=with(|s|s.owner);crate::notice(owner,body);}
-/// 唯一의 Model 대입. Win32의 재진입 전에 RefCell 빌림을 끝낸다.
+/// Model 대입은 이곳 한 군데뿐이다. Win32의 재진입 전에 RefCell 빌림을 끝낸다.
 pub fn event(e:Event){
- if matches!(&e,Event::Close|Event::Escape|Event::Outside|Event::Minimize|Event::Call(_)){save();}
+ if matches!(&e,Event::Close|Event::Escape|Event::Outside|Event::Minimize|Event::Call(_)|Event::Opened{..}){save();}
  let effects=edit(|s|{let(next,effects)=vf_state::step(&s.model,e);s.model=next;effects});
  for effect in effects{match effect{
   Effect::Show=>{if let Err(error)=ensure(){notify(&error);event(Event::Close);return;}let h=with(|s|s.hwnd);unsafe{ShowWindow(h,SW_SHOW);SetForegroundWindow(h);SetFocus(h);}},
   Effect::Foreground=>{let h=with(|s|s.hwnd);unsafe{SetForegroundWindow(h);SetFocus(h);}},
   Effect::Hide=>{save();let h=with(|s|s.hwnd);unsafe{ShowWindow(h,SW_HIDE);}},
-  Effect::ClearItems=>edit(|s|{s.boxes.clear();s.items=Vec::new();s.filtered=Vec::new();s.top=0;s.committed.clear();s.comp.clear();}),
+  Effect::ClearItems=>edit(|s|{s.boxes=Vec::new();s.items=Vec::new();s.filtered=Vec::new();s.top=0;s.committed.clear();s.comp.clear();}),
   Effect::Read{seq,context}=>read(seq,context),
   Effect::Filter=>refilter(),Effect::Draw=>draw_later(),
   Effect::Notice(message)=>notify(&message),
-  Effect::Open{seq,..}=>event(Event::Opened{seq,result:Err("열기는 V7에서 연결합니다".into())}),
+  Effect::Open{seq,item_id}=>open_item(seq,item_id,crate::open::Action::Open),
+  Effect::Locate{seq,item_id,origin}=>open_item(seq,item_id,if origin{crate::open::Action::LocateOrigin}else{crate::open::Action::LocateCopy}),
  }}
  let(v,_,_,_)=snapshot();let _=crate::status(&v);
 }
 fn read(seq:u64,mut c:Context){
- draw_later();let h=with(|s|s.hwnd);unsafe{UpdateWindow(h);}
+ edit(|s|s.truncated=false);draw_later();let h=with(|s|s.hwnd);unsafe{UpdateWindow(h);}
  if c.box_id.is_none(){c.box_id=Settings::load(&crate::paths::data_dir().join("settings.json")).last_box;}
  let result=match vf_data::read(&crate::paths::library_dir(),c.box_id){
   Ok(Snapshot::Loaded{boxes,box_id,items,truncated})=>{
@@ -89,7 +90,7 @@ unsafe fn paint(h:HWND){unsafe{
  let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),RECT{left:pad,top:head+tab,right:rc.right-pad,bottom:y},DT_END_ELLIPSIS);}
  let message=match &s.model.view{View::Loading(_)=>"불러오는 중",View::Failed{error,..}=>error,View::Empty{reason,..}=>reason,_ if s.filtered.is_empty()=>"항목이 없습니다. 다른 상자·영역을 고르거나 F5로 다시 불러오세요",_=>""};
  if !message.is_empty(){text(message,RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row},DT_END_ELLIPSIS);}
- for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(((rc.bottom-y)/row).max(0)as usize){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};if c.and_then(|c|c.selection)==Some(*id){fill(r,0x00f7e3cf);}text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
+ for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};if c.and_then(|c|c.selection)==Some(*id){fill(r,0x00f7e3cf);}text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
  if s.truncated{text("5,000개까지만 보입니다. 앱에서 보세요",RECT{left:pad,top:rc.bottom-row,right:rc.right,bottom:rc.bottom},DT_END_ELLIPSIS);}
  });frame::own_border(mem,rc);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
 }}
@@ -97,16 +98,17 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  WM_PAINT=>{paint(h);0},WM_ERASEBKGND=>1,WM_NCCALCSIZE if w!=0=>0,
  WM_NCHITTEST=>{let(x,y)=xy(l);let mut p=POINT{x,y};ScreenToClient(h,&mut p);let r=size(h);frame::frame_hit(p.x,p.y,r.right,r.bottom,frame::scale(h,6),frame::scale(h,HEAD),p.x<frame::scale(h,260)||button(h,p.x,p.y).is_some(),IsZoomed(h)!=0,false).code()as isize},
  WM_NCLBUTTONDBLCLK if w==HTCAPTION as usize=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});0},
- WM_CLOSE=>{event(Event::Close);0},WM_ACTIVATE if (w&0xffff)as u32==WA_INACTIVE=>{event(Event::Outside);0},
+ WM_CLOSE=>{event(Event::Close);0},WM_ACTIVATE if (w&0xffff)as u32==WA_INACTIVE=>{let mut pid=0;GetWindowThreadProcessId(l as HWND,&mut pid);if pid!=std::process::id(){event(Event::Outside);}0},
  WM_GETMINMAXINFO=>{let p=&mut*(l as *mut MINMAXINFO);p.ptMinTrackSize=POINT{x:frame::scale(h,360),y:frame::scale(h,160)};0},
- WM_SIZE=>{draw_later();0},WM_EXITSIZEMOVE=>{save();0},
+ WM_SIZE=>{draw_later();0},WM_EXITSIZEMOVE=>{save();0},WM_DESTROY=>{edit(|s|s.hwnd=null_mut());0},
  WM_LBUTTONDOWN=>{let(x,y)=xy(l);edit(|s|s.pressed=button(h,x,y));0},
  WM_LBUTTONUP=>{let(x,y)=xy(l);let pressed=edit(|s|s.pressed.take());let b=button(h,x,y);if b.is_some()||pressed.is_some(){if b==pressed{match b{Some(0)=>event(Event::Close),Some(1)=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});},Some(2)=>event(Event::Minimize),Some(3)=>{let on=with(|s|!s.model.sticky);event(Event::SetSticky(on));topmost(h);save();draw_later();},_=>{}}}}else if y<frame::scale(h,HEAD)&&x<frame::scale(h,260){boxes_menu(h);}else if y<frame::scale(h,HEAD+TAB){let i=(x*5/size(h).right.max(1)).clamp(0,4)as usize;edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[i].map(String::from)));}else if let Some(i)=row_at(h,l){choose(i);}0},
  WM_LBUTTONDBLCLK=>{if let Some(i)=row_at(h,l){choose(i);event(Event::Open);}0},
+ WM_RBUTTONUP=>{if let Some(i)=row_at(h,l){choose(i);item_menu(h,l);}0},
  WM_MOUSEWHEEL=>{move_selection(h,if ((w>>16)as u16)as i16>0{-3}else{3});0},
  WM_KEYDOWN=>{match w as u16{
  VK_ESCAPE=>{edit(|s|{s.committed.clear();s.comp.clear();});event(Event::Escape);},VK_F5=>event(Event::Refresh),
- VK_BACK=>{edit(|s|{s.committed.pop();s.comp.clear();});query();},VK_RETURN=>event(Event::Open),
+ VK_BACK=>{edit(|s|{s.committed.pop();s.comp.clear();});query();},VK_RETURN=>event(if GetKeyState(VK_CONTROL as i32)<0{Event::LocateCopy}else{Event::Open}),
  VK_LEFT=>change_tab(-1),VK_RIGHT=>change_tab(1),VK_TAB=>change_tab(if GetKeyState(VK_SHIFT as i32)<0{-1}else{1}),
  VK_UP=>move_selection(h,-1),VK_DOWN=>move_selection(h,1),VK_PRIOR=>move_selection(h,-(((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize)),VK_NEXT=>move_selection(h,((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize),VK_HOME=>move_selection(h,-100000),VK_END=>move_selection(h,100000),_=>{}}
  0},
@@ -143,8 +145,11 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   let fixture=Isolated::new();
   let db=crate::sqlite::Connection::open(fixture.root.join("library/library.db").to_str().unwrap()).unwrap();
   db.exec("CREATE TABLE box(id INTEGER PRIMARY KEY,name TEXT,description TEXT,created_at REAL,updated_at REAL); CREATE TABLE item(id INTEGER PRIMARY KEY,box_id INTEGER,kind TEXT,source_path TEXT,origin_path TEXT,managed_path TEXT,display_name TEXT,space TEXT,created_at REAL); INSERT INTO box VALUES(1,'시험 상자','',1,2),(2,'빈 상자','',1,1); INSERT INTO item VALUES(1,1,'file','','','','한글 보고','core',3),(2,1,'file','','','','한 자료','core',2),(3,1,'file','','','','영역 자료','basis',1)").unwrap();drop(db);
+  let before_db=std::fs::read(fixture.root.join("library/library.db")).unwrap();
   configure(null_mut(),&Settings::default());assert!(with(|s|s.hwnd.is_null()));
   call(Caller::SecondRun);let h=with(|s|s.hwnd);assert!(!h.is_null());assert_eq!(snapshot().0,"list");assert_eq!(snapshot().2,3);
+  let pinned=Settings{sticky:true,..Settings::default()};configure(null_mut(),&pinned);unsafe{assert_ne!(GetWindowLongPtrW(h,GWL_EXSTYLE)&WS_EX_TOPMOST as isize,0);}configure(null_mut(),&Settings::default());unsafe{assert_eq!(GetWindowLongPtrW(h,GWL_EXSTYLE)&WS_EX_TOPMOST as isize,0);}
+  unsafe{SendMessageW(h,WM_ACTIVATE,WA_INACTIVE as usize,h as isize);}assert_eq!(snapshot().0,"list");
   unsafe{assert_ne!(IsWindowVisible(h),0);UpdateWindow(h);SendMessageW(h,WM_KEYDOWN,VK_RIGHT as usize,0);}
   assert_eq!(snapshot().2,2);unsafe{SendMessageW(h,WM_KEYDOWN,VK_RIGHT as usize,0);}assert_eq!(snapshot().2,1);
   unsafe{SendMessageW(h,WM_KEYDOWN,VK_LEFT as usize,0);SendMessageW(h,WM_CHAR,'한' as usize,0);}assert_eq!(snapshot().2,2);
@@ -155,5 +160,19 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   event(Event::Escape);assert_eq!(snapshot().0,"list");event(Event::ChangeBox(2));assert_eq!(snapshot().0,"empty");assert_eq!(snapshot().1,Some(2));event(Event::ChangeBox(1));assert_eq!(snapshot().0,"list");
   event(Event::SetSticky(true));event(Event::Outside);assert_eq!(snapshot().0,"list");call(Caller::Hotkey);assert_eq!(snapshot().0,"hidden");assert_eq!(with(|s|s.items.len()),0);assert_eq!(snapshot().2,0);
   let status=std::fs::read_to_string(fixture.root.join("kvf/status.json")).unwrap();assert_eq!(crate::json::parse(&status).unwrap().str("view"),Some("hidden"));
+  assert_eq!(std::fs::read(fixture.root.join("library/library.db")).unwrap(),before_db);
+  unsafe{crate::wndproc(null_mut(),WM_DESTROY,0,0);}assert!(!fixture.root.join("kvf/status.json").exists());
  }
 }
+
+fn open_item(seq:u64,id:i64,action:crate::open::Action){
+ let item=with(|s|s.items.iter().find(|i|i.id==id).cloned());let h=with(|s|s.hwnd);
+ let result=item.ok_or_else(||"자료가 옮겨졌거나 지워졌습니다".to_string()).and_then(|item|crate::open::open(h,&crate::paths::library_dir(),&item,action));
+ event(Event::Opened{seq,result});
+}
+fn item_menu(h:HWND,l:isize){unsafe{
+ let origin=with(|s|s.model.view.context().and_then(|c|c.selection).and_then(|id|s.items.iter().find(|i|i.id==id)).is_some_and(|i|!i.origin_path.is_empty()&&std::path::Path::new(&i.origin_path).exists()));
+ let menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING,1,wide("열기").as_ptr());AppendMenuW(menu,MF_STRING,2,wide("탐색기에서 위치 열기\tCtrl+Enter").as_ptr());if origin{AppendMenuW(menu,MF_STRING,3,wide("원본 위치 열기").as_ptr());}
+ let(x,y)=xy(l);let mut p=POINT{x,y};ClientToScreen(h,&mut p);let command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,h,null());DestroyMenu(menu);
+ match command{1=>event(Event::Open),2=>event(Event::LocateCopy),3=>event(Event::LocateOrigin),_=>{}}
+}}
