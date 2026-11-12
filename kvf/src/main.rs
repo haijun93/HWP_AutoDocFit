@@ -1,4 +1,4 @@
-﻿#![cfg_attr(not(test), windows_subsystem = "windows")]
+#![cfg_attr(not(test), windows_subsystem = "windows")]
 #![allow(dead_code)] // V5~V8에서 연결할 공용 함수도 같은 원본으로 컴파일한다.
 #[path = "../../kagent/src/sqlite.rs"] mod sqlite;
 #[path = "../../kagent/src/json.rs"] mod json;
@@ -7,6 +7,8 @@
 #[path = "../../kagent/src/frame.rs"] mod frame;
 #[path = "../../kagent/src/hotkey.rs"] mod hotkey;
 #[path = "../../kagent/src/open_rules.rs"] mod open_rules;
+mod settings;
+mod tray;
 mod paths;
 mod proc_state;
 
@@ -15,11 +17,17 @@ use proc_state::{Command, Event, State, Effect};
 use std::sync::Mutex;
 const SHOW: u32 = WM_APP + 1;
 const RELOAD: u32 = WM_APP + 2;
+static TRAY: Mutex<Option<tray::Tray>> = Mutex::new(None);
 static RUNTIME: Mutex<(State, &'static str)> = Mutex::new((State::NotRunning,"hidden"));
 fn status(view: &str) -> std::io::Result<()> {
     let dir = paths::data_dir();
     std::fs::create_dir_all(&dir)?;
-    let body = format!("{{\"version\":\"{}\",\"pid\":{},\"hotkey\":\"Win+Shift+F\",\"hotkey_ok\":false,\"view\":\"{}\",\"box\":null,\"items\":0,\"error\":\"\"}}",env!("CARGO_PKG_VERSION"),std::process::id(),view);
+    let tray=TRAY.lock().unwrap();let t=tray.as_ref();
+    let body=json::to_string(&json::Value::obj(vec![
+      ("version",env!("CARGO_PKG_VERSION").into()),("pid",(std::process::id() as i64).into()),
+      ("hotkey",t.map(|t|t.settings.hotkey.as_str()).unwrap_or("Win+Shift+F").into()),
+      ("hotkey_ok",t.is_some_and(|t|t.ok).into()),("view",view.into()),("box",json::Value::Null),
+      ("items",0i64.into()),("error",t.map(|t|t.error.as_str()).unwrap_or("").into())]));
     let path = dir.join("status.json");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&body) { std::fs::write(path,body)?; }
     Ok(())
@@ -40,11 +48,13 @@ fn dispatch(event: Event) -> bool {
 unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
     match msg {
         SHOW => { if !dispatch(Event::Show) { unsafe { DestroyWindow(hwnd); } } 0 }
-        RELOAD => { dispatch(Event::Reload); 0 }
+        RELOAD => { dispatch(Event::Reload); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let _=status(RUNTIME.lock().unwrap().1); 0 }
+        WM_HOTKEY => { dispatch(Event::Show); 0 }
+        tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { dispatch(Event::Show); } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{dispatch(Event::Show);},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
         WM_CLOSE => { dispatch(Event::Quit); unsafe { DestroyWindow(hwnd); } 0 }
         WM_QUERYENDSESSION => 1,
         WM_ENDSESSION if w != 0 => { dispatch(Event::EndSession); unsafe { DestroyWindow(hwnd); } 0 }
-        WM_DESTROY => { dispatch(Event::Cleaned); unsafe { PostQuitMessage(0); } 0 }
+        WM_DESTROY => { if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); unsafe { PostQuitMessage(0); } 0 }
         _ => unsafe { DefWindowProcW(hwnd,msg,w,l) }
     }
 }
@@ -82,6 +92,7 @@ fn run() -> Result<(),String> {
         if RegisterClassW(&wc) == 0 { dispatch(Event::Failed); return Err("창 클래스 등록 실패".into()); }
         let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),util::wide("가상 폴더").as_ptr(),WS_POPUP,0,0,0,0,std::ptr::null_mut(),std::ptr::null_mut(),instance,std::ptr::null());
         if hwnd.is_null() { dispatch(Event::Failed); return Err("주 창 생성 실패".into()); }
+        let mut tray=tray::Tray::new(); tray.reload(hwnd); *TRAY.lock().unwrap()=Some(tray);
         RUNTIME.lock().unwrap().0 = state;
         for effect in effects {
             if let Effect::SetView(v) = effect {
