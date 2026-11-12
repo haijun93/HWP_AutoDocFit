@@ -5,9 +5,14 @@ import zipfile
 from tests import test_attachment_block as attachment_tests
 
 
-class AttachmentLeftTrimTest(attachment_tests.DocumentTest):
+class AttachmentLeftTrimTest(unittest.TestCase):
+    setUpClass = classmethod(attachment_tests.DocumentTest.setUpClass.__func__)
+    _p = staticmethod(attachment_tests.DocumentTest._p)
+    _convert = attachment_tests.DocumentTest._convert
+    BODY = attachment_tests.DocumentTest.BODY
+
     def _doc(self, body, marker_face='휴먼명조'):
-        path = super()._doc(body, marker_face)
+        path = attachment_tests.DocumentTest._doc(self, body, marker_face)
         with zipfile.ZipFile(path) as z:
             contents = {n: z.read(n) for n in z.namelist()}
         header = self.parse(contents['Contents/header.xml'])
@@ -22,6 +27,22 @@ class AttachmentLeftTrimTest(attachment_tests.DocumentTest):
             for name, data in contents.items():
                 z.writestr(name, data)
         return path
+
+    def test_later_com_unification_preserves_attachment_alignment(self):
+        from unittest.mock import patch
+        from tests.test_style_unify_elements import UnifyElementTests
+        harness = UnifyElementTests()
+        harness.ns = self.ns
+        texts = ['1. 본문 하나', '2. 본문 둘', '3. 본문 셋',
+                 '붙임  1. 계획 1부.', '2. 일정 1부.', '끝.']
+        with harness.document([{}, {}, {}, {'align': 'LEFT'}, {'align': 'LEFT'}, {'align': 'LEFT'}]) as (fn, com, action, _):
+            read = fn.__globals__['현재문단_텍스트']
+            with patch.dict(fn.__globals__, {
+                '현재문단_텍스트': lambda: texts[int(read().rsplit(' ', 1)[1])],
+                '_서식통일_XML_조사': lambda: None,
+            }):
+                self.assertTrue(fn())
+            self.assertNotIn(('AlignType', 0), harness.para_items(action))
 
     def test_layout_without_font_reference_and_second_pass(self):
         from unittest.mock import patch
