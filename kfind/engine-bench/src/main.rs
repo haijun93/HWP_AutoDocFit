@@ -88,6 +88,12 @@ fn run_query(eng: &Eng, plan: &Value, reps: usize, open_ms: f64) -> Value {
         let (top, _) = rank(meta, s.iter(), Some(20));
         let first = ms(t);
         first_ms.get_or_insert(first);
+        // 같은 질의의 첫 '전체' 계산(DFB2: 첫 회와 반복 중앙값을 상위 20·전체 모두 구분해 보고).
+        let t = Instant::now();
+        let s = eng.query(&words);
+        let (_, _) = rank(meta, s.iter(), None);
+        let _: Vec<u32> = s.iter().collect();
+        let first_full = ms(t);
         let (mut top_s, mut full_s) = (Vec::new(), Vec::new());
         let mut result = Value::Null;
         for r in 0..reps {
@@ -106,7 +112,7 @@ fn run_query(eng: &Eng, plan: &Value, reps: usize, open_ms: f64) -> Value {
                     "rank_hash": format!("{:016x}", rank_hash(&all)), "top20": hits_json(&top)});
             }
         }
-        out_q.push(json!({"q": q, "words": words, "first_ms": first, "top20": stats(&top_s), "full": stats(&full_s), "result": result}));
+        out_q.push(json!({"q": q, "words": words, "first_ms": first, "first_full_ms": first_full, "top20": stats(&top_s), "full": stats(&full_s), "result": result}));
     }
     let mut out_t = Vec::new();
     for seq in plan["typing"].as_array().unwrap() {
