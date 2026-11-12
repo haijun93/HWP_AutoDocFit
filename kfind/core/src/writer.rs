@@ -64,7 +64,8 @@ pub struct MergeJob {
 /// 합치기 결과. `Writer::apply_merge`에 넘긴다.
 pub struct MergeOutput {
     new_id: u64,
-    meta: Option<SegMeta>,
+    /// 새 조각과 (작으면) 그 메모리 사본.
+    meta: Option<(SegMeta, Option<Vec<u8>>)>,
     sources: Vec<MergedSource>,
 }
 
@@ -99,6 +100,16 @@ pub struct Writer {
     dirty: bool,
     /// 진행 중인 합치기의 새 조각 번호.
     merging: Option<u64>,
+}
+
+/// 쓰는 쪽이 방금 쓴 조각을 연다: 메모리 사본이 있으면 그것으로(새 파일을 디스크에서 다시 열고 매핑하는 비용이
+/// 문서 1개 커밋의 절반 이상이었다, KB3), 없으면(큰 조각) 파일을 매핑한다. 읽는 쪽은 언제나 파일을 매핑한다.
+fn open_written(dir: &Path, id: u64, copy: Option<Vec<u8>>) -> Result<Segment> {
+    let path = dir.join(seg_file_name(id));
+    match copy {
+        Some(bytes) => Segment::from_bytes(bytes, &path),
+        None => Segment::open(&path),
+    }
 }
 
 fn index_docs(manifest: &Manifest, segs: &[Arc<Segment>]) -> Result<HashMap<u64, (u64, u32)>> {
@@ -247,8 +258,8 @@ impl Writer {
         if has_docs {
             let id = self.manifest.next_seg;
             self.manifest.next_seg += 1;
-            let meta = write_segment(&self.dir, id, self.pending.iter().flatten())?;
-            let seg = Arc::new(Segment::open(&self.dir.join(seg_file_name(id)))?);
+            let (meta, copy) = write_segment(&self.dir, id, self.pending.iter().flatten())?;
+            let seg = Arc::new(open_written(&self.dir, id, copy)?);
             let mut local = 0u32;
             for d in self.pending.iter().flatten() {
                 self.docs.insert(d.doc_id, (id, local));
@@ -368,8 +379,8 @@ impl Writer {
                     deleted.insert(src.base + (sid - src.deleted.rank(sid) as u32));
                 }
             }
-            let opened = match &out.meta {
-                Some(meta) => Some((SegEntry { id: meta.id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted }, Arc::new(Segment::open(&self.dir.join(seg_file_name(meta.id)))?))),
+            let opened = match out.meta {
+                Some((meta, copy)) => Some((SegEntry { id: meta.id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted }, Arc::new(open_written(&self.dir, meta.id, copy)?))),
                 None => None,
             };
             let at = positions.iter().copied().min().unwrap_or(0);

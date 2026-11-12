@@ -51,6 +51,9 @@ const ALPHA_IX: usize = 9;
 const DOC_REC: usize = 24;
 const ALPHA_REC: usize = 12;
 const ALPHA_IX_REC: usize = 8;
+/// 이보다 작은 조각은 쓰는 동안 메모리 사본을 남겨, 쓰는 쪽이 방금 쓴 파일을 디스크에서 다시 열지 않는다(KB3:
+/// 문서 1개 커밋에서 새 파일 첫 열기·매핑이 15~40ms로 커밋 시간의 절반 이상이었다). 큰 조각(대량 색인)은 다시 연다.
+pub(crate) const KEEP_IN_MEMORY_BYTES: usize = 8 << 20;
 /// 낱말(어절) 사전에 넣는 낱말의 최대 길이(바이트). 더 긴 어절은 나누기 후보가 되지 않는다.
 pub(crate) const MAX_WORD_BYTES: usize = 96;
 /// 낱말 열쇠의 머리 바이트. 비교형 글에는 0x00이 없어 조각 열쇠와 겹치지 않는다.
@@ -131,6 +134,8 @@ struct SegWriter {
     doc_of: Vec<u32>,
     buf: Vec<u8>,
     alpha: Alphabet,
+    /// 파일에 쓴 바이트의 메모리 사본(`KEEP_IN_MEMORY_BYTES`를 넘으면 버린다).
+    copy: Option<Vec<u8>>,
 }
 
 impl SegWriter {
@@ -153,11 +158,19 @@ impl SegWriter {
             doc_of: Vec::new(),
             buf: Vec::new(),
             alpha,
+            copy: Some(vec![0u8; HEADER_LEN]),
         })
     }
 
     fn put(&mut self, bytes: &[u8]) -> Result<()> {
         self.out.write_all(bytes)?;
+        if let Some(c) = self.copy.as_mut() {
+            if c.len() + bytes.len() <= KEEP_IN_MEMORY_BYTES {
+                c.extend_from_slice(bytes);
+            } else {
+                self.copy = None;
+            }
+        }
         self.hash = fnv64(self.hash, bytes);
         self.pos += bytes.len() as u64;
         Ok(())
@@ -210,7 +223,8 @@ impl SegWriter {
         Ok(())
     }
 
-    fn finish(mut self, id: u64, docs: &[DocRec], final_path: &Path) -> Result<SegMeta> {
+    /// 머리글을 채우고 디스크에 내린 뒤 제 이름으로 바꾼다. 작은 조각이면 파일과 같은 바이트의 메모리 사본도 돌려준다.
+    fn finish(mut self, id: u64, docs: &[DocRec], final_path: &Path) -> Result<(SegMeta, Option<Vec<u8>>)> {
         let n_sent = self.text_off.len();
         if n_sent >= u32::MAX as usize || docs.len() >= u32::MAX as usize {
             return Err(Error::Invalid("too many sentences in one segment".into()));
@@ -286,7 +300,11 @@ impl SegWriter {
         file.sync_all()?;
         drop(file);
         crate::manifest::rename_retry(&self.tmp, final_path)?;
-        Ok(SegMeta { id, n_sent: n_sent as u32, n_docs: docs.len() as u32, body_hash: self.hash })
+        let mut copy = self.copy.take();
+        if let Some(c) = copy.as_mut() {
+            c[..HEADER_LEN].copy_from_slice(&h);
+        }
+        Ok((SegMeta { id, n_sent: n_sent as u32, n_docs: docs.len() as u32, body_hash: self.hash }, copy))
     }
 }
 
@@ -306,7 +324,8 @@ fn gram_key_bytes(packed: u64, out: &mut Vec<u8>) {
 }
 
 /// 문서들로 새 조각 파일을 만든다. `dir/seg-<id>.kfs.tmp`에 쓰고 다 쓴 뒤 제 이름으로 바꾼다.
-pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = &'a PendingDoc> + Clone) -> Result<SegMeta> {
+/// 작은 조각이면 파일과 같은 바이트의 메모리 사본도 돌려준다(`Segment::from_bytes`).
+pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = &'a PendingDoc> + Clone) -> Result<(SegMeta, Option<Vec<u8>>)> {
     let mut grams: FxMap<u64, RoaringBitmap> = FxMap::default();
     let mut words: HashMap<Box<[u8]>, RoaringBitmap> = HashMap::new();
     let mut cps: Vec<u64> = Vec::new();
@@ -389,9 +408,25 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
     w.finish(id, &recs, &dir.join(name))
 }
 
-/// mmap 구역을 fst가 빌려 쓸 수 있게 감싼다.
+/// 조각 바이트: 파일 매핑(읽는 쪽, 큰 조각) 또는 쓰는 쪽이 방금 쓴 작은 조각의 메모리 사본(파일과 같은 바이트).
+pub(crate) enum Backing {
+    Map(Mmap),
+    Mem(Box<[u8]>),
+}
+
+impl std::ops::Deref for Backing {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Backing::Map(m) => m,
+            Backing::Mem(b) => b,
+        }
+    }
+}
+
+/// 조각 바이트의 구역을 fst가 빌려 쓸 수 있게 감싼다.
 struct Section {
-    map: Arc<Mmap>,
+    map: Arc<Backing>,
     start: usize,
     len: usize,
 }
@@ -408,7 +443,7 @@ pub(crate) struct Segment {
     pub n_sent: u32,
     pub n_docs: u32,
     pub body_hash: u64,
-    map: Arc<Mmap>,
+    map: Arc<Backing>,
     dict: fst::Map<Section>,
     sec: [(usize, usize); N_SECTIONS],
 }
@@ -429,6 +464,15 @@ impl Segment {
         // SAFETY: 조각 파일은 제 이름을 얻은 뒤에는 누구도 내용을 바꾸지 않는다(새 내용은 항상 새 번호의 새 파일).
         // 지우기는 목록 파일에서 빠진 뒤에만 하고, Windows에서는 매핑 중인 파일을 지울 수 없어 다음 정리 때로 미뤄진다.
         let map = unsafe { Mmap::map(&file)? };
+        Segment::from_backing(Backing::Map(map), path)
+    }
+
+    /// 쓰는 쪽이 방금 `path`에 쓴 조각을 그 메모리 사본으로 연다(디스크에서 다시 읽지 않는다). 검사는 `open`과 같다.
+    pub(crate) fn from_bytes(bytes: Vec<u8>, path: &Path) -> Result<Segment> {
+        Segment::from_backing(Backing::Mem(bytes.into_boxed_slice()), path)
+    }
+
+    fn from_backing(map: Backing, path: &Path) -> Result<Segment> {
         let b: &[u8] = &map;
         if b.len() < HEADER_LEN || &b[0..8] != MAGIC {
             return corrupt(format!("{}: not a segment file", path.display()));
@@ -661,7 +705,7 @@ pub(crate) struct MergedSource {
 
 /// 여러 조각의 살아 있는 문장만 모아 새 조각 하나로 쓴다. 비트맵은 다시 만들지 않고 문장 번호만 옮겨 적는다.
 /// 살아 있는 문장이 없으면 파일을 만들지 않고 None을 돌려준다.
-pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, RoaringBitmap)]) -> Result<(Option<SegMeta>, Vec<MergedSource>)> {
+pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, RoaringBitmap)]) -> Result<(Option<(SegMeta, Option<Vec<u8>>)>, Vec<MergedSource>)> {
     const GONE: u32 = u32::MAX;
     let mut remaps: Vec<Vec<u32>> = Vec::with_capacity(sources.len());
     let mut out_sources = Vec::with_capacity(sources.len());
@@ -745,9 +789,46 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
             }
         }
     }
-    let meta = w.finish(new_id, &recs, &dir.join(name))?;
+    let (meta, copy) = w.finish(new_id, &recs, &dir.join(name))?;
     if meta.n_sent as u64 != next {
         return corrupt("merge wrote a different sentence count than planned");
     }
-    Ok((Some(meta), out_sources))
+    Ok((Some((meta, copy)), out_sources))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc(id: u64, text: &str) -> PendingDoc {
+        let mut d = PendingDoc { doc_id: id, date: 0, text: String::new(), sent_end: Vec::new(), tok_start: Vec::new(), para: Vec::new(), level: Vec::new() };
+        for tok in text.split(' ') {
+            d.tok_start.push(d.text.len() as u32);
+            crate::fold::fold_into(tok, &mut d.text);
+        }
+        d.sent_end.push(d.text.len() as u32);
+        d.para.push(0);
+        d.level.push(1);
+        d
+    }
+
+    /// 쓰는 쪽이 남기는 메모리 사본은 디스크 파일과 바이트까지 같고, 같은 검사를 거쳐 열린다(KB3).
+    #[test]
+    fn memory_copy_equals_file() {
+        let dir = std::env::temp_dir().join(format!("kfind-memcopy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let docs = [doc(1, "예산 집행 계획을 세운다"), doc(2, "주민센터 프로그램 예산")];
+        let (meta, copy) = write_segment(&dir, 3, docs.iter()).unwrap();
+        let path = dir.join(seg_file_name(3));
+        let copy = copy.expect("small segment keeps a memory copy");
+        assert_eq!(copy, std::fs::read(&path).unwrap());
+        let mem = Segment::from_bytes(copy, &path).unwrap();
+        mem.verify().unwrap();
+        assert_eq!((mem.id, mem.n_sent, mem.n_docs, mem.body_hash), (meta.id, meta.n_sent, meta.n_docs, meta.body_hash));
+        let file = Segment::open(&path).unwrap();
+        assert_eq!(mem.posting("예산".as_bytes()).unwrap(), file.posting("예산".as_bytes()).unwrap());
+        drop((mem, file));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
