@@ -9,7 +9,7 @@ from .api_contract import ServiceError
 from .job_envelope import job_error, fit_result
 
 TERMINAL = {'done', 'failed', 'cancelled'}
-EVENT_TYPES = TERMINAL | {'started', 'progress', 'item_done', 'item_failed', 'log', 'dialog'}
+EVENT_TYPES = TERMINAL | {'started', 'progress', 'item_done', 'item_failed', 'log', 'dialog', 'conversion_summary'}
 LIGHT_KINDS = {'inspect', 'preview', 'catalog', 'library_index', 'file_rename_apply', 'file_rename_undo'}
 # 같은 kind는 동시에 하나만(문서 슬롯은 쓰지 않음). 위반 시 JOB_RUNNING.
 SINGLETON_KINDS = {'library_index', 'file_rename_apply', 'file_rename_undo'}
@@ -328,21 +328,17 @@ def legacy_event(manager, identifier, item):
         fraction = max(0, min(100, float(values[0]))) / 100
         total, n = progress['total'], progress['file']
         manager.report(identifier, 'progress', {'percent':100 * (max(0, n - 1) + fraction) / total if total else 0})
-    elif event in ('saved', 'document_error'):
-        if event == 'saved':
-            manager.report(identifier, 'item_done', {'source':str(values[0]), 'status':'converted', 'output':str(values[1])})
-        else:
-            from docfit_core.file_conversion import is_same_format
-            source, reason = str(values[0]), str(values[1])
-            skipped = is_same_format(source, manager._get(identifier)['params'].get('target'))
-            manager.report(identifier, 'item_done' if skipped else 'item_failed',
-                           {'source':source, 'status':'skipped' if skipped else 'failed', 'reason':reason, 'output':None})
+    elif event == 'document_error':
+        manager.report(identifier, 'log', {'message':str(values[1]), 'source':str(values[0]), 'legacy_event':'document_error', 'legacy_values':[str(values[0]), str(values[1])]})
+    elif event == 'saved':
+        manager.report(identifier, 'item_done', {'source':str(values[0]), 'status':'converted', 'output':str(values[1])})
         manager.report(identifier, 'progress', {'percent':100 * progress['file'] / progress['total'] if progress['total'] else 0})
-    elif event in ('finished', 'file_conversion_finished'):
-        data = {'success':values[0], 'failed':values[1]}
-        if len(values) > 2 and isinstance(values[2], dict):
-            data.update(values[2])
-        manager.report(identifier, 'done', data)
+    elif event == 'file_conversion_summary':
+        manager.report(identifier, 'conversion_summary', values[0])
+    elif event == 'file_conversion_finished':
+        manager.report(identifier, 'done', {'success':values[0], 'failed':values[1]})
+    elif event == 'finished':
+        manager.report(identifier, 'done', {'success':values[0], 'failed':values[1]})
     elif event in ('stopped', 'file_conversion_stopped'):
         manager.report(identifier, 'cancelled', {})
     elif event in ('fatal_error', 'conversion_error'):
