@@ -250,7 +250,13 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     from ..marker_scheme import detect_scheme, classify_marker
     from ..style_unify import unify_marker
 
-    texts = [p.text for p in paragraphs]
+    markdown_table_rows = {
+        i for i, p in enumerate(paragraphs)
+        if Path(path).suffix.lower() in {".txt", ".md"}
+        and re.fullmatch(r"\|.*\|", p.text.strip())
+    }
+    # 표의 구분 기호가 본문 기호 체계의 증거로 섞이지 않게 한다.
+    texts = [p.text if i not in markdown_table_rows else "" for i, p in enumerate(paragraphs)]
     plain_levels = (_plain_numbered_levels(paragraphs)
                     if Path(path).suffix.lower() in {".txt", ".md"} else None)
     scheme = detect_scheme(texts)
@@ -289,7 +295,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         level = None
 
         # [지적 4 반영] 표 셀 문단은 표 셀 예외를 최우선으로 적용하여 최하위인 table_cell로 고정
-        if p.is_table_cell:
+        if p.is_table_cell or paragraph_position in markdown_table_rows:
             level = "table_cell"
         else:
             # 1. HWPX 명시 제목/heading 스타일과 outline level
@@ -390,7 +396,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                     else:
                         level = "body"
 
-        if level not in LEVEL_ORDER:
+        if level not in LEVEL_RANKS:
             level = "table_cell" if p.is_table_cell else "body"
 
         classified.append(

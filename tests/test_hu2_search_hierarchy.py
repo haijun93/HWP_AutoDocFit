@@ -21,3 +21,7 @@ class SearchHierarchyRegressionTests(unittest.TestCase):
             self.assertEqual(["chapter", "body", "body", "body"], self.levels(
                 ["## 2. 계획", "1. 첫째", "2. 둘째", "3. 셋째"], suffix))
 
+    def test_markdown_table_rows(self):
+        for suffix in (".txt", ".md"):
+            self.assertEqual(["table_cell"] * 3, self.levels(
+                ["| 항목 | 값 |", "| --- | --- |", "| 시설 | 관리 |"], suffix))
