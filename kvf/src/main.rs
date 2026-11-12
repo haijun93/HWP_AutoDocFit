@@ -7,6 +7,7 @@
 #[path = "../../kagent/src/frame.rs"] mod frame;
 #[path = "../../kagent/src/hotkey.rs"] mod hotkey;
 #[path = "../../kagent/src/open_rules.rs"] mod open_rules;
+mod window;
 mod settings;
 mod tray;
 mod paths;
@@ -23,11 +24,13 @@ fn status(view: &str) -> std::io::Result<()> {
     let dir = paths::data_dir();
     std::fs::create_dir_all(&dir)?;
     let tray=TRAY.lock().unwrap();let t=tray.as_ref();
+    let (actual,box_id,items,error)=window::snapshot();
+    let view=if actual=="hidden" && view=="loading" {"loading"} else {actual.as_str()};
     let body=json::to_string(&json::Value::obj(vec![
       ("version",env!("CARGO_PKG_VERSION").into()),("pid",(std::process::id() as i64).into()),
       ("hotkey",t.map(|t|t.settings.hotkey.as_str()).unwrap_or("Win+Shift+F").into()),
-      ("hotkey_ok",t.is_some_and(|t|t.ok).into()),("view",view.into()),("box",json::Value::Null),
-      ("items",0i64.into()),("error",t.map(|t|t.error.as_str()).unwrap_or("").into())]));
+      ("hotkey_ok",t.is_some_and(|t|t.ok).into()),("view",view.into()),("box",box_id.map(json::Value::from).unwrap_or(json::Value::Null)),
+      ("items",(items as i64).into()),("error",if error.is_empty(){t.map(|t|t.error.as_str()).unwrap_or("").into()}else{error.into()})]));
     let path = dir.join("status.json");
     if std::fs::read_to_string(&path).ok().as_deref() != Some(&body) { std::fs::write(path,body)?; }
     Ok(())
@@ -38,7 +41,7 @@ fn dispatch(event: Event) -> bool {
     runtime.0 = next;
     for effect in effects {
         match effect {
-            Effect::SetView(v) => { runtime.1 = v; if status(v).is_err() { return false; } }
+            Effect::SetView(v) => { runtime.1 = v; }
             Effect::Cleanup => { let _ = std::fs::remove_file(paths::data_dir().join("status.json")); }
             _ => {}
         }
@@ -47,14 +50,14 @@ fn dispatch(event: Event) -> bool {
 }
 unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
     match msg {
-        SHOW => { if !dispatch(Event::Show) { unsafe { DestroyWindow(hwnd); } } 0 }
-        RELOAD => { dispatch(Event::Reload); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let _=status(RUNTIME.lock().unwrap().1); 0 }
-        WM_HOTKEY => { dispatch(Event::Show); 0 }
-        tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { dispatch(Event::Show); } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{dispatch(Event::Show);},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
+        SHOW => { if dispatch(Event::Show){window::call(vf_state::Caller::SecondRun);} 0 }
+        RELOAD => { dispatch(Event::Reload); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings); let _=status(&window::snapshot().0); 0 }
+        WM_HOTKEY => { if dispatch(Event::Show){window::call(vf_state::Caller::Hotkey);} 0 }
+        tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { window::call(vf_state::Caller::Tray); } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{window::call(vf_state::Caller::Tray);},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
         WM_CLOSE => { dispatch(Event::Quit); unsafe { DestroyWindow(hwnd); } 0 }
         WM_QUERYENDSESSION => 1,
         WM_ENDSESSION if w != 0 => { dispatch(Event::EndSession); unsafe { DestroyWindow(hwnd); } 0 }
-        WM_DESTROY => { if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); unsafe { PostQuitMessage(0); } 0 }
+        WM_DESTROY => { window::close(); window::destroy(); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); unsafe { PostQuitMessage(0); } 0 }
         _ => unsafe { DefWindowProcW(hwnd,msg,w,l) }
     }
 }
@@ -93,6 +96,7 @@ fn run() -> Result<(),String> {
         let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),util::wide("가상 폴더").as_ptr(),WS_POPUP,0,0,0,0,std::ptr::null_mut(),std::ptr::null_mut(),instance,std::ptr::null());
         if hwnd.is_null() { dispatch(Event::Failed); return Err("주 창 생성 실패".into()); }
         let mut tray=tray::Tray::new(); tray.reload(hwnd); *TRAY.lock().unwrap()=Some(tray);
+        let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings);
         RUNTIME.lock().unwrap().0 = state;
         for effect in effects {
             if let Effect::SetView(v) = effect {
@@ -100,6 +104,7 @@ fn run() -> Result<(),String> {
                 if let Err(e) = status(v) { dispatch(Event::Quit); DestroyWindow(hwnd); return Err(e.to_string()); }
             }
         }
+        if args.command==Command::Show {window::call(vf_state::Caller::SecondRun);}
         let mut msg: MSG = std::mem::zeroed();
         loop {
             let result = GetMessageW(&mut msg,std::ptr::null_mut(),0,0);
@@ -115,3 +120,5 @@ fn run() -> Result<(),String> {
 fn main() { if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
 mod vf_data;
 mod vf_state;
+
+fn notice(hwnd: HWND, body: &str){if let Some(t)=TRAY.lock().unwrap().as_ref(){unsafe{if t.settings.tray || !t.error.is_empty(){t.notice(hwnd,"가상 폴더",body);}else{MessageBoxW(hwnd,util::wide(body).as_ptr(),util::wide("가상 폴더").as_ptr(),MB_OK|MB_ICONINFORMATION);}}}}

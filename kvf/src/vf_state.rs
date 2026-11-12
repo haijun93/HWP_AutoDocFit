@@ -15,7 +15,7 @@ impl View {
 pub struct Model { pub view:View,pub seq:u64,pub sticky:bool,pub pending_open:Option<u64> }
 impl Default for Model {fn default()->Self {Self{view:View::Hidden,seq:0,sticky:false,pending_open:None}}}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)] pub enum Caller {Hotkey,Tray,SecondRun}
-#[derive(Clone,Debug,PartialEq,Eq)] pub enum ReadResult { Items{box_id:i64}, Empty(String), Failed(String) }
+#[derive(Clone,Debug,PartialEq,Eq)] pub enum ReadResult { Items{box_id:i64}, Empty(String), EmptyBox{box_id:i64,reason:String}, Failed(String) }
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Event {
     Call(Caller), Loaded{seq:u64,result:ReadResult}, Query(String), Escape, Close, Outside,
     Minimize, ChangeBox(i64), ChangeSpace(Option<String>), Select(Option<i64>), Refresh,
@@ -47,6 +47,7 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
             let mut c=m.view.context().unwrap().clone();
             m.view=match result {
                 ReadResult::Items{box_id}=>{c.box_id=Some(box_id);if c.query.is_empty(){View::List(c)}else{View::Search(c)}},
+                ReadResult::EmptyBox{box_id,reason}=>{c.box_id=Some(box_id);View::Empty{reason,context:c}},
                 ReadResult::Empty(reason)=>View::Empty{reason,context:c},
                 ReadResult::Failed(error)=>View::Failed{error,context:c},
             };
@@ -61,7 +62,7 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
         Event::Close|Event::Escape if m.view.visible()=>hide(m),
         Event::Outside if m.view.visible() && !m.sticky=>hide(m),
         Event::Minimize if m.view.visible()=>{m.seq+=1;m.pending_open=None;m.view=View::Minimized(Box::new(m.view));(m,vec![Effect::Hide])},
-        Event::ChangeBox(id) if id>0 && matches!(m.view,View::List(_)|View::Search(_))=>{
+        Event::ChangeBox(id) if id>0 && matches!(m.view,View::List(_)|View::Search(_)|View::Empty{..})=>{
             let mut c=m.view.context().unwrap().clone();c.box_id=Some(id);c.query.clear();c.selection=None;loading(m,c,vec![])
         },
         Event::ChangeSpace(space) if matches!(m.view,View::List(_)|View::Search(_)) && space.as_deref().is_none_or(|s|["core","basis","reference","temp"].contains(&s))=>{
@@ -137,4 +138,9 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
     #[test] fn names_are_status_values() {assert_eq!(Model::default().view.name(),"hidden");assert_eq!(visible().iter().map(|m|m.view.name()).collect::<Vec<_>>(),vec!["loading","list","search","empty","failed"]);assert_eq!(View::Minimized(Box::new(View::Hidden)).name(),"minimized");}
     #[test] fn sticky_setting_is_explicit() {let(n,e)=step(&list(),Event::SetSticky(true));assert!(n.sticky);assert!(e.is_empty());}
     #[test] fn events_on_non_loading_cannot_replace_view() {for m in [list(),search(),Model::default()] {no_op(&m,Event::Loaded{seq:m.seq,result:ReadResult::Failed("old".into())});}}
+}
+
+#[cfg(test)]mod window_extension_tests{
+ use super::*;
+ #[test]fn empty_box_retains_id_and_can_switch(){let(load,_)=step(&Model::default(),Event::Call(Caller::Tray));let(empty,_)=step(&load,Event::Loaded{seq:load.seq,result:ReadResult::EmptyBox{box_id:2,reason:"빈 상자".into()}});assert_eq!(empty.view.context().unwrap().box_id,Some(2));assert_eq!(step(&empty,Event::Open).0,empty);let(next,e)=step(&empty,Event::ChangeBox(1));assert!(matches!(next.view,View::Loading(_)));assert!(matches!(e[0],Effect::Read{..}));}
 }
