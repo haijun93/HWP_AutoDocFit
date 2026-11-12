@@ -77,6 +77,7 @@ class _LiveProgressState extends State<LiveProgress>
   List get tips => live['tips'] as List? ?? const [];
   Map get doc => live['doc'] as Map? ?? const {};
   bool get isConversion => live['mode'] == 'file_format';
+  Map get conversionSummary => live['conversion_summary'] as Map? ?? const {};
 
   @override
   void initState() {
@@ -307,7 +308,7 @@ class _LiveProgressState extends State<LiveProgress>
   Widget _ring() {
     final ratio = ((live['ratio'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0);
     final caption = isConversion
-        ? '파일 ${queue.where((f) => f['state'] == 'done' || f['state'] == 'failed').length}/${queue.length}'
+        ? '파일 ${queue.where((f) => f['state'] == 'done' || f['state'] == 'failed' || f['state'] == 'skipped').length}/${queue.length}'
         : steps.isEmpty
         ? ''
         : '단계 ${steps.where((s) => s['state'] == 'done').length}/${steps.length}';
@@ -720,6 +721,8 @@ class _LiveProgressState extends State<LiveProgress>
         style: const TextStyle(fontSize: 13, color: _muted),
       ),
       const SizedBox(height: 12),
+      if (finished && isConversion && conversionSummary.isNotEmpty && (conversionSummary['success'] ?? 0) == 0)
+        Text('변환된 파일이 없어요 — 건너뜀 ${conversionSummary['skipped'] ?? 0}, 실패 ${conversionSummary['failed'] ?? 0}', style: const TextStyle(fontSize: 14, color: _muted)),
       for (final item in queue) _fileRow(item as Map),
     ],
   );
@@ -745,6 +748,7 @@ class _LiveProgressState extends State<LiveProgress>
           size: 22,
         ),
       ),
+      'skipped' => const Icon(Icons.skip_next_rounded, color: _faint, size: 22),
       'active' => const SizedBox(
         key: ValueKey('active'),
         width: 20,
@@ -814,6 +818,8 @@ class _LiveProgressState extends State<LiveProgress>
                 style: const TextStyle(fontSize: 12, color: _red),
               ),
             ),
+          if (state == 'skipped')
+            Padding(padding: const EdgeInsets.only(left: 36, top: 6), child: Text('$note · 건너뛰었어요', style: const TextStyle(fontSize: 12, color: _muted))),
           if (active && running)
             Padding(
               padding: const EdgeInsets.only(left: 36, top: 10),

@@ -4632,7 +4632,6 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 manager_for(self).report(self._job_id, 'started', {})
                 self.running = True
                 self.closing = False
-                중단_event.clear()
                 self.selected_mode.set("file_format")
                 self._결과_초기화(결과목록도_지우기=True)
                 self._안내키, self._안내지남 = None, set()
@@ -4700,7 +4699,6 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if self.settings_toplevel is not None and self.settings_toplevel.winfo_exists():
                     self.settings_toplevel.withdraw()
                 self.closing = False
-                중단_event.clear()
                 self._결과_초기화(결과목록도_지우기=not 이어서_진행)   # 이어서 진행할 때는 이전 결과 기록을 남긴다
                 if not 이어서_진행:
                     self._작업시작시각 = time.monotonic()
@@ -5691,6 +5689,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
 
                 if 모인_로그:
                     self.로그_여러줄_표시(모인_로그)
+
+                if gui_queue.empty():
+                    from docfit_app.jobs import prepare_legacy
+                    prepare_legacy(self, pending=lambda: not gui_queue.empty())
 
                 try:
                     self._queue_after_id = self.root.after(20 if not gui_queue.empty() else 100, self.queue_처리)

@@ -1060,6 +1060,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                     if 중단_요청됨():
                         return False
                     pos = (0, 번호, 0)
+                    위치텍스트[pos] = 글
                     marker = 서식통일_항목기호(글)[0] if 글.strip() else ""
                     if marker:
                         결과 = 서식통일_표본(pos, 글)
@@ -1102,6 +1103,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                             첫쪽끝 = True
                     text = 현재문단_텍스트()
                     본문 = _서식통일_위치텍스트(pos, text) if text.strip() else text
+                    위치텍스트[tuple(pos)] = 본문
                     # 번호 계열('1.' '2.' …)은 한 그룹으로 묶고, 고정폭 빈칸 뒤 항목기호도 인식한다.
                     marker = 서식통일_항목기호(본문)[0] if 본문.strip() else ""
                     if marker:
@@ -1152,6 +1154,11 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             if 조사 is False:
                 return False
             표본, 문맥, 위치텍스트, 첫쪽문단, 첫쪽끝 = 조사
+            # 조사 완료 → 붙임 범위 확정 → 보정 계획: 기존 묶음 판정만 재사용한다.
+            본문위치 = sorted(pos for pos in 위치텍스트 if pos[0] == 0)
+            붙임위치 = set()
+            for start, end in 붙임묶음_찾기([위치텍스트[pos] for pos in 본문위치]):
+                붙임위치.update(본문위치[start:end + 1])
             # 쪽 범위는 수정 대상을 제한하지만, 대표서식은 같은 문서의 정상 문장까지
             # 포함해 산출해야 한다. 선택 쪽에서만 표본을 모으면 그 쪽의 이상 서식이
             # 대표값으로 채택되어 검출이 0건이 되는 문제가 생긴다.
@@ -1438,7 +1445,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                     왼쪽표준 = 대표.get("left", (None, 0))[0]
                     오른쪽표준 = 대표.get("right", (None, 0))[0]
                     빈칸표준 = 대표.get("lead", (None, 0))[0]
-                    정렬_불일치 = 정렬표준 is not None and 부가.get("align") not in (None, 정렬표준)
+                    정렬_불일치 = (tuple(시작) not in 붙임위치 and 정렬표준 is not None
+                                  and 부가.get("align") not in (None, 정렬표준))
                     왼쪽_불일치 = (왼쪽표준 is not None and 부가.get("left_margin") not in (None, 왼쪽표준)
                                   and 빈칸표준 is not None and 부가.get("lead_spaces") == 빈칸표준
                                   and not 내어쓰기_불일치)

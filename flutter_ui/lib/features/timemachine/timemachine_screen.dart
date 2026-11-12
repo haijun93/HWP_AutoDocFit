@@ -1493,8 +1493,6 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
             icon: const Icon(Icons.play_arrow, size: 16),
             label: const Text('\uBCF8\uBB38 \uC0C9\uC778'),
           ),
-        if (_contentProgress['errors'] != null)
-          Text('추출 실패 ${_contentProgress['errors']}건', style: const TextStyle(fontSize: 12, color: Colors.red)),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [

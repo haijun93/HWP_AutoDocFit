@@ -291,7 +291,8 @@ void main() {
     expect(hit!.style!.backgroundColor,const Color(0xFFFFEB3B));
     await tester.tap(find.text('본문 색인').last); await tester.pumpAndSettle();
     expect(api.calls.any((c)=>c.$1=='content_index_start'),true);
-    expect(find.textContaining('추출 실패 2건'),findsOneWidget);
+    // 사용자 지시(2026-11-12): '추출 실패 N건'은 표시하지 않는다(글 없는 파일을 오류로 오해).
+    expect(find.textContaining('추출 실패'),findsNothing);
   });
 
   testWidgets('본문 검색 결과를 Markdown으로 내보낸다', (tester) async {
