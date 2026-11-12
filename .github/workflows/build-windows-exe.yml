@@ -196,6 +196,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item klib/target/release/klib.exe resources/klib.exe -Force
           (Get-FileHash resources/klib.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/klib.exe.sha256
+      - name: Rust/Python content index level parity (RLEV)
+        shell: pwsh
+        run: |
+          $env:KLIB_EXE = (Resolve-Path resources/klib.exe).Path
+          & ".\.venv\Scripts\python.exe" -X utf8 -m unittest tests.test_rlev_rust_index_levels -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build EXE using shared packaging specification
         run: |

@@ -17,10 +17,24 @@ _thread = local()      # 이 스레드에서 마지막으로 등록한 PID들(ta
 
 
 def _run(args):
+    import locale
     import subprocess
-    return subprocess.run(args, capture_output=True, text=True, check=False,
-                          creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
-                          timeout=3)
+    result = subprocess.run(args, capture_output=True, text=False, check=False,
+                            creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                            timeout=3)
+    encoding = locale.getpreferredencoding(False)
+    for stream in ('stdout', 'stderr'):
+        value = getattr(result, stream)
+        if isinstance(value, bytes):
+            try:
+                decoded = value.decode(encoding)
+            except (LookupError, UnicodeDecodeError):
+                try:
+                    decoded = value.decode('cp949')
+                except (LookupError, UnicodeDecodeError):
+                    decoded = value.decode(encoding if encoding else 'utf-8', errors='replace')
+            setattr(result, stream, decoded)
+    return result
 
 
 def hwp_pids(*, runner=None) -> set[int]:
