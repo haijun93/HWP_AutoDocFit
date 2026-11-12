@@ -61,6 +61,7 @@ Rust `kfind_core::fold`와 Python 기준 구현 `kfind/core/tools/fold_ref.py`�
 
 - 조각 사전 열쇠: 비교형 2·3글자 조각의 UTF-8 → 문장 비트맵. `0x00 + 낱말` → 그 낱말이 어절로 나온 문장 비트맵(나누기용 낱말 사전. 삭제된 문서의 낱말은 "지운 문장"과 비교해 죽은 것으로 본다).
 - 2·3글자 낱말은 비트맵 하나가 정답. 4글자 이상은 3글자 조각 비트맵 교집합(후보) 뒤 비교형 원문에서 `memchr::memmem`으로 확인(시제품과 같음).
+- **형식 버전 2(KB2, 2026-11-13)**: TEXT를 UTF-8 대신 조각마다 빈도순 글자 번호의 자기 동기 가변 길이 부호(1~4바이트, `src/textcode.rs`)로 쓰고, TEXT_OFF를 u64 → u32로 줄였다. 글자 표 구역 ALPHA(번호 순, 빈도)·ALPHA_IX(글자 순)가 늘었고 머리글은 216바이트다. 확인은 낱말을 같은 부호로 바꿔 그대로 `memmem` 한 번. 형식 1 색인은 `FormatVersion` 오류로 다시 만들기를 안내한다. 자세한 수치는 `reports/KB2-report.md`.
 - 안전 저장: 조각은 `seg-….kfs.tmp`에 다 쓰고 fsync한 뒤 제 이름으로 rename. 목록 파일도 같은 방식. 쓰다 죽어도 남는 것은 임시 파일이나 목록에 오르지 못한 조각뿐이고, 읽는 쪽은 무시하며 다음에 쓰는 쪽이 열 때 지운다(확인: `leftovers_of_an_interrupted_write…`).
 - 읽기는 mmap. 매핑하는 파일(조각)은 바뀌지 않고, 교체되는 파일(목록)은 매핑하지 않고 통째로 읽는다 → **다른 프로세스가 읽는 중에 커밋·합치기가 일어나도 이미 연 세대는 그대로 유효**(확인: 처음 세대를 쥔 읽는 쪽이 증분 갱신·배경 합치기·정리 뒤에도 대조 표 162줄 전부 일치). 합쳐진 옛 조각 파일은 Windows에서 매핑 중이면 지워지지 않아 다음 커밋 때 다시 지운다.
 - 읽는 쪽이 목록을 읽고 조각을 여는 사이 조각이 합쳐져 사라지면 새 목록으로 다시 시도한다(5회).
@@ -177,6 +178,10 @@ if let Some(job) = w.plan_merge(&MergePolicy::default()) {          // 배경 �
 }
 let mut index = Index::open(dir)?;                                  // 읽는 쪽은 여럿
 let r = index.search("예산집행 계획", &SearchOptions::default())?;   // 상위 20, 붙어 있는 일치 우선
+// KB2: 입력 도중에는 개수만, 전체 순위는 미리보기 없이 내고 화면에 보일 문서만 미리보기
+let c = index.count("예산집행", &opts)?;                            // c.total_sentences, c.total_docs
+let all = index.rank("예산집행", &SearchOptions { top: 0, ..opts })?;  // all.result.hits(미리보기 비어 있음)
+let preview = all.sentences(&index, 0, 3)?;                         // 첫 문서의 일치 문장 3개
 index.reload()?;                                                    // 새 세대로
 ```
 문서 ID(u64)·날짜(i64)·문단 번호·위계 순위(u8, 작을수록 높음)는 호출하는 쪽이 정한다. 문장 나누기는 엔진 밖(계획 S5 `sentence.rs`)이다.
