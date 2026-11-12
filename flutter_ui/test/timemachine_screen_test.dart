@@ -8,6 +8,95 @@ import 'package:docfit_ui/core/hierarchy_ffi.dart';
 
 void main() {
   _labelsTest();
+  for (final phase in ['indexing', 'reindexing']) {
+    testWidgets('화면 진입 시 $phase 상태를 읽고 자동 진행을 폴링한다', (tester) async {
+      final api = _FakeApi(enabled: true, developerMode: false);
+      api.contentStatus = {'ok': true, 'phase': phase, 'seen': 5, 'indexed': 3, 'errors': 0};
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+      await tester.pumpAndSettle();
+      expect(api.calls.any((c) => c.$1 == 'content_index_status'), true);
+      await tester.tap(find.text('본문검색'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('5건 확인 · 3건 색인 · 실패 0건'), findsOneWidget);
+      expect(api.calls.any((c) => c.$1 == 'content_index_start'), false);
+      final before = api.calls.where((c) => c.$1 == 'content_index_status').length;
+      api.contentStatus = {'ok': true, 'phase': 'finished', 'running': false, 'errors': 0};
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(api.calls.where((c) => c.$1 == 'content_index_status').length, greaterThan(before));
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+  }
+
+  testWidgets('검색에서 자동 재색인을 발견하고 취소 요청도 진행 상태로 유지한다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    api.contentStatus = {'ok': true, 'phase': 'reindexing', 'seen': 7, 'indexed': 4, 'errors': 1};
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(find.text('7건 확인 · 4건 색인 · 실패 1건'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'cancel_requested', 'running': true};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'cancelled', 'running': false};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets('재색인 안내를 상태에서 읽고 완료 시 지운다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    api.contentStatus = {'ok': true, 'phase': 'idle', 'needs_reindex': true,
+      'needs_reindex_count': 2, 'reindex_guide': '기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다.'};
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('재색인 필요: 2건'), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'finished', 'needs_reindex': false, 'needs_reindex_count': 0};
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '사업');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('재색인 필요: 2건'), findsNothing);
+  });
+
+  testWidgets('상태 통신 실패 후 진행을 유지하고 폴링으로 복구한다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    api.contentStatus = {'ok': true, 'phase': 'reindexing'};
+    var failStatus = false;
+    Future<Object?> call(String method, List<Object?> args) async {
+      if (failStatus && method == 'timemachine' && args[0] == 'content_index_status') {
+        throw StateError('temporary connection failure');
+      }
+      return api.call(method, args);
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    failStatus = true;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    failStatus = false;
+    api.contentStatus = {'ok': true, 'phase': 'failed', 'running': false, 'failure_reason': 'test failure'};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
   test('DLL이 없는 환경에서 위계 FFI는 기존 백엔드 대체 경로를 선택한다', () {
     if (!Platform.isWindows) {
       expect(HierarchyFfi.instance.analyze([{'text': '1. 항목'}]), isNull);
@@ -614,6 +703,48 @@ void main() {
     expect(tester.getTopLeft(path).dy, lessThan(tester.getTopLeft(find.text('위치 발췌문')).dy));
   });
 
+  testWidgets('같은 절에서 여러 곳인 묶음만 최대 두 개 표시한다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {
+        'id': 54, 'file_name': '절묶음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '절 묶음 발췌',
+        'sections': [
+          {'parent_text': '제1절 목적', 'count': 4},
+          {'parent_text': '제2절 적용', 'count': 2},
+          {'parent_text': '제3절 제외', 'count': 8},
+        ],
+      },
+      {
+        'id': 55, 'file_name': '절없음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '묶음 없는 발췌',
+        'sections': [],
+      },
+      {
+        'id': 56, 'file_name': '한곳.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '한 곳 발췌',
+        'sections': [
+          {'parent_text': '제4절 한 곳뿐', 'count': 1},
+          {'parent_text': '', 'count': 3},
+        ],
+      },
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '절');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('「제1절 목적」에서 4곳'), findsOneWidget);
+    expect(find.text('「제2절 적용」에서 2곳'), findsOneWidget);
+    expect(find.text('「제3절 제외」에서 8곳'), findsNothing);
+    expect(find.text('「제4절 한 곳뿐」에서 1곳'), findsNothing);
+    expect(find.text('절 묶음 발췌'), findsOneWidget);
+    expect(find.text('묶음 없는 발췌'), findsOneWidget);
+    expect(find.text('한 곳 발췌'), findsOneWidget);
+  });
+
   testWidgets('위계 경로를 발췌문 위에 표시하고 경로가 비면 표시하지 않는다', (tester) async {
     final api = _FakeApi(enabled: true, contentSearchResults: [
       {
@@ -1191,6 +1322,7 @@ class _FakeApi {
 
   final bool enabled, cloud, scanRunning;
   bool developerMode;
+  Map<String, Object?>? contentStatus;
   final Object? thumbnail;
   Map<String, Object?>? relatedResponse;
   final int itemCount;
@@ -1226,7 +1358,7 @@ class _FakeApi {
       case 'content_index_start':
         return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'content_index_status':
-        return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
+        return contentStatus ?? {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'content_index_cancel':
         return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'file_search':

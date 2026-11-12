@@ -1,13 +1,12 @@
 <h1 align="center">한글편집 후처리</h1>
 
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.58</h2>
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.59</h2>
 
 | 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
 |:---:|:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Portable.exe) |
-| GitLab | [분할 파일 내려받기 안내](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/tree/downloads) | [분할 파일 내려받기 안내](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/tree/downloads) |
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/HWP_AutoDocFit_v2.2.59_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/HWP_AutoDocFit_v2.2.59_Portable.exe) |
 
-실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/raw/downloads/%5B%EB%AA%A8%EC%9D%98%EB%8D%B0%EC%9D%B4%ED%84%B0%5D%EB%AC%B8%EC%84%9C%ED%8E%B8%EC%A7%91_%EC%9E%91%EC%97%85%EB%B0%A9%EC%8B%9D%28%ED%95%9C%EB%B2%88%EC%97%90%EC%A0%81%EC%9A%A9%29%20%EA%B8%B0%EB%8A%A5%EC%8B%9C%EC%97%B0%EC%9A%A9%EB%AC%B8%EC%84%9C.txt?inline=false) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
+실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
 **설치형**은 설치 후 시작 메뉴에서 실행하고, **포터블**은 설치 없이 파일을 바로 실행합니다. Windows 10·11용이며, 문서 편집 기능에는 한컴오피스 한/글이 필요합니다.
 
@@ -266,6 +265,6 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.58**입니다.
+현재 공개 버전은 **v2.2.59**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.

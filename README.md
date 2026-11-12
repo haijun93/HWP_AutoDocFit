@@ -1,13 +1,10 @@
 <!-- DOWNLOAD:START -->
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.58</h2>
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.59</h2>
 
 | 내려받는 곳 | 다운로드 안내 |
 |:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Setup.exe) · [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.58/HWP_AutoDocFit_v2.2.58_Portable.exe) |
-| GitLab | [GitLab 내려받기(압축 파일 목록)](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/tree/downloads) |
-| 기능시연용 예시문서 | [예시문서 내려받기](https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit/-/raw/downloads/%5B%EB%AA%A8%EC%9D%98%EB%8D%B0%EC%9D%B4%ED%84%B0%5D%EB%AC%B8%EC%84%9C%ED%8E%B8%EC%A7%91_%EC%9E%91%EC%97%85%EB%B0%A9%EC%8B%9D%28%ED%95%9C%EB%B2%88%EC%97%90%EC%A0%81%EC%9A%A9%29%20%EA%B8%B0%EB%8A%A5%EC%8B%9C%EC%97%B0%EC%9A%A9%EB%AC%B8%EC%84%9C.txt?inline=false) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) |
-
-원하는 종류(설치형 또는 포터블)의 압축 파일(`.zip`, `.z01`, `.z02`)을 모두 같은 폴더에 받은 뒤 `.zip` 하나만 압축을 풀면 실행 파일이 나옵니다. 합치는 명령은 필요 없으며, 반디집·알집·7-Zip 같은 압축 프로그램을 써 주세요(서버 용량 제한으로 80MB 단위로 나눠 압축했습니다).
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/HWP_AutoDocFit_v2.2.59_Setup.exe) · [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/HWP_AutoDocFit_v2.2.59_Portable.exe) |
+| 기능시연용 예시문서 | [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.59/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) |
 
 실행 파일과 함께 **기능시연용 예시문서**도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
@@ -271,6 +268,6 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.58**입니다.
+현재 공개 버전은 **v2.2.59**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.
