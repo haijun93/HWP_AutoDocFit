@@ -596,6 +596,24 @@ class TimemachineService:
     # 본문검색과 위계검색은 일반 모드에서도 허용한다.
     DEVELOPER_ONLY_ACTIONS = frozenset()
 
+    RELATED_QUERY_SORTS = frozenset({"hierarchy_relevance", "mentions", "relevance"})
+
+    def _related_query_search(self, query, payload):
+        """검색어만으로 하는 위계검색. 결과 형태는 본문검색(content_search)과 같다(path·file_name 포함)."""
+        limit = payload.get("limit", 100)
+        if type(limit) is not int or not 1 <= limit <= 200:
+            raise ValueError("결과 개수를 확인해 주세요.")
+        sort = payload.get("sort", "hierarchy_relevance")
+        if sort not in self.RELATED_QUERY_SORTS:
+            raise ValueError("정렬 방식을 확인해 주세요.")
+        if not self._settings["roots"]:
+            # search()는 roots가 비면 전체 색인을 찾으므로, 조사 폴더가 없으면 아무것도 돌려주지 않는다.
+            return {"ok": True, "mode": "query", "items": []}
+        rows = self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
+        for row in rows:
+            row["file_name"] = row["name"]
+        return {"ok": True, "mode": "query", "items": rows}
+
     def _command(self, action, payload):
         if action in self.DEVELOPER_ONLY_ACTIONS:
             denied = self._require_developer_mode()
@@ -677,6 +695,11 @@ class TimemachineService:
             return {"ok": True, "items": self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500))}
         if action == "related_search":
             path = payload.get("path")
+            query = payload.get("query")
+            if path is None and isinstance(query, str) and query.strip():
+                # 검색어 위계검색(ISUI2): 화면 검색창은 기준 문서 없이 검색어만 보낸다.
+                # 문단 위계(제목 > 항목 > 본문)가 높은 곳에서 찾은 문서가 앞에 온다.
+                return self._related_query_search(query, payload)
             if not isinstance(path, str) or not self._path_in_active_root(path):
                 return self._error("INVALID_INPUT", "현재 조사 폴더의 문서를 선택해 주세요.")
             limit = payload.get("limit", 100)

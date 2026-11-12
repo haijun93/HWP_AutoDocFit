@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
+import unicodedata
 from defusedxml import ElementTree as ET
 from ..hwpx import open_hwpx_safely, open_zip_safely
 from .extract_text import extract_text as _extract_text_by_format
@@ -69,11 +70,20 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 2
+CURRENT_HIERARCHY_SCHEMA_VERSION = 5
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
 _EXTRACTED_LOCATIONS_LOCK = threading.RLock()
+
+
+def _nfc(text: str | None) -> str:
+    """한국어 자모 조합(NFD) 등을 완성형(NFC)으로 정규화한다."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    return unicodedata.normalize("NFC", text)
 
 
 def _min_position_span(position_lists) -> int | None:
@@ -179,6 +189,10 @@ def _plain_numbered_levels(paragraphs):
     """TXT/MD 번호 계열의 연속성과 첫 등장 순서를 확인한다."""
     from ..marker_scheme import classify_marker, _ordinal
 
+    # Markdown 제목이 위계를 명시한 문서의 번호 목록은 본문으로 유지한다.
+    if any(_MARKDOWN_HEADING.match(p.text.strip()) for p in paragraphs if not p.is_table_cell):
+        return {}
+
     candidates, groups = {}, {}
     for position, paragraph in enumerate(paragraphs):
         text = paragraph.text.strip()
@@ -230,6 +244,29 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     if not paragraphs:
         return []
     from docfit_app.hierarchy_bridge import analyze_levels
+    from ..ai_answer import _LABEL_BY_MARKER
+
+    marker_by_label = {label: marker for marker, label in _LABEL_BY_MARKER.items()}
+    marker_by_label["주석1"] = marker_by_label["주석"]
+    label_levels = {}
+    normalized = []
+    for position, paragraph in enumerate(paragraphs):
+        match = re.match(r"^\s*([^:：]+?)\s*[:：]\s*(\S.*)$", paragraph.text)
+        label = match.group(1) if match else None
+        if not paragraph.is_table_cell and label in marker_by_label:
+            marker = marker_by_label[label]
+            level = {"□": "square", "ㅇ": "circle", "-": "dash"}.get(marker, "asterisk")
+            label_levels[position] = level
+            paragraph = replace(paragraph, text=f"{marker} {match.group(2)}")
+        elif not paragraph.is_table_cell and label == "개요":
+            # 개요는 제목 아래 요약 상자다. 부연설명(*)이 아니라 본문 위계로 둔다.
+            label_levels[position] = "body"
+        normalized.append(paragraph)
+    paragraphs = normalized
+
+    def apply_label_levels(records):
+        return [replace(record, level=label_levels[i], level_rank=LEVEL_RANKS[label_levels[i]])
+                if i in label_levels else record for i, record in enumerate(records)]
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
@@ -240,13 +277,19 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         for position, level in plain_chapters.items():
             if position < len(converted):
                 converted[position] = replace(converted[position], level=level, level_rank=LEVEL_RANKS[level])
-        return _fallback_document_title(path, converted)
+        return _fallback_document_title(path, apply_label_levels(converted))
 
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
     from ..style_unify import unify_marker
 
-    texts = [p.text for p in paragraphs]
+    markdown_table_rows = {
+        i for i, p in enumerate(paragraphs)
+        if Path(path).suffix.lower() in {".txt", ".md"}
+        and re.fullmatch(r"\|.*\|", p.text.strip())
+    }
+    # 표의 구분 기호가 본문 기호 체계의 증거로 섞이지 않게 한다.
+    texts = [p.text if i not in markdown_table_rows else "" for i, p in enumerate(paragraphs)]
     plain_levels = (_plain_numbered_levels(paragraphs)
                     if Path(path).suffix.lower() in {".txt", ".md"} else None)
     scheme = detect_scheme(texts)
@@ -285,7 +328,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         level = None
 
         # [지적 4 반영] 표 셀 문단은 표 셀 예외를 최우선으로 적용하여 최하위인 table_cell로 고정
-        if p.is_table_cell:
+        if p.is_table_cell or paragraph_position in markdown_table_rows:
             level = "table_cell"
         else:
             # 1. HWPX 명시 제목/heading 스타일과 outline level
@@ -325,11 +368,11 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             if level is None and scheme:
                 marker_level = scheme.family_levels.get(family)
                 if marker_level == 1:
-                    level = "chapter"
+                    level = "square"
                 elif marker_level == 2:
-                    level = "section"
+                    level = "circle"
                 elif marker_level == 3:
-                    level = "topic"
+                    level = "dash"
 
             # 번호 기호는 문서 안에서 계열·순서·들여쓰기로 체계가 확인된 경우에만 위계로 인정한다.
             if level is None:
@@ -386,7 +429,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                     else:
                         level = "body"
 
-        if level not in LEVEL_ORDER:
+        if level not in LEVEL_RANKS:
             level = "table_cell" if p.is_table_cell else "body"
 
         classified.append(
@@ -401,7 +444,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 table_cell_id=p.table_cell_id, table_id=p.table_id,
             )
         )
-    return _fallback_document_title(path, classified)
+    return _fallback_document_title(path, apply_label_levels(classified))
 
 
 def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
@@ -475,7 +518,7 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
             record.sequence - 1: (record.location_label, record.section) for record in extracted}
     paragraphs = [ParagraphRecord(
         paragraph_index=record.sequence - 1,
-        text=record.text,
+        text=_nfc(record.text),
         level=record.hierarchy_level or "body",
         level_rank=LEVEL_RANKS.get(record.hierarchy_level, LEVEL_RANKS["body"]),
         is_table_cell=record.is_table_cell,
@@ -535,7 +578,7 @@ def extract_paragraphs_legacy(path, ext):
                             if child.tail:
                                 chunks.append(child.tail)
                     collect(node, True)
-                    text = "".join(chunks).strip()
+                    text = _nfc("".join(chunks).strip())
                     if text:
                         style_id = node.attrib.get("styleIDRef") or node.attrib.get("styleID") or node.attrib.get("style")
                         outline = node.attrib.get("outlineLevel") or node.attrib.get("outline_level")
@@ -593,7 +636,7 @@ def extract_paragraphs_legacy(path, ext):
                             collect(child)
                             if child.tail: chunks.append(child.tail)
                     collect(node, True)
-                    text = "".join(chunks).strip()
+                    text = _nfc("".join(chunks).strip())
                     if text:
                         style = None; outline = None
                         for ppr in node:
@@ -653,7 +696,7 @@ def extract_text(path):
         raw = Path(path).read_bytes()
         for encoding in ("utf-8-sig", "cp949", "utf-16"):
             try:
-                return raw.decode(encoding)
+                return _nfc(raw.decode(encoding))
             except UnicodeError:
                 pass
         raise ValueError("텍스트 인코딩을 판별할 수 없음")
@@ -670,7 +713,7 @@ def extract_text(path):
             for name in targets:
                 root = ET.fromstring(archive.read(name))
                 chunks.extend(t.strip() for t in root.itertext() if t and t.strip())
-        text = "\n".join(chunks)
+        text = _nfc("\n".join(chunks))
         if not text.strip():
             raise ValueError("본문 텍스트가 없음")
         return text
@@ -678,7 +721,7 @@ def extract_text(path):
     reader = PdfReader(path)
     if reader.is_encrypted:
         raise ValueError("암호화된 PDF")
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = _nfc("\n".join(page.extract_text() or "" for page in reader.pages))
     if not text.strip():
         raise ValueError("추출 가능한 PDF 텍스트가 없음")
     return text
@@ -812,6 +855,9 @@ class ContentSearchIndex:
             "CREATE TABLE IF NOT EXISTS content_paragraph_map("
             "path TEXT NOT NULL, paragraph_index INTEGER NOT NULL, para_rowid INTEGER NOT NULL,"
             " PRIMARY KEY(path, paragraph_index, para_rowid)) WITHOUT ROWID")
+        # 검색어 후보 문서를 rowid로 찾을 때 쓴다(_matching_paths). FTS 본문 행을 읽지 않고 경로를 얻는다.
+        self.db.execute(
+            "CREATE INDEX IF NOT EXISTS content_paragraph_map_rowid ON content_paragraph_map(para_rowid, path)")
         # 대응 표의 행 수·가장 큰 rowid. 행 수를 세는 것(24만 문단에서 수백 ms)을 피하려고 따로 적어 둔다.
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS content_paragraph_map_state("
@@ -962,7 +1008,10 @@ class ContentSearchIndex:
     @staticmethod
     def parse_query(query):
         """Parse AND terms, quoted phrases and Docufinder-style filters."""
-        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        if not isinstance(query, str):
+            raise ValueError("검색어는 1~200자로 입력해 주세요.")
+        query = _nfc(query)
+        if not query.strip() or len(query) > 200:
             raise ValueError("검색어는 1~200자로 입력해 주세요.")
         tokens = re.findall(r'-?"(?:[^"\\]|\\.)*"|\S+', query)
         parsed = {"terms": [], "phrases": [], "exclude": [], "ext": [], "path": [], "after": None, "before": None, "near": None}
@@ -970,18 +1019,18 @@ class ContentSearchIndex:
             neg = token.startswith("-")
             raw = token[1:] if neg else token
             if raw.startswith('"') and raw.endswith('"'):
-                parsed["exclude" if neg else "phrases"].append(raw[1:-1].replace('\\"','"'))
+                parsed["exclude" if neg else "phrases"].append(_nfc(raw[1:-1].replace('\\"','"')))
                 continue
             if not neg and ":" in raw:
                 key, value = raw.split(":", 1)
                 if key == "ext": parsed["ext"].extend(x.lower().lstrip(".") for x in value.split(",") if x)
-                elif key == "path" and value: parsed["path"].append(value)
+                elif key == "path" and value: parsed["path"].append(_nfc(value))
                 elif key in ("after", "before"):
                     parsed[key] = value if re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", value) else (_ for _ in ()).throw(ValueError(f"{key} 날짜 형식이 올바르지 않습니다."))
-                else: parsed["terms"].append(raw)
+                else: parsed["terms"].append(_nfc(raw))
                 continue
             if not neg and re.fullmatch(r"~\d+", raw): parsed["near"] = int(raw[1:]); continue
-            (parsed["exclude"] if neg else parsed["terms"]).append(raw)
+            (parsed["exclude"] if neg else parsed["terms"]).append(_nfc(raw))
         return parsed
 
     def close(self):
@@ -1144,9 +1193,10 @@ class ContentSearchIndex:
             paragraphs = extract_paragraphs(path)
             if not paragraphs:
                 raise ValueError("본문 텍스트가 없음")
+            paragraphs = [replace(p, text=_nfc(p.text)) for p in paragraphs]
             body = "\n".join(p.text for p in paragraphs)
             ref_date = extract_reference_date(body)
-            name = os.path.basename(path)
+            name = _nfc(os.path.basename(path))
             ext = Path(path).suffix.lower().lstrip(".")
 
             with self._lock:
@@ -1228,11 +1278,11 @@ class ContentSearchIndex:
         try:
             if ext in {".hwpx", ".docx"}:
                 records = extract_paragraphs(path)
-                if [p.text for p in records] != [row["body"] for row in rows]:
+                if [_nfc(p.text) for p in records] != [_nfc(row["body"]) for row in rows]:
                     return {**self.index_file(path), "mode": "reindexed"}
             else:
                 records = classify_paragraph_levels(path, [
-                    ParagraphRecord(paragraph_index=int(row["paragraph_index"]), text=row["body"], level="body",
+                    ParagraphRecord(paragraph_index=int(row["paragraph_index"]), text=_nfc(row["body"]), level="body",
                                     level_rank=LEVEL_RANKS["body"], is_table_cell=False) for row in rows])
         except Exception as exc:
             logging.getLogger(__name__).warning("위계 재판정 실패(본문 행 유지): %s: %s", path, exc)
@@ -1276,8 +1326,9 @@ class ContentSearchIndex:
 
     def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance"):
         self._ensure_paragraph_map()
+        query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
-        terms = parsed["terms"] + parsed["phrases"]
+        terms = [_nfc(t) for t in (parsed["terms"] + parsed["phrases"])]
         if not terms:
             raise ValueError("본문 검색어를 입력해 주세요.")
         lim = max(1, min(int(limit), 500))
@@ -1289,7 +1340,7 @@ class ContentSearchIndex:
             expression = '"' + term.replace('"', '""') + '"'
             try:
                 with self._lock:
-                    found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?", (expression,))}
+                    found = self._matching_paths(expression)
             except sqlite3.OperationalError:
                 with self._lock:
                     found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
@@ -1399,7 +1450,8 @@ class ContentSearchIndex:
                 try:
                     aggregate_rows = self.db.execute(f"""
                         WITH scored AS MATERIALIZED (
-                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level, level_rank, body,
+                            -- 원문 body·level은 아래 집계에서 쓰지 않으므로 담지 않는다(행 복사 비용만 든다).
+                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level_rank,
                                    lower(body) AS body_folded, bm25(content_paragraph_fts) AS bm25_rank
                             FROM content_paragraph_fts
                             WHERE content_paragraph_fts MATCH ?
@@ -1515,7 +1567,7 @@ class ContentSearchIndex:
             best_bm25 = float(aggregate["best_bm25"] or 0.0)
 
             doc_date = _document_date(meta["ctime"], meta["mtime"])
-            file_name = meta["name"] or os.path.basename(path)
+            file_name = _nfc(meta["name"] or os.path.basename(path))
 
             prepared.append({
                 "path": path,
@@ -1539,7 +1591,7 @@ class ContentSearchIndex:
         context_rows = {}
         if context_paths:
             for row in self._select_paragraphs_for_paths(
-                    "rowid AS paragraph_rowid, path, paragraph_index, level_rank, body", context_paths):
+                    "rowid AS paragraph_rowid, path, paragraph_index, body, level, level_rank", context_paths):
                 context_rows.setdefault(row["path"], []).append(row)
         folded_terms = {term.casefold() for term in terms}
         for item in prepared:
@@ -1606,7 +1658,11 @@ class ContentSearchIndex:
             crumb_paths = {item["_crumb"][0] for item in final_items if item["_crumb"][1] is not None}
             crumb_rows = {}
             if crumb_paths:
-                for row in self._breadcrumb_rows(crumb_paths):
+                # 문맥 조사에서 이미 읽은 문서의 문단은 다시 읽지 않는다(같은 함수·같은 순서로 읽은 행).
+                for row in self._breadcrumb_rows(
+                        crumb_paths, known=context_rows,
+                        until={item["_crumb"][0]: item["_crumb"][1] for item in final_items
+                               if item["_crumb"][1] is not None}):
                     crumb_rows.setdefault(row["path"], []).append(row)
             for item in final_items:
                 raw_path, chosen = item.pop("_crumb")
@@ -1616,7 +1672,7 @@ class ContentSearchIndex:
                 item["context_hits"] = item.pop("_context_hits", hierarchy_path.context_term_hits(trail, terms))
         for idx, item in enumerate(final_items):
             # 스니펫·하이라이트는 화면에 보일 상위 결과에만 만든다(N214B 속도 개선, 결과 동일)
-            target_para_body = item.pop("_target_body")
+            target_para_body = _nfc(item.pop("_target_body"))
             t_folded = target_para_body.casefold()
             offsets = [t_folded.find(t.casefold()) for t in terms if t_folded.find(t.casefold()) >= 0]
             first = min(offsets) if offsets else 0
@@ -1686,6 +1742,47 @@ class ContentSearchIndex:
     # 24만 문단 측정: rowid 조회는 문단당 약 4.5µs(8만 문단 0.39초), 전체 훑기는 0.2~0.7초로 8만 문단 근처에서 뒤집힌다.
     _PARAGRAPH_SCAN_RATIO = 4
 
+    def _matching_paths(self, expression):
+        """FTS MATCH 식에 맞는 문단이 있는 문서 경로 집합.
+
+        FTS에서 path 열을 꺼내면 일치 문단마다 본문 행을 읽는다. 일치 rowid만 얻고 경로는
+        대응 표(content_paragraph_map, search 시작 때 맞춰 둔다)의 rowid 색인에서 읽어 같은 집합을 더 싸게 얻는다.
+        """
+        return {r[0] for r in self.db.execute(
+            "SELECT DISTINCT path FROM content_paragraph_map WHERE para_rowid IN"
+            " (SELECT rowid FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?)", (expression,))}
+
+    def _paragraph_prefixes(self, bounds):
+        """{path: 마지막 문단 번호}마다 그 번호까지의 문단을 rowid 순으로 읽는다.
+
+        대응 표의 (path, paragraph_index) 기본 키 범위로 rowid를 얻는다. 읽을 문단이 전체의
+        1/_PARAGRAPH_SCAN_RATIO를 넘으면 표를 훑는 편이 나아 None을 돌려준다(호출자가 전체를 읽는다).
+        """
+        with self._lock:
+            opened_here = not self.db.in_transaction
+            try:
+                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS breadcrumb_prefix_bounds("
+                                "path TEXT PRIMARY KEY, last_index INTEGER NOT NULL)")
+                self.db.execute("DELETE FROM breadcrumb_prefix_bounds")
+                self.db.executemany("INSERT OR REPLACE INTO breadcrumb_prefix_bounds(path, last_index) VALUES(?, ?)",
+                                    bounds.items())
+                source = ("SELECT m.para_rowid FROM temp.breadcrumb_prefix_bounds b JOIN content_paragraph_map m"
+                          " ON m.path=b.path AND m.paragraph_index<=b.last_index")
+                state = self.db.execute("SELECT row_count FROM content_paragraph_map_state WHERE id=1").fetchone()
+                total = state[0] if state else -1
+                if total < 0:
+                    return None
+                ceiling = total // self._PARAGRAPH_SCAN_RATIO if self._PARAGRAPH_SCAN_RATIO else total
+                wanted = self.db.execute(f"SELECT COUNT(*) FROM ({source} LIMIT ?)", (ceiling + 1,)).fetchone()[0]
+                if wanted > ceiling:
+                    return None
+                return self.db.execute(
+                    "SELECT path,paragraph_index,body,level,level_rank FROM content_paragraph_fts"
+                    f" WHERE rowid IN ({source}) ORDER BY rowid").fetchall()
+            finally:
+                if opened_here and self.db.in_transaction:
+                    self.db.commit()
+
     def _select_paragraphs_for_paths(self, columns, paths, where="", params=()):
         """경로 목록에 속한 문단을 rowid 순으로 읽는다.
 
@@ -1723,11 +1820,17 @@ class ContentSearchIndex:
                 if opened_here and self.db.in_transaction:
                     self.db.commit()
 
-    def _breadcrumb_rows(self, paths):
-        """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다."""
+    def _breadcrumb_rows(self, paths, known=None, until=None):
+        """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다.
+
+        known: 경로별로 이미 읽은 문단 행({path: [row…]}, path·paragraph_index·body·level·level_rank 포함).
+        여기 있는 경로는 다시 읽지 않고 그 행을 쓴다.
+        until: {path: 고른 문단 번호}. 그 문서의 상위 경로만 필요하면 그 번호까지의 문단만 읽는다.
+        표 칸이 있거나 첫 문단이 표 칸인 문서는 제목 칸을 뒤쪽 문단에서 찾으므로 전체를 읽는다.
+        이렇게 읽은 행으로 hierarchy_path.breadcrumb(rows, 고른 번호)를 만들면 전체 행과 같은 값이다.
+        """
         paths = list(paths)
-        rows = self._select_paragraphs_for_paths(
-            "path,paragraph_index,body,level,level_rank", paths)
+        known = known or {}
         cells = {}
         for start in range(0, len(paths), 500):
             batch = paths[start:start + 500]
@@ -1736,14 +1839,34 @@ class ContentSearchIndex:
                 for row in self.db.execute(
                         f"SELECT path,paragraph_index,cell_id FROM content_table_cells WHERE path IN ({marks})", batch):
                     cells[(row["path"], int(row["paragraph_index"]))] = row["cell_id"]
+        rows = [row for path in paths for row in known.get(path, ())]
+        missing = [path for path in paths if path not in known]
+        if missing and until:
+            with_cells = {path for path, _ in cells}
+            bounds = {path: int(until[path]) for path in missing
+                      if path in until and until[path] is not None and path not in with_cells}
+            prefix = self._paragraph_prefixes(bounds) if bounds else None
+            if prefix is not None:
+                first = {}
+                for row in prefix:
+                    index = int(row["paragraph_index"])
+                    if row["path"] not in first or index < first[row["path"]][0]:
+                        first[row["path"]] = (index, row["level"])
+                complete = {path for path, (_, level) in first.items() if level != "table_cell"}
+                rows += [row for row in prefix if row["path"] in complete]
+                missing = [path for path in missing if path not in complete]
+        if missing:
+            rows += self._select_paragraphs_for_paths(
+                "path,paragraph_index,body,level,level_rank", missing)
         return [dict(row, table_cell_id=cells.get((row["path"], int(row["paragraph_index"]))))
                 for row in rows]
 
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
         self._ensure_paragraph_map()
+        query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
-        positive = [*parsed["terms"], *parsed["phrases"]]
+        positive = [_nfc(t) for t in [*parsed["terms"], *parsed["phrases"]]]
         if not positive:
             raise ValueError("본문 검색어를 입력해 주세요.")
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
@@ -2021,7 +2144,7 @@ class ContentSearchIndex:
             crumbs = breadcrumb_by_path.get(path, ())
             locations = []
             for paragraph in paragraphs:
-                text = paragraph["body"] or ""
+                text = _nfc(paragraph["body"] or "")
                 folded = text.casefold()
                 starts = [folded.find(term.casefold()) for term in positive if folded.find(term.casefold()) >= 0]
                 if not starts:
@@ -2048,7 +2171,7 @@ class ContentSearchIndex:
                                   "breadcrumb_text": hierarchy_path.breadcrumb_text(trail)})
             primary_breadcrumb = locations[0]["breadcrumb"] if locations else []
             primary_breadcrumb_text = locations[0]["breadcrumb_text"] if locations else ""
-            results.append({"path": path, "name": meta["name"] or os.path.basename(path),
+            results.append({"path": path, "name": _nfc(meta["name"] or os.path.basename(path)),
                             "extension": meta["extension"] or Path(path).suffix.lstrip("."),
                             "mtime": meta["mtime"], "folder_path": os.path.dirname(path),
                             "folder_name": os.path.basename(os.path.dirname(path)),
@@ -2063,6 +2186,7 @@ class ContentSearchIndex:
 
     def search_files(self, query, *, roots=None, limit=500):
         """Immediate in-memory filename cache populated from indexed metadata."""
+        query = _nfc(query) if isinstance(query, str) else str(query or "")
         words = [w.casefold() for w in query.split() if w]
         if not words: return []
         allowed = [os.path.normcase(os.path.abspath(r)) for r in roots] if roots else None
@@ -2070,14 +2194,15 @@ class ContentSearchIndex:
         out = []
         for r in rows:
             # 이름이 맞지 않는 행은 경로 정규화·제외 판정을 하지 않고 넘어간다(결과는 같다).
-            name_folded = (r["name"] or "").casefold()
+            name_nfc = _nfc(r["name"] or Path(r["path"]).name)
+            name_folded = name_nfc.casefold()
             if not all(w in name_folded for w in words):
                 continue
             p = os.path.abspath(r["path"])
-            if excluded_name(r["name"] or "") or excluded_name(os.path.basename(p)):
+            if excluded_name(name_nfc) or excluded_name(_nfc(os.path.basename(p))):
                 continue
             if (allowed is None or any(os.path.commonpath((os.path.normcase(p), root)) == root for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold())):
-                out.append({"path": p, "name": r["name"] or Path(p).name, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
+                out.append({"path": p, "name": name_nfc, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
                 if len(out) >= limit: break
         return out
 

@@ -156,6 +156,7 @@ impl Database {
     }
 
     pub fn box_get(&self, id: i64) -> Result<Option<(BoxRow, Vec<ItemRow>, Vec<RelationRow>)>> {
+        // kvf 가상 폴더 창이 box의 5열과 item의 9열을 직접 읽는다.
         let mut stmt = self.conn.prepare(
             "SELECT id, name, description, created_at, updated_at, export_path,
                     (SELECT COUNT(*) FROM item WHERE box_id = ?1)

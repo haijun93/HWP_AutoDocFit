@@ -733,8 +733,9 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
     await tester.pumpAndSettle();
+    // ISUI1: 1글자는 실시간 검색 기준(2글자) 미만이라 Enter로 찾는다.
     await tester.enterText(find.byType(TextField), '절');
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
     expect(find.text('「제1절 목적」에서 4곳'), findsOneWidget);
@@ -1293,6 +1294,56 @@ void main() {
 const _jpeg='/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 
 void _labelsTest() {
+  testWidgets('ISUI1: 검색어는 파일명·본문검색·위계검색이 공유하고 탭을 바꾸면 그 검색어로 바로 찾는다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '보고');
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '보고');
+
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '보고');
+    expect(api.calls.where((c) => c.$1 == 'content_search').single.$2['query'], '보고');
+    expect(find.text('본문포함.docx'), findsOneWidget);
+
+    await tester.tap(find.text('위계검색'));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'related_search').single.$2['query'], '보고');
+
+    await tester.tap(find.text('파일명'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '보고');
+    expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '보고');
+  });
+
+  testWidgets('ISUI1: 1글자는 실시간으로 찾지 않고 Enter는 바로 찾는다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(api.calls.any((c) => c.$1 == 'content_search'), isFalse);
+    expect(find.textContaining('2글자 이상'), findsOneWidget);
+
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'content_search').single.$2['query'], '회');
+
+    // 2글자가 되면 Enter 없이 짧은 지연(150ms) 뒤 찾는다.
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(api.calls.where((c) => c.$1 == 'content_search').length, 1);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'content_search').last.$2['query'], '회의');
+  });
+
   testWidgets('종류 필터는 확장자 이름으로 보인다', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: _FakeApi(enabled: true).call))));
     await tester.pumpAndSettle();

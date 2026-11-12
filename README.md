@@ -1,10 +1,10 @@
 <!-- DOWNLOAD:START -->
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.61</h2>
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.63</h2>
 
 | 내려받는 곳 | 다운로드 안내 |
 |:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.61/HWP_AutoDocFit_v2.2.61_Setup.exe) · [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.61/HWP_AutoDocFit_v2.2.61_Portable.exe) |
-| 기능시연용 예시문서 | [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.61/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) |
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.63/HWP_AutoDocFit_v2.2.63_Setup.exe) · [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.63/HWP_AutoDocFit_v2.2.63_Portable.exe) |
+| 기능시연용 예시문서 | [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.63/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) |
 
 실행 파일과 함께 **기능시연용 예시문서**도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
@@ -16,6 +16,9 @@
 <p align="center"><strong>오프라인 · 폐쇄망 사용 가능 · 원본 보존 · 한/글 연동</strong></p>
 
 <p align="center"><img src="docs/media/cardnews/02-work-modes.png" alt="문서 편집 작업 방식 선택" width="860"></p>
+
+
+가상 폴더 창(`kvf.exe`)에서 자료함을 빠르게 열고 영역별로 찾아볼 수 있습니다. DB의 읽기 구조는 klib 시험으로 고정하며, R6·R7 실기 확인과 R9·R10 자원 측정은 아직 0회입니다.
 
 <!-- DEMO:START -->
 ## 시연 영상
@@ -187,6 +190,17 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 > 2026년 업무보고 > 제2장 주요 추진사업 > 2.1 공공 AI 대전환
 
+#### 독자 개발 검색 엔진
+
+본문검색·위계검색에는 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발한 독자 검색 엔진(kfind-core)을 사용하도록 개발하고 있습니다.
+
+- 문장 단위 다중 단어 검색: 여러 단어가 같은 문장 안에 함께 나오는 경우를 색인 단계에서 바로 판정합니다.
+- 한국어 부분 일치: 2글자 단위로 색인하여 조사·어미가 붙은 단어도 찾습니다.
+- 가벼운 색인: 압축 단어 사전(FST)과 압축 비트맵(Roaring)으로 색인 크기와 메모리 사용을 줄였습니다.
+- 실시간 검색: 검색창에 2글자 이상 입력하면 Enter 없이 바로 결과를 보여 줍니다.
+
+자체 시험(문서 3,000개)에서 색인 8.9초·색인 크기 32MB, 검색 1회 엔진 처리 시간 1.4ms 이하로 측정되었습니다.
+
 </details>
 
 ### 8. 타임머신
@@ -268,6 +282,6 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.61**입니다.
+현재 공개 버전은 **v2.2.63**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.

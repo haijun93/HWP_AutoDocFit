@@ -153,3 +153,9 @@
 3. 기관 PC에서 **상주 프로그램·자동 시작**(HKCU Run)이 허용되는지.
 4. 팝업은 1차에 **네이티브 최소 구현**(제안)으로 하고 한글 검색(IME)은 2차로 미뤄도 되는지.
 5. 에이전트 데이터 위치(`%LOCALAPPDATA%`)가 기관 정책(프로필 초기화·로밍)에 맞는지.
+
+## 12. 가상 폴더 창(kvf)
+
+`kvf.exe`는 앱과 별도 프로세스로 동작하는 가상 폴더 창이다. 자료함 DB를 읽기 전용으로 열어 `box`의 `id, name, description, created_at, updated_at` 5개 열과 `item`의 `id, box_id, kind, source_path, display_name, space, created_at, origin_path, managed_path` 9개 열을 읽는다. `origin_path`·`managed_path`가 없는 예전 DB는 열 목록을 확인해 빈 문자열로 처리한다. klib는 `klib/tests/test_klib.rs::test_kvf_read_column_contract`로 이 열 이름과 순서를 고정하며, `klib/src/db.rs`의 `box_get` 주석은 kvf가 이 구조를 읽는다고 알린다.
+
+2026-11-13 V10 마무리 시 R6(앱에서 추가 후 F5 새 항목 확인) 0회, R7(앱 쓰기 중 단축키 확인) 0회, R9(숨긴 뒤 1분 자원 측정) 0회, R10(1,000항목 표시 시간·메모리 측정) 0회로 모두 실기 미실시다. 따라서 R6·R7의 동작 결과와 R9·R10의 실측 메모리·CPU·시간 값은 확인되지 않았다. 계획의 R9 기준은 개인 메모리 2.0MB 이하·CPU 0.0%(목표 1.5MB), R10 기준은 100ms 이하·숨김 대비 +1.0MB 이하(시간 목표)이며, 이는 측정값이 아니다.

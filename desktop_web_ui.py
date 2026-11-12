@@ -2155,6 +2155,10 @@ class DesktopWebBridge:
             logging.getLogger(__name__).exception("타임머신 처리 실패")
             return {"ok": False, "code": "TM_FAILED", "message": "타임머신 작업을 완료하지 못했습니다."}
 
+    def kvf(self, action, payload=None):
+        from docfit_app.kvf_client import KvfClient
+        return KvfClient().command(action, payload)
+
     def kclip(self, action, payload=None):
         """몽땅클립보드: 상주 프로그램(kagent.exe) 켜기·끄기와 목록·설정(파이프 명령)."""
         try:
@@ -3561,7 +3565,7 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "kvf", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
@@ -3933,6 +3937,13 @@ def run_webview(gui):
                 logging.getLogger(__name__).exception("몽땅클립보드 에이전트 업그레이드 점검 실패")
 
         threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
+        def upgrade_kvf():
+            from docfit_app.kvf_client import KvfClient
+            result = KvfClient().command("upgrade_if_stale")
+            if not result.get("ok"):
+                logging.getLogger(__name__).warning("가상 폴더 창 교체 실패: %s", result)
+
+        threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

@@ -5,26 +5,13 @@ use windows_sys::Win32::Foundation::HWND;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
+pub use crate::open_rules::safe_web_url;
+use crate::open_rules::forbidden;
 use crate::util::wide;
 
 const OPEN_DIR: &str = "open";
-const FORBIDDEN: &[&str] = &["exe", "com", "bat", "cmd", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh", "msc", "scr", "pif", "cpl", "hta", "lnk", "url", "reg", "msi", "msp", "dll"];
-pub const MAX_WEB_URL_CHARS: usize = 2048;
 const WEB_MARKER: &[u8] = b"\0KAGENT-WEB\0";
 static NAME_SEQ: AtomicU64 = AtomicU64::new(0);
-
-/// Accept only bounded HTTP(S) URLs without control characters or whitespace.
-pub fn safe_web_url(url: &str) -> Option<&str> {
-    if url.is_empty() || url.chars().count() > MAX_WEB_URL_CHARS
-        || url.chars().any(|c| c.is_control() || c.is_whitespace())
-    { return None; }
-    let rest = if let Some(rest) = url.strip_prefix("http://") { rest }
-        else if let Some(rest) = url.strip_prefix("https://") { rest }
-        else { return None };
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    if authority.is_empty() || authority.starts_with('.') || authority.ends_with('.') { return None; }
-    Some(url)
-}
 
 pub fn classify_web_text(text: &str) -> Option<String> {
     let trimmed = text.trim();
@@ -76,14 +63,6 @@ pub fn formats_from_extra(extra: &[u8]) -> Vec<(String, Vec<u8>)> {
 #[link(name = "bcrypt")]
 unsafe extern "system" {
     fn BCryptGenRandom(algorithm: *mut std::ffi::c_void, buffer: *mut u8, length: u32, flags: u32) -> i32;
-}
-
-fn extension(path: &str) -> Option<String> {
-    Path::new(path).extension().and_then(|s| s.to_str()).map(str::to_ascii_lowercase)
-}
-
-fn forbidden(path: &str) -> bool {
-    extension(path).is_some_and(|ext| FORBIDDEN.contains(&ext.as_str()))
 }
 
 fn temp_name(dir: &Path, ext: &str) -> PathBuf {
@@ -171,12 +150,6 @@ pub fn open(hwnd: HWND, data_dir: &str, kind: &str, data: &[u8], extra: &[u8], c
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn executable_extensions_are_blocked_case_insensitively() {
-        for p in ["C:\\a.exe", "C:\\b.BAT", "C:\\c.cmd", "C:\\d.ps1", "C:\\e.vbs", "C:\\f.js", "C:\\g.lnk"] { assert!(forbidden(p), "{p}"); }
-        assert!(!forbidden("C:\\safe.txt"));
-    }
 
     #[test]
     fn generated_names_are_unpredictable_and_have_expected_extension() {

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/drop_events.dart';
+import '../../core/instant_search.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../library/library_api.dart';
@@ -22,6 +23,9 @@ const kNotebookWideWidth = 1000.0;
 /// textScaler로 따로 곱해지므로 여기서는 크기를 고정해 호스트의 기본 글자 크기(약 30px로 보이던 원인)에 끌려가지 않게 한다.
 const kNbReadingFontSize = 10 * 96 / 72;
 const _readingStyle = TextStyle(fontSize: kNbReadingFontSize, height: 1.5);
+
+/// 본문검색(hits) 또는 출처 비교(groups) 한 번의 결과. 검색 중 업무자료함을 바꾸면 버리려고 id를 함께 둔다.
+typedef _NbSearchOutcome = ({int notebookId, List<int>? scope, List<NbHit>? hits, List<NbCompareGroup>? groups});
 
 /// 넓은 화면의 칸 폭(사용자가 구분선을 끌어 조정). 기본·최소·최대와 가운데 칸 최소 폭.
 const kNotebookSourcesWidth = 260.0;
@@ -75,6 +79,10 @@ class _NotebookScreenState extends State<NotebookScreen> {
   double _notesWidth = _savedNotesWidth;
   double _lastTotalWidth = 0;
   final _queryController = TextEditingController();
+
+  /// 본문검색·출처 비교가 함께 쓰는 검색어(ISUI2). 탭 이름은 'search'·'compare'.
+  /// 2글자부터 입력하는 대로 찾고, Enter·단추는 바로 찾으며, 두 메뉴를 오가면 같은 검색어로 다시 찾는다.
+  late final InstantSearchController<_NbSearchOutcome?> _searchBox;
   final _titleController = TextEditingController();
   final _bodyController = TextEditingController();
   final _tagsController = TextEditingController();
@@ -112,6 +120,14 @@ class _NotebookScreenState extends State<NotebookScreen> {
   @override
   void initState() {
     super.initState();
+    _searchBox = InstantSearchController<_NbSearchOutcome?>(
+      initialTab: 'search',
+      text: _queryController,
+      search: _runQuery,
+      onResult: _applyQueryResult,
+      onCleared: _queryCleared,
+      onError: _queryFailed,
+    )..addListener(_searchPhaseChanged);
     _stopDrops = (widget.watchDropEvents ?? _watchNotebookDrops)(() => unawaited(_takeDrops()));
     unawaited(widget.api.watchDrops(true).catchError((Object _) {}));
     _run(_loadNotebooks);
@@ -121,6 +137,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   void dispose() {
     _stopDrops?.call();
     unawaited(widget.api.watchDrops(false).catchError((Object _) {}));
+    _searchBox.dispose();
     _queryController.dispose();
     _titleController.dispose();
     _bodyController.dispose();
@@ -383,50 +400,80 @@ class _NotebookScreenState extends State<NotebookScreen> {
 
   List<int>? get _scope => _checked.length == _sources.length ? null : _checked.toList();
 
-  Future<void> _search() async {
-    final nb = _notebook;
-    final query = _queryController.text.trim();
-    if (nb == null || query.isEmpty) return;
-    if (_checked.isEmpty) {
-      setState(() => _status = '근거를 찾을 출처를 하나 이상 고르세요.');
+  /// 「본문검색」「비교」 단추와 Enter: 지연 없이 지금 검색어로 찾는다(1글자도).
+  void _submitQuery(String tab) {
+    _searchBox.selectTab(tab); // 이미 그 탭이면 아무 일도 하지 않는다.
+    if (InstantSearchController.effectiveQuery(_queryController.value).isEmpty) {
+      if (tab == 'compare') setState(() => _status = '비교할 검색어를 입력하세요.');
       return;
     }
-    await _run(() async {
-      final hits = await widget.api.search(nb.id, query, sourceIds: _scope);
-      if (!mounted) return;
-      setState(() {
+    _searchBox.submit();
+  }
+
+  /// 가운데 칸 메뉴 전환. 본문검색↔출처 비교는 검색어를 그대로 두고 바뀐 메뉴에서 곧바로 다시 찾는다.
+  void _selectMiddle(_Middle mode) {
+    setState(() => _middle = mode);
+    if (mode == _Middle.search) _searchBox.selectTab('search');
+    if (mode == _Middle.compare) _searchBox.selectTab('compare');
+  }
+
+  void _searchPhaseChanged() {
+    if (mounted) setState(() {}); // 검색 중 진행 막대
+  }
+
+  /// 검색 컨트롤러가 부르는 실제 검색. 늦게 온 응답은 컨트롤러가 요청 번호로 버린다.
+  Future<_NbSearchOutcome?> _runQuery(InstantSearchRequest request) async {
+    final nb = _notebook;
+    if (nb == null) return null;
+    final compare = request.tab == 'compare';
+    if (_checked.isEmpty) {
+      setState(() => _status = compare ? '비교할 출처를 하나 이상 고르세요.' : '근거를 찾을 출처를 하나 이상 고르세요.');
+      return null;
+    }
+    final scope = _scope;
+    if (compare) {
+      final groups = await widget.api.compare(nb.id, request.query, sourceIds: scope);
+      return (notebookId: nb.id, scope: scope, hits: null, groups: groups);
+    }
+    final hits = await widget.api.search(nb.id, request.query, sourceIds: scope);
+    return (notebookId: nb.id, scope: scope, hits: hits, groups: null);
+  }
+
+  void _applyQueryResult(InstantSearchRequest request, _NbSearchOutcome? outcome) {
+    if (outcome == null || !mounted || outcome.notebookId != _notebook?.id) return;
+    final hits = outcome.hits;
+    final groups = outcome.groups;
+    setState(() {
+      if (hits != null) {
         _hits = hits;
-        _middle = _Middle.search;
         _status = hits.isEmpty ? '근거 문단을 찾지 못했습니다.' : '근거 문단 ${hits.length}개';
-      });
+      }
+      if (groups != null) {
+        final found = groups.where((g) => g.hits.isNotEmpty).length;
+        _compareGroups = groups;
+        _compareQuery = request.query;
+        _compareScope = outcome.scope;
+        _status = '출처 ${groups.length}개 중 $found개에서 근거를 찾았습니다.';
+      }
     });
   }
 
-  /// 같은 검색어의 근거를 출처마다 따로 찾아 나란히 보여 준다.
-  Future<void> _compare() async {
-    final nb = _notebook;
-    final query = _queryController.text.trim();
-    if (nb == null || query.isEmpty) {
-      setState(() => _status = '비교할 검색어를 입력하세요.');
-      return;
-    }
-    if (_checked.isEmpty) {
-      setState(() => _status = '비교할 출처를 하나 이상 고르세요.');
-      return;
-    }
-    final scope = _scope;
-    await _run(() async {
-      final groups = await widget.api.compare(nb.id, query, sourceIds: scope);
-      if (!mounted) return;
-      final found = groups.where((g) => g.hits.isNotEmpty).length;
-      setState(() {
-        _compareGroups = groups;
-        _compareQuery = query;
-        _compareScope = scope;
-        _middle = _Middle.compare;
-        _status = '출처 ${groups.length}개 중 $found개에서 근거를 찾았습니다.';
-      });
+  /// 검색어가 2글자 미만이 되면 그 메뉴의 결과를 비운다(출처 비교는 내보내기에 붙일 비교도 함께 비운다).
+  void _queryCleared(String tab, String query) {
+    if (!mounted) return;
+    setState(() {
+      if (tab == 'compare') {
+        _compareGroups = [];
+        _compareQuery = null;
+        _compareScope = null;
+      } else {
+        _hits = [];
+      }
     });
+  }
+
+  void _queryFailed(InstantSearchRequest request, Object error) {
+    if (mounted) setState(() => _status = _errorText(error));
   }
 
   Future<void> _transform(String type) async {
@@ -606,7 +653,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
             icon: const Icon(Icons.create_new_folder_outlined),
           ),
         ],
-        bottom: _busy
+        bottom: _busy || _searchBox.isSearching
             ? const PreferredSize(preferredSize: Size.fromHeight(2), child: LinearProgressIndicator(minHeight: 2))
             : null,
       ),
@@ -868,7 +915,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                   key: ValueKey(key),
                   label: Text(label),
                   selected: _middle == mode,
-                  onSelected: (_) => setState(() => _middle = mode),
+                  onSelected: (_) => _selectMiddle(mode),
                 ),
             ],
           ),
@@ -903,13 +950,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  onSubmitted: (_) => _search(),
+                  onSubmitted: (_) => _submitQuery('search'),
                 ),
               ),
               const SizedBox(width: 8),
               FilledButton(
                 key: const ValueKey('nb-search-run'),
-                onPressed: _busy ? null : _search,
+                onPressed: _busy ? null : () => _submitQuery('search'),
                 child: const Text('본문검색'),
               ),
             ],
@@ -977,13 +1024,13 @@ class _NotebookScreenState extends State<NotebookScreen> {
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
-                  onSubmitted: (_) => _compare(),
+                  onSubmitted: (_) => _submitQuery('compare'),
                 ),
               ),
               const SizedBox(width: 8),
               FilledButton(
                 key: const ValueKey('nb-compare-run'),
-                onPressed: _busy ? null : _compare,
+                onPressed: _busy ? null : () => _submitQuery('compare'),
                 child: const Text('비교'),
               ),
             ],
@@ -994,7 +1041,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
               ? const Center(
                   child: Padding(
                     padding: EdgeInsets.all(12),
-                    child: Text('검색어를 넣고 비교를 누르면 체크한 출처마다 근거 문단을 나란히 보여 줍니다.'),
+                    child: Text('검색어를 2글자 이상 넣으면 체크한 출처마다 근거 문단을 나란히 보여 줍니다. 본문검색과 검색어를 함께 씁니다.'),
                   ),
                 )
               : Scrollbar(

@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../workspace/tab_navigation_shell.dart' show kFileRenameMenuEnabled;
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/instant_search.dart';
 import '../preview/option_images.dart';
 import 'idiom_panel.dart';
+import 'kvf_panel.dart';
 import 'kiosk_theme.dart';
 import 'setting_guides.dart';
 
@@ -20,6 +22,7 @@ class SettingsDialog extends StatefulWidget {
 
 // 설정 값 목록이 아닌 관리 화면 분류(상용구·앱 정보, 2026-10-15).
 const _panelCategories = [
+  GuideCategory('kvf', '가상 폴더 창', 'Win+Shift+F', Icons.folder_open),
   GuideCategory('idiom_text', '글자 상용구', '준말 → 글자', Icons.short_text_rounded),
   GuideCategory('idiom_body', '본문 상용구', '준말 → 문서 서식', Icons.article_outlined),
   GuideCategory('about', '앱 정보', '개발자 도토리만두', Icons.info_outline_rounded),
@@ -29,7 +32,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Map? snapshot;
   final Map<String, TextEditingController> inputs = {};
   final Map<String, Object?> changed = {};
-  final search = TextEditingController();
+  /// 2글자부터 실시간, 1글자는 Enter로 거른다(ISUI3).
+  final search = InstantFilterController();
   bool busy = true;
   String? error;
   String category = guideCategories.first.id;
@@ -54,8 +58,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
   void initState() {
     super.initState();
     _closeLease = CloseGuards.register(_prepareHostClose);
+    search.addListener(_onSearch);
     load();
     _loadFonts();
+  }
+
+  void _onSearch() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadFonts() async {
@@ -84,6 +93,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void dispose() {
     _closeLease.release();
+    search.removeListener(_onSearch);
     search.dispose();
     for (final input in inputs.values) {
       input.dispose();
@@ -431,7 +441,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   Widget _categoryTile(GuideCategory item, int count, bool compact) {
-    final selected = item.id == category && search.text.trim().isEmpty;
+    final selected = item.id == category && search.filterQuery.isEmpty;
     final tile = Material(
       color: selected ? Kiosk.blueSoft : Colors.white,
       borderRadius: BorderRadius.circular(16),
@@ -440,7 +450,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         borderRadius: BorderRadius.circular(16),
         onTap: () => setState(() {
           category = item.id;
-          search.clear();
+          search.text.clear();
         }),
         child: Padding(
           padding: EdgeInsets.symmetric(
@@ -501,7 +511,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   Widget build(BuildContext context) {
     final locked = busy || snapshot?['running'] == true;
-    final query = search.text.trim();
+    final query = search.filterQuery;
     final counts = <String, int>{};
     for (final field in _fields) {
       counts.update(_categoryOf(field), (n) => n + 1, ifAbsent: () => 1);
@@ -550,8 +560,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(height: 14),
                     TextField(
-                      controller: search,
-                      onChanged: (_) => setState(() {}),
+                      key: const Key('settingsSearchField'),
+                      controller: search.text,
+                      onSubmitted: (_) => search.submit(),
                       style: const TextStyle(fontSize: 16),
                       decoration: InputDecoration(
                         prefixIcon: const Icon(
@@ -748,6 +759,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   /// 오른쪽 내용: 설정 값 목록, 또는 상용구·앱 정보 관리 화면(검색 중이면 설정 값 목록).
   Widget _body(List<Map> visible, bool locked, String query) {
+    if (query.isEmpty && category == 'kvf') return KvfPanel(api: widget.api);
     if (query.isEmpty && category == 'general') {
       final current = snapshot?['values'] as Map?;
       return ListView(

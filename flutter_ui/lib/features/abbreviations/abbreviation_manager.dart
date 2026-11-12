@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/instant_search.dart';
 import '../../core/models/abbreviation.dart';
 import 'abbreviation_editor.dart';
 
@@ -14,7 +15,8 @@ class AbbreviationManager extends StatefulWidget {
 class _AbbreviationManagerState extends State<AbbreviationManager> {
   late final AbbreviationApi api;
   AbbreviationSnapshot? data;
-  final search = TextEditingController();
+  /// 2글자부터 실시간, 1글자는 Enter로 거른다(ISUI3).
+  final search = InstantFilterController();
   bool busy = false;
   String? error;
 
@@ -22,11 +24,17 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
   void initState() {
     super.initState();
     api = AbbreviationApi(widget.api);
+    search.addListener(_onSearch);
     request(api.load);
+  }
+
+  void _onSearch() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    search.removeListener(_onSearch);
     search.dispose();
     super.dispose();
   }
@@ -89,7 +97,7 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
 
   @override
   Widget build(BuildContext context) {
-    final query = search.text.trim().toLowerCase();
+    final query = search.filterQuery.toLowerCase();
     final entries =
         data?.entries
             .where(
@@ -149,12 +157,12 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
               ),
               TextField(
                 key: const Key('abbreviationSearchField'),
-                controller: search,
+                controller: search.text,
                 decoration: const InputDecoration(
                   labelText: '준말·본말 검색',
                   prefixIcon: Icon(Icons.search),
                 ),
-                onChanged: (_) => setState(() {}),
+                onSubmitted: (_) => search.submit(),
               ),
               if (busy) const LinearProgressIndicator(),
               if (error != null)
