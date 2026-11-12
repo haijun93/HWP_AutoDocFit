@@ -28,14 +28,27 @@ def start_conversion_job(manager, files, target, output_dir=None, *, job_id=None
                         self.progress.update(data)
                     report(type, data)
         adapter = Adapter()
+        terminal_event = None
         def emit(item):
-            legacy_event(adapter, 'conversion', item)
-            if item[0] == 'file_conversion_finished' and len(item) > 3:
-                adapter.terminal = ('done', {'success':item[1], 'failed':item[2], **item[3]})
+            nonlocal terminal_event
             if progress:
                 progress(item)
+            if item[0] in ('file_conversion_finished', 'file_conversion_stopped'):
+                terminal_event = item
         results = run_conversion(files, target, output_dir,
             progress=emit, stop_event=Stop(), **kwargs)
+        if results and all({'source', 'status', 'error', 'output'} <= item.keys() for item in results):
+            skipped = sum(item['status'] == 'skipped' for item in results)
+            success = sum(item['status'] == 'success' for item in results)
+            failed = sum(item['status'] == 'failed' for item in results)
+            report('conversion_summary', {
+                'outcome':'ok' if success and not failed else 'partial' if success else 'nothing_saved',
+                'success':success, 'failed':failed, 'skipped':skipped,
+                'results':[{'source':item['source'], 'status':{'success':'converted','skipped':'skipped','failed':'failed'}[item['status']],
+                            'reason':item['error'], 'output':item['output']} for item in results if item['source'] is not None],
+            })
+        if terminal_event:
+            legacy_event(adapter, 'conversion', terminal_event)
         if adapter.terminal:
             report(*adapter.terminal)
         return results
@@ -83,10 +96,10 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
     class Events:
         def put(self, event):
             if event[0] == 'saved':
-                results.append(dict(source=event[1], output=event[2], status='success', error=None))
+                results.append(dict(source=event[1], output=event[2], status='success', error=None, event_source=event[1]))
             elif event[0] == 'document_error':
                 results.append(dict(source=event[1], output=None,
-                                    status='skipped' if is_same_format(event[1], target_format) else 'failed', error=event[2]))
+                                    status='skipped' if is_same_format(event[1], target_format) else 'failed', error=event[2], event_source=event[1]))
             elif event[0] in {'fatal_error', 'conversion_error'}:
                 results.append(dict(source=None, output=None, status='failed', error=event[1]))
             elif event[0] == 'file_conversion_stopped':
@@ -220,13 +233,7 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
         else:
             skipped = sum(result['status'] == 'skipped' for result in results)
             outcome = 'ok' if successes and not failures else 'partial' if successes else 'nothing_saved'
-            gui_queue.put(("file_conversion_finished", successes, failures, {
-                'outcome': outcome, 'skipped': skipped, 'results': [
-                    {'source': result['source'], 'status': {'success':'converted','skipped':'skipped','failed':'failed'}[result['status']],
-                     'reason': result['error'], 'output': result['output']}
-                    for result in results if result['source'] is not None
-                ]
-            }))
+            gui_queue.put(("file_conversion_finished", successes, failures))
     except Exception as exc:
         gui_queue.put(("fatal_error", str(exc)))
     finally:
