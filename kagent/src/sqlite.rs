@@ -1,5 +1,6 @@
 //! Windows 내장 SQLite(`winsqlite3.dll`, System32)를 실행 중 불러 쓴다.
 //! 실행 파일에 SQLite를 넣지 않아 크기가 늘지 않고 C 컴파일러도 필요 없다.
+//! kvf(가상 폴더 창)도 이 파일을 컴파일한다. `std`·`windows-sys`·`crate::util` 말고는 쓰지 말 것.
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::sync::OnceLock;

@@ -1,4 +1,5 @@
 //! 에이전트 교체 순서. 실제 프로세스와 파일 IO는 Runtime으로 분리해 격리 시험한다.
+//! kvf(가상 폴더 창)도 이 파일을 컴파일한다. `std`·`windows-sys`·`crate::util` 말고는 쓰지 말 것.
 pub fn stale(file_differs: bool, running: bool, running_version: Option<&str>, bundled_version: &str) -> bool {
     file_differs || (running && running_version != Some(bundled_version))
 }
