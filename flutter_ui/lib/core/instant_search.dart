@@ -142,6 +142,10 @@ class InstantSearchController<R> extends ChangeNotifier {
       _clear();
       return;
     }
+    if (delay == Duration.zero) {
+      _start('input'); // 지연 0(목록 거르기): 타이머 없이 바로 찾는다.
+      return;
+    }
     _setPhase(InstantSearchPhase.typing);
     _timer = Timer(delay, () => _start('input'));
   }
@@ -257,4 +261,21 @@ class InstantSearchController<R> extends ChangeNotifier {
     if (_ownsText) text.dispose();
     super.dispose();
   }
+}
+
+/// 받아 둔 목록을 화면 안에서 거르는 검색창용(ISUI3, 사용자 결정 2026-11-12).
+///
+/// 표 단위·준말본말·상용구·설정 검색이 쓴다. 백엔드를 부르지 않으므로 지연 0이고, "검색 결과"는 거를 검색어 자체다.
+/// - 2글자 이상: 입력하는 즉시 거른다.
+/// - 1글자: 거르지 않고 전체 목록. Enter([submit])를 누르면 그 1글자로 거른다.
+/// - 빈 검색어: 전체 목록.
+/// 화면은 [filterQuery]로 목록을 거르고, 이 컨트롤러를 듣고(addListener) 다시 그린다.
+class InstantFilterController extends InstantSearchController<String> {
+  InstantFilterController({super.text, super.minLength})
+      : super(initialTab: 'filter', search: _echo, delay: Duration.zero);
+
+  static Future<String> _echo(InstantSearchRequest request) => Future.value(request.query);
+
+  /// 목록을 거를 검색어. 기준 미만이라 거르지 않으면 ''.
+  String get filterQuery => phase == InstantSearchPhase.empty ? '' : (result ?? '');
 }
