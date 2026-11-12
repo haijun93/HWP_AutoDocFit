@@ -50,7 +50,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
 }
 fn run() -> Result<(),String> {
     let args = proc_state::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
-    if args.command == Command::Version { println!("kvf {}",env!("CARGO_PKG_VERSION")); return Ok(()); }
+    if args.command == Command::Version { println!("{{\"version\":\"{}\"}}",env!("CARGO_PKG_VERSION")); return Ok(()); }
     if !matches!(args.command,Command::Show|Command::Hidden|Command::Quit|Command::Reload) {
         return Err("설치·상태 명령은 V8에서 연결합니다".into());
     }
@@ -102,3 +102,4 @@ fn run() -> Result<(),String> {
     Ok(())
 }
 fn main() { if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
+mod vf_data;

@@ -35,6 +35,7 @@ pub fn step(state: State, event: Event, command: Command) -> (State, Vec<Effect>
     use Effect::*;
     match (state,event) {
         (State::NotRunning, Event::Start) => (State::Starting, vec![Acquire]),
+        (State::Starting, Event::Existing) if command == Command::Hidden => (State::NotRunning, vec![Exit(0)]),
         (State::Starting, Event::Existing) => (State::NotRunning, vec![Notify(command), Exit(0)]),
         (State::Starting, Event::Ready) if matches!(command, Command::Quit | Command::Reload) => (State::NotRunning, vec![Exit(0)]),
         (State::Starting, Event::Ready) => (State::Resident, vec![Create, SetView(if command == Command::Hidden { "hidden" } else { "loading" })]),
@@ -58,7 +59,8 @@ pub fn step(state: State, event: Event, command: Command) -> (State, Vec<Effect>
     #[test] fn reject_conflicts() { assert!(args(&["--hidden","--quit"]).is_err()); assert!(args(&["--wat"]).is_err()); assert!(args(&["--autostart"]).is_err()); }
     #[test] fn enable_autostart() { assert!(args(&["--enable","--autostart"]).unwrap().autostart); }
     #[test] fn start() { assert_eq!(step(State::NotRunning,Event::Start,Command::Show),(State::Starting,vec![Effect::Acquire])); }
-    #[test] fn existing() { for c in [Command::Show,Command::Hidden,Command::Quit,Command::Reload] { assert_eq!(step(State::Starting,Event::Existing,c),(State::NotRunning,vec![Effect::Notify(c),Effect::Exit(0)])); } }
+    #[test] fn existing() { for c in [Command::Show,Command::Quit,Command::Reload] { assert_eq!(step(State::Starting,Event::Existing,c),(State::NotRunning,vec![Effect::Notify(c),Effect::Exit(0)])); } }
+    #[test] fn existing_hidden_is_noop() { assert_eq!(step(State::Starting,Event::Existing,Command::Hidden),(State::NotRunning,vec![Effect::Exit(0)])); }
     #[test] fn no_resident_for_controls() { for c in [Command::Quit,Command::Reload] { assert_eq!(step(State::Starting,Event::Ready,c).0,State::NotRunning); } }
     #[test] fn resident_initial_view() { for (c,v) in [(Command::Show,"loading"),(Command::Hidden,"hidden")] { assert_eq!(step(State::Starting,Event::Ready,c),(State::Resident,vec![Effect::Create,Effect::SetView(v)])); } }
     #[test] fn startup_failure() { assert_eq!(step(State::Starting,Event::Failed,Command::Show).0,State::Exiting); }

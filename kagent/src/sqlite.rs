@@ -129,6 +129,18 @@ impl Row {
 }
 
 impl Connection {
+    /// kvf 전용: 파일을 만들지 않고 읽기 전용으로 연다. 기존 open 동작은 유지한다.
+    pub fn open_readonly(path: &str) -> Result<Connection, String> {
+        let l = lib()?;
+        let c = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+        let mut db: Db = std::ptr::null_mut();
+        let rc = (l.open_v2)(c.as_ptr(), &mut db, 0x1 | SQLITE_OPEN_FULLMUTEX, std::ptr::null());
+        let conn = Connection { db };
+        if rc != SQLITE_OK { return Err(conn.error()); }
+        if (l.busy_timeout)(db, 200) != SQLITE_OK { return Err(conn.error()); }
+        Ok(conn)
+    }
+
     pub fn open(path: &str) -> Result<Connection, String> {
         let l = lib()?;
         let c = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
