@@ -17,7 +17,7 @@ mod textcode;
 mod writer;
 
 pub use fold::{FOLD_RULE_VERSION, UNICODE_VERSION, fold, fold_into, tokens};
-pub use index::{DocHit, Index, Ranking, SearchOptions, SearchResult, SentenceMatch, SentenceRef};
+pub use index::{DocHit, Index, Ranking, SearchCounts, SearchOptions, SearchResult, SentenceMatch, SentenceRef};
 pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_query};
 pub use segment::FORMAT_VERSION;
 pub use writer::{MergeJob, MergeOutput, MergePolicy, Sentence, Writer, WriterOptions};

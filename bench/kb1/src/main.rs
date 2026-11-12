@@ -236,11 +236,18 @@ mod kf {
             let h = &r.result;
             Out { sentences: h.total_sentences, docs: Some(h.total_docs), top: h.hits.iter().map(|h| (h.doc_id as u32, h.level, h.count)).collect() }
         };
+        let count = |o: SearchOptions| {
+            let c = index.count(q, &o).expect("count");
+            Out { sentences: c.total_sentences, docs: Some(c.total_docs), top: vec![] }
+        };
         let variants: Vec<Variant> = vec![
             ("top20_default(dict)", Box::new(|| run(opts(20, SplitMode::DictLongest)))),
             ("top20_off", Box::new(|| run(opts(20, SplitMode::Off)))),
             ("full_off", Box::new(|| run(opts(0, SplitMode::Off)))),
             ("full_rank_off(page20)", Box::new(|| rank_page(opts(0, SplitMode::Off)))),
+            // KB2: 개수만(문장 수 + 문서 수, 문서 묶기·순위 없음). 입력 도중 표시용.
+            ("count_dict", Box::new(|| count(opts(20, SplitMode::DictLongest)))),
+            ("count_off", Box::new(|| count(opts(20, SplitMode::Off)))),
         ];
         // 나누기 결과 기록: run_variants가 측정을 마친 뒤에 부른다(콜드 측정에 영향 없음).
         let extra = || {

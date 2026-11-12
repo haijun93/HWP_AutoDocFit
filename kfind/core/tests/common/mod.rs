@@ -134,6 +134,18 @@ pub fn check_rank(index: &Index, expected: &[Expect], label: &str) -> usize {
     expected.len()
 }
 
+/// `count`(개수만)가 대조 표의 문장 수·문서 수, `search`의 낱말 해석과 같은지 본다(KB2). 확인한 줄 수를 돌려준다.
+pub fn check_count(index: &Index, expected: &[Expect], label: &str) -> usize {
+    for e in expected {
+        let ctx = format!("[{label}] mode={} query={:?}", e.mode_name, e.query);
+        let c = index.count(&e.query, &opts(e.mode, 20)).expect("count");
+        assert_eq!((c.total_sentences, c.total_docs, c.generation), (e.sentences, e.docs, index.generation()), "{ctx}: counts");
+        let s = index.search(&e.query, &opts(e.mode, 20)).expect("search");
+        assert_eq!((&c.words, &c.dropped), (&s.words, &s.dropped), "{ctx}: words");
+    }
+    expected.len()
+}
+
 /// 색인 결과가 대조 표의 모든 줄과 같은지 본다. 확인한 줄 수를 돌려준다.
 pub fn check_all(index: &Index, expected: &[Expect], label: &str) -> usize {
     for e in expected {

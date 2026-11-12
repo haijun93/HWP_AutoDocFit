@@ -119,6 +119,16 @@ pub struct SearchResult {
     pub generation: u64,
 }
 
+/// 개수만 낸 결과(`Index::count`). 값은 같은 검색어·방법의 `search` 합계와 같다.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchCounts {
+    pub words: Vec<QueryWord>,
+    pub dropped: Vec<String>,
+    pub total_sentences: u64,
+    pub total_docs: usize,
+    pub generation: u64,
+}
+
 /// 시간 한도·취소 확인.
 struct Budget<'a> {
     deadline: Option<Instant>,
@@ -639,6 +649,40 @@ impl Index {
         }
         let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
         Ok(Ranking { result, slots, sets })
+    }
+
+    /// 개수만: 일치 문장 수와 문서 수. 문서별 모으기·순위·미리보기를 하지 않는다(입력 도중 개수 표시용,
+    /// 상위 N건은 입력이 멈춘 뒤 `search`로). `opts.top`·`refs_per_doc`은 쓰지 않는다.
+    pub fn count(&self, query: &str, opts: &SearchOptions) -> Result<SearchCounts> {
+        guard(|| self.count_inner(query, opts))
+    }
+
+    fn count_inner(&self, query: &str, opts: &SearchOptions) -> Result<SearchCounts> {
+        let mut budget = Budget::new(opts);
+        budget.check()?;
+        let parsed = self.resolve_inner(query, opts.split)?;
+        let sets = self.eval_all(&parsed, &mut budget)?;
+        let (mut total_sentences, mut total_docs) = (0u64, 0usize);
+        for (view, (matched, _)) in self.views.iter().zip(&sets) {
+            if matched.is_empty() {
+                continue;
+            }
+            total_sentences += matched.len();
+            let tables = view.seg.tables();
+            // 문서의 문장은 이어져 있다: 문서마다 첫 일치 문장에서 문서 끝으로 건너뛴다.
+            let mut it = matched.iter();
+            while let Some(sid) = it.next() {
+                budget.tick()?;
+                let Some(rec) = tables.doc_of(sid).and_then(|local| tables.doc(local)) else { return corrupt("document out of range") };
+                if sid < rec.first_sid || sid - rec.first_sid >= rec.n_sent {
+                    return corrupt("sentence outside its document range");
+                }
+                total_docs += 1;
+                it.advance_to(rec.first_sid + rec.n_sent);
+            }
+        }
+        budget.check()?;
+        Ok(SearchCounts { words: parsed.words, dropped: parsed.dropped, total_sentences, total_docs, generation: self.generation })
     }
 
     /// 일치 문장 전부(문서 ID, 문장 순번 오름차순). `opts.top`·`refs_per_doc`은 쓰지 않는다.
