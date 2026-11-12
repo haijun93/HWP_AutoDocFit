@@ -1,0 +1,255 @@
+{
+  "runs": [
+    {
+      "seconds": 351.7232234000112,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "main-demo",
+      "saved": 1,
+      "relevant_log": [
+        "[문서 유형] 심화보고서 — 제목 표 1개, 보고서 1개(1:1~4쪽)",
+        "페이지 수 맞춤 불필요: 마지막 쪽(4쪽)에 6줄 (당겨올 기준 4줄 이하가 아님)",
+        "[처리 시간 단계별] 01 준비 0.00초 -> 02 변환 10.71초 -> 03 원본 쪽 구성 기록 0.02초 -> 04 준말 변환 0.27초 -> 05 제목·개요 가로 크기 0.17초 -> 06 보고서 표준서식 2.14초 -> 07 보고서 표준서식 15.50초 -> 08 텍스트 표(박스 그림) 변환 9.73초 -> 09 자간 초기화 0.08초 -> 10 별표 위첨자 0.04초 -> 11 별표 위첨자 0.02초 -> 12 제목·개요·붙임 선행 서식 0.12초 -> 13 제목·개요·붙임 선행 서식 0.08초 -> 14 제목·개요·붙임 선행 서식 0.03초 -> 15 제목·개요·붙임 선행 서식 0.03초 -> 16 기본 표 서식 0.05초 -> 17 표 칸 너비 0.03초 -> 18 표 칸 너비 0.04초 -> 19 표 칸 너비 0.02초 -> 20 표 칸 너비 0.07초 -> 21 표 칸 너비 0.03초 -> 22 표 칸 너비 2.15초 -> 23 한 칸 표 영역 조사 3.32초 -> 24 쪽 보호 해제 1.27초 -> 25 공백·문장부호·라벨(XML) 3.38초 -> 26 셀 안쪽 여백 강제 축소 0.03초 -> 27 셀 너비 본문 맞춤 0.07초 -> 28 표 테두리 선 굵기 통일 0.02초 -> 29 개요·한 칸 표 자간 조정 10.59초 -> 30 최종 서식 기준 내어쓰기 27.09초 -> 31 부연설명 들여쓰기 2.25초 -> 32 본문 자간·단어 분리 조정 114.68초 -> 33 연결 부호 맞춤 2.22초 -> 34 짧은 마지막 줄 병합 11.42초 -> 35 표/컨트롤 자간·단어 분리 조정 11.24초 -> 36 표/컨트롤 줄 병합 0.97초 -> 37 자간 조정 후 내어쓰기 19.22초 -> 38 자간 조정 후 부연설명 들여쓰기 2.13초 -> 39 자간 조정 후 별표(**) 정렬 2.17초 -> 40 본문 자간·단어 분리 조정 (2/3차) 18.51초 -> 41 연결 부호 맞춤 (2/3차) 2.21초 -> 42 짧은 마지막 줄 병합 (2/3차) 6.11초 -> 43 표/컨트롤 자간·단어 분리 조정 (2/3차) 1.16초 -> 44 표/컨트롤 줄 병합 (2/3차) 0.77초 -> 45 문단 아래 간격 페이지 맞춤 1.40초 -> 46 개별 문단 페이지 배치 35.02초 -> 47 최종 내어쓰기 재확인 27.53초 -> 48 검수 집계 0.00초 -> 49 저장 준비(쪽 보호·쪽 나누기 해제) 1.05초 -> 50 저장 0.66초 -> 51 저장 후 규칙 검수 0.00초 -> 52 무결성·숫자 대조 0.00초"
+      ],
+      "pages": 4,
+      "xml_body_count": 44,
+      "com_end": [
+        0,
+        43,
+        60
+      ],
+      "starts": [],
+      "tables": [
+        0,
+        1
+      ],
+      "unchanged": true,
+      "position_mismatches": [
+        0
+      ],
+      "text_mismatches": [],
+      "attachment_paragraphs": [],
+      "sha256": "5f3a7eecce6f89a5fc53ce4e52711156772b7f46536bb0b697f5e76527c59944"
+    },
+    {
+      "seconds": 340.03125759999966,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "branch-demo",
+      "saved": 1,
+      "relevant_log": [
+        "[문서 유형] 심화보고서 — 제목 표 1개, 보고서 1개(1:1~4쪽)",
+        "페이지 수 맞춤 불필요: 마지막 쪽(4쪽)에 6줄 (당겨올 기준 4줄 이하가 아님)",
+        "[처리 시간 단계별] 01 준비 0.01초 -> 02 변환 10.43초 -> 03 원본 쪽 구성 기록 0.00초 -> 04 준말 변환 0.21초 -> 05 제목·개요 가로 크기 0.11초 -> 06 보고서 표준서식 2.32초 -> 07 보고서 표준서식 14.94초 -> 08 텍스트 표(박스 그림) 변환 3.16초 -> 09 자간 초기화 0.15초 -> 10 별표 위첨자 0.06초 -> 11 별표 위첨자 0.03초 -> 12 제목·개요·붙임 선행 서식 0.11초 -> 13 제목·개요·붙임 선행 서식 0.09초 -> 14 제목·개요·붙임 선행 서식 0.05초 -> 15 제목·개요·붙임 선행 서식 0.04초 -> 16 기본 표 서식 0.07초 -> 17 표 칸 너비 0.04초 -> 18 표 칸 너비 0.05초 -> 19 표 칸 너비 0.04초 -> 20 표 칸 너비 0.08초 -> 21 표 칸 너비 0.04초 -> 22 표 칸 너비 0.12초 -> 23 한 칸 표 영역 조사 1.34초 -> 24 쪽 보호 해제 1.13초 -> 25 공백·문장부호·라벨(XML) 0.81초 -> 26 셀 안쪽 여백 강제 축소 0.13초 -> 27 셀 너비 본문 맞춤 0.02초 -> 28 표 테두리 선 굵기 통일 0.00초 -> 29 개요·한 칸 표 자간 조정 10.99초 -> 30 최종 서식 기준 내어쓰기 26.15초 -> 31 부연설명 들여쓰기 2.21초 -> 32 본문 자간·단어 분리 조정 114.32초 -> 33 연결 부호 맞춤 2.29초 -> 34 짧은 마지막 줄 병합 11.96초 -> 35 표/컨트롤 자간·단어 분리 조정 11.04초 -> 36 표/컨트롤 줄 병합 0.95초 -> 37 자간 조정 후 내어쓰기 18.81초 -> 38 자간 조정 후 부연설명 들여쓰기 2.30초 -> 39 자간 조정 후 별표(**) 정렬 2.43초 -> 40 본문 자간·단어 분리 조정 (2/3차) 19.42초 -> 41 연결 부호 맞춤 (2/3차) 2.08초 -> 42 짧은 마지막 줄 병합 (2/3차) 6.07초 -> 43 표/컨트롤 자간·단어 분리 조정 (2/3차) 1.78초 -> 44 표/컨트롤 줄 병합 (2/3차) 0.67초 -> 45 문단 아래 간격 페이지 맞춤 1.68초 -> 46 개별 문단 페이지 배치 35.08초 -> 47 최종 내어쓰기 재확인 28.08초 -> 48 검수 집계 0.00초 -> 49 저장 준비(쪽 보호·쪽 나누기 해제) 1.01초 -> 50 저장 1.25초 -> 51 저장 후 규칙 검수 0.00초 -> 52 무결성·숫자 대조 0.01초"
+      ],
+      "pages": 4,
+      "xml_body_count": 44,
+      "com_end": [
+        0,
+        43,
+        60
+      ],
+      "starts": [],
+      "tables": [
+        0,
+        1
+      ],
+      "unchanged": true,
+      "position_mismatches": [
+        0
+      ],
+      "text_mismatches": [],
+      "attachment_paragraphs": [],
+      "sha256": "257ea7ff9d4561e22e5ba0b9aafb456578059783eaed43c8a1b338f2ecb5258c"
+    },
+    {
+      "seconds": 44.36624380000285,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "main-valid",
+      "saved": 1,
+      "relevant_log": [
+        "[문서 유형] 1쪽 보고서 — 제목 표 0개, 보고서 1개(1:1~2쪽)",
+        "보고서 1 1쪽 맞춤 실패: 마지막 수단으로도 1쪽 안에 담지 못함(넘친 줄 2) — 원래 값으로 되돌림",
+        "[처리 시간 계측] 오래 걸린 단계(상위 10): 문단 아래 간격 페이지 맞춤 13.0초(32%, 1회) / 보고서 표준서식 9.4초(23%, 2회) / 최종 서식 기준 내어쓰기 5.0초(12%, 1회) / 최종 내어쓰기 재확인 4.5초(11%, 1회) / 표/컨트롤 자간·단어 분리 조정 2.4초(6%, 1회) / 개별 문단 페이지 배치 1.2초(3%, 1회) / 텍스트 표(박스 그림) 변환 1.0초(2%, 1회) / 공백·문장부호·라벨(XML) 0.7초(2%, 1회) / 저장 0.5초(1%, 1회) / 부연설명 들여쓰기 0.5초(1%, 1회)",
+        "[처리 시간 단계별] 01 준비 0.10초 -> 02 열기 0.38초 -> 03 원본 쪽 구성 기록 0.01초 -> 04 준말 변환 0.03초 -> 05 제목·개요 가로 크기 0.09초 -> 06 보고서 표준서식 1.80초 -> 07 보고서 표준서식 7.61초 -> 08 텍스트 표(박스 그림) 변환 0.96초 -> 09 자간 초기화 0.05초 -> 10 별표 위첨자 0.04초 -> 11 별표 위첨자 0.02초 -> 12 제목·개요·붙임 선행 서식 0.02초 -> 13 제목·개요·붙임 선행 서식 0.02초 -> 14 제목·개요·붙임 선행 서식 0.02초 -> 15 제목·개요·붙임 선행 서식 0.02초 -> 16 기본 표 서식 0.02초 -> 17 표 칸 너비 0.02초 -> 18 표 칸 너비 0.02초 -> 19 표 칸 너비 0.02초 -> 20 표 칸 너비 0.02초 -> 21 표 칸 너비 0.01초 -> 22 표 칸 너비 0.10초 -> 23 한 칸 표 영역 조사 0.12초 -> 24 쪽 보호 해제 0.31초 -> 25 공백·문장부호·라벨(XML) 0.68초 -> 26 셀 안쪽 여백 강제 축소 0.06초 -> 27 셀 너비 본문 맞춤 0.03초 -> 28 표 테두리 선 굵기 통일 0.00초 -> 29 개요·한 칸 표 자간 조정 0.01초 -> 30 최종 서식 기준 내어쓰기 4.98초 -> 31 부연설명 들여쓰기 0.46초 -> 32 본문 자간·단어 분리 조정 0.34초 -> 33 연결 부호 맞춤 0.45초 -> 34 짧은 마지막 줄 병합 0.31초 -> 35 표/컨트롤 자간·단어 분리 조정 2.44초 -> 36 표/컨트롤 줄 병합 0.01초 -> 37 문단 아래 간격 페이지 맞춤 13.01초 -> 38 개별 문단 페이지 배치 1.21초 -> 39 최종 내어쓰기 재확인 4.52초 -> 40 검수 집계 0.00초 -> 41 저장 준비(쪽 보호·쪽 나누기 해제) 0.27초 -> 42 저장 0.52초 -> 43 저장 후 규칙 검수 0.00초 -> 44 무결성·숫자 대조 0.00초"
+      ],
+      "pages": 2,
+      "xml_body_count": 15,
+      "com_end": [
+        0,
+        14,
+        12
+      ],
+      "starts": [
+        [
+          13,
+          "문단"
+        ]
+      ],
+      "tables": [],
+      "unchanged": true,
+      "position_mismatches": [
+        0
+      ],
+      "text_mismatches": [],
+      "attachment_paragraphs": [
+        {
+          "xml_index": 13,
+          "com_pos": [
+            0,
+            13,
+            0
+          ],
+          "xml_text": "[붙임 1]",
+          "com_text": "[붙임 1]",
+          "text_matches": true
+        }
+      ],
+      "sha256": "81c93892f42e5ea02f9c6f1c44f211e005a789ad0c07169a4a79d584df4ee311"
+    },
+    {
+      "seconds": 30.181351000006543,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "branch-valid-clean",
+      "saved": 1,
+      "relevant_log": [
+        "[문서 유형] 1쪽 보고서 — 제목 표 0개, 보고서 1개(1:1~2쪽)",
+        "[쪽 수 맞춤] 보고서 1: 쪽 나눔 붙임 1개라 1쪽 안에 담기 불가능 — 간격 축소 건너뜀",
+        "[처리 시간 단계별] 01 준비 0.10초 -> 02 열기 0.35초 -> 03 원본 쪽 구성 기록 0.01초 -> 04 준말 변환 0.01초 -> 05 제목·개요 가로 크기 0.10초 -> 06 보고서 표준서식 1.62초 -> 07 보고서 표준서식 7.39초 -> 08 텍스트 표(박스 그림) 변환 0.90초 -> 09 자간 초기화 0.04초 -> 10 별표 위첨자 0.03초 -> 11 별표 위첨자 0.02초 -> 12 제목·개요·붙임 선행 서식 0.02초 -> 13 제목·개요·붙임 선행 서식 0.02초 -> 14 제목·개요·붙임 선행 서식 0.02초 -> 15 제목·개요·붙임 선행 서식 0.02초 -> 16 기본 표 서식 0.03초 -> 17 표 칸 너비 0.02초 -> 18 표 칸 너비 0.02초 -> 19 표 칸 너비 0.02초 -> 20 표 칸 너비 0.02초 -> 21 표 칸 너비 0.01초 -> 22 표 칸 너비 0.08초 -> 23 한 칸 표 영역 조사 0.09초 -> 24 쪽 보호 해제 0.29초 -> 25 공백·문장부호·라벨(XML) 0.63초 -> 26 셀 안쪽 여백 강제 축소 0.05초 -> 27 셀 너비 본문 맞춤 0.02초 -> 28 표 테두리 선 굵기 통일 0.00초 -> 29 개요·한 칸 표 자간 조정 0.01초 -> 30 최종 서식 기준 내어쓰기 4.59초 -> 31 부연설명 들여쓰기 0.49초 -> 32 본문 자간·단어 분리 조정 0.31초 -> 33 연결 부호 맞춤 0.45초 -> 34 짧은 마지막 줄 병합 0.32초 -> 35 표/컨트롤 자간·단어 분리 조정 0.52초 -> 36 표/컨트롤 줄 병합 0.01초 -> 37 문단 아래 간격 페이지 맞춤 0.43초 -> 38 개별 문단 페이지 배치 1.06초 -> 39 최종 내어쓰기 재확인 4.56초 -> 40 검수 집계 0.00초 -> 41 저장 준비(쪽 보호·쪽 나누기 해제) 0.28초 -> 42 저장 1.91초 -> 43 저장 후 규칙 검수 0.00초 -> 44 무결성·숫자 대조 0.00초"
+      ],
+      "pages": 2,
+      "xml_body_count": 15,
+      "com_end": [
+        0,
+        14,
+        12
+      ],
+      "starts": [
+        [
+          13,
+          "문단"
+        ]
+      ],
+      "tables": [],
+      "unchanged": true,
+      "position_mismatches": [
+        0
+      ],
+      "text_mismatches": [],
+      "attachment_paragraphs": [
+        {
+          "xml_index": 13,
+          "com_pos": [
+            0,
+            13,
+            0
+          ],
+          "xml_text": "[붙임 1]",
+          "com_text": "[붙임 1]",
+          "text_matches": true
+        }
+      ],
+      "sha256": "01a4445be411d113eb305e6416dafc3582139b76fc5f07a515fcd70ba15d8d9e"
+    },
+    {
+      "seconds": 3.549471500009531,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "main-attp_text",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\main-attp_text\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\main-attp_text\\source.hwpx"
+      ]
+    },
+    {
+      "seconds": 3.3129275999963284,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "branch-attp_text",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\branch-attp_text\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\branch-attp_text\\source.hwpx"
+      ]
+    },
+    {
+      "seconds": 3.621158199995989,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "main-attp_table",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\main-attp_table\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\main-attp_table\\source.hwpx"
+      ]
+    },
+    {
+      "seconds": 6.0384710999787785,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "branch-attp_table",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\branch-attp_table\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\branch-attp_table\\source.hwpx"
+      ]
+    },
+    {
+      "seconds": 3.6477216000203043,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "main-attp_shape",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\main-attp_shape\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\main-attp_shape\\source.hwpx"
+      ]
+    },
+    {
+      "seconds": 3.8250478000263683,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "run": "branch-attp_shape",
+      "saved": 0,
+      "relevant_log": [
+        "문서 처리 오류: E:\\docfit-tmp\\attp2-results\\branch-attp_shape\\source.hwpx — 한글에서 문서를 열지 못했습니다: E:\\docfit-tmp\\attp2-results\\branch-attp_shape\\source.hwpx"
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "left": "main-demo",
+      "right": "branch-demo",
+      "xml_identical": {
+        "Contents/header.xml": true,
+        "Contents/section0.xml": true
+      },
+      "structure_diff": {
+        "before": "E:\\docfit-tmp\\attp2-results\\main-demo\\source(일괄적용).hwpx",
+        "after": "E:\\docfit-tmp\\attp2-results\\branch-demo\\source(일괄적용).hwpx",
+        "paragraph_count": {
+          "before": 49,
+          "after": 49
+        },
+        "changed_paragraphs": []
+      }
+    },
+    {
+      "left": "main-valid",
+      "right": "branch-valid-clean",
+      "xml_identical": {
+        "Contents/header.xml": true,
+        "Contents/section0.xml": true
+      },
+      "structure_diff": {
+        "before": "E:\\docfit-tmp\\attp2-results\\main-valid\\source(일괄적용).hwpx",
+        "after": "E:\\docfit-tmp\\attp2-results\\branch-valid-clean\\source(일괄적용).hwpx",
+        "paragraph_count": {
+          "before": 15,
+          "after": 15
+        },
+        "changed_paragraphs": []
+      }
+    }
+  ],
+  "invalid_measurement": "branch-valid: instrumentation InitScan argument count error changed fallback path; excluded, replaced by branch-valid-clean",
+  "artifacts": "E:\\docfit-tmp\\attp2-results"
+}
