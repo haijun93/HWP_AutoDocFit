@@ -179,6 +179,10 @@ def _plain_numbered_levels(paragraphs):
     """TXT/MD 번호 계열의 연속성과 첫 등장 순서를 확인한다."""
     from ..marker_scheme import classify_marker, _ordinal
 
+    # Markdown 제목이 위계를 명시한 문서의 번호 목록은 본문으로 유지한다.
+    if any(_MARKDOWN_HEADING.match(p.text.strip()) for p in paragraphs if not p.is_table_cell):
+        return {}
+
     candidates, groups = {}, {}
     for position, paragraph in enumerate(paragraphs):
         text = paragraph.text.strip()

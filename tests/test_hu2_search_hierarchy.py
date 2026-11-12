@@ -16,3 +16,8 @@ class SearchHierarchyRegressionTests(unittest.TestCase):
         self.assertEqual(["square", "circle", "dash", "asterisk", "asterisk"],
                          self.levels(["□ 시설", "ㅇ 관리", "- 내용", "• 위치: ① 첫째", "• 위치: ② 둘째"]))
 
+    def test_markdown_numbered_list(self):
+        for suffix in (".txt", ".md"):
+            self.assertEqual(["chapter", "body", "body", "body"], self.levels(
+                ["## 2. 계획", "1. 첫째", "2. 둘째", "3. 셋째"], suffix))
+
