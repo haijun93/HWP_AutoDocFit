@@ -223,6 +223,42 @@ void main() {
     expect(find.byKey(const Key('templateCard_0:2')), findsOneWidget);
   });
 
+  testWidgets('검색창: 1글자는 거르지 않고 Enter로 거르며 2글자부터 실시간(ISUI3)', (tester) async {
+    Future<Object?> api(String name, List<Object?> args) async {
+      final action = args[0] as String;
+      if (action == 'list') return envelope(sampleListData());
+      if (action == 'preview') return envelope(samplePreview());
+      return envelope({});
+    }
+
+    await pumpScreen(tester, api: api);
+    final searchField = find.byKey(const Key('searchTextField'));
+
+    // 1글자만 입력: 전체 목록 그대로
+    await tester.enterText(searchField, '월');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateCard_0:1')), findsOneWidget);
+    expect(find.byKey(const Key('templateCard_0:3')), findsOneWidget);
+
+    // Enter: 1글자로 거른다
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateCard_0:3')), findsOneWidget);
+    expect(find.byKey(const Key('templateCard_0:1')), findsNothing);
+
+    // 2글자: Enter 없이 바로 거른다
+    await tester.enterText(searchField, '과제');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateCard_0:1')), findsOneWidget);
+    expect(find.byKey(const Key('templateCard_0:3')), findsNothing);
+
+    // 지우기 단추: 전체 목록
+    await tester.tap(find.byIcon(Icons.clear));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('templateCard_0:1')), findsOneWidget);
+    expect(find.byKey(const Key('templateCard_0:3')), findsOneWidget);
+  });
+
   testWidgets('즐겨찾기 토글 호출 및 즐겨찾기 칩 거르기', (tester) async {
     final calls = <List<Object?>>[];
     Future<Object?> api(String name, List<Object?> args) async {
