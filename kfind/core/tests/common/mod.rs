@@ -108,6 +108,32 @@ pub fn opts(mode: SplitMode, top: usize) -> SearchOptions {
     SearchOptions { top, split: mode, time_limit: None, cancel: None, refs_per_doc: 2 }
 }
 
+/// `rank`(미리보기 없이 순위만)가 `search`와 같은 순위·합계를 내고, 문서별 미리보기를 나중에 만들어도
+/// `search`의 미리보기와 같은지 본다(KB2). 대조 표의 순위 지문도 함께 본다. 확인한 줄 수를 돌려준다.
+pub fn check_rank(index: &Index, expected: &[Expect], label: &str) -> usize {
+    let strip = |hits: &[kfind_core::DocHit]| -> Vec<(u64, bool, u8, u32, i64)> { hits.iter().map(|h| (h.doc_id, h.adjacent, h.level, h.count, h.date)).collect() };
+    for e in expected {
+        let ctx = format!("[{label}] mode={} query={:?}", e.mode_name, e.query);
+        for top in [0usize, 1, 20] {
+            let full = index.search(&e.query, &opts(e.mode, top)).expect("search");
+            let ranking = index.rank(&e.query, &opts(e.mode, top)).expect("rank");
+            let r = &ranking.result;
+            assert_eq!((r.total_sentences, r.total_docs, r.adjacent_docs, r.generation), (e.sentences, e.docs, e.adjacent_docs, index.generation()), "{ctx} top={top}: totals");
+            assert_eq!(strip(&r.hits), strip(&full.hits), "{ctx} top={top}: order");
+            assert!(r.hits.iter().all(|h| h.sentences.is_empty()), "{ctx}: rank builds no previews");
+            for (i, h) in full.hits.iter().enumerate() {
+                assert_eq!(ranking.sentences(index, i, 2).expect("sentences"), h.sentences, "{ctx} top={top}: preview of hit {i}");
+            }
+            assert!(ranking.sentences(index, r.hits.len(), 2).is_err(), "{ctx}: hit out of range");
+            if top == 0 {
+                let rank = hash_u64s(r.hits.iter().flat_map(|h| [h.doc_id, h.adjacent as u64, h.level as u64, h.count as u64]));
+                assert_eq!(rank, e.rank_hash, "{ctx}: rank order fingerprint");
+            }
+        }
+    }
+    expected.len()
+}
+
 /// 색인 결과가 대조 표의 모든 줄과 같은지 본다. 확인한 줄 수를 돌려준다.
 pub fn check_all(index: &Index, expected: &[Expect], label: &str) -> usize {
     for e in expected {

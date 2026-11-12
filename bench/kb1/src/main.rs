@@ -227,10 +227,20 @@ mod kf {
             let r = index.search(q, &o).expect("search");
             Out { sentences: r.total_sentences as u64, docs: Some(r.total_docs as usize), top: r.hits.iter().map(|h| (h.doc_id as u32, h.level, h.count as u32)).collect() }
         };
+        // KB2: 전체 순위를 미리보기 없이 내고, 화면 첫 페이지(20문서)만 미리보기 문장 3개를 만든다.
+        let rank_page = |o: SearchOptions| {
+            let r = index.rank(q, &o).expect("rank");
+            for i in 0..r.result.hits.len().min(20) {
+                std::hint::black_box(r.sentences(&index, i, 3).expect("sentences"));
+            }
+            let h = &r.result;
+            Out { sentences: h.total_sentences, docs: Some(h.total_docs), top: h.hits.iter().map(|h| (h.doc_id as u32, h.level, h.count)).collect() }
+        };
         let variants: Vec<Variant> = vec![
             ("top20_default(dict)", Box::new(|| run(opts(20, SplitMode::DictLongest)))),
             ("top20_off", Box::new(|| run(opts(20, SplitMode::Off)))),
             ("full_off", Box::new(|| run(opts(0, SplitMode::Off)))),
+            ("full_rank_off(page20)", Box::new(|| rank_page(opts(0, SplitMode::Off)))),
         ];
         // 나누기 결과 기록: run_variants가 측정을 마친 뒤에 부른다(콜드 측정에 영향 없음).
         let extra = || {

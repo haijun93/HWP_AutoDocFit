@@ -6,7 +6,7 @@ use crate::{Error, Result, corrupt, guard};
 use roaring::RoaringBitmap;
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::time::{Duration, Instant};
 
@@ -297,40 +297,81 @@ impl Agg {
     }
 }
 
-/// 문서 순위 모으기. `top`이 0이면 전부 모으고, 아니면 가장 앞선 `top`개만 순위 순서로 쥐고 있는다
-/// (문서 전체를 쌓았다가 고르지 않는다 — 상위 N건을 먼저 낼 때의 비용을 줄인다).
-struct Collector {
+/// 문서의 고정 순위표: 모든 조각의 모든 문서를 (날짜 최신, 문서 ID, 조각, 조각 안 번호) 순서로 줄 세운 번호.
+/// 질의마다 달라지지 않는 순위 뒷부분(날짜 > 문서 ID)을 32비트 하나로 바꿔, 전체 순위를 정수 하나의 정렬로 만든다.
+/// 색인 세대마다 처음 전체 순위를 낼 때 한 번 만든다(문서 수 D에 O(D log D)).
+struct StaticRank {
+    /// [조각][조각 안 문서 번호] → 순위.
+    per_view: Vec<Vec<u32>>,
+    /// 순위 → (조각, 조각 안 문서 번호).
+    inverse: Vec<(u32, u32)>,
+}
+
+/// 전체 순위 정렬 열쇠: 위 = 질의 순위 열쇠(41비트), 아래 32비트 = 고정 순위. 작을수록 앞.
+#[inline]
+fn full_key(key: u64, static_rank: u32) -> u128 {
+    ((key as u128) << 32) | static_rank as u128
+}
+
+/// 문서 순위 모으기. `top`이 0이면 전부 모으고(고정 순위로 묶은 정렬 열쇠 하나씩), 아니면 가장 앞선 `top`개만
+/// 순위 순서로 쥐고 있는다(문서 전체를 쌓았다가 고르지 않는다 — 상위 N건을 먼저 낼 때의 비용을 줄인다).
+struct Collector<'r> {
     top: usize,
     best: Vec<Agg>,
+    all: Vec<u128>,
+    ranks: &'r [Vec<u32>],
     total_docs: usize,
     adjacent_docs: usize,
 }
 
-impl Collector {
+impl Collector<'_> {
     #[inline]
-    fn push(&mut self, a: Agg) {
+    fn push(&mut self, a: Agg) -> Result<()> {
         self.total_docs += 1;
         self.adjacent_docs += a.adjacent() as usize;
         if self.top == 0 {
-            self.best.push(a);
-            return;
+            let Some(&r) = self.ranks.get(a.view as usize).and_then(|v| v.get(a.local as usize)) else { return corrupt("document missing from the static rank") };
+            self.all.push(full_key(a.key, r));
+            return Ok(());
         }
         if self.best.len() == self.top {
             match self.best.last() {
                 Some(worst) if order(&a, worst) == Ordering::Less => {
                     self.best.pop();
                 }
-                _ => return,
+                _ => return Ok(()),
             }
         }
         let pos = self.best.partition_point(|b| order(b, &a) == Ordering::Less);
         self.best.insert(pos, a);
+        Ok(())
     }
 }
 
 /// 순위: 붙어 있는 일치 > 위계(작은 값) > 일치 문장 수 > 날짜 최신 > 문서 ID.
 fn order(a: &Agg, b: &Agg) -> Ordering {
-    a.key.cmp(&b.key).then(b.date.cmp(&a.date)).then(a.doc_id.cmp(&b.doc_id))
+    a.key.cmp(&b.key).then_with(|| b.date.cmp(&a.date)).then_with(|| a.doc_id.cmp(&b.doc_id))
+}
+
+/// 미리보기 문장 없이 순위만 낸 결과. 미리보기는 화면에 보일 문서만 `sentences`로 만든다.
+pub struct Ranking {
+    /// `hits`의 `sentences`는 비어 있다.
+    pub result: SearchResult,
+    /// hits와 같은 순서의 (조각, 조각 안 문서 번호).
+    slots: Vec<(u32, u32)>,
+    /// 조각별 (일치 문장, 붙어 있는 일치 문장).
+    sets: Vec<(RoaringBitmap, Option<RoaringBitmap>)>,
+}
+
+impl Ranking {
+    /// `hit`번째 문서의 앞에서부터 `n`개 일치 문장. `index`는 이 순위를 낸 색인(같은 세대)이어야 한다.
+    pub fn sentences(&self, index: &Index, hit: usize, n: usize) -> Result<Vec<SentenceRef>> {
+        if index.generation != self.result.generation || index.views.len() != self.sets.len() {
+            return Err(Error::Invalid("ranking belongs to another index generation".into()));
+        }
+        let Some(&(view, local)) = self.slots.get(hit) else { return Err(Error::Invalid(format!("hit {hit} out of range"))) };
+        guard(|| index.doc_sentences(&self.sets, view, local, n))
+    }
 }
 
 /// 열려 있는 색인의 한 세대.
@@ -338,6 +379,7 @@ pub struct Index {
     dir: PathBuf,
     generation: u64,
     views: Vec<SegView>,
+    ranks: OnceLock<StaticRank>,
 }
 
 impl Index {
@@ -351,7 +393,50 @@ impl Index {
 
     fn from_parts(dir: &Path, manifest: Manifest, segs: Vec<Arc<Segment>>) -> Index {
         let views = segs.into_iter().zip(manifest.segs).map(|(seg, e)| SegView { seg, deleted: e.deleted }).collect();
-        Index { dir: dir.to_path_buf(), generation: manifest.generation, views }
+        Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new() }
+    }
+
+    /// 문서 고정 순위표(처음 부를 때 만든다).
+    fn static_rank(&self) -> Result<&StaticRank> {
+        if let Some(r) = self.ranks.get() {
+            return Ok(r);
+        }
+        let mut all: Vec<(i64, u64, u32, u32)> = Vec::with_capacity(self.views.iter().map(|v| v.seg.n_docs as usize).sum());
+        for (vi, v) in self.views.iter().enumerate() {
+            let t = v.seg.tables();
+            for local in 0..v.seg.n_docs {
+                let Some(rec) = t.doc(local) else { return corrupt("document out of range") };
+                all.push((rec.date, rec.doc_id, vi as u32, local));
+            }
+        }
+        if all.len() > u32::MAX as usize {
+            return Err(Error::Invalid("too many documents for one ranking".into()));
+        }
+        // 날짜 최신 > 문서 ID > 조각 > 번호(살아 있는 문서의 ID는 겹치지 않아 뒤 둘은 지운 문서끼리만 가른다).
+        all.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)).then(a.3.cmp(&b.3)));
+        let mut per_view: Vec<Vec<u32>> = self.views.iter().map(|v| vec![0; v.seg.n_docs as usize]).collect();
+        let mut inverse = Vec::with_capacity(all.len());
+        for (r, &(_, _, view, local)) in all.iter().enumerate() {
+            per_view[view as usize][local as usize] = r as u32;
+            inverse.push((view, local));
+        }
+        let _ = self.ranks.set(StaticRank { per_view, inverse });
+        Ok(self.ranks.get().expect("static rank was just set"))
+    }
+
+    /// 문서 하나의 앞에서부터 `n`개 일치 문장.
+    fn doc_sentences(&self, sets: &[(RoaringBitmap, Option<RoaringBitmap>)], view: u32, local: u32, n: usize) -> Result<Vec<SentenceRef>> {
+        let mut out = Vec::new();
+        if n == 0 {
+            return Ok(out);
+        }
+        let (matched, adjacent) = &sets[view as usize];
+        let seg = &*self.views[view as usize].seg;
+        let rec = seg.doc(local)?;
+        for sid in matched.range(rec.first_sid..rec.first_sid + rec.n_sent).take(n) {
+            out.push(SentenceRef { ord: sid - rec.first_sid, para: seg.para(sid)?, level: seg.level(sid)?, adjacent: adjacent.as_ref().is_none_or(|b| b.contains(sid)) });
+        }
+        Ok(out)
     }
 
     /// 목록 파일이 바뀌었으면 새 세대로 바꾼다(이미 연 조각은 다시 열지 않는다). 바뀌었으면 true.
@@ -458,11 +543,30 @@ impl Index {
     }
 
     fn search_inner(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
+        let ranking = self.rank_inner(query, opts)?;
+        let mut result = ranking.result;
+        if opts.refs_per_doc > 0 {
+            for (hit, &(view, local)) in result.hits.iter_mut().zip(&ranking.slots) {
+                hit.sentences = self.doc_sentences(&ranking.sets, view, local, opts.refs_per_doc)?;
+            }
+        }
+        Ok(result)
+    }
+
+    /// `search`와 같은 순위를 내되 미리보기 문장(`DocHit::sentences`)은 만들지 않는다. 전체 순위(`opts.top` 0)를
+    /// 낼 때 화면에 보일 문서만 `Ranking::sentences`로 미리보기를 만들면 문서 수만큼의 미리보기 비용이 들지 않는다.
+    /// `opts.refs_per_doc`은 쓰지 않는다.
+    pub fn rank(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
+        guard(|| self.rank_inner(query, opts))
+    }
+
+    fn rank_inner(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
         let mut budget = Budget::new(opts);
         budget.check()?;
         let parsed = self.resolve_inner(query, opts.split)?;
         let sets = self.eval_all(&parsed, &mut budget)?;
-        let mut found = Collector { top: opts.top, best: Vec::new(), total_docs: 0, adjacent_docs: 0 };
+        let static_rank = if opts.top == 0 && sets.iter().any(|(m, _)| !m.is_empty()) { Some(self.static_rank()?) } else { None };
+        let mut found = Collector { top: opts.top, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
         let mut total_sentences = 0u64;
         for (vi, (view, (matched, adjacent))) in self.views.iter().zip(&sets).enumerate() {
             if matched.is_empty() {
@@ -471,7 +575,7 @@ impl Index {
             total_sentences += matched.len();
             let tables = view.seg.tables();
             if opts.top == 0 {
-                found.best.reserve((matched.len().min(view.seg.n_docs as u64)) as usize);
+                found.all.reserve((matched.len().min(view.seg.n_docs as u64)) as usize);
             }
             // 붙어 있는 일치 문장은 일치 문장의 부분집합이고 둘 다 오름차순이라 나란히 훑는다.
             let mut adj = adjacent.as_ref().map(|b| b.iter().peekable());
@@ -479,7 +583,7 @@ impl Index {
             // 넘을 때만 문서 표를 찾는다. 일치 문장 수와 가장 높은 위계는 지역 변수에 모았다가 문서가 바뀔 때 적는다.
             let (mut doc_end, mut count, mut best) = (0u32, 0u32, u8::MAX);
             let mut cur: Option<Agg> = None;
-            let mut finish = |cur: &mut Option<Agg>, doc_end: u32, count: u32, best: u8| {
+            let mut finish = |cur: &mut Option<Agg>, doc_end: u32, count: u32, best: u8| -> Result<()> {
                 if let Some(mut a) = cur.take() {
                     let mut adjacent_hit = adj.is_none();
                     if let Some(it) = adj.as_mut() {
@@ -488,8 +592,9 @@ impl Index {
                         }
                     }
                     a.set(adjacent_hit, best, count);
-                    found.push(a);
+                    found.push(a)?;
                 }
+                Ok(())
             };
             for sid in matched {
                 let Some(lv) = tables.level(sid) else { return corrupt("matched sentence out of range") };
@@ -499,7 +604,7 @@ impl Index {
                     continue;
                 }
                 budget.tick()?;
-                finish(&mut cur, doc_end, count, best);
+                finish(&mut cur, doc_end, count, best)?;
                 let Some((local, rec)) = tables.doc_of(sid).and_then(|local| tables.doc(local).map(|r| (local, r))) else { return corrupt("document out of range") };
                 if sid < rec.first_sid || sid - rec.first_sid >= rec.n_sent {
                     return corrupt("sentence outside its document range");
@@ -508,28 +613,32 @@ impl Index {
                 (count, best) = (1, lv);
                 cur = Some(Agg { key: 0, doc_id: rec.doc_id, date: rec.date, view: vi as u32, local });
             }
-            finish(&mut cur, doc_end, count, best);
+            finish(&mut cur, doc_end, count, best)?;
         }
         budget.check()?;
         let (total_docs, adjacent_docs) = (found.total_docs, found.adjacent_docs);
-        let mut aggs = found.best;
-        if opts.top == 0 {
-            aggs.sort_unstable_by(order);
-        }
-        let mut hits = Vec::with_capacity(aggs.len());
-        for a in &aggs {
-            let mut sentences = Vec::new();
-            if opts.refs_per_doc > 0 {
-                let (matched, adjacent) = &sets[a.view as usize];
-                let seg = &*self.views[a.view as usize].seg;
-                let rec = seg.doc(a.local)?;
-                for sid in matched.range(rec.first_sid..rec.first_sid + rec.n_sent).take(opts.refs_per_doc) {
-                    sentences.push(SentenceRef { ord: sid - rec.first_sid, para: seg.para(sid)?, level: seg.level(sid)?, adjacent: adjacent.as_ref().is_none_or(|b| b.contains(sid)) });
-                }
+        let (mut hits, mut slots) = (Vec::new(), Vec::new());
+        if let Some(sr) = static_rank {
+            // 전체 순위: 정수 하나(질의 열쇠 + 고정 순위)로 정렬하고, 고정 순위에서 문서를 되찾는다.
+            let mut all = found.all;
+            all.sort_unstable();
+            hits.reserve(all.len());
+            slots.reserve(all.len());
+            for k in all {
+                let Some(&(view, local)) = sr.inverse.get(k as u32 as usize) else { return corrupt("static rank out of range") };
+                let Some(rec) = self.views.get(view as usize).and_then(|v| v.seg.tables().doc(local)) else { return corrupt("document out of range") };
+                let a = Agg { key: (k >> 32) as u64, doc_id: rec.doc_id, date: rec.date, view, local };
+                hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
+                slots.push((view, local));
             }
-            hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences });
+        } else {
+            for a in &found.best {
+                hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
+                slots.push((a.view, a.local));
+            }
         }
-        Ok(SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation })
+        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
+        Ok(Ranking { result, slots, sets })
     }
 
     /// 일치 문장 전부(문서 ID, 문장 순번 오름차순). `opts.top`·`refs_per_doc`은 쓰지 않는다.
