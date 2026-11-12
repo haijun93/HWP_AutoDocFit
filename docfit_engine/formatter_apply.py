@@ -834,7 +834,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         return bind_function(_본문기호_글꼴, _docfit_namespace)
     if _docfit_symbol == '붙임글꼴_hwpx_처리':
         def 붙임글꼴_hwpx_처리(source, target=None, selections=None):
-            """'붙임 …'부터 '끝.'까지 묶음의 모든 문장을 항목기호 ㅇ와 같은 글꼴 종류·크기로 맞춘다(글은 그대로)."""
+            """'붙임 …'부터 '끝.'까지 묶음의 모든 문장을 항목기호 ㅇ와 같은 글꼴·크기로 맞추고 왼쪽 정렬과 끝 공백 제거를 적용한다."""
             with open_hwpx_safely(source) as z:
                 contents = {n: z.read(n) for n in z.namelist()}
             for name, data in contents.items():
@@ -964,7 +964,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         return bind_function(붙임글꼴_hwpx_처리, _docfit_namespace)
     if _docfit_symbol == '글자서식_선행적용':
         def 글자서식_선행적용(원본문서경로, 별표위첨자=True, 붙임글꼴=True, 현재문서_기준=True, 변경알림=None):
-            """별표 위첨자·붙임 글꼴 통일을 한 번에 처리해 결과를 한 번만 다시 연다(둘 다 글자 모양만 바꾸는 단계)."""
+            """별표 위첨자·붙임 글꼴 통일을 한 번에 처리해 결과를 한 번만 다시 연다(붙임은 정렬·끝 공백도 정리)."""
             return 제목붙임_선행적용(
                 원본문서경로, 현재문서_기준=현재문서_기준, 변경알림=변경알림,
                 처리목록=((별표위첨자, '별표 위첨자', 별표위첨자_hwpx_처리, 'asterisk.hwpx'),
