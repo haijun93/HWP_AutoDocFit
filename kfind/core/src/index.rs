@@ -479,13 +479,24 @@ impl Index {
         guard(|| self.views.iter().try_for_each(|v| v.seg.verify()))
     }
 
-    /// 살아 있는 문장에 이 낱말(어절, 비교형)이 있는지.
+    /// 살아 있는 문서에 이 낱말(어절, 비교형)이 있는지. 낱말 비트맵은 조각 안 문서 번호이고(형식 v3), 문서는 통째로
+    /// 지워지므로 첫 문장이 지워지지 않은 문서가 하나라도 있으면 살아 있다.
     fn has_word(&self, w: &str) -> Result<bool> {
         let key = word_key(w);
         for v in &self.views {
             if let Some(bm) = v.seg.posting(&key)? {
-                if v.deleted.is_empty() || !bm.is_subset(&v.deleted) {
-                    return Ok(true);
+                if v.deleted.is_empty() {
+                    if !bm.is_empty() {
+                        return Ok(true);
+                    }
+                    continue;
+                }
+                let tables = v.seg.tables();
+                for local in &bm {
+                    let Some(rec) = tables.doc(local) else { return corrupt("word posting: document out of range") };
+                    if !v.deleted.contains(rec.first_sid) {
+                        return Ok(true);
+                    }
                 }
             }
         }

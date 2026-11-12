@@ -44,14 +44,26 @@ fn inflected_only_words_still_split() {
 
 #[test]
 fn deleted_inflected_forms_do_not_count() {
-    // 줄기로 알아본 근거 어절이 모두 지워지면 더는 나누지 않는다(살아 있는 문장만 낱말 판정에 쓴다).
-    let dir = build("stem-split-del", &[(1, &["예산을 쓴다."]), (2, &["집행 보고."])]);
-    let index = Index::open(&dir).unwrap();
-    assert_eq!(words(&index, "예산집행"), "예산집행=예산+집행");
+    // 줄기로 알아본 근거 어절이 모두 지워지면 더는 나누지 않는다(살아 있는 문서만 낱말 판정에 쓴다).
+    // 형식 v3: 낱말 비트맵은 문서 번호라 합치기에서 문서 번호 옮기기도 함께 본다.
+    let dir = build("stem-split-del", &[(1, &["예산을 쓴다."]), (2, &["집행 보고."]), (3, &["새 예산을 본다."]), (4, &["기타 문장."])]);
+    let words_now = || words(&Index::open(&dir).unwrap(), "예산집행");
+    assert_eq!(words_now(), "예산집행=예산+집행");
     let mut w = Writer::open(&dir, WriterOptions::default()).unwrap();
     w.delete_document(1).unwrap();
     w.commit().unwrap();
-    drop(w);
-    let index = Index::open(&dir).unwrap();
-    assert_eq!(words(&index, "예산집행"), "예산집행");
+    assert_eq!(words_now(), "예산집행=예산+집행", "문서 3에 남아 있다");
+    // 문서 4를 고쳐 새 조각에 넣고 모두 합친다: 문서 번호가 바뀐 뒤에도 같은 판정.
+    w.add_document(4, 0, &[Sentence { para: 0, level: 1, text: "예산의 쓰임." }]).unwrap();
+    w.commit().unwrap();
+    assert!(w.merge_all().unwrap());
+    assert_eq!(w.num_segments(), 1);
+    assert_eq!(words_now(), "예산집행=예산+집행");
+    w.delete_document(3).unwrap();
+    w.delete_document(4).unwrap();
+    w.commit().unwrap();
+    assert_eq!(words_now(), "예산집행", "근거 어절이 모두 지워짐(합치기 전)");
+    assert!(w.merge_all().unwrap());
+    assert_eq!(words_now(), "예산집행", "근거 어절이 모두 지워짐(합친 뒤)");
+    assert_eq!(words(&Index::open(&dir).unwrap(), "집행보고"), "집행보고=집행+보고");
 }

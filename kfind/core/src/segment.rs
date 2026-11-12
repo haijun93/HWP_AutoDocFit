@@ -8,7 +8,7 @@
 //!   32 본문 해시 u64(FNV-1a 64, 머리글 뒤 전체)        40  파일 길이 u64
 //!   48 구역 표 10 × (위치 u64, 길이 u64)               208 머리글 해시 u64(0..208)
 //! 구역
-//!   POST     조각·낱말별 문장 번호 roaring 비트맵(표준 직렬화)을 이어 붙임
+//!   POST     열쇠별 roaring 비트맵(표준 직렬화)을 이어 붙임: 2·3글자 조각은 문장 번호, 낱말(어절)은 조각 안 문서 번호
 //!   DICT     fst: 열쇠 → POST 안 위치. 열쇠 = 2·3글자 조각의 UTF-8, 또는 0x00 + 낱말(어절) UTF-8
 //!   TEXT     문장 비교형을 조각 글자 표 번호로 부호화해 이어 붙임(4글자 이상 낱말 확인용, `textcode` 참고)
 //!   TEXT_OFF (문장 수 + 1) × u32: 문장의 TEXT 안 시작 위치
@@ -19,7 +19,9 @@
 //!   ALPHA    글자 수 × (글자 u32, 빈도 u64): 번호 순서(빈도 많은 순). 합칠 때 빈도를 더해 새 표를 만든다.
 //!   ALPHA_IX 글자 수 × (글자 u32, 번호 u32): 글자 오름차순(검색어 부호화용 이진 탐색, 열 때 표를 만들지 않는다)
 //! ```
-//! 형식 v1(KC1)과 다른 점: TEXT를 UTF-8 대신 조각 글자 표 부호로, TEXT_OFF를 u64 대신 u32로 쓴다(KB2, 디스크 축소).
+//! 형식 v1(KC1)과 다른 점: TEXT를 UTF-8 대신 조각 글자 표 부호로, TEXT_OFF를 u64 대신 u32로 쓴다(v2, KB2 디스크 축소).
+//! v3(KB3): 낱말(어절) 비트맵을 문장 번호 대신 문서 번호로 쓴다. 낱말 비트맵은 붙여 쓴 검색어 나누기의 "살아 있는 문서에
+//! 이 낱말이 있는가" 판정에만 쓰이고, 지우기는 언제나 문서 통째라 판정 결과는 같다(3만 문서 합성 자료 28.2 → 약 2MB).
 //! 한 문서의 문장은 조각 안에서 이어져 있고, 문서 안 순번 = 문장 번호 - 첫 문장 번호.
 use crate::fold::FOLD_RULE_VERSION;
 use crate::textcode::{Alphabet, MAX_CODES, decode_codes, put_code};
@@ -33,7 +35,7 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 const MAGIC: &[u8; 8] = b"KFSEG\r\n\x1a";
 const HEADER_LEN: usize = 216;
 const HEADER_HASH: usize = HEADER_LEN - 8;
@@ -331,7 +333,8 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
     let mut cps: Vec<u64> = Vec::new();
     let mut char_counts: FxMap<u64, u64> = FxMap::default();
     let mut sid: u32 = 0;
-    for d in docs.clone() {
+    for (local, d) in docs.clone().enumerate() {
+        let local = local as u32;
         let mut start = 0usize;
         let mut tok = 0usize;
         for &end in &d.sent_end {
@@ -356,13 +359,14 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
                 tok += 1;
                 let w = &d.text.as_bytes()[a..b];
                 if w.len() <= MAX_WORD_BYTES && d.text[a..b].chars().nth(crate::query::MIN_WORD_CHARS - 1).is_some() {
+                    // 낱말은 문서 번호로 적는다(같은 문서 안 중복은 try_push가 거부한다).
                     match words.get_mut(w) {
                         Some(bm) => {
-                            let _ = bm.try_push(sid);
+                            let _ = bm.try_push(local);
                         }
                         None => {
                             let mut bm = RoaringBitmap::new();
-                            let _ = bm.try_push(sid);
+                            let _ = bm.try_push(local);
                             words.insert(w.into(), bm);
                         }
                     }
@@ -703,13 +707,15 @@ pub(crate) struct MergedSource {
     pub base: u32,
 }
 
-/// 여러 조각의 살아 있는 문장만 모아 새 조각 하나로 쓴다. 비트맵은 다시 만들지 않고 문장 번호만 옮겨 적는다.
+/// 여러 조각의 살아 있는 문장만 모아 새 조각 하나로 쓴다. 비트맵은 다시 만들지 않고 문장 번호(낱말은 문서 번호)만 옮겨 적는다.
 /// 살아 있는 문장이 없으면 파일을 만들지 않고 None을 돌려준다.
 pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, RoaringBitmap)]) -> Result<(Option<(SegMeta, Option<Vec<u8>>)>, Vec<MergedSource>)> {
     const GONE: u32 = u32::MAX;
     let mut remaps: Vec<Vec<u32>> = Vec::with_capacity(sources.len());
     let mut out_sources = Vec::with_capacity(sources.len());
+    let mut doc_remaps: Vec<Vec<u32>> = Vec::with_capacity(sources.len());
     let mut next: u64 = 0;
+    let mut next_doc: u32 = 0;
     for (seg, deleted) in sources {
         let base = next;
         let mut remap = vec![GONE; seg.n_sent as usize];
@@ -722,6 +728,16 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
         if next >= u32::MAX as u64 {
             return Err(Error::Invalid("too many sentences to merge into one segment".into()));
         }
+        // 문서 번호 옮기기: 살아 있는 문서(첫 문장이 지워지지 않은 문서)만 아래 문서 기록과 같은 순서로 번호를 받는다.
+        let mut doc_remap = vec![GONE; seg.n_docs as usize];
+        for (local, slot) in doc_remap.iter_mut().enumerate() {
+            let d = seg.doc(local as u32)?;
+            if d.n_sent > 0 && remap[d.first_sid as usize] != GONE {
+                *slot = next_doc;
+                next_doc += 1;
+            }
+        }
+        doc_remaps.push(doc_remap);
         remaps.push(remap);
         out_sources.push(MergedSource { id: seg.id, deleted: deleted.clone(), base: base as u32 });
     }
@@ -749,8 +765,9 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
             ivs.extend_from_slice(values);
             ivs.sort_unstable_by_key(|iv| iv.index);
             let mut bm = RoaringBitmap::new();
+            let is_word = key.first() == Some(&WORD_PREFIX);
             for iv in &ivs {
-                let remap = &remaps[iv.index];
+                let remap = if is_word { &doc_remaps[iv.index] } else { &remaps[iv.index] };
                 let src = sources[iv.index].0.posting_at(iv.value)?;
                 for sid in src {
                     match remap.get(sid as usize) {
@@ -758,7 +775,7 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
                             let _ = bm.try_push(n);
                         }
                         Some(_) => {}
-                        None => return corrupt(format!("segment {}: posting sentence {sid} out of range", sources[iv.index].0.id)),
+                        None => return corrupt(format!("segment {}: posting entry {sid} out of range", sources[iv.index].0.id)),
                     }
                 }
             }
