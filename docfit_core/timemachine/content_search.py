@@ -1447,7 +1447,8 @@ class ContentSearchIndex:
                 try:
                     aggregate_rows = self.db.execute(f"""
                         WITH scored AS MATERIALIZED (
-                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level, level_rank, body,
+                            -- 원문 body·level은 아래 집계에서 쓰지 않으므로 담지 않는다(행 복사 비용만 든다).
+                            SELECT rowid AS paragraph_rowid, path, paragraph_index, level_rank,
                                    lower(body) AS body_folded, bm25(content_paragraph_fts) AS bm25_rank
                             FROM content_paragraph_fts
                             WHERE content_paragraph_fts MATCH ?
