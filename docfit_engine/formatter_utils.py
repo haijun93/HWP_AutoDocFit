@@ -455,6 +455,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             global _단계시간표
             지금 = time.perf_counter()
             _단계시간표 = {'시작': 지금, '현재': '준비', '현재시작': 지금, '합': {}, '순서': [], '기록': []}
+            from docfit_core import com_perf
+            com_perf.start_document()
         return bind_function(단계시간_시작, _docfit_namespace)
     if _docfit_symbol == '_단계시간_닫기':
         def _단계시간_닫기(표, 지금):
@@ -480,6 +482,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             지금 = time.perf_counter()
             _단계시간_닫기(표, 지금)
             표['현재'], 표['현재시작'] = 이름, 지금
+            from docfit_core import com_perf
+            com_perf.set_stage(이름)
         return bind_function(단계시간_구간, _docfit_namespace)
     if _docfit_symbol == '단계시간_끝':
         def 단계시간_끝():

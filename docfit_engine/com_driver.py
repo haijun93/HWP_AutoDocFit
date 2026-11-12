@@ -273,6 +273,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             from docfit_core import hwp_process
             hwp_process.take_registered()   # 같은 스레드의 이전 등록이 섞이지 않게 비운다
             hwp = 한글_COM_인스턴스_생성(독립=True)
+            # 개발용 COM 계측(DOCFIT_COM_PERF=1일 때만 대리 객체로 감싼다. 평소에는 그대로).
+            from docfit_core.com_perf import wrap_if_enabled as _com_perf_wrap
+            hwp = _com_perf_wrap(hwp)
             # 이 작업 창의 PID를 객체에 묶어 둔다 → 작업창_분리 때 소유를 정확히 풀 수 있다(SM7 가)
             hwp_process.bind_owner(hwp, hwp_process.take_registered())
             hwp.XHwpWindows.Item(0).Visible = True
