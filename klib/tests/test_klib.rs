@@ -101,6 +101,28 @@ fn test_box_crud() {
     assert!(db.box_get(b1).unwrap().is_none());
 }
 
+/// kvf 가상 폴더 창이 직접 읽는 box 5열과 item 9열의 이름·순서를 고정한다.
+#[test]
+fn test_kvf_read_column_contract() {
+    let ctx = TestContext::new("kvf_columns");
+    let db = Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let conn = db.connection();
+
+    let box_columns = {
+        let mut stmt = conn.prepare("SELECT id, name, description, created_at, updated_at FROM box LIMIT 0").unwrap();
+        stmt.column_names().map(str::to_string).collect::<Vec<_>>()
+    };
+    assert_eq!(box_columns, ["id", "name", "description", "created_at", "updated_at"]);
+
+    let item_columns = {
+        let mut stmt = conn.prepare(
+            "SELECT id, box_id, kind, source_path, display_name, space, created_at, origin_path, managed_path FROM item LIMIT 0",
+        ).unwrap();
+        stmt.column_names().map(str::to_string).collect::<Vec<_>>()
+    };
+    assert_eq!(item_columns, ["id", "box_id", "kind", "source_path", "display_name", "space", "created_at", "origin_path", "managed_path"]);
+}
+
 #[test]
 fn test_item_types_and_copy() {
     let ctx = TestContext::new("item_types");

@@ -17,6 +17,9 @@
 
 <p align="center"><img src="docs/media/cardnews/02-work-modes.png" alt="문서 편집 작업 방식 선택" width="860"></p>
 
+
+가상 폴더 창(`kvf.exe`)에서 자료함을 빠르게 열고 영역별로 찾아볼 수 있습니다. DB의 읽기 구조는 klib 시험으로 고정하며, R6·R7 실기 확인과 R9·R10 자원 측정은 아직 0회입니다.
+
 <!-- DEMO:START -->
 ## 시연 영상
 
