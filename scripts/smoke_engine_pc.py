@@ -25,10 +25,12 @@ def main():
     from docfit_engine.runtime import session_for
 
     source = args.source.resolve(strict=True)
-    validate_hwpx(source)
+    is_hwpx = source.suffix.lower() == '.hwpx'
+    if is_hwpx:
+        validate_hwpx(source)
     before = sha256(source.read_bytes()).hexdigest()
     args.out.mkdir(parents=True, exist_ok=False)
-    copied = (args.out / 'source.hwpx').resolve()
+    copied = (args.out / ('source' + source.suffix.lower())).resolve()
     shutil.copy2(source, copied)
     ns = runpy.run_path(str(repo / 'hwp-auto-docfit.py'), run_name='engine_smoke')
     namespace = ns['작업_실행'].__globals__
@@ -47,7 +49,11 @@ def main():
     for output in outputs:
         validate_hwpx(output)
         inspections.append(inspect_hwpx(output))
-    original_text = ''.join(inspect_hwpx(copied).text.split())
+    # TXT 등은 한/글이 변환해 연다. 글자 보존 비교는 원문 텍스트를 기준으로 한다(서식 변환으로 다를 수 있다).
+    if is_hwpx:
+        original_text = ''.join(inspect_hwpx(copied).text.split())
+    else:
+        original_text = ''.join(copied.read_text(encoding='utf-8-sig', errors='replace').split())
     report = {
         'version': ns['APP_VERSION'], 'mode': args.mode,
         'seconds': round(perf_counter() - started, 3),
