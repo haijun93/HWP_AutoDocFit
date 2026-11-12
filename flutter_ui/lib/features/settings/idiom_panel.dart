@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/instant_search.dart';
 import 'kiosk_theme.dart';
 
 /// 설정의 '글자 상용구'·'본문 상용구' 관리(알파, 2026-10-15).
@@ -29,7 +30,8 @@ class _IdiomPanelState extends State<IdiomPanel> {
   bool busy = true;
   String? error;
   String? notice;
-  final search = TextEditingController();
+  /// 2글자부터 실시간, 1글자는 Enter로 거른다(ISUI3).
+  final search = InstantFilterController();
   final keyInput = TextEditingController();
   final valueInput = TextEditingController();
 
@@ -41,11 +43,17 @@ class _IdiomPanelState extends State<IdiomPanel> {
   @override
   void initState() {
     super.initState();
+    search.addListener(_onSearch);
     request('get');
+  }
+
+  void _onSearch() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    search.removeListener(_onSearch);
     search.dispose();
     keyInput.dispose();
     valueInput.dispose();
@@ -226,7 +234,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
     final locked = busy || widget.locked;
     final available = data['available'] != false;
     final directConfig = data['source'] == 'hwpx';
-    final query = search.text.trim();
+    final query = search.filterQuery;
     final all = entries;
     final visible = [
       for (var i = 0; i < all.length; i++)
@@ -351,8 +359,9 @@ class _IdiomPanelState extends State<IdiomPanel> {
           children: [
             Expanded(
               child: TextField(
-                controller: search,
-                onChanged: (_) => setState(() {}),
+                key: Key('idiom-search-${widget.body}'),
+                controller: search.text,
+                onSubmitted: (_) => search.submit(),
                 decoration: InputDecoration(
                   prefixIcon: const Icon(Icons.search, color: Kiosk.faint),
                   hintText: '상용구 찾기 (${all.length}개)',

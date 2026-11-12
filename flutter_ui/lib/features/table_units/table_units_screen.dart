@@ -12,6 +12,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/table_units_api.dart';
 
+import '../../core/instant_search.dart';
+
 import 'table_grid_preview.dart';
 
 import 'table_template_order.dart';
@@ -68,9 +70,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
   String _selectedCategory = '전체';
 
-  String _searchQuery = '';
+  /// 2글자부터 실시간, 1글자는 Enter로 거른다(ISUI3). 거를 검색어는 [InstantFilterController.filterQuery].
 
-  final TextEditingController _searchController = TextEditingController();
+  final InstantFilterController _search = InstantFilterController();
 
 
 
@@ -118,7 +120,17 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
     _api = TableUnitsApi(widget.api);
 
+    _search.addListener(_onSearch);
+
     _loadList();
+
+  }
+
+
+
+  void _onSearch() {
+
+    if (mounted) setState(() {});
 
   }
 
@@ -128,7 +140,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
   void dispose() {
 
-    _searchController.dispose();
+    _search.removeListener(_onSearch);
+
+    _search.dispose();
 
     _galleryScrollController.dispose();
 
@@ -852,7 +866,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
   List<TableTemplateInfo> _getFilteredTemplates() {
     if (_listData == null) return const [];
-    final query = _searchQuery.trim();
+    final query = _search.filterQuery;
     // 즐겨찾기·최근 사용은 사용자가 정한 순서/최근 순서 그대로(검색어로 거르기만 한다).
     if (_selectedCategory == '즐겨찾기') {
       return filterTemplateSearch(
@@ -1206,7 +1220,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                 key: const Key('searchTextField'),
 
-                controller: _searchController,
+                controller: _search.text,
 
                 decoration: InputDecoration(
 
@@ -1232,7 +1246,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   ),
 
-                  suffixIcon: _searchQuery.isNotEmpty
+                  suffixIcon: _search.text.text.isNotEmpty
 
                       ? IconButton(
 
@@ -1242,9 +1256,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                           onPressed: () {
 
-                            _searchController.clear();
+                            _search.text.clear();
 
-                            setState(() => _searchQuery = '');
+                            setState(() {});
 
                           },
 
@@ -1268,11 +1282,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                 style: const TextStyle(fontSize: 12.5),
 
-                onChanged: (val) {
+                // 지우기 단추 표시만 바꾼다. 목록 거르기는 _search가 맡는다.
 
-                  setState(() => _searchQuery = val);
+                onChanged: (_) => setState(() {}),
 
-                },
+                onSubmitted: (_) => _search.submit(),
 
               ),
 
