@@ -1591,7 +1591,7 @@ class ContentSearchIndex:
         context_rows = {}
         if context_paths:
             for row in self._select_paragraphs_for_paths(
-                    "rowid AS paragraph_rowid, path, paragraph_index, level_rank, body", context_paths):
+                    "rowid AS paragraph_rowid, path, paragraph_index, body, level, level_rank", context_paths):
                 context_rows.setdefault(row["path"], []).append(row)
         folded_terms = {term.casefold() for term in terms}
         for item in prepared:
@@ -1658,7 +1658,8 @@ class ContentSearchIndex:
             crumb_paths = {item["_crumb"][0] for item in final_items if item["_crumb"][1] is not None}
             crumb_rows = {}
             if crumb_paths:
-                for row in self._breadcrumb_rows(crumb_paths):
+                # 문맥 조사에서 이미 읽은 문서의 문단은 다시 읽지 않는다(같은 함수·같은 순서로 읽은 행).
+                for row in self._breadcrumb_rows(crumb_paths, known=context_rows):
                     crumb_rows.setdefault(row["path"], []).append(row)
             for item in final_items:
                 raw_path, chosen = item.pop("_crumb")
@@ -1785,11 +1786,19 @@ class ContentSearchIndex:
                 if opened_here and self.db.in_transaction:
                     self.db.commit()
 
-    def _breadcrumb_rows(self, paths):
-        """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다."""
+    def _breadcrumb_rows(self, paths, known=None):
+        """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다.
+
+        known: 경로별로 이미 읽은 문단 행({path: [row…]}, path·paragraph_index·body·level·level_rank 포함).
+        여기 있는 경로는 다시 읽지 않고 그 행을 쓴다.
+        """
         paths = list(paths)
-        rows = self._select_paragraphs_for_paths(
-            "path,paragraph_index,body,level,level_rank", paths)
+        known = known or {}
+        rows = [row for path in paths for row in known.get(path, ())]
+        missing = [path for path in paths if path not in known]
+        if missing:
+            rows += self._select_paragraphs_for_paths(
+                "path,paragraph_index,body,level,level_rank", missing)
         cells = {}
         for start in range(0, len(paths), 500):
             batch = paths[start:start + 500]

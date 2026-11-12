@@ -51,5 +51,32 @@ class MatchingPathsTests(unittest.TestCase):
                 index.close()
 
 
+class BreadcrumbRowsReuseTests(unittest.TestCase):
+    def test_known_rows_give_same_breadcrumb_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = _synthetic_index(tmp, documents=8, paragraphs=6)
+            try:
+                paths = sorted({r[0] for r in index.db.execute("SELECT path FROM content_paragraph_fts")})
+                index.db.execute("INSERT INTO content_table_cells(path,paragraph_index,cell_id) VALUES(?,?,?)",
+                                 (paths[1], 0, 7))
+                expected = index._breadcrumb_rows(paths)
+                known = {}
+                for row in index._select_paragraphs_for_paths(
+                        "rowid AS paragraph_rowid, path, paragraph_index, body, level, level_rank", paths[:5]):
+                    known.setdefault(row["path"], []).append(row)
+
+                def by_path(rows):
+                    grouped = {}
+                    for row in rows:
+                        grouped.setdefault(row["path"], []).append(
+                            {k: row[k] for k in ("paragraph_index", "body", "level", "level_rank", "table_cell_id")})
+                    return grouped
+
+                self.assertEqual(by_path(index._breadcrumb_rows(paths, known=known)), by_path(expected))
+                self.assertEqual(by_path(expected)[paths[1]][0]["table_cell_id"], 7)
+            finally:
+                index.close()
+
+
 if __name__ == "__main__":
     unittest.main()
