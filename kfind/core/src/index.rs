@@ -283,12 +283,12 @@ fn remove_deleted(view: &SegView, mut sets: SegSets) -> SegSets {
     sets
 }
 
-/// 캐시에 담긴 판정에서 지운 문장을 뺀 사본.
-fn live_copy(view: &SegView, sets: &SegSets) -> SegSets {
+/// 캐시에 담긴 판정에서 지운 문장을 뺀 것. 지운 문장이 없으면 복사하지 않고 같이 쓴다.
+fn live_share(view: &SegView, sets: &Arc<SegSets>) -> Arc<SegSets> {
     if view.deleted.is_empty() {
         return sets.clone();
     }
-    (&sets.0 - &view.deleted, sets.1.as_ref().map(|sa| sa - &view.deleted))
+    Arc::new((&sets.0 - &view.deleted, sets.1.as_ref().map(|sa| sa - &view.deleted)))
 }
 
 struct Agg {
@@ -384,7 +384,7 @@ pub struct Ranking {
     /// hits와 같은 순서의 (조각, 조각 안 문서 번호).
     slots: Vec<(u32, u32)>,
     /// 조각별 (일치 문장, 붙어 있는 일치 문장).
-    sets: Vec<(RoaringBitmap, Option<RoaringBitmap>)>,
+    sets: Vec<Arc<SegSets>>,
 }
 
 impl Ranking {
@@ -456,12 +456,12 @@ impl Index {
     }
 
     /// 문서 하나의 앞에서부터 `n`개 일치 문장.
-    fn doc_sentences(&self, sets: &[(RoaringBitmap, Option<RoaringBitmap>)], view: u32, local: u32, n: usize) -> Result<Vec<SentenceRef>> {
+    fn doc_sentences(&self, sets: &[Arc<SegSets>], view: u32, local: u32, n: usize) -> Result<Vec<SentenceRef>> {
         let mut out = Vec::new();
         if n == 0 {
             return Ok(out);
         }
-        let (matched, adjacent) = &sets[view as usize];
+        let (matched, adjacent) = &*sets[view as usize];
         let seg = &*self.views[view as usize].seg;
         let rec = seg.doc(local)?;
         for sid in matched.range(rec.first_sid..rec.first_sid + rec.n_sent).take(n) {
@@ -578,16 +578,16 @@ impl Index {
         Ok(parsed)
     }
 
-    fn eval_all(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<SegSets>> {
+    fn eval_all(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
         if parsed.words.is_empty() {
             budget.check()?;
-            return Ok(self.views.iter().map(|_| (RoaringBitmap::new(), None)).collect());
+            return Ok(self.views.iter().map(|_| Arc::new((RoaringBitmap::new(), None))).collect());
         }
         let Some(cache) = &self.cache else {
             let mut out = Vec::with_capacity(self.views.len());
             for v in &self.views {
                 budget.check()?;
-                out.push(remove_deleted(v, eval_seg(&v.seg, &parsed.words, None, budget)?));
+                out.push(Arc::new(remove_deleted(v, eval_seg(&v.seg, &parsed.words, None, budget)?)));
             }
             return Ok(out);
         };
@@ -602,14 +602,14 @@ impl Index {
             budget.check()?;
             let raw = match plan {
                 Plan::Reuse(s) => {
-                    out.push(live_copy(v, &s));
+                    out.push(live_share(v, &s));
                     continue;
                 }
                 Plan::Narrow(prev) => eval_seg(&v.seg, &parsed.words, Some(&prev.0), budget)?,
                 Plan::Fresh => eval_seg(&v.seg, &parsed.words, None, budget)?,
             };
             let raw = Arc::new(raw);
-            out.push(live_copy(v, &raw));
+            out.push(live_share(v, &raw));
             fresh.push((*sk, raw));
         }
         lock_cache(cache).store(&key, &parsed.words, fresh);
@@ -657,10 +657,11 @@ impl Index {
         budget.check()?;
         let parsed = self.resolve_inner(query, opts.split)?;
         let sets = self.eval_all(&parsed, &mut budget)?;
-        let static_rank = if opts.top == 0 && sets.iter().any(|(m, _)| !m.is_empty()) { Some(self.static_rank()?) } else { None };
+        let static_rank = if opts.top == 0 && sets.iter().any(|s| !s.0.is_empty()) { Some(self.static_rank()?) } else { None };
         let mut found = Collector { top: opts.top, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
         let mut total_sentences = 0u64;
-        for (vi, (view, (matched, adjacent))) in self.views.iter().zip(&sets).enumerate() {
+        for (vi, (view, sets_v)) in self.views.iter().zip(&sets).enumerate() {
+            let (matched, adjacent) = &**sets_v;
             if matched.is_empty() {
                 continue;
             }
@@ -745,7 +746,8 @@ impl Index {
         let parsed = self.resolve_inner(query, opts.split)?;
         let sets = self.eval_all(&parsed, &mut budget)?;
         let (mut total_sentences, mut total_docs) = (0u64, 0usize);
-        for (view, (matched, _)) in self.views.iter().zip(&sets) {
+        for (view, sets_v) in self.views.iter().zip(&sets) {
+            let matched = &sets_v.0;
             if matched.is_empty() {
                 continue;
             }
@@ -774,7 +776,8 @@ impl Index {
             let parsed = self.resolve_inner(query, opts.split)?;
             let sets = self.eval_all(&parsed, &mut budget)?;
             let mut out = Vec::new();
-            for (view, (matched, adjacent)) in self.views.iter().zip(&sets) {
+            for (view, sets_v) in self.views.iter().zip(&sets) {
+                let (matched, adjacent) = &**sets_v;
                 let seg = &*view.seg;
                 for sid in matched {
                     budget.tick()?;
