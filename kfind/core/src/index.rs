@@ -1,6 +1,6 @@
 //! 읽기 쪽: 목록 파일의 한 세대를 열어 질의한다. 쓰는 쪽이 목록을 바꿔도 이미 연 세대는 그대로 유효하다.
 use crate::manifest::Manifest;
-use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, char_bounds, parse_query, split_bigram, split_dict};
+use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
 use roaring::RoaringBitmap;
@@ -499,12 +499,15 @@ impl Index {
             return Ok(None);
         }
         let mut failed: Option<Error> = None;
-        let first = split_dict(w, |p| match self.has_word(p) {
-            Ok(found) => found,
-            Err(e) => {
-                failed.get_or_insert(e);
-                false
-            }
+        // 조각은 색인 어절이거나, 조사·어미가 붙은 꼴로만 나온 줄기(KB3: "예산"이 "예산을"로만 나와도 나눈다).
+        let first = split_dict(w, |p| {
+            is_word_or_stem(p, |x| match self.has_word(x) {
+                Ok(found) => found,
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    false
+                }
+            })
         });
         if let Some(e) = failed {
             return Err(e);

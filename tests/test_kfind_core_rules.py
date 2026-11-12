@@ -71,6 +71,16 @@ class OracleTests(unittest.TestCase):
         self.assertIsNone(oracle.split_deep("프로그램", vocab))
         self.assertIsNone(oracle.split_deep("예산을집행", vocab))
 
+    def test_split_accepts_stems_of_inflected_words(self):
+        # KB3: 조각 낱말이 조사·어미가 붙은 꼴로만 색인에 있어도 줄기로 알아본다(Rust와 같은 꼬리 목록 파일).
+        vocab = {"예산을", "집행한다", "계획의", "집행부"}
+        self.assertEqual(oracle.split_deep("예산집행", vocab), ["예산", "집행"])
+        self.assertEqual(oracle.split_deep("예산집행계획", vocab), ["예산", "집행", "계획"])
+        self.assertEqual(oracle.split_deep("집행부예산", vocab), ["집행부", "예산"])
+        self.assertIsNone(oracle.split_deep("행부예산", vocab))
+        self.assertIn("을", oracle.STEM_SUFFIXES)
+        self.assertIn("한다", oracle.STEM_SUFFIXES)
+
     def test_broad_match_and_adjacent_first(self):
         docs = [
             {"doc": 1, "date": 1, "sents": [(0, 8, "예산 편성과 집행 계획을 세운다.")]},

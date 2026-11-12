@@ -45,6 +45,29 @@ pub fn parse_query(q: &str) -> ParsedQuery {
     out
 }
 
+/// 줄기 꼬리(조사·어미) 목록 원문. 형식은 파일 머리말 참고.
+const STEM_SUFFIXES_TXT: &str = include_str!("stem_suffixes.txt");
+
+/// 붙여 쓴 검색어 나누기의 줄기 꼬리 목록: 조각 후보 p가 색인 어절로 없어도 p + 꼬리가 색인 어절이면 낱말로 본다.
+pub fn stem_suffixes() -> &'static [&'static str] {
+    static LIST: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    LIST.get_or_init(|| STEM_SUFFIXES_TXT.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect())
+}
+
+/// 색인 낱말 방식의 낱말 판정: 어절 그대로이거나, 어절에서 조사·어미 꼬리를 뗀 줄기.
+pub(crate) fn is_word_or_stem(p: &str, mut is_word: impl FnMut(&str) -> bool) -> bool {
+    if is_word(p) {
+        return true;
+    }
+    let mut buf = String::with_capacity(p.len() + 16);
+    stem_suffixes().iter().any(|s| {
+        buf.clear();
+        buf.push_str(p);
+        buf.push_str(s);
+        is_word(&buf)
+    })
+}
+
 pub(crate) fn char_bounds(w: &str) -> Vec<usize> {
     w.char_indices().map(|(i, _)| i).chain([w.len()]).collect()
 }
@@ -159,5 +182,20 @@ mod tests {
         // 물러나기: "예산집" 뒤 "행"이 남아 실패하면 "예산"으로.
         let dict2 = ["예산", "예산집", "집행"];
         assert_eq!(split_dict("예산집행", |s| dict2.contains(&s)).unwrap(), ["예산", "집행"]);
+    }
+
+    /// KB3: 조각 낱말이 조사·어미가 붙은 꼴로만 색인에 있어도 줄기로 알아본다.
+    #[test]
+    fn dict_split_accepts_stems_of_inflected_words() {
+        let dict = ["예산을", "집행한다", "계획의", "주민센터"];
+        let is = |s: &str| is_word_or_stem(s, |x| dict.contains(&x));
+        // 어절 그대로만 보면 나뉘지 않는다(KC1 남은 문제).
+        assert!(split_dict("예산집행", |s| dict.contains(&s)).is_none());
+        assert_eq!(split_dict("예산집행", is).unwrap(), ["예산", "집행"]);
+        assert_eq!(split_dict("예산집행계획", is).unwrap(), ["예산", "집행", "계획"]);
+        // 꼬리 목록에 없는 덧붙임("센터" → "주민센터"의 앞 "주민"은 줄기가 아니다)은 받지 않는다.
+        assert!(split_dict("주민예산", is).is_none());
+        assert!(stem_suffixes().contains(&"을") && stem_suffixes().contains(&"한다"));
+        assert!(stem_suffixes().iter().all(|s| !s.is_empty() && !s.starts_with('#') && crate::fold::fold(s) == *s));
     }
 }

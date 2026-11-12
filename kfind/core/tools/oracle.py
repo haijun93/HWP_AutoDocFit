@@ -15,6 +15,9 @@ sys.path.insert(0, str(HERE))
 from fold_ref import MIN_WORD_CHARS, fold, parse_query, tokens  # noqa: E402
 
 DATA = HERE.parent / "tests" / "data"
+# 붙여 쓴 검색어 나누기의 줄기 꼬리(조사·어미) 목록 — Rust와 같은 파일을 읽는다(KB3).
+STEM_SUFFIXES = [line.strip() for line in (HERE.parent / "src" / "stem_suffixes.txt").read_text(encoding="utf-8").splitlines()
+                 if line.strip() and not line.strip().startswith("#")]
 MAX_WORD_BYTES = 96
 TOP = 20
 
@@ -99,6 +102,11 @@ def split_bigram(w):
     return out
 
 
+def is_word_or_stem(p, vocab):
+    """색인 어절이거나, 어절에서 조사·어미 꼬리를 뗀 줄기(KB3)."""
+    return p in vocab or any(p + s in vocab for s in STEM_SUFFIXES)
+
+
 def split_dict(w, vocab):
     n = len(w)
     if n < 2 * MIN_WORD_CHARS:
@@ -113,7 +121,7 @@ def split_dict(w, vocab):
             return False
         end = n - MIN_WORD_CHARS if i == 0 else n
         while end >= i + MIN_WORD_CHARS:
-            if (end == n or n - end >= MIN_WORD_CHARS) and w[i:end] in vocab:
+            if (end == n or n - end >= MIN_WORD_CHARS) and is_word_or_stem(w[i:end], vocab):
                 cuts.append(end)
                 if go(end):
                     return True
