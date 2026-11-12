@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, replace
 from datetime import date
 from pathlib import Path
+import unicodedata
 from defusedxml import ElementTree as ET
 from ..hwpx import open_hwpx_safely, open_zip_safely
 from .extract_text import extract_text as _extract_text_by_format
@@ -69,11 +70,20 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 4
+CURRENT_HIERARCHY_SCHEMA_VERSION = 5
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
 _EXTRACTED_LOCATIONS_LOCK = threading.RLock()
+
+
+def _nfc(text: str | None) -> str:
+    """한국어 자모 조합(NFD) 등을 완성형(NFC)으로 정규화한다."""
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    return unicodedata.normalize("NFC", text)
 
 
 def _min_position_span(position_lists) -> int | None:
@@ -508,7 +518,7 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
             record.sequence - 1: (record.location_label, record.section) for record in extracted}
     paragraphs = [ParagraphRecord(
         paragraph_index=record.sequence - 1,
-        text=record.text,
+        text=_nfc(record.text),
         level=record.hierarchy_level or "body",
         level_rank=LEVEL_RANKS.get(record.hierarchy_level, LEVEL_RANKS["body"]),
         is_table_cell=record.is_table_cell,
@@ -568,7 +578,7 @@ def extract_paragraphs_legacy(path, ext):
                             if child.tail:
                                 chunks.append(child.tail)
                     collect(node, True)
-                    text = "".join(chunks).strip()
+                    text = _nfc("".join(chunks).strip())
                     if text:
                         style_id = node.attrib.get("styleIDRef") or node.attrib.get("styleID") or node.attrib.get("style")
                         outline = node.attrib.get("outlineLevel") or node.attrib.get("outline_level")
@@ -626,7 +636,7 @@ def extract_paragraphs_legacy(path, ext):
                             collect(child)
                             if child.tail: chunks.append(child.tail)
                     collect(node, True)
-                    text = "".join(chunks).strip()
+                    text = _nfc("".join(chunks).strip())
                     if text:
                         style = None; outline = None
                         for ppr in node:
@@ -686,7 +696,7 @@ def extract_text(path):
         raw = Path(path).read_bytes()
         for encoding in ("utf-8-sig", "cp949", "utf-16"):
             try:
-                return raw.decode(encoding)
+                return _nfc(raw.decode(encoding))
             except UnicodeError:
                 pass
         raise ValueError("텍스트 인코딩을 판별할 수 없음")
@@ -703,7 +713,7 @@ def extract_text(path):
             for name in targets:
                 root = ET.fromstring(archive.read(name))
                 chunks.extend(t.strip() for t in root.itertext() if t and t.strip())
-        text = "\n".join(chunks)
+        text = _nfc("\n".join(chunks))
         if not text.strip():
             raise ValueError("본문 텍스트가 없음")
         return text
@@ -711,7 +721,7 @@ def extract_text(path):
     reader = PdfReader(path)
     if reader.is_encrypted:
         raise ValueError("암호화된 PDF")
-    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    text = _nfc("\n".join(page.extract_text() or "" for page in reader.pages))
     if not text.strip():
         raise ValueError("추출 가능한 PDF 텍스트가 없음")
     return text
@@ -995,7 +1005,10 @@ class ContentSearchIndex:
     @staticmethod
     def parse_query(query):
         """Parse AND terms, quoted phrases and Docufinder-style filters."""
-        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        if not isinstance(query, str):
+            raise ValueError("검색어는 1~200자로 입력해 주세요.")
+        query = _nfc(query)
+        if not query.strip() or len(query) > 200:
             raise ValueError("검색어는 1~200자로 입력해 주세요.")
         tokens = re.findall(r'-?"(?:[^"\\]|\\.)*"|\S+', query)
         parsed = {"terms": [], "phrases": [], "exclude": [], "ext": [], "path": [], "after": None, "before": None, "near": None}
@@ -1003,18 +1016,18 @@ class ContentSearchIndex:
             neg = token.startswith("-")
             raw = token[1:] if neg else token
             if raw.startswith('"') and raw.endswith('"'):
-                parsed["exclude" if neg else "phrases"].append(raw[1:-1].replace('\\"','"'))
+                parsed["exclude" if neg else "phrases"].append(_nfc(raw[1:-1].replace('\\"','"')))
                 continue
             if not neg and ":" in raw:
                 key, value = raw.split(":", 1)
                 if key == "ext": parsed["ext"].extend(x.lower().lstrip(".") for x in value.split(",") if x)
-                elif key == "path" and value: parsed["path"].append(value)
+                elif key == "path" and value: parsed["path"].append(_nfc(value))
                 elif key in ("after", "before"):
                     parsed[key] = value if re.fullmatch(r"\d{4}(?:-\d{2}(?:-\d{2})?)?", value) else (_ for _ in ()).throw(ValueError(f"{key} 날짜 형식이 올바르지 않습니다."))
-                else: parsed["terms"].append(raw)
+                else: parsed["terms"].append(_nfc(raw))
                 continue
             if not neg and re.fullmatch(r"~\d+", raw): parsed["near"] = int(raw[1:]); continue
-            (parsed["exclude"] if neg else parsed["terms"]).append(raw)
+            (parsed["exclude"] if neg else parsed["terms"]).append(_nfc(raw))
         return parsed
 
     def close(self):
@@ -1177,9 +1190,10 @@ class ContentSearchIndex:
             paragraphs = extract_paragraphs(path)
             if not paragraphs:
                 raise ValueError("본문 텍스트가 없음")
+            paragraphs = [replace(p, text=_nfc(p.text)) for p in paragraphs]
             body = "\n".join(p.text for p in paragraphs)
             ref_date = extract_reference_date(body)
-            name = os.path.basename(path)
+            name = _nfc(os.path.basename(path))
             ext = Path(path).suffix.lower().lstrip(".")
 
             with self._lock:
@@ -1261,11 +1275,11 @@ class ContentSearchIndex:
         try:
             if ext in {".hwpx", ".docx"}:
                 records = extract_paragraphs(path)
-                if [p.text for p in records] != [row["body"] for row in rows]:
+                if [_nfc(p.text) for p in records] != [_nfc(row["body"]) for row in rows]:
                     return {**self.index_file(path), "mode": "reindexed"}
             else:
                 records = classify_paragraph_levels(path, [
-                    ParagraphRecord(paragraph_index=int(row["paragraph_index"]), text=row["body"], level="body",
+                    ParagraphRecord(paragraph_index=int(row["paragraph_index"]), text=_nfc(row["body"]), level="body",
                                     level_rank=LEVEL_RANKS["body"], is_table_cell=False) for row in rows])
         except Exception as exc:
             logging.getLogger(__name__).warning("위계 재판정 실패(본문 행 유지): %s: %s", path, exc)
@@ -1309,8 +1323,9 @@ class ContentSearchIndex:
 
     def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance"):
         self._ensure_paragraph_map()
+        query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
-        terms = parsed["terms"] + parsed["phrases"]
+        terms = [_nfc(t) for t in (parsed["terms"] + parsed["phrases"])]
         if not terms:
             raise ValueError("본문 검색어를 입력해 주세요.")
         lim = max(1, min(int(limit), 500))
@@ -1548,7 +1563,7 @@ class ContentSearchIndex:
             best_bm25 = float(aggregate["best_bm25"] or 0.0)
 
             doc_date = _document_date(meta["ctime"], meta["mtime"])
-            file_name = meta["name"] or os.path.basename(path)
+            file_name = _nfc(meta["name"] or os.path.basename(path))
 
             prepared.append({
                 "path": path,
@@ -1649,7 +1664,7 @@ class ContentSearchIndex:
                 item["context_hits"] = item.pop("_context_hits", hierarchy_path.context_term_hits(trail, terms))
         for idx, item in enumerate(final_items):
             # 스니펫·하이라이트는 화면에 보일 상위 결과에만 만든다(N214B 속도 개선, 결과 동일)
-            target_para_body = item.pop("_target_body")
+            target_para_body = _nfc(item.pop("_target_body"))
             t_folded = target_para_body.casefold()
             offsets = [t_folded.find(t.casefold()) for t in terms if t_folded.find(t.casefold()) >= 0]
             first = min(offsets) if offsets else 0
@@ -1775,8 +1790,9 @@ class ContentSearchIndex:
     def keyword_search(self, query, *, roots=None, limit=100, offset=0):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
         self._ensure_paragraph_map()
+        query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
-        positive = [*parsed["terms"], *parsed["phrases"]]
+        positive = [_nfc(t) for t in [*parsed["terms"], *parsed["phrases"]]]
         if not positive:
             raise ValueError("본문 검색어를 입력해 주세요.")
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
@@ -2054,7 +2070,7 @@ class ContentSearchIndex:
             crumbs = breadcrumb_by_path.get(path, ())
             locations = []
             for paragraph in paragraphs:
-                text = paragraph["body"] or ""
+                text = _nfc(paragraph["body"] or "")
                 folded = text.casefold()
                 starts = [folded.find(term.casefold()) for term in positive if folded.find(term.casefold()) >= 0]
                 if not starts:
@@ -2081,7 +2097,7 @@ class ContentSearchIndex:
                                   "breadcrumb_text": hierarchy_path.breadcrumb_text(trail)})
             primary_breadcrumb = locations[0]["breadcrumb"] if locations else []
             primary_breadcrumb_text = locations[0]["breadcrumb_text"] if locations else ""
-            results.append({"path": path, "name": meta["name"] or os.path.basename(path),
+            results.append({"path": path, "name": _nfc(meta["name"] or os.path.basename(path)),
                             "extension": meta["extension"] or Path(path).suffix.lstrip("."),
                             "mtime": meta["mtime"], "folder_path": os.path.dirname(path),
                             "folder_name": os.path.basename(os.path.dirname(path)),
@@ -2096,6 +2112,7 @@ class ContentSearchIndex:
 
     def search_files(self, query, *, roots=None, limit=500):
         """Immediate in-memory filename cache populated from indexed metadata."""
+        query = _nfc(query) if isinstance(query, str) else str(query or "")
         words = [w.casefold() for w in query.split() if w]
         if not words: return []
         allowed = [os.path.normcase(os.path.abspath(r)) for r in roots] if roots else None
@@ -2103,14 +2120,15 @@ class ContentSearchIndex:
         out = []
         for r in rows:
             # 이름이 맞지 않는 행은 경로 정규화·제외 판정을 하지 않고 넘어간다(결과는 같다).
-            name_folded = (r["name"] or "").casefold()
+            name_nfc = _nfc(r["name"] or Path(r["path"]).name)
+            name_folded = name_nfc.casefold()
             if not all(w in name_folded for w in words):
                 continue
             p = os.path.abspath(r["path"])
-            if excluded_name(r["name"] or "") or excluded_name(os.path.basename(p)):
+            if excluded_name(name_nfc) or excluded_name(_nfc(os.path.basename(p))):
                 continue
             if (allowed is None or any(os.path.commonpath((os.path.normcase(p), root)) == root for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold())):
-                out.append({"path": p, "name": r["name"] or Path(p).name, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
+                out.append({"path": p, "name": name_nfc, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
                 if len(out) >= limit: break
         return out
 
