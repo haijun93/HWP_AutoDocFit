@@ -1,8 +1,8 @@
-"""SM6: 현재 동작 고정 시험 — 데이터 손실 위험 (가)·(나).
+"""SM6→SM7: 데이터 손실 위험 (가)·(나)의 고친 동작 시험.
 
 실제 한/글 COM·실제 프로세스 종료 없음. 가짜 COM 생성기와 가짜 tasklist/taskkill 실행기만 쓴다.
-이 시험은 '현재 동작'을 고정한다. 위험을 고치면(docs/SM6_DATA_LOSS_RISKS_2026-11-12.md 3절)
-기대값을 바꿔야 하는 시험이며, 그 사실을 각 시험 이름에 `currently_`로 표시했다.
+SM6에서는 위험이 있는 '현재 동작'을 `currently_` 시험으로 고정했고, SM7 수정으로 그 기대값을
+반전했다(각 시험 주석에 전후 기대를 적음). 문서: docs/SM6_DATA_LOSS_RISKS_2026-11-12.md 9절.
 """
 import runpy
 from pathlib import Path
@@ -41,7 +41,7 @@ def _clear_owned():
 
 
 class PreservedResultWindowTests(unittest.TestCase):
-    """(가) 자동닫기 끔으로 보존한 결과 창이 다음 작업의 강제 정리에 함께 닫힌다."""
+    """(가) 자동닫기 끔으로 사용자에게 넘긴 결과 창은 다음 작업의 강제 정리에서 빠진다."""
 
     @classmethod
     def setUpClass(cls):
@@ -87,6 +87,18 @@ class PreservedResultWindowTests(unittest.TestCase):
         self.assertEqual(hp.owned_pids(), set())
         self.assertIsNone(self.ns['hwp'])
         self.assertEqual(hp.hand_over(app), set())   # 두 번 넘겨도 아무 일 없음
+
+    def test_compare_reembed_after_handover_skips_result_window(self):
+        self._create(101)
+        self.ns.update({'비교보기_사용': True, '작업_hwp_hwnd': 42,
+                        '원본_hwp_hwnd': 43, '비교보기_좌측_프레임_hwnd': 44,
+                        '비교보기_우측_프레임_hwnd': 45, '창_임베드': Mock()})
+        self._detach()
+        com_driver._install(_docfit_namespace=self.ns, _docfit_symbol='비교보기_임베드_재확인')()
+        self.ns['창_임베드_해제'].assert_called_once_with(42)
+        self.ns['창_임베드'].assert_called_once_with(43, 44)
+        self.assertIsNone(self.ns['작업_hwp_hwnd'])
+        self.assertEqual(hp.kill_owned(), [])
 
     def test_auto_close_keeps_window_owned_when_quit_fails(self):
         """자동닫기 켬(작업창_닫기)은 창을 넘기지 않는다: Quit 실패로 남은 창은 계속 정리 대상."""
@@ -155,7 +167,7 @@ class PreservedResultWindowTests(unittest.TestCase):
 
 
 class DoubleCloseTests(unittest.TestCase):
-    """(나) 확인 대화상자가 떠 있는 중 닫기를 다시 누르면 확인 없이 강제 종료된다."""
+    """(나) 확인 대화상자가 떠 있는 중의 닫기 연타는 30초 전까지 강제 종료로 치지 않는다."""
 
     def setUp(self):
         _clear_owned()
@@ -178,25 +190,74 @@ class DoubleCloseTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.tasks = FakeTasks(101)
-        hp.register_owned({101})   # 앞 작업에서 보존한 결과 창
+        hp.register_owned({101})   # 아직 앱 소유인 작업 한/글(넘긴 결과 창은 (가) 수정으로 소유가 아님)
         run = patch.object(hp, '_run', side_effect=self.tasks)
         run.start()
         self.addCleanup(run.stop)
 
-    def test_second_close_during_acknowledged_confirmation_currently_forces_exit(self):
+    def _clock(self, start=100.0):
+        self.now = start
+        patcher = patch('desktop_web_ui.time.monotonic', side_effect=lambda: self.now)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _confirming(self):
         self.assertFalse(self.bridge.request_close())           # 1번째 닫기
         identifier = self.bridge._close_request['id']
+        self.assertEqual(self.bridge._close_request['state'], 'delivering')
         # Flutter가 확인을 받고(F:2431) '편집 내용을 버릴까요?' 등을 띄운 상태
         self.assertEqual(self.bridge.acknowledge_close(identifier), {'ok': True})
-        self.assertTrue(self.bridge.request_close())            # 2번째 닫기(W:3184~3187)
-        self.callbacks.get(timeout=2)()                           # 정리 스레드의 root.destroy 예약 실행
+        self.assertEqual(self.bridge._close_request['state'], 'confirming')
+        return identifier
 
-        self.gui.종료.assert_not_called()          # '작업 중단하고 종료할까요?'(L:5724) 없이
+    def test_second_close_during_acknowledged_confirmation_does_not_force_exit(self):
+        # SM6 전: 2번째 닫기가 곧바로 강제 종료(True, root.destroy, 101 종료). SM7 (나) 뒤: 무시.
+        self._clock()
+        identifier = self._confirming()
+        self.now += 29.9                                         # 시한(30초) 전의 연타
+        self.assertFalse(self.bridge.request_close())
+        self.assertFalse(self.bridge.request_close())
+        self.assertEqual(self.bridge._close_request['id'], identifier)   # 확인 창 요청 유지
+        self.assertEqual(self.bridge._close_request['repeat_closes'], 2)
+        self.assertTrue(self.callbacks.empty())                   # 정리 스레드 없음
+        self.root.destroy.assert_not_called()
+        self.assertFalse(self.bridge.tk_stopped.is_set())
+        self.assertEqual(self.tasks.killed, [])
+        # 사용자의 답은 여전히 유효하다: 취소하면 앱은 그대로, 다음 닫기는 새 확인.
+        self.assertEqual(self.bridge.resolve_dialog(identifier, False), {'accepted': False})
+        self.assertFalse(self.bridge.request_close())
+        self.assertNotEqual(self.bridge._close_request['id'], identifier)
+
+    def test_second_close_after_confirmation_deadline_still_forces_exit(self):
+        """탈출구: 확인 창이 30초 넘게 답이 없으면(화면 멈춤) 다음 닫기는 기존처럼 강제 종료."""
+        self._clock()
+        self._confirming()
+        self.now += 30.0
+        self.assertTrue(self.bridge.request_close())
+        self.callbacks.get(timeout=2)()                           # 정리 스레드의 root.destroy 예약 실행
+        self.gui.종료.assert_not_called()
         self.root.destroy.assert_called_once_with()
         self.assertTrue(self.bridge.tk_stopped.is_set())
-        self.assertEqual(self.tasks.killed, [101])  # 보존한 결과 창도 함께 강제 종료
-        # 늦게 온 사용자 응답(취소)은 이미 소용이 없다.
+        self.assertEqual(self.tasks.killed, [101])                # 아직 앱 소유인 한/글은 정리
         self.assertIsNone(self.bridge._close_request)
+
+    def test_duplicate_acknowledgement_does_not_extend_confirmation_deadline(self):
+        self._clock()
+        identifier = self._confirming()
+        self.now += 29.0
+        self.assertEqual(self.bridge.acknowledge_close(identifier), {'ok': True})
+        self.now += 1.0
+        self.assertTrue(self.bridge.request_close())
+        self.callbacks.get(timeout=2)()
+        self.root.destroy.assert_called_once_with()
+
+    def test_second_close_before_delivery_still_forces_exit(self):
+        """전달 전(acknowledge 없음)의 2번째 닫기는 기존과 같이 즉시 강제 종료."""
+        self.assertFalse(self.bridge.request_close())
+        self.assertTrue(self.bridge.request_close())
+        self.callbacks.get(timeout=2)()
+        self.root.destroy.assert_called_once_with()
+        self.assertEqual(self.tasks.killed, [101])
 
     def test_close_after_user_cancel_asks_again(self):
         """막는 경로 확인: 사용자가 취소로 답한 뒤의 닫기는 새 요청(확인 다시)이다."""

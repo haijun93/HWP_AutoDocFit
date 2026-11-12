@@ -33,6 +33,15 @@ _TABLE_UNITS_COM_LOCK = threading.Lock()
 _TK_START_TIMEOUT = 5.0
 _TK_START_DEFAULT = object()
 
+# 닫기 확인 창이 떠 있는(confirming) 동안 2번째 닫기를 강제 종료로 인정하기까지의 시한(초).
+# 근거(docs/SM6_DATA_LOSS_RISKS_2026-11-12.md 4절 (나)-C 권고 30초):
+# - 확인 창은 Flutter가 acknowledge_close로 살아 있음을 증명한 뒤에만 뜬다. 그 전의 응답 없음은
+#   기존 5초 감시(_close_unanswered)와 즉시 강제 종료(2번째 닫기)가 그대로 맡는다.
+# - 30초는 확인 문구를 읽는 중의 연타를 보호하면서 확인 응답 후 화면이 멈춘 경우 탈출도 허용하는 절충값이다.
+# - 승인 뒤의 기존 종료 시한(작업 중 10초 한/글 정리·15초 강제 종료, legacy worker_종료확인)보다 길어
+#   그 경로가 먼저 끝난다. 30초가 지나도 답이 없으면 화면이 멈춘 것으로 보고 다음 닫기를 강제 종료로 받는다.
+CLOSE_CONFIRM_FORCE_AFTER = 30.0
+
 
 class TkBusyError(RuntimeError):
     """Tk 스레드가 바빠 명령을 시작하지 못했다(명령은 실행되지 않았고 나중에도 실행되지 않는다)."""
@@ -1570,6 +1579,11 @@ class DesktopWebBridge:
             if self._close_request is None or self._close_request["id"] != identifier:
                 return {"ok": False}
             self._cancel_close_timer()
+            # 닫기 요청 상태: delivering(전달 중, 5초 감시) → confirming(Flutter가 확인 창을 띄움).
+            # confirming 동안의 2번째 닫기는 CLOSE_CONFIRM_FORCE_AFTER 전까지 강제 종료로 치지 않는다(SM7 나).
+            if self._close_request.get("state") != "confirming":
+                self._close_request["state"] = "confirming"
+                self._close_request["confirming_since"] = time.monotonic()
         return {"ok": True}
 
     def _close_unanswered(self, identifier):
@@ -3181,12 +3195,21 @@ class DesktopWebBridge:
         force = False
         with self._close_lock:
             if self._close_protocol:
-                if self._close_request is not None:
+                request = self._close_request
+                if request is not None and request.get("state") == "confirming" and (
+                        time.monotonic() - request.get("confirming_since", 0.0) < CLOSE_CONFIRM_FORCE_AFTER):
+                    # 사용자가 확인 창(미저장 편집 등)에 답하기 전의 연타: 확인 창을 그대로 두고 닫기를 막는다.
+                    request["repeat_closes"] = request.get("repeat_closes", 0) + 1
+                    logging.getLogger(__name__).info(
+                        "close ignored while confirmation is open (%d)", request["repeat_closes"])
+                    return False
+                if request is not None:
+                    # 전달 전(delivering)이거나 확인 창이 시한을 넘겨 응답이 없으면 기존처럼 강제 종료한다.
                     self._close_request = None
                     self._cancel_close_timer()
                     force = True
                 else:
-                    self._close_request = {"id": uuid.uuid4().hex, "kind": "app_close"}
+                    self._close_request = {"id": uuid.uuid4().hex, "kind": "app_close", "state": "delivering"}
                     self._close_timer = threading.Timer(
                         5.0, self._close_unanswered, args=(self._close_request["id"],))
                     self._close_timer.daemon = True
