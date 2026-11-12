@@ -1,12 +1,12 @@
-"""ATT2: ?? ???? ?? ?? ??."""
+"""ATT2: 붙임 정렬 및 끝 공백 회귀 시험."""
 import copy
 import unittest
 import zipfile
-from tests.test_attachment_block import DocumentTest
+from tests import test_attachment_block as attachment_tests
 
 
-class AttachmentLeftTrimTest(DocumentTest):
-    def _doc(self, body, marker_face='????'):
+class AttachmentLeftTrimTest(attachment_tests.DocumentTest):
+    def _doc(self, body, marker_face='휴먼명조'):
         path = super()._doc(body, marker_face)
         with zipfile.ZipFile(path) as z:
             contents = {n: z.read(n) for n in z.namelist()}
@@ -23,10 +23,31 @@ class AttachmentLeftTrimTest(DocumentTest):
                 z.writestr(name, data)
         return path
 
+    def test_layout_without_font_reference_and_second_pass(self):
+        from unittest.mock import patch
+        source = self._doc(self._p('붙임  자료 1부. 끝. \t'))
+        fn = self.ns['붙임글꼴_hwpx_처리']
+        target = source.with_name('layout.hwpx')
+        with patch.dict(fn.__globals__, {'표준서식_기호_사용': False}):
+            found = fn(source)
+            self.assertEqual(found, {'Contents/section0.xml': [(0, 0)]})
+            self.assertEqual(fn(source, target, found), 1)
+            self.assertEqual(fn(target), {'Contents/section0.xml': []})
+
+    def test_xml_tabs_and_separate_runs_are_trimmed(self):
+        body = self._p('붙임  자료 1부.  끝.')
+        body = body.replace('</hp:t>', '<hp:tab/> </hp:t>')
+        body = body.replace('</hp:p>', '<hp:run charPrIDRef="0"><hp:t> \t </hp:t></hp:run></hp:p>')
+        _, target, _, _, _, section = self._convert(body)
+        para = list(section)[0]
+        self.assertEqual(self.ns['제목_문자열'](para), '붙임  자료 1부.  끝.')
+        self.assertFalse(any(self.name(x) == 'tab' for x in para.iter()))
+        self.assertEqual(self.ns['붙임글꼴_hwpx_처리'](target), {'Contents/section0.xml': []})
+
     def test_left_trim_preserves_shared_style_and_number_geometry(self):
-        body = (self._p('? ??', '1') + self._p('?? ??  ')
-                + self._p('??  1. ?? 1?.  ') + self._p('   2. ?? 1?.\t ')
-                + self._p('?.  '))
+        body = (self._p('ㅇ 본문', '1') + self._p('일반 문장  ')
+                + self._p('붙임  1. 계획 1부.  ') + self._p('   2. 일정 1부.\t ')
+                + self._p('끝.  '))
         _, _, _, count, header, section = self._convert(body)
         paras = list(section)
         styles = {x.get('id'): x for x in header.iter() if self.name(x) == 'paraPr'}
@@ -38,8 +59,8 @@ class AttachmentLeftTrimTest(DocumentTest):
             a.attrib.pop('id'); b.attrib.pop('id')
             next(x for x in a if self.name(x) == 'align').set('horizontal', 'LEFT')
             self.assertEqual(self.ns['ET'].tostring(a), self.ns['ET'].tostring(b))
-        self.assertEqual([self.ns['??_???'](p) for p in paras][1:],
-                         ['?? ??  ', '??  1. ?? 1?.', '   2. ?? 1?.', '?.'])
+        self.assertEqual([self.ns['제목_문자열'](p) for p in paras][1:],
+                         ['일반 문장  ', '붙임  1. 계획 1부.', '   2. 일정 1부.', '끝.'])
         self.assertEqual(count, 3)
         self.assertNotEqual(paras[1].get('paraPrIDRef'), paras[2].get('paraPrIDRef'))
 
