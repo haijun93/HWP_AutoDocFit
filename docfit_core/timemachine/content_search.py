@@ -69,7 +69,7 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 2
+CURRENT_HIERARCHY_SCHEMA_VERSION = 3
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
@@ -325,11 +325,11 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             if level is None and scheme:
                 marker_level = scheme.family_levels.get(family)
                 if marker_level == 1:
-                    level = "chapter"
+                    level = "square"
                 elif marker_level == 2:
-                    level = "section"
+                    level = "circle"
                 elif marker_level == 3:
-                    level = "topic"
+                    level = "dash"
 
             # 번호 기호는 문서 안에서 계열·순서·들여쓰기로 체계가 확인된 경우에만 위계로 인정한다.
             if level is None:
