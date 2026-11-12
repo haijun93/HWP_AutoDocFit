@@ -224,10 +224,22 @@ class TimemachineService:
                         break
                 if cancel_event.is_set():
                     break
+            relevel_paths = []
             if not cancel_event.is_set() and rust_paths:
                 fallback, seen, indexed, errors = self._run_klib_index(rust_paths, cancel_event, seen, indexed, errors)
                 python_paths.extend(fallback)
+                # Rust는 본문·문단만 빠르게 쓰고, 위계(level·level_rank·표 칸)는 Python 규칙이 유일한 기준이다.
+                # Rust가 쓴 문서는 위계 버전이 낮으므로 그 문서만 위계를 다시 매긴다(진행 수는 Rust 단계에서 이미 셈).
+                failed = {os.path.normcase(os.path.abspath(str(path))) for path in fallback}
+                relevel_paths = self.content_index.stale_hierarchy_paths(
+                    [path for path in rust_paths if os.path.normcase(os.path.abspath(str(path))) not in failed])
             with self.content_index.batch():
+                for path in relevel_paths:
+                    if cancel_event.is_set(): break
+                    result = self.content_index.relevel_file(path)
+                    errors += bool(result["error"])
+                    with self._content_lock:
+                        self._content_state.update(errors=errors)
                 for path in python_paths:
                     if cancel_event.is_set(): break
                     result = self.content_index.index_file(path)
