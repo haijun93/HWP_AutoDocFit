@@ -7,7 +7,7 @@ from unittest.mock import patch
 from docfit_core.timemachine.content_search import (
     ContentSearchIndex, ParagraphRecord, classify_paragraph_levels,
 )
-from docfit_core.timemachine import hierarchy_path
+from docfit_core.timemachine import content_search, hierarchy_path
 
 
 class SearchLabelTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class SearchLabelTests(unittest.TestCase):
                 index.db.execute('UPDATE content_meta SET hierarchy_schema_version=3')
                 index.db.commit()
                 self.assertTrue(index.index_file(str(fixture))['indexed'])
-                self.assertEqual(4, index.db.execute(
+                self.assertEqual(content_search.CURRENT_HIERARCHY_SCHEMA_VERSION, index.db.execute(
                     'SELECT hierarchy_schema_version FROM content_meta').fetchone()[0])
             finally:
                 index.close()
