@@ -834,7 +834,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         return bind_function(_본문기호_글꼴, _docfit_namespace)
     if _docfit_symbol == '붙임글꼴_hwpx_처리':
         def 붙임글꼴_hwpx_처리(source, target=None, selections=None):
-            """'붙임 …'부터 '끝.'까지 묶음의 모든 문장을 항목기호 ㅇ와 같은 글꼴 종류·크기로 맞춘다(글은 그대로)."""
+            """'붙임 …'부터 '끝.'까지 묶음의 모든 문장을 항목기호 ㅇ와 같은 글꼴·크기로 맞추고 왼쪽 정렬과 끝 공백 제거를 적용한다."""
             with open_hwpx_safely(source) as z:
                 contents = {n: z.read(n) for n in z.namelist()}
             for name, data in contents.items():
@@ -849,13 +849,64 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             chars = {x.get('id'): x for x in header.iter() if 제목_xml이름(x) == 'charPr'}
 
             def paragraph_text(p):
-                texts = _문단_일반글(p)
+                # 탭만 있는 글 요소는 판정용 사본에서 문자로 펼친다. 표·필드 등은 기존대로 제외한다.
+                probe = copy.deepcopy(p)
+                for text in probe.iter():
+                    if 제목_xml이름(text) == 't' and len(text):
+                        if any(제목_xml이름(child) != 'tab' for child in text):
+                            return None
+                        value = text.text or ''
+                        for child in list(text):
+                            value += '\t' + (child.tail or '')
+                            text.remove(child)
+                        text.text = value
+                texts = _문단_일반글(probe)
                 return None if texts is None else ''.join(t.text or '' for t in texts)
 
             def runs_with_text(p):
                 return [r for r in p if 제목_xml이름(r) == 'run' and any(제목_xml이름(t) == 't' and (t.text or '') for t in r)]
 
+            paras_by_id = {x.get('id'): x for x in header.iter() if 제목_xml이름(x) == 'paraPr'}
+            para_group = next((x for x in header.iter() if 제목_xml이름(x) == 'paraProperties'), None)
+            para_cache = {}
+
+            def needs_layout_change(p):
+                style = paras_by_id.get(p.get('paraPrIDRef'))
+                align = next((x for x in style if 제목_xml이름(x) == 'align'), None) if style is not None else None
+                text = paragraph_text(p)
+                return ((align is not None and align.get('horizontal') != 'LEFT')
+                        or (text is not None and text != text.rstrip(' \t')))
+
+            def apply_layout(p):
+                old = p.get('paraPrIDRef')
+                style = paras_by_id.get(old)
+                if style is not None and para_group is not None:
+                    align = next((x for x in style if 제목_xml이름(x) == 'align'), None)
+                    if align is not None and align.get('horizontal') != 'LEFT':
+                        if old not in para_cache:
+                            clone = copy.deepcopy(style)
+                            new_id = str(max([int(k) for k in paras_by_id if (k or '').isdigit()] + [-1]) + 1)
+                            clone.set('id', new_id)
+                            next(x for x in clone if 제목_xml이름(x) == 'align').set('horizontal', 'LEFT')
+                            para_group.append(clone)
+                            para_group.set('itemCnt', str(len(para_group)))
+                            paras_by_id[new_id] = clone
+                            para_cache[old] = new_id
+                        p.set('paraPrIDRef', para_cache[old])
+                # 글꼴 원문 보존 검사 후 여러 run에 걸친 끝 공백만 제거한다.
+                for text in reversed([x for run in p for x in run if 제목_xml이름(x) == 't']):
+                    for child in reversed(list(text)):
+                        child.tail = (child.tail or '').rstrip(' \t')
+                        if child.tail or 제목_xml이름(child) != 'tab':
+                            return
+                        text.remove(child)
+                    text.text = (text.text or '').rstrip(' \t')
+                    if text.text:
+                        break
+
             def needs_change(p):
+                if goal is None:
+                    return False
                 for run in runs_with_text(p):
                     char = chars.get(run.get('charPrIDRef'))
                     if char is not None:
@@ -865,12 +916,10 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                 return False
 
             if selections is None:
-                if goal is None:
-                    return {n: [] for n in body}
                 return {n: [(s, e) for s, e in 붙임묶음_찾기([paragraph_text(p) for p in paras])
-                            if any(needs_change(p) for p in paras[s:e + 1])]
+                            if any(needs_change(p) or needs_layout_change(p) for p in paras[s:e + 1])]
                         for n, paras in body.items()}
-            if goal is None or not any(items for items in selections.values()):
+            if not any(items for items in selections.values()):
                 if target is not None: shutil.copyfile(source, target)
                 return 0
             font_cache, char_cache, count = {}, {}, 0
@@ -879,7 +928,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                 for start, end in items:
                     for p in body[name][start:end + 1]:
                         before = 제목_문자열(p)
-                        for run in runs_with_text(p):
+                        for run in (runs_with_text(p) if goal is not None else []):
                             old = run.get('charPrIDRef')
                             if old not in char_cache:
                                 source_char = chars.get(old)
@@ -904,6 +953,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                             run.set('charPrIDRef', char_cache[old])
                         if 제목_문자열(p) != before:
                             raise RuntimeError('붙임 글꼴 통일 중 문장 글이 바뀌어 중단했습니다.')
+                        apply_layout(p)
                         for lineseg in [x for x in p if 제목_xml이름(x) == 'linesegarray']:
                             p.remove(lineseg)
                         count += 1
@@ -914,7 +964,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         return bind_function(붙임글꼴_hwpx_처리, _docfit_namespace)
     if _docfit_symbol == '글자서식_선행적용':
         def 글자서식_선행적용(원본문서경로, 별표위첨자=True, 붙임글꼴=True, 현재문서_기준=True, 변경알림=None):
-            """별표 위첨자·붙임 글꼴 통일을 한 번에 처리해 결과를 한 번만 다시 연다(둘 다 글자 모양만 바꾸는 단계)."""
+            """별표 위첨자·붙임 글꼴 통일을 한 번에 처리해 결과를 한 번만 다시 연다(붙임은 정렬·끝 공백도 정리)."""
             return 제목붙임_선행적용(
                 원본문서경로, 현재문서_기준=현재문서_기준, 변경알림=변경알림,
                 처리목록=((별표위첨자, '별표 위첨자', 별표위첨자_hwpx_처리, 'asterisk.hwpx'),

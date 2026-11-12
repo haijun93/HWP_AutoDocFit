@@ -254,6 +254,9 @@ def align_sections(header, sections, *, source_sections=None, rules=None, measur
                 paren_id = ids[body + paren.start()] if paren else ids[body]
                 state = (family, anchor, end, p, ids[body], paren_id, index)
                 first_pair, _ = geometry(anchor, end)
+                if marker is None:
+                    # 기호 없는 inline은 붙임이며, 한/글 첫 줄은 left에서 시작한다.
+                    first_pair = (0, -end)
                 spec = ParagraphStyle(text=text, para_extra=(('left', first_pair[0]), ('intent', first_pair[1])))
                 p.set('paraPrIDRef', _para(pool, p.get('paraPrIDRef'), spec))
                 for cache in list(p):
@@ -270,6 +273,8 @@ def align_sections(header, sections, *, source_sections=None, rules=None, measur
                 proto = next(x for x in parent if tag(x) == 'run')
                 _copy_roles(p, cleaned, body_id, paren_id, proto)
                 _, pair = geometry(anchor, end)
+                if classify_marker(plain_text(parent)) is None:
+                    pair = (anchor, -(end - anchor))
                 # Same paragraph style as the parent, with geometry rebased after removing spaces.
                 spec = ParagraphStyle(text=cleaned, para_extra=(('left', pair[0]), ('intent', pair[1])))
                 p.set('paraPrIDRef', _para(pool, parent.get('paraPrIDRef'), spec))

@@ -69,7 +69,7 @@ _NUMBERED_FAMILY_LEVELS = {
     "Ⅰ.": 1, "I.": 1, "1.": 2, "가.": 3, "(1)": 3, "①": 4,
     "㉠": 4, "㉮": 4,
 }
-CURRENT_HIERARCHY_SCHEMA_VERSION = 2
+CURRENT_HIERARCHY_SCHEMA_VERSION = 4
 # 본문검색 쪽 넘김용 순위 목록을 보관하는 시간(초). 색인이 바뀌면 그 전에도 버린다.
 KEYWORD_RANK_CACHE_SECONDS = 120
 _EXTRACTED_LOCATIONS: dict[str, dict[int, tuple[str, str | None]]] = {}
@@ -179,6 +179,10 @@ def _plain_numbered_levels(paragraphs):
     """TXT/MD 번호 계열의 연속성과 첫 등장 순서를 확인한다."""
     from ..marker_scheme import classify_marker, _ordinal
 
+    # Markdown 제목이 위계를 명시한 문서의 번호 목록은 본문으로 유지한다.
+    if any(_MARKDOWN_HEADING.match(p.text.strip()) for p in paragraphs if not p.is_table_cell):
+        return {}
+
     candidates, groups = {}, {}
     for position, paragraph in enumerate(paragraphs):
         text = paragraph.text.strip()
@@ -230,6 +234,29 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     if not paragraphs:
         return []
     from docfit_app.hierarchy_bridge import analyze_levels
+    from ..ai_answer import _LABEL_BY_MARKER
+
+    marker_by_label = {label: marker for marker, label in _LABEL_BY_MARKER.items()}
+    marker_by_label["주석1"] = marker_by_label["주석"]
+    label_levels = {}
+    normalized = []
+    for position, paragraph in enumerate(paragraphs):
+        match = re.match(r"^\s*([^:：]+?)\s*[:：]\s*(\S.*)$", paragraph.text)
+        label = match.group(1) if match else None
+        if not paragraph.is_table_cell and label in marker_by_label:
+            marker = marker_by_label[label]
+            level = {"□": "square", "ㅇ": "circle", "-": "dash"}.get(marker, "asterisk")
+            label_levels[position] = level
+            paragraph = replace(paragraph, text=f"{marker} {match.group(2)}")
+        elif not paragraph.is_table_cell and label == "개요":
+            # 개요는 제목 아래 요약 상자다. 부연설명(*)이 아니라 본문 위계로 둔다.
+            label_levels[position] = "body"
+        normalized.append(paragraph)
+    paragraphs = normalized
+
+    def apply_label_levels(records):
+        return [replace(record, level=label_levels[i], level_rank=LEVEL_RANKS[label_levels[i]])
+                if i in label_levels else record for i, record in enumerate(records)]
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
@@ -240,13 +267,19 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         for position, level in plain_chapters.items():
             if position < len(converted):
                 converted[position] = replace(converted[position], level=level, level_rank=LEVEL_RANKS[level])
-        return _fallback_document_title(path, converted)
+        return _fallback_document_title(path, apply_label_levels(converted))
 
     from ..style_hierarchy import leading_marker, canonical_marker, DOT_MARKERS
     from ..marker_scheme import detect_scheme, classify_marker
     from ..style_unify import unify_marker
 
-    texts = [p.text for p in paragraphs]
+    markdown_table_rows = {
+        i for i, p in enumerate(paragraphs)
+        if Path(path).suffix.lower() in {".txt", ".md"}
+        and re.fullmatch(r"\|.*\|", p.text.strip())
+    }
+    # 표의 구분 기호가 본문 기호 체계의 증거로 섞이지 않게 한다.
+    texts = [p.text if i not in markdown_table_rows else "" for i, p in enumerate(paragraphs)]
     plain_levels = (_plain_numbered_levels(paragraphs)
                     if Path(path).suffix.lower() in {".txt", ".md"} else None)
     scheme = detect_scheme(texts)
@@ -285,7 +318,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         level = None
 
         # [지적 4 반영] 표 셀 문단은 표 셀 예외를 최우선으로 적용하여 최하위인 table_cell로 고정
-        if p.is_table_cell:
+        if p.is_table_cell or paragraph_position in markdown_table_rows:
             level = "table_cell"
         else:
             # 1. HWPX 명시 제목/heading 스타일과 outline level
@@ -325,11 +358,11 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             if level is None and scheme:
                 marker_level = scheme.family_levels.get(family)
                 if marker_level == 1:
-                    level = "chapter"
+                    level = "square"
                 elif marker_level == 2:
-                    level = "section"
+                    level = "circle"
                 elif marker_level == 3:
-                    level = "topic"
+                    level = "dash"
 
             # 번호 기호는 문서 안에서 계열·순서·들여쓰기로 체계가 확인된 경우에만 위계로 인정한다.
             if level is None:
@@ -386,7 +419,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                     else:
                         level = "body"
 
-        if level not in LEVEL_ORDER:
+        if level not in LEVEL_RANKS:
             level = "table_cell" if p.is_table_cell else "body"
 
         classified.append(
@@ -401,7 +434,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 table_cell_id=p.table_cell_id, table_id=p.table_id,
             )
         )
-    return _fallback_document_title(path, classified)
+    return _fallback_document_title(path, apply_label_levels(classified))
 
 
 def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
