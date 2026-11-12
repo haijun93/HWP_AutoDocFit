@@ -1,0 +1,38 @@
+[package]
+name = "kfind-core"
+version = "0.1.0"
+edition = "2024"
+description = "공용 본문 문장 검색 엔진(문장 비트맵 roaring + 조각 사전 fst). klib·kfind·kvf가 함께 쓴다."
+license = "MIT"
+publish = false
+
+# 저장소 다른 크레이트의 작업 공간에 묶이지 않게 독립 작업 공간으로 둔다.
+[workspace]
+
+[lib]
+name = "kfind_core"
+
+# 실행 의존성 라이선스(허용: MIT·Apache-2.0·Unicode-3.0)는 docs/KC1_KFIND_CORE_2026-11-12.md 참고.
+[dependencies]
+fst = "=0.4.7"
+roaring = "=0.12.0"
+memmap2 = "=0.9.12"
+memchr = "2.8"
+unicode-normalization = "=0.1.26"
+
+# 측정 도구(examples/kc1_bench.rs)의 메모리 측정용. 라이브러리에는 들어가지 않는다.
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+# 견고성 요건 3: 패닉 격리(catch_unwind)가 동작하려면 unwind여야 한다. abort로 바꾸지 말 것.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.test]
+opt-level = 2
