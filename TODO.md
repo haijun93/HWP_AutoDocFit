@@ -1,6 +1,6 @@
 # 할 일 (미완성 항목만)
 
-- [ ] 가상 폴더 창: V8~V10 설치·배포·앱 연결·실기/자원 검증. V5~V7 구현은 feature/vfolder-popup에서 kvf 133/133·kagent 기준선 유지로 검증. V6 잠금 시간 시험 1회 실패 이력·미확인·기존 V3 오류 문구는 [계획 결과 절](docs/VF1_PLAN_2026-11-12.md) 참조.
+- [ ] 가상 폴더 창: V10과 V9의 전체 Python 회귀·CI 꾸러미·R17 로그인 실기 확인. V8 설치·V9 배포/앱 연결 구현은 feature/vfolder-popup에서 kvf 141/141·kagent 132 통과/1 제외로 검증. V9 Python 관련 기존 85/85 유지·신규 13/13, Flutter 신규 2/2. 전체 Python은 접근 위반/기존 표 단위 시험 지연으로 미확인. 실제 kvf 실행은 이번 지시로 하지 않음. 시험 이력·미확인·기존 V3 오류 문구는 [계획 결과 절](docs/VF1_PLAN_2026-11-12.md) 참조.
 
 > SM2 색인 상태 통합 구현 완료(2026-11-12, feature/hs2-hsa). 지정 Python 155개·화면 위젯 53개 통과, analyze 0건. 실기·전체 시험 미확인. [구현·검증 보고](docs/SM2_INDEX_STATE_IMPLEMENTATION_2026-11-12.md).
 

@@ -44,3 +44,6 @@ editor_core/target/
 
 # 가상 폴더 창 Rust 산출물
 kvf/target/
+
+resources/kvf.exe
+resources/kvf.exe.sha256
