@@ -379,6 +379,56 @@ class TimemachineServiceTests(unittest.TestCase):
         self.assertTrue(res["ok"])
         self.assertTrue(res["ok"])
 
+    def test_related_search_accepts_query_only_and_ranks_by_hierarchy(self):
+        """ISUI2: 화면 검색창은 기준 문서 없이 검색어만 보낸다. 위계가 높은 문단에서 찾은 문서가 앞에 온다."""
+        self.enable()
+        from tests.test_timemachine_content_search import write_hwpx_paragraphs
+        doc_sq = self.root / "square.hwpx"
+        write_hwpx_paragraphs(doc_sq, [{"text": "ㅁ 위계질의어"}])
+        doc_body = self.root / "body.txt"
+        doc_body.write_text("본문에만 위계질의어 위계질의어 위계질의어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc_sq)})
+        self.service.command("content_index", {"path": str(doc_body)})
+
+        res = self.service.command("related_search", {"query": "위계질의어", "limit": 100, "sort": "hierarchy_relevance"})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["mode"], "query")
+        names = [item["file_name"] for item in res["items"]]
+        self.assertEqual(set(names), {"square.hwpx", "body.txt"})
+        self.assertEqual(names[0], "square.hwpx")  # 'ㅁ' 항목 문단이 본문 문단보다 위계가 높다.
+        first = res["items"][0]
+        for key in ("path", "name", "snippet", "best_level", "relevance_rank"):
+            self.assertIn(key, first)
+        self.assertFalse([key for key in first if key.startswith("_")])
+        # 2글자 검색어도 된다(실시간 검색 기준).
+        self.assertTrue(self.service.command("related_search", {"query": "위계"})["ok"])
+
+    def test_related_search_query_mode_validates_input_and_keeps_path_contract(self):
+        self.enable()
+        doc = self.root / "기준.txt"
+        doc.write_text("기준 문서 검색어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc)})
+        # 경로도 검색어도 없으면 예전처럼 문서를 고르라고 한다.
+        self.assertEqual(self.service.command("related_search", {})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "   "})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "검색어", "limit": 0})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "검색어", "sort": "없는정렬"})["code"], "INVALID_INPUT")
+        # 경로를 주면 검색어가 함께 와도 기존 연관 문서(경로) 방식으로 답한다.
+        by_path = self.service.command("related_search", {"path": str(doc), "query": "검색어"})
+        self.assertTrue(by_path["ok"])
+        self.assertNotEqual(by_path.get("mode"), "query")
+        self.assertFalse(any("path" in item for item in by_path["items"]))
+
+    def test_related_search_query_mode_returns_nothing_without_roots(self):
+        self.enable()
+        doc = self.root / "루트.txt"
+        doc.write_text("루트밖 검색어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc)})
+        self.service._settings["roots"] = []
+        res = self.service.command("related_search", {"query": "루트밖"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["items"], [])
+
     def test_content_search_returns_keyword_fields_without_internal_sort_keys(self):
         self.developer_mode = True
         self.enable()
