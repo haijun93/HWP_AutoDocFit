@@ -19,7 +19,7 @@ class SearchLabelTests(unittest.TestCase):
             with self.subTest(engine=engine), patch(
                     'docfit_app.hierarchy_bridge.analyze_levels', return_value=engine):
                 result = classify_paragraph_levels('sample.txt', records)
-                self.assertEqual(['square', 'circle', 'dash'] + ['asterisk'] * 6,
+                self.assertEqual(['square', 'circle', 'dash'] + ['asterisk'] * 5 + ['body'],
                                  [p.level for p in result])
                 self.assertEqual('□ 배경', result[0].text)
 

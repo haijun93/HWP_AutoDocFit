@@ -249,7 +249,8 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
             label_levels[position] = level
             paragraph = replace(paragraph, text=f"{marker} {match.group(2)}")
         elif not paragraph.is_table_cell and label == "개요":
-            label_levels[position] = "asterisk"
+            # 개요는 제목 아래 요약 상자다. 부연설명(*)이 아니라 본문 위계로 둔다.
+            label_levels[position] = "body"
         normalized.append(paragraph)
     paragraphs = normalized
 
