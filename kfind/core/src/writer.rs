@@ -107,9 +107,22 @@ pub struct Writer {
 fn open_written(dir: &Path, id: u64, copy: Option<Vec<u8>>) -> Result<Segment> {
     let path = dir.join(seg_file_name(id));
     match copy {
-        Some(bytes) => Segment::from_bytes(bytes, &path),
+        Some(bytes) => {
+            warm_file(path.clone());
+            Segment::from_bytes(bytes, &path)
+        }
         None => Segment::open(&path),
     }
+}
+
+/// 방금 제 이름을 얻은 조각 파일을 배경 스레드에서 한 번 열고 닫는다(KB4). 이 PC에서 새로 쓴 파일의 첫 열기는
+/// 누가 열든 한 번 약 15ms가 들고(열기 호출 자체, 백신 검사로 추정) 두 번째부터는 0.2ms 안팎이다. 메모리 사본으로
+/// 연 조각은 쓰는 쪽이 파일을 열지 않아 그 비용을 읽는 쪽 `reload`가 냈다. 커밋의 나머지(목록 저장)와 겹쳐 미리 낸다.
+/// 실패는 무시한다(읽는 쪽이 열 때 같은 오류를 다시 만난다).
+fn warm_file(path: PathBuf) {
+    let _ = std::thread::Builder::new().name("kfind-warm".into()).spawn(move || {
+        let _ = File::open(&path);
+    });
 }
 
 fn index_docs(manifest: &Manifest, segs: &[Arc<Segment>]) -> Result<HashMap<u64, (u64, u32)>> {
