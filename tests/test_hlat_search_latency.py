@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from docfit_core.timemachine import hierarchy_path
 from docfit_core.timemachine.content_search import ContentSearchIndex
 
 
@@ -74,6 +75,72 @@ class BreadcrumbRowsReuseTests(unittest.TestCase):
 
                 self.assertEqual(by_path(index._breadcrumb_rows(paths, known=known)), by_path(expected))
                 self.assertEqual(by_path(expected)[paths[1]][0]["table_cell_id"], 7)
+            finally:
+                index.close()
+
+
+class BreadcrumbPrefixTests(unittest.TestCase):
+    # (level, level_rank, body) 문단 목록. 표 칸 제목·뒤쪽 문서 제목·제목 없는 문서를 섞는다.
+    DOCUMENTS = {
+        "plain": [("document_title", 0, "# 시설 사업"), ("chapter", 1, "## 관광안내판"),
+                  ("section", 2, "### 안전관리"), ("body", 8, "해체공사 본문"), ("body", 8, "다른 본문")],
+        "late_title": [("body", 8, "머리 본문"), ("chapter", 1, "제1장 총칙"), ("body", 8, "해체공사"),
+                       ("document_title", 0, "늦은 문서 제목"), ("body", 8, "끝")],
+        "no_title": [("body", 8, "첫 본문"), ("chapter", 1, "제2장 계획"), ("body", 8, "해체공사 계획")],
+        "cell_title": [("table_cell", 8, "짧"), ("table_cell", 8, "관광안내판 정비 계획"),
+                       ("chapter", 1, "1. 개요"), ("body", 8, "해체공사 개요")],
+        "grouped_cells": [("table_cell", 8, "부제 문구"), ("body", 8, "본문 하나"),
+                          ("table_cell", 8, "본제 문구"), ("chapter", 1, "1. 추진"), ("body", 8, "해체공사")],
+    }
+
+    def _index(self, tmp):
+        index = ContentSearchIndex(Path(tmp) / "index.sqlite")
+        rows, cells = [], []
+        for name, paragraphs in self.DOCUMENTS.items():
+            path = str(Path(tmp) / f"{name}.md")
+            for number, (level, rank, body) in enumerate(paragraphs):
+                rows.append((path, f"{name}.md", number, level, rank, body))
+            if name == "grouped_cells":
+                cells += [(path, 0, 3), (path, 2, 3)]
+        index.db.executemany("INSERT INTO content_paragraph_fts(path,name,paragraph_index,level,level_rank,body)"
+                             " VALUES(?,?,?,?,?,?)", rows)
+        index.db.executemany("INSERT INTO content_table_cells(path,paragraph_index,cell_id) VALUES(?,?,?)", cells)
+        index.db.commit()
+        index._ensure_paragraph_map()
+        return index
+
+    def _trails(self, index, chosen_by_path, **kwargs):
+        grouped = {}
+        for row in index._breadcrumb_rows(list(chosen_by_path), **kwargs):
+            grouped.setdefault(row["path"], []).append(row)
+        return {path: hierarchy_path.breadcrumb(grouped.get(path, ()), chosen) for path, chosen in chosen_by_path.items()}
+
+    def test_prefix_rows_give_same_breadcrumb_for_every_paragraph(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = self._index(tmp)
+            index._PARAGRAPH_SCAN_RATIO = 1  # 작은 시험 색인에서도 앞부분 읽기 경로를 탄다.
+            try:
+                for number in range(6):
+                    until = {str(Path(tmp) / f"{name}.md"): number for name in self.DOCUMENTS}
+                    self.assertEqual(self._trails(index, until, until=until), self._trails(index, until), number)
+                late = str(Path(tmp) / "late_title.md")
+                self.assertEqual(index._paragraph_prefixes({late: 2}).__len__(), 3)
+            finally:
+                index.close()
+
+    def test_prefix_reading_falls_back_when_too_many_paragraphs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            index = self._index(tmp)
+            try:
+                plain = str(Path(tmp) / "plain.md")
+                late = str(Path(tmp) / "late_title.md")
+                self.assertIsNone(index._paragraph_prefixes({plain: 4, late: 4}))  # 10/22문단 > 22//4
+                self.assertEqual(self._trails(index, {plain: 4, late: 4}, until={plain: 4, late: 4}),
+                                 self._trails(index, {plain: 4, late: 4}))
+                until = {plain: 3}
+                self.assertEqual(self._trails(index, until, until=until), self._trails(index, until))
+                self.assertEqual([step["text"] for step in self._trails(index, until)[plain]],
+                                 ["시설 사업", "관광안내판", "안전관리"])
             finally:
                 index.close()
 

@@ -1659,7 +1659,10 @@ class ContentSearchIndex:
             crumb_rows = {}
             if crumb_paths:
                 # 문맥 조사에서 이미 읽은 문서의 문단은 다시 읽지 않는다(같은 함수·같은 순서로 읽은 행).
-                for row in self._breadcrumb_rows(crumb_paths, known=context_rows):
+                for row in self._breadcrumb_rows(
+                        crumb_paths, known=context_rows,
+                        until={item["_crumb"][0]: item["_crumb"][1] for item in final_items
+                               if item["_crumb"][1] is not None}):
                     crumb_rows.setdefault(row["path"], []).append(row)
             for item in final_items:
                 raw_path, chosen = item.pop("_crumb")
@@ -1749,6 +1752,37 @@ class ContentSearchIndex:
             "SELECT DISTINCT path FROM content_paragraph_map WHERE para_rowid IN"
             " (SELECT rowid FROM content_paragraph_fts WHERE content_paragraph_fts MATCH ?)", (expression,))}
 
+    def _paragraph_prefixes(self, bounds):
+        """{path: 마지막 문단 번호}마다 그 번호까지의 문단을 rowid 순으로 읽는다.
+
+        대응 표의 (path, paragraph_index) 기본 키 범위로 rowid를 얻는다. 읽을 문단이 전체의
+        1/_PARAGRAPH_SCAN_RATIO를 넘으면 표를 훑는 편이 나아 None을 돌려준다(호출자가 전체를 읽는다).
+        """
+        with self._lock:
+            opened_here = not self.db.in_transaction
+            try:
+                self.db.execute("CREATE TEMP TABLE IF NOT EXISTS breadcrumb_prefix_bounds("
+                                "path TEXT PRIMARY KEY, last_index INTEGER NOT NULL)")
+                self.db.execute("DELETE FROM breadcrumb_prefix_bounds")
+                self.db.executemany("INSERT OR REPLACE INTO breadcrumb_prefix_bounds(path, last_index) VALUES(?, ?)",
+                                    bounds.items())
+                source = ("SELECT m.para_rowid FROM temp.breadcrumb_prefix_bounds b JOIN content_paragraph_map m"
+                          " ON m.path=b.path AND m.paragraph_index<=b.last_index")
+                state = self.db.execute("SELECT row_count FROM content_paragraph_map_state WHERE id=1").fetchone()
+                total = state[0] if state else -1
+                if total < 0:
+                    return None
+                ceiling = total // self._PARAGRAPH_SCAN_RATIO if self._PARAGRAPH_SCAN_RATIO else total
+                wanted = self.db.execute(f"SELECT COUNT(*) FROM ({source} LIMIT ?)", (ceiling + 1,)).fetchone()[0]
+                if wanted > ceiling:
+                    return None
+                return self.db.execute(
+                    "SELECT path,paragraph_index,body,level,level_rank FROM content_paragraph_fts"
+                    f" WHERE rowid IN ({source}) ORDER BY rowid").fetchall()
+            finally:
+                if opened_here and self.db.in_transaction:
+                    self.db.commit()
+
     def _select_paragraphs_for_paths(self, columns, paths, where="", params=()):
         """경로 목록에 속한 문단을 rowid 순으로 읽는다.
 
@@ -1786,19 +1820,17 @@ class ContentSearchIndex:
                 if opened_here and self.db.in_transaction:
                     self.db.commit()
 
-    def _breadcrumb_rows(self, paths, known=None):
+    def _breadcrumb_rows(self, paths, known=None, until=None):
         """위계 조회에만 칸 식별자를 붙인다. FTS 본문·순위는 바꾸지 않는다.
 
         known: 경로별로 이미 읽은 문단 행({path: [row…]}, path·paragraph_index·body·level·level_rank 포함).
         여기 있는 경로는 다시 읽지 않고 그 행을 쓴다.
+        until: {path: 고른 문단 번호}. 그 문서의 상위 경로만 필요하면 그 번호까지의 문단만 읽는다.
+        표 칸이 있거나 첫 문단이 표 칸인 문서는 제목 칸을 뒤쪽 문단에서 찾으므로 전체를 읽는다.
+        이렇게 읽은 행으로 hierarchy_path.breadcrumb(rows, 고른 번호)를 만들면 전체 행과 같은 값이다.
         """
         paths = list(paths)
         known = known or {}
-        rows = [row for path in paths for row in known.get(path, ())]
-        missing = [path for path in paths if path not in known]
-        if missing:
-            rows += self._select_paragraphs_for_paths(
-                "path,paragraph_index,body,level,level_rank", missing)
         cells = {}
         for start in range(0, len(paths), 500):
             batch = paths[start:start + 500]
@@ -1807,6 +1839,25 @@ class ContentSearchIndex:
                 for row in self.db.execute(
                         f"SELECT path,paragraph_index,cell_id FROM content_table_cells WHERE path IN ({marks})", batch):
                     cells[(row["path"], int(row["paragraph_index"]))] = row["cell_id"]
+        rows = [row for path in paths for row in known.get(path, ())]
+        missing = [path for path in paths if path not in known]
+        if missing and until:
+            with_cells = {path for path, _ in cells}
+            bounds = {path: int(until[path]) for path in missing
+                      if path in until and until[path] is not None and path not in with_cells}
+            prefix = self._paragraph_prefixes(bounds) if bounds else None
+            if prefix is not None:
+                first = {}
+                for row in prefix:
+                    index = int(row["paragraph_index"])
+                    if row["path"] not in first or index < first[row["path"]][0]:
+                        first[row["path"]] = (index, row["level"])
+                complete = {path for path, (_, level) in first.items() if level != "table_cell"}
+                rows += [row for row in prefix if row["path"] in complete]
+                missing = [path for path in missing if path not in complete]
+        if missing:
+            rows += self._select_paragraphs_for_paths(
+                "path,paragraph_index,body,level,level_rank", missing)
         return [dict(row, table_cell_id=cells.get((row["path"], int(row["paragraph_index"]))))
                 for row in rows]
 
