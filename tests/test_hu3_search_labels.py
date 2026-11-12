@@ -24,7 +24,7 @@ class SearchLabelTests(unittest.TestCase):
                 self.assertEqual('□ 배경', result[0].text)
 
     def test_fixture_index_and_parent_path(self):
-        with tempfile.TemporaryDirectory(dir='E:/docfit-tmp') as folder:
+        with tempfile.TemporaryDirectory() as folder:
             index = ContentSearchIndex(Path(folder) / 'index.sqlite')
             try:
                 fixture = Path(__file__).parent / 'fixtures' / 'beomgov_markdown.txt'
