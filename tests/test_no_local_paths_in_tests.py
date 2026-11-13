@@ -2,7 +2,7 @@
 import pathlib
 import unittest
 
-FORBIDDEN = ("E:/docfit-tmp", "E:\docfit-tmp", "E:\\docfit-tmp")  # 작업용 임시 드라이브. 기존 시험의 C:/HWP_AUTODOCFIT 참조는 없을 때 건너뛰는 선택 자료라 대상에서 뺀다.
+FORBIDDEN = tuple(f"{d}:{sep}docfit-tmp" for d in "EFG" for sep in ("/", "\\", "\\\\"))  # 작업용 임시 드라이브. 기존 시험의 C:/HWP_AUTODOCFIT 참조는 없을 때 건너뛰는 선택 자료라 대상에서 뺀다.
 
 
 class NoLocalPathsInTests(unittest.TestCase):
@@ -16,6 +16,20 @@ class NoLocalPathsInTests(unittest.TestCase):
             for token in FORBIDDEN:
                 if token in text:
                     bad.append(f"{path.name}: {token}")
+        self.assertEqual([], bad)
+
+    def test_rust_sources_do_not_hardcode_this_pc_paths(self):
+        """Rust 시험도 같은 실수를 했다(2026-11-13 kvf, v2.2.64 CI 실패). 크레이트 src·tests 전부 검사한다."""
+        root = pathlib.Path(__file__).resolve().parent.parent
+        bad = []
+        for path in root.rglob("*.rs"):
+            parts = set(path.parts)
+            if "target" in parts or "node_modules" in parts:
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for token in FORBIDDEN:
+                if token in text:
+                    bad.append(f"{path.relative_to(root)}: {token}")
         self.assertEqual([], bad)
 
 
