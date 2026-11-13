@@ -1,3 +1,7 @@
+# APP1-D·E·F 인계 (2026-11-14)
+
+`feature/kfind-app`, `8c0eaefd` 위에 `github/main` 먼저 병합(`553ff982`, 충돌 없음). 결과 4종 변환·문장/조각 강조, IPC 잠금 포함 가짜 서버 지연 1회(count p95 4.2449ms/query 4.1488ms/별도 연결 취소 3.9917ms), 기본 kfind·오류 시 legacy와 사유 표시·seeding phase 및 변경 훅 구현. 관련 254개 통과 뒤 보강한 최종 관련 41개 통과. 전체 3,057개는 E: exFAT TEMP 탓에 실패 3·오류 19·제외 15, 같은 실패 22개 NTFS TEMP에서 전부 통과(단일 전체 통과는 아님). 생성 fixture 4개 원복, 전체/COM 잠금 해제. 실제 Flutter/서비스 속도와 동등성 정밀 대조는 미측정(APP1-J/K 후속). ktm.exe는 isearch 읽기 전용 범위라 수정하지 않음. 보고서 `reports/APP1_DEF_2026-11-14.md`. GitHub 기능 브랜치에만 푸시, main/GitLab 금지 유지.
+
 # APP1-A·C 인계 (2026-11-13)
 
 `feature/kfind-app`: APP1-A `4f3b7ee1`, APP1-C `8e9b9a63` 구현. 기존 시험 2,941개 유지·새 시험 6개 추가. 지정 명령의 최종 전체 2,947개 OK(제외 10), 실패·오류 0, 1,830.883초. 래퍼 실행의 문서 진단 1건 실패와 재검증 이력은 `reports/APP1_AC_2026-11-13.md` 참조. 생성 fixture 4개 복원, GitHub `feature/kfind-app`에만 푸시. main 병합·푸시·GitLab 접근 금지 유지. 후속 APP1-B·D 이후 연결 작업은 이 카드 범위 밖이다.
