@@ -124,6 +124,23 @@ class LibrarySyncTests(unittest.TestCase):
         self.assertEqual(result["total_sentences"], 1)
         self.assertIn(("count", "예산", "box:2"), self.client.calls)
 
+    def test_memo_seconds_timestamp_and_reference_date(self):
+        self.items[0]["created_at"] = 1704067200
+        sync = LibraryKfindSync(self.request, self.client)
+        sync.sync("box:2")
+        doc = self.client.docs["memo:2:3"]
+        self.assertEqual(doc["date"], 1704067200000)
+        self.assertEqual(doc["ref_date"], "2024-01-01")
+
+    def test_failed_extraction_removes_previous_document(self):
+        sync = LibraryKfindSync(self.request, self.client)
+        sync.sync("box:2")
+        self.items[0].update(kind="file", source_path="missing.txt")
+        with self.assertRaises(OSError):
+            sync.sync("box:2")
+        self.assertNotIn("memo:2:3", self.client.docs)
+        self.assertEqual(sync.state["corpus"], "failed")
+
     def test_external_file_uses_stored_path_and_python_levels(self):
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "outside.txt"
@@ -193,3 +210,16 @@ class BridgeKfindTests(unittest.TestCase):
         with patch.object(bridge, "_legacy_request", return_value=dict(ok=True, items=[])):
             self.assertEqual(bridge.request(dict(cmd="item_search", box_id=2, query="")), dict(ok=True, items=[]))
         self.assertEqual(bridge._kfind.calls, [])
+
+    def test_legacy_box_results_receive_item_ids_without_claiming_full_count(self):
+        bridge = self.bridge(dict(search_engine="legacy"))
+        def legacy(payload):
+            if payload["cmd"] == "box_get":
+                return dict(ok=True, items=[dict(id=8, managed_path="folder/a.txt")])
+            return dict(ok=True, results=[dict(path="folder/a.txt", snippet="예산")])
+        with patch.object(bridge, "_legacy_request", side_effect=legacy):
+            result = bridge.request(dict(cmd="search", box_id=2, query="예산"))
+        self.assertEqual(result["results"][0]["item_ids"], [8])
+        self.assertEqual(result["total_docs"], 1)
+        self.assertIsNone(result["total_sentences"])
+        self.assertFalse(result["count_exact"])

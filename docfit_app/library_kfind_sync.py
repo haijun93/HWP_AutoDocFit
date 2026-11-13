@@ -62,7 +62,7 @@ class LibraryKfindSync:
         records = [cs.ParagraphRecord(i, p["text"], "body", 8, False)
                    for i, p in enumerate(paragraphs)]
         records = cs.classify_paragraph_levels("memo.md", records)
-        stamp = float(item.get("created_at") or 0) / 1000
+        stamp = float(item.get("created_at") or 0)
         return "", records, SimpleNamespace(st_size=len(text.encode("utf-8")), st_mtime=stamp, st_ctime=stamp)
 
     def _collect(self, scope):
