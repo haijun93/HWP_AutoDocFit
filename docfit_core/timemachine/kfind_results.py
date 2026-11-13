@@ -103,3 +103,7 @@ def to_keyword_rows(response, index=None, *, documents=None, offset=0):
                      "adjacent": hit["adjacent"], "dropped": response.get("dropped", []),
                      "engine": "kfind", "gen": response["generation"]})
     return rows
+
+
+def to_hierarchy_rows(response, index=None, *, documents=None):
+    return to_keyword_rows(response, index, documents=documents)

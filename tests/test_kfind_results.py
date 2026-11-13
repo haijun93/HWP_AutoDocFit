@@ -42,3 +42,9 @@ class ResultTests(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(results.to_keyword_rows(dict(hits=[])), [])
+
+    def test_hierarchy_uses_sentence_level_and_sqlite_ancestors(self):
+        row = results.to_hierarchy_rows(self.response, self.index)[0]
+        self.assertEqual(row["context_hits"], 0)
+        self.assertEqual(row["breadcrumb_text"], "예산 계획")
+        self.assertEqual(row["breadcrumb"], ["예산 계획"])
