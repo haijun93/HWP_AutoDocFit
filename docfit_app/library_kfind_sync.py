@@ -40,6 +40,29 @@ class LibraryKfindSync:
             self.state.update(corpus="pending", engine="legacy", engine_reason="kfind_pending")
             self._files.clear()
 
+    def drop_scope(self, scope):
+        """상자 삭제 뒤에는 box_get이 불가능하므로 서비스 범위 목록에서 지운다."""
+        with self._lock:
+            self.client.status()
+            keys = set(self._scope_keys.get(scope, ()))
+            after = None
+            while True:
+                inventory = self.client.stale(scope, 0xffffffff, after=after)
+                batch = inventory["doc_keys"]
+                keys.update(batch)
+                if not inventory.get("more"):
+                    break
+                if not batch or batch[-1] == after:
+                    raise ValueError("kfind 범위 목록이 진행하지 않습니다")
+                after = batch[-1]
+            if keys:
+                self.client.remove(sorted(keys))
+            for key in keys:
+                self.documents.pop(key, None)
+                self._fingerprints.pop(key, None)
+            self._scope_keys.pop(scope, None)
+            self.invalidate()
+
     def _records(self, item):
         path = item.get("managed_path") or item.get("source_path") or ""
         kind = item.get("kind")

@@ -143,6 +143,11 @@ class LibraryBridge:
             except Exception as exc:
                 reason = str(exc) or type(exc).__name__
         result = self._legacy_request(request)
+        if result.get("ok") and command == "box_delete" and self._engine() == "kfind":
+            try:
+                self._search_sync().drop_scope(f"box:{int(request['id'])}")
+            except Exception:
+                pass  # klib의 삭제 성공은 유지한다. 서비스 오류로 원본 삭제를 되돌리지 않는다.
         if search:
             result = dict(result, engine="legacy", requested_engine=engine, engine_reason=reason)
             if command == "search" and result.get("ok") and request.get("box_id") is not None:

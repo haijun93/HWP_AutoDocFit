@@ -119,6 +119,14 @@ class LibrarySyncTests(unittest.TestCase):
         sync.sync("box:2")
         self.assertIn("memo:2:3", self.client.docs)
 
+    def test_deleted_box_removes_service_scope_even_after_restart(self):
+        sync = LibraryKfindSync(self.request, self.client)
+        sync.sync("box:2")
+        self.client.docs["memo:9:1"] = dict(scopes=["box:9"])
+        restarted = LibraryKfindSync(lambda payload: self.fail("삭제된 상자를 읽으면 안 됩니다"), self.client)
+        restarted.drop_scope("box:2")
+        self.assertEqual(set(self.client.docs), {"memo:9:1"})
+
     def test_count_uses_server_box_scope(self):
         result = LibraryKfindSync(self.request, self.client).search(dict(cmd="search", box_id=2, query="예산", count_only=True))
         self.assertEqual(result["total_sentences"], 1)
@@ -210,6 +218,12 @@ class BridgeKfindTests(unittest.TestCase):
         with patch.object(bridge, "_legacy_request", return_value=dict(ok=True, items=[])):
             self.assertEqual(bridge.request(dict(cmd="item_search", box_id=2, query="")), dict(ok=True, items=[]))
         self.assertEqual(bridge._kfind.calls, [])
+
+    def test_box_delete_drops_scope_and_keeps_legacy_success(self):
+        bridge = self.bridge()
+        with patch.object(bridge, "_legacy_request", return_value=dict(ok=True)), patch.object(bridge, "_search_sync") as sync:
+            self.assertTrue(bridge.request(dict(cmd="box_delete", id=2))["ok"])
+        sync.return_value.drop_scope.assert_called_once_with("box:2")
 
     def test_legacy_box_results_receive_item_ids_without_claiming_full_count(self):
         bridge = self.bridge(dict(search_engine="legacy"))
