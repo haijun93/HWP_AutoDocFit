@@ -8,6 +8,7 @@ import 'timemachine_thumbnails.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
 import '../../core/instant_search.dart';
+import 'idle_indexing_status.dart';
 
 /// 본문·위계검색 한 번의 결과(정렬을 함께 넘겨 화면 정렬 표시와 맞춘다).
 typedef _ContentSearchOutcome = ({String sort, List<TimemachineContentResult> items});
@@ -777,15 +778,22 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Future<void> _pickExtensions() async {
     final values=List<String>.from((_settings?['extensions'] as List?) ?? _extensions);
     var useRust = _settings?['rust_content_index'] != false;
+    var idleIndexing = _settings?['idle_indexing'] != false;
+    var idleSeconds = (_settings?['idle_seconds'] as num?)?.toInt() ?? 120;
+    final secondsChoices = {...idleSecondsChoices, idleSeconds}.toList()..sort();
     final saved=await showDialog<bool>(context:context,builder:(context)=>StatefulBuilder(builder:(context,update)=>AlertDialog(
       title:const Text('적용 확장자'),
       content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
         Wrap(spacing:6,runSpacing:4,children:[for(final ext in _extensions) FilterChip(label:Text(ext),selected:values.contains(ext),onSelected:(selected)=>update(()=>selected?values.add(ext):values.remove(ext)))]),
         SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('Rust 본문 색인'),subtitle:const Text('끄면 Python 색인기를 사용합니다.'),value:useRust,onChanged:(value)=>update(()=>useRust=value)),
+        SwitchListTile(key:const ValueKey('tm-idle-indexing'),contentPadding:EdgeInsets.zero,title:const Text('쉬는 시간에 색인'),subtitle:const Text('컴퓨터를 쓰지 않을 때만 바뀐 문서를 낮은 우선순위로 색인합니다. 배터리·전체 화면·발표 중에는 미룹니다.'),value:idleIndexing,onChanged:(value)=>update(()=>idleIndexing=value)),
+        ListTile(contentPadding:EdgeInsets.zero,title:const Text('쉬는 시간 기준'),subtitle:const Text('키보드·마우스 입력이 없는 시간'),
+          trailing:DropdownButton<int>(key:const ValueKey('tm-idle-seconds'),value:idleSeconds,onChanged:idleIndexing?(value){if(value!=null)update(()=>idleSeconds=value);}:null,
+            items:[for(final seconds in secondsChoices) DropdownMenuItem(value:seconds,child:Text(idleSecondsLabel(seconds)))])),
       ])),
       actions:[TextButton(onPressed:()=>Navigator.pop(context,false),child:const Text('취소')),FilledButton(onPressed:()=>Navigator.pop(context,true),child:const Text('저장'))],
     )));
-    if(saved==true&&mounted)await _saveSettings(Map<String,Object?>.from(_settings!)..['extensions']=values..['rust_content_index']=useRust);
+    if(saved==true&&mounted)await _saveSettings(Map<String,Object?>.from(_settings!)..['extensions']=values..['rust_content_index']=useRust..['idle_indexing']=idleIndexing..['idle_seconds']=idleSeconds);
   }
   Future<void> _addRoot() async {
     final path=await getDirectoryPath(); if(path==null||!mounted)return;
@@ -1501,8 +1509,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       children: [
         Text(_relatedMode ? '위계검색' : '본문검색', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
         if (_contentIndexRunning) ...[
-          const SizedBox(width: 80, child: LinearProgressIndicator()),
-          Text('${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건', style: const TextStyle(fontSize: 12)),
+          SizedBox(width: 80, child: LinearProgressIndicator(value: idleIndexingProgress(_contentProgress))),
+          Text(idleIndexingStatusText(_contentProgress) ?? '${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건', key: const ValueKey('tm-content-index-status'), style: const TextStyle(fontSize: 12)),
           TextButton(onPressed: _cancelContentIndex, child: const Text('\uCDE8\uC18C')),
         ] else
           TextButton.icon(
