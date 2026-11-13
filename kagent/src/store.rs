@@ -199,7 +199,7 @@ impl Settings {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Summary {
     pub id: i64,
     pub kind: String,

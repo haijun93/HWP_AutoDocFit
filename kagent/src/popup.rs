@@ -283,6 +283,8 @@ fn apply_items(seq: u64, needle: &str, items: Vec<Summary>, keep_sel: bool) -> b
 /// 분류·찾기 글자로 목록을 다시 만든다. 먼저 메모리 목록으로 바로 그리고, 필요할 때만 저장소를 본다.
 /// 단계별로 잠금을 풀어 STATE와 DB/recent를 동시에 잡지 않고, seq로 늦게 온 결과가 새 입력을 덮지 않게 한다.
 fn refilter(keep_sel: bool) {
+    // 목록이 바뀌면 가리키던 그림도 바뀔 수 있으니 미리보기는 닫는다(다음 마우스 움직임·키 입력에 다시 뜬다).
+    crate::preview::hide();
     let (tab, needle, cur_seq) = {
         let mut st = STATE.lock().unwrap();
         st.seq += 1;
@@ -475,12 +477,14 @@ pub fn refresh() {
 
 /// 닫기: 숨기고 다음에 열 때 처음 상태(전체)로.
 fn hide() {
+    crate::preview::hide();
     STATE.lock().unwrap().minimized = false;
     unsafe { ShowWindow(popup_hwnd(), SW_HIDE) };
 }
 
 /// 최소화: 숨기되 분류·찾기·선택·위치를 그대로 둔다.
 fn minimize() {
+    crate::preview::hide();
     unsafe { ShowWindow(popup_hwnd(), SW_HIDE) };
     // 숨기는 동안 WM_ACTIVATE(비활성)가 hide()를 부를 수 있으므로 숨긴 뒤에 표시한다.
     STATE.lock().unwrap().minimized = true;
@@ -542,6 +546,7 @@ pub fn paste_into(target: HWND) {
 }
 
 fn choose(index: usize) {
+    crate::preview::hide();
     let (id, target) = {
         let st = STATE.lock().unwrap();
         match st.items.get(index) {
@@ -568,6 +573,31 @@ fn move_sel(delta: isize) {
         st.top = st.sel;
     } else if st.sel >= st.top + VISIBLE {
         st.top = st.sel + 1 - VISIBLE;
+    }
+}
+
+/// 마우스가 가리키는 줄의 그림 미리보기(커서 옆).
+fn preview_hover(index: Option<usize>) {
+    let target = index.and_then(|i| STATE.lock().unwrap().items.get(i).and_then(crate::preview::target_of));
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut pt) };
+    crate::preview::point(target, crate::preview::Anchor::Cursor(pt));
+}
+
+/// 키보드(·휠)로 고른 줄의 그림 미리보기(빠른 목록 창 옆, 그 줄 높이).
+fn preview_selected(hwnd: HWND) {
+    let (target, offset, search) = {
+        let st = STATE.lock().unwrap();
+        (st.items.get(st.sel).and_then(crate::preview::target_of), st.sel.saturating_sub(st.top) as i32,
+         st.current() == Tab::Search)
+    };
+    unsafe {
+        let row = scale(hwnd, ROW_H);
+        let mut pt = POINT { x: 0, y: list_top(scale(hwnd, HEAD_H), scale(hwnd, CAT_H), search, row) + offset * row };
+        ClientToScreen(hwnd, &mut pt);
+        let mut r: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut r);
+        crate::preview::point(target, crate::preview::Anchor::Row { y: pt.y, left: r.left, right: r.right });
     }
 }
 
@@ -1102,12 +1132,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         let sel = STATE.lock().unwrap().sel;
                         choose(sel);
                     }
-                    VK_UP => move_sel(-1),
-                    VK_DOWN => move_sel(1),
-                    VK_PRIOR => move_sel(-(VISIBLE as isize)),
-                    VK_NEXT => move_sel(VISIBLE as isize),
-                    VK_HOME => move_sel(-100000),
-                    VK_END => move_sel(100000),
+                    VK_UP => { move_sel(-1); preview_selected(hwnd); }
+                    VK_DOWN => { move_sel(1); preview_selected(hwnd); }
+                    VK_PRIOR => { move_sel(-(VISIBLE as isize)); preview_selected(hwnd); }
+                    VK_NEXT => { move_sel(VISIBLE as isize); preview_selected(hwnd); }
+                    VK_HOME => { move_sel(-100000); preview_selected(hwnd); }
+                    VK_END => { move_sel(100000); preview_selected(hwnd); }
                     VK_DELETE => {
                         let id = {
                             let st = STATE.lock().unwrap();
@@ -1192,11 +1222,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     st.hover_tab = tab;
                     drop(st);
                     InvalidateRect(hwnd, std::ptr::null(), 0);
+                } else {
+                    drop(st);
                 }
+                // 같은 줄 안에서는 커서를 따라 옮기고, 줄이 바뀌면 그 항목 그림으로(그림이 아니면 숨김).
+                preview_hover(i);
                 0
             }
             WM_MOUSELEAVE => {
                 TRACKING.store(false, Ordering::Relaxed);
+                crate::preview::hide();
                 let mut st = STATE.lock().unwrap();
                 st.hover = None;
                 st.hover_btn = None;
@@ -1302,6 +1337,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_MOUSEWHEEL => {
                 let delta = ((wp >> 16) & 0xFFFF) as i16;
                 move_sel(if delta > 0 { -3 } else { 3 });
+                preview_selected(hwnd);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 0
             }

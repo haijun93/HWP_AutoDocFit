@@ -20,6 +20,7 @@ mod open_rules;
 mod json;
 mod pipe;
 mod popup;
+mod preview;
 mod settings_menu;
 mod sqlite;
 mod store;
@@ -1101,6 +1102,7 @@ fn main() {
         }
         app().hwnd.store(hwnd as isize, Ordering::Relaxed);
         popup::register(instance);
+        preview::register(instance);
         // 격리 시험 전용: 시험 폴더가 없으면 실제 기록에 시험 항목을 넣지 않도록 무시한다.
         if has("--test-window") && std::env::var_os("KAGENT_TEST_ROOT").is_some() {
             if let Some(root) = std::env::var_os("KAGENT_TEST_ROOT") {
