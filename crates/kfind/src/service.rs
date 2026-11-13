@@ -51,7 +51,7 @@ fn run() -> Result<()> {
     let result = runtime.block_on(async {
         let initial = crate::pipe::create(crate::PIPE_NAME, true)?;
         handle.set_service_status(status(ServiceState::Running, 0))?;
-        crate::pipe::run_bound(initial, crate::PIPE_NAME, root, receiver).await
+        crate::pipe::run_bound_mode(initial, crate::PIPE_NAME, root, receiver, "service").await
     });
     handle.set_service_status(status(
         ServiceState::Stopped,
