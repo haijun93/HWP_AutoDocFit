@@ -463,6 +463,56 @@ fn lock_cache(c: &Mutex<QueryCache>) -> std::sync::MutexGuard<'_, QueryCache> {
 }
 
 impl Index {
+    /// Explicit one-character search for an Enter-submitted UI query. This scans
+    /// the mapped comparison text; normal indexed queries remain unchanged.
+    pub fn search_character(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
+        guard(|| {
+            let word = crate::fold(query);
+            if word.chars().count() != 1 {
+                return Err(Error::Invalid("character search requires one comparison character".into()));
+            }
+            if !opts.phrases.is_empty() {
+                return Err(Error::Invalid("character search does not accept phrase filters".into()));
+            }
+            let mut budget = Budget::new(opts);
+            budget.check()?;
+            let mut docs = std::collections::BTreeMap::<u64, DocHit>::new();
+            let mut total_sentences = 0;
+            for view in &self.views {
+                let seg = &view.seg;
+                let Some(code) = seg.encode_word(&word) else { continue };
+                let finder = memchr::memmem::Finder::new(&code);
+                for sid in 0..seg.n_sent {
+                    budget.tick()?;
+                    if view.deleted.contains(sid) || finder.find(seg.text(sid)?).is_none() { continue; }
+                    let rec = seg.doc(seg.doc_of(sid)?)?;
+                    if !opts.admits(rec.doc_id) { continue; }
+                    let level = seg.level(sid)?;
+                    let hit = docs.entry(rec.doc_id).or_insert_with(|| DocHit {
+                        doc_id: rec.doc_id, adjacent: true, level, count: 0,
+                        date: rec.date, sentences: Vec::new(),
+                    });
+                    hit.level = hit.level.min(level);
+                    hit.count += 1;
+                    total_sentences += 1;
+                    if hit.sentences.len() < opts.refs_per_doc {
+                        hit.sentences.push(SentenceRef { ord: sid - rec.first_sid,
+                            para: seg.para(sid)?, level, adjacent: true });
+                    }
+                }
+            }
+            budget.check()?;
+            let total_docs = docs.len();
+            let mut hits: Vec<_> = docs.into_values().collect();
+            hits.sort_unstable_by(|a, b| a.level.cmp(&b.level)
+                .then_with(|| b.count.cmp(&a.count)).then_with(|| b.date.cmp(&a.date))
+                .then_with(|| a.doc_id.cmp(&b.doc_id)));
+            if opts.top != 0 { hits.truncate(opts.top); }
+            Ok(SearchResult { total_docs, total_sentences, adjacent_docs: total_docs,
+                generation: self.generation, hits, ..SearchResult::default() })
+        })
+    }
+
     /// 색인 폴더를 연다. 목록 파일이 없으면 빈 색인(세대 0).
     pub fn open(dir: &Path) -> Result<Index> {
         guard(|| {
