@@ -624,7 +624,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       status = await _api.command('status');
       settings = await _api.command('settings_get');
     } catch (_) {
-      if (mounted) setState(() { _settings = {'roots': [], 'time_mode':'max', 'enabled':false}; _error = '타임머신에 연결하지 못했습니다. 앱 연결을 확인해 주세요.'; });
+      if (mounted) setState(() { _settings = {'roots': [], 'time_mode':'max', 'enabled':false}; _error = '몽땅검색에 연결하지 못했습니다. 앱 연결을 확인해 주세요.'; });
       return;
     }
     if (!mounted) return;
@@ -1513,7 +1513,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final roots = (_settings?['roots'] as List?) ?? const [];
     final disconnected = _error?.contains('연결하지 못했습니다') == true;
     return Center(child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:620),child:Card(child:Padding(padding:const EdgeInsets.all(24),child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text('타임머신',style:Theme.of(context).textTheme.headlineSmall), const SizedBox(height:8), const Text('켜면 선택한 폴더의 문서 정보만 색인해 시간순으로 찾아볼 수 있습니다.'), const SizedBox(height:16), const Text('조사 폴더'),
+      Text('몽땅검색',style:Theme.of(context).textTheme.headlineSmall), const SizedBox(height:8), const Text('켜면 선택한 폴더의 문서 정보만 색인해 시간순으로 찾아볼 수 있습니다.'), const SizedBox(height:16), const Text('조사 폴더'),
       for(final root in roots) Row(children:[Expanded(child:Text('• $root')),IconButton(tooltip:'조사 폴더 삭제',onPressed:(){final next=Map<String,Object?>.from(_settings!)..['roots']=List<String>.from(roots.cast<String>())..remove(root);_saveSettings(next);},icon:const Icon(Icons.close))]),
       OutlinedButton.icon(onPressed:_addRoot,icon:const Icon(Icons.folder_open),label:const Text('조사 폴더 추가')),
       const SizedBox(height:16), FilledButton.icon(onPressed:_enable,icon:const Icon(Icons.power_settings_new),label:const Text('켜기')),

@@ -1,4 +1,4 @@
-"""타임머신 화면 명령과 기존 KAgent 색인 저장소의 앱 측 연결."""
+"""몽땅검색 화면 명령과 기존 KAgent 색인 저장소의 앱 측 연결."""
 from __future__ import annotations
 
 import base64
@@ -363,7 +363,7 @@ class TimemachineService:
                 if in_scan_roots and (not in_active_roots or not extension_allowed or not os.path.exists(path)):
                     self.content_index.remove_file(path)
         except Exception as exc:
-            logging.getLogger(__name__).exception("타임머신 본문 색인 실패")
+            logging.getLogger(__name__).exception("몽땅검색 본문 색인 실패")
             with self._content_lock:
                 self._content_state.update(phase="failed", failure_reason=f"{type(exc).__name__}: {exc}")
         finally:
@@ -486,7 +486,7 @@ class TimemachineService:
                 raise ValueError("조사 폴더는 절대 경로로 지정해 주세요.")
             path = os.path.abspath(raw)
             if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
-                raise ValueError("Windows 휴지통($Recycle.Bin)은 타임머신 조사 폴더로 선택할 수 없습니다.")
+                raise ValueError("Windows 휴지통($Recycle.Bin)은 몽땅검색 조사 폴더로 선택할 수 없습니다.")
             try:
                 info = os.lstat(path)
             except OSError as exc:
@@ -586,14 +586,14 @@ class TimemachineService:
 
     @staticmethod
     def _agent_settings(settings):
-        # 꺼진 타임머신의 폴더를 에이전트가 계속 감시하면 안 되므로 빈 목록을 보낸다.
+        # 꺼진 몽땅검색의 폴더를 에이전트가 계속 감시하면 안 되므로 빈 목록을 보낸다.
         return {"timeline_roots": settings["roots"] if settings["enabled"] else [],
                 "timeline_mtime_only": settings["time_mode"] == "mtime"}
 
     def _sync_agent(self, *, force=False):
         """에이전트에 조사 폴더를 맡긴다. 맡았으면 True, 아니면 앱이 색인해야 하므로 False.
 
-        에이전트를 타임머신보다 나중에 켜면 에이전트 설정에 폴더가 없으므로, 보내기 전에 비교한다.
+        에이전트를 몽땅검색보다 나중에 켜면 에이전트 설정에 폴더가 없으므로, 보내기 전에 비교한다.
         """
         wanted = self._agent_settings(self._settings)
         try:
@@ -635,7 +635,7 @@ class TimemachineService:
                                         errors=[str(item[1]) for item in result.errors])
             self._schedule_content_refresh()
         except Exception as exc:
-            logging.getLogger(__name__).exception("타임머신 색인 갱신 실패")
+            logging.getLogger(__name__).exception("몽땅검색 색인 갱신 실패")
             with self._scan_lock:
                 self._scan_state["errors"] = [type(exc).__name__]
         finally:
@@ -647,7 +647,7 @@ class TimemachineService:
 
     def _start_scan(self, *, agent_ready=None, restart=False):
         if not self._settings["enabled"]:
-            return self._error("TM_DISABLED", "타임머신을 켠 뒤 다시 훑어 주세요.")
+            return self._error("TM_DISABLED", "몽땅검색을 켠 뒤 다시 훑어 주세요.")
         if agent_ready is None:
             agent_ready = self._sync_agent()
         with self._scan_lock:
@@ -699,7 +699,7 @@ class TimemachineService:
                 self._content_state.update(running=False, finished_at=time.time(), phase="failed",
                                            failure_reason=f"{type(exc).__name__}: {exc}")
                 self._content_idle_ctx = None
-                logging.getLogger(__name__).exception("타임머신 본문 자동 색인 시작 실패")
+                logging.getLogger(__name__).exception("몽땅검색 본문 자동 색인 시작 실패")
                 return False
             return True
 
@@ -925,7 +925,7 @@ class TimemachineService:
             try:
                 (self.opener if action == "open" else self.revealer)(path)
             except Exception as exc:
-                logging.getLogger(__name__).exception("타임머신 파일 작업 실패")
+                logging.getLogger(__name__).exception("몽땅검색 파일 작업 실패")
                 return self._error("TM_OPEN_FAILED" if action == "open" else "TM_REVEAL_FAILED",
                                    f"파일을 열지 못했습니다: {exc}" if action == "open" else f"폴더를 열지 못했습니다: {exc}")
             return {"ok": True}
@@ -941,7 +941,7 @@ class TimemachineService:
             return {"ok": True, "removed": self.thumbnails.clear()}
         if action == "send_to_feature":
             return self._send_to_feature(payload.get("feature"), payload.get("ids"))
-        return self._error("NOT_AVAILABLE", "지원하지 않는 타임머신 명령입니다.")
+        return self._error("NOT_AVAILABLE", "지원하지 않는 몽땅검색 명령입니다.")
 
     def _send_to_feature(self, feature, file_ids):
         if feature not in ALLOWED_FEATURES:
@@ -1007,7 +1007,7 @@ class TimemachineService:
         if type(file_id) is not int or file_id <= 0:
             raise ValueError("파일 항목을 확인해 주세요.")
         if not self._settings["enabled"]:
-            return self._error("TM_DISABLED", "타임머신이 꺼져 있습니다.")
+            return self._error("TM_DISABLED", "몽땅검색이 꺼져 있습니다.")
         row = self.store.get(file_id)
         if not row:
             return self._error("TM_NOT_FOUND", "파일 항목을 찾지 못했습니다.")
@@ -1080,12 +1080,12 @@ class TimemachineService:
         except ValueError as exc:
             return self._error("INVALID_INPUT", str(exc))
         except Exception:
-            logging.getLogger(__name__).exception("타임머신 명령 처리 실패")
-            return self._error("TM_FAILED", "타임머신 작업을 완료하지 못했습니다.")
+            logging.getLogger(__name__).exception("몽땅검색 명령 처리 실패")
+            return self._error("TM_FAILED", "몽땅검색 작업을 완료하지 못했습니다.")
 
 
 class _ContentIdleJob:
-    """타임머신 본문 변경분 색인을 쉬는 시간 스케줄러 작업(IdleJob)으로 감싼 것."""
+    """몽땅검색 본문 변경분 색인을 쉬는 시간 스케줄러 작업(IdleJob)으로 감싼 것."""
 
     name = CONTENT_IDLE_JOB
 

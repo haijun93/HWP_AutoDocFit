@@ -19,7 +19,7 @@ class RelatedDocumentsDialog extends StatefulWidget {
   final String selectedPath;
   final String selectedName;
 
-  /// '연관 자료 추가'에서 고를 수 있는 문서(현재 타임머신 목록).
+  /// '연관 자료 추가'에서 고를 수 있는 문서(현재 몽땅검색 목록).
   final List<TimemachineItem> candidates;
 
   @override
@@ -326,7 +326,7 @@ class _IncludePickerState extends State<_IncludePicker> {
           onChanged: (value) => setState(() => _filter = value),
         ),
         const SizedBox(height: 8),
-        if (shown.isEmpty) const Text('추가할 수 있는 문서가 없습니다. 타임머신 목록에 있는 문서만 고를 수 있습니다.')
+        if (shown.isEmpty) const Text('추가할 수 있는 문서가 없습니다. 몽땅검색 목록에 있는 문서만 고를 수 있습니다.')
         else for (final item in shown) ListTile(
           key: ValueKey('tm-related-include-${item.id}'),
           dense: true,
