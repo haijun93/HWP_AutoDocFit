@@ -7,6 +7,7 @@
 //! - SQLite는 Windows 내장 winsqlite3.dll, 네트워크 코드 없음.
 #![windows_subsystem = "windows"]
 
+mod capture_dirs;
 mod category;
 mod frame;
 mod hotkey;
@@ -19,9 +20,12 @@ mod open_rules;
 mod json;
 mod pipe;
 mod popup;
+mod prewarm;
+mod preview;
 mod settings_menu;
 mod sqlite;
 mod store;
+mod thumb;
 mod timeline;
 mod util;
 mod watch;
@@ -101,7 +105,8 @@ pub struct App {
     /// 마지막 스크린샷 PNG 지문과 시각(클립보드·파일 경로 공통 중복 제거).
     pub image_dedupe: Mutex<std::collections::VecDeque<(String, u64)>>,
     pub timeline: Mutex<Option<timeline::Timeline>>,
-    pub screenshots: Mutex<String>,
+    /// 화면캡처 폴더별 감시 상태(`capture_dirs::plan`, 설정·일시정지가 바뀔 때마다 다시 계산).
+    pub capture_plan: Mutex<Vec<(capture_dirs::Candidate, capture_dirs::FolderState)>>,
     pub scan_pending: Mutex<HashSet<String>>,
     pub timeline_generation: AtomicU64,
     pub timeline_files: AtomicI64,
@@ -112,76 +117,75 @@ fn now_ms() -> u64 {
     (now() * 1000.0) as u64
 }
 
-/// 스크린샷 폴더(알려진 폴더 FOLDERID_Screenshots, 없으면 사진\Screenshots).
-fn screenshots_folder() -> Option<String> {
-    use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_Screenshots, SHGetKnownFolderPath};
+/// 화면캡처 폴더 후보 중 실제로 있는 것(시험용 환경 변수가 있으면 그 폴더 하나만 — 사용자 폴더를 건드리지 않게).
+fn capture_folders() -> Vec<capture_dirs::Candidate> {
+    let single = |path: String| vec![capture_dirs::Candidate { path, label: capture_dirs::LABEL_WINDOWS, subtree: false }];
     if let Ok(root) = std::env::var("KAGENT_TEST_ROOT") {
         let dir = std::path::Path::new(&root).join("Screenshots");
-        if std::fs::create_dir_all(&dir).is_ok() {
-            return Some(dir.to_string_lossy().into_owned());
-        }
-        return None;
+        return if std::fs::create_dir_all(&dir).is_ok() { single(dir.to_string_lossy().into_owned()) } else { Vec::new() };
     }
     if let Ok(dir) = std::env::var("KAGENT_SCREENSHOTS") {
-        return std::path::Path::new(&dir).is_dir().then_some(dir); // 시험용
+        return if std::path::Path::new(&dir).is_dir() { single(dir) } else { Vec::new() };
     }
-    unsafe {
-        let mut p: windows_sys::core::PWSTR = std::ptr::null_mut();
-        if SHGetKnownFolderPath(&FOLDERID_Screenshots, 0, std::ptr::null_mut(), &mut p) == 0 && !p.is_null() {
-            let mut n = 0;
-            while *p.add(n) != 0 {
-                n += 1;
-            }
-            let path = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
-            CoTaskMemFree(p as _);
-            if std::path::Path::new(&path).is_dir() {
-                return Some(path);
-            }
-        } else if !p.is_null() {
-            CoTaskMemFree(p as _);
-        }
-    }
-    let fallback = format!("{}\\Pictures\\Screenshots", std::env::var("USERPROFILE").ok()?);
-    std::path::Path::new(&fallback).is_dir().then_some(fallback)
+    capture_dirs::discover(&capture_dirs::Env::from_system(), &|p| std::path::Path::new(p).is_dir())
 }
 
-/// 스크린샷 폴더에 새로 생긴 PNG 한 장을 그림 항목으로 기록한다.
-fn record_screenshot(path: &str) {
-    if !path.to_lowercase().ends_with(".png") {
+/// 표시 경로 → 클립보드 붙여넣기 때 그림으로도 올릴 '캡처 파일' 항목 표시(extra 칸).
+pub const CAPTURE_FILE_MARK: &[u8] = b"kagent:capture-file";
+
+/// 화면캡처 폴더에 새로 생긴 그림 파일을 '화면캡처' 항목으로 기록한다. 내용은 저장하지 않고 경로만(파일 항목).
+fn record_capture(path: &str) {
+    if !capture_dirs::is_capture_image(path) {
         return;
     }
-    let max = app().settings.lock().unwrap().max_item_bytes as u64;
-    // 캡처 도구가 아직 쓰는 중일 수 있어 몇 번 다시 시도한다.
-    let mut data = None;
-    for _ in 0..5 {
-        match std::fs::metadata(path) {
-            Ok(m) if m.len() > max => return,
-            Ok(_) => {
-                if let Ok(bytes) = std::fs::read(path) {
-                    if bytes.starts_with(b"\x89PNG") && bytes.ends_with(b"IEND\xAE\x42\x60\x82") {
-                        data = Some(bytes);
-                        break;
-                    }
-                }
-            }
-            Err(_) => return,
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
+    if capture_dirs::is_clipboard_twin(now_ms(), app().last_clip_image.load(Ordering::Relaxed)) {
+        return;
     }
-    let Some(data) = data else { return };
-    if !claim_image(&data) { return; }
-    let preview = format!("캡처 · {}", clip::preview("image", &data));
-    let settings = app().settings.lock().unwrap().clone();
-    {
-        let store = app().store.lock().unwrap();
-        let t = now();
-        if store.insert("image", &data, &[], &preview, "screenshot", t).is_err() {
+    // 캡처 앱이 아직 쓰는 중일 수 있어 크기가 멈추고(PNG는 끝 표시까지) 나서 기록한다.
+    let png = path.to_ascii_lowercase().ends_with(".png");
+    let mut prev = None;
+    let mut done = false;
+    for _ in 0..8 {
+        let Ok(meta) = std::fs::metadata(path) else { return };
+        if !meta.is_file() {
             return;
         }
-        let _ = store.enforce(&settings, t);
+        let tail = if png { read_tail(path, 12) } else { None };
+        if capture_dirs::looks_complete(prev, meta.len(), if png { Some(tail.as_deref().unwrap_or(&[])) } else { None }) {
+            done = true;
+            break;
+        }
+        prev = Some(meta.len());
+        std::thread::sleep(std::time::Duration::from_millis(120));
     }
+    if !done {
+        return;
+    }
+    let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+    let preview = format!("캡처 · {name}");
+    let settings = app().settings.lock().unwrap().clone();
+    let id = {
+        let store = app().store.lock().unwrap();
+        let t = now();
+        let Ok((id, _)) = store.insert("files", path.as_bytes(), CAPTURE_FILE_MARK, &preview, "screenshot", t) else {
+            return;
+        };
+        let _ = store.enforce(&settings, t);
+        id
+    };
+    // 상태 파일에 대기가 바로 보이게 목록 갱신(상태 쓰기) 전에 넣는다.
+    prewarm::enqueue(id);
     refresh_recent();
+}
+
+fn read_tail(path: &str, n: u64) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(n))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(buf)
 }
 
 fn image_hash(data: &[u8]) -> String { store::content_hash("image", data) }
@@ -312,15 +316,21 @@ pub fn scan_timeline_root(root: &str) {
     schedule_timeline_scan(root.to_string());
 }
 
+/// 화면캡처 폴더 감시 태그 시작값(타임머신 폴더는 1부터).
+const CAPTURE_TAG: u32 = 1_000_000;
+
 /// 설정에 맞춰 폴더 감시(스크린샷·타임머신)를 다시 시작한다. 타임머신 폴더는 먼저 한 번 증분으로 훑는다.
 pub fn restart_watchers() {
     let settings = app().settings.lock().unwrap().clone();
     let mut roots: Vec<(String, u32, bool)> = Vec::new();
-    let shots = if settings.watch_screenshots && !settings.paused { screenshots_folder() } else { None };
-    *app().screenshots.lock().unwrap() = shots.clone().unwrap_or_default();
-    if let Some(dir) = shots {
-        roots.push((dir, 0, false));
+    let plan = capture_dirs::plan(&capture_folders(), settings.watch_screenshots, settings.paused, &settings.capture_dirs_off);
+    let capture_roots: Vec<String> = plan.iter().map(|(c, _)| c.path.clone()).collect();
+    for (i, (c, state)) in plan.iter().enumerate() {
+        if *state == capture_dirs::FolderState::Watching {
+            roots.push((c.path.clone(), CAPTURE_TAG + i as u32, c.subtree));
+        }
     }
+    *app().capture_plan.lock().unwrap() = plan;
     let timeline_roots: Vec<String> =
         settings.timeline_roots.iter().filter(|r| std::path::Path::new(r).is_dir()).cloned().collect();
 
@@ -342,10 +352,11 @@ pub fn restart_watchers() {
     let names = timeline_roots.clone();
     watch::restart(roots, move |batch| {
         for (tag, change) in batch {
-            if tag == 0 {
-                if let watch::Change::Added(rel) | watch::Change::Modified(rel) = change {
-                    let dir = app().screenshots.lock().unwrap().clone();
-                    record_screenshot(&format!("{dir}\\{rel}"));
+            if tag >= CAPTURE_TAG {
+                if let (watch::Change::Added(rel) | watch::Change::Modified(rel), Some(dir)) =
+                    (change, capture_roots.get((tag - CAPTURE_TAG) as usize))
+                {
+                    record_capture(&format!("{dir}\\{rel}"));
                 }
                 continue;
             }
@@ -439,7 +450,10 @@ pub fn write_status() {
         (s.count().unwrap_or(0), s.total_bytes().unwrap_or(0))
     };
     let settings = a.settings.lock().unwrap().clone();
-    let screenshots = a.screenshots.lock().unwrap().clone();
+    let plan = a.capture_plan.lock().unwrap().clone();
+    // 예전 키 "screenshots"(감시 중인 첫 폴더)는 앱 호환을 위해 둔다.
+    let screenshots = plan.iter().find(|(_, s)| *s == capture_dirs::FolderState::Watching)
+        .map(|(c, _)| c.path.clone()).unwrap_or_default();
     let timeline_files = a.timeline_files.load(Ordering::Relaxed);
     let v = json::Value::obj(vec![
         ("version", VERSION.into()),
@@ -451,11 +465,22 @@ pub fn write_status() {
         ("hotkey", settings.hotkey.as_str().into()),
         ("hotkey_ok", a.hotkey_ok.load(Ordering::Relaxed).into()),
         ("screenshots", screenshots.as_str().into()),
+        ("capture_dirs", capture_plan_json(&plan)),
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
+        ("thumb_prewarm", prewarm::status_json()),
     ]);
     v
     });
+}
+
+/// 화면캡처 폴더 목록(설정 화면·status.json 공통): 경로·출처·상태.
+pub fn capture_plan_json(plan: &[(capture_dirs::Candidate, capture_dirs::FolderState)]) -> json::Value {
+    json::Value::Arr(plan.iter().map(|(c, s)| json::Value::obj(vec![
+        ("path", c.path.as_str().into()),
+        ("label", c.label.into()),
+        ("state", s.code().into()),
+    ])).collect())
 }
 
 pub fn save_settings() {
@@ -615,8 +640,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             let preview = format!("{} · 서식 상한 초과: {}", clip::preview(kind, &data), suffix);
             let t = now();
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &trimmed, &preview, &source, t).is_ok() { let _ = store.enforce(&settings, t); }
+            let inserted = store.insert(kind, &data, &trimmed, &preview, &source, t).ok().map(|(id, _)| id);
+            if inserted.is_some() { let _ = store.enforce(&settings, t); }
             drop(store);
+            if let (Some(id), "image") = (inserted, kind) { prewarm::enqueue(id); }
             refresh_recent();
             continue;
         }
@@ -627,12 +654,17 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             else if skipped.is_empty() { format!("{} · 서식 포함", clip::preview(kind, &data)) }
             else { format!("{} · 서식 포함 ({}개 형식 생략)", clip::preview(kind, &data), skipped.len()) };
         let t = now();
-        {
+        let id = {
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &extra, &preview, &source, t).is_err() {
+            let Ok((id, _)) = store.insert(kind, &data, &extra, &preview, &source, t) else {
                 continue;
-            }
+            };
             let _ = store.enforce(&settings, t);
+            id
+        };
+        if kind == "image" {
+            // 그림은 쉬는 때 썸네일을 미리 만들어 첫 미리보기를 빠르게(KCAP2). 상태 파일에 대기가 바로 보이게 먼저.
+            prewarm::enqueue(id);
         }
         refresh_recent();
     }
@@ -824,6 +856,7 @@ fn tray_menu(hwnd: HWND) {
             2 => set_paused(hwnd, !paused),
             3 => {
                 let _ = app().store.lock().unwrap().clear(true);
+                thumb::clear_all();
                 refresh_recent();
             }
             4 => {
@@ -1046,7 +1079,7 @@ fn main() {
         last_clip_image: AtomicU64::new(0),
         image_dedupe: Mutex::new(std::collections::VecDeque::new()),
         timeline: Mutex::new(None),
-        screenshots: Mutex::new(String::new()),
+        capture_plan: Mutex::new(Vec::new()),
         scan_pending: Mutex::new(HashSet::new()),
         timeline_generation: AtomicU64::new(0),
         timeline_files: AtomicI64::new(0),
@@ -1082,6 +1115,7 @@ fn main() {
         }
         app().hwnd.store(hwnd as isize, Ordering::Relaxed);
         popup::register(instance);
+        preview::register(instance);
         // 격리 시험 전용: 시험 폴더가 없으면 실제 기록에 시험 항목을 넣지 않도록 무시한다.
         if has("--test-window") && std::env::var_os("KAGENT_TEST_ROOT").is_some() {
             if let Some(root) = std::env::var_os("KAGENT_TEST_ROOT") {

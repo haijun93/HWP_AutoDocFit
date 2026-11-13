@@ -789,6 +789,60 @@ class TimemachineServiceTests(unittest.TestCase):
         self.assertTrue(self.service.command("hide",{"id":row["id"]})["ok"])
         self.assertEqual(self.service.command("hide",{"id":987654})["code"],"TM_NOT_FOUND")
 
+    def test_open_and_reveal_content_paths_without_timeline_id(self):
+        self.enable()
+        for extension in ("hwpx", "docx", "pdf"):
+            file = self.root / ("검색 결과." + extension)
+            file.write_bytes(b"test")
+            for action, calls in (("open", self.opened), ("reveal", self.revealed)):
+                with self.subTest(extension=extension, action=action):
+                    self.assertTrue(self.service.command(action, {"path": str(file)})["ok"])
+                    self.assertEqual(calls[-1], str(file))
+
+    def test_path_open_security_and_missing_file_errors(self):
+        self.enable()
+        for action in ("open", "reveal"):
+            for path, code in ((str(self.plain_file), "TM_NOT_AVAILABLE"),
+                               (str(self.root / "bad.exe"), "TM_NOT_AVAILABLE"),
+                               (str(self.root / "missing.pdf"), "TM_MISSING"),
+                               (str(self.root / ".." / self.plain_file.name), "TM_NOT_AVAILABLE"),
+                               ("relative.pdf", "INVALID_INPUT")):
+                with self.subTest(action=action, path=path):
+                    result = self.service.command(action, {"path": path})
+                    self.assertEqual(result["code"], code)
+                    self.assertTrue(result["message"])
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.revealed, [])
+
+    def test_path_open_rejects_link_escape_and_inactive_roots(self):
+        self.enable()
+        file = self.root / "linked.pdf"
+        file.write_bytes(b"test")
+        with patch("docfit_app.timemachine_service.os.path.realpath", side_effect=lambda value:
+                   str(self.plain_file) if str(value) == str(file) else str(value)):
+            self.assertEqual(self.service.command("open", {"path": str(file)})["code"], "TM_NOT_AVAILABLE")
+        self.service._settings["roots"] = []
+        self.assertEqual(self.service.command("open", {"path": str(file)})["code"], "TM_NOT_AVAILABLE")
+        self.assertEqual(self.opened, [])
+
+    def test_invalid_id_does_not_fall_back_to_path(self):
+        self.enable()
+        file = self.root / "allowed.pdf"
+        file.write_bytes(b"test")
+        for file_id in (False, 0, "1"):
+            self.assertEqual(self.service.command("open", {"id": file_id, "path": str(file)})["code"], "INVALID_INPUT")
+        self.assertEqual(self.opened, [])
+
+    def test_path_open_reports_associated_application_failure(self):
+        self.enable()
+        file = self.root / "allowed.pdf"
+        file.write_bytes(b"test")
+        with patch.object(self.service, "opener", side_effect=OSError("no application")):
+            result = self.service.command("open", {"path": str(file)})
+        self.assertEqual(result["code"], "TM_OPEN_FAILED")
+        self.assertIn("no application", result["message"])
+        self.assertTrue(result["message"])
+
     def test_open_rejects_unknown_id_and_disallowed_extension(self):
         self.assertEqual(self.service.command("open",{"id":55})["code"],"TM_NOT_FOUND")
         file=self.root/"bad.exe"; file.write_bytes(b"x"); now=time.time()

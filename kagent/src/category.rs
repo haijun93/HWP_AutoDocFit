@@ -6,6 +6,7 @@
 //! 정한 규칙(사용자 확인 전 '기본안'; 바꿀 때는 이 목록과 시험을 함께 고친다):
 //! 1. 분류는 겹칠 수 있다. 한 항목이 여러 분류에 속하고, "전체"에는 항상 속한다.
 //! 2. 화면캡처: kind=image 이면서 source=="screenshot"·캡처 프로그램(ScreenClippingHost·캡처 도구) 또는
+//!    (화면캡처 폴더 파일: kind=files 이면서 source=="screenshot") 또는
 //!    미리보기가 "캡처 · "로 시작. 그림에도 함께 속한다.
 //! 3. 그림: kind=image, 또는 파일 항목에 그림 확장자 파일이 하나라도 있음.
 //! 4. 문서: 파일 항목에 문서 확장자 파일이 하나라도 있음, 또는 글 항목이 문서 프로그램(source)에서 왔거나
@@ -177,6 +178,10 @@ pub fn classify(entry: &Entry, is_dir: &dyn Fn(&str) -> Option<bool>) -> Categor
                         _ => {}
                     }
                 }
+            }
+            // 화면캡처 폴더에서 기록한 파일(경로만 저장, 출처 "screenshot")도 화면캡처다.
+            if source == "screenshot" {
+                set.insert(Category::Capture);
             }
         }
         "text" => {

@@ -469,6 +469,14 @@ class TimemachineService:
         return False
 
     @staticmethod
+    def _real_path_under_root(path, root):
+        try:
+            path, root = (os.path.normcase(value).casefold() for value in (path, root))
+            return os.path.commonpath((path, root)) == root
+        except (OSError, ValueError):
+            return False
+
+    @staticmethod
     def _validate_roots(roots):
         if not isinstance(roots, list) or len(roots) > 20:
             raise ValueError("조사 폴더는 최대 20개까지 지정할 수 있습니다.")
@@ -886,24 +894,40 @@ class TimemachineService:
             return {"ok": True}
         if action in ("open", "reveal"):
             file_id = payload.get("id")
-            if type(file_id) is not int or file_id <= 0:
-                raise ValueError("파일 항목을 확인해 주세요.")
-            row = self.store.get(file_id)
-            if not row:
-                return self._error("TM_NOT_FOUND", "파일 항목을 찾지 못했습니다.")
-            path = row["path"]
-            if (Rules().kind(row["name"]) not in KINDS or
-                    not self._path_in_active_root(path, row.get("root"))):
+            row = None
+            if "id" in payload:
+                if type(file_id) is not int or file_id <= 0:
+                    raise ValueError("파일 항목을 확인해 주세요.")
+                row = self.store.get(file_id)
+                if not row:
+                    return self._error("TM_NOT_FOUND", "파일 항목을 찾지 못했습니다.")
+                path = row["path"]
+            else:
+                path = payload.get("path")
+                if not isinstance(path, str) or not path or not os.path.isabs(path):
+                    raise ValueError("파일 항목을 확인해 주세요.")
+            if not self._path_in_active_root(path, row.get("root") if row else None):
+                return self._error("TM_NOT_AVAILABLE", "현재 조사 폴더 안의 문서만 열 수 있습니다.")
+            # 정션·심볼릭 링크를 통해 조사 폴더 밖으로 나가는 경로도 거부한다.
+            real_path = os.path.realpath(path)
+            real_roots = [os.path.realpath(root) for root in self._settings["roots"]]
+            if not any(self._real_path_under_root(real_path, root) for root in real_roots):
+                return self._error("TM_NOT_AVAILABLE", "현재 조사 폴더 밖으로 연결된 문서입니다.")
+            rules = Rules()
+            if (rules.kind(Path(path).name) not in KINDS or rules.skip_file(Path(path).name) or
+                    any(rules.skip_dir(part) for part in self._parts_under_root(path)) or
+                    (row and row["hidden"])):
                 return self._error("TM_NOT_AVAILABLE", "지원하지 않는 파일입니다.")
             if not os.path.isfile(path):
-                self.store.hide(file_id)
-                return self._error("TM_MISSING", "파일이 없어 목록에서 정리했습니다.")
+                if row:
+                    self.store.hide(file_id)
+                return self._error("TM_MISSING", "파일이 존재하지 않습니다. 이동하거나 삭제했는지 확인해 주세요.")
             try:
                 (self.opener if action == "open" else self.revealer)(path)
-            except Exception:
+            except Exception as exc:
                 logging.getLogger(__name__).exception("타임머신 파일 작업 실패")
                 return self._error("TM_OPEN_FAILED" if action == "open" else "TM_REVEAL_FAILED",
-                                   "파일을 열지 못했습니다." if action == "open" else "폴더를 열지 못했습니다.")
+                                   f"파일을 열지 못했습니다: {exc}" if action == "open" else f"폴더를 열지 못했습니다: {exc}")
             return {"ok": True}
         if action == "thumbnail":
             return self._thumbnail(payload.get("id"))

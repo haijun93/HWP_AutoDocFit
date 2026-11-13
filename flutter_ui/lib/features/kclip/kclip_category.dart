@@ -162,6 +162,8 @@ List<String> kclipClassify(KClipEntry entry, {KClipIsDir isDir = _unknown}) {
           }
         }
       }
+      // 화면캡처 폴더에서 기록한 파일(경로만 저장, 출처 "screenshot")도 화면캡처다.
+      if (source == 'screenshot') set.add('화면캡처');
     case 'text':
       if (kclipDocPrograms.contains(source) || hasFormat(kclipDocFormats)) {
         set.add('문서');
@@ -177,6 +179,9 @@ List<String> kclipClassify(KClipEntry entry, {KClipIsDir isDir = _unknown}) {
 /// 에이전트 목록 항목이 [category]에 속하는지.
 bool kclipItemIn(Map item, String category, {KClipIsDir? isDir}) {
   if (category == '전체') return true;
+  // 에이전트가 준 분류(빠른 목록과 같은 계산, 경로만 저장한 화면캡처 항목 포함)가 있으면 그대로 쓴다.
+  final cats = item['cats'];
+  if (cats is List && cats.isNotEmpty) return cats.contains(category);
   final known = item['is_folder'];
   final lookup = isDir ?? (known is bool ? (_) => known : _unknown);
   return kclipClassify(KClipEntry.fromItem(item), isDir: lookup).contains(category);

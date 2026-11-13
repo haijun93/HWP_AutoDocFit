@@ -32,6 +32,8 @@
     {"name": "그림", "entry": {"kind": "image", "source": "mspaint.exe", "preview": "그림 10×10"}, "expect": ["전체", "그림"]},
     {"name": "화면 캡처(출처)", "entry": {"kind": "image", "source": "screenshot", "preview": "캡처 · 그림 1×1"}, "expect": ["전체", "그림", "화면캡처"]},
     {"name": "화면 캡처(미리보기)", "entry": {"kind": "image", "preview": "캡처 · 그림"}, "expect": ["전체", "그림", "화면캡처"]},
+    {"name": "화면캡처 폴더 파일(경로만)", "entry": {"kind": "files", "source": "screenshot", "preview": "캡처 · 스크린샷 1.png", "paths": ["C:/Users/u/Pictures/Screenshots/스크린샷 1.png"]}, "is_dir": {"C:/Users/u/Pictures/Screenshots/스크린샷 1.png": false}, "expect": ["전체", "그림", "파일", "화면캡처"]},
+    {"name": "출처가 캡처가 아닌 그림 파일", "entry": {"kind": "files", "source": "explorer.exe", "preview": "파일 1개: a.png", "paths": ["C:/a.png"]}, "is_dir": {"C:/a.png": false}, "expect": ["전체", "그림", "파일"]},
     {"name": "문서 파일", "entry": {"kind": "files", "paths": ["C:\\a\\보고서.HWPX"]}, "is_dir": {"C:\\a\\보고서.HWPX": false}, "expect": ["전체", "문서", "파일"]},
     {"name": "그림 파일", "entry": {"kind": "files", "paths": ["C:\\a\\사진.JPG"]}, "is_dir": {"C:\\a\\사진.JPG": false}, "expect": ["전체", "그림", "파일"]},
     {"name": "기타 파일", "entry": {"kind": "files", "paths": ["C:\\a\\setup.exe"]}, "is_dir": {"C:\\a\\setup.exe": false}, "expect": ["전체", "파일"]},
