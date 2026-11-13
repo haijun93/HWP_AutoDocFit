@@ -10,7 +10,7 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::crc::crc32c;
-use crate::index::{EXT_OTHER, ExtList, ExtTable, Names, NONE, View, Volume};
+use crate::index::{EXT_OTHER, ExtList, ExtTable, NONE, Names, View, Volume};
 use crate::{Error, Result};
 
 pub const MAGIC: &[u8; 8] = b"KTMSEG01";
@@ -157,10 +157,14 @@ fn cast<T: Copy>(b: &[u8]) -> Result<&[T]> {
 }
 
 fn rd_u32(b: &[u8], o: usize) -> Result<u32> {
-    b.get(o..o + 4).map(|x| u32::from_le_bytes(x.try_into().unwrap())).ok_or_else(|| corrupt("short"))
+    b.get(o..o + 4)
+        .map(|x| u32::from_le_bytes(x.try_into().unwrap()))
+        .ok_or_else(|| corrupt("short"))
 }
 fn rd_u64(b: &[u8], o: usize) -> Result<u64> {
-    b.get(o..o + 8).map(|x| u64::from_le_bytes(x.try_into().unwrap())).ok_or_else(|| corrupt("short"))
+    b.get(o..o + 8)
+        .map(|x| u64::from_le_bytes(x.try_into().unwrap()))
+        .ok_or_else(|| corrupt("short"))
 }
 
 impl NamesSeg {
@@ -218,7 +222,14 @@ impl NamesSeg {
                 return Err(corrupt("missing section"));
             }
         }
-        let mut s = NamesSeg { map, secs, generation, n: 0, base_len: 0, vols: Vec::new() };
+        let mut s = NamesSeg {
+            map,
+            secs,
+            generation,
+            n: 0,
+            base_len: 0,
+            vols: Vec::new(),
+        };
         s.load_meta()?;
         s.validate()?;
         Ok(s)
@@ -247,15 +258,25 @@ impl NamesSeg {
             let next_usn = rd_u64(&m, o + 16)? as i64;
             let rl = rd_u32(&m, o + 24)? as usize;
             let nl = rd_u32(&m, o + 28)? as usize;
-            let name = m.get(o + 32..o + 32 + nl).ok_or_else(|| corrupt("meta name"))?;
-            let name = std::str::from_utf8(name).map_err(|_| corrupt("meta utf8"))?.to_string();
+            let name = m
+                .get(o + 32..o + 32 + nl)
+                .ok_or_else(|| corrupt("meta name"))?;
+            let name = std::str::from_utf8(name)
+                .map_err(|_| corrupt("meta utf8"))?
+                .to_string();
             o = (o + 32 + nl).div_ceil(8) * 8;
             let rm = recmap.get(ro..ro + rl).ok_or_else(|| corrupt("recmap"))?;
             if rm.iter().any(|&i| i != NONE && i as usize >= n) {
                 return Err(corrupt("recmap range"));
             }
             ro += rl;
-            vols.push(Volume { name, root_rec, recmap: rm.to_vec(), journal_id, next_usn });
+            vols.push(Volume {
+                name,
+                root_rec,
+                recmap: rm.to_vec(),
+                journal_id,
+                next_usn,
+            });
         }
         if base_len as usize != n {
             return Err(corrupt("segment must be compacted"));
@@ -279,7 +300,10 @@ impl NamesSeg {
         {
             return Err(corrupt("array lengths"));
         }
-        if v.fold.first() != Some(&0) || v.fold_off[0] != 1 || v.fold_off[n] as usize != v.fold.len() {
+        if v.fold.first() != Some(&0)
+            || v.fold_off[0] != 1
+            || v.fold_off[n] as usize != v.fold.len()
+        {
             return Err(corrupt("fold arena"));
         }
         for i in 0..n {
@@ -308,7 +332,10 @@ impl NamesSeg {
         }
         std::str::from_utf8(v.name).map_err(|_| corrupt("name utf8"))?;
         let eo: &[u32] = cast(self.raw(sec::EXT_OFF))?;
-        if eo.is_empty() || eo[0] != 0 || eo.windows(2).any(|w| w[1] < w[0]) || *eo.last().unwrap() as usize != self.raw(sec::EXT_BLOB).len()
+        if eo.is_empty()
+            || eo[0] != 0
+            || eo.windows(2).any(|w| w[1] < w[0])
+            || *eo.last().unwrap() as usize != self.raw(sec::EXT_BLOB).len()
         {
             return Err(corrupt("ext table"));
         }
@@ -326,7 +353,10 @@ impl NamesSeg {
             end: cast(self.raw(sec::END))?,
             fold: self.raw(sec::FOLD),
             name: self.raw(sec::NAME),
-            exts: ExtList::Blob { blob: self.raw(sec::EXT_BLOB), off: cast(self.raw(sec::EXT_OFF))? },
+            exts: ExtList::Blob {
+                blob: self.raw(sec::EXT_BLOB),
+                off: cast(self.raw(sec::EXT_OFF))?,
+            },
             base_len: self.base_len,
             redirect: None,
             dirty: false,
@@ -383,7 +413,11 @@ impl NamesSeg {
             dirty: false,
             vols: self.vols.clone(),
             generation: self.generation,
-            deleted: v.flags.iter().filter(|&&f| f & crate::flag::DELETED != 0).count(),
+            deleted: v
+                .flags
+                .iter()
+                .filter(|&&f| f & crate::flag::DELETED != 0)
+                .count(),
         }
     }
 }

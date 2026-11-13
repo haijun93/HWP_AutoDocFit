@@ -12,16 +12,16 @@
 mod build;
 mod crc;
 mod index;
+#[cfg(windows)]
+pub mod ntfs;
 pub mod query;
 pub mod seg;
 pub mod source;
 #[cfg(windows)]
-pub mod ntfs;
-#[cfg(windows)]
 pub mod walk;
 
 pub use build::Builder;
-pub use index::{Names, View, flag, NONE};
+pub use index::{NONE, Names, View, flag};
 pub use query::{Hit, Options, Query, Results, Searcher, Sort, parse};
 pub use seg::NamesSeg;
 pub use source::{Change, ChangeKind};

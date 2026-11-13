@@ -3,11 +3,12 @@
 use std::ffi::c_void;
 
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_HANDLE_EOF, GENERIC_READ, GetLastError, HANDLE, INVALID_HANDLE_VALUE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_HANDLE_EOF, GENERIC_READ, GetLastError, HANDLE,
+    INVALID_HANDLE_VALUE,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    CreateFileW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW, GetLogicalDrives,
-    GetVolumeInformationW, OPEN_EXISTING,
+    CreateFileW, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, GetDriveTypeW,
+    GetLogicalDrives, GetVolumeInformationW, OPEN_EXISTING,
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -94,7 +95,11 @@ impl Volume {
         };
         if h == INVALID_HANDLE_VALUE {
             let e = unsafe { GetLastError() };
-            return Err(if e == ERROR_ACCESS_DENIED { Error::AccessDenied } else { Error::Io(std::io::Error::from_raw_os_error(e as i32)) });
+            return Err(if e == ERROR_ACCESS_DENIED {
+                Error::AccessDenied
+            } else {
+                Error::Io(std::io::Error::from_raw_os_error(e as i32))
+            });
         }
         Ok(Volume(h))
     }
@@ -113,7 +118,11 @@ impl Volume {
                 std::ptr::null_mut(),
             )
         };
-        if ok == 0 { Err(unsafe { GetLastError() }) } else { Ok(got as usize) }
+        if ok == 0 {
+            Err(unsafe { GetLastError() })
+        } else {
+            Ok(got as usize)
+        }
     }
 
     /// USN 저널 정보. 저널이 없으면 None.
@@ -133,7 +142,11 @@ impl Volume {
     }
 
     /// MFT 항목을 모두 열거한다. `f(frn, parent_frn, name_utf16, attrs)`. 돌려주는 값은 항목 수.
-    pub fn enum_mft(&self, high_usn: i64, mut f: impl FnMut(u64, u64, &[u16], u32)) -> Result<usize> {
+    pub fn enum_mft(
+        &self,
+        high_usn: i64,
+        mut f: impl FnMut(u64, u64, &[u16], u32),
+    ) -> Result<usize> {
         let mut buf = vec![0u8; 1 << 20];
         let mut start: u64 = 0;
         let mut count = 0usize;
@@ -158,7 +171,14 @@ impl Volume {
 
     /// `start`부터 USN 기록을 읽는다. `wait_secs`가 Some이면 새 기록이 올 때까지(최대 그 초) 막혀 기다린다(0 = 끝없이).
     /// 돌려주는 값: (다음 USN, 변경들). 저널이 잘려 나갔으면 `Error::Rescan`.
-    pub fn read_usn(&self, vol: u16, j: &Journal, start: i64, wait_secs: Option<u64>, buf: &mut Vec<u8>) -> Result<(i64, Vec<Change>)> {
+    pub fn read_usn(
+        &self,
+        vol: u16,
+        j: &Journal,
+        start: i64,
+        wait_secs: Option<u64>,
+        buf: &mut Vec<u8>,
+    ) -> Result<(i64, Vec<Change>)> {
         if buf.len() < 64 * 1024 {
             buf.resize(64 * 1024, 0);
         }
@@ -186,8 +206,12 @@ impl Volume {
                 Ok((next, out))
             }
             Ok(_) => Ok((start, Vec::new())),
-            Err(ERROR_JOURNAL_ENTRY_DELETED) => Err(Error::Rescan("journal entries deleted".into())),
-            Err(ERROR_JOURNAL_NOT_ACTIVE) | Err(ERROR_JOURNAL_DELETE_IN_PROGRESS) => Err(Error::Rescan("journal not active".into())),
+            Err(ERROR_JOURNAL_ENTRY_DELETED) => {
+                Err(Error::Rescan("journal entries deleted".into()))
+            }
+            Err(ERROR_JOURNAL_NOT_ACTIVE) | Err(ERROR_JOURNAL_DELETE_IN_PROGRESS) => {
+                Err(Error::Rescan("journal not active".into()))
+            }
             Err(ERROR_ACCESS_DENIED) => Err(Error::AccessDenied),
             Err(e) => Err(Error::Io(std::io::Error::from_raw_os_error(e as i32))),
         }
@@ -226,8 +250,24 @@ pub fn parse_records(mut b: &[u8], mut f: impl FnMut(Record)) -> usize {
         let u32at = |o: usize| u32::from_le_bytes(r[o..o + 4].try_into().unwrap());
         let u64at = |o: usize| u64::from_le_bytes(r[o..o + 8].try_into().unwrap());
         let (frn, parent, usn, reason, attrs, nl, no) = match major {
-            2 => (u64at(8), u64at(16), u64at(24) as i64, u32at(40), u32at(52), u16::from_le_bytes(r[56..58].try_into().unwrap()), u16::from_le_bytes(r[58..60].try_into().unwrap())),
-            3 if len >= 76 => (u64at(8), u64at(24), u64at(40) as i64, u32at(56), u32at(68), u16::from_le_bytes(r[72..74].try_into().unwrap()), u16::from_le_bytes(r[74..76].try_into().unwrap())),
+            2 => (
+                u64at(8),
+                u64at(16),
+                u64at(24) as i64,
+                u32at(40),
+                u32at(52),
+                u16::from_le_bytes(r[56..58].try_into().unwrap()),
+                u16::from_le_bytes(r[58..60].try_into().unwrap()),
+            ),
+            3 if len >= 76 => (
+                u64at(8),
+                u64at(24),
+                u64at(40) as i64,
+                u32at(56),
+                u32at(68),
+                u16::from_le_bytes(r[72..74].try_into().unwrap()),
+                u16::from_le_bytes(r[74..76].try_into().unwrap()),
+            ),
             _ => {
                 b = &b[len..];
                 continue;
@@ -238,8 +278,20 @@ pub fn parse_records(mut b: &[u8], mut f: impl FnMut(Record)) -> usize {
             break;
         }
         tmp.clear();
-        tmp.extend(r[no..no + nl].chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])));
-        f(Record { frn, parent, usn, reason, attrs, name: &tmp, name_buf: std::marker::PhantomData });
+        tmp.extend(
+            r[no..no + nl]
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]])),
+        );
+        f(Record {
+            frn,
+            parent,
+            usn,
+            reason,
+            attrs,
+            name: &tmp,
+            name_buf: std::marker::PhantomData,
+        });
         n += 1;
         b = &b[len..];
     }
@@ -267,7 +319,14 @@ pub fn index_volume(b: &mut Builder, letter: char) -> Result<(u16, Option<Journa
 mod tests {
     use super::*;
 
-    pub(crate) fn rec_v2(frn: u64, parent: u64, usn: i64, reason: u32, attrs: u32, name: &str) -> Vec<u8> {
+    pub(crate) fn rec_v2(
+        frn: u64,
+        parent: u64,
+        usn: i64,
+        reason: u32,
+        attrs: u32,
+        name: &str,
+    ) -> Vec<u8> {
         let nm: Vec<u8> = name.encode_utf16().flat_map(|c| c.to_le_bytes()).collect();
         let len = (60 + nm.len()).div_ceil(8) * 8;
         let mut r = vec![0u8; len];
@@ -305,9 +364,14 @@ mod tests {
         b.extend(rec_v3(0x11, 0x10, 0x200, "b.txt"));
         b.extend([0xFFu8; 12]);
         let mut got = Vec::new();
-        let n = parse_records(&b, |r| got.push((r.frn, r.parent, r.reason, String::from_utf16_lossy(r.name))));
+        let n = parse_records(&b, |r| {
+            got.push((r.frn, r.parent, r.reason, String::from_utf16_lossy(r.name)))
+        });
         assert_eq!(n, 2);
-        assert_eq!(got[0], (0x0001_0000_0000_0010, 5, 0x100, "예산.hwp".to_string()));
+        assert_eq!(
+            got[0],
+            (0x0001_0000_0000_0010, 5, 0x100, "예산.hwp".to_string())
+        );
         assert_eq!(got[1], (0x11, 0x10, 0x200, "b.txt".to_string()));
         // 잘린 기록
         let short = &rec_v2(1, 5, 0, 0, 0, "abc")[..40];
@@ -324,7 +388,9 @@ mod tests {
     /// 관리자 권한이 있을 때만 실제 MFT를 읽는다(없으면 건너뜀).
     #[test]
     fn real_mft_when_admin() {
-        let Some((letter, _)) = fixed_drives().into_iter().find(|(_, fs)| fs == "NTFS") else { return };
+        let Some((letter, _)) = fixed_drives().into_iter().find(|(_, fs)| fs == "NTFS") else {
+            return;
+        };
         match Volume::open(letter) {
             Err(Error::AccessDenied) => eprintln!("skip: no admin"),
             Err(e) => eprintln!("skip: {e}"),

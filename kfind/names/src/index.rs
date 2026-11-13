@@ -96,7 +96,10 @@ pub(crate) struct ExtTable {
 
 impl ExtTable {
     pub fn new() -> Self {
-        ExtTable { names: vec![Vec::new()], map: HashMap::new() }
+        ExtTable {
+            names: vec![Vec::new()],
+            map: HashMap::new(),
+        }
     }
     pub fn intern(&mut self, f: Option<String>) -> u16 {
         let Some(f) = f else { return 0 };
@@ -137,7 +140,9 @@ impl<'a> ExtList<'a> {
         }
     }
     pub fn find(&self, f: &[u8]) -> Option<u16> {
-        (1..self.len()).find(|&i| self.get(i) == f).map(|i| i as u16)
+        (1..self.len())
+            .find(|&i| self.get(i) == f)
+            .map(|i| i as u16)
     }
 }
 
@@ -214,7 +219,11 @@ impl<'a> View<'a> {
     }
     /// 조상 폴더 번호를 가까운 것부터.
     pub fn ancestors(&self, i: u32) -> Ancestors<'_, 'a> {
-        Ancestors { v: self, cur: self.parent_of(i), steps: 0 }
+        Ancestors {
+            v: self,
+            cur: self.parent_of(i),
+            steps: 0,
+        }
     }
     /// 항목이 들어 있는 폴더의 경로(`C:\Users\x`). 뿌리 항목이면 빈 문자열.
     pub fn dir_path(&self, i: u32) -> String {
@@ -231,16 +240,25 @@ impl<'a> View<'a> {
     }
     /// 살아 있는 항목 수.
     pub fn live_count(&self) -> usize {
-        self.flags.iter().filter(|&&f| f & flag::DELETED == 0).count()
+        self.flags
+            .iter()
+            .filter(|&&f| f & flag::DELETED == 0)
+            .count()
     }
     /// 살아 있는 바로 아래 항목들.
     pub fn children(&self, dir: u32) -> Vec<u32> {
-        let hi = if dir < self.base_len && self.flags[dir as usize] & flag::APPENDED == 0 && !self.dirty {
-            self.end[dir as usize]
+        let hi =
+            if dir < self.base_len && self.flags[dir as usize] & flag::APPENDED == 0 && !self.dirty
+            {
+                self.end[dir as usize]
+            } else {
+                self.base_len
+            };
+        let lo = if hi == self.base_len && self.dirty {
+            0
         } else {
-            self.base_len
+            dir + 1
         };
-        let lo = if hi == self.base_len && self.dirty { 0 } else { dir + 1 };
         (lo..hi)
             .chain(self.base_len..self.len() as u32)
             .filter(|&j| j != dir && self.is_live(j) && self.parent_of(j) == dir)
@@ -252,14 +270,15 @@ impl<'a> View<'a> {
         let mut comps = path.split(['\\', '/']).filter(|c| !c.is_empty());
         let first = comps.next()?;
         let mut cur = (0..self.len() as u32).find(|&i| {
-            self.parent[i as usize] == NONE && self.is_live(i) && self.name_of(i).eq_ignore_ascii_case(first)
+            self.parent[i as usize] == NONE
+                && self.is_live(i)
+                && self.name_of(i).eq_ignore_ascii_case(first)
         })?;
         for c in comps {
             let lc = c.to_lowercase();
-            cur = self
-                .children(cur)
-                .into_iter()
-                .find(|&j| self.flags[j as usize] & flag::DIR != 0 && self.name_of(j).to_lowercase() == lc)?;
+            cur = self.children(cur).into_iter().find(|&j| {
+                self.flags[j as usize] & flag::DIR != 0 && self.name_of(j).to_lowercase() == lc
+            })?;
         }
         Some(cur)
     }
@@ -344,7 +363,11 @@ impl Names {
             name: &self.name,
             exts: ExtList::Owned(&self.exts.names),
             base_len: self.base_len,
-            redirect: if self.redirect.is_empty() { None } else { Some(&self.redirect) },
+            redirect: if self.redirect.is_empty() {
+                None
+            } else {
+                Some(&self.redirect)
+            },
             dirty: self.dirty,
         }
     }
@@ -382,9 +405,18 @@ impl Names {
             + self.end.capacity() * 4
             + self.fold.capacity()
             + self.name.capacity()
-            + self.vols.iter().map(|v| v.recmap.capacity() * 4).sum::<usize>()
+            + self
+                .vols
+                .iter()
+                .map(|v| v.recmap.capacity() * 4)
+                .sum::<usize>()
             + self.redirect.len() * 16
-            + self.exts.names.iter().map(|n| n.len() + 24 + 32).sum::<usize>()
+            + self
+                .exts
+                .names
+                .iter()
+                .map(|n| n.len() + 24 + 32)
+                .sum::<usize>()
     }
 
     fn lookup(&self, vol: u16, rec: u64) -> u32 {
@@ -413,7 +445,11 @@ impl Names {
 
     fn push_entry(&mut self, parent: u32, name: &str, attrs: u32) -> u32 {
         let idx = self.parent.len() as u32;
-        let depth = if parent == NONE { 0 } else { key_depth(self.key[parent as usize]) + 1 };
+        let depth = if parent == NONE {
+            0
+        } else {
+            key_depth(self.key[parent as usize]) + 1
+        };
         let f = kfind_core::fold(name);
         self.fold.extend_from_slice(f.as_bytes());
         self.fold.push(0);
@@ -518,8 +554,18 @@ impl Names {
                     continue;
                 }
                 let p = v.parent_of(i);
-                let pr = if p == NONE { vol.root_rec } else { rec_of_idx.get(&p).copied().unwrap_or(vol.root_rec) };
-                b.push(vi as u16, r as u64, pr, v.name_of(i), attrs_of(self.flags[i as usize]));
+                let pr = if p == NONE {
+                    vol.root_rec
+                } else {
+                    rec_of_idx.get(&p).copied().unwrap_or(vol.root_rec)
+                };
+                b.push(
+                    vi as u16,
+                    r as u64,
+                    pr,
+                    v.name_of(i),
+                    attrs_of(self.flags[i as usize]),
+                );
             }
         }
         let mut n = b.finish();
@@ -541,6 +587,9 @@ impl Names {
 
     /// 덧붙임·지움이 있는가(있으면 `seg::write`가 먼저 `compact`한다).
     pub fn has_delta(&self) -> bool {
-        self.len() != self.base_len as usize || self.deleted > 0 || !self.redirect.is_empty() || self.dirty
+        self.len() != self.base_len as usize
+            || self.deleted > 0
+            || !self.redirect.is_empty()
+            || self.dirty
     }
 }

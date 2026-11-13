@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, HashSet};
 
 use kfind_names::query::{Kind, hits, search};
 use kfind_names::source::{ChangeKind, attr};
-use kfind_names::{Builder, Change, Names, NamesSeg, Options, Query, Searcher, Sort, View, flag, parse, seg};
+use kfind_names::{
+    Builder, Change, Names, NamesSeg, Options, Query, Searcher, Sort, View, flag, parse, seg,
+};
 
 struct Rng(u64);
 impl Rng {
@@ -19,10 +21,36 @@ impl Rng {
 }
 
 const WORDS: &[&str] = &[
-    "예산", "집행", "계획", "보고서", "회의", "결과", "Report", "plan", "draft", "Final", "사업", "2026", "2025", "자료",
-    "민원", "공문", "budget", "a", "ab", "x", "카페", "Straße", "ＡＢＣ", "e\u{301}clair", "data", "img",
+    "예산",
+    "집행",
+    "계획",
+    "보고서",
+    "회의",
+    "결과",
+    "Report",
+    "plan",
+    "draft",
+    "Final",
+    "사업",
+    "2026",
+    "2025",
+    "자료",
+    "민원",
+    "공문",
+    "budget",
+    "a",
+    "ab",
+    "x",
+    "카페",
+    "Straße",
+    "ＡＢＣ",
+    "e\u{301}clair",
+    "data",
+    "img",
 ];
-const EXTS: &[&str] = &["hwp", "hwpx", "pdf", "xlsx", "txt", "PNG", "", "tar.gz", "jpg"];
+const EXTS: &[&str] = &[
+    "hwp", "hwpx", "pdf", "xlsx", "txt", "PNG", "", "tar.gz", "jpg",
+];
 
 /// 합성 모델: (볼륨, 레코드) → (부모 레코드, 이름, 속성).
 #[derive(Clone)]
@@ -146,11 +174,20 @@ fn ext_of(name: &str, dir: bool) -> Option<Vec<u8>> {
 }
 
 /// 기준 구현: (전체 경로 집합, 정렬 튜플 목록).
-fn oracle(m: &Model, q: &Query, deny: &[String], sort: Sort) -> (HashSet<String>, Vec<(u8, u32, Vec<u8>)>) {
+fn oracle(
+    m: &Model,
+    q: &Query,
+    deny: &[String],
+    sort: Sort,
+) -> (HashSet<String>, Vec<(u8, u32, Vec<u8>)>) {
     let mut set = HashSet::new();
     let mut tuples = Vec::new();
     // 볼륨 뿌리(`C:`)도 항목이다(깊이 0, 조상 없음).
-    let roots = m.vols.iter().enumerate().map(|(vi, (n, r))| ((vi as u16, *r), n.clone()));
+    let roots = m
+        .vols
+        .iter()
+        .enumerate()
+        .map(|(vi, (n, r))| ((vi as u16, *r), n.clone()));
     let items = roots
         .map(|(k, n)| (k, n, attr::DIRECTORY, true))
         .chain(m.e.iter().map(|(&k, (_, n, a))| (k, n.clone(), *a, false)));
@@ -170,11 +207,22 @@ fn oracle(m: &Model, q: &Query, deny: &[String], sort: Sort) -> (HashSet<String>
             continue;
         }
         let chain = if is_root { Vec::new() } else { m.chain(v, rec) };
-        if !q.path.iter().all(|w| chain.iter().any(|(_, n)| contains(&fold(n), w))) {
+        if !q
+            .path
+            .iter()
+            .all(|w| chain.iter().any(|(_, n)| contains(&fold(n), w)))
+        {
             continue;
         }
-        let full = if is_root { name.clone() } else { m.full_path(v, rec) };
-        if deny.iter().any(|d| full == *d || full.starts_with(&format!("{d}\\"))) {
+        let full = if is_root {
+            name.clone()
+        } else {
+            m.full_path(v, rec)
+        };
+        if deny
+            .iter()
+            .any(|d| full == *d || full.starts_with(&format!("{d}\\")))
+        {
             continue;
         }
         let depth = (chain.len() as u32).min(63);
@@ -211,18 +259,41 @@ fn engine_tuple(v: &View, q: &Query, id: u32, sort: Sort) -> (u8, u32, Vec<u8>) 
 
 fn check(m: &Model, v: &View, text: &str, deny_paths: &[String], sort: Sort, serial_bytes: usize) {
     let q = parse(text);
-    let deny: Vec<u32> = deny_paths.iter().map(|p| v.find_dir(p).expect("deny dir")).collect();
+    let deny: Vec<u32> = deny_paths
+        .iter()
+        .map(|p| v.find_dir(p).expect("deny dir"))
+        .collect();
     let (want_set, want_t) = oracle(m, &q, deny_paths, sort);
-    let all = Options { limit: usize::MAX, sort, deny: deny.clone(), serial_bytes, ..Default::default() };
+    let all = Options {
+        limit: usize::MAX,
+        sort,
+        deny: deny.clone(),
+        serial_bytes,
+        ..Default::default()
+    };
     let r = search(v, &q, &all).unwrap();
     assert_eq!(r.total, want_t.len(), "total for {text:?}");
     let got: HashSet<String> = r.top.iter().map(|&i| v.full_path(i)).collect();
     assert_eq!(got, want_set, "set for {text:?}");
     if sort != Sort::Path {
-        let top = Options { limit: 30, sort, deny, serial_bytes, ..Default::default() };
+        let top = Options {
+            limit: 30,
+            sort,
+            deny,
+            serial_bytes,
+            ..Default::default()
+        };
         let r = search(v, &q, &top).unwrap();
-        let t: Vec<_> = r.top.iter().map(|&i| engine_tuple(v, &q, i, sort)).collect();
-        assert_eq!(t, want_t.iter().take(30).cloned().collect::<Vec<_>>(), "order for {text:?}");
+        let t: Vec<_> = r
+            .top
+            .iter()
+            .map(|&i| engine_tuple(v, &q, i, sort))
+            .collect();
+        assert_eq!(
+            t,
+            want_t.iter().take(30).cloned().collect::<Vec<_>>(),
+            "order for {text:?}"
+        );
     } else {
         // 경로 순 = 번호 순.
         assert!(r.top.windows(2).all(|w| w[0] < w[1]));
@@ -230,9 +301,37 @@ fn check(m: &Model, v: &View, text: &str, deny_paths: &[String], sort: Sort, ser
 }
 
 const QUERIES: &[&str] = &[
-    "a", "예", "예산", "예산집행", "예산 집행", "보고서", "report", "REPORT", "x", "2026", "ab", "e\u{301}", "é", "abc", "strasse",
-    "예산 -집행", "plan ext:pdf", "ext:hwp;hwpx", "ext:gz", "file: 회의", "folder: 자료", "path:자료 a", "path:예산 path:2026",
-    "자료\\보고", "!a", "-a -예", "\"final report\"", "", "zzzz", "1", "data img",
+    "a",
+    "예",
+    "예산",
+    "예산집행",
+    "예산 집행",
+    "보고서",
+    "report",
+    "REPORT",
+    "x",
+    "2026",
+    "ab",
+    "e\u{301}",
+    "é",
+    "abc",
+    "strasse",
+    "예산 -집행",
+    "plan ext:pdf",
+    "ext:hwp;hwpx",
+    "ext:gz",
+    "file: 회의",
+    "folder: 자료",
+    "path:자료 a",
+    "path:예산 path:2026",
+    "자료\\보고",
+    "!a",
+    "-a -예",
+    "\"final report\"",
+    "",
+    "zzzz",
+    "1",
+    "data img",
 ];
 
 #[test]
@@ -254,25 +353,37 @@ fn deny_folders_and_hidden() {
     let n = m.build();
     let v = n.view();
     // 하위가 많은 폴더 두 개를 제외 대상으로.
-    let mut dirs: Vec<(usize, String)> = m
-        .e
-        .iter()
-        .filter(|(_, (_, _, a))| a & attr::DIRECTORY != 0)
-        .map(|(&(vv, r), _)| {
-            let p = m.full_path(vv, r);
-            (m.e.keys().filter(|&&(v2, r2)| m.full_path(v2, r2).starts_with(&format!("{p}\\"))).count(), p)
-        })
-        .take(400)
-        .collect();
+    let mut dirs: Vec<(usize, String)> =
+        m.e.iter()
+            .filter(|(_, (_, _, a))| a & attr::DIRECTORY != 0)
+            .map(|(&(vv, r), _)| {
+                let p = m.full_path(vv, r);
+                (
+                    m.e.keys()
+                        .filter(|&&(v2, r2)| m.full_path(v2, r2).starts_with(&format!("{p}\\")))
+                        .count(),
+                    p,
+                )
+            })
+            .take(400)
+            .collect();
     dirs.sort();
     let deny: Vec<String> = dirs.iter().rev().take(2).map(|d| d.1.clone()).collect();
     for &q in &["a", "예산", "path:자료 a", "ext:pdf", ""] {
         check(&m, &v, q, &deny, Sort::Relevance, 0);
         check(&m, &v, q, &deny, Sort::Name, usize::MAX);
     }
-    let hidden = Options { hidden: false, limit: usize::MAX, ..Default::default() };
+    let hidden = Options {
+        hidden: false,
+        limit: usize::MAX,
+        ..Default::default()
+    };
     let r = search(&v, &parse("a"), &hidden).unwrap();
-    assert!(r.top.iter().all(|&i| v.flags[i as usize] & flag::HIDDEN == 0));
+    assert!(
+        r.top
+            .iter()
+            .all(|&i| v.flags[i as usize] & flag::HIDDEN == 0)
+    );
 }
 
 #[test]
@@ -281,7 +392,14 @@ fn narrowing_equals_fresh_search() {
     let n = m.build();
     let v = n.view();
     let seqs: &[&[&str]] = &[
-        &["예", "예산", "예산집", "예산집행", "예산집행 2026", "예산집행 2026 -a"],
+        &[
+            "예",
+            "예산",
+            "예산집",
+            "예산집행",
+            "예산집행 2026",
+            "예산집행 2026 -a",
+        ],
         &["a", "ab", "abc", "ab"],
         &["r", "re", "rep", "repo", "report ext:pdf", "report ext:pdf"],
         &["path:자료 a", "path:자료 ab", "path:자료 ab -x"],
@@ -289,7 +407,12 @@ fn narrowing_equals_fresh_search() {
     ];
     for seq in seqs {
         for sort in [Sort::Relevance, Sort::Name] {
-            let opts = Options { limit: 50, sort, serial_bytes: 0, ..Default::default() };
+            let opts = Options {
+                limit: 50,
+                sort,
+                serial_bytes: 0,
+                ..Default::default()
+            };
             let mut s = Searcher::new();
             let mut narrowed = 0;
             for &t in *seq {
@@ -323,7 +446,11 @@ fn usn_changes_keep_results_exact() {
     let mut n = m.build();
     let mut r = Rng(5);
     let g0 = n.generation();
-    let dir_recs: Vec<(u16, u64)> = m.e.iter().filter(|(_, x)| x.2 & attr::DIRECTORY != 0).map(|(k, _)| *k).collect();
+    let dir_recs: Vec<(u16, u64)> =
+        m.e.iter()
+            .filter(|(_, x)| x.2 & attr::DIRECTORY != 0)
+            .map(|(k, _)| *k)
+            .collect();
     for k in 0..600 {
         let keys: Vec<(u16, u64)> = m.e.keys().copied().collect();
         let (vol, rec) = keys[r.below(keys.len())];
@@ -331,17 +458,38 @@ fn usn_changes_keep_results_exact() {
             // 새 파일
             0 => {
                 let pd = dir_recs[r.below(dir_recs.len())];
-                Change { vol: pd.0, rec: 1_000_000 + k, parent: pd.1, name: format!("새예산_{k}.hwp"), attrs: 0, kind: ChangeKind::Upsert }
+                Change {
+                    vol: pd.0,
+                    rec: 1_000_000 + k,
+                    parent: pd.1,
+                    name: format!("새예산_{k}.hwp"),
+                    attrs: 0,
+                    kind: ChangeKind::Upsert,
+                }
             }
             // 이름 바꾸기(같은 부모)
             1 => {
                 let (p, nm, a) = m.e[&(vol, rec)].clone();
-                Change { vol, rec, parent: p, name: format!("바뀜_{nm}"), attrs: a, kind: ChangeKind::Upsert }
+                Change {
+                    vol,
+                    rec,
+                    parent: p,
+                    name: format!("바뀜_{nm}"),
+                    attrs: a,
+                    kind: ChangeKind::Upsert,
+                }
             }
             // 옮기기(폴더 포함, 고리가 생기지 않게 다른 볼륨 뿌리 아래로만)
             2 => {
                 let (_, nm, a) = m.e[&(vol, rec)].clone();
-                Change { vol, rec, parent: 5, name: nm, attrs: a, kind: ChangeKind::Upsert }
+                Change {
+                    vol,
+                    rec,
+                    parent: 5,
+                    name: nm,
+                    attrs: a,
+                    kind: ChangeKind::Upsert,
+                }
             }
             // 지우기(폴더는 빈 경우만 — NTFS와 같게)
             _ => {
@@ -349,7 +497,14 @@ fn usn_changes_keep_results_exact() {
                 if has_child {
                     continue;
                 }
-                Change { vol, rec, parent: 0, name: String::new(), attrs: 0, kind: ChangeKind::Remove }
+                Change {
+                    vol,
+                    rec,
+                    parent: 0,
+                    name: String::new(),
+                    attrs: 0,
+                    kind: ChangeKind::Remove,
+                }
             }
         };
         apply_both(&mut m, &mut n, c);
@@ -358,7 +513,16 @@ fn usn_changes_keep_results_exact() {
     assert!(n.delta_count() > 0);
     let v = n.view();
     // 관련도 순의 깊이는 옮긴 폴더 아래에서 다시 만들기 전까지 옛 값이라(설계 문서 §3.5) 집합·이름 순만 본다.
-    for &q in &["새예산", "바뀜", "예산", "a", "path:자료 a", "ext:hwp 바뀜", "folder: 바뀜", ""] {
+    for &q in &[
+        "새예산",
+        "바뀜",
+        "예산",
+        "a",
+        "path:자료 a",
+        "ext:hwp 바뀜",
+        "folder: 바뀜",
+        "",
+    ] {
         check(&m, &v, q, &[], Sort::Path, 0);
         check(&m, &v, q, &[], Sort::Name, usize::MAX);
         check(&m, &v, q, &[], Sort::Name, 0);
@@ -385,7 +549,10 @@ fn segment_roundtrip_and_corruption() {
     let (a, b) = (n.view(), s.view());
     for &q in QUERIES {
         let q = parse(q);
-        let o = Options { limit: 40, ..Default::default() };
+        let o = Options {
+            limit: 40,
+            ..Default::default()
+        };
         let ra = search(&a, &q, &o).unwrap();
         let rb = search(&b, &q, &o).unwrap();
         assert_eq!(ra, rb);
@@ -394,7 +561,12 @@ fn segment_roundtrip_and_corruption() {
     // 소유판으로 되읽기 → 갱신 가능.
     let mut back = s.to_names();
     assert!(back.upsert(0, 999_999, 5, "되읽기.txt", 0));
-    assert_eq!(search(&back.view(), &parse("되읽기"), &Options::default()).unwrap().total, 1);
+    assert_eq!(
+        search(&back.view(), &parse("되읽기"), &Options::default())
+            .unwrap()
+            .total,
+        1
+    );
     // 손상: 잘라내기·바이트 뒤집기 → 오류(패닉 없음).
     let bytes = std::fs::read(&p).unwrap();
     let mut r = Rng(11);
@@ -424,7 +596,15 @@ fn segment_roundtrip_and_corruption() {
             if let Ok(s) = NamesSeg::open(&bad, false) {
                 let v = s.view();
                 for q in ["a", "예산", "path:자료 a", "ext:pdf", ""] {
-                    let r = search(&v, &parse(q), &Options { limit: 20, ..Default::default() }).unwrap();
+                    let r = search(
+                        &v,
+                        &parse(q),
+                        &Options {
+                            limit: 20,
+                            ..Default::default()
+                        },
+                    )
+                    .unwrap();
                     let _ = hits(&v, &r.top);
                 }
             }

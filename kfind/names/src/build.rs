@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::index::{ExtTable, Names, NONE, Volume, ext_fold, flag, flags_of, make_key};
+use crate::index::{ExtTable, NONE, Names, Volume, ext_fold, flag, flags_of, make_key};
 use crate::source::rec_of;
 
 /// 색인 만들기. 레코드는 아무 순서로 넣어도 된다(MFT 열거 순서 그대로).
@@ -20,7 +20,10 @@ pub struct Builder {
 
 impl Builder {
     pub fn new() -> Self {
-        Builder { name_off: vec![0], ..Default::default() }
+        Builder {
+            name_off: vec![0],
+            ..Default::default()
+        }
     }
 
     pub fn with_capacity(entries: usize, name_bytes: usize) -> Self {
@@ -73,11 +76,13 @@ impl Builder {
         self.parent.extend_from_slice(&other.parent);
         self.attrs.extend_from_slice(&other.attrs);
         self.name.extend_from_slice(&other.name);
-        self.name_off.extend(other.name_off[1..].iter().map(|o| o + base));
+        self.name_off
+            .extend(other.name_off[1..].iter().map(|o| o + base));
     }
 
     fn name_at(&self, i: usize) -> &str {
-        std::str::from_utf8(&self.name[self.name_off[i] as usize..self.name_off[i + 1] as usize]).unwrap_or("")
+        std::str::from_utf8(&self.name[self.name_off[i] as usize..self.name_off[i + 1] as usize])
+            .unwrap_or("")
     }
 
     pub fn finish(self) -> Names {
@@ -110,11 +115,21 @@ impl Builder {
             let v = self.vol[i] as usize;
             let p = self.parent[i] as usize;
             let pi = recmaps[v].get(p).copied().unwrap_or(NONE);
-            oparent[nv + i] = if pi == NONE || pi as usize == nv + i { v as u32 } else { pi };
+            oparent[nv + i] = if pi == NONE || pi as usize == nv + i {
+                v as u32
+            } else {
+                pi
+            };
         }
         // 비교형(병렬).
         let names: Vec<&str> = (0..total)
-            .map(|i| if i < nv { self.vols[i].0.as_str() } else { self.name_at(i - nv) })
+            .map(|i| {
+                if i < nv {
+                    self.vols[i].0.as_str()
+                } else {
+                    self.name_at(i - nv)
+                }
+            })
             .collect();
         let folds: Vec<String> = names.par_iter().map(|s| kfind_core::fold(s)).collect();
         // 자식 목록(CSR).
@@ -192,8 +207,16 @@ impl Builder {
         for &o in &order {
             let p = oparent[o as usize];
             // 고리로 닿은 항목은 부모가 뒤 번호일 수 있다 → 뿌리로 끊는다.
-            let np = if p == NONE || newid[p as usize] >= newid[o as usize] { NONE } else { newid[p as usize] };
-            let d = if np == NONE { 0 } else { depth[np as usize] + 1 };
+            let np = if p == NONE || newid[p as usize] >= newid[o as usize] {
+                NONE
+            } else {
+                newid[p as usize]
+            };
+            let d = if np == NONE {
+                0
+            } else {
+                depth[np as usize] + 1
+            };
             depth[newid[o as usize] as usize] = d;
             parent.push(np);
         }
@@ -223,7 +246,11 @@ impl Builder {
             fold.push(0);
             name.extend_from_slice(names[o].as_bytes());
             name_off.push(name.len() as u32);
-            let fl = if o < nv { flag::DIR } else { flags_of(self.attrs[o - nv]) };
+            let fl = if o < nv {
+                flag::DIR
+            } else {
+                flags_of(self.attrs[o - nv])
+            };
             flags.push(fl);
             ext.push(exts.intern(ext_fold(names[o], fl & flag::DIR != 0)));
             key.push(make_key(depth[n], folds[o].as_bytes()));
@@ -237,7 +264,10 @@ impl Builder {
             .map(|((nm, rr), m)| Volume {
                 name: nm.clone(),
                 root_rec: *rr,
-                recmap: m.into_iter().map(|o| if o == NONE { NONE } else { newid[o as usize] }).collect(),
+                recmap: m
+                    .into_iter()
+                    .map(|o| if o == NONE { NONE } else { newid[o as usize] })
+                    .collect(),
                 journal_id: 0,
                 next_usn: 0,
             })

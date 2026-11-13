@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows_sys::Win32::Storage::FileSystem::{
-    FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW, FindNextFileW,
-    WIN32_FIND_DATAW,
+    FIND_FIRST_EX_LARGE_FETCH, FindClose, FindExInfoBasic, FindExSearchNameMatch, FindFirstFileExW,
+    FindNextFileW, WIN32_FIND_DATAW,
 };
 
 use crate::build::Builder;
@@ -54,7 +54,11 @@ fn list_dir(ctx: &Ctx, path: &[u16], rec: u64, sub: &mut Vec<(Vec<u16>, u64)>) {
     }
     let mut batch = Vec::new();
     loop {
-        let l = d.cFileName.iter().position(|&c| c == 0).unwrap_or(d.cFileName.len());
+        let l = d
+            .cFileName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(d.cFileName.len());
         let nm = &d.cFileName[..l];
         let dot = nm == [b'.' as u16] || nm == [b'.' as u16, b'.' as u16];
         if !dot && l > 0 {
@@ -66,7 +70,12 @@ fn list_dir(ctx: &Ctx, path: &[u16], rec: u64, sub: &mut Vec<(Vec<u16>, u64)>) {
                 p.extend_from_slice(nm);
                 sub.push((p, r));
             }
-            batch.push(Rec { rec: r, parent: rec, attrs: a, name: String::from_utf16_lossy(nm) });
+            batch.push(Rec {
+                rec: r,
+                parent: rec,
+                attrs: a,
+                name: String::from_utf16_lossy(nm),
+            });
         }
         if unsafe { FindNextFileW(h, &mut d) } == 0 {
             break;
@@ -106,9 +115,16 @@ pub fn index_tree(b: &mut Builder, root: &str) -> WalkStats {
     } else {
         format!("\\\\?\\{display}").encode_utf16().collect()
     };
-    let ctx = Ctx { next: AtomicU64::new(1), errors: AtomicUsize::new(0), out: Mutex::new(Vec::new()) };
+    let ctx = Ctx {
+        next: AtomicU64::new(1),
+        errors: AtomicUsize::new(0),
+        out: Mutex::new(Vec::new()),
+    };
     rayon::scope(|s| walk(s, &ctx, start, 0));
-    let mut st = WalkStats { errors: ctx.errors.load(Ordering::Relaxed), ..Default::default() };
+    let mut st = WalkStats {
+        errors: ctx.errors.load(Ordering::Relaxed),
+        ..Default::default()
+    };
     for batch in ctx.out.into_inner().unwrap() {
         for r in batch {
             if r.attrs & attr::DIRECTORY != 0 {
@@ -144,7 +160,10 @@ mod tests {
         assert_eq!(res.total, 1);
         let p = v.full_path(res.top[0]);
         assert!(p.ends_with("문서\\2026\\예산_집행계획.hwp"), "{p}");
-        assert!(p.starts_with(r.to_string_lossy().trim_end_matches('\\')), "{p}");
+        assert!(
+            p.starts_with(r.to_string_lossy().trim_end_matches('\\')),
+            "{p}"
+        );
         let res = search(&v, &parse("path:문서 ext:txt"), &Options::default()).unwrap();
         assert_eq!(res.total, 1);
         assert_eq!(v.name_of(res.top[0]), "메모.txt");

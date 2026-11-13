@@ -3,7 +3,8 @@ name = "kfind-names"
 version = "0.1.0"
 edition = "2024"
 description = "드라이브 전체 파일명 색인·질의(MFT·USN, 디렉터리 순회 대체, names.seg 메모리 매핑). FN1."
-license = "MIT"
+# PolyForm Strict 1.0.0(사용자 지시 2026-11-13, 비공개 엔진). 저장소 MIT가 아님.
+license-file = "LICENSE"
 publish = false
 
 # 저장소 다른 크레이트의 작업 공간에 묶이지 않게 독립 작업 공간으로 둔다.
@@ -32,6 +33,7 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
+    "Win32_Graphics_Gdi",
 ] }
 
 [dev-dependencies]

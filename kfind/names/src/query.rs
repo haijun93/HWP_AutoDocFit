@@ -39,7 +39,11 @@ pub struct Query {
 
 impl Query {
     pub fn is_empty(&self) -> bool {
-        self.words.is_empty() && self.not.is_empty() && self.exts.is_empty() && self.path.is_empty() && self.kind == Kind::Any
+        self.words.is_empty()
+            && self.not.is_empty()
+            && self.exts.is_empty()
+            && self.path.is_empty()
+            && self.kind == Kind::Any
     }
 }
 
@@ -166,7 +170,14 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Options { limit: 100, sort: Sort::Relevance, deny: Vec::new(), hidden: true, cancel: None, serial_bytes: 256 * 1024 }
+        Options {
+            limit: 100,
+            sort: Sort::Relevance,
+            deny: Vec::new(),
+            hidden: true,
+            cancel: None,
+            serial_bytes: 256 * 1024,
+        }
     }
 }
 
@@ -190,7 +201,12 @@ pub struct Hit {
 
 pub fn hits(v: &View, top: &[u32]) -> Vec<Hit> {
     top.iter()
-        .map(|&id| Hit { id, name: v.name_of(id).to_string(), dir: v.dir_path(id), is_dir: v.flags[id as usize] & flag::DIR != 0 })
+        .map(|&id| Hit {
+            id,
+            name: v.name_of(id).to_string(),
+            dir: v.dir_path(id),
+            is_dir: v.flags[id as usize] & flag::DIR != 0,
+        })
         .collect()
 }
 
@@ -288,10 +304,15 @@ struct Out {
 
 #[inline]
 fn cmp_cand(v: &View, a: (u64, u32), b: (u64, u32), sort: Sort) -> std::cmp::Ordering {
-    a.0.cmp(&b.0).then_with(|| {
-        if sort == Sort::Path { std::cmp::Ordering::Equal } else { v.fold_of(a.1).cmp(v.fold_of(b.1)) }
-    })
-    .then(a.1.cmp(&b.1))
+    a.0.cmp(&b.0)
+        .then_with(|| {
+            if sort == Sort::Path {
+                std::cmp::Ordering::Equal
+            } else {
+                v.fold_of(a.1).cmp(v.fold_of(b.1))
+            }
+        })
+        .then(a.1.cmp(&b.1))
 }
 
 impl Out {
@@ -307,7 +328,9 @@ impl Out {
             }
             self.top.pop();
         }
-        let pos = self.top.partition_point(|&x| cmp_cand(v, x, c, sort) == std::cmp::Ordering::Less);
+        let pos = self
+            .top
+            .partition_point(|&x| cmp_cand(v, x, c, sort) == std::cmp::Ordering::Less);
         self.top.insert(pos, c);
     }
 }
@@ -405,7 +428,11 @@ impl<'q> Plan<'q> {
         if self.deny.contains(&i) {
             return false;
         }
-        let mut need: u64 = if self.path.len() >= 64 { u64::MAX } else { (1u64 << self.path.len()) - 1 };
+        let mut need: u64 = if self.path.len() >= 64 {
+            u64::MAX
+        } else {
+            (1u64 << self.path.len()) - 1
+        };
         for a in v.ancestors(i) {
             if self.deny.contains(&a) {
                 return false;
@@ -433,7 +460,14 @@ impl<'q> Plan<'q> {
     }
 
     /// 항목 구간 [a,b)를 훑는다.
-    fn scan(&self, v: &View, a: u32, b: u32, collect: bool, cancel: Option<&AtomicBool>) -> Result<Out> {
+    fn scan(
+        &self,
+        v: &View,
+        a: u32,
+        b: u32,
+        collect: bool,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<Out> {
         let mut out = Out::default();
         let check_path = true;
         let Some(fin) = &self.primary else {
@@ -455,7 +489,9 @@ impl<'q> Plan<'q> {
         let b = b as usize;
         let mut n = 0u32;
         while pos < hay.len() {
-            let Some(r) = fin.find(&hay[pos..]) else { break };
+            let Some(r) = fin.find(&hay[pos..]) else {
+                break;
+            };
             let p = (base + pos + r) as u32;
             // 질주 탐색: off[cur] <= p < off[cur+1]인 cur.
             let mut step = 1usize;
@@ -501,7 +537,10 @@ fn reduce_words(words: &[Vec<u8>]) -> Vec<&[u8]> {
     let mut out: Vec<&[u8]> = Vec::new();
     for (i, w) in words.iter().enumerate() {
         let covered = words.iter().enumerate().any(|(j, o)| {
-            j != i && o.len() >= w.len() && memchr::memmem::find(o, w).is_some() && (o.len() > w.len() || j < i)
+            j != i
+                && o.len() >= w.len()
+                && memchr::memmem::find(o, w).is_some()
+                && (o.len() > w.len() || j < i)
         });
         if !covered {
             out.push(w.as_slice());
@@ -517,7 +556,16 @@ fn path_ranges(v: &View, w: &[u8], threads_ok: bool) -> Ranges {
     if n == 0 {
         return Vec::new();
     }
-    let chunks = chunk_ranges(v, &[(0, n as u32)], if threads_ok { rayon::current_num_threads() * 4 } else { 1 }, 64 * 1024);
+    let chunks = chunk_ranges(
+        v,
+        &[(0, n as u32)],
+        if threads_ok {
+            rayon::current_num_threads() * 4
+        } else {
+            1
+        },
+        64 * 1024,
+    );
     let parts: Vec<Ranges> = chunks
         .par_iter()
         .map(|&(a, b)| {
@@ -528,7 +576,9 @@ fn path_ranges(v: &View, w: &[u8], threads_ok: bool) -> Ranges {
             let mut pos = 0;
             let mut cur = a as usize;
             while pos < hay.len() {
-                let Some(x) = fin.find(&hay[pos..]) else { break };
+                let Some(x) = fin.find(&hay[pos..]) else {
+                    break;
+                };
                 let p = (base + pos + x) as u32;
                 cur += off[cur..b as usize].partition_point(|&o| o <= p) - 1;
                 let fl = v.flags[cur];
@@ -545,7 +595,12 @@ fn path_ranges(v: &View, w: &[u8], threads_ok: bool) -> Ranges {
 }
 
 /// 구간들을 비슷한 바이트 크기의 조각(항목 경계)으로 나눈다.
-fn chunk_ranges(v: &View, regions: &[(u32, u32)], parts: usize, min_bytes: usize) -> Vec<(u32, u32)> {
+fn chunk_ranges(
+    v: &View,
+    regions: &[(u32, u32)],
+    parts: usize,
+    min_bytes: usize,
+) -> Vec<(u32, u32)> {
     let bytes = |a: u32, b: u32| (v.fold_off[b as usize] - v.fold_off[a as usize]) as usize;
     let total: usize = regions.iter().map(|&(a, b)| bytes(a, b)).sum();
     let target = (total / parts.max(1)).max(min_bytes).max(1);
@@ -554,7 +609,8 @@ fn chunk_ranges(v: &View, regions: &[(u32, u32)], parts: usize, min_bytes: usize
         let mut s = a;
         while s < b {
             let want = v.fold_off[s as usize] as usize + target;
-            let mut e = s + v.fold_off[s as usize..=b as usize].partition_point(|&o| (o as usize) < want) as u32;
+            let mut e = s + v.fold_off[s as usize..=b as usize]
+                .partition_point(|&o| (o as usize) < want) as u32;
             e = e.clamp(s + 1, b);
             out.push((s, e));
             s = e;
@@ -563,7 +619,13 @@ fn chunk_ranges(v: &View, regions: &[(u32, u32)], parts: usize, min_bytes: usize
     out
 }
 
-fn merge(v: &View, outs: Vec<Out>, limit: usize, sort: Sort, collect: bool) -> (usize, Vec<u32>, Vec<u32>) {
+fn merge(
+    v: &View,
+    outs: Vec<Out>,
+    limit: usize,
+    sort: Sort,
+    collect: bool,
+) -> (usize, Vec<u32>, Vec<u32>) {
     let total = outs.iter().map(|o| o.count).sum();
     let mut all: Vec<(u64, u32)> = Vec::with_capacity(outs.iter().map(|o| o.top.len()).sum());
     let mut ids = Vec::new();
@@ -585,7 +647,12 @@ fn plan<'q>(v: &View, q: &'q Query, opts: &Options, reduced: &[&'q [u8]]) -> Pla
     // 1차 낱말: 가장 긴 것(대개 가장 드묾).
     let pi = (0..reduced.len()).max_by_key(|&k| (reduced[k].len(), std::cmp::Reverse(k)));
     let primary = pi.map(|k| Finder::new(reduced[k]));
-    let others = reduced.iter().enumerate().filter(|(k, _)| Some(*k) != pi).map(|(_, w)| Finder::new(*w)).collect();
+    let others = reduced
+        .iter()
+        .enumerate()
+        .filter(|(k, _)| Some(*k) != pi)
+        .map(|(_, w)| Finder::new(*w))
+        .collect();
     let ext_ok = if q.exts.is_empty() {
         None
     } else {
@@ -634,7 +701,13 @@ fn plan<'q>(v: &View, q: &'q Query, opts: &Options, reduced: &[&'q [u8]]) -> Pla
     }
 }
 
-fn run(v: &View, q: &Query, opts: &Options, cands: Option<&[u32]>, collect: bool) -> Result<(usize, Vec<u32>, Vec<u32>)> {
+fn run(
+    v: &View,
+    q: &Query,
+    opts: &Options,
+    cands: Option<&[u32]>,
+    collect: bool,
+) -> Result<(usize, Vec<u32>, Vec<u32>)> {
     let reduced = reduce_words(&q.words);
     let p = plan(v, q, opts, &reduced);
     let cancel = opts.cancel.as_deref();
@@ -645,7 +718,9 @@ fn run(v: &View, q: &Query, opts: &Options, cands: Option<&[u32]>, collect: bool
         let outs: Vec<Out> = if parts == 1 {
             vec![p.verify(v, c, collect)]
         } else {
-            c.par_chunks(size).map(|ch| p.verify(v, ch, collect)).collect()
+            c.par_chunks(size)
+                .map(|ch| p.verify(v, ch, collect))
+                .collect()
         };
         if cancelled(cancel) {
             return Err(Error::Cancelled);
@@ -656,7 +731,10 @@ fn run(v: &View, q: &Query, opts: &Options, cands: Option<&[u32]>, collect: bool
     if (v.len() as u32) > v.base_len {
         regions.push((v.base_len, v.len() as u32));
     }
-    let bytes: usize = regions.iter().map(|&(a, b)| (v.fold_off[b as usize] - v.fold_off[a as usize]) as usize).sum();
+    let bytes: usize = regions
+        .iter()
+        .map(|&(a, b)| (v.fold_off[b as usize] - v.fold_off[a as usize]) as usize)
+        .sum();
     let outs: Vec<Out> = if bytes <= opts.serial_bytes {
         let mut o = Vec::with_capacity(regions.len());
         for &(a, b) in &regions {
@@ -665,7 +743,10 @@ fn run(v: &View, q: &Query, opts: &Options, cands: Option<&[u32]>, collect: bool
         o
     } else {
         let chunks = chunk_ranges(v, &regions, threads * 4, 32 * 1024);
-        chunks.par_iter().map(|&(a, b)| p.scan(v, a, b, collect, cancel)).collect::<Result<Vec<Out>>>()?
+        chunks
+            .par_iter()
+            .map(|&(a, b)| p.scan(v, a, b, collect, cancel))
+            .collect::<Result<Vec<Out>>>()?
     };
     Ok(merge(v, outs, opts.limit, opts.sort, collect))
 }
@@ -673,7 +754,11 @@ fn run(v: &View, q: &Query, opts: &Options, cands: Option<&[u32]>, collect: bool
 /// 한 번 질의(앞 결과를 쓰지 않음).
 pub fn search(v: &View, q: &Query, opts: &Options) -> Result<Results> {
     let (total, top, _) = run(v, q, opts, None, false)?;
-    Ok(Results { total, top, narrowed: false })
+    Ok(Results {
+        total,
+        top,
+        narrowed: false,
+    })
 }
 
 /// 같은 범위 조건 아래, 새 질의의 일치가 늘 앞 질의의 일치 안에 드는가.
@@ -682,7 +767,11 @@ fn refines(old: &Query, new: &Query) -> bool {
         && old.exts == new.exts
         && old.path == new.path
         && old.not.iter().all(|w| new.not.contains(w))
-        && old.words.iter().all(|w| new.words.iter().any(|n| memchr::memmem::find(n, w).is_some()))
+        && old.words.iter().all(|w| {
+            new.words
+                .iter()
+                .any(|n| memchr::memmem::find(n, w).is_some())
+        })
 }
 
 struct Last {
@@ -704,7 +793,10 @@ pub struct Searcher {
 
 impl Searcher {
     pub fn new() -> Self {
-        Searcher { last: None, max_keep: 1 << 24 }
+        Searcher {
+            last: None,
+            max_keep: 1 << 24,
+        }
     }
 
     pub fn clear(&mut self) {
@@ -712,11 +804,21 @@ impl Searcher {
     }
 
     /// `generation`: 색인 세대(바뀌면 앞 결과를 버린다).
-    pub fn search(&mut self, v: &View, generation: u64, q: &Query, opts: &Options) -> Result<Results> {
+    pub fn search(
+        &mut self,
+        v: &View,
+        generation: u64,
+        q: &Query,
+        opts: &Options,
+    ) -> Result<Results> {
         let last = self.last.take();
         let cands = last
             .filter(|l| {
-                l.generation == generation && l.len == v.len() && l.deny == opts.deny && l.hidden == opts.hidden && refines(&l.q, q)
+                l.generation == generation
+                    && l.len == v.len()
+                    && l.deny == opts.deny
+                    && l.hidden == opts.hidden
+                    && refines(&l.q, q)
             })
             .map(|l| l.ids);
         let narrowed = cands.is_some();
@@ -729,11 +831,22 @@ impl Searcher {
             }
         };
         self.last = if ids.len() <= self.max_keep {
-            Some(Last { generation, len: v.len(), q: q.clone(), deny: opts.deny.clone(), hidden: opts.hidden, ids })
+            Some(Last {
+                generation,
+                len: v.len(),
+                q: q.clone(),
+                deny: opts.deny.clone(),
+                hidden: opts.hidden,
+                ids,
+            })
         } else {
             None
         };
-        Ok(Results { total, top, narrowed })
+        Ok(Results {
+            total,
+            top,
+            narrowed,
+        })
     }
 }
 
@@ -744,7 +857,10 @@ mod tests {
     #[test]
     fn parse_basic() {
         let q = parse("예산 집행 -초안 ext:hwp;.PDF path:문서 file:");
-        assert_eq!(q.words, vec!["예산".as_bytes().to_vec(), "집행".as_bytes().to_vec()]);
+        assert_eq!(
+            q.words,
+            vec!["예산".as_bytes().to_vec(), "집행".as_bytes().to_vec()]
+        );
         assert_eq!(q.not, vec!["초안".as_bytes().to_vec()]);
         assert_eq!(q.exts, vec![b"hwp".to_vec(), b"pdf".to_vec()]);
         assert_eq!(q.path, vec!["문서".as_bytes().to_vec()]);
@@ -764,8 +880,14 @@ mod tests {
         let b = vec![(5, 25)];
         assert_eq!(intersect(&a, &b), vec![(5, 10), (20, 25)]);
         assert_eq!(subtract(&a, &b), vec![(0, 5), (25, 30)]);
-        assert_eq!(subtract(&a, &vec![(0, 10), (21, 22)]), vec![(20, 21), (22, 30)]);
-        assert_eq!(normalize(vec![(3, 5), (0, 4), (6, 6), (5, 7)]), vec![(0, 7)]);
+        assert_eq!(
+            subtract(&a, &vec![(0, 10), (21, 22)]),
+            vec![(20, 21), (22, 30)]
+        );
+        assert_eq!(
+            normalize(vec![(3, 5), (0, 4), (6, 6), (5, 7)]),
+            vec![(0, 7)]
+        );
         assert!(in_ranges(&a, 25) && !in_ranges(&a, 10) && in_ranges(&a, 0));
     }
 
@@ -782,7 +904,12 @@ mod tests {
 
     #[test]
     fn reduce() {
-        let w = vec![b"ab".to_vec(), b"abc".to_vec(), b"x".to_vec(), b"ab".to_vec()];
+        let w = vec![
+            b"ab".to_vec(),
+            b"abc".to_vec(),
+            b"x".to_vec(),
+            b"ab".to_vec(),
+        ];
         assert_eq!(reduce_words(&w), vec![b"abc".as_slice(), b"x".as_slice()]);
     }
 }

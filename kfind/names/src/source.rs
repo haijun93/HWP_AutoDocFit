@@ -44,7 +44,9 @@ pub struct Change {
 pub fn kind_from_reason(r: u32) -> ChangeKind {
     if r & reason::FILE_DELETE != 0 {
         ChangeKind::Remove
-    } else if r & reason::RENAME_OLD_NAME != 0 && r & (reason::RENAME_NEW_NAME | reason::FILE_CREATE) == 0 {
+    } else if r & reason::RENAME_OLD_NAME != 0
+        && r & (reason::RENAME_NEW_NAME | reason::FILE_CREATE) == 0
+    {
         ChangeKind::Ignore
     } else {
         ChangeKind::Upsert
@@ -63,12 +65,30 @@ mod tests {
 
     #[test]
     fn reasons() {
-        assert_eq!(kind_from_reason(reason::FILE_CREATE | reason::CLOSE), ChangeKind::Upsert);
-        assert_eq!(kind_from_reason(reason::FILE_DELETE | reason::CLOSE), ChangeKind::Remove);
-        assert_eq!(kind_from_reason(reason::FILE_CREATE | reason::FILE_DELETE), ChangeKind::Remove);
-        assert_eq!(kind_from_reason(reason::RENAME_OLD_NAME), ChangeKind::Ignore);
-        assert_eq!(kind_from_reason(reason::RENAME_NEW_NAME), ChangeKind::Upsert);
-        assert_eq!(kind_from_reason(reason::BASIC_INFO_CHANGE), ChangeKind::Upsert);
+        assert_eq!(
+            kind_from_reason(reason::FILE_CREATE | reason::CLOSE),
+            ChangeKind::Upsert
+        );
+        assert_eq!(
+            kind_from_reason(reason::FILE_DELETE | reason::CLOSE),
+            ChangeKind::Remove
+        );
+        assert_eq!(
+            kind_from_reason(reason::FILE_CREATE | reason::FILE_DELETE),
+            ChangeKind::Remove
+        );
+        assert_eq!(
+            kind_from_reason(reason::RENAME_OLD_NAME),
+            ChangeKind::Ignore
+        );
+        assert_eq!(
+            kind_from_reason(reason::RENAME_NEW_NAME),
+            ChangeKind::Upsert
+        );
+        assert_eq!(
+            kind_from_reason(reason::BASIC_INFO_CHANGE),
+            ChangeKind::Upsert
+        );
         assert_eq!(rec_of(0x0005_0000_0000_0123), 0x123);
     }
 }
