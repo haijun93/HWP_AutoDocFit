@@ -2,11 +2,12 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'table_sketch_colors.dart';
 import 'table_sketch_models.dart';
 
 /// '#RRGGBB' → 화면 색.
 Color sketchColorValue(String hex) =>
-    Color(0xFF000000 | int.parse(hex.substring(1), radix: 16));
+    Color(0xFF000000 | int.parse(hex.substring(1), radix: 16)); // 문서 색(테마 무관)
 
 /// 점 p에서 선분 a-b 사이의 최단거리 계산.
 double distanceToSegment(Offset p, Offset a, Offset b) {
@@ -117,7 +118,11 @@ class TableSketchPainter extends CustomPainter {
     this.guideSameSize = const [],
     this.selectedBounds,
     this.regionCells = const {},
+    this.colors = TableSketchColors.light,
   });
+
+  /// 캔버스 위 격자·선택·손잡이·안내선 색(지역 팔레트, 화면이 테마에서 골라 넘긴다).
+  final TableSketchColors colors;
 
   /// 같은 간격 표시 선분(격자 단위).
   final List<(Offset, Offset)> guideSpacing;
@@ -170,7 +175,7 @@ class TableSketchPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     // 1. 종이 바탕색 (흰색)
-    final bgPaint = Paint()..color = Colors.white;
+    final bgPaint = Paint()..color = TableSketchColors.paper;
     canvas.drawRect(Offset.zero & size, bgPaint);
 
     // 2. 바둑판 점선 격자 (연회색 점선)
@@ -206,7 +211,7 @@ class TableSketchPainter extends CustomPainter {
     }
     // '칸 색'으로 고른 칸(선 아래, 연한 초록).
     if (regionCells.isNotEmpty) {
-      final mark = Paint()..color = const Color(0x3316A34A);
+      final mark = Paint()..color = colors.regionMark;
       for (final (x, y) in regionCells) {
         canvas.drawRect(
           Rect.fromLTWH(x * cellSize, y * cellSize, cellSize, cellSize),
@@ -222,11 +227,11 @@ class TableSketchPainter extends CustomPainter {
         target.right * cellSize,
         target.bottom * cellSize,
       );
-      canvas.drawRect(r, Paint()..color = const Color(0x2216A34A));
+      canvas.drawRect(r, Paint()..color = colors.imageTargetFill);
       canvas.drawRect(
         r.deflate(1),
         Paint()
-          ..color = const Color(0xFF16A34A)
+          ..color = colors.imageTarget
           ..style = PaintingStyle.stroke
           ..strokeWidth = 2,
       );
@@ -281,7 +286,7 @@ class TableSketchPainter extends CustomPainter {
         final t = doc.texts[i];
         canvas.drawRect(
           Rect.fromLTWH(t.x * cellSize, t.y * cellSize, cellSize, cellSize),
-          Paint()..color = const Color(0x553B82F6),
+          Paint()..color = colors.selectionGlow,
         );
       }
       _drawSketchText(canvas, doc.texts[i]);
@@ -295,7 +300,7 @@ class TableSketchPainter extends CustomPainter {
         canvas.drawPath(
           createDashedPath(Path()..addRect(bounds.inflate(4)), 5.0, 3.0),
           Paint()
-            ..color = const Color(0xFF2563EB)
+            ..color = colors.selection
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.2,
         );
@@ -304,7 +309,7 @@ class TableSketchPainter extends CustomPainter {
 
     // 6-1. 맞춤 안내선(다이어그램처럼 빨간 점선)
     final guide = Paint()
-      ..color = const Color(0xFFDC2626)
+      ..color = colors.guide
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     for (final x in guideXs) {
@@ -370,9 +375,9 @@ class TableSketchPainter extends CustomPainter {
     // 6-2. 사각형 크기 조절 손잡이
     final box = resizeBox;
     if (box != null) {
-      final fill = Paint()..color = Colors.white;
+      final fill = Paint()..color = colors.handleFill;
       final edge = Paint()
-        ..color = const Color(0xFF2563EB)
+        ..color = colors.selection
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.5;
       for (final p in handlePoints(box)) {
@@ -395,11 +400,11 @@ class TableSketchPainter extends CustomPainter {
         }
         outline.close();
       }
-      canvas.drawPath(outline, Paint()..color = const Color(0x1A2563EB));
+      canvas.drawPath(outline, Paint()..color = colors.lassoFill);
       canvas.drawPath(
         createDashedPath(outline, 5.0, 3.0),
         Paint()
-          ..color = const Color(0xFF2563EB)
+          ..color = colors.selection
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.2,
       );
@@ -407,7 +412,7 @@ class TableSketchPainter extends CustomPainter {
 
     // 6. 종이 테두리 (가장자리 회색 선)
     final borderPaint = Paint()
-      ..color = const Color(0xFFCBD5E1)
+      ..color = colors.paperBorder
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawRect(Offset.zero & size, borderPaint);
@@ -433,7 +438,7 @@ class TableSketchPainter extends CustomPainter {
 
     final dashedGrid = createDashedPath(gridPath, 2.0, 3.0);
     final gridPaint = Paint()
-      ..color = const Color(0xFFE2E8F0)
+      ..color = colors.grid
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawPath(dashedGrid, gridPaint);
@@ -452,17 +457,17 @@ class TableSketchPainter extends CustomPainter {
     final baseStrokeWidth = sketchStrokePx(line.width);
 
     final color = isPreview
-        ? const Color(0xFF2563EB).withValues(alpha: 0.8)
+        ? colors.selection.withValues(alpha: 0.8)
         : (isSelected
-              ? const Color(0xFF1D4ED8)
+              ? colors.selectedLine
               : (line.color == sketchBlack
-                    ? const Color(0xFF0F172A)
+                    ? const Color(0xFF0F172A) // 문서 색(테마 무관)
                     : sketchColorValue(line.color)));
 
     // 선택된 선 하이라이트 (바깥쪽 푸른 글로우)
     if (isSelected) {
       final glowPaint = Paint()
-        ..color = const Color(0x553B82F6)
+        ..color = colors.selectionGlow
         ..style = PaintingStyle.stroke
         ..strokeWidth = baseStrokeWidth + 8.0
         ..strokeCap = StrokeCap.round;
@@ -470,7 +475,7 @@ class TableSketchPainter extends CustomPainter {
 
       // 끝점 핸들(하나만 골랐을 때)
       if (showHandles) {
-        final handlePaint = Paint()..color = const Color(0xFF2563EB);
+        final handlePaint = Paint()..color = colors.selection;
         canvas.drawCircle(p1, 4.0, handlePaint);
         canvas.drawCircle(p2, 4.0, handlePaint);
       }
@@ -539,7 +544,7 @@ class TableSketchPainter extends CustomPainter {
     final path = Path()..addRect(rect);
     final dashed = createDashedPath(path, 6.0, 4.0);
     final paint = Paint()
-      ..color = const Color(0xFF2563EB).withValues(alpha: 0.8)
+      ..color = colors.selection.withValues(alpha: 0.8)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.4;
     canvas.drawPath(dashed, paint);
@@ -554,7 +559,7 @@ class TableSketchPainter extends CustomPainter {
     bool selected,
   ) {
     final paint = Paint()
-      ..color = selected ? const Color(0xFF1D4ED8) : sketchColorValue(color)
+      ..color = selected ? colors.selectedLine : sketchColorValue(color)
       ..strokeWidth = width == 'double' ? 1.4 : sketchStrokePx(width)
       ..strokeCap = StrokeCap.round;
     canvas.drawLine(a, b, paint);
@@ -574,8 +579,8 @@ class TableSketchPainter extends CustomPainter {
       );
     canvas.drawPath(path, paint..style = PaintingStyle.stroke);
     if (selected) {
-      canvas.drawCircle(a, 4, Paint()..color = const Color(0xFF2563EB));
-      canvas.drawCircle(b, 4, Paint()..color = const Color(0xFF2563EB));
+      canvas.drawCircle(a, 4, Paint()..color = colors.selection);
+      canvas.drawCircle(b, 4, Paint()..color = colors.selection);
     }
   }
 
@@ -598,7 +603,7 @@ class TableSketchPainter extends CustomPainter {
     // 모든 한글·○ 같은 기호가 보인다(지정하지 않으면 일부 글자가 □로 보였음, 2.0.5).
     final textStyle = TextStyle(
       fontFamily: 'NotoSansKR',
-      color: const Color(0xFF0F172A),
+      color: const Color(0xFF0F172A), // 문서 색(테마 무관)
       fontSize: math.max(10.0, cellSize * 0.7),
       fontWeight: textItem.bold ? FontWeight.bold : FontWeight.normal,
     );
@@ -633,7 +638,8 @@ class TableSketchPainter extends CustomPainter {
       textPainter.width + 4.0,
       textPainter.height + 2.0,
     );
-    final bgPaint = Paint()..color = Colors.white.withValues(alpha: 0.85);
+    final bgPaint = Paint()
+      ..color = TableSketchColors.paper.withValues(alpha: 0.85);
     canvas.drawRRect(
       RRect.fromRectAndRadius(bgRect, const Radius.circular(3.0)),
       bgPaint,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_theme.dart';
+
 /// HWP → HWPX 일괄 변환(2.0.7): 파일 하나·폴더·로컬 드라이브 전체, 암호 문서는 암호를 차례로 넣어 연다.
 /// [call]은 백엔드 명령을 그대로 부르고 결과를 돌려준다(상태는 1초마다 get_state의 hwp_bulk로 읽는다).
 typedef BulkCall = Future<Object?> Function(String method, List<Object?> args);
@@ -181,9 +183,9 @@ class _HwpBulkDialogState extends State<HwpBulkDialog> {
                   ],
                 ),
                 const SizedBox(height: 6),
-                const Text(
+                Text(
                   'Windows·Program Files·AppData 같은 시스템 폴더는 건너뜁니다. 드라이브가 크면 오래 걸려요.',
-                  style: TextStyle(fontSize: 12, color: Color(0xff64748b)),
+                  style: TextStyle(fontSize: 12, color: context.colors.muted),
                 ),
               ],
               const Divider(height: 24),
@@ -220,19 +222,19 @@ class _HwpBulkDialogState extends State<HwpBulkDialog> {
                   ],
                 ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 '· 결과는 원본 옆에 같은 이름의 .hwpx로 저장하고, 이미 있으면 건너뜁니다(원본은 그대로).\n'
                 '· 암호 문서는 넣은 암호를 차례로 시도하고, 결과 HWPX도 같은 암호로 잠깁니다.\n'
                 '· 배포용 문서는 한/글이 저장을 허용하면 바꾸고, 기관 보안(DRM) 문서는 이 PC의 보안 프로그램이 열어 줄 때만 바뀝니다.\n'
                 '· 끝나면 결과표(CSV)에 변환·실패 이유를 남깁니다. 암호는 저장하지 않습니다.',
-                style: TextStyle(fontSize: 12, color: Color(0xff475569)),
+                style: TextStyle(fontSize: 12, color: context.colors.textSecondary),
               ),
               if (message != null) ...[
                 const SizedBox(height: 8),
                 Text(
                   message!,
                   key: const Key('hwpBulkMessage'),
-                  style: const TextStyle(color: Color(0xffdc2626)),
+                  style: TextStyle(color: context.colors.danger),
                 ),
               ],
             ],
@@ -301,9 +303,9 @@ class HwpBulkCard extends StatelessWidget {
                   current,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
-                    color: Color(0xff64748b),
+                    color: context.colors.muted,
                   ),
                 ),
             ],
@@ -314,7 +316,7 @@ class HwpBulkCard extends StatelessWidget {
                 '✕ ${'${f['source'] ?? ''}'.split(RegExp(r'[\\/]')).last}: ${f['message'] ?? ''}',
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11, color: Color(0xffb91c1c)),
+                style: TextStyle(fontSize: 11, color: context.colors.dangerDeep),
               ),
             if (failures.length > 5)
               Text(

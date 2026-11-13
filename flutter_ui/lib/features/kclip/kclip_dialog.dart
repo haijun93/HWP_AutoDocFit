@@ -7,8 +7,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../../core/theme/app_theme.dart';
 import 'kclip_category.dart';
 import 'kclip_category_prefs.dart';
+import 'kclip_colors.dart';
 import 'kclip_ffi.dart';
 import 'kclip_preview.dart';
 
@@ -531,8 +533,8 @@ class _KClipPanelState extends State<KClipPanel> {
           child: Material(
             key: const ValueKey('kclip-preview'),
             elevation: 6,
-            color: Colors.white,
-            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey.shade400)),
+            color: context.colors.surface,
+            shape: RoundedRectangleBorder(side: BorderSide(color: KclipColors.of(context).previewBorder)),
             child: Padding(
               padding: const EdgeInsets.all(4),
               child: ConstrainedBox(
@@ -941,7 +943,7 @@ class _KClipPanelState extends State<KClipPanel> {
               avatar: Icon(
                 paused ? Icons.pause_circle_outline : Icons.fiber_manual_record,
                 size: 16,
-                color: paused ? null : Colors.red,
+                color: paused ? null : KclipColors.of(context).recording,
               ),
               label: Text(
                 paused ? '일시정지' : '기록 중 · ${agent['items'] ?? items.length}개',

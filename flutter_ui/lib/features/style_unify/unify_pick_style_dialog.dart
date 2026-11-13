@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
+import 'style_unify_colors.dart';
 
 class UnifyPickStyleDialog extends StatefulWidget {
   const UnifyPickStyleDialog({
@@ -83,7 +84,7 @@ class _UnifyPickStyleDialogState extends State<UnifyPickStyleDialog> {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
                       error,
-                      style: const TextStyle(color: Colors.red),
+                      style: TextStyle(color: StyleUnifyColors.of(context).error),
                     ),
                   ),
                 const Text(

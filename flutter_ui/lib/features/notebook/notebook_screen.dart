@@ -11,7 +11,9 @@ import '../editor/memo_editor_page.dart';
 import '../library/library_api.dart';
 import '../library/library_screen.dart';
 import '../workspace/tab_navigation_shell.dart' show HostClosablePage;
+import '../../core/theme/app_theme.dart';
 import 'notebook_api.dart';
+import 'notebook_colors.dart';
 
 /// 업무자료함 화면(개발자 모드). 세 칸: 출처 · 본문검색/미리보기/변환 · 노트.
 /// 폭이 [kNotebookWideWidth] 미만이면 세 칸을 탭으로 바꾼다.
@@ -663,7 +665,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
           if (_status != null)
             Container(
               width: double.infinity,
-              color: const Color(0xFFF1F5F9),
+              color: context.colors.surfaceSubtle,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Text(_status!, key: const ValueKey('nb-status'), maxLines: 2, overflow: TextOverflow.ellipsis),
             ),
@@ -827,11 +829,11 @@ class _NotebookScreenState extends State<NotebookScreen> {
             ],
           ),
         ),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 12),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
             '체크한 출처에서만 본문검색합니다. 파일을 이 창에 끌어 놓아도 출처로 추가됩니다.',
-            style: TextStyle(fontSize: 12, color: Colors.black54),
+            style: TextStyle(fontSize: 12, color: NotebookColors.of(context).secondaryText),
           ),
         ),
         Expanded(
@@ -977,7 +979,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                     children: [
                       Text(
                         '${hit.displayName} · 문단 ${hit.ordinal + 1}${hit.location.isEmpty ? '' : ' · ${hit.location}'} · 점수 ${hit.score.toStringAsFixed(1)}',
-                        style: const TextStyle(fontSize: 12, color: Colors.black54),
+                        style: TextStyle(fontSize: 12, color: NotebookColors.of(context).secondaryText),
                         overflow: TextOverflow.ellipsis,
                       ),
                       const SizedBox(height: 4),
@@ -1064,14 +1066,14 @@ class _NotebookScreenState extends State<NotebookScreen> {
       key: ValueKey('nb-compare-col-${group.sourceId}'),
       width: 280,
       decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.colors.line),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Container(
-            color: const Color(0xFFF1F5F9),
+            color: context.colors.surfaceSubtle,
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
             child: Text(
               '${group.displayName} · 근거 ${group.hits.length}개',
@@ -1081,8 +1083,8 @@ class _NotebookScreenState extends State<NotebookScreen> {
           ),
           Expanded(
             child: group.hits.isEmpty
-                ? const Center(
-                    child: Text('근거 문단 없음', style: TextStyle(color: Colors.black45)),
+                ? Center(
+                    child: Text('근거 문단 없음', style: TextStyle(color: NotebookColors.of(context).hintText)),
                   )
                 : ListView(
                     padding: const EdgeInsets.all(6),
@@ -1099,7 +1101,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
                                 children: [
                                   Text(
                                     '문단 ${group.hits[i].ordinal + 1}${group.hits[i].location.isEmpty ? '' : ' · ${group.hits[i].location}'} · 점수 ${group.hits[i].score.toStringAsFixed(1)}',
-                                    style: const TextStyle(fontSize: 12, color: Colors.black54),
+                                    style: TextStyle(fontSize: 12, color: NotebookColors.of(context).secondaryText),
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   const SizedBox(height: 4),
@@ -1143,7 +1145,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
       spans.add(
         TextSpan(
           text: m.group(0),
-          style: const TextStyle(fontWeight: FontWeight.w700, backgroundColor: Color(0xFFFFF3BF)),
+          style: TextStyle(fontWeight: FontWeight.w700, backgroundColor: NotebookColors.of(context).mark),
         ),
       );
       start = m.end;
@@ -1167,16 +1169,16 @@ class _NotebookScreenState extends State<NotebookScreen> {
             margin: const EdgeInsets.only(bottom: 4),
             padding: EdgeInsets.fromLTRB(6.0 + 12.0 * p.level.clamp(0, 6), 6, 6, 6),
             color: p.ordinal == _previewOrdinal
-                ? const Color(0xFFFFF3BF)
+                ? NotebookColors.of(context).mark
                 : p.isTable
-                ? const Color(0xFFF1F5F9)
+                ? context.colors.surfaceSubtle
                 : null,
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SizedBox(
                   width: 36,
-                  child: Text('${p.ordinal + 1}', style: const TextStyle(fontSize: 12, color: Colors.black45)),
+                  child: Text('${p.ordinal + 1}', style: TextStyle(fontSize: 12, color: NotebookColors.of(context).hintText)),
                 ),
                 Expanded(
                   child: SelectableText(
@@ -1358,11 +1360,11 @@ class _NotebookScreenState extends State<NotebookScreen> {
                 Container(
                   key: ValueKey('nb-citation-$i'),
                   margin: const EdgeInsets.only(top: 6),
-                  decoration: const BoxDecoration(
-                    border: Border(left: BorderSide(color: Color(0xFF94A3B8), width: 3)),
+                  decoration: BoxDecoration(
+                    border: Border(left: BorderSide(color: context.colors.faint, width: 3)),
                   ),
                   child: Material(
-                    color: const Color(0xFFF8FAFC),
+                    color: context.colors.surfaceMuted,
                     child: ListTile(
                       dense: true,
                       title: Text(_citations[i].quote, maxLines: 3, overflow: TextOverflow.ellipsis),
@@ -1571,7 +1573,7 @@ class _LibraryPickDialogState extends State<_LibraryPickDialog> {
                 },
               ),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
-            if (_error != null) Text(_error!, style: const TextStyle(color: Colors.red)),
+            if (_error != null) Text(_error!, style: TextStyle(color: NotebookColors.of(context).error)),
             Expanded(
               child: !_loading && _boxes.isEmpty
                   ? const Center(child: Text('가상 폴더가 없습니다.'))

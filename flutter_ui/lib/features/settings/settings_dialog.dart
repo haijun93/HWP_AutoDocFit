@@ -2,6 +2,7 @@ import '../../core/close_guards.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import '../workspace/tab_navigation_shell.dart' show kFileRenameMenuEnabled;
 
 import '../../core/api/abbreviation_api.dart';
@@ -234,8 +235,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
         scale: 1.15,
         child: Switch(
           key: ValueKey(key),
-          activeThumbColor: Colors.white,
-          activeTrackColor: Kiosk.blue,
+          activeThumbColor: context.kiosk.onBlue,
+          activeTrackColor: context.kiosk.blueFill,
           value: _value(key) == true,
           onChanged: locked
               ? null
@@ -255,10 +256,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
         controller: inputs[key],
         enabled: !locked,
         textAlign: number ? TextAlign.center : TextAlign.start,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 17,
           fontWeight: FontWeight.w600,
-          color: Kiosk.ink,
+          color: context.kiosk.ink,
         ),
         keyboardType: number
             ? const TextInputType.numberWithOptions(decimal: true)
@@ -266,7 +267,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         decoration: InputDecoration(
           isDense: true,
           filled: true,
-          fillColor: const Color(0xfff2f4f6),
+          fillColor: context.kiosk.secondaryFill,
           hintText: number ? null : '비워 두면 기본값',
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(12),
@@ -289,7 +290,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           PopupMenuButton<String>(
             tooltip: '이 PC 글꼴에서 고르기',
             enabled: !locked,
-            icon: const Icon(Icons.font_download_outlined, color: Kiosk.blue),
+            icon: Icon(Icons.font_download_outlined, color: context.kiosk.blue),
             itemBuilder: (context) => [
               for (final name in fontNames)
                 PopupMenuItem(
@@ -323,7 +324,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               dirs.isEmpty
                   ? '한/글 전용 글꼴 폴더를 찾지 못했어요. Windows 글꼴 ${fontSummary['total'] ?? 0}종을 써요.'
                   : '자동 인식: 한/글 전용 글꼴 ${fontSummary['hangul_count'] ?? 0}종 · 전체 ${fontSummary['total'] ?? 0}종\n${dirs.join('\n')}',
-              style: Kiosk.caption,
+              style: Kiosk.caption(context),
             ),
           ),
         ],
@@ -334,8 +335,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
         IconButton.filledTonal(
           tooltip: label,
           style: IconButton.styleFrom(
-            backgroundColor: Kiosk.blueSoft,
-            foregroundColor: Kiosk.blue,
+            backgroundColor: context.kiosk.blueSoft,
+            foregroundColor: context.kiosk.blue,
           ),
           onPressed: locked ? null : () => _setNumber(key, delta),
           icon: Icon(icon, size: 20),
@@ -350,7 +351,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         step(Icons.add, 1, '1 늘리기'),
         if (unit != null) ...[
           const SizedBox(width: 8),
-          Text(unit, style: Kiosk.body),
+          Text(unit, style: Kiosk.body(context)),
         ],
       ],
     );
@@ -363,7 +364,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.all(20),
-      decoration: Kiosk.cardBox(selected: isChanged),
+      decoration: Kiosk.cardBox(context, selected: isChanged),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -378,7 +379,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       Flexible(
                         child: Text(
                           guide?.title ?? '${field['label']}',
-                          style: Kiosk.cardTitle,
+                          style: Kiosk.cardTitle(context),
                         ),
                       ),
                       if (isChanged) ...[
@@ -389,14 +390,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: Kiosk.blueSoft,
+                            color: context.kiosk.blueSoft,
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: const Text(
+                          child: Text(
                             '바뀜',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Kiosk.blue,
+                              color: context.kiosk.blue,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -406,7 +407,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   if (guide != null) ...[
                     const SizedBox(height: 4),
-                    Text(guide.summary, style: Kiosk.body),
+                    Text(guide.summary, style: Kiosk.body(context)),
                   ],
                 ],
               );
@@ -443,7 +444,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Widget _categoryTile(GuideCategory item, int count, bool compact) {
     final selected = item.id == category && search.filterQuery.isEmpty;
     final tile = Material(
-      color: selected ? Kiosk.blueSoft : Colors.white,
+      color: selected ? context.kiosk.blueSoft : context.kiosk.card,
       borderRadius: BorderRadius.circular(16),
       child: InkWell(
         key: ValueKey('category-${item.id}'),
@@ -464,13 +465,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 width: 38,
                 height: 38,
                 decoration: BoxDecoration(
-                  color: selected ? Kiosk.blue : const Color(0xfff2f4f6),
+                  color: selected
+                      ? context.kiosk.blueFill
+                      : context.kiosk.secondaryFill,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
                   item.icon,
                   size: 20,
-                  color: selected ? Colors.white : Kiosk.sub,
+                  color: selected ? context.kiosk.onBlue : context.kiosk.sub,
                 ),
               ),
               const SizedBox(width: 12),
@@ -484,7 +487,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w700,
-                        color: selected ? Kiosk.blue : Kiosk.ink,
+                        color: selected ? context.kiosk.blue : context.kiosk.ink,
                       ),
                     ),
                     if (!compact)
@@ -492,7 +495,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         count < 0
                             ? item.subtitle
                             : '${item.subtitle} · $count개',
-                        style: Kiosk.caption,
+                        style: Kiosk.caption(context),
                       ),
                   ],
                 ),
@@ -539,7 +542,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return PopScope(
       canPop: !busy,
       child: Dialog(
-        backgroundColor: Kiosk.canvas,
+        backgroundColor: context.kiosk.canvas,
         insetPadding: EdgeInsets.all(compact ? 8 : 24),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         child: SizedBox(
@@ -552,11 +555,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('설정', style: Kiosk.title),
+                    Text('설정', style: Kiosk.title(context)),
                     const SizedBox(height: 4),
-                    const Text(
+                    Text(
                       '설정을 바꾸면 문서가 어떻게 달라지는지 예시로 보여 드려요.',
-                      style: Kiosk.body,
+                      style: Kiosk.body(context),
                     ),
                     const SizedBox(height: 14),
                     TextField(
@@ -565,14 +568,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       onSubmitted: (_) => search.submit(),
                       style: const TextStyle(fontSize: 16),
                       decoration: InputDecoration(
-                        prefixIcon: const Icon(
+                        prefixIcon: Icon(
                           Icons.search,
-                          color: Kiosk.faint,
+                          color: context.kiosk.faint,
                         ),
                         hintText: '설정 찾기 (예: 내어쓰기, 자간, 표)',
                         labelText: '설정 검색',
                         filled: true,
-                        fillColor: Colors.white,
+                        fillColor: context.kiosk.card,
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(14),
                           borderSide: BorderSide.none,
@@ -589,18 +592,18 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         padding: const EdgeInsets.only(top: 8),
                         child: Text(
                           error!,
-                          style: const TextStyle(
-                            color: Kiosk.red,
+                          style: TextStyle(
+                            color: context.kiosk.red,
                             fontSize: 14,
                           ),
                         ),
                       ),
                     if (snapshot?['running'] == true)
-                      const Padding(
+                      Padding(
                         padding: EdgeInsets.only(top: 8),
                         child: Text(
                           '작업 중에는 설정을 바꿀 수 없어요.',
-                          style: TextStyle(color: Kiosk.red),
+                          style: TextStyle(color: context.kiosk.red),
                         ),
                       ),
                   ],
@@ -636,9 +639,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                 children: [
                                   for (final c in categories)
                                     _categoryTile(c, counts[c.id] ?? 0, false),
-                                  const Padding(
+                                  Padding(
                                     padding: EdgeInsets.fromLTRB(6, 8, 0, 8),
-                                    child: Text('관리', style: Kiosk.caption),
+                                    child: Text('관리', style: Kiosk.caption(context)),
                                   ),
                                   for (final c in _panelCategories)
                                     _categoryTile(c, -1, false),
@@ -658,10 +661,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.fromLTRB(24, 14, 24, 18),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  border: Border(top: BorderSide(color: Kiosk.line)),
-                  borderRadius: BorderRadius.vertical(
+                decoration: BoxDecoration(
+                  color: context.kiosk.card,
+                  border: Border(top: BorderSide(color: context.kiosk.line)),
+                  borderRadius: const BorderRadius.vertical(
                     bottom: Radius.circular(24),
                   ),
                 ),
@@ -671,7 +674,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    const Text('개발자 도토리만두', style: Kiosk.caption),
+                    Text('개발자 도토리만두', style: Kiosk.caption(context)),
                     const SizedBox(width: 12),
                     Text(
                       changed.isEmpty
@@ -680,7 +683,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
-                        color: changed.isEmpty ? Kiosk.faint : Kiosk.blue,
+                        color: changed.isEmpty ? context.kiosk.faint : context.kiosk.blue,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -733,17 +736,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
     children: [
       Container(
         padding: const EdgeInsets.all(16),
-        decoration: Kiosk.cardBox(),
+        decoration: Kiosk.cardBox(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('적용 전·후 예시', style: Kiosk.cardTitle),
+            Text('적용 전·후 예시', style: Kiosk.cardTitle(context)),
             const SizedBox(height: 4),
             Text(
               lastKey == null
                   ? '설정이 문서에 어떻게 반영되는지 예시로 보여 드려요. 그림을 누르면 크게 볼 수 있어요.'
                   : '방금 바꾼 설정과 관련된 예시예요. 그림을 누르면 크게 볼 수 있어요.',
-              style: Kiosk.caption,
+              style: Kiosk.caption(context),
             ),
             const SizedBox(height: 12),
             OptionImagePreview(
@@ -832,7 +835,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       return Center(
         child: Text(
           query.isEmpty ? '이 분류에는 설정이 없어요.' : '“$query”와 맞는 설정이 없어요.',
-          style: Kiosk.body,
+          style: Kiosk.body(context),
         ),
       );
     }
