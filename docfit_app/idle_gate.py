@@ -255,28 +255,40 @@ def cpu_percent_from_times(previous, current):
 
 
 # ---------------------------------------------------------------- 낮은 우선순위
+def begin_background():
+    """지금 스레드를 Windows 배경 모드로(CPU·디스크 I/O·메모리 우선순위 낮음). 걸었으면 True.
+
+    THREAD_MODE_BACKGROUND_BEGIN은 호출한 스레드에만 걸리므로 반드시 일하는 스레드 안에서 부르고,
+    같은 스레드에서 `end_background()`로 푼다. 다른 OS·실패 시 False(아무것도 안 함).
+    """
+    if os.name != "nt":
+        return False
+    try:
+        kernel32 = _kernel32()
+        return bool(kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_MODE_BACKGROUND_BEGIN))
+    except Exception:
+        return False
+
+
+def end_background():
+    if os.name != "nt":
+        return False
+    try:
+        kernel32 = _kernel32()
+        return bool(kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_MODE_BACKGROUND_END))
+    except Exception:
+        return False
+
+
 @contextlib.contextmanager
 def background_priority():
-    """지금 스레드를 Windows 배경 모드로(CPU·디스크 I/O·메모리 우선순위 낮음). 다른 OS·실패 시 아무것도 안 함.
-
-    THREAD_MODE_BACKGROUND_BEGIN은 호출한 스레드에만 걸리므로 반드시 일하는 스레드 안에서 쓴다.
-    """
-    started = False
-    if os.name == "nt":
-        try:
-            kernel32 = _kernel32()
-            started = bool(kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_MODE_BACKGROUND_BEGIN))
-        except Exception:
-            started = False
+    """`begin_background()`~`end_background()`를 묶은 것."""
+    started = begin_background()
     try:
         yield started
     finally:
         if started:
-            try:
-                kernel32 = _kernel32()
-                kernel32.SetThreadPriority(kernel32.GetCurrentThread(), _THREAD_MODE_BACKGROUND_END)
-            except Exception:
-                pass
+            end_background()
 
 
 # ---------------------------------------------------------------- 상태를 들고 있는 문
