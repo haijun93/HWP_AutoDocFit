@@ -162,6 +162,8 @@ List<String> kclipClassify(KClipEntry entry, {KClipIsDir isDir = _unknown}) {
           }
         }
       }
+      // 화면캡처 폴더에서 기록한 파일(경로만 저장, 출처 "screenshot")도 화면캡처다.
+      if (source == 'screenshot') set.add('화면캡처');
     case 'text':
       if (kclipDocPrograms.contains(source) || hasFormat(kclipDocFormats)) {
         set.add('문서');

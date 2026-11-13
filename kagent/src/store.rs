@@ -31,6 +31,8 @@ pub struct Settings {
     pub excluded_apps: Vec<String>,
     /// 스크린샷 폴더(Win+PrtScn·캡처 도구 자동 저장)에 새로 생긴 PNG도 기록.
     pub watch_screenshots: bool,
+    /// 자동 인식한 화면캡처 폴더 중 사용자가 끈 폴더(소문자 경로, `capture_dirs::plan`).
+    pub capture_dirs_off: Vec<String>,
     /// 타임머신 조사 폴더(앱이 정해 준다, 비어 있으면 감시 안 함).
     pub timeline_roots: Vec<String>,
     pub timeline_mtime_only: bool,
@@ -64,6 +66,7 @@ impl Default for Settings {
                 .map(|s| s.to_string())
                 .collect(),
             watch_screenshots: true,
+            capture_dirs_off: Vec::new(),
             timeline_roots: Vec::new(),
             timeline_mtime_only: false,
             popup_x: -1,
@@ -100,6 +103,7 @@ impl Settings {
             ("hotkey", self.hotkey.as_str().into()),
             ("excluded_apps", Value::Arr(self.excluded_apps.iter().map(|s| s.as_str().into()).collect())),
             ("watch_screenshots", self.watch_screenshots.into()),
+            ("capture_dirs_off", Value::Arr(self.capture_dirs_off.iter().map(|s| s.as_str().into()).collect())),
             ("timeline_roots", Value::Arr(self.timeline_roots.iter().map(|s| s.as_str().into()).collect())),
             ("timeline_mtime_only", self.timeline_mtime_only.into()),
             ("popup_x", self.popup_x.into()),
@@ -155,6 +159,9 @@ impl Settings {
         }
         if let Some(b) = v.bool("watch_screenshots") {
             self.watch_screenshots = b;
+        }
+        if let Some(list) = string_list(v, "capture_dirs_off", true, 1000) {
+            self.capture_dirs_off = list.into_iter().take(50).collect();
         }
         // 조사 폴더: 절대 경로(드라이브 문자)만, 최대 20개.
         if let Some(list) = string_list(v, "timeline_roots", false, 1000) {

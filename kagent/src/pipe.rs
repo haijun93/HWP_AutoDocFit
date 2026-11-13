@@ -325,13 +325,15 @@ pub fn handle(v: &Value) -> Value {
             ok(vec![])
         }
         "settings_get" => ok(vec![("settings", a.settings.lock().unwrap().to_json()),
-            ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into())]),
+            ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into()),
+            ("capture_dirs", crate::capture_plan_json(&a.capture_plan.lock().unwrap()))]),
         "settings_set" => {
             let Some(new) = v.get("settings") else { return error("설정을 확인해 주세요.") };
             // 빠른 목록 설정 메뉴와 같은 길(검사·저장·정리·창 갱신).
             let snapshot = crate::update_settings(new);
             ok(vec![("settings", snapshot.to_json()),
-                ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into())])
+                ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into()),
+                ("capture_dirs", crate::capture_plan_json(&a.capture_plan.lock().unwrap()))])
         }
         "quit" => {
             unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
