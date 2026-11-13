@@ -336,6 +336,7 @@ class KClipService:
             "add_files": ("add_files", ("paths",)),
             "list": ("list", ("limit", "query")),
             "get": ("get", ("id",)),
+            "thumb": ("thumb", ("id", "size")),
             "restore": ("restore", ("id",)),
             "delete": ("delete", ("id",)),
             "pin": ("pin", ("id", "pinned")),
@@ -381,7 +382,7 @@ class KClipService:
                 if not result.get("ok"):
                     return result
         cmd, keys = forwards[action]
-        if action in ("get", "restore", "delete", "pin"):
+        if action in ("get", "thumb", "restore", "delete", "pin"):
             try:
                 item_id = int(payload.get("id"))
                 if isinstance(payload.get("id"), bool) or item_id <= 0:
