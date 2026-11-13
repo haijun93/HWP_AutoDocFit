@@ -82,7 +82,9 @@ async fn call(name: &str, request: &serde_json::Value) -> std::io::Result<serde_
     let mut client = loop {
         match ClientOptions::new().open(name) {
             Ok(c) => break c,
-            Err(e) if e.raw_os_error() == Some(231) => tokio::time::sleep(Duration::from_millis(5)).await,
+            Err(e) if e.raw_os_error() == Some(231) => {
+                tokio::time::sleep(Duration::from_millis(5)).await
+            }
             Err(e) => return Err(e),
         }
     };
@@ -121,7 +123,10 @@ async fn executable_user_mode_ingest_roundtrip() {
             match call(&name, &json!({"command":"status"})).await {
                 Ok(v) => break v,
                 Err(e) if matches!(e.raw_os_error(), Some(2 | 231)) => {
-                    assert!(process.0.try_wait().unwrap().is_none(), "user mode exited before binding");
+                    assert!(
+                        process.0.try_wait().unwrap().is_none(),
+                        "user mode exited before binding"
+                    );
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 Err(e) => panic!("pipe connect: {e}"),
@@ -139,7 +144,11 @@ async fn executable_user_mode_ingest_roundtrip() {
     let filler = "가나다라마바사아자차카타파하 ".repeat(9);
     let paras: Vec<_> = (0..300u32)
         .map(|p| {
-            let t = if p == 250 { format!("{filler}끝에 있는 예산 집행 문장.") } else { filler.clone() };
+            let t = if p == 250 {
+                format!("{filler}끝에 있는 예산 집행 문장.")
+            } else {
+                filler.clone()
+            };
             json!({"p":p,"lv":if p == 0 { 0 } else { 8 },"t":t})
         })
         .collect();
@@ -151,7 +160,10 @@ async fn executable_user_mode_ingest_roundtrip() {
         v
     };
     assert!(serde_json::to_vec(&whole).unwrap().len() > 65_536);
-    assert!(call(&name, &whole).await.is_err(), "unsplit request over 64KB closes the connection");
+    assert!(
+        call(&name, &whole).await.is_err(),
+        "unsplit request over 64KB closes the connection"
+    );
     let chunks: Vec<_> = paras.chunks(75).collect();
     for (i, chunk) in chunks.iter().enumerate() {
         let mut v = head.clone();
@@ -167,7 +179,12 @@ async fn executable_user_mode_ingest_roundtrip() {
         "level_src":"rs","level_rule":0,"paras":[{"p":0,"lv":2,"t":"예산 집행 메모. ※"}]});
     assert_eq!(call(&name, &small).await.unwrap()["ok"], true);
 
-    let q = call(&name, &json!({"command":"query","id":1,"text":"예산 집행","scope":"box:9","refs":3})).await.unwrap();
+    let q = call(
+        &name,
+        &json!({"command":"query","id":1,"text":"예산 집행","scope":"box:9","refs":3}),
+    )
+    .await
+    .unwrap();
     assert_eq!(q["ok"], true, "{q}");
     let hit = &q["result"]["hits"][0];
     assert_eq!(q["result"]["total_docs"], 1);
@@ -177,21 +194,56 @@ async fn executable_user_mode_ingest_roundtrip() {
     assert_eq!(s["para"], 250);
     // 문단 250 = 채움 글(마침표 없음) + "끝에 있는 … 문장." → 한 문장. 앞에 문장 하나("간단. ")를 둔 문단으로 위치를 따로 본다.
     let text = format!("{filler}끝에 있는 예산 집행 문장.");
-    assert_eq!((s["start"].as_u64(), s["len"].as_u64()), (Some(0), Some(text.trim_end().chars().count() as u64)));
+    assert_eq!(
+        (s["start"].as_u64(), s["len"].as_u64()),
+        (Some(0), Some(text.trim_end().chars().count() as u64))
+    );
     let small2 = json!({"command":"ingest","doc_key":"pos","path":"pos.txt","size":1,"mtime":1,"date":1,"scopes":["box:9"],
         "level_src":"py","level_rule":4,"paras":[{"p":4,"lv":3,"t":"간단. ※ 그리고 예산 집행 문장."}]});
     assert_eq!(call(&name, &small2).await.unwrap()["ok"], true);
-    let q = call(&name, &json!({"command":"query","id":9,"text":"예산 집행","scope":"box:9","refs":3})).await.unwrap();
-    let pos = q["result"]["hits"].as_array().unwrap().iter().find(|h| h["doc_key"] == "pos").unwrap();
+    let q = call(
+        &name,
+        &json!({"command":"query","id":9,"text":"예산 집행","scope":"box:9","refs":3}),
+    )
+    .await
+    .unwrap();
+    let pos = q["result"]["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["doc_key"] == "pos")
+        .unwrap();
     let s = &pos["sentences"][0];
     let t = "간단. ※ 그리고 예산 집행 문장.";
-    let got: String = t.chars().skip(s["start"].as_u64().unwrap() as usize).take(s["len"].as_u64().unwrap() as usize).collect();
-    assert_eq!((s["para"].as_u64(), s["level"].as_u64(), got.as_str()), (Some(4), Some(3), "※ 그리고 예산 집행 문장."));
-    assert_eq!(call(&name, &json!({"command":"remove","doc_keys":["pos"]})).await.unwrap()["result"]["removed"], 1);
+    let got: String = t
+        .chars()
+        .skip(s["start"].as_u64().unwrap() as usize)
+        .take(s["len"].as_u64().unwrap() as usize)
+        .collect();
+    assert_eq!(
+        (s["para"].as_u64(), s["level"].as_u64(), got.as_str()),
+        (Some(4), Some(3), "※ 그리고 예산 집행 문장.")
+    );
+    assert_eq!(
+        call(&name, &json!({"command":"remove","doc_keys":["pos"]}))
+            .await
+            .unwrap()["result"]["removed"],
+        1
+    );
 
-    let c = call(&name, &json!({"command":"count","id":2,"text":"예산 집행"})).await.unwrap();
-    assert_eq!((c["result"]["total_docs"].as_u64(), c["result"]["total_sentences"].as_u64()), (Some(2), Some(2)));
-    let st = call(&name, &json!({"command":"stale","level_rule":4})).await.unwrap();
+    let c = call(&name, &json!({"command":"count","id":2,"text":"예산 집행"}))
+        .await
+        .unwrap();
+    assert_eq!(
+        (
+            c["result"]["total_docs"].as_u64(),
+            c["result"]["total_sentences"].as_u64()
+        ),
+        (Some(2), Some(2))
+    );
+    let st = call(&name, &json!({"command":"stale","level_rule":4}))
+        .await
+        .unwrap();
     assert_eq!(st["result"], json!({"doc_keys":["memo"],"more":false}));
     // 같은 파일 판의 py 문서를 rs가 덮는 것은 거절.
     let mut down = head.clone();
@@ -201,9 +253,13 @@ async fn executable_user_mode_ingest_roundtrip() {
     assert_eq!(r["ok"], false);
     assert!(r["error"].as_str().unwrap().starts_with("rejected:"), "{r}");
 
-    let r = call(&name, &json!({"command":"remove","doc_keys":["big"]})).await.unwrap();
+    let r = call(&name, &json!({"command":"remove","doc_keys":["big"]}))
+        .await
+        .unwrap();
     assert_eq!(r["result"]["removed"], 1);
-    let q = call(&name, &json!({"command":"query","id":3,"text":"예산 집행"})).await.unwrap();
+    let q = call(&name, &json!({"command":"query","id":3,"text":"예산 집행"}))
+        .await
+        .unwrap();
     assert_eq!(q["result"]["hits"][0]["doc_key"], "memo");
     assert_eq!(q["result"]["total_docs"], 1);
     let status = call(&name, &json!({"command":"status"})).await.unwrap();

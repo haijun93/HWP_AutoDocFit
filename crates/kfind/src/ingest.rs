@@ -45,7 +45,9 @@ pub fn merge_paras(paras: Vec<Para>) -> Result<Vec<Para>> {
         match out.last_mut() {
             Some(last) if last.p == para.p => {
                 if last.lv != para.lv {
-                    return Err(format!("paragraph {} continues with a different level", para.p).into());
+                    return Err(
+                        format!("paragraph {} continues with a different level", para.p).into(),
+                    );
                 }
                 last.t.push_str(&para.t);
             }
@@ -61,7 +63,11 @@ pub fn sentences(paras: &[Para]) -> (Vec<kfind_core::Sentence<'_>>, Vec<u32>) {
     let mut spans = Vec::new();
     for para in paras {
         for sp in kfind_core::index_sentences(&para.t) {
-            out.push(kfind_core::Sentence { para: para.p, level: para.lv, text: sp.text(&para.t) });
+            out.push(kfind_core::Sentence {
+                para: para.p,
+                level: para.lv,
+                text: sp.text(&para.t),
+            });
             spans.extend([para.p, sp.start, sp.len]);
         }
     }
@@ -106,8 +112,18 @@ impl Uploads {
     }
 
     /// 조각 하나를 받는다. `part`·`parts`가 없으면 한 번에 온 문서.
-    pub fn accept(&mut self, sid: &str, key: &str, meta: DocMeta, paras: Vec<Para>, part: Option<u32>, parts: Option<u32>, now: Instant) -> Result<Accepted> {
-        self.map.retain(|_, u| now.duration_since(u.touched) < UPLOAD_IDLE);
+    pub fn accept(
+        &mut self,
+        sid: &str,
+        key: &str,
+        meta: DocMeta,
+        paras: Vec<Para>,
+        part: Option<u32>,
+        parts: Option<u32>,
+        now: Instant,
+    ) -> Result<Accepted> {
+        self.map
+            .retain(|_, u| now.duration_since(u.touched) < UPLOAD_IDLE);
         let bytes = text_bytes(&paras);
         let (part, parts) = match (part, parts) {
             (None, None) => (0, 1),
@@ -115,7 +131,9 @@ impl Uploads {
             _ => return Err("part and parts must be given together".into()),
         };
         if parts == 0 || parts > MAX_PARTS || part >= parts {
-            return Err(format!("part {part} of {parts} is out of range (parts 1..={MAX_PARTS})").into());
+            return Err(
+                format!("part {part} of {parts} is out of range (parts 1..={MAX_PARTS})").into(),
+            );
         }
         if bytes > MAX_DOC_BYTES {
             return Err("document exceeds 64MB".into());
@@ -131,10 +149,22 @@ impl Uploads {
             if mine >= MAX_UPLOADS_PER_USER || self.map.len() >= MAX_UPLOADS {
                 return Err("too many documents being uploaded in parts".into());
             }
-            self.map.insert(id, Upload { meta, parts, next: 1, paras, bytes, touched: now });
+            self.map.insert(
+                id,
+                Upload {
+                    meta,
+                    parts,
+                    next: 1,
+                    paras,
+                    bytes,
+                    touched: now,
+                },
+            );
             return Ok(Accepted::Waiting { received: 1, parts });
         }
-        let Some(up) = self.map.get_mut(&id) else { return Err(format!("part {part} without part 0").into()) };
+        let Some(up) = self.map.get_mut(&id) else {
+            return Err(format!("part {part} without part 0").into());
+        };
         let problem = if up.next != part {
             Some(format!("expected part {}, got {part}", up.next))
         } else if up.parts != parts || up.meta != meta {
@@ -153,10 +183,16 @@ impl Uploads {
         up.next += 1;
         up.touched = now;
         if up.next < up.parts {
-            return Ok(Accepted::Waiting { received: up.next, parts: up.parts });
+            return Ok(Accepted::Waiting {
+                received: up.next,
+                parts: up.parts,
+            });
         }
         let up = self.map.remove(&id).expect("upload exists");
-        Ok(Accepted::Complete { meta: up.meta, paras: up.paras })
+        Ok(Accepted::Complete {
+            meta: up.meta,
+            paras: up.paras,
+        })
     }
 }
 
@@ -166,7 +202,16 @@ mod tests {
     use crate::doctable::LevelSrc;
 
     fn meta() -> DocMeta {
-        DocMeta { path: "a.txt".into(), size: 1, mtime: 1, date: 0, ref_date: None, scopes: vec!["tm".into()], level_src: LevelSrc::Py, level_rule: 4 }
+        DocMeta {
+            path: "a.txt".into(),
+            size: 1,
+            mtime: 1,
+            date: 0,
+            ref_date: None,
+            scopes: vec!["tm".into()],
+            level_src: LevelSrc::Py,
+            level_rule: 4,
+        }
     }
     fn para(p: u32, lv: u8, t: &str) -> Para {
         Para { p, lv, t: t.into() }
@@ -174,11 +219,29 @@ mod tests {
 
     #[test]
     fn paragraphs_merge_and_split_into_indexable_sentences() {
-        let merged = merge_paras(vec![para(0, 0, "예산 계획"), para(1, 8, "집행한다. ※"), para(1, 8, "\n다음 문장.")]).unwrap();
-        assert_eq!(merged, vec![para(0, 0, "예산 계획"), para(1, 8, "집행한다. ※\n다음 문장.")]);
+        let merged = merge_paras(vec![
+            para(0, 0, "예산 계획"),
+            para(1, 8, "집행한다. ※"),
+            para(1, 8, "\n다음 문장."),
+        ])
+        .unwrap();
+        assert_eq!(
+            merged,
+            vec![
+                para(0, 0, "예산 계획"),
+                para(1, 8, "집행한다. ※\n다음 문장.")
+            ]
+        );
         let (s, spans) = sentences(&merged);
         let texts: Vec<_> = s.iter().map(|s| (s.para, s.level, s.text)).collect();
-        assert_eq!(texts, [(0, 0, "예산 계획"), (1, 8, "집행한다."), (1, 8, "다음 문장.")]);
+        assert_eq!(
+            texts,
+            [
+                (0, 0, "예산 계획"),
+                (1, 8, "집행한다."),
+                (1, 8, "다음 문장.")
+            ]
+        );
         assert_eq!(spans, [0, 0, 5, 1, 0, 5, 1, 8, 6]);
         assert!(merge_paras(vec![para(1, 8, "a"), para(1, 7, "b")]).is_err());
         assert!(merge_paras(vec![para(1, 9, "a")]).is_err());
@@ -189,38 +252,128 @@ mod tests {
     fn parts_assemble_in_order() {
         let mut u = Uploads::default();
         let t = Instant::now();
-        assert_eq!(u.accept("S", "k", meta(), vec![para(0, 0, "가")], Some(0), Some(3), t).unwrap(), Accepted::Waiting { received: 1, parts: 3 });
-        assert_eq!(u.accept("S", "k", meta(), vec![para(0, 0, "나")], Some(1), Some(3), t).unwrap(), Accepted::Waiting { received: 2, parts: 3 });
-        match u.accept("S", "k", meta(), vec![para(1, 8, "다")], Some(2), Some(3), t).unwrap() {
-            Accepted::Complete { paras, .. } => assert_eq!(merge_paras(paras).unwrap(), vec![para(0, 0, "가나"), para(1, 8, "다")]),
+        assert_eq!(
+            u.accept(
+                "S",
+                "k",
+                meta(),
+                vec![para(0, 0, "가")],
+                Some(0),
+                Some(3),
+                t
+            )
+            .unwrap(),
+            Accepted::Waiting {
+                received: 1,
+                parts: 3
+            }
+        );
+        assert_eq!(
+            u.accept(
+                "S",
+                "k",
+                meta(),
+                vec![para(0, 0, "나")],
+                Some(1),
+                Some(3),
+                t
+            )
+            .unwrap(),
+            Accepted::Waiting {
+                received: 2,
+                parts: 3
+            }
+        );
+        match u
+            .accept(
+                "S",
+                "k",
+                meta(),
+                vec![para(1, 8, "다")],
+                Some(2),
+                Some(3),
+                t,
+            )
+            .unwrap()
+        {
+            Accepted::Complete { paras, .. } => assert_eq!(
+                merge_paras(paras).unwrap(),
+                vec![para(0, 0, "가나"), para(1, 8, "다")]
+            ),
             other => panic!("{other:?}"),
         }
         assert!(u.is_empty());
         // 한 번에 온 문서.
-        assert!(matches!(u.accept("S", "k", meta(), vec![], None, None, t).unwrap(), Accepted::Complete { .. }));
+        assert!(matches!(
+            u.accept("S", "k", meta(), vec![], None, None, t).unwrap(),
+            Accepted::Complete { .. }
+        ));
     }
 
     #[test]
     fn impossible_part_transitions_are_rejected() {
         let mut u = Uploads::default();
         let t = Instant::now();
-        assert!(u.accept("S", "k", meta(), vec![], Some(1), Some(2), t).is_err(), "no part 0");
-        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t).unwrap();
-        assert!(u.accept("S", "k", meta(), vec![], Some(2), Some(3), t).is_err(), "skipped part");
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(1), Some(2), t)
+                .is_err(),
+            "no part 0"
+        );
+        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t)
+            .unwrap();
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(2), Some(3), t)
+                .is_err(),
+            "skipped part"
+        );
         assert!(u.is_empty(), "rejected upload is dropped");
-        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t).unwrap();
+        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t)
+            .unwrap();
         let other = DocMeta { size: 2, ..meta() };
-        assert!(u.accept("S", "k", other, vec![], Some(1), Some(3), t).is_err(), "header changed");
-        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t).unwrap();
-        assert!(u.accept("S", "k", meta(), vec![], Some(1), Some(4), t).is_err(), "parts changed");
+        assert!(
+            u.accept("S", "k", other, vec![], Some(1), Some(3), t)
+                .is_err(),
+            "header changed"
+        );
+        u.accept("S", "k", meta(), vec![], Some(0), Some(3), t)
+            .unwrap();
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(1), Some(4), t)
+                .is_err(),
+            "parts changed"
+        );
         // 다른 SID의 조각은 섞이지 않는다.
-        u.accept("S", "k", meta(), vec![], Some(0), Some(2), t).unwrap();
-        assert!(u.accept("T", "k", meta(), vec![], Some(1), Some(2), t).is_err());
+        u.accept("S", "k", meta(), vec![], Some(0), Some(2), t)
+            .unwrap();
+        assert!(
+            u.accept("T", "k", meta(), vec![], Some(1), Some(2), t)
+                .is_err()
+        );
         // 오래된 조각은 버린다.
-        assert!(u.accept("S", "k", meta(), vec![], Some(1), Some(2), t + Duration::from_secs(61)).is_err());
-        assert!(u.accept("S", "k", meta(), vec![], Some(0), Some(0), t).is_err());
-        assert!(u.accept("S", "k", meta(), vec![], Some(0), None, t).is_err());
-        assert!(u.accept("S", "k", meta(), vec![], Some(0), Some(MAX_PARTS + 1), t).is_err());
+        assert!(
+            u.accept(
+                "S",
+                "k",
+                meta(),
+                vec![],
+                Some(1),
+                Some(2),
+                t + Duration::from_secs(61)
+            )
+            .is_err()
+        );
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(0), Some(0), t)
+                .is_err()
+        );
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(0), None, t)
+                .is_err()
+        );
+        assert!(
+            u.accept("S", "k", meta(), vec![], Some(0), Some(MAX_PARTS + 1), t)
+                .is_err()
+        );
     }
 
     #[test]
@@ -228,12 +381,38 @@ mod tests {
         let mut u = Uploads::default();
         let t = Instant::now();
         for i in 0..MAX_UPLOADS_PER_USER {
-            u.accept("S", &i.to_string(), meta(), vec![], Some(0), Some(2), t).unwrap();
+            u.accept("S", &i.to_string(), meta(), vec![], Some(0), Some(2), t)
+                .unwrap();
         }
-        assert!(u.accept("S", "x", meta(), vec![], Some(0), Some(2), t).is_err());
-        u.accept("T", "x", meta(), vec![], Some(0), Some(2), t).unwrap();
+        assert!(
+            u.accept("S", "x", meta(), vec![], Some(0), Some(2), t)
+                .is_err()
+        );
+        u.accept("T", "x", meta(), vec![], Some(0), Some(2), t)
+            .unwrap();
         let big = "가".repeat(MAX_DOC_BYTES / 3 / 2 + 1);
-        u.accept("T", "y", meta(), vec![para(0, 0, &big)], Some(0), Some(3), t).unwrap();
-        assert!(u.accept("T", "y", meta(), vec![para(0, 0, &big)], Some(1), Some(3), t).is_err(), "over 64MB");
+        u.accept(
+            "T",
+            "y",
+            meta(),
+            vec![para(0, 0, &big)],
+            Some(0),
+            Some(3),
+            t,
+        )
+        .unwrap();
+        assert!(
+            u.accept(
+                "T",
+                "y",
+                meta(),
+                vec![para(0, 0, &big)],
+                Some(1),
+                Some(3),
+                t
+            )
+            .is_err(),
+            "over 64MB"
+        );
     }
 }

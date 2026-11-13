@@ -1,5 +1,7 @@
 use crate::Result;
-use crate::doctable::{DocMeta, DocTable, Filters, LevelSrc, check_replace, scope_contains, valid_scope};
+use crate::doctable::{
+    DocMeta, DocTable, Filters, LevelSrc, check_replace, scope_contains, valid_scope,
+};
 use crate::ingest::{Accepted, Para, Uploads, merge_paras, sentences, valid_doc_key};
 use kfind_core::{Index, MergePolicy, RoaringTreemap, SearchOptions, SplitMode, Writer};
 use serde::Deserialize;
@@ -30,7 +32,11 @@ pub const MAX_REQUEST: usize = 65536;
 pub enum Request {
     /// 간단 형(시험·내부용, 나머지는 기본값). 파이프에서 온 `query`는 `Find`로 읽는다.
     #[serde(skip)]
-    Query { id: u64, text: String, top: usize },
+    Query {
+        id: u64,
+        text: String,
+        top: usize,
+    },
     #[serde(rename = "query")]
     Find(QueryArgs),
     Count {
@@ -238,10 +244,17 @@ fn scope_wants(scope: Option<&str>, sources: Option<&[String]>) -> Result<Option
     Ok(Some(wants))
 }
 fn in_scope(wants: Option<&[String]>, scopes: &[String]) -> bool {
-    wants.is_none_or(|w| w.iter().any(|w| scopes.iter().any(|d| scope_contains(w, d))))
+    wants.is_none_or(|w| {
+        w.iter()
+            .any(|w| scopes.iter().any(|d| scope_contains(w, d)))
+    })
 }
 /// 문서 표로 허용 문서 집합을 만든다. 범위도 표 거르개도 없으면 None(전부 허용).
-fn allow_set(table: &DocTable, wants: Option<&[String]>, filters: &Filters) -> Option<RoaringTreemap> {
+fn allow_set(
+    table: &DocTable,
+    wants: Option<&[String]>,
+    filters: &Filters,
+) -> Option<RoaringTreemap> {
     if wants.is_none() && !filters.uses_table() {
         return None;
     }
@@ -260,7 +273,12 @@ fn check_filters(filters: &Filters) -> Result<()> {
     Ok(())
 }
 fn words_json(words: &[kfind_core::QueryWord]) -> Value {
-    Value::Array(words.iter().map(|w| json!({"text":w.text,"pieces":w.pieces})).collect())
+    Value::Array(
+        words
+            .iter()
+            .map(|w| json!({"text":w.text,"pieces":w.pieces}))
+            .collect(),
+    )
 }
 impl Handler {
     pub fn new(root: PathBuf) -> Self {
@@ -316,7 +334,10 @@ impl Handler {
         if stores.len() >= 64 {
             return Err("too many user indices".into());
         }
-        let s = Arc::new(Mutex::new(Store { table: DocTable::load(&dir)?, writer: None }));
+        let s = Arc::new(Mutex::new(Store {
+            table: DocTable::load(&dir)?,
+            writer: None,
+        }));
         stores.insert(sid.to_owned(), s.clone());
         Ok(Some(s))
     }
@@ -326,7 +347,10 @@ impl Handler {
             let dir = self.root.join(sid);
             let w = match Writer::open(&dir, Default::default()) {
                 Ok(w) => w,
-                Err(e @ (kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. })) => {
+                Err(
+                    e @ (kfind_core::Error::FormatVersion { .. }
+                    | kfind_core::Error::RuleVersion { .. }),
+                ) => {
                     self.note_error(&format!("rebuilt index: {e}"));
                     let w = Writer::create(&dir, Default::default())?;
                     store.table.clear()?;
@@ -350,16 +374,35 @@ impl Handler {
             return Err("too many active queries".into());
         }
         active.insert(key.clone(), flag.clone());
-        Ok((QueryLease { active: self.active.clone(), key }, flag))
+        Ok((
+            QueryLease {
+                active: self.active.clone(),
+                key,
+            },
+            flag,
+        ))
     }
     /// 질의 옵션: 나누기·구문·범위(문서 표)·제외어(엔진 문서 집합).
     #[allow(clippy::too_many_arguments)]
-    fn options(&self, sid: &str, index: &Index, scope: Option<&str>, sources: Option<&[String]>, split: Option<&str>, filters: &Filters, flag: Arc<AtomicBool>) -> Result<SearchOptions> {
+    fn options(
+        &self,
+        sid: &str,
+        index: &Index,
+        scope: Option<&str>,
+        sources: Option<&[String]>,
+        split: Option<&str>,
+        filters: &Filters,
+        flag: Arc<AtomicBool>,
+    ) -> Result<SearchOptions> {
         check_filters(filters)?;
         let wants = scope_wants(scope, sources)?;
         let allow = if wants.is_some() || filters.uses_table() {
             match self.store(sid, false)? {
-                Some(s) => allow_set(&s.lock().map_err(|_| "store poisoned")?.table, wants.as_deref(), filters),
+                Some(s) => allow_set(
+                    &s.lock().map_err(|_| "store poisoned")?.table,
+                    wants.as_deref(),
+                    filters,
+                ),
                 None => Some(RoaringTreemap::new()),
             }
         } else {
@@ -392,28 +435,103 @@ impl Handler {
                 }
                 Ok(json!({"id":id,"cancelled":found.is_some()}))
             }
-            Request::Query { id, text, top } => self.query(sid, id, &text, top, None, None, default_refs(), None, &Filters::default()),
-            Request::Find(q) => self.query(sid, q.id, &q.text, q.top, q.scope.as_deref(), q.sources.as_deref(), q.refs, q.split.as_deref(), &q.filters),
-            Request::Count { id, text, scope, sources, split, filters } => {
+            Request::Query { id, text, top } => self.query(
+                sid,
+                id,
+                &text,
+                top,
+                None,
+                None,
+                default_refs(),
+                None,
+                &Filters::default(),
+            ),
+            Request::Find(q) => self.query(
+                sid,
+                q.id,
+                &q.text,
+                q.top,
+                q.scope.as_deref(),
+                q.sources.as_deref(),
+                q.refs,
+                q.split.as_deref(),
+                &q.filters,
+            ),
+            Request::Count {
+                id,
+                text,
+                scope,
+                sources,
+                split,
+                filters,
+            } => {
                 let started = std::time::Instant::now();
                 let (_lease, flag) = self.lease(sid, id)?;
                 let view = self.index(sid)?;
                 let mut index = view.lock().map_err(|_| "user index poisoned")?;
                 index.reload()?;
-                let opts = self.options(sid, &index, scope.as_deref(), sources.as_deref(), split.as_deref(), &filters, flag)?;
+                let opts = self.options(
+                    sid,
+                    &index,
+                    scope.as_deref(),
+                    sources.as_deref(),
+                    split.as_deref(),
+                    &filters,
+                    flag,
+                )?;
                 let c = index.count(&text, &opts)?;
-                Ok(json!({"id":id,"generation":c.generation,"total_docs":c.total_docs,"total_sentences":c.total_sentences,"words":words_json(&c.words),"dropped":c.dropped,"ms":started.elapsed().as_secs_f64()*1000.0}))
+                Ok(
+                    json!({"id":id,"generation":c.generation,"total_docs":c.total_docs,"total_sentences":c.total_sentences,"words":words_json(&c.words),"dropped":c.dropped,"ms":started.elapsed().as_secs_f64()*1000.0}),
+                )
             }
-            Request::Ingest { doc_key, path, size, mtime, date, ref_date, scopes, level_src, level_rule, paras, part, parts } => {
-                let meta = DocMeta { path, size, mtime, date, ref_date, scopes, level_src, level_rule };
+            Request::Ingest {
+                doc_key,
+                path,
+                size,
+                mtime,
+                date,
+                ref_date,
+                scopes,
+                level_src,
+                level_rule,
+                paras,
+                part,
+                parts,
+            } => {
+                let meta = DocMeta {
+                    path,
+                    size,
+                    mtime,
+                    date,
+                    ref_date,
+                    scopes,
+                    level_src,
+                    level_rule,
+                };
                 self.ingest(sid, doc_key, meta, paras, part, parts)
             }
             Request::Remove { doc_keys } => self.remove(sid, &doc_keys),
-            Request::Stale { scope, level_rule, after, limit } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
+            Request::Stale {
+                scope,
+                level_rule,
+                after,
+                limit,
+            } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
         }
     }
     #[allow(clippy::too_many_arguments)]
-    fn query(&self, sid: &str, id: u64, text: &str, top: usize, scope: Option<&str>, sources: Option<&[String]>, refs: usize, split: Option<&str>, filters: &Filters) -> Result<Value> {
+    fn query(
+        &self,
+        sid: &str,
+        id: u64,
+        text: &str,
+        top: usize,
+        scope: Option<&str>,
+        sources: Option<&[String]>,
+        refs: usize,
+        split: Option<&str>,
+        filters: &Filters,
+    ) -> Result<Value> {
         if !(1..=1000).contains(&top) {
             return Err("top must be 1..1000".into());
         }
@@ -458,7 +576,15 @@ impl Handler {
             "ms":started.elapsed().as_secs_f64()*1000.0
         }))
     }
-    fn ingest(&self, sid: &str, doc_key: String, meta: DocMeta, paras: Vec<Para>, part: Option<u32>, parts: Option<u32>) -> Result<Value> {
+    fn ingest(
+        &self,
+        sid: &str,
+        doc_key: String,
+        meta: DocMeta,
+        paras: Vec<Para>,
+        part: Option<u32>,
+        parts: Option<u32>,
+    ) -> Result<Value> {
         if !valid_doc_key(&doc_key) {
             return Err("invalid doc_key".into());
         }
@@ -467,12 +593,36 @@ impl Handler {
         }
         let store = self.store(sid, true)?.ok_or("store unavailable")?;
         // 위계 출처 전이는 첫 조각에서도 확인한다(거절될 문서의 조각을 모으지 않는다).
-        if let Err(e) = check_replace(store.lock().map_err(|_| "store poisoned")?.table.get(&doc_key).map(|e| &e.meta), &meta) {
+        if let Err(e) = check_replace(
+            store
+                .lock()
+                .map_err(|_| "store poisoned")?
+                .table
+                .get(&doc_key)
+                .map(|e| &e.meta),
+            &meta,
+        ) {
             return Err(format!("rejected: {e}").into());
         }
-        let accepted = self.uploads.lock().map_err(|_| "upload registry poisoned")?.accept(sid, &doc_key, meta, paras, part, parts, std::time::Instant::now())?;
+        let accepted = self
+            .uploads
+            .lock()
+            .map_err(|_| "upload registry poisoned")?
+            .accept(
+                sid,
+                &doc_key,
+                meta,
+                paras,
+                part,
+                parts,
+                std::time::Instant::now(),
+            )?;
         let (meta, paras) = match accepted {
-            Accepted::Waiting { received, parts } => return Ok(json!({"doc_key":doc_key,"indexed":false,"received":received,"parts":parts})),
+            Accepted::Waiting { received, parts } => {
+                return Ok(
+                    json!({"doc_key":doc_key,"indexed":false,"received":received,"parts":parts}),
+                );
+            }
             Accepted::Complete { meta, paras } => (meta, paras),
         };
         let paras = merge_paras(paras)?;
@@ -486,39 +636,60 @@ impl Handler {
         let n = sents.len();
         let generation = self.write(sid, s, |w| w.add_document(id, meta.date, &sents))?;
         s.table.put(&doc_key, id, meta, spans)?;
-        Ok(json!({"doc_key":doc_key,"indexed":true,"doc_id":id,"sentences":n,"generation":generation}))
+        Ok(
+            json!({"doc_key":doc_key,"indexed":true,"doc_id":id,"sentences":n,"generation":generation}),
+        )
     }
     fn remove(&self, sid: &str, doc_keys: &[String]) -> Result<Value> {
         if doc_keys.len() > 1000 {
             return Err("too many doc_keys (max 1000)".into());
         }
-        let Some(store) = self.store(sid, false)? else { return Ok(json!({"removed":0,"missing":doc_keys.len()})) };
+        let Some(store) = self.store(sid, false)? else {
+            return Ok(json!({"removed":0,"missing":doc_keys.len()}));
+        };
         let mut guard = store.lock().map_err(|_| "store poisoned")?;
         let s = &mut *guard;
-        let mut ids: Vec<(&str, u64)> = doc_keys.iter().filter_map(|k| s.table.get(k).map(|e| (k.as_str(), e.id))).collect();
+        let mut ids: Vec<(&str, u64)> = doc_keys
+            .iter()
+            .filter_map(|k| s.table.get(k).map(|e| (k.as_str(), e.id)))
+            .collect();
         ids.sort_unstable();
         ids.dedup();
         if ids.is_empty() {
             return Ok(json!({"removed":0,"missing":doc_keys.len()}));
         }
-        let generation = self.write(sid, s, |w| ids.iter().try_for_each(|(_, id)| w.delete_document(*id).map(|_| ())))?;
+        let generation = self.write(sid, s, |w| {
+            ids.iter()
+                .try_for_each(|(_, id)| w.delete_document(*id).map(|_| ()))
+        })?;
         for (k, _) in &ids {
             s.table.remove(k)?;
         }
         Ok(json!({"removed":ids.len(),"missing":doc_keys.len()-ids.len(),"generation":generation}))
     }
     /// 위계를 다시 보내야 하는 문서: 범위 안이고 출처가 `py`가 아니거나 규칙 판이 `level_rule`보다 낮은 것(열쇠 순서).
-    fn stale(&self, sid: &str, scope: Option<&str>, level_rule: u32, after: Option<&str>, limit: usize) -> Result<Value> {
+    fn stale(
+        &self,
+        sid: &str,
+        scope: Option<&str>,
+        level_rule: u32,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Value> {
         if !(1..=10000).contains(&limit) {
             return Err("limit must be 1..10000".into());
         }
         let wants = scope_wants(scope, None)?;
-        let Some(store) = self.store(sid, false)? else { return Ok(json!({"doc_keys":[],"more":false})) };
+        let Some(store) = self.store(sid, false)? else {
+            return Ok(json!({"doc_keys":[],"more":false}));
+        };
         let s = store.lock().map_err(|_| "store poisoned")?;
         let mut keys = Vec::new();
         let mut more = false;
         for (k, e) in s.table.iter_after(after) {
-            if in_scope(wants.as_deref(), &e.meta.scopes) && (e.meta.level_src != LevelSrc::Py || e.meta.level_rule < level_rule) {
+            if in_scope(wants.as_deref(), &e.meta.scopes)
+                && (e.meta.level_src != LevelSrc::Py || e.meta.level_rule < level_rule)
+            {
                 if keys.len() == limit {
                     more = true;
                     break;
@@ -530,7 +701,12 @@ impl Handler {
     }
     /// 쓰기 한 번: 바꾸고 커밋하고(조각이 많으면 합치기) 새 세대를 돌려준다. 실패하면 Writer를 버린다
     /// (디스크의 이전 세대는 그대로이고 다음 쓰기에서 다시 연다).
-    fn write(&self, sid: &str, store: &mut Store, change: impl FnOnce(&mut Writer) -> kfind_core::Result<()>) -> Result<u64> {
+    fn write(
+        &self,
+        sid: &str,
+        store: &mut Store,
+        change: impl FnOnce(&mut Writer) -> kfind_core::Result<()>,
+    ) -> Result<u64> {
         let result = (|| -> Result<u64> {
             let w = self.writer(sid, store)?;
             change(w)?;
@@ -562,8 +738,16 @@ impl Handler {
             }
             None => (0, json!({})),
         };
-        let last_error = self.last_error.lock().map_err(|_| "status poisoned")?.clone();
-        let uploads = self.uploads.lock().map_err(|_| "upload registry poisoned")?.len();
+        let last_error = self
+            .last_error
+            .lock()
+            .map_err(|_| "status poisoned")?
+            .clone();
+        let uploads = self
+            .uploads
+            .lock()
+            .map_err(|_| "upload registry poisoned")?
+            .len();
         Ok(json!({
             "state":"ready","version":env!("CARGO_PKG_VERSION"),"sid":sid,"index_available":available,
             "mode":self.mode,"generation":generation,"docs":docs,"sentences":sentences,
@@ -814,7 +998,15 @@ mod tests {
     fn req(v: Value) -> Request {
         decode(&serde_json::to_vec(&v).unwrap()).unwrap()
     }
-    fn ingest(h: &Handler, key: &str, path: &str, scopes: &[&str], src: &str, mtime: i64, paras: Value) -> Result<Value> {
+    fn ingest(
+        h: &Handler,
+        key: &str,
+        path: &str,
+        scopes: &[&str],
+        src: &str,
+        mtime: i64,
+        paras: Value,
+    ) -> Result<Value> {
         h.handle(
             SID,
             req(json!({"command":"ingest","doc_key":key,"path":path,"size":10,"mtime":mtime,"date":mtime,"ref_date":"2026-11-13",
@@ -823,26 +1015,43 @@ mod tests {
     }
     fn query(h: &Handler, text: &str, extra: Value) -> Value {
         let mut v = json!({"command":"query","id":1,"text":text,"top":20});
-        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
         h.handle(SID, req(v)).unwrap()
     }
     fn count(h: &Handler, text: &str, extra: Value) -> Value {
         let mut v = json!({"command":"count","id":2,"text":text});
-        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
         h.handle(SID, req(v)).unwrap()
     }
     fn keys(r: &Value) -> Vec<String> {
-        r["hits"].as_array().unwrap().iter().map(|h| h["doc_key"].as_str().unwrap().to_owned()).collect()
+        r["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|h| h["doc_key"].as_str().unwrap().to_owned())
+            .collect()
     }
 
     #[test]
     fn ingest_then_query_returns_path_and_sentence_positions() {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
-        let r = ingest(&h, "k1", r"D:\자료\예산.hwp", &["tm"], "py", 1, json!([
-            {"p":0,"lv":0,"t":"※"},
-            {"p":3,"lv":8,"t":"사업 개요. 예산을 집행한다.\n※ - -\n예산 집행 결과"}
-        ]))
+        let r = ingest(
+            &h,
+            "k1",
+            r"D:\자료\예산.hwp",
+            &["tm"],
+            "py",
+            1,
+            json!([
+                {"p":0,"lv":0,"t":"※"},
+                {"p":3,"lv":8,"t":"사업 개요. 예산을 집행한다.\n※ - -\n예산 집행 결과"}
+            ]),
+        )
         .unwrap();
         assert_eq!(r["indexed"], true);
         assert_eq!(r["sentences"], 3, "symbol-only sentences are not indexed");
@@ -859,14 +1068,33 @@ mod tests {
             .iter()
             .map(|s| {
                 let (a, n) = (s["start"].as_u64().unwrap(), s["len"].as_u64().unwrap());
-                (s["ord"].as_u64().unwrap(), s["para"].as_u64().unwrap(), text.chars().skip(a as usize).take(n as usize).collect())
+                (
+                    s["ord"].as_u64().unwrap(),
+                    s["para"].as_u64().unwrap(),
+                    text.chars().skip(a as usize).take(n as usize).collect(),
+                )
             })
             .collect();
-        assert_eq!(got, [(1, 3, "예산을 집행한다.".to_owned()), (2, 3, "예산 집행 결과".to_owned())]);
+        assert_eq!(
+            got,
+            [
+                (1, 3, "예산을 집행한다.".to_owned()),
+                (2, 3, "예산 집행 결과".to_owned())
+            ]
+        );
         assert_eq!(q["words"][0]["text"], "예산");
         assert!(q["ms"].as_f64().unwrap() >= 0.0);
         // 다시 넣으면 같은 ID로 바뀐다.
-        let r2 = ingest(&h, "k1", r"D:\자료\예산.hwp", &["tm"], "py", 2, json!([{"p":0,"lv":0,"t":"결산 보고"}])).unwrap();
+        let r2 = ingest(
+            &h,
+            "k1",
+            r"D:\자료\예산.hwp",
+            &["tm"],
+            "py",
+            2,
+            json!([{"p":0,"lv":0,"t":"결산 보고"}]),
+        )
+        .unwrap();
         assert_eq!(r2["doc_id"], r["doc_id"]);
         assert_eq!(query(&h, "예산", json!({}))["total_docs"], 0);
         assert_eq!(query(&h, "결산", json!({}))["total_docs"], 1);
@@ -877,10 +1105,37 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
         let p = |t: &str| json!([{"p":0,"lv":8,"t":t}]);
-        ingest(&h, "a", r"C:\x\a.hwp", &["tm", "box:1"], "py", 1, p("예산 집행 계획")).unwrap();
-        ingest(&h, "b", r"C:\y\b.docx", &["tm"], "py", 2, p("예산 집행 보고")).unwrap();
+        ingest(
+            &h,
+            "a",
+            r"C:\x\a.hwp",
+            &["tm", "box:1"],
+            "py",
+            1,
+            p("예산 집행 계획"),
+        )
+        .unwrap();
+        ingest(
+            &h,
+            "b",
+            r"C:\y\b.docx",
+            &["tm"],
+            "py",
+            2,
+            p("예산 집행 보고"),
+        )
+        .unwrap();
         ingest(&h, "m", "", &["nb:5:src:7"], "py", 3, p("예산 집행 메모")).unwrap();
-        ingest(&h, "n", "", &["nb:50:src:7"], "py", 4, p("예산 집행 다른 노트")).unwrap();
+        ingest(
+            &h,
+            "n",
+            "",
+            &["nb:50:src:7"],
+            "py",
+            4,
+            p("예산 집행 다른 노트"),
+        )
+        .unwrap();
         let cases = [
             (json!({}), vec!["n", "m", "b", "a"]),
             (json!({"scope":"tm"}), vec!["b", "a"]),
@@ -891,7 +1146,10 @@ mod tests {
             (json!({"scope":"nb:5","sources":["8"]}), vec![]),
             (json!({"scope":"tm","filters":{"ext":["docx"]}}), vec!["b"]),
             (json!({"filters":{"path":["\\x\\"]}}), vec!["a"]),
-            (json!({"scope":"tm","filters":{"exclude":["보고"]}}), vec!["a"]),
+            (
+                json!({"scope":"tm","filters":{"exclude":["보고"]}}),
+                vec!["a"],
+            ),
             (json!({"filters":{"phrases":["집행 계획"]}}), vec!["a"]),
             (json!({"filters":{"after":"2027"}}), vec![]),
         ];
@@ -902,10 +1160,35 @@ mod tests {
             assert_eq!(c["total_docs"], want.len(), "{extra}");
             assert_eq!(c["total_sentences"], q["total_sentences"], "{extra}");
         }
-        assert!(h.handle(SID, req(json!({"command":"query","id":1,"text":"예산","sources":["7"]}))).is_err(), "sources without scope");
-        assert!(h.handle(SID, req(json!({"command":"query","id":1,"text":"예산","scope":"a b"}))).is_err());
-        assert!(h.handle(SID, req(json!({"command":"query","id":1,"text":"예산","split":"x"}))).is_err());
-        assert!(h.handle(SID, req(json!({"command":"query","id":1,"text":"예산","refs":101}))).is_err());
+        assert!(
+            h.handle(
+                SID,
+                req(json!({"command":"query","id":1,"text":"예산","sources":["7"]}))
+            )
+            .is_err(),
+            "sources without scope"
+        );
+        assert!(
+            h.handle(
+                SID,
+                req(json!({"command":"query","id":1,"text":"예산","scope":"a b"}))
+            )
+            .is_err()
+        );
+        assert!(
+            h.handle(
+                SID,
+                req(json!({"command":"query","id":1,"text":"예산","split":"x"}))
+            )
+            .is_err()
+        );
+        assert!(
+            h.handle(
+                SID,
+                req(json!({"command":"query","id":1,"text":"예산","refs":101}))
+            )
+            .is_err()
+        );
         assert!(decode(br#"{"command":"query","id":1,"text":"a","filters":{"near":2}}"#).is_err());
     }
 
@@ -919,10 +1202,16 @@ mod tests {
         let e = ingest(&h, "k", "a.txt", &["tm"], "rs", 1, p.clone()).unwrap_err();
         assert!(e.to_string().starts_with("rejected:"), "{e}");
         // 거절된 쓰기는 색인·문서 표를 바꾸지 않는다.
-        assert_eq!(h.handle(SID, Request::Status {}).unwrap()["level_rule_counts"], json!({"py4":1}));
+        assert_eq!(
+            h.handle(SID, Request::Status {}).unwrap()["level_rule_counts"],
+            json!({"py4":1})
+        );
         // 파일이 바뀌었으면(수정 시각이 다름) rs가 들어간다.
         ingest(&h, "k", "a.txt", &["tm"], "rs", 2, p).unwrap();
-        assert_eq!(h.handle(SID, Request::Status {}).unwrap()["level_rule_counts"], json!({"rs":1}));
+        assert_eq!(
+            h.handle(SID, Request::Status {}).unwrap()["level_rule_counts"],
+            json!({"rs":1})
+        );
     }
 
     #[test]
@@ -930,25 +1219,56 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
         let p = json!([{"p":0,"lv":8,"t":"예산 집행"}]);
-        for (k, src, scope) in [("a", "py", "tm"), ("b", "rs", "tm"), ("c", "rs", "tm"), ("d", "rs", "box:1"), ("e", "py", "tm")] {
+        for (k, src, scope) in [
+            ("a", "py", "tm"),
+            ("b", "rs", "tm"),
+            ("c", "rs", "tm"),
+            ("d", "rs", "box:1"),
+            ("e", "py", "tm"),
+        ] {
             ingest(&h, k, "", &[scope], src, 1, p.clone()).unwrap();
         }
         let stale = |extra: Value| {
             let mut v = json!({"command":"stale","level_rule":4});
-            v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
             h.handle(SID, req(v)).unwrap()
         };
-        assert_eq!(stale(json!({})), json!({"doc_keys":["b","c","d"],"more":false}));
-        assert_eq!(stale(json!({"scope":"tm","limit":1})), json!({"doc_keys":["b"],"more":true}));
-        assert_eq!(stale(json!({"scope":"tm","limit":1,"after":"b"})), json!({"doc_keys":["c"],"more":false}));
+        assert_eq!(
+            stale(json!({})),
+            json!({"doc_keys":["b","c","d"],"more":false})
+        );
+        assert_eq!(
+            stale(json!({"scope":"tm","limit":1})),
+            json!({"doc_keys":["b"],"more":true})
+        );
+        assert_eq!(
+            stale(json!({"scope":"tm","limit":1,"after":"b"})),
+            json!({"doc_keys":["c"],"more":false})
+        );
         // 규칙 판이 올라가면 py 문서도 낡았다.
-        assert_eq!(stale(json!({"scope":"tm","level_rule":5}))["doc_keys"], json!(["a", "b", "c", "e"]));
-        let r = h.handle(SID, req(json!({"command":"remove","doc_keys":["a","b","zz","a"]}))).unwrap();
-        assert_eq!((r["removed"].as_u64(), r["missing"].as_u64()), (Some(2), Some(2)));
+        assert_eq!(
+            stale(json!({"scope":"tm","level_rule":5}))["doc_keys"],
+            json!(["a", "b", "c", "e"])
+        );
+        let r = h
+            .handle(
+                SID,
+                req(json!({"command":"remove","doc_keys":["a","b","zz","a"]})),
+            )
+            .unwrap();
+        assert_eq!(
+            (r["removed"].as_u64(), r["missing"].as_u64()),
+            (Some(2), Some(2))
+        );
         assert_eq!(keys(&query(&h, "예산", json!({}))), ["c", "d", "e"]);
         assert_eq!(stale(json!({}))["doc_keys"], json!(["c", "d"]));
         let s = h.handle(SID, Request::Status {}).unwrap();
-        assert_eq!((s["docs"].as_u64(), s["sentences"].as_u64()), (Some(3), Some(3)));
+        assert_eq!(
+            (s["docs"].as_u64(), s["sentences"].as_u64()),
+            (Some(3), Some(3))
+        );
         // 새 Handler(서비스 다시 시작)도 같은 표를 읽는다.
         drop(h);
         let h2 = Handler::new(d.path().to_owned());
@@ -966,12 +1286,29 @@ mod tests {
                     "level_src":"py","level_rule":4,"paras":paras,"part":i,"parts":3})),
             )
         };
-        assert_eq!(part(0, json!([{"p":0,"lv":8,"t":"예산 집"}])).unwrap()["received"], 1);
-        assert_eq!(query(&h, "예산", json!({}))["total_docs"], 0, "not visible until the last part");
-        assert_eq!(part(1, json!([{"p":0,"lv":8,"t":"행 계획"}, {"p":1,"lv":8,"t":"둘째"}])).unwrap()["indexed"], false);
+        assert_eq!(
+            part(0, json!([{"p":0,"lv":8,"t":"예산 집"}])).unwrap()["received"],
+            1
+        );
+        assert_eq!(
+            query(&h, "예산", json!({}))["total_docs"],
+            0,
+            "not visible until the last part"
+        );
+        assert_eq!(
+            part(
+                1,
+                json!([{"p":0,"lv":8,"t":"행 계획"}, {"p":1,"lv":8,"t":"둘째"}])
+            )
+            .unwrap()["indexed"],
+            false
+        );
         assert_eq!(h.handle(SID, Request::Status {}).unwrap()["uploads"], 1);
         let r = part(2, json!([{"p":2,"lv":8,"t":"셋째 문단"}])).unwrap();
-        assert_eq!((r["indexed"].as_bool(), r["sentences"].as_u64()), (Some(true), Some(3)));
+        assert_eq!(
+            (r["indexed"].as_bool(), r["sentences"].as_u64()),
+            (Some(true), Some(3))
+        );
         let q = query(&h, "예산집행", json!({}));
         assert_eq!(q["hits"][0]["sentences"][0]["start"], 0);
         assert_eq!(q["hits"][0]["sentences"][0]["len"], 8);

@@ -78,22 +78,42 @@ impl DocEntry {
 
     /// 확장자(소문자, 점 없음). 경로가 없으면 빈 글.
     pub fn ext(&self) -> String {
-        Path::new(&self.meta.path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+        Path::new(&self.meta.path)
+            .extension()
+            .map(|e| e.to_string_lossy().to_lowercase())
+            .unwrap_or_default()
     }
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 enum Line {
-    Put { key: String, id: u64, meta: DocMeta, spans: Vec<u32> },
-    Del { key: String },
-    Next { id: u64 },
+    Put {
+        key: String,
+        id: u64,
+        meta: DocMeta,
+        spans: Vec<u32>,
+    },
+    Del {
+        key: String,
+    },
+    Next {
+        id: u64,
+    },
 }
 
 /// 위계 출처 전이 규칙. 거절이면 이유.
-pub fn check_replace(old: Option<&DocMeta>, new: &DocMeta) -> std::result::Result<(), &'static str> {
+pub fn check_replace(
+    old: Option<&DocMeta>,
+    new: &DocMeta,
+) -> std::result::Result<(), &'static str> {
     match old {
-        Some(o) if o.level_src == LevelSrc::Py && new.level_src == LevelSrc::Rs && o.size == new.size && o.mtime == new.mtime => {
+        Some(o)
+            if o.level_src == LevelSrc::Py
+                && new.level_src == LevelSrc::Rs
+                && o.size == new.size
+                && o.mtime == new.mtime =>
+        {
             Err("level_src rs cannot replace py for the same file version")
         }
         _ => Ok(()),
@@ -108,7 +128,8 @@ pub fn valid_scope(s: &str) -> bool {
 /// 문서 범위 `doc`이 요청 범위 `want` 안인가: 같거나, `want` 뒤에 `:`로 이어지는 하위 범위.
 /// `nb:5`는 `nb:5:src:7`을 포함하고 `nb:50`은 포함하지 않는다.
 pub fn scope_contains(want: &str, doc: &str) -> bool {
-    doc == want || (doc.len() > want.len() && doc.starts_with(want) && doc.as_bytes()[want.len()] == b':')
+    doc == want
+        || (doc.len() > want.len() && doc.starts_with(want) && doc.as_bytes()[want.len()] == b':')
 }
 
 /// 질의 거르개(Python `parse_query` 결과 그대로, 해석은 앱이 한다).
@@ -132,13 +153,20 @@ pub struct Filters {
 impl Filters {
     /// 문서 표로 판정하는 거르개가 있는가(제외어·구문은 엔진이 한다).
     pub fn uses_table(&self) -> bool {
-        !self.ext.is_empty() || !self.path.is_empty() || self.after.is_some() || self.before.is_some()
+        !self.ext.is_empty()
+            || !self.path.is_empty()
+            || self.after.is_some()
+            || self.before.is_some()
     }
 
     pub fn admits(&self, e: &DocEntry) -> bool {
         if !self.ext.is_empty() {
             let ext = e.ext();
-            if !self.ext.iter().any(|x| x.trim_start_matches('.').to_lowercase() == ext) {
+            if !self
+                .ext
+                .iter()
+                .any(|x| x.trim_start_matches('.').to_lowercase() == ext)
+            {
                 return false;
             }
         }
@@ -176,7 +204,13 @@ impl DocTable {
     /// 폴더의 문서 표를 연다(없으면 빈 표, 파일은 처음 기록할 때 만든다).
     pub fn load(dir: &Path) -> Result<DocTable> {
         let path = dir.join(FILE_NAME);
-        let mut t = DocTable { path, docs: BTreeMap::new(), by_id: HashMap::new(), next_id: 1, lines: 0 };
+        let mut t = DocTable {
+            path,
+            docs: BTreeMap::new(),
+            by_id: HashMap::new(),
+            next_id: 1,
+            lines: 0,
+        };
         let file = match File::open(&t.path) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(t),
@@ -214,7 +248,12 @@ impl DocTable {
 
     fn apply(&mut self, line: Line) {
         match line {
-            Line::Put { key, id, meta, spans } => {
+            Line::Put {
+                key,
+                id,
+                meta,
+                spans,
+            } => {
                 self.next_id = self.next_id.max(id + 1);
                 if let Some(old) = self.docs.insert(key.clone(), DocEntry { id, meta, spans }) {
                     if old.id != id {
@@ -259,13 +298,18 @@ impl DocTable {
     }
 
     /// `after` 다음 열쇠부터(열쇠 순서).
-    pub fn iter_after<'a>(&'a self, after: Option<&'a str>) -> impl Iterator<Item = (&'a str, &'a DocEntry)> + 'a {
+    pub fn iter_after<'a>(
+        &'a self,
+        after: Option<&'a str>,
+    ) -> impl Iterator<Item = (&'a str, &'a DocEntry)> + 'a {
         use std::ops::Bound;
         let lower = match after {
             Some(a) => Bound::Excluded(a.to_owned()),
             None => Bound::Unbounded,
         };
-        self.docs.range((lower, Bound::Unbounded)).map(|(k, e)| (k.as_str(), e))
+        self.docs
+            .range((lower, Bound::Unbounded))
+            .map(|(k, e)| (k.as_str(), e))
     }
 
     /// 이 열쇠의 문서 ID: 있으면 그 ID, 없으면 새 ID(기록은 `put`에서).
@@ -280,7 +324,12 @@ impl DocTable {
 
     /// 문서를 적는다(색인 커밋 뒤에 부른다).
     pub fn put(&mut self, key: &str, id: u64, meta: DocMeta, spans: Vec<u32>) -> Result<()> {
-        let line = Line::Put { key: key.to_owned(), id, meta, spans };
+        let line = Line::Put {
+            key: key.to_owned(),
+            id,
+            meta,
+            spans,
+        };
         self.append(&line)?;
         self.apply(line);
         Ok(())
@@ -288,8 +337,12 @@ impl DocTable {
 
     /// 문서를 지운다(색인 커밋 뒤에 부른다). 있었으면 그 ID.
     pub fn remove(&mut self, key: &str) -> Result<Option<u64>> {
-        let Some(id) = self.docs.get(key).map(|e| e.id) else { return Ok(None) };
-        let line = Line::Del { key: key.to_owned() };
+        let Some(id) = self.docs.get(key).map(|e| e.id) else {
+            return Ok(None);
+        };
+        let line = Line::Del {
+            key: key.to_owned(),
+        };
         self.append(&line)?;
         self.apply(line);
         Ok(Some(id))
@@ -326,7 +379,12 @@ impl DocTable {
         };
         push(&Line::Next { id: self.next_id })?;
         for (key, e) in &self.docs {
-            push(&Line::Put { key: key.clone(), id: e.id, meta: e.meta.clone(), spans: e.spans.clone() })?;
+            push(&Line::Put {
+                key: key.clone(),
+                id: e.id,
+                meta: e.meta.clone(),
+                spans: e.spans.clone(),
+            })?;
         }
         {
             let mut f = File::create(&tmp)?;
@@ -357,7 +415,16 @@ mod tests {
     use super::*;
 
     fn meta(src: LevelSrc, size: u64, mtime: i64) -> DocMeta {
-        DocMeta { path: r"C:\문서\보고.HWP".into(), size, mtime, date: 5, ref_date: Some("2026-11-13".into()), scopes: vec!["tm".into()], level_src: src, level_rule: 4 }
+        DocMeta {
+            path: r"C:\문서\보고.HWP".into(),
+            size,
+            mtime,
+            date: 5,
+            ref_date: Some("2026-11-13".into()),
+            scopes: vec!["tm".into()],
+            level_src: src,
+            level_rule: 4,
+        }
     }
 
     #[test]
@@ -380,12 +447,21 @@ mod tests {
         assert!(scope_contains("nb:5", "nb:5:src:7"));
         assert!(!scope_contains("nb:5", "nb:50"));
         assert!(!scope_contains("nb:5:src:7", "nb:5"));
-        assert!(valid_scope("box:3") && !valid_scope("") && !valid_scope("a b") && !valid_scope(&"x".repeat(201)));
+        assert!(
+            valid_scope("box:3")
+                && !valid_scope("")
+                && !valid_scope("a b")
+                && !valid_scope(&"x".repeat(201))
+        );
     }
 
     #[test]
     fn filters_follow_python_semantics() {
-        let e = DocEntry { id: 1, meta: meta(LevelSrc::Py, 1, 1), spans: vec![] };
+        let e = DocEntry {
+            id: 1,
+            meta: meta(LevelSrc::Py, 1, 1),
+            spans: vec![],
+        };
         let f = |j: &str| -> Filters { serde_json::from_str(j).unwrap() };
         assert!(f(r#"{"ext":[".hwp"]}"#).admits(&e));
         assert!(!f(r#"{"ext":["docx"]}"#).admits(&e));
@@ -394,7 +470,14 @@ mod tests {
         assert!(f(r#"{"after":"2026-11"}"#).admits(&e));
         assert!(!f(r#"{"before":"2026-11"}"#).admits(&e));
         assert!(f(r#"{"before":"2027"}"#).admits(&e));
-        let none = DocEntry { id: 2, meta: DocMeta { ref_date: None, ..meta(LevelSrc::Py, 1, 1) }, spans: vec![] };
+        let none = DocEntry {
+            id: 2,
+            meta: DocMeta {
+                ref_date: None,
+                ..meta(LevelSrc::Py, 1, 1)
+            },
+            spans: vec![],
+        };
         assert!(!f(r#"{"after":"2000"}"#).admits(&none));
         assert!(serde_json::from_str::<Filters>(r#"{"near":3}"#).is_err());
     }
@@ -404,7 +487,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let mut t = DocTable::load(d.path()).unwrap();
         let a = t.id_for("a");
-        t.put("a", a, meta(LevelSrc::Py, 1, 1), vec![0, 0, 3]).unwrap();
+        t.put("a", a, meta(LevelSrc::Py, 1, 1), vec![0, 0, 3])
+            .unwrap();
         let b = t.id_for("b");
         assert_ne!(a, b);
         t.put("b", b, meta(LevelSrc::Rs, 1, 1), vec![]).unwrap();
@@ -421,9 +505,21 @@ mod tests {
         assert!(t2.id_for("c") > b);
         // 기록이 쌓이면 다시 써서 줄인다.
         for i in 0..1100 {
-            t2.put("a", a, DocMeta { size: i, ..meta(LevelSrc::Py, 1, 1) }, vec![]).unwrap();
+            t2.put(
+                "a",
+                a,
+                DocMeta {
+                    size: i,
+                    ..meta(LevelSrc::Py, 1, 1)
+                },
+                vec![],
+            )
+            .unwrap();
         }
-        let lines = std::fs::read_to_string(d.path().join(FILE_NAME)).unwrap().lines().count();
+        let lines = std::fs::read_to_string(d.path().join(FILE_NAME))
+            .unwrap()
+            .lines()
+            .count();
         assert!(lines < 1010, "{lines}");
         let t3 = DocTable::load(d.path()).unwrap();
         assert_eq!(t3.get("a").unwrap().meta.size, 1099);
@@ -442,7 +538,11 @@ mod tests {
         std::fs::write(&p, &text).unwrap();
         let t = DocTable::load(d.path()).unwrap();
         assert_eq!(t.len(), 1);
-        assert!(!std::fs::read_to_string(&p).unwrap().contains(r#""key":"b""#));
+        assert!(
+            !std::fs::read_to_string(&p)
+                .unwrap()
+                .contains(r#""key":"b""#)
+        );
         let mut bad = b"garbage\n".to_vec();
         bad.extend(std::fs::read(&p).unwrap());
         std::fs::write(&p, bad).unwrap();
