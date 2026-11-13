@@ -25,6 +25,8 @@ struct Rec {
     parent: u64,
     attrs: u32,
     name: String,
+    size: u64,
+    mtime: i64,
 }
 
 struct Ctx {
@@ -75,6 +77,13 @@ fn list_dir(ctx: &Ctx, path: &[u16], rec: u64, sub: &mut Vec<(Vec<u16>, u64)>) {
                 parent: rec,
                 attrs: a,
                 name: String::from_utf16_lossy(nm),
+                size: if a & attr::DIRECTORY != 0 {
+                    crate::index::SIZE_UNKNOWN
+                } else {
+                    ((d.nFileSizeHigh as u64) << 32) | d.nFileSizeLow as u64
+                },
+                mtime: ((d.ftLastWriteTime.dwHighDateTime as i64) << 32)
+                    | d.ftLastWriteTime.dwLowDateTime as i64,
             });
         }
         if unsafe { FindNextFileW(h, &mut d) } == 0 {
@@ -132,7 +141,7 @@ pub fn index_tree(b: &mut Builder, root: &str) -> WalkStats {
             } else {
                 st.files += 1;
             }
-            b.push(vol, r.rec, r.parent, &r.name, r.attrs);
+            b.push_meta(vol, r.rec, r.parent, &r.name, r.attrs, r.size, r.mtime);
         }
     }
     st

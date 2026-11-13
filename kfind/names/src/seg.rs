@@ -14,7 +14,8 @@ use crate::index::{EXT_OTHER, ExtList, ExtTable, NONE, Names, View, Volume};
 use crate::{Error, Result};
 
 pub const MAGIC: &[u8; 8] = b"KTMSEG01";
-pub const FORMAT_VERSION: u32 = 1;
+/// 2: 크기·고친 시각 열(Q-F2) 추가.
+pub const FORMAT_VERSION: u32 = 2;
 pub const KIND_NAMES: u32 = 1;
 const HEADER: usize = 64;
 
@@ -32,7 +33,9 @@ mod sec {
     pub const EXT_OFF: u32 = 11;
     pub const META: u32 = 12;
     pub const RECMAP: u32 = 13;
-    pub const ALL: [u32; 13] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    pub const SIZE: u32 = 14;
+    pub const MTIME: u32 = 15;
+    pub const ALL: [u32; 15] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
 }
 
 fn bytes_of<T: Copy>(v: &[T]) -> &[u8] {
@@ -89,6 +92,8 @@ pub fn write(names: &Names, path: &Path) -> Result<u64> {
         (sec::EXT_OFF, bytes_of(&ext_off)),
         (sec::META, &meta),
         (sec::RECMAP, bytes_of(&recmap)),
+        (sec::SIZE, bytes_of(&n.size)),
+        (sec::MTIME, bytes_of(&n.mtime)),
     ];
     let mut body: Vec<u8> = Vec::new();
     let mut toc: Vec<(u32, u64, u64)> = Vec::new();
@@ -296,6 +301,8 @@ impl NamesSeg {
             || v.key.len() != n
             || v.ext.len() != n
             || v.flags.len() != n
+            || v.size.len() != n
+            || v.mtime.len() != n
             || v.end.len() != n
         {
             return Err(corrupt("array lengths"));
@@ -350,6 +357,8 @@ impl NamesSeg {
             key: cast(self.raw(sec::KEY))?,
             ext: cast(self.raw(sec::EXT))?,
             flags: self.raw(sec::FLAGS),
+            size: cast(self.raw(sec::SIZE))?,
+            mtime: cast(self.raw(sec::MTIME))?,
             end: cast(self.raw(sec::END))?,
             fold: self.raw(sec::FOLD),
             name: self.raw(sec::NAME),
@@ -404,6 +413,8 @@ impl NamesSeg {
             key: v.key.to_vec(),
             ext: v.ext.to_vec(),
             flags: v.flags.to_vec(),
+            size: v.size.to_vec(),
+            mtime: v.mtime.to_vec(),
             end: v.end.to_vec(),
             fold: v.fold.to_vec(),
             name: v.name.to_vec(),

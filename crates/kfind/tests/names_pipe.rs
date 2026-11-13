@@ -65,7 +65,21 @@ fn user_mode_build_query_status() {
     assert_eq!(names, vec!["2026", "회의록.txt"]);
     let q = call(&h, json!({"command":"names_query","id":6,"text":"folder:","limit":1})).unwrap();
     assert_eq!((q["total"].as_u64(), q["items"].as_array().unwrap().len()), (Some(3), 1));
-    assert!(call(&h, json!({"command":"names_query","id":7,"text":"a","sort":"size"})).is_err());
+    assert!(call(&h, json!({"command":"names_query","id":7,"text":"a","sort":"bogus"})).is_err());
+    // Q-F2: 크기·날짜 순. 순회 원천은 파일 크기·고친 시각을 채운다(폴더 크기는 모름 → null, 맨 뒤).
+    std::fs::write(r.join("업무").join("2026").join("예산_집행계획.hwp"), vec![0u8; 300]).unwrap();
+    std::fs::write(r.join("업무").join("2026").join("예산집행 결과.pdf"), vec![0u8; 10]).unwrap();
+    call(&h, json!({"command":"names_build","roots":[r.to_string_lossy()]})).unwrap();
+    wait_ready(&h);
+    let q = call(&h, json!({"command":"names_query","id":71,"text":"예산집행","sort":"size"})).unwrap();
+    let sizes: Vec<u64> = q["items"].as_array().unwrap().iter().map(|i| i["size"].as_u64().unwrap()).collect();
+    assert_eq!(sizes, vec![300, 10]);
+    assert!(q["items"][0]["mtime"].as_i64().unwrap() > 0);
+    let q = call(&h, json!({"command":"names_query","id":72,"text":"업무","sort":"date"})).unwrap();
+    assert!(q["items"][0]["size"].is_null());
+    // Q-F3: 글자 그대로 "예산_집행"이 든 이름이 먼저.
+    let q = call(&h, json!({"command":"names_query","id":73,"text":"예산_집행"})).unwrap();
+    assert_eq!((q["total"].as_u64(), q["items"][0]["name"].as_str()), (Some(2), Some("예산_집행계획.hwp")));
     // 다시 만들기: 새 파일이 보인다.
     std::fs::write(r.join("새문서.hwp"), b"").unwrap();
     call(&h, json!({"command":"names_build","roots":[r.to_string_lossy()]})).unwrap();

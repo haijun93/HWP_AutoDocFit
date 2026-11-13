@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::index::{ExtTable, NONE, Names, Volume, ext_fold, flag, flags_of, make_key};
+use crate::index::{ExtTable, NONE, Names, SIZE_UNKNOWN, TIME_UNKNOWN, Volume, ext_fold, flag, flags_of, make_key};
 use crate::source::rec_of;
 
 /// 색인 만들기. 레코드는 아무 순서로 넣어도 된다(MFT 열거 순서 그대로).
@@ -16,6 +16,9 @@ pub struct Builder {
     attrs: Vec<u32>,
     name: Vec<u8>,
     name_off: Vec<u32>,
+    /// 크기(바이트)·고친 시각(FILETIME). 모르면 `SIZE_UNKNOWN`·`TIME_UNKNOWN`.
+    size: Vec<u64>,
+    mtime: Vec<i64>,
 }
 
 impl Builder {
@@ -32,6 +35,8 @@ impl Builder {
         b.rec.reserve(entries);
         b.parent.reserve(entries);
         b.attrs.reserve(entries);
+        b.size.reserve(entries);
+        b.mtime.reserve(entries);
         b.name.reserve(name_bytes);
         b.name_off.reserve(entries + 1);
         b
@@ -53,6 +58,12 @@ impl Builder {
 
     /// 항목 하나. 뿌리 폴더 자체(`rec == root_rec`)는 넣지 않아도 된다(`add_volume`이 만든다).
     pub fn push(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32) {
+        self.push_meta(vol, rec, parent_rec, name, attrs, SIZE_UNKNOWN, TIME_UNKNOWN);
+    }
+
+    /// `push`에 크기·고친 시각을 더한 것(Q-F2 크기·날짜 정렬).
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_meta(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32, size: u64, mtime: i64) {
         if name.is_empty() || vol as usize >= self.vols.len() {
             return;
         }
@@ -64,6 +75,8 @@ impl Builder {
         self.rec.push(rec);
         self.parent.push(rec_of(parent_rec));
         self.attrs.push(attrs);
+        self.size.push(size);
+        self.mtime.push(mtime);
         self.name.extend_from_slice(name.as_bytes());
         self.name_off.push(self.name.len() as u32);
     }
@@ -75,6 +88,8 @@ impl Builder {
         self.rec.extend_from_slice(&other.rec);
         self.parent.extend_from_slice(&other.parent);
         self.attrs.extend_from_slice(&other.attrs);
+        self.size.extend_from_slice(&other.size);
+        self.mtime.extend_from_slice(&other.mtime);
         self.name.extend_from_slice(&other.name);
         self.name_off
             .extend(other.name_off[1..].iter().map(|o| o + base));
@@ -236,6 +251,8 @@ impl Builder {
         let mut key = Vec::with_capacity(total);
         let mut ext = Vec::with_capacity(total);
         let mut flags = Vec::with_capacity(total);
+        let mut sizes = Vec::with_capacity(total);
+        let mut mtimes = Vec::with_capacity(total);
         let mut exts = ExtTable::new();
         fold.push(0);
         name_off.push(0);
@@ -252,6 +269,13 @@ impl Builder {
                 flags_of(self.attrs[o - nv])
             };
             flags.push(fl);
+            if o < nv {
+                sizes.push(SIZE_UNKNOWN);
+                mtimes.push(TIME_UNKNOWN);
+            } else {
+                sizes.push(self.size[o - nv]);
+                mtimes.push(self.mtime[o - nv]);
+            }
             ext.push(exts.intern(ext_fold(names[o], fl & flag::DIR != 0)));
             key.push(make_key(depth[n], folds[o].as_bytes()));
         }
@@ -279,6 +303,8 @@ impl Builder {
             key,
             ext,
             flags,
+            size: sizes,
+            mtime: mtimes,
             end,
             fold,
             name,
