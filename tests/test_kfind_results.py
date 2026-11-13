@@ -70,3 +70,11 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual((rows[0]["source_id"], rows[0]["ordinal"], rows[0]["body"], rows[0]["location"]),
                          (17, 1, "예산ㆍ집행", "시트 4행"))
+
+    def test_fold_highlights_unicode_and_multiple_sentences(self):
+        body = "😀 Straße Cafe\u0301 예산. Straße"
+        words = [dict(text=t) for t in ("STRASSE", "Café", "예산")]
+        row = results._location(dict(body=body, paragraph_index=0),
+            dict(start=0, len=body.index(".") + 1), words, [])
+        self.assertEqual([row["snippet"][a:b] for a, b in row["highlights"]],
+                         ["Straße", "Cafe\u0301", "예산"])

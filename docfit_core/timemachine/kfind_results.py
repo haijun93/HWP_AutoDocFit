@@ -154,4 +154,7 @@ def to_notebook_rows(response, index=None, *, documents=None):
                              "highlights": location["highlights"], "adjacent": hit["adjacent"],
                              "dropped": response.get("dropped", []), "engine": "kfind", "gen": response["generation"]})
     # 같은 문단의 여러 일치 문장은 업무자료함의 한 문단 행으로 표시한다.
-    return list({(r["source_id"], r["ordinal"]): r for r in rows}.values())
+    unique = {}
+    for row in rows:
+        unique.setdefault((row["source_id"], row["ordinal"]), row)
+    return list(unique.values())

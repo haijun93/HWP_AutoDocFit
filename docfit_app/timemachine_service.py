@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import queue
+import secrets
 import stat
 import subprocess
 import tempfile
@@ -51,7 +52,7 @@ class TimemachineService:
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
         self.kfind = kfind_client if kfind_client is not None else KfindClient()
-        self._kfind_ids = itertools.count(1)
+        self._kfind_ids = itertools.count(secrets.randbits(63))
         self._kfind_pending = {}
         self._kfind_synced = False
         self._kfind_generation = None
@@ -108,7 +109,10 @@ class TimemachineService:
 
     def _engine_status(self):
         with self._content_lock:
-            return {**self._engine_state, "requested_engine": self._search_engine(),
+            state = dict(self._engine_state)
+            if self._search_engine() == "legacy":
+                state.update(engine="legacy", engine_reason="configured_legacy")
+            return {**state, "requested_engine": self._search_engine(),
                     "connection": self.kfind.state()}
 
     def _kfind_sync(self, path, result):
@@ -129,19 +133,28 @@ class TimemachineService:
             self._content_state["phase"] = "kfind_seeding"
             self._engine_state.update(corpus="seeding", engine="legacy", engine_reason="kfind_seeding")
         try:
-            self.kfind.status()
+            initial_status = self.kfind.status()
             paths = self.content_index.indexed_paths(roots=self._settings["roots"]) if self._settings["roots"] else []
+            path_keys = {doc_key(path=p) for p in paths}
             for path, result in pending.items():
                 if cancel_event.is_set():
                     return
-                if result.get("removed") or path not in paths:
+                if result.get("removed") or doc_key(path=path) not in path_keys:
                     self.kfind.remove([doc_key(path=path)])
+            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경은 다시 seeding.
+            if pending and initial_status["generation"] == self._kfind_generation:
+                changed = {doc_key(path=p) for p in pending}
+                paths = [p for p in paths if doc_key(path=p) in changed]
             for path in paths:
                 if cancel_event.is_set() or self._closing:
                     return
                 if self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
                     cancel_event.set()
                     return
+                if self.content_index.stale_hierarchy_paths([path]):
+                    self.content_index.relevel_file(path)
+                    if self.content_index.stale_hierarchy_paths([path]):
+                        raise KfindError("kfind_hierarchy_pending")
                 # 원문과 stat은 같은 SQLite 스냅숏. 사용자 문서를 다시 열지 않는다.
                 with self.content_index._lock:
                     meta = self.content_index.db.execute("SELECT * FROM content_meta WHERE path=?", (path,)).fetchone()
@@ -184,6 +197,9 @@ class TimemachineService:
             def run():
                 try:
                     self._seed_kfind(self._content_cancel)
+                    with self._content_lock:
+                        if self._engine_state["corpus"] == "failed":
+                            self._content_state["failure_reason"] = self._engine_state["engine_reason"]
                 finally:
                     self._finish_content_index(self._content_cancel)
             self._content_thread = threading.Thread(target=run, name="kfind-seeding", daemon=True)
@@ -818,6 +834,8 @@ class TimemachineService:
 
     def _search_rows(self, query, *, hierarchy=False, limit=100, offset=0, sort="hierarchy_relevance"):
         parsed = self.content_index.parse_query(query)
+        if not parsed["terms"] and not parsed["phrases"]:
+            raise ValueError("본문 검색어를 입력해 주세요.")
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
             raise ValueError("결과 개수와 시작 위치를 확인해 주세요.")
         def legacy():
@@ -834,6 +852,8 @@ class TimemachineService:
         if not self._settings["roots"]:
             return []
         try:
+            if parsed["near"] is not None:
+                raise KfindError("legacy_near_filter")
             status = self.kfind.status()
             with self._content_lock:
                 ready = self._kfind_synced and status["generation"] == self._kfind_generation
@@ -843,9 +863,20 @@ class TimemachineService:
                 self._start_kfind_seeding()
                 raise KfindError("kfind_seeding")
             # tm은 공유 서비스 범위. 조사 폴더는 앱 설정마다 달라 전체 순위 뒤 현재 폴더로 거른다.
+            filters = {key: parsed[key] for key in ("ext", "path", "after", "before", "exclude", "phrases")}
+            if not hierarchy:
+                extensions = set(filters["ext"])
+                for group in ({"hwp", "hwpx"}, {"doc", "docx"}, {"xls", "xlsx"}, {"ppt", "pptx"}):
+                    if extensions & group:
+                        extensions.update(group)
+                filters["ext"] = sorted(extensions)
             response = self.kfind.query(" ".join(parsed["terms"]), "tm", top=0, refs=3,
-                filters={key: parsed[key] for key in ("ext", "path", "after", "before", "exclude", "phrases")},
+                filters=filters,
                 request_id=next(self._kfind_ids))
+            with self._content_lock:
+                if response["generation"] != status["generation"] or not self._kfind_synced:
+                    self._kfind_synced = False
+                    raise KfindError("kfind_generation_changed")
             response = dict(response, hits=[hit for hit in response["hits"]
                 if isinstance(hit.get("path"), str) and self._path_in_active_root(hit["path"])])
             if sort == "mentions":
@@ -926,11 +957,12 @@ class TimemachineService:
                 raise ValueError("검색 엔진을 확인해 주세요.")
             with self._settings_lock:
                 old_roots = list(self._settings["roots"])
+                old_engine = self._search_engine()
                 changed = self._settings != settings
                 removed = {self._root_key(root) for root in old_roots} - {self._root_key(root) for root in roots}
                 self._save_settings(settings)
                 self._settings = settings
-                if changed:
+                if old_roots != roots or settings["search_engine"] != old_engine:
                     self._kfind_synced = False
                 for root in old_roots:
                     if self._root_key(root) in removed:
