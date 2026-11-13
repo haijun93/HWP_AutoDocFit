@@ -5,6 +5,7 @@
 //! - 질의: 2글자부터, 같은 문장 안 다중 낱말, 붙여 쓴 검색어 나누기, 붙어 있는 일치 우선, 상위 N건.
 //! - 증분: 문서 추가·수정·삭제는 새 조각 + 지운 문장 비트맵, 합치기는 배경 스레드에서.
 //! - 견고성: 공개 진입점은 패닉을 `Error::Panic`으로 바꾸고, 질의에는 시간 한도·취소가 있다.
+//! - 문장 나누기: `split_sentences`(규칙 판 `SENTENCE_RULE_VERSION`, Python 기준 `tools/sentence_ref.py`).
 //!
 //! 규칙·형식 설명: `docs/KC1_KFIND_CORE_2026-11-12.md`.
 mod fold;
@@ -14,6 +15,7 @@ mod manifest;
 mod qcache;
 mod query;
 mod segment;
+mod sentence;
 mod textcode;
 mod writer;
 
@@ -24,6 +26,7 @@ pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_query, 
 pub use segment::FORMAT_VERSION;
 /// 문서 범위(`SearchOptions::allow`·`deny`)의 문서 ID 집합. 호출하는 쪽이 같은 판의 roaring을 맞추지 않아도 되게 다시 낸다.
 pub use roaring::RoaringTreemap;
+pub use sentence::{SENTENCE_RULE_VERSION, SentenceSpan, split_sentences};
 pub use writer::{MergeJob, MergeOutput, MergePolicy, Sentence, Writer, WriterOptions};
 
 use std::fmt;
