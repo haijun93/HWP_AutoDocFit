@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 /// 업데이트 설정 패널(Filee 방식).
 ///
@@ -65,9 +66,9 @@ class UpdatePanel extends StatelessWidget {
       margin: const EdgeInsets.only(top: 8, bottom: 8),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: const Color(0xfff8fafc),
+        color: context.colors.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xffe2e8f0)),
+        border: Border.all(color: context.colors.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -78,10 +79,10 @@ class UpdatePanel extends StatelessWidget {
               Expanded(
                 child: Text(
                   currentLabel,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xff334155),
+                    color: context.colors.textBody,
                   ),
                 ),
               ),
@@ -104,9 +105,9 @@ class UpdatePanel extends StatelessWidget {
             Text(
               statusText,
               key: const Key('updateStatusText'),
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 12,
-                color: Color(0xff64748b),
+                color: context.colors.muted,
               ),
             ),
           ],
@@ -127,16 +128,16 @@ class UpdatePanel extends StatelessWidget {
               width: double.infinity,
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.colors.surface,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xffe2e8f0)),
+                border: Border.all(color: context.colors.line),
               ),
               child: Text(
                 displayNotes.map((n) => '• $n').join('\n'),
                 key: const Key('updateNotes'),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  color: Color(0xff334155),
+                  color: context.colors.textBody,
                   height: 1.45,
                 ),
               ),

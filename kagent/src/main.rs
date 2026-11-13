@@ -7,6 +7,7 @@
 //! - SQLite는 Windows 내장 winsqlite3.dll, 네트워크 코드 없음.
 #![windows_subsystem = "windows"]
 
+mod boxscale;
 mod capture_dirs;
 mod category;
 mod frame;
@@ -29,6 +30,7 @@ mod thumb;
 mod timeline;
 mod util;
 mod watch;
+mod wic;
 mod xl_target;
 mod excel_target;
 
@@ -469,6 +471,7 @@ pub fn write_status() {
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
         ("thumb_prewarm", prewarm::status_json()),
+        ("thumb_steps", thumb::steps_json()),
     ]);
     v
     });
@@ -503,6 +506,22 @@ pub fn update_settings(new: &json::Value) -> Settings {
     // 잠금을 모두 놓은 뒤 창 스레드의 등록 결과까지 기다린다(타이머·폴링 없음).
     unsafe { SendMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
     snapshot
+}
+
+/// 테마 상태 전이(창 스레드에서만): 설정의 선호(`theme`) + 시스템 앱 모드·고대비 → `ui_theme` 상태 하나.
+/// 보이는 색이 바뀌면 창 틀을 맞추고 바로 다시 그린다. 선호가 바뀌었고 `broadcast`면(관리창·설정 메뉴로 바꿈)
+/// 다른 프로세스(kvf)에 알린다. 시작할 때·WM_SETTINGS·테마 메시지에서 부른다.
+fn refresh_theme(broadcast: bool) {
+    let pref = ui_theme::ThemePref::parse(&app().settings.lock().unwrap().theme);
+    let change = ui_theme::refresh(pref);
+    if change.look {
+        ui_theme::apply_window(main_hwnd(), ui_theme::theme().kind);
+        popup::apply_theme();
+        preview::apply_theme();
+    }
+    if change.pref && broadcast {
+        ui_theme::broadcast_changed();
+    }
 }
 
 /// 시간 일시정지가 끝나는 때(ms, 0 = 없음).
@@ -596,6 +615,13 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 }
 
 
+/// 그림 항목 기록 직후: 클립보드 비트맵에서 만든 썸네일이 있으면 캐시에 바로 넣고, 없으면 미리 만들기 대기열로(KCAP2).
+fn prime_or_enqueue(id: i64, dib_thumb: Option<thumb::Thumb>) {
+    if !dib_thumb.is_some_and(|t| thumb::prime(id, t)) {
+        prewarm::enqueue(id);
+    }
+}
+
 /// 작업 스레드: 클립보드에서 복사해 온 내용을 변환·암호화·저장한다(낮은 우선순위).
 fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
     unsafe {
@@ -603,6 +629,8 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
     for (capture, source) in rx {
+        // 클립보드 비트맵이면 PNG로 바꾸기 전 메모리 비트맵에서 바로 썸네일(KCAP3 ③, 측정 4K 약 17ms·추가 버퍼 없음).
+        let mut dib_thumb: Option<thumb::Thumb> = None;
         let (mut kind, data, mut extra, skipped) = match capture {
             Capture::Text(s, formats, skipped) => ("text", s.into_bytes(), clip::pack_formats(&formats), skipped),
             Capture::Files(files) => ("files", files.join("\n").into_bytes(), Vec::new(), Vec::new()),
@@ -612,7 +640,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
                 ("image", b, clip::pack_formats(&formats), skipped)
             }
             Capture::Dib(d, formats, skipped) => match { app().last_clip_image.store(now_ms(), Ordering::Relaxed); clip::dib_to_png(&d) } {
-                Some(p) if claim_image(&p) => ("image", p, clip::pack_formats(&formats), skipped),
+                Some(p) if claim_image(&p) => {
+                    dib_thumb = thumb::from_dib(&d, thumb::MAX_SIDE);
+                    ("image", p, clip::pack_formats(&formats), skipped)
+                }
                 Some(_) => continue,
                 None => continue,
             },
@@ -643,7 +674,7 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             let inserted = store.insert(kind, &data, &trimmed, &preview, &source, t).ok().map(|(id, _)| id);
             if inserted.is_some() { let _ = store.enforce(&settings, t); }
             drop(store);
-            if let (Some(id), "image") = (inserted, kind) { prewarm::enqueue(id); }
+            if let (Some(id), "image") = (inserted, kind) { prime_or_enqueue(id, dib_thumb.take()); }
             refresh_recent();
             continue;
         }
@@ -664,7 +695,7 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         };
         if kind == "image" {
             // 그림은 쉬는 때 썸네일을 미리 만들어 첫 미리보기를 빠르게(KCAP2). 상태 파일에 대기가 바로 보이게 먼저.
-            prewarm::enqueue(id);
+            prime_or_enqueue(id, dib_thumb.take());
         }
         refresh_recent();
     }
@@ -971,6 +1002,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_SETTINGS => {
                 register_hotkey(hwnd);
+                refresh_theme(true);
                 popup::apply_settings();
                 let paused = app().settings.lock().unwrap().paused;
                 set_listening(hwnd, !paused);
@@ -987,6 +1019,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = std::fs::remove_file(format!("{}\\status.json", app().dir));
                 PostQuitMessage(0);
                 0
+            }
+            // 시스템 앱 모드·고대비·시스템 색이 바뀌었거나 다른 프로세스가 테마 변경을 알렸다.
+            _ if ui_theme::is_theme_message(msg, wp, lp) => {
+                refresh_theme(false);
+                DefWindowProcW(hwnd, msg, wp, lp)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
@@ -1114,6 +1151,9 @@ fn main() {
             std::process::exit(3);
         }
         app().hwnd.store(hwnd as isize, Ordering::Relaxed);
+        // 창을 만들기 전에 테마를 정한다(빠른 목록 창은 만들 때 틀 색을 입힌다). 트레이 메뉴 소유 창도 맞춘다.
+        refresh_theme(false);
+        ui_theme::apply_window(hwnd, ui_theme::theme().kind);
         popup::register(instance);
         preview::register(instance);
         // 격리 시험 전용: 시험 폴더가 없으면 실제 기록에 시험 항목을 넣지 않도록 무시한다.

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
+import 'settings_colors.dart';
 
 class KvfPanel extends StatefulWidget {
   const KvfPanel({super.key, required this.api});
@@ -51,7 +52,10 @@ class _KvfPanelState extends State<KvfPanel> {
       if (busy) const LinearProgressIndicator(),
       if (error != null)
         ListTile(
-          title: Text(error!, style: const TextStyle(color: Colors.red)),
+          title: Text(error!, style: TextStyle(
+              color: SettingsColors.of(context).errorText,
+            ),
+          ),
         ),
       SwitchListTile(
         title: const Text('가상 폴더 창 켜기'),

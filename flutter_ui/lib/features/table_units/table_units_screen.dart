@@ -14,9 +14,13 @@ import '../../core/api/table_units_api.dart';
 
 import '../../core/instant_search.dart';
 
+import '../../core/theme/app_theme.dart';
+
 import 'table_grid_preview.dart';
 
 import 'table_template_order.dart';
+
+import 'table_units_colors.dart';
 
 
 
@@ -41,6 +45,10 @@ class TableUnitsScreen extends StatefulWidget {
 
 
 class _TableUnitsScreenState extends State<TableUnitsScreen> {
+
+  AppColors get _c => context.colors;
+
+  TableUnitsColors get _t => TableUnitsColors.of(context);
 
   late final TableUnitsApi _api;
 
@@ -986,7 +994,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                 key: const Key('errorMessage'),
 
-                style: const TextStyle(color: Color(0xfff04452), fontSize: 15),
+                style: TextStyle(color: _t.errorText, fontSize: 15),
 
                 textAlign: TextAlign.center,
 
@@ -1072,7 +1080,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     width: 10,
 
-                    color: const Color(0xfff8fafc),
+                    color: _c.surfaceMuted,
 
                     child: Stack(
 
@@ -1084,7 +1092,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                           width: 1,
 
-                          color: const Color(0xffcbd5e1),
+                          color: _c.lineStrong,
 
                         ),
 
@@ -1096,7 +1104,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                           decoration: BoxDecoration(
 
-                            color: const Color(0xff94a3b8),
+                            color: _c.faint,
 
                             borderRadius: BorderRadius.circular(2),
 
@@ -1154,13 +1162,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   _buildGallery(shrinkWrap: true),
 
-                  const Divider(
+                  Divider(
 
                     height: 1,
 
                     thickness: 1,
 
-                    color: Color(0xffe2e8f0),
+                    color: _c.line,
 
                   ),
 
@@ -1228,21 +1236,21 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   hintText: '이름 또는 분류 검색 (예: 일정표, 부연설명)',
 
-                  hintStyle: const TextStyle(
+                  hintStyle: TextStyle(
 
                     fontSize: 12,
 
-                    color: Color(0xff94a3b8),
+                    color: _c.faint,
 
                   ),
 
-                  prefixIcon: const Icon(
+                  prefixIcon: Icon(
 
                     Icons.search,
 
                     size: 16,
 
-                    color: Color(0xff64748b),
+                    color: _c.muted,
 
                   ),
 
@@ -1268,7 +1276,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   filled: true,
 
-                  fillColor: const Color(0xfff1f5f9),
+                  fillColor: _c.surfaceSubtle,
 
                   border: OutlineInputBorder(
 
@@ -1304,11 +1312,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               decoration: BoxDecoration(
 
-                color: const Color(0xfff8fafc),
+                color: _c.surfaceMuted,
 
                 borderRadius: BorderRadius.circular(8),
 
-                border: Border.all(color: const Color(0xffe2e8f0)),
+                border: Border.all(color: _c.line),
 
               ),
 
@@ -1342,7 +1350,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     },
 
-                    child: const SizedBox(
+                    child: SizedBox(
 
                       width: 22,
 
@@ -1354,7 +1362,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                         size: 16,
 
-                        color: Color(0xff64748b),
+                        color: _c.muted,
 
                       ),
 
@@ -1394,9 +1402,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                               color: isSelected
 
-                                  ? const Color(0xff2563eb)
+                                  ? _c.accentFill
 
-                                  : Colors.white,
+                                  : _c.surface,
 
                               shape: RoundedRectangleBorder(
 
@@ -1406,9 +1414,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                   color: isSelected
 
-                                      ? const Color(0xff2563eb)
+                                      ? _c.accent
 
-                                      : const Color(0xffcbd5e1),
+                                      : _c.lineStrong,
 
                                 ),
 
@@ -1442,13 +1450,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                       if (isSelected) ...[
 
-                                        const Icon(
+                                        Icon(
 
                                           Icons.check,
 
                                           size: 12,
 
-                                          color: Colors.white,
+                                          color: _c.onAccent,
 
                                         ),
 
@@ -1456,13 +1464,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                       ] else if (cat == '즐겨찾기') ...[
 
-                                        const Icon(
+                                        Icon(
 
                                           Icons.star,
 
                                           size: 12,
 
-                                          color: Color(0xffeab308),
+                                          color: _t.star,
 
                                         ),
 
@@ -1470,13 +1478,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                       ] else if (cat == '최근 사용') ...[
 
-                                        const Icon(
+                                        Icon(
 
                                           Icons.history,
 
                                           size: 12,
 
-                                          color: Color(0xff64748b),
+                                          color: _c.muted,
 
                                         ),
 
@@ -1498,9 +1506,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                           color: isSelected
 
-                                              ? Colors.white
+                                              ? _c.onAccent
 
-                                              : const Color(0xff334155),
+                                              : _c.textBody,
 
                                           fontWeight: isSelected
 
@@ -1560,7 +1568,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     },
 
-                    child: const SizedBox(
+                    child: SizedBox(
 
                       width: 22,
 
@@ -1572,7 +1580,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                         size: 16,
 
-                        color: Color(0xff64748b),
+                        color: _c.muted,
 
                       ),
 
@@ -1598,13 +1606,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   '$_selectedCategory 서식',
 
-                  style: const TextStyle(
+                  style: TextStyle(
 
                     fontSize: 12,
 
                     fontWeight: FontWeight.bold,
 
-                    color: Color(0xff475569),
+                    color: _c.textSecondary,
 
                   ),
 
@@ -1618,7 +1626,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   decoration: BoxDecoration(
 
-                    color: const Color(0xffe2e8f0),
+                    color: _c.line,
 
                     borderRadius: BorderRadius.circular(10),
 
@@ -1628,13 +1636,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     '${templates.length}개',
 
-                    style: const TextStyle(
+                    style: TextStyle(
 
                       fontSize: 10.5,
 
                       fontWeight: FontWeight.w700,
 
-                      color: Color(0xff334155),
+                      color: _c.textBody,
 
                     ),
 
@@ -1660,19 +1668,19 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
     if (templates.isEmpty) {
 
-      bodySliver = const SliverToBoxAdapter(
+      bodySliver = SliverToBoxAdapter(
 
         child: Center(
 
           child: Padding(
 
-            padding: EdgeInsets.symmetric(vertical: 40),
+            padding: const EdgeInsets.symmetric(vertical: 40),
 
             child: Text(
 
               '표 템플릿이 없습니다.',
 
-              style: TextStyle(color: Color(0xff8b95a1)),
+              style: TextStyle(color: _t.emptyText),
 
             ),
 
@@ -1726,7 +1734,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                   decoration: BoxDecoration(
 
-                    color: isSelected ? const Color(0xffedf3ff) : Colors.white,
+                    color: isSelected ? _c.accentSoft : _c.surface,
 
                     borderRadius: BorderRadius.circular(10),
 
@@ -1734,23 +1742,23 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                       color: isSelected
 
-                          ? const Color(0xff2563eb)
+                          ? _c.accent
 
-                          : const Color(0xffe2e8f0),
+                          : _c.line,
 
                       width: isSelected ? 2 : 1,
 
                     ),
 
-                    boxShadow: const [
+                    boxShadow: [
 
                       BoxShadow(
 
-                        color: Color(0x0a000000),
+                        color: _t.cardShadow,
 
                         blurRadius: 4,
 
-                        offset: Offset(0, 2),
+                        offset: const Offset(0, 2),
 
                       ),
 
@@ -1772,11 +1780,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                             child: Container(
 
-                              decoration: const BoxDecoration(
+                              decoration: BoxDecoration(
 
-                                color: Color(0xfff8fafc),
+                                color: _c.surfaceMuted,
 
-                                borderRadius: BorderRadius.vertical(
+                                borderRadius: const BorderRadius.vertical(
 
                                   top: Radius.circular(8),
 
@@ -1790,13 +1798,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                   ? Image.memory(imageBytes, fit: BoxFit.contain)
 
-                                  : const Icon(
+                                  : Icon(
 
                                       Icons.table_chart_outlined,
 
                                       size: 36,
 
-                                      color: Color(0xff94a3b8),
+                                      color: _c.faint,
 
                                     ),
 
@@ -1818,13 +1826,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                                   template.name,
 
-                                  style: const TextStyle(
+                                  style: TextStyle(
 
                                     fontSize: 13,
 
                                     fontWeight: FontWeight.bold,
 
-                                    color: Color(0xff1e293b),
+                                    color: _c.text,
 
                                   ),
 
@@ -1864,9 +1872,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                             color: template.favorite
 
-                                ? const Color(0xfff59e0b)
+                                ? _t.favoriteStar
 
-                                : const Color(0xff94a3b8),
+                                : _c.faint,
 
                             size: 20,
 
@@ -1960,13 +1968,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
         decoration: BoxDecoration(
 
-          color: const Color(0xfff1f5f9),
+          color: _c.surfaceSubtle,
 
           borderRadius: BorderRadius.circular(4),
 
         ),
 
-        child: const Text(
+        child: Text(
 
           '고정 표',
 
@@ -1974,7 +1982,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
             fontSize: 11,
 
-            color: Color(0xff64748b),
+            color: _c.muted,
 
             fontWeight: FontWeight.w500,
 
@@ -2012,7 +2020,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
       decoration: BoxDecoration(
 
-        color: const Color(0xffeff6ff),
+        color: _t.badgeSurface,
 
         borderRadius: BorderRadius.circular(4),
 
@@ -2022,11 +2030,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
         '정보단위 $label',
 
-        style: const TextStyle(
+        style: TextStyle(
 
           fontSize: 11,
 
-          color: Color(0xff2563eb),
+          color: _c.accent,
 
           fontWeight: FontWeight.w600,
 
@@ -2050,17 +2058,17 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
     if (template == null) {
 
-      return const Center(
+      return Center(
 
         child: Padding(
 
-          padding: EdgeInsets.symmetric(vertical: 40),
+          padding: const EdgeInsets.symmetric(vertical: 40),
 
           child: Text(
 
             '선택된 템플릿이 없습니다.',
 
-            style: TextStyle(color: Color(0xff8b95a1)),
+            style: TextStyle(color: _t.emptyText),
 
           ),
 
@@ -2096,13 +2104,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     template.name,
 
-                    style: const TextStyle(
+                    style: TextStyle(
 
                       fontSize: 20,
 
                       fontWeight: FontWeight.bold,
 
-                      color: Color(0xff1e293b),
+                      color: _c.text,
 
                     ),
 
@@ -2114,11 +2122,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     '${template.category} · 기본 ${template.rows}행 × ${template.cols}열',
 
-                    style: const TextStyle(
+                    style: TextStyle(
 
                       fontSize: 13,
 
-                      color: Color(0xff64748b),
+                      color: _c.muted,
 
                     ),
 
@@ -2138,13 +2146,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               icon: _copying
 
-                  ? const SizedBox(
+                  ? SizedBox(
 
                       width: 16,
 
                       height: 16,
 
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      child: CircularProgressIndicator(strokeWidth: 2, color: _c.onAccent),
 
                     )
 
@@ -2160,7 +2168,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               style: FilledButton.styleFrom(
 
-                backgroundColor: const Color(0xff2563eb),
+                backgroundColor: _c.accentFill,
 
                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
 
@@ -2182,9 +2190,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                 style: OutlinedButton.styleFrom(
 
-                  foregroundColor: const Color(0xffef4444),
+                  foregroundColor: _t.dangerText,
 
-                  side: const BorderSide(color: Color(0xfffecaca)),
+                  side: BorderSide(color: _t.dangerBorder),
 
                   padding: const EdgeInsets.symmetric(
 
@@ -2224,11 +2232,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
           decoration: BoxDecoration(
 
-            color: const Color(0xfff8fafc),
+            color: _c.surfaceMuted,
 
             borderRadius: BorderRadius.circular(12),
 
-            border: Border.all(color: const Color(0xffe2e8f0)),
+            border: Border.all(color: _c.line),
 
           ),
 
@@ -2254,7 +2262,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                       _previewError!,
 
-                      style: const TextStyle(color: Color(0xfff04452)),
+                      style: TextStyle(color: _t.errorText),
 
                     ),
 
@@ -2288,11 +2296,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                     const SizedBox(height: 8),
 
-                    const Text(
+                    Text(
 
                       '칸을 누르면 글을 직접 입력할 수 있어요.',
 
-                      style: TextStyle(fontSize: 11, color: Color(0xff94a3b8)),
+                      style: TextStyle(fontSize: 11, color: _c.faint),
 
                     ),
 
@@ -2316,21 +2324,21 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
             decoration: BoxDecoration(
 
-              color: const Color(0xfff1f5f9),
+              color: _c.surfaceSubtle,
 
               borderRadius: BorderRadius.circular(8),
 
-              border: Border.all(color: const Color(0xffe2e8f0)),
+              border: Border.all(color: _c.line),
 
             ),
 
-            child: const Row(
+            child: Row(
 
               children: [
 
-                Icon(Icons.info_outline, size: 18, color: Color(0xff64748b)),
+                Icon(Icons.info_outline, size: 18, color: _c.muted),
 
-                SizedBox(width: 8),
+                const SizedBox(width: 8),
 
                 Expanded(
 
@@ -2342,7 +2350,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                       fontSize: 14,
 
-                      color: Color(0xff334155),
+                      color: _c.textBody,
 
                       fontWeight: FontWeight.w500,
 
@@ -2460,13 +2468,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
             const SizedBox(height: 4),
 
-            const Text(
+            Text(
 
               '열 단위를 늘려도 표 전체 폭은 그대로라 칸이 좁아져요. 긴 글은 붙여넣은 뒤 다듬어 주세요.',
 
               key: Key('colWidthNotice'),
 
-              style: TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(fontSize: 12, color: _t.note),
 
             ),
 
@@ -2497,7 +2505,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
             icon: _copying
 
-                ? const SizedBox(
+                ? SizedBox(
 
                     width: 18,
 
@@ -2507,7 +2515,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
                       strokeWidth: 2,
 
-                      color: Colors.white,
+                      color: _c.onAccent,
 
                     ),
 
@@ -2541,9 +2549,9 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               key: const Key('copyErrorMessage'),
 
-              style: const TextStyle(
+              style: TextStyle(
 
-                color: Color(0xfff04452),
+                color: _t.errorText,
 
                 fontSize: 13,
 
@@ -2595,10 +2603,10 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
           height: height,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? const Color(0xffdbeafe) : Colors.white,
+            color: selected ? _t.selectedSurface : _c.surface,
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color: selected ? const Color(0xff2563eb) : const Color(0xffcbd5e1),
+              color: selected ? _c.accent : _c.lineStrong,
               width: selected ? 2 : 1,
             ),
           ),
@@ -2618,19 +2626,19 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
       key: const Key('arrowSelector'),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: _c.surface,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xffe2e8f0)),
+        border: Border.all(color: _c.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              const Expanded(
+              Expanded(
                 child: Text(
                   '화살표 모양',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xff334155)),
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _c.textBody),
                 ),
               ),
               TextButton(
@@ -2641,7 +2649,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
             ],
           ),
           const SizedBox(height: 6),
-          const Text('기호 화살표', style: TextStyle(fontSize: 12, color: Color(0xff64748b))),
+          Text('기호 화살표', style: TextStyle(fontSize: 12, color: _c.muted)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
@@ -2652,12 +2660,12 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
                   key: Key('arrowSymbol_$symbol'),
                   selected: kind == 'symbol' && value == symbol,
                   onTap: () => _chooseArrow({'kind': 'symbol', 'value': '$symbol'}),
-                  child: Text('$symbol', style: const TextStyle(fontSize: 20, color: Color(0xff0f172a))),
+                  child: Text('$symbol', style: TextStyle(fontSize: 20, color: _c.textStrong)),
                 ),
             ],
           ),
           const SizedBox(height: 12),
-          const Text('공문서용 그림 화살표', style: TextStyle(fontSize: 12, color: Color(0xff64748b))),
+          Text('공문서용 그림 화살표', style: TextStyle(fontSize: 12, color: _c.muted)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -2683,7 +2691,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text('${item['label']}', style: const TextStyle(fontSize: 11, color: Color(0xff475569))),
+                    Text('${item['label']}', style: TextStyle(fontSize: 11, color: _c.textSecondary)),
                   ],
                 ),
             ],
@@ -2742,11 +2750,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
       decoration: BoxDecoration(
 
-        color: Colors.white,
+        color: _c.surface,
 
         borderRadius: BorderRadius.circular(8),
 
-        border: Border.all(color: const Color(0xffe2e8f0)),
+        border: Border.all(color: _c.line),
 
       ),
 
@@ -2756,7 +2764,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
         children: [
 
-          const Text(
+          Text(
 
             '늘린 칸 글 처리',
 
@@ -2766,7 +2774,7 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               fontWeight: FontWeight.w600,
 
-              color: Color(0xff334155),
+              color: _c.textBody,
 
             ),
 
@@ -2894,11 +2902,11 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
       decoration: BoxDecoration(
 
-        color: Colors.white,
+        color: _c.surface,
 
         borderRadius: BorderRadius.circular(8),
 
-        border: Border.all(color: const Color(0xffe2e8f0)),
+        border: Border.all(color: _c.line),
 
       ),
 
@@ -2912,13 +2920,13 @@ class _TableUnitsScreenState extends State<TableUnitsScreen> {
 
               '$axisLabel $count개',
 
-              style: const TextStyle(
+              style: TextStyle(
 
                 fontSize: 15,
 
                 fontWeight: FontWeight.w600,
 
-                color: Color(0xff1e293b),
+                color: _c.text,
 
               ),
 

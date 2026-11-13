@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
+import 'style_unify_colors.dart';
 
 class UnifyAreaDialog extends StatefulWidget {
   const UnifyAreaDialog({super.key, required this.api, required this.data});
@@ -65,7 +66,10 @@ class _UnifyAreaDialogState extends State<UnifyAreaDialog> {
               if (error.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(error, style: const TextStyle(color: Colors.red)),
+                  child: Text(
+                    error,
+                    style: TextStyle(color: StyleUnifyColors.of(context).error),
+                  ),
                 ),
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),

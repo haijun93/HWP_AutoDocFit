@@ -10,7 +10,9 @@ import '../../core/instant_search.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../notebook/notebook_api.dart';
+import '../../core/theme/app_theme.dart';
 import 'library_api.dart';
+import 'library_colors.dart';
 import 'library_document_search.dart';
 import 'library_explorer_view.dart';
 import 'library_layout.dart';
@@ -1491,7 +1493,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
 
   Widget _buildSidebar() => Material(
-        color: Colors.white,
+        color: context.colors.surface,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1748,7 +1750,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return Container(
       key: const ValueKey('librarySelectionBar'),
       width: double.infinity,
-      color: const Color(0xFFE3F2FD),
+      color: LibraryColors.of(context).selectedFill,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 4, children: [
         Text('${_selectedIds.length}개 선택', key: const ValueKey('librarySelectionCount'), style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1930,7 +1932,7 @@ class _TransferDialogState extends State<_TransferDialog> {
             onChanged: (s) { if (s != null) setState(() => _space = s); },
           ),
           const SizedBox(height: 8),
-          const Text('가상 폴더의 복사본을 옮기거나 새로 복사합니다. 원본 파일은 그대로 유지됩니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          Text('가상 폴더의 복사본을 옮기거나 새로 복사합니다. 원본 파일은 그대로 유지됩니다.', style: TextStyle(fontSize: 12, color: LibraryColors.of(context).secondaryText)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
@@ -2038,7 +2040,7 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
     final cardWidth = widget.cardWidth;
     final cardHeight = widget.cardHeight;
     return Container(
-      decoration: BoxDecoration(border: Border.all(color: Colors.black12), color: _spaceColor(space)),
+      decoration: BoxDecoration(border: Border.all(color: LibraryColors.of(context).border), color: _spaceColor(LibraryColors.of(context), space)),
       child: Column(children: [
         Padding(
           padding: const EdgeInsets.all(6),
@@ -2106,12 +2108,12 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
                           CustomPaint(
                             key: const ValueKey('libraryRelationPainter'),
                             size: size,
-                            painter: _RelationPainter(relations: widget.relations, items: shown, cardWidth: cardWidth, cardHeight: cardHeight),
+                            painter: _RelationPainter(relations: widget.relations, items: shown, cardWidth: cardWidth, cardHeight: cardHeight, color: LibraryColors.of(context).relationLine),
                           ),
                         for (final item in ordered) _card(item, items.firstWhere((i) => i.id == item.id)),
                         if (space == LibrarySpace.core)
                           for (final relation in widget.relations) _relationLabel(relation, shown, size),
-                        if (items.isEmpty) const Center(child: Text('자료가 없습니다.', style: TextStyle(color: Colors.black45))),
+                        if (items.isEmpty) Center(child: Text('자료가 없습니다.', style: TextStyle(color: LibraryColors.of(context).hintText))),
                       ],
                     ),
                   ),
@@ -2144,8 +2146,8 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
               if (dragCount > 1)
                 Positioned(right: -6, top: -6, child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(10)),
-                  child: Text('$dragCount개', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  decoration: BoxDecoration(color: LibraryColors.of(context).badgeFill, borderRadius: BorderRadius.circular(10)),
+                  child: Text('$dragCount개', style: TextStyle(color: context.colors.onAccent, fontSize: 12)),
                 )),
             ]),
           ),
@@ -2179,18 +2181,18 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
     return Positioned(
       left: center.dx.clamp(0.0, math.max(0.0, size.width - 110)),
       top: center.dy.clamp(0.0, math.max(0.0, size.height - 36)),
-      child: Material(color: Colors.white.withValues(alpha: .9), borderRadius: BorderRadius.circular(12), child: Row(mainAxisSize: MainAxisSize.min, children: [
+      child: Material(color: context.colors.surface.withValues(alpha: .9), borderRadius: BorderRadius.circular(12), child: Row(mainAxisSize: MainAxisSize.min, children: [
         InkWell(key: ValueKey('libraryRelation-${relation.id}'), onTap: () => widget.onEditRelation(relation), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), child: Text(relation.label?.isNotEmpty == true ? relation.label! : '관계'))),
         IconButton(key: ValueKey('libraryRelationDelete-${relation.id}'), tooltip: '관계선 삭제', onPressed: () => widget.onDeleteRelation(relation.id), constraints: const BoxConstraints.tightFor(width: 26, height: 26), padding: EdgeInsets.zero, icon: const Icon(Icons.close, size: 14)),
       ])),
     );
   }
 
-  Color _spaceColor(LibrarySpace space) => switch (space) {
-        LibrarySpace.core => const Color(0xFFF0F5FF),
-        LibrarySpace.basis => const Color(0xFFF4F7F0),
-        LibrarySpace.reference => const Color(0xFFFFF8EA),
-        LibrarySpace.temp => const Color(0xFFF5F1F8),
+  Color _spaceColor(LibraryColors p, LibrarySpace space) => switch (space) {
+        LibrarySpace.core => p.spaceCore,
+        LibrarySpace.basis => p.spaceBasis,
+        LibrarySpace.reference => p.spaceReference,
+        LibrarySpace.temp => p.spaceTemp,
       };
 }
 
@@ -2223,9 +2225,9 @@ class _LibraryCard extends StatelessWidget {
         height: height,
         child: Card(
           elevation: selected ? 5 : 2,
-          color: selected ? const Color(0xFFE3F2FD) : null,
+          color: selected ? LibraryColors.of(context).selectedFill : null,
           shape: RoundedRectangleBorder(
-            side: BorderSide(color: selected ? Colors.blue : Colors.white, width: selected ? 2 : 1),
+            side: BorderSide(color: selected ? LibraryColors.of(context).selectedBorder : context.colors.surface, width: selected ? 2 : 1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: InkWell(
@@ -2236,7 +2238,7 @@ class _LibraryCard extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.fromLTRB(8, 8, _hasMenu ? 0 : 8, 8),
               child: Row(children: [
-                Icon(selected ? Icons.check_circle : _icon, size: 20, color: selected ? Colors.blue : null),
+                Icon(selected ? Icons.check_circle : _icon, size: 20, color: selected ? LibraryColors.of(context).selectedBorder : null),
                 const SizedBox(width: 6),
                 Expanded(child: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis)),
                 if (_hasMenu)
@@ -2286,15 +2288,16 @@ class _LibraryCard extends StatelessWidget {
 }
 
 class _RelationPainter extends CustomPainter {
-  _RelationPainter({required this.relations, required this.items, required this.cardWidth, required this.cardHeight});
+  _RelationPainter({required this.relations, required this.items, required this.cardWidth, required this.cardHeight, required this.color});
   final List<LibraryRelation> relations;
+  final Color color;
   final List<LibraryItem> items;
   final double cardWidth;
   final double cardHeight;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.indigo..strokeWidth = 2..style = PaintingStyle.stroke;
+    final paint = Paint()..color = color..strokeWidth = 2..style = PaintingStyle.stroke;
     for (final relation in relations) {
       final from = items.where((item) => item.id == relation.fromItemId).firstOrNull;
       final to = items.where((item) => item.id == relation.toItemId).firstOrNull;
@@ -2370,7 +2373,7 @@ class _NotebookPickDialogState extends State<_NotebookPickDialog> {
             Text('“${widget.itemTitle}”을(를) 넣을 업무자료함을 고르세요.', maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 8),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
-            if (_error != null) Text(_error!, key: const ValueKey('libraryNbPickError'), style: const TextStyle(color: Colors.red)),
+            if (_error != null) Text(_error!, key: const ValueKey('libraryNbPickError'), style: TextStyle(color: LibraryColors.of(context).error)),
             Expanded(
               child: !_loading && _notebooks.isEmpty
                   ? const Center(child: Text('업무자료함이 없습니다. 아래에서 새로 만드세요.'))

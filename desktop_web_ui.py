@@ -632,6 +632,7 @@ class DesktopWebBridge:
                 "drop_target": self.drop_target,
                 "rename_open": rename_open,
                 "sidebar_collapsed": self._sidebar_collapsed_value(),
+                "theme_mode": self._theme_mode_value(),
                 "developer_mode": self._setting_flag('developer_mode'),
                 "always_on_top": self._setting_flag('always_on_top'),
                 "sidebar_mode": self.sidebar_active,
@@ -2996,6 +2997,26 @@ class DesktopWebBridge:
         self.gui._준말_서비스().settings.update(lambda current: current.update({"sidebar_collapsed": value}))
         return value
 
+    def _theme_mode_value(self):
+        """화면 테마 저장값(system·light·dark; 없거나 잘못되면 system). 한 번만 읽는다."""
+        from docfit_app.settings_schema import normalize_theme_mode
+        if not hasattr(self, "_theme_mode"):
+            try:
+                self._theme_mode = normalize_theme_mode(self.gui._준말_서비스().settings.read().get("theme_mode"))
+            except Exception:
+                self._theme_mode = "system"
+        return self._theme_mode
+
+    def set_theme_mode(self, mode):
+        """화면 테마를 설정 파일에 저장하고, 켜져 있는 몽땅클립보드 상주 프로그램에도 알린다."""
+        from docfit_app.settings_schema import validate_theme_mode
+        from docfit_app.kclip_service import push_theme
+        value = validate_theme_mode(mode)
+        self.gui._준말_서비스().settings.update(lambda current: current.update({"theme_mode": value}))
+        self._theme_mode = value
+        push_theme(value, getattr(self, "_kagent_client", None))
+        return {"theme_mode": value}
+
     def set_drop_target(self, target):
         """끌어 놓은 파일을 넣을 곳을 바꾼다: documents(문서 목록) 또는 format(예시 서식 복제)."""
         self._apply_drop_target(target)
@@ -3605,7 +3626,7 @@ class _BrowserApi:
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
             "set_exclude_tables", "set_card_option",
-            "set_sidebar_collapsed", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
+            "set_sidebar_collapsed", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
             "set_conversion_target", "start_single_file_conversion", "convert_cell_bg", "check_update", "start_update", "open_update_page",
         ):

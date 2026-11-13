@@ -15,6 +15,7 @@ import 'app/rename_format_dialog.dart';
 import 'bridge.dart' as bridge;
 import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
+import 'core/theme/app_theme.dart';
 import 'core/drop_events.dart';
 import 'features/preview/option_images.dart';
 import 'features/abbreviations/abbreviation_manager.dart';
@@ -37,42 +38,152 @@ export 'core/api/abbreviation_api.dart' show ApiCall;
 
 void main() => runApp(const LifecycleRedraw(child: DocFitApp()));
 
+/// 문서편집 작업 화면에만 쓰는 색(AppColors에 맞는 토큰이 없는 것, DARK1 2026-11-13).
+/// 라이트 값은 예전 하드코딩 값 그대로, 다크 값은 AppColors.dark 바탕 위 4.5:1 이상,
+/// 고대비는 AppColors 토큰(시스템 색)으로 대체한다.
+@immutable
+class _ShellColors {
+  const _ShellColors({
+    required this.faint,
+    required this.barrier,
+    required this.pickerSurface,
+    required this.panelBorder,
+    required this.panelShadow,
+    required this.notice,
+    required this.tabSelected,
+    required this.stepNumber,
+    required this.stepLabel,
+    required this.note,
+    required this.hwpBadge,
+    required this.onHwpBadge,
+    required this.welcomeStart,
+    required this.welcomeEnd,
+    required this.welcomeText,
+    required this.dropBorder,
+    required this.track,
+    required this.dangerFill,
+    required this.strongText,
+    required this.failText,
+    required this.errorSoft,
+  });
 
-const _ink = Color(0xff172b4d);
-const _muted = Color(0xff64748b);
-const _faint = Color(0xff8b98ad);
-const _line = Color(0xffe2e8f0);
-const _blue = Color(0xff2563eb);
-const _blueDeep = Color(0xff1d4ed8);
-const _blueSoft = Color(0xffedf3ff);
-const _mint = Color(0xff287c72);
-const _mintSoft = Color(0xfff3f8f7);
+  /// 흐린 설명 글자(#8b98ad).
+  final Color faint;
+  /// 포맷 선택 창 뒤 가림막.
+  final Color barrier;
+  /// 포맷 선택 창 바탕.
+  final Color pickerSurface;
+  /// 카드 테두리·사이드바 구분선.
+  final Color panelBorder;
+  final Color panelShadow;
+  /// 연결 오류 띠 바탕.
+  final Color notice;
+  /// 좁은 창 상단 탭 선택 바탕.
+  final Color tabSelected;
+  /// 사이드바 단계 번호·이름.
+  final Color stepNumber;
+  final Color stepLabel;
+  /// 안내 보조 글자(#738299).
+  final Color note;
+  /// HWP 확장자 표시 바탕과 글자.
+  final Color hwpBadge;
+  final Color onHwpBadge;
+  /// 첫 화면 안내 그라데이션과 글자.
+  final Color welcomeStart;
+  final Color welcomeEnd;
+  final Color welcomeText;
+  /// 서식 끌어놓기 영역 테두리.
+  final Color dropBorder;
+  /// 진행 막대 바탕·대기 단계 원 바탕.
+  final Color track;
+  /// 삭제·오류 단추와 알림 바탕(그 위 글자는 테마 기본 글자색).
+  final Color dangerFill;
+  /// 절약 안내 진한 글자.
+  final Color strongText;
+  /// 실패·불일치 글자.
+  final Color failText;
+  /// 비교 오류 띠 바탕.
+  final Color errorSoft;
 
-({Color surface, Color selectedSurface, Color accent}) _modeColors(
-  String mode,
-) => switch (mode) {
-  'spacing' => (
-    surface: const Color(0xfff0f5ff),
-    selectedSurface: const Color(0xffe3edff),
-    accent: const Color(0xff3b6fb6),
-  ),
-  'unify' => (
-    surface: const Color(0xffeff8f5),
-    selectedSurface: const Color(0xffdef1ea),
-    accent: const Color(0xff2f8273),
-  ),
-  'all' => (
-    surface: const Color(0xfffff7eb),
-    selectedSurface: const Color(0xffffedcf),
-    accent: const Color(0xffa86a1f),
-  ),
-  'file_format' => (
-    surface: const Color(0xfff4f1ff),
-    selectedSurface: const Color(0xffeae4ff),
-    accent: const Color(0xff7656a8),
-  ),
-  _ => (surface: Colors.white, selectedSurface: _blueSoft, accent: _blue),
-};
+  static const light = _ShellColors(
+    faint: Color(0xff8b98ad),
+    barrier: Color(0x480f172a),
+    pickerSurface: Color(0xfff6f7fc),
+    panelBorder: Color(0xffe8edf4),
+    panelShadow: Color(0x050f172a),
+    notice: Color(0xfffff1da),
+    tabSelected: Color(0xffe4edff),
+    stepNumber: Color(0xffa5afbd),
+    stepLabel: Color(0xff66748a),
+    note: Color(0xff738299),
+    hwpBadge: Color(0xfffff4e5),
+    onHwpBadge: Color(0xffb45309),
+    welcomeStart: Color(0xffeaf0ff),
+    welcomeEnd: Color(0xffedf8f5),
+    welcomeText: Color(0xff4b5f7c),
+    dropBorder: Color(0xff93c5fd),
+    track: Color(0xffedf2f7),
+    dangerFill: Color(0xffdc2626),
+    strongText: Color(0xff111827),
+    failText: Color(0xffb42318),
+    errorSoft: Color(0xfffee2e2),
+  );
+
+  static const dark = _ShellColors(
+    faint: Color(0xff8e9bad),
+    barrier: Color(0x99000000),
+    pickerSurface: Color(0xff1b222c),
+    panelBorder: Color(0xff2e3846),
+    panelShadow: Color(0x33000000),
+    notice: Color(0xff3a2e14),
+    tabSelected: Color(0xff1d2d4a),
+    stepNumber: Color(0xff8e9bad),
+    stepLabel: Color(0xffb4c0cf),
+    note: Color(0xff9eabbb),
+    hwpBadge: Color(0xff3a2e14),
+    onHwpBadge: Color(0xfff0b94a),
+    welcomeStart: Color(0xff1c2a44),
+    welcomeEnd: Color(0xff16302c),
+    welcomeText: Color(0xffcbd5e1),
+    dropBorder: Color(0xff4a6fae),
+    track: Color(0xff2e3846),
+    // 다크 테마 단추·알림 글자는 어두운 색이라 밝은 빨강 바탕을 쓴다.
+    dangerFill: Color(0xffff7b7b),
+    strongText: Color(0xfff1f5f9),
+    failText: Color(0xffff9c9c),
+    errorSoft: Color(0xff3a1d20),
+  );
+
+  factory _ShellColors.highContrast(AppColors c) => _ShellColors(
+    faint: c.faint,
+    barrier: c.scrim,
+    pickerSurface: c.surface,
+    panelBorder: c.line,
+    panelShadow: c.shadow,
+    notice: c.surfaceSubtle,
+    tabSelected: c.surfaceSubtle,
+    stepNumber: c.faint,
+    stepLabel: c.text,
+    note: c.muted,
+    hwpBadge: c.surfaceSubtle,
+    onHwpBadge: c.text,
+    welcomeStart: c.surface,
+    welcomeEnd: c.surface,
+    welcomeText: c.text,
+    dropBorder: c.line,
+    track: c.surfaceSubtle,
+    dangerFill: c.accentFill,
+    strongText: c.textStrong,
+    failText: c.danger,
+    errorSoft: c.dangerSoft,
+  );
+
+  static _ShellColors of(BuildContext context) {
+    final c = context.colors;
+    if (c.highContrast) return _ShellColors.highContrast(c);
+    return c.isDark ? dark : light;
+  }
+}
 
 class DocFitApp extends StatelessWidget {
   const DocFitApp({
@@ -83,36 +194,22 @@ class DocFitApp extends StatelessWidget {
   final ApiCall api;
   final bool useIntegratedShell;
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: '한글편집 후처리',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      fontFamily: 'NotoSansKR',
-      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
-      colorScheme: ColorScheme.fromSeed(seedColor: _blue),
-      scaffoldBackgroundColor: const Color(0xfff6f8fb),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(48, 52),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    ),
-    home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: appThemeListenable(),
+    builder: (context, _) {
+      // 고대비가 켜져 있으면 Flutter가 highContrast(Dark)Theme을 고른다(시스템 색 우선).
+      final highContrast = highContrastAppTheme();
+      return MaterialApp(
+        title: '한글편집 후처리',
+        debugShowCheckedModeBanner: false,
+        theme: lightAppTheme,
+        darkTheme: darkAppTheme,
+        highContrastTheme: highContrast,
+        highContrastDarkTheme: highContrast,
+        themeMode: appThemeChoice.value.mode,
+        home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+      );
+    },
   );
 }
 
@@ -141,6 +238,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       setState(() {
         developerMode = value['developer_mode'] == true;
       });
+      appThemeChoice.value = AppThemeChoice.parse(value['theme_mode']);
     }).catchError((_) {}));
     HardwareKeyboard.instance.addHandler(_onKClipHotkey);
   }
@@ -395,10 +493,25 @@ class Workspace extends StatefulWidget {
 }
 
 class _WorkspaceState extends State<Workspace> implements ConversionHost {
+  /// 테마 색(DARK1). 라이트 값은 예전 하드코딩 값과 같다.
+  AppColors get _c => context.colors;
+  _ShellColors get _s => _ShellColors.of(context);
+
   Map<String, dynamic> state = {};
   int tab = 0;
   bool busy = false, polling = false, wasRunning = false;
   int commandVersion = 0;
+
+  /// 테마 저장은 [command]의 busy 검사를 거치지 않는다(다른 명령 처리 중에도 저장, DARK1-R).
+  late final themeSaves = ThemeSaveQueue(
+    (choice) => widget.api('set_theme_mode', [choice.key]),
+    onError: (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('화면 테마를 저장하지 못했어요: $e')));
+    },
+  );
   int jobEventSeq = 0;
   String? activeJobId;
   bool jobCancelled = false;
@@ -953,7 +1066,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         context: context,
         barrierDismissible: true,
         barrierLabel: '포맷 선택창 닫기',
-        barrierColor: const Color(0x480f172a),
+        barrierColor: _s.barrier,
         transitionDuration: const Duration(milliseconds: 160),
         pageBuilder: (dialogContext, animation, secondaryAnimation) =>
             LayoutBuilder(
@@ -989,7 +1102,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         child: Focus(
                           autofocus: true,
                           child: Material(
-                            color: const Color(0xfff6f7fc),
+                            color: _s.pickerSurface,
                             borderRadius: BorderRadius.circular(28),
                             elevation: 16,
                             child: SingleChildScrollView(
@@ -1089,12 +1202,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           Text(
             '${target['reason'] ?? ''}',
             key: const Key('conversionSummaryNotice'),
-            style: const TextStyle(fontSize: 12, color: _muted),
+            style: TextStyle(fontSize: 12, color: _c.muted),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '원본을 보존하고 결과를 원본 폴더에 새 파일로 저장해요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
         ],
       ),
@@ -1114,12 +1227,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       Container(
         padding: padding,
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _c.surface,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: const Color(0xffe8edf4)),
-          boxShadow: const [
+          border: Border.all(color: _s.panelBorder),
+          boxShadow: [
             BoxShadow(
-              color: Color(0x050f172a),
+              color: _s.panelShadow,
               blurRadius: 24,
               offset: Offset(0, 8),
             ),
@@ -1139,7 +1252,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           ).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.w700),
         ),
         const SizedBox(height: 10),
-        Text(subtitle, style: const TextStyle(color: _muted, height: 1.6)),
+        Text(subtitle, style: TextStyle(color: _c.muted, height: 1.6)),
       ],
     ),
   );
@@ -1149,10 +1262,10 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: _blueSoft,
+          color: _c.accentSoft,
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Icon(icon, size: 20, color: _blue),
+        child: Icon(icon, size: 20, color: _c.accent),
       ),
       const SizedBox(width: 14),
       Expanded(
@@ -1166,7 +1279,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             const SizedBox(height: 4),
             Text(
               subtitle,
-              style: const TextStyle(fontSize: 13, color: _muted, height: 1.5),
+              style: TextStyle(fontSize: 13, color: _c.muted, height: 1.5),
             ),
           ],
         ),
@@ -1210,7 +1323,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                           if (busy) const LinearProgressIndicator(minHeight: 2),
                           if (error != null)
                             Material(
-                              color: const Color(0xfffff1da),
+                              color: _s.notice,
                               child: ListTile(
                                 leading: const Icon(Icons.wifi_off_rounded),
                                 title: Text(error!),
@@ -1306,7 +1419,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         );
 
         return AppBar(
-          backgroundColor: Colors.white,
+          backgroundColor: _c.surface,
           surfaceTintColor: Colors.transparent,
           toolbarHeight: integrated ? 46 : 72,
           automaticallyImplyLeading: false,
@@ -1318,12 +1431,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: _ink,
+                    color: _c.ink,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.description_rounded,
-                    color: Colors.white,
+                    color: _c.surface,
                     size: 23,
                   ),
                 ),
@@ -1433,9 +1546,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 style: TextButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   backgroundColor: tab == i
-                      ? const Color(0xffe4edff)
+                      ? _s.tabSelected
                       : Colors.transparent,
-                  foregroundColor: tab == i ? _blueDeep : _muted,
+                  foregroundColor: tab == i ? _c.accentDeep : _c.muted,
                 ),
                 onPressed: () => setState(() => tab = i),
                 child: Row(
@@ -1468,21 +1581,21 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
 
   Widget sidebar() => Container(
     width: 232,
-    decoration: const BoxDecoration(
-      color: Colors.white,
-      border: Border(right: BorderSide(color: Color(0xffe8edf4))),
+    decoration: BoxDecoration(
+      color: _c.surface,
+      border: Border(right: BorderSide(color: _s.panelBorder)),
     ),
     padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
+        Padding(
           padding: EdgeInsets.only(left: 12, bottom: 22),
           child: Text(
             '작업 순서',
             style: TextStyle(
               fontSize: 12,
-              color: _faint,
+              color: _s.faint,
               fontWeight: FontWeight.w700,
             ),
           ),
@@ -1491,7 +1604,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           Padding(
             padding: const EdgeInsets.only(bottom: 10),
             child: Material(
-              color: tab == i ? _blueSoft : Colors.transparent,
+              color: tab == i ? _c.accentSoft : Colors.transparent,
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 borderRadius: BorderRadius.circular(14),
@@ -1507,7 +1620,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         '0${i + 1}',
                         style: TextStyle(
                           fontSize: 12,
-                          color: tab == i ? _blue : const Color(0xffa5afbd),
+                          color: tab == i ? _c.accent : _s.stepNumber,
                         ),
                       ),
                       const SizedBox(width: 13),
@@ -1522,8 +1635,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                                     ? FontWeight.w700
                                     : FontWeight.w500,
                                 color: tab == i
-                                    ? _blueDeep
-                                    : const Color(0xff66748a),
+                                    ? _c.accentDeep
+                                    : _s.stepLabel,
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -1531,9 +1644,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                               tabHint(i),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 11,
-                                color: _faint,
+                                color: _s.faint,
                               ),
                             ),
                           ],
@@ -1546,10 +1659,10 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       else if (tab == i)
-                        const Icon(
+                        Icon(
                           Icons.arrow_forward_rounded,
                           size: 16,
-                          color: _blue,
+                          color: _c.accent,
                         ),
                     ],
                   ),
@@ -1561,13 +1674,13 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: _mintSoft,
+            color: _c.mintSoft,
             borderRadius: BorderRadius.circular(18),
           ),
-          child: const Column(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.verified_user_outlined, color: _mint, size: 24),
+              Icon(Icons.verified_user_outlined, color: _c.mint, size: 24),
               SizedBox(height: 12),
               Text(
                 '원본은 그대로 둬요',
@@ -1576,7 +1689,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               SizedBox(height: 6),
               Text(
                 '결과는 원본 폴더에 새 파일로 저장돼요.',
-                style: TextStyle(fontSize: 11, color: Color(0xff738299)),
+                style: TextStyle(fontSize: 11, color: _s.note),
               ),
             ],
           ),
@@ -1584,7 +1697,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         const SizedBox(height: 20),
         Text(
           '${state['version'] ?? '연결 중'}',
-          style: const TextStyle(fontSize: 10, color: _faint),
+          style: TextStyle(fontSize: 10, color: _s.faint),
         ),
       ],
     ),
@@ -1631,7 +1744,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   '${files[i]['folder'] ?? ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: _faint),
+                  style: TextStyle(fontSize: 12, color: _s.faint),
                 ),
                 trailing: IconButton(
                   tooltip: '목록에서 제거',
@@ -1653,7 +1766,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       width: 48,
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
-        color: ext == 'HWP' ? const Color(0xfffff4e5) : _blueSoft,
+        color: ext == 'HWP' ? _s.hwpBadge : _c.accentSoft,
         borderRadius: BorderRadius.circular(10),
       ),
       child: Text(
@@ -1662,7 +1775,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
-          color: ext == 'HWP' ? const Color(0xffb45309) : _blueDeep,
+          color: ext == 'HWP' ? _s.onHwpBadge : _c.accentDeep,
         ),
       ),
     );
@@ -1697,22 +1810,22 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     compact
         ? LayoutBuilder(
             builder: (context, box) {
-              const hint = Text(
+              final hint = Text(
                 '문서를 더 끌어다 놓거나 추가할 수 있어요.',
-                style: TextStyle(color: _muted),
+                style: TextStyle(color: _c.muted),
               );
               return box.maxWidth >= 760
                   ? Row(
                       children: [
-                        const Icon(Icons.upload_file_rounded, color: _blue),
+                        Icon(Icons.upload_file_rounded, color: _c.accent),
                         const SizedBox(width: 12),
-                        const Expanded(child: hint),
+                        Expanded(child: hint),
                         addButtons(),
                       ],
                     )
                   : Column(
                       children: [
-                        const Icon(Icons.upload_file_rounded, color: _blue),
+                        Icon(Icons.upload_file_rounded, color: _c.accent),
                         const SizedBox(height: 8),
                         hint,
                         const SizedBox(height: 14),
@@ -1726,13 +1839,13 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               Container(
                 padding: const EdgeInsets.all(15),
                 decoration: BoxDecoration(
-                  color: _blueSoft,
+                  color: _c.accentSoft,
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.upload_file_rounded,
                   size: 34,
-                  color: _blue,
+                  color: _c.accent,
                 ),
               ),
               const SizedBox(height: 18),
@@ -1742,17 +1855,17 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 style: TextStyle(fontWeight: FontWeight.w700, fontSize: 19),
               ),
               const SizedBox(height: 8),
-              const Text(
+              Text(
                 'HWP·HWPX 파일이나 폴더를 넣을 수 있어요. 여러 개를 한 번에 넣어도 돼요.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xff738299), fontSize: 13),
+                style: TextStyle(color: _s.note, fontSize: 13),
               ),
               const SizedBox(height: 24),
               addButtons(),
               const SizedBox(height: 14),
-              const Text(
+              Text(
                 '단축키 Ctrl+O로 문서를 바로 추가할 수 있어요.',
-                style: TextStyle(fontSize: 12, color: _faint),
+                style: TextStyle(fontSize: 12, color: _s.faint),
               ),
             ],
           ),
@@ -1763,8 +1876,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       padding: EdgeInsets.all(layout.maxWidth < 500 ? 24 : 34),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(28),
-        gradient: const LinearGradient(
-          colors: [Color(0xffeaf0ff), Color(0xffedf8f5)],
+        gradient: LinearGradient(
+          colors: [_s.welcomeStart, _s.welcomeEnd],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -1782,7 +1895,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     fontWeight: FontWeight.w800,
                     height: 1.35,
                     letterSpacing: -1.2,
-                    color: _ink,
+                    color: _c.ink,
                   ),
                 ),
                 const SizedBox(height: 18),
@@ -1798,13 +1911,13 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                       children: [
                         CircleAvatar(
                           radius: 11,
-                          backgroundColor: Colors.white,
+                          backgroundColor: _c.surface,
                           child: Text(
                             n,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: _blue,
+                              color: _c.accent,
                             ),
                           ),
                         ),
@@ -1812,10 +1925,10 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         Expanded(
                           child: Text(
                             text,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 14,
                               height: 1.5,
-                              color: Color(0xff4b5f7c),
+                              color: _s.welcomeText,
                             ),
                           ),
                         ),
@@ -1889,7 +2002,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
 
   Widget modeCard((String, String, String, IconData, String) m) {
     final selected = cardMode == m.$1;
-    final colors = _modeColors(m.$1);
+    final colors = _c.mode(m.$1);
     final isAll = m.$1 == 'all';
     final suffix = m.$1 == 'file_format'
         ? '${conversionTarget.toUpperCase()}변경'
@@ -1949,7 +2062,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                           ? Icons.check_circle
                           : Icons.radio_button_unchecked,
                       size: 36,
-                      color: selected ? colors.accent : const Color(0xffcbd5e1),
+                      color: selected ? colors.accent : _c.lineStrong,
                     ),
                   ],
                 ),
@@ -1967,7 +2080,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 const SizedBox(height: 12),
                 Text(
                   '결과: 문서이름($suffix).hwpx',
-                  style: const TextStyle(fontSize: 12, color: _faint),
+                  style: TextStyle(fontSize: 12, color: _s.faint),
                 ),
               ],
             ),
@@ -2044,7 +2157,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             spacingPageFit
                 ? '자간·장평·줄 병합은 그대로 두고 문단·표의 세로 간격과 페이지 배치만 조정해요.'
                 : '자간 정리를 끄고 페이지 맞춤도 제외하면 할 일이 없습니다.',
-            style: const TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
   // 켜면 문서에 이미 있는 자간을 0%로 되돌리는 단계를 건너뛴다.
         Row(
@@ -2065,9 +2178,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           ],
         ),
         if (spacingEnabled && excludeResetSpacing)
-          const Text(
+          Text(
             '문서에 있던 자간은 그대로 두고 그 위에서 정리해요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
         // '표 제외'를 켜면 표 칸 안 문장은 자간 정리 대상에서 뺀다(설정 table_spacing의 반대 값).
         if (showTableOptions)
@@ -2089,9 +2202,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             ],
           ),
         if (!tableSpacing)
-          const Text(
+          Text(
             '표 칸 안 문장은 자간 정리에서 빼요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
       ],
       if (optionMode == 'unify') ...[
@@ -2126,7 +2239,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             ],
           ),
           if (cardOption(o.$1))
-            Text(o.$3, style: const TextStyle(fontSize: 12, color: _faint)),
+            Text(o.$3, style: TextStyle(fontSize: 12, color: _s.faint)),
         ],
       ],
       if (optionMode == 'all') ...[
@@ -2161,9 +2274,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           ],
         ),
         if (!includeSpacing)
-          const Text(
+          Text(
             '기존 자간은 그대로 두고 서식만 적용해요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
         // 켜면 표 관련 작업을 모두 빼고 정리한다(제목·개요 서식 표는 정리).
         if (showTableOptions)
@@ -2185,9 +2298,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             ],
           ),
         if (excludeTables)
-          const Text(
+          Text(
             '표 관련 작업은 모두 빼고 정리해요. 제목·개요 서식 표는 정리해요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
         Row(
           children: [
@@ -2226,9 +2339,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           ],
         ),
         if (cardOption('all_exclude_pagefit'))
-          const Text(
+          Text(
             '문단 아래 간격 페이지 맞춤·관련 문단 페이지 배치를 빼요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
       ],
     ],
@@ -2596,7 +2709,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           FilledButton(
             key: const Key('confirmDeleteFormat'),
             style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xffdc2626),
+              backgroundColor: _s.dangerFill,
             ),
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('삭제'),
@@ -2616,15 +2729,15 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
       decoration: BoxDecoration(
-        color: active ? _blueSoft : Colors.white,
+        color: active ? _c.accentSoft : _c.surface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: active ? _blue : const Color(0xffe2e8f0)),
+        border: Border.all(color: active ? _c.accent : _c.line),
       ),
       child: Row(
         children: [
           Icon(
             active ? Icons.check_circle : Icons.description_outlined,
-            color: active ? _blue : _faint,
+            color: active ? _c.accent : _s.faint,
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -2642,13 +2755,13 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     if (organization.isNotEmpty)
                       Text(
                         '· $organization',
-                        style: const TextStyle(color: _muted, fontSize: 12),
+                        style: TextStyle(color: _c.muted, fontSize: 12),
                       ),
                     if (active)
-                      const Text(
+                      Text(
                         '사용 중',
                         style: TextStyle(
-                          color: _blue,
+                          color: _c.accent,
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                         ),
@@ -2660,14 +2773,14 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   builtin
                       ? '앱에 들어 있는 기본 공문서 서식'
                       : (source.isNotEmpty ? '예시 보고서: $source' : '직접 만든 서식'),
-                  style: const TextStyle(fontSize: 12, color: _muted),
+                  style: TextStyle(fontSize: 12, color: _c.muted),
                   overflow: TextOverflow.ellipsis,
                 ),
                 if (p['coverage'] is Map)
                   Text(
                     '서식 요소 ${(p['coverage'] as Map)['total']}개 중 '
                     '${(p['coverage'] as Map)['applied']}개 복제',
-                    style: const TextStyle(fontSize: 11, color: _faint),
+                    style: TextStyle(fontSize: 11, color: _s.faint),
                   ),
               ],
             ),
@@ -2697,7 +2810,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 TextButton(
                   key: Key('deleteFormat-${p['id']}'),
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xffdc2626),
+                    foregroundColor: _c.danger,
                   ),
                   onPressed: locked ? null : () => deleteFormat(p),
                   child: const Text('삭제'),
@@ -2726,7 +2839,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.style_outlined, color: _blue),
+                  Icon(Icons.style_outlined, color: _c.accent),
                   const SizedBox(width: 10),
                   const Expanded(
                     child: Text(
@@ -2773,19 +2886,19 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   key: const Key('formatDropZone'),
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    color: _blueSoft,
+                    color: _c.accentSoft,
                     borderRadius: BorderRadius.circular(18),
                     border: Border.all(
-                      color: const Color(0xff93c5fd),
+                      color: _s.dropBorder,
                       width: 1.5,
                     ),
                   ),
                   child: Column(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.file_copy_outlined,
                         size: 30,
-                        color: _blue,
+                        color: _c.accent,
                       ),
                       const SizedBox(height: 8),
                       const Text(
@@ -2797,12 +2910,12 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 4),
-                      const Text(
+                      Text(
                         '제목·개요 표, 항목기호 문장, 표의 글꼴·크기·문단 모양을 분석해 새 서식으로 복제해요. '
                         '분석이 끝나면 이름과 세부값을 확인하는 창이 열리고, 저장하면 바로 이 서식을 써요.',
                         style: TextStyle(
                           fontSize: 12,
-                          color: _muted,
+                          color: _c.muted,
                           height: 1.5,
                         ),
                         textAlign: TextAlign.center,
@@ -2840,9 +2953,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         const SizedBox(height: 6),
                         Text(
                           '서식 분석 중 · $file',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: _blue,
+                            color: _c.accent,
                             fontWeight: FontWeight.w600,
                           ),
                         ),
@@ -2854,8 +2967,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   const SizedBox(height: 8),
                   Text(
                     formatNotice!,
-                    style: const TextStyle(
-                      color: Color(0xffdc2626),
+                    style: TextStyle(
+                      color: _c.danger,
                       fontSize: 12,
                     ),
                   ),
@@ -2863,15 +2976,15 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   const SizedBox(height: 8),
                   Text(
                     status,
-                    style: const TextStyle(color: _muted, fontSize: 12),
+                    style: TextStyle(color: _c.muted, fontSize: 12),
                   ),
                 ],
                 const SizedBox(height: 16),
                 Text(
                   '서식 목록 (${profiles.length}개)',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontWeight: FontWeight.w700,
-                    color: _faint,
+                    color: _s.faint,
                     fontSize: 12,
                   ),
                 ),
@@ -2883,9 +2996,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   '사용 중인 서식은 한 번에 적용(서식 적용) 작업에서 써요. 기본 서식은 지울 수 없고, 세부 수정하면 새 서식으로 저장돼요.',
-                  style: TextStyle(fontSize: 12, color: _faint),
+                  style: TextStyle(fontSize: 12, color: _s.faint),
                 ),
               ],
             ],
@@ -3007,7 +3120,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             title: const Text('다음 실행에도 이 구성 사용'),
             subtitle: Text(
               saved ? '바꾸는 즉시 저장돼요.' : '끄면 이번 실행에만 적용하고, 다음에는 처음 기본값으로 시작해요.',
-              style: const TextStyle(fontSize: 12, color: _muted),
+              style: TextStyle(fontSize: 12, color: _c.muted),
             ),
           ),
           Wrap(
@@ -3088,8 +3201,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   problem,
-                  style: const TextStyle(
-                    color: Color(0xffdc2626),
+                  style: TextStyle(
+                    color: _c.danger,
                     fontSize: 13,
                   ),
                 ),
@@ -3164,14 +3277,14 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         child: LinearProgressIndicator(
                           minHeight: 8,
                           value: running && ratio == 0 ? null : ratio,
-                          backgroundColor: const Color(0xffedf2f7),
+                          backgroundColor: _s.track,
                         ),
                       ),
                     ),
                     const SizedBox(width: 14),
                     Text(
                       '${finished ? steps.length : done.length}/${steps.length} 단계',
-                      style: const TextStyle(fontSize: 12, color: _muted),
+                      style: TextStyle(fontSize: 12, color: _c.muted),
                     ),
                   ],
                 ),
@@ -3186,9 +3299,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                       done.contains(i) || (current != null && i < current),
                 ),
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 '선택한 세부 작업에 따라 일부 단계는 건너뛸 수 있어요.',
-                style: TextStyle(fontSize: 12, color: _faint),
+                style: TextStyle(fontSize: 12, color: _s.faint),
               ),
               if (state['status'] != null && '${state['status']}'.isNotEmpty)
                 Padding(
@@ -3197,7 +3310,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     '${state['status']}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12, color: _muted),
+                    style: TextStyle(fontSize: 12, color: _c.muted),
                   ),
                 ),
               const SizedBox(height: 16),
@@ -3222,7 +3335,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     margin: const EdgeInsets.only(bottom: 8),
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
     decoration: BoxDecoration(
-      color: active ? _blueSoft : Colors.transparent,
+      color: active ? _c.accentSoft : Colors.transparent,
       borderRadius: BorderRadius.circular(14),
     ),
     child: Row(
@@ -3230,26 +3343,26 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         CircleAvatar(
           radius: 14,
           backgroundColor: active
-              ? _blue
+              ? _c.accentFill
               : finished
-              ? const Color(0xffdff3ee)
-              : const Color(0xffedf2f7),
+              ? _c.successSoft
+              : _s.track,
           child: active && running
-              ? const SizedBox(
+              ? SizedBox(
                   width: 14,
                   height: 14,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: Colors.white,
+                    color: _c.onAccent,
                   ),
                 )
               : finished
-              ? const Icon(Icons.check, size: 16, color: _mint)
+              ? Icon(Icons.check, size: 16, color: _c.mint)
               : Text(
                   '${index + 1}',
                   style: TextStyle(
                     fontSize: 12,
-                    color: active ? Colors.white : _muted,
+                    color: active ? _c.onAccent : _c.muted,
                   ),
                 ),
         ),
@@ -3261,10 +3374,10 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               height: 1.5,
               fontWeight: active ? FontWeight.w700 : FontWeight.w500,
               color: active
-                  ? _blueDeep
+                  ? _c.accentDeep
                   : finished
-                  ? const Color(0xff475569)
-                  : const Color(0xff94a3b8),
+                  ? _c.textSecondary
+                  : _c.faint,
             ),
           ),
         ),
@@ -3310,10 +3423,10 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   msg,
                   key: const Key('savingsMessageText'),
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xff111827),
+                    color: _s.strongText,
                   ),
                 ),
               ),
@@ -3352,7 +3465,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               for (final line in completion['details'] as List? ?? const [])
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
-                  child: Text('• $line', style: const TextStyle(color: _muted)),
+                  child: Text('• $line', style: TextStyle(color: _c.muted)),
                 ),
               if (completion['report'] is String &&
                   '${completion['report']}'.isNotEmpty)
@@ -3360,7 +3473,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   padding: const EdgeInsets.only(top: 6),
                   child: Text(
                     '검수 보고서: ${completion['report']}',
-                    style: const TextStyle(color: _muted),
+                    style: TextStyle(color: _c.muted),
                   ),
                 ),
               if (failures.isNotEmpty) ...[
@@ -3376,7 +3489,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     padding: const EdgeInsets.only(top: 5),
                     child: Text(
                       '• ${entry.key}: ${entry.value}',
-                      style: const TextStyle(color: Color(0xffb42318)),
+                      style: TextStyle(color: _s.failText),
                     ),
                   ),
               ],
@@ -3390,29 +3503,29 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                 ),
                 Text(
                   '${_formatReviewStatus(formatReview['status'])} · 검사 문장 ${formatReview['checked'] ?? 0}개 · 불일치 ${(formatReview['issues'] as List? ?? const []).length}개 · 판정 보류 ${(formatReview['not_checkable'] as List? ?? const []).length}개',
-                  style: const TextStyle(color: _muted),
+                  style: TextStyle(color: _c.muted),
                 ),
                 for (final item in formatReview['issues'] as List? ?? const [])
                   Text(
                     '• ${item['text'] ?? item}',
-                    style: const TextStyle(color: Color(0xffb42318)),
+                    style: TextStyle(color: _s.failText),
                   ),
                 for (final item
                     in formatReview['not_checkable'] as List? ?? const [])
                   Text(
                     '• 판정 보류: ${item['marker'] ?? ''} / ${item['role'] ?? ''} · ${(item['fields'] as List? ?? const []).join(', ')}',
-                    style: const TextStyle(color: _muted),
+                    style: TextStyle(color: _c.muted),
                   ),
                 for (final item
                     in formatReview['unresolved'] as List? ?? const [])
                   Text(
                     '• 대표값 미확정: ${item['text'] ?? ''} · ${(item['fields'] as List? ?? const []).join(', ')}',
-                    style: const TextStyle(color: Color(0xffb42318)),
+                    style: TextStyle(color: _s.failText),
                   ),
                 if ('${formatReview['error'] ?? ''}'.isNotEmpty)
                   Text(
                     '검수 오류: ${formatReview['error']}',
-                    style: const TextStyle(color: Color(0xffb42318)),
+                    style: TextStyle(color: _s.failText),
                   ),
               ],
             ],
@@ -3428,7 +3541,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             Icon(
               results.isEmpty ? Icons.inbox_outlined : Icons.task_alt_rounded,
               size: 56,
-              color: _blue,
+              color: _c.accent,
             ),
             const SizedBox(height: 18),
             Text(
@@ -3454,7 +3567,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   ].join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, color: _faint),
+                  style: TextStyle(fontSize: 12, color: _s.faint),
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -3499,24 +3612,24 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                   vertical: 8,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xfffee2e2),
+                  color: _s.errorSoft,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.error_outline,
                       size: 18,
-                      color: Color(0xffdc2626),
+                      color: _c.danger,
                     ),
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
                         compareError!,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
-                          color: Color(0xffdc2626),
+                          color: _c.danger,
                         ),
                       ),
                     ),
@@ -3552,7 +3665,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(err),
-              backgroundColor: const Color(0xffdc2626),
+              backgroundColor: _s.dangerFill,
             ),
           );
         }
@@ -3565,7 +3678,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(err),
-            backgroundColor: const Color(0xffdc2626),
+            backgroundColor: _s.dangerFill,
           ),
         );
       }
@@ -3589,7 +3702,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   // ---- 하단 실행 막대 ------------------------------------------------
 
   Widget bottomBar() => Container(
-    color: Colors.white,
+    color: _c.surface,
     padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
     child: Column(
       mainAxisSize: MainAxisSize.min,
@@ -3613,7 +3726,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(fontSize: 13, color: _muted),
+                        style: TextStyle(fontSize: 13, color: _c.muted),
                       ),
                     )
                   : const SizedBox(),
@@ -3664,7 +3777,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               ? '원본을 보존하고 결과를 별도 파일로 저장해요  ·  Ctrl+Enter로 다음 단계'
               : '원본을 보존하고 결과를 별도 파일로 저장해요  ·  ${state['version'] ?? '알파'}',
           textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 11, color: _muted),
+          style: TextStyle(fontSize: 11, color: _c.muted),
         ),
       ],
     ),
@@ -3692,9 +3805,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Row(
+          title: Row(
             children: [
-              Icon(Icons.receipt_long_outlined, color: _blue),
+              Icon(Icons.receipt_long_outlined, color: _c.accent),
               SizedBox(width: 10),
               Text('작업 로그'),
             ],
@@ -3704,8 +3817,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             height: 420,
             child: DecoratedBox(
               decoration: BoxDecoration(
-                color: const Color(0xfff8fafc),
-                border: Border.all(color: _line),
+                color: _c.surfaceMuted,
+                border: Border.all(color: _c.line),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Scrollbar(
@@ -3796,7 +3909,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
 
   Widget settingsDrawer() => Drawer(
     width: 400,
-    backgroundColor: Colors.white,
+    backgroundColor: _c.surface,
     child: SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
@@ -3819,14 +3932,14 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           const SizedBox(height: 6),
           Text(
             running ? '작업 중에는 설정을 바꿀 수 없어요.' : '자주 바꾸는 설정만 모았어요. 바꾸면 바로 저장돼요.',
-            style: const TextStyle(color: _muted, fontSize: 13),
+            style: TextStyle(color: _c.muted, fontSize: 13),
           ),
           settingsLabel('서식 기준'),
           profilePicker(),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '서식 적용·한 번에 적용 작업에서 사용해요.',
-            style: TextStyle(fontSize: 12, color: _faint),
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
           settingsLabel('작업 뒤 처리'),
           optionSwitch(
@@ -3873,15 +3986,16 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             '앱 창을 항상 위에 표시',
             '다른 창을 사용해도 앱을 앞에 유지해요.',
           ),
+          themeChoicePicker(),
           optionSwitch('developer_mode', '개발자 모드', '자세한 문서 처리 완료 안내를 표시해요.'),
           settingsLabel('더 보기'),
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.tune),
             title: const Text('전체 설정 열기'),
-            subtitle: const Text(
+            subtitle: Text(
               '글꼴·항목기호·자간 한도 등 모든 값을 바꿔요.',
-              style: TextStyle(fontSize: 12, color: _muted),
+              style: TextStyle(fontSize: 12, color: _c.muted),
             ),
             trailing: const Icon(Icons.open_in_new, size: 18),
             onTap: locked
@@ -3918,14 +4032,54 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     ),
   );
 
+  /// 화면 테마 선택(DARK1). 작업 중에도 바꿀 수 있고, 바꾸면 바로 적용·저장한다.
+  Widget themeChoicePicker() => Semantics(
+    label: '화면 테마',
+    container: true,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('화면 테마'),
+          const SizedBox(height: 8),
+          ValueListenableBuilder<AppThemeChoice>(
+            valueListenable: appThemeChoice,
+            builder: (context, choice, _) => SegmentedButton<AppThemeChoice>(
+              key: const Key('themeChoicePicker'),
+              showSelectedIcon: false,
+              segments: [
+                for (final c in AppThemeChoice.values)
+                  ButtonSegment(value: c, label: Text(c.label)),
+              ],
+              selected: {choice},
+              onSelectionChanged: (v) => setThemeChoice(v.first),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '시스템 설정을 따르면 Windows 밝게/어둡게·고대비에 맞춰 바뀌어요.',
+            style: TextStyle(fontSize: 12, color: _c.muted),
+          ),
+        ],
+      ),
+    ),
+  );
+
+  Future<void> setThemeChoice(AppThemeChoice choice) async {
+    if (appThemeChoice.value == choice) return;
+    appThemeChoice.value = choice;
+    await themeSaves.save(choice);
+  }
+
   Widget settingsLabel(String text) => Padding(
     padding: const EdgeInsets.only(top: 28, bottom: 10),
     child: Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 12,
         fontWeight: FontWeight.w700,
-        color: _faint,
+        color: _s.faint,
       ),
     ),
   );
@@ -3940,7 +4094,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         title: Text(title),
         subtitle: Text(
           subtitle,
-          style: const TextStyle(fontSize: 12, color: _muted),
+          style: TextStyle(fontSize: 12, color: _c.muted),
         ),
       );
 
@@ -3948,7 +4102,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('사용 방법'),
-      content: const SizedBox(
+      content: SizedBox(
         width: 420,
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -3962,7 +4116,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             SizedBox(height: 16),
             Text(
               '원본 문서는 바꾸지 않아요. 결과는 원본 폴더에 새 파일로 저장돼요.',
-              style: TextStyle(color: _mint, fontWeight: FontWeight.w600),
+              style: TextStyle(color: _c.mint, fontWeight: FontWeight.w600),
             ),
             SizedBox(height: 16),
             Text('단축키', style: TextStyle(fontWeight: FontWeight.w700)),

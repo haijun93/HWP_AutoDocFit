@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 import 'kiosk_theme.dart';
+import 'settings_colors.dart';
 
 /// 한글 문서처럼 보이는 작은 미리보기 부품들.
 /// 설정값(크기 pt·자간 %·장평 %·내어쓰기·문단 위 간격·줄 간격)을 그대로 받아 그린다.
@@ -37,7 +39,7 @@ class DocPara {
     this.lineSpacing = 160,
     this.align = TextAlign.left,
     this.lines,
-    this.color = Kiosk.ink,
+    this.color = const Color(0xff191f28), // 문서 색(테마 무관)
   });
 
   /// 항목기호(□, ㅇ, -, ※ …). 비우면 기호 없는 문단.
@@ -218,12 +220,14 @@ class DocPaper extends StatelessWidget {
         width: width,
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.white, // 문서 색(테마 무관): 흰 종이
           borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xffdfe3e8)),
-          boxShadow: const [
+          border: Border.all(
+            color: const Color(0xffdfe3e8),
+          ), // 문서 색(테마 무관): 종이 테두리
+          boxShadow: [
             BoxShadow(
-              color: Color(0x14000000),
+              color: context.colors.shadow,
               blurRadius: 10,
               offset: Offset(0, 3),
             ),
@@ -237,7 +241,7 @@ class DocPaper extends StatelessWidget {
       if (caption != null)
         Padding(
           padding: const EdgeInsets.only(top: 6),
-          child: Text(caption!, style: Kiosk.caption),
+          child: Text(caption!, style: Kiosk.caption(context)),
         ),
     ],
   );
@@ -249,7 +253,7 @@ class DocTable extends StatelessWidget {
     super.key,
     required this.rows,
     this.headerBold = true,
-    this.headerFill = const Color(0xffeef1f5),
+    this.headerFill = const Color(0xffeef1f5), // 문서 색(테마 무관)
     this.headerSize = 12,
     this.bodySize = 11,
     this.bodyBold = false,
@@ -267,7 +271,10 @@ class DocTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Table(
-    border: TableBorder.all(color: const Color(0xff4e5968), width: 0.8),
+    border: TableBorder.all(
+      color: const Color(0xff4e5968), // 문서 색(테마 무관)
+      width: 0.8,
+    ),
     defaultVerticalAlignment: TableCellVerticalAlignment.middle,
     children: [
       for (var r = 0; r < rows.length; r++)
@@ -291,7 +298,7 @@ class DocTable extends StatelessWidget {
                         spacing /
                         100,
                     backgroundColor: r > 0 ? mark : null,
-                    color: Kiosk.ink,
+                    color: const Color(0xff191f28), // 문서 색(테마 무관)
                   ),
                 ),
               ),
@@ -317,13 +324,20 @@ class BeforeAfter extends StatelessWidget {
   final String offLabel;
   final String onLabel;
 
-  Widget _side(String label, List<Widget> children, bool active) => Container(
+  Widget _side(
+    BuildContext context,
+    String label,
+    List<Widget> children,
+    bool active,
+  ) => Container(
     padding: const EdgeInsets.all(10),
     decoration: BoxDecoration(
-      color: active ? Kiosk.blueSoft : const Color(0xfff9fafb),
+      color: active
+          ? context.kiosk.blueSoft
+          : SettingsColors.of(context).softFill,
       borderRadius: BorderRadius.circular(14),
       border: Border.all(
-        color: active ? Kiosk.blue : Colors.transparent,
+        color: active ? context.kiosk.blue : Colors.transparent,
         width: 2,
       ),
     ),
@@ -339,14 +353,14 @@ class BeforeAfter extends StatelessWidget {
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: active ? Kiosk.blue : Kiosk.faint,
+                color: active ? context.kiosk.blue : context.kiosk.faint,
               ),
             ),
             if (active) ...[
               const SizedBox(width: 6),
-              const Text(
+              Text(
                 '지금 설정',
-                style: TextStyle(fontSize: 12, color: Kiosk.blue),
+                style: TextStyle(fontSize: 12, color: context.kiosk.blue),
               ),
             ],
           ],
@@ -361,6 +375,9 @@ class BeforeAfter extends StatelessWidget {
   Widget build(BuildContext context) => Wrap(
     spacing: 12,
     runSpacing: 12,
-    children: [_side(offLabel, off, !value), _side(onLabel, on, value)],
+    children: [
+      _side(context, offLabel, off, !value),
+      _side(context, onLabel, on, value),
+    ],
   );
 }

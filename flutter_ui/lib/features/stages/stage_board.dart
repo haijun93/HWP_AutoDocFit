@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 import '../preview/option_images.dart';
 import '../settings/kiosk_theme.dart';
@@ -192,7 +193,7 @@ class _StageBoardState extends State<StageBoard> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8, right: 8),
       child: Material(
-        color: selected ? Kiosk.blueSoft : Colors.white,
+        color: selected ? context.kiosk.blueSoft : context.kiosk.card,
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
           key: ValueKey('stage-group-${item.id}'),
@@ -213,13 +214,15 @@ class _StageBoardState extends State<StageBoard> {
                   width: 34,
                   height: 34,
                   decoration: BoxDecoration(
-                    color: selected ? Kiosk.blue : Kiosk.canvas,
+                    color: selected
+                        ? context.kiosk.blueFill
+                        : context.kiosk.canvas,
                     borderRadius: BorderRadius.circular(11),
                   ),
                   child: Icon(
                     item.icon,
                     size: 18,
-                    color: selected ? Colors.white : Kiosk.sub,
+                    color: selected ? context.kiosk.onBlue : context.kiosk.sub,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -235,13 +238,15 @@ class _StageBoardState extends State<StageBoard> {
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.w700,
-                          color: selected ? Kiosk.blue : Kiosk.ink,
+                          color: selected
+                              ? context.kiosk.blue
+                              : context.kiosk.ink,
                         ),
                       ),
                       if (!compact)
                         Text(
                           '${item.subtitle} · $on/${members.length}',
-                          style: Kiosk.caption,
+                          style: Kiosk.caption(context),
                         ),
                     ],
                   ),
@@ -257,14 +262,14 @@ class _StageBoardState extends State<StageBoard> {
   Widget _badge(String text, {bool strong = true}) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
     decoration: BoxDecoration(
-      color: strong ? Kiosk.blueSoft : Kiosk.canvas,
+      color: strong ? context.kiosk.blueSoft : context.kiosk.canvas,
       borderRadius: BorderRadius.circular(8),
     ),
     child: Text(
       text,
       style: TextStyle(
         fontSize: 12,
-        color: strong ? Kiosk.blue : Kiosk.sub,
+        color: strong ? context.kiosk.blue : context.kiosk.sub,
         fontWeight: FontWeight.w700,
       ),
     ),
@@ -283,15 +288,15 @@ class _StageBoardState extends State<StageBoard> {
       scale: 1.1,
       child: Switch(
         key: ValueKey('stage-switch-$key'),
-        activeThumbColor: Colors.white,
-        activeTrackColor: Kiosk.blue,
+        activeThumbColor: context.kiosk.onBlue,
+        activeTrackColor: context.kiosk.blueFill,
         value: on,
         onChanged: widget.locked ? null : (v) => _toggle(stage, v),
       ),
     );
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      decoration: Kiosk.cardBox(selected: focused),
+      decoration: Kiosk.cardBox(context, selected: focused),
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
@@ -316,9 +321,11 @@ class _StageBoardState extends State<StageBoard> {
                         children: [
                           Text(
                             '${index + 1}. ${stage['label']}',
-                            style: Kiosk.cardTitle.copyWith(
+                            style: Kiosk.cardTitle(context).copyWith(
                               fontSize: 16,
-                              color: on ? Kiosk.ink : Kiosk.faint,
+                              color: on
+                                  ? context.kiosk.ink
+                                  : context.kiosk.faint,
                             ),
                           ),
                           if (changed) _badge('바뀜'),
@@ -329,7 +336,7 @@ class _StageBoardState extends State<StageBoard> {
                         const SizedBox(height: 4),
                         Text(
                           example,
-                          style: Kiosk.body.copyWith(fontSize: 13.5),
+                          style: Kiosk.body(context).copyWith(fontSize: 13.5),
                         ),
                       ],
                     ],
@@ -360,17 +367,17 @@ class _StageBoardState extends State<StageBoard> {
     final image = stage == null ? null : optionImageFor(key);
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: Kiosk.cardBox(),
+      decoration: Kiosk.cardBox(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('적용 전·후 예시', style: Kiosk.cardTitle),
+          Text('적용 전·후 예시', style: Kiosk.cardTitle(context)),
           const SizedBox(height: 4),
           Text(
             stage == null
                 ? '단계를 고르면 문서가 어떻게 바뀌는지 보여 드려요.'
                 : '${stage['label']} — 왼쪽이 단계 전, 오른쪽이 단계 뒤예요. 그림을 누르면 크게 볼 수 있어요.',
-            style: Kiosk.caption,
+            style: Kiosk.caption(context),
           ),
           const SizedBox(height: 12),
           if (image != null)
@@ -383,12 +390,12 @@ class _StageBoardState extends State<StageBoard> {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Kiosk.canvas,
+                color: context.kiosk.canvas,
                 borderRadius: BorderRadius.circular(14),
               ),
               child: Text(
                 '${stage['example'] ?? '이 단계는 문서 전체를 살펴 정리해요.'}',
-                style: Kiosk.body.copyWith(fontSize: 13.5),
+                style: Kiosk.body(context).copyWith(fontSize: 13.5),
               ),
             ),
         ],

@@ -53,13 +53,15 @@ fn dispatch(event: Event) -> bool {
 unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
     match msg {
         SHOW => { if dispatch(Event::Show){window::call(vf_state::Caller::SecondRun);} 0 }
-        RELOAD => { if !dispatch(Event::Reload){return 0;} if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings); let _=status(&window::snapshot().0); 0 }
+        RELOAD => { if !dispatch(Event::Reload){return 0;} if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.reload(hwnd);}} let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::refresh_theme(); window::configure(hwnd,&settings); let _=status(&window::snapshot().0); 0 }
         WM_HOTKEY => { if dispatch(Event::Show){window::call(vf_state::Caller::Hotkey);} 0 }
         tray::MESSAGE => { if l as u32 == WM_LBUTTONUP { if dispatch(Event::Show){window::call(vf_state::Caller::Tray);} } else if l as u32 == WM_RBUTTONUP { match unsafe{tray::menu(hwnd)} {1=>{if dispatch(Event::Show){window::call(vf_state::Caller::Tray);}},2=>{unsafe{PostMessageW(hwnd,WM_CLOSE,0,0);}},_=>{}} } 0 }
         WM_CLOSE => { dispatch(Event::Quit); unsafe { DestroyWindow(hwnd); } 0 }
         WM_QUERYENDSESSION => 1,
         WM_ENDSESSION if w != 0 => { dispatch(Event::EndSession); unsafe { DestroyWindow(hwnd); } 0 }
         WM_DESTROY => { window::close(); window::destroy(); if let Some(t)=TRAY.lock().unwrap().as_mut(){unsafe{t.remove(hwnd);}} dispatch(Event::Cleaned); let _=std::fs::remove_file(paths::data_dir().join("status.json")); unsafe { PostQuitMessage(0); } 0 }
+        // 시스템 앱 모드·고대비·시스템 색 변경, kagent 테마 설정 변경 방송(DocFitThemeChanged).
+        _ if ui_theme::is_theme_message(msg,w,l) => { window::refresh_theme(); unsafe { DefWindowProcW(hwnd,msg,w,l) } }
         _ => unsafe { DefWindowProcW(hwnd,msg,w,l) }
     }
 }
@@ -104,7 +106,7 @@ fn run() -> Result<(),String> {
         let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),util::wide("가상 폴더").as_ptr(),WS_POPUP,0,0,0,0,std::ptr::null_mut(),std::ptr::null_mut(),instance,std::ptr::null());
         if hwnd.is_null() { dispatch(Event::Failed); return Err("주 창 생성 실패".into()); }
         let mut tray=tray::Tray::new(); tray.reload(hwnd); *TRAY.lock().unwrap()=Some(tray);
-        let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::configure(hwnd,&settings);
+        let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::refresh_theme(); ui_theme::apply_window(hwnd,ui_theme::theme().kind); window::configure(hwnd,&settings);
         RUNTIME.lock().unwrap().0 = state;
         for effect in effects {
             if let Effect::SetView(v) = effect {

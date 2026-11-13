@@ -8,7 +8,7 @@ from docfit_app.abbreviation_service import AbbreviationService
 from docfit_app.api_contract import ServiceError, response
 from docfit_app.configuration_service import ConfigurationService
 from docfit_app.settings_service import SettingsService
-from docfit_app.settings_schema import DEFAULTS
+from docfit_app.settings_schema import DEFAULTS, normalize_theme_mode, validate_theme_mode
 from docfit_app.flow_service import FlowService
 from docfit_app.settings_migrations import migrate
 from docfit_core.hwpx import validate_and_inspect_hwpx
@@ -86,6 +86,14 @@ class ApplicationService:
             self._rename_service = FileRenameService(self.store._path.parent, settings=self.store)
         return self._rename_service
 
+    def set_theme_mode(self, mode):
+        """화면 테마를 저장하고, 켜져 있는 몽땅클립보드 상주 프로그램에도 알린다(꺼져 있으면 건너뜀)."""
+        from .kclip_service import push_theme
+        value = validate_theme_mode(mode)
+        self.store.update(lambda current: current.update({'theme_mode': value}))
+        push_theme(value, getattr(self, '_kagent_client', None))
+        return {'theme_mode': value}
+
     def job_status(self, job_id):
         return self.jobs.job_status(job_id)
 
@@ -111,14 +119,14 @@ class ApplicationService:
                 'progress':{'steps':list(STAGE_ORDER),'active':None,'visited':[],'outcome':None,'detail':''},
                 'stages':[{'key':k,'label':label,'enabled':self.data.stages.get((self.data.mode,k),selected.get(k,default_choice(k,self.data.mode))),
                            'default':default_choice(k,self.data.mode)} for k,label in stages_for_mode(self.data.mode)],
-                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
+                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'theme_mode':normalize_theme_mode(settings.get('theme_mode')),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
 
     def dispatch(self, method, args):
         counts = {'handshake':0,'get_state':0,'get_settings':0,'save_settings':2,
                   'get_abbreviations':0,'save_abbreviation':4,'delete_abbreviation':1,
                   'set_abbreviation_defaults':1,'abbreviation_document':1,'add_paths':1,'remove_file':1,
                   'clear_files':0,'set_mode':1,'inspect_document':1,'get_log':0,'clear_log':0,'shutdown':0}
-        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1})
+        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
         counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2})
@@ -231,6 +239,8 @@ class ApplicationService:
         if method=='set_sidebar_collapsed':
             self.store.update(lambda current:current.update({'sidebar_collapsed':bool(args[0])}))
             return True
+        if method=='set_theme_mode':
+            return self.set_theme_mode(args[0])
         if method=='get_pending_dialog': return None
         if method=='get_state': return self.state()
         if method=='get_settings': return response(self.configuration.snapshot)

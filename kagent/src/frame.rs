@@ -1,6 +1,7 @@
 //! 틀 없는 창의 공용 틀 함수: 크기 조절 판정·테두리 한 겹·DWM 꾸밈·화면 배율·줄 위치·글자 폭.
 //! `popup.rs`(몽땅클립보드 창)에서 내용 변경 없이 옮겼다(2026-11-12, VF V1).
-//! kvf(가상 폴더 창)도 이 파일을 컴파일한다. `std`·`windows-sys`·`crate::util` 말고는 쓰지 말 것.
+//! kvf(가상 폴더 창)도 이 파일을 컴파일한다. `std`·`windows-sys`·`crate::util`·`ui_theme` 말고는 쓰지 말 것.
+//! 테두리 색은 현재 테마(`ui_theme::palette().border`)를 따른다(RUSTALL1 DARK1).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -13,8 +14,6 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 /// 크기 조절로 쓰는 가장자리 폭(창 안쪽).
 pub(crate) const GRIP: i32 = 6;
-/// 테두리 선 색(BGR).
-pub(crate) const BORDER: u32 = 0x00BDBDBD;
 
 // ---- 틀(테두리·크기 조절) ----
 
@@ -89,10 +88,18 @@ pub(crate) unsafe fn style_frame(hwnd: HWND) {
         DwmExtendFrameIntoClientArea(hwnd, &m);
         let corner = DWMWCP_ROUND;
         DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner as *const u32 as _, 4);
-        let color = BORDER;
-        let ok = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color as *const u32 as _, 4) >= 0;
-        DWM_BORDER.store(ok, Ordering::Relaxed);
+        apply_theme(hwnd);
     }
+}
+
+/// 현재 테마를 창 틀에 입힌다(어두운 DWM 모드·테두리 색). 창을 만들 때와 테마가 바뀔 때 부른다.
+/// 그리기 영역은 부르는 쪽이 InvalidateRect로 다시 그린다.
+pub(crate) unsafe fn apply_theme(hwnd: HWND) {
+    let theme = ui_theme::theme();
+    ui_theme::apply_window(hwnd, theme.kind);
+    let color = theme.palette.border;
+    let ok = unsafe { DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &color as *const u32 as _, 4) } >= 0;
+    DWM_BORDER.store(ok, Ordering::Relaxed);
 }
 
 /// Windows 11이 아니면 창 둘레에 1px 선을 한 번만 그린다(틀·WS_BORDER가 없으므로 이것이 유일한 테두리).
@@ -101,7 +108,7 @@ pub(crate) unsafe fn own_border(mem: HDC, rc: RECT) {
         return;
     }
     unsafe {
-        let brush = CreateSolidBrush(BORDER);
+        let brush = CreateSolidBrush(ui_theme::palette().border);
         if !brush.is_null() {
             FrameRect(mem, &rc, brush);
             DeleteObject(brush);

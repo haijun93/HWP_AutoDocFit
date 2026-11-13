@@ -9,6 +9,8 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
 import '../../core/instant_search.dart';
 import 'idle_indexing_status.dart';
+import 'timemachine_colors.dart';
+import '../../core/theme/app_theme.dart';
 
 /// 본문·위계검색 한 번의 결과(정렬을 함께 넘겨 화면 정렬 표시와 맞춘다).
 typedef _ContentSearchOutcome = ({String sort, List<TimemachineContentResult> items});
@@ -35,7 +37,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
             '「${'${section['parent_text']}'.trim()}」에서 ${int.parse('${section['count']}')}곳',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Colors.black54),
+            style: TextStyle(fontSize: 11, color: TimemachineColors.of(context).secondaryText),
           ),
         ),
     ];
@@ -156,7 +158,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       at = hit + key.length;
       spans.add(TextSpan(
         text: text.substring(hit, at),
-        style: const TextStyle(backgroundColor: Color(0xFFFFEB3B), color: Colors.black),
+        style: TextStyle(backgroundColor: context.colors.highlight, color: TimemachineColors.of(context).onMark),
       ));
     }
     if (at < text.length) spans.add(TextSpan(text: text.substring(at)));
@@ -214,7 +216,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       }
       spans.add(TextSpan(
         text: text.substring(interval.$1, interval.$2),
-        style: const TextStyle(backgroundColor: Color(0xFFFFEB3B), color: Colors.black),
+        style: TextStyle(backgroundColor: context.colors.highlight, color: TimemachineColors.of(context).onMark),
       ));
       last = interval.$2;
     }
@@ -452,10 +454,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (hit > at) spans.add(TextSpan(text: text.substring(at, hit)));
       spans.add(TextSpan(
         text: text.substring(hit, hit + needle.length),
-        style: TextStyle(
-          backgroundColor: hit == active ? Colors.orangeAccent : const Color(0xFFFFEB3B),
-          color: Colors.black,
-        ),
+        style: hit == active
+            ? TimemachineColors.of(context).activeMarkStyle
+            : TextStyle(backgroundColor: context.colors.highlight, color: TimemachineColors.of(context).onMark),
       ));
       at = hit + needle.length;
     }
@@ -938,7 +939,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
           if (_contentMode && _contentNeedsReindex && !_contentReindexDismissed && _contentReindexGuide != null)
             MaterialBanner(
               content: Text('$_contentReindexGuide (재색인 필요: $_contentNeedsReindexCount건)'),
-              leading: const Icon(Icons.info_outline, color: Colors.amber),
+              leading: Icon(Icons.info_outline, color: TimemachineColors.of(context).infoIcon),
               actions: [
                 TextButton(onPressed: _startContentIndex, child: const Text('재색인 시작')),
                 TextButton(onPressed: () => setState(() => _contentReindexDismissed = true), child: const Text('닫기')),
@@ -1128,7 +1129,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                     if (result.hierarchy.isNotEmpty)
                       Text(
                         result.hierarchy,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: TimemachineColors.of(context).hintText),
                       ),
                   ],
                 ),
@@ -1351,7 +1352,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                               width: 12,
                               height: 20,
                               alignment: Alignment.center,
-                              child: Container(width: 2, height: 16, color: Colors.grey.withValues(alpha: 0.4)),
+                              child: Container(width: 2, height: 16, color: TimemachineColors.of(context).rule.withValues(alpha: 0.4)),
                             ),
                           ),
                         ),
@@ -1428,8 +1429,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       final ratio = maximum == 0 ? 0.0 : count / maximum;
       final barLength = 4.0 + 36.0 * ratio;
       final color = count > 0
-          ? Colors.blue.withValues(alpha: 0.3 + 0.7 * ratio)
-          : Colors.grey.withValues(alpha: 0.25);
+          ? TimemachineColors.of(context).blue.withValues(alpha: 0.3 + 0.7 * ratio)
+          : TimemachineColors.of(context).rule.withValues(alpha: 0.25);
       return Semantics(
         key: ValueKey('tm-density-bar-$h'),
         container: true,
@@ -1517,7 +1518,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       for(final root in roots) Row(children:[Expanded(child:Text('• $root')),IconButton(tooltip:'조사 폴더 삭제',onPressed:(){final next=Map<String,Object?>.from(_settings!)..['roots']=List<String>.from(roots.cast<String>())..remove(root);_saveSettings(next);},icon:const Icon(Icons.close))]),
       OutlinedButton.icon(onPressed:_addRoot,icon:const Icon(Icons.folder_open),label:const Text('조사 폴더 추가')),
       const SizedBox(height:16), FilledButton.icon(onPressed:_enable,icon:const Icon(Icons.power_settings_new),label:const Text('켜기')),
-      if (_error != null) Text(_error!,style:const TextStyle(color:Colors.red)),
+      if (_error != null) Text(_error!,style:TextStyle(color:TimemachineColors.of(context).error)),
       if (disconnected) TextButton(onPressed:_retryConnection,child:const Text('다시 연결')),
     ])))));
   }
@@ -1717,7 +1718,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Widget _dateCell(int index,DateTime date,int maximum) {
     if(index<0 || date.month!=_month.month) return const SizedBox(width:36,height:36);
     final count=_days['${date.day}']??0; final alpha=maximum==0?0.04:0.08+0.42*count/maximum;
-    return SizedBox(width:36,height:36,child:TextButton(key:ValueKey('tm-day-${date.day}'),style:TextButton.styleFrom(backgroundColor:Colors.blue.withValues(alpha:alpha),padding:EdgeInsets.zero),onPressed:()=>_chooseDay(date),child:Text('${date.day}')));
+    return SizedBox(width:36,height:36,child:TextButton(key:ValueKey('tm-day-${date.day}'),style:TextButton.styleFrom(backgroundColor:TimemachineColors.of(context).blue.withValues(alpha:alpha),padding:EdgeInsets.zero),onPressed:()=>_chooseDay(date),child:Text('${date.day}')));
   }
   Widget _timeline() {
     if (_items.isEmpty && !_loading) return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('이 기간에 기록된 파일이 없습니다.')));
@@ -1780,7 +1781,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
-                    const Icon(Icons.folder_zip_outlined, color: Colors.blue),
+                    Icon(Icons.folder_zip_outlined, color: TimemachineColors.of(context).blue),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
@@ -1810,9 +1811,9 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(width: 2, height: 8, color: Colors.blue),
-              Container(width: 2, height: 32, color: Colors.blue.withValues(alpha: .35)),
-              Container(width: 9, height: 9, decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle)),
+              Container(width: 2, height: 8, color: TimemachineColors.of(context).blue),
+              Container(width: 2, height: 32, color: TimemachineColors.of(context).blue.withValues(alpha: .35)),
+              Container(width: 9, height: 9, decoration: BoxDecoration(color: TimemachineColors.of(context).blue, shape: BoxShape.circle)),
             ],
           ),
         ),
@@ -1870,7 +1871,7 @@ class _HierarchyBreadcrumb extends StatelessWidget {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Colors.grey),
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(color: TimemachineColors.of(context).hintText),
       );
 }
 

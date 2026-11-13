@@ -18,6 +18,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'editor_colors.dart';
 import 'editor_core.dart';
 import 'editor_files.dart';
 import 'klib_editor_core.dart' show EditorBackend, KlibEditorCore, fetchEditorText;
@@ -114,7 +115,6 @@ class _MemoTextController extends TextEditingController {
   _MemoTextController({super.text});
 
   TextRange _highlight = TextRange.empty;
-  Color highlightColor = const Color(0x66FFC107);
 
   set highlight(TextRange range) {
     if (range == _highlight) return;
@@ -133,7 +133,7 @@ class _MemoTextController extends TextEditingController {
       style: style,
       children: [
         TextSpan(text: text.substring(0, h.start)),
-        TextSpan(text: text.substring(h.start, h.end), style: TextStyle(backgroundColor: highlightColor)),
+        TextSpan(text: text.substring(h.start, h.end), style: TextStyle(backgroundColor: EditorColors.of(context).findMark)),
         TextSpan(text: text.substring(h.end)),
       ],
     );

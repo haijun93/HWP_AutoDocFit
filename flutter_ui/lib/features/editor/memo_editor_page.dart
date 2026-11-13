@@ -6,6 +6,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'editor_colors.dart';
 import 'klib_editor_core.dart';
 import 'memo_editor.dart';
 
@@ -105,7 +106,7 @@ class _MemoEditorPageState<T> extends State<MemoEditorPage<T>> {
                   child: Text(
                     _error ?? widget.hint,
                     key: const ValueKey('memo-hint'),
-                    style: TextStyle(fontSize: 12, color: _error == null ? Colors.black54 : Colors.red),
+                    style: TextStyle(fontSize: 12, color: _error == null ? EditorColors.of(context).secondaryText : EditorColors.of(context).error),
                   ),
                 ),
                 FilledButton.icon(

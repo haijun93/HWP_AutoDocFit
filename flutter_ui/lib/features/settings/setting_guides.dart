@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'doc_preview.dart';
-import 'kiosk_theme.dart';
 
 /// 설정 분류(왼쪽 큰 타일).
 class GuideCategory {
@@ -56,7 +55,7 @@ bool _on(Object? value) => value == true;
 double _num(Object? value, double fallback) =>
     double.tryParse('${value ?? ''}'.trim()) ?? fallback;
 
-const _hl = Color(0xfffff3b0);
+const _hl = Color(0xfffff3b0); // 문서 색(테마 무관): 종이 위 형광 표시
 
 DocPara _item(
   String marker,
@@ -438,7 +437,7 @@ final Map<String, SettingGuide> settingGuides = {
         const DocPara(
           spans: [DocSpan('앞 문단의 마지막 줄')],
           size: 12,
-          color: Kiosk.faint,
+          color: Color(0xff8b95a1), // 문서 색(테마 무관): 흰 종이 위 흐린 앞 문단
         ),
         DocPara(
           marker: entry.value.$1,
@@ -676,7 +675,7 @@ final Map<String, SettingGuide> settingGuides = {
         size: 12,
         spans: [
           const DocSpan('남은 전기버스를 행정서비스에 '),
-          DocSpan('활용하는', mark: _on(v) ? const Color(0xffcfe3ff) : null),
+          DocSpan('활용하는', mark: _on(v) ? const Color(0xffcfe3ff) : null), // 문서 색(테마 무관)
           const DocSpan(' 방안'),
         ],
       ),
