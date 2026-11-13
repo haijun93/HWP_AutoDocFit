@@ -247,6 +247,24 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
       );
     }
+    if (field['type'] == 'choice') {
+      final choices = List<String>.from(field['choices'] as List);
+      final labels = field['choice_labels'] as Map? ?? const {};
+      final selected = '${_value(key)}';
+      return SizedBox(
+        width: 260,
+        child: DropdownButtonFormField<String>(
+          key: ValueKey(key),
+          initialValue: choices.contains(selected) ? selected : choices.first,
+          items: [for (final choice in choices)
+            DropdownMenuItem(value: choice, child: Text('${labels[choice] ?? choice}'))],
+          onChanged: locked ? null : (value) => setState(() {
+            if (value != null) changed[key] = value;
+            lastKey = key;
+          }),
+        ),
+      );
+    }
     final number = field['type'] == 'number';
     final unit = guideFor(key)?.unit;
     final box = SizedBox(

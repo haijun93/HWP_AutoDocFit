@@ -29,6 +29,7 @@ from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
 from .kfind_client import KfindClient, KfindError
+from .settings_schema import normalize_search_engine
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -44,7 +45,8 @@ ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
 class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
-                 developer_mode=None, idle_scheduler=None, kfind_client=None):
+                 developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None):
+        self.search_engine_provider = search_engine_provider
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
@@ -104,16 +106,26 @@ class TimemachineService:
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
 
     def _search_engine(self):
+        if self.search_engine_provider is not None:
+            return normalize_search_engine(self.search_engine_provider())
         value = self._settings.get("search_engine", "kfind")
         return value if value in {"kfind", "legacy", "shadow"} else "kfind"
 
     def _engine_status(self):
         with self._content_lock:
             state = dict(self._engine_state)
-            if self._search_engine() == "legacy":
+            requested = self._search_engine()
+            if requested == "legacy":
                 state.update(engine="legacy", engine_reason="configured_legacy")
-            return {**state, "requested_engine": self._search_engine(),
-                    "connection": self.kfind.state()}
+            connection = self.kfind.state()
+            # 전환 상태는 표시할 때마다 한곳에서 계산한다. configured_legacy는 자동 대체가 아니다.
+            transition = ("legacy" if requested == "legacy" else
+                          "ready" if state["engine"] == "kfind" else
+                          "seeding" if state["corpus"] == "seeding" else
+                          "pending" if state["corpus"] == "pending" else "fallback")
+            bundle = {**state, "requested_engine": requested, "connection": connection,
+                      "transition": transition}
+            return {**bundle, "search_engine_status": bundle}
 
     def _kfind_sync(self, path, result):
         """색인/위계/삭제 후 동기화 대기열. legacy에서는 연결·대기열 모두 건드리지 않는다."""
@@ -937,7 +949,7 @@ class TimemachineService:
         if action == "status":
             return self._status()
         if action == "settings_get" or (action == "settings" and not payload):
-            return {"ok": True, "settings": dict(self._settings, roots=list(self._settings["roots"]))}
+            return {"ok": True, "settings": dict(self._settings, roots=list(self._settings["roots"]), search_engine=self._search_engine())}
         if action in ("settings_set", "settings"):
             roots = self._validate_roots(payload.get("roots"))
             mode, enabled = payload.get("time_mode"), payload.get("enabled")

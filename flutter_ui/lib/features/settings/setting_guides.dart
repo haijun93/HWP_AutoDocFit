@@ -838,6 +838,10 @@ final Map<String, SettingGuide> settingGuides = {
   ),
 
   // ---------------- 프로그램·네트워크 ----------------
+  'search_engine': SettingGuide(
+    'program', '검색 엔진',
+    '기본은 새 검색 엔진이에요. 연결이나 검색 오류가 나면 기존 엔진으로 자동 대체해요. 기존 엔진을 직접 선택할 수도 있어요.',
+  ),
   'check_updates_on_start': SettingGuide(
     'program',
     '시작할 때 업데이트 확인',

@@ -131,7 +131,21 @@ DEFAULTS = {
     "hierarchy_engine": False,
     # 화면 테마: "system"(윈도 설정 따름)·"light"·"dark". 몽땅클립보드 상주 프로그램에도 전달한다.
     "theme_mode": "system",
+    "search_engine": "kfind",
 }
+
+SEARCH_ENGINES = ("kfind", "legacy")
+
+
+def normalize_search_engine(value):
+    return value if isinstance(value, str) and value in SEARCH_ENGINES else "kfind"
+
+
+def validate_search_engine(value):
+    if not isinstance(value, str) or value not in SEARCH_ENGINES:
+        raise ValueError("검색 엔진은 kfind·legacy 중 하나여야 합니다.")
+    return value
+
 
 THEME_MODES = ("system", "light", "dark")
 

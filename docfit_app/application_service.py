@@ -8,7 +8,7 @@ from docfit_app.abbreviation_service import AbbreviationService
 from docfit_app.api_contract import ServiceError, response
 from docfit_app.configuration_service import ConfigurationService
 from docfit_app.settings_service import SettingsService
-from docfit_app.settings_schema import DEFAULTS, normalize_theme_mode, validate_theme_mode
+from docfit_app.settings_schema import DEFAULTS, normalize_theme_mode, validate_theme_mode, normalize_search_engine
 from docfit_app.flow_service import FlowService
 from docfit_app.settings_migrations import migrate
 from docfit_core.hwpx import validate_and_inspect_hwpx
@@ -302,7 +302,8 @@ class ApplicationService:
                 from .timemachine_service import TimemachineService
                 # 쉬는 시간 색인(IDLE1): 자동 재색인은 사용자가 쉬는 동안에만, 낮은 우선순위로.
                 self._timemachine_service = TimemachineService(self.store._path.parent,
-                                                               idle_scheduler=shared_scheduler())
+                                                               idle_scheduler=shared_scheduler(),
+                                                               search_engine_provider=lambda: normalize_search_engine(self.store.read().get("search_engine")))
             return self._timemachine_service.command(*args)
         if method=='library':
             return self._library().command(*args)

@@ -9,6 +9,7 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/hierarchy_ffi.dart';
 import '../../core/instant_search.dart';
 import 'idle_indexing_status.dart';
+import 'search_engine_status.dart';
 import 'timemachine_colors.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -567,7 +568,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     if (!mounted || (status['ok'] == false && !status.containsKey('phase'))) return;
     final phase = status['phase'];
     final running = phase is String
-        ? const {'indexing', 'reindexing', 'cancel_requested'}.contains(phase)
+        ? const {'indexing', 'reindexing', 'kfind_seeding', 'cancel_requested'}.contains(phase)
         : status['running'] == true;
     setState(() {
       _contentProgress = status;
@@ -1667,6 +1668,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final tools = <Widget>[
       OutlinedButton.icon(onPressed:_scan,icon:const Icon(Icons.refresh),label:const Text('다시 훑기')),
       OutlinedButton.icon(key:const ValueKey('tm-clear-thumb-cache'),onPressed:_clearThumbnailCache,icon:const Icon(Icons.delete_outline),label:const Text('썸네일 캐시 지우기')),
+      SearchEngineStatus(status: _contentProgress),
       Row(mainAxisSize:MainAxisSize.min,children:[Icon(_watchByAgent?Icons.sync:Icons.hourglass_empty,size:18),const SizedBox(width:4),Text(_watchByAgent?'실시간 감시: K에이전트':'실시간 감시: 앱을 열 때만',key:const ValueKey('tm-watch-status'),style:Theme.of(context).textTheme.bodySmall)]),
     ];
     final children=<Widget>[

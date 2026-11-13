@@ -2119,6 +2119,7 @@ class DesktopWebBridge:
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
                 idle_scheduler=self._idle_scheduler(),
+                search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
             )
         return service
 
@@ -2549,7 +2550,7 @@ class DesktopWebBridge:
         """klib 브리지는 앱 시작 때 만들지 않고 처음 부를 때 만든다(v2.2.17: 속성 없음 오류 수정)."""
         if getattr(self, "_library_bridge", None) is None:
             from docfit_app.library_bridge import LibraryBridge
-            self._library_bridge = LibraryBridge()
+            self._library_bridge = LibraryBridge(settings_provider=lambda: self._settings_store().read())
             try:
                 self._idle_scheduler()
                 self._register_notebook_idle_job()
