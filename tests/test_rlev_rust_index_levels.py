@@ -180,7 +180,8 @@ class RealKlibLevelsTest(RustLevelsBase):
         subprocess.run([find_klib(), "index-content", index.path, str(self.root / "sample.md")],
                        check=True, capture_output=True)
         self.assertEqual(index.needs_reindex_count(roots=[str(self.root)]), 1)
-        self.assertEqual(self.breadcrumb(service, "고유검색어"), ["제목1"])
+        # RHIER1(2026-11-13) 뒤로는 klib 단독 색인도 Python과 같은 위계를 내므로 옛 경로가 틀린 위계를 낸다고 가정하지 않는다.
+        # 핵심은 위계 판 표시가 옛 값이면 다음 색인 때 다시 판정되는 것.
         self.index(service)
         self.assertEqual(self.breadcrumb(service, "고유검색어"), ["제목1 > 장 > 절"])
         self.assertEqual(index.needs_reindex_count(roots=[str(self.root)]), 0)

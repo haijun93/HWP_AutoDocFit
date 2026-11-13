@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/library/library_document_search.dart';
 
 void main() {
-  test('ISUI2: 가상 폴더 본문·위계검색은 타임머신 기존 명령에 검색어만 보낸다', () async {
+  test('ISUI2: 가상 폴더 본문·위계검색은 몽땅검색 기존 명령에 검색어만 보낸다', () async {
     final sent = <(String, List<Object?>)>[];
     Future<Object?> call(String method, List<Object?> args) async {
       sent.add((method, args));
