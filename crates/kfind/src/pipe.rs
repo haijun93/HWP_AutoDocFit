@@ -810,6 +810,11 @@ fn valid_sid(sid: &str) -> bool {
             .split('-')
             .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 }
+/// 해석 실패 응답. 오류 문구는 앞부분만 싣는다(요청 원문이 길게 되돌아가지 않게).
+fn bad_request(e: &str) -> Value {
+    let msg: String = e.chars().take(200).collect();
+    json!({"ok":false,"error":format!("bad request: {msg}")})
+}
 pub async fn serve_client(mut pipe: NamedPipeServer, handler: Handler) -> Result<()> {
     let mut pid = 0;
     if unsafe { GetNamedPipeClientProcessId(pipe.as_raw_handle().cast(), &mut pid) } == 0 {
@@ -823,17 +828,22 @@ pub async fn serve_client(mut pipe: NamedPipeServer, handler: Handler) -> Result
         }
         let mut bytes = vec![0; size];
         pipe.read_exact(&mut bytes).await?;
-        let request = decode(&bytes)?;
-        let response = tokio::task::spawn_blocking(move || {
-            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                handler.handle(&sid, request)
-            })) {
-                Ok(Ok(value)) => json!({"ok":true,"result":value}),
-                Ok(Err(e)) => json!({"ok":false,"error":e.to_string()}),
-                Err(_) => json!({"ok":false,"error":"query panic isolated"}),
+        let response = match decode(&bytes) {
+            // 해석 못 하는 요청도 연결을 끊지 않고 오류 응답을 돌려준다(MG3).
+            Err(e) => bad_request(&e.to_string()),
+            Ok(request) => {
+                tokio::task::spawn_blocking(move || {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        handler.handle(&sid, request)
+                    })) {
+                        Ok(Ok(value)) => json!({"ok":true,"result":value}),
+                        Ok(Err(e)) => json!({"ok":false,"error":e.to_string()}),
+                        Err(_) => json!({"ok":false,"error":"query panic isolated"}),
+                    }
+                })
+                .await?
             }
-        })
-        .await?;
+        };
         let bytes = serde_json::to_vec(&response)?;
         pipe.write_u32_le(bytes.len() as u32).await?;
         pipe.write_all(&bytes).await?;
@@ -1046,6 +1056,50 @@ mod tests {
             }
             task.await.unwrap();
         }
+    }
+    async fn pipe_roundtrip(handler: &Handler, name: &str, body: &[u8]) -> Value {
+        let server = create(name, true).unwrap();
+        let h = handler.clone();
+        let task = tokio::spawn(async move {
+            server.connect().await.unwrap();
+            serve_client(server, h).await
+        });
+        let mut client = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(name)
+            .unwrap();
+        client.write_u32_le(body.len() as u32).await.unwrap();
+        client.write_all(body).await.unwrap();
+        let n = client.read_u32_le().await.unwrap();
+        let mut bytes = vec![0; n as usize];
+        client.read_exact(&mut bytes).await.unwrap();
+        task.await.unwrap().unwrap();
+        serde_json::from_slice(&bytes).unwrap()
+    }
+    #[tokio::test]
+    async fn undecodable_request_gets_error_response() {
+        let d = tempfile::tempdir().unwrap();
+        let name = format!(r"\\.\pipe\kfind-badreq-{}", std::process::id());
+        let handler = Handler::new(d.path().to_owned());
+        for body in [
+            &br#"{"command":"status","id":7}"#[..],
+            br#"{"command":"names_status","id":7}"#,
+            br#"{"command":"names_build","id":7}"#,
+            br#"{"command":"no_such"}"#,
+            br#"not json"#,
+            b"\xff\xfe",
+        ] {
+            let r = pipe_roundtrip(&handler, &name, body).await;
+            assert_eq!(r["ok"], false, "{r}");
+            assert!(r["error"].as_str().unwrap().starts_with("bad request:"), "{r}");
+        }
+        // 같은 처리기로 정상 요청은 계속 된다.
+        let r = pipe_roundtrip(&handler, &name, br#"{"command":"status"}"#).await;
+        assert_eq!(r["ok"], true, "{r}");
+    }
+    #[test]
+    fn bad_request_message_is_bounded() {
+        let r = bad_request(&"x".repeat(5000));
+        assert!(r["error"].as_str().unwrap().len() < 220);
     }
     // ---- KFS1: ingest·remove·stale·count, 문서 표, query 응답의 path·문장 위치 ----
     const SID: &str = "S-1-5-21-7";
