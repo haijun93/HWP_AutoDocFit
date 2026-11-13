@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import itertools
 import json
 import logging
@@ -97,7 +98,7 @@ class TimemachineService:
         subprocess.Popen(["explorer", "/select," + path])
 
     def _defaults(self):
-        return {"roots": default_roots(), "time_mode": "max", "enabled": True, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
+        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
                 "search_engine": "kfind",
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
 
@@ -815,6 +816,72 @@ class TimemachineService:
 
     RELATED_QUERY_SORTS = frozenset({"hierarchy_relevance", "mentions", "relevance"})
 
+    def _search_rows(self, query, *, hierarchy=False, limit=100, offset=0, sort="hierarchy_relevance"):
+        parsed = self.content_index.parse_query(query)
+        if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
+            raise ValueError("결과 개수와 시작 위치를 확인해 주세요.")
+        def legacy():
+            if not self._settings["roots"]:
+                return []
+            if hierarchy:
+                return self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
+            return self.content_index.keyword_search(query, roots=self._settings["roots"], limit=limit, offset=offset)
+        requested = self._search_engine()
+        if requested == "legacy":
+            with self._content_lock:
+                self._engine_state.update(engine="legacy", engine_reason="configured_legacy")
+            return legacy()
+        if not self._settings["roots"]:
+            return []
+        try:
+            status = self.kfind.status()
+            with self._content_lock:
+                ready = self._kfind_synced and status["generation"] == self._kfind_generation
+                if not ready:
+                    self._kfind_synced = False
+            if not ready:
+                self._start_kfind_seeding()
+                raise KfindError("kfind_seeding")
+            # tm은 공유 서비스 범위. 조사 폴더는 앱 설정마다 달라 전체 순위 뒤 현재 폴더로 거른다.
+            response = self.kfind.query(" ".join(parsed["terms"]), "tm", top=0, refs=3,
+                filters={key: parsed[key] for key in ("ext", "path", "after", "before", "exclude", "phrases")},
+                request_id=next(self._kfind_ids))
+            response = dict(response, hits=[hit for hit in response["hits"]
+                if isinstance(hit.get("path"), str) and self._path_in_active_root(hit["path"])])
+            if sort == "mentions":
+                response["hits"].sort(key=lambda hit: -hit["count"])
+            response["hits"] = response["hits"][offset:offset + limit]
+            converter = to_hierarchy_rows if hierarchy else to_keyword_rows
+            rows = converter(response, self.content_index, **({} if hierarchy else {"offset": offset}))
+            with self._content_lock:
+                self._kfind_generation = response["generation"]
+                self._engine_state.update(engine="kfind", engine_reason=None, corpus="synced")
+            if requested == "shadow":
+                old = legacy()
+                self._record_search_shadow(query, old, rows)
+                with self._content_lock:
+                    self._engine_state.update(engine="legacy", engine_reason="shadow")
+                return old
+            return rows
+        except Exception as exc:
+            with self._content_lock:
+                self._engine_state.update(engine="legacy", engine_reason=str(exc))
+            return legacy()
+
+    def _record_search_shadow(self, query, old, new):
+        """비교의 원문은 남기지 않는다. APP1-J의 정밀 E1~E8 판정은 별도 도구가 맡는다."""
+        directory = self.settings_root / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "search-shadow.jsonl"
+        entry = {"query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                 "legacy_count": len(old), "kfind_count": len(new),
+                 "same_paths": [r["path"] for r in old] == [r["path"] for r in new]}
+        with self._content_lock:
+            if target.exists() and target.stat().st_size >= 1024 * 1024:
+                target.replace(target.with_suffix(".jsonl.1"))
+            with target.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(entry) + "\n")
+
     def _related_query_search(self, query, payload):
         """검색어만으로 하는 위계검색. 결과 형태는 본문검색(content_search)과 같다(path·file_name 포함)."""
         limit = payload.get("limit", 100)
@@ -826,10 +893,10 @@ class TimemachineService:
         if not self._settings["roots"]:
             # search()는 roots가 비면 전체 색인을 찾으므로, 조사 폴더가 없으면 아무것도 돌려주지 않는다.
             return {"ok": True, "mode": "query", "items": []}
-        rows = self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
+        rows = self._search_rows(query, hierarchy=True, limit=limit, sort=sort)
         for row in rows:
             row["file_name"] = row["name"]
-        return {"ok": True, "mode": "query", "items": rows}
+        return {"ok": True, "mode": "query", "items": rows, **self._engine_status()}
 
     def _command(self, action, payload):
         if action in self.DEVELOPER_ONLY_ACTIONS:
@@ -894,11 +961,11 @@ class TimemachineService:
             return self.cancel_content_index(wait=bool(payload.get("wait", False)), timeout=float(payload.get("timeout", 2.0)))
         if action == "content_search":
             query = payload.get("query")
-            rows = self.content_index.keyword_search(query, roots=self._settings["roots"],
+            rows = self._search_rows(query,
                 limit=payload.get("limit", 100), offset=payload.get("offset", 0))
             for row in rows:
                 row["file_name"] = row["name"]
-            return {"ok": True, "items": rows}
+            return {"ok": True, "items": rows, **self._engine_status()}
         if action == "content_export_markdown":
             target = payload.get("path")
             if not isinstance(target, str) or not target.strip():
