@@ -1,0 +1,23 @@
+[package]
+name = "hwpx-layout"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+description = "한/글이 저장한 HWPX의 줄 배치(hp:linesegarray)를 읽어 문단별 줄 수·줄 시작·쪽을 낸다(COMX1 연구 프로토타입)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+quick-xml = "0.41"
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+serde_json = "1"
+
+[[bin]]
+name = "hwpx-layout"
+path = "src/bin/hwpx-layout.rs"
+
+[profile.release]
+lto = true
+codegen-units = 1
