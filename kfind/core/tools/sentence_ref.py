@@ -275,7 +275,7 @@ def cases_tsv():
 def _rust(exe, paragraphs):
     """EXE는 줄마다 16진 문단을 받아 줄마다 구간을 돌려준다(examples/sentence_dump.rs)."""
     inp = "".join(to_hex(p) + "\n" for p in paragraphs).encode("ascii")
-    out = subprocess.run([exe], input=inp, capture_output=True, check=True).stdout.decode("ascii")
+    out = subprocess.run([str(Path(exe).resolve())], input=inp, capture_output=True, check=True).stdout.decode("ascii")
     return out.splitlines()
 
 
