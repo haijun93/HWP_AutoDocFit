@@ -68,6 +68,9 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | xlrd 2.0.1 | 엑셀(.xls) 읽기 | BSD-3-Clause | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
 | windows-sys 0.59, png 0.17, qoi 0.4(썸네일 디스크 캐시, KCAP3) | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml`, 라이선스는 일반 지식 |
 | rusqlite 0.33(SQLite 포함), tantivy 0.27 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
+| fst 0.4.7, roaring 0.12.0, memmap2 0.9.12, memchr 2.8, unicode-normalization 0.1.26 | 독자 검색 엔진 문장 색인(`kfind/core`, Rust) | fst·memchr: Unlicense OR MIT, roaring·memmap2·unicode-normalization: MIT OR Apache-2.0 | 의존성: `kfind/core/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
+| rayon 1.12, memchr 2.8, memmap2 0.9.12, windows-sys 0.59 | 독자 검색 엔진 파일명 색인(`kfind/names`, Rust) | MIT OR Apache-2.0 (memchr: Unlicense OR MIT) | 의존성: `kfind/names/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
+| tokio 1.54, windows-service 0.8.1, serde 1.0, serde_json 1.0, windows-sys 0.59 | 색인 서비스 실행 파일(`crates/kfind`, `kfind.exe`, Rust) | tokio: MIT, 나머지: MIT OR Apache-2.0 | 의존성: `crates/kfind/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
 | file_selector, web, webview_flutter_windows 1.2.0 | Flutter 화면 | BSD-3-Clause | 의존성: `flutter_ui/pubspec.yaml`, 라이선스는 일반 지식 |
 | Material Icons 글꼴(Flutter 포함) | 화면 아이콘 | Apache-2.0 | 일반 지식 |
 

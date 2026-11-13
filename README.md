@@ -206,7 +206,7 @@ PC에 흩어진 작업 파일을 파일명·본문·위계로 한곳에서 찾�
 
 #### 독자 개발 검색 엔진 (개발 중)
 
-본문검색·위계검색에 쓸 검색 엔진(kfind)을 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발하고 있습니다. 아직 개발 중이며, 현재 배포판의 검색은 기존 방식으로 동작합니다.
+본문검색·위계검색에 쓸 검색 엔진(kfind)을 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발하고 있습니다. v2.2.65부터 앱 안 검색(본문검색·위계검색)은 이 엔진을 기본으로 쓰고, 엔진이 응답하지 않으면 기존 방식으로 자동 대체합니다. 엔진 코드는 이 저장소의 `kfind/`·`crates/kfind/`에 공개되어 있습니다.
 
 - 문장 단위 다중 단어 검색: 여러 단어가 같은 문장 안에 함께 나오는 경우를 색인 단계에서 바로 판정합니다.
 - 한국어 부분 일치: 2글자 조각 단위로 색인하여 조사·어미가 붙은 단어도 찾습니다.
@@ -292,7 +292,7 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 ## 라이선스
 
 - **앱**: [MIT 라이선스](LICENSE)로 배포합니다.
-- **독자 검색 엔진(kfind)**: 엔진 폴더(`kfind/`, `crates/kfind/` 등)에는 [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/)과 출처 표시 의무를 적용합니다. 엔진 코드는 아직 이 저장소에 없으며 차기 버전에서 공개할 예정입니다(공개 버전부터 적용).
+- **독자 검색 엔진(kfind)**: `kfind/`(`kfind/core/`·`kfind/names/` 포함)·`crates/kfind/` 폴더는 MIT가 아니라 [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/) + 출처 표시 조건으로 배포합니다(전문: [`kfind/LICENSE`](kfind/LICENSE)). 비상업적 사용만 허용하며, 수정·재배포는 허용하지 않습니다.
 - 함께 쓰는 오픈소스의 라이선스는 [사용한 오픈소스](THIRD_PARTY_NOTICES.md)를 참고하세요.
 
 ## 배포 현황
@@ -327,7 +327,7 @@ Once a report draft is written, a lot of time still goes into rule-based finishi
 - **AI answer to official-document format** — paste an answer from ChatGPT, Gemini, Claude, etc.; leftover Markdown/HTML marks are cleaned up and the text is restructured into the standard Korean official-document bullet hierarchy (□, ㅇ, -, •).
 - **Mongttang Search (all-in-one search, formerly "Time Machine")** — search your work files by file name, full text or document hierarchy from one place. The three modes share one search box, results appear as you type (two or more characters, no Enter needed), documents open directly from the results, and a timeline shows earlier versions and change history.
 - **Hierarchy search** — ranks results by where the term appears in the document's structure (title, chapter, section, body, tables) and shows the document path of each hit.
-- **In-house search engine (kfind, in development)** — a Rust search engine written from scratch for full-text and hierarchy search: multi-word matching within a single sentence, Korean partial matching by indexing two-character fragments, and a compact index built on an FST term dictionary and Roaring compressed bitmaps. In our own test (3,000 documents) indexing took 8.9 s with a 32 MB index, and a single query took at most 1.4 ms of engine time. It is still in development and not yet used by the released app.
+- **In-house search engine (kfind, in development)** — a Rust search engine written from scratch for full-text and hierarchy search: multi-word matching within a single sentence, Korean partial matching by indexing two-character fragments, and a compact index built on an FST term dictionary and Roaring compressed bitmaps. In our own test (3,000 documents) indexing took 8.9 s with a 32 MB index, and a single query took at most 1.4 ms of engine time. From v2.2.65 the app's built-in search uses it by default and falls back to the previous search automatically if the engine does not respond.
 - **Virtual folders** — collect references to original files (not copies) in a lightweight separate window (`kvf.exe`), sorted into areas such as key materials, background materials, references and scratch space; convert to a real folder when needed.
 - **Work Library (offline notebook)** — group laws, manuals, past reports and references by topic and search only within that set; matching passages from each checked source are shown side by side, and you can keep notes.
 - **Mongttang Clipboard** — keeps a history of copied text and images. Press `Ctrl+Shift+V` (default) for a quick list to paste from, screenshot folders are detected automatically so new screenshots join the list, and image items show a large preview.
@@ -352,7 +352,7 @@ The user interface and documentation are in Korean.
 ### License
 
 - **Application**: [MIT License](LICENSE).
-- **kfind search engine**: the engine folders (`kfind/`, `crates/kfind/`, etc.) will be licensed under [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/) with an attribution requirement, starting from the version in which they are published. The engine code is not in this repository yet and is planned for a future release.
+- **kfind search engine**: the `kfind/` (including `kfind/core/` and `kfind/names/`) and `crates/kfind/` folders are not MIT; they are licensed under [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/) with an attribution requirement (full text: [`kfind/LICENSE`](kfind/LICENSE)). Noncommercial use only; modification and redistribution are not permitted.
 - Third-party components: see [Third-party notices](THIRD_PARTY_NOTICES.md).
 
 See the [user guide](docs/USER_GUIDE.md) and [development guide](docs/DEVELOPMENT.md) (both in Korean) for details.

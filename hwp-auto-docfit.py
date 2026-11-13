@@ -3438,6 +3438,12 @@ def main():
 
         threading.Thread(target=_배경_런타임_배포, name="kordoc-deploy", daemon=True).start()
 
+    try:
+        from docfit_app.kfind_process import ensure_kfind_running
+        threading.Thread(target=ensure_kfind_running, name="kfind-ensure", daemon=True).start()
+    except Exception:
+        pass
+
     # WebView2가 있으면 반응형 웹 화면을 주 UI로 사용하고, 문서 처리·설정 창은
     # 기존 Tk 백엔드에 연결한다. WebView 초기화 문제 진단·복구 시 환경변수로
     # 기존 화면을 선택할 수 있고, 연결 패키지가 없을 때도 Tk 화면으로 돌아간다.

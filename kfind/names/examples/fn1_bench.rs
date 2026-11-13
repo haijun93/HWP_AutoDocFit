@@ -1,7 +1,7 @@
 //! FN1 측정: 이 PC 고정 드라이브 전체 이름 색인 → 질의 지연(콜드·웜 p50/p95, 입력 연속) → Everything(IPC) 같은 질의 비교.
 //! 파일 내용은 읽지 않는다(이름·속성만). 결과 이름은 출력하지 않고 개수만 적는다.
 //!
-//! cargo run --release --example fn1_bench -- --out G:/docfit-tmp/fn1 [--runs 30] [--everything] [--kfind-exe PATH]
+//! cargo run --release --example fn1_bench -- --out <출력 폴더> [--runs 30] [--everything] [--kfind-exe PATH]
 #![cfg(windows)]
 use std::ffi::c_void;
 use std::io::{Read, Write};

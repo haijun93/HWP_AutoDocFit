@@ -186,6 +186,22 @@ jobs:
           (Get-FileHash resources/kvf.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kvf.exe.sha256
           if (!(Test-Path resources/kvf.exe) -or !(Test-Path resources/kvf.exe.sha256)) { throw 'kvf bundle missing' }
 
+      - name: Build kfind service (kfind.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path kfind/core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --release --locked --manifest-path kfind/names/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo test --release --locked --manifest-path crates/kfind/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path crates/kfind/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item crates/kfind/target/release/kfind.exe resources/kfind.exe -Force
+          (Get-FileHash resources/kfind.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kfind.exe.sha256
+          if (!(Test-Path resources/kfind.exe) -or !(Test-Path resources/kfind.exe.sha256)) { throw 'kfind bundle missing' }
+
       - name: Test hierarchy core (Rust)
         shell: pwsh
         run: cargo test --manifest-path hierarchy/Cargo.toml
@@ -226,6 +242,14 @@ jobs:
           if (!(Test-Path "$folder/kvf.exe") -or !(Test-Path "$folder/kvf.exe.sha256")) { throw 'kvf missing from frozen bundle' }
           $expected = (Get-Content "$folder/kvf.exe.sha256" -Raw).Trim()
           if ((Get-FileHash "$folder/kvf.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'kvf bundle hash mismatch' }
+
+      - name: Verify kfind in frozen bundle
+        shell: pwsh
+        run: |
+          $folder = 'dist/HWP_AutoDocFit/_internal/resources'
+          if (!(Test-Path "$folder/kfind.exe") -or !(Test-Path "$folder/kfind.exe.sha256")) { throw 'kfind missing from frozen bundle' }
+          $expected = (Get-Content "$folder/kfind.exe.sha256" -Raw).Trim()
+          if ((Get-FileHash "$folder/kfind.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'kfind bundle hash mismatch' }
 
       - name: Build per-user Inno Setup installer
         shell: pwsh
