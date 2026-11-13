@@ -505,6 +505,22 @@ pub fn update_settings(new: &json::Value) -> Settings {
     snapshot
 }
 
+/// 테마 상태 전이(창 스레드에서만): 설정의 선호(`theme`) + 시스템 앱 모드·고대비 → `ui_theme` 상태 하나.
+/// 보이는 색이 바뀌면 창 틀을 맞추고 바로 다시 그린다. 선호가 바뀌었고 `broadcast`면(관리창·설정 메뉴로 바꿈)
+/// 다른 프로세스(kvf)에 알린다. 시작할 때·WM_SETTINGS·테마 메시지에서 부른다.
+fn refresh_theme(broadcast: bool) {
+    let pref = ui_theme::ThemePref::parse(&app().settings.lock().unwrap().theme);
+    let change = ui_theme::refresh(pref);
+    if change.look {
+        ui_theme::apply_window(main_hwnd(), ui_theme::theme().kind);
+        popup::apply_theme();
+        preview::apply_theme();
+    }
+    if change.pref && broadcast {
+        ui_theme::broadcast_changed();
+    }
+}
+
 /// 시간 일시정지가 끝나는 때(ms, 0 = 없음).
 static PAUSE_UNTIL_MS: AtomicU64 = AtomicU64::new(0);
 const TIMER_RESUME: usize = 2;
@@ -971,6 +987,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_SETTINGS => {
                 register_hotkey(hwnd);
+                refresh_theme(true);
                 popup::apply_settings();
                 let paused = app().settings.lock().unwrap().paused;
                 set_listening(hwnd, !paused);
@@ -987,6 +1004,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = std::fs::remove_file(format!("{}\\status.json", app().dir));
                 PostQuitMessage(0);
                 0
+            }
+            // 시스템 앱 모드·고대비·시스템 색이 바뀌었거나 다른 프로세스가 테마 변경을 알렸다.
+            _ if ui_theme::is_theme_message(msg, wp, lp) => {
+                refresh_theme(false);
+                DefWindowProcW(hwnd, msg, wp, lp)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
@@ -1114,6 +1136,9 @@ fn main() {
             std::process::exit(3);
         }
         app().hwnd.store(hwnd as isize, Ordering::Relaxed);
+        // 창을 만들기 전에 테마를 정한다(빠른 목록 창은 만들 때 틀 색을 입힌다). 트레이 메뉴 소유 창도 맞춘다.
+        refresh_theme(false);
+        ui_theme::apply_window(hwnd, ui_theme::theme().kind);
         popup::register(instance);
         preview::register(instance);
         // 격리 시험 전용: 시험 폴더가 없으면 실제 기록에 시험 항목을 넣지 않도록 무시한다.

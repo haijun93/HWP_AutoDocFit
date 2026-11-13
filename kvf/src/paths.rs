@@ -3,6 +3,8 @@ use std::path::PathBuf;
 
 pub fn data_dir() -> PathBuf { root("KVF_TEST_ROOT", "kvf") }
 pub fn library_dir() -> PathBuf { root("KLIB_TEST_ROOT", "library") }
+/// kagent 설정 파일(읽기 전용: 단축키 비교·화면 테마). tray.rs와 같은 위치.
+pub fn agent_settings() -> PathBuf { root("KAGENT_TEST_ROOT", "kagent").join("settings.json") }
 fn root(key: &str, leaf: &str) -> PathBuf {
     std::env::var_os(key).map(PathBuf::from).unwrap_or_else(|| {
         PathBuf::from(std::env::var_os("LOCALAPPDATA").expect("LOCALAPPDATA 없음"))

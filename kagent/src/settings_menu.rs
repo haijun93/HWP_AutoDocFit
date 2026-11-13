@@ -7,6 +7,7 @@
 
 use crate::json::Value;
 use crate::store::Settings;
+use ui_theme::ThemePref;
 
 /// 보관 개수·크기·기간 선택지(관리창 드롭다운과 같은 값 + 항목 하나 최대 크기).
 pub const MAX_ITEMS: [i64; 6] = [20, 50, 100, 200, 500, 1000];
@@ -115,6 +116,8 @@ pub enum Command {
     Autostart(bool),
     /// 일시정지(분, 0 = 다시 켤 때까지).
     Pause(u32),
+    /// 화면 테마(시스템 따라가기·밝게·어둡게).
+    Theme(ThemePref),
     Resume,
     ClearAll,
     Quit,
@@ -126,6 +129,7 @@ const ID_RESUME: usize = 110;
 const ID_CLEAR: usize = 120;
 const ID_QUIT: usize = 121;
 const ID_FLAG: usize = 130; // + Flag 순서
+const ID_THEME: usize = 160; // + ThemePref::ALL 순서
 const ID_PAUSE: usize = 50_000; // + 분(0~1440)
 const ID_NUMBER: usize = 10_000; // Number 코드 × 10000 + 값
 
@@ -137,6 +141,7 @@ pub fn command_id(c: Command) -> usize {
         Command::Autostart(true) => ID_AUTOSTART_ON,
         Command::Autostart(false) => ID_AUTOSTART_OFF,
         Command::Pause(m) => ID_PAUSE + m.min(1440) as usize,
+        Command::Theme(t) => ID_THEME + ThemePref::ALL.iter().position(|x| *x == t).unwrap_or(0),
         Command::Resume => ID_RESUME,
         Command::ClearAll => ID_CLEAR,
         Command::Quit => ID_QUIT,
@@ -151,6 +156,7 @@ pub fn command_of(id: usize) -> Option<Command> {
         ID_CLEAR => Some(Command::ClearAll),
         ID_QUIT => Some(Command::Quit),
         _ if (ID_FLAG..ID_FLAG + Flag::ALL.len()).contains(&id) => Some(Command::Toggle(Flag::ALL[id - ID_FLAG])),
+        _ if (ID_THEME..ID_THEME + ThemePref::ALL.len()).contains(&id) => Some(Command::Theme(ThemePref::ALL[id - ID_THEME])),
         _ if (ID_PAUSE..=ID_PAUSE + 1440).contains(&id) => Some(Command::Pause((id - ID_PAUSE) as u32)),
         _ if (ID_NUMBER..ID_PAUSE).contains(&id) => {
             Number::from_code(id / ID_NUMBER).map(|n| Command::Set(n, (id % ID_NUMBER) as i64))
@@ -182,6 +188,14 @@ pub struct Extra {
     pub autostart: Option<bool>,
     /// 시간 일시정지면 다시 기록까지 남은 분.
     pub resume_in_min: Option<u64>,
+}
+
+fn theme_label(t: ThemePref) -> &'static str {
+    match t {
+        ThemePref::System => "시스템 설정 따라가기",
+        ThemePref::Light => "밝게",
+        ThemePref::Dark => "어둡게",
+    }
 }
 
 fn pause_label(m: u32) -> String {
@@ -229,6 +243,10 @@ pub fn build(s: &Settings, extra: Extra) -> Vec<Entry> {
         None => out.push(note("Windows 로그인 시 자동 실행(확인 못 함)")),
     }
     out.push(note(format!("단축키: {} (관리창에서 안내)", s.hotkey)));
+    // 화면 테마(고대비가 켜져 있으면 선택과 상관없이 시스템 고대비 색)
+    let theme = ThemePref::parse(&s.theme);
+    let entries = ThemePref::ALL.iter().map(|t| item(Command::Theme(*t), theme_label(*t), *t == theme, true)).collect();
+    out.push(Entry::Sub { label: format!("화면 테마: {}", theme_label(theme)), entries });
     out.push(Entry::Separator);
     out.push(item(Command::ClearAll, "모두 지우기(고정 항목 제외)…", false, false));
     out.push(item(Command::Quit, "몽땅클립보드 끄기…", false, false));
@@ -241,6 +259,7 @@ pub fn settings_patch(s: &Settings, c: Command) -> Option<Value> {
     match c {
         Command::Set(n, v) => Some(Value::obj(vec![(n.key(), v.into())])),
         Command::Toggle(f) => Some(Value::obj(vec![(f.key(), (!f.get(s)).into())])),
+        Command::Theme(t) => Some(Value::obj(vec![("theme", t.as_str().into())])),
         _ => None,
     }
 }
@@ -399,6 +418,35 @@ mod tests {
         assert_eq!(command_id(Command::Toggle(Flag::Sticky)), 130);
         assert_eq!(command_id(Command::Toggle(Flag::WatchScreenshots)), 133);
         assert_eq!(command_id(Command::Toggle(Flag::ExcelTarget)), 134);
+        assert_eq!(command_of(134), Some(Command::Toggle(Flag::ExcelTarget)));
+    }
+
+    #[test]
+    fn theme_submenu_marks_current_choice_and_patches_settings() {
+        let mut s = Settings::default();
+        let m = build(&s, Extra::default());
+        let Entry::Sub { label, entries } = find(&m, "화면 테마") else { panic!("테마 하위 메뉴") };
+        assert_eq!(label, "화면 테마: 시스템 설정 따라가기");
+        let rows: Vec<_> = entries.iter().filter_map(|e| match e {
+            Entry::Item { id, label, checked, radio: true, enabled: true } => Some((command_of(*id), label.as_str(), *checked)),
+            _ => None }).collect();
+        assert_eq!(rows, [
+            (Some(Command::Theme(ThemePref::System)), "시스템 설정 따라가기", true),
+            (Some(Command::Theme(ThemePref::Light)), "밝게", false),
+            (Some(Command::Theme(ThemePref::Dark)), "어둡게", false),
+        ]);
+        // 고르면 settings_set과 같은 키·검사를 지난다.
+        for t in ThemePref::ALL {
+            let mut u = s.clone();
+            u.apply(&settings_patch(&s, Command::Theme(t)).unwrap());
+            assert_eq!(u.theme, t.as_str());
+        }
+        s.theme = "dark".into();
+        let m = build(&s, Extra::default());
+        assert!(matches!(find(&m, "화면 테마"), Entry::Sub { label, .. } if label == "화면 테마: 어둡게"));
+        // 번호는 다른 명령과 겹치지 않는다(160~162).
+        assert_eq!(command_id(Command::Theme(ThemePref::System)), 160);
+        assert_eq!(command_of(163), None);
         assert_eq!(command_of(134), Some(Command::Toggle(Flag::ExcelTarget)));
     }
 

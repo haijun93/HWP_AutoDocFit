@@ -45,6 +45,8 @@ pub struct Settings {
     pub popup_collapsed: bool,
     /// 엑셀 표 항목은 앱에 맡겨 '목표 결과'(공백·빈 칸·열 너비·칸 여백 정리)로 붙이기. 앱이 꺼져 있으면 원래대로.
     pub excel_target_paste: bool,
+    /// 네이티브 창 테마: "system"(시스템 따라가기, 기본)·"light"·"dark". 그 밖의 값은 무시(RUSTALL1 DARK1).
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             popup_height: 0,
             popup_collapsed: false,
             excel_target_paste: true,
+            theme: "system".into(),
         }
     }
 }
@@ -112,6 +115,7 @@ impl Settings {
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
             ("excel_target_paste", self.excel_target_paste.into()),
+            ("theme", self.theme.as_str().into()),
             ("policy_rev", 1i64.into()),
         ])
     }
@@ -182,6 +186,7 @@ impl Settings {
         if let Some(n) = v.num("popup_height").filter(|n| (150.0..=4000.0).contains(n)) { self.popup_height = n as i64; }
         if let Some(b) = v.bool("popup_collapsed") { self.popup_collapsed = b; }
         if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
+        if let Some(t) = v.str("theme").filter(|t| ui_theme::ThemePref::is_valid(t)) { self.theme = t.to_string(); }
     }
 
     pub fn load(path: &str) -> Settings {
@@ -715,6 +720,26 @@ mod tests {
         let mut roundtrip = Settings::default();
         roundtrip.apply(&settings.to_json());
         assert!(!roundtrip.watch_screenshots);
+    }
+
+    #[test]
+    fn theme_defaults_to_system_round_trips_and_ignores_unknown_values() {
+        assert_eq!(Settings::default().theme, "system");
+        assert_eq!(Settings::load(&std::env::temp_dir().join("kagent-no-such-dir").join("settings.json").to_string_lossy()).theme, "system");
+        let mut st = Settings::default();
+        st.apply(&json::parse(r#"{"theme":"dark"}"#).unwrap());
+        assert_eq!(st.theme, "dark");
+        for bad in [r#"{"theme":"Dark"}"#, r#"{"theme":"blue"}"#, r#"{"theme":1}"#, r#"{"theme":""}"#] {
+            st.apply(&json::parse(bad).unwrap());
+            assert_eq!(st.theme, "dark", "{bad}");
+        }
+        let mut back = Settings::default();
+        back.apply(&st.to_json());
+        assert_eq!(back.theme, "dark");
+        st.apply(&json::parse(r#"{"theme":"light"}"#).unwrap());
+        assert_eq!(st.theme, "light");
+        st.apply(&json::parse(r#"{"theme":"system"}"#).unwrap());
+        assert_eq!(st.theme, "system");
     }
 
     #[test]

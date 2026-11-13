@@ -145,6 +145,16 @@ pub fn register(instance: HINSTANCE) {
     }
 }
 
+/// 테마가 바뀌면 보이는 미리보기를 바로 다시 그린다(틀 없는 계층 창이라 DWM 모드만 맞춘다).
+pub fn apply_theme() {
+    let h = hwnd();
+    if h.is_null() {
+        return;
+    }
+    ui_theme::apply_window(h, ui_theme::theme().kind);
+    unsafe { InvalidateRect(h, std::ptr::null(), 0) };
+}
+
 /// 마우스·키보드가 가리키는 항목이 바뀌거나 움직일 때 부른다(창 스레드).
 pub fn point(target: Option<Target>, anchor: Anchor) {
     let cached = target.is_some_and(|t| crate::thumb::is_cached(t.id, t.size));
@@ -236,10 +246,11 @@ unsafe fn paint(h: HWND) {
         }
         let mut rc: RECT = std::mem::zeroed();
         GetClientRect(h, &mut rc);
-        let bg = CreateSolidBrush(0x00FFFFFF);
+        let p = ui_theme::palette();
+        let bg = CreateSolidBrush(p.bg);
         FillRect(dc, &rc, bg);
         DeleteObject(bg);
-        let border = CreateSolidBrush(0x00B4B4B4);
+        let border = CreateSolidBrush(p.preview_border);
         FrameRect(dc, &rc, border);
         DeleteObject(border);
         let shown = match SHARED.lock().unwrap().state { State::Showing(t) => Some(t), _ => None };

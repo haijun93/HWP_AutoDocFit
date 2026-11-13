@@ -45,6 +45,8 @@ windows-sys = { version = "0.59", features = [
 # 클립보드 비트맵(DIB) ↔ PNG. 순수 Rust.
 png = "0.17"
 regex = "1.13.1"
+# 공용 색 표(밝게·어둡게·고대비)와 Windows 테마 감지(RUSTALL1 DARK1).
+ui_theme = { path = "../ui_theme" }
 
 [profile.release]
 opt-level = 3
