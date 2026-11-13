@@ -26,7 +26,7 @@
 | `held` | 이 앱을 뺀 CPU > 25%(쉬는 중이면 60%) / 디스크 > 8MB/s(쉬는 중이면 32MB/s) | `cpu` / `disk` |
 | `idle` | 위 어느 것도 아님 | `idle` |
 
-- 신호: `GetLastInputInfo`, `GetSystemTimes`−`GetProcessTimes`(자기 몫 제외), `GetSystemPowerStatus`, `SHQueryUserNotificationState`(2·3·4). 디스크는 `psutil`이 있을 때만(없으면 판정에서 뺌). 측정은 1초에 한 번까지.
+- 신호: `GetLastInputInfo`, `GetSystemTimes`−`GetProcessTimes`(자기 몫 제외), `GetSystemPowerStatus`, `SHQueryUserNotificationState`(2·3·4). 디스크는 Win32 API(`IOCTL_DISK_PERFORMANCE`·`GetProcessIoCounters`, NBIDX1에서 psutil 대신 — 배포판에 psutil이 들어간다는 보장이 없어서). Win32 측정이 실패할 때만 psutil(있으면). 측정은 1초에 한 번까지.
 - 불가능한 전이: 설정 꺼짐·입력 있음 상태에서 다른 조건 확인 없이 `idle`로. 부하 기준은 들어갈 때·나갈 때를 달리 둬 색인 자신 때문에 들락거리지 않는다. 입력은 즉시 `active`.
 
 ### 2-2. 작업(`IdleIndexScheduler`의 `jobs[이름].state`)
@@ -79,7 +79,7 @@ isearch 파일은 고치지 않았다. APP1 카드가 쉬는 시간 스케줄러
 
 ## 6. 남은 문제
 
-- **업무자료함(노트북) 출처는 변경분 색인을 붙이지 못했다.** klib에 출처를 다시 넣는 명령이 없고, 지우고 다시 넣으면 출처 id가 바뀌어 메모 연결이 깨진다. klib `nb_source_refresh`(같은 id로 문단 교체)가 생기면 `IdleJob` 하나로 붙인다.
+- ~~업무자료함(노트북) 출처는 변경분 색인을 붙이지 못했다.~~ → NBIDX1(`docs/NBIDX1_NOTEBOOK_SEPARATE_INDEX_2026-11-13.md`): 별도 색인 + klib `nb_source_check`·`nb_source_refresh`(같은 id로 문단 교체) + 쉬는 시간 작업 `notebook-sources`.
 - 한 파일이 여러 자료함에 들어 있으면 자료함 변경분 색인을 건너뛴다(파이프 `index_file`이 자료함 id 하나만 받음, `skipped_multi_box`). klib에 `box_ids`를 받는 명령이 생기면 풀 것.
 - 실제 앱에서 사용자 입력·전체 화면·배터리 전이를 손으로 확인하지 않았다(시험은 가짜 신호). 부하 기준 숫자(25%/60%, 8/32MB/s)는 측정 근거 없이 정한 값이다.
 - 상태 줄은 타임머신 화면에만 붙였다. 앱 전체 상태 줄·자료함 화면에는 아직 없다(`content_status()["idle"]["jobs"]`로 읽을 수 있음).
