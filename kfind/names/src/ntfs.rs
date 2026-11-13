@@ -201,6 +201,7 @@ impl Volume {
                         name: String::from_utf16_lossy(r.name),
                         attrs: r.attrs,
                         kind: kind_from_reason(r.reason),
+                        time: r.time,
                     })
                 });
                 Ok((next, out))
@@ -230,6 +231,8 @@ pub struct Record<'a> {
     pub frn: u64,
     pub parent: u64,
     pub usn: i64,
+    /// 기록 시각(FILETIME 100ns).
+    pub time: i64,
     pub reason: u32,
     pub attrs: u32,
     pub name: &'a [u16],
@@ -249,11 +252,12 @@ pub fn parse_records(mut b: &[u8], mut f: impl FnMut(Record)) -> usize {
         let major = u16::from_le_bytes(r[4..6].try_into().unwrap());
         let u32at = |o: usize| u32::from_le_bytes(r[o..o + 4].try_into().unwrap());
         let u64at = |o: usize| u64::from_le_bytes(r[o..o + 8].try_into().unwrap());
-        let (frn, parent, usn, reason, attrs, nl, no) = match major {
+        let (frn, parent, usn, time, reason, attrs, nl, no) = match major {
             2 => (
                 u64at(8),
                 u64at(16),
                 u64at(24) as i64,
+                u64at(32) as i64,
                 u32at(40),
                 u32at(52),
                 u16::from_le_bytes(r[56..58].try_into().unwrap()),
@@ -263,6 +267,7 @@ pub fn parse_records(mut b: &[u8], mut f: impl FnMut(Record)) -> usize {
                 u64at(8),
                 u64at(24),
                 u64at(40) as i64,
+                u64at(48) as i64,
                 u32at(56),
                 u32at(68),
                 u16::from_le_bytes(r[72..74].try_into().unwrap()),
@@ -287,6 +292,7 @@ pub fn parse_records(mut b: &[u8], mut f: impl FnMut(Record)) -> usize {
             frn,
             parent,
             usn,
+            time,
             reason,
             attrs,
             name: &tmp,

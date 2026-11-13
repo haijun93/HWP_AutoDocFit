@@ -6,6 +6,10 @@ use crate::source::{Change, ChangeKind, attr, rec_of};
 
 /// 없음(부모 없음·레코드 없음).
 pub const NONE: u32 = u32::MAX;
+/// 크기를 모름(폴더, MFT 열거 원천). 크기 순에서 맨 뒤.
+pub const SIZE_UNKNOWN: u64 = u64::MAX;
+/// 고친 시각을 모름. 날짜 순에서 맨 뒤.
+pub const TIME_UNKNOWN: i64 = i64::MIN;
 
 /// 항목 표지(u8).
 pub mod flag {
@@ -157,6 +161,9 @@ pub struct View<'a> {
     pub key: &'a [u64],
     pub ext: &'a [u16],
     pub flags: &'a [u8],
+    /// 크기(바이트, 모르면 `SIZE_UNKNOWN`)·고친 시각(FILETIME 100ns, 모르면 `TIME_UNKNOWN`). Q-F2.
+    pub size: &'a [u64],
+    pub mtime: &'a [i64],
     /// 하위 트리 끝(제외). 기본판 항목만 뜻이 있다.
     pub end: &'a [u32],
     /// 비교형 덩어리: `0, f0, 0, f1, 0, …, f(n-1), 0`.
@@ -337,6 +344,8 @@ pub struct Names {
     pub(crate) key: Vec<u64>,
     pub(crate) ext: Vec<u16>,
     pub(crate) flags: Vec<u8>,
+    pub(crate) size: Vec<u64>,
+    pub(crate) mtime: Vec<i64>,
     pub(crate) end: Vec<u32>,
     pub(crate) fold: Vec<u8>,
     pub(crate) name: Vec<u8>,
@@ -358,6 +367,8 @@ impl Names {
             key: &self.key,
             ext: &self.ext,
             flags: &self.flags,
+            size: &self.size,
+            mtime: &self.mtime,
             end: &self.end,
             fold: &self.fold,
             name: &self.name,
@@ -402,6 +413,8 @@ impl Names {
             + self.key.capacity() * 8
             + self.ext.capacity() * 2
             + self.flags.capacity()
+            + self.size.capacity() * 8
+            + self.mtime.capacity() * 8
             + self.end.capacity() * 4
             + self.fold.capacity()
             + self.name.capacity()
@@ -443,7 +456,7 @@ impl Names {
         }
     }
 
-    fn push_entry(&mut self, parent: u32, name: &str, attrs: u32) -> u32 {
+    fn push_entry(&mut self, parent: u32, name: &str, attrs: u32, size: u64, mtime: i64) -> u32 {
         let idx = self.parent.len() as u32;
         let depth = if parent == NONE {
             0
@@ -462,6 +475,8 @@ impl Names {
         self.key.push(make_key(depth, f.as_bytes()));
         self.ext.push(e);
         self.flags.push(fl);
+        self.size.push(size);
+        self.mtime.push(mtime);
         self.end.push(idx + 1);
         idx
     }
@@ -469,6 +484,12 @@ impl Names {
     /// 만들기·이름 바꾸기·옮기기: 같은 이름·부모면 속성만 맞추고, 아니면 옛 항목을 지우고 새로 덧붙인다.
     /// 바뀌었으면 true.
     pub fn upsert(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32) -> bool {
+        self.upsert_meta(vol, rec, parent_rec, name, attrs, None, None)
+    }
+
+    /// `upsert`에 크기·고친 시각(아는 것만)을 더한 것. 모르는 값은 옛 항목 값을 이어받는다.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_meta(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32, size: Option<u64>, mtime: Option<i64>) -> bool {
         if vol as usize >= self.vols.len() || name.is_empty() {
             return false;
         }
@@ -487,16 +508,22 @@ impl Names {
             if v.parent_of(old) == pidx && v.name_of(old) == name {
                 let keep = self.flags[old as usize] & (flag::DELETED | flag::APPENDED);
                 let nf = flags_of(attrs) | keep;
-                if self.flags[old as usize] == nf {
+                let o = old as usize;
+                let ns = size.unwrap_or(self.size[o]);
+                let nt = mtime.unwrap_or(self.mtime[o]);
+                if self.flags[o] == nf && self.size[o] == ns && self.mtime[o] == nt {
                     return false;
                 }
-                self.flags[old as usize] = nf;
+                self.flags[o] = nf;
+                self.size[o] = ns;
+                self.mtime[o] = nt;
                 self.generation += 1;
                 return true;
             }
             let was_dir = self.flags[old as usize] & flag::DIR != 0;
+            let (os, ot) = (self.size[old as usize], self.mtime[old as usize]);
             self.mark_deleted(old);
-            let new = self.push_entry(pidx, name, attrs);
+            let new = self.push_entry(pidx, name, attrs, size.unwrap_or(os), mtime.unwrap_or(ot));
             if was_dir {
                 self.redirect.insert(old, new);
                 if old < self.base_len {
@@ -505,7 +532,7 @@ impl Names {
             }
             self.set_rec(vol, rec, new);
         } else {
-            let new = self.push_entry(pidx, name, attrs);
+            let new = self.push_entry(pidx, name, attrs, size.unwrap_or(SIZE_UNKNOWN), mtime.unwrap_or(TIME_UNKNOWN));
             self.set_rec(vol, rec, new);
         }
         self.generation += 1;
@@ -531,7 +558,10 @@ impl Names {
     /// 변경 기록 하나를 반영한다.
     pub fn apply(&mut self, c: &Change) -> bool {
         match c.kind {
-            ChangeKind::Upsert => self.upsert(c.vol, c.rec, c.parent, &c.name, c.attrs),
+            ChangeKind::Upsert => {
+                let t = (c.time != 0).then_some(c.time);
+                self.upsert_meta(c.vol, c.rec, c.parent, &c.name, c.attrs, None, t)
+            }
             ChangeKind::Remove => self.remove(c.vol, c.rec),
             ChangeKind::Ignore => false,
         }
@@ -559,12 +589,14 @@ impl Names {
                 } else {
                     rec_of_idx.get(&p).copied().unwrap_or(vol.root_rec)
                 };
-                b.push(
+                b.push_meta(
                     vi as u16,
                     r as u64,
                     pr,
                     v.name_of(i),
                     attrs_of(self.flags[i as usize]),
+                    self.size[i as usize],
+                    self.mtime[i as usize],
                 );
             }
         }

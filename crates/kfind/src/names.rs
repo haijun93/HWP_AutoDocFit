@@ -71,12 +71,9 @@ pub struct NamesService {
 }
 
 fn sort_of(s: Option<&str>) -> Result<Sort> {
-    Ok(match s.unwrap_or("relevance") {
-        "relevance" => Sort::Relevance,
-        "name" => Sort::Name,
-        "path" => Sort::Path,
-        other => return Err(format!("unknown sort {other}").into()),
-    })
+    let s = s.unwrap_or("relevance");
+    // relevance·name·path, Q-F2 size(큰 것 먼저)·date(최근 먼저).
+    Sort::parse(s).ok_or_else(|| format!("unknown sort {s}").into())
 }
 
 impl NamesService {
@@ -376,7 +373,7 @@ impl NamesService {
             s.search(&v, names.generation(), &q, &opts).map_err(|e| e.to_string())?
         };
         let search_ms = started.elapsed().as_secs_f64() * 1000.0;
-        let items: Vec<Value> = hits(&v, &r.top).into_iter().map(|h| json!({"name":h.name,"dir":h.dir,"is_dir":h.is_dir})).collect();
+        let items: Vec<Value> = hits(&v, &r.top).into_iter().map(|h| json!({"name":h.name,"dir":h.dir,"is_dir":h.is_dir,"size":h.size,"mtime":h.mtime})).collect();
         Ok(json!({
             "generation": names.generation(), "total": r.total, "items": items, "narrowed": r.narrowed,
             "search_ms": search_ms, "ms": started.elapsed().as_secs_f64() * 1000.0

@@ -38,6 +38,8 @@ pub struct Change {
     pub name: String,
     pub attrs: u32,
     pub kind: ChangeKind,
+    /// 바뀐 시각(FILETIME 100ns, USN 기록 시각). 0이면 모름.
+    pub time: i64,
 }
 
 /// USN 이유 → 변경 종류.

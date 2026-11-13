@@ -230,16 +230,22 @@ fn oracle(
             Some(w) if &f == w => 0,
             Some(w) if f.starts_with(w) => 1,
             _ => 2,
-        };
+        } + literal_tier(q, name);
         tuples.push(match sort {
             Sort::Relevance => (grade, depth, f),
             Sort::Name => (0, 0, f),
-            Sort::Path => (0, 0, Vec::new()),
+            Sort::Path | Sort::Size | Sort::Date => (0, 0, Vec::new()),
         });
         set.insert(full);
     }
     tuples.sort();
     (set, tuples)
+}
+
+/// Q-F3 기준: 글자 그대로(소문자) 낱말이 하나라도 이름에 없으면 4(등급 위 묶음).
+fn literal_tier(q: &Query, name: &str) -> u8 {
+    let lower = name.to_lowercase();
+    if q.literal.iter().all(|w| lower.contains(w.as_str())) { 0 } else { 4 }
 }
 
 fn engine_tuple(v: &View, q: &Query, id: u32, sort: Sort) -> (u8, u32, Vec<u8>) {
@@ -249,11 +255,11 @@ fn engine_tuple(v: &View, q: &Query, id: u32, sort: Sort) -> (u8, u32, Vec<u8>) 
         Some(w) if &f == w => 0,
         Some(w) if f.starts_with(w) => 1,
         _ => 2,
-    };
+    } + literal_tier(q, v.name_of(id));
     match sort {
         Sort::Relevance => (grade, depth, f),
         Sort::Name => (0, 0, f),
-        Sort::Path => (0, 0, Vec::new()),
+        Sort::Path | Sort::Size | Sort::Date => (0, 0, Vec::new()),
     }
 }
 
@@ -465,6 +471,7 @@ fn usn_changes_keep_results_exact() {
                     name: format!("새예산_{k}.hwp"),
                     attrs: 0,
                     kind: ChangeKind::Upsert,
+                    time: 0,
                 }
             }
             // 이름 바꾸기(같은 부모)
@@ -477,6 +484,7 @@ fn usn_changes_keep_results_exact() {
                     name: format!("바뀜_{nm}"),
                     attrs: a,
                     kind: ChangeKind::Upsert,
+                    time: 0,
                 }
             }
             // 옮기기(폴더 포함, 고리가 생기지 않게 다른 볼륨 뿌리 아래로만)
@@ -489,6 +497,7 @@ fn usn_changes_keep_results_exact() {
                     name: nm,
                     attrs: a,
                     kind: ChangeKind::Upsert,
+                    time: 0,
                 }
             }
             // 지우기(폴더는 빈 경우만 — NTFS와 같게)
@@ -504,6 +513,7 @@ fn usn_changes_keep_results_exact() {
                     name: String::new(),
                     attrs: 0,
                     kind: ChangeKind::Remove,
+                    time: 0,
                 }
             }
         };

@@ -6,13 +6,16 @@
 //! - `"…"`: 따옴표 안을 한 낱말로. `-낱말`·`!낱말`: 그 낱말이 이름에 없어야 한다.
 //! - `ext:hwp;pdf`: 확장자 중 하나. `path:낱말`: 조상 폴더 이름 중 하나가 그 낱말을 품음. `a\b`: `a`는 경로 조건, `b`는 이름 낱말.
 //! - `file:`·`folder:`(`dir:`): 종류.
+//! - Q-F3(사용자 결정 2026-11-14): 구분 기호를 빼고 비교하는 넓은 일치는 그대로 두고, 관련도 순에서는 입력한 글자
+//!   그대로(대소문자만 무시) 이름에 들어 있는 항목을 앞에 둔다("예산_집행" → `예산_집행.hwp`가 `예산집행.hwp`보다 앞).
+//! - Q-F2: 크기 순(큰 것 먼저)·날짜 순(최근 먼저). 모르는 값(폴더 크기, MFT 열거 원천)은 맨 뒤.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use memchr::memmem::Finder;
 use rayon::prelude::*;
 
-use crate::index::{EXT_OTHER, View, ext_fold, flag};
+use crate::index::{EXT_OTHER, SIZE_UNKNOWN, TIME_UNKNOWN, View, ext_fold, flag};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -35,6 +38,8 @@ pub struct Query {
     /// 조상 폴더 이름에 들어 있어야 하는 낱말(각각 어떤 조상이든).
     pub path: Vec<Vec<u8>>,
     pub kind: Kind,
+    /// 글자 그대로 비교할 낱말(소문자). 비교형과 다른 낱말만(구분 기호 등이 있어 넓은 일치와 결과가 갈릴 때).
+    pub literal: Vec<String>,
 }
 
 impl Query {
@@ -136,6 +141,10 @@ pub fn parse(text: &str) -> Query {
         }
         let f = fold_b(&t);
         if !f.is_empty() {
+            let raw = t.to_lowercase();
+            if raw.as_bytes() != f.as_slice() {
+                q.literal.push(raw);
+            }
             q.words.push(f);
         }
     }
@@ -152,6 +161,34 @@ pub enum Sort {
     Name,
     /// 경로 순(DFS 번호 순).
     Path,
+    /// 크기 순(큰 것 먼저, 모르는 크기는 맨 뒤). Q-F2.
+    Size,
+    /// 고친 날짜 순(최근 먼저, 모르는 날짜는 맨 뒤). Q-F2.
+    Date,
+}
+
+impl Sort {
+    /// 파이프·설정 글 → 정렬. 모르는 글은 None.
+    pub fn parse(s: &str) -> Option<Sort> {
+        Some(match s {
+            "relevance" => Sort::Relevance,
+            "name" => Sort::Name,
+            "path" => Sort::Path,
+            "size" => Sort::Size,
+            "date" => Sort::Date,
+            _ => return None,
+        })
+    }
+}
+
+/// 대소문자 무시 포함(ASCII는 할당 없이).
+fn contains_ci(hay: &str, needle_lower: &str) -> bool {
+    if hay.is_ascii() && needle_lower.is_ascii() {
+        let (h, n) = (hay.as_bytes(), needle_lower.as_bytes());
+        n.is_empty() || h.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+    } else {
+        hay.to_lowercase().contains(needle_lower)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +234,10 @@ pub struct Hit {
     pub name: String,
     pub dir: String,
     pub is_dir: bool,
+    /// 크기(바이트). 모르면 None.
+    pub size: Option<u64>,
+    /// 고친 시각(FILETIME 100ns). 모르면 None.
+    pub mtime: Option<i64>,
 }
 
 pub fn hits(v: &View, top: &[u32]) -> Vec<Hit> {
@@ -206,6 +247,8 @@ pub fn hits(v: &View, top: &[u32]) -> Vec<Hit> {
             name: v.name_of(id).to_string(),
             dir: v.dir_path(id),
             is_dir: v.flags[id as usize] & flag::DIR != 0,
+            size: Some(v.size[id as usize]).filter(|&s| s != SIZE_UNKNOWN),
+            mtime: Some(v.mtime[id as usize]).filter(|&t| t != TIME_UNKNOWN),
         })
         .collect()
 }
@@ -283,6 +326,7 @@ struct Plan<'q> {
     path: Vec<Finder<'q>>,
     ext_ok: Option<Vec<bool>>,
     ext_words: &'q [Vec<u8>],
+    literal: &'q [String],
     kind: Kind,
     hidden: bool,
     sort: Sort,
@@ -341,8 +385,20 @@ impl<'q> Plan<'q> {
         match self.sort {
             Sort::Path => i as u64,
             Sort::Name => v.key[i as usize] & ((1u64 << 56) - 1),
+            Sort::Size => match v.size[i as usize] {
+                SIZE_UNKNOWN => u64::MAX,
+                s => u64::MAX - 1 - s,
+            },
+            Sort::Date => match v.mtime[i as usize] {
+                TIME_UNKNOWN => u64::MAX,
+                t => (i64::MAX - t.max(0)) as u64,
+            },
             Sort::Relevance => {
                 let base = v.key[i as usize] & ((1u64 << 62) - 1);
+                // 글자 그대로 일치가 아니면 맨 위 비트(Q-F3). 등급은 그다음 2비트, 깊이·이름 앞부분은 한 비트 줄여
+                // 아래에 둔다(같은 열쇠끼리는 비교형 전체로 다시 가르므로 순서는 그대로).
+                let nonliteral = !self.literal.is_empty()
+                    && !self.literal.iter().all(|w| contains_ci(v.name_of(i), w));
                 let g = match self.first {
                     Some(w) => {
                         let f = v.fold_of(i);
@@ -356,7 +412,7 @@ impl<'q> Plan<'q> {
                     }
                     None => 2,
                 };
-                (g << 62) | base
+                ((nonliteral as u64) << 63) | (g << 61) | (base >> 1)
             }
         }
     }
@@ -690,6 +746,7 @@ fn plan<'q>(v: &View, q: &'q Query, opts: &Options, reduced: &[&'q [u8]]) -> Pla
         path: q.path.iter().map(|w| Finder::new(w.as_slice())).collect(),
         ext_ok,
         ext_words: &q.exts,
+        literal: &q.literal,
         kind: q.kind,
         hidden: opts.hidden,
         sort: opts.sort,
