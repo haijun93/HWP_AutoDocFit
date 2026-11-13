@@ -1,7 +1,9 @@
 //! Read-only mapped content queries and a bounded service-pipe alternative.
-//! The current published index contains comparison text and positions, not original
-//! sentences. `snippet` stays empty rather than presenting a position as a quote.
-use kfind_core::{DocHit, Index, SearchOptions};
+//! The published index holds comparison text and positions only (no original text).
+//! Snippets come from the app's SQLite paragraph table (Q-A6), read-only, and only for
+//! rows about to be shown; without that table `snippet` stays empty.
+use crate::paragraphs::Paragraphs;
+use kfind_core::{DocHit, Index, Order, SearchOptions};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
@@ -10,6 +12,18 @@ use std::path::{Path, PathBuf};
 pub type Result<T> = std::result::Result<T, String>;
 pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";
 const LIMIT: usize = 50;
+/// 검색 직후 원문을 함께 가져올 앞 결과 수(기본 창 크기에서 보이는 줄 + 여유). 나머지는 스크롤할 때.
+pub const SNIPPET_PREFETCH: usize = 8;
+/// 발췌: 첫 일치 앞 글자 수, 최대 글자 수.
+const EXCERPT_BEFORE: usize = 16;
+const EXCERPT_MAX: usize = 120;
+
+/// 검색 한 번의 결과: 줄과 강조 낱말(검색어 낱말 + 엔진이 나눈 조각).
+#[derive(Clone, Debug, Default)]
+pub struct Answer {
+    pub rows: Vec<Row>,
+    pub terms: Vec<String>,
+}
 
 #[derive(Clone, Debug, Default)]
 pub struct Row {
@@ -21,6 +35,10 @@ pub struct Row {
     pub location: String,
     pub level: u8,
     pub count: u32,
+    /// 첫 일치 문장의 문단 번호(원문 찾기용).
+    pub para: Option<u32>,
+    /// 원문 찾기를 이미 해 봤는지(없어도 다시 찾지 않음).
+    pub snippet_tried: bool,
 }
 
 pub struct Backend {
@@ -28,6 +46,9 @@ pub struct Backend {
     index: Index,
     table_stamp: Option<(u64, Option<std::time::SystemTime>)>,
     paths: HashMap<u64, String>,
+    para_path: Option<PathBuf>,
+    paragraphs: Option<Paragraphs>,
+    para_tried: bool,
 }
 
 impl Backend {
@@ -43,11 +64,59 @@ impl Backend {
             index,
             table_stamp: None,
             paths: HashMap::new(),
+            para_path: None,
+            paragraphs: None,
+            para_tried: false,
         })
     }
 
+    /// 원문 문단 표 위치(없으면 원문 없이 위치만 보여 줌).
+    pub fn with_paragraphs(mut self, path: Option<PathBuf>) -> Self {
+        self.para_path = path;
+        self
+    }
+
+    /// 시작할 때 한 번: 문서 표 읽기, 문단 표 열기, 질의 한 번으로 매핑 쪽을 데운다(창 표시 경로에서 무거운 일 0).
+    pub fn warm(&mut self) -> Result<()> {
+        self.search_cancel("문서", false, None)?;
+        self.search_cancel("문서", true, None)?;
+        self.open_paragraphs();
+        if let Some(p) = self.paragraphs.as_mut() {
+            p.body("", 0)?;
+        }
+        Ok(())
+    }
+
+    fn open_paragraphs(&mut self) {
+        if !self.para_tried {
+            self.para_tried = true;
+            self.paragraphs = self.para_path.as_deref().and_then(|p| Paragraphs::open(p).ok());
+        }
+    }
+
+    pub fn has_paragraphs(&mut self) -> bool {
+        self.open_paragraphs();
+        self.paragraphs.is_some()
+    }
+
+    /// 아직 찾아보지 않은 줄의 원문 발췌를 채운다(문단 표가 없으면 아무것도 안 함).
+    pub fn fill_snippets(&mut self, rows: &mut [Row], terms: &[String]) {
+        self.open_paragraphs();
+        let Some(p) = self.paragraphs.as_mut() else { return };
+        for row in rows.iter_mut().filter(|r| !r.snippet_tried) {
+            row.snippet_tried = true;
+            let Some(para) = row.para else { continue };
+            if row.path.is_empty() {
+                continue;
+            }
+            if let Ok(Some(body)) = p.body(&row.path, para) {
+                row.snippet = crate::highlight::excerpt(&body, terms, EXCERPT_BEFORE, EXCERPT_MAX);
+            }
+        }
+    }
+
     pub fn search(&mut self, query: &str, hierarchy: bool) -> Result<Vec<Row>> {
-        self.search_cancel(query, hierarchy, None)
+        self.search_cancel(query, hierarchy, None).map(|a| a.rows)
     }
 
     pub fn search_cancel(
@@ -55,28 +124,36 @@ impl Backend {
         query: &str,
         hierarchy: bool,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
-    ) -> Result<Vec<Row>> {
+    ) -> Result<Answer> {
         self.index.reload().map_err(|e| e.to_string())?;
         let query = query.trim();
         if query.is_empty() {
-            return Ok(Vec::new());
+            return Ok(Answer::default());
         }
         let opts = SearchOptions {
-            top: if hierarchy { 0 } else { LIMIT },
+            top: LIMIT,
             refs_per_doc: 1,
             cancel,
             ..SearchOptions::default()
         };
-        let mut result = if kfind_core::fold(query).chars().count() == 1 {
+        // 1글자 훑기는 이미 위계 먼저 정렬한다(모든 일치가 붙어 있는 일치).
+        let order = if hierarchy { Order::Hierarchy } else { Order::Relevance };
+        let result = if kfind_core::fold(query).chars().count() == 1 {
             self.index.search_character(query, &opts)
         } else {
-            self.index.search(query, &opts)
+            self.index.search_by(query, &opts, order)
         }
         .map_err(|e| e.to_string())?;
-        if hierarchy {
-            result.hits.sort_by_key(|h| h.level);
-            result.hits.truncate(LIMIT);
+        let mut terms: Vec<String> = query.split_whitespace().map(str::to_owned).collect();
+        for w in &result.words {
+            terms.push(w.text.clone());
+            terms.extend(w.pieces.iter().flatten().cloned());
         }
+        if terms.is_empty() || kfind_core::fold(query).chars().count() == 1 {
+            terms.push(kfind_core::fold(query));
+        }
+        terms.sort();
+        terms.dedup();
         let path = self.root.join("doctable.jsonl");
         let stamp = match std::fs::metadata(&path) {
             Ok(m) => Some((m.len(), m.modified().ok())),
@@ -88,11 +165,14 @@ impl Backend {
             self.paths = paths;
             self.table_stamp = stamp;
         }
-        Ok(result
+        let mut rows: Vec<Row> = result
             .hits
             .iter()
             .map(|h| row(h, self.paths.get(&h.doc_id).map(String::as_str)))
-            .collect())
+            .collect();
+        let n = rows.len().min(SNIPPET_PREFETCH);
+        self.fill_snippets(&mut rows[..n], &terms);
+        Ok(Answer { rows, terms })
     }
 }
 
@@ -111,8 +191,8 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
     let location = hit
         .sentences
         .first()
-        .map(|s| format!("문단 {} · 위계 {} · 원문 미게시", s.para + 1, s.level))
-        .unwrap_or_else(|| format!("위계 {} · 원문 미게시", hit.level));
+        .map(|s| format!("문단 {} · 위계 {}", s.para + 1, s.level))
+        .unwrap_or_else(|| format!("위계 {}", hit.level));
     Row {
         doc_id: hit.doc_id,
         path,
@@ -122,6 +202,8 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         location,
         level: hit.level,
         count: hit.count,
+        para: hit.sentences.first().map(|s| s.para),
+        snippet_tried: false,
     }
 }
 
@@ -349,6 +431,48 @@ mod tests {
         );
     }
     #[test]
+    fn snippets_come_from_paragraph_table_only_for_prefetched_rows() {
+        let t = Temp::new();
+        let mut writer = Writer::open(&t.0, WriterOptions::default()).unwrap();
+        let mut table = String::new();
+        for id in 1..=12u64 {
+            writer
+                .add_document(id, id as i64, &[Sentence { para: 2, level: (id % 3) as u8, text: "예산 집행 계획" }])
+                .unwrap();
+            table.push_str(&format!(
+                "{{\"op\":\"put\",\"key\":\"k{id}\",\"id\":{id},\"meta\":{{\"path\":\"D:\\\\d\\\\{id}.hwp\"}}}}\n"
+            ));
+        }
+        writer.commit().unwrap();
+        std::fs::write(t.0.join("doctable.jsonl"), table).unwrap();
+        let db = t.0.join("timeline-content.sqlite");
+        let bodies: Vec<(String, String)> = (1..=12)
+            .map(|id| (format!("D:\\d\\{id}.hwp"), format!("머리말 {id} 이 문서는 아주 긴 머리글을 가진 시험 문단이다\n올해 예산 집행 계획을 세운다 {id}")))
+            .collect();
+        let rows: Vec<(&str, u32, &str)> = bodies.iter().map(|(p, b)| (p.as_str(), 2, b.as_str())).collect();
+        crate::paragraphs::create_fixture(&db, &rows).unwrap();
+        let mut backend = Backend::open(&t.0).unwrap().with_paragraphs(Some(db.clone()));
+        backend.warm().unwrap();
+        let mut answer = backend.search_cancel("예산집행", true, None).unwrap();
+        assert_eq!(answer.rows.len(), 12);
+        assert!(answer.terms.iter().any(|w| w == "예산") && answer.terms.iter().any(|w| w == "집행"));
+        // 위계 순(0 → 1 → 2).
+        assert!(answer.rows.windows(2).all(|w| w[0].level <= w[1].level));
+        for r in &answer.rows[..SNIPPET_PREFETCH] {
+            assert!(r.snippet.contains("예산 집행 계획"), "{:?}", r.snippet);
+            assert!(r.snippet.starts_with('…'));
+        }
+        assert!(answer.rows[SNIPPET_PREFETCH..].iter().all(|r| r.snippet.is_empty() && !r.snippet_tried));
+        let terms = answer.terms.clone();
+        backend.fill_snippets(&mut answer.rows[SNIPPET_PREFETCH..], &terms);
+        assert!(answer.rows.iter().all(|r| !r.snippet.is_empty()));
+        // 문단 표가 없으면 원문 없이 위치만.
+        let mut plain = Backend::open(&t.0).unwrap().with_paragraphs(Some(t.0.join("none.sqlite")));
+        let a = plain.search_cancel("예산", false, None).unwrap();
+        assert!(a.rows.iter().all(|r| r.snippet.is_empty() && r.location.starts_with("문단 3")));
+        assert!(!t.0.join("none.sqlite").exists());
+    }
+    #[test]
     fn replay_replacement_deletion_and_missing_index() {
         let t = Temp::new();
         assert!(Backend::open(&t.0).is_err());
@@ -418,6 +542,7 @@ mod tests {
         .unwrap();
         assert_eq!(rows[0].name, "x.hwp");
         assert!(rows[0].snippet.is_empty());
-        assert!(rows[0].location.contains("원문 미게시"));
+        assert_eq!(rows[0].location, "위계 1");
+        assert_eq!(rows[0].para, None);
     }
 }

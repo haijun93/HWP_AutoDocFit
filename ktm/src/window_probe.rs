@@ -1,42 +1,207 @@
 //! 격리 창 검사/단 한 번의 측정에서만 쓰는 어댑터. 일반 상주 경로에는 타이머가 없다.
 use super::*;
 use windows_sys::Win32::System::{ProcessStatus::*, Threading::*};
-pub unsafe fn wait_results(h:HWND)->Result<(),String>{unsafe{
-    let limit=Instant::now()+std::time::Duration::from_secs(5);
-    while with(|u|u.state.phase)==Phase::Searching {
-        if Instant::now()>limit{return Err("격리 창 검색 대기 초과".into());}
-        MsgWaitForMultipleObjects(0,null(),0,50,QS_ALLINPUT);
-        let mut msg:MSG=std::mem::zeroed();while PeekMessageW(&mut msg,null_mut(),0,0,PM_REMOVE)!=0{TranslateMessage(&msg);DispatchMessageW(&msg);}
+unsafe fn pump_until(limit_ms: u64, done: impl Fn() -> bool) -> Result<(), String> {
+    unsafe {
+        let limit = Instant::now() + std::time::Duration::from_millis(limit_ms);
+        while !done() {
+            if Instant::now() > limit {
+                return Err("격리 창 대기 초과".into());
+            }
+            MsgWaitForMultipleObjects(0, null(), 0, 50, QS_ALLINPUT);
+            let mut msg: MSG = std::mem::zeroed();
+            while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+        Ok(())
     }
-    UpdateWindow(h);
-    if with(|u|u.state.phase)!=Phase::Results{return Err(with(|u|format!("검색 실패: {:?}",u.state.error)));}Ok(())
-}}
-pub unsafe fn smoke(h:HWND,output:&std::path::Path,measure:bool)->Result<(),String>{unsafe{
-    SendMessageW(h,WM_HOTKEY,tray::HOTKEY_ID as usize,0);
-    let start=Instant::now();let ed=with(|u|u.edit);SetWindowTextW(ed,wide("예산").as_ptr());wait_results(h)?;
-    let first_ms=start.elapsed().as_secs_f64()*1000.0;
-    let count=with(|u|u.rows.len());if count<6{return Err("합성 검사 자료는 6건 이상 필요합니다".into());}
-    let first_path=with(|u|u.rows[0].path.clone());ktm::open::target(&first_path,false)?;ktm::open::target(&first_path,true)?;
-    event(h,Event::MoveSelection(6));if with(|u|u.top)==0{return Err("선택 스크롤 실패".into());}
-    UpdateWindow(h);capture(h,&output.with_extension("bmp"))?;
-    event(h,Event::SwitchTab(Tab::Hierarchy));wait_results(h)?;if with(|u|u.state.query.clone())!="예산"{return Err("탭 검색어 공유 실패".into());}
-    event(h,Event::SwitchTab(Tab::Names));if with(|u|u.state.phase)==Phase::Searching{return Err("파일명 탭 비활성 실패".into());}
-    event(h,Event::SwitchTab(Tab::Body));wait_results(h)?;
-    SetWindowTextW(ed,wide("예").as_ptr());if with(|u|u.state.phase)!=Phase::Typing{return Err("1글자 자동검색 금지 실패".into());}event(h,Event::Submit);wait_results(h)?;
-    event(h,Event::Hide);if IsWindowVisible(h)!=0{return Err("Esc 숨김 실패".into());}
-    let report=serde_json::json!({"ok":true,"results":count,"first_result_ms":first_ms,"checks":["registered isolated hotkey","show","Korean EDIT change","results","selection scroll","shared query tabs","disabled names","one-character Enter","file/folder target","hide"]});
-    std::fs::write(output,report.to_string()).map_err(|e|e.to_string())?;
-    if measure {
-        let output=output.to_path_buf();let handle=h as usize;
-        std::thread::spawn(move||{std::thread::sleep(std::time::Duration::from_secs(2));let before=cpu();let mem=memory();let start=Instant::now();std::thread::sleep(std::time::Duration::from_secs(60));let after=cpu();let elapsed=start.elapsed().as_secs_f64();let data=serde_json::json!({"idle_seconds":elapsed,"idle_cpu_ms":(after-before) as f64/10000.0,"idle_cpu_percent_one_core":(after-before) as f64/100000.0/elapsed,"private_bytes":mem.0,"working_set_bytes":mem.1});let _=std::fs::write(output.with_extension("idle.json"),data.to_string());PostMessageW(handle as HWND,WM_DESTROY,0,0);});
-    } else {DestroyWindow(h);}
-    Ok(())
-}}
-unsafe fn cpu()->u64{unsafe{let mut c=std::mem::zeroed();let mut e=std::mem::zeroed();let mut k:FILETIME=std::mem::zeroed();let mut u:FILETIME=std::mem::zeroed();GetProcessTimes(GetCurrentProcess(),&mut c,&mut e,&mut k,&mut u);((k.dwHighDateTime as u64)<<32|k.dwLowDateTime as u64)+((u.dwHighDateTime as u64)<<32|u.dwLowDateTime as u64)}}
-unsafe fn memory()->(usize,usize){unsafe{let mut m:PROCESS_MEMORY_COUNTERS_EX=std::mem::zeroed();GetProcessMemoryInfo(GetCurrentProcess(),(&mut m as *mut PROCESS_MEMORY_COUNTERS_EX).cast(),std::mem::size_of_val(&m)as u32);(m.PrivateUsage,m.WorkingSetSize)}}
-unsafe fn capture(h:HWND,path:&std::path::Path)->Result<(),String>{unsafe{
-    let dc=GetDC(h);let mut r:RECT=std::mem::zeroed();GetClientRect(h,&mut r);let mem=CreateCompatibleDC(dc);let bm=CreateCompatibleBitmap(dc,r.right,r.bottom);let old=SelectObject(mem,bm);BitBlt(mem,0,0,r.right,r.bottom,dc,0,0,SRCCOPY);SelectObject(mem,old);
-    let mut info:BITMAPINFO=std::mem::zeroed();info.bmiHeader.biSize=std::mem::size_of::<BITMAPINFOHEADER>()as u32;info.bmiHeader.biWidth=r.right;info.bmiHeader.biHeight= -r.bottom;info.bmiHeader.biPlanes=1;info.bmiHeader.biBitCount=32;info.bmiHeader.biCompression=BI_RGB;
-    let mut pixels=vec![0u8;(r.right*r.bottom*4)as usize];let got=GetDIBits(dc,bm,0,r.bottom as u32,pixels.as_mut_ptr().cast(),&mut info,DIB_RGB_COLORS);DeleteObject(bm);DeleteDC(mem);ReleaseDC(h,dc);if got==0{return Err("캡처 실패".into());}
-    let mut out=Vec::new();out.extend_from_slice(b"BM");out.extend_from_slice(&((54+pixels.len())as u32).to_le_bytes());out.extend_from_slice(&[0;4]);out.extend_from_slice(&54u32.to_le_bytes());let header=std::slice::from_raw_parts((&info.bmiHeader as *const BITMAPINFOHEADER).cast::<u8>(),40);out.extend_from_slice(header);out.extend_from_slice(&pixels);std::fs::write(path,out).map_err(|e|e.to_string())
-}}
+}
+pub unsafe fn wait_results(h: HWND) -> Result<(), String> {
+    unsafe {
+        pump_until(5000, || with(|u| u.state.phase) != Phase::Searching)?;
+        UpdateWindow(h);
+        if with(|u| u.state.phase) != Phase::Results {
+            return Err(with(|u| format!("검색 실패: {:?}", u.state.error)));
+        }
+        Ok(())
+    }
+}
+fn ms(start: Instant) -> f64 {
+    start.elapsed().as_secs_f64() * 1000.0
+}
+/// 검색어를 넣고 결과를 그릴 때까지(입력 → 결과 그리기).
+unsafe fn type_query(h: HWND, text: &str) -> Result<f64, String> {
+    unsafe {
+        let start = Instant::now();
+        SetWindowTextW(with(|u| u.edit), wide(text).as_ptr());
+        wait_results(h)?;
+        Ok(ms(start))
+    }
+}
+unsafe fn switch(h: HWND, tab: Tab) -> Result<f64, String> {
+    unsafe {
+        let start = Instant::now();
+        event(h, Event::SwitchTab(tab));
+        wait_results(h)?;
+        Ok(ms(start))
+    }
+}
+unsafe fn show(h: HWND) -> f64 {
+    unsafe {
+        let start = Instant::now();
+        SendMessageW(h, WM_HOTKEY, tray::HOTKEY_ID as usize, 0);
+        ms(start)
+    }
+}
+pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<(), String> {
+    unsafe {
+        let boot = Instant::now();
+        pump_until(20000, || with(|u| u.warmed))?;
+        let warm_wait_ms = ms(boot);
+        let show_first_ms = show(h);
+        let first_ms = type_query(h, "예산")?;
+        let count = with(|u| u.rows.len());
+        if count < 6 {
+            return Err("합성 검사 자료는 6건 이상 필요합니다".into());
+        }
+        let snippets = with(|u| u.rows.iter().take(ktm::backend::SNIPPET_PREFETCH).filter(|r| !r.snippet.is_empty()).count());
+        let first_path = with(|u| u.rows[0].path.clone());
+        ktm::open::target(&first_path, false)?;
+        ktm::open::target(&first_path, true)?;
+        event(h, Event::MoveSelection(9));
+        if with(|u| u.top) == 0 {
+            return Err("선택 스크롤 실패".into());
+        }
+        // 스크롤로 새로 보인 줄의 원문 찾기 응답을 받는다.
+        let _ = pump_until(500, || with(|u| u.rows.get(9).is_some_and(|r| !r.snippet.is_empty())));
+        let scrolled_snippet = with(|u| u.rows.get(9).is_some_and(|r| !r.snippet.is_empty()));
+        UpdateWindow(h);
+        capture(h, &output.with_extension("bmp"))?;
+        let second_ms = type_query(h, "추진 계획")?;
+        let hierarchy_ms = switch(h, Tab::Hierarchy)?;
+        if with(|u| u.state.query.clone()) != "추진 계획" {
+            return Err("탭 검색어 공유 실패".into());
+        }
+        let hier_sorted = with(|u| u.rows.windows(2).all(|w| w[0].level <= w[1].level));
+        let hierarchy_retype_ms = type_query(h, "예산")?;
+        let names_ms = match switch(h, Tab::Names) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                log_text("names_error", &e);
+                None
+            }
+        };
+        let names_rows = with(|u| u.rows.len());
+        let body_back_ms = switch(h, Tab::Body)?;
+        SetWindowTextW(with(|u| u.edit), wide("예").as_ptr());
+        if with(|u| u.state.phase) != Phase::Typing {
+            return Err("1글자 자동검색 금지 실패".into());
+        }
+        let start = Instant::now();
+        event(h, Event::Submit);
+        wait_results(h)?;
+        let one_char_ms = ms(start);
+        event(h, Event::Hide);
+        if IsWindowVisible(h) != 0 {
+            return Err("Esc 숨김 실패".into());
+        }
+        let hidden_mem = memory();
+        let show_second_ms = show(h);
+        event(h, Event::Hide);
+        let report = serde_json::json!({"ok":true,"results":count,"warm_wait_ms":warm_wait_ms,
+            "show_first_ms":show_first_ms,"show_second_ms":show_second_ms,
+            "first_result_ms":first_ms,"second_query_ms":second_ms,"hierarchy_switch_ms":hierarchy_ms,
+            "hierarchy_retype_ms":hierarchy_retype_ms,"hierarchy_sorted":hier_sorted,
+            "names_switch_ms":names_ms,"names_rows":names_rows,"body_back_ms":body_back_ms,"one_char_ms":one_char_ms,
+            "snippets_prefetched":snippets,"scrolled_snippet":scrolled_snippet,
+            "after_hide_private_bytes":hidden_mem.0,"after_hide_working_set_bytes":hidden_mem.1,
+            "checks":["registered isolated hotkey","warm before show","show","Korean EDIT change","results","snippets from paragraph table","selection scroll","shared query tabs","hierarchy top-N order","names tab","one-character Enter","file/folder target","hide"]});
+        std::fs::write(output, report.to_string()).map_err(|e| e.to_string())?;
+        if measure {
+            let output = output.to_path_buf();
+            let handle = h as usize;
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+                let before = cpu();
+                let mem = memory();
+                let start = Instant::now();
+                std::thread::sleep(std::time::Duration::from_secs(60));
+                let after = cpu();
+                let mem_end = memory();
+                let elapsed = start.elapsed().as_secs_f64();
+                let data = serde_json::json!({"idle_seconds":elapsed,"idle_cpu_ms":(after-before) as f64/10000.0,
+                    "idle_cpu_percent_one_core":(after-before) as f64/100000.0/elapsed,
+                    "private_bytes":mem.0,"working_set_bytes":mem.1,
+                    "private_bytes_end":mem_end.0,"working_set_bytes_end":mem_end.1});
+                let _ = std::fs::write(output.with_extension("idle.json"), data.to_string());
+                PostMessageW(handle as HWND, WM_DESTROY, 0, 0);
+            });
+        } else {
+            DestroyWindow(h);
+        }
+        Ok(())
+    }
+}
+fn log_text(name: &str, value: &str) {
+    if let Some(path) = std::env::var_os("KTM_METRICS") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{}", serde_json::json!({"metric":name,"text":value}));
+        }
+    }
+}
+unsafe fn cpu() -> u64 {
+    unsafe {
+        let mut c = std::mem::zeroed();
+        let mut e = std::mem::zeroed();
+        let mut k: FILETIME = std::mem::zeroed();
+        let mut u: FILETIME = std::mem::zeroed();
+        GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u);
+        ((k.dwHighDateTime as u64) << 32 | k.dwLowDateTime as u64) + ((u.dwHighDateTime as u64) << 32 | u.dwLowDateTime as u64)
+    }
+}
+fn memory() -> (usize, usize) {
+    unsafe {
+        let mut m: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
+        GetProcessMemoryInfo(GetCurrentProcess(), (&mut m as *mut PROCESS_MEMORY_COUNTERS_EX).cast(), std::mem::size_of_val(&m) as u32);
+        (m.PrivateUsage, m.WorkingSetSize)
+    }
+}
+unsafe fn capture(h: HWND, path: &std::path::Path) -> Result<(), String> {
+    unsafe {
+        let dc = GetDC(h);
+        let mut r: RECT = std::mem::zeroed();
+        GetClientRect(h, &mut r);
+        let mem = CreateCompatibleDC(dc);
+        let bm = CreateCompatibleBitmap(dc, r.right, r.bottom);
+        let old = SelectObject(mem, bm);
+        BitBlt(mem, 0, 0, r.right, r.bottom, dc, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        let mut info: BITMAPINFO = std::mem::zeroed();
+        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        info.bmiHeader.biWidth = r.right;
+        info.bmiHeader.biHeight = -r.bottom;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        let mut pixels = vec![0u8; (r.right * r.bottom * 4) as usize];
+        let got = GetDIBits(dc, bm, 0, r.bottom as u32, pixels.as_mut_ptr().cast(), &mut info, DIB_RGB_COLORS);
+        DeleteObject(bm);
+        DeleteDC(mem);
+        ReleaseDC(h, dc);
+        if got == 0 {
+            return Err("캡처 실패".into());
+        }
+        let mut out = Vec::new();
+        out.extend_from_slice(b"BM");
+        out.extend_from_slice(&((54 + pixels.len()) as u32).to_le_bytes());
+        out.extend_from_slice(&[0; 4]);
+        out.extend_from_slice(&54u32.to_le_bytes());
+        let header = std::slice::from_raw_parts((&info.bmiHeader as *const BITMAPINFOHEADER).cast::<u8>(), 40);
+        out.extend_from_slice(header);
+        out.extend_from_slice(&pixels);
+        std::fs::write(path, out).map_err(|e| e.to_string())
+    }
+}

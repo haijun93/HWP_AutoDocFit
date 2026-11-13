@@ -2,7 +2,7 @@
 #[path = "window_probe.rs"]
 mod probe;
 use ktm::{
-    backend::{Backend, Row},
+    backend::{Answer, Backend, Row},
     settings::Settings,
     tm_state::{self, Effect, Event, Phase, State, Tab},
     tray,
@@ -30,24 +30,39 @@ use windows_sys::Win32::{
     },
 };
 const READY: u32 = WM_APP + 21;
+const WARMED: u32 = WM_APP + 22;
 const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
-type Job = (u64, String, bool, Instant, Arc<AtomicBool>);
-type Answer = (u64, Result<Vec<Row>, String>, Instant);
+type Job = (u64, String, Tab, Instant, Arc<AtomicBool>);
+/// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
+type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
+/// 일꾼 대기열: 검색은 늘 최신 하나, 원문 찾기도 최신 하나(검색 먼저).
+#[derive(Default)]
+struct Pending {
+    search: Option<Job>,
+    snippets: Option<SnipJob>,
+}
+enum Reply {
+    Search(u64, Result<Answer, String>, Instant),
+    Snippets(u64, Vec<(usize, Row)>),
+}
 struct Ui {
     state: State,
     rows: Vec<Row>,
+    terms: Vec<String>,
     edit: HWND,
     font: HFONT,
     brush: HBRUSH,
     theme: String,
-    tx: Arc<(Mutex<Option<Job>>, Condvar)>,
-    rx: mpsc::Receiver<Answer>,
+    tx: Arc<(Mutex<Pending>, Condvar)>,
+    rx: mpsc::Receiver<Reply>,
     status: mpsc::Sender<String>,
     top: usize,
     timing: Option<Instant>,
     hotkey_error: String,
     cancel: Arc<AtomicBool>,
     settings_path: PathBuf,
+    /// 시작 데우기가 끝났는지(측정 탐침이 기다림).
+    warmed: bool,
 }
 thread_local! {static UI:RefCell<Option<Ui>>=const{RefCell::new(None)};}
 pub fn wide(s: &str) -> Vec<u16> {
@@ -101,6 +116,7 @@ fn event(h: HWND, e: Event) {
         u.state = s;
         if u.state.result_count == 0 {
             u.rows.clear();
+            u.terms.clear();
             u.top = 0;
         }
         fx
@@ -109,6 +125,7 @@ fn event(h: HWND, e: Event) {
         unsafe {
             match fx {
                 Effect::Show => {
+                    let t = Instant::now();
                     let mut p = POINT { x: 0, y: 0 };
                     GetCursorPos(&mut p);
                     let mon = MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST);
@@ -126,11 +143,17 @@ fn event(h: HWND, e: Event) {
                         hh,
                         SWP_SHOWWINDOW,
                     );
+                    let t1 = Instant::now();
                     SetForegroundWindow(h);
+                    let t2 = Instant::now();
                     SetFocus(with(|u| u.edit));
+                    phase("show_setwindowpos_ms", t1 - t);
+                    phase("show_foreground_ms", t2 - t1);
+                    phase("show_focus_ms", t2.elapsed());
                 }
                 Effect::Hide => {
                     ShowWindow(h, SW_HIDE);
+                    trim_memory();
                 }
                 Effect::Search {
                     generation,
@@ -140,13 +163,11 @@ fn event(h: HWND, e: Event) {
                     let tx = with(|u| u.tx.clone());
                     let cancel = Arc::new(AtomicBool::new(false));
                     edit(|u| u.cancel = cancel.clone());
-                    *tx.0.lock().unwrap() = Some((
-                        generation,
-                        query,
-                        tab == Tab::Hierarchy,
-                        Instant::now(),
-                        cancel,
-                    ));
+                    {
+                        let mut p = tx.0.lock().unwrap();
+                        p.search = Some((generation, query, tab, Instant::now(), cancel));
+                        p.snippets = None;
+                    }
                     tx.1.notify_one();
                 }
                 Effect::Open { index, folder } => {
@@ -173,6 +194,7 @@ fn event(h: HWND, e: Event) {
             } else if index >= u.top + count {
                 u.top = index + 1 - count;
             }
+            request_snippets(u, count);
         }
     });
     let (s, path) = with(|u| {
@@ -184,6 +206,31 @@ fn event(h: HWND, e: Event) {
     let _ = path.send(s.to_string());
     unsafe {
         InvalidateRect(h, null(), 0);
+    }
+}
+/// 보이는 줄 중 원문을 아직 찾지 않은 줄만 일꾼에게 보낸다(한 번만).
+fn request_snippets(u: &mut Ui, count: usize) {
+    let end = (u.top + count + 1).min(u.rows.len());
+    let mut want = Vec::new();
+    for i in u.top..end {
+        if !u.rows[i].snippet_tried {
+            u.rows[i].snippet_tried = true;
+            let mut r = u.rows[i].clone();
+            r.snippet_tried = false;
+            want.push((i, r));
+        }
+    }
+    if !want.is_empty() {
+        u.tx.0.lock().unwrap().snippets = Some((u.state.generation, want, u.terms.clone()));
+        u.tx.1.notify_one();
+    }
+}
+/// 숨을 때·시작 데우기 뒤: 작업 집합을 비운다(매핑 쪽은 파일 기반이라 다시 부르면 캐시에서 바로 돌아온다).
+fn trim_memory() {
+    unsafe {
+        windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet(
+            windows_sys::Win32::System::Threading::GetCurrentProcess(),
+        );
     }
 }
 fn key(h: HWND, key: usize) -> bool {
@@ -291,10 +338,10 @@ unsafe fn layout(h: HWND) {
         );
     }
 }
-unsafe fn highlighted(dc:HDC,s:&str,query:&str,rc:RECT,fg:u32,bg:u32) {unsafe{
+unsafe fn highlighted(dc:HDC,s:&str,terms:&[String],rc:RECT,fg:u32,bg:u32) {unsafe{
     let saved=SaveDC(dc);IntersectClipRect(dc,rc.left,rc.top,rc.right,rc.bottom);
     let mut offset=0;let mut x=rc.left;
-    for (start,end) in ktm::highlight::ranges(s,query).into_iter().chain(Some((s.len(),s.len()))) {
+    for (start,end) in ktm::highlight::ranges_terms(s,terms).into_iter().chain(Some((s.len(),s.len()))) {
         for (part,marked) in [(&s[offset..start],false),(&s[start..end],true)] {
             if part.is_empty(){continue;}
             let w=wide(part);let mut size:SIZE=std::mem::zeroed();GetTextExtentPoint32W(dc,w.as_ptr(),(w.len()-1)as i32,&mut size);
@@ -311,10 +358,51 @@ unsafe fn paint(h: HWND) {
         let dc = BeginPaint(h, &mut ps);
         let mut r: RECT = std::mem::zeroed();
         GetClientRect(h, &mut r);
-        if r.right <= 0 || r.bottom <= 0 {
-            EndPaint(h, &ps);
-            return;
+        if r.right > 0 && r.bottom > 0 {
+            draw(h, dc, r);
         }
+        EndPaint(h, &ps);
+        if let Some(start) = edit(|u| u.timing.take()) {
+            log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+}
+/// 시작할 때 한 번: 화면 밖 메모리 DC에 창 전체(글꼴·한글 글꼴 연결·강조 경로 포함)와 검색 칸을 그려 둔다.
+/// 첫 부름에서 GDI·Uniscribe·글꼴을 처음 불러오는 비용을 없앤다.
+unsafe fn prerender(h: HWND) {
+    unsafe {
+        let mut r: RECT = std::mem::zeroed();
+        GetClientRect(h, &mut r);
+        let dc = GetDC(h);
+        if r.right > 0 && r.bottom > 0 {
+            edit(|u| {
+                u.rows = vec![Row {
+                    name: "몽땅검색 미리 그리기.hwp".into(),
+                    parent: "C:\\".into(),
+                    snippet: "…가나다 예산 ABC 123 문서".into(),
+                    ..Row::default()
+                }];
+                u.terms = vec!["예산".into()];
+            });
+            draw(h, dc, r);
+            let ed = with(|u| u.edit);
+            let mem = CreateCompatibleDC(dc);
+            let bm = CreateCompatibleBitmap(dc, r.right, scale(h, 40));
+            let old = SelectObject(mem, bm);
+            SendMessageW(ed, WM_PRINT, mem as usize, (PRF_CLIENT | PRF_NONCLIENT | PRF_ERASEBKGND) as isize);
+            SelectObject(mem, old);
+            DeleteObject(bm);
+            DeleteDC(mem);
+            edit(|u| {
+                u.rows.clear();
+                u.terms.clear();
+            });
+        }
+        ReleaseDC(h, dc);
+    }
+}
+unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
+    unsafe {
         let mem = CreateCompatibleDC(dc);
         let bitmap = CreateCompatibleBitmap(dc, r.right, r.bottom);
         let old = SelectObject(mem, bitmap);
@@ -427,13 +515,13 @@ unsafe fn paint(h: HWND) {
                     c,
                     DT_PATH_ELLIPSIS,
                 );
-                let snippet = if row.snippet.is_empty() {
-                    row.location.clone()
+                let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
+                    (&row.location, &[])
                 } else {
-                    row.snippet.clone()
+                    (&row.snippet, &u.terms)
                 };
                 highlighted(
-                    mem, &snippet, &u.state.query,
+                    mem, snippet, terms,
                     RECT {
                         left: p,
                         top: top + 2 * line,
@@ -474,10 +562,6 @@ unsafe fn paint(h: HWND) {
         SelectObject(mem, old);
         DeleteObject(bitmap);
         DeleteDC(mem);
-        EndPaint(h, &ps);
-        if let Some(start) = edit(|u| u.timing.take()) {
-            log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
-        }
     }
 }
 fn client_bottom(h: HWND) -> i32 {
@@ -485,6 +569,18 @@ fn client_bottom(h: HWND) -> i32 {
         let mut r: RECT = std::mem::zeroed();
         GetClientRect(h, &mut r);
         r.bottom
+    }
+}
+thread_local! {static PHASES: RefCell<Vec<(&'static str, f64)>> = const { RefCell::new(Vec::new()) };}
+/// 측정 켰을 때만 모았다가 `flush_phases`에서 한 번에 쓴다(쓰기가 잰 구간에 들지 않게).
+fn phase(name: &'static str, d: std::time::Duration) {
+    if std::env::var_os("KTM_METRICS").is_some() {
+        PHASES.with(|p| p.borrow_mut().push((name, d.as_secs_f64() * 1000.0)));
+    }
+}
+fn flush_phases() {
+    for (n, v) in PHASES.with(|p| std::mem::take(&mut *p.borrow_mut())) {
+        log(n, v);
     }
 }
 fn log(name: &str, value: f64) {
@@ -523,8 +619,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             WM_HOTKEY => {
                 let start = Instant::now();
                 event(h, Event::Show);
+                let t = Instant::now();
                 UpdateWindow(h);
-                log("hotkey_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
+                phase("show_update_ms", t.elapsed());
+                phase("hotkey_to_paint_ms", start.elapsed());
+                flush_phases();
                 0
             }
             WM_SIZE => {
@@ -613,12 +712,27 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             READY => {
                 let answers = with(|u| u.rx.try_iter().collect::<Vec<_>>());
-                for (g, result, start) in answers {
+                for reply in answers {
+                    let (g, result, start) = match reply {
+                        Reply::Search(g, result, start) => (g, result, start),
+                        Reply::Snippets(g, rows) => {
+                            edit(|u| {
+                                if g == u.state.generation {
+                                    for (i, r) in rows {
+                                        if let Some(slot) = u.rows.get_mut(i) {
+                                            slot.snippet = r.snippet;
+                                        }
+                                    }
+                                }
+                            });
+                            continue;
+                        }
+                    };
                     if g != with(|u| u.state.generation) {
                         continue;
                     }
                     match result {
-                        Ok(rows) => {
+                        Ok(Answer { rows, terms }) => {
                             let count = rows.len();
                             event(
                                 h,
@@ -629,6 +743,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             );
                             edit(|u| {
                                 u.rows = rows;
+                                u.terms = terms;
                                 u.timing = Some(start);
                             });
                         }
@@ -642,6 +757,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     }
                 }
                 InvalidateRect(h, null(), 0);
+                0
+            }
+            WARMED => {
+                log("startup_warm_ms", w as f64 / 1000.0);
+                edit(|u| u.warmed = true);
+                if with(|u| u.state.phase) == Phase::Hidden {
+                    trim_memory();
+                }
                 0
             }
             m if m == tray::MESSAGE => {
@@ -689,6 +812,7 @@ pub fn run() -> Result<(), String> {
             }
             return Ok(());
         }
+        let pipe_mode_early = arg("--backend").as_deref() == Some("pipe");
         let previous = FindWindowW(wide(CLASS).as_ptr(), null());
         if !previous.is_null() && std::env::var_os("KTM_TEST_ROOT").is_none() {
             PostMessageW(previous, WM_HOTKEY, 0, 0);
@@ -698,7 +822,8 @@ pub fn run() -> Result<(), String> {
             Some(p) => PathBuf::from(p),
             None => ktm::paths::default_index()?,
         };
-        let pending = Arc::new((Mutex::new(None::<Job>), Condvar::new()));
+        let started = Instant::now();
+        let pending = Arc::new((Mutex::new(Pending::default()), Condvar::new()));
         let (tx, rx) = mpsc::channel();
         let (status_tx,status_rx) = mpsc::channel::<String>();
         let status_path = data.join("status.json");
@@ -757,6 +882,7 @@ pub fn run() -> Result<(), String> {
             *u.borrow_mut() = Some(Ui {
                 state: State::default(),
                 rows: Vec::new(),
+                terms: Vec::new(),
                 edit: ed,
                 font: null_mut(),
                 brush: null_mut(),
@@ -769,6 +895,7 @@ pub fn run() -> Result<(), String> {
                 hotkey_error: String::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 settings_path: data.join("settings.json"),
+                warmed: pipe_mode_early,
             })
         });
         SetWindowLongPtrW(h, GWLP_WNDPROC, proc as *const () as isize);
@@ -778,29 +905,66 @@ pub fn run() -> Result<(), String> {
         let handle = h as usize;
         let pipe_name = arg("--pipe-name").unwrap_or(ktm::backend::PIPE_NAME.into());
         let pipe_mode = arg("--backend").as_deref() == Some("pipe");
+        let para_path = arg("--content-db")
+            .map(PathBuf::from)
+            .or_else(ktm::paragraphs::default_path);
         std::thread::spawn(move || {
+            // 시작 데우기: 색인 매핑·문서 표·문단 표를 미리 열고 질의 한 번(창 표시 경로에서 무거운 일 0).
+            let open = |root: &PathBuf| Backend::open(root).map(|b| b.with_paragraphs(para_path.clone()));
             let mut backend: Option<Backend> = None;
+            if !pipe_mode {
+                let t = Instant::now();
+                backend = open(&root).ok();
+                if let Some(b) = backend.as_mut() {
+                    let _ = b.warm();
+                }
+                PostMessageW(handle as HWND, WARMED, t.elapsed().as_micros() as usize, 0);
+            }
             loop {
-                let (g, q, hierarchy, start, cancel) = {
+                enum Work {
+                    Search(Job),
+                    Snippets(SnipJob),
+                }
+                let work = {
                     let mut slot = worker_pending.0.lock().unwrap();
-                    while slot.is_none() {
+                    loop {
+                        if let Some(j) = slot.search.take() {
+                            break Work::Search(j);
+                        }
+                        if let Some(j) = slot.snippets.take() {
+                            break Work::Snippets(j);
+                        }
                         slot = worker_pending.1.wait(slot).unwrap();
                     }
-                    slot.take().unwrap()
                 };
-                let answer = (|| {
-                    if pipe_mode {
-                        return ktm::backend::pipe_search(&pipe_name, &q, hierarchy);
+                let reply = match work {
+                    Work::Search((g, q, tab, start, cancel)) => {
+                        let hierarchy = tab == Tab::Hierarchy;
+                        let answer = (|| {
+                            if pipe_mode {
+                                let rows = ktm::backend::pipe_search(&pipe_name, &q, hierarchy)?;
+                                let terms = q.split_whitespace().map(str::to_owned).collect();
+                                return Ok(Answer { rows, terms });
+                            }
+                            if backend.is_none() {
+                                backend = Some(open(&root)?);
+                            }
+                            backend.as_mut().unwrap().search_cancel(&q, hierarchy, Some(cancel))
+                        })();
+                        Reply::Search(g, answer, start)
                     }
-                    if backend.is_none() {
-                        backend = Some(Backend::open(&root)?);
+                    Work::Snippets((g, mut rows, terms)) => {
+                        if let Some(b) = backend.as_mut() {
+                            let mut only: Vec<Row> = rows.iter().map(|r| r.1.clone()).collect();
+                            b.fill_snippets(&mut only, &terms);
+                            for (slot, r) in rows.iter_mut().zip(only) {
+                                slot.1 = r;
+                            }
+                        }
+                        Reply::Snippets(g, rows)
                     }
-                    backend
-                        .as_mut()
-                        .unwrap()
-                        .search_cancel(&q, hierarchy, Some(cancel))
-                })();
-                if tx.send((g, answer, start)).is_err() {
+                };
+                if tx.send(reply).is_err() {
                     break;
                 }
                 PostMessageW(handle as HWND, READY, 0, 0);
@@ -823,6 +987,14 @@ pub fn run() -> Result<(), String> {
                 Event::Hide
             },
         );
+        // 숨긴 창을 미리 그려 둔다: 메모리 DC에 한 번, 그리고 화면 밖 자리에서 한 번 보였다 숨겨 DWM 표면까지 만든다.
+        if with(|u| u.state.phase) == Phase::Hidden {
+            prerender(h);
+            SetWindowPos(h, null_mut(), -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UpdateWindow(h);
+            ShowWindow(h, SW_HIDE);
+            log("startup_prerender_ms", started.elapsed().as_secs_f64() * 1000.0);
+        }
         if let Some(query) = arg("--show-query") {
             event(h, Event::Show);
             SetWindowTextW(ed, wide(&query).as_ptr());
