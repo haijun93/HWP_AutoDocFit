@@ -151,7 +151,7 @@ class LibraryScreen extends StatefulWidget {
   });
 
   /// 검색창의 본문검색·위계검색(ISUI2). 있으면 검색창 옆에 파일명·본문검색·위계검색 메뉴가 나타나고
-  /// 세 메뉴가 검색어를 함께 쓴다. 기본 앱은 타임머신 명령을 쓴다([timemachineLibraryDocumentSearch]).
+  /// 세 메뉴가 검색어를 함께 쓴다. 기본 앱은 몽땅검색 명령을 쓴다([timemachineLibraryDocumentSearch]).
   final LibraryDocumentSearch? documentSearch;
 
   /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
@@ -937,7 +937,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _showSearchResults = true;
       if (document) {
         _statusMessage = _searchStatus = outcome.items.isEmpty
-            ? '$label: 이 가상 폴더 자료에서 찾지 못했습니다. 타임머신 조사 폴더에서 본문 색인된 문서만 찾습니다.'
+            ? '$label: 이 가상 폴더 자료에서 찾지 못했습니다. 몽땅검색 조사 폴더에서 본문 색인된 문서만 찾습니다.'
             : '$label: 자료 ${outcome.items.length}개';
       } else {
         _dropSearchStatus();

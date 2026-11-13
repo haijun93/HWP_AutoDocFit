@@ -1,9 +1,9 @@
 /// 가상 폴더 검색창의 본문검색·위계검색(ISUI2).
 ///
-/// 새 백엔드 명령을 만들지 않고 타임머신의 기존 명령을 그대로 쓴다.
+/// 새 백엔드 명령을 만들지 않고 몽땅검색의 기존 명령을 그대로 쓴다.
 /// - 본문검색: `timemachine` → `content_search` {query, limit, sort: relevance}
 /// - 위계검색: `timemachine` → `related_search` {query, limit, sort: hierarchy_relevance}(검색어만 보내는 방식)
-/// 결과는 타임머신 조사 폴더 전체에서 오므로, 가상 폴더 화면이 자기 자료(원본 경로·복사본 경로)와 맞는 것만 남긴다.
+/// 결과는 몽땅검색 조사 폴더 전체에서 오므로, 가상 폴더 화면이 자기 자료(원본 경로·복사본 경로)와 맞는 것만 남긴다.
 library;
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
@@ -23,7 +23,7 @@ class LibraryDocumentHit {
 /// [mode]는 'content'(본문검색) 또는 'related'(위계검색).
 typedef LibraryDocumentSearch = Future<List<LibraryDocumentHit>> Function(String mode, String query);
 
-/// 타임머신 명령으로 본문·위계검색을 하는 기본 구현.
+/// 몽땅검색 명령으로 본문·위계검색을 하는 기본 구현.
 LibraryDocumentSearch timemachineLibraryDocumentSearch(ApiCall call, {int limit = 200}) {
   final api = TimemachineApi(call);
   return (mode, query) async {

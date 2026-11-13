@@ -38,12 +38,12 @@ pub fn agent_theme(path:&Path)->ui_theme::ThemePref{std::fs::read_to_string(path
  #[test]fn long_hotkey(){assert_eq!(Settings::parse(&format!("{{\"hotkey\":\"{}\"}}","a".repeat(41))).hotkey,"Win+Shift+F");}
  #[test]fn disabled_hotkey(){assert_eq!(Settings::parse(r#"{"hotkey":""}"#).hotkey,"");}
  #[test]fn combinations(){assert!(same_hotkey("Shift+Ctrl+V","Ctrl+Shift+V"));assert!(!same_hotkey("",""));assert!(!same_hotkey("Win+Shift+F","Ctrl+Shift+V"));}
- #[test]fn missing_agent(){assert_eq!(agent_hotkey(Path::new("E:/docfit-tmp/absent-kvf-settings.json")),"Ctrl+Shift+V");}
+ #[test]fn missing_agent(){assert_eq!(agent_hotkey(&std::env::temp_dir().join("absent-kvf-settings.json")),"Ctrl+Shift+V");}
+ #[test]fn file_and_unchanged(){let p=std::env::temp_dir().join(format!("kvf-settings-{}.json",std::process::id()));let s=Settings::default();assert!(s.save(&p).unwrap());assert!(!s.save(&p).unwrap());assert_eq!(Settings::load(&p),s);std::fs::remove_file(p).unwrap();}
  #[test]fn agent_theme_reads_kagent_settings(){
   let p=std::env::temp_dir().join(format!("kvf-agent-theme-{}.json",std::process::id()));
   assert_eq!(agent_theme(&p),ui_theme::ThemePref::System,"파일 없음");
   for (text,want) in [(r#"{"theme":"dark"}"#,ui_theme::ThemePref::Dark),(r#"{"theme":"light","hotkey":"Ctrl+Shift+V"}"#,ui_theme::ThemePref::Light),(r#"{"theme":"blue"}"#,ui_theme::ThemePref::System),(r#"{"hotkey":"Alt+V"}"#,ui_theme::ThemePref::System),("bad",ui_theme::ThemePref::System)]{std::fs::write(&p,text).unwrap();assert_eq!(agent_theme(&p),want,"{text}");}
   std::fs::remove_file(p).unwrap();
  }
- #[test]fn file_and_unchanged(){let p=std::path::PathBuf::from(format!("E:/docfit-tmp/kvf-settings-{}.json",std::process::id()));let s=Settings::default();assert!(s.save(&p).unwrap());assert!(!s.save(&p).unwrap());assert_eq!(Settings::load(&p),s);std::fs::remove_file(p).unwrap();}
 }

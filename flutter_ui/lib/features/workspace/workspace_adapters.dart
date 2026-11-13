@@ -108,7 +108,7 @@ class FileRenameAdapter extends StatelessWidget {
   );
 }
 
-/// Workspace adapter for Tab 8: 타임머신.
+/// Workspace adapter for Tab 8: 몽땅검색.
 class TimemachineAdapter extends StatelessWidget {
   const TimemachineAdapter({super.key, required this.api});
 
