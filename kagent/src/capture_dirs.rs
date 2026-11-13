@@ -316,3 +316,17 @@ mod tests {
         assert!(looks_complete(Some(10), 10, Some(b"\0\0\0\0IEND\xAE\x42\x60\x82")));
     }
 }
+
+#[cfg(test)]
+mod system_probe {
+    /// 이 PC에서 실제로 찾은 폴더를 출력만 한다(읽기 전용, 기본 실행에서 빠짐): `cargo test -- --ignored --nocapture probe`.
+    #[test]
+    #[ignore]
+    fn probe_this_pc() {
+        let env = super::Env::from_system();
+        for c in super::discover(&env, &|p| std::path::Path::new(p).is_dir()) {
+            println!("FOUND {} | {} | subtree={}", c.label, c.path, c.subtree);
+        }
+        println!("known_screenshots={:?} onedrive={}", env.known_screenshots.is_some(), env.onedrive.len());
+    }
+}

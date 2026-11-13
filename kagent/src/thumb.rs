@@ -283,9 +283,16 @@ pub fn get(id: i64, size: i64) -> Option<Arc<Thumb>> {
     if let Some(t) = cached(id, size) {
         return Some(t);
     }
+    // 저장 그림은 DB의 내용 지문으로 디스크 캐시를 먼저 본다(큰 그림을 복호화하지 않고).
+    let (kind, hash) = crate::app().store.lock().unwrap().kind_hash(id).ok().flatten()?;
+    if kind == "image" {
+        if let Some(t) = disk_get(&disk_name(&hash)) {
+            return Some(remember(id, size, t));
+        }
+    }
     let (kind, data, _) = crate::app().store.lock().unwrap().payload(id).ok().flatten()?;
     let (fingerprint, source) = match kind.as_str() {
-        "image" => (crate::store::content_hash("image", &data), Source::Png(data)),
+        "image" => (hash, Source::Png(data)),
         "files" => {
             let path = first_image_path(&data)?;
             let meta = std::fs::metadata(&path).ok()?;
@@ -306,9 +313,13 @@ pub fn get(id: i64, size: i64) -> Option<Arc<Thumb>> {
             t
         }
     };
+    Some(remember(id, size, thumb))
+}
+
+fn remember(id: i64, size: i64, thumb: Thumb) -> Arc<Thumb> {
     let t = Arc::new(thumb);
     with_mem(|m| m.put(mem_key(id, size), t.clone()));
-    Some(t)
+    t
 }
 
 enum Source {

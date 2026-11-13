@@ -460,6 +460,13 @@ impl Store {
         Info { cats, paths: entry.paths, web_url: entry.web_url }
     }
 
+    /// (종류, 내용 지문) — 복호화 없이 읽는다(썸네일 디스크 캐시 키).
+    pub fn kind_hash(&self, id: i64) -> Result<Option<(String, String)>, String> {
+        let mut found = None;
+        self.conn.query("SELECT kind, hash FROM items WHERE id = ?", &[Arg::Int(id)], |r| found = Some((r.text(0), r.text(1))))?;
+        Ok(found)
+    }
+
     /// (종류, 내용, 서식 묶음).
     pub fn payload(&self, id: i64) -> Result<Option<(String, Vec<u8>, Vec<u8>)>, String> {
         let mut found = None;

@@ -39,6 +39,13 @@
 **2차(같은 날)**: 서식 보존(글과 함께 HTML·RTF 보관·복원, 스키마 v2 자동 이전), 팝업 찾기(글자를 치면 바로 찾기, 한글 조합 중 글자 반영, Esc로 지우기), 폴더 감시(`watch.rs`: ReadDirectoryChangesW + 완료 포트 한 개, 400ms 묶기, 넘침이면 그 폴더만 다시 훑기) — 스크린샷 폴더의 새 PNG를 '캡처' 항목으로(같은 캡처가 클립보드로 3초 안에 왔으면 한 번만), 타임머신 조사 폴더를 앱과 같은 `timeline.db` 스키마로 실시간 갱신(`timeline.rs`, 설정 `timeline_roots`). 실측(`scripts/kagent_watch_check_pc.py`): 새 파일 반영 0.43초, 지운 폴더 반영, 임시 파일 무시, 앱 `Store`로 읽기 호환, 감시 켠 상태 유휴 CPU 0.0%·개인 메모리 1.95MB, exe 0.72MB.
 남은 것: 코드 서명(인증서 필요), 24시간 누수 측정(K1 과제로 스트레스 측정 스크립트), 타임머신 화면(TM2 과제).
 
+**화면캡처 폴더 자동 인식·그림 미리보기(KCAP1, 2026-11-13, 브랜치 `feature/kclip-capture-preview`)**:
+- 폴더 찾기(`capture_dirs.rs`): 알려진 폴더 Screenshots(캡처 도구·Win+PrtSc, OneDrive가 옮긴 경로 포함)·사진\Screenshots·사진\스크린샷, OneDrive 뿌리(`OneDrive`·`OneDriveConsumer`·`OneDriveCommercial`)의 스크린샷 폴더, 동영상\Captures(Xbox Game Bar), 사진·문서 아래 ALCapture·알캡처·한컴 캡처·HancomCapture·PicPick, 문서\ShareX\Screenshots(하위 폴더까지). **실제로 있는 폴더만** 감시하고 같은 폴더는 한 번. 알캡처·한컴·PicPick 기본 폴더 이름은 추정이며 실기 확인 전이다. 캡처 도구의 '저장 위치 바꾸기'는 알려진 폴더 Screenshots를 옮기는 것으로 보고 따로 읽지 않는다(실기 확인 필요). 새로 설치한 캡처 앱 폴더는 다음 감시 재시작(설정 변경·일시정지 해제·에이전트 재시작) 때 잡힌다.
+- 폴더별 감시 상태(명시적 상태 기계 `plan`): `Watching`·`UserOff`(설정 `capture_dirs_off`)·`AllOff`(`watch_screenshots=false`)·`Paused`, 우선순위 AllOff > Paused > UserOff > Watching. `status.json`·`settings_get/set`의 `capture_dirs`(경로·출처·상태)로 앱·에이전트가 같은 값을 본다.
+- 기록: 새 png·jpg·jpeg·bmp·gif·webp를 **내용 없이 경로만** 파일 항목(출처 `screenshot`, 미리보기 `캡처 · 이름`)으로. 크기가 멈추고 PNG는 IEND까지 쓰인 뒤 기록, 3초 안에 클립보드 그림이 기록됐으면 겹침으로 보고 건너뜀. 붙일 때 PNG·BMP는 그림(PNG·CF_DIB)을 먼저, 파일(CF_HDROP)을 뒤에 올린다. 예전에는 Screenshots 한 곳의 PNG 내용을 저장했다(동작 변경 — 원본 파일을 지우면 항목은 붙지 않는다).
+- 미리보기(`thumb.rs`·`preview.rs`): 그림 항목(저장 그림, 그림 파일이 든 파일 항목)을 마우스로 가리키거나 키보드·휠로 고르면 긴 변 320px 썸네일을 커서(키보드는 창 옆 그 줄) 옆에 띄움. 상태 Hidden/Waiting/Showing(`step` 순수 함수), 썸네일은 작업 스레드 하나가 필요할 때 만들고 메모리 4MB·디스크 16MB(DPAPI 암호화, `thumbs\`) 캐시, 모두 지우기 때 삭제. 앱 화면은 파이프 `thumb`로 같은 캐시를 쓰고 같은 상태 기계(`kclip_preview.dart`)를 따른다.
+- 실측(2026-11-13, 릴리스 빌드·시험 인스턴스, 각 1회): 캡처 파일 생김→항목 기록 598ms(쓰기 완료 확인 대기 포함), 썸네일 첫 생성 1920×1080 PNG 파일 87ms·4K 저장 그림 177ms(목표 50ms 넘음), 메모리 캐시 2.9~3.1ms, 에이전트 재시작 뒤 디스크 캐시 30.8ms, 디스크 캐시 평문 PNG 없음, 폴더 끄기 뒤 새 파일 기록 안 함, 모두 지우기 뒤 `thumbs\` 삭제, 유휴 개인 메모리 3.13MB. 이 PC에서 찾은 폴더: OneDrive로 옮긴 사진\스크린샷(알려진 폴더), 동영상\Captures.
+
 ## 1. 왜 독립 exe인가 (같은 exe 모드와 비교)
 
 | 항목 | 기존 exe의 `--kclip` 모드 | **독립 `kagent.exe`(제안)** |
