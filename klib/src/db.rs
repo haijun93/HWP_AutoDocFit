@@ -41,10 +41,34 @@ pub struct RelationRow {
 
 pub struct Database {
     conn: Connection,
+    path: PathBuf,
+    /// 업무자료함 별도 저장소(`notebook/notebook.db`를 `nb`로 붙임 + 별도 색인). 옮기기에 실패했으면 오류 문구.
+    nb: std::result::Result<crate::nb_store::Store, String>,
+    nb_migration: crate::nb_store::Migration,
 }
 
 impl Database {
     pub(crate) fn connection(&self) -> &Connection { &self.conn }
+
+    /// 업무자료함 별도 색인. 저장소를 열지 못했으면(옮기기 실패) 다시 시도 안내가 든 오류.
+    pub fn nb_index(&self) -> std::result::Result<std::sync::Arc<crate::search::SearchIndex>, String> {
+        self.nb.as_ref().map(|s| s.index.clone()).map_err(|e| format!("업무자료함 저장소를 열지 못했습니다: {e} (nb_migrate로 다시 시도)"))
+    }
+    /// 업무자료함 명령을 받을 수 있는지.
+    pub fn nb_ready(&self) -> std::result::Result<(), String> { self.nb_index().map(|_| ()) }
+    pub fn nb_migration(&self) -> &crate::nb_store::Migration { &self.nb_migration }
+    pub fn nb_root(&self) -> PathBuf { crate::nb_store::root_for(&self.path) }
+    /// 옮기기·열기를 다시 시도한다(이미 열려 있으면 그대로).
+    pub fn nb_retry(&mut self) -> std::result::Result<(), String> {
+        if self.nb.is_ok() { return Ok(()); }
+        let (nb, m) = crate::nb_store::open(&self.conn, &self.path);
+        self.nb = nb; self.nb_migration = m;
+        self.nb_ready()
+    }
+    /// 업무자료함 표가 이 연결에서 보이는지(별도 저장소를 붙였거나, 옮기기 전이라 옛 표가 자료함 DB에 있을 때).
+    fn nb_tables_visible(&self) -> bool {
+        self.nb.is_ok() || self.conn.query_row("SELECT EXISTS(SELECT 1 FROM main.sqlite_master WHERE type='table' AND name='nb_source')", [], |r| r.get(0)).unwrap_or(false)
+    }
 
     pub fn notebook_create(&self,name:&str,description:&str)->Result<i64>{crate::notebook::create(&self.conn,name,description)}
     pub fn notebook_update(&self,id:i64,name:&str,description:&str)->Result<bool>{crate::notebook::update(&self.conn,id,name,description)}
@@ -60,10 +84,12 @@ impl Database {
             let _ = fs::create_dir_all(parent);
         }
         let conn = Connection::open(db_path)?;
-        let db = Database { conn };
+        let mut db = Database { conn, path: PathBuf::from(db_path), nb: Err("아직 열지 않음".into()), nb_migration: Default::default() };
         db.init_schema()?;
-        crate::notebook::init_schema(&db.conn)?;
         crate::scan::init_schema(&db.conn)?;
+        // 업무자료함은 별도 DB·색인에 둔다(처음 실행 때 자료함 DB의 옛 자료를 한 번 옮김). 실패해도 자료함은 연다.
+        let (nb, m) = crate::nb_store::open(&db.conn, &db.path);
+        db.nb = nb; db.nb_migration = m;
         Ok(db)
     }
 
@@ -346,7 +372,7 @@ impl Database {
         let updated: Result<usize> = (|| {
             let tx = self.conn.unchecked_transaction()?;
             let affected = tx.execute("UPDATE item SET source_path=?1, managed_path=?1, origin_path=?2 WHERE id=?3 AND managed_path=''", params![managed, origin, id])?;
-            if affected == 1 { tx.execute("UPDATE nb_source SET origin=?1 WHERE item_id=?2", params![managed, id])?; }
+            if affected == 1 && self.nb_tables_visible() { tx.execute("UPDATE nb_source SET origin=?1 WHERE item_id=?2", params![managed, id])?; }
             tx.commit()?;
             Ok(affected)
         })();
@@ -547,7 +573,7 @@ impl Database {
                 "UPDATE item SET space = ?1, x = ?2, y = ?3, source_path=?5, managed_path=CASE WHEN kind='link' THEN '' ELSE ?5 END WHERE id = ?4",
                 params![space, x, y, id, managed],
             )?;
-            tx.execute("UPDATE nb_source SET origin=?1 WHERE item_id=?2", params![managed, id])?;
+            if self.nb_tables_visible() { tx.execute("UPDATE nb_source SET origin=?1 WHERE item_id=?2", params![managed, id])?; }
             tx.commit()?;
             Ok(affected)
         })();
