@@ -42,8 +42,15 @@ struct Pending {
     search: Option<Job>,
     snippets: Option<SnipJob>,
 }
+/// 일꾼이 검색을 집어 든 시각과 마친 시각(첫 입력 구간 단계별 계측, MG3).
+#[derive(Clone, Copy)]
+struct WorkTimes {
+    picked: Instant,
+    done: Instant,
+}
 enum Reply {
-    Search(u64, Result<Answer, String>, Instant),
+    /// (세대, 답, 입력 시각, 일꾼 단계 시각).
+    Search(u64, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
 }
 struct Ui {
@@ -59,6 +66,8 @@ struct Ui {
     status: mpsc::Sender<String>,
     top: usize,
     timing: Option<Instant>,
+    /// 결과를 받은 시각(READY 처리) — 그리기까지 구간 계측.
+    ready_at: Option<Instant>,
     hotkey_error: String,
     cancel: Arc<AtomicBool>,
     settings_path: PathBuf,
@@ -382,6 +391,9 @@ unsafe fn paint(h: HWND) {
         EndPaint(h, &ps);
         if let Some(start) = edit(|u| u.timing.take()) {
             log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
+            if let Some(ready) = edit(|u| u.ready_at.take()) {
+                phase("search_ready_to_paint_ms", ready.elapsed());
+            }
         }
     }
 }
@@ -742,7 +754,12 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let answers = with(|u| u.rx.try_iter().collect::<Vec<_>>());
                 for reply in answers {
                     let (g, result, start) = match reply {
-                        Reply::Search(g, result, start) => (g, result, start),
+                        Reply::Search(g, result, start, times) => {
+                            phase("search_queue_ms", times.picked - start);
+                            phase("search_work_ms", times.done - times.picked);
+                            phase("search_deliver_ms", times.done.elapsed());
+                            (g, result, start)
+                        }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
                                 if g == u.state.generation {
@@ -773,6 +790,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 u.rows = rows;
                                 u.terms = terms;
                                 u.timing = Some(start);
+                                u.ready_at = Some(Instant::now());
                             });
                         }
                         Err(message) => event(
@@ -921,6 +939,7 @@ pub fn run() -> Result<(), String> {
                 status: status_tx,
                 top: 0,
                 timing: None,
+                ready_at: None,
                 hotkey_error: String::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 settings_path: data.join("settings.json"),
@@ -969,6 +988,7 @@ pub fn run() -> Result<(), String> {
                 };
                 let reply = match work {
                     Work::Search((g, q, tab, start, cancel, sort)) => {
+                        let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
@@ -986,7 +1006,7 @@ pub fn run() -> Result<(), String> {
                             }
                             backend.as_mut().unwrap().search_cancel(&q, hierarchy, Some(cancel))
                         })();
-                        Reply::Search(g, answer, start)
+                        Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
                     }
                     Work::Snippets((g, mut rows, terms)) => {
                         if let Some(b) = backend.as_mut() {

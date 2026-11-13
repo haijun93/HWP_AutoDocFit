@@ -11,8 +11,14 @@ unsafe fn pump_until(limit_ms: u64, done: impl Fn() -> bool) -> Result<(), Strin
             MsgWaitForMultipleObjects(0, null(), 0, 50, QS_ALLINPUT);
             let mut msg: MSG = std::mem::zeroed();
             while PeekMessageW(&mut msg, null_mut(), 0, 0, PM_REMOVE) != 0 {
+                let t = Instant::now();
                 TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+                // 첫 입력 구간 진단(MG3): 한 메시지 처리에 10ms 넘게 걸리면 메시지 번호와 함께 남긴다.
+                let took = ms(t);
+                if took > 10.0 {
+                    log_line(serde_json::json!({"metric":"slow_dispatch_ms","value":took,"msg":msg.message,"to_edit":msg.hwnd == with(|u| u.edit)}).to_string());
+                }
             }
         }
         Ok(())
