@@ -8,6 +8,66 @@ import 'package:docfit_ui/core/hierarchy_ffi.dart';
 
 void main() {
   _labelsTest();
+  for (final mode in ['파일명', '본문검색', '위계검색']) {
+    for (final withId in [true, false]) {
+      if (mode == '파일명' && !withId) continue;
+      testWidgets('$mode 문서 열기는 더블클릭과 미리보기 버튼에서 ${withId ? 'id' : 'path'}를 보내고 실패 이유를 표시한다', (tester) async {
+        await tester.binding.setSurfaceSize(const Size(1400, 1000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        const path = r'C:\TM\보고서.hwpx';
+        final result = <String, Object?>{
+          if (withId) 'id': 42, 'name': '보고서.hwpx', 'file_name': '보고서.hwpx',
+          'path': path, 'folder': r'C:\TM', 'kind': 'hwpx', 'snippet': '검색 본문',
+          'size': 10, 'mtime': 1000.0, 'ctime': 1000.0, 'work_time': 1000.0,
+        };
+        final api = _FakeApi(enabled: true, contentSearchResults: [result], fileSearchResults: [result]);
+        api.relatedResponse = {'ok': true, 'items': [result]};
+        var fail = false;
+        var throwOpen = false;
+        Future<Object?> call(String method, List<Object?> args) async {
+          if (method == 'timemachine' && args[0] == 'open') {
+            await api.call(method, args);
+            if (throwOpen) throw StateError('connection lost');
+            return fail ? {'ok': false, 'message': '활성 검색 폴더 밖의 파일입니다.'} : {'ok': true};
+          }
+          return api.call(method, args);
+        }
+        await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: call))));
+        await tester.pumpAndSettle();
+        if (mode != '파일명') {
+          await tester.tap(find.text(mode));
+        } else {
+          await tester.tap(find.byTooltip('열 보기'));
+        }
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '보고서');
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+        final row = find.byKey(ValueKey(mode == '파일명' ? 'tm-file-row-42' : 'tm-content-row-${withId ? 42 : path}'));
+        await tester.tap(row);
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('문서 열기'));
+        await tester.pumpAndSettle();
+        final payload = withId ? {'id': 42} : {'path': path};
+        expect(api.calls.where((c) => c.$1 == 'open').single.$2, payload);
+        fail = true;
+        await tester.tap(row);
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.tap(row);
+        await tester.pumpAndSettle();
+        expect(api.calls.where((c) => c.$1 == 'open').length, 2);
+        expect(api.calls.where((c) => c.$1 == 'open').last.$2, payload);
+        expect(find.text('활성 검색 폴더 밖의 파일입니다.'), findsOneWidget);
+        throwOpen = true;
+        await tester.tap(find.text('문서 열기'));
+        await tester.pumpAndSettle();
+        expect(find.text('파일을 열지 못했습니다. 앱 연결을 확인해 주세요.'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
   for (final phase in ['indexing', 'reindexing']) {
     testWidgets('화면 진입 시 $phase 상태를 읽고 자동 진행을 폴링한다', (tester) async {
       final api = _FakeApi(enabled: true, developerMode: false);

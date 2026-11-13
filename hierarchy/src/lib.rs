@@ -1,3 +1,5 @@
+pub mod search_levels;
+mod search_unify_marker;
 pub mod compat;
 pub mod search;
 
@@ -9,8 +11,7 @@ pub unsafe extern "C" fn hierarchy_analyze_json(input: *const std::ffi::c_char) 
     let raw = std::ffi::CStr::from_ptr(input).to_bytes();
     let result = std::panic::catch_unwind(|| {
         let value: serde_json::Value = serde_json::from_slice(raw).ok()?;
-        let paragraphs = value.get("paragraphs").cloned().unwrap_or(serde_json::Value::Array(vec![]));
-        serde_json::to_string(&compat::analyze_hierarchy::analyze_hierarchy(&paragraphs)).ok()
+        serde_json::to_string(&search_levels::response(&value)).ok()
     }).ok().flatten();
     result.and_then(|s| std::ffi::CString::new(s).ok()).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }

@@ -26,6 +26,10 @@ fn classify(paragraphs: &[Value], stage: usize) -> Vec<Value> {
 }
 
 pub(crate) fn classify_with_scheme(paragraphs: &[Value], stage: usize, scheme: &hierarchy::compat::marker_scheme::MarkerScheme) -> Vec<Value> {
+    if stage >= 7 {
+        return hierarchy::search_levels::classify_json(&crate::json::to_string(&Value::Arr(paragraphs.to_vec())))
+            .expect("paragraphs serialize to valid JSON").into_iter().map(Value::Str).collect();
+    }
     paragraphs.iter().map(|p| {
         let style = text(p, "style_name").to_lowercase();
         let outline = integer(p, "outline_level");
@@ -62,7 +66,12 @@ pub(crate) fn classify_with_scheme(paragraphs: &[Value], stage: usize, scheme: &
 }
 
 pub(crate) fn classify_extracted(paragraphs: &[crate::extract::Paragraph], scheme: &hierarchy::compat::marker_scheme::MarkerScheme) -> Vec<String> {
+    classify_extracted_for_path(paragraphs, scheme, "")
+}
+
+pub(crate) fn classify_extracted_for_path(paragraphs: &[crate::extract::Paragraph], scheme: &hierarchy::compat::marker_scheme::MarkerScheme, path: &str) -> Vec<String> {
     let values: Vec<Value> = paragraphs.iter().map(|p| Value::obj(vec![
+        ("source_path", path.into()),
         ("text", p.text.clone().into()), ("is_table_cell", p.is_table_cell.into()),
         ("style_name", p.style_name.clone().map(Value::Str).unwrap_or(Value::Null)),
         ("outline_level", p.outline_level.map(Value::from).unwrap_or(Value::Null)),

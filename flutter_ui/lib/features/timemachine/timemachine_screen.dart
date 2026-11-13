@@ -499,11 +499,25 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     }
   }
 
+  Future<void> _openDocument(Map<String, Object?> payload) async {
+    try {
+      final response = await _api.command('open', payload);
+      if (!mounted) return;
+      setState(() => _error = response['ok'] == true
+          ? null
+          : '${response['message'] ?? '파일을 열지 못했습니다.'}');
+    } catch (_) {
+      if (mounted) setState(() => _error = '파일을 열지 못했습니다. 앱 연결을 확인해 주세요.');
+    }
+  }
+
   Future<void> _openContentResult(TimemachineContentResult result) async {
     if (result.id != null) {
-      await _api.command('open', {'id': result.id});
+      await _openDocument({'id': result.id});
     } else if (result.path != null && result.path!.isNotEmpty) {
-      await _api.command('open', {'path': result.path});
+      await _openDocument({'path': result.path});
+    } else if (mounted) {
+      setState(() => _error = '파일 항목을 확인해 주세요.');
     }
   }
 
@@ -835,11 +849,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (mounted) setState(() => _error = '다시 훑지 못했습니다. 앱 연결을 확인해 주세요.');
     }
   }
-  Future<void> _openItem(TimemachineItem item) async {
-    try { final response = await _api.command('open', {'id':item.id});
-      if (response['ok'] != true && mounted) setState(() => _error = '${response['message'] ?? '파일을 열지 못했습니다.'}');
-    } catch (_) { if (mounted) setState(() => _error = '파일을 열지 못했습니다. 앱 연결을 확인해 주세요.'); }
-  }
+  Future<void> _openItem(TimemachineItem item) => _openDocument({'id': item.id});
   Future<void> _revealItem(TimemachineItem item) async {
     try { final response = await _api.command('reveal', {'id':item.id});
       if (response['ok'] != true && mounted) setState(() => _error = '${response['message'] ?? '폴더를 열지 못했습니다.'}');
@@ -940,7 +950,13 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
             child: (_contentMode || _relatedMode)
                 ? Column(children: [if (_contentMode) _contentSearchPanel(), Expanded(child: _contentResultsView())])
                 : (_fileTableView && _fileSearchSupported
-                    ? _fileSearchTable(_fileSearchActive ? _fileSearchResults : _items)
+                    ? Row(children: [
+                        Expanded(flex: 3, child: _fileSearchTable(_fileSearchActive ? _fileSearchResults : _items)),
+                        if (_selectedContentResult != null || _previewLoading) ...[
+                          const VerticalDivider(width: 1),
+                          Expanded(flex: 2, child: _contentPreviewPane()),
+                        ],
+                      ])
                     : (isNarrow
                         ? Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1349,7 +1365,11 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
                             final sizeKb = (item.size / 1024).toStringAsFixed(1);
                             return InkWell(
                               key: ValueKey('tm-file-row-${item.id}'),
-                              onTap: () => _openItem(item),
+                              onTap: () => _previewContentResult(TimemachineContentResult.fromJson({
+                                'id': item.id, 'name': item.name, 'folder': item.folder,
+                                'path': '${item.folder}\\${item.name}', 'kind': item.kind,
+                              }, query: _search.text.trim())),
+                              onDoubleTap: () => _openItem(item),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                 child: Row(
