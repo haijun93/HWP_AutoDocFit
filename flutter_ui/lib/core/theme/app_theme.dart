@@ -35,6 +35,38 @@ enum AppThemeChoice {
 /// 현재 테마 선택(앱 전역 하나). `DocFitApp`이 듣고 다시 그린다.
 final appThemeChoice = ValueNotifier<AppThemeChoice>(AppThemeChoice.system);
 
+/// 테마 저장 대기열(DARK1-R). 다른 명령이 처리 중이어도 저장을 버리지 않고, 저장이 겹치면
+/// 차례로 보내되 그 사이 쌓인 선택은 마지막 값 하나만 보낸다(설정 파일 = 화면에 보이는 선택).
+/// 상태: 쉼 → 저장 중(대기 값 없음/있음) → 대기 값이 있으면 이어서 저장 → 쉼.
+class ThemeSaveQueue {
+  ThemeSaveQueue(this._save, {this.onError});
+
+  final Future<void> Function(AppThemeChoice choice) _save;
+  final void Function(Object error)? onError;
+  AppThemeChoice? _pending;
+  Future<void>? _running;
+
+  bool get saving => _running != null;
+
+  /// [choice]를 저장 대기에 넣고, 대기열이 빌 때까지 기다린다.
+  Future<void> save(AppThemeChoice choice) {
+    _pending = choice;
+    return _running ??= _drain().whenComplete(() => _running = null);
+  }
+
+  Future<void> _drain() async {
+    while (_pending != null) {
+      final next = _pending!;
+      _pending = null;
+      try {
+        await _save(next);
+      } catch (e) {
+        onError?.call(e);
+      }
+    }
+  }
+}
+
 /// 작업 방식 카드 색(문서편집 작업 카드).
 typedef ModeColors = ({Color surface, Color selectedSurface, Color accent});
 
