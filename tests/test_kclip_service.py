@@ -53,6 +53,17 @@ class KClipServiceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_manage_show_forwards_mode_and_theme_only_when_running(self):
+        off = self.service.command("manage_show", {"mode": "hotkey", "theme": "dark"})
+        self.assertFalse(off["ok"])
+        self.assertEqual(off["code"], "KCLIP_OFFLINE")
+        self.assertEqual(self.client.requests, [])
+        self.client.on = True
+        self.assertTrue(self.service.command("manage_show", {"mode": "hotkey", "theme": "dark"})["ok"])
+        self.service.command("manage_show", {"mode": "x", "theme": "neon"})
+        self.assertEqual(self.client.requests, [("manage_show", {"mode": "hotkey", "theme": "dark"}),
+                                                ("manage_show", {"mode": "sidebar"})])
+
     def test_status_exposes_store_and_optional_ffi_paths(self):
         status = self.service.status()
         self.assertIsNone(status["db_path"])

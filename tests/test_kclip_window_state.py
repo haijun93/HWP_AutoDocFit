@@ -31,6 +31,17 @@ class KClipWindowStateTest(unittest.TestCase):
         self.assertEqual(store.data["other"], 1)
         self.assertTrue(store.data["always_on_top"])
 
+    def test_ui_choice_defaults_to_native_and_saves_flutter(self):
+        store = _Store({"kclip_window": {"x": 1}, "ui": {"other": 2}})
+        self.assertEqual(state.command(store, "ui_get"), {"ok": True, "kclip": "native"})
+        self.assertEqual(state.command(store, "ui_set", {"kclip": "flutter"}), {"ok": True, "kclip": "flutter"})
+        self.assertEqual(state.command(store, "ui_get")["kclip"], "flutter")
+        self.assertEqual(store.data["ui"], {"other": 2, "kclip": "flutter"})
+        self.assertEqual(store.data["kclip_window"], {"x": 1})
+        self.assertFalse(state.command(store, "ui_set", {"kclip": "web"})["ok"])
+        self.assertEqual(state.load_ui(_Store({"ui": {"kclip": "bogus"}})), "native")
+        self.assertEqual(state.load_ui(_Store({"ui": "native"})), "native")
+
     def test_partial_update_keeps_previous_values(self):
         store = _Store()
         state.save(store, {"x": 10, "y": 20, "width": 700, "height": 500})

@@ -346,6 +346,14 @@ class KClipService:
             "settings_get": ("settings_get", ()),
             "settings_set": ("settings_set", ("settings",)),
         }
+        if action == "manage_show":
+            # 관리창(kagent 안 Win32 창, UI1)을 연다. 에이전트가 꺼져 있으면 오류 → 앱이 Flutter 화면(켜기 동의)으로.
+            mode = "hotkey" if payload.get("mode") == "hotkey" else "sidebar"
+            theme = payload.get("theme") if payload.get("theme") in ("system", "light", "dark") else None
+            if not self.client.running():
+                return dict(ok=False, code="KCLIP_OFFLINE", message="몽땅클립보드가 꺼져 있습니다.")
+            args = dict(mode=mode, theme=theme) if theme else dict(mode=mode)
+            return self._forward("manage_show", args, tuple(args))
         if action == "open_web":
             try:
                 item_id = int(payload.get("id"))

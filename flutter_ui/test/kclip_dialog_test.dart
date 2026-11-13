@@ -663,4 +663,56 @@ void main() {
     final clear = sent.firstWhere((c) => c[0] == 'clear');
     expect((clear[1] as Map)['keep_pinned'], true);
   });
+
+  group('관리창 화면 선택 ui.kclip(UI1)', () {
+    Future<List<String>> openWith(WidgetTester tester, String choice, {bool agentOk = true}) async {
+      final calls = <String>[];
+      Future<Object?> api(String method, List<Object?> args) async {
+        final action = args.isEmpty ? '' : '${args[0]}';
+        calls.add('$method:$action');
+        if (method == 'kclip_window') {
+          if (action == 'ui_get') return {'ok': true, 'kclip': choice};
+          return {'ok': true, 'window': {'x': 10, 'y': 10, 'width': 460, 'height': 560, 'always_on_top': false}};
+        }
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (action == 'manage_show') {
+          return agentOk ? {'ok': true, 'shown': true} : {'ok': false, 'code': 'KCLIP_OFFLINE'};
+        }
+        if (action == 'status') return {'ok': true, 'running': true, 'available': true, 'status': {}};
+        if (action == 'list') return {'ok': true, 'items': []};
+        if (action == 'settings_get') return {'ok': true, 'settings': {}};
+        return {'ok': true};
+      }
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: Builder(
+        builder: (context) => TextButton(
+          onPressed: () => openKClipManager(context, api, mode: KClipEntryMode.hotkey),
+          child: const Text('열기'),
+        ),
+      ))));
+      await tester.tap(find.text('열기'));
+      await tester.pumpAndSettle();
+      return calls;
+    }
+
+    testWidgets('native(기본)면 kagent 관리창을 열고 앱 안 화면은 띄우지 않는다', (tester) async {
+      final calls = await openWith(tester, 'native');
+      expect(calls.take(2), ['kclip_window:ui_get', 'kclip:manage_show']);
+      expect(find.byKey(const ValueKey('kclip-sticky-window')), findsNothing);
+    });
+
+    testWidgets('flutter면 앱 안 화면, native라도 에이전트가 꺼져 있으면 앱 안 화면', (tester) async {
+      final calls = await openWith(tester, 'flutter');
+      expect(calls, isNot(contains('kclip:manage_show')));
+      expect(find.byKey(const ValueKey('kclip-sticky-window')), findsOneWidget);
+    });
+
+    testWidgets('native인데 에이전트가 꺼져 있으면 앱 안 화면(켜기 동의)', (tester) async {
+      final calls = await openWith(tester, 'native', agentOk: false);
+      expect(calls, contains('kclip:manage_show'));
+      expect(find.byKey(const ValueKey('kclip-sticky-window')), findsOneWidget);
+    });
+  });
 }

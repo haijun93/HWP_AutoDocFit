@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../../core/theme/app_theme.dart' show appThemeChoice;
 import 'kclip_category.dart';
 import 'kclip_category_prefs.dart';
 import 'kclip_ffi.dart';
@@ -43,6 +44,27 @@ Future<void> showKClipDialog(BuildContext context, ApiCall api,
       ),
     ),
   );
+}
+
+/// 관리창 열기(UI1): 설정 `ui.kclip`이 native(기본)면 상주 프로그램(kagent) 안의 Win32 관리창을 열고,
+/// flutter이거나 에이전트가 꺼져 있으면(켜기 동의가 필요) 앱 안 화면([showKClipStickyWindow])을 연다.
+/// 한 릴리스 동안 두 화면을 함께 둔다.
+Future<void> openKClipManager(BuildContext context, ApiCall api,
+    {KClipEntryMode mode = KClipEntryMode.sidebar}) async {
+  try {
+    final ui = await api('kclip_window', ['ui_get', const <String, Object?>{}]);
+    if (ui is Map && ui['kclip'] == 'native') {
+      final shown = await api('kclip', [
+        'manage_show',
+        {'mode': mode.name, 'theme': appThemeChoice.value.key},
+      ]);
+      if (shown is Map && shown['ok'] == true) return;
+    }
+  } catch (_) {
+    // 설정·파이프를 못 읽으면 앱 안 화면으로.
+  }
+  if (!context.mounted) return;
+  await showKClipStickyWindow(context, api, mode: mode);
 }
 
 /// 스티커 메모형 관리창: 앱 창 안에 떠 있는 이동·크기 조절 가능한 창(모달 아님)으로 연다.

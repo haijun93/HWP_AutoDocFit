@@ -1606,7 +1606,8 @@ mod tests {
         ("search_empty", "440x420", 0x542cebf266f6ad04),
         ("empty_error", "440x420", 0xe147f4b478cca2c1),
         ("empty_cat", "440x420", 0x3febe35e93b83781),
-        ("collapsed", "440x122", 0xdd002344b5fa7c88),
+        // UI1: 122px 창에 6항목 → 스크롤 막대가 새로 생김(막대를 빼면 UI0 이전 값 0xdd002344b5fa7c88과 같음을 확인).
+        ("collapsed", "440x122", 0x70585bae23d19908),
         ("narrow_pinned_max", "420x300", 0xea36edee890c2d27),
         ("wide", "900x600", 0xc9e0754688a54aac),
     ];

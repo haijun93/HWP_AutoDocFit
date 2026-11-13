@@ -61,6 +61,37 @@ def save(store, payload):
     return dict(saved)
 
 
+UI_KEY = "ui"
+UI_CHOICES = ("native", "flutter")
+UI_DEFAULT = "native"
+
+
+def load_ui(store):
+    """관리창 화면 선택 ``ui.kclip``: native(kagent 안 Win32 창, 기본) 또는 flutter(앱 안 화면).
+
+    한 릴리스 동안 두 화면을 함께 두고 이 값으로 고른다(UI1, 2026-11-14)."""
+    try:
+        ui = store.read().get(UI_KEY)
+    except Exception:
+        return UI_DEFAULT
+    value = ui.get("kclip") if isinstance(ui, dict) else None
+    return value if value in UI_CHOICES else UI_DEFAULT
+
+
+def save_ui(store, value):
+    if value not in UI_CHOICES:
+        raise ValueError(value)
+
+    def change(current):
+        ui = current.get(UI_KEY)
+        ui = dict(ui) if isinstance(ui, dict) else {}
+        ui["kclip"] = value
+        current[UI_KEY] = ui
+
+    store.update(change)
+    return value
+
+
 def command(store, action, payload=None, apply_topmost=None):
     """``kclip_window`` 화면 명령.
 
@@ -68,11 +99,19 @@ def command(store, action, payload=None, apply_topmost=None):
     - ``set``: 위치·크기·항상 위를 저장하고 항상 위를 적용한다.
     - ``close``: 관리창을 닫을 때 앱 창의 원래 항상 위 설정으로 되돌린다(저장값은 유지).
     - ``get``: 저장값만 돌려준다.
+    - ``ui_get``·``ui_set``: 관리창 화면 선택 ``ui.kclip``(native·flutter, 기본 native).
     ``apply_topmost(enabled_or_None)``: None이면 앱 본래 설정으로 되돌린다.
     """
     payload = payload if isinstance(payload, dict) else {}
     if action == "get":
         return {"ok": True, "window": load(store)}
+    if action == "ui_get":
+        return {"ok": True, "kclip": load_ui(store)}
+    if action == "ui_set":
+        value = payload.get("kclip")
+        if value not in UI_CHOICES:
+            return {"ok": False, "message": "관리창 화면은 native 또는 flutter만 고를 수 있습니다."}
+        return {"ok": True, "kclip": save_ui(store, value)}
     if action == "open":
         window = load(store)
         _apply(apply_topmost, True if window["always_on_top"] else None)

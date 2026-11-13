@@ -161,7 +161,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     _kclipOpen = true;
     try {
       if (!mounted) return;
-      await showKClipStickyWindow(context, widget.api, mode: KClipEntryMode.hotkey);
+      await openKClipManager(context, widget.api, mode: KClipEntryMode.hotkey);
     } finally {
       _kclipOpen = false;
     }
@@ -251,7 +251,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
                 if (_kclipOpen) return;
                 _kclipOpen = true;
                 try {
-                  await showKClipStickyWindow(context, widget.api);
+                  await openKClipManager(context, widget.api);
                 } finally {
                   _kclipOpen = false;
                 }
