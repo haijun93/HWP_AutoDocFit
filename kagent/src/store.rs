@@ -236,6 +236,9 @@ impl Summary {
             ("pinned", self.pinned.into()),
             ("used", self.used.into()),
             ("size", self.size.into()),
+            // 빠른 목록과 같은 분류(앱 화면이 경로만 저장한 캡처 항목도 같은 기준으로 거르고 미리보게).
+            ("cats", Value::Arr(crate::category::Category::ALL.iter().filter(|c| self.cats.contains(**c))
+                .map(|c| c.label().into()).collect())),
         ])
     }
 }
