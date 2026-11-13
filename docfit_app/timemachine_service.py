@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import logging
 import math
@@ -16,12 +17,15 @@ from pathlib import Path
 
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.content_search import ContentSearchIndex
+from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
+from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
 from docfit_core.timemachine.related import related_documents
 from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
 from docfit_core.timemachine.scan import default_roots, scan_roots
 from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
+from .kfind_client import KfindClient, KfindError
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -37,13 +41,19 @@ ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
 class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
-                 developer_mode=None, idle_scheduler=None):
+                 developer_mode=None, idle_scheduler=None, kfind_client=None):
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
         excluded_rows = self.store.purge_excluded()
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
+        self.kfind = kfind_client if kfind_client is not None else KfindClient()
+        self._kfind_ids = itertools.count(1)
+        self._kfind_pending = {}
+        self._kfind_synced = False
+        self._kfind_generation = None
+        self._engine_state = {"engine": "legacy", "engine_reason": "not_connected", "corpus": "pending"}
         self.agent = agent if agent is not None else KAgentClient()
         self.opener = opener if opener is not None else self._open_file
         self.revealer = revealer if revealer is not None else self._reveal_file
@@ -86,8 +96,18 @@ class TimemachineService:
         subprocess.Popen(["explorer", "/select," + path])
 
     def _defaults(self):
-        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
+        return {"roots": default_roots(), "time_mode": "max", "enabled": True, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
+                "search_engine": "kfind",
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
+
+    def _search_engine(self):
+        value = self._settings.get("search_engine", "kfind")
+        return value if value in {"kfind", "legacy", "shadow"} else "kfind"
+
+    def _engine_status(self):
+        with self._content_lock:
+            return {**self._engine_state, "requested_engine": self._search_engine(),
+                    "connection": self.kfind.state()}
 
     @staticmethod
     def _idle_values(source, fallback):
