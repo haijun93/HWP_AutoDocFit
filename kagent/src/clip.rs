@@ -367,6 +367,14 @@ pub fn write(hwnd: HWND, kind: &str, payload: &[u8], extra: &[u8]) -> bool {
             }
             "files" => {
                 let text = String::from_utf8_lossy(payload);
+                // 화면캡처 폴더 항목(경로만 저장): 붙일 때 파일을 읽어 그림으로도 올린다. 그림을 먼저 두어
+                // 한/글·워드 같은 그림 붙여넣기 프로그램은 그림을, 탐색기는 파일(CF_HDROP)을 고르게 한다.
+                if extra == crate::CAPTURE_FILE_MARK {
+                    if let Some((png, dib)) = capture_file_image(text.trim()) {
+                        if let Some(p) = png { put(formats().png, &p); }
+                        put(CF_DIB as u32, &dib);
+                    }
+                }
                 let mut data = Vec::new();
                 let header = DROPFILES {
                     pFiles: std::mem::size_of::<DROPFILES>() as u32,
@@ -614,6 +622,36 @@ pub fn png_to_dib(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// 캡처 파일 → (PNG 원본, CF_DIB). PNG·BMP만(JPG 등은 파일로만 붙는다). 50MB 넘으면 읽지 않는다.
+pub fn capture_file_image(path: &str) -> Option<(Option<Vec<u8>>, Vec<u8>)> {
+    if std::fs::metadata(path).ok()?.len() > 50 * 1024 * 1024 {
+        return None;
+    }
+    let lower = path.to_ascii_lowercase();
+    if lower.ends_with(".png") {
+        let bytes = std::fs::read(path).ok()?;
+        let dib = png_to_dib(&bytes)?;
+        return Some((Some(bytes), dib));
+    }
+    if lower.ends_with(".bmp") {
+        let bytes = std::fs::read(path).ok()?;
+        return bmp_file_to_dib(&bytes).map(|d| (None, d));
+    }
+    None
+}
+
+/// BMP 파일(14바이트 파일 머리 + DIB) → CF_DIB. 머리 검사만 하고 크기 검사는 checked_dib_layout에 맡긴다.
+pub fn bmp_file_to_dib(bytes: &[u8]) -> Option<Vec<u8>> {
+    if bytes.len() < 14 + 40 || !bytes.starts_with(b"BM") {
+        return None;
+    }
+    let dib = &bytes[14..];
+    let u32_at = |o: usize| dib.get(o..o + 4).map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
+    let bits = u16::from_le_bytes([*dib.get(14)?, *dib.get(15)?]);
+    checked_dib_layout(u32_at(4)? as i32, u32_at(8)? as i32, bits, u32_at(16)?, u32_at(0)? as usize, dib.len())?;
+    Some(dib.to_vec())
+}
+
 pub fn png_size(data: &[u8]) -> Option<(u32, u32)> {
     let w = data.get(16..20)?;
     let h = data.get(20..24)?;
@@ -670,6 +708,19 @@ mod tests {
             d.extend_from_slice(&line);
         }
         d
+    }
+
+    #[test]
+    fn bmp_file_becomes_dib_and_rejects_junk() {
+        let d = dib(2, 2, 24, &[1, 2, 3]);
+        let mut file = b"BM".to_vec();
+        file.extend_from_slice(&[0u8; 12]);
+        file.extend_from_slice(&d);
+        assert_eq!(bmp_file_to_dib(&file).unwrap(), d);
+        assert!(bmp_file_to_dib(b"BMxx").is_none());
+        let mut bad = file.clone();
+        bad[14 + 14] = 8; // 8비트는 지원 안 함
+        assert!(bmp_file_to_dib(&bad).is_none());
     }
 
     #[test]

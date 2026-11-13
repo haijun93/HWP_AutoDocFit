@@ -119,8 +119,7 @@ fn run() -> Result<String, String> {
     let mut raw = Vec::new();
     std::io::stdin().read_to_end(&mut raw).map_err(|e| e.to_string())?;
     let value: Value = serde_json::from_slice(&raw).map_err(|e| e.to_string())?;
-    let paragraphs = value.get("paragraphs").cloned().unwrap_or(Value::Array(vec![]));
-    serde_json::to_string(&hierarchy::compat::analyze_hierarchy::analyze_hierarchy(&paragraphs))
+    serde_json::to_string(&hierarchy::search_levels::response(&value))
         .map_err(|e| e.to_string())
 }
 

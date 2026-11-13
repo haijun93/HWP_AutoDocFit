@@ -35,7 +35,7 @@ void main() {
       fileConversion: _page('파일변환 화면'),
       paint: _page('그림판 화면'),
       fileRename: _page('파일이름 화면'),
-      timemachine: _page('타임머신 화면'),
+      timemachine: _page('몽땅검색 화면'),
       initialIndex: 8,
     )));
     await tester.pumpAndSettle();
@@ -58,7 +58,7 @@ void main() {
           fileConversion: _page('파일변환 화면'),
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
-          timemachine: _page('타임머신 화면'),
+          timemachine: _page('몽땅검색 화면'),
           initialIndex: 3,
         ),
       ),
@@ -118,7 +118,7 @@ void main() {
           fileConversion: _page('파일변환 화면'),
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
-          timemachine: _page('타임머신 화면'),
+          timemachine: _page('몽땅검색 화면'),
         ),
       ),
     );
@@ -153,7 +153,7 @@ void main() {
           fileConversion: _page('파일변환 화면'),
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
-          timemachine: _page('타임머신 화면'),
+          timemachine: _page('몽땅검색 화면'),
         ),
       ),
     );
@@ -174,7 +174,7 @@ void main() {
           fileConversion: _page('파일변환 화면'),
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
-          timemachine: _page('타임머신 화면'),
+          timemachine: _page('몽땅검색 화면'),
         ),
       ),
     );

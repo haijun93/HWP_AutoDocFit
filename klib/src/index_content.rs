@@ -74,7 +74,7 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
     let levels = if ext == "hwp" {
         crate::legacy_records::classify_texts(&texts)
     } else {
-        crate::classify_levels::classify_extracted(&paragraphs, &scheme)
+        crate::classify_levels::classify_extracted_for_path(&paragraphs, &scheme, &path)
     };
     let body = paragraphs.iter().map(|p|p.text.as_str()).collect::<Vec<_>>().join("\n");
     let date = extract_date(&body);

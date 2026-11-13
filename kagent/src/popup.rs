@@ -55,7 +55,6 @@ const CAT_H: i32 = 28;
 /// 캡션 단추 하나의 폭(Windows 기본 캡션 단추 46px).
 const CAPTION_W: i32 = 46;
 /// 접힌 창 높이(틀이 없으므로 머리글 + 위아래 테두리 1px).
-const COLLAPSED_H: i32 = HEAD_H + 2;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
 /// 최소 폭: 제목(약 90) + 단추 7개(322).
@@ -68,7 +67,6 @@ const TAB_MIN_PAD: i32 = 4;
 const LIST_LIMIT: usize = 50;
 /// WM_MOUSELEAVE(0x02A3). windows-sys에서는 Win32_UI_Controls 기능에만 있어 의존성 기능을 늘리지 않고 직접 둔다.
 const WM_MOUSELEAVE: u32 = 0x02A3;
-const CMD_COLLAPSE: usize = 10;
 const CMD_CLEAR: usize = 11;
 
 // ---- 분류 메뉴 ----
@@ -285,6 +283,8 @@ fn apply_items(seq: u64, needle: &str, items: Vec<Summary>, keep_sel: bool) -> b
 /// 분류·찾기 글자로 목록을 다시 만든다. 먼저 메모리 목록으로 바로 그리고, 필요할 때만 저장소를 본다.
 /// 단계별로 잠금을 풀어 STATE와 DB/recent를 동시에 잡지 않고, seq로 늦게 온 결과가 새 입력을 덮지 않게 한다.
 fn refilter(keep_sel: bool) {
+    // 목록이 바뀌면 가리키던 그림도 바뀔 수 있으니 미리보기는 닫는다(다음 마우스 움직임·키 입력에 다시 뜬다).
+    crate::preview::hide();
     let (tab, needle, cur_seq) = {
         let mut st = STATE.lock().unwrap();
         st.seq += 1;
@@ -425,8 +425,8 @@ pub fn show() {
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(monitor, &mut mi);
         let wa = mi.rcWork;
-        let (sticker, collapsed, saved_x, saved_y, saved_w, saved_h) =
-            (settings.sticky_popup, settings.popup_collapsed, settings.popup_x, settings.popup_y,
+        let (sticker, saved_x, saved_y, saved_w, saved_h) =
+            (settings.sticky_popup, settings.popup_x, settings.popup_y,
              settings.popup_width, settings.popup_height);
         let dpi = GetDpiForWindow(hwnd).max(96) as i64;
         let saved_x_px = saved_x * dpi / 96;
@@ -434,7 +434,7 @@ pub fn show() {
         let saved_w_px = saved_w * dpi / 96;
         let saved_h_px = saved_h * dpi / 96;
         let saved_rect_valid = sticker && saved_x_px >= wa.left as i64 && saved_y_px >= wa.top as i64
-            && saved_w > 0 && saved_h > COLLAPSED_H as i64
+            && saved_w > 0 && saved_h > MIN_H as i64
             && saved_x_px + saved_w_px <= wa.right as i64 && saved_y_px + saved_h_px <= wa.bottom as i64;
         let (x, y, w, mut h) = if saved_rect_valid {
             (saved_x_px as i32, saved_y_px as i32, saved_w_px as i32, saved_h_px as i32)
@@ -442,10 +442,8 @@ pub fn show() {
             ((pt.x + 8).min(wa.right - default_w).max(wa.left),
              (pt.y + 8).min(wa.bottom - default_h).max(wa.top), default_w, default_h)
         };
-        if collapsed {
-            h = scale(hwnd, COLLAPSED_H);
-        } else if h < scale(hwnd, MIN_H) {
-            // 펼친 상태인데 높이가 너무 작으면(접힌 높이가 저장된 경우) 기본 높이로 되돌린다.
+        if h < scale(hwnd, MIN_H) {
+            // 높이가 너무 작으면(예전 버전의 접힌 높이가 저장된 경우) 기본 높이로 되돌린다.
             h = default_h;
         }
         SetWindowPos(hwnd, if settings.always_on_top { HWND_TOPMOST } else { HWND_NOTOPMOST },
@@ -479,12 +477,14 @@ pub fn refresh() {
 
 /// 닫기: 숨기고 다음에 열 때 처음 상태(전체)로.
 fn hide() {
+    crate::preview::hide();
     STATE.lock().unwrap().minimized = false;
     unsafe { ShowWindow(popup_hwnd(), SW_HIDE) };
 }
 
 /// 최소화: 숨기되 분류·찾기·선택·위치를 그대로 둔다.
 fn minimize() {
+    crate::preview::hide();
     unsafe { ShowWindow(popup_hwnd(), SW_HIDE) };
     // 숨기는 동안 WM_ACTIVATE(비활성)가 hide()를 부를 수 있으므로 숨긴 뒤에 표시한다.
     STATE.lock().unwrap().minimized = true;
@@ -512,29 +512,10 @@ fn toggle_max(hwnd: HWND) {
     }
 }
 
-/// 목록 접기/펼치기(머리글만 남김). 오른쪽 클릭 메뉴에서 부른다.
-fn toggle_collapse(hwnd: HWND) {
-    let (collapsed, saved_h) = {
-        let mut s = app().settings.lock().unwrap();
-        s.popup_collapsed = !s.popup_collapsed;
-        (s.popup_collapsed, s.popup_height as i32)
-    };
-    crate::save_settings();
-    // 설정 잠금은 SetWindowPos 전에 풀어야 한다(WM_GETMINMAXINFO가 다시 잠근다).
-    let target_h = if collapsed { COLLAPSED_H } else if saved_h >= MIN_H { saved_h } else { HEAD_H + CAT_H + ROW_H * 5 + 8 };
-    STATE.lock().unwrap().restore_rect = None;
-    unsafe {
-        let mut rect: RECT = std::mem::zeroed();
-        GetWindowRect(hwnd, &mut rect);
-        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, rect.right - rect.left, scale(hwnd, target_h),
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
-        InvalidateRect(hwnd, std::ptr::null(), 0);
-    }
-}
-
 fn clear_all(hwnd: HWND) {
     if crate::confirm_clear(hwnd) {
         let _ = app().store.lock().unwrap().clear(true);
+        crate::thumb::clear_all();
         refresh_recent();
     }
 }
@@ -565,6 +546,7 @@ pub fn paste_into(target: HWND) {
 }
 
 fn choose(index: usize) {
+    crate::preview::hide();
     let (id, target) = {
         let st = STATE.lock().unwrap();
         match st.items.get(index) {
@@ -591,6 +573,31 @@ fn move_sel(delta: isize) {
         st.top = st.sel;
     } else if st.sel >= st.top + VISIBLE {
         st.top = st.sel + 1 - VISIBLE;
+    }
+}
+
+/// 마우스가 가리키는 줄의 그림 미리보기(커서 옆).
+fn preview_hover(index: Option<usize>) {
+    let target = index.and_then(|i| STATE.lock().unwrap().items.get(i).and_then(crate::preview::target_of));
+    let mut pt = POINT { x: 0, y: 0 };
+    unsafe { GetCursorPos(&mut pt) };
+    crate::preview::point(target, crate::preview::Anchor::Cursor(pt));
+}
+
+/// 키보드(·휠)로 고른 줄의 그림 미리보기(빠른 목록 창 옆, 그 줄 높이).
+fn preview_selected(hwnd: HWND) {
+    let (target, offset, search) = {
+        let st = STATE.lock().unwrap();
+        (st.items.get(st.sel).and_then(crate::preview::target_of), st.sel.saturating_sub(st.top) as i32,
+         st.current() == Tab::Search)
+    };
+    unsafe {
+        let row = scale(hwnd, ROW_H);
+        let mut pt = POINT { x: 0, y: list_top(scale(hwnd, HEAD_H), scale(hwnd, CAT_H), search, row) + offset * row };
+        ClientToScreen(hwnd, &mut pt);
+        let mut r: RECT = std::mem::zeroed();
+        GetWindowRect(hwnd, &mut r);
+        crate::preview::point(target, crate::preview::Anchor::Row { y: pt.y, left: r.left, right: r.right });
     }
 }
 
@@ -899,21 +906,18 @@ fn row_at(hwnd: HWND, lp: LPARAM) -> Option<usize> {
     row_index(y, top_y, scale(hwnd, ROW_H), st.top, st.items.len())
 }
 
-/// 머리글·빈 곳 오른쪽 클릭 메뉴 항목(접기·모두 지우기). 항목 메뉴 뒤에도 붙인다.
+/// 머리글·빈 곳 오른쪽 클릭 메뉴 항목(모두 지우기). 항목 메뉴 뒤에도 붙인다.
 unsafe fn append_window_items(menu: HMENU, separator: bool) {
     unsafe {
-        let collapsed = app().settings.lock().unwrap().popup_collapsed;
         if separator {
             AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         }
-        AppendMenuW(menu, MF_STRING, CMD_COLLAPSE, wide(if collapsed { "목록 펼치기" } else { "목록 접기" }).as_ptr());
         AppendMenuW(menu, MF_STRING, CMD_CLEAR, wide("모두 지우기(고정 항목 제외)…").as_ptr());
     }
 }
 
 fn run_window_command(hwnd: HWND, command: usize) -> bool {
     match command {
-        CMD_COLLAPSE => { toggle_collapse(hwnd); true }
         CMD_CLEAR => { clear_all(hwnd); true }
         _ => false,
     }
@@ -1038,8 +1042,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let info = &mut *(lp as *mut MINMAXINFO);
                 info.ptMinTrackSize.x = scale(hwnd, MIN_W);
                 // 접힌 창은 머리글 높이까지 줄어야 한다.
-                let min_h = if app().settings.lock().unwrap().popup_collapsed { COLLAPSED_H } else { MIN_H };
-                info.ptMinTrackSize.y = scale(hwnd, min_h);
+                info.ptMinTrackSize.y = scale(hwnd, MIN_H);
                 0
             }
             WM_ERASEBKGND => 1,
@@ -1129,12 +1132,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         let sel = STATE.lock().unwrap().sel;
                         choose(sel);
                     }
-                    VK_UP => move_sel(-1),
-                    VK_DOWN => move_sel(1),
-                    VK_PRIOR => move_sel(-(VISIBLE as isize)),
-                    VK_NEXT => move_sel(VISIBLE as isize),
-                    VK_HOME => move_sel(-100000),
-                    VK_END => move_sel(100000),
+                    VK_UP => { move_sel(-1); preview_selected(hwnd); }
+                    VK_DOWN => { move_sel(1); preview_selected(hwnd); }
+                    VK_PRIOR => { move_sel(-(VISIBLE as isize)); preview_selected(hwnd); }
+                    VK_NEXT => { move_sel(VISIBLE as isize); preview_selected(hwnd); }
+                    VK_HOME => { move_sel(-100000); preview_selected(hwnd); }
+                    VK_END => { move_sel(100000); preview_selected(hwnd); }
                     VK_DELETE => {
                         let id = {
                             let st = STATE.lock().unwrap();
@@ -1219,11 +1222,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     st.hover_tab = tab;
                     drop(st);
                     InvalidateRect(hwnd, std::ptr::null(), 0);
+                } else {
+                    drop(st);
                 }
+                // 같은 줄 안에서는 커서를 따라 옮기고, 줄이 바뀌면 그 항목 그림으로(그림이 아니면 숨김).
+                preview_hover(i);
                 0
             }
             WM_MOUSELEAVE => {
                 TRACKING.store(false, Ordering::Relaxed);
+                crate::preview::hide();
                 let mut st = STATE.lock().unwrap();
                 st.hover = None;
                 st.hover_btn = None;
@@ -1329,6 +1337,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_MOUSEWHEEL => {
                 let delta = ((wp >> 16) & 0xFFFF) as i16;
                 move_sel(if delta > 0 { -3 } else { 3 });
+                preview_selected(hwnd);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 0
             }
@@ -1403,8 +1412,6 @@ mod tests {
         assert!(!draws_own_border(true));
         assert!(draws_own_border(false));
         // 접힌 창은 머리글 + 위아래 1px, 틀 두께(예전 12px)를 더하지 않는다.
-        assert_eq!(COLLAPSED_H, HEAD_H + 2);
-        assert!(MIN_H > COLLAPSED_H);
     }
 
     #[test]

@@ -270,9 +270,20 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
     engine_levels = analyze_levels(
-        [{"text": p.text, "indent": 0, "font_size": 0} for p in paragraphs]
+        [{"text": p.text, "indent": 0, "font_size": 0,
+          "source_path": os.fspath(path), "paragraph_index": p.paragraph_index,
+          "is_table_cell": p.is_table_cell, "style_name": p.style_name,
+          "outline_level": p.outline_level, "table_cell_id": p.table_cell_id,
+          "table_id": p.table_id} for p in paragraphs]
     )
-    if engine_levels is not None:
+    engine_search = engine_levels.get("search_levels") if engine_levels is not None else None
+    legacy_levels = (engine_levels.get("levels") if engine_levels is not None
+                     and "search_levels" not in engine_levels else None)
+    valid_search = (isinstance(engine_search, list) and len(engine_search) == len(paragraphs)
+                    and all(isinstance(level, str) and level in LEVEL_RANKS for level in engine_search))
+    valid_legacy = (isinstance(legacy_levels, list) and len(legacy_levels) == len(paragraphs)
+                    and all(type(level) is int and 0 <= level <= 10 for level in legacy_levels))
+    if valid_search or valid_legacy:
         converted = convert_engine_levels_to_records(paragraphs, engine_levels)
         for position, level in plain_chapters.items():
             if position < len(converted):
@@ -481,14 +492,18 @@ def _fallback_document_title(path, paragraphs: list[ParagraphRecord]) -> list[Pa
 
 
 def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: dict) -> list[ParagraphRecord]:
-    """엔진의 정수 레벨을 본문 검색 색인 레코드로 변환한다."""
-    levels = result.get("levels", [])
+    """검색용 이름 레벨과 구형 정수 레벨을 색인 레코드로 변환한다."""
+    levels = result.get("search_levels", result.get("levels", result.get("role_sequence", [])))
     converted = []
     for paragraph, engine_level in zip(paragraphs, levels):
         level = {0: "document_title", 1: "chapter", 2: "section", 3: "topic",
                  4: "square", 5: "circle", 6: "dash", 7: "asterisk", 8: "body",
                  9: "table_cell", 10: "body"}.get(engine_level)
-        if paragraph.is_table_cell:
+        if engine_level in LEVEL_RANKS:
+            level = engine_level
+        elif isinstance(engine_level, str):
+            level = {"제목": "document_title", **ROLE_TO_LEVEL}.get(engine_level, "body")
+        if paragraph.is_table_cell and not ("search_levels" in result and level == "document_title"):
             level = "table_cell"
         if level not in LEVEL_ORDER and level != "table_cell":
             level = "body"

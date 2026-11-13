@@ -1,6 +1,13 @@
 # APP1-A·C 인계 (2026-11-13)
 
 `feature/kfind-app`: APP1-A `4f3b7ee1`, APP1-C `8e9b9a63` 구현. 기존 시험 2,941개 유지·새 시험 6개 추가. 지정 명령의 최종 전체 2,947개 OK(제외 10), 실패·오류 0, 1,830.883초. 래퍼 실행의 문서 진단 1건 실패와 재검증 이력은 `reports/APP1_AC_2026-11-13.md` 참조. 생성 fixture 4개 복원, GitHub `feature/kfind-app`에만 푸시. main 병합·푸시·GitLab 접근 금지 유지. 후속 APP1-B·D 이후 연결 작업은 이 카드 범위 밖이다.
+# FIX13 인계 (2026-11-13)
+
+`fix/todo-1113`에서 타임머신 open/reveal에 path 요청을 지원했다. ID가 있으면 기존 색인 항목을 우선하며 잘못된 ID를 path로 우회하지 않는다. 활성 조사 폴더·실제 연결 경로·지원 형식·제외 이름/폴더·파일 존재를 검사하고, 실패 이유를 화면에 표시한다. 파일명 열 보기의 단일 클릭은 미리보기, 더블클릭과 미리보기 문서 열기는 공통 명령 경로를 사용한다. 본문/위계검색도 ID 유무에 따라 같은 열기 경로를 사용한다.
+
+문서 선택 화면의 표 칸 그림 배경 버튼·전용 처리·안내를 제거했다. 파일변환 화면의 동일 기능과 시험은 유지했다. TODO에서 해결한 두 절·HLAT1·ATTP1을 제거하고 사무실 클립보드는 수정 완료, 다음 릴리스 후 실기 확인 한 줄로 줄였다. 접힘 제거 `0f6a6896` 포함 확인. Rust 132통과·1제외, Python 타임머신 79통과 및 마지막 오류 이유 보강 후 path 시험 3통과, Flutter 집중 81통과·analyze 0건. Flutter/Python 전체 최종 결과는 검증 후 아래에 기록한다.
+
+검증 환경 문제: E: 공간 부족으로 첫 Rust 빌드·Flutter 컴파일 실패. C:/HWP_AUTODOCFIT/fix13-* 아래 프로세스별 빌드/임시 경로로 분리했다(시험 코드에 PC 경로 추가 없음). 첫 Flutter 전체는 실행 중 소스 수정과 부하로 실패했고 최신 소스 동결 후 재검증했다. Python 전체는 다른 세션 APP1의 COM 잠금 해제를 기다린 후 실행한다. 사용자 문서 원본 수정 없음, main/GitLab 변경 금지, github/fix/todo-1113만 푸시.
 
 # ATTP2 인계 (2026-11-13)
 
@@ -31,3 +38,9 @@ feature/vfolder-popup에서 단축키·트레이·GDI 창·읽기/찾기·사본
 feature/hs2-hsa에서 3단계 구현 완료. 종료 수명 관리 5d061082, 상태 통합 50493ff6, 화면 연결은 이 인계 문서를 포함한 커밋이다. 지정 Python 155개(서비스 71·본문검색 78·제목 재색인 6), Flutter 타임머신 화면 53개 통과. flutter analyze 지적 0건. 기존 시험 본문·명령·응답 필드·화면 문구 유지, 상태 필드와 시험 추가. 푸시·태그·원격 접근 없음.
 
 상세 변경·실패 시도·실행 시간·미확인 범위는 docs/SM2_INDEX_STATE_IMPLEMENTATION_2026-11-12.md 참조. 실제 앱/EXE·COM·전체 시험은 미확인. 다음 단계인 main 병합·게시는 총괄 범위다.
+
+# RHIER1 인계 (2026-11-13)
+
+fix/rust-hierarchy-parity(기준 3a69b3e4)에서 Python 검색 위계 규칙 판 5를 Rust 공용 분류기로 옮겼다. role_sequence와 검색 위계를 구분하는 search_levels 계약, 구형 정수 계약/실패 폴백, 제목 표·Markdown·번호·라벨·개요·기호 단계와 klib 연결을 구현했다. 기본 hierarchy_engine=False 유지.
+
+합성 82문서·229문단: 기준 CLI 응답 누락 포함 차이 229→0, CLI·DLL·klib 687판정 차이 0. hierarchy 56 통과, klib 175 통과·기존 제외 2. Python 고유 관련 시험 58개 중 53 통과·제외 5(선택 실행 56개와 최종 계약/네이티브 7개는 5개 중복). 전체 Python·COM·실제 문서 평가·설치/배포는 미확인. 보고서 docs/RHIER1_RUST_PARITY_2026-11-13.md, 원시 결과 reports/RHIER1-parity.json. 검증 바이너리는 E:/docfit-tmp/rhier1-verified-binaries에 보존. E: 공간 부족과 공용 Cargo target의 의존성 타입 충돌을 겪었으므로 debug=0·incremental=0, crate별 target 분리로 빌드한다. main 병합·푸시·GitLab 접근은 하지 않는다.

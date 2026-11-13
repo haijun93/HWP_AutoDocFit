@@ -2117,11 +2117,25 @@ class DesktopWebBridge:
             service = self._timemachine_service_instance = TimemachineService(
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
+                idle_scheduler=self._idle_scheduler(),
             )
         return service
 
+    def _idle_scheduler(self):
+        """쉬는 시간 색인 스케줄러(IDLE1). 앱 전체에 하나, 자료함 변경분 작업은 처음 한 번만 등록한다."""
+        from docfit_app.idle_scheduler import shared_scheduler
+        scheduler = shared_scheduler()
+        if not getattr(self, "_library_idle_registered", False):
+            from docfit_app.library_idle_refresh import LIBRARY_IDLE_EVERY_SECONDS, LibraryItemRefreshJob
+            folder = self._settings_store()._path.parent
+            # klib를 이번 실행에서 쓴 적이 있을 때만 일한다(쉬는 시간에 klib를 새로 띄우지 않음).
+            job = LibraryItemRefreshJob(lambda: getattr(self, "_library_bridge", None), folder / "library-idle.json")
+            scheduler.register(job, every=LIBRARY_IDLE_EVERY_SECONDS)
+            self._library_idle_registered = True
+        return scheduler
+
     def _timemachine_send_to_feature(self, feature, paths):
-        """타임머신에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
+        """몽땅검색에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
         if feature == "rename_batch":
             return self._file_rename_service().add_paths(paths)
         if feature in ("convert", "document_edit"):
@@ -2140,20 +2154,20 @@ class DesktopWebBridge:
                 added = self.add_paths(paths, from_drop=False)
                 if not added:
                     return {"ok": False, "code": "FEATURE_FAILED", "message": "파일을 추가하지 못했습니다."}
-                self.gui.status_var.set(f"타임머신에서 문서 추가 · 총 {len(self.gui.files)}개")
+                self.gui.status_var.set(f"몽땅검색에서 문서 추가 · 총 {len(self.gui.files)}개")
                 self._update_document_hints()
                 return {"ok": True}
             return self._tk(add_to_gui)
         return {"ok": False, "code": "FEATURE_UNAVAILABLE", "message": "해당 기능을 사용할 수 없습니다."}
 
     def timemachine(self, action, payload=None):
-        """타임머신 화면 명령을 처리한다."""
+        """몽땅검색 화면 명령을 처리한다."""
         try:
             from docfit_app.timemachine_service import TimemachineService
             return self._timemachine_service().command(action, payload)
         except Exception:
-            logging.getLogger(__name__).exception("타임머신 처리 실패")
-            return {"ok": False, "code": "TM_FAILED", "message": "타임머신 작업을 완료하지 못했습니다."}
+            logging.getLogger(__name__).exception("몽땅검색 처리 실패")
+            return {"ok": False, "code": "TM_FAILED", "message": "몽땅검색 작업을 완료하지 못했습니다."}
 
     def kvf(self, action, payload=None):
         from docfit_app.kvf_client import KvfClient
@@ -2524,6 +2538,10 @@ class DesktopWebBridge:
         if getattr(self, "_library_bridge", None) is None:
             from docfit_app.library_bridge import LibraryBridge
             self._library_bridge = LibraryBridge()
+            try:
+                self._idle_scheduler()
+            except Exception:
+                logging.getLogger(__name__).debug("쉬는 시간 색인 등록 실패", exc_info=True)
         return self._library_bridge
 
     def _library_open_item(self, request):

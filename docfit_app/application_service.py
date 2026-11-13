@@ -288,8 +288,11 @@ class ApplicationService:
             return self._rename_service.command(*args)
         if method=='timemachine':
             if getattr(self, '_timemachine_service', None) is None:
+                from .idle_scheduler import shared_scheduler
                 from .timemachine_service import TimemachineService
-                self._timemachine_service = TimemachineService(self.store._path.parent)
+                # 쉬는 시간 색인(IDLE1): 자동 재색인은 사용자가 쉬는 동안에만, 낮은 우선순위로.
+                self._timemachine_service = TimemachineService(self.store._path.parent,
+                                                               idle_scheduler=shared_scheduler())
             return self._timemachine_service.command(*args)
         if method=='library':
             return self._library().command(*args)

@@ -92,7 +92,7 @@ impl Flag {
             Flag::AutoPaste => "고르면 바로 붙여넣기",
             Flag::Sticky => "스티커 메모처럼 화면에 유지",
             Flag::AlwaysOnTop => "항상 위",
-            Flag::WatchScreenshots => "스크린샷 폴더 감시(Win+PrtScn 그림 기록)",
+            Flag::WatchScreenshots => "스크린샷 폴더 감시(캡처 도구·Win+PrtScn·캡처 앱 폴더 자동 인식)",
             Flag::ExcelTarget => "엑셀 표는 목표 결과로 붙이기",
         }
     }
