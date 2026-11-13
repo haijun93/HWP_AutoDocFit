@@ -59,3 +59,14 @@ class ResultTests(unittest.TestCase):
         row = results.to_library_rows(response, documents={self.path: doc})[0]
         self.assertEqual((row["page"], row["hit_pages"], row["box_ids"]), (7, [7], ["2", "10"]))
         self.assertEqual(row["highlighted"], ["&lt;<b>예산</b>ㆍ<b>집행</b>&gt;"])
+
+    def test_notebook_source_ordinal_original_and_location(self):
+        doc = dict(name="메모", scopes=["nb:2:src:17"], paragraphs=[
+            dict(paragraph_index=1, body="예산ㆍ집행", location_label="시트 4행", level_rank=8)])
+        response = copy.deepcopy(self.response)
+        response["hits"][0]["sentences"][0].update(start=0, len=5)
+        response["hits"][0]["sentences"] *= 2
+        rows = results.to_notebook_rows(response, documents={self.path: doc})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((rows[0]["source_id"], rows[0]["ordinal"], rows[0]["body"], rows[0]["location"]),
+                         (17, 1, "예산ㆍ집행", "시트 4행"))

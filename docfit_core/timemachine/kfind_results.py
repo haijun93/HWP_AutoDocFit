@@ -135,3 +135,23 @@ def to_library_rows(response, index=None, *, documents=None):
                    page=row["position"]["page"], hit_pages=[loc["position"]["page"] for loc in row["locations"]],
                    box_ids=[scope[4:] for scope in doc.get("scopes", []) if scope.startswith("box:")])
     return rows
+
+
+def to_notebook_rows(response, index=None, *, documents=None):
+    rows = []
+    for hit, doc in _documents(response, index, documents):
+        sources = [s.split(":")[3] for s in doc.get("scopes", [])
+                   if re.fullmatch(r"nb:[^:]+:src:[^:]+", s)]
+        paragraphs = {int(p["paragraph_index"]): p for p in doc["paragraphs"]}
+        for sentence in hit["sentences"]:
+            paragraph = paragraphs[sentence["para"]]
+            location = _location(paragraph, sentence, response["words"], doc.get("crumbs", list(paragraphs.values())))
+            for source in sources:
+                rows.append({"source_id": int(source), "ordinal": sentence["para"],
+                             "display_name": doc.get("display_name", doc.get("name", "")),
+                             "location": location["position"]["label"], "body": paragraph["body"],
+                             "score": hit["count"], "snippet": location["snippet"],
+                             "highlights": location["highlights"], "adjacent": hit["adjacent"],
+                             "dropped": response.get("dropped", []), "engine": "kfind", "gen": response["generation"]})
+    # 같은 문단의 여러 일치 문장은 업무자료함의 한 문단 행으로 표시한다.
+    return list({(r["source_id"], r["ordinal"]): r for r in rows}.values())
