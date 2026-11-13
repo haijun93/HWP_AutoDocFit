@@ -1,6 +1,7 @@
 //! 그림 항목 미리보기용 축소 썸네일(사용자 요청 2026-11-13).
 //!
-//! - 필요할 때만 만든다(마우스·키보드로 그림 항목을 가리킬 때, 앱의 `thumb` 요청).
+//! - 마우스·키보드로 그림 항목을 가리킬 때(앱의 `thumb` 요청 포함) 없으면 바로 만든다. 그림·화면캡처 항목을
+//!   기록하면 `prewarm`이 쉬는 때 미리 만들어 둔다(KCAP2, 첫 미리보기 50ms 목표).
 //! - 메모리 캐시(최근 것부터, 합계 `MEM_CAP` 바이트)와 디스크 캐시(`thumbs\`, DPAPI 암호화, 합계 `DISK_CAP`).
 //!   디스크 캐시는 에이전트를 다시 켠 뒤 큰 그림을 다시 풀지 않게 하려는 것이며, 클립보드 내용 보호 원칙에
 //!   맞춰 평문으로 두지 않는다. 모두 지우기 때 함께 지운다.
@@ -9,6 +10,7 @@
 //! 순수 계산(크기 맞춤·축소·캐시 한도)은 따로 시험한다.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// 썸네일 긴 변 최대(물리 픽셀).
@@ -220,6 +222,9 @@ pub fn mem_key(id: i64, size: i64) -> String {
 // ---- 시스템 연결(에이전트 실행 중에만) ----
 
 static MEM: Mutex<Option<MemCache>> = Mutex::new(None);
+/// 캐시 세대: 모두 지우기마다 하나 늘린다. 지우기 전에 시작한 생성 결과는 캐시에 넣지 않는다
+/// (미리 만들기·즉시 생성이 지우기와 겹쳐도 지운 뒤에 썸네일이 되살아나지 않게).
+static EPOCH: AtomicU64 = AtomicU64::new(0);
 
 fn with_mem<R>(f: impl FnOnce(&mut MemCache) -> R) -> R {
     let mut guard = MEM.lock().unwrap();
@@ -240,6 +245,8 @@ fn disk_dir() -> String {
 
 /// 메모리·디스크 캐시를 모두 지운다(모두 지우기·끄기 때).
 pub fn clear_all() {
+    EPOCH.fetch_add(1, Ordering::SeqCst);
+    crate::prewarm::clear();
     with_mem(|m| m.clear());
     let _ = std::fs::remove_dir_all(disk_dir());
 }
@@ -250,8 +257,11 @@ fn disk_get(name: &str) -> Option<Thumb> {
     from_png(&png, MAX_SIDE)
 }
 
-fn disk_put(name: &str, t: &Thumb) {
+fn disk_put(name: &str, t: &Thumb, epoch: u64) {
     let Some(sealed) = to_png(t).and_then(|p| crate::crypt::protect(&p)) else { return };
+    if EPOCH.load(Ordering::SeqCst) != epoch {
+        return;
+    }
     let dir = disk_dir();
     if std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -283,11 +293,12 @@ pub fn get(id: i64, size: i64) -> Option<Arc<Thumb>> {
     if let Some(t) = cached(id, size) {
         return Some(t);
     }
+    let epoch = EPOCH.load(Ordering::SeqCst);
     // 저장 그림은 DB의 내용 지문으로 디스크 캐시를 먼저 본다(큰 그림을 복호화하지 않고).
     let (kind, hash) = crate::app().store.lock().unwrap().kind_hash(id).ok().flatten()?;
     if kind == "image" {
         if let Some(t) = disk_get(&disk_name(&hash)) {
-            return Some(remember(id, size, t));
+            return Some(remember(id, size, t, epoch));
         }
     }
     let (kind, data, _) = crate::app().store.lock().unwrap().payload(id).ok().flatten()?;
@@ -309,16 +320,20 @@ pub fn get(id: i64, size: i64) -> Option<Arc<Thumb>> {
                 Source::Png(bytes) => from_png(&bytes, MAX_SIDE)?,
                 Source::File(path) => from_file(&path, MAX_SIDE)?,
             };
-            disk_put(&name, &t);
+            disk_put(&name, &t, epoch);
             t
         }
     };
-    Some(remember(id, size, thumb))
+    Some(remember(id, size, thumb, epoch))
 }
 
-fn remember(id: i64, size: i64, thumb: Thumb) -> Arc<Thumb> {
+fn remember(id: i64, size: i64, thumb: Thumb, epoch: u64) -> Arc<Thumb> {
     let t = Arc::new(thumb);
-    with_mem(|m| m.put(mem_key(id, size), t.clone()));
+    with_mem(|m| {
+        if EPOCH.load(Ordering::SeqCst) == epoch {
+            m.put(mem_key(id, size), t.clone());
+        }
+    });
     t
 }
 

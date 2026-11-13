@@ -20,6 +20,7 @@ mod open_rules;
 mod json;
 mod pipe;
 mod popup;
+mod prewarm;
 mod preview;
 mod settings_menu;
 mod sqlite;
@@ -163,14 +164,17 @@ fn record_capture(path: &str) {
     let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
     let preview = format!("캡처 · {name}");
     let settings = app().settings.lock().unwrap().clone();
-    {
+    let id = {
         let store = app().store.lock().unwrap();
         let t = now();
-        if store.insert("files", path.as_bytes(), CAPTURE_FILE_MARK, &preview, "screenshot", t).is_err() {
+        let Ok((id, _)) = store.insert("files", path.as_bytes(), CAPTURE_FILE_MARK, &preview, "screenshot", t) else {
             return;
-        }
+        };
         let _ = store.enforce(&settings, t);
-    }
+        id
+    };
+    // 상태 파일에 대기가 바로 보이게 목록 갱신(상태 쓰기) 전에 넣는다.
+    prewarm::enqueue(id);
     refresh_recent();
 }
 
@@ -464,6 +468,7 @@ pub fn write_status() {
         ("capture_dirs", capture_plan_json(&plan)),
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
+        ("thumb_prewarm", prewarm::status_json()),
     ]);
     v
     });
@@ -635,8 +640,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             let preview = format!("{} · 서식 상한 초과: {}", clip::preview(kind, &data), suffix);
             let t = now();
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &trimmed, &preview, &source, t).is_ok() { let _ = store.enforce(&settings, t); }
+            let inserted = store.insert(kind, &data, &trimmed, &preview, &source, t).ok().map(|(id, _)| id);
+            if inserted.is_some() { let _ = store.enforce(&settings, t); }
             drop(store);
+            if let (Some(id), "image") = (inserted, kind) { prewarm::enqueue(id); }
             refresh_recent();
             continue;
         }
@@ -647,12 +654,17 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             else if skipped.is_empty() { format!("{} · 서식 포함", clip::preview(kind, &data)) }
             else { format!("{} · 서식 포함 ({}개 형식 생략)", clip::preview(kind, &data), skipped.len()) };
         let t = now();
-        {
+        let id = {
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &extra, &preview, &source, t).is_err() {
+            let Ok((id, _)) = store.insert(kind, &data, &extra, &preview, &source, t) else {
                 continue;
-            }
+            };
             let _ = store.enforce(&settings, t);
+            id
+        };
+        if kind == "image" {
+            // 그림은 쉬는 때 썸네일을 미리 만들어 첫 미리보기를 빠르게(KCAP2). 상태 파일에 대기가 바로 보이게 먼저.
+            prewarm::enqueue(id);
         }
         refresh_recent();
     }
@@ -844,6 +856,7 @@ fn tray_menu(hwnd: HWND) {
             2 => set_paused(hwnd, !paused),
             3 => {
                 let _ = app().store.lock().unwrap().clear(true);
+                thumb::clear_all();
                 refresh_recent();
             }
             4 => {

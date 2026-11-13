@@ -467,6 +467,13 @@ impl Store {
         Ok(found)
     }
 
+    /// 저장 크기(목록의 `size`와 같은 값 — 썸네일 메모리 캐시 키).
+    pub fn size_of(&self, id: i64) -> Result<Option<i64>, String> {
+        let mut found = None;
+        self.conn.query("SELECT size FROM items WHERE id = ?", &[Arg::Int(id)], |r| found = Some(r.int(0)))?;
+        Ok(found)
+    }
+
     /// (종류, 내용, 서식 묶음).
     pub fn payload(&self, id: i64) -> Result<Option<(String, Vec<u8>, Vec<u8>)>, String> {
         let mut found = None;
