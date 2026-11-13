@@ -1,0 +1,104 @@
+# KB4 1회 측정 원자료 (2026-11-13, measure.sh)
+
+===== start.txt
+2026-11-13 01:35:48
+
+===== load_before.txt
+total CPU load% 31 (logical cores 8)
+
+Name    Id CorePct
+----    -- -------
+find 19160     105
+
+
+
+
+===== commit1.txt
+### base (515a14a7) commit1 30k x20
+writer open 8.63ms
+commit(1 doc) n=20 min=8.80 p50=11.65 p90=15.11 max=21.88
+reader reload  n=20 min=9.46 p50=19.77 p90=61.59 max=72.61
+commit+reload  n=20 min=22.01 p50=33.38 p90=72.24 max=82.66
+15.1/43.8 21.9/13.1 13.5/9.5 13.3/19.8 14.2/21.6 11.6/23.5 10.1/72.6 11.6/10.4 10.8/15.1 10.6/61.6 12.4/54.8 13.9/10.2 14.0/19.4 11.2/20.8 12.5/16.1 9.5/15.9 9.1/16.1 9.6/42.9 9.2/19.1 8.8/31.9 
+segments 21
+merge_all 9192.5ms
+### new (3a9c83d6) commit1 30k x20
+writer open 6.44ms
+commit(1 doc) n=20 min=10.51 p50=12.59 p90=14.43 max=15.35
+reader reload  n=20 min=3.31 p50=8.37 p90=62.45 max=67.74
+commit+reload  n=20 min=14.31 p50=21.81 p90=74.54 max=83.09
+11.2/30.6 10.7/6.0 10.8/5.2 10.5/4.7 11.0/3.3 13.8/23.8 15.4/67.7 13.7/3.9 14.4/4.3 12.1/62.4 12.7/43.9 13.1/8.4 11.8/8.1 10.6/15.1 13.8/8.0 13.9/9.2 12.6/5.0 12.3/35.0 13.9/7.6 11.6/24.2 
+segments 21
+merge_all 9808.9ms
+
+===== load_mid.txt
+total CPU load% 9 (logical cores 8)
+
+Name          Id CorePct
+----          -- -------
+find       19160     105
+powershell 21104       5
+
+
+
+
+===== qbench30k.txt
+== repeat (top20 dict, 20 reps after 1 warm-up), p50 ms: plain → cached
+  예산           n=20 min=4.85 p50=5.39 p90=6.15 max=6.22 → n=20 min=4.96 p50=5.32 p90=6.45 max=8.47
+  희귀           n=20 min=0.00 p50=0.00 p90=0.00 max=0.00 → n=20 min=0.00 p50=0.00 p90=0.00 max=0.00
+  예산 집행        n=20 min=2.55 p50=2.74 p90=3.04 max=3.50 → n=20 min=2.43 p50=2.62 p90=3.09 max=3.66
+  예산 집행 계획     n=20 min=1.79 p50=1.86 p90=2.06 max=2.32 → n=20 min=1.24 p50=1.33 p90=1.63 max=1.77
+  예산집행         n=20 min=3.68 p50=4.60 p90=7.25 max=7.27 → n=20 min=2.57 p50=2.94 p90=4.03 max=4.16
+  예산  집행       n=20 min=2.61 p50=2.78 p90=2.92 max=3.08 → n=20 min=2.51 p50=2.74 p90=3.12 max=3.35
+  가나다라         n=20 min=0.01 p50=0.02 p90=0.02 max=0.05 → n=20 min=0.01 p50=0.02 p90=0.02 max=0.02
+  예산을          n=20 min=1.19 p50=1.38 p90=2.14 max=2.26 → n=20 min=1.11 p50=1.13 p90=1.34 max=1.43
+== typing (per prefix: count + top20 dict), total ms per query (warm 1 + 5 reps, p50): plain → cached
+  예산           n=5 min=6.22 p50=6.63 p90=6.73 max=6.73 → n=5 min=6.44 p50=6.82 p90=9.44 max=9.44  QueryCacheStats { queries: 1, bytes: 155872, reused: 2, narrowed: 0, evaluated: 1, evicted: 0 }
+  희귀           n=5 min=0.00 p50=0.00 p90=0.00 max=0.00 → n=5 min=0.00 p50=0.00 p90=0.00 max=0.00  QueryCacheStats { queries: 1, bytes: 72, reused: 2, narrowed: 0, evaluated: 1, evicted: 0 }
+  예산 집행        n=5 min=22.89 p50=24.42 p90=27.02 max=27.02 → n=5 min=23.07 p50=23.20 p90=25.75 max=25.75  QueryCacheStats { queries: 2, bytes: 309848, reused: 7, narrowed: 1, evaluated: 1, evicted: 0 }
+  예산 집행 계획     n=5 min=35.75 p50=37.29 p90=39.96 max=39.96 → n=5 min=35.66 p50=36.93 p90=39.09 max=39.09  QueryCacheStats { queries: 3, bytes: 441288, reused: 12, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산집행         n=5 min=12.46 p50=12.80 p90=12.94 max=12.94 → n=5 min=11.85 p50=12.45 p90=13.27 max=13.27  QueryCacheStats { queries: 3, bytes: 318356, reused: 4, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산  집행       n=5 min=27.88 p50=28.77 p90=29.46 max=29.46 → n=5 min=28.14 p50=28.87 p90=31.15 max=31.15  QueryCacheStats { queries: 2, bytes: 309848, reused: 9, narrowed: 1, evaluated: 1, evicted: 0 }
+  가나다라         n=5 min=0.03 p50=0.03 p90=0.03 max=0.03 → n=5 min=0.04 p50=0.04 p90=0.04 max=0.04  QueryCacheStats { queries: 3, bytes: 216, reused: 4, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산을          n=5 min=9.55 p50=9.67 p90=10.48 max=10.48 → n=5 min=10.18 p50=11.26 p90=12.17 max=12.17  QueryCacheStats { queries: 2, bytes: 262920, reused: 3, narrowed: 1, evaluated: 1, evicted: 0 }
+== after 1-doc commit + reload: first search per query (sum of 8 queries), ms: plain → cached
+  segments 11 plain n=10 min=19.33 p50=20.88 p90=24.96 max=24.96 → cached n=10 min=18.25 p50=20.10 p90=23.06 max=23.06
+  QueryCacheStats { queries: 7, bytes: 712916, reused: 971, narrowed: 44, evaluated: 33, evicted: 0 }
+
+===== qbench3k.txt
+== repeat (top20 dict, 20 reps after 1 warm-up), p50 ms: plain → cached
+  예산           n=20 min=0.57 p50=0.67 p90=0.92 max=1.43 → n=20 min=0.57 p50=0.60 p90=1.03 max=1.24
+  희귀           n=20 min=0.00 p50=0.00 p90=0.00 max=0.00 → n=20 min=0.00 p50=0.00 p90=0.00 max=0.00
+  예산 집행        n=20 min=0.29 p50=0.30 p90=0.32 max=0.33 → n=20 min=0.28 p50=0.29 p90=0.32 max=0.45
+  예산 집행 계획     n=20 min=0.18 p50=0.19 p90=0.33 max=0.37 → n=20 min=0.14 p50=0.15 p90=0.23 max=0.29
+  예산집행         n=20 min=0.32 p50=0.34 p90=0.40 max=0.47 → n=20 min=0.30 p50=0.31 p90=0.34 max=0.34
+  예산  집행       n=20 min=0.29 p50=0.33 p90=0.56 max=0.57 → n=20 min=0.28 p50=0.28 p90=0.29 max=0.30
+  가나다라         n=20 min=0.02 p50=0.02 p90=0.02 max=0.02 → n=20 min=0.02 p50=0.02 p90=0.02 max=0.03
+  예산을          n=20 min=0.12 p50=0.12 p90=0.16 max=0.17 → n=20 min=0.12 p50=0.12 p90=0.13 max=0.14
+== typing (per prefix: count + top20 dict), total ms per query (warm 1 + 5 reps, p50): plain → cached
+  예산           n=5 min=0.65 p50=0.68 p90=0.80 max=0.80 → n=5 min=0.68 p50=0.71 p90=0.75 max=0.75  QueryCacheStats { queries: 1, bytes: 16472, reused: 2, narrowed: 0, evaluated: 1, evicted: 0 }
+  희귀           n=5 min=0.00 p50=0.00 p90=0.00 max=0.00 → n=5 min=0.00 p50=0.00 p90=0.00 max=0.00  QueryCacheStats { queries: 1, bytes: 72, reused: 2, narrowed: 0, evaluated: 1, evicted: 0 }
+  예산 집행        n=5 min=2.30 p50=2.37 p90=2.84 max=2.84 → n=5 min=2.39 p50=2.46 p90=4.02 max=4.02  QueryCacheStats { queries: 2, bytes: 32944, reused: 7, narrowed: 1, evaluated: 1, evicted: 0 }
+  예산 집행 계획     n=5 min=3.92 p50=3.95 p90=4.08 max=4.08 → n=5 min=3.60 p50=3.63 p90=3.80 max=3.80  QueryCacheStats { queries: 3, bytes: 46202, reused: 12, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산집행         n=5 min=1.26 p50=1.29 p90=1.70 max=1.70 → n=5 min=1.15 p50=1.17 p90=1.18 max=1.18  QueryCacheStats { queries: 3, bytes: 33892, reused: 4, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산  집행       n=5 min=3.12 p50=5.35 p90=6.46 max=6.46 → n=5 min=3.09 p50=3.11 p90=3.20 max=3.20  QueryCacheStats { queries: 2, bytes: 32944, reused: 9, narrowed: 1, evaluated: 1, evicted: 0 }
+  가나다라         n=5 min=0.04 p50=0.04 p90=0.04 max=0.04 → n=5 min=0.04 p50=0.04 p90=0.04 max=0.04  QueryCacheStats { queries: 3, bytes: 216, reused: 4, narrowed: 2, evaluated: 1, evicted: 0 }
+  예산을          n=5 min=0.94 p50=0.96 p90=1.00 max=1.00 → n=5 min=0.97 p50=0.98 p90=1.00 max=1.00  QueryCacheStats { queries: 2, bytes: 27122, reused: 3, narrowed: 1, evaluated: 1, evicted: 0 }
+== after 1-doc commit + reload: first search per query (sum of 8 queries), ms: plain → cached
+  segments 11 plain n=10 min=2.26 p50=2.35 p90=4.24 max=4.24 → cached n=10 min=1.99 p50=2.13 p90=3.68 max=3.68
+  QueryCacheStats { queries: 7, bytes: 80148, reused: 971, narrowed: 44, evaluated: 33, evicted: 0 }
+
+===== load_after.txt
+total CPU load% 7 (logical cores 8)
+
+Name          Id CorePct
+----          -- -------
+find       19160     106
+Code       21564      27
+powershell  8012       5
+
+
+
+
+===== end.txt
+2026-11-13 01:36:36

@@ -56,3 +56,9 @@ feature/kfind-app에서 github/main 최신 병합 확인, kapp 보존 stash 적�
 fix/rust-hierarchy-parity(기준 3a69b3e4)에서 Python 검색 위계 규칙 판 5를 Rust 공용 분류기로 옮겼다. role_sequence와 검색 위계를 구분하는 search_levels 계약, 구형 정수 계약/실패 폴백, 제목 표·Markdown·번호·라벨·개요·기호 단계와 klib 연결을 구현했다. 기본 hierarchy_engine=False 유지.
 
 합성 82문서·229문단: 기준 CLI 응답 누락 포함 차이 229→0, CLI·DLL·klib 687판정 차이 0. hierarchy 56 통과, klib 175 통과·기존 제외 2. Python 고유 관련 시험 58개 중 53 통과·제외 5(선택 실행 56개와 최종 계약/네이티브 7개는 5개 중복). 전체 Python·COM·실제 문서 평가·설치/배포는 미확인. 보고서 docs/RHIER1_RUST_PARITY_2026-11-13.md, 원시 결과 reports/RHIER1-parity.json. 검증 바이너리는 E:/docfit-tmp/rhier1-verified-binaries에 보존. E: 공간 부족과 공용 Cargo target의 의존성 타입 충돌을 겪었으므로 debug=0·incremental=0, crate별 target 분리로 빌드한다. main 병합·푸시·GitLab 접근은 하지 않는다.
+
+# T4 1단계 인계 (2026-11-13)
+작업 브랜치 feature/kfind-service, 기준 f2355aca. 새 실행 크레이트 crates/kfind가 기존 kfind/core를 재사용한다.
+SCM 명령·SID별 검색 파이프·대체 방식 저장·공개 색인 제거를 구현했다. 실제 SCM 등록과 예약 작업 생성은 시험하지 않는다.
+구현 범위·프로토콜·시험 결과·후속 작업은 docs/T4_KFIND_SERVICE_2026-11-13.md에 기록한다.
+이번 지시는 로컬 커밋만 허용한다. 푸시·태그·GitLab 접근 금지.

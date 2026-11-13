@@ -47,3 +47,5 @@ kvf/target/
 
 resources/kvf.exe
 resources/kvf.exe.sha256
+
+/crates/kfind/target/
