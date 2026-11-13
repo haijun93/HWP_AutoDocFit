@@ -20,11 +20,15 @@ from docfit_core.timemachine.related import related_documents
 from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
 from docfit_core.timemachine.scan import default_roots, scan_roots
 from docfit_core.timemachine.store import Store
+from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
 THUMBNAIL_TIME_LIMIT = 5.0
+# 쉬는 시간 색인(IDLE1): 스케줄러 작업 이름과, 쉬는 시간마다 변경분을 다시 훑는 최소 간격(초)
+CONTENT_IDLE_JOB = "timemachine-content"
+CONTENT_IDLE_EVERY_SECONDS = 1800
 
 
 ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
@@ -33,7 +37,7 @@ ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
 class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
-                 developer_mode=None):
+                 developer_mode=None, idle_scheduler=None):
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
@@ -59,15 +63,19 @@ class TimemachineService:
         self._content_thread = None
         self._content_process = None
         self._content_pending_roots = None
-        self._content_state = {"running": False, "seen": 0, "indexed": 0, "errors": 0,
-                               "cancelled": False, "started_at": None, "finished_at": None,
-                               "phase": "idle", "failure_reason": None}
+        self._content_state = self._new_content_state(running=False, phase="idle", trigger=None)
         self._scan_state = {"running": False, "seen": 0, "written": 0, "removed": 0,
                             "errors": [], "started_at": None, "finished_at": None}
         self._rescan = False
+        self._content_idle_ctx = None
         self._settings = self._load_settings()
+        # 쉬는 시간 색인(IDLE1): 스케줄러가 주어졌을 때만(앱). 시험·다른 진입점은 예전처럼 곧바로 자동 재색인.
+        self.idle_scheduler = idle_scheduler
+        if idle_scheduler is not None:
+            self._configure_idle()
+            idle_scheduler.register(_ContentIdleJob(self), every=CONTENT_IDLE_EVERY_SECONDS)
         if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
-            self._refresh_content_index_async()
+            self._schedule_content_refresh()
 
     @staticmethod
     def _open_file(path):
@@ -78,7 +86,48 @@ class TimemachineService:
         subprocess.Popen(["explorer", "/select," + path])
 
     def _defaults(self):
-        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True}
+        return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
+                "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
+
+    @staticmethod
+    def _idle_values(source, fallback):
+        """쉬는 시간 색인 설정 두 값. 잘못된 값은 그 값만 fallback으로(조사 폴더 설정을 잃지 않게)."""
+        enabled = source.get("idle_indexing", fallback["idle_indexing"])
+        if type(enabled) is not bool:
+            enabled = fallback["idle_indexing"]
+        seconds = source.get("idle_seconds", fallback["idle_seconds"])
+        try:
+            seconds = clamp_idle_seconds(seconds)
+        except ValueError:
+            seconds = fallback["idle_seconds"]
+        return {"idle_indexing": enabled, "idle_seconds": seconds}
+
+    def _configure_idle(self):
+        if self.idle_scheduler is not None:
+            self.idle_scheduler.configure(enabled=self._settings.get("idle_indexing", True),
+                                          idle_seconds=self._settings.get("idle_seconds", DEFAULT_IDLE_SECONDS))
+
+    def _idle_indexing_on(self):
+        return self.idle_scheduler is not None and self._settings.get("idle_indexing", True)
+
+    def _schedule_content_refresh(self):
+        """자동 재색인 요청 한 곳: 쉬는 시간 색인이 켜져 있으면 스케줄러에 맡기고, 아니면 예전처럼 곧바로."""
+        if self._idle_indexing_on():
+            self.idle_scheduler.request(CONTENT_IDLE_JOB)
+        else:
+            self._refresh_content_index_async()
+
+    def run_idle_content_refresh(self, ctx):
+        """스케줄러 스레드에서: 변경분 자동 재색인을 쉬는 시간 모드로 돌리고 끝날 때까지 기다린다."""
+        if not self._refresh_content_index_async(idle_ctx=ctx):
+            return
+        with self._content_lock:
+            worker = self._content_thread
+        while worker is not None and worker.is_alive():
+            worker.join(0.2)
+            if ctx.stopped and worker.is_alive():
+                self.cancel_content_index(wait=True, timeout=2.0)
+                break
 
     def _klib_executable(self):
         env_exe = os.environ.get("KLIB_EXE")
@@ -160,6 +209,8 @@ class TimemachineService:
             if self._closing:
                 return
             self._closing = True
+        if self.idle_scheduler is not None:
+            self.idle_scheduler.unregister(CONTENT_IDLE_JOB)
         self.cancel_content_index(wait=False)
         with self._scan_lock:
             scan_worker = self._scan_thread
@@ -173,24 +224,60 @@ class TimemachineService:
         """시작·취소·조회가 공유하는 작업 상태와 저장 상태 응답."""
         with self._content_lock:
             state = dict(self._content_state)
-        return {"ok": True, **state,
+            ctx = self._content_idle_ctx
+        if ctx is not None and state.get("running"):
+            state["yielded"] = bool(ctx.yielded)
+        idle = self.idle_scheduler.status() if self.idle_scheduler is not None else None
+        return {"ok": True, **state, "idle": idle,
                 **self.content_index.status_summary(roots=self._settings["roots"])}
+
+    @staticmethod
+    def _new_content_state(*, running, phase, trigger):
+        """작업 상태 한 벌. trigger: manual(사용자 시작) | auto(곧바로 자동) | idle(쉬는 시간 자동) | None.
+        total은 처리할 문서 수가 정해지면(목록을 다 훑은 뒤) 채운다. yielded는 쉬는 시간 모드에서 사용자에게 양보 중."""
+        return {"running": running, "seen": 0, "indexed": 0, "errors": 0, "cancelled": False,
+                "started_at": time.time() if running else None, "finished_at": None,
+                "phase": phase, "failure_reason": None, "trigger": trigger, "total": None,
+                "processed": 0, "yielded": False}
 
     def _finish_content_index(self, cancel_event):
         with self._content_lock:
             self._content_state.update(running=False, cancelled=cancel_event.is_set(), finished_at=time.time(),
                                        phase="failed" if self._content_state.get("failure_reason") else
-                                       "cancelled" if cancel_event.is_set() else "finished")
+                                       "cancelled" if cancel_event.is_set() else "finished", yielded=False)
+            self._content_idle_ctx = None
 
-    def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True):
+    def _content_index_worker(self, roots, extensions, cancel_event=None, use_rust=True, idle_ctx=None):
         cancel_event = cancel_event or self._content_cancel
         seen = indexed = errors = 0
+        processed = 0
+        total = None
+
+        def proceed():
+            """문서(또는 폴더) 하나를 시작하기 직전. 쉬는 시간 모드면 사용자가 쓰는 동안 여기서 기다린다."""
+            if cancel_event.is_set():
+                return False
+            if idle_ctx is None:
+                return True
+            if not idle_ctx.checkpoint(cancel_event):
+                cancel_event.set()
+                return False
+            return True
+
+        def advance():
+            nonlocal processed
+            processed += 1
+            with self._content_lock:
+                self._content_state.update(processed=processed)
+            if idle_ctx is not None:
+                idle_ctx.progress(processed, total)
+
         rules = Rules(extensions=extensions, extra_extensions=extensions)  # 본문 색인 확장자(예: txt)는 타임라인 종류에 없어도 색인한다
         try:
             rust_paths, python_paths, stale_paths = [], [], []
             for root in roots:
                 for folder, dirs, files in os.walk(root, followlinks=False):
-                    if cancel_event.is_set(): break
+                    if not proceed(): break
                     dirs[:] = [d for d in dirs if not rules.skip_dir(d) and not cancel_event.is_set()]
                     for name in files:
                         if cancel_event.is_set():
@@ -233,21 +320,28 @@ class TimemachineService:
                 failed = {os.path.normcase(os.path.abspath(str(path))) for path in fallback}
                 relevel_paths = self.content_index.stale_hierarchy_paths(
                     [path for path in rust_paths if os.path.normcase(os.path.abspath(str(path))) not in failed])
+            total = len(relevel_paths) + len(python_paths)
+            with self._content_lock:
+                self._content_state.update(total=total)
+            if idle_ctx is not None:
+                idle_ctx.progress(processed, total)
             with self.content_index.batch():
                 for path in relevel_paths:
-                    if cancel_event.is_set(): break
+                    if not proceed(): break
                     result = self.content_index.relevel_file(path)
                     errors += bool(result["error"])
                     with self._content_lock:
                         self._content_state.update(errors=errors)
+                    advance()
                 for path in python_paths:
-                    if cancel_event.is_set(): break
+                    if not proceed(): break
                     result = self.content_index.index_file(path)
                     seen += 1
                     indexed += bool(result["indexed"])
                     errors += bool(result["error"])
                     with self._content_lock:
                         self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                    advance()
             # 취소가 끝나기 전에 건너뛴 파일을 지우지 않도록 색인 완료 후 정리한다.
             if not cancel_event.is_set():
                 for path in stale_paths:
@@ -273,6 +367,8 @@ class TimemachineService:
             with self._content_lock:
                 self._content_state.update(phase="failed", failure_reason=f"{type(exc).__name__}: {exc}")
         finally:
+            if idle_ctx is not None:
+                idle_ctx.leave_background()  # 우선순위는 스레드 단위라 이 스레드에서 푼다
             self._finish_content_index(cancel_event)
 
     def _start_content_index(self):
@@ -280,14 +376,16 @@ class TimemachineService:
             if self._closing:
                 return self._error("TM_INDEX_FAILED", "색인 작업을 시작하지 못했습니다.")
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
+                # 쉬는 시간 자동 색인이 돌던 중에 사용자가 직접 시작하면 기다리지 않고 바로 끝까지 돌린다.
+                if self._content_idle_ctx is not None:
+                    self._content_idle_ctx.promote()
+                    self._content_state.update(trigger="manual", yielded=False)
                 return self.content_status()
             self._content_pending_roots = set(self.content_index.indexed_paths(roots=self._settings["roots"]))
             cancel_event = threading.Event()
             self._content_cancel = cancel_event
-            self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
-                                   "cancelled": False, "started_at": time.time(), "finished_at": None,
-                                   "phase": "reindexing" if self._content_pending_roots else "indexing",
-                                   "failure_reason": None}
+            self._content_state = self._new_content_state(
+                running=True, phase="reindexing" if self._content_pending_roots else "indexing", trigger="manual")
             self._content_thread = threading.Thread(target=self._content_index_worker,
                 args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event),
                 name="timemachine-content-index", daemon=True)
@@ -333,7 +431,7 @@ class TimemachineService:
             rust_content_index = data.get("rust_content_index", True)
             if type(rust_content_index) is not bool: raise ValueError("settings")
             return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
-                    "rust_content_index": rust_content_index}
+                    "rust_content_index": rust_content_index, **self._idle_values(data, defaults)}
         except (OSError, ValueError, TypeError, KeyError):
             return defaults
 
@@ -527,7 +625,7 @@ class TimemachineService:
                 self._scan_state.update(seen=result.seen, written=result.written,
                                         removed=result.removed,
                                         errors=[str(item[1]) for item in result.errors])
-            self._refresh_content_index_async()
+            self._schedule_content_refresh()
         except Exception as exc:
             logging.getLogger(__name__).exception("타임머신 색인 갱신 실패")
             with self._scan_lock:
@@ -567,31 +665,35 @@ class TimemachineService:
                 return self._error("TM_SCAN_FAILED", "색인 작업을 시작하지 못했습니다.")
         return {"ok": True, "by": "app", "running": True}
 
-    def _refresh_content_index_async(self):
+    def _refresh_content_index_async(self, idle_ctx=None):
+        """변경분 자동 재색인을 시작한다. 시작했으면 True. idle_ctx가 있으면 쉬는 시간 모드(양보·낮은 우선순위)."""
         with self._content_lock:
             if self._closing:
-                return
+                return False
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
-                return
+                return False
             # 본문 색인을 쓴 적이 없으면(색인이 비어 있으면) 자동으로 시작하지 않는다.
             pending = set(self.content_index.indexed_paths(roots=self._settings["roots"]))
             if not pending:
-                return
+                return False
             self._content_pending_roots = pending
             cancel_event = threading.Event()
             self._content_cancel = cancel_event
-            self._content_state = {"running": True, "seen": 0, "indexed": 0, "errors": 0,
-                                   "cancelled": False, "started_at": time.time(), "finished_at": None,
-                                   "phase": "reindexing", "failure_reason": None}
+            self._content_state = self._new_content_state(running=True, phase="reindexing",
+                                                          trigger="idle" if idle_ctx is not None else "auto")
+            self._content_idle_ctx = idle_ctx
             self._content_thread = threading.Thread(target=self._content_index_worker,
                 args=(list(self._settings["roots"]), frozenset(self._settings["extensions"]), cancel_event, False),
-                name="timemachine-content-index", daemon=True)
+                kwargs={"idle_ctx": idle_ctx}, name="timemachine-content-index", daemon=True)
             try:
                 self._content_thread.start()
             except Exception as exc:
                 self._content_state.update(running=False, finished_at=time.time(), phase="failed",
                                            failure_reason=f"{type(exc).__name__}: {exc}")
+                self._content_idle_ctx = None
                 logging.getLogger(__name__).exception("타임머신 본문 자동 색인 시작 실패")
+                return False
+            return True
 
     # 본문검색과 위계검색은 일반 모드에서도 허용한다.
     DEVELOPER_ONLY_ACTIONS = frozenset()
@@ -631,8 +733,12 @@ class TimemachineService:
             extensions = self._validate_extensions(payload.get("extensions", self._settings["extensions"]))
             rust_content_index = payload.get("rust_content_index", self._settings.get("rust_content_index", True))
             if type(rust_content_index) is not bool: raise ValueError("설정 값을 확인해 주세요.")
+            idle_enabled = payload.get("idle_indexing", self._settings.get("idle_indexing", True))
+            if type(idle_enabled) is not bool: raise ValueError("설정 값을 확인해 주세요.")
+            idle_seconds = clamp_idle_seconds(payload.get("idle_seconds", self._settings.get("idle_seconds", DEFAULT_IDLE_SECONDS)))
             settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
-                        "rust_content_index": rust_content_index}
+                        "rust_content_index": rust_content_index, "idle_indexing": idle_enabled,
+                        "idle_seconds": idle_seconds}
             with self._settings_lock:
                 old_roots = list(self._settings["roots"])
                 changed = self._settings != settings
@@ -642,6 +748,7 @@ class TimemachineService:
                 for root in old_roots:
                     if self._root_key(root) in removed:
                         self.store.drop_root(root)
+            self._configure_idle()
             agent_ready = self._sync_agent(force=True)
             if enabled and changed:
                 self._start_scan(agent_ready=agent_ready, restart=True)
@@ -951,3 +1058,19 @@ class TimemachineService:
         except Exception:
             logging.getLogger(__name__).exception("타임머신 명령 처리 실패")
             return self._error("TM_FAILED", "타임머신 작업을 완료하지 못했습니다.")
+
+
+class _ContentIdleJob:
+    """타임머신 본문 변경분 색인을 쉬는 시간 스케줄러 작업(IdleJob)으로 감싼 것."""
+
+    name = CONTENT_IDLE_JOB
+
+    def __init__(self, service):
+        self._service = service
+
+    def pending(self):
+        service = self._service
+        return not service._closing and bool(service._settings["roots"])
+
+    def run(self, ctx):
+        self._service.run_idle_content_refresh(ctx)
