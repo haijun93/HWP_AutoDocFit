@@ -92,7 +92,7 @@ unsafe fn paint(h:HWND){unsafe{
  if !message.is_empty(){text(message,RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row},DT_END_ELLIPSIS);}
  for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};if c.and_then(|c|c.selection)==Some(*id){fill(r,0x00f7e3cf);}text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
  if s.truncated{text("5,000개까지만 보입니다. 앱에서 보세요",RECT{left:pad,top:rc.bottom-row,right:rc.right,bottom:rc.bottom},DT_END_ELLIPSIS);}
- });frame::own_border(mem,rc);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
+ });frame::own_border(mem,rc);ui_core::probe::record(mem,rc.right,rc.bottom);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
 }}
 unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{match msg{
  WM_PAINT=>{paint(h);0},WM_ERASEBKGND=>1,WM_NCCALCSIZE if w!=0=>0,
@@ -126,9 +126,10 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
 
 #[cfg(test)] mod integration_tests {
  use super::*;
+ static SEQ:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
  struct Isolated {root:std::path::PathBuf,old_root:Option<std::ffi::OsString>,old_library:Option<std::ffi::OsString>,mutex:HANDLE}
  impl Isolated {fn new()->Self{unsafe{
-  let root=std::path::PathBuf::from(format!("E:/docfit-tmp/kvf-window-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();
+  let root=std::env::temp_dir().join(format!("kvf-window-test-{}-{}",std::process::id(),SEQ.fetch_add(1,std::sync::atomic::Ordering::SeqCst)));std::fs::create_dir_all(&root).unwrap();
   let old_root=std::env::var_os("KVF_TEST_ROOT");let old_library=std::env::var_os("KLIB_TEST_ROOT");
   std::env::set_var("KVF_TEST_ROOT",root.join("kvf"));std::env::set_var("KLIB_TEST_ROOT",root.join("library"));std::fs::create_dir_all(root.join("library")).unwrap();
   let name=wide(&crate::paths::object_name("Local\\HwpAutoDocFit.kvf",Some(root.to_str().unwrap())));let mutex=windows_sys::Win32::System::Threading::CreateMutexW(null(),0,name.as_ptr());assert!(!mutex.is_null());
@@ -139,7 +140,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   match &self.old_root{Some(v)=>std::env::set_var("KVF_TEST_ROOT",v),None=>std::env::remove_var("KVF_TEST_ROOT")};
   match &self.old_library{Some(v)=>std::env::set_var("KLIB_TEST_ROOT",v),None=>std::env::remove_var("KLIB_TEST_ROOT")};
   // 고정된 시험 디렉터리만 정리한다.
-  assert!(self.root.starts_with("E:/docfit-tmp"));let _=std::fs::remove_dir_all(&self.root);
+  assert!(self.root.starts_with(std::env::temp_dir()));let _=std::fs::remove_dir_all(&self.root);
  }}}
  #[test]fn isolated_window_events_and_rendering(){
   let fixture=Isolated::new();
@@ -163,6 +164,35 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   assert_eq!(std::fs::read(fixture.root.join("library/library.db")).unwrap(),before_db);
   unsafe{crate::wndproc(null_mut(),WM_DESTROY,0,0);}assert!(!fixture.root.join("kvf/status.json").exists());
  }
+ /// 그리기 결과 해시(UI0 이식 전후 비교용, `--ignored`로만 실행). 같은 상태 → 같은 픽셀.
+ pub(crate) fn render_cases()->Vec<(&'static str,ui_core::probe::Frame)>{
+  let fixture=Isolated::new();
+  let db=crate::sqlite::Connection::open(fixture.root.join("library/library.db").to_str().unwrap()).unwrap();
+  db.exec("CREATE TABLE box(id INTEGER PRIMARY KEY,name TEXT,description TEXT,created_at REAL,updated_at REAL); CREATE TABLE item(id INTEGER PRIMARY KEY,box_id INTEGER,kind TEXT,source_path TEXT,origin_path TEXT,managed_path TEXT,display_name TEXT,space TEXT,created_at REAL); INSERT INTO box VALUES(1,'시험 상자','',1,2),(2,'빈 상자','',1,1); INSERT INTO item VALUES(1,1,'file','','','','한글 보고','core',3),(2,1,'file','','','','한 자료','core',2),(3,1,'file','','','','영역 자료 아주 긴 이름 말줄임 확인용 이름 계속 이어서 더 길게','basis',1)").unwrap();drop(db);
+  configure(null_mut(),&Settings::default());call(Caller::SecondRun);let h=with(|s|s.hwnd);assert!(!h.is_null());
+  let mut out=Vec::new();
+  let mut shot=|name:&'static str,w:i32,hh:i32|{unsafe{SetWindowPos(h,null_mut(),0,0,w,hh,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);ui_core::probe::arm();SendMessageW(h,WM_PAINT,0,0);}out.push((name,ui_core::probe::take().expect(name)));};
+  shot("list",600,420);
+  event(Event::Select(Some(2)));shot("selected",600,420);
+  unsafe{SendMessageW(h,WM_KEYDOWN,VK_RIGHT as usize,0);}shot("tab_core",600,420);
+  unsafe{SendMessageW(h,WM_CHAR,'한' as usize,0);}shot("query",600,420);
+  shot("narrow",360,200);
+  event(Event::SetSticky(true));shot("sticky",600,420);
+  event(Event::ChangeBox(2));shot("empty_box",600,420);
+  drop(fixture);out
+ }
+ #[test]#[ignore]fn measure_show_ms(){
+  let fixture=Isolated::new();
+  let db=crate::sqlite::Connection::open(fixture.root.join("library/library.db").to_str().unwrap()).unwrap();
+  let mut sql=String::from("CREATE TABLE box(id INTEGER PRIMARY KEY,name TEXT,description TEXT,created_at REAL,updated_at REAL); CREATE TABLE item(id INTEGER PRIMARY KEY,box_id INTEGER,kind TEXT,source_path TEXT,origin_path TEXT,managed_path TEXT,display_name TEXT,space TEXT,created_at REAL); INSERT INTO box VALUES(1,'시험 상자','',1,2);");
+  for i in 0..500{sql.push_str(&format!("INSERT INTO item VALUES({},1,'file','','','','자료 {}','core',{});",i+1,i,i));}
+  db.exec(&sql).unwrap();drop(db);configure(null_mut(),&Settings::default());
+  let mut ms=Vec::new();
+  for _ in 0..30{let t=std::time::Instant::now();call(Caller::SecondRun);let h=with(|s|s.hwnd);unsafe{UpdateWindow(h);}ms.push(t.elapsed().as_secs_f64()*1000.0);close();}
+  let first=ms[0];ms.sort_by(|a,b|a.partial_cmp(b).unwrap());
+  println!("MEASURE kvf show first={first:.3}ms median={:.3}ms p90={:.3}ms",ms[ms.len()/2],ms[ms.len()*9/10]);drop(fixture);
+ }
+ #[test]#[ignore]fn golden_render_matches_before_ui0(){for(name,f)in render_cases(){println!("RENDER kvf {name} {}x{} {:016x}",f.width,f.height,f.hash);}}
 }
 
 fn open_item(seq:u64,id:i64,action:crate::open::Action){

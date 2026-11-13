@@ -6,6 +6,14 @@ version = 4
 name = "kvf"
 version = "0.1.0"
 dependencies = [
+ "ui-core",
+ "windows-sys",
+]
+
+[[package]]
+name = "ui-core"
+version = "0.1.0"
+dependencies = [
  "windows-sys",
 ]
 

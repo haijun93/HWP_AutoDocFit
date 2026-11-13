@@ -754,6 +754,7 @@ unsafe fn paint(hwnd: HWND) {
             st.tab_spans.clear();
             drop(st);
             own_border(mem, rc);
+            ui_core::probe::record(mem, w, h);
             BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
             return;
         }
@@ -859,6 +860,7 @@ unsafe fn paint(hwnd: HWND) {
         }
         drop(st);
         own_border(mem, rc);
+        ui_core::probe::record(mem, w, h);
         BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
     }
 }
@@ -1523,6 +1525,93 @@ mod tests {
         assert!(!needs_store(Tab::Cat(Category::Web), full, LIST_LIMIT, true));
         assert!(!needs_store(Tab::Search, full, full, true)); // 빈 찾기 = 메모리 목록
         assert!(needs_store(Tab::Search, 3, 0, false)); // 찾기는 모든 항목 대상
+    }
+
+    /// 화면 그리기 결과 해시(UI0 이식 전후 비교용). 같은 상태 → 같은 픽셀이어야 한다.
+    /// 글꼴·ClearType·배율에 따라 값이 달라지므로 기준값은 이식 전 같은 PC에서 뽑았다(`--ignored`로만 실행).
+    pub(crate) fn render_cases() -> Vec<(&'static str, ui_core::probe::Frame)> {
+        let app = crate::test_app();
+        unsafe {
+            if popup_hwnd().is_null() {
+                register(windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()));
+            }
+        }
+        let hwnd = popup_hwnd();
+        assert!(!hwnd.is_null());
+        let sample = |id: i64, kind: &str, preview: &str, pinned: bool| Summary {
+            id, kind: kind.into(), preview: preview.into(), pinned, used: 0.0, size: 0,
+            cats: CategorySet::of(&[Category::All]),
+        };
+        let items = vec![
+            sample(1, "text", "고정한 회의 메모: 다음 주 화요일 10시", true),
+            sample(2, "image", "그림 640×480", false),
+            sample(3, "text", "웹 · https://example.com/아주/긴/주소/말줄임/확인용/경로/이어서/계속", false),
+            sample(4, "files", "C:\\자료\\보고서.hwpx", false),
+            sample(5, "text", "서식 포함 · 표 머리글", false),
+            sample(6, "text", "여섯 번째 항목", false),
+        ];
+        let mut out = Vec::new();
+        let mut case = |name: &'static str, w: i32, h: i32, pinned: bool, error: &str, f: &dyn Fn(&mut State)| {
+            {
+                let mut s = app.settings.lock().unwrap();
+                s.sticky_popup = pinned;
+                s.always_on_top = pinned;
+            }
+            *app.recent_error.lock().unwrap() = error.to_string();
+            {
+                let mut st = STATE.lock().unwrap();
+                st.items = items.clone();
+                st.sel = 0; st.top = 0; st.hover = None; st.query.clear(); st.comp.clear(); st.tab = 0;
+                st.hover_btn = None; st.pressed_btn = None; st.hover_tab = None; st.restore_rect = None;
+                f(&mut st);
+            }
+            unsafe {
+                SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, w, h, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                ui_core::probe::arm();
+                SendMessageW(hwnd, WM_PAINT, 0, 0);
+            }
+            out.push((name, ui_core::probe::take().expect(name)));
+        };
+        case("all", 440, 420, false, "", &|_| {});
+        case("hover", 440, 420, false, "", &|st| { st.sel = 1; st.hover = Some(2); st.hover_btn = Some(HeadButton::Close); st.hover_tab = Some(3); });
+        case("hover_btn_pressed", 440, 420, false, "", &|st| { st.hover_btn = Some(HeadButton::Pin); st.pressed_btn = Some(HeadButton::Pin); st.hover = Some(0); });
+        case("search", 440, 420, false, "", &|st| { st.tab = SEARCH_TAB; st.query = "항목".into(); st.comp = "글".into(); st.items.truncate(2); });
+        case("search_empty", 440, 420, false, "", &|st| { st.tab = SEARCH_TAB; st.items.clear(); });
+        case("empty_error", 440, 420, false, "database is locked", &|st| { st.items.clear(); });
+        case("empty_cat", 440, 420, false, "", &|st| { st.tab = 5; st.items.clear(); });
+        case("collapsed", 440, 34, false, "", &|_| {});
+        case("narrow_pinned_max", 300, 300, true, "", &|st| { st.restore_rect = Some(RECT { left: 0, top: 0, right: 1, bottom: 1 }); st.sel = 3; st.top = 2; });
+        case("wide", 900, 600, false, "", &|st| { st.tab = 2; });
+        out
+    }
+
+    /// 창 표시 시간 측정(UI0 1회 측정, `--ignored --release`로만): show() 호출부터 첫 그리기 끝까지.
+    #[test]
+    #[ignore]
+    fn measure_show_ms() {
+        render_cases();
+        let hwnd = popup_hwnd();
+        let mut ms = Vec::new();
+        for _ in 0..30 {
+            hide();
+            let t = std::time::Instant::now();
+            show();
+            unsafe { UpdateWindow(hwnd) };
+            ms.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        hide();
+        let first = ms[0];
+        ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        println!("MEASURE popup show first={first:.3}ms median={:.3}ms p90={:.3}ms", ms[ms.len() / 2], ms[ms.len() * 9 / 10]);
+    }
+
+    #[test]
+    #[ignore]
+    fn golden_render_matches_before_ui0() {
+        let got = render_cases();
+        for (name, f) in &got {
+            println!("RENDER popup {name} {}x{} {:016x}", f.width, f.height, f.hash);
+        }
     }
 
     #[test]

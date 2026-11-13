@@ -1462,6 +1462,34 @@ mod lifecycle_tests {
 }
 
 
+/// 화면 시험용 App(메모리 DB, 기본 설정). 프로세스에서 한 번만 만든다.
+#[cfg(test)]
+pub(crate) fn test_app() -> &'static App {
+    APP.get_or_init(|| {
+        let (tx, _rx) = channel();
+        App {
+            dir: std::env::temp_dir().join(format!("kagent-ui-test-{}", std::process::id())).to_string_lossy().into_owned(),
+            store: Mutex::new(Store::open(":memory:").unwrap()),
+            settings: Mutex::new(Settings::default()),
+            recent: Mutex::new(Vec::new()),
+            recent_error: Mutex::new(String::new()),
+            tx: Mutex::new(tx),
+            self_seq: AtomicU32::new(0),
+            hwnd: AtomicIsize::new(0),
+            hotkey_ok: AtomicBool::new(false),
+            listening: AtomicBool::new(false),
+            last_clip_image: AtomicU64::new(0),
+            image_dedupe: Mutex::new(std::collections::VecDeque::new()),
+            timeline: Mutex::new(None),
+            capture_plan: Mutex::new(Vec::new()),
+            scan_pending: Mutex::new(HashSet::new()),
+            timeline_generation: AtomicU64::new(0),
+            timeline_files: AtomicI64::new(0),
+            timeline_tx: Mutex::new(None),
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
