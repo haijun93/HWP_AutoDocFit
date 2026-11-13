@@ -20,6 +20,7 @@ class NbSource {
     required this.paragraphCount,
     this.origin = '',
     this.itemId,
+    this.reason = '',
   });
   final int id;
   final String displayName;
@@ -30,6 +31,47 @@ class NbSource {
 
   /// 자료함 항목에서 온 출처면 그 항목 id(klib nb_source.item_id). 아니면 null.
   final String? itemId;
+
+  /// 상태 이유(실패·원본 없음 까닭, klib nb_source.reason).
+  final String reason;
+}
+
+/// 출처 색인 상태(klib nb_source.status, NBIDX1)를 화면 문구로. ready·indexed는 문단 수.
+String nbSourceStatusLabel(NbSource s) {
+  switch (s.status) {
+    case 'ready':
+    case 'indexed':
+      return '문단 ${s.paragraphCount}개';
+    case 'stale':
+      return '원본이 바뀜 · 다시 색인 대기 (문단 ${s.paragraphCount}개)';
+    case 'refreshing':
+      return '다시 색인 중';
+    case 'missing':
+      return '원본 파일 없음 · 문단 ${s.paragraphCount}개는 그대로';
+    case 'failed':
+      return s.reason.isEmpty ? '다시 색인 실패' : '다시 색인 실패: ${s.reason}';
+    case 'pending':
+      return '색인 준비 중';
+    default:
+      return s.status;
+  }
+}
+
+/// 출처 다시 색인 결과(klib nb_source_refresh). 출처 번호는 그대로이고, 인용은 [relinked]개가 옮겨진 문단을 가리키게 됐다.
+/// [unresolved]개는 새 원본에서 인용 글을 찾지 못해 번호를 그대로 두었다(노트의 인용 글은 남아 있다).
+class NbRefreshResult {
+  const NbRefreshResult({required this.paragraphCount, this.relinked = 0, this.unresolved = 0});
+  final int paragraphCount;
+  final int relinked;
+  final int unresolved;
+}
+
+/// 다시 색인 결과 문구.
+String nbRefreshMessage(NbRefreshResult r) {
+  final parts = <String>['같은 출처로 다시 색인했습니다(문단 ${r.paragraphCount}개'];
+  if (r.relinked > 0) parts.add('인용 ${r.relinked}개 위치 옮김');
+  if (r.unresolved > 0) parts.add('인용 ${r.unresolved}개는 새 원본에서 찾지 못해 그대로');
+  return '${parts.join(', ')}).';
 }
 
 /// 자료함 항목을 출처로 넣은 결과. [reused]면 이미 출처에 있어 새로 만들지 않았다.
@@ -165,6 +207,9 @@ abstract class NotebookApi {
   Future<int> addSource(int notebookId, String path);
   Future<void> removeSource(int notebookId, int sourceId);
 
+  /// 출처를 같은 번호로 다시 색인한다(원본이 바뀌었을 때). 노트의 인용 연결은 유지된다.
+  Future<NbRefreshResult> refreshSource(int notebookId, int sourceId);
+
   /// '+메모 추가'로 쓴 메모를 TEXT(.txt) 출처로 넣는다. [markdown]은 서식 원문이고,
   /// 색인에는 서식 기호를 뺀 평문 문단이 들어간다(호스트 nb_memo_add). 새 출처 id를 돌려준다.
   Future<int> addMemoSource(int notebookId, {required String title, required String markdown});
@@ -253,6 +298,7 @@ class BridgeNotebookApi implements NotebookApi {
         paragraphCount: _int(r['paragraph_count']),
         origin: _str(r['origin']),
         itemId: r['item_id'] == null ? null : _str(r['item_id']),
+        reason: _str(r['reason']),
       ),
   ];
 
@@ -289,6 +335,16 @@ class BridgeNotebookApi implements NotebookApi {
   @override
   Future<void> removeSource(int notebookId, int sourceId) =>
       _request('nb_source_remove', {'notebook_id': notebookId, 'source_id': sourceId});
+
+  @override
+  Future<NbRefreshResult> refreshSource(int notebookId, int sourceId) async {
+    final r = await _request('nb_source_refresh', {'notebook_id': notebookId, 'source_id': sourceId});
+    return NbRefreshResult(
+      paragraphCount: _int(r['paragraph_count']),
+      relinked: _int(r['relinked']),
+      unresolved: _int(r['unresolved']),
+    );
+  }
 
   @override
   Future<List<NbParagraph>> paragraphs(int notebookId, int sourceId) async => [
@@ -438,7 +494,7 @@ class BridgeNotebookApi implements NotebookApi {
 
 /// 시험·미리보기용 메모리 구현. 파일 내용은 [fileContents]에서 읽고, 없으면 파일 이름을 한 문단으로 쓴다.
 class InMemoryNotebookApi implements NotebookApi {
-  InMemoryNotebookApi({Map<String, String>? fileContents, this.library}) : _files = fileContents ?? const {};
+  InMemoryNotebookApi({Map<String, String>? fileContents, this.library}) : _files = fileContents ?? <String, String>{};
 
   final Map<String, String> _files;
 
@@ -506,6 +562,31 @@ class InMemoryNotebookApi implements NotebookApi {
       NbSource(id: id, displayName: name, kind: 'txt', status: 'ready', paragraphCount: plain.length, origin: 'memo://$id.txt'),
     );
     return id;
+  }
+
+  /// 시험용: 원본 파일 내용을 바꾼다(다시 색인 확인).
+  void setFile(String path, String text) => _files[path] = text;
+
+  @override
+  Future<NbRefreshResult> refreshSource(int notebookId, int sourceId) async {
+    final list = _sources[notebookId] ?? <NbSource>[];
+    final index = list.indexWhere((s) => s.id == sourceId);
+    if (index < 0) throw StateError('출처를 찾을 수 없습니다.');
+    final s = list[index];
+    final text = _files[s.origin];
+    if (text == null) throw StateError('원본 파일을 찾을 수 없습니다.');
+    final lines = text.split(RegExp(r'\r?\n')).map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+    _paragraphs[sourceId] = [for (var i = 0; i < lines.length; i++) NbParagraph(sourceId: sourceId, ordinal: i, body: lines[i])];
+    list[index] = NbSource(
+      id: s.id,
+      displayName: s.displayName,
+      kind: s.kind,
+      status: 'ready',
+      paragraphCount: lines.length,
+      origin: s.origin,
+      itemId: s.itemId,
+    );
+    return NbRefreshResult(paragraphCount: lines.length);
   }
 
   @override

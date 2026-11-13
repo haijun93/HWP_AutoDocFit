@@ -23,6 +23,8 @@ mod search;
 mod notebook;
 #[path = "../src/nb_transform.rs"]
 mod nb_transform;
+#[path = "../src/nb_store.rs"]
+mod nb_store;
 #[path = "../src/content.rs"]
 mod content;
 #[path = "../src/reindex.rs"]
@@ -792,8 +794,8 @@ fn test_nb_source_item_column_migration_on_old_db() {
         let db = Database::open(path.to_str().unwrap()).unwrap();
         drop(db);
     }
-    // item_id 열이 없는 옛 nb_source 표를 흉내 낸 뒤 다시 열어도 열이 생긴다.
-    let c = rusqlite::Connection::open(&path).unwrap();
+    // item_id 열이 없는 옛 nb_source 표를 흉내 낸 뒤 다시 열어도 열이 생긴다(업무자료함 표는 별도 DB, NBIDX1).
+    let c = rusqlite::Connection::open(ctx.dir.join("notebook").join("notebook.db")).unwrap();
     c.execute_batch("DROP INDEX IF EXISTS idx_nb_source_item; ALTER TABLE nb_source DROP COLUMN item_id;").unwrap();
     drop(c);
     let db = Database::open(path.to_str().unwrap()).unwrap();
@@ -1606,4 +1608,107 @@ fn test_index_status_ready_and_search_without_indexing_flag() {
     assert!(found.get("indexing").is_none(), "{found:?}");
     reindex::wait();
     assert_eq!(call(r#"{"cmd":"index_status"}"#).str("state"), Some("ready"));
+}
+
+/// NBIDX1: 출처 다시 색인은 같은 출처 번호로 문단을 바꾸고(인용 연결 유지), 원본 변경 검사·나눠 보내기·상태 명령이 맞물린다.
+#[test]
+fn test_nb_source_refresh_check_and_status() {
+    let ctx = TestContext::new("nb_refresh");
+    let db = Arc::new(Mutex::new(Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: String| json::parse(&pipe::handle_request(&req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    assert_eq!(status.bool("ready"), Some(true), "{status:?}");
+    assert_eq!(status.get("migration").and_then(|m| m.str("state")), Some("not_needed"));
+    assert!(ctx.dir.join("notebook").join("notebook.db").is_file());
+    assert!(ctx.dir.join("notebook").join("tantivy").join("meta.json").is_file());
+
+    let nb = call(r#"{"cmd":"nb_create","name":"노트"}"#.into()).i64("id").unwrap();
+    let md = ctx.dir.join("계획.md");
+    fs::write(&md, "# 추진 계획\n복지 예산은 120억 원이다.\n도로 정비\n").unwrap();
+    let md_path = md.to_str().unwrap().replace(std::path::MAIN_SEPARATOR, "/");
+    let sid = call(format!(r#"{{"cmd":"nb_source_add","notebook_id":{nb},"source_path":"{md_path}"}}"#)).i64("id").unwrap();
+    let note = call(format!(r#"{{"cmd":"nb_note_save","notebook_id":{nb},"title":"메모","body":"","citations":[{{"source_id":{sid},"paragraph_ordinal":1,"quote":"복지 예산은 120억 원이다."}}]}}"#)).i64("id").unwrap();
+    let checked = call(r#"{"cmd":"nb_source_check"}"#.into());
+    assert_eq!(checked.arr("refresh").unwrap().len(), 0, "{checked:?}");
+
+    // 원본이 바뀌면 stale → 다시 색인하면 같은 번호로 ready, 인용은 옮겨진 문단을 가리킨다.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&md, "# 추진 계획\n새로 넣은 교통 대책\n복지 예산은 120억 원이다.\n도로 정비\n").unwrap();
+    let checked = call(format!(r#"{{"cmd":"nb_source_check","notebook_id":{nb}}}"#));
+    let refresh = checked.arr("refresh").unwrap();
+    assert_eq!(refresh.iter().map(|r| (r.i64("source_id").unwrap(), r.str("status").unwrap().to_string())).collect::<Vec<_>>(), vec![(sid, "stale".to_string())]);
+    assert_eq!(refresh[0].bool("needs_paragraphs"), Some(false));
+    let done = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{sid}}}"#));
+    assert_eq!(done.bool("ok"), Some(true), "{done:?}");
+    assert_eq!((done.i64("source_id"), done.i64("paragraph_count"), done.i64("relinked"), done.i64("unresolved")), (Some(sid), Some(4), Some(1), Some(0)));
+    let notes = call(format!(r#"{{"cmd":"nb_note_list","notebook_id":{nb}}}"#));
+    let first_note = &notes.arr("notes").unwrap()[0];
+    let cite = &first_note.arr("citations").unwrap()[0];
+    assert_eq!((first_note.i64("id"), cite.i64("source_id"), cite.i64("paragraph_ordinal")), (Some(note), Some(sid), Some(2)));
+    let hits = call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"교통 대책"}}"#));
+    assert_eq!(hits.arr("results").unwrap().iter().map(|h| (h.i64("source_id").unwrap(), h.i64("ordinal").unwrap())).collect::<Vec<_>>(), vec![(sid, 1)]);
+    let list = call(format!(r#"{{"cmd":"nb_source_list","notebook_id":{nb}}}"#));
+    assert_eq!(list.arr("sources").unwrap()[0].str("status"), Some("ready"));
+    assert_eq!(call(r#"{"cmd":"nb_source_check"}"#.into()).arr("refresh").unwrap().len(), 0);
+
+    // hwp·pdf는 Python이 문단을 나눠 보낸다(part 0 … last). 마지막 묶음 전까지는 옛 문단으로 검색된다.
+    let pdf = ctx.dir.join("자료.pdf");
+    fs::write(&pdf, b"%PDF-1.4 a").unwrap();
+    let pdf_path = pdf.to_str().unwrap().replace(std::path::MAIN_SEPARATOR, "/");
+    let pid = call(format!(r#"{{"cmd":"nb_source_add","notebook_id":{nb},"source_path":"{pdf_path}","paragraphs":[{{"text":"옛 보고서 문단"}}]}}"#)).i64("id").unwrap();
+    let needs = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid}}}"#));
+    assert_eq!((needs.bool("ok"), needs.str("code")), (Some(false), Some("NEEDS_PARAGRAPHS")));
+    let first = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":0,"last":false,"paragraphs":[{{"text":"새 보고서 첫 문단"}}]}}"#));
+    assert_eq!((first.i64("staged"), first.str("status")), (Some(1), Some("refreshing")), "{first:?}");
+    assert_eq!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"옛 보고서"}}"#)).arr("results").unwrap().len(), 1);
+    let last = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":1,"last":true,"paragraphs":[{{"text":"새 보고서 둘째 문단"}}]}}"#));
+    assert_eq!(last.i64("paragraph_count"), Some(2), "{last:?}");
+    assert!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"옛 보고서 문단"}}"#)).arr("results").unwrap().iter().all(|h| h.str("body") != Some("옛 보고서 문단")));
+    assert_eq!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"보고서","source_ids":[{pid}]}}"#)).arr("results").unwrap().len(), 2);
+    // 순서가 어긋난 묶음은 거절.
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":3,"paragraphs":[{{"text":"x"}}]}}"#)).bool("ok"), Some(false));
+
+    // 원본이 없어지면 missing, 다시 색인하면 MISSING 코드.
+    fs::remove_file(&md).unwrap();
+    assert_eq!(call(r#"{"cmd":"nb_source_check"}"#.into()).get("counts").and_then(|c| c.i64("missing")), Some(1));
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{sid}}}"#)).str("code"), Some("MISSING"));
+    // 다른 노트북의 출처는 거절.
+    let other = call(r#"{"cmd":"nb_create","name":"다른"}"#.into()).i64("id").unwrap();
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{other},"source_id":{pid}}}"#)).bool("ok"), Some(false));
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    assert_eq!(status.i64("index_paragraphs"), Some(6), "{status:?}");
+    assert_eq!(status.get("sources").and_then(|s| s.i64("missing")), Some(1));
+}
+
+/// NBIDX1: 옛 버전 자료함 DB(main에 업무자료함 표)를 열면 별도 저장소로 한 번 옮기고, 공용 색인의 업무자료함 문단은 지운다.
+#[test]
+fn test_nb_legacy_library_moves_on_open_and_cleans_shared_index() {
+    let ctx = TestContext::new("nb_legacy_move");
+    let path = ctx.dir.join("library.db");
+    let (nb, sid) = {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        notebook::init_schema(&c).unwrap();
+        let nb = notebook::create(&c, "옛 노트", "").unwrap();
+        let sid = notebook::add_source(&c, nb, "txt", "옛.txt", "옛 출처").unwrap();
+        let ps = vec![notebook::Paragraph { source_id: sid, ordinal: 0, location: String::new(), level: 0, kind: "text".into(), body: "옛 자료함에 있던 정책 문단".into() }];
+        notebook::replace_paragraphs(&c, sid, &ps).unwrap();
+        // 옛 버전은 업무자료함 문단을 공용 색인에 넣었다.
+        let s = notebook::source_by_id(&c, sid).unwrap().unwrap();
+        search_index().unwrap().replace_notebook_source(nb, &s, &ps).unwrap();
+        (nb, sid)
+    };
+    assert_eq!(search_index().unwrap().search_notebook(nb, "정책", None, 5).unwrap().len(), 1);
+    let db = Arc::new(Mutex::new(Database::open(path.to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: String| json::parse(&pipe::handle_request(&req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    let m = status.get("migration").unwrap();
+    assert_eq!((m.str("state"), m.i64("attempts")), (Some("done"), Some(1)), "{status:?}");
+    assert!(Path::new(m.str("backup").unwrap()).is_file());
+    let hits = call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"정책"}}"#));
+    assert_eq!(hits.arr("results").unwrap().iter().map(|h| h.i64("source_id").unwrap()).collect::<Vec<_>>(), vec![sid]);
+    assert!(search_index().unwrap().search_notebook(nb, "정책", None, 5).unwrap().is_empty(), "공용 색인에서 업무자료함 문단이 지워져야 한다");
+    let state: String = fs::read_to_string(ctx.dir.join("notebook").join("migration.json")).unwrap();
+    assert!(state.contains("\"state\":\"done\""), "{state}");
 }

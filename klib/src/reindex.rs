@@ -1,9 +1,10 @@
 //! 본문 색인 다시 만들기.
 //!
 //! 색인 폴더의 스키마 버전이 지금 코드와 다르면 `SearchIndex::open_or_create`가 옛 색인을 버리고
-//! `needs_rebuild()`를 켠다. 여기서는 DB(sqlite)에 남아 있는 원본 목록(자료함 항목·노트북 출처)으로
+//! `needs_rebuild()`를 켠다. 여기서는 DB(sqlite)에 남아 있는 원본 목록(자료함 항목)으로
 //! 색인을 처음부터 다시 채우고, 다 끝난 뒤에만 버전 표시를 쓴다(`finish_rebuild`).
 //! 중간에 죽으면 버전 표시가 없으므로 다음 실행 때 처음부터 다시 한다.
+//! 업무자료함(노트북) 출처는 별도 색인(`nb_store`)에 있으므로 여기서 넣지 않는다(NBIDX1, 2026-11-13).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -26,7 +27,6 @@ pub struct Report {
     pub files: usize,
     /// 그중 읽지 못한 파일 수(원본이 없어졌거나 본문이 없는 파일). 재색인을 막지 않는다.
     pub failed: usize,
-    pub notebook_sources: usize,
 }
 
 /// DB의 원본 목록으로 색인을 다시 채우고 버전 표시를 쓴다. 호출한 스레드에서 끝까지 돈다.
@@ -47,11 +47,7 @@ pub fn rebuild(index: &SearchIndex, c: &rusqlite::Connection) -> Result<Report, 
             }
         }
     }
-    let sources: Vec<i64> = {
-        let mut s = c.prepare("SELECT id FROM nb_source ORDER BY id").map_err(text)?;
-        s.query_map([], |r| r.get(0)).map_err(text)?.collect::<rusqlite::Result<_>>().map_err(text)?
-    };
-    TOTAL.store(files.len() + sources.len(), Ordering::Relaxed);
+    TOTAL.store(files.len(), Ordering::Relaxed);
     DONE.store(0, Ordering::Relaxed);
     FAILED.store(0, Ordering::Relaxed);
     let mut report = Report { files: files.len(), ..Report::default() };
@@ -61,18 +57,6 @@ pub fn rebuild(index: &SearchIndex, c: &rusqlite::Connection) -> Result<Report, 
             if crate::content::index_file_in_boxes(index, path, name, boxes).is_err() {
                 report.failed += 1;
                 FAILED.fetch_add(1, Ordering::Relaxed);
-            }
-            DONE.fetch_add(1, Ordering::Relaxed);
-        }
-        batch.finish().map_err(|e| e.to_string())?;
-    }
-    for chunk in sources.chunks(CHUNK) {
-        let batch = index.batch();
-        for &id in chunk {
-            if let Some(source) = crate::notebook::source_by_id(c, id).map_err(text)? {
-                let paragraphs = crate::notebook::paragraphs(c, id).map_err(text)?;
-                index.replace_notebook_source(source.notebook_id, &source, &paragraphs).map_err(|e| e.to_string())?;
-                report.notebook_sources += 1;
             }
             DONE.fetch_add(1, Ordering::Relaxed);
         }
@@ -152,6 +136,7 @@ mod tests {
         }
         // 본문 색인 대상이 아닌 종류(링크 등)는 다시 색인하지 않는다.
         c.execute("INSERT INTO item(box_id,kind,source_path,display_name,created_at) VALUES(?1,'link','https://example.invalid/서울','링크',0)", [box1]).unwrap();
+        // 업무자료함 출처는 별도 저장소(`nb`)에 들어가 공용 색인 재구성 대상이 아니다.
         let nb = crate::notebook::create(c, "노트", "").unwrap();
         let source = crate::notebook::add_source(c, nb, "txt", "origin", "출처 자료").unwrap();
         crate::notebook::replace_paragraphs(c, source, &[crate::notebook::Paragraph { source_id: source, ordinal: 0, location: "1".into(), level: 0, kind: "text".into(), body: "대전 교통 대책".into() }]).unwrap();
@@ -166,7 +151,7 @@ mod tests {
         assert!(index.search("옛날", SearchOptions { limit: 5 }).unwrap().is_empty());
 
         let report = rebuild(&index, c).unwrap();
-        assert_eq!(report, Report { files: 3, failed: 1, notebook_sources: 1 });
+        assert_eq!(report, Report { files: 3, failed: 1 });
         assert!(!index.needs_rebuild());
         let hits = index.search("서울", SearchOptions { limit: 5 }).unwrap();
         assert_eq!(hits.iter().map(|h| h.path.clone()).collect::<Vec<_>>(), [path(&a)]);
@@ -174,14 +159,13 @@ mod tests {
         assert_eq!(index.search_box(box2, "서울", 5).unwrap().len(), 1);
         assert_eq!(index.search("부산", SearchOptions { limit: 5 }).unwrap().iter().map(|h| h.path.clone()).collect::<Vec<_>>(), [path(&b)]);
         assert!(index.search("옛날", SearchOptions { limit: 5 }).unwrap().is_empty());
-        assert_eq!(index.search_notebook(nb, "대전", None, 5).unwrap().len(), 1);
+        assert!(index.search_notebook(nb, "대전", None, 5).unwrap().is_empty());
         drop(index);
 
         // 다시 열면 버전 표시가 맞으므로 그대로 쓴다.
         let index = SearchIndex::open_or_create(&dir).unwrap();
         assert!(!index.needs_rebuild());
         assert_eq!(index.search("서울", SearchOptions { limit: 5 }).unwrap().len(), 1);
-        assert_eq!(index.search_notebook(nb, "대전", None, 5).unwrap().len(), 1);
         drop(index);
         drop(db);
         let _ = std::fs::remove_dir_all(root);

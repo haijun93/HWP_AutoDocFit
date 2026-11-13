@@ -361,6 +361,21 @@ class _NotebookScreenState extends State<NotebookScreen> {
     }, done: '출처를 뺐습니다(원본 파일은 그대로입니다).');
   }
 
+  /// 출처를 같은 번호로 다시 색인한다(원본이 바뀌었을 때). 인용 연결은 klib가 지킨다.
+  Future<void> _refreshSource(NbSource source) async {
+    final nb = _notebook;
+    if (nb == null) return;
+    NbRefreshResult? result;
+    await _run(() async {
+      result = await widget.api.refreshSource(nb.id, source.id);
+      await _loadNotebookContent();
+    });
+    final done = result;
+    if (!mounted || done == null) return; // 실패 문구는 _run이 이미 보였다.
+    if (_previewSource?.id == source.id) await _preview(source.id, null);
+    if (mounted) setState(() => _status = nbRefreshMessage(done));
+  }
+
   /// 출처가 나온 자료함 항목을 찾아 자료함 화면에서 보여 준다.
   Future<void> _showInLibrary(NbSource source) async {
     final nb = _notebook;
@@ -866,8 +881,11 @@ class _NotebookScreenState extends State<NotebookScreen> {
                           ],
                         ),
                         subtitle: Text(
-                          s.status == 'ready' || s.status == 'indexed' ? '문단 ${s.paragraphCount}개' : '${s.status} ',
+                          nbSourceStatusLabel(s),
+                          key: ValueKey('nb-source-status-${s.id}'),
                           style: const TextStyle(fontSize: 12),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         onTap: () => _preview(s.id, null),
                         trailing: Row(
@@ -880,6 +898,12 @@ class _NotebookScreenState extends State<NotebookScreen> {
                                 icon: const Icon(Icons.inventory_2_outlined, size: 18),
                                 onPressed: _busy ? null : () => _showInLibrary(s),
                               ),
+                            IconButton(
+                              key: ValueKey('nb-source-refresh-${s.id}'),
+                              tooltip: '다시 색인(원본이 바뀌었을 때, 메모·인용 연결 유지)',
+                              icon: Icon(Icons.refresh, size: 18, color: s.status == 'stale' || s.status == 'failed' ? Theme.of(context).colorScheme.primary : null),
+                              onPressed: _busy ? null : () => _refreshSource(s),
+                            ),
                             IconButton(
                               tooltip: '출처 빼기',
                               icon: const Icon(Icons.close, size: 18),
