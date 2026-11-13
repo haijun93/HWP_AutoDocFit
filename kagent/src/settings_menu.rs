@@ -118,6 +118,8 @@ pub enum Command {
     Resume,
     ClearAll,
     Quit,
+    /// 관리창 열기(UI1, kagent 안 Win32 창).
+    OpenManager,
 }
 
 const ID_AUTOSTART_ON: usize = 100;
@@ -125,6 +127,7 @@ const ID_AUTOSTART_OFF: usize = 101;
 const ID_RESUME: usize = 110;
 const ID_CLEAR: usize = 120;
 const ID_QUIT: usize = 121;
+const ID_MANAGER: usize = 122;
 const ID_FLAG: usize = 130; // + Flag 순서
 const ID_PAUSE: usize = 50_000; // + 분(0~1440)
 const ID_NUMBER: usize = 10_000; // Number 코드 × 10000 + 값
@@ -140,6 +143,7 @@ pub fn command_id(c: Command) -> usize {
         Command::Resume => ID_RESUME,
         Command::ClearAll => ID_CLEAR,
         Command::Quit => ID_QUIT,
+        Command::OpenManager => ID_MANAGER,
     }
 }
 
@@ -150,6 +154,7 @@ pub fn command_of(id: usize) -> Option<Command> {
         ID_RESUME => Some(Command::Resume),
         ID_CLEAR => Some(Command::ClearAll),
         ID_QUIT => Some(Command::Quit),
+        ID_MANAGER => Some(Command::OpenManager),
         _ if (ID_FLAG..ID_FLAG + Flag::ALL.len()).contains(&id) => Some(Command::Toggle(Flag::ALL[id - ID_FLAG])),
         _ if (ID_PAUSE..=ID_PAUSE + 1440).contains(&id) => Some(Command::Pause((id - ID_PAUSE) as u32)),
         _ if (ID_NUMBER..ID_PAUSE).contains(&id) => {
@@ -225,6 +230,7 @@ pub fn build(s: &Settings, extra: Extra) -> Vec<Entry> {
     }
     out.push(note(format!("단축키: {} (관리창에서 안내)", s.hotkey)));
     out.push(Entry::Separator);
+    out.push(item(Command::OpenManager, "관리창 열기…", false, false));
     out.push(item(Command::ClearAll, "모두 지우기(고정 항목 제외)…", false, false));
     out.push(item(Command::Quit, "몽땅클립보드 끄기…", false, false));
     out
@@ -310,7 +316,7 @@ mod tests {
         let m = build(&s, Extra { autostart: Some(false), resume_in_min: None });
         for prefix in ["일시정지", "보관 개수: 500개", "전체 최대 크기: 200MB", "항목 하나 최대 크기: 10MB", "보관 기간: 30일",
                        "스티커 메모처럼", "항상 위", "고르면 바로 붙여넣기", "스크린샷 폴더 감시", "엑셀 표는 목표 결과로 붙이기", "Windows 로그인 시 자동 실행",
-                       "단축키: Ctrl+Shift+V", "모두 지우기", "몽땅클립보드 끄기"] {
+                       "단축키: Ctrl+Shift+V", "관리창 열기", "모두 지우기", "몽땅클립보드 끄기"] {
             find(&m, prefix);
         }
         // 켜진 설정은 체크 표시

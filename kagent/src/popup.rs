@@ -39,7 +39,7 @@ use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RE
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, GetKeyState, SetFocus, TrackMouseEvent, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
+    GetAsyncKeyState, GetKeyState, ReleaseCapture, SetCapture, SetFocus, TrackMouseEvent, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
     SendInput, TME_LEAVE, TRACKMOUSEEVENT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
     VK_HOME, VK_LEFT, VK_LMENU, VK_LWIN, VK_MENU, VK_NEXT, VK_PRIOR, VK_RETURN, VK_RIGHT, VK_RMENU, VK_RWIN, VK_SHIFT,
     VK_TAB, VK_UP,
@@ -48,7 +48,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::category::Category;
 use crate::settings_menu::{self, Command, Entry};
-use ui_core::frame::{own_border, row_index, scale, text_width};
+use ui_core::frame::{row_index, scale, text_width};
 use crate::store::Summary;
 use crate::open_item;
 use crate::util::wide;
@@ -225,12 +225,16 @@ struct State {
     restore_rect: Option<RECT>,
     /// 최소화(숨김) 상태 — 다시 부르면 상태를 그대로 보여 준다.
     minimized: bool,
+    /// 마지막으로 그린 스크롤 막대(창 안 막대 사각형, 상태). 항목이 보이는 줄보다 많을 때만 있다.
+    scroll: Option<(RECT, ui_core::list::Scrollbar)>,
+    /// 손잡이를 끄는 중: (누른 y, 그때의 첫 줄).
+    drag: Option<(i32, usize)>,
 }
 
 static STATE: Mutex<State> = Mutex::new(State {
     items: Vec::new(), sel: 0, top: 0, target: 0, hover: None, query: String::new(), comp: String::new(), seq: 0,
     tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_tab: None, restore_rect: None,
-    minimized: false,
+    minimized: false, scroll: None, drag: None,
 });
 static TRACKING: AtomicBool = AtomicBool::new(false);
 
@@ -567,9 +571,25 @@ fn kind_tag(kind: &str) -> &'static str {
     }
 }
 
-/// 색(UI0 이전 상수와 같은 값, `ClipPalette::LIGHT`). 다크·고대비 연결은 UI1에서.
-const PAL: ClipPalette = ClipPalette::LIGHT;
-const ACCENT: u32 = PAL.accent;
+/// 색: 라이트는 UI0 이전 상수와 같은 값(`ClipPalette::LIGHT`), 다크·고대비는 UI1부터 `look`이 고른다.
+fn palette() -> ClipPalette {
+    crate::look::clip_palette()
+}
+
+/// 테마가 바뀌면(설정·시스템) 틀 색과 화면을 다시.
+pub fn theme_changed() {
+    let hwnd = popup_hwnd();
+    if hwnd.is_null() {
+        return;
+    }
+    unsafe {
+        crate::look::frame_for(hwnd);
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
+}
+
+/// 스크롤 막대 폭(논리 px). 항목이 보이는 줄보다 많을 때만 그린다(그 밖의 화면은 UI0와 같은 픽셀).
+const SCROLL_W: i32 = 8;
 
 const F_BODY: FontSpec = FontSpec::clear(FACE_UI, 15, 400);
 const F_SMALL: FontSpec = FontSpec::clear(FACE_UI, 12, 400);
@@ -588,6 +608,7 @@ const A11Y_TABS: u32 = 50;
 const A11Y_SEARCH: u32 = 60;
 const A11Y_LIST: u32 = 70;
 const A11Y_EMPTY: u32 = 80;
+const A11Y_SCROLL: u32 = 81;
 const A11Y_TAB0: u32 = 100;
 const A11Y_ITEM0: u32 = 1000;
 
@@ -601,6 +622,7 @@ unsafe fn paint(hwnd: HWND) {
         let rc = buf.rect();
         let (w, h) = (rc.right, rc.bottom);
         let mem = buf.dc();
+        let pal = palette();
         let dpi = GetDpiForWindow(hwnd).max(96);
         let fonts = FONTS.with(|c| {
             let mut c = c.borrow_mut();
@@ -620,25 +642,25 @@ unsafe fn paint(hwnd: HWND) {
         let cat_h = scale(hwnd, CAT_H);
         let row = scale(hwnd, ROW_H);
         let bw = scale(hwnd, CAPTION_W);
-        fill(rc, PAL.window);
+        fill(rc, pal.window);
         let mut nodes: Vec<Node> = Vec::new();
 
         let mut st = STATE.lock().unwrap();
         let maximized = st.restore_rect.is_some();
 
         // ① 상단 메뉴바
-        fill(RECT { left: 0, top: 0, right: w, bottom: head }, PAL.head);
+        fill(RECT { left: 0, top: 0, right: w, bottom: head }, pal.head);
         for (n, b) in HEAD_BUTTONS.into_iter().enumerate() {
             let (l, r) = head_button_span(b, w, bw);
             let br = RECT { left: l, top: 0, right: r, bottom: head };
             let hovered = st.hover_btn == Some(b);
             let on = b == HeadButton::Pin && pinned;
             if hovered {
-                fill(br, if b == HeadButton::Close { PAL.close_hover } else if st.pressed_btn == Some(b) { PAL.head_pressed } else { PAL.head_hover });
+                fill(br, if b == HeadButton::Close { pal.close_hover } else if st.pressed_btn == Some(b) { pal.head_pressed } else { pal.head_hover });
             } else if on {
-                fill(br, PAL.head_on);
+                fill(br, pal.head_on);
             }
-            p.text_color(if hovered && b == HeadButton::Close { PAL.on_close_hover } else if on { ACCENT } else { PAL.glyph });
+            p.text_color(if hovered && b == HeadButton::Close { pal.on_close_hover } else if on { pal.accent } else { pal.glyph });
             let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Memo | HeadButton::Pin);
             p.font(if big { glyph_big } else { glyph });
             draw(&head_button_glyph(b, pinned, maximized).to_string(), br, DT_CENTER);
@@ -646,13 +668,13 @@ unsafe fn paint(hwnd: HWND) {
         }
         let buttons_left = head_button_span(HEAD_BUTTONS[0], w, bw).0;
         p.font(title_font);
-        p.text_color(PAL.title);
+        p.text_color(pal.title);
         let title_left = scale(hwnd, 10);
         draw("몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
         let title_right = title_left + text_width(mem, "몽땅클립보드") + scale(hwnd, 8);
         if title_right < buttons_left - scale(hwnd, 24) {
             p.font(small);
-            p.text_color(PAL.hint);
+            p.text_color(pal.hint);
             let hint = match st.hover_btn {
                 Some(b) => head_button_name(b, pinned, maximized).to_string(),
                 None => "1~9 선택 · ←→ 분류".to_string(),
@@ -665,15 +687,15 @@ unsafe fn paint(hwnd: HWND) {
         if collapsed {
             st.tab_spans.clear();
             drop(st);
-            own_border(mem, rc);
+            ui_core::frame::own_border_with(mem, rc, pal.border);
             buf.finish();
             a11y::publish(hwnd, nodes);
             return;
         }
 
         // ② 분류 메뉴바
-        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, PAL.tab_bar);
-        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, PAL.tab_line);
+        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, pal.tab_bar);
+        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, pal.tab_line);
         p.font(small_bold);
         let long: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(false))).collect();
         let short: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(true))).collect();
@@ -686,17 +708,17 @@ unsafe fn paint(hwnd: HWND) {
             let tr = RECT { left: l, top: head, right: r, bottom: head + cat_h - 1 };
             let selected = i == st.tab;
             if selected {
-                fill(tr, PAL.window);
+                fill(tr, pal.window);
                 fill(RECT { left: l + scale(hwnd, 3), top: head + cat_h - scale(hwnd, 3), right: r - scale(hwnd, 3),
-                            bottom: head + cat_h - 1 }, ACCENT);
+                            bottom: head + cat_h - 1 }, pal.accent);
                 p.font(small_bold);
-                p.text_color(ACCENT);
+                p.text_color(pal.accent);
             } else {
                 if st.hover_tab == Some(i) {
-                    fill(tr, PAL.tab_hover);
+                    fill(tr, pal.tab_hover);
                 }
                 p.font(small);
-                p.text_color(PAL.tab_text);
+                p.text_color(pal.tab_text);
             }
             draw(tab.label(use_short), tr, DT_CENTER | DT_END_ELLIPSIS);
             nodes.push(Node::item(A11Y_TAB0 + i as u32, A11Y_TABS, Role::TabItem, tab.label(false), URect::from_win(&tr), selected));
@@ -710,14 +732,14 @@ unsafe fn paint(hwnd: HWND) {
             let y = head + cat_h;
             let pad = scale(hwnd, 6);
             let boxr = RECT { left: pad, top: y + scale(hwnd, 3), right: w - pad, bottom: y + row - scale(hwnd, 3) };
-            p.frame(boxr, ACCENT);
+            p.frame(boxr, pal.accent);
             p.font(small);
             let text_r = RECT { left: boxr.left + pad, top: boxr.top, right: boxr.right - pad, bottom: boxr.bottom };
             if needle.is_empty() {
-                p.text_color(PAL.placeholder);
+                p.text_color(pal.placeholder);
                 draw("▏찾을 글자를 입력하세요 · 저장된 모든 항목에서 찾기", text_r, DT_END_ELLIPSIS);
             } else {
-                p.text_color(PAL.title);
+                p.text_color(pal.title);
                 draw(&format!("{}{}▏  · {}개 · Esc 지우기", st.query, st.comp, st.items.len()), text_r, DT_END_ELLIPSIS);
             }
             let mut n = Node::new(A11Y_SEARCH, 0, Role::Edit, format!("키워드검색: {needle}"), URect::from_win(&boxr));
@@ -729,9 +751,15 @@ unsafe fn paint(hwnd: HWND) {
         let top_y = list_top(head, cat_h, searching, row);
         let visible_rows = ((h - top_y).max(0) / row).max(1) as usize;
         nodes.push(Node::new(A11Y_LIST, 0, Role::List, "몽땅클립보드 항목", URect::new(0, top_y, w, h)));
+        // 스크롤 막대(UI1): 필요할 때만 오른쪽에 자리를 잡는다. 필요 없으면 폭 0 → 예전과 같은 픽셀.
+        let bar = ui_core::list::Scrollbar { len: st.items.len(), rows: visible_rows, top: st.top, track: h - top_y,
+                                             min_thumb: scale(hwnd, 20) };
+        let bar_w = if bar.needed() { scale(hwnd, SCROLL_W) } else { 0 };
+        let full_w = w;
+        let w = w - bar_w;
         if st.items.is_empty() {
             p.font(font);
-            p.text_color(PAL.empty_text);
+            p.text_color(pal.empty_text);
             let load_error = app().recent_error.lock().unwrap().clone();
             let msg = match tab {
                 // 저장소를 읽지 못해 비어 있는 경우를 "기록 없음"으로 잘못 알리지 않는다.
@@ -748,28 +776,28 @@ unsafe fn paint(hwnd: HWND) {
             let y = top_y + (i - st.top) as i32 * row;
             let r = RECT { left: 0, top: y, right: w, bottom: y + row };
             if i == st.sel {
-                fill(r, PAL.selected_row);
+                fill(r, pal.selected_row);
             } else if st.hover == Some(i) {
-                fill(r, PAL.hover_row);
+                fill(r, pal.hover_row);
             }
             p.font(small);
-            p.text_color(PAL.shortcut);
+            p.text_color(pal.shortcut);
             let shortcut = if i - st.top < 9 && needle.is_empty() { format!("{}", i - st.top + 1) } else { String::new() };
             draw(&shortcut, RECT { left: scale(hwnd, 8), top: y, right: scale(hwnd, 24), bottom: y + row }, DT_CENTER);
-            p.text_color(PAL.tag);
+            p.text_color(pal.tag);
             let tag = format!("{}{}{}{}", if item.pinned { "★" } else { "" }, kind_tag(&item.kind),
                 if item.preview.contains("웹 ·") { " · 웹" } else { "" },
                 if item.preview.contains("서식 포함") { " · 서식 포함" } else { "" });
             draw(&tag, RECT { left: scale(hwnd, 28), top: y, right: scale(hwnd, 70), bottom: y + row }, 0);
             p.font(font);
-            p.text_color(PAL.title);
+            p.text_color(pal.title);
             let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) } else { 0 };
             draw(&item.preview, RECT { left: scale(hwnd, 72), top: y, right: w - actions - scale(hwnd, 10), bottom: y + row },
                  DT_END_ELLIPSIS);
             if st.hover == Some(i) {
                 let del = RECT { left: w - scale(hwnd, ROW_DELETE_W), top: y, right: w, bottom: y + row };
                 let pin = RECT { left: del.left - scale(hwnd, ROW_PIN_W), top: y, right: del.left, bottom: y + row };
-                p.text_color(PAL.row_action);
+                p.text_color(pal.row_action);
                 draw("✕", del, DT_CENTER);
                 draw(if item.pinned { "📌" } else { "📍" }, pin, DT_CENTER);
             }
@@ -779,8 +807,20 @@ unsafe fn paint(hwnd: HWND) {
             n.focused = i == st.sel;
             nodes.push(n);
         }
+        st.scroll = None;
+        if bar.needed() {
+            let track = RECT { left: full_w - bar_w, top: top_y, right: full_w, bottom: h };
+            fill(track, pal.tab_bar);
+            if let Some((t0, tn)) = bar.thumb() {
+                let inset = scale(hwnd, 2);
+                fill(RECT { left: track.left + inset, top: top_y + t0, right: track.right - inset, bottom: top_y + t0 + tn },
+                     if st.drag.is_some() { pal.glyph } else { pal.placeholder });
+            }
+            nodes.push(Node::new(A11Y_SCROLL, A11Y_LIST, Role::ScrollBar, "목록 스크롤", URect::from_win(&track)));
+            st.scroll = Some((track, bar));
+        }
         drop(st);
-        own_border(mem, rc);
+        ui_core::frame::own_border_with(mem, rc, pal.border);
         buf.finish();
         a11y::publish(hwnd, nodes);
     }
@@ -952,6 +992,7 @@ fn run_settings_command(hwnd: HWND, c: Command) {
             }
         }
         Command::ClearAll => clear_all(hwnd),
+        Command::OpenManager => crate::manage::show(crate::manage_state::OpenMode::Sidebar),
         Command::Quit => unsafe {
             let text = "몽땅클립보드를 끌까요?\n\n복사 기록과 빠른 목록 단축키가 멈춥니다. 기록은 지워지지 않으며, \
                         앱의 몽땅클립보드 화면에서 다시 켤 수 있습니다.";
@@ -1010,6 +1051,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 0
             }
             WM_ERASEBKGND => 1,
+            WM_SETTINGCHANGE | WM_SYSCOLORCHANGE | WM_THEMECHANGED => {
+                // 시스템 다크·고대비가 바뀌면 빠른 목록·관리창 둘 다 다시 그린다(UI1).
+                if crate::look::on_message(msg, lp) {
+                    theme_changed();
+                    crate::manage::theme_changed();
+                }
+                DefWindowProcW(hwnd, msg, wp, lp)
+            }
             WM_EXITSIZEMOVE if IsWindowVisible(hwnd) != 0 => {
                 // 사용자가 끌어 옮기거나 크기를 바꾸면 최대화 상태는 끝난다.
                 STATE.lock().unwrap().restore_rect = None;
@@ -1146,6 +1195,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_MOUSEMOVE => {
+                {
+                    let mut st = STATE.lock().unwrap();
+                    if let (Some((y0, top0)), Some((_, bar))) = (st.drag, st.scroll) {
+                        let (_, y) = xy(lp);
+                        st.top = bar.drag(top0, y - y0);
+                        drop(st);
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                        return 0;
+                    }
+                }
                 if !TRACKING.swap(true, Ordering::Relaxed) {
                     let mut tme = TRACKMOUSEEVENT {
                         cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd,
@@ -1185,6 +1244,27 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = xy(lp);
+                // 스크롤 막대: 손잡이는 끌기 시작, 위·아래 빈 곳은 한 쪽씩.
+                {
+                    let mut st = STATE.lock().unwrap();
+                    if let Some((track, bar)) = st.scroll {
+                        if x >= track.left && x < track.right && y >= track.top && y < track.bottom {
+                            let max_top = bar.len.saturating_sub(bar.rows);
+                            match bar.hit(y - track.top) {
+                                Some(ui_core::list::ScrollHit::Thumb) => {
+                                    st.drag = Some((y, st.top));
+                                    SetCapture(hwnd);
+                                }
+                                Some(ui_core::list::ScrollHit::PageUp) => st.top = st.top.saturating_sub(bar.rows),
+                                Some(ui_core::list::ScrollHit::PageDown) => st.top = (st.top + bar.rows).min(max_top),
+                                None => {}
+                            }
+                            drop(st);
+                            InvalidateRect(hwnd, std::ptr::null(), 0);
+                            return 0;
+                        }
+                    }
+                }
                 let btn = head_button_at(hwnd, x, y);
                 STATE.lock().unwrap().pressed_btn = btn;
                 if btn.is_some() {
@@ -1194,6 +1274,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_LBUTTONUP => {
                 let (x, y) = xy(lp);
+                {
+                    let mut st = STATE.lock().unwrap();
+                    let in_bar = st.scroll.is_some_and(|(t, _)| x >= t.left && x < t.right && y >= t.top && y < t.bottom);
+                    if st.drag.take().is_some() || in_bar {
+                        drop(st);
+                        ReleaseCapture();
+                        InvalidateRect(hwnd, std::ptr::null(), 0);
+                        return 0;
+                    }
+                }
                 let pressed = STATE.lock().unwrap().pressed_btn.take();
                 let btn = head_button_at(hwnd, x, y);
                 if btn.is_some() || pressed.is_some() {
@@ -1428,10 +1518,10 @@ mod tests {
     /// 화면 그리기 결과 해시(UI0 이식 전후 비교용). 같은 상태 → 같은 픽셀이어야 한다.
     /// 글꼴·ClearType·배율에 따라 값이 달라지므로 기준값은 이식 전 같은 PC에서 뽑았다(`--ignored`로만 실행).
     /// 빠른 목록 창은 하나(STATE 전역)이고 만든 스레드가 끝나면 없어지므로 창 시험은 한 번에 하나씩.
-    static UI_TEST: Mutex<()> = Mutex::new(());
 
     pub(crate) fn render_cases() -> Vec<(&'static str, ui_core::probe::Frame)> {
         let app = crate::test_app();
+        crate::look::force(Some(ui_core::theme::Mode::Light));
         unsafe {
             if popup_hwnd().is_null() || IsWindow(popup_hwnd()) == 0 {
                 register(windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()));
@@ -1490,7 +1580,7 @@ mod tests {
     #[test]
     #[ignore]
     fn measure_show_ms() {
-        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let _ui = crate::look::tests_lock();
         render_cases();
         let hwnd = popup_hwnd();
         let mut ms = Vec::new();
@@ -1524,7 +1614,7 @@ mod tests {
     #[test]
     #[ignore]
     fn golden_render_matches_before_ui0() {
-        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let _ui = crate::look::tests_lock();
         let got = render_cases();
         for (name, f) in &got {
             println!("RENDER popup {name} {}x{} {:016x}", f.width, f.height, f.hash);
@@ -1537,7 +1627,7 @@ mod tests {
     /// 접근성: 모든 요소에 이름, 머리글 단추 7·분류 8·보이는 항목마다 목록 항목. 호출·선택은 UI 스레드 메시지로 같은 일을 한다.
     #[test]
     fn accessibility_tree_names_every_drawn_element() {
-        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        let _ui = crate::look::tests_lock();
         render_cases();
         let hwnd = popup_hwnd();
         let nodes = a11y::nodes(hwnd);
@@ -1559,6 +1649,70 @@ mod tests {
         assert_eq!(STATE.lock().unwrap().tab, 0);
         assert_eq!(head_button_of_id(7), Some(HeadButton::Close));
         assert_eq!(head_button_of_id(8), None);
+    }
+
+    /// UI1: 세 테마 그리기 해시와 스크롤 막대. 라이트 기본 상태는 UI0 이전과 같은 화면이어야 하고(골든은 `--ignored`),
+    /// 다크·고대비는 다르게, 항목이 보이는 줄보다 많으면 스크롤 막대가 생긴다.
+    #[test]
+    fn themes_and_scrollbar_render() {
+        let _ui = crate::look::tests_lock();
+        let light = render_cases();
+        let hwnd = popup_hwnd();
+        let frame = |mode: ui_core::theme::Mode, many: bool| {
+            crate::look::force(Some(mode));
+            {
+                let mut st = STATE.lock().unwrap();
+                st.tab = 0; st.sel = 0; st.top = 0; st.hover = None; st.query.clear(); st.comp.clear();
+                st.hover_btn = None; st.pressed_btn = None; st.hover_tab = None; st.restore_rect = None;
+                let n = if many { 40 } else { 6 };
+                st.items = (1..=n).map(|i| Summary { id: i, kind: "text".into(), preview: format!("항목 {i}"), pinned: false,
+                    used: 0.0, size: 0, cats: CategorySet::of(&[Category::All]) }).collect();
+                if many { st.top = 10; st.sel = 12; }
+            }
+            unsafe {
+                SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 440, 420, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+                ui_core::probe::arm();
+                SendMessageW(hwnd, WM_PAINT, 0, 0);
+            }
+            let f = ui_core::probe::take().unwrap();
+            let bar = STATE.lock().unwrap().scroll;
+            (f.hash, bar)
+        };
+        use ui_core::theme::Mode;
+        let (l, lbar) = frame(Mode::Light, false);
+        let (d, _) = frame(Mode::Dark, false);
+        let (c, _) = frame(Mode::HighContrast, false);
+        let (ls, sbar) = frame(Mode::Light, true);
+        let (ds, _) = frame(Mode::Dark, true);
+        let (cs, _) = frame(Mode::HighContrast, true);
+        crate::look::force(Some(Mode::Light));
+        println!("RENDER popup themes few light={l:016x} dark={d:016x} hc={c:016x}");
+        println!("RENDER popup themes scroll light={ls:016x} dark={ds:016x} hc={cs:016x}");
+        assert!(lbar.is_none(), "6개는 스크롤 막대 없음");
+        let (track, bar) = sbar.expect("40개는 스크롤 막대");
+        assert_eq!((bar.len, bar.top), (40, 10));
+        assert_eq!(track.right, 440);
+        assert!(l != d && d != c && l != c);
+        assert!(ls != l && ds != d);
+        // 라이트 기본 상태는 render_cases의 첫 화면과 같은 입력이 아니어도 테마 고정 뒤 같은 결과를 낸다.
+        assert_eq!(light.len(), 10);
+        // 막대 끌기·쪽 넘기기는 같은 상태(top)를 바꾼다.
+        unsafe {
+            let y = track.top + bar.thumb().unwrap().0 + 2;
+            let x = track.left + 2;
+            SendMessageW(hwnd, WM_LBUTTONDOWN, 0, ((y as isize) << 16) | x as isize);
+            SendMessageW(hwnd, WM_MOUSEMOVE, 0, (((y + 60) as isize) << 16) | x as isize);
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, (((y + 60) as isize) << 16) | x as isize);
+            assert!(STATE.lock().unwrap().top > 10, "끌어 내리면 아래로");
+            let bottom = track.bottom - 2;
+            let before = STATE.lock().unwrap().top;
+            SendMessageW(hwnd, WM_LBUTTONDOWN, 0, ((bottom as isize) << 16) | x as isize);
+            SendMessageW(hwnd, WM_LBUTTONUP, 0, ((bottom as isize) << 16) | x as isize);
+            assert!(STATE.lock().unwrap().top >= before);
+            assert!(STATE.lock().unwrap().drag.is_none());
+        }
+        let nodes = a11y::nodes(hwnd);
+        assert!(a11y::unnamed(&nodes).is_empty());
     }
 
     #[test]

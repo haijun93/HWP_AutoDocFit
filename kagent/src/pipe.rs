@@ -347,6 +347,17 @@ pub fn handle(v: &Value) -> Value {
                 ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into()),
                 ("capture_dirs", crate::capture_plan_json(&a.capture_plan.lock().unwrap()))])
         }
+        "manage_show" => {
+            // 앱(ui.kclip=native)이 관리창을 연다. 앱 테마를 함께 받아 같은 모양으로(UI1).
+            if let Some(theme) = v.str("theme").filter(|t| matches!(*t, "system" | "light" | "dark")) {
+                if a.settings.lock().unwrap().theme_mode != theme {
+                    crate::update_settings(&Value::obj(vec![("theme_mode", theme.into())]));
+                }
+            }
+            let mode = (v.str("mode") == Some("hotkey")) as usize;
+            unsafe { PostMessageW(hwnd, crate::WM_MANAGE, mode, 0) };
+            ok(vec![("shown", true.into())])
+        }
         "quit" => {
             unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };
             ok(vec![])

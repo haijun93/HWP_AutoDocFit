@@ -13,6 +13,10 @@ mod hotkey;
 mod lifecycle;
 mod clip;
 mod crypt;
+mod drop_target;
+mod look;
+mod manage;
+mod manage_state;
 mod memo;
 mod open_item;
 mod open_rules;
@@ -62,6 +66,8 @@ pub const WM_RESTORE: u32 = WM_APP + 3;
 pub const WM_SHOW: u32 = WM_APP + 4;
 pub const WM_PAUSE: u32 = WM_APP + 5;
 pub const WM_SETTINGS: u32 = WM_APP + 6;
+/// 관리창 열기(wp: 0 = 앱 단추·트레이, 1 = 앱 안 단축키). 파이프 `manage_show`가 보낸다(UI1).
+pub const WM_MANAGE: u32 = WM_APP + 7;
 const HOTKEY_ID: i32 = 1;
 const TIMER_READ: usize = 1;
 const READ_DELAY_MS: u32 = 60; // 연달아 오는 변경 알림을 한 번으로(복사 중간 상태 읽기 방지)
@@ -840,6 +846,7 @@ fn tray_menu(hwnd: HWND) {
     unsafe {
         let menu = CreatePopupMenu();
         AppendMenuW(menu, MF_STRING, 1, wide("최근 항목 열기").as_ptr());
+        AppendMenuW(menu, MF_STRING, 5, wide("관리창 열기").as_ptr());
         AppendMenuW(menu, MF_STRING, 2, wide(if paused { "다시 기록" } else { "일시정지" }).as_ptr());
         AppendMenuW(menu, MF_STRING, 3, wide("모두 지우기(고정 제외)").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
@@ -851,6 +858,7 @@ fn tray_menu(hwnd: HWND) {
         DestroyMenu(menu);
         match cmd {
             1 => popup::show(),
+            5 => manage::show(manage_state::OpenMode::Sidebar),
             2 => set_paused(hwnd, !paused),
             3 => {
                 let _ = app().store.lock().unwrap().clear(true);
@@ -936,6 +944,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_TIMER if wp == TIMER_RESUME => {
                 set_paused(hwnd, false); // 타이머도 함께 멈춘다
                 popup::refresh();
+                manage::refresh();
                 0
             }
             WM_HOTKEY if wp as i32 == HOTKEY_ID => {
@@ -953,6 +962,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             WM_REFRESH => {
                 tray(hwnd, NIM_MODIFY);
                 popup::refresh();
+                manage::refresh();
+                0
+            }
+            WM_MANAGE => {
+                manage::show(if wp == 1 { manage_state::OpenMode::Hotkey } else { manage_state::OpenMode::Sidebar });
                 0
             }
             WM_RESTORE => {
@@ -969,6 +983,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_SETTINGS => {
                 register_hotkey(hwnd);
+                let theme = app().settings.lock().unwrap().theme_mode.clone();
+                if look::apply_choice(&theme) {
+                    popup::theme_changed();
+                    manage::theme_changed();
+                }
                 popup::apply_settings();
                 let paused = app().settings.lock().unwrap().paused;
                 set_listening(hwnd, !paused);

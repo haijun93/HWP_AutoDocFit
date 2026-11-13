@@ -15,7 +15,7 @@ use crate::sqlite::{Arg, Connection};
 /// 스키마 버전(PRAGMA user_version). 앱(kagent_client.py)이 같은 값을 확인한다.
 pub const SCHEMA_VERSION: i64 = 3;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub max_items: i64,
     pub max_item_bytes: i64,
@@ -45,6 +45,8 @@ pub struct Settings {
     pub popup_collapsed: bool,
     /// 엑셀 표 항목은 앱에 맡겨 '목표 결과'(공백·빈 칸·열 너비·칸 여백 정리)로 붙이기. 앱이 꺼져 있으면 원래대로.
     pub excel_target_paste: bool,
+    /// 화면 테마 선택(앱 설정 `theme_mode`와 같은 값: system·light·dark). 고대비는 OS 설정이 우선(UI1).
+    pub theme_mode: String,
 }
 
 impl Default for Settings {
@@ -75,6 +77,7 @@ impl Default for Settings {
             popup_height: 0,
             popup_collapsed: false,
             excel_target_paste: true,
+            theme_mode: "system".into(),
         }
     }
 }
@@ -112,6 +115,7 @@ impl Settings {
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
             ("excel_target_paste", self.excel_target_paste.into()),
+            ("theme_mode", self.theme_mode.as_str().into()),
             ("policy_rev", 1i64.into()),
         ])
     }
@@ -182,6 +186,9 @@ impl Settings {
         if let Some(n) = v.num("popup_height").filter(|n| (150.0..=4000.0).contains(n)) { self.popup_height = n as i64; }
         if let Some(b) = v.bool("popup_collapsed") { self.popup_collapsed = b; }
         if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
+        if let Some(t) = v.str("theme_mode").filter(|t| matches!(*t, "system" | "light" | "dark")) {
+            self.theme_mode = t.to_string();
+        }
     }
 
     pub fn load(path: &str) -> Settings {
