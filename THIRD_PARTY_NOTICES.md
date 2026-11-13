@@ -66,7 +66,7 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | PP-OCRv5 모델(PaddlePaddle: `PP-OCRv5_mobile_det`, `korean_PP-OCRv5_mobile_rec`) | 글자 인식 | Apache-2.0 (모델 배포처 안내 기준) | 고정 주소·SHA-256: `scripts/download_ocr_models.py`, 라이선스는 일반 지식 |
 | pypdfium2 | PDF 렌더링 | Apache-2.0 OR BSD-3-Clause (동봉 PDFium은 BSD-3-Clause) | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
 | xlrd 2.0.1 | 엑셀(.xls) 읽기 | BSD-3-Clause | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
-| windows-sys 0.59, png 0.17 | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml`, 라이선스는 일반 지식 |
+| windows-sys 0.59, png 0.17, qoi 0.4(썸네일 디스크 캐시, KCAP3) | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml`, 라이선스는 일반 지식 |
 | rusqlite 0.33(SQLite 포함), tantivy 0.27 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
 | file_selector, web, webview_flutter_windows 1.2.0 | Flutter 화면 | BSD-3-Clause | 의존성: `flutter_ui/pubspec.yaml`, 라이선스는 일반 지식 |
 | Material Icons 글꼴(Flutter 포함) | 화면 아이콘 | Apache-2.0 | 일반 지식 |

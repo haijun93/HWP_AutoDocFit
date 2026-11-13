@@ -7,6 +7,7 @@
 //! - SQLite는 Windows 내장 winsqlite3.dll, 네트워크 코드 없음.
 #![windows_subsystem = "windows"]
 
+mod boxscale;
 mod capture_dirs;
 mod category;
 mod frame;
@@ -29,6 +30,7 @@ mod thumb;
 mod timeline;
 mod util;
 mod watch;
+mod wic;
 mod xl_target;
 mod excel_target;
 
@@ -469,6 +471,7 @@ pub fn write_status() {
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
         ("thumb_prewarm", prewarm::status_json()),
+        ("thumb_steps", thumb::steps_json()),
     ]);
     v
     });
@@ -596,6 +599,13 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 }
 
 
+/// 그림 항목 기록 직후: 클립보드 비트맵에서 만든 썸네일이 있으면 캐시에 바로 넣고, 없으면 미리 만들기 대기열로(KCAP2).
+fn prime_or_enqueue(id: i64, dib_thumb: Option<thumb::Thumb>) {
+    if !dib_thumb.is_some_and(|t| thumb::prime(id, t)) {
+        prewarm::enqueue(id);
+    }
+}
+
 /// 작업 스레드: 클립보드에서 복사해 온 내용을 변환·암호화·저장한다(낮은 우선순위).
 fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
     unsafe {
@@ -603,6 +613,8 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
     for (capture, source) in rx {
+        // 클립보드 비트맵이면 PNG로 바꾸기 전 메모리 비트맵에서 바로 썸네일(KCAP3 ③, 측정 4K 약 17ms·추가 버퍼 없음).
+        let mut dib_thumb: Option<thumb::Thumb> = None;
         let (mut kind, data, mut extra, skipped) = match capture {
             Capture::Text(s, formats, skipped) => ("text", s.into_bytes(), clip::pack_formats(&formats), skipped),
             Capture::Files(files) => ("files", files.join("\n").into_bytes(), Vec::new(), Vec::new()),
@@ -612,7 +624,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
                 ("image", b, clip::pack_formats(&formats), skipped)
             }
             Capture::Dib(d, formats, skipped) => match { app().last_clip_image.store(now_ms(), Ordering::Relaxed); clip::dib_to_png(&d) } {
-                Some(p) if claim_image(&p) => ("image", p, clip::pack_formats(&formats), skipped),
+                Some(p) if claim_image(&p) => {
+                    dib_thumb = thumb::from_dib(&d, thumb::MAX_SIDE);
+                    ("image", p, clip::pack_formats(&formats), skipped)
+                }
                 Some(_) => continue,
                 None => continue,
             },
@@ -643,7 +658,7 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             let inserted = store.insert(kind, &data, &trimmed, &preview, &source, t).ok().map(|(id, _)| id);
             if inserted.is_some() { let _ = store.enforce(&settings, t); }
             drop(store);
-            if let (Some(id), "image") = (inserted, kind) { prewarm::enqueue(id); }
+            if let (Some(id), "image") = (inserted, kind) { prime_or_enqueue(id, dib_thumb.take()); }
             refresh_recent();
             continue;
         }
@@ -664,7 +679,7 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         };
         if kind == "image" {
             // 그림은 쉬는 때 썸네일을 미리 만들어 첫 미리보기를 빠르게(KCAP2). 상태 파일에 대기가 바로 보이게 먼저.
-            prewarm::enqueue(id);
+            prime_or_enqueue(id, dib_thumb.take());
         }
         refresh_recent();
     }
