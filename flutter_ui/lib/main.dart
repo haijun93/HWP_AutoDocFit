@@ -1688,12 +1688,6 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         icon: const Icon(Icons.edit_note),
         label: const Text('텍스트 입력'),
       ),
-      OutlinedButton.icon(
-        key: const Key('cellBgToolButton'),
-        onPressed: locked ? null : () => convertCellBgTool(),
-        icon: const Icon(Icons.table_chart_outlined),
-        label: const Text('표 칸 그림을 배경으로'),
-      ),
     ],
   );
 

@@ -206,11 +206,6 @@ class ConversionWorkspace extends StatelessWidget {
       Icons.create_new_folder_outlined,
       () => host.command('add_folder'),
     ),
-    (
-      '표 칸 그림을 배경으로',
-      Icons.table_chart_outlined,
-      () => _convertCellBg(context),
-    ),
     if (host.files.isNotEmpty)
       ('목록 비우기', Icons.clear_all_rounded, () => host.command('clear_files')),
   ]);
@@ -271,12 +266,6 @@ class ConversionWorkspace extends StatelessWidget {
                                   Icons.swap_horiz,
                                   () => _singleFileMenu(context, d.globalPosition, i),
                                 ),
-                                if ('${file['path'] ?? ''}'.toLowerCase().endsWith('.hwpx'))
-                                  (
-                                    '표 칸 그림을 배경으로',
-                                    Icons.table_chart_outlined,
-                                    () => _executeConvertCellBg(context, '${file['path']}'),
-                                  ),
                                 (
                                   '목록에서 빼기',
                                   Icons.close_rounded,
@@ -382,17 +371,6 @@ class ConversionWorkspace extends StatelessWidget {
                       : () => showHwpBulkDialog(context, host.apiCall),
                   icon: const Icon(Icons.manage_search_rounded),
                   label: const Text('HWP 찾아 HWPX로 바꾸기'),
-                ),
-              ),
-              Tooltip(
-                message: '표 셀 안 그림을 셀 배경 이미지로 변환하여 원본 옆에 사본으로 저장',
-                child: TextButton.icon(
-                  key: const Key('conversionCellBg'),
-                  onPressed: host.locked
-                      ? null
-                      : () => _convertCellBg(context),
-                  icon: const Icon(Icons.table_chart_outlined),
-                  label: const Text('표 칸 그림을 배경으로'),
                 ),
               ),
             ],

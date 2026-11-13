@@ -20,8 +20,8 @@
 - [ ] 원인 후보(코드 확인, 2026-11-13): Flutter `_openContentResult`(`timemachine_screen.dart`)는 결과에 `id`가 없으면 `{'path': …}`로 `open` 명령을 보내는데, Python `TimemachineService`의 `open`/`reveal`(`docfit_app/timemachine_service.py`)은 정수 `id`만 받고 `path`는 읽지 않아 "파일 항목을 확인해 주세요."(ValueError)로 끝난다. 본문·위계검색 결과는 `id`가 없을 수 있어 이 경로를 탄다. 오류가 화면에 나오지 않아 "아무 반응이 없는" 것으로 보인다.
 - [ ] 개선: `path`로 여는 경우도 지원하되 보안 검사는 유지(활성 검색 폴더 안인지, 지원 형식인지, 파일 존재 여부), 실패 때는 화면에 이유를 표시, 더블클릭·「문서 열기」·「폴더 열기」 세 곳을 같은 경로로 통일하고 시험(id 있음/없음, 폴더 밖 경로 거부, 없는 파일)을 추가한다. 실기: 한/글 문서(.hwpx)·.docx·.pdf 더블클릭.
 
-## 문서편집 화면 정리 (사용자 요청 2026-11-13)
-- [ ] [하] 문서편집 > 문서 선택 화면에서 「표 칸 그림을 배경으로」 버튼 삭제(버튼과 연결된 동작·시험·사용 안내 문구 함께 정리, 다른 화면에서 쓰이는지 확인 후 제거).
+## 표 칸 그림 배경 변환 정리 (사용자 요청 2026-11-13)
+- [ ] [하] 「표 칸 그림을 배경으로」 버튼은 문서 선택·파일변환 화면에서 뺐다(`fix/remove-cellbg-button`, Flutter 빌드·시험 미실행). 남은 일: 쓰이지 않게 된 처리 코드(`convertCellBgTool`, `_convertCellBg`, `_executeConvertCellBg`, 파이썬 `convert_cell_bg`)와 `tests/test_cell_bg_service.py`를 지울지 결정하고 Windows에서 빌드 확인.
 
 ## ★ 검색 엔진·독립 앱 (2026-11-12 정리, 최우선)
 - [ ] 독자 검색 엔진(kfind-core) 같은 조건 비교(KB1: Tantivy·SeekStorm) → 지는 항목 개선.
