@@ -1,0 +1,48 @@
+[package]
+name = "kfind-names"
+version = "0.1.0"
+edition = "2024"
+description = "드라이브 전체 파일명 색인·질의(MFT·USN, 디렉터리 순회 대체, names.seg 메모리 매핑). FN1."
+license = "MIT"
+publish = false
+
+# 저장소 다른 크레이트의 작업 공간에 묶이지 않게 독립 작업 공간으로 둔다.
+[workspace]
+
+[lib]
+name = "kfind_names"
+
+# 실행 의존성 라이선스(허용: MIT·Apache-2.0·Unicode-3.0): memchr(MIT/Unlicense), rayon(MIT/Apache-2.0),
+# memmap2(MIT/Apache-2.0), windows-sys(MIT/Apache-2.0), kfind-core(저장소 안, 비교형 규칙 공용).
+[dependencies]
+kfind-core = { path = "../core" }
+memchr = "2.8"
+memmap2 = "=0.9.12"
+rayon = "1.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
+    "Win32_Security",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+debug = 1
+
+[profile.test]
+opt-level = 2
