@@ -61,6 +61,11 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
         pump_until(20000, || with(|u| u.warmed))?;
         let warm_wait_ms = ms(boot);
         let show_first_ms = show(h);
+        // KTM_PROBE_SETTLE_MS: 표시 뒤 사람이 치기 시작할 때까지의 틈(기본 0 = 표시 직후 바로 입력).
+        let settle = std::env::var("KTM_PROBE_SETTLE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0u64);
+        if settle > 0 {
+            let _ = pump_until(settle, || false);
+        }
         let first_ms = type_query(h, "예산")?;
         let count = with(|u| u.rows.len());
         if count < 6 {
@@ -93,7 +98,12 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
                 None
             }
         };
+        // 파일명 색인이 있으면(서비스가 names_build를 마친 경우) 파일 이름에 든 낱말로 한 번 더.
+        let names_query_ms = if names_ms.is_some() { type_query(h, "합성문서").ok() } else { None };
         let names_rows = with(|u| u.rows.len());
+        if names_query_ms.is_some() {
+            type_query(h, "예산")?;
+        }
         let body_back_ms = switch(h, Tab::Body)?;
         SetWindowTextW(with(|u| u.edit), wide("예").as_ptr());
         if with(|u| u.state.phase) != Phase::Typing {
@@ -112,9 +122,9 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
         event(h, Event::Hide);
         let report = serde_json::json!({"ok":true,"after_hide_private_working_set_bytes":hidden_mem.2,"results":count,"warm_wait_ms":warm_wait_ms,
             "show_first_ms":show_first_ms,"show_second_ms":show_second_ms,
-            "first_result_ms":first_ms,"second_query_ms":second_ms,"hierarchy_switch_ms":hierarchy_ms,
+            "first_result_ms":first_ms,"settle_ms":settle,"second_query_ms":second_ms,"hierarchy_switch_ms":hierarchy_ms,
             "hierarchy_retype_ms":hierarchy_retype_ms,"hierarchy_sorted":hier_sorted,
-            "names_switch_ms":names_ms,"names_rows":names_rows,"body_back_ms":body_back_ms,"one_char_ms":one_char_ms,
+            "names_switch_ms":names_ms,"names_query_ms":names_query_ms,"names_rows":names_rows,"body_back_ms":body_back_ms,"one_char_ms":one_char_ms,
             "snippets_prefetched":snippets,"scrolled_snippet":scrolled_snippet,
             "after_hide_private_bytes":hidden_mem.0,"after_hide_working_set_bytes":hidden_mem.1,
             "checks":["registered isolated hotkey","warm before show","show","Korean EDIT change","results","snippets from paragraph table","selection scroll","shared query tabs","hierarchy top-N order","names tab","one-character Enter","file/folder target","hide"]});
@@ -146,12 +156,7 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
     }
 }
 fn log_text(name: &str, value: &str) {
-    if let Some(path) = std::env::var_os("KTM_METRICS") {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-            let _ = writeln!(f, "{}", serde_json::json!({"metric":name,"text":value}));
-        }
-    }
+    log_line(serde_json::json!({"metric":name,"text":value}).to_string());
 }
 unsafe fn cpu() -> u64 {
     unsafe {

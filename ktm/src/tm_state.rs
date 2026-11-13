@@ -50,6 +50,8 @@ pub enum Event {
     Input(String),
     Submit,
     SwitchTab(Tab),
+    /// 같은 검색어·칸으로 다시 찾기(파일명 정렬 바꿈 등). 앞 결과는 무효.
+    Refresh,
     SearchFinished { generation: u64, count: usize },
     SearchFailed { generation: u64, message: String },
     MoveSelection(isize),
@@ -84,7 +86,7 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
     // Increment even for an empty/short query: an older completion is now invalid.
     state.generation = state.generation.wrapping_add(1);
     let query = state.query.trim();
-    if state.tab != Tab::Names && query.chars().count() >= if explicit { 1 } else { 2 } {
+    if query.chars().count() >= if explicit { 1 } else { 2 } {
         state.phase = Phase::Searching;
         effects.push(Effect::Search {
             generation: state.generation,
@@ -131,6 +133,10 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 state.tab = tab;
                 search(&mut state, &mut effects, false);
             }
+        }
+        Event::Refresh => {
+            let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
+            search(&mut state, &mut effects, explicit);
         }
         Event::Submit => {
             if state.phase == Phase::Results && state.selected.is_some() {
@@ -270,11 +276,26 @@ mod tests {
     }
 
     #[test]
-    fn names_slot_is_disabled() {
+    fn names_tab_searches_with_shared_query_and_refresh_reruns() {
         let state = step(&visible(), Event::Input("예산".into())).0;
         let (state, effects) = step(&state, Event::SwitchTab(Tab::Names));
-        assert!(effects.is_empty());
-        assert!(step(&state, Event::Submit).1.is_empty());
+        assert!(matches!(&effects[..], [Effect::Search { tab: Tab::Names, query, .. }] if query == "예산"));
+        let g = state.generation;
+        let (state, effects) = step(&state, Event::Refresh);
+        assert!(state.generation > g);
+        assert!(matches!(&effects[..], [Effect::Search { tab: Tab::Names, .. }]));
+        // 앞 세대의 결과는 버린다.
+        assert_eq!(step(&state, Event::SearchFinished { generation: g, count: 3 }).0, state);
+        // 1글자는 Enter로만 찾고, 그 뒤 다시 찾기는 1글자 그대로.
+        let one = step(&state, Event::Input("예".into())).0;
+        assert_eq!(one.phase, Phase::Typing);
+        assert!(step(&one, Event::Refresh).1.is_empty());
+        let (one, fx) = step(&one, Event::Submit);
+        assert_eq!(fx.len(), 1);
+        assert_eq!(step(&one, Event::Refresh).1.len(), 1);
+        // 숨긴 상태에서는 아무것도 안 함.
+        let hidden = step(&one, Event::Hide).0;
+        assert!(step(&hidden, Event::Refresh).1.is_empty());
     }
 
     #[test]

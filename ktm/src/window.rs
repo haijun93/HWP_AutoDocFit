@@ -32,7 +32,8 @@ use windows_sys::Win32::{
 const READY: u32 = WM_APP + 21;
 const WARMED: u32 = WM_APP + 22;
 const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
-type Job = (u64, String, Tab, Instant, Arc<AtomicBool>);
+/// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬).
+type Job = (u64, String, Tab, Instant, Arc<AtomicBool>, &'static str);
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
 type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
 /// 일꾼 대기열: 검색은 늘 최신 하나, 원문 찾기도 최신 하나(검색 먼저).
@@ -63,6 +64,8 @@ struct Ui {
     settings_path: PathBuf,
     /// 시작 데우기가 끝났는지(측정 탐침이 기다림).
     warmed: bool,
+    /// 파일명 탭 정렬(`backend::NAME_SORTS` 번호, Ctrl+S로 돌림).
+    name_sort: usize,
 }
 thread_local! {static UI:RefCell<Option<Ui>>=const{RefCell::new(None)};}
 pub fn wide(s: &str) -> Vec<u16> {
@@ -163,9 +166,10 @@ fn event(h: HWND, e: Event) {
                     let tx = with(|u| u.tx.clone());
                     let cancel = Arc::new(AtomicBool::new(false));
                     edit(|u| u.cancel = cancel.clone());
+                    let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
                     {
                         let mut p = tx.0.lock().unwrap();
-                        p.search = Some((generation, query, tab, Instant::now(), cancel));
+                        p.search = Some((generation, query, tab, Instant::now(), cancel, sort));
                         p.snippets = None;
                     }
                     tx.1.notify_one();
@@ -267,14 +271,24 @@ fn key(h: HWND, key: usize) -> bool {
             VK_NEXT => event(h, Event::MoveSelection(5)),
             VK_PRIOR => event(h, Event::MoveSelection(-5)),
             VK_TAB => {
-                let tab = with(|u| {
-                    if u.state.tab == Tab::Body {
-                        Tab::Hierarchy
-                    } else {
-                        Tab::Body
-                    }
+                let tab = with(|u| match (u.state.tab, shift) {
+                    (Tab::Body, false) | (Tab::Names, true) => Tab::Hierarchy,
+                    (Tab::Hierarchy, false) | (Tab::Body, true) => Tab::Names,
+                    _ => Tab::Body,
                 });
                 event(h, Event::SwitchTab(tab));
+            }
+            _ if ctrl && key == b'S' as usize => {
+                // 파일명 정렬 돌리기(관련도 → 이름 → 크기 → 날짜). 파일명 탭이면 바로 다시 찾는다.
+                let names = edit(|u| {
+                    u.name_sort = (u.name_sort + 1) % 4;
+                    u.state.tab == Tab::Names
+                });
+                if names {
+                    event(h, Event::Refresh);
+                } else {
+                    InvalidateRect(h, null(), 0);
+                }
             }
             _ if ctrl && key == b'L' as usize => {
                 let t = edit(|u| {
@@ -455,10 +469,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             DT_RIGHT,
         );
         with(|u| {
+            let names_label = format!("파일명 · {}", ktm::backend::NAME_SORTS[u.name_sort % 4].1);
             for (i, (label, tab)) in [
                 ("본문", Tab::Body),
                 ("위계", Tab::Hierarchy),
-                ("파일명 · 준비 중", Tab::Names),
+                (names_label.as_str(), Tab::Names),
             ]
             .iter()
             .enumerate()
@@ -542,6 +557,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => "검색 중…".into(),
+                    Phase::Results if u.state.tab == Tab::Names => format!(
+                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
+                        u.rows.len()
+                    ),
                     Phase::Results => format!(
                         "{}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
                         u.rows.len()
@@ -575,27 +594,33 @@ fn client_bottom(h: HWND) -> i32 {
         r.bottom
     }
 }
-thread_local! {static PHASES: RefCell<Vec<(&'static str, f64)>> = const { RefCell::new(Vec::new()) };}
-/// 측정 켰을 때만 모았다가 `flush_phases`에서 한 번에 쓴다(쓰기가 잰 구간에 들지 않게).
+thread_local! {static METRICS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };}
+/// 측정(KTM_METRICS) 켰을 때만 줄을 메모리에 모은다. 파일 쓰기는 창이 닫힐 때 한 번
+/// (`flush_metrics`): 쓰기가 잰 구간·다음 표시·첫 결과에 끼어들지 않게.
 fn phase(name: &'static str, d: std::time::Duration) {
-    if std::env::var_os("KTM_METRICS").is_some() {
-        PHASES.with(|p| p.borrow_mut().push((name, d.as_secs_f64() * 1000.0)));
-    }
-}
-fn flush_phases() {
-    for (n, v) in PHASES.with(|p| std::mem::take(&mut *p.borrow_mut())) {
-        log(n, v);
-    }
+    log(name, d.as_secs_f64() * 1000.0);
 }
 fn log(name: &str, value: f64) {
-    if let Some(path) = std::env::var_os("KTM_METRICS") {
+    log_line(format!("{{\"metric\":\"{name}\",\"ms\":{value:.4}}}"));
+}
+fn log_line(line: String) {
+    if std::env::var_os("KTM_METRICS").is_some() {
+        // 오래 켜 둔 수동 측정은 1,000줄마다 한 번 쓴다(메모리 상한).
+        if METRICS.with(|m| {
+            let mut m = m.borrow_mut();
+            m.push(line);
+            m.len() >= 1000
+        }) {
+            flush_metrics();
+        }
+    }
+}
+fn flush_metrics() {
+    let lines = METRICS.with(|m| std::mem::take(&mut *m.borrow_mut()));
+    if let (Some(path), false) = (std::env::var_os("KTM_METRICS"), lines.is_empty()) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-        {
-            let _ = writeln!(f, "{{\"metric\":\"{name}\",\"ms\":{value:.4}}}");
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = f.write_all((lines.join("\n") + "\n").as_bytes());
         }
     }
 }
@@ -627,7 +652,6 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 UpdateWindow(h);
                 phase("show_update_ms", t.elapsed());
                 phase("hotkey_to_paint_ms", start.elapsed());
-                flush_phases();
                 0
             }
             WM_SIZE => {
@@ -786,6 +810,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 0
             }
             WM_DESTROY => {
+                flush_metrics();
                 PostQuitMessage(0);
                 0
             }
@@ -900,6 +925,7 @@ pub fn run() -> Result<(), String> {
                 cancel: Arc::new(AtomicBool::new(false)),
                 settings_path: data.join("settings.json"),
                 warmed: pipe_mode_early,
+                name_sort: 0,
             })
         });
         SetWindowLongPtrW(h, GWLP_WNDPROC, proc as *const () as isize);
@@ -942,9 +968,14 @@ pub fn run() -> Result<(), String> {
                     }
                 };
                 let reply = match work {
-                    Work::Search((g, q, tab, start, cancel)) => {
+                    Work::Search((g, q, tab, start, cancel, sort)) => {
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
+                            if tab == Tab::Names {
+                                let rows = ktm::backend::pipe_names(&pipe_name, &q, sort)?;
+                                let terms = q.split_whitespace().map(str::to_owned).collect();
+                                return Ok(Answer { rows, terms });
+                            }
                             if pipe_mode {
                                 let rows = ktm::backend::pipe_search(&pipe_name, &q, hierarchy)?;
                                 let terms = q.split_whitespace().map(str::to_owned).collect();

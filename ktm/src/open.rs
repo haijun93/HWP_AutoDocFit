@@ -60,7 +60,8 @@ pub fn validate_path(path: &str) -> Result<(), String> {
 pub fn target(path: &str, folder: bool) -> Result<PathBuf, String> {
     validate_path(path)?;
     let path = Path::new(path);
-    if !path.is_file() {
+    // 파일명 탭 결과는 폴더일 수 있다: 열기 = 그 폴더, 폴더 열기 = 상위 폴더.
+    if !path.is_file() && !path.is_dir() {
         return Err("문서 파일이 없거나 접근할 수 없습니다".into());
     }
     if folder {
@@ -105,6 +106,16 @@ pub fn open(path: &str, folder: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn folders_open_themselves_or_their_parent() {
+        let dir = std::env::temp_dir().join(format!("ktm-open-dir-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("하위")).unwrap();
+        let sub = dir.join("하위");
+        let s = sub.to_string_lossy();
+        assert_eq!(target(&s, false).unwrap(), sub);
+        assert_eq!(target(&s, true).unwrap(), dir);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[test]
     fn rejects_nonlocal_and_relative_paths() {
         for path in [

@@ -291,9 +291,13 @@ pub fn pipe_search(name: &str, query: &str, hierarchy: bool) -> Result<Vec<Row>>
     if hierarchy {
         return Err("서비스 파이프는 전체 위계 순위 질의를 아직 지원하지 않습니다.".into());
     }
-    let request = serde_json::to_vec(&json!({"command":"query", "id":1,
-        "text":query,"top":LIMIT,"refs":1}))
-    .map_err(|e| e.to_string())?;
+    let bytes = pipe_call(name, &json!({"command":"query", "id":1, "text":query,"top":LIMIT,"refs":1}))?;
+    decode_rows(&bytes)
+}
+
+/// 길이 접두 JSON 요청 하나 → 응답 바이트(상한 8MB).
+pub fn pipe_call(name: &str, request: &Value) -> Result<Vec<u8>> {
+    let request = serde_json::to_vec(request).map_err(|e| e.to_string())?;
     let mut pipe = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -310,7 +314,90 @@ pub fn pipe_search(name: &str, query: &str, hierarchy: bool) -> Result<Vec<Row>>
     }
     let mut bytes = vec![0; n];
     pipe.read_exact(&mut bytes).map_err(|e| e.to_string())?;
-    decode_rows(&bytes)
+    Ok(bytes)
+}
+
+/// 파일명 정렬(Q-F2): 파이프 `names_query`의 `sort` 값과 화면 이름.
+pub const NAME_SORTS: [(&str, &str); 4] = [("relevance", "관련도"), ("name", "이름순"), ("size", "크기순"), ("date", "날짜순")];
+
+/// 파일명 탭: 서비스가 메모리에 쥔 드라이브 전체 이름 색인에 `names_query`(서비스 SID 범위, 다른 사용자 프로필 제외).
+pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
+    let bytes = pipe_call(name, &json!({"command":"names_query","id":1,"text":query,"limit":LIMIT,"sort":sort}))?;
+    decode_names(&bytes)
+}
+
+fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if value["ok"] != true {
+        let e = value["error"].as_str().unwrap_or("색인 서비스 오류");
+        return Err(if e.contains("unavailable") {
+            format!("파일명 색인을 준비하는 중입니다({e}).")
+        } else {
+            e.to_owned()
+        });
+    }
+    let items = value["result"]["items"].as_array().ok_or("파일명 응답에 결과가 없습니다.")?;
+    Ok(items
+        .iter()
+        .map(|i| {
+            let name = i["name"].as_str().unwrap_or_default().to_owned();
+            let dir = i["dir"].as_str().unwrap_or_default().to_owned();
+            let path = if dir.is_empty() {
+                name.clone()
+            } else if dir.ends_with('\\') {
+                format!("{dir}{name}")
+            } else {
+                format!("{dir}\\{name}")
+            };
+            let is_dir = i["is_dir"].as_bool().unwrap_or(false);
+            let mut info = Vec::new();
+            if is_dir {
+                info.push("폴더".to_owned());
+            } else if let Some(s) = i["size"].as_u64() {
+                info.push(format_size(s));
+            }
+            if let Some(t) = i["mtime"].as_i64().and_then(format_filetime) {
+                info.push(t);
+            }
+            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, ..Row::default() }
+        })
+        .collect())
+}
+
+/// 크기 글: 1023 B · 1.5 KB · 12.3 MB · 1.2 GB.
+pub fn format_size(n: u64) -> String {
+    const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut v = n as f64;
+    let mut k = 0;
+    while v >= 1024.0 && k < U.len() - 1 {
+        v /= 1024.0;
+        k += 1;
+    }
+    if k == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[k]) }
+}
+
+/// FILETIME(100ns, 1601-01-01 UTC) → 지역 시각 "2026-11-14 09:05". 범위 밖이면 None.
+#[cfg(windows)]
+pub fn format_filetime(t: i64) -> Option<String> {
+    use windows_sys::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows_sys::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    if t <= 0 {
+        return None;
+    }
+    unsafe {
+        let ft = FILETIME { dwLowDateTime: t as u32, dwHighDateTime: (t >> 32) as u32 };
+        let mut utc: SYSTEMTIME = std::mem::zeroed();
+        let mut local: SYSTEMTIME = std::mem::zeroed();
+        if FileTimeToSystemTime(&ft, &mut utc) == 0 || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0 {
+            return None;
+        }
+        Some(format!("{:04}-{:02}-{:02} {:02}:{:02}", local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute))
+    }
+}
+
+#[cfg(not(windows))]
+pub fn format_filetime(_t: i64) -> Option<String> {
+    None
 }
 
 fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
@@ -471,6 +558,26 @@ mod tests {
         let a = plain.search_cancel("예산", false, None).unwrap();
         assert!(a.rows.iter().all(|r| r.snippet.is_empty() && r.location.starts_with("문단 3")));
         assert!(!t.0.join("none.sqlite").exists());
+    }
+    #[test]
+    fn names_rows_size_date_and_errors() {
+        let rows = decode_names(
+            br#"{"ok":true,"result":{"items":[{"name":"a.hwp","dir":"C:\\x","is_dir":false,"size":1536,"mtime":133758000000000000},{"name":"x","dir":"C:","is_dir":true,"size":null,"mtime":null},{"name":"C:","dir":"","is_dir":true}]}}"#,
+        )
+        .unwrap();
+        assert_eq!(rows[0].path, "C:\\x\\a.hwp");
+        assert!(rows[0].location.starts_with("1.5 KB · 2024-"), "{}", rows[0].location);
+        assert_eq!(rows[1].path, "C:\\x");
+        assert_eq!(rows[1].location, "폴더");
+        assert_eq!(rows[2].path, "C:");
+        assert!(rows.iter().all(|r| r.snippet.is_empty() && r.snippet_tried));
+        let e = decode_names(br#"{"ok":false,"error":"names index unavailable (building)"}"#).unwrap_err();
+        assert!(e.contains("준비하는 중"));
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(1023), "1023 B");
+        assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(format_filetime(0), None);
+        assert!(pipe_names(r"\\.\pipe\ktm-none-test-pipe", "예산", "size").is_err());
     }
     #[test]
     fn replay_replacement_deletion_and_missing_index() {
