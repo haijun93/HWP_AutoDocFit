@@ -110,7 +110,7 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
         let hidden_mem = memory();
         let show_second_ms = show(h);
         event(h, Event::Hide);
-        let report = serde_json::json!({"ok":true,"results":count,"warm_wait_ms":warm_wait_ms,
+        let report = serde_json::json!({"ok":true,"after_hide_private_working_set_bytes":hidden_mem.2,"results":count,"warm_wait_ms":warm_wait_ms,
             "show_first_ms":show_first_ms,"show_second_ms":show_second_ms,
             "first_result_ms":first_ms,"second_query_ms":second_ms,"hierarchy_switch_ms":hierarchy_ms,
             "hierarchy_retype_ms":hierarchy_retype_ms,"hierarchy_sorted":hier_sorted,
@@ -134,7 +134,8 @@ pub unsafe fn smoke(h: HWND, output: &std::path::Path, measure: bool) -> Result<
                 let data = serde_json::json!({"idle_seconds":elapsed,"idle_cpu_ms":(after-before) as f64/10000.0,
                     "idle_cpu_percent_one_core":(after-before) as f64/100000.0/elapsed,
                     "private_bytes":mem.0,"working_set_bytes":mem.1,
-                    "private_bytes_end":mem_end.0,"working_set_bytes_end":mem_end.1});
+                    "private_bytes_end":mem_end.0,"working_set_bytes_end":mem_end.1,
+                    "private_working_set_bytes":mem.2,"private_working_set_bytes_end":mem_end.2});
                 let _ = std::fs::write(output.with_extension("idle.json"), data.to_string());
                 PostMessageW(handle as HWND, WM_DESTROY, 0, 0);
             });
@@ -162,11 +163,13 @@ unsafe fn cpu() -> u64 {
         ((k.dwHighDateTime as u64) << 32 | k.dwLowDateTime as u64) + ((u.dwHighDateTime as u64) << 32 | u.dwLowDateTime as u64)
     }
 }
-fn memory() -> (usize, usize) {
+/// (개인 커밋, 작업 집합, 개인 작업 집합 = 작업 관리자 '메모리' 열).
+fn memory() -> (usize, usize, usize) {
     unsafe {
-        let mut m: PROCESS_MEMORY_COUNTERS_EX = std::mem::zeroed();
-        GetProcessMemoryInfo(GetCurrentProcess(), (&mut m as *mut PROCESS_MEMORY_COUNTERS_EX).cast(), std::mem::size_of_val(&m) as u32);
-        (m.PrivateUsage, m.WorkingSetSize)
+        let mut m: PROCESS_MEMORY_COUNTERS_EX2 = std::mem::zeroed();
+        m.cb = std::mem::size_of_val(&m) as u32;
+        GetProcessMemoryInfo(GetCurrentProcess(), (&mut m as *mut PROCESS_MEMORY_COUNTERS_EX2).cast(), m.cb);
+        (m.PrivateUsage, m.WorkingSetSize, m.PrivateWorkingSetSize)
     }
 }
 unsafe fn capture(h: HWND, path: &std::path::Path) -> Result<(), String> {

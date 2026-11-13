@@ -225,8 +225,12 @@ fn request_snippets(u: &mut Ui, count: usize) {
         u.tx.1.notify_one();
     }
 }
-/// 숨을 때·시작 데우기 뒤: 작업 집합을 비운다(매핑 쪽은 파일 기반이라 다시 부르면 캐시에서 바로 돌아온다).
+/// 작업 집합 비우기는 쓰지 않는다(MG2 측정: 다음 표시·첫 질의가 쪽 다시 읽기로 25~90ms 늦어짐).
+/// 쉴 때 실사용 메모리(개인 작업 집합)는 비우지 않아도 개인 커밋(약 3.6MB) 안이다. `--trim-on-hide`로만 켠다.
 fn trim_memory() {
+    if !std::env::args().any(|a| a == "--trim-on-hide") {
+        return;
+    }
     unsafe {
         windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet(
             windows_sys::Win32::System::Threading::GetCurrentProcess(),
@@ -990,9 +994,17 @@ pub fn run() -> Result<(), String> {
         // 숨긴 창을 미리 그려 둔다: 메모리 DC에 한 번, 그리고 화면 밖 자리에서 한 번 보였다 숨겨 DWM 표면까지 만든다.
         if with(|u| u.state.phase) == Phase::Hidden {
             prerender(h);
+            let fg = GetForegroundWindow();
             SetWindowPos(h, null_mut(), -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
             UpdateWindow(h);
+            if std::env::var_os("KTM_EXP_NO_FOCUS").is_none() {
+                // 검색 칸에 한 번 초점을 주어 이 스레드의 IME·입력기(TSF)를 미리 붙인다. 백그라운드라 앞 창은 그대로.
+                SetFocus(ed);
+            }
             ShowWindow(h, SW_HIDE);
+            if GetForegroundWindow() != fg {
+                log("startup_foreground_changed", 1.0);
+            }
             log("startup_prerender_ms", started.elapsed().as_secs_f64() * 1000.0);
         }
         if let Some(query) = arg("--show-query") {
