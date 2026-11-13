@@ -21,7 +21,7 @@ import 'library_view_prefs.dart';
 String _errorText(Object error) => error.toString().replaceFirst(RegExp(r'^(Bad state|StateError): '), '');
 
 /// 검색 한 번의 결과: 위 띠에 보일 결과와 영역에 남길 자료. 검색 중 가상 폴더를 바꾸면 버리려고 상자 id를 둔다.
-typedef _LibrarySearchOutcome = ({String boxId, List<LibrarySearchResult> results, List<LibraryItem> items});
+typedef _LibrarySearchOutcome = ({String boxId, List<LibrarySearchResult> results, List<LibraryItem> items, ScopedLibraryHits? scoped});
 
 /// 검색창 메뉴(ISUI2). 탭 이름은 컨트롤러 탭 이름과 같다.
 const _librarySearchModes = [('file', '파일명'), ('content', '본문검색'), ('related', '위계검색')];
@@ -148,11 +148,13 @@ class LibraryScreen extends StatefulWidget {
     this.fileInfoApi,
     this.initialPaneCount,
     this.documentSearch,
+    this.scopedDocumentSearch,
   });
 
   /// 검색창의 본문검색·위계검색(ISUI2). 있으면 검색창 옆에 파일명·본문검색·위계검색 메뉴가 나타나고
   /// 세 메뉴가 검색어를 함께 쓴다. 기본 앱은 몽땅검색 명령을 쓴다([timemachineLibraryDocumentSearch]).
   final LibraryDocumentSearch? documentSearch;
+  final ScopedLibraryDocumentSearch? scopedDocumentSearch;
 
   /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
   final LibraryViewPrefs? viewPrefs;
@@ -899,11 +901,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final box = _selectedBox;
     if (box == null) return null;
     final query = request.query;
+    final scopedSearch = widget.scopedDocumentSearch;
+    if (request.tab != 'file' && scopedSearch != null) {
+      final response = await scopedSearch(box.id, request.tab, query);
+      final all = await widget.api.listItems(box.id);
+      final ids = <String>{for (final row in response.rows)
+        for (final id in row['item_ids'] as List? ?? const []) '$id'};
+      final results = <LibrarySearchResult>[for (final row in response.rows)
+        LibrarySearchResult(itemId: (row['item_ids'] as List?)?.firstOrNull?.toString(),
+          path: '${row['path'] ?? ''}', name: '${row['title'] ?? row['name'] ?? ''}',
+          snippet: '${row['breadcrumb_text'] ?? ''} ${row['snippet'] ?? ''}'.trim())];
+      return (boxId: box.id, results: results, items: all.where((i) => ids.contains(i.id)).toList(), scoped: response);
+    }
     final documentSearch = widget.documentSearch;
     if (request.tab == 'file' || documentSearch == null) {
       final results = await widget.api.searchContent(box.id, query);
       final items = await widget.api.listItems(box.id, query: query);
-      return (boxId: box.id, results: results, items: items);
+      return (boxId: box.id, results: results, items: items, scoped: null);
     }
     final hits = await documentSearch(request.tab, query);
     final all = await widget.api.listItems(box.id);
@@ -922,20 +936,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final snippet = hit.breadcrumb.isEmpty ? hit.snippet : '${hit.breadcrumb} · ${hit.snippet}';
       results.add(LibrarySearchResult(path: hit.path, name: item.title, snippet: snippet));
     }
-    return (boxId: box.id, results: results, items: matched.values.toList());
+    return (boxId: box.id, results: results, items: matched.values.toList(), scoped: null);
   }
 
   void _applySearchResult(InstantSearchRequest request, _LibrarySearchOutcome? outcome) {
     if (outcome == null || !mounted || _selectedBox?.id != outcome.boxId) return;
-    final document = request.tab != 'file' && widget.documentSearch != null;
+    final document = request.tab != 'file' && (widget.documentSearch != null || widget.scopedDocumentSearch != null);
     final label = _librarySearchModes.firstWhere((m) => m.$1 == request.tab, orElse: () => _librarySearchModes.first).$2;
     setState(() {
+      _scopedHits = outcome.scoped;
       _searchResults..clear()..addAll(outcome.results);
       _items = outcome.items;
       _documentMatchIds = document ? {for (final i in outcome.items) i.id} : null;
       _highlightedItemId = null;
       _showSearchResults = true;
-      if (document) {
+      if (outcome.scoped case final info?) {
+        final reason = info.reason == 'configured_legacy' ? ' (설정)' : info.reason == null ? '' : ' (자동 대체: ${info.reason})';
+        _statusMessage = _searchStatus = '$label: ${info.countLabel} · ${info.engine == 'kfind' ? '새 검색' : '기존 검색'}$reason';
+      } else if (document) {
         _statusMessage = _searchStatus = outcome.items.isEmpty
             ? '$label: 이 가상 폴더 자료에서 찾지 못했습니다. 몽땅검색 조사 폴더에서 본문 색인된 문서만 찾습니다.'
             : '$label: 자료 ${outcome.items.length}개';
@@ -947,10 +965,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// 본문·위계검색이 띄운 안내(다른 작업의 안내는 건드리지 않으려고 따로 기억한다).
   String? _searchStatus;
+  ScopedLibraryHits? _scopedHits;
 
   void _dropSearchStatus() {
     if (_searchStatus != null && _statusMessage == _searchStatus) _statusMessage = null;
     _searchStatus = null;
+    _scopedHits = null;
   }
 
   /// 검색어가 기준 미만이 되면 결과를 비우고 가상 폴더 전체를 다시 보인다.
@@ -984,7 +1004,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final items = await widget.api.listItems(box.id);
     final wanted = normalizeLibraryPath(result.path);
     bool samePath(String? path) => path != null && path.isNotEmpty && normalizeLibraryPath(path) == wanted;
-    final match = items.where((i) => i.source == result.path || i.title == result.name).firstOrNull ??
+    final match = (result.itemId == null ? null : items.where((i) => i.id == result.itemId).firstOrNull) ??
+        items.where((i) => i.source == result.path || i.title == result.name).firstOrNull ??
         (wanted.isEmpty ? null : items.where((i) => samePath(i.source) || samePath(i.managedPath)).firstOrNull);
     if (!mounted) return;
     setState(() { _items = items; _highlightedItemId = match?.id; });
@@ -1620,7 +1641,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               onSubmitted: (_) => _searchBox.submit(),
             )),
-            if (widget.documentSearch != null)
+            if (widget.documentSearch != null || widget.scopedDocumentSearch != null)
               SegmentedButton<String>(
                 key: const ValueKey('librarySearchMode'),
                 showSelectedIcon: false,
@@ -1632,6 +1653,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 selected: {_searchBox.tab},
                 onSelectionChanged: (tabs) => _selectSearchMode(tabs.single),
               ),
+            if (_scopedHits != null && _activeQuery.isNotEmpty)
+              Padding(padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Chip(key: const ValueKey('librarySearchCount'),
+                  label: Text(_scopedHits!.countLabel))),
             SizedBox(width: 180, height: 38, child: TextField(
               key: const ValueKey('libraryNewItemText'),
               controller: _newItemController,

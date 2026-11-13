@@ -1226,4 +1226,49 @@ void libraryScanTests() {
     final t = LibraryScanStatus.fromJson({'state': 'scanning', 'total': 8, 'processed': 2, 'changed': 2});
     expect(t.fraction, 0.25);
   });
+
+  testWidgets('APP1-H: scopedDocumentSearch가 있으면 서버 범위 검색을 쓰고 count 배지를 보인다', (tester) async {
+    final api = InMemoryLibraryApi(
+      initialBoxes: const [LibraryBox(id: '1', name: '예산함')],
+      initialItems: const [
+        LibraryItem(id: '1', boxId: '1', title: '예산_추진.txt', kind: LibraryItemKind.file, space: LibrarySpace.core, x: 10, y: 10),
+      ],
+    );
+    var searchCalled = false;
+    Future<ScopedLibraryHits> scopedSearch(String boxId, String mode, String query) async {
+      searchCalled = true;
+      return ScopedLibraryHits(
+        rows: [
+          {'title': '예산_추진.txt', 'snippet': '예산 100억 집행', 'item_ids': [1]},
+        ],
+        totalDocs: 1,
+        totalSentences: 3,
+        engine: 'kfind',
+      );
+    }
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LibraryScreen(
+          api: api,
+          scopedDocumentSearch: scopedSearch,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '예산');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(searchCalled, isTrue);
+    expect(find.byKey(const ValueKey('librarySearchCount')), findsOneWidget);
+    expect(find.text('1개 · 3문장'), findsOneWidget);
+    expect(find.textContaining('새 검색'), findsOneWidget);
+  });
 }

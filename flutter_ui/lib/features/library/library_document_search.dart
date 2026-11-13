@@ -52,3 +52,44 @@ LibraryDocumentSearch timemachineLibraryDocumentSearch(ApiCall call, {int limit 
 
 /// 윈도 경로 비교용: 대소문자와 구분자 차이를 없앤다.
 String normalizeLibraryPath(String path) => path.trim().replaceAll('/', r'\').toLowerCase();
+
+/// 서버가 상자 범위로 검색한 결과. 자료 ID는 경로 없는 메모도 식별한다.
+class ScopedLibraryHits {
+  const ScopedLibraryHits({required this.rows, required this.totalDocs,
+    required this.totalSentences, required this.engine, this.reason, this.countExact = true});
+  final List<Map> rows;
+  final int totalDocs;
+  final int totalSentences;
+  final String engine;
+  final String? reason;
+  final bool countExact;
+
+  String get countLabel => countExact ? '$totalDocs개 · $totalSentences문장' : '표시 $totalDocs개';
+}
+
+typedef ScopedLibraryDocumentSearch = Future<ScopedLibraryHits> Function(
+  String boxId, String mode, String query);
+
+ScopedLibraryDocumentSearch scopedLibraryDocumentSearch(ApiCall call, {int limit = 200}) {
+  return (boxId, mode, query) async {
+    final payload = <String, Object?>{'cmd': 'search', 'box_id': int.parse(boxId),
+      'query': query, 'limit': limit, 'mode': mode == 'related' ? 'hierarchy' : 'keyword'};
+    Future<Map> request(Map<String, Object?> data) async {
+      final response = await call('library', [data]);
+      if (response is! Map || response['ok'] != true) {
+        throw Exception(response is Map ? response['message'] ?? '검색에 실패했습니다.' : '검색 응답을 확인해 주세요.');
+      }
+      return response;
+    }
+    final response = await request(payload);
+    final count = response['engine'] == 'legacy' ? response : await request({...payload, 'count_only': true});
+    // 세대가 다른 count는 사용하지 않는다. 다음 입력이 새 결과를 요청한다.
+    final sameGeneration = (response['generation'] ?? response['gen']) == (count['generation'] ?? count['gen']) && response['engine'] == count['engine'];
+    final totals = sameGeneration ? count : response;
+    return ScopedLibraryHits(rows: [for (final row in response['results'] as List? ?? const []) if (row is Map) row],
+      totalDocs: (totals['total_docs'] as num?)?.toInt() ?? 0,
+      totalSentences: (totals['total_sentences'] as num?)?.toInt() ?? 0,
+      engine: '${response['engine'] ?? 'legacy'}', reason: response['engine_reason'] as String?,
+      countExact: totals['count_exact'] != false);
+  };
+}

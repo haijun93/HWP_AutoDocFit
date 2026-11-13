@@ -178,7 +178,7 @@ class IntegratedWorkspace extends StatelessWidget {
       libraryScreen: libraryScreen ?? LibraryScreen(
             api: BridgeLibraryApi(api),
             notebookApi: BridgeNotebookApi(api),
-            documentSearch: timemachineLibraryDocumentSearch(api),
+            scopedDocumentSearch: scopedLibraryDocumentSearch(api),
           ),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
