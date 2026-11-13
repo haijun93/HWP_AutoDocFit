@@ -47,3 +47,21 @@ fn spans_cover_text_and_are_trimmed() {
 fn sentence_rule_version_is_pinned() {
     assert_eq!(SENTENCE_RULE_VERSION, 1);
 }
+
+/// 색인 대상 문장(기호만 있는 문장 제외, 2026-11-13 결정): 같은 표에서 Python `sentence_ref.index_spans`는
+/// 문장 478개 중 475개를 남긴다(`python -X utf8 -c "...index_spans..."`로 센 수).
+#[test]
+fn index_sentences_match_python_counts() {
+    use kfind_core::{index_sentences, is_indexable};
+    let (mut all, mut kept) = (0, 0);
+    for r in rows("sentence_cases.tsv") {
+        let text = from_hex(&r[0]);
+        let split = split_sentences(&text);
+        let index = index_sentences(&text);
+        let expect: Vec<_> = split.iter().copied().filter(|sp| is_indexable(sp.text(&text))).collect();
+        assert_eq!(index, expect, "{}", r[0]);
+        all += split.len();
+        kept += index.len();
+    }
+    assert_eq!((all, kept), (478, 475));
+}

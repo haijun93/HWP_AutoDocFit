@@ -26,7 +26,7 @@ pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_query, 
 pub use segment::FORMAT_VERSION;
 /// 문서 범위(`SearchOptions::allow`·`deny`)의 문서 ID 집합. 호출하는 쪽이 같은 판의 roaring을 맞추지 않아도 되게 다시 낸다.
 pub use roaring::RoaringTreemap;
-pub use sentence::{SENTENCE_RULE_VERSION, SentenceSpan, split_sentences};
+pub use sentence::{SENTENCE_RULE_VERSION, SentenceSpan, index_sentences, is_indexable, split_sentences};
 pub use writer::{MergeJob, MergeOutput, MergePolicy, Sentence, Writer, WriterOptions};
 
 use std::fmt;

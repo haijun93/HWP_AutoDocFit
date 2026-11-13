@@ -9,7 +9,8 @@
 //! 3. 묶음이 마침표(`.` `．`)뿐일 때 예외(경계 아님): ① 마침표 2개 이상(말줄임)
 //!    ② 마침표 하나이고 바로 앞이 아라비아 숫자("2026. 11. 12.", "1. 개요")
 //!    ③ 마침표 하나이고 그 줄 처음부터가 목록 표지(앞 공백·여는 괄호 하나 뺀 한글 음절 1자, 영문자 1~4자, 로마 숫자 글자 1~4자).
-//! 4. 문장은 앞뒤 공백(유니코드 White_Space)을 뺀 구간이고 빈 문장은 버린다. 기호만 있는 문장은 남긴다.
+//! 4. 문장은 앞뒤 공백(유니코드 White_Space)을 뺀 구간이고 빈 문장은 버린다. 기호만 있는 문장은 남긴다
+//!    (색인할 때는 `index_sentences`가 뺀다 — 나누기 규칙과 색인 대상 규칙을 나눠 대조 표를 그대로 둔다).
 //! 5. 위치는 문단 안 코드포인트(Python 문자열 색인과 같음)와 UTF-8 바이트 둘 다 준다.
 
 /// 문장 나누기 규칙 판. 바뀌면 문장 색인을 다시 만들어야 한다.
@@ -136,9 +137,36 @@ pub fn split_sentences(text: &str) -> Vec<SentenceSpan> {
     out
 }
 
+/// 색인에 넣을 문장인가: 비교형(`fold`)이 비어 있지 않은 문장. 기호·공백만 있는 문장("※", "- - -", "( )")은
+/// 어떤 검색어로도 찾을 수 없으므로 색인에서 뺀다(SEN1 남은 문제, 2026-11-13 결정: 제외). 나누기 규칙(판 1)은 그대로다.
+pub fn is_indexable(sentence: &str) -> bool {
+    let mut folded = String::new();
+    crate::fold::fold_into(sentence, &mut folded);
+    !folded.is_empty()
+}
+
+/// 색인용 문장 나누기: `split_sentences`에서 `is_indexable`이 거짓인 문장을 뺀 것(순서 유지).
+/// Python 기준 구현은 `tools/sentence_ref.py`의 `index_spans`.
+pub fn index_sentences(text: &str) -> Vec<SentenceSpan> {
+    let mut spans = split_sentences(text);
+    spans.retain(|sp| is_indexable(sp.text(text)));
+    spans
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn symbol_only_sentences_are_not_indexed() {
+        let s = "※\n예산을 집행한다. - - -\n( )\n1.";
+        let all: Vec<&str> = split_sentences(s).iter().map(|sp| sp.text(s)).collect();
+        assert_eq!(all, ["※", "예산을 집행한다.", "- - -", "( )", "1."]);
+        let kept: Vec<&str> = index_sentences(s).iter().map(|sp| sp.text(s)).collect();
+        assert_eq!(kept, ["예산을 집행한다.", "1."]);
+        assert!(!is_indexable("  …  ·  "));
+        assert!(is_indexable("Ⅱ"));
+    }
 
     fn texts(s: &str) -> Vec<&str> {
         split_sentences(s).iter().map(|sp| sp.text(s)).collect()

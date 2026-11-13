@@ -125,6 +125,13 @@ def sentences(text):
     return [text[s:s + n] for s, n in split(text)]
 
 
+def index_spans(text):
+    """색인용 구간: split(text)에서 비교형이 빈 문장(기호·공백만)을 뺀 것.
+    Rust `kfind_core::index_sentences`와 같다(2026-11-13 결정: 기호만 있는 문장은 색인 제외)."""
+    from fold_ref import fold
+    return [(s, n) for s, n in split(text) if fold(text[s:s + n])]
+
+
 # ---- 대조 표 ----
 
 def to_hex(s):
