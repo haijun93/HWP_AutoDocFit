@@ -25,6 +25,9 @@ def doc_from_records(path, records, stat, ref_date, scopes):
     return {
         "doc_key": doc_key(path=path),
         "path": os.fspath(path),
+        "size": int(getattr(stat, "st_size", 0) or 0),
+        "mtime": int((stat.st_mtime or 0) * 1000),
+        "ref_date": ref_date,
         "date": int(_document_date(stat.st_ctime, stat.st_mtime) * 1000),
         "level_src": "py",
         "level_rule": CURRENT_HIERARCHY_SCHEMA_VERSION,

@@ -39,6 +39,10 @@ feature/hs2-hsa에서 3단계 구현 완료. 종료 수명 관리 5d061082, 상�
 
 상세 변경·실패 시도·실행 시간·미확인 범위는 docs/SM2_INDEX_STATE_IMPLEMENTATION_2026-11-12.md 참조. 실제 앱/EXE·COM·전체 시험은 미확인. 다음 단계인 main 병합·게시는 총괄 범위다.
 
+# APP1-B 인계 (2026-11-14)
+
+feature/kfind-app에서 github/main 최신 병합 확인, kapp 보존 stash 적용·원본 보존. 연결 상태 6개·36조합, KFS1 프레임·64KB 분할 ingest·취소·시간 한도 구현. APP1-A 메타데이터 보완, APP1-C 조건 충족 확인. 관련 25개 통과(1.457초), 이후 긴 문단 분할의 반복 직렬화 축소는 최종 전체 시험에서 확인 필요. 다른 comx 측정의 COM 잠금과 별도 전체 시험 종료 대기로 전체 시험·푸시 미완료. 대기 래퍼 G:/docfit-tmp/kapp-app1b-run-full.py, 로그 예정 G:/docfit-tmp/kapp-app1b-full.log. 상세 reports/APP1_B_2026-11-14.md. 후속 APP1-F/I의 기본 engine=kfind·오류 때 legacy 대체 결정 유지.
+
 # RHIER1 인계 (2026-11-13)
 
 fix/rust-hierarchy-parity(기준 3a69b3e4)에서 Python 검색 위계 규칙 판 5를 Rust 공용 분류기로 옮겼다. role_sequence와 검색 위계를 구분하는 search_levels 계약, 구형 정수 계약/실패 폴백, 제목 표·Markdown·번호·라벨·개요·기호 단계와 klib 연결을 구현했다. 기본 hierarchy_engine=False 유지.
