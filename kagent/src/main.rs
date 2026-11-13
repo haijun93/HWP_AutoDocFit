@@ -23,6 +23,7 @@ mod popup;
 mod settings_menu;
 mod sqlite;
 mod store;
+mod thumb;
 mod timeline;
 mod util;
 mod watch;

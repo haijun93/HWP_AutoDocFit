@@ -511,6 +511,7 @@ fn toggle_max(hwnd: HWND) {
 fn clear_all(hwnd: HWND) {
     if crate::confirm_clear(hwnd) {
         let _ = app().store.lock().unwrap().clear(true);
+        crate::thumb::clear_all();
         refresh_recent();
     }
 }
