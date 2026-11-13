@@ -66,4 +66,3 @@ class ConfigurationTests(unittest.TestCase):
 
         with self.assertRaises(ServiceError):
             self.service.save({'search_engine': 'unsupported'}, result['revision'])
-
