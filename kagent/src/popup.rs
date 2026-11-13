@@ -381,7 +381,7 @@ pub fn show() {
     // leave this process's recent snapshot stale. Rebuild it before every fresh open.
     crate::refresh_recent();
     unsafe {
-        let settings = app().settings.lock().unwrap().clone();
+        let mut settings = app().settings.lock().unwrap().clone();
         if settings.sticky_popup && IsWindowVisible(hwnd) != 0 {
             ShowWindow(hwnd, SW_HIDE);
             return;
@@ -401,6 +401,13 @@ pub fn show() {
             SetFocus(hwnd);
             refilter(true);
             return;
+        }
+        // 접힌 채(머리글만) 저장돼 있으면 단축키로 불러도 목록이 안 보여 "기록이 안 나온다"고 오해한다
+        // (2026-11-13 사무실 PC 사례). 새로 열 때는 항상 펼쳐서 보인다.
+        if settings.popup_collapsed {
+            settings.popup_collapsed = false;
+            app().settings.lock().unwrap().popup_collapsed = false;
+            crate::save_settings();
         }
         {
             let mut st = STATE.lock().unwrap();
