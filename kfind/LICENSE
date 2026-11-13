@@ -1,4 +1,4 @@
-Copyright (c) 2026 haijun93 (마포구청 공혁준). Required Notice: Copyright 2026 haijun93 (마포구청 공혁준). 이 디렉터리의 검색 엔진 코드는 저장소의 MIT 라이선스가 아니라 아래 PolyForm Strict License 1.0.0을 따릅니다(비상업적 목적의 사용만 허용, 배포·수정·2차 저작물 금지). 정부기관·교육기관 등의 사용은 허용 목적에 포함됩니다.
+Copyright (c) 2026 haijun93 (마포구청 공혁준). Required Notice: Copyright 2026 haijun93 (마포구청 공혁준). 이 디렉터리의 검색 엔진 코드는 저장소의 MIT 라이선스가 아니라 아래 PolyForm Strict License 1.0.0을 따릅니다(비상업적 목적의 사용만 허용, 배포·수정·2차 저작물 금지, 출처 표시 필수 — 맨 아래 추가 조건). 정부기관·교육기관 등의 사용은 허용 목적에 포함됩니다.
 
 # PolyForm Strict License 1.0.0
 
@@ -59,3 +59,12 @@ The **licensor** is the individual or entity offering these terms, and the **sof
 **Your licenses** are all the licenses granted to you for the software under these terms.
 
 **Use** means anything you do with the software requiring one of your licenses.
+
+
+## 추가 조건: 출처 표시 의무 (Attribution, 라이선스 제공자가 덧붙인 조건)
+
+이 소프트웨어를 사용하거나, 사용 결과를 보고서·발표·문서·웹페이지 등에 인용하거나, 이 소프트웨어를 언급·소개할 때에는 반드시 다음 출처를 눈에 잘 띄게 표시해야 합니다. 출처 표시는 위 PolyForm Strict License의 허용 범위를 넓히지 않으며, 출처를 표시하지 않은 사용은 허용되지 않습니다.
+
+> 출처: HWP AutoDocFit 검색 엔진 (kfind), haijun93 (마포구청 공혁준), https://github.com/haijun93/HWP_AutoDocFit
+
+Additional condition (attribution): Any use of this software, any citation of its results, and any reference to it must prominently credit: "HWP AutoDocFit search engine (kfind), haijun93, https://github.com/haijun93/HWP_AutoDocFit". This condition does not expand the permissions above.
