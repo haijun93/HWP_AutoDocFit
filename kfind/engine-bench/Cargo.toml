@@ -3,7 +3,7 @@ name = "kfind-engine-bench"
 version = "0.1.0"
 edition = "2024"
 description = "IS-S1 본문 문장 검색 엔진 비교 시제품: (A) Tantivy 대 (B) fst+roaring 직접 구현. 앱 코드가 아니다."
-license = "MIT"
+license-file = "../LICENSE"
 publish = false
 
 # 저장소 다른 크레이트의 작업 공간에 묶이지 않게 독립 작업 공간으로 둔다.

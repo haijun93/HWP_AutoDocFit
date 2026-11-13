@@ -3,7 +3,7 @@ name = "kfind-core"
 version = "0.1.0"
 edition = "2024"
 description = "공용 본문 문장 검색 엔진(문장 비트맵 roaring + 조각 사전 fst). klib·kfind·kvf가 함께 쓴다."
-license = "MIT"
+license-file = "../LICENSE"
 publish = false
 
 # 저장소 다른 크레이트의 작업 공간에 묶이지 않게 독립 작업 공간으로 둔다.
