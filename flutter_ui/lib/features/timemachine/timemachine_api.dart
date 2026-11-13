@@ -243,7 +243,7 @@ class TimemachineApi {
       }
       return result;
     }
-    return {'ok': false, 'code': 'TM_RESPONSE', 'message': '타임머신 응답을 읽지 못했습니다.'};
+    return {'ok': false, 'code': 'TM_RESPONSE', 'message': '몽땅검색 응답을 읽지 못했습니다.'};
   }
 
   Future<List<TimemachineContentResult>> contentSearch(

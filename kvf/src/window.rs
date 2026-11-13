@@ -128,7 +128,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  use super::*;
  struct Isolated {root:std::path::PathBuf,old_root:Option<std::ffi::OsString>,old_library:Option<std::ffi::OsString>,mutex:HANDLE}
  impl Isolated {fn new()->Self{unsafe{
-  let root=std::path::PathBuf::from(format!("E:/docfit-tmp/kvf-window-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();
+  let root=std::env::temp_dir().join(format!("kvf-window-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();
   let old_root=std::env::var_os("KVF_TEST_ROOT");let old_library=std::env::var_os("KLIB_TEST_ROOT");
   std::env::set_var("KVF_TEST_ROOT",root.join("kvf"));std::env::set_var("KLIB_TEST_ROOT",root.join("library"));std::fs::create_dir_all(root.join("library")).unwrap();
   let name=wide(&crate::paths::object_name("Local\\HwpAutoDocFit.kvf",Some(root.to_str().unwrap())));let mutex=windows_sys::Win32::System::Threading::CreateMutexW(null(),0,name.as_ptr());assert!(!mutex.is_null());
@@ -139,7 +139,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   match &self.old_root{Some(v)=>std::env::set_var("KVF_TEST_ROOT",v),None=>std::env::remove_var("KVF_TEST_ROOT")};
   match &self.old_library{Some(v)=>std::env::set_var("KLIB_TEST_ROOT",v),None=>std::env::remove_var("KLIB_TEST_ROOT")};
   // 고정된 시험 디렉터리만 정리한다.
-  assert!(self.root.starts_with("E:/docfit-tmp"));let _=std::fs::remove_dir_all(&self.root);
+  assert!(self.root.starts_with(std::env::temp_dir()));let _=std::fs::remove_dir_all(&self.root);
  }}}
  #[test]fn isolated_window_events_and_rendering(){
   let fixture=Isolated::new();
