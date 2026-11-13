@@ -1,12 +1,19 @@
 //! GDI 이중 버퍼·공용 frame·직접 키/IME 입력. Model은 event의 step 한 곳에서만 갱신한다.
+//! UI0(2026-11-14): 틀·배율·이중 버퍼·글꼴 캐시·색·배치·목록 이동·메뉴·IME는 ui-core. 그리기 결과는 UI0 이전과 같다
+//! (`golden_render_matches_before_ui0`, 7상태 픽셀 해시). 새로 WM_DPICHANGED 다시 배치와 UIA 접근성.
 use std::{cell::RefCell,ptr::{null,null_mut}};
-use crate::{vf_state::{self,Model,View,Event,Effect,Caller,ReadResult,Context},vf_data::{self,Item,BoxRow,Snapshot},settings::Settings,util::wide,frame};
-use windows_sys::Win32::{Foundation::*,Graphics::Gdi::*,System::LibraryLoader::GetModuleHandleW,UI::{WindowsAndMessaging::*,Input::{KeyboardAndMouse::*,Ime::*}}};
+use crate::{vf_state::{self,Model,View,Event,Effect,Caller,ReadResult,Context},vf_data::{self,Item,BoxRow,Snapshot},settings::Settings,util::wide};
+use ui_core::{frame,a11y::{self,Node,Role},geom::Rect as URect,paint::BackBuffer,font::{FontCache,FontSpec,FACE_UI,QUALITY_DEFAULT},theme::ClipPalette,menu::Entry};
+use windows_sys::Win32::{Foundation::*,Graphics::Gdi::*,System::LibraryLoader::GetModuleHandleW,UI::{WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};
 const HEAD:i32=32;const TAB:i32=30;const ROW:i32=30;
 const SPACES:[Option<&str>;5]=[None,Some("core"),Some("basis"),Some("reference"),Some("temp")];
 const LABELS:[&str;5]=["전체","핵심자료","기초자료","참고자료","임시저장소"];
 #[derive(Default)]struct Ui{model:Model,hwnd:HWND,owner:HWND,boxes:Vec<BoxRow>,items:Vec<Item>,filtered:Vec<i64>,top:usize,committed:String,comp:String,pressed:Option<usize>,truncated:bool}
-thread_local!{static UI:RefCell<Ui>=RefCell::new(Ui::default());}
+thread_local!{static UI:RefCell<Ui>=RefCell::new(Ui::default());static FONTS:RefCell<FontCache>=const{RefCell::new(FontCache::new())};}
+/// 색(UI0 이전 상수와 같은 값). 글꼴은 맑은 고딕 14px(기본 품질).
+const PAL:ClipPalette=ClipPalette::LIGHT;const FONT:FontSpec=FontSpec::new(FACE_UI,14,400,QUALITY_DEFAULT);
+/// 접근성 요소 id: 머리 단추 1..=4(닫기·최대화·최소화·항상 위), 상자 고르기 5, 영역 탭 50·100+i, 찾기 60, 목록 70·항목 1000+n, 안내 80.
+const A_BOX:u32=5;const A_TABS:u32=50;const A_SEARCH:u32=60;const A_LIST:u32=70;const A_MSG:u32=80;const A_TAB0:u32=100;const A_ITEM0:u32=1000;
 fn with<R>(f:impl FnOnce(&Ui)->R)->R{UI.with(|s|f(&s.borrow()))}
 fn edit<R>(f:impl FnOnce(&mut Ui)->R)->R{UI.with(|s|f(&mut s.borrow_mut()))}
 pub fn snapshot()->(String,Option<i64>,usize,String){with(|s|(s.model.view.name().into(),s.model.view.context().and_then(|c|c.box_id),s.filtered.len(),match &s.model.view{View::Failed{error,..}=>error.clone(),_=>String::new()}))}
@@ -66,41 +73,54 @@ fn ensure()->Result<(),String>{
  let h=CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),wide("가상 폴더").as_ptr(),WS_POPUP|WS_THICKFRAME|WS_MAXIMIZEBOX,r[0],r[1],r[2],r[3],null_mut(),null_mut(),instance,null());
  if h.is_null(){return Err("목록 창 생성 실패".into());}edit(|s|s.hwnd=h);frame::style_frame(h);topmost(h);Ok(())
  }}
-fn place(saved:Option<[i32;4]>,mouse:[i32;2],work:RECT)->[i32;4]{let mut r=saved.unwrap_or([mouse[0]+12,mouse[1]+12,600,420]);r[2]=r[2].max(360).min((work.right-work.left).max(1));r[3]=r[3].max(160).min((work.bottom-work.top).max(1));r[0]=r[0].clamp(work.left,(work.right-r[2]).max(work.left));r[1]=r[1].clamp(work.top,(work.bottom-r[3]).max(work.top));r}
-fn topmost(h:HWND){unsafe{SetWindowPos(h,if with(|s|s.model.sticky){HWND_TOPMOST}else{HWND_NOTOPMOST},0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);}}
-fn xy(l:isize)->(i32,i32){((l as u16)as i16 as i32,((l>>16)as u16)as i16 as i32)}
+fn place(saved:Option<[i32;4]>,mouse:[i32;2],work:RECT)->[i32;4]{ui_core::window::place(saved,mouse,URect::from_win(&work),12,[600,420],[360,160])}
+fn topmost(h:HWND){ui_core::window::set_topmost(h,with(|s|s.model.sticky));}
+fn xy(l:isize)->(i32,i32){ui_core::geom::xy(l)}
 fn size(h:HWND)->RECT{unsafe{let mut r=std::mem::zeroed();GetClientRect(h,&mut r);r}}
 fn list_y(h:HWND)->i32{frame::scale(h,HEAD+TAB+if with(|s|s.model.view.context().is_some_and(|c|!c.query.is_empty())){ROW}else{0})}
 fn row_at(h:HWND,l:isize)->Option<usize>{let (_,y)=xy(l);with(|s|frame::row_index(y,list_y(h),frame::scale(h,ROW),s.top,s.filtered.len()))}
 fn button(h:HWND,x:i32,y:i32)->Option<usize>{let w=size(h).right;let bw=frame::scale(h,40);(y>=0&&y<frame::scale(h,HEAD)&&x>=w-4*bw&&x<w).then(||((w-1-x)/bw)as usize)}
 fn choose(index:usize){let id=with(|s|s.filtered.get(index).copied());event(Event::Select(id));}
-fn move_selection(h:HWND,delta:isize){let(rows,current,len)=with(|s|{let rows=((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as usize;(rows,s.model.view.context().and_then(|c|c.selection).and_then(|id|s.filtered.iter().position(|v|*v==id)).unwrap_or(0),s.filtered.len())});if len==0{return;}let i=(current as isize+delta).clamp(0,len as isize-1)as usize;edit(|s|{if i<s.top{s.top=i;}if i>=s.top+rows{s.top=i+1-rows;}});choose(i);}
+fn move_selection(h:HWND,delta:isize){let(rows,current,len)=with(|s|{let rows=((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as usize;(rows,s.model.view.context().and_then(|c|c.selection).and_then(|id|s.filtered.iter().position(|v|*v==id)).unwrap_or(0),s.filtered.len())});if len==0{return;}let(i,top)=ui_core::list::move_selection(current,with(|s|s.top),len,delta,rows);edit(|s|s.top=top);choose(i);}
 fn change_tab(delta:isize){let i=with(|s|SPACES.iter().position(|v|*v==s.model.view.context().and_then(|c|c.space.as_deref())).unwrap_or(0));edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[(i as isize+delta).rem_euclid(5)as usize].map(String::from)));}
-fn boxes_menu(h:HWND){unsafe{let m=CreatePopupMenu();with(|s|{for(i,b)in s.boxes.iter().enumerate(){AppendMenuW(m,MF_STRING,100+i,wide(&b.name).as_ptr());}});let mut pt=POINT{x:0,y:frame::scale(h,HEAD)};ClientToScreen(h,&mut pt);let n=TrackPopupMenu(m,TPM_RETURNCMD,pt.x,pt.y,0,h,null());DestroyMenu(m);if n>=100{let id=with(|s|s.boxes.get(n as usize-100).map(|b|b.id));if let Some(id)=id{event(Event::ChangeBox(id));}}}}
+fn boxes_menu(h:HWND){unsafe{let entries:Vec<Entry>=with(|s|s.boxes.iter().enumerate().map(|(i,b)|Entry::item(100+i,b.name.clone())).collect());let mut pt=POINT{x:0,y:frame::scale(h,HEAD)};ClientToScreen(h,&mut pt);let n=ui_core::menu::track(h,&entries,pt,0);if n>=100{let id=with(|s|s.boxes.get(n as usize-100).map(|b|b.id));if let Some(id)=id{event(Event::ChangeBox(id));}}}}
 unsafe fn paint(h:HWND){unsafe{
- let mut ps:PAINTSTRUCT=std::mem::zeroed();let dc=BeginPaint(h,&mut ps);let rc=size(h);if rc.right<=0||rc.bottom<=0{EndPaint(h,&ps);return;}
- let mem=CreateCompatibleDC(dc);let bmp=CreateCompatibleBitmap(dc,rc.right,rc.bottom);let old=SelectObject(mem,bmp);let font=CreateFontW(-frame::scale(h,14),0,0,0,400,0,0,0,DEFAULT_CHARSET as u32,0,0,0,0,wide("맑은 고딕").as_ptr());let oldfont=SelectObject(mem,font);SetBkMode(mem,TRANSPARENT as i32);
- let fill=|r:RECT,color|{let b=CreateSolidBrush(color);FillRect(mem,&r,b);DeleteObject(b);};
- let text=|s:&str,mut r:RECT,flags|{let v=wide(s);DrawTextW(mem,v.as_ptr(),(v.len()-1)as i32,&mut r,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|flags);};
- fill(rc,0x00ffffff);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},0x00f4f4f4);
+ let Some(mut buf)=BackBuffer::begin(h)else{return};let rc=buf.rect();let font=FONTS.with(|c|c.borrow_mut().get(FONT,ui_core::dpi::window_dpi(h)));if font.is_null(){return;}
+ buf.select_font(font);let p=buf.painter();p.transparent();let mem=buf.dc();
+ let fill=|r:RECT,color|p.fill(r,color);let text=|s:&str,r:RECT,flags|p.text(s,r,flags);
+ fill(rc,PAL.window);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},PAL.vf_head);
+ let mut nodes:Vec<Node>=Vec::new();
  with(|s|{
- let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,0x00222222);text(&format!("가상 폴더 · {name} ▾"),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
- for(i,label)in ["✕","□","―",if s.model.sticky{"◆"}else{"◇"}].iter().enumerate(){let right=rc.right-i as i32*frame::scale(h,40);text(label,RECT{left:right-frame::scale(h,40),top:0,right,bottom:head},DT_CENTER);}
- for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},0x00cc7733);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);}
- let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),RECT{left:pad,top:head+tab,right:rc.right-pad,bottom:y},DT_END_ELLIPSIS);}
+ let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");p.text_color(PAL.vf_text);let title=RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head};text(&format!("가상 폴더 · {name} ▾"),title,DT_END_ELLIPSIS);
+ nodes.push(Node::button(A_BOX,0,format!("상자 고르기: {name}"),URect::from_win(&title)));
+ for(i,label)in ["✕","□","―",if s.model.sticky{"◆"}else{"◇"}].iter().enumerate(){let right=rc.right-i as i32*frame::scale(h,40);let br=RECT{left:right-frame::scale(h,40),top:0,right,bottom:head};text(label,br,DT_CENTER);nodes.push(Node::button(i as u32+1,0,["닫기","최대화/복원","최소화",if s.model.sticky{"항상 위 끄기 (켜짐)"}else{"항상 위 켜기"}][i],URect::from_win(&br)));}
+ nodes.push(Node::new(A_TABS,0,Role::Tab,"영역",URect::new(0,head,rc.right,head+tab)));
+ for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},PAL.vf_tab_mark);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);nodes.push(Node::item(A_TAB0+i as u32,A_TABS,Role::TabItem,*label,URect::new(l,head,r,head+tab),selected));}
+ let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){let qr=RECT{left:pad,top:head+tab,right:rc.right-pad,bottom:y};text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),qr,DT_END_ELLIPSIS);nodes.push(Node::new(A_SEARCH,0,Role::Edit,format!("찾기: {}",c.query),URect::from_win(&qr)));}
+ nodes.push(Node::new(A_LIST,0,Role::List,"가상 폴더 항목",URect::new(0,y,rc.right,rc.bottom)));
  let message=match &s.model.view{View::Loading(_)=>"불러오는 중",View::Failed{error,..}=>error,View::Empty{reason,..}=>reason,_ if s.filtered.is_empty()=>"항목이 없습니다. 다른 상자·영역을 고르거나 F5로 다시 불러오세요",_=>""};
- if !message.is_empty(){text(message,RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row},DT_END_ELLIPSIS);}
- for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};if c.and_then(|c|c.selection)==Some(*id){fill(r,0x00f7e3cf);}text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
+ if !message.is_empty(){let mr=RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row};text(message,mr,DT_END_ELLIPSIS);nodes.push(Node::new(A_MSG,A_LIST,Role::Text,message,URect::from_win(&mr)));}
+ for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};let sel=c.and_then(|c|c.selection)==Some(*id);if sel{fill(r,PAL.selected_row);}let label=format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]);text(&label,RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);let mut node=Node::item(A_ITEM0+n as u32,A_LIST,Role::ListItem,label,URect::from_win(&r),sel);node.invoke=true;node.focused=sel;nodes.push(node);}}
  if s.truncated{text("5,000개까지만 보입니다. 앱에서 보세요",RECT{left:pad,top:rc.bottom-row,right:rc.right,bottom:rc.bottom},DT_END_ELLIPSIS);}
- });frame::own_border(mem,rc);ui_core::probe::record(mem,rc.right,rc.bottom);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
+ });frame::own_border(mem,rc);buf.finish();a11y::publish(h,nodes);
 }}
+/// 접근성 동작(호출·선택)을 마우스·키보드와 같은 길로.
+fn a11y_action(h:HWND,action:a11y::Action,id:u32){unsafe{match id{
+ 1=>event(Event::Close),2=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});},3=>event(Event::Minimize),
+ 4=>{let on=with(|s|!s.model.sticky);event(Event::SetSticky(on));topmost(h);save();draw_later();},A_BOX=>boxes_menu(h),
+ _ if (A_TAB0..A_TAB0+5).contains(&id)=>{edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[(id-A_TAB0)as usize].map(String::from)));},
+ _ if id>=A_ITEM0=>{choose((id-A_ITEM0)as usize);if action==a11y::Action::Invoke{event(Event::Open);}},
+ _=>{}}}}
 unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{match msg{
  WM_PAINT=>{paint(h);0},WM_ERASEBKGND=>1,WM_NCCALCSIZE if w!=0=>0,
+ WM_DPICHANGED=>{let dpi=ui_core::dpi::on_dpi_changed(h,w,l);FONTS.with(|c|c.borrow_mut().retain_dpi(dpi));draw_later();0},
+ WM_GETOBJECT=>a11y::on_getobject(h,w,l).unwrap_or_else(||DefWindowProcW(h,msg,w,l)),
+ m if m==a11y::action_message()=>{if let Some((action,id))=a11y::decode(w,l){a11y_action(h,action,id);}0},
  WM_NCHITTEST=>{let(x,y)=xy(l);let mut p=POINT{x,y};ScreenToClient(h,&mut p);let r=size(h);frame::frame_hit(p.x,p.y,r.right,r.bottom,frame::scale(h,6),frame::scale(h,HEAD),p.x<frame::scale(h,260)||button(h,p.x,p.y).is_some(),IsZoomed(h)!=0,false).code()as isize},
  WM_NCLBUTTONDBLCLK if w==HTCAPTION as usize=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});0},
  WM_CLOSE=>{event(Event::Close);0},WM_ACTIVATE if (w&0xffff)as u32==WA_INACTIVE=>{let mut pid=0;GetWindowThreadProcessId(l as HWND,&mut pid);if pid!=std::process::id(){event(Event::Outside);}0},
  WM_GETMINMAXINFO=>{let p=&mut*(l as *mut MINMAXINFO);p.ptMinTrackSize=POINT{x:frame::scale(h,360),y:frame::scale(h,160)};0},
- WM_SIZE=>{draw_later();0},WM_EXITSIZEMOVE=>{save();0},WM_DESTROY=>{edit(|s|s.hwnd=null_mut());0},
+ WM_SIZE=>{draw_later();0},WM_EXITSIZEMOVE=>{save();0},WM_DESTROY=>{a11y::on_destroy(h);edit(|s|s.hwnd=null_mut());0},
  WM_LBUTTONDOWN=>{let(x,y)=xy(l);edit(|s|s.pressed=button(h,x,y));0},
  WM_LBUTTONUP=>{let(x,y)=xy(l);let pressed=edit(|s|s.pressed.take());let b=button(h,x,y);if b.is_some()||pressed.is_some(){if b==pressed{match b{Some(0)=>event(Event::Close),Some(1)=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});},Some(2)=>event(Event::Minimize),Some(3)=>{let on=with(|s|!s.model.sticky);event(Event::SetSticky(on));topmost(h);save();draw_later();},_=>{}}}}else if y<frame::scale(h,HEAD)&&x<frame::scale(h,260){boxes_menu(h);}else if y<frame::scale(h,HEAD+TAB){let i=(x*5/size(h).right.max(1)).clamp(0,4)as usize;edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[i].map(String::from)));}else if let Some(i)=row_at(h,l){choose(i);}0},
  WM_LBUTTONDBLCLK=>{if let Some(i)=row_at(h,l){choose(i);event(Event::Open);}0},
@@ -113,7 +133,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  VK_UP=>move_selection(h,-1),VK_DOWN=>move_selection(h,1),VK_PRIOR=>move_selection(h,-(((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize)),VK_NEXT=>move_selection(h,((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize),VK_HOME=>move_selection(h,-100000),VK_END=>move_selection(h,100000),_=>{}}
  0},
  WM_CHAR=>{if let Some(ch)=char::from_u32(w as u32).filter(|c|!c.is_control()){edit(|s|{if s.committed.chars().count()<256{s.committed.push(ch);}s.comp.clear();});query();}0},
- WM_IME_COMPOSITION=>{if l as u32&GCS_COMPSTR!=0{let imc=ImmGetContext(h);if !imc.is_null(){let n=ImmGetCompositionStringW(imc,GCS_COMPSTR,null_mut(),0).max(0)as usize;let mut buf=vec![0u16;n/2];if n>0{ImmGetCompositionStringW(imc,GCS_COMPSTR,buf.as_mut_ptr()as _,n as u32);}ImmReleaseContext(h,imc);edit(|s|s.comp=String::from_utf16_lossy(&buf));query();}}DefWindowProcW(h,msg,w,l)},
+ WM_IME_COMPOSITION=>{if let Some(comp)=ui_core::text_input::composition_string(h,l){edit(|s|s.comp=comp);query();}DefWindowProcW(h,msg,w,l)},
  WM_IME_ENDCOMPOSITION=>{edit(|s|s.comp.clear());query();DefWindowProcW(h,msg,w,l)},
  _=>DefWindowProcW(h,msg,w,l)
 }}}
@@ -127,13 +147,15 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
 #[cfg(test)] mod integration_tests {
  use super::*;
  static SEQ:std::sync::atomic::AtomicUsize=std::sync::atomic::AtomicUsize::new(0);
- struct Isolated {root:std::path::PathBuf,old_root:Option<std::ffi::OsString>,old_library:Option<std::ffi::OsString>,mutex:HANDLE}
- impl Isolated {fn new()->Self{unsafe{
+ /// 시험 폴더는 환경 변수(프로세스 전역)로 고르므로 창 시험은 한 번에 하나씩.
+ static LOCK:std::sync::Mutex<()>=std::sync::Mutex::new(());
+ struct Isolated {root:std::path::PathBuf,old_root:Option<std::ffi::OsString>,old_library:Option<std::ffi::OsString>,mutex:HANDLE,_guard:std::sync::MutexGuard<'static,()>}
+ impl Isolated {fn new()->Self{let guard=LOCK.lock().unwrap_or_else(|e|e.into_inner());unsafe{
   let root=std::env::temp_dir().join(format!("kvf-window-test-{}-{}",std::process::id(),SEQ.fetch_add(1,std::sync::atomic::Ordering::SeqCst)));std::fs::create_dir_all(&root).unwrap();
   let old_root=std::env::var_os("KVF_TEST_ROOT");let old_library=std::env::var_os("KLIB_TEST_ROOT");
   std::env::set_var("KVF_TEST_ROOT",root.join("kvf"));std::env::set_var("KLIB_TEST_ROOT",root.join("library"));std::fs::create_dir_all(root.join("library")).unwrap();
   let name=wide(&crate::paths::object_name("Local\\HwpAutoDocFit.kvf",Some(root.to_str().unwrap())));let mutex=windows_sys::Win32::System::Threading::CreateMutexW(null(),0,name.as_ptr());assert!(!mutex.is_null());
-  Self{root,old_root,old_library,mutex}
+  Self{root,old_root,old_library,mutex,_guard:guard}
  }}}
  impl Drop for Isolated{fn drop(&mut self){unsafe{
   close();destroy();CloseHandle(self.mutex);
@@ -192,7 +214,35 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   let first=ms[0];ms.sort_by(|a,b|a.partial_cmp(b).unwrap());
   println!("MEASURE kvf show first={first:.3}ms median={:.3}ms p90={:.3}ms",ms[ms.len()/2],ms[ms.len()*9/10]);drop(fixture);
  }
- #[test]#[ignore]fn golden_render_matches_before_ui0(){for(name,f)in render_cases(){println!("RENDER kvf {name} {}x{} {:016x}",f.width,f.height,f.hash);}}
+ /// UI0 이전(8a356bf9, 이 PC 96 DPI) 그리기 해시. 글꼴 설정이 다른 PC에서는 값이 다르므로 `--ignored`로만.
+ const BEFORE_UI0:[(&str,&str,u64);7]=[
+  ("list", "586x406", 0x406c9e8123fc58cb),
+  ("selected", "586x406", 0x188941b103fdb7bd),
+  ("tab_core", "586x406", 0xf292ee9b42d168f2),
+  ("query", "586x406", 0xd586458456a6fd6d),
+  ("narrow", "360x200", 0x2e2dcf05356ff27e),
+  ("sticky", "600x420", 0xd717db47ffd688ab),
+  ("empty_box", "600x420", 0x279329f13e0e17a1),
+ ];
+ #[test]#[ignore]fn golden_render_matches_before_ui0(){let got:Vec<(&str,String,u64)>=render_cases().into_iter().map(|(n,f)|{println!("RENDER kvf {n} {}x{} {:016x}",f.width,f.height,f.hash);(n,format!("{}x{}",f.width,f.height),f.hash)}).collect();
+  let want:Vec<(&str,String,u64)>=BEFORE_UI0.iter().map(|(n,s,h)|(*n,s.to_string(),*h)).collect();assert_eq!(got,want,"UI0 이전과 화면이 달라짐");}
+ /// 접근성: 모든 요소에 이름, 머리 단추 4·상자 고르기·영역 탭 5·항목. 탭 '선택'은 영역을 바꾸고 항목 '선택'은 선택을 바꾼다.
+ #[test]fn accessibility_tree_and_actions(){
+  let fixture=Isolated::new();
+  let db=crate::sqlite::Connection::open(fixture.root.join("library/library.db").to_str().unwrap()).unwrap();
+  db.exec("CREATE TABLE box(id INTEGER PRIMARY KEY,name TEXT,description TEXT,created_at REAL,updated_at REAL); CREATE TABLE item(id INTEGER PRIMARY KEY,box_id INTEGER,kind TEXT,source_path TEXT,origin_path TEXT,managed_path TEXT,display_name TEXT,space TEXT,created_at REAL); INSERT INTO box VALUES(1,'시험 상자','',1,2); INSERT INTO item VALUES(1,1,'file','','','','한글 보고','core',3),(2,1,'file','','','','한 자료','core',2),(3,1,'file','','','','영역 자료','basis',1)").unwrap();drop(db);
+  configure(null_mut(),&Settings::default());call(Caller::SecondRun);let h=with(|s|s.hwnd);unsafe{SendMessageW(h,WM_PAINT,0,0);}
+  let nodes=a11y::nodes(h);assert!(a11y::unnamed(&nodes).is_empty());
+  assert_eq!(nodes.iter().filter(|n|n.role==Role::Button).count(),5);assert_eq!(nodes.iter().filter(|n|n.role==Role::TabItem).count(),5);
+  assert_eq!(nodes.iter().filter(|n|n.role==Role::ListItem).count(),3);assert!(nodes.iter().any(|n|n.name.contains("한글 보고")));
+  a11y_action(h,a11y::Action::Select,A_TAB0+2);assert_eq!(snapshot().2,1,"기초자료 영역");
+  a11y_action(h,a11y::Action::Select,A_TAB0);unsafe{SendMessageW(h,WM_PAINT,0,0);}
+  a11y_action(h,a11y::Action::Select,A_ITEM0+1);assert_eq!(with(|s|s.model.view.context().unwrap().selection),Some(2));
+  unsafe{SendMessageW(h,WM_PAINT,0,0);}assert_eq!(a11y::nodes(h).iter().filter(|n|n.selected==Some(true)&&n.role==Role::ListItem).count(),1);
+  // 실제 메시지 길(UIA 호출이 PostMessage한 것과 같은 메시지).
+  unsafe{SendMessageW(h,a11y::action_message(),2,(A_TAB0+1)as isize);}assert_eq!(snapshot().2,2,"핵심자료 영역");
+  drop(fixture);
+ }
 }
 
 fn open_item(seq:u64,id:i64,action:crate::open::Action){
@@ -202,7 +252,7 @@ fn open_item(seq:u64,id:i64,action:crate::open::Action){
 }
 fn item_menu(h:HWND,l:isize){unsafe{
  let origin=with(|s|s.model.view.context().and_then(|c|c.selection).and_then(|id|s.items.iter().find(|i|i.id==id)).is_some_and(|i|!i.origin_path.is_empty()&&std::path::Path::new(&i.origin_path).exists()));
- let menu=CreatePopupMenu();AppendMenuW(menu,MF_STRING,1,wide("열기").as_ptr());AppendMenuW(menu,MF_STRING,2,wide("탐색기에서 위치 열기\tCtrl+Enter").as_ptr());if origin{AppendMenuW(menu,MF_STRING,3,wide("원본 위치 열기").as_ptr());}
- let(x,y)=xy(l);let mut p=POINT{x,y};ClientToScreen(h,&mut p);let command=TrackPopupMenu(menu,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,h,null());DestroyMenu(menu);
+ let mut entries=vec![Entry::item(1,"열기"),Entry::item(2,"탐색기에서 위치 열기\tCtrl+Enter")];if origin{entries.push(Entry::item(3,"원본 위치 열기"));}
+ let(x,y)=xy(l);let mut p=POINT{x,y};ClientToScreen(h,&mut p);let command=ui_core::menu::track(h,&entries,p,TPM_RIGHTBUTTON);
  match command{1=>event(Event::Open),2=>event(Event::LocateCopy),3=>event(Event::LocateOrigin),_=>{}}
 }}

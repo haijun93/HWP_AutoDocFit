@@ -159,13 +159,8 @@ pub fn command_of(id: usize) -> Option<Command> {
     }
 }
 
-/// 메뉴 한 줄.
-#[derive(Clone, PartialEq, Debug)]
-pub enum Entry {
-    Item { id: usize, label: String, checked: bool, radio: bool, enabled: bool },
-    Separator,
-    Sub { label: String, entries: Vec<Entry> },
-}
+/// 메뉴 한 줄(공용 모델, UI0에서 ui-core로 옮김).
+pub use ui_core::menu::Entry;
 
 fn item(c: Command, label: impl Into<String>, checked: bool, radio: bool) -> Entry {
     Entry::Item { id: command_id(c), label: label.into(), checked, radio, enabled: true }

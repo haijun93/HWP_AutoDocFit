@@ -21,13 +21,23 @@
 //!    Windows 11은 DWM이 그리는 테두리(색 지정)+둥근 모서리, 그 밖에는 직접 그린 1px 선. 그림자는 DWM(4면).
 //!    크기 조절은 가장자리 6px(배율 적용)를 WM_NCHITTEST에서 좌·우·아래·아래 모서리로 돌려준다(`frame_hit`).
 
+//! ⑤ 공용 부품(UI0, 2026-11-14): 틀·배율·이중 버퍼·글꼴 캐시·색·탭 배치·목록 이동·메뉴·IME는 `ui-core`를 쓴다.
+//!    UI0 이전과 그리기 결과가 같다(`golden_render_matches_before_ui0`, 10상태 픽셀 해시). 새로 생긴 것은
+//!    WM_DPICHANGED(다른 배율 모니터로 옮기면 제안 크기로 다시 배치)와 UIA 접근성(단추·분류·목록 항목 이름·역할·호출·선택).
+
+use std::cell::RefCell;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
+use ui_core::a11y::{self, Node, Role};
+use ui_core::controls::{tab_layout, tab_at, wrap_index};
+use ui_core::font::{FACE_GLYPH, FACE_UI, FontCache, FontSpec};
+use ui_core::geom::Rect as URect;
+use ui_core::paint::BackBuffer;
+use ui_core::theme::ClipPalette;
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
-use windows_sys::Win32::UI::Input::Ime::{GCS_COMPSTR, ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, SetFocus, TrackMouseEvent, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
     SendInput, TME_LEAVE, TRACKMOUSEEVENT, VIRTUAL_KEY, VK_BACK, VK_CONTROL, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE,
@@ -38,7 +48,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::category::Category;
 use crate::settings_menu::{self, Command, Entry};
-use crate::frame::{GRIP, frame_hit, own_border, row_index, scale, style_frame, text_width};
+use ui_core::frame::{own_border, row_index, scale, text_width};
 use crate::store::Summary;
 use crate::open_item;
 use crate::util::wide;
@@ -94,36 +104,9 @@ impl Tab {
     }
 }
 
-/// 분류 단추 배치(순수 함수). long·short: 각 단추 글자 폭(긴 이름·짧은 이름), avail: 쓸 수 있는 폭.
-/// 돌려주는 값: 각 단추의 (왼쪽, 오른쪽)(0부터), 짧은 이름을 쓰는지.
-/// 순서: ① 기본 여백 ② 최소 여백 ③ 짧은 이름+최소 여백 ④ 같은 폭으로 나눔(글자는 말줄임).
-fn tab_layout(long: &[i32], short: &[i32], avail: i32, pad: i32, min_pad: i32) -> (Vec<(i32, i32)>, bool) {
-    let lay = |widths: &[i32], p: i32| -> Option<Vec<(i32, i32)>> {
-        let total: i32 = widths.iter().map(|w| w + 2 * p).sum();
-        if total > avail {
-            return None;
-        }
-        let mut x = 0;
-        Some(widths.iter().map(|w| { let l = x; x += w + 2 * p; (l, x) }).collect())
-    };
-    if let Some(v) = lay(long, pad) { return (v, false); }
-    if let Some(v) = lay(long, min_pad) { return (v, false); }
-    if let Some(v) = lay(short, min_pad) { return (v, true); }
-    let n = long.len().max(1) as i32;
-    let avail = avail.max(0);
-    let spans = (0..n).map(|i| (avail * i / n, avail * (i + 1) / n)).collect();
-    (spans, true)
-}
-
-/// x가 어느 분류 단추 위인지.
-fn tab_at(x: i32, spans: &[(i32, i32)]) -> Option<usize> {
-    spans.iter().position(|&(l, r)| x >= l && x < r)
-}
-
-/// 분류를 delta만큼 옮긴다(양 끝에서 돌아간다).
+/// 분류를 delta만큼 옮긴다(양 끝에서 돌아간다). 배치(`tab_layout`)·판정(`tab_at`)은 ui-core.
 fn next_tab(cur: usize, delta: isize) -> usize {
-    let n = TABS.len() as isize;
-    ((cur as isize + delta).rem_euclid(n)) as usize
+    wrap_index(cur, delta, TABS.len())
 }
 
 // ---- 상단 메뉴바 단추 ----
@@ -337,37 +320,15 @@ fn popup_hwnd() -> HWND {
     HWND_POPUP.load(Ordering::Relaxed) as HWND
 }
 
-pub fn register(instance: HINSTANCE) {
-    unsafe {
-        let class = wide(CLASS);
-        let wc = WNDCLASSEXW {
-            cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
-            style: 0, // 그림자는 DWM이 4면에(CS_DROPSHADOW는 오른쪽·아래에만 생겨 이중선처럼 보였다)
-            lpfnWndProc: Some(wndproc),
-            cbClsExtra: 0,
-            cbWndExtra: 0,
-            hInstance: instance,
-            hIcon: std::ptr::null_mut(),
-            hCursor: LoadCursorW(std::ptr::null_mut(), IDC_ARROW),
-            hbrBackground: std::ptr::null_mut(),
-            lpszMenuName: std::ptr::null(),
-            lpszClassName: class.as_ptr(),
-            hIconSm: std::ptr::null_mut(),
-        };
-        RegisterClassExW(&wc);
-        let topmost = app().settings.lock().unwrap().always_on_top;
-        let ex_style = WS_EX_TOOLWINDOW | if topmost { WS_EX_TOPMOST } else { 0 };
-        let hwnd = CreateWindowExW(ex_style, class.as_ptr(), wide("몽땅클립보드").as_ptr(),
-                                   // WS_THICKFRAME은 크기 조절·DWM 그림자용으로만 두고 틀 자체는 WM_NCCALCSIZE로 없앤다.
-                                   WS_POPUP | WS_THICKFRAME, 0, 0, BASE_W, 200, std::ptr::null_mut(),
-                                   std::ptr::null_mut(), instance, std::ptr::null());
-        HWND_POPUP.store(hwnd as isize, Ordering::Relaxed);
-        if !hwnd.is_null() {
-            style_frame(hwnd);
-            SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, 0, 0,
-                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        }
-    }
+pub fn register(_instance: HINSTANCE) {
+    // 그림자는 DWM이 4면에(CS_DROPSHADOW는 오른쪽·아래에만 생겨 이중선처럼 보였다).
+    // WS_THICKFRAME은 크기 조절·DWM 그림자용으로만 두고 틀 자체는 WM_NCCALCSIZE로 없앤다(ui-core window).
+    let _ = ui_core::window::register_class(CLASS, Some(wndproc), false);
+    let topmost = app().settings.lock().unwrap().always_on_top;
+    let kind = ui_core::window::Kind::Floating { topmost, noactivate: false };
+    let hwnd = ui_core::window::create(kind, CLASS, "몽땅클립보드", URect::xywh(0, 0, BASE_W, 200), std::ptr::null_mut())
+        .unwrap_or(std::ptr::null_mut());
+    HWND_POPUP.store(hwnd as isize, Ordering::Relaxed);
 }
 
 /// 단축키·트레이에서 부른다. 지금 앞 창을 기억해 두고 마우스 옆에 띄운다.
@@ -567,13 +528,9 @@ fn move_sel(delta: isize) {
     if st.items.is_empty() {
         return;
     }
-    let last = st.items.len() as isize - 1;
-    st.sel = (st.sel as isize + delta).clamp(0, last) as usize;
-    if st.sel < st.top {
-        st.top = st.sel;
-    } else if st.sel >= st.top + VISIBLE {
-        st.top = st.sel + 1 - VISIBLE;
-    }
+    let (sel, top) = ui_core::list::move_selection(st.sel, st.top, st.items.len(), delta, VISIBLE);
+    st.sel = sel;
+    st.top = top;
 }
 
 /// 마우스가 가리키는 줄의 그림 미리보기(커서 옆).
@@ -610,137 +567,92 @@ fn kind_tag(kind: &str) -> &'static str {
     }
 }
 
-struct PaintGuard {
-    hwnd: HWND,
-    ps: PAINTSTRUCT,
-    hdc: HDC,
-    mem: HDC,
-    bmp: HBITMAP,
-    old_bmp: HGDIOBJ,
-    old_font: HGDIOBJ,
-    fonts: Vec<HFONT>,
+/// 색(UI0 이전 상수와 같은 값, `ClipPalette::LIGHT`). 다크·고대비 연결은 UI1에서.
+const PAL: ClipPalette = ClipPalette::LIGHT;
+const ACCENT: u32 = PAL.accent;
+
+const F_BODY: FontSpec = FontSpec::clear(FACE_UI, 15, 400);
+const F_SMALL: FontSpec = FontSpec::clear(FACE_UI, 12, 400);
+const F_SMALL_BOLD: FontSpec = FontSpec::clear(FACE_UI, 12, 700);
+const F_TITLE: FontSpec = FontSpec::clear(FACE_UI, 13, 700);
+const F_GLYPH: FontSpec = FontSpec::clear(FACE_GLYPH, 10, 400);
+const F_GLYPH_BIG: FontSpec = FontSpec::clear(FACE_GLYPH, 14, 400);
+
+thread_local! {
+    /// 창 스레드의 글꼴 캐시(예전에는 그릴 때마다 6개를 만들고 지웠다).
+    static FONTS: RefCell<FontCache> = const { RefCell::new(FontCache::new()) };
 }
 
-impl Drop for PaintGuard {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.mem.is_null() {
-                if !self.old_font.is_null() {
-                    SelectObject(self.mem, self.old_font);
-                }
-                if !self.old_bmp.is_null() {
-                    SelectObject(self.mem, self.old_bmp);
-                }
-                DeleteDC(self.mem);
-            }
-            for f in &self.fonts {
-                if !f.is_null() {
-                    DeleteObject(*f);
-                }
-            }
-            if !self.bmp.is_null() {
-                DeleteObject(self.bmp);
-            }
-            if !self.hdc.is_null() {
-                EndPaint(self.hwnd, &self.ps);
-            }
-        }
-    }
-}
+/// 접근성 요소 id: 머리글 단추 1..=7, 분류 묶음 50·분류 100+i, 찾기 칸 60, 목록 70·항목 1000+i, 빈 목록 안내 80.
+const A11Y_TABS: u32 = 50;
+const A11Y_SEARCH: u32 = 60;
+const A11Y_LIST: u32 = 70;
+const A11Y_EMPTY: u32 = 80;
+const A11Y_TAB0: u32 = 100;
+const A11Y_ITEM0: u32 = 1000;
 
-const ACCENT: u32 = 0x00D9731F; // BGR — 파랑(#1F73D9)
-const HEAD_BG: u32 = 0x00F5EFE8;
+fn head_button_of_id(id: u32) -> Option<HeadButton> {
+    (1..=HEAD_BUTTONS.len() as u32).contains(&id).then(|| HEAD_BUTTONS[id as usize - 1])
+}
 
 unsafe fn paint(hwnd: HWND) {
     unsafe {
-        let mut ps: PAINTSTRUCT = std::mem::zeroed();
-        let hdc = BeginPaint(hwnd, &mut ps);
-        if hdc.is_null() {
-            return;
-        }
-        let mut guard = PaintGuard {
-            hwnd, ps, hdc, mem: std::ptr::null_mut(), bmp: std::ptr::null_mut(), old_bmp: std::ptr::null_mut(),
-            old_font: std::ptr::null_mut(), fonts: Vec::new(),
-        };
-
-        let mut rc: RECT = std::mem::zeroed();
-        GetClientRect(hwnd, &mut rc);
+        let Some(mut buf) = BackBuffer::begin(hwnd) else { return };
+        let rc = buf.rect();
         let (w, h) = (rc.right, rc.bottom);
-        let mem = CreateCompatibleDC(hdc);
-        if mem.is_null() {
+        let mem = buf.dc();
+        let dpi = GetDpiForWindow(hwnd).max(96);
+        let fonts = FONTS.with(|c| {
+            let mut c = c.borrow_mut();
+            [F_BODY, F_SMALL, F_SMALL_BOLD, F_TITLE, F_GLYPH, F_GLYPH_BIG].map(|f| c.get(f, dpi))
+        });
+        if fonts.iter().any(|f| f.is_null()) {
             return;
         }
-        guard.mem = mem;
-        let bmp = CreateCompatibleBitmap(hdc, w, h);
-        if bmp.is_null() {
-            return;
-        }
-        guard.bmp = bmp;
-        guard.old_bmp = SelectObject(mem, bmp);
-
-        let mk = |px: i32, weight: i32, face: &str| {
-            CreateFontW(-scale(hwnd, px), 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 5, 0, wide(face).as_ptr())
-        };
-        let font = mk(15, 400, "맑은 고딕");
-        let small = mk(12, 400, "맑은 고딕");
-        let small_bold = mk(12, 700, "맑은 고딕");
-        let title_font = mk(13, 700, "맑은 고딕");
-        let glyph = mk(10, 400, "Segoe MDL2 Assets");
-        let glyph_big = mk(14, 400, "Segoe MDL2 Assets");
-        guard.fonts = vec![font, small, small_bold, title_font, glyph, glyph_big];
-        if guard.fonts.iter().any(|f| f.is_null()) {
-            return;
-        }
-        guard.old_font = SelectObject(mem, font);
-        SetBkMode(mem, TRANSPARENT as i32);
-
-        let fill = |r: RECT, color: u32| {
-            let brush = CreateSolidBrush(color);
-            if !brush.is_null() {
-                FillRect(mem, &r, brush);
-                DeleteObject(brush);
-            }
-        };
-        let draw = |s: &str, r: RECT, flags: u32| {
-            let mut r = r;
-            DrawTextW(mem, wide(s).as_ptr(), -1, &mut r, flags | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
-        };
+        let [font, small, small_bold, title_font, glyph, glyph_big] = fonts;
+        buf.select_font(font);
+        let p = buf.painter();
+        p.transparent();
+        let fill = |r: RECT, color: u32| p.fill(r, color);
+        let draw = |s: &str, r: RECT, flags: u32| p.text(s, r, flags);
         let pinned = { let s = app().settings.lock().unwrap(); s.sticky_popup && s.always_on_top };
         let head = scale(hwnd, HEAD_H);
         let cat_h = scale(hwnd, CAT_H);
         let row = scale(hwnd, ROW_H);
         let bw = scale(hwnd, CAPTION_W);
-        fill(rc, 0x00FFFFFF);
+        fill(rc, PAL.window);
+        let mut nodes: Vec<Node> = Vec::new();
 
         let mut st = STATE.lock().unwrap();
         let maximized = st.restore_rect.is_some();
 
         // ① 상단 메뉴바
-        fill(RECT { left: 0, top: 0, right: w, bottom: head }, HEAD_BG);
-        for b in HEAD_BUTTONS {
+        fill(RECT { left: 0, top: 0, right: w, bottom: head }, PAL.head);
+        for (n, b) in HEAD_BUTTONS.into_iter().enumerate() {
             let (l, r) = head_button_span(b, w, bw);
             let br = RECT { left: l, top: 0, right: r, bottom: head };
             let hovered = st.hover_btn == Some(b);
             let on = b == HeadButton::Pin && pinned;
             if hovered {
-                fill(br, if b == HeadButton::Close { 0x002311E8 } else if st.pressed_btn == Some(b) { 0x00CFC6BC } else { 0x00E0D8CF });
+                fill(br, if b == HeadButton::Close { PAL.close_hover } else if st.pressed_btn == Some(b) { PAL.head_pressed } else { PAL.head_hover });
             } else if on {
-                fill(br, 0x00F2DCC4);
+                fill(br, PAL.head_on);
             }
-            SetTextColor(mem, if hovered && b == HeadButton::Close { 0x00FFFFFF } else if on { ACCENT } else { 0x00333333 });
+            p.text_color(if hovered && b == HeadButton::Close { PAL.on_close_hover } else if on { ACCENT } else { PAL.glyph });
             let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Memo | HeadButton::Pin);
-            SelectObject(mem, if big { glyph_big } else { glyph });
+            p.font(if big { glyph_big } else { glyph });
             draw(&head_button_glyph(b, pinned, maximized).to_string(), br, DT_CENTER);
+            nodes.push(Node::button(n as u32 + 1, 0, head_button_name(b, pinned, maximized), URect::from_win(&br)));
         }
         let buttons_left = head_button_span(HEAD_BUTTONS[0], w, bw).0;
-        SelectObject(mem, title_font);
-        SetTextColor(mem, 0x00222222);
+        p.font(title_font);
+        p.text_color(PAL.title);
         let title_left = scale(hwnd, 10);
         draw("몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
         let title_right = title_left + text_width(mem, "몽땅클립보드") + scale(hwnd, 8);
         if title_right < buttons_left - scale(hwnd, 24) {
-            SelectObject(mem, small);
-            SetTextColor(mem, 0x00777777);
+            p.font(small);
+            p.text_color(PAL.hint);
             let hint = match st.hover_btn {
                 Some(b) => head_button_name(b, pinned, maximized).to_string(),
                 None => "1~9 선택 · ←→ 분류".to_string(),
@@ -754,38 +666,40 @@ unsafe fn paint(hwnd: HWND) {
             st.tab_spans.clear();
             drop(st);
             own_border(mem, rc);
-            ui_core::probe::record(mem, w, h);
-            BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+            buf.finish();
+            a11y::publish(hwnd, nodes);
             return;
         }
 
         // ② 분류 메뉴바
-        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, 0x00FAFAFA);
-        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, 0x00E3E3E3);
-        SelectObject(mem, small_bold);
+        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, PAL.tab_bar);
+        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, PAL.tab_line);
+        p.font(small_bold);
         let long: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(false))).collect();
         let short: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(true))).collect();
         let margin = scale(hwnd, TAB_MARGIN);
         let (spans, use_short) = tab_layout(&long, &short, w - 2 * margin, scale(hwnd, TAB_PAD), scale(hwnd, TAB_MIN_PAD));
         st.tab_spans = spans.iter().map(|(l, r)| (l + margin, r + margin)).collect();
+        nodes.push(Node::new(A11Y_TABS, 0, Role::Tab, "분류", URect::new(0, head, w, head + cat_h)));
         for (i, tab) in TABS.iter().enumerate() {
             let (l, r) = st.tab_spans[i];
             let tr = RECT { left: l, top: head, right: r, bottom: head + cat_h - 1 };
             let selected = i == st.tab;
             if selected {
-                fill(tr, 0x00FFFFFF);
+                fill(tr, PAL.window);
                 fill(RECT { left: l + scale(hwnd, 3), top: head + cat_h - scale(hwnd, 3), right: r - scale(hwnd, 3),
                             bottom: head + cat_h - 1 }, ACCENT);
-                SelectObject(mem, small_bold);
-                SetTextColor(mem, ACCENT);
+                p.font(small_bold);
+                p.text_color(ACCENT);
             } else {
                 if st.hover_tab == Some(i) {
-                    fill(tr, 0x00EFEFEF);
+                    fill(tr, PAL.tab_hover);
                 }
-                SelectObject(mem, small);
-                SetTextColor(mem, 0x00444444);
+                p.font(small);
+                p.text_color(PAL.tab_text);
             }
             draw(tab.label(use_short), tr, DT_CENTER | DT_END_ELLIPSIS);
+            nodes.push(Node::item(A11Y_TAB0 + i as u32, A11Y_TABS, Role::TabItem, tab.label(false), URect::from_win(&tr), selected));
         }
 
         // 키워드검색 입력 줄
@@ -796,28 +710,28 @@ unsafe fn paint(hwnd: HWND) {
             let y = head + cat_h;
             let pad = scale(hwnd, 6);
             let boxr = RECT { left: pad, top: y + scale(hwnd, 3), right: w - pad, bottom: y + row - scale(hwnd, 3) };
-            let border = CreateSolidBrush(ACCENT);
-            if !border.is_null() {
-                FrameRect(mem, &boxr, border);
-                DeleteObject(border);
-            }
-            SelectObject(mem, small);
+            p.frame(boxr, ACCENT);
+            p.font(small);
             let text_r = RECT { left: boxr.left + pad, top: boxr.top, right: boxr.right - pad, bottom: boxr.bottom };
             if needle.is_empty() {
-                SetTextColor(mem, 0x00888888);
+                p.text_color(PAL.placeholder);
                 draw("▏찾을 글자를 입력하세요 · 저장된 모든 항목에서 찾기", text_r, DT_END_ELLIPSIS);
             } else {
-                SetTextColor(mem, 0x00222222);
+                p.text_color(PAL.title);
                 draw(&format!("{}{}▏  · {}개 · Esc 지우기", st.query, st.comp, st.items.len()), text_r, DT_END_ELLIPSIS);
             }
+            let mut n = Node::new(A11Y_SEARCH, 0, Role::Edit, format!("키워드검색: {needle}"), URect::from_win(&boxr));
+            n.focused = st.items.is_empty();
+            nodes.push(n);
         }
 
         // ③ 목록
         let top_y = list_top(head, cat_h, searching, row);
         let visible_rows = ((h - top_y).max(0) / row).max(1) as usize;
+        nodes.push(Node::new(A11Y_LIST, 0, Role::List, "몽땅클립보드 항목", URect::new(0, top_y, w, h)));
         if st.items.is_empty() {
-            SelectObject(mem, font);
-            SetTextColor(mem, 0x00666666);
+            p.font(font);
+            p.text_color(PAL.empty_text);
             let load_error = app().recent_error.lock().unwrap().clone();
             let msg = match tab {
                 // 저장소를 읽지 못해 비어 있는 경우를 "기록 없음"으로 잘못 알리지 않는다.
@@ -826,43 +740,87 @@ unsafe fn paint(hwnd: HWND) {
                 Tab::Cat(Category::All) | Tab::Search => "아직 기록된 항목이 없습니다. 무엇이든 복사해 보세요.".to_string(),
                 Tab::Cat(c) => format!("'{}' 분류에 해당하는 항목이 없습니다.", c.label()),
             };
-            draw(&msg, RECT { left: scale(hwnd, 12), top: top_y, right: w, bottom: top_y + row }, DT_END_ELLIPSIS);
+            let mr = RECT { left: scale(hwnd, 12), top: top_y, right: w, bottom: top_y + row };
+            draw(&msg, mr, DT_END_ELLIPSIS);
+            nodes.push(Node::new(A11Y_EMPTY, A11Y_LIST, Role::Text, msg, URect::from_win(&mr)));
         }
         for (i, item) in st.items.iter().enumerate().skip(st.top).take(visible_rows) {
             let y = top_y + (i - st.top) as i32 * row;
             let r = RECT { left: 0, top: y, right: w, bottom: y + row };
             if i == st.sel {
-                fill(r, 0x00F7E3CF);
+                fill(r, PAL.selected_row);
             } else if st.hover == Some(i) {
-                fill(r, 0x00FBF3EC);
+                fill(r, PAL.hover_row);
             }
-            SelectObject(mem, small);
-            SetTextColor(mem, 0x00EB6325);
+            p.font(small);
+            p.text_color(PAL.shortcut);
             let shortcut = if i - st.top < 9 && needle.is_empty() { format!("{}", i - st.top + 1) } else { String::new() };
             draw(&shortcut, RECT { left: scale(hwnd, 8), top: y, right: scale(hwnd, 24), bottom: y + row }, DT_CENTER);
-            SetTextColor(mem, 0x00888888);
+            p.text_color(PAL.tag);
             let tag = format!("{}{}{}{}", if item.pinned { "★" } else { "" }, kind_tag(&item.kind),
                 if item.preview.contains("웹 ·") { " · 웹" } else { "" },
                 if item.preview.contains("서식 포함") { " · 서식 포함" } else { "" });
             draw(&tag, RECT { left: scale(hwnd, 28), top: y, right: scale(hwnd, 70), bottom: y + row }, 0);
-            SelectObject(mem, font);
-            SetTextColor(mem, 0x00222222);
+            p.font(font);
+            p.text_color(PAL.title);
             let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) } else { 0 };
             draw(&item.preview, RECT { left: scale(hwnd, 72), top: y, right: w - actions - scale(hwnd, 10), bottom: y + row },
                  DT_END_ELLIPSIS);
             if st.hover == Some(i) {
                 let del = RECT { left: w - scale(hwnd, ROW_DELETE_W), top: y, right: w, bottom: y + row };
                 let pin = RECT { left: del.left - scale(hwnd, ROW_PIN_W), top: y, right: del.left, bottom: y + row };
-                SetTextColor(mem, 0x00555555);
+                p.text_color(PAL.row_action);
                 draw("✕", del, DT_CENTER);
                 draw(if item.pinned { "📌" } else { "📍" }, pin, DT_CENTER);
             }
+            let mut n = Node::item(A11Y_ITEM0 + i as u32, A11Y_LIST, Role::ListItem,
+                                   format!("{shortcut} {tag} {}", item.preview).trim().to_string(), URect::from_win(&r), i == st.sel);
+            n.invoke = true;
+            n.focused = i == st.sel;
+            nodes.push(n);
         }
         drop(st);
         own_border(mem, rc);
-        ui_core::probe::record(mem, w, h);
-        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+        buf.finish();
+        a11y::publish(hwnd, nodes);
     }
+}
+
+/// 접근성 동작(화면 읽기 프로그램의 호출·선택)을 마우스·키보드와 같은 길로.
+fn a11y_action(hwnd: HWND, action: a11y::Action, id: u32) {
+    if let Some(b) = head_button_of_id(id) {
+        if action == a11y::Action::Invoke {
+            run_head_button(hwnd, b);
+            unsafe { InvalidateRect(hwnd, std::ptr::null(), 0) };
+        }
+        return;
+    }
+    if (A11Y_TAB0..A11Y_TAB0 + TABS.len() as u32).contains(&id) {
+        set_tab((id - A11Y_TAB0) as usize);
+    } else if id >= A11Y_ITEM0 {
+        let i = (id - A11Y_ITEM0) as usize;
+        if action == a11y::Action::Invoke {
+            choose(i);
+            return;
+        }
+        let sel = STATE.lock().unwrap().sel;
+        move_sel(i as isize - sel as isize);
+    }
+    unsafe { InvalidateRect(hwnd, std::ptr::null(), 0) };
+}
+
+/// 상단 메뉴바 단추 실행(마우스·접근성 공통). true면 메뉴를 띄웠다(다시 그리기는 메뉴 쪽에서).
+fn run_head_button(hwnd: HWND, b: HeadButton) -> bool {
+    match b {
+        HeadButton::Settings => { unsafe { settings_menu(hwnd) }; return true; }
+        HeadButton::Capture => { hide(); crate::capture_screen(); }
+        HeadButton::Memo => { hide(); crate::start_memo(); }
+        HeadButton::Pin => toggle_pin(),
+        HeadButton::Minimize => minimize(),
+        HeadButton::Maximize => toggle_max(hwnd),
+        HeadButton::Close => hide(),
+    }
+    false
 }
 
 /// '항상 위': 다른 창을 눌러도 닫히지 않고 맨 위에 남는다. 끄면 원래처럼 포커스를 잃을 때 닫힌다.
@@ -879,7 +837,7 @@ fn toggle_pin() {
 }
 
 fn xy(lp: LPARAM) -> (i32, i32) {
-    ((lp & 0xFFFF) as i16 as i32, ((lp >> 16) & 0xFFFF) as i16 as i32)
+    ui_core::geom::xy(lp)
 }
 
 fn client_width(hwnd: HWND) -> i32 {
@@ -938,34 +896,9 @@ unsafe fn window_menu(hwnd: HWND, pt: POINT) {
     }
 }
 
-/// 메뉴 모델(`settings_menu::Entry`)을 Win32 메뉴로 만든다. 하위 메뉴는 부모 메뉴가 없앨 때 함께 없어진다.
+/// 메뉴 모델(`settings_menu::Entry` = `ui_core::menu::Entry`)을 Win32 메뉴로.
 unsafe fn build_menu(entries: &[Entry]) -> HMENU {
-    unsafe {
-        let menu = CreatePopupMenu();
-        if menu.is_null() {
-            return menu;
-        }
-        for e in entries {
-            match e {
-                Entry::Separator => { AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null()); }
-                Entry::Item { id, label, checked, radio, enabled } => {
-                    let flags = MF_STRING | if *checked && !*radio { MF_CHECKED } else { 0 }
-                        | if *enabled { 0 } else { MF_GRAYED };
-                    AppendMenuW(menu, flags, *id, wide(label).as_ptr());
-                    if *checked && *radio {
-                        CheckMenuRadioItem(menu, *id as u32, *id as u32, *id as u32, MF_BYCOMMAND);
-                    }
-                }
-                Entry::Sub { label, entries } => {
-                    let sub = build_menu(entries);
-                    if !sub.is_null() {
-                        AppendMenuW(menu, MF_STRING | MF_POPUP, sub as usize, wide(label).as_ptr());
-                    }
-                }
-            }
-        }
-        menu
-    }
+    unsafe { ui_core::menu::build(entries) }
 }
 
 /// 상단 메뉴바 '설정' 단추: 관리창과 같은 설정을 메뉴로 보여 주고, 고르면 바로 반영한다(적용 단추 없음).
@@ -1040,11 +973,40 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 paint(hwnd);
                 0
             }
-            WM_GETMINMAXINFO => {
-                let info = &mut *(lp as *mut MINMAXINFO);
-                info.ptMinTrackSize.x = scale(hwnd, MIN_W);
-                // 접힌 창은 머리글 높이까지 줄어야 한다.
-                info.ptMinTrackSize.y = scale(hwnd, MIN_H);
+            // 비클라이언트 틀 없애기(WM_NCCALCSIZE)·크기 조절 판정(WM_NCHITTEST)·최소 크기는 ui-core 틀 한 곳.
+            // 테두리는 한 겹만 — own_border·DWM 참고. 접힌 창은 머리글 높이까지 줄어야 한다(MIN_H).
+            WM_GETMINMAXINFO | WM_NCCALCSIZE | WM_NCHITTEST => {
+                let mut rc: RECT = std::mem::zeroed();
+                GetClientRect(hwnd, &mut rc);
+                let collapsed = rc.bottom < scale(hwnd, HEAD_H) + scale(hwnd, CAT_H) + scale(hwnd, ROW_H);
+                let maximized = STATE.lock().unwrap().restore_rect.is_some();
+                let on_button = |x: i32, y: i32| head_button_at(hwnd, x, y).is_some();
+                let spec = ui_core::window::FrameSpec { head: HEAD_H, min_w: MIN_W, min_h: MIN_H, on_button: &on_button,
+                                                        maximized, collapsed };
+                match ui_core::window::frame_message(hwnd, msg, wp, lp, &spec) {
+                    Some(r) => r,
+                    None => DefWindowProcW(hwnd, msg, wp, lp),
+                }
+            }
+            WM_DPICHANGED => {
+                // 다른 배율 모니터로 옮겨지면 제안 사각형으로(글꼴은 DPI 열쇠라 새로 만들어진다).
+                let dpi = ui_core::dpi::on_dpi_changed(hwnd, wp, lp);
+                FONTS.with(|c| c.borrow_mut().retain_dpi(dpi));
+                InvalidateRect(hwnd, std::ptr::null(), 0);
+                0
+            }
+            WM_GETOBJECT => match a11y::on_getobject(hwnd, wp, lp) {
+                Some(r) => r,
+                None => DefWindowProcW(hwnd, msg, wp, lp),
+            },
+            WM_DESTROY => {
+                a11y::on_destroy(hwnd);
+                0
+            }
+            m if m == a11y::action_message() => {
+                if let Some((action, id)) = a11y::decode(wp, lp) {
+                    a11y_action(hwnd, action, id);
+                }
                 0
             }
             WM_ERASEBKGND => 1,
@@ -1078,21 +1040,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     return MA_NOACTIVATE as LRESULT;
                 }
                 DefWindowProcW(hwnd, msg, wp, lp)
-            }
-            // 비클라이언트 틀을 없앤다(창 전체가 그리기 영역). 테두리는 한 겹만 — own_border·DWM 참고.
-            WM_NCCALCSIZE if wp != 0 => 0,
-            WM_NCHITTEST => {
-                let (sx, sy) = xy(lp);
-                let mut pt = POINT { x: sx, y: sy };
-                ScreenToClient(hwnd, &mut pt);
-                let mut rc: RECT = std::mem::zeroed();
-                GetClientRect(hwnd, &mut rc);
-                let (head, row) = (scale(hwnd, HEAD_H), scale(hwnd, ROW_H));
-                let maximized = STATE.lock().unwrap().restore_rect.is_some();
-                let collapsed = rc.bottom < head + scale(hwnd, CAT_H) + row;
-                let on_button = head_button_at(hwnd, pt.x, pt.y).is_some();
-                frame_hit(pt.x, pt.y, rc.right, rc.bottom, scale(hwnd, GRIP), head, on_button, maximized, collapsed)
-                    .code() as LRESULT
             }
             WM_NCLBUTTONDBLCLK if wp == HTCAPTION as usize => {
                 toggle_max(hwnd);
@@ -1181,17 +1128,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 0
             }
             WM_IME_COMPOSITION => {
-                if lp as u32 & GCS_COMPSTR != 0 {
-                    let imc = ImmGetContext(hwnd);
-                    let bytes = ImmGetCompositionStringW(imc, GCS_COMPSTR, std::ptr::null_mut(), 0);
-                    let mut buf = vec![0u16; (bytes.max(0) as usize) / 2];
-                    if !buf.is_empty() {
-                        ImmGetCompositionStringW(imc, GCS_COMPSTR, buf.as_mut_ptr() as _, bytes as u32);
-                    }
-                    ImmReleaseContext(hwnd, imc);
+                if let Some(comp) = ui_core::text_input::composition_string(hwnd, lp) {
                     {
                         let mut st = STATE.lock().unwrap();
-                        st.comp = String::from_utf16_lossy(&buf);
+                        st.comp = comp;
                         if !st.comp.is_empty() {
                             st.tab = SEARCH_TAB;
                         }
@@ -1258,15 +1198,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let btn = head_button_at(hwnd, x, y);
                 if btn.is_some() || pressed.is_some() {
                     // Windows 캡션 단추처럼 누른 단추 위에서 뗄 때만 동작한다.
-                    match btn.filter(|b| Some(*b) == pressed) {
-                        Some(HeadButton::Settings) => { settings_menu(hwnd); return 0; }
-                        Some(HeadButton::Capture) => { hide(); crate::capture_screen(); }
-                        Some(HeadButton::Memo) => { hide(); crate::start_memo(); }
-                        Some(HeadButton::Pin) => toggle_pin(),
-                        Some(HeadButton::Minimize) => minimize(),
-                        Some(HeadButton::Maximize) => toggle_max(hwnd),
-                        Some(HeadButton::Close) => hide(),
-                        None => {}
+                    if let Some(b) = btn.filter(|b| Some(*b) == pressed) {
+                        if run_head_button(hwnd, b) {
+                            return 0;
+                        }
                     }
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                     return 0;
@@ -1352,7 +1287,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 mod tests {
     use super::*;
     use crate::category::CategorySet;
-    use crate::frame::draws_own_border;
+    use ui_core::frame::draws_own_border;
 
     #[test]
     fn caption_buttons_right_to_left_close_max_min_pin_memo_capture_settings() {
@@ -1433,50 +1368,13 @@ mod tests {
         assert_eq!(next_tab(SEARCH_TAB, 1), 0);
     }
 
-    fn assert_fits(spans: &[(i32, i32)], avail: i32) {
-        assert!(spans.first().unwrap().0 >= 0 && spans.last().unwrap().1 <= avail);
-        for pair in spans.windows(2) {
-            assert!(pair[0].1 <= pair[1].0, "겹침: {pair:?}");
-        }
-    }
-
     #[test]
-    fn tab_layout_shrinks_padding_then_short_labels_then_equal_share() {
-        let long = [24, 24, 24, 24, 24, 12, 48, 60];
-        let short = [24, 24, 24, 24, 24, 12, 24, 24];
-        // 넉넉하면 기본 여백 9
-        let (s, short_used) = tab_layout(&long, &short, 600, 9, 4);
-        assert!(!short_used);
-        assert_eq!(s[0], (0, 42));
-        assert_eq!(s[7].1, 240 + 8 * 18);
-        assert_fits(&s, 600);
-        // 기본 여백이 넘치면 최소 여백 4 (240 + 64 = 304)
-        let (s, short_used) = tab_layout(&long, &short, 320, 9, 4);
-        assert!(!short_used);
-        assert_eq!(s[7].1, 304);
-        assert_fits(&s, 320);
-        // 그래도 넘치면 짧은 이름 (180 + 64 = 244)
-        let (s, short_used) = tab_layout(&long, &short, 260, 9, 4);
-        assert!(short_used);
-        assert_eq!(s[7].1, 244);
-        // 마지막: 같은 폭으로 나눔(말줄임)
-        let (s, short_used) = tab_layout(&long, &short, 200, 9, 4);
-        assert!(short_used);
-        assert_eq!(s.len(), 8);
-        assert_eq!((s[0], s[7].1), ((0, 25), 200));
-        assert_fits(&s, 200);
-        let (s, _) = tab_layout(&long, &short, -5, 9, 4);
-        assert!(s.iter().all(|(l, r)| *l == 0 && *r == 0));
-    }
-
-    #[test]
-    fn tab_hit_uses_spans() {
+    fn tab_hit_uses_spans_from_ui_core() {
         let spans = [(6, 48), (48, 90), (90, 132)];
         assert_eq!(tab_at(5, &spans), None);
-        assert_eq!(tab_at(6, &spans), Some(0));
         assert_eq!(tab_at(48, &spans), Some(1));
-        assert_eq!(tab_at(131, &spans), Some(2));
-        assert_eq!(tab_at(132, &spans), None);
+        let (s, short) = tab_layout(&[24, 60], &[24, 24], 600, 9, 4);
+        assert_eq!((s, short), (vec![(0, 42), (42, 120)], false));
     }
 
     #[test]
@@ -1529,10 +1427,13 @@ mod tests {
 
     /// 화면 그리기 결과 해시(UI0 이식 전후 비교용). 같은 상태 → 같은 픽셀이어야 한다.
     /// 글꼴·ClearType·배율에 따라 값이 달라지므로 기준값은 이식 전 같은 PC에서 뽑았다(`--ignored`로만 실행).
+    /// 빠른 목록 창은 하나(STATE 전역)이고 만든 스레드가 끝나면 없어지므로 창 시험은 한 번에 하나씩.
+    static UI_TEST: Mutex<()> = Mutex::new(());
+
     pub(crate) fn render_cases() -> Vec<(&'static str, ui_core::probe::Frame)> {
         let app = crate::test_app();
         unsafe {
-            if popup_hwnd().is_null() {
+            if popup_hwnd().is_null() || IsWindow(popup_hwnd()) == 0 {
                 register(windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null()));
             }
         }
@@ -1589,6 +1490,7 @@ mod tests {
     #[test]
     #[ignore]
     fn measure_show_ms() {
+        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
         render_cases();
         let hwnd = popup_hwnd();
         let mut ms = Vec::new();
@@ -1605,13 +1507,58 @@ mod tests {
         println!("MEASURE popup show first={first:.3}ms median={:.3}ms p90={:.3}ms", ms[ms.len() / 2], ms[ms.len() * 9 / 10]);
     }
 
+    /// UI0 이전(8a356bf9, 이 PC 96 DPI·ClearType) 그리기 해시. 글꼴 설정이 다른 PC에서는 값이 다르므로 `--ignored`로만.
+    const BEFORE_UI0: [(&str, &str, u64); 10] = [
+        ("all", "440x420", 0x764403f2da0d13d2),
+        ("hover", "440x420", 0xfb8e0125247caf1d),
+        ("hover_btn_pressed", "440x420", 0xb79fa380c483a7a0),
+        ("search", "440x420", 0xd95f5ed5158b927e),
+        ("search_empty", "440x420", 0x542cebf266f6ad04),
+        ("empty_error", "440x420", 0xe147f4b478cca2c1),
+        ("empty_cat", "440x420", 0x3febe35e93b83781),
+        ("collapsed", "440x122", 0xdd002344b5fa7c88),
+        ("narrow_pinned_max", "420x300", 0xea36edee890c2d27),
+        ("wide", "900x600", 0xc9e0754688a54aac),
+    ];
+
     #[test]
     #[ignore]
     fn golden_render_matches_before_ui0() {
+        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
         let got = render_cases();
         for (name, f) in &got {
             println!("RENDER popup {name} {}x{} {:016x}", f.width, f.height, f.hash);
         }
+        let got: Vec<(&str, String, u64)> = got.iter().map(|(n, f)| (*n, format!("{}x{}", f.width, f.height), f.hash)).collect();
+        let want: Vec<(&str, String, u64)> = BEFORE_UI0.iter().map(|(n, s, h)| (*n, s.to_string(), *h)).collect();
+        assert_eq!(got, want, "UI0 이전과 화면이 달라짐");
+    }
+
+    /// 접근성: 모든 요소에 이름, 머리글 단추 7·분류 8·보이는 항목마다 목록 항목. 호출·선택은 UI 스레드 메시지로 같은 일을 한다.
+    #[test]
+    fn accessibility_tree_names_every_drawn_element() {
+        let _ui = UI_TEST.lock().unwrap_or_else(|e| e.into_inner());
+        render_cases();
+        let hwnd = popup_hwnd();
+        let nodes = a11y::nodes(hwnd);
+        assert!(a11y::unnamed(&nodes).is_empty(), "빈 이름: {:?}", a11y::unnamed(&nodes));
+        assert_eq!(nodes.iter().filter(|n| n.role == Role::Button && n.invoke).count(), 7);
+        assert_eq!(nodes.iter().filter(|n| n.role == Role::TabItem).count(), TABS.len());
+        assert_eq!(nodes.iter().filter(|n| n.role == Role::TabItem && n.selected == Some(true)).count(), 1);
+        // 마지막 상태("wide", 그림 분류 선택)의 항목 6개.
+        let items: Vec<_> = nodes.iter().filter(|n| n.role == Role::ListItem).collect();
+        assert_eq!(items.len(), 6);
+        assert!(items[0].name.contains("고정한 회의 메모"));
+        assert_eq!(items.iter().filter(|n| n.selected == Some(true)).count(), 1);
+        // 접근성 '선택'(항목 3) → 선택 이동, '선택'(분류 0) → 분류 변경. 호출은 붙여넣기라 시험하지 않는다.
+        STATE.lock().unwrap().sel = 0;
+        a11y_action(hwnd, a11y::Action::Select, A11Y_ITEM0 + 3);
+        assert_eq!(STATE.lock().unwrap().sel, 3);
+        STATE.lock().unwrap().tab = 2;
+        a11y_action(hwnd, a11y::Action::Select, A11Y_TAB0);
+        assert_eq!(STATE.lock().unwrap().tab, 0);
+        assert_eq!(head_button_of_id(7), Some(HeadButton::Close));
+        assert_eq!(head_button_of_id(8), None);
     }
 
     #[test]

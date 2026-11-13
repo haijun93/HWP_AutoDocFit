@@ -4,7 +4,6 @@
 #[path = "../../kagent/src/json.rs"] mod json;
 #[path = "../../kagent/src/util.rs"] mod util;
 #[path = "../../kagent/src/lifecycle.rs"] mod lifecycle;
-#[path = "../../kagent/src/frame.rs"] mod frame;
 #[path = "../../kagent/src/hotkey.rs"] mod hotkey;
 #[path = "../../kagent/src/open_rules.rs"] mod open_rules;
 mod install;
@@ -79,7 +78,7 @@ fn run() -> Result<(),String> {
     let name = util::wide(&paths::object_name("Local\\HwpAutoDocFit.kvf",root.as_deref()));
     dispatch(Event::Start);
     unsafe {
-        windows_sys::Win32::UI::HiDpi::SetProcessDpiAwarenessContext(windows_sys::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        ui_core::dpi::enable_per_monitor_v2();
         let mutex = CreateMutexW(std::ptr::null(),0,name.as_ptr());
         if mutex.is_null() { dispatch(Event::Failed); return Err("뮤텍스 생성 실패".into()); }
         struct Handle(HANDLE);

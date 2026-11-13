@@ -9,7 +9,6 @@
 
 mod capture_dirs;
 mod category;
-mod frame;
 mod hotkey;
 mod lifecycle;
 mod clip;
@@ -43,7 +42,6 @@ use windows_sys::Win32::System::DataExchange::{AddClipboardFormatListener, GetCl
                                                RemoveClipboardFormatListener};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     RegisterHotKey, UnregisterHotKey,
 };
@@ -1046,7 +1044,7 @@ fn main() {
             CloseHandle(instance_mutex);
             return;
         }
-        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        ui_core::dpi::enable_per_monitor_v2();
     }
     // 로그인 직후 자동 시작이면 다른 프로그램이 먼저 뜨도록 늦게 시작한다.
     if let Some(i) = args.iter().position(|a| a == "--delay") {
