@@ -233,6 +233,20 @@ impl<'a> View<'a> {
     pub fn live_count(&self) -> usize {
         self.flags.iter().filter(|&&f| f & flag::DELETED == 0).count()
     }
+    /// 살아 있는 바로 아래 항목들.
+    pub fn children(&self, dir: u32) -> Vec<u32> {
+        let hi = if dir < self.base_len && self.flags[dir as usize] & flag::APPENDED == 0 && !self.dirty {
+            self.end[dir as usize]
+        } else {
+            self.base_len
+        };
+        let lo = if hi == self.base_len && self.dirty { 0 } else { dir + 1 };
+        (lo..hi)
+            .chain(self.base_len..self.len() as u32)
+            .filter(|&j| j != dir && self.is_live(j) && self.parent_of(j) == dir)
+            .collect()
+    }
+
     /// 경로(`C:\a\b`, 대소문자 무시)로 살아 있는 폴더를 찾는다.
     pub fn find_dir(&self, path: &str) -> Option<u32> {
         let mut comps = path.split(['\\', '/']).filter(|c| !c.is_empty());
@@ -242,20 +256,10 @@ impl<'a> View<'a> {
         })?;
         for c in comps {
             let lc = c.to_lowercase();
-            let hi = if cur < self.base_len && self.flags[cur as usize] & flag::APPENDED == 0 {
-                self.end[cur as usize]
-            } else {
-                self.len() as u32
-            };
-            let found = (cur + 1..hi)
-                .chain(self.base_len.max(hi)..self.len() as u32)
-                .find(|&j| {
-                    self.is_live(j)
-                        && self.flags[j as usize] & flag::DIR != 0
-                        && self.parent_of(j) == cur
-                        && self.name_of(j).to_lowercase() == lc
-                });
-            cur = found?;
+            cur = self
+                .children(cur)
+                .into_iter()
+                .find(|&j| self.flags[j as usize] & flag::DIR != 0 && self.name_of(j).to_lowercase() == lc)?;
         }
         Some(cur)
     }

@@ -85,6 +85,25 @@ pub enum Request {
         #[serde(default = "default_stale_limit")]
         limit: usize,
     },
+    /// FN1: 드라이브 전체 파일명 검색.
+    NamesQuery {
+        id: u64,
+        text: String,
+        #[serde(default = "default_names_limit")]
+        limit: usize,
+        /// `relevance`(기본)·`name`·`path`.
+        #[serde(default)]
+        sort: Option<String>,
+        /// 숨김·시스템 항목 포함(기본 참).
+        #[serde(default = "default_true")]
+        hidden: bool,
+    },
+    /// FN1: 파일명 색인 (다시) 만들기. 서비스 모드는 roots 없이(고정 드라이브 전체), 사용자 모드는 roots 필수.
+    NamesBuild {
+        #[serde(default)]
+        roots: Option<Vec<String>>,
+    },
+    NamesStatus {},
 }
 /// `query` 요청.
 #[derive(Deserialize, Debug)]
@@ -117,6 +136,12 @@ fn default_refs() -> usize {
 }
 fn default_stale_limit() -> usize {
     1000
+}
+fn default_names_limit() -> usize {
+    100
+}
+fn default_true() -> bool {
+    true
 }
 pub fn decode(bytes: &[u8]) -> Result<Request> {
     if bytes.len() > MAX_REQUEST {
@@ -210,6 +235,7 @@ pub struct Handler {
     uploads: Arc<Mutex<Uploads>>,
     mode: &'static str,
     last_error: Arc<Mutex<Option<String>>>,
+    names: Arc<crate::names::NamesService>,
 }
 struct QueryLease {
     active: Active,
@@ -294,7 +320,12 @@ impl Handler {
             uploads: Arc::new(Mutex::new(Uploads::default())),
             mode,
             last_error: Arc::new(Mutex::new(None)),
+            names: crate::names::NamesService::new(mode),
         }
+    }
+    /// FN1 파일명 색인(서비스 시작 때 만들기·멈출 때 USN 따라가기 정리에 쓴다).
+    pub fn names(&self) -> &Arc<crate::names::NamesService> {
+        &self.names
     }
     fn note_error(&self, e: &str) {
         if let Ok(mut last) = self.last_error.lock() {
@@ -517,6 +548,22 @@ impl Handler {
                 after,
                 limit,
             } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
+            Request::NamesQuery {
+                id,
+                text,
+                limit,
+                sort,
+                hidden,
+            } => {
+                let (_lease, flag) = self.lease(sid, id)?;
+                let mut r = self
+                    .names
+                    .query(sid, &text, limit, sort.as_deref(), hidden, flag)?;
+                r["id"] = json!(id);
+                Ok(r)
+            }
+            Request::NamesBuild { roots } => self.names.build(roots),
+            Request::NamesStatus {} => self.names.status(),
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -819,6 +866,12 @@ pub async fn run_bound_mode(
     mode: &'static str,
 ) -> Result<()> {
     let handler = Handler::with_mode(root, mode);
+    if mode == "service" {
+        // 서비스는 시작하자마자 드라이브 전체 이름 색인을 만든다(그동안 names_query는 상태를 알려 줌).
+        if let Err(e) = handler.names().build(None) {
+            handler.note_error(&e.to_string());
+        }
+    }
     let permits = Arc::new(tokio::sync::Semaphore::new(32));
     let mut clients = tokio::task::JoinSet::new();
     loop {
@@ -833,6 +886,7 @@ pub async fn run_bound_mode(
     }
     clients.abort_all();
     while clients.join_next().await.is_some() {}
+    handler.names().stop_followers();
     Ok(())
 }
 #[cfg(test)]
