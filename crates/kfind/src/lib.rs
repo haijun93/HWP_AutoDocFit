@@ -1,4 +1,5 @@
 pub mod doctable;
+pub mod ingest;
 pub mod install;
 pub mod pipe;
 pub mod service;
