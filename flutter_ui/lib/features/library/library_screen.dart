@@ -152,8 +152,9 @@ class LibraryScreen extends StatefulWidget {
   });
 
   /// 검색창의 본문검색·위계검색(ISUI2). 있으면 검색창 옆에 파일명·본문검색·위계검색 메뉴가 나타나고
-  /// 세 메뉴가 검색어를 함께 쓴다. 기본 앱은 몽땅검색 명령을 쓴다([timemachineLibraryDocumentSearch]).
+  /// 세 메뉴가 검색어를 함께 쓴다. 기존 호출자의 검색 어댑터를 주입할 때 사용한다.
   final LibraryDocumentSearch? documentSearch;
+  /// 기본 앱의 본문·위계검색: 서버가 상자 범위와 자료 ID를 반환한다.
   final ScopedLibraryDocumentSearch? scopedDocumentSearch;
 
   /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
