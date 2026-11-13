@@ -2134,6 +2134,17 @@ class DesktopWebBridge:
             self._library_idle_registered = True
         return scheduler
 
+    def _register_notebook_idle_job(self):
+        """업무자료함 출처 변경분 작업(NBIDX1)을 klib 브리지를 처음 만들 때 한 번 등록한다.
+        비교·다시 색인은 klib(nb_source_check·nb_source_refresh), hwp·pdf 추출만 NotebookService가 한다."""
+        scheduler = self._idle_scheduler()
+        if not getattr(self, "_notebook_idle_registered", False):
+            from docfit_app.notebook_idle_refresh import NOTEBOOK_IDLE_EVERY_SECONDS, NotebookSourceRefreshJob
+            job = NotebookSourceRefreshJob(lambda: getattr(self, "_library_bridge", None), self._notebook_service_for)
+            scheduler.register(job, every=NOTEBOOK_IDLE_EVERY_SECONDS)
+            self._notebook_idle_registered = True
+        return scheduler
+
     def _timemachine_send_to_feature(self, feature, paths):
         """타임머신에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
         if feature == "rename_batch":
@@ -2540,6 +2551,7 @@ class DesktopWebBridge:
             self._library_bridge = LibraryBridge()
             try:
                 self._idle_scheduler()
+                self._register_notebook_idle_job()
             except Exception:
                 logging.getLogger(__name__).debug("쉬는 시간 색인 등록 실패", exc_info=True)
         return self._library_bridge
@@ -2680,15 +2692,20 @@ class DesktopWebBridge:
                 # 노트 HWPX 내보내기 저장 위치(네이티브 저장 대화상자, 경로는 호스트에만 보관).
                 import uuid
                 return self._file_dialogs.select_files(uuid.uuid4().hex, "notebook_hwpx", "save")
-            if getattr(self, "_notebook_service", None) is None:
-                from docfit_app.notebook_service import NotebookService
-                self._notebook_service = NotebookService(self._get_library_bridge())
+            self._notebook_service_for(self._get_library_bridge())
             if cmd == "nb_export_hwpx":
                 target = self._selection_path(request, "notebook_hwpx", "output_selection_id")
                 return self._notebook_service.export_hwpx(request, target)
             return self._notebook_service.handle(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    def _notebook_service_for(self, bridge):
+        """업무자료함 중계 서비스(앱에 하나). 화면 요청과 쉬는 시간 출처 다시 색인이 같은 서비스를 쓴다."""
+        if getattr(self, "_notebook_service", None) is None:
+            from docfit_app.notebook_service import NotebookService
+            self._notebook_service = NotebookService(bridge)
+        return self._notebook_service
 
     def _library_drop_watch(self, active):
         """자료함 화면이 열려 있는 동안 창에 놓은 파일을 자료함 항목으로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
