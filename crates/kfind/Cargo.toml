@@ -6,10 +6,11 @@ publish = false
 [workspace]
 [dependencies]
 kfind-core = { path = "../../kfind/core" }
+kfind-names = { path = "../../kfind/names" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros"] }
 windows-service = "0.8"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_Memory"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_Pipes", "Win32_System_Memory", "Win32_System_Registry", "Win32_System_IO"] }
 [dev-dependencies]
 tempfile = "3"
