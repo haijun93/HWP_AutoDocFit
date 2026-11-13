@@ -1,6 +1,7 @@
 pub mod doctable;
 pub mod ingest;
 pub mod install;
+pub mod names;
 pub mod pipe;
 pub mod service;
 pub const SERVICE_NAME: &str = "HwpAutoDocFit.Index";
