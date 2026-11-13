@@ -222,7 +222,7 @@ mod kf {
         let t = Instant::now();
         let index = Index::open(dir).expect("open");
         let open_ms = ms(t);
-        let opts = |top: usize, split: SplitMode| SearchOptions { top, split, time_limit: None, cancel: None, refs_per_doc: 3 };
+        let opts = |top: usize, split: SplitMode| SearchOptions { top, split, time_limit: None, cancel: None, refs_per_doc: 3, ..SearchOptions::default() };
         let run = |o: SearchOptions| {
             let r = index.search(q, &o).expect("search");
             Out { sentences: r.total_sentences as u64, docs: Some(r.total_docs as usize), top: r.hits.iter().map(|h| (h.doc_id as u32, h.level, h.count as u32)).collect() }

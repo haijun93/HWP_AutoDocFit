@@ -4,7 +4,7 @@ use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey
 use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
-use roaring::RoaringBitmap;
+use roaring::{RoaringBitmap, RoaringTreemap};
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -65,11 +65,29 @@ pub struct SearchOptions {
     pub cancel: Option<Arc<AtomicBool>>,
     /// 문서마다 돌려줄 일치 문장 수(미리보기용).
     pub refs_per_doc: usize,
+    /// 문서 범위(허용 집합, 문서 ID). 있으면 이 안의 문서만 결과에 낸다(조사 폴더·상자·업무자료함 범위, 날짜·확장자
+    /// 거르기). 비어 있으면 결과도 비어 있다. None이면 거르지 않는다.
+    pub allow: Option<Arc<RoaringTreemap>>,
+    /// 뺄 문서(문서 ID). `allow`보다 나중에 적용한다(둘 다 있으면 허용 ∖ 제외). 제외어는 `Index::doc_set`으로 만든다.
+    pub deny: Option<Arc<RoaringTreemap>>,
 }
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions { top: 20, split: SplitMode::DictLongest, time_limit: Some(Duration::from_secs(2)), cancel: None, refs_per_doc: 3 }
+        SearchOptions { top: 20, split: SplitMode::DictLongest, time_limit: Some(Duration::from_secs(2)), cancel: None, refs_per_doc: 3, allow: None, deny: None }
+    }
+}
+
+impl SearchOptions {
+    /// 문서 범위 거르기가 있는지.
+    fn scoped(&self) -> bool {
+        self.allow.is_some() || self.deny.is_some()
+    }
+
+    /// 이 문서가 범위 안인지(허용 집합 안이고 제외 집합 밖).
+    #[inline]
+    fn admits(&self, doc_id: u64) -> bool {
+        self.allow.as_ref().is_none_or(|a| a.contains(doc_id)) && !self.deny.as_ref().is_some_and(|d| d.contains(doc_id))
     }
 }
 
@@ -289,6 +307,34 @@ fn live_share(view: &SegView, sets: &Arc<SegSets>) -> Arc<SegSets> {
         return sets.clone();
     }
     Arc::new((&sets.0 - &view.deleted, sets.1.as_ref().map(|sa| sa - &view.deleted)))
+}
+
+/// 문서 범위 거르기(KFC1): 범위 밖 문서의 문장을 일치·붙어 있는 일치에서 뺀다. 판정(과 질의 이력 캐시)은 범위와
+/// 무관하게 하고 여기서만 거르므로, 같은 질의를 범위만 바꿔 물어도 캐시를 그대로 쓴다. 문서의 문장은 조각 안에서
+/// 이어져 있어 일치 문서마다 한 번만 확인한다. 범위 밖 문서가 없으면 복사하지 않는다.
+fn scope_sets(view: &SegView, sets: Arc<SegSets>, opts: &SearchOptions, budget: &mut Budget) -> Result<Arc<SegSets>> {
+    if !opts.scoped() || sets.0.is_empty() {
+        return Ok(sets);
+    }
+    let tables = view.seg.tables();
+    let mut outside = RoaringBitmap::new();
+    let mut it = sets.0.iter();
+    while let Some(sid) = it.next() {
+        budget.tick()?;
+        let Some(rec) = tables.doc_of(sid).and_then(|local| tables.doc(local)) else { return corrupt("document out of range") };
+        if sid < rec.first_sid || sid - rec.first_sid >= rec.n_sent {
+            return corrupt("sentence outside its document range");
+        }
+        let end = rec.first_sid + rec.n_sent;
+        if !opts.admits(rec.doc_id) {
+            outside.insert_range(rec.first_sid..end);
+        }
+        it.advance_to(end);
+    }
+    if outside.is_empty() {
+        return Ok(sets);
+    }
+    Ok(Arc::new((&sets.0 - &outside, sets.1.as_ref().map(|a| a - &outside))))
 }
 
 struct Agg {
@@ -578,7 +624,17 @@ impl Index {
         Ok(parsed)
     }
 
-    fn eval_all(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
+    /// 조각마다 (일치 문장, 붙어 있는 일치 문장): 지운 문장과 범위 밖 문서(`opts.allow`·`deny`)를 뺀 것.
+    /// `rank`·`count`·`match_sentences`가 모두 이 결과를 쓰므로 세 결과의 범위가 늘 같다.
+    fn eval_all(&self, parsed: &ParsedQuery, opts: &SearchOptions, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
+        let sets = self.eval_unscoped(parsed, budget)?;
+        if !opts.scoped() {
+            return Ok(sets);
+        }
+        self.views.iter().zip(sets).map(|(v, s)| scope_sets(v, s, opts, budget)).collect()
+    }
+
+    fn eval_unscoped(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
         if parsed.words.is_empty() {
             budget.check()?;
             return Ok(self.views.iter().map(|_| Arc::new((RoaringBitmap::new(), None))).collect());
@@ -656,7 +712,7 @@ impl Index {
         let mut budget = Budget::new(opts);
         budget.check()?;
         let parsed = self.resolve_inner(query, opts.split)?;
-        let sets = self.eval_all(&parsed, &mut budget)?;
+        let sets = self.eval_all(&parsed, opts, &mut budget)?;
         let static_rank = if opts.top == 0 && sets.iter().any(|s| !s.0.is_empty()) { Some(self.static_rank()?) } else { None };
         let mut found = Collector { top: opts.top, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
         let mut total_sentences = 0u64;
@@ -744,7 +800,7 @@ impl Index {
         let mut budget = Budget::new(opts);
         budget.check()?;
         let parsed = self.resolve_inner(query, opts.split)?;
-        let sets = self.eval_all(&parsed, &mut budget)?;
+        let sets = self.eval_all(&parsed, opts, &mut budget)?;
         let (mut total_sentences, mut total_docs) = (0u64, 0usize);
         for (view, sets_v) in self.views.iter().zip(&sets) {
             let matched = &sets_v.0;
@@ -774,7 +830,7 @@ impl Index {
         guard(|| {
             let mut budget = Budget::new(opts);
             let parsed = self.resolve_inner(query, opts.split)?;
-            let sets = self.eval_all(&parsed, &mut budget)?;
+            let sets = self.eval_all(&parsed, opts, &mut budget)?;
             let mut out = Vec::new();
             for (view, sets_v) in self.views.iter().zip(&sets) {
                 let (matched, adjacent) = &**sets_v;

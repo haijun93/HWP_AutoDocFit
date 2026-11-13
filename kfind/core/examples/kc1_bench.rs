@@ -125,7 +125,7 @@ fn query(dir: &Path, queries: &Path, reps: usize) {
     let mut rows: Vec<String> = Vec::new();
     for q in &list {
         for (name, mode) in [("off", SplitMode::Off), ("dict", SplitMode::DictLongest), ("bigram", SplitMode::Bigram)] {
-            let top = SearchOptions { top: 20, split: mode, time_limit: None, cancel: None, refs_per_doc: 3 };
+            let top = SearchOptions { top: 20, split: mode, time_limit: None, cancel: None, refs_per_doc: 3, ..SearchOptions::default() };
             let full = SearchOptions { top: 0, refs_per_doc: 0, ..top.clone() };
             let t = Instant::now();
             let first = index.search(q, &top).expect("search");

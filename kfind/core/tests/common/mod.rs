@@ -105,7 +105,7 @@ pub fn hash_u64s(values: impl Iterator<Item = u64>) -> String {
 }
 
 pub fn opts(mode: SplitMode, top: usize) -> SearchOptions {
-    SearchOptions { top, split: mode, time_limit: None, cancel: None, refs_per_doc: 2 }
+    SearchOptions { top, split: mode, time_limit: None, cancel: None, refs_per_doc: 2, ..SearchOptions::default() }
 }
 
 /// `rank`(미리보기 없이 순위만)가 `search`와 같은 순위·합계를 내고, 문서별 미리보기를 나중에 만들어도

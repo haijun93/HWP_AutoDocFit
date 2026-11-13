@@ -179,11 +179,15 @@ class Oracle:
             pieces = [split_deep(w, self.vocab) for w in words]
         return list(zip(words, pieces)), dropped
 
-    def search(self, q, mode):
+    def search(self, q, mode, admits=None):
+        """`admits`(문서 ID → 범위 안인지)가 있으면 범위 밖 문서의 문장은 일치에서 뺀다(KFC1). 나누기는 범위와 무관하게
+        색인 전체 낱말로 한다."""
         words, dropped = self.resolve(q, mode)
         matched = []
         if words:
             for doc, date, ord_, para, level, text in self.sents:
+                if admits is not None and not admits(doc):
+                    continue
                 strict = [w in text for w, _ in words]
                 broad = [s or (p is not None and all(x in text for x in p)) for s, (_, p) in zip(strict, words)]
                 if all(broad):
@@ -222,13 +226,64 @@ def expect_tsv(docs):
     return "\n".join(rows) + "\n"
 
 
+# 문서 범위 거르기(KFC1) 대조: 허용·제외 집합은 규칙 이름으로 적고 Rust 시험이 같은 규칙으로 만든다.
+# 규칙은 두 상태 문서 ID의 합집합과 없는 ID 하나(NO_SUCH_DOC)에 적용한다 — 지운 문서의 ID가 허용 집합에 있어도
+# 결과에 다시 나오면 안 되고, 없는 ID는 아무 영향이 없어야 한다.
+NO_SUCH_DOC = 999_999_999
+SCOPE_RULES = {
+    "-": None,
+    "mod3": lambda d: d % 3 == 0,
+    "mod4": lambda d: d % 4 == 1,
+    "big": lambda d: d >= 1 << 40,
+    "empty": lambda d: False,
+    "nosuch": lambda d: d == NO_SUCH_DOC,
+}
+# (허용 규칙, 제외 규칙)
+SCOPES = [("mod3", "-"), ("-", "mod4"), ("mod3", "mod4"), ("big", "-"), ("-", "big"), ("empty", "-"), ("nosuch", "-"), ("-", "nosuch")]
+SCOPE_QUERIES = ["예산", "예산 집행", "예산을 집행", "예산집행", "예산집행계획", "주민센터프로그램", "budget", "BUDGET plan",
+                 "1.5배 예산", "도로공사협의", "결과현황개선청소", "및", "", "가나다라"]
+
+
+def scope_set(rule, universe):
+    """규칙 이름 → 문서 ID 집합(None이면 거르지 않음)."""
+    f = SCOPE_RULES[rule]
+    return None if f is None else {d for d in universe | {NO_SUCH_DOC} if f(d)}
+
+
+def expect_scope_tsv(docs, universe):
+    oracle = Oracle(docs)
+    rows = ["# 방법\t검색어(코드포인트 16진)\t허용 규칙\t제외 규칙\t구문(16진, '|' 구분)\t제외어(16진, '|' 구분)\t" + "\t".join(COLUMNS)]
+    for allow_rule, deny_rule in SCOPES:
+        allow, deny = scope_set(allow_rule, universe), scope_set(deny_rule, universe)
+
+        def admits(d, allow=allow, deny=deny):
+            return (allow is None or d in allow) and (deny is None or d not in deny)
+
+        for q in SCOPE_QUERIES:
+            for mode in MODES:
+                r = oracle.search(q, mode, admits)
+                rows.append(f"{mode}\t{hex_text(q)}\t{allow_rule}\t{deny_rule}\t-\t-\t" + "\t".join(str(r[c]) for c in COLUMNS))
+    return "\n".join(rows) + "\n"
+
+
+def hex_text(s):
+    return " ".join(f"{ord(c):X}" for c in s) or "-"
+
+
+def hex_list(items):
+    return "|".join(hex_text(x) for x in items) or "-"
+
+
 def outputs():
     first, second = make_states()
+    universe = {d["doc"] for d in first} | {d["doc"] for d in second}
     return {
         DATA / "oracle_corpus_1.tsv": corpus_tsv(first),
         DATA / "oracle_corpus_2.tsv": corpus_tsv(second),
         DATA / "oracle_expect_1.tsv": expect_tsv(first),
         DATA / "oracle_expect_2.tsv": expect_tsv(second),
+        DATA / "oracle_scope_1.tsv": expect_scope_tsv(first, universe),
+        DATA / "oracle_scope_2.tsv": expect_scope_tsv(second, universe),
     }
 
 
