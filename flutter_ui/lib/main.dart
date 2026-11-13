@@ -15,6 +15,7 @@ import 'app/rename_format_dialog.dart';
 import 'bridge.dart' as bridge;
 import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
+import 'core/theme/app_theme.dart';
 import 'core/drop_events.dart';
 import 'features/preview/option_images.dart';
 import 'features/abbreviations/abbreviation_manager.dart';
@@ -83,36 +84,22 @@ class DocFitApp extends StatelessWidget {
   final ApiCall api;
   final bool useIntegratedShell;
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: '한글편집 후처리',
-    debugShowCheckedModeBanner: false,
-    theme: ThemeData(
-      useMaterial3: true,
-      fontFamily: 'NotoSansKR',
-      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
-      colorScheme: ColorScheme.fromSeed(seedColor: _blue),
-      scaffoldBackgroundColor: const Color(0xfff6f8fb),
-      filledButtonTheme: FilledButtonThemeData(
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(48, 52),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      outlinedButtonTheme: OutlinedButtonThemeData(
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-    ),
-    home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+  Widget build(BuildContext context) => ListenableBuilder(
+    listenable: appThemeListenable(),
+    builder: (context, _) {
+      // 고대비가 켜져 있으면 Flutter가 highContrast(Dark)Theme을 고른다(시스템 색 우선).
+      final highContrast = highContrastAppTheme();
+      return MaterialApp(
+        title: '한글편집 후처리',
+        debugShowCheckedModeBanner: false,
+        theme: lightAppTheme,
+        darkTheme: darkAppTheme,
+        highContrastTheme: highContrast,
+        highContrastDarkTheme: highContrast,
+        themeMode: appThemeChoice.value.mode,
+        home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+      );
+    },
   );
 }
 
@@ -141,6 +128,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       setState(() {
         developerMode = value['developer_mode'] == true;
       });
+      appThemeChoice.value = AppThemeChoice.parse(value['theme_mode']);
     }).catchError((_) {}));
     HardwareKeyboard.instance.addHandler(_onKClipHotkey);
   }
