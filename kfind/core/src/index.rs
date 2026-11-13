@@ -352,6 +352,27 @@ struct Agg {
 
 const ADJACENT_BIT: u64 = 1 << 40;
 
+/// 결과 순서(MG2). `Relevance`는 `search`·`rank`의 기본 순서, `Hierarchy`는 위계(작은 값) 먼저이고 같은 위계 안에서는
+/// 기본 순서(붙어 있는 일치 > 일치 문장 수 > 날짜 최신 > 문서 ID) — 기본 순서 결과를 위계로 안정 정렬한 것과 같다.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Order {
+    #[default]
+    Relevance,
+    Hierarchy,
+}
+
+/// 위계 순 열쇠: 위계(8비트)를 맨 위로 올리고 붙어 있는 일치 비트·일치 문장 수 보수는 그대로 둔다(작을수록 앞).
+#[inline]
+fn hierarchy_key(key: u64) -> u64 {
+    (((key >> 32) & 0xff) << 41) | (key & ADJACENT_BIT) | (key & 0xffff_ffff)
+}
+
+/// `hierarchy_key`의 역.
+#[inline]
+fn relevance_key(hkey: u64) -> u64 {
+    (hkey & ADJACENT_BIT) | (((hkey >> 41) & 0xff) << 32) | (hkey & 0xffff_ffff)
+}
+
 impl Agg {
     /// 순위 열쇠를 적는다. 일치 문장 수는 아래 32비트에 보수로 넣는다(많을수록 열쇠가 작다).
     #[inline]
@@ -390,6 +411,7 @@ fn full_key(key: u64, static_rank: u32) -> u128 {
 /// 순위 순서로 쥐고 있는다(문서 전체를 쌓았다가 고르지 않는다 — 상위 N건을 먼저 낼 때의 비용을 줄인다).
 struct Collector<'r> {
     top: usize,
+    order: Order,
     best: Vec<Agg>,
     all: Vec<u128>,
     ranks: &'r [Vec<u32>],
@@ -404,26 +426,35 @@ impl Collector<'_> {
         self.adjacent_docs += a.adjacent() as usize;
         if self.top == 0 {
             let Some(&r) = self.ranks.get(a.view as usize).and_then(|v| v.get(a.local as usize)) else { return corrupt("document missing from the static rank") };
-            self.all.push(full_key(a.key, r));
+            self.all.push(full_key(sort_key(&a, self.order), r));
             return Ok(());
         }
         if self.best.len() == self.top {
             match self.best.last() {
-                Some(worst) if order(&a, worst) == Ordering::Less => {
+                Some(worst) if order(&a, worst, self.order) == Ordering::Less => {
                     self.best.pop();
                 }
                 _ => return Ok(()),
             }
         }
-        let pos = self.best.partition_point(|b| order(b, &a) == Ordering::Less);
+        let pos = self.best.partition_point(|b| order(b, &a, self.order) == Ordering::Less);
         self.best.insert(pos, a);
         Ok(())
     }
 }
 
 /// 순위: 붙어 있는 일치 > 위계(작은 값) > 일치 문장 수 > 날짜 최신 > 문서 ID.
-fn order(a: &Agg, b: &Agg) -> Ordering {
-    a.key.cmp(&b.key).then_with(|| b.date.cmp(&a.date)).then_with(|| a.doc_id.cmp(&b.doc_id))
+/// `Order::Hierarchy`면 위계를 앞에 둔 열쇠로 같은 비교를 한다.
+#[inline]
+fn sort_key(a: &Agg, o: Order) -> u64 {
+    match o {
+        Order::Relevance => a.key,
+        Order::Hierarchy => hierarchy_key(a.key),
+    }
+}
+
+fn order(a: &Agg, b: &Agg, o: Order) -> Ordering {
+    sort_key(a, o).cmp(&sort_key(b, o)).then_with(|| b.date.cmp(&a.date)).then_with(|| a.doc_id.cmp(&b.doc_id))
 }
 
 /// 미리보기 문장 없이 순위만 낸 결과. 미리보기는 화면에 보일 문서만 `sentences`로 만든다.
@@ -782,8 +813,23 @@ impl Index {
         guard(|| self.search_inner(query, opts))
     }
 
+    /// `search`와 같되 결과 순서를 고른다. `Order::Hierarchy`는 위계 순 상위 `opts.top`건만 쥐고 모으므로(전체를 모아
+    /// 정렬하지 않음) 위계 칸의 재검색이 기본 순서 상위 N건과 같은 비용이다.
+    pub fn search_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<SearchResult> {
+        guard(|| self.search_inner_by(query, opts, order))
+    }
+
+    /// `rank`와 같되 결과 순서를 고른다.
+    pub fn rank_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
+        guard(|| self.rank_inner(query, opts, order))
+    }
+
     fn search_inner(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
-        let ranking = self.rank_inner(query, opts)?;
+        self.search_inner_by(query, opts, Order::Relevance)
+    }
+
+    fn search_inner_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<SearchResult> {
+        let ranking = self.rank_inner(query, opts, order)?;
         let mut result = ranking.result;
         if opts.refs_per_doc > 0 {
             for (hit, &(view, local)) in result.hits.iter_mut().zip(&ranking.slots) {
@@ -797,16 +843,16 @@ impl Index {
     /// 낼 때 화면에 보일 문서만 `Ranking::sentences`로 미리보기를 만들면 문서 수만큼의 미리보기 비용이 들지 않는다.
     /// `opts.refs_per_doc`은 쓰지 않는다.
     pub fn rank(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
-        guard(|| self.rank_inner(query, opts))
+        guard(|| self.rank_inner(query, opts, Order::Relevance))
     }
 
-    fn rank_inner(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
+    fn rank_inner(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
         let mut budget = Budget::new(opts);
         budget.check()?;
         let parsed = self.resolve_opts(query, opts)?;
         let sets = self.eval_all(&parsed, opts, &mut budget)?;
         let static_rank = if opts.top == 0 && sets.iter().any(|s| !s.0.is_empty()) { Some(self.static_rank()?) } else { None };
-        let mut found = Collector { top: opts.top, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
+        let mut found = Collector { top: opts.top, order, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
         let mut total_sentences = 0u64;
         for (vi, (view, sets_v)) in self.views.iter().zip(&sets).enumerate() {
             let (matched, adjacent) = &**sets_v;
@@ -868,7 +914,9 @@ impl Index {
             for k in all {
                 let Some(&(view, local)) = sr.inverse.get(k as u32 as usize) else { return corrupt("static rank out of range") };
                 let Some(rec) = self.views.get(view as usize).and_then(|v| v.seg.tables().doc(local)) else { return corrupt("document out of range") };
-                let a = Agg { key: (k >> 32) as u64, doc_id: rec.doc_id, date: rec.date, view, local };
+                let skey = (k >> 32) as u64;
+                let key = if order == Order::Hierarchy { relevance_key(skey) } else { skey };
+                let a = Agg { key, doc_id: rec.doc_id, date: rec.date, view, local };
                 hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
                 slots.push((view, local));
             }
@@ -951,5 +999,21 @@ mod tests {
         assert_eq!(cover_offsets(4), [0, 1]);
         assert_eq!(cover_offsets(6), [0, 3]);
         assert_eq!(cover_offsets(7), [0, 3, 4]);
+    }
+
+    #[test]
+    fn hierarchy_key_round_trip_and_order() {
+        let mk = |adj: bool, level: u8, count: u32| {
+            let mut a = Agg { key: 0, doc_id: 0, date: 0, view: 0, local: 0 };
+            a.set(adj, level, count);
+            a.key
+        };
+        for k in [mk(true, 0, 1), mk(false, 255, u32::MAX), mk(false, 3, 7), mk(true, 9, 0)] {
+            assert_eq!(relevance_key(hierarchy_key(k)), k);
+        }
+        // 위계가 붙어 있는 일치보다 앞선다.
+        assert!(hierarchy_key(mk(false, 1, 1)) < hierarchy_key(mk(true, 2, 99)));
+        assert!(hierarchy_key(mk(true, 1, 1)) < hierarchy_key(mk(false, 1, 99)));
+        assert!(hierarchy_key(mk(true, 1, 5)) < hierarchy_key(mk(true, 1, 4)));
     }
 }
