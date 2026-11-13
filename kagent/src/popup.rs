@@ -55,7 +55,6 @@ const CAT_H: i32 = 28;
 /// 캡션 단추 하나의 폭(Windows 기본 캡션 단추 46px).
 const CAPTION_W: i32 = 46;
 /// 접힌 창 높이(틀이 없으므로 머리글 + 위아래 테두리 1px).
-const COLLAPSED_H: i32 = HEAD_H + 2;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
 /// 최소 폭: 제목(약 90) + 단추 7개(322).
@@ -68,7 +67,6 @@ const TAB_MIN_PAD: i32 = 4;
 const LIST_LIMIT: usize = 50;
 /// WM_MOUSELEAVE(0x02A3). windows-sys에서는 Win32_UI_Controls 기능에만 있어 의존성 기능을 늘리지 않고 직접 둔다.
 const WM_MOUSELEAVE: u32 = 0x02A3;
-const CMD_COLLAPSE: usize = 10;
 const CMD_CLEAR: usize = 11;
 
 // ---- 분류 메뉴 ----
@@ -381,7 +379,7 @@ pub fn show() {
     // leave this process's recent snapshot stale. Rebuild it before every fresh open.
     crate::refresh_recent();
     unsafe {
-        let mut settings = app().settings.lock().unwrap().clone();
+        let settings = app().settings.lock().unwrap().clone();
         if settings.sticky_popup && IsWindowVisible(hwnd) != 0 {
             ShowWindow(hwnd, SW_HIDE);
             return;
@@ -401,13 +399,6 @@ pub fn show() {
             SetFocus(hwnd);
             refilter(true);
             return;
-        }
-        // 접힌 채(머리글만) 저장돼 있으면 단축키로 불러도 목록이 안 보여 "기록이 안 나온다"고 오해한다
-        // (2026-11-13 사무실 PC 사례). 새로 열 때는 항상 펼쳐서 보인다.
-        if settings.popup_collapsed {
-            settings.popup_collapsed = false;
-            app().settings.lock().unwrap().popup_collapsed = false;
-            crate::save_settings();
         }
         {
             let mut st = STATE.lock().unwrap();
@@ -432,8 +423,8 @@ pub fn show() {
         mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         GetMonitorInfoW(monitor, &mut mi);
         let wa = mi.rcWork;
-        let (sticker, collapsed, saved_x, saved_y, saved_w, saved_h) =
-            (settings.sticky_popup, settings.popup_collapsed, settings.popup_x, settings.popup_y,
+        let (sticker, saved_x, saved_y, saved_w, saved_h) =
+            (settings.sticky_popup, settings.popup_x, settings.popup_y,
              settings.popup_width, settings.popup_height);
         let dpi = GetDpiForWindow(hwnd).max(96) as i64;
         let saved_x_px = saved_x * dpi / 96;
@@ -441,7 +432,7 @@ pub fn show() {
         let saved_w_px = saved_w * dpi / 96;
         let saved_h_px = saved_h * dpi / 96;
         let saved_rect_valid = sticker && saved_x_px >= wa.left as i64 && saved_y_px >= wa.top as i64
-            && saved_w > 0 && saved_h > COLLAPSED_H as i64
+            && saved_w > 0 && saved_h > MIN_H as i64
             && saved_x_px + saved_w_px <= wa.right as i64 && saved_y_px + saved_h_px <= wa.bottom as i64;
         let (x, y, w, mut h) = if saved_rect_valid {
             (saved_x_px as i32, saved_y_px as i32, saved_w_px as i32, saved_h_px as i32)
@@ -449,10 +440,8 @@ pub fn show() {
             ((pt.x + 8).min(wa.right - default_w).max(wa.left),
              (pt.y + 8).min(wa.bottom - default_h).max(wa.top), default_w, default_h)
         };
-        if collapsed {
-            h = scale(hwnd, COLLAPSED_H);
-        } else if h < scale(hwnd, MIN_H) {
-            // 펼친 상태인데 높이가 너무 작으면(접힌 높이가 저장된 경우) 기본 높이로 되돌린다.
+        if h < scale(hwnd, MIN_H) {
+            // 높이가 너무 작으면(예전 버전의 접힌 높이가 저장된 경우) 기본 높이로 되돌린다.
             h = default_h;
         }
         SetWindowPos(hwnd, if settings.always_on_top { HWND_TOPMOST } else { HWND_NOTOPMOST },
@@ -515,26 +504,6 @@ fn toggle_max(hwnd: HWND) {
             SetWindowPos(hwnd, std::ptr::null_mut(), wa.left, wa.top, wa.right - wa.left, wa.bottom - wa.top,
                          SWP_NOZORDER | SWP_NOACTIVATE);
         }
-        InvalidateRect(hwnd, std::ptr::null(), 0);
-    }
-}
-
-/// 목록 접기/펼치기(머리글만 남김). 오른쪽 클릭 메뉴에서 부른다.
-fn toggle_collapse(hwnd: HWND) {
-    let (collapsed, saved_h) = {
-        let mut s = app().settings.lock().unwrap();
-        s.popup_collapsed = !s.popup_collapsed;
-        (s.popup_collapsed, s.popup_height as i32)
-    };
-    crate::save_settings();
-    // 설정 잠금은 SetWindowPos 전에 풀어야 한다(WM_GETMINMAXINFO가 다시 잠근다).
-    let target_h = if collapsed { COLLAPSED_H } else if saved_h >= MIN_H { saved_h } else { HEAD_H + CAT_H + ROW_H * 5 + 8 };
-    STATE.lock().unwrap().restore_rect = None;
-    unsafe {
-        let mut rect: RECT = std::mem::zeroed();
-        GetWindowRect(hwnd, &mut rect);
-        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, rect.right - rect.left, scale(hwnd, target_h),
-                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         InvalidateRect(hwnd, std::ptr::null(), 0);
     }
 }
@@ -906,21 +875,18 @@ fn row_at(hwnd: HWND, lp: LPARAM) -> Option<usize> {
     row_index(y, top_y, scale(hwnd, ROW_H), st.top, st.items.len())
 }
 
-/// 머리글·빈 곳 오른쪽 클릭 메뉴 항목(접기·모두 지우기). 항목 메뉴 뒤에도 붙인다.
+/// 머리글·빈 곳 오른쪽 클릭 메뉴 항목(모두 지우기). 항목 메뉴 뒤에도 붙인다.
 unsafe fn append_window_items(menu: HMENU, separator: bool) {
     unsafe {
-        let collapsed = app().settings.lock().unwrap().popup_collapsed;
         if separator {
             AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         }
-        AppendMenuW(menu, MF_STRING, CMD_COLLAPSE, wide(if collapsed { "목록 펼치기" } else { "목록 접기" }).as_ptr());
         AppendMenuW(menu, MF_STRING, CMD_CLEAR, wide("모두 지우기(고정 항목 제외)…").as_ptr());
     }
 }
 
 fn run_window_command(hwnd: HWND, command: usize) -> bool {
     match command {
-        CMD_COLLAPSE => { toggle_collapse(hwnd); true }
         CMD_CLEAR => { clear_all(hwnd); true }
         _ => false,
     }
@@ -1045,8 +1011,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let info = &mut *(lp as *mut MINMAXINFO);
                 info.ptMinTrackSize.x = scale(hwnd, MIN_W);
                 // 접힌 창은 머리글 높이까지 줄어야 한다.
-                let min_h = if app().settings.lock().unwrap().popup_collapsed { COLLAPSED_H } else { MIN_H };
-                info.ptMinTrackSize.y = scale(hwnd, min_h);
+                info.ptMinTrackSize.y = scale(hwnd, MIN_H);
                 0
             }
             WM_ERASEBKGND => 1,
@@ -1410,8 +1375,6 @@ mod tests {
         assert!(!draws_own_border(true));
         assert!(draws_own_border(false));
         // 접힌 창은 머리글 + 위아래 1px, 틀 두께(예전 12px)를 더하지 않는다.
-        assert_eq!(COLLAPSED_H, HEAD_H + 2);
-        assert!(MIN_H > COLLAPSED_H);
     }
 
     #[test]
