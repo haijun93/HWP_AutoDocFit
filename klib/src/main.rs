@@ -11,6 +11,8 @@ mod search;
 mod content;
 mod reindex;
 mod notebook;
+mod nb_store;
+mod nb_split_check;
 mod nb_transform;
 mod scan;
 mod extract;
@@ -86,6 +88,13 @@ fn main() {
         return;
     }
     let has = |flag: &str| args.iter().any(|a| a == flag);
+
+    if args.first().is_some_and(|a| a == "nb-split-compare") {
+        // 업무자료함 색인 분리 비교(사본 폴더 전용): 옮기기 전후 표·검색 결과 차이.
+        let Some(dir) = args.get(1) else { eprintln!("usage: klib nb-split-compare <library-folder-copy>"); std::process::exit(2); };
+        match nb_split_check::run(std::path::Path::new(dir)) { Ok(v) => println!("{}", json::to_string(&v)), Err(e) => { eprintln!("{e}"); std::process::exit(1); } }
+        return;
+    }
 
     if args.first().is_some_and(|a| a == "legacy-records") {
         let Some(path) = args.get(1) else { eprintln!("legacy-records requires a path"); std::process::exit(2); };
