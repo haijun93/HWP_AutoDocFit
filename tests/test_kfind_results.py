@@ -44,7 +44,18 @@ class ResultTests(unittest.TestCase):
         self.assertEqual(results.to_keyword_rows(dict(hits=[])), [])
 
     def test_hierarchy_uses_sentence_level_and_sqlite_ancestors(self):
+        with self.index._lock:
+            self.index.db.execute("UPDATE content_paragraph_fts SET level='document_title', level_rank=0 WHERE CAST(paragraph_index AS INTEGER)=0")
         row = results.to_hierarchy_rows(self.response, self.index)[0]
         self.assertEqual(row["context_hits"], 0)
         self.assertEqual(row["breadcrumb_text"], "예산 계획")
         self.assertEqual(row["breadcrumb"], ["예산 계획"])
+
+    def test_library_pages_scopes_and_escaped_highlight(self):
+        doc = dict(name="메모", title="제목", scopes=["tm", "box:2", "box:10"], paragraphs=[
+            dict(paragraph_index=1, body="<예산ㆍ집행>", location_label="7쪽", level_rank=8)])
+        response = copy.deepcopy(self.response)
+        response["hits"][0]["sentences"][0].update(start=1, len=5)
+        row = results.to_library_rows(response, documents={self.path: doc})[0]
+        self.assertEqual((row["page"], row["hit_pages"], row["box_ids"]), (7, [7], ["2", "10"]))
+        self.assertEqual(row["highlighted"], ["&lt;<b>예산</b>ㆍ<b>집행</b>&gt;"])

@@ -15,7 +15,7 @@ def _fold_positions(text):
     folded, positions = [], []
     # 원문 코드포인트 위치를 유지한다(NFC 합성·casefold 확장 포함).
     for match in re.finditer(r".[\u0300-\u036f\u1160-\u11ff]*", text, re.S):
-        for char in unicodedata.normalize("NFC", match.group()).lower():
+        for char in unicodedata.normalize("NFC", match.group()).casefold():
             if char.isalnum():
                 folded.append(char)
                 positions.append((match.start(), match.end()))
@@ -107,3 +107,31 @@ def to_keyword_rows(response, index=None, *, documents=None, offset=0):
 
 def to_hierarchy_rows(response, index=None, *, documents=None):
     return to_keyword_rows(response, index, documents=documents)
+
+
+def _highlighted(location):
+    text = location["snippet"]
+    merged = []
+    for a, b in sorted(location["highlights"]):
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(b, merged[-1][1])
+        else:
+            merged.append([a, b])
+    parts, end = [], 0
+    for a, b in merged:
+        parts.extend((html.escape(text[end:a]), "<b>", html.escape(text[a:b]), "</b>"))
+        end = b
+    parts.append(html.escape(text[end:]))
+    return "".join(parts)
+
+
+def to_library_rows(response, index=None, *, documents=None):
+    docs = list(_documents(response, index, documents))
+    rows = to_keyword_rows(response, index, documents=documents)
+    for row, (hit, doc) in zip(rows, docs):
+        row.update(title=doc.get("title", row["name"]), paragraph_count=hit["count"],
+                   snippets=[loc["snippet"] for loc in row["locations"]],
+                   highlighted=[_highlighted(loc) for loc in row["locations"]],
+                   page=row["position"]["page"], hit_pages=[loc["position"]["page"] for loc in row["locations"]],
+                   box_ids=[scope[4:] for scope in doc.get("scopes", []) if scope.startswith("box:")])
+    return rows
