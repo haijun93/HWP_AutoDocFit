@@ -35,6 +35,9 @@ ALLOWED_COMMANDS = frozenset({
 
     "nb_search", "nb_transform", "nb_note_save", "nb_note_list", "nb_note_delete", "nb_export_md", "nb_compare",
 
+    # NBIDX1: 업무자료함 별도 저장소 — 원본 변경 검사, 같은 번호로 다시 색인, 옮기기 상태·다시 시도.
+    "nb_source_check", "nb_source_refresh", "nb_status", "nb_migrate",
+
 } | frozenset(f"edit_{name}" for name in (
 
     # 메모 편집기 코어(editor_core, klib 파이프 edit_*). docs/EDITOR_CORE_DESIGN.md 4절.
