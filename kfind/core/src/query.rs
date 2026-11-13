@@ -45,6 +45,28 @@ pub fn parse_query(q: &str) -> ParsedQuery {
     out
 }
 
+/// 구문(KFC2)을 검색 낱말로 더한다. 구문은 비교형(공백·기호를 뺀 글)이 붙어 있는 그대로 든 문장만 찾는 낱말 하나이고
+/// 나누지 않는다. 같은 낱말이 이미 있으면 그 낱말의 나누기를 끈다. 비교형이 2글자 미만이면 뺀 낱말에 더하고,
+/// 비교형이 빈 구문은 무시한다. 구문 문법(`"…"`)은 호출하는 쪽(앱)이 해석한다.
+pub(crate) fn add_phrases(parsed: &mut ParsedQuery, phrases: &[String]) {
+    for p in phrases {
+        let f = crate::fold::fold(p);
+        if f.is_empty() {
+            continue;
+        }
+        if f.chars().count() < MIN_WORD_CHARS {
+            if !parsed.dropped.contains(&f) {
+                parsed.dropped.push(f);
+            }
+            continue;
+        }
+        match parsed.words.iter_mut().find(|w| w.text == f) {
+            Some(w) => w.pieces = None,
+            None => parsed.words.push(QueryWord { text: f, pieces: None }),
+        }
+    }
+}
+
 /// 줄기 꼬리(조사·어미) 목록 원문. 형식은 파일 머리말 참고.
 const STEM_SUFFIXES_TXT: &str = include_str!("stem_suffixes.txt");
 
@@ -156,6 +178,17 @@ mod tests {
         assert_eq!(p.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["예산", "집행"]);
         assert_eq!(p.dropped, ["및"]);
         assert!(parse_query("ㅇ").words.is_empty());
+    }
+
+    #[test]
+    fn phrases_are_unsplit_words() {
+        let mut p = parse_query("예산집행 계획");
+        p.words[0].pieces = Some(vec!["예산".into(), "집행".into()]);
+        add_phrases(&mut p, &["예산 집행".into(), "주민·센터".into(), "및".into(), "…".into(), "계획".into(), "주민센터".into()]);
+        let words: Vec<(&str, bool)> = p.words.iter().map(|w| (w.text.as_str(), w.pieces.is_some())).collect();
+        // 같은 낱말은 나누기만 끄고, 새 구문은 나누지 않는 낱말로 한 번만, 기호만 있는 구문은 무시.
+        assert_eq!(words, [("예산집행", false), ("계획", false), ("주민센터", false)]);
+        assert_eq!(p.dropped, ["및"]);
     }
 
     #[test]

@@ -79,13 +79,19 @@ fn scope_set(rule: &str, universe: &HashSet<u64>) -> Option<Arc<RoaringTreemap>>
     Some(Arc::new(universe.iter().copied().chain([NO_SUCH_DOC]).filter(|&d| f(d)).collect()))
 }
 
-/// 표 한 줄의 질의 옵션(구문·제외어는 KFC2에서 채운다).
+/// 표 한 줄의 질의 옵션. 제외어(KFC2)는 `Index::doc_set`으로 문서 집합을 만들어 제외 집합에 합친다.
 fn row_opts(index: &Index, row: &ScopeRow, top: usize, universe: &HashSet<u64>) -> SearchOptions {
     let mut o = opts(row.mode, top);
     o.allow = scope_set(&row.allow, universe);
     o.deny = scope_set(&row.deny, universe);
-    assert!(row.phrases.is_empty() && row.excludes.is_empty(), "phrases/excludes need KFC2: {}", row.label);
-    let _ = index;
+    o.phrases = row.phrases.clone();
+    if !row.excludes.is_empty() {
+        let mut deny = o.deny.as_deref().cloned().unwrap_or_default();
+        for x in &row.excludes {
+            deny |= index.doc_set(x).expect("doc_set");
+        }
+        o.deny = Some(Arc::new(deny));
+    }
     o
 }
 
@@ -149,7 +155,7 @@ fn check_scope(index: &Index, expected: &[ScopeRow], label: &str) -> usize {
 fn scope_single_and_many_segments_match_python() {
     let docs = corpus(1);
     let exp = scope_rows(1);
-    assert_eq!(exp.len(), 8 * 14 * 3, "fixture: 8 scopes x 14 queries x 3 modes");
+    assert_eq!(exp.len(), 8 * 14 * 3 + 17 * 3, "fixture: 8 scopes x 14 queries x 3 modes + 17 phrase/exclude cases x 3 modes");
 
     let dir = tmp_dir("scope-single");
     let mut w = Writer::open(&dir, WriterOptions::default()).unwrap();
@@ -157,7 +163,7 @@ fn scope_single_and_many_segments_match_python() {
         add(&mut w, d);
     }
     w.commit().unwrap();
-    assert_eq!(check_scope(&Index::open(&dir).unwrap(), &exp, "single"), 336);
+    assert_eq!(check_scope(&Index::open(&dir).unwrap(), &exp, "single"), 387);
 
     let dir = tmp_dir("scope-many");
     let mut w = Writer::open(&dir, WriterOptions::default()).unwrap();
@@ -238,4 +244,34 @@ fn scope_identity_and_empty() {
         assert_eq!(none.words, plain.words, "words are resolved against the whole index");
         assert_eq!(index.count(&e.query, &empty).unwrap().total_docs, 0);
     }
+}
+
+/// 제외어 문서 집합(KFC2): 나누지 않은 붙어 있는 일치 문장이 있는 살아 있는 문서와 같다(지운 문서는 빠진다).
+#[test]
+fn doc_set_is_documents_with_an_adjacent_match() {
+    let (first, second) = (corpus(1), corpus(2));
+    let dir = tmp_dir("doc-set");
+    let mut w = Writer::open(&dir, WriterOptions::default()).unwrap();
+    for d in &first {
+        add(&mut w, d);
+    }
+    w.commit().unwrap();
+    let new: HashSet<u64> = second.iter().map(|d| d.id).collect();
+    for d in first.iter().filter(|d| !new.contains(&d.id)) {
+        w.delete_document(d.id).unwrap();
+    }
+    w.commit().unwrap();
+    let index = Index::open(&dir).unwrap();
+    for word in ["예산", "집행", "예산 집행", "예산집행계획", "주민센터", "BUDGET", "e-mail", "1.5배", "가나다라", "프로그램"] {
+        let set = index.doc_set(word).unwrap();
+        let o = SearchOptions { phrases: vec![word.to_string()], ..opts(SplitMode::DictLongest, 0) };
+        let docs: RoaringTreemap = index.match_sentences("", &o).unwrap().iter().map(|m| m.doc_id).collect();
+        assert_eq!(set, docs, "{word}");
+        assert!(set.iter().all(|d| new.contains(&d)), "{word}: deleted documents are not in the set");
+    }
+    assert!(index.doc_set("및").is_err() && index.doc_set("…").is_err(), "shorter than 2 chars");
+    // 구문 해석은 resolve_with에 드러난다.
+    let o = SearchOptions { phrases: vec!["예산 집행".into(), "및".into()], ..opts(SplitMode::DictLongest, 0) };
+    let parsed = index.resolve_with("예산집행", &o).unwrap();
+    assert_eq!((parsed.words.len(), parsed.words[0].text.as_str(), parsed.words[0].pieces.is_none(), parsed.dropped.as_slice()), (1, "예산집행", true, ["및".to_string()].as_slice()));
 }

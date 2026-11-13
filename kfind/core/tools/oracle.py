@@ -169,7 +169,9 @@ class Oracle:
                 self.sents.append((d["doc"], d["date"], ord_, para, level, "".join(toks)))
                 self.vocab.update(t for t in toks if len(t) >= MIN_WORD_CHARS and len(t.encode("utf-8")) <= MAX_WORD_BYTES)
 
-    def resolve(self, q, mode):
+    def resolve(self, q, mode, phrases=()):
+        """구문(KFC2): 비교형(공백·기호 없앰)을 나누지 않는 낱말 하나로 더한다. 같은 낱말이 검색어에 있으면 그 낱말의
+        나누기를 끈다. 2글자 미만이면 뺀 낱말에 더하고, 비교형이 빈 구문은 무시한다."""
         words, dropped = parse_query(q)
         if mode == "off":
             pieces = [None] * len(words)
@@ -177,12 +179,32 @@ class Oracle:
             pieces = [split_bigram(w) for w in words]
         else:
             pieces = [split_deep(w, self.vocab) for w in words]
-        return list(zip(words, pieces)), dropped
+        out = list(zip(words, pieces))
+        for ph in phrases:
+            f = fold(ph)
+            if not f:
+                continue
+            if len(f) < MIN_WORD_CHARS:
+                if f not in dropped:
+                    dropped.append(f)
+                continue
+            for i, (w, _) in enumerate(out):
+                if w == f:
+                    out[i] = (w, None)
+                    break
+            else:
+                out.append((f, None))
+        return out, dropped
 
-    def search(self, q, mode, admits=None):
+    def doc_set(self, word):
+        """제외어(KFC2): 비교형 낱말이 붙어 있는 그대로 들어 있는 문장이 하나라도 있는 문서."""
+        f = fold(word)
+        return {doc for doc, _, _, _, _, text in self.sents if f in text}
+
+    def search(self, q, mode, admits=None, phrases=()):
         """`admits`(문서 ID → 범위 안인지)가 있으면 범위 밖 문서의 문장은 일치에서 뺀다(KFC1). 나누기는 범위와 무관하게
-        색인 전체 낱말로 한다."""
-        words, dropped = self.resolve(q, mode)
+        색인 전체 낱말로 한다. `phrases`는 나누지 않는 구문(KFC2)."""
+        words, dropped = self.resolve(q, mode, phrases)
         matched = []
         if words:
             for doc, date, ord_, para, level, text in self.sents:
@@ -242,6 +264,27 @@ SCOPE_RULES = {
 SCOPES = [("mod3", "-"), ("-", "mod4"), ("mod3", "mod4"), ("big", "-"), ("-", "big"), ("empty", "-"), ("nosuch", "-"), ("-", "nosuch")]
 SCOPE_QUERIES = ["예산", "예산 집행", "예산을 집행", "예산집행", "예산집행계획", "주민센터프로그램", "budget", "BUDGET plan",
                  "1.5배 예산", "도로공사협의", "결과현황개선청소", "및", "", "가나다라"]
+# (검색어, 구문들, 제외어들, 허용 규칙, 제외 규칙). 구문만 있는 질의·검색어 낱말과 같은 구문(나누기 끔)·짧은 구문·
+# 기호만 있는 구문·제외어(나눠야만 맞는 낱말 포함)·없는 제외어·허용·제외 규칙과 함께 쓰는 경우.
+PHRASE_CASES = [
+    ("", ["예산 집행"], [], "-", "-"),
+    ("", ["예산집행"], [], "-", "-"),
+    ("예산집행", ["예산집행"], [], "-", "-"),
+    ("예산집행계획", ["예산 집행"], [], "-", "-"),
+    ("주민", ["주민센터 프로그램"], [], "-", "-"),
+    ("예산", ["및"], [], "-", "-"),
+    ("예산", ["…"], [], "-", "-"),
+    ("budget", ["Budget-Plan"], [], "-", "-"),
+    ("예산", ["예산을 집행", "계획"], [], "-", "-"),
+    ("예산", [], ["집행"], "-", "-"),
+    ("예산 집행", [], ["예산집행계획"], "-", "-"),
+    ("예산집행", [], ["주민센터", "budget"], "-", "-"),
+    ("예산", [], ["가나다라"], "-", "-"),
+    ("예산", [], ["예산"], "-", "-"),
+    ("사업", ["주민 안전"], [], "-", "-"),
+    ("주민", ["예산 집행"], ["계획"], "mod3", "-"),
+    ("예산", [], ["도로공사"], "-", "mod4"),
+]
 
 
 def scope_set(rule, universe):
@@ -263,6 +306,18 @@ def expect_scope_tsv(docs, universe):
             for mode in MODES:
                 r = oracle.search(q, mode, admits)
                 rows.append(f"{mode}\t{hex_text(q)}\t{allow_rule}\t{deny_rule}\t-\t-\t" + "\t".join(str(r[c]) for c in COLUMNS))
+    # 구문·제외어(KFC2): 제외어마다 doc_set을 제외 집합에 더한다(허용·제외 규칙과 함께 쓰는 줄 포함).
+    for q, phrases, excludes, allow_rule, deny_rule in PHRASE_CASES:
+        allow, deny = scope_set(allow_rule, universe), scope_set(deny_rule, universe)
+        excluded = set().union(*(oracle.doc_set(x) for x in excludes))
+
+        def admits(d, allow=allow, deny=deny, excluded=excluded):
+            return (allow is None or d in allow) and (deny is None or d not in deny) and d not in excluded
+
+        for mode in MODES:
+            r = oracle.search(q, mode, admits, phrases)
+            rows.append(f"{mode}\t{hex_text(q)}\t{allow_rule}\t{deny_rule}\t{hex_list(phrases)}\t{hex_list(excludes)}\t"
+                        + "\t".join(str(r[c]) for c in COLUMNS))
     return "\n".join(rows) + "\n"
 
 

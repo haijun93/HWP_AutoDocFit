@@ -1,7 +1,7 @@
 //! 읽기 쪽: 목록 파일의 한 세대를 열어 질의한다. 쓰는 쪽이 목록을 바꿔도 이미 연 세대는 그대로 유효하다.
 use crate::manifest::Manifest;
 use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
-use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
+use crate::query::{MIN_WORD_CHARS, ParsedQuery, add_phrases, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
 use roaring::{RoaringBitmap, RoaringTreemap};
@@ -70,11 +70,14 @@ pub struct SearchOptions {
     pub allow: Option<Arc<RoaringTreemap>>,
     /// 뺄 문서(문서 ID). `allow`보다 나중에 적용한다(둘 다 있으면 허용 ∖ 제외). 제외어는 `Index::doc_set`으로 만든다.
     pub deny: Option<Arc<RoaringTreemap>>,
+    /// 구문(KFC2): 나누지 않고 붙어 있는 그대로만 찾는 낱말(검색어 낱말과 AND). 비교형으로 바꾸므로 "예산 집행"은
+    /// "예산집행"이 붙어 있는 문장을 찾는다. 같은 낱말이 검색어에 있으면 그 낱말의 나누기를 끈다.
+    pub phrases: Vec<String>,
 }
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions { top: 20, split: SplitMode::DictLongest, time_limit: Some(Duration::from_secs(2)), cancel: None, refs_per_doc: 3, allow: None, deny: None }
+        SearchOptions { top: 20, split: SplitMode::DictLongest, time_limit: Some(Duration::from_secs(2)), cancel: None, refs_per_doc: 3, allow: None, deny: None, phrases: Vec::new() }
     }
 }
 
@@ -624,6 +627,45 @@ impl Index {
         Ok(parsed)
     }
 
+    /// 질의 옵션까지 반영한 해석: `opts.split`으로 나누고 `opts.phrases`(구문)를 나누지 않는 낱말로 더한다.
+    /// `search`·`rank`·`count`·`match_sentences`가 쓰는 해석과 같다.
+    pub fn resolve_with(&self, query: &str, opts: &SearchOptions) -> Result<ParsedQuery> {
+        guard(|| self.resolve_opts(query, opts))
+    }
+
+    fn resolve_opts(&self, query: &str, opts: &SearchOptions) -> Result<ParsedQuery> {
+        let mut parsed = self.resolve_inner(query, opts.split)?;
+        add_phrases(&mut parsed, &opts.phrases);
+        Ok(parsed)
+    }
+
+    /// 제외어용 문서 집합(KFC2): 비교형 낱말이 붙어 있는 그대로(나누지 않음) 들어 있는 문장이 하나라도 있는 살아 있는
+    /// 문서의 ID. 여러 낱말("예산 집행")은 비교형을 이어 붙인 하나로 본다. 결과를 `SearchOptions::deny`에 합쳐 쓴다.
+    /// 비교형이 2글자 미만이면 `Error::Invalid`(본문 검색 낱말과 같은 하한).
+    pub fn doc_set(&self, word: &str) -> Result<RoaringTreemap> {
+        guard(|| {
+            let w = crate::fold(word);
+            if w.chars().count() < MIN_WORD_CHARS {
+                return Err(Error::Invalid(format!("exclude word shorter than {MIN_WORD_CHARS} chars")));
+            }
+            let opts = SearchOptions { time_limit: None, ..SearchOptions::default() };
+            let mut budget = Budget::new(&opts);
+            let mut out = RoaringTreemap::new();
+            for v in &self.views {
+                let mut hit = strict(&v.seg, &w, None, &mut budget)?;
+                hit -= &v.deleted;
+                let tables = v.seg.tables();
+                let mut it = hit.iter();
+                while let Some(sid) = it.next() {
+                    let Some(rec) = tables.doc_of(sid).and_then(|local| tables.doc(local)) else { return corrupt("document out of range") };
+                    out.insert(rec.doc_id);
+                    it.advance_to(rec.first_sid + rec.n_sent);
+                }
+            }
+            Ok(out)
+        })
+    }
+
     /// 조각마다 (일치 문장, 붙어 있는 일치 문장): 지운 문장과 범위 밖 문서(`opts.allow`·`deny`)를 뺀 것.
     /// `rank`·`count`·`match_sentences`가 모두 이 결과를 쓰므로 세 결과의 범위가 늘 같다.
     fn eval_all(&self, parsed: &ParsedQuery, opts: &SearchOptions, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
@@ -711,7 +753,7 @@ impl Index {
     fn rank_inner(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
         let mut budget = Budget::new(opts);
         budget.check()?;
-        let parsed = self.resolve_inner(query, opts.split)?;
+        let parsed = self.resolve_opts(query, opts)?;
         let sets = self.eval_all(&parsed, opts, &mut budget)?;
         let static_rank = if opts.top == 0 && sets.iter().any(|s| !s.0.is_empty()) { Some(self.static_rank()?) } else { None };
         let mut found = Collector { top: opts.top, best: Vec::new(), all: Vec::new(), ranks: static_rank.map_or(&[], |r| &r.per_view), total_docs: 0, adjacent_docs: 0 };
@@ -799,7 +841,7 @@ impl Index {
     fn count_inner(&self, query: &str, opts: &SearchOptions) -> Result<SearchCounts> {
         let mut budget = Budget::new(opts);
         budget.check()?;
-        let parsed = self.resolve_inner(query, opts.split)?;
+        let parsed = self.resolve_opts(query, opts)?;
         let sets = self.eval_all(&parsed, opts, &mut budget)?;
         let (mut total_sentences, mut total_docs) = (0u64, 0usize);
         for (view, sets_v) in self.views.iter().zip(&sets) {
@@ -829,7 +871,7 @@ impl Index {
     pub fn match_sentences(&self, query: &str, opts: &SearchOptions) -> Result<Vec<SentenceMatch>> {
         guard(|| {
             let mut budget = Budget::new(opts);
-            let parsed = self.resolve_inner(query, opts.split)?;
+            let parsed = self.resolve_opts(query, opts)?;
             let sets = self.eval_all(&parsed, opts, &mut budget)?;
             let mut out = Vec::new();
             for (view, sets_v) in self.views.iter().zip(&sets) {
