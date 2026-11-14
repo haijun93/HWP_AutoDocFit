@@ -1,5 +1,6 @@
 """업무자료함 노트 → 한/글 HWPX 내보내기: 생성 파일을 defusedxml로 다시 읽어 구조를 확인한다(COM 없음)."""
 import hashlib
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -197,6 +198,7 @@ class NotebookServiceHwpxTests(unittest.TestCase):
         self.assertNotIn("nb_export_hwpx", NOTEBOOK_COMMANDS)
         self.assertNotIn("nb_select_output", NOTEBOOK_COMMANDS)
 
+    @unittest.skipUnless(sys.platform == "win32", "업무자료함 저장은 Windows 전용 파이프(klib)를 거친다")
     def test_desktop_bridge_uses_save_selection(self):
         import desktop_web_ui
         bridge = desktop_web_ui.DesktopWebBridge.__new__(desktop_web_ui.DesktopWebBridge)
