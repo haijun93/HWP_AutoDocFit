@@ -90,6 +90,8 @@ begin
   StopHelper('kvf.exe');
   StopHelper('kfind.exe');
   StopHelper('hierarchy.exe');
+  // 몽땅검색 단축키 앱도 창 없이 상주해 Restart Manager가 닫지 못한다(이 PC 재현: "모든 응용 프로그램을 자동으로 닫지 못했습니다", 2026-11-14).
+  StopHelper('ktm.exe');
   Sleep(500);
   Result := '';
 end;
