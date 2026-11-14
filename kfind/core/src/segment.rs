@@ -32,10 +32,15 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::io::{BufWriter, Seek, SeekFrom, Write};
+use crate::docmap::{
+    DATE_PREFIX, DOC_GRAM_PREFIX, FILE_TYPE_PREFIX, FOLDER_PREFIX, MONTH_PREFIX, ROLE_PREFIX,
+    WORD_PREFIX, YEAR_PREFIX, extract_file_type, extract_folder, normalize_date,
+    ym_to_key, ymd_to_key,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-pub const FORMAT_VERSION: u32 = 3;
+pub const FORMAT_VERSION: u32 = 4;
 const MAGIC: &[u8; 8] = b"KFSEG\r\n\x1a";
 const HEADER_LEN: usize = 216;
 const HEADER_HASH: usize = HEADER_LEN - 8;
@@ -58,8 +63,6 @@ const ALPHA_IX_REC: usize = 8;
 pub(crate) const KEEP_IN_MEMORY_BYTES: usize = 8 << 20;
 /// 낱말(어절) 사전에 넣는 낱말의 최대 길이(바이트). 더 긴 어절은 나누기 후보가 되지 않는다.
 pub(crate) const MAX_WORD_BYTES: usize = 96;
-/// 낱말 열쇠의 머리 바이트. 비교형 글에는 0x00이 없어 조각 열쇠와 겹치지 않는다.
-pub(crate) const WORD_PREFIX: u8 = 0;
 
 pub(crate) fn seg_file_name(id: u64) -> String {
     format!("seg-{id:08}.kfs")
@@ -70,6 +73,53 @@ pub(crate) fn word_key(w: &str) -> Vec<u8> {
     let mut k = Vec::with_capacity(w.len() + 1);
     k.push(WORD_PREFIX);
     k.extend_from_slice(w.as_bytes());
+    k
+}
+
+#[allow(dead_code)]
+pub(crate) fn doc_gram_key(g2: &str) -> Vec<u8> {
+    let mut k = Vec::with_capacity(g2.len() + 1);
+    k.push(DOC_GRAM_PREFIX);
+    k.extend_from_slice(g2.as_bytes());
+    k
+}
+
+pub(crate) fn file_type_key(ext: &str) -> Vec<u8> {
+    let mut k = Vec::with_capacity(ext.len() + 1);
+    k.push(FILE_TYPE_PREFIX);
+    k.extend_from_slice(ext.as_bytes());
+    k
+}
+
+pub(crate) fn role_key(role_id: u8) -> Vec<u8> {
+    vec![ROLE_PREFIX, role_id]
+}
+
+pub(crate) fn date_key(ymd: u32) -> Vec<u8> {
+    let mut k = Vec::with_capacity(5);
+    k.push(DATE_PREFIX);
+    k.extend_from_slice(&ymd.to_be_bytes());
+    k
+}
+
+pub(crate) fn month_key(ym: u32) -> Vec<u8> {
+    let mut k = Vec::with_capacity(5);
+    k.push(MONTH_PREFIX);
+    k.extend_from_slice(&ym.to_be_bytes());
+    k
+}
+
+pub(crate) fn year_key(y: u32) -> Vec<u8> {
+    let mut k = Vec::with_capacity(5);
+    k.push(YEAR_PREFIX);
+    k.extend_from_slice(&y.to_be_bytes());
+    k
+}
+
+pub(crate) fn folder_key(folder: &str) -> Vec<u8> {
+    let mut k = Vec::with_capacity(folder.len() + 1);
+    k.push(FOLDER_PREFIX);
+    k.extend_from_slice(folder.as_bytes());
     k
 }
 
@@ -85,6 +135,8 @@ pub(crate) struct DocRec {
 pub(crate) struct PendingDoc {
     pub doc_id: u64,
     pub date: i64,
+    pub path: Option<String>,
+    pub file_type: Option<String>,
     /// 문장 비교형을 이어 붙인 글.
     pub text: String,
     /// 문장마다 끝 위치(text 안).
@@ -93,6 +145,7 @@ pub(crate) struct PendingDoc {
     pub tok_start: Vec<u32>,
     pub para: Vec<u32>,
     pub level: Vec<u8>,
+    pub roles: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -329,15 +382,51 @@ fn gram_key_bytes(packed: u64, out: &mut Vec<u8>) {
 /// 작은 조각이면 파일과 같은 바이트의 메모리 사본도 돌려준다(`Segment::from_bytes`).
 pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = &'a PendingDoc> + Clone) -> Result<(SegMeta, Option<Vec<u8>>)> {
     let mut grams: FxMap<u64, RoaringBitmap> = FxMap::default();
+    let mut doc_grams: FxMap<u64, RoaringBitmap> = FxMap::default();
     let mut words: HashMap<Box<[u8]>, RoaringBitmap> = HashMap::new();
+    let mut file_types: HashMap<String, RoaringBitmap> = HashMap::new();
+    let mut roles: [RoaringBitmap; 5] = Default::default();
+    let mut days: std::collections::BTreeMap<u32, RoaringBitmap> = std::collections::BTreeMap::new();
+    let mut months: std::collections::BTreeMap<u32, RoaringBitmap> = std::collections::BTreeMap::new();
+    let mut years: std::collections::BTreeMap<u32, RoaringBitmap> = std::collections::BTreeMap::new();
+    let mut folders: HashMap<String, RoaringBitmap> = HashMap::new();
     let mut cps: Vec<u64> = Vec::new();
     let mut char_counts: FxMap<u64, u64> = FxMap::default();
     let mut sid: u32 = 0;
     for (local, d) in docs.clone().enumerate() {
         let local = local as u32;
+
+        // 파일 형식 수집
+        let ext = d.file_type.clone().unwrap_or_else(|| {
+            d.path.as_deref().map(extract_file_type).unwrap_or_default()
+        });
+        if !ext.is_empty() {
+            let _ = file_types.entry(ext).or_default().try_push(local);
+        }
+
+        // 날짜(일/월/년) 수집
+        let (y, m, day) = normalize_date(d.date);
+        let ymd = ymd_to_key(y, m, day);
+        let ym = ym_to_key(y, m);
+        let _ = days.entry(ymd).or_default().try_push(local);
+        let _ = months.entry(ym).or_default().try_push(local);
+        let _ = years.entry(y).or_default().try_push(local);
+
+        // 폴더 경로 수집 (상위 폴더 포함)
+        if let Some(path) = &d.path {
+            let mut folder = extract_folder(path);
+            while !folder.is_empty() {
+                let _ = folders.entry(folder.clone()).or_default().try_push(local);
+                match folder.rfind('/') {
+                    Some(idx) => folder.truncate(idx),
+                    None => break,
+                }
+            }
+        }
+
         let mut start = 0usize;
         let mut tok = 0usize;
-        for &end in &d.sent_end {
+        for (i, &end) in d.sent_end.iter().enumerate() {
             let end = end as usize;
             let s = &d.text[start..end];
             cps.clear();
@@ -349,10 +438,20 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
                 let k2 = cps[i] | (cps[i + 1] << 21);
                 // 같은 문장 안 중복 조각은 try_push가 거부한다(문장 번호가 늘어나는 순서로만 들어온다).
                 let _ = grams.entry(k2).or_default().try_push(sid);
+                let _ = doc_grams.entry(k2).or_default().try_push(local);
                 if i + 2 < cps.len() {
                     let _ = grams.entry(k2 | (cps[i + 2] << 42)).or_default().try_push(sid);
                 }
             }
+
+            // 문장 역할 수집
+            let role_id = d.roles.get(i).copied().unwrap_or_else(|| {
+                crate::docmap::detect_sentence_role(d.level[i], d.para[i], s) as u8
+            });
+            if role_id >= 1 && role_id <= 4 {
+                let _ = roles[role_id as usize].try_push(sid);
+            }
+
             while tok < d.tok_start.len() && (d.tok_start[tok] as usize) < end {
                 let a = d.tok_start[tok] as usize;
                 let b = d.tok_start.get(tok + 1).map(|v| (*v as usize).min(end)).unwrap_or(end);
@@ -376,17 +475,44 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
             sid = sid.checked_add(1).ok_or_else(|| Error::Invalid("too many sentences in one segment".into()))?;
         }
     }
-    let mut entries: Vec<(Vec<u8>, RoaringBitmap)> = Vec::with_capacity(grams.len() + words.len());
+    let mut entries: Vec<(Vec<u8>, RoaringBitmap)> = Vec::with_capacity(
+        grams.len() + doc_grams.len() + words.len() + file_types.len() + 4 + days.len() + months.len() + years.len() + folders.len()
+    );
     let mut key = Vec::new();
     for (packed, bm) in grams {
         gram_key_bytes(packed, &mut key);
         entries.push((key.clone(), bm));
     }
-    for (w, bm) in words {
-        let mut k = Vec::with_capacity(w.len() + 1);
-        k.push(WORD_PREFIX);
-        k.extend_from_slice(&w);
+    for (packed, bm) in doc_grams {
+        gram_key_bytes(packed, &mut key);
+        let mut k = Vec::with_capacity(key.len() + 1);
+        k.push(DOC_GRAM_PREFIX);
+        k.extend_from_slice(&key);
         entries.push((k, bm));
+    }
+    for (w, bm) in words {
+        entries.push((word_key(std::str::from_utf8(&w).unwrap_or("")), bm));
+    }
+    for (ext, bm) in file_types {
+        entries.push((file_type_key(&ext), bm));
+    }
+    for role_id in 1u8..=4 {
+        let bm = &roles[role_id as usize];
+        if !bm.is_empty() {
+            entries.push((role_key(role_id), bm.clone()));
+        }
+    }
+    for (ymd, bm) in days {
+        entries.push((date_key(ymd), bm));
+    }
+    for (ym, bm) in months {
+        entries.push((month_key(ym), bm));
+    }
+    for (y, bm) in years {
+        entries.push((year_key(y), bm));
+    }
+    for (folder, bm) in folders {
+        entries.push((folder_key(&folder), bm));
     }
     entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
@@ -543,6 +669,59 @@ impl Segment {
             None => Ok(None),
             Some(off) => self.posting_at(off).map(Some),
         }
+    }
+
+    /// 2글자 조각의 문서 비트맵 (DOC_GRAM_PREFIX). 없으면 None.
+    pub(crate) fn doc_posting(&self, key: &[u8]) -> Result<Option<RoaringBitmap>> {
+        let mut k = Vec::with_capacity(key.len() + 1);
+        k.push(DOC_GRAM_PREFIX);
+        k.extend_from_slice(key);
+        self.posting(&k)
+    }
+
+    /// 파일 형식별 문서 비트맵 (FILE_TYPE_PREFIX). 없으면 None.
+    pub(crate) fn file_type_posting(&self, ext: &str) -> Result<Option<RoaringBitmap>> {
+        self.posting(&file_type_key(ext))
+    }
+
+    /// 문장 역할별 문장 비트맵 (ROLE_PREFIX). 없으면 None.
+    pub(crate) fn role_posting(&self, role_id: u8) -> Result<Option<RoaringBitmap>> {
+        self.posting(&role_key(role_id))
+    }
+
+    /// 일별 문서 비트맵 (DATE_PREFIX). 없으면 None.
+    pub(crate) fn date_posting(&self, ymd: u32) -> Result<Option<RoaringBitmap>> {
+        self.posting(&date_key(ymd))
+    }
+
+    /// 월별 문서 비트맵 (MONTH_PREFIX). 없으면 None.
+    pub(crate) fn month_posting(&self, ym: u32) -> Result<Option<RoaringBitmap>> {
+        self.posting(&month_key(ym))
+    }
+
+    /// 년별 문서 비트맵 (YEAR_PREFIX). 없으면 None.
+    pub(crate) fn year_posting(&self, y: u32) -> Result<Option<RoaringBitmap>> {
+        self.posting(&year_key(y))
+    }
+
+    /// 폴더별 문서 비트맵 (FOLDER_PREFIX). 없으면 None.
+    pub(crate) fn folder_posting(&self, folder: &str) -> Result<Option<RoaringBitmap>> {
+        self.posting(&folder_key(folder))
+    }
+
+    /// 세그먼트에 등록된 모든 폴더 목록을 fst 스트림으로 꺼낸다.
+    pub(crate) fn folders(&self) -> Result<Vec<String>> {
+        let mut op = self.dict.stream();
+        let mut out = Vec::new();
+        use fst::Streamer;
+        while let Some((k, _)) = op.next() {
+            if k.first() == Some(&FOLDER_PREFIX) {
+                if let Ok(s) = std::str::from_utf8(&k[1..]) {
+                    out.push(s.to_string());
+                }
+            }
+        }
+        Ok(out)
     }
 
     fn posting_at(&self, off: u64) -> Result<RoaringBitmap> {
@@ -765,9 +944,19 @@ pub(crate) fn merge_segments(dir: &Path, new_id: u64, sources: &[(Arc<Segment>, 
             ivs.extend_from_slice(values);
             ivs.sort_unstable_by_key(|iv| iv.index);
             let mut bm = RoaringBitmap::new();
-            let is_word = key.first() == Some(&WORD_PREFIX);
+            let prefix = key.first().copied().unwrap_or(b' ');
+            let is_doc = matches!(
+                prefix,
+                WORD_PREFIX
+                    | DOC_GRAM_PREFIX
+                    | FILE_TYPE_PREFIX
+                    | DATE_PREFIX
+                    | MONTH_PREFIX
+                    | YEAR_PREFIX
+                    | FOLDER_PREFIX
+            );
             for iv in &ivs {
-                let remap = if is_word { &doc_remaps[iv.index] } else { &remaps[iv.index] };
+                let remap = if is_doc { &doc_remaps[iv.index] } else { &remaps[iv.index] };
                 let src = sources[iv.index].0.posting_at(iv.value)?;
                 for sid in src {
                     match remap.get(sid as usize) {
@@ -818,7 +1007,18 @@ mod tests {
     use super::*;
 
     fn doc(id: u64, text: &str) -> PendingDoc {
-        let mut d = PendingDoc { doc_id: id, date: 0, text: String::new(), sent_end: Vec::new(), tok_start: Vec::new(), para: Vec::new(), level: Vec::new() };
+        let mut d = PendingDoc {
+            doc_id: id,
+            date: 0,
+            path: None,
+            file_type: None,
+            text: String::new(),
+            sent_end: Vec::new(),
+            tok_start: Vec::new(),
+            para: Vec::new(),
+            level: Vec::new(),
+            roles: Vec::new(),
+        };
         for tok in text.split(' ') {
             d.tok_start.push(d.text.len() as u32);
             crate::fold::fold_into(tok, &mut d.text);
