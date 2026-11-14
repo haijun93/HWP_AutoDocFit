@@ -18,7 +18,7 @@ class InstanceFileTests(unittest.TestCase):
             requests = list(instance_files._folder().glob('*.json'))
             self.assertEqual(len(requests), 1)
             self.assertEqual(json.loads(requests[0].read_text(encoding='utf-8')),
-                             {'rename': False, 'paths': [str(document)]})
+                             {'rename': False, 'photo_paste': False, 'paths': [str(document)]})
             gui = Mock(running=False)
             with patch.object(sys, 'argv', ['app', str(document)]):
                 instance_files.start(gui)
