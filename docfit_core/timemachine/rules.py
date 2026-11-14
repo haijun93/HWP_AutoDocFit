@@ -17,7 +17,7 @@ KINDS = {
     "image": (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tif", ".tiff", ".webp"),
 }
 EXT_KIND = {ext: kind for kind, exts in KINDS.items() for ext in exts}
-DEFAULT_EXTENSIONS = ("hwpx", "hwp", "docx", "pptx", "xlsx", "pdf", "txt")
+DEFAULT_EXTENSIONS = ("hwpx", "hwp", "docx", "pptx", "xlsx", "pdf", "txt", "md")
 SUPPORTED_EXTENSIONS = tuple(ext.lstrip(".").lower() for ext in EXT_KIND)
 IMAGE_EXTENSIONS = tuple(ext.lstrip(".").lower() for ext in KINDS["image"])
 

@@ -63,7 +63,7 @@ def extract_document(path: str | Path, *, hierarchy_records: list | None = None)
     if not ext:
         raise ExtractionError("unsupported", f"확장자가 없는 파일: {p.name}")
 
-    if ext in ("txt", "md"):
+    if ext in ("txt", "md", "csv"):  # csv는 한 줄을 한 문단으로(2026-11-14 검색 대상 점검)
         from .extractors_text import extract_plain_text
         records = extract_plain_text(p)
         return _apply_hierarchy(records, hierarchy_records)
@@ -83,7 +83,7 @@ def extract_document(path: str | Path, *, hierarchy_records: list | None = None)
         from .extractors_ooxml import extract_pptx
         records = extract_pptx(p)
         return _apply_hierarchy(records, hierarchy_records)
-    elif ext == "xlsx":
+    elif ext in ("xlsx", "xlsm"):  # xlsm은 xlsx와 같은 OOXML(매크로는 읽지 않음)
         from .extractors_ooxml import extract_xlsx
         records = extract_xlsx(p)
         return _apply_hierarchy(records, hierarchy_records)
