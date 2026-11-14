@@ -274,3 +274,14 @@
 3. **향후 권고 조치**:
    - kfind 코드는 변경하지 않고 그대로 유지.
    - 향후 APP1-K 관문 통과 및 전체 전환을 위해 `tools/app1_equivalence.py`의 `classify_difference` 판정 로직을 보완(순위 기준 역전 E7, dropped 제외어 E9, 구문 fold 및 기호 검색어 E5 확장 등)하여 15건의 `UNKNOWN`을 합당한 의도된 차이(Explained)로 해소할 것을 권고함.
+
+---
+
+## 6. 조치 내역 (2026-11-14)
+
+### 유형 4(따옴표 구문 검색 누락) 도구 수정
+- **수정 파일**: `tools/app1_equivalence.py`
+- **바꾼 이유**:
+  따옴표 구문(`"…"`) 검색 시 `ContentSearchIndex.parse_query`는 검색어를 `parsed['phrases']`에 담으나, 기존 도구는 `parsed['terms']`만 `words`에 반영하여 구문 검색어만 있는 경우 `words = []`가 되어 차이 분류 조건(`if words and ...`)을 타지 못하고 `UNKNOWN`으로 누락됨.
+  이에 따라 `raw_terms = [*parsed['terms'], *parsed['phrases']]`로 구문 검색어를 포함시키고, 원문 공백·기호 불일치로 legacy에서는 누락되었으나 kfind에서 fold 비교형 정규화로 일치하여 추가된 경우(`added`)를 `E5(비교형 정규화 차이)`로 올바르게 분류하도록 보완함.
+- **시험 추가**: `tests/test_app1_equivalence.py`에 따옴표 구문 E5 분류(일반 및 tempfile 기반)와 문장 분리 E1 분류 시험 추가.

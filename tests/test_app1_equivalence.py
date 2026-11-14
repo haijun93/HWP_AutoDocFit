@@ -59,3 +59,41 @@ class EquivalenceTests(unittest.TestCase):
     def test_default_queries_at_least_80_unique(self):
         self.assertGreaterEqual(len(DEFAULT_QUERIES), 80)
         self.assertEqual(len(DEFAULT_QUERIES), len(set(DEFAULT_QUERIES)))
+
+    def test_phrase_normalization_difference_classified_as_e5(self):
+        # 따옴표 구문("예산 집행") 질의 시 본문이 붙여 쓴 "예산집행"이라 legacy에서는
+        # 공백 불일치로 매칭 실패(0건)했으나 kfind에서는 fold 비교형 정규화로 일치하는 경우 E5로 분류
+        ref = Reference([document('plan.md', '예산집행 계획.')])
+        new = ref.search('"예산 집행"', 'tm')
+        diffs = classify_difference([], new, '"예산 집행"', ref)
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0]['kind'], 'E5')
+        self.assertEqual(diffs[0]['direction'], 'added')
+        self.assertEqual(diffs[0]['doc_key'], 'plan.md')
+
+    def test_phrase_normalization_with_tempfile(self):
+        # PC 절대 경로 하드코딩 없이 tempfile 임시 디렉토리를 사용한 따옴표 구문 E5 검증
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_path = os.path.join(tmpdir, 'plan.md')
+            doc = document('plan.md', '예산집행 계획.')
+            doc['path'] = file_path
+            ref = Reference([doc])
+            new = ref.search('"예산 집행"', 'tm')
+            diffs = classify_difference([], new, '"예산 집행"', ref)
+            self.assertEqual(len(diffs), 1)
+            self.assertEqual(diffs[0]['kind'], 'E5')
+            self.assertEqual(diffs[0]['direction'], 'added')
+            self.assertEqual(diffs[0]['doc_key'], 'plan.md')
+
+    def test_phrase_removed_difference_classified_as_e1(self):
+        # 따옴표 구문("예산 집행") 질의 시 legacy는 문단 전체에서 찾았으나
+        # kfind 문장 단위 인덱싱에서는 구문 일치 문장이 없어 탈락한 경우(removed) E1으로 분류
+        ref = Reference([document('doc.txt', '예산이다. 집행한다.')])
+        new = ref.search('"예산 집행"', 'tm')
+        diffs = classify_difference([dict(path='doc.txt')], new, '"예산 집행"', ref)
+        self.assertEqual(len(diffs), 1)
+        self.assertEqual(diffs[0]['kind'], 'E1')
+        self.assertEqual(diffs[0]['direction'], 'removed')
+        self.assertEqual(diffs[0]['doc_key'], 'doc.txt')

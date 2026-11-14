@@ -2,6 +2,10 @@
 
 python -m tools.app1_equivalence --corpus COPIES --pipe PIPE.test.NAME --out REPORT
 --reference-only는 서비스 미확인 보고서를 만들며 비교 A 합격으로 판정하지 않는다.
+
+2026-11-14 변경(유형 4): 따옴표 구문("…") 질의 비교 시 parsed['phrases']가 누락되어
+UNKNOWN으로 분류되던 문제를 수정. raw_terms에 phrases를 포함하고 원문 공백 불일치
+구문 매칭을 E5(비교형 정규화 차이)로 정상 분류하도록 보완.
 """
 from __future__ import annotations
 
@@ -100,7 +104,8 @@ def classify_difference(old, new, query, reference):
         return []
     evidence = []
     parsed = ContentSearchIndex.parse_query(query)
-    words = [fold(t) for t in parsed['terms']]
+    raw_terms = [*parsed['terms'], *parsed['phrases']]
+    words = [fold(t) for t in raw_terms if fold(t)]
     docs = {d['doc_key']: d for d in reference.docs}
     for key in sorted(set(old_keys) - set(new_keys)):
         row = next(r for r in old if r['path'] == key)
@@ -121,7 +126,8 @@ def classify_difference(old, new, query, reference):
         body = ' '.join(p['t'] for p in doc['paras']) if doc else ''
         if any(p for _, p in new.get('words', [])):
             kind = 'E2'
-        elif words and all(w in fold(body) for w in words) and not all(w in body for w in words):
+        elif words and all(w in fold(body) for w in words) and (
+                not all(w in body for w in words) or not all(t in body for t in raw_terms)):
             kind = 'E5'
         else:
             kind = 'UNKNOWN'
