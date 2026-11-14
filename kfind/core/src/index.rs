@@ -363,11 +363,30 @@ pub(crate) fn candidate_docs_for_query(view: &SegView, words: &[QueryWord], opts
 
     // 폴더 단위 거르기 (요구사항 5)
     if let Some(folder) = &opts.folder {
-        if let Some(f_bm) = seg.folder_posting(folder)? {
+        let norm_f = folder.replace('\\', "/");
+        let norm_f = norm_f.trim_matches('/');
+        let mut f_bm = seg.folder_posting(norm_f)?;
+        if f_bm.is_none() {
+            let all_folders = seg.folders()?;
+            for af in all_folders {
+                if af == norm_f || af.ends_with(&format!("/{norm_f}")) {
+                    if let Some(bm) = seg.folder_posting(&af)? {
+                        f_bm = Some(match f_bm {
+                            None => bm,
+                            Some(mut b) => {
+                                b |= bm;
+                                b
+                            }
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(bm) = f_bm {
             cand = Some(match cand {
-                None => f_bm,
+                None => bm,
                 Some(mut c) => {
-                    c &= f_bm;
+                    c &= bm;
                     c
                 }
             });
