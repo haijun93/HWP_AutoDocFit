@@ -6,6 +6,14 @@ description = "가상 관계형 자료함 엔진 klib.exe"
 license = "MIT"
 publish = false
 
+[lib]
+name = "klib"
+path = "src/lib.rs"
+
+[[bin]]
+name = "klib"
+path = "src/main.rs"
+
 [dependencies]
 rusqlite = { version = "0.41", features = ["bundled"] }
 windows-sys = { version = "0.59", features = [
@@ -25,6 +33,8 @@ encoding_rs = "0.8"
 quick-xml = "0.41"
 time = { version = "0.3.55", features = ["local-offset"] }
 zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
+cfb = "0.7"
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
 unicode-normalization = "0.1"
 # 메모 편집기 코어(같은 저장소의 std 전용 크레이트, 외부 의존성 없음). 파이프 명령 edit_*를 위임한다.
 editor_core = { path = "../editor_core" }
