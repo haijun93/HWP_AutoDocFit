@@ -52,12 +52,12 @@ jobs:
             echo "이미 있는 릴리스: $TAG"
           else
             # GitHub는 첨부 파일 이름의 한글을 지우므로(default.txt가 됨) 영문 이름으로 올리고 한글은 표시 이름(#)으로 둔다.
-            cp "release-assets/보고서 예시 파일(한번에 적용).txt" report-example-all-in-one.txt
+            cp "release-assets/[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt" report-example-all-in-one.txt
             if test -f release-assets/build-delivery.json; then
-              gh release upload "$TAG" release-assets/SHA256SUMS "report-example-all-in-one.txt#보고서 예시 파일(한번에 적용).txt" --clobber
+              gh release upload "$TAG" release-assets/SHA256SUMS "report-example-all-in-one.txt#[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt" --clobber
               gh release edit "$TAG" --draft=false --title "$TITLE" --notes-file "$NOTE" --latest
             else
-              python3 -c "import zipfile, os; tag=os.environ.get('TAG', 'release'); z=zipfile.ZipFile(f'HWP_AutoDocFit-{tag}.zip', 'w', zipfile.ZIP_DEFLATED); z.write('release-assets/HWP_AutoDocFit.exe', 'HWP_AutoDocFit.exe'); os.path.exists('release-assets/보고서 예시 파일(한번에 적용).txt') and z.write('release-assets/보고서 예시 파일(한번에 적용).txt', '보고서 예시 파일(한번에 적용).txt'); z.close()"
-              gh release create "$TAG" "HWP_AutoDocFit-${TAG}.zip" release-assets/HWP_AutoDocFit.exe release-assets/SHA256SUMS "report-example-all-in-one.txt#보고서 예시 파일(한번에 적용).txt" --title "$TITLE" --notes-file "$NOTE" --latest
+              python3 -c "import zipfile, os; tag=os.environ.get('TAG', 'release'); z=zipfile.ZipFile(f'HWP_AutoDocFit-{tag}.zip', 'w', zipfile.ZIP_DEFLATED); z.write('release-assets/HWP_AutoDocFit.exe', 'HWP_AutoDocFit.exe'); os.path.exists('release-assets/[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt') and z.write('release-assets/[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt', '[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt'); z.close()"
+              gh release create "$TAG" "HWP_AutoDocFit-${TAG}.zip" release-assets/HWP_AutoDocFit.exe release-assets/SHA256SUMS "report-example-all-in-one.txt#[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt" --title "$TITLE" --notes-file "$NOTE" --latest
             fi
           fi

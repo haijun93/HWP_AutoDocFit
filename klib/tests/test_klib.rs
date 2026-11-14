@@ -23,8 +23,12 @@ mod search;
 mod notebook;
 #[path = "../src/nb_transform.rs"]
 mod nb_transform;
+#[path = "../src/nb_store.rs"]
+mod nb_store;
 #[path = "../src/content.rs"]
 mod content;
+#[path = "../src/reindex.rs"]
+mod reindex;
 
 static SEARCH_INDEX: std::sync::OnceLock<Result<search::SearchIndex, String>> = std::sync::OnceLock::new();
 fn search_index() -> Result<&'static search::SearchIndex, String> {
@@ -97,6 +101,28 @@ fn test_box_crud() {
     let deleted = db.box_delete(b1).unwrap();
     assert!(deleted);
     assert!(db.box_get(b1).unwrap().is_none());
+}
+
+/// kvf 가상 폴더 창이 직접 읽는 box 5열과 item 9열의 이름·순서를 고정한다.
+#[test]
+fn test_kvf_read_column_contract() {
+    let ctx = TestContext::new("kvf_columns");
+    let db = Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap();
+    let conn = db.connection();
+
+    let box_columns = {
+        let mut stmt = conn.prepare("SELECT id, name, description, created_at, updated_at FROM box LIMIT 0").unwrap();
+        stmt.column_names().map(str::to_string).collect::<Vec<_>>()
+    };
+    assert_eq!(box_columns, ["id", "name", "description", "created_at", "updated_at"]);
+
+    let item_columns = {
+        let mut stmt = conn.prepare(
+            "SELECT id, box_id, kind, source_path, display_name, space, created_at, origin_path, managed_path FROM item LIMIT 0",
+        ).unwrap();
+        stmt.column_names().map(str::to_string).collect::<Vec<_>>()
+    };
+    assert_eq!(item_columns, ["id", "box_id", "kind", "source_path", "display_name", "space", "created_at", "origin_path", "managed_path"]);
 }
 
 #[test]
@@ -768,8 +794,8 @@ fn test_nb_source_item_column_migration_on_old_db() {
         let db = Database::open(path.to_str().unwrap()).unwrap();
         drop(db);
     }
-    // item_id 열이 없는 옛 nb_source 표를 흉내 낸 뒤 다시 열어도 열이 생긴다.
-    let c = rusqlite::Connection::open(&path).unwrap();
+    // item_id 열이 없는 옛 nb_source 표를 흉내 낸 뒤 다시 열어도 열이 생긴다(업무자료함 표는 별도 DB, NBIDX1).
+    let c = rusqlite::Connection::open(ctx.dir.join("notebook").join("notebook.db")).unwrap();
     c.execute_batch("DROP INDEX IF EXISTS idx_nb_source_item; ALTER TABLE nb_source DROP COLUMN item_id;").unwrap();
     drop(c);
     let db = Database::open(path.to_str().unwrap()).unwrap();
@@ -1338,4 +1364,351 @@ fn test_rel2255b_copy_source_through_directory_alias() {
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
     assert!(!target.exists());
     assert_eq!(fs::read_to_string(source.join("document.txt")).unwrap(), "original");
+}
+
+// ---- 파이프 서버(T1111-PIPE): 이벤트 대기 읽기, 한 연결 여러 요청, 대기 인스턴스 ----
+
+#[test]
+fn test_pipe_take_line_limits() {
+    use pipe::{Line, take_line};
+    let mut data = b"{\"cmd\":\"ping\"}\n{\"cmd\":".to_vec();
+    assert_eq!(take_line(&mut data), Line::Ready("{\"cmd\":\"ping\"}".into()));
+    assert_eq!(data, b"{\"cmd\":");
+    assert_eq!(take_line(&mut data), Line::More);
+    // 줄바꿈 전 길이가 정확히 64 KiB면 허용, 1바이트 넘으면 거부.
+    let mut exact = vec![b'a'; 64 * 1024];
+    assert_eq!(take_line(&mut exact), Line::More);
+    exact.push(b'\n');
+    assert!(matches!(take_line(&mut exact), Line::Ready(s) if s.len() == 64 * 1024));
+    let mut over = vec![b'a'; 64 * 1024 + 1];
+    assert_eq!(take_line(&mut over), Line::Reject);
+    over.push(b'\n');
+    assert_eq!(take_line(&mut over), Line::Reject);
+    // UTF-8이 아닌 요청은 거부.
+    let mut bad = vec![0xff, 0xfe, b'\n'];
+    assert_eq!(take_line(&mut bad), Line::Reject);
+    let mut empty = b"\nx".to_vec();
+    assert_eq!(take_line(&mut empty), Line::Ready(String::new()));
+}
+
+/// 시험용 파이프 서버. 사용자 파이프와 겹치지 않는 이름으로 serve_on을 스레드에 띄운다.
+struct PipeServer {
+    name: String,
+    running: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl PipeServer {
+    fn start(ctx: &TestContext, tag: &str) -> Self {
+        let name = format!("\\\\.\\pipe\\HwpAutoDocFit.klib.test.pipew-{tag}-{}.{}", std::process::id(), pipe::user_sid());
+        let db = Arc::new(Mutex::new(Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+        let running = Arc::new(AtomicBool::new(true));
+        let (n, r) = (name.clone(), running.clone());
+        let thread = std::thread::spawn(move || {
+            let last_activity = std::sync::atomic::AtomicU64::new(0);
+            pipe::serve_on(&n, &db, &r, &last_activity);
+        });
+        PipeServer { name, running, thread: Some(thread) }
+    }
+    fn connect(&self) -> fs::File {
+        for _ in 0..400 {
+            if let Ok(f) = fs::OpenOptions::new().read(true).write(true).open(&self.name) { return f; }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("파이프에 연결하지 못했습니다: {}", self.name);
+    }
+    /// 기존 클라이언트 방식: 연결 → 요청 1개 → 응답 1줄 → 닫기.
+    fn once(&self, request: &str) -> String {
+        let mut f = self.connect();
+        pipe_send(&mut f, request);
+        pipe_read_line(&mut f).expect("응답 한 줄")
+    }
+}
+
+impl Drop for PipeServer {
+    fn drop(&mut self) {
+        self.running.store(false, std::sync::atomic::Ordering::Relaxed);
+        if let Some(t) = self.thread.take() { let _ = t.join(); }
+    }
+}
+
+fn pipe_send(f: &mut fs::File, request: &str) {
+    use std::io::Write;
+    f.write_all(format!("{request}\n").as_bytes()).unwrap();
+}
+
+/// 응답 한 줄(줄바꿈 제외). 서버가 연결을 끊으면 None.
+fn pipe_read_line(f: &mut fs::File) -> Option<String> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    let mut b = [0u8; 1];
+    loop {
+        match f.read(&mut b) {
+            Ok(1) if b[0] == b'\n' => return String::from_utf8(out).ok(),
+            Ok(1) => out.push(b[0]),
+            _ => return None,
+        }
+    }
+}
+
+#[test]
+fn test_pipe_server_legacy_client_roundtrip_without_polling_delay() {
+    let ctx = TestContext::new("pipe_legacy");
+    let server = PipeServer::start(&ctx, "legacy");
+    let direct = { let db = Mutex::new(Database::open(ctx.dir.join("direct.db").to_str().unwrap()).unwrap()); pipe::handle_request(r#"{"cmd":"ping"}"#, &db, &AtomicBool::new(true)) };
+    assert_eq!(server.once(r#"{"cmd":"ping"}"#), direct);
+    let mut times = Vec::new();
+    for _ in 0..60 {
+        let t = std::time::Instant::now();
+        assert_eq!(server.once(r#"{"cmd":"ping"}"#), direct);
+        times.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let median = times[times.len() / 2];
+    println!("파이프 왕복(연결마다 1요청) 중앙값 {median:.3} ms, 최대 {:.3} ms", times[times.len() - 1]);
+    // 예전 폴링(요청마다 sleep 20ms, 실제 약 31ms)이 되살아나면 걸린다.
+    assert!(median < 10.0, "왕복 중앙값 {median:.3} ms");
+    // 잘못된 요청도 예전과 같은 응답 한 줄.
+    assert_eq!(json::parse(&server.once("not json")).unwrap().bool("ok"), Some(false));
+}
+
+#[test]
+fn test_pipe_server_many_requests_on_one_connection() {
+    let ctx = TestContext::new("pipe_keep");
+    let server = PipeServer::start(&ctx, "keep");
+    let mut f = server.connect();
+    pipe_send(&mut f, r#"{"cmd":"box_create","name":"한 연결","description":""}"#);
+    let created = json::parse(&pipe_read_line(&mut f).unwrap()).unwrap();
+    let id = created.i64("id").unwrap();
+    for i in 0..20 {
+        pipe_send(&mut f, &format!(r#"{{"cmd":"box_update","id":{id},"name":"이름{i}","description":"d"}}"#));
+        assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().bool("ok"), Some(true));
+    }
+    // 두 요청을 한 번에 써도 응답 두 줄이 차례로 온다.
+    pipe_send(&mut f, &format!("{{\"cmd\":\"ping\"}}\n{{\"cmd\":\"box_get\",\"id\":{id}}}"));
+    assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().str("message"), Some("pong"));
+    let got = json::parse(&pipe_read_line(&mut f).unwrap()).unwrap();
+    assert_eq!(got.get("box").and_then(|b| b.str("name")), Some("이름19"));
+    // 요청을 나눠 써도(줄바꿈이 나중에 와도) 한 요청으로 처리한다.
+    {
+        use std::io::Write;
+        f.write_all(b"{\"cmd\":").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        f.write_all(b"\"ping\"}\n").unwrap();
+    }
+    assert_eq!(json::parse(&pipe_read_line(&mut f).unwrap()).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_second_client_while_first_stays_connected() {
+    let ctx = TestContext::new("pipe_two");
+    let server = PipeServer::start(&ctx, "two");
+    let mut first = server.connect();
+    pipe_send(&mut first, r#"{"cmd":"ping"}"#);
+    assert!(pipe_read_line(&mut first).is_some());
+    // 첫 연결이 열린 채(요청을 쓰다 만 상태 포함)여도 다른 클라이언트가 바로 처리된다.
+    { use std::io::Write; first.write_all(b"{\"cmd\":\"pi").unwrap(); }
+    let t = std::time::Instant::now();
+    for _ in 0..5 {
+        assert_eq!(json::parse(&server.once(r#"{"cmd":"ping"}"#)).unwrap().str("message"), Some("pong"));
+    }
+    assert!(t.elapsed().as_millis() < 2000, "두 번째 클라이언트가 막혔습니다: {:?}", t.elapsed());
+    { use std::io::Write; first.write_all(b"ng\"}\n").unwrap(); }
+    assert_eq!(json::parse(&pipe_read_line(&mut first).unwrap()).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_survives_broken_and_oversized_clients() {
+    let ctx = TestContext::new("pipe_bad");
+    let server = PipeServer::start(&ctx, "bad");
+    // 줄바꿈 없이 끊은 클라이언트.
+    { use std::io::Write; let mut f = server.connect(); f.write_all(b"{\"cmd\":\"ping\"").unwrap(); }
+    // 연결만 하고 끊은 클라이언트.
+    drop(server.connect());
+    // 64 KiB를 넘는 요청: 응답 없이 끊긴다.
+    {
+        use std::io::Write;
+        let mut f = server.connect();
+        let big = format!("{{\"cmd\":\"ping\",\"pad\":\"{}\"}}\n", "a".repeat(70 * 1024));
+        let _ = f.write_all(big.as_bytes());
+        assert_eq!(pipe_read_line(&mut f), None);
+    }
+    // UTF-8이 아닌 요청: 응답 없이 끊긴다.
+    {
+        use std::io::Write;
+        let mut f = server.connect();
+        f.write_all(&[0xff, 0xfe, b'\n']).unwrap();
+        assert_eq!(pipe_read_line(&mut f), None);
+    }
+    assert_eq!(json::parse(&server.once(r#"{"cmd":"ping"}"#)).unwrap().str("message"), Some("pong"));
+}
+
+#[test]
+fn test_pipe_server_quit_replies_then_stops() {
+    let ctx = TestContext::new("pipe_quit");
+    let mut server = PipeServer::start(&ctx, "quit");
+    let idle = server.connect(); // 열려만 있는 다른 연결이 종료를 막지 않아야 한다
+    let reply = json::parse(&server.once(r#"{"cmd":"quit"}"#)).unwrap();
+    assert_eq!(reply.bool("ok"), Some(true));
+    let t = std::time::Instant::now();
+    server.thread.take().unwrap().join().unwrap();
+    assert!(t.elapsed().as_millis() < 3000, "quit 뒤 서버가 끝나지 않았습니다");
+    assert!(!server.running.load(std::sync::atomic::Ordering::Relaxed));
+    drop(idle);
+}
+
+/// edit_* 명령은 klib가 파싱한 값을 그대로 편집 코어에 넘긴다(이중 파싱 제거). 응답은 요청 문자열을 코어에 직접 넘긴 것과 같아야 한다.
+#[test]
+fn test_edit_requests_reuse_parsed_value_same_response() {
+    let ctx = TestContext::new("edit_parsed");
+    let db = Mutex::new(Database::open(ctx.dir.join("library.db").to_str().unwrap()).unwrap());
+    let running = AtomicBool::new(true);
+    let mut core = editor_core::api::Engine::new();
+    let open = r#"{"cmd":"edit_open","text":"가나다\nabc😀\n","line_ending":"CRLF"}"#;
+    let via_pipe = json::parse(&pipe::handle_request(open, &db, &running)).unwrap().i64("doc").unwrap();
+    let via_core = json::parse(&core.handle(open)).unwrap().i64("doc").unwrap();
+    let big = "붙여넣기 큰 글 ".repeat(2500);
+    let templates = [
+        r#"{"cmd":"edit_ping"}"#.to_string(),
+        r#"{"cmd":"edit_insert","doc":DOC,"pos":0,"text":"\"따옴표\"\t\\ \/ é😀\u0000\n"}"#.to_string(),
+        format!(r#"{{"cmd":"edit_insert","doc":DOC,"pos":0,"text":"{big}"}}"#),
+        r#" { "cmd" : "edit_text" , "doc" : DOC } "#.to_string(),
+        r#"{"cmd":"edit_line_range","doc":DOC,"start_line":0,"count":1e1}"#.to_string(),
+        r#"{"cmd":"edit_find_all","doc":DOC,"query":"가","case_sensitive":true,"whole_word":false}"#.to_string(),
+        r#"{"cmd":"edit_delete","doc":DOC,"start":0,"end":3.0}"#.to_string(),
+        r#"{"cmd":"edit_delete","doc":DOC,"start":-0,"end":1.5}"#.to_string(),
+        r#"{"cmd":"edit_undo","doc":DOC,"cmd":"edit_redo"}"#.to_string(),
+        r#"{"cmd":"edit_status","doc":DOC,"pos":0,"extra":[1,{"a":null},[]]}"#.to_string(),
+        r#"{"cmd":"edit_text","doc":999999}"#.to_string(),
+        r#"{"cmd":"edit_nope","doc":DOC}"#.to_string(),
+        r#"{"cmd":"edit_text"}"#.to_string(),
+        r#"{"cmd":"edit_close","doc":DOC}"#.to_string(),
+    ];
+    for t in templates {
+        let a = pipe::handle_request(&t.replace("DOC", &via_pipe.to_string()), &db, &running);
+        let b = core.handle(&t.replace("DOC", &via_core.to_string()));
+        assert_eq!(a.replace(&format!("문서 {via_pipe}"), "문서 N"), b.replace(&format!("문서 {via_core}"), "문서 N"), "{}", t.chars().take(80).collect::<String>());
+    }
+}
+
+/// 색인을 다시 만들 일이 없으면 상태는 ready이고, 검색 응답에 '색인 중' 표시가 붙지 않는다.
+#[test]
+fn test_index_status_ready_and_search_without_indexing_flag() {
+    let ctx = TestContext::new("index_status");
+    let db = Arc::new(Mutex::new(Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: &str| json::parse(&pipe::handle_request(req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"index_status"}"#);
+    assert_eq!(status.bool("ok"), Some(true), "{status:?}");
+    assert_eq!(status.str("state"), Some("ready"), "{status:?}");
+    assert_eq!(status.bool("indexing"), Some(false));
+    assert_eq!(status.i64("schema_version"), Some(search::SCHEMA_VERSION as i64));
+    let found = call(r#"{"cmd":"search","query":"없는검색어xyz"}"#);
+    assert_eq!(found.bool("ok"), Some(true), "{found:?}");
+    assert!(found.get("indexing").is_none(), "{found:?}");
+    reindex::wait();
+    assert_eq!(call(r#"{"cmd":"index_status"}"#).str("state"), Some("ready"));
+}
+
+/// NBIDX1: 출처 다시 색인은 같은 출처 번호로 문단을 바꾸고(인용 연결 유지), 원본 변경 검사·나눠 보내기·상태 명령이 맞물린다.
+#[test]
+fn test_nb_source_refresh_check_and_status() {
+    let ctx = TestContext::new("nb_refresh");
+    let db = Arc::new(Mutex::new(Database::open(&ctx.dir.join("library.db").to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: String| json::parse(&pipe::handle_request(&req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    assert_eq!(status.bool("ready"), Some(true), "{status:?}");
+    assert_eq!(status.get("migration").and_then(|m| m.str("state")), Some("not_needed"));
+    assert!(ctx.dir.join("notebook").join("notebook.db").is_file());
+    assert!(ctx.dir.join("notebook").join("tantivy").join("meta.json").is_file());
+
+    let nb = call(r#"{"cmd":"nb_create","name":"노트"}"#.into()).i64("id").unwrap();
+    let md = ctx.dir.join("계획.md");
+    fs::write(&md, "# 추진 계획\n복지 예산은 120억 원이다.\n도로 정비\n").unwrap();
+    let md_path = md.to_str().unwrap().replace(std::path::MAIN_SEPARATOR, "/");
+    let sid = call(format!(r#"{{"cmd":"nb_source_add","notebook_id":{nb},"source_path":"{md_path}"}}"#)).i64("id").unwrap();
+    let note = call(format!(r#"{{"cmd":"nb_note_save","notebook_id":{nb},"title":"메모","body":"","citations":[{{"source_id":{sid},"paragraph_ordinal":1,"quote":"복지 예산은 120억 원이다."}}]}}"#)).i64("id").unwrap();
+    let checked = call(r#"{"cmd":"nb_source_check"}"#.into());
+    assert_eq!(checked.arr("refresh").unwrap().len(), 0, "{checked:?}");
+
+    // 원본이 바뀌면 stale → 다시 색인하면 같은 번호로 ready, 인용은 옮겨진 문단을 가리킨다.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&md, "# 추진 계획\n새로 넣은 교통 대책\n복지 예산은 120억 원이다.\n도로 정비\n").unwrap();
+    let checked = call(format!(r#"{{"cmd":"nb_source_check","notebook_id":{nb}}}"#));
+    let refresh = checked.arr("refresh").unwrap();
+    assert_eq!(refresh.iter().map(|r| (r.i64("source_id").unwrap(), r.str("status").unwrap().to_string())).collect::<Vec<_>>(), vec![(sid, "stale".to_string())]);
+    assert_eq!(refresh[0].bool("needs_paragraphs"), Some(false));
+    let done = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{sid}}}"#));
+    assert_eq!(done.bool("ok"), Some(true), "{done:?}");
+    assert_eq!((done.i64("source_id"), done.i64("paragraph_count"), done.i64("relinked"), done.i64("unresolved")), (Some(sid), Some(4), Some(1), Some(0)));
+    let notes = call(format!(r#"{{"cmd":"nb_note_list","notebook_id":{nb}}}"#));
+    let first_note = &notes.arr("notes").unwrap()[0];
+    let cite = &first_note.arr("citations").unwrap()[0];
+    assert_eq!((first_note.i64("id"), cite.i64("source_id"), cite.i64("paragraph_ordinal")), (Some(note), Some(sid), Some(2)));
+    let hits = call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"교통 대책"}}"#));
+    assert_eq!(hits.arr("results").unwrap().iter().map(|h| (h.i64("source_id").unwrap(), h.i64("ordinal").unwrap())).collect::<Vec<_>>(), vec![(sid, 1)]);
+    let list = call(format!(r#"{{"cmd":"nb_source_list","notebook_id":{nb}}}"#));
+    assert_eq!(list.arr("sources").unwrap()[0].str("status"), Some("ready"));
+    assert_eq!(call(r#"{"cmd":"nb_source_check"}"#.into()).arr("refresh").unwrap().len(), 0);
+
+    // hwp·pdf는 Python이 문단을 나눠 보낸다(part 0 … last). 마지막 묶음 전까지는 옛 문단으로 검색된다.
+    let pdf = ctx.dir.join("자료.pdf");
+    fs::write(&pdf, b"%PDF-1.4 a").unwrap();
+    let pdf_path = pdf.to_str().unwrap().replace(std::path::MAIN_SEPARATOR, "/");
+    let pid = call(format!(r#"{{"cmd":"nb_source_add","notebook_id":{nb},"source_path":"{pdf_path}","paragraphs":[{{"text":"옛 보고서 문단"}}]}}"#)).i64("id").unwrap();
+    let needs = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid}}}"#));
+    assert_eq!((needs.bool("ok"), needs.str("code")), (Some(false), Some("NEEDS_PARAGRAPHS")));
+    let first = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":0,"last":false,"paragraphs":[{{"text":"새 보고서 첫 문단"}}]}}"#));
+    assert_eq!((first.i64("staged"), first.str("status")), (Some(1), Some("refreshing")), "{first:?}");
+    assert_eq!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"옛 보고서"}}"#)).arr("results").unwrap().len(), 1);
+    let last = call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":1,"last":true,"paragraphs":[{{"text":"새 보고서 둘째 문단"}}]}}"#));
+    assert_eq!(last.i64("paragraph_count"), Some(2), "{last:?}");
+    assert!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"옛 보고서 문단"}}"#)).arr("results").unwrap().iter().all(|h| h.str("body") != Some("옛 보고서 문단")));
+    assert_eq!(call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"보고서","source_ids":[{pid}]}}"#)).arr("results").unwrap().len(), 2);
+    // 순서가 어긋난 묶음은 거절.
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{pid},"part":3,"paragraphs":[{{"text":"x"}}]}}"#)).bool("ok"), Some(false));
+
+    // 원본이 없어지면 missing, 다시 색인하면 MISSING 코드.
+    fs::remove_file(&md).unwrap();
+    assert_eq!(call(r#"{"cmd":"nb_source_check"}"#.into()).get("counts").and_then(|c| c.i64("missing")), Some(1));
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{nb},"source_id":{sid}}}"#)).str("code"), Some("MISSING"));
+    // 다른 노트북의 출처는 거절.
+    let other = call(r#"{"cmd":"nb_create","name":"다른"}"#.into()).i64("id").unwrap();
+    assert_eq!(call(format!(r#"{{"cmd":"nb_source_refresh","notebook_id":{other},"source_id":{pid}}}"#)).bool("ok"), Some(false));
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    assert_eq!(status.i64("index_paragraphs"), Some(6), "{status:?}");
+    assert_eq!(status.get("sources").and_then(|s| s.i64("missing")), Some(1));
+}
+
+/// NBIDX1: 옛 버전 자료함 DB(main에 업무자료함 표)를 열면 별도 저장소로 한 번 옮기고, 공용 색인의 업무자료함 문단은 지운다.
+#[test]
+fn test_nb_legacy_library_moves_on_open_and_cleans_shared_index() {
+    let ctx = TestContext::new("nb_legacy_move");
+    let path = ctx.dir.join("library.db");
+    let (nb, sid) = {
+        let c = rusqlite::Connection::open(&path).unwrap();
+        notebook::init_schema(&c).unwrap();
+        let nb = notebook::create(&c, "옛 노트", "").unwrap();
+        let sid = notebook::add_source(&c, nb, "txt", "옛.txt", "옛 출처").unwrap();
+        let ps = vec![notebook::Paragraph { source_id: sid, ordinal: 0, location: String::new(), level: 0, kind: "text".into(), body: "옛 자료함에 있던 정책 문단".into() }];
+        notebook::replace_paragraphs(&c, sid, &ps).unwrap();
+        // 옛 버전은 업무자료함 문단을 공용 색인에 넣었다.
+        let s = notebook::source_by_id(&c, sid).unwrap().unwrap();
+        search_index().unwrap().replace_notebook_source(nb, &s, &ps).unwrap();
+        (nb, sid)
+    };
+    assert_eq!(search_index().unwrap().search_notebook(nb, "정책", None, 5).unwrap().len(), 1);
+    let db = Arc::new(Mutex::new(Database::open(path.to_str().unwrap()).unwrap()));
+    let running = Arc::new(AtomicBool::new(true));
+    let call = |req: String| json::parse(&pipe::handle_request(&req, &db, &running)).unwrap();
+    let status = call(r#"{"cmd":"nb_status"}"#.into());
+    let m = status.get("migration").unwrap();
+    assert_eq!((m.str("state"), m.i64("attempts")), (Some("done"), Some(1)), "{status:?}");
+    assert!(Path::new(m.str("backup").unwrap()).is_file());
+    let hits = call(format!(r#"{{"cmd":"nb_search","notebook_id":{nb},"query":"정책"}}"#));
+    assert_eq!(hits.arr("results").unwrap().iter().map(|h| h.i64("source_id").unwrap()).collect::<Vec<_>>(), vec![sid]);
+    assert!(search_index().unwrap().search_notebook(nb, "정책", None, 5).unwrap().is_empty(), "공용 색인에서 업무자료함 문단이 지워져야 한다");
+    let state: String = fs::read_to_string(ctx.dir.join("notebook").join("migration.json")).unwrap();
+    assert!(state.contains("\"state\":\"done\""), "{state}");
 }

@@ -558,6 +558,49 @@ void main() {
     expect(calls, ['nb_select_output']);
   });
 
+  testWidgets('ISUI2: 본문검색·출처 비교는 2글자부터 Enter 없이 찾고 메뉴를 바꾸면 같은 검색어로 다시 찾는다', (tester) async {
+    await _setSize(tester, 1400);
+    final api = InMemoryNotebookApi(fileContents: {_path: _content});
+    final nb = await api.createNotebook('연구');
+    final sourceId = await api.addSource(nb, _path);
+    await tester.pumpWidget(MaterialApp(home: NotebookScreen(api: api)));
+    await tester.pumpAndSettle();
+
+    // 1글자는 찾지 않는다.
+    await tester.enterText(find.byKey(const ValueKey('nb-query')), '복');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('nb-hit-0')), findsNothing);
+
+    // 2글자부터 단추 없이 찾는다.
+    await tester.enterText(find.byKey(const ValueKey('nb-query')), '복지');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('nb-hit-0')), findsOneWidget);
+
+    // 출처 비교로 바꾸면 같은 검색어가 남아 있고 곧바로 비교한다.
+    await tester.tap(find.byKey(const ValueKey('nb-mid-compare')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('nb-compare-query'))).controller!.text, '복지');
+    expect(find.byKey(ValueKey('nb-compare-col-$sourceId')), findsOneWidget);
+    expect(find.text('출처 1개 중 1개에서 근거를 찾았습니다.'), findsOneWidget);
+
+    // 비교 메뉴에서 바꾼 검색어로 본문검색에 돌아가면 그 검색어로 다시 찾는다.
+    await tester.enterText(find.byKey(const ValueKey('nb-compare-query')), '도로 정비');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('nb-mid-search')));
+    await tester.pumpAndSettle();
+    expect(find.descendant(of: find.byKey(const ValueKey('nb-hit-0')), matching: find.textContaining('도로 정비')), findsOneWidget);
+    expect(find.descendant(of: find.byKey(const ValueKey('nb-hit-0')), matching: find.textContaining('120억')), findsNothing);
+
+    // 지우면(2글자 미만) 결과를 비운다.
+    await tester.enterText(find.byKey(const ValueKey('nb-query')), '');
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('nb-hit-0')), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('middle tab and search button are named 본문검색', (tester) async {
     await _setSize(tester, 1400);
     final api = InMemoryNotebookApi(fileContents: {_path: _content});

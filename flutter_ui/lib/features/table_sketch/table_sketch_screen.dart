@@ -15,6 +15,8 @@ import 'dart:ui' as ui;
 import 'package:file_selector/file_selector.dart';
 
 import '../../core/drop_events.dart';
+import '../../core/theme/app_theme.dart';
+import 'table_sketch_colors.dart';
 import 'table_sketch_painter.dart';
 import 'table_sketch_selection.dart';
 
@@ -444,8 +446,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           SnackBar(
             content: Text(res.message),
             backgroundColor: res.ok
-                ? const Color(0xFF16A34A)
-                : const Color(0xFFDC2626),
+                ? TableSketchColors.of(context).snackOk
+                : context.colors.danger,
           ),
         );
       }
@@ -455,7 +457,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('복사 중 오류가 발생했습니다: $e'),
-            backgroundColor: const Color(0xFFDC2626),
+            backgroundColor: context.colors.danger,
           ),
         );
       }
@@ -659,9 +661,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       key: const Key('sketchLayerPanel'),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: context.colors.surfaceMuted,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        border: Border.all(color: context.colors.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -674,7 +676,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           for (final layer in layers)
             Material(
               color: layer.id == _doc.activeLayer
-                  ? const Color(0xFFDBEAFE)
+                  ? TableSketchColors.of(context).toolSelected
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
               child: InkWell(
@@ -733,9 +735,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                     ),
                     Text(
                       '${_doc.countIn(layer.id)}',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF64748B),
+                        color: context.colors.muted,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -805,9 +807,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               },
               child: Text('고른 선·글 $selected개를 이 레이어로'),
             ),
-          const Text(
+          Text(
             '숨긴 레이어는 한/글 표에 넣지 않아요. 잠근 레이어는 보이지만 고칠 수 없어요.',
-            style: TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+            style: TextStyle(fontSize: 11, color: context.colors.muted),
           ),
         ],
       ),
@@ -1914,15 +1916,15 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                 height: 14,
                 decoration: BoxDecoration(
                   color: current == null
-                      ? Colors.white
-                      : sketchColorValue(current),
-                  border: Border.all(color: const Color(0xFF94A3B8)),
+                      ? context.colors.surface
+                      : sketchColorValue(current), // 문서 색(테마 무관)
+                  border: Border.all(color: context.colors.faint),
                 ),
                 child: current == null
-                    ? const Icon(
+                    ? Icon(
                         Icons.block,
                         size: 12,
-                        color: Color(0xFFDC2626),
+                        color: context.colors.danger,
                       )
                     : null,
               ),
@@ -1956,11 +1958,11 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             width: 26,
             height: 26,
             decoration: BoxDecoration(
-              color: sketchColorValue(hex),
+              color: sketchColorValue(hex), // 문서 색(테마 무관)
               border: Border.all(
                 color: hex == current
-                    ? const Color(0xFF2563EB)
-                    : const Color(0xFFCBD5E1),
+                    ? context.colors.accent
+                    : context.colors.lineStrong,
                 width: hex == current ? 2.5 : 1,
               ),
             ),
@@ -2247,15 +2249,15 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         autofocus: true,
         child: Scaffold(
           key: const Key('tableSketchScreen'),
-          backgroundColor: const Color(0xFFF8FAFC),
+          backgroundColor: context.colors.surfaceMuted,
           appBar: AppBar(
-            backgroundColor: Colors.white,
+            backgroundColor: context.colors.surface,
             surfaceTintColor: Colors.transparent,
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.border_all_outlined, color: Color(0xFF2563EB)),
-                SizedBox(width: 8),
-                Flexible(
+                Icon(Icons.border_all_outlined, color: context.colors.accent),
+                const SizedBox(width: 8),
+                const Flexible(
                   child: Text(
                     '표그림판',
                     overflow: TextOverflow.ellipsis,
@@ -2405,10 +2407,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                     ),
                     Container(
                       width: 320,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
+                      decoration: BoxDecoration(
+                        color: context.colors.surface,
                         border: Border(
-                          left: BorderSide(color: Color(0xFFE2E8F0)),
+                          left: BorderSide(color: context.colors.line),
                         ),
                       ),
                       child: _buildBottomOrRightPanel(isNarrow: false),
@@ -2427,9 +2429,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Widget _buildTopToolbar({required bool isNarrow}) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        color: context.colors.surface,
+        border: Border(bottom: BorderSide(color: context.colors.line)),
       ),
       // 창이 좁으면 가로 스크롤 대신 다음 줄로 내려 모든 도구가 보이게 한다(2026-10-30 사용자 보고).
       child: Wrap(
@@ -2532,9 +2534,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           ),
           // 묶음(굵기·종류·확대)은 한 덩어리로 줄을 바꾼다.
           _toolGroup([
-            const Text(
+            Text(
               '굵기:',
-              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+              style: TextStyle(fontSize: 12, color: context.colors.muted),
             ),
             const SizedBox(width: 4),
             _widthChip('thin', '얇게', const Key('lineWidthThin')),
@@ -2544,9 +2546,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           // 좁은 창(420px)에서 한 줄에 넘치지 않게 mm 목록은 따로 줄을 바꾼다.
           _toolGroup([_widthMenu()]),
           _toolGroup([
-            const Text(
+            Text(
               '종류:',
-              style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+              style: TextStyle(fontSize: 12, color: context.colors.muted),
             ),
             const SizedBox(width: 4),
             _styleChip('solid', '실선', const Key('lineStyleSolid')),
@@ -2644,7 +2646,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     mainAxisSize: MainAxisSize.min,
     children: [
       const SizedBox(width: 4),
-      Container(width: 1, height: 24, color: const Color(0xFFCBD5E1)),
+      Container(width: 1, height: 24, color: context.colors.lineStrong),
       const SizedBox(width: 8),
       ...children,
     ],
@@ -3017,7 +3019,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     if (_recognizing) {
       return _RecognizeCard(
         key: const Key('recognizeBusy'),
-        color: const Color(0xFFEFF6FF),
+        color: TableSketchColors.of(context).infoSoft,
         children: [
           const SizedBox(
             width: 16,
@@ -3035,12 +3037,15 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     if (error != null) {
       return _RecognizeCard(
         key: const Key('recognizeError'),
-        color: const Color(0xFFFEF2F2),
+        color: context.colors.dangerSoft,
         children: [
-          const Icon(Icons.error_outline, color: Color(0xFFDC2626), size: 20),
+          Icon(Icons.error_outline, color: context.colors.danger, size: 20),
           const SizedBox(width: 8),
           Flexible(
-            child: Text(error, style: const TextStyle(color: Color(0xFF991B1B))),
+            child: Text(
+              error,
+              style: TextStyle(color: TableSketchColors.of(context).errorText),
+            ),
           ),
           const SizedBox(width: 8),
           TextButton(
@@ -3055,7 +3060,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     final image = _recognizedImage;
     return _RecognizeCard(
       key: const Key('recognizeOverlay'),
-      color: const Color(0xFFEFF6FF),
+      color: TableSketchColors.of(context).infoSoft,
       children: [
         if (image != null) ...[
           ClipRRect(
@@ -3080,14 +3085,20 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                 '$_recognizedRows행 × $_recognizedCols열 (파란 선)',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
-              const Text(
+              Text(
                 '적용하면 지금 그림이 바뀝니다. 되돌리기로 돌아갈 수 있어요.',
-                style: TextStyle(fontSize: 12, color: Color(0xFF475569)),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: context.colors.textSecondary,
+                ),
               ),
               for (final w in _recognizedWarnings)
                 Text(
                   w,
-                  style: const TextStyle(fontSize: 12, color: Color(0xFFB45309)),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: TableSketchColors.of(context).warnText,
+                  ),
                 ),
             ],
           ),
@@ -3172,10 +3183,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     children: [
       Text(
         _imageTarget == null ? '칸을 고르세요' : '고른 칸',
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 12,
           fontWeight: FontWeight.w700,
-          color: Color(0xFF15803D),
+          color: context.colors.success,
         ),
       ),
       _selectionAction(
@@ -3203,7 +3214,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+        style: TextStyle(fontSize: 11, color: context.colors.muted),
       ),
     ),
   );
@@ -3216,9 +3227,11 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       // 버튼은 왼쪽에 고정하고, 창이 좁으면 안내 글만 줄여 버튼이 가려지지 않게 한다.
       height: 38,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFEFF6FF),
-        border: Border(bottom: BorderSide(color: Color(0xFFBFDBFE))),
+      decoration: BoxDecoration(
+        color: TableSketchColors.of(context).infoSoft,
+        border: Border(
+          bottom: BorderSide(color: TableSketchColors.of(context).infoLine),
+        ),
       ),
       child: _tool == SketchToolMode.cellImage
           ? _cellImageBar()
@@ -3228,10 +3241,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                 Text(
                   _regionSel.isEmpty ? '칸을 누르세요' : '칸 ${_regionSel.length}격자 선택',
                   key: const Key('sketchRegionCount'),
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF15803D),
+                    color: context.colors.success,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -3244,10 +3257,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                   Text(
                     '${_sel.count}개 선택',
                     key: const Key('sketchSelectionCount'),
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      color: Color(0xFF1D4ED8),
+                      color: context.colors.accentDeep,
                     ),
                   ),
                   _selectionAction(
@@ -3342,12 +3355,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             decoration: BoxDecoration(
-              color: isSelected ? const Color(0xFFDBEAFE) : Colors.transparent,
+              color: isSelected
+                  ? TableSketchColors.of(context).toolSelected
+                  : Colors.transparent,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                color: isSelected
-                    ? const Color(0xFF2563EB)
-                    : Colors.transparent,
+                color: isSelected ? context.colors.accent : Colors.transparent,
               ),
             ),
             // 아이콘만으로는 정밀 지우개·올가미를 알아보기 어려워 이름을 함께 보인다(2026-10-30).
@@ -3358,8 +3371,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                   icon,
                   size: 20,
                   color: isSelected
-                      ? const Color(0xFF1D4ED8)
-                      : const Color(0xFF475569),
+                      ? context.colors.accentDeep
+                      : context.colors.textSecondary,
                 ),
                 const SizedBox(width: 4),
                 Text(
@@ -3368,8 +3381,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                     fontSize: 12,
                     fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
                     color: isSelected
-                        ? const Color(0xFF1D4ED8)
-                        : const Color(0xFF475569),
+                        ? context.colors.accentDeep
+                        : context.colors.textSecondary,
                   ),
                 ),
               ],
@@ -3406,7 +3419,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     Widget preview(String width) => SizedBox(
       width: 48,
       height: 16,
-      child: CustomPaint(painter: _WidthPreviewPainter(width)),
+      child: CustomPaint(
+        painter: _WidthPreviewPainter(width, context.colors.textStrong),
+      ),
     );
     return PopupMenuButton<String>(
       key: const Key('lineWidthMenu'),
@@ -3446,7 +3461,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         margin: const EdgeInsets.only(left: 2),
         decoration: BoxDecoration(
-          border: Border.all(color: const Color(0xFFCBD5E1)),
+          border: Border.all(color: context.colors.lineStrong),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Row(
@@ -3524,17 +3539,24 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     final found = _recognized!;
     final overlay = TableSketchDoc(
       grid: found.grid,
-      lines: [for (final l in found.lines) l.copyWith(color: '#2563EB')],
+      lines: [
+        for (final l in found.lines)
+          l.copyWith(color: TableSketchColors.recognizedLineHex),
+      ],
       texts: found.texts,
       fills: found.fills,
     );
     return IgnorePointer(
       child: Container(
         key: const Key('recognizeCanvasOverlay'),
-        color: const Color(0xC8FFFFFF),
+        color: TableSketchColors.paperVeil,
         child: CustomPaint(
           size: Size(width, height),
-          painter: TableSketchPainter(doc: overlay, cellSize: _cellSize),
+          painter: TableSketchPainter(
+            doc: overlay,
+            cellSize: _cellSize,
+            colors: TableSketchColors.of(context),
+          ),
         ),
       ),
     );
@@ -3562,7 +3584,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     return Listener(
       onPointerSignal: _handlePointerSignal,
       child: Container(
-        color: const Color(0xFFF1F5F9),
+        color: context.colors.surfaceSubtle,
         child: Center(
           child: Scrollbar(
             controller: _vScroll,
@@ -3585,10 +3607,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                       width: canvasWidth,
                       height: canvasHeight,
                       decoration: BoxDecoration(
-                        color: Colors.white,
-                        boxShadow: const [
+                        color: TableSketchColors.paper,
+                        boxShadow: [
                           BoxShadow(
-                            color: Color(0x1E0F172A),
+                            color: TableSketchColors.of(context).paperShadow,
                             blurRadius: 16,
                             offset: Offset(0, 4),
                           ),
@@ -3658,6 +3680,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                               regionCells: _tool == SketchToolMode.cellFill
                                   ? _regionSel
                                   : const {},
+                              colors: TableSketchColors.of(context),
                             ),
                             child: pending == null
                                 ? null
@@ -3694,9 +3717,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
+                color: context.colors.surfaceMuted,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
+                border: Border.all(color: context.colors.line),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -3704,12 +3727,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
+                      Text(
                         '표 미리보기',
                         style: TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: context.colors.text,
                         ),
                       ),
                       if (_previewLoading)
@@ -3724,17 +3747,17 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                   if (_previewResult != null && _previewResult!.ok) ...[
                     Text(
                       '크기: ${_previewResult!.rows}행 × ${_previewResult!.cols}열 (${_previewResult!.cells.length}칸)',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 13,
-                        color: Color(0xFF334155),
+                        color: context.colors.textBody,
                       ),
                     ),
                     const SizedBox(height: 4),
                     Text(
                       '용지 차지: ${_previewResult!.widthMm.toStringAsFixed(1)}mm × ${_previewResult!.heightMm.toStringAsFixed(1)}mm',
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
-                        color: Color(0xFF64748B),
+                        color: context.colors.muted,
                       ),
                     ),
                     if (_previewResult!.warnings.isNotEmpty) ...[
@@ -3742,7 +3765,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                       Container(
                         padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
+                          color: TableSketchColors.of(context).warnSoft,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Column(
@@ -3751,9 +3774,11 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                               .map(
                                 (w) => Text(
                                   '• $w',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 11,
-                                    color: Color(0xFF92400E),
+                                    color: TableSketchColors.of(
+                                      context,
+                                    ).warnSoftText,
                                   ),
                                 ),
                               )
@@ -3762,9 +3787,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                       ),
                     ],
                   ] else ...[
-                    const Text(
+                    Text(
                       '선을 그리면 한/글 표 형태가 자동으로 계산됩니다.',
-                      style: TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: context.colors.muted,
+                      ),
                     ),
                   ],
                 ],
@@ -3777,18 +3805,18 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               key: const Key('sketchCopyButton'),
               onPressed: _copying ? null : _copyToClipboard,
               icon: _copying
-                  ? const SizedBox(
+                  ? SizedBox(
                       width: 18,
                       height: 18,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: context.colors.onAccent,
                       ),
                     )
                   : const Icon(Icons.copy_rounded, size: 18),
               label: const Text('한/글에 붙여넣기용 복사'),
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF2563EB),
+                backgroundColor: context.colors.accentFill,
                 padding: const EdgeInsets.symmetric(vertical: 14),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
@@ -3798,12 +3826,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             const SizedBox(height: 16),
 
             // 저장 및 불러오기
-            const Text(
+            Text(
               '표 서식 보관',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF475569),
+                color: context.colors.textSecondary,
               ),
             ),
             const SizedBox(height: 8),
@@ -4022,9 +4050,9 @@ class _HwpxTablePicker extends StatelessWidget {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: Text(
                   '앞의 표 ${tables.length}개만 보입니다.',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 12,
-                    color: Color(0xFF64748B),
+                    color: context.colors.muted,
                   ),
                 ),
               ),
@@ -4046,7 +4074,7 @@ class _HwpxTablePicker extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: t.ok
                       ? null
-                      : const TextStyle(color: Color(0xFFB91C1C)),
+                      : TextStyle(color: context.colors.dangerDeep),
                 ),
                 onTap: () => Navigator.of(context).pop(t.index),
               ),
@@ -4092,13 +4120,14 @@ class _RecognizeCard extends StatelessWidget {
 
 /// 굵기 목록의 선 모양 미리보기.
 class _WidthPreviewPainter extends CustomPainter {
-  const _WidthPreviewPainter(this.width);
+  const _WidthPreviewPainter(this.width, this.color);
   final String width;
+  final Color color;
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = const Color(0xFF0F172A)
+      ..color = color
       ..strokeWidth = sketchStrokePx(width);
     final y = size.height / 2;
     if (width == 'double') {
@@ -4110,5 +4139,6 @@ class _WidthPreviewPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_WidthPreviewPainter old) => old.width != width;
+  bool shouldRepaint(_WidthPreviewPainter old) =>
+      old.width != width || old.color != color;
 }

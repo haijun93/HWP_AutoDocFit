@@ -48,21 +48,151 @@ impl NotebookIndex {
     }
 }
 
-pub fn init_schema(c:&Connection)->rusqlite::Result<()> { c.execute_batch("PRAGMA foreign_keys=ON;
-CREATE TABLE IF NOT EXISTS notebook(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS nb_source(id INTEGER PRIMARY KEY AUTOINCREMENT,notebook_id INTEGER NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,kind TEXT NOT NULL,origin TEXT NOT NULL DEFAULT '',display_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',reason TEXT NOT NULL DEFAULT '',paragraph_count INTEGER NOT NULL DEFAULT 0,original_size INTEGER NOT NULL DEFAULT 0,original_mtime INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,UNIQUE(notebook_id,id));
-CREATE TABLE IF NOT EXISTS nb_paragraph(source_id INTEGER NOT NULL REFERENCES nb_source(id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,location TEXT NOT NULL DEFAULT '',level INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'text',body TEXT NOT NULL,PRIMARY KEY(source_id,ordinal),UNIQUE(source_id,ordinal));
-CREATE TABLE IF NOT EXISTS nb_note(id INTEGER PRIMARY KEY AUTOINCREMENT,notebook_id INTEGER NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,title TEXT NOT NULL,body TEXT NOT NULL,updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS nb_citation(id INTEGER PRIMARY KEY AUTOINCREMENT,note_id INTEGER NOT NULL REFERENCES nb_note(id) ON DELETE CASCADE,source_id INTEGER NOT NULL REFERENCES nb_source(id) ON DELETE CASCADE,paragraph_ordinal INTEGER NOT NULL,quote TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS nb_note_tag(note_id INTEGER NOT NULL REFERENCES nb_note(id) ON DELETE CASCADE,tag TEXT NOT NULL,PRIMARY KEY(note_id,tag));
-CREATE INDEX IF NOT EXISTS idx_nb_note_tag_tag ON nb_note_tag(tag);
-CREATE INDEX IF NOT EXISTS idx_nb_source_notebook ON nb_source(notebook_id); CREATE INDEX IF NOT EXISTS idx_nb_paragraph_source ON nb_paragraph(source_id,ordinal); CREATE INDEX IF NOT EXISTS idx_nb_note_notebook ON nb_note(notebook_id); CREATE INDEX IF NOT EXISTS idx_nb_citation_note ON nb_citation(note_id); CREATE INDEX IF NOT EXISTS idx_nb_citation_source_paragraph ON nb_citation(source_id,paragraph_ordinal);")?; migrate_item_link(c) }
+/// 업무자료함 표(노트북·출처·문단·노트·인용·태그·다시 색인 준비)를 만든다. 시험·옮기기용 단독 연결에서는 main에 만든다.
+pub fn init_schema(c:&Connection)->rusqlite::Result<()> { init_schema_in(c,"main") }
+/// `schema`(main 또는 klib 연결에 붙인 `nb`) 안에 표를 만든다. 외래키 부모 표는 같은 DB 파일 안에 있다.
+pub fn init_schema_in(c:&Connection,schema:&str)->rusqlite::Result<()> { let s=schema; c.execute_batch(&format!("PRAGMA foreign_keys=ON;
+CREATE TABLE IF NOT EXISTS {s}.notebook(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS {s}.nb_source(id INTEGER PRIMARY KEY AUTOINCREMENT,notebook_id INTEGER NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,kind TEXT NOT NULL,origin TEXT NOT NULL DEFAULT '',display_name TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',reason TEXT NOT NULL DEFAULT '',paragraph_count INTEGER NOT NULL DEFAULT 0,original_size INTEGER NOT NULL DEFAULT 0,original_mtime INTEGER NOT NULL DEFAULT 0,created_at INTEGER NOT NULL DEFAULT 0,updated_at INTEGER NOT NULL DEFAULT 0,UNIQUE(notebook_id,id));
+CREATE TABLE IF NOT EXISTS {s}.nb_paragraph(source_id INTEGER NOT NULL REFERENCES nb_source(id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,location TEXT NOT NULL DEFAULT '',level INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'text',body TEXT NOT NULL,PRIMARY KEY(source_id,ordinal),UNIQUE(source_id,ordinal));
+CREATE TABLE IF NOT EXISTS {s}.nb_note(id INTEGER PRIMARY KEY AUTOINCREMENT,notebook_id INTEGER NOT NULL REFERENCES notebook(id) ON DELETE CASCADE,title TEXT NOT NULL,body TEXT NOT NULL,updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS {s}.nb_citation(id INTEGER PRIMARY KEY AUTOINCREMENT,note_id INTEGER NOT NULL REFERENCES nb_note(id) ON DELETE CASCADE,source_id INTEGER NOT NULL REFERENCES nb_source(id) ON DELETE CASCADE,paragraph_ordinal INTEGER NOT NULL,quote TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS {s}.nb_note_tag(note_id INTEGER NOT NULL REFERENCES nb_note(id) ON DELETE CASCADE,tag TEXT NOT NULL,PRIMARY KEY(note_id,tag));
+CREATE TABLE IF NOT EXISTS {s}.nb_refresh(source_id INTEGER PRIMARY KEY REFERENCES nb_source(id) ON DELETE CASCADE,original_size INTEGER NOT NULL,original_mtime INTEGER NOT NULL,started_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS {s}.nb_refresh_paragraph(source_id INTEGER NOT NULL REFERENCES nb_refresh(source_id) ON DELETE CASCADE,ordinal INTEGER NOT NULL,location TEXT NOT NULL DEFAULT '',level INTEGER NOT NULL DEFAULT 0,kind TEXT NOT NULL DEFAULT 'text',body TEXT NOT NULL,PRIMARY KEY(source_id,ordinal));
+CREATE INDEX IF NOT EXISTS {s}.idx_nb_note_tag_tag ON nb_note_tag(tag);
+CREATE INDEX IF NOT EXISTS {s}.idx_nb_source_notebook ON nb_source(notebook_id); CREATE INDEX IF NOT EXISTS {s}.idx_nb_paragraph_source ON nb_paragraph(source_id,ordinal); CREATE INDEX IF NOT EXISTS {s}.idx_nb_note_notebook ON nb_note(notebook_id); CREATE INDEX IF NOT EXISTS {s}.idx_nb_citation_note ON nb_citation(note_id); CREATE INDEX IF NOT EXISTS {s}.idx_nb_citation_source_paragraph ON nb_citation(source_id,paragraph_ordinal);"))?; migrate_item_link(c,s) }
 
 /// nb_source.item_id(출처가 나온 자료함 항목 id): 기존 DB에는 없을 수 있어 없으면 만든다. 항목이 지워져도 출처는 남으므로 외래키는 두지 않는다.
-fn migrate_item_link(c:&Connection)->rusqlite::Result<()> {
-    let has:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('nb_source') WHERE name='item_id')",[],|r|r.get(0))?;
-    if !has { c.execute_batch("ALTER TABLE nb_source ADD COLUMN item_id INTEGER;")?; }
-    c.execute_batch("CREATE INDEX IF NOT EXISTS idx_nb_source_item ON nb_source(notebook_id,item_id);")
+fn migrate_item_link(c:&Connection,s:&str)->rusqlite::Result<()> {
+    let has:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM pragma_table_info('nb_source',?1) WHERE name='item_id')",[s],|r|r.get(0))?;
+    if !has { c.execute_batch(&format!("ALTER TABLE {s}.nb_source ADD COLUMN item_id INTEGER;"))?; }
+    c.execute_batch(&format!("CREATE INDEX IF NOT EXISTS {s}.idx_nb_source_item ON nb_source(notebook_id,item_id);"))
+}
+
+/// 출처 색인 상태(nb_source.status). 화면·Python·에이전트가 같은 값을 읽는다.
+///
+/// ```text
+/// pending ─추가 완료─▶ ready ─원본 바뀜(nb_source_check)─▶ stale ─다시 색인 시작─▶ refreshing ─완료─▶ ready
+///                        │  ▲                              │                         └─실패─▶ failed ─다시 색인 시작─▶ refreshing
+///                        └──┴─원본 없어짐─▶ missing ─원본 다시 보임─▶ stale | ready(크기·시각 같음)
+/// ```
+/// 불가능한 전이: pending→stale(아직 색인 전), refreshing→stale·missing(다시 색인 중에는 검사가 상태를 덮지 않음), ready→failed(실패는 다시 색인에서만).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SourceStatus { Pending, Ready, Stale, Refreshing, Failed, Missing }
+impl SourceStatus {
+    pub fn as_str(self)->&'static str { match self { Self::Pending=>"pending", Self::Ready=>"ready", Self::Stale=>"stale", Self::Refreshing=>"refreshing", Self::Failed=>"failed", Self::Missing=>"missing" } }
+    pub fn parse(s:&str)->Option<Self> { Some(match s { "pending"=>Self::Pending, "ready"=>Self::Ready, "stale"=>Self::Stale, "refreshing"=>Self::Refreshing, "failed"=>Self::Failed, "missing"=>Self::Missing, _=>return None }) }
+    pub fn can_go(self,to:Self)->bool { use SourceStatus::*; self==to || matches!((self,to),
+        (Pending,Ready)|(Pending,Failed)|(Ready,Stale)|(Ready,Missing)|(Ready,Refreshing)|(Stale,Refreshing)|(Stale,Missing)|(Stale,Ready)
+        |(Refreshing,Ready)|(Refreshing,Failed)|(Failed,Refreshing)|(Failed,Missing)|(Missing,Stale)|(Missing,Ready)|(Missing,Refreshing)) }
+    /// 다시 색인할 대상인지(쉬는 시간 작업이 고른다).
+    pub fn wants_refresh(self)->bool { matches!(self,Self::Stale|Self::Failed) }
+}
+/// 상태를 바꾼다. 허용되지 않은 전이는 바꾸지 않고 Err.
+pub fn set_status(c:&Connection,source_id:i64,to:SourceStatus,reason:&str)->Result<(),String>{
+    let from:String=c.query_row("SELECT status FROM nb_source WHERE id=?1",[source_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    let from=SourceStatus::parse(&from).unwrap_or(SourceStatus::Ready);
+    if !from.can_go(to){return Err(format!("출처 상태를 {}에서 {}로 바꿀 수 없습니다.",from.as_str(),to.as_str()))}
+    c.execute("UPDATE nb_source SET status=?1,reason=?2,updated_at=?3 WHERE id=?4",params![to.as_str(),reason,now(),source_id]).map_err(|e|e.to_string())?;Ok(())
+}
+
+/// 다시 색인 결과: 문단 수와 인용 연결(그대로·옮김·찾지 못함).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RefreshReport { pub paragraphs:usize, pub citations:usize, pub kept:usize, pub relinked:usize, pub unresolved:usize }
+
+/// 다시 색인 준비: 원본 크기·시각을 적고 준비 문단을 비운다(상태 refreshing).
+pub fn refresh_begin(c:&Connection,source_id:i64,size:i64,mtime:i64)->Result<(),String>{
+    let tx=c.unchecked_transaction().map_err(|e|e.to_string())?;
+    set_status(&tx,source_id,SourceStatus::Refreshing,"")?;
+    tx.execute("DELETE FROM nb_refresh WHERE source_id=?1",[source_id]).map_err(|e|e.to_string())?;
+    tx.execute("INSERT INTO nb_refresh(source_id,original_size,original_mtime,started_at) VALUES(?1,?2,?3,?4)",params![source_id,size,mtime,now()]).map_err(|e|e.to_string())?;
+    tx.commit().map_err(|e|e.to_string())
+}
+/// 준비 문단을 덧붙인다(번호는 이어서). 준비가 없으면 Err(순서가 어긋난 요청).
+pub fn refresh_append(c:&Connection,source_id:i64,ps:&[Paragraph])->Result<usize,String>{
+    let tx=c.unchecked_transaction().map_err(|e|e.to_string())?;
+    let started:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM nb_refresh WHERE source_id=?1)",[source_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if !started{return Err("다시 색인을 시작하지 않은 출처입니다(part 0부터 보내 주세요).".into())}
+    let start:i64=tx.query_row("SELECT COALESCE(MAX(ordinal)+1,0) FROM nb_refresh_paragraph WHERE source_id=?1",[source_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    {let mut s=tx.prepare("INSERT INTO nb_refresh_paragraph(source_id,ordinal,location,level,kind,body) VALUES(?1,?2,?3,?4,?5,?6)").map_err(|e|e.to_string())?;
+     for(i,p)in ps.iter().enumerate(){s.execute(params![source_id,start+i as i64,p.location,p.level,p.kind,p.body]).map_err(|e|e.to_string())?;}}
+    let n:i64=tx.query_row("SELECT count(*) FROM nb_refresh_paragraph WHERE source_id=?1",[source_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    tx.commit().map_err(|e|e.to_string())?;Ok(n as usize)
+}
+/// 준비 문단으로 출처 문단을 한 번에 바꾼다(출처 번호 그대로). 인용은 같은 번호 문단에 인용 글이 있으면 그대로, 없으면
+/// 인용 글이 든 가장 가까운 문단으로 옮기고, 어디에도 없으면 번호를 그대로 둔다(인용 글 사본은 노트에 남아 있다).
+/// 문단이 하나도 없으면 바꾸지 않고 Err(옛 문단 유지).
+pub fn refresh_commit(c:&Connection,source_id:i64)->Result<RefreshReport,String>{
+    let e=|e:rusqlite::Error|e.to_string();
+    let tx=c.unchecked_transaction().map_err(e)?;
+    let meta:Option<(i64,i64)>=tx.query_row("SELECT original_size,original_mtime FROM nb_refresh WHERE source_id=?1",[source_id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(e)?;
+    let Some((size,mtime))=meta else{return Err("다시 색인을 시작하지 않은 출처입니다.".into())};
+    let staged:Vec<Paragraph>={let mut s=tx.prepare("SELECT source_id,ordinal,location,level,kind,body FROM nb_refresh_paragraph WHERE source_id=?1 ORDER BY ordinal").map_err(e)?;
+        s.query_map([source_id],|r|Ok(Paragraph{source_id:r.get(0)?,ordinal:r.get(1)?,location:r.get(2)?,level:r.get(3)?,kind:r.get(4)?,body:r.get(5)?})).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(e)?};
+    if staged.is_empty(){return Err("출처에서 본문 문단을 찾지 못했습니다.".into())}
+    let citations:Vec<(i64,i64,String)>={let mut s=tx.prepare("SELECT id,paragraph_ordinal,quote FROM nb_citation WHERE source_id=?1 ORDER BY id").map_err(e)?;
+        s.query_map([source_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(e)?};
+    let mut report=RefreshReport{paragraphs:staged.len(),citations:citations.len(),..Default::default()};
+    for(id,ordinal,quote) in &citations{
+        match relink(&staged,*ordinal,quote){
+            Some(o) if o==*ordinal=>report.kept+=1,
+            Some(o)=>{tx.execute("UPDATE nb_citation SET paragraph_ordinal=?1 WHERE id=?2",params![o,id]).map_err(e)?;report.relinked+=1}
+            None=>report.unresolved+=1,
+        }
+    }
+    tx.execute("DELETE FROM nb_paragraph WHERE source_id=?1",[source_id]).map_err(e)?;
+    tx.execute("INSERT INTO nb_paragraph(source_id,ordinal,location,level,kind,body) SELECT source_id,ordinal,location,level,kind,body FROM nb_refresh_paragraph WHERE source_id=?1",[source_id]).map_err(e)?;
+    tx.execute("DELETE FROM nb_refresh WHERE source_id=?1",[source_id]).map_err(e)?;
+    set_status(&tx,source_id,SourceStatus::Ready,"")?;
+    tx.execute("UPDATE nb_source SET paragraph_count=?1,original_size=?2,original_mtime=?3 WHERE id=?4",params![staged.len() as i64,size,mtime,source_id]).map_err(e)?;
+    tx.commit().map_err(e)?;Ok(report)
+}
+/// 다시 색인 실패: 준비 문단을 버리고 옛 문단은 그대로 둔 채 failed로.
+pub fn refresh_fail(c:&Connection,source_id:i64,reason:&str)->Result<(),String>{
+    let tx=c.unchecked_transaction().map_err(|e|e.to_string())?;
+    tx.execute("DELETE FROM nb_refresh WHERE source_id=?1",[source_id]).map_err(|e|e.to_string())?;
+    let status:String=tx.query_row("SELECT status FROM nb_source WHERE id=?1",[source_id],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if status!="failed"{ if SourceStatus::parse(&status)!=Some(SourceStatus::Refreshing){set_status(&tx,source_id,SourceStatus::Refreshing,"")?;} set_status(&tx,source_id,SourceStatus::Failed,reason)?; }
+    else { tx.execute("UPDATE nb_source SET reason=?1 WHERE id=?2",params![reason,source_id]).map_err(|e|e.to_string())?; }
+    tx.commit().map_err(|e|e.to_string())
+}
+/// 인용 글이 든 문단 번호: 같은 번호 문단이 먼저, 아니면 가장 가까운 번호(같으면 앞 번호). 공백 차이는 무시한다.
+fn relink(ps:&[Paragraph],ordinal:i64,quote:&str)->Option<i64>{
+    let squash=|s:&str|s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let q=squash(quote); if q.is_empty(){return ps.iter().any(|p|p.ordinal==ordinal).then_some(ordinal)}
+    let has=|p:&Paragraph|squash(&p.body).contains(&q);
+    if ps.iter().any(|p|p.ordinal==ordinal&&has(p)){return Some(ordinal)}
+    ps.iter().filter(|p|has(p)).min_by_key(|p|((p.ordinal-ordinal).abs(),p.ordinal)).map(|p|p.ordinal)
+}
+/// 원본 크기·시각(ms). 원본이 없으면 None.
+pub fn file_signature(path:&Path)->Option<(i64,i64)>{let m=std::fs::metadata(path).ok()?;if !m.is_file(){return None}Some((m.len() as i64,m.modified().ok().and_then(|t|t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d|d.as_millis() as i64).unwrap_or(0)))}
+
+/// 원본 변경 검사 한 줄.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckRow { pub source_id:i64, pub notebook_id:i64, pub path:String, pub kind:String, pub status:SourceStatus }
+/// 출처마다 원본 크기·시각을 저장값과 견줘 상태를 고친다(ready↔stale↔missing). 다시 색인 중(refreshing)인 출처는 건드리지 않는다.
+/// 크기·시각을 모르는 옛 출처(둘 다 0)는 지금 값을 기준으로 적고 다시 색인하지 않는다.
+/// `path_of`는 출처의 지금 원본 경로(자료함 항목과 연결된 출처는 항목의 지금 사본 경로)를 준다.
+pub fn check_sources(c:&Connection,notebook_id:Option<i64>,path_of:impl Fn(&Source,Option<i64>)->String)->Result<Vec<CheckRow>,String>{
+    let e=|e:rusqlite::Error|e.to_string();
+    let rows:Vec<(Source,Option<i64>)>={let mut s=c.prepare("SELECT id,notebook_id,kind,origin,display_name,status,reason,paragraph_count,original_size,original_mtime,item_id FROM nb_source WHERE ?1 IS NULL OR notebook_id=?1 ORDER BY id").map_err(e)?;
+        s.query_map([notebook_id],|r|Ok((Source{id:r.get(0)?,notebook_id:r.get(1)?,kind:r.get(2)?,origin:r.get(3)?,display_name:r.get(4)?,status:r.get(5)?,reason:r.get(6)?,paragraph_count:r.get(7)?,original_size:r.get(8)?,original_mtime:r.get(9)?},r.get(10)?))).map_err(e)?.collect::<rusqlite::Result<_>>().map_err(e)?};
+    let mut out=Vec::new();
+    for(s,item) in rows{
+        let status=SourceStatus::parse(&s.status).unwrap_or(SourceStatus::Ready);
+        if matches!(status,SourceStatus::Pending|SourceStatus::Refreshing){continue}
+        let path=path_of(&s,item);
+        let next=match file_signature(Path::new(&path)){
+            None=>SourceStatus::Missing,
+            Some((size,mtime)) if s.original_size==0&&s.original_mtime==0=>{c.execute("UPDATE nb_source SET original_size=?1,original_mtime=?2 WHERE id=?3",params![size,mtime,s.id]).map_err(e)?;if status==SourceStatus::Missing{SourceStatus::Ready}else{status}}
+            Some((size,mtime)) if size==s.original_size&&mtime==s.original_mtime=>if matches!(status,SourceStatus::Missing|SourceStatus::Stale){SourceStatus::Ready}else{status},
+            Some(_)=>if status==SourceStatus::Failed{status}else{SourceStatus::Stale},
+        };
+        if next!=status{set_status(c,s.id,next,if next==SourceStatus::Missing{"원본 파일을 찾을 수 없습니다."}else{""})?;}
+        out.push(CheckRow{source_id:s.id,notebook_id:s.notebook_id,path,kind:s.kind,status:next});
+    }
+    Ok(out)
 }
 pub fn set_source_item(c:&Connection,source_id:i64,item_id:i64)->rusqlite::Result<()> {c.execute("UPDATE nb_source SET item_id=?1 WHERE id=?2",params![item_id,source_id])?;Ok(())}
 pub fn source_for_item(c:&Connection,notebook_id:i64,item_id:i64)->rusqlite::Result<Option<i64>> {c.query_row("SELECT id FROM nb_source WHERE notebook_id=?1 AND item_id=?2 ORDER BY id LIMIT 1",params![notebook_id,item_id],|r|r.get(0)).optional()}
@@ -234,6 +364,56 @@ INSERT INTO notebook(name,created_at,updated_at) VALUES('옛',1,1);INSERT INTO n
     init_schema(&c).unwrap();init_schema(&c).unwrap();
     assert_eq!(notes(&c,1,None).unwrap().len(),1);assert!(note_tags(&c,1).unwrap().is_empty());
     set_note_tags(&c,1,&["옛것"]).unwrap();assert_eq!(notes(&c,1,Some("옛것")).unwrap().len(),1);
+}
+#[test]fn source_status_transitions_are_explicit(){
+    use SourceStatus::*;
+    for(a,b) in [(Pending,Ready),(Ready,Stale),(Stale,Refreshing),(Refreshing,Ready),(Refreshing,Failed),(Failed,Refreshing),(Ready,Missing),(Missing,Stale),(Missing,Ready),(Stale,Ready)]{assert!(a.can_go(b),"{a:?}->{b:?}")}
+    for(a,b) in [(Pending,Stale),(Refreshing,Stale),(Refreshing,Missing),(Ready,Failed),(Missing,Failed),(Stale,Pending)]{assert!(!a.can_go(b),"{a:?}->{b:?}")}
+    for s in [Pending,Ready,Stale,Refreshing,Failed,Missing]{assert_eq!(SourceStatus::parse(s.as_str()),Some(s))}
+    assert!(Stale.wants_refresh()&&Failed.wants_refresh()&&!Ready.wants_refresh()&&!Missing.wants_refresh());
+    let c=db();let n=create(&c,"노트","").unwrap();let s=add_source(&c,n,"txt","a.txt","a").unwrap();
+    assert!(set_status(&c,s,Stale,"").is_err(),"pending에서 stale로 갈 수 없다");
+    replace_paragraphs(&c,s,&[p(s,0,0,"text","하나")]).unwrap();
+    assert!(set_status(&c,s,Failed,"x").is_err());
+    set_status(&c,s,Stale,"").unwrap();assert_eq!(source_by_id(&c,s).unwrap().unwrap().status,"stale");
+}
+#[test]fn refresh_keeps_source_id_and_relinks_citations(){
+    let c=db();let n=create(&c,"노트","").unwrap();let s=add_source(&c,n,"txt","a.txt","a").unwrap();
+    replace_paragraphs(&c,s,&[p(s,0,0,"text","머리말"),p(s,1,0,"text","복지 예산은 120억 원이다."),p(s,2,0,"text","도로 정비 계획")]).unwrap();
+    let note=save_note_with_citations(&c,None,n,"메모","본문",&[(s,1,"복지 예산은 120억 원이다.".into()),(s,2,"도로 정비".into()),(s,0,"사라질 문장".into())],None).unwrap();
+    // 앞에 문단이 하나 끼어 번호가 밀린 새 원본.
+    refresh_begin(&c,s,10,20).unwrap();assert_eq!(source_by_id(&c,s).unwrap().unwrap().status,"refreshing");
+    assert_eq!(refresh_append(&c,s,&[p(s,0,0,"text","새 머리말"),p(s,0,0,"text","추가 문단")]).unwrap(),2);
+    assert_eq!(refresh_append(&c,s,&[p(s,0,0,"text","복지   예산은 120억 원이다. 덧붙임"),p(s,0,0,"text","도로 정비 계획")]).unwrap(),4);
+    // 준비 중에는 옛 문단이 그대로다.
+    assert_eq!(paragraphs(&c,s).unwrap().len(),3);
+    let r=refresh_commit(&c,s).unwrap();
+    assert_eq!(r,RefreshReport{paragraphs:4,citations:3,kept:0,relinked:2,unresolved:1});
+    let src=source_by_id(&c,s).unwrap().unwrap();assert_eq!((src.id,src.status.as_str(),src.paragraph_count,src.original_size,src.original_mtime),(s,"ready",4,10,20));
+    let cites=citations(&c,note).unwrap();assert_eq!(cites.iter().map(|x|(x.1,x.3.as_str())).collect::<Vec<_>>(),vec![(2,"복지 예산은 120억 원이다."),(3,"도로 정비"),(0,"사라질 문장")]);
+    assert!(export_md(&c,n,note).unwrap().unwrap().contains("> 복지 예산은 120억 원이다."));
+    // 준비 없이 덧붙이기·확정은 거절, 빈 준비로 확정하면 옛 문단 유지 후 실패 상태.
+    assert!(refresh_append(&c,s,&[p(s,0,0,"text","x")]).is_err());assert!(refresh_commit(&c,s).is_err());
+    refresh_begin(&c,s,1,1).unwrap();assert!(refresh_commit(&c,s).is_err());refresh_fail(&c,s,"본문 없음").unwrap();
+    let src=source_by_id(&c,s).unwrap().unwrap();assert_eq!((src.status.as_str(),src.reason.as_str(),src.paragraph_count),("failed","본문 없음",4));
+    assert_eq!(paragraphs(&c,s).unwrap().len(),4);
+    let staged:i64=c.query_row("SELECT count(*) FROM nb_refresh",[],|r|r.get(0)).unwrap();assert_eq!(staged,0);
+}
+#[test]fn check_marks_stale_missing_and_baselines_unknown(){
+    let dir=std::env::temp_dir().join(format!("nb-check-{}",std::process::id()));let _=std::fs::remove_dir_all(&dir);std::fs::create_dir_all(&dir).unwrap();
+    let (a,b,u)=(dir.join("a.txt"),dir.join("b.txt"),dir.join("u.txt"));for f in [&a,&b,&u]{std::fs::write(f,"하나").unwrap();}
+    let c=db();let n=create(&c,"노트","").unwrap();
+    let mk=|path:&Path|{let s=add_source(&c,n,"txt",path.to_str().unwrap(),"x").unwrap();replace_paragraphs(&c,s,&[p(s,0,0,"text","하나")]).unwrap();s};
+    let (sa,sb,su)=(mk(&a),mk(&b),mk(&u));
+    for (s,f) in [(sa,&a),(sb,&b)]{let (size,mtime)=file_signature(f).unwrap();c.execute("UPDATE nb_source SET original_size=?1,original_mtime=?2 WHERE id=?3",params![size,mtime,s]).unwrap();}
+    std::fs::write(&a,"하나 둘 셋").unwrap();std::fs::remove_file(&b).unwrap();
+    let rows=check_sources(&c,Some(n),|s,_|s.origin.clone()).unwrap();
+    assert_eq!(rows.iter().map(|r|(r.source_id,r.status)).collect::<Vec<_>>(),vec![(sa,SourceStatus::Stale),(sb,SourceStatus::Missing),(su,SourceStatus::Ready)]);
+    assert_eq!(source_by_id(&c,su).unwrap().unwrap().original_size,"하나".len() as i64,"크기·시각을 모르던 출처는 기준만 잡는다");
+    std::fs::write(&b,"하나").unwrap();c.execute("UPDATE nb_source SET original_mtime=1 WHERE id=?1",[sb]).unwrap();
+    let rows=check_sources(&c,None,|s,_|s.origin.clone()).unwrap();
+    assert_eq!(rows[1].status,SourceStatus::Stale,"다시 보인 원본은 크기·시각이 다르면 stale");
+    let _=std::fs::remove_dir_all(dir);
 }
 #[test]fn compare_groups_each_source_side_by_side(){
     let dir=std::env::temp_dir().join(format!("nb-compare-{}",std::process::id()));let _=std::fs::remove_dir_all(&dir);let ix=NotebookIndex::open(&dir).unwrap();

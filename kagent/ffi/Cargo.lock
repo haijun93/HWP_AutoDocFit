@@ -6,6 +6,14 @@ version = 4
 name = "kclip_ffi"
 version = "0.1.0"
 dependencies = [
+ "ui_theme",
+ "windows-sys",
+]
+
+[[package]]
+name = "ui_theme"
+version = "0.1.0"
+dependencies = [
  "windows-sys",
 ]
 

@@ -1,0 +1,423 @@
+..........................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................C:\Users\haiju\AppData\Local\Programs\Python\Python314\Lib\json\encoder.py:263: ResourceWarning: unclosed <ssl.SSLSocket [closed] fd=1268, family=2, type=1, proto=0>
+  def _make_iterencode(markers, _default, _encoder, _indent, _floatstr,
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+C:\Users\haiju\AppData\Local\Programs\Python\Python314\Lib\tempfile.py:484: ResourceWarning: Implicitly cleaning up <HTTPError 404: 'Not Found'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+....................E:\docfit-tmp\attp\docfit_engine\runtime.py:119: ResourceWarning: unclosed <ssl.SSLSocket [closed] fd=1356, family=2, type=1, proto=0>
+  def bind_function(function, namespace):
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.......................................................................................................................................................................................................................................................................................................................sssss.....................................................................................................................................................................kagent 앱 서비스 요청 처리 실패
+Traceback (most recent call last):
+  File "E:\docfit-tmp\attp\docfit_app\kagent_app_service.py", line 71, in handle_line
+    response = handle(request)
+  File "E:\docfit-tmp\attp\tests\test_kagent_app_service.py", line 64, in <lambda>
+    svc.handle = lambda _r: 1 / 0
+                            ~~^~~
+ZeroDivisionError: division by zero
+............................몽땅클립보드 에이전트 갱신 실패: {'ok': False, 'upgraded': False, 'reason': 'still_running'}
+.....................몽땅클립보드 에이전트 갱신 실패: {'ok': False, 'upgraded': False, 'reason': 'cannot start new agent'}
+.몽땅클립보드 에이전트 갱신 실패: {'ok': False, 'upgraded': False, 'reason': 'integrity'}
+..................몽땅클립보드 관리창 항상 위 적용 실패
+Traceback (most recent call last):
+  File "E:\docfit-tmp\attp\docfit_app\kclip_window_state.py", line 94, in _apply
+    apply_topmost(enabled)
+    ~~~~~~~~~~~~~^^^^^^^^^
+  File "E:\docfit-tmp\attp\tests\test_kclip_window_state.py", line 75, in boom
+    raise RuntimeError("no window")
+RuntimeError: no window
+................................................................................................................................s..............................................................................[11/13/26 04:31:49] INFO     Processing request of type           server.py:733
+                             ListToolsRequest
+........................................................................................................................................................................................................................................................................................................................................sss위계 재판정 실패(본문 행 유지): E:\docfit-tmp\rlev-test-lcbkwv37\docs\sample.md: rules failed
+...................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................제목 표와 개요 표 사이 빈 줄 1개 삭제
+제목·개요 표와 첫 항목기호 문장 사이 빈 줄 2개 삭제
+[준말 제외] '제목: 가': 줄 안에 있는 필드(누름틀·하이퍼링크 등) 때문에 본말로 바꾸지 않습니다.
+[준말 제외] '제목1: 표 안': 줄 안에 있는 표 때문에 본말로 바꾸지 않습니다.
+설정 저장 실패: 설정을 저장하지 못했습니다. 다시 시도해 주세요.
+준말 문서에서 준말 15개를 읽었습니다.
+준말 문서에서 준말 15개를 읽었습니다.
+PDF 하나로 합치기 완료: 가 외 1개(합친 PDF).pdf (파일 2개 → 3쪽)
+준말 문서에서 준말 15개를 읽었습니다.
+파일 변환 완료: 쪽.pdf → 쪽(PNG변경).png
+준말 문서에서 준말 15개를 읽었습니다.
+파일 변환 건너뜀(같은 형식): 메모.txt
+서식 프로필의 제목 표 (2행 1열) 예시가 칸 구성과 맞지 않아 기본 서식 표를 씁니다.
+문서 유형 판정 실패(무시하고 기존 방식): 'NoneType' object has no attribute 'GetPos'
+페이지 수 맞춤 불필요: 마지막 쪽(3쪽)에 25줄 (당겨올 기준 3줄 이하가 아님)
+프로그램 버전: 2.2.63 / 전체 처리 1회 / 단어 분리 방지: False / 본문 15단계 / 표 5단계 / 줄간격 조정범위 140~200%
+장평 줄이기: 안 함(자간 줄이기·늘리기만 사용)
+표 칸 하한: 줄 간격 100% / 자간 -25% (본문: 줄 간격 140% / 자간 -50%)
+작업 로그 파일: (만들지 않음)
+이전 실행의 임시 폴더 3개 정리
+작업 범위: 문서 전체
+표 안 문장 자간조정: 제외
+success: E:\docfit-tmp\tmp2_q42ssy\valid.hwpx → E:\docfit-tmp\tmp2_q42ssy\valid.hwpx.pdf
+success: E:\docfit-tmp\tmpd1ya9ikf\doc1.hwpx → E:\docfit-tmp\tmpd1ya9ikf\doc1.hwpx.pdf
+success: E:\docfit-tmp\tmpd1ya9ikf\doc2.hwpx → E:\docfit-tmp\tmpd1ya9ikf\doc2.hwpx.pdf
+success: E:\docfit-tmp\tmpd1ya9ikf\doc3.hwpx → E:\docfit-tmp\tmpd1ya9ikf\doc3.hwpx.pdf
+success: E:\docfit-tmp\tmpayqfp01k\doc1.hwpx → E:\docfit-tmp\tmpayqfp01k\doc1.hwpx.pdf
+success: E:\docfit-tmp\tmpayqfp01k\doc2.hwpx → E:\docfit-tmp\tmpayqfp01k\doc2.hwpx.pdf
+success: E:\docfit-tmp\tmpayqfp01k\doc3.hwpx → E:\docfit-tmp\tmpayqfp01k\doc3.hwpx.pdf
+success: E:\docfit-tmp\tmptifeczdw\doc1.hwpx → E:\docfit-tmp\tmptifeczdw\doc1.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_000.hwpx → E:\docfit-tmp\tmpltlku0el\doc_000.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_001.hwpx → E:\docfit-tmp\tmpltlku0el\doc_001.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_002.hwpx → E:\docfit-tmp\tmpltlku0el\doc_002.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_003.hwpx → E:\docfit-tmp\tmpltlku0el\doc_003.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_004.hwpx → E:\docfit-tmp\tmpltlku0el\doc_004.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_005.hwpx → E:\docfit-tmp\tmpltlku0el\doc_005.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_006.hwpx → E:\docfit-tmp\tmpltlku0el\doc_006.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_007.hwpx → E:\docfit-tmp\tmpltlku0el\doc_007.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_008.hwpx → E:\docfit-tmp\tmpltlku0el\doc_008.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_009.hwpx → E:\docfit-tmp\tmpltlku0el\doc_009.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_010.hwpx → E:\docfit-tmp\tmpltlku0el\doc_010.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_011.hwpx → E:\docfit-tmp\tmpltlku0el\doc_011.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_012.hwpx → E:\docfit-tmp\tmpltlku0el\doc_012.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_013.hwpx → E:\docfit-tmp\tmpltlku0el\doc_013.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_014.hwpx → E:\docfit-tmp\tmpltlku0el\doc_014.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_015.hwpx → E:\docfit-tmp\tmpltlku0el\doc_015.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_016.hwpx → E:\docfit-tmp\tmpltlku0el\doc_016.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_017.hwpx → E:\docfit-tmp\tmpltlku0el\doc_017.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_018.hwpx → E:\docfit-tmp\tmpltlku0el\doc_018.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_019.hwpx → E:\docfit-tmp\tmpltlku0el\doc_019.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_020.hwpx → E:\docfit-tmp\tmpltlku0el\doc_020.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_021.hwpx → E:\docfit-tmp\tmpltlku0el\doc_021.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_022.hwpx → E:\docfit-tmp\tmpltlku0el\doc_022.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_023.hwpx → E:\docfit-tmp\tmpltlku0el\doc_023.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_024.hwpx → E:\docfit-tmp\tmpltlku0el\doc_024.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_025.hwpx → E:\docfit-tmp\tmpltlku0el\doc_025.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_026.hwpx → E:\docfit-tmp\tmpltlku0el\doc_026.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_027.hwpx → E:\docfit-tmp\tmpltlku0el\doc_027.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_028.hwpx → E:\docfit-tmp\tmpltlku0el\doc_028.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_029.hwpx → E:\docfit-tmp\tmpltlku0el\doc_029.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_030.hwpx → E:\docfit-tmp\tmpltlku0el\doc_030.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_031.hwpx → E:\docfit-tmp\tmpltlku0el\doc_031.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_032.hwpx → E:\docfit-tmp\tmpltlku0el\doc_032.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_033.hwpx → E:\docfit-tmp\tmpltlku0el\doc_033.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_034.hwpx → E:\docfit-tmp\tmpltlku0el\doc_034.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_035.hwpx → E:\docfit-tmp\tmpltlku0el\doc_035.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_036.hwpx → E:\docfit-tmp\tmpltlku0el\doc_036.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_037.hwpx → E:\docfit-tmp\tmpltlku0el\doc_037.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_038.hwpx → E:\docfit-tmp\tmpltlku0el\doc_038.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_039.hwpx → E:\docfit-tmp\tmpltlku0el\doc_039.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_040.hwpx → E:\docfit-tmp\tmpltlku0el\doc_040.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_041.hwpx → E:\docfit-tmp\tmpltlku0el\doc_041.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_042.hwpx → E:\docfit-tmp\tmpltlku0el\doc_042.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_043.hwpx → E:\docfit-tmp\tmpltlku0el\doc_043.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_044.hwpx → E:\docfit-tmp\tmpltlku0el\doc_044.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_045.hwpx → E:\docfit-tmp\tmpltlku0el\doc_045.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_046.hwpx → E:\docfit-tmp\tmpltlku0el\doc_046.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_047.hwpx → E:\docfit-tmp\tmpltlku0el\doc_047.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_048.hwpx → E:\docfit-tmp\tmpltlku0el\doc_048.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_049.hwpx → E:\docfit-tmp\tmpltlku0el\doc_049.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_050.hwpx → E:\docfit-tmp\tmpltlku0el\doc_050.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_051.hwpx → E:\docfit-tmp\tmpltlku0el\doc_051.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_052.hwpx → E:\docfit-tmp\tmpltlku0el\doc_052.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_053.hwpx → E:\docfit-tmp\tmpltlku0el\doc_053.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_054.hwpx → E:\docfit-tmp\tmpltlku0el\doc_054.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_055.hwpx → E:\docfit-tmp\tmpltlku0el\doc_055.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_056.hwpx → E:\docfit-tmp\tmpltlku0el\doc_056.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_057.hwpx → E:\docfit-tmp\tmpltlku0el\doc_057.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_058.hwpx → E:\docfit-tmp\tmpltlku0el\doc_058.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_059.hwpx → E:\docfit-tmp\tmpltlku0el\doc_059.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_060.hwpx → E:\docfit-tmp\tmpltlku0el\doc_060.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_061.hwpx → E:\docfit-tmp\tmpltlku0el\doc_061.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_062.hwpx → E:\docfit-tmp\tmpltlku0el\doc_062.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_063.hwpx → E:\docfit-tmp\tmpltlku0el\doc_063.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_064.hwpx → E:\docfit-tmp\tmpltlku0el\doc_064.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_065.hwpx → E:\docfit-tmp\tmpltlku0el\doc_065.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_066.hwpx → E:\docfit-tmp\tmpltlku0el\doc_066.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_067.hwpx → E:\docfit-tmp\tmpltlku0el\doc_067.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_068.hwpx → E:\docfit-tmp\tmpltlku0el\doc_068.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_069.hwpx → E:\docfit-tmp\tmpltlku0el\doc_069.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_070.hwpx → E:\docfit-tmp\tmpltlku0el\doc_070.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_071.hwpx → E:\docfit-tmp\tmpltlku0el\doc_071.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_072.hwpx → E:\docfit-tmp\tmpltlku0el\doc_072.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_073.hwpx → E:\docfit-tmp\tmpltlku0el\doc_073.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_074.hwpx → E:\docfit-tmp\tmpltlku0el\doc_074.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_075.hwpx → E:\docfit-tmp\tmpltlku0el\doc_075.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_076.hwpx → E:\docfit-tmp\tmpltlku0el\doc_076.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_077.hwpx → E:\docfit-tmp\tmpltlku0el\doc_077.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_078.hwpx → E:\docfit-tmp\tmpltlku0el\doc_078.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_079.hwpx → E:\docfit-tmp\tmpltlku0el\doc_079.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_080.hwpx → E:\docfit-tmp\tmpltlku0el\doc_080.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_081.hwpx → E:\docfit-tmp\tmpltlku0el\doc_081.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_082.hwpx → E:\docfit-tmp\tmpltlku0el\doc_082.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_083.hwpx → E:\docfit-tmp\tmpltlku0el\doc_083.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_084.hwpx → E:\docfit-tmp\tmpltlku0el\doc_084.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_085.hwpx → E:\docfit-tmp\tmpltlku0el\doc_085.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_086.hwpx → E:\docfit-tmp\tmpltlku0el\doc_086.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_087.hwpx → E:\docfit-tmp\tmpltlku0el\doc_087.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_088.hwpx → E:\docfit-tmp\tmpltlku0el\doc_088.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_089.hwpx → E:\docfit-tmp\tmpltlku0el\doc_089.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_090.hwpx → E:\docfit-tmp\tmpltlku0el\doc_090.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_091.hwpx → E:\docfit-tmp\tmpltlku0el\doc_091.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_092.hwpx → E:\docfit-tmp\tmpltlku0el\doc_092.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_093.hwpx → E:\docfit-tmp\tmpltlku0el\doc_093.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_094.hwpx → E:\docfit-tmp\tmpltlku0el\doc_094.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_095.hwpx → E:\docfit-tmp\tmpltlku0el\doc_095.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_096.hwpx → E:\docfit-tmp\tmpltlku0el\doc_096.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_097.hwpx → E:\docfit-tmp\tmpltlku0el\doc_097.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_098.hwpx → E:\docfit-tmp\tmpltlku0el\doc_098.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_099.hwpx → E:\docfit-tmp\tmpltlku0el\doc_099.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_100.hwpx → E:\docfit-tmp\tmpltlku0el\doc_100.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_101.hwpx → E:\docfit-tmp\tmpltlku0el\doc_101.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_102.hwpx → E:\docfit-tmp\tmpltlku0el\doc_102.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_103.hwpx → E:\docfit-tmp\tmpltlku0el\doc_103.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_104.hwpx → E:\docfit-tmp\tmpltlku0el\doc_104.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_105.hwpx → E:\docfit-tmp\tmpltlku0el\doc_105.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_106.hwpx → E:\docfit-tmp\tmpltlku0el\doc_106.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_107.hwpx → E:\docfit-tmp\tmpltlku0el\doc_107.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_108.hwpx → E:\docfit-tmp\tmpltlku0el\doc_108.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_109.hwpx → E:\docfit-tmp\tmpltlku0el\doc_109.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_110.hwpx → E:\docfit-tmp\tmpltlku0el\doc_110.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_111.hwpx → E:\docfit-tmp\tmpltlku0el\doc_111.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_112.hwpx → E:\docfit-tmp\tmpltlku0el\doc_112.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_113.hwpx → E:\docfit-tmp\tmpltlku0el\doc_113.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_114.hwpx → E:\docfit-tmp\tmpltlku0el\doc_114.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_115.hwpx → E:\docfit-tmp\tmpltlku0el\doc_115.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_116.hwpx → E:\docfit-tmp\tmpltlku0el\doc_116.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_117.hwpx → E:\docfit-tmp\tmpltlku0el\doc_117.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_118.hwpx → E:\docfit-tmp\tmpltlku0el\doc_118.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_119.hwpx → E:\docfit-tmp\tmpltlku0el\doc_119.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_120.hwpx → E:\docfit-tmp\tmpltlku0el\doc_120.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_121.hwpx → E:\docfit-tmp\tmpltlku0el\doc_121.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_122.hwpx → E:\docfit-tmp\tmpltlku0el\doc_122.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_123.hwpx → E:\docfit-tmp\tmpltlku0el\doc_123.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_124.hwpx → E:\docfit-tmp\tmpltlku0el\doc_124.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_125.hwpx → E:\docfit-tmp\tmpltlku0el\doc_125.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_126.hwpx → E:\docfit-tmp\tmpltlku0el\doc_126.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_127.hwpx → E:\docfit-tmp\tmpltlku0el\doc_127.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_128.hwpx → E:\docfit-tmp\tmpltlku0el\doc_128.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_129.hwpx → E:\docfit-tmp\tmpltlku0el\doc_129.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_130.hwpx → E:\docfit-tmp\tmpltlku0el\doc_130.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_131.hwpx → E:\docfit-tmp\tmpltlku0el\doc_131.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_132.hwpx → E:\docfit-tmp\tmpltlku0el\doc_132.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_133.hwpx → E:\docfit-tmp\tmpltlku0el\doc_133.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_134.hwpx → E:\docfit-tmp\tmpltlku0el\doc_134.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_135.hwpx → E:\docfit-tmp\tmpltlku0el\doc_135.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_136.hwpx → E:\docfit-tmp\tmpltlku0el\doc_136.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_137.hwpx → E:\docfit-tmp\tmpltlku0el\doc_137.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_138.hwpx → E:\docfit-tmp\tmpltlku0el\doc_138.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_139.hwpx → E:\docfit-tmp\tmpltlku0el\doc_139.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_140.hwpx → E:\docfit-tmp\tmpltlku0el\doc_140.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_141.hwpx → E:\docfit-tmp\tmpltlku0el\doc_141.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_142.hwpx → E:\docfit-tmp\tmpltlku0el\doc_142.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_143.hwpx → E:\docfit-tmp\tmpltlku0el\doc_143.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_144.hwpx → E:\docfit-tmp\tmpltlku0el\doc_144.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_145.hwpx → E:\docfit-tmp\tmpltlku0el\doc_145.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_146.hwpx → E:\docfit-tmp\tmpltlku0el\doc_146.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_147.hwpx → E:\docfit-tmp\tmpltlku0el\doc_147.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_148.hwpx → E:\docfit-tmp\tmpltlku0el\doc_148.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_149.hwpx → E:\docfit-tmp\tmpltlku0el\doc_149.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_150.hwpx → E:\docfit-tmp\tmpltlku0el\doc_150.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_151.hwpx → E:\docfit-tmp\tmpltlku0el\doc_151.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_152.hwpx → E:\docfit-tmp\tmpltlku0el\doc_152.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_153.hwpx → E:\docfit-tmp\tmpltlku0el\doc_153.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_154.hwpx → E:\docfit-tmp\tmpltlku0el\doc_154.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_155.hwpx → E:\docfit-tmp\tmpltlku0el\doc_155.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_156.hwpx → E:\docfit-tmp\tmpltlku0el\doc_156.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_157.hwpx → E:\docfit-tmp\tmpltlku0el\doc_157.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_158.hwpx → E:\docfit-tmp\tmpltlku0el\doc_158.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_159.hwpx → E:\docfit-tmp\tmpltlku0el\doc_159.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_160.hwpx → E:\docfit-tmp\tmpltlku0el\doc_160.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_161.hwpx → E:\docfit-tmp\tmpltlku0el\doc_161.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_162.hwpx → E:\docfit-tmp\tmpltlku0el\doc_162.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_163.hwpx → E:\docfit-tmp\tmpltlku0el\doc_163.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_164.hwpx → E:\docfit-tmp\tmpltlku0el\doc_164.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_165.hwpx → E:\docfit-tmp\tmpltlku0el\doc_165.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_166.hwpx → E:\docfit-tmp\tmpltlku0el\doc_166.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_167.hwpx → E:\docfit-tmp\tmpltlku0el\doc_167.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_168.hwpx → E:\docfit-tmp\tmpltlku0el\doc_168.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_169.hwpx → E:\docfit-tmp\tmpltlku0el\doc_169.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_170.hwpx → E:\docfit-tmp\tmpltlku0el\doc_170.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_171.hwpx → E:\docfit-tmp\tmpltlku0el\doc_171.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_172.hwpx → E:\docfit-tmp\tmpltlku0el\doc_172.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_173.hwpx → E:\docfit-tmp\tmpltlku0el\doc_173.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_174.hwpx → E:\docfit-tmp\tmpltlku0el\doc_174.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_175.hwpx → E:\docfit-tmp\tmpltlku0el\doc_175.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_176.hwpx → E:\docfit-tmp\tmpltlku0el\doc_176.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_177.hwpx → E:\docfit-tmp\tmpltlku0el\doc_177.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_178.hwpx → E:\docfit-tmp\tmpltlku0el\doc_178.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_179.hwpx → E:\docfit-tmp\tmpltlku0el\doc_179.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_180.hwpx → E:\docfit-tmp\tmpltlku0el\doc_180.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_181.hwpx → E:\docfit-tmp\tmpltlku0el\doc_181.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_182.hwpx → E:\docfit-tmp\tmpltlku0el\doc_182.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_183.hwpx → E:\docfit-tmp\tmpltlku0el\doc_183.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_184.hwpx → E:\docfit-tmp\tmpltlku0el\doc_184.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_185.hwpx → E:\docfit-tmp\tmpltlku0el\doc_185.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_186.hwpx → E:\docfit-tmp\tmpltlku0el\doc_186.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_187.hwpx → E:\docfit-tmp\tmpltlku0el\doc_187.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_188.hwpx → E:\docfit-tmp\tmpltlku0el\doc_188.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_189.hwpx → E:\docfit-tmp\tmpltlku0el\doc_189.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_190.hwpx → E:\docfit-tmp\tmpltlku0el\doc_190.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_191.hwpx → E:\docfit-tmp\tmpltlku0el\doc_191.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_192.hwpx → E:\docfit-tmp\tmpltlku0el\doc_192.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_193.hwpx → E:\docfit-tmp\tmpltlku0el\doc_193.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_194.hwpx → E:\docfit-tmp\tmpltlku0el\doc_194.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_195.hwpx → E:\docfit-tmp\tmpltlku0el\doc_195.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_196.hwpx → E:\docfit-tmp\tmpltlku0el\doc_196.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_197.hwpx → E:\docfit-tmp\tmpltlku0el\doc_197.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_198.hwpx → E:\docfit-tmp\tmpltlku0el\doc_198.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_199.hwpx → E:\docfit-tmp\tmpltlku0el\doc_199.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_200.hwpx → E:\docfit-tmp\tmpltlku0el\doc_200.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_201.hwpx → E:\docfit-tmp\tmpltlku0el\doc_201.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_202.hwpx → E:\docfit-tmp\tmpltlku0el\doc_202.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_203.hwpx → E:\docfit-tmp\tmpltlku0el\doc_203.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_204.hwpx → E:\docfit-tmp\tmpltlku0el\doc_204.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_205.hwpx → E:\docfit-tmp\tmpltlku0el\doc_205.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_206.hwpx → E:\docfit-tmp\tmpltlku0el\doc_206.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_207.hwpx → E:\docfit-tmp\tmpltlku0el\doc_207.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_208.hwpx → E:\docfit-tmp\tmpltlku0el\doc_208.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_209.hwpx → E:\docfit-tmp\tmpltlku0el\doc_209.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_210.hwpx → E:\docfit-tmp\tmpltlku0el\doc_210.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_211.hwpx → E:\docfit-tmp\tmpltlku0el\doc_211.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_212.hwpx → E:\docfit-tmp\tmpltlku0el\doc_212.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_213.hwpx → E:\docfit-tmp\tmpltlku0el\doc_213.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_214.hwpx → E:\docfit-tmp\tmpltlku0el\doc_214.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_215.hwpx → E:\docfit-tmp\tmpltlku0el\doc_215.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_216.hwpx → E:\docfit-tmp\tmpltlku0el\doc_216.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_217.hwpx → E:\docfit-tmp\tmpltlku0el\doc_217.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_218.hwpx → E:\docfit-tmp\tmpltlku0el\doc_218.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_219.hwpx → E:\docfit-tmp\tmpltlku0el\doc_219.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_220.hwpx → E:\docfit-tmp\tmpltlku0el\doc_220.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_221.hwpx → E:\docfit-tmp\tmpltlku0el\doc_221.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_222.hwpx → E:\docfit-tmp\tmpltlku0el\doc_222.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_223.hwpx → E:\docfit-tmp\tmpltlku0el\doc_223.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_224.hwpx → E:\docfit-tmp\tmpltlku0el\doc_224.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_225.hwpx → E:\docfit-tmp\tmpltlku0el\doc_225.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_226.hwpx → E:\docfit-tmp\tmpltlku0el\doc_226.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_227.hwpx → E:\docfit-tmp\tmpltlku0el\doc_227.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_228.hwpx → E:\docfit-tmp\tmpltlku0el\doc_228.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_229.hwpx → E:\docfit-tmp\tmpltlku0el\doc_229.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_230.hwpx → E:\docfit-tmp\tmpltlku0el\doc_230.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_231.hwpx → E:\docfit-tmp\tmpltlku0el\doc_231.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_232.hwpx → E:\docfit-tmp\tmpltlku0el\doc_232.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_233.hwpx → E:\docfit-tmp\tmpltlku0el\doc_233.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_234.hwpx → E:\docfit-tmp\tmpltlku0el\doc_234.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_235.hwpx → E:\docfit-tmp\tmpltlku0el\doc_235.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_236.hwpx → E:\docfit-tmp\tmpltlku0el\doc_236.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_237.hwpx → E:\docfit-tmp\tmpltlku0el\doc_237.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_238.hwpx → E:\docfit-tmp\tmpltlku0el\doc_238.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_239.hwpx → E:\docfit-tmp\tmpltlku0el\doc_239.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_240.hwpx → E:\docfit-tmp\tmpltlku0el\doc_240.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_241.hwpx → E:\docfit-tmp\tmpltlku0el\doc_241.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_242.hwpx → E:\docfit-tmp\tmpltlku0el\doc_242.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_243.hwpx → E:\docfit-tmp\tmpltlku0el\doc_243.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_244.hwpx → E:\docfit-tmp\tmpltlku0el\doc_244.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_245.hwpx → E:\docfit-tmp\tmpltlku0el\doc_245.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_246.hwpx → E:\docfit-tmp\tmpltlku0el\doc_246.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_247.hwpx → E:\docfit-tmp\tmpltlku0el\doc_247.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_248.hwpx → E:\docfit-tmp\tmpltlku0el\doc_248.hwpx.pdf
+success: E:\docfit-tmp\tmpltlku0el\doc_249.hwpx → E:\docfit-tmp\tmpltlku0el\doc_249.hwpx.pdf
+success: E:\docfit-tmp\tmp009u5cv9\exists.hwpx → E:\docfit-tmp\tmp009u5cv9\exists.hwpx.pdf
+준말 문서에서 준말 15개를 읽었습니다.
+정밀 표 1: 후보 점수가 모호하여 정밀 복제 생략 · 기본 표 서식 적용
+
+[1000x1000 인식 시간] 0.425s
+DETECT 분야별과제표 · 모양 1: {'row': None, 'col': {'start': 0, 'core': 4, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}} expected={'row': None, 'col': {'start': 0, 'core': 3, 'sep': 1, 'count': 3, 'min': 1, 'max': 50}, 'signature': '408beef24fa87dd6'} match=False
+DETECT 분야별과제표 · 모양 2: catalog record missing
+DETECT 표(가로) · 모양 1: {'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'signature': 'eb8966dfb9811ca3'} match=False
+DETECT 표(가로) · 모양 2: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 4, 'min': 1, 'max': 50}} expected={'row': {'start': 0, 'core': 1, 'sep': 0, 'count': 1, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 4, 'min': 1, 'max': 50}, 'signature': 'dc2b6b8dcf7f4325'} match=False
+DETECT 표(가로) · 모양 3: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}} expected={'row': None, 'col': {'start': 2, 'core': 2, 'sep': 0, 'count': 1, 'min': 1, 'max': 50}, 'signature': 'bdefa9af7bf4d5ba'} match=False
+DETECT 현황표(가로) · 모양 1: {'row': {'start': 0, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': None} expected={'row': {'start': 3, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 2, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'signature': '96d1f6dc43f69192'} match=False
+DETECT 사진첨부용 · 모양 1: catalog record missing
+DETECT 사진첨부용 · 모양 2: catalog record missing
+DETECT 행사시간표 · 모양 1: {'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}, 'col': {'start': 2, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'signature': '93fdef0a5e0e82aa'} match=False
+DETECT 추진절차(가로) · 모양 1: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 5, 'min': 1, 'max': 50}} expected={'row': {'start': 0, 'core': 1, 'sep': 0, 'count': 1, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 5, 'min': 1, 'max': 50}, 'signature': '3d47a1f8cc513c8b'} match=False
+DETECT 추진절차(가로) · 모양 2: {'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 5, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 5, 'min': 1, 'max': 50}, 'signature': '47e5c804bb9f56cd'} match=False
+DETECT 추진절차(가로) · 모양 3: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 4, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 4, 'min': 1, 'max': 50}, 'signature': 'fb587afb20a87119'} match=False
+DETECT 추진절차(가로) · 모양 4: {'row': None, 'col': {'start': 1, 'core': 1, 'sep': 1, 'count': 3, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 4, 'min': 1, 'max': 50}, 'signature': 'fb587afb20a87119'} match=False
+DETECT 추진절차(가로) · 모양 5: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 6, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 1, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 6, 'min': 1, 'max': 50}, 'signature': '153a12978b7c3ab3'} match=False
+DETECT 추진절차(가로세로) · 모양 1: {'row': {'start': 1, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}} expected={'row': {'start': 0, 'core': 1, 'sep': 1, 'count': 3, 'min': 1, 'max': 50, 'kind': 'grid_flow'}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50, 'kind': 'grid_flow'}, 'signature': 'dcc581be5e609dcd'} match=False
+DETECT 추진절차(가로세로) · 사용자형: catalog record missing
+DETECT 추진절차(세로) · 모양 1: {'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 3, 'min': 1, 'max': 50}} expected={'row': {'start': 2, 'core': 1, 'sep': 1, 'count': 6, 'min': 1, 'max': 50}, 'col': None, 'signature': '77d7182dd4a2859a'} match=False
+DETECT 신구대조표 · 모양 1: {'row': None, 'col': None} expected={'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 4, 'min': 1, 'max': 50, 'kind': 'staggered'}, 'col': None, 'signature': '78ffecfa68b7b6ab'} match=False
+DETECT 신구대조표 · 사용자형: catalog record missing
+DETECT 신구대조표 · 모양 2: {'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}, 'col': None} expected={'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}, 'col': None, 'signature': 'dcc581be5e609dcd'} match=False
+DETECT 신구대조표 · 모양 3: {'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 3, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}, 'col': None, 'signature': '22556c475d775a45'} match=False
+DETECT 일정표(연간) · 모양 1: {'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 4, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}} expected={'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 4, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'signature': '84a71465228518f1'} match=False
+DETECT 일정표(월별) · 모양 1: {'row': {'start': 1, 'core': 1, 'sep': 1, 'count': 12, 'min': 1, 'max': 50}, 'col': {'start': 2, 'core': 1, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 4, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}, 'col': {'start': 2, 'core': 1, 'sep': 0, 'count': 6, 'min': 1, 'max': 50}, 'signature': '2398484fbb0fdf6d'} match=False
+DETECT 일정표(주간) · 모양 1: {'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 3, 'min': 1, 'max': 50}, 'col': None} expected={'row': {'start': 2, 'core': 1, 'sep': 0, 'count': 9, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 0, 'count': 5, 'min': 1, 'max': 50, 'kind': 'weekly'}, 'signature': '5bee044c21f08c86'} match=False
+DETECT 일정표(일간) · 모양 1: {'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 5, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 2, 'sep': 0, 'count': 9, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 0, 'count': 4, 'min': 1, 'max': 50}, 'signature': '67ead53e71fb418b'} match=False
+DETECT 행사표(1일) · 모양 1: {'row': {'start': 1, 'core': 1, 'sep': 0, 'count': 8, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}} expected={'row': {'start': 1, 'core': 8, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 3, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'signature': '4cfe028a946afd99'} match=False
+DETECT 부연설명 · 모양 1: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}} expected={'row': None, 'col': None, 'signature': 'e71baf079ebf674f'} match=False
+DETECT 부연설명 · 모양 2: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}} expected={'row': None, 'col': None, 'signature': '68fc9894b22bd0a2'} match=False
+DETECT 부연설명 · 모양 3: {'row': None, 'col': {'start': 0, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}} expected={'row': None, 'col': None, 'signature': 'e71baf079ebf674f'} match=False
+DETECT 부연설명 · 모양 4: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': 'ba28e3852a1ed1bc'} match=False
+DETECT 부연설명 · 모양 5: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': '4afc81c3945f5542'} match=False
+DETECT 부연설명 · 모양 6: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': '6abcd3b1acdbe172'} match=False
+DETECT 부연설명 · 모양 7: catalog record missing
+DETECT 라벨 서식 · 모양 1: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': '4afc81c3945f5542'} match=False
+DETECT 라벨 서식 · 모양 2: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': '4afc81c3945f5542'} match=False
+DETECT 라벨 서식 · 모양 3: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': 'ba28e3852a1ed1bc'} match=False
+DETECT 라벨 서식 · 모양 4: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': '4afc81c3945f5542'} match=False
+DETECT 라벨 서식 · 모양 5: {'row': None, 'col': None} expected={'row': None, 'col': None, 'signature': 'fb7620756fb25509'} match=False
+DETECT 라벨 서식 · 모양 6: {'row': {'start': 0, 'core': 1, 'sep': 0, 'count': 2, 'min': 1, 'max': 50}, 'col': {'start': 1, 'core': 1, 'sep': 1, 'count': 2, 'min': 1, 'max': 50}} expected={'row': None, 'col': None, 'signature': '7a641a7402375f53'} match=False
+DETECT 조직도 · 모양 1: {'row': None, 'col': None} expected={'row': None, 'col': {'count': 6, 'min': 2, 'max': 10, 'core': 2, 'sep': 1, 'kind': 'org_chart_wide'}, 'signature': 'f97c6d9d4a4f2dc6'} match=False
+DETECT 사업개요표 · 모양 1: catalog record missing
+DETECT 사업개요표 · 모양 2: catalog record missing
+DETECT 사업개요표 · 모양 3: catalog record missing
+DETECT 추진실적표 · 모양 1: catalog record missing
+DETECT 추진실적표 · 모양 2: catalog record missing
+DETECT 추진실적표 · 모양 3: catalog record missing
+DETECT 예산집행표 · 모양 1: catalog record missing
+DETECT 예산집행표 · 모양 2: catalog record missing
+DETECT 예산집행표 · 모양 3: catalog record missing
+DETECT 연도별 추진계획표 · 모양 1: catalog record missing
+DETECT 연도별 추진계획표 · 모양 2: catalog record missing
+DETECT 연도별 추진계획표 · 모양 3: catalog record missing
+DETECT 월별 실적표 · 모양 1: catalog record missing
+DETECT 월별 실적표 · 모양 2: catalog record missing
+DETECT 문제점·개선방안표 · 모양 1: catalog record missing
+DETECT 문제점·개선방안표 · 모양 2: catalog record missing
+DETECT 문제점·개선방안표 · 모양 3: catalog record missing
+DETECT 대안비교표 · 모양 1: catalog record missing
+DETECT 대안비교표 · 모양 2: catalog record missing
+DETECT 대안비교표 · 모양 3: catalog record missing
+DETECT 업무분장표 · 모양 1: catalog record missing
+DETECT 업무분장표 · 모양 2: catalog record missing
+DETECT 업무분장표 · 모양 3: catalog record missing
+DETECT 성과지표표 · 모양 1: catalog record missing
+DETECT 성과지표표 · 모양 2: catalog record missing
+DETECT 점검표(체크리스트) · 모양 1: catalog record missing
+DETECT 점검표(체크리스트) · 모양 2: catalog record missing
+DETECT 점검표(체크리스트) · 모양 3: catalog record missing
+DETECT 참석자 명단 · 모양 1: catalog record missing
+DETECT 참석자 명단 · 모양 2: catalog record missing
+DETECT 민원처리 현황표 · 모양 1: catalog record missing
+DETECT 민원처리 현황표 · 모양 2: catalog record missing
+DETECT 비상연락망 · 모양 1: catalog record missing
+DETECT 비상연락망 · 모양 2: catalog record missing
+DETECT 위원 명단 · 모양 1: catalog record missing
+DETECT 위원 명단 · 모양 2: catalog record missing
+DETECT 추진경과표 · 모양 1: catalog record missing
+DETECT 추진경과표 · 모양 2: catalog record missing
+DETECT 추진경과표 · 모양 3: catalog record missing
+DETECT SWOT 분석표 · 모양 1: catalog record missing
+DETECT SWOT 분석표 · 모양 2: catalog record missing
+DETECT 평가표(심사표) · 모양 1: catalog record missing
+DETECT 평가표(심사표) · 모양 2: catalog record missing
+DETECT 인력 현황표 · 모양 1: catalog record missing
+DETECT 인력 현황표 · 모양 2: catalog record missing
+DETECT 조직도: catalog record missing
+DETECT 조직도 · 모양 2: catalog record missing
+DETECT 조직도 · 모양 3: catalog record missing
+
+[성능 측정] 3000건 본문검색: 0.2133초
+......................................
+[성능 측정] 2글자 3,000건 전체검색=0.3831초 / 전 LIKE 후보=0.0085초 / 후 그램 후보=0.0025초
+.......................................................................................................................................................................................................................................................................................s..............................................#< CLIXML
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj></Objs>..................................................................................................................................WebView2 renderer recovery stopped after 3 reloads in 60 seconds
+WebView2 renderer recovery stopped after 3 reloads in 60 seconds
+...............................................................
+----------------------------------------------------------------------
+Ran 2941 tests in 1036.334s
+
+OK (skipped=10)
+제목 표와 개요 표 사이 빈 줄 2개 삭제
+제목·개요 표와 첫 항목기호 문장 사이 빈 줄 2개 삭제
+제목·개요 표 가로 크기 맞춤: 2개 (쪽 좌우 여백 사이 최대 폭)
+제목·개요 표 가로 크기 맞춤: 1개 (쪽 좌우 여백 사이 최대 폭, 표준서식 편집 여백 반영)
+제목 표와 개요 표 사이 빈 줄 1개 삭제
+제목·개요 표와 첫 항목기호 문장 사이 빈 줄 2개 삭제
+제목 표와 개요 표 사이 빈 줄 2개 삭제
+제목·개요 표와 첫 항목기호 문장 사이 빈 줄 1개 삭제

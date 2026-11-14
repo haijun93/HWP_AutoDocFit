@@ -249,8 +249,6 @@ import hashlib
 import difflib
 import urllib.error
 import urllib.parse
-import http.client
-import ssl
 import webbrowser
 from defusedxml import ElementTree as ET
 from collections import Counter, defaultdict, deque
@@ -271,10 +269,8 @@ import win32com.client as win32
 import win32gui
 import win32con
 from defusedxml.ElementTree import fromstring as safe_xml_fromstring
-from docfit_core.batch_format import apply_batch, ParagraphStyle, BatchUnsupported
 from docfit_core.updater import (expected_sha256 as 업데이트_예상해시, install_script as 업데이트_교체스크립트, launch_environment as 업데이트_실행환경,
                                  leftover_files as 업데이트_잔여파일, verify_download as 업데이트_파일검증)
-from docfit_core.fidelity.package import UnsupportedPackage
 from docfit_core.style_hierarchy import DOT_MARKERS, DOCUMENT_TYPES, analyze_hierarchy, display_role, document_type as 문서유형_판정, hierarchy_summary, leading_marker, normalize_leading_dot, stored_role
 from docfit_core.style_unify import complement_ranges as 서식통일_범위분리, merge_adjacent as 서식통일_범위병합, parenthetical_spans as 서식통일_부연괄호, representative as 서식통일_최빈값
 from docfit_core.style_unify import dominant as 서식통일_우세값, hierarchy_levels as 서식통일_계층순서, looks_like_cover as 서식통일_표지판정, unify_marker as 서식통일_항목기호, vocabulary_fallback as 서식통일_문서어휘_대표
@@ -288,6 +284,10 @@ from docfit_core.stage_selection import TABLE_STAGE_KEYS as 표작업_키목록,
 from docfit_core.stage_selection import without_page_fit as 페이지맞춤_제외
 from docfit_core.page_fit_search import level_amounts as 쪽맞춤_레벨_줄임량, search_level as 쪽맞춤_레벨_탐색
 from docfit_core.page_fit_search import classify_reports as 쪽맞춤_문서유형_판정
+from docfit_core.attachment_page import (body_paragraphs as 붙임쪽_본문문단, find_attachment_starts as 붙임쪽_시작찾기,
+                                         is_attachment_label as 붙임쪽_표시인가, pull_up_blocked as 붙임쪽_당김불가,
+                                         report_fit_impossible as 붙임쪽_보고서_불가,
+                                         table_paragraph_indices as 붙임쪽_표문단번호)
 from docfit_core.stage_selection import CARD_OPTION_STAGES as 카드옵션_세부작업, card_option_from_stages as 카드옵션_판정
 from docfit_core.stage_selection import card_option_off_keys as 카드옵션_끈작업, card_option_stage_values as 카드옵션_세부작업값
 from docfit_core.stage_selection import card_option_turns_off as 카드옵션_끄는값
@@ -298,16 +298,10 @@ from docfit_core.document_rules import (
     official_double_space_spans,
     paragraph_level, straight_double_quote_replacements, text_edit_spans,
 )
-from docfit_core.document_review import DOCUMENT_KINDS, PURPOSES, review_document
 from docfit_core.final_evaluation import build_work_goal, evaluate_work, write_evaluation_report
 from docfit_core.style_profile_edit import FIELDS as STYLE_FIELDS, ROLES as STYLE_ROLES, apply_reviewed_styles
-from docfit_core.korean_proofread import (
-    apply_approved_hwpx, load_exclusions, save_exclusions, scan_hwpx,
-)
-from docfit_core.pasted_text import clean_pasted_text, outline_pasted_text
 from docfit_core.labeled_text import label_outline_text, looks_labeled, parse_labeled_text
 from docfit_core.roman_heading import match_heading as roman_heading_match
-from docfit_core.ai_answer import ai_answer_to_labeled_text, ai_answer_to_outline_text, looks_like_ai_answer
 from docfit_core.asterisk_superscript import mark_spans as 별표_위치
 from docfit_core.attachment_block import find_blocks as 붙임묶음_찾기
 from docfit_core.attachment_block import blank_line_plan as 붙임_앞빈줄_계획
@@ -322,8 +316,7 @@ from docfit_core.table_style import HeaderPool as 표서식_저장소, apply_tab
 from docfit_core.table_style import learn_from_table as 표서식_한표학습, valid_style as 표서식_유효
 from docfit_core.table_style import has_unit_caption as 단위캡션표인가, is_user_designed_table as 사용자표인가, protected_tables as 보호표_목록
 from docfit_core.text_table import find_box_tables
-from docfit_core import writing_aids, ai_prompts
-from docfit_core.writing_aids import refresh_dates as 날짜_현행화
+from docfit_core import ai_prompts
 
 
 XML_네임스페이스_등록 = _engine_resolve('docfit_engine.com_driver', 'XML_네임스페이스_등록', globals())
@@ -387,7 +380,7 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.57"
+APP_VERSION = "2.2.65"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"
@@ -2706,6 +2699,18 @@ _문단_줄시작들 = _engine_resolve('docfit_engine.page_fit', '_문단_줄시
 보고서_새쪽_시작인가 = _engine_resolve('docfit_engine.page_fit', '보고서_새쪽_시작인가', globals())
 
 
+붙임쪽_경계_목록 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_경계_목록', globals())
+
+
+_붙임쪽_화면종류 = _engine_resolve('docfit_engine.page_fit', '_붙임쪽_화면종류', globals())
+
+
+붙임쪽_마지막쪽_막힘 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_마지막쪽_막힘', globals())
+
+
+붙임쪽_보고서_쪽나눔수 = _engine_resolve('docfit_engine.page_fit', '붙임쪽_보고서_쪽나눔수', globals())
+
+
 _대표_줄간격 = _engine_resolve('docfit_engine.page_fit', '_대표_줄간격', globals())
 
 
@@ -3432,6 +3437,12 @@ def main():
                 pass
 
         threading.Thread(target=_배경_런타임_배포, name="kordoc-deploy", daemon=True).start()
+
+    try:
+        from docfit_app.kfind_process import ensure_kfind_running
+        threading.Thread(target=ensure_kfind_running, name="kfind-ensure", daemon=True).start()
+    except Exception:
+        pass
 
     # WebView2가 있으면 반응형 웹 화면을 주 UI로 사용하고, 문서 처리·설정 창은
     # 기존 Tk 백엔드에 연결한다. WebView 초기화 문제 진단·복구 시 환경변수로

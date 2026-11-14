@@ -1,6 +1,8 @@
 """Shared settings defaults; storage keys and legacy adapter bindings are preserved."""
 DEFAULTS = {
     'shell_menu': False,
+    # 몽땅검색 단축키 앱(ktm.exe, Ctrl+Alt+Space): 기본 켬(MG3 사용자 지시). 끄면 상주 프로그램을 끄고 자동 실행을 푼다.
+    'mongttang_search': True,
     'file_rename_sendto': False,
     'rust_rename_preview': True,
     'rust_timemachine_scan': True,
@@ -129,7 +131,37 @@ DEFAULTS = {
     "ui_tk_fallback": False,
     # 위계 엔진(hierarchy 실행 파일) 사용 여부. 기본 꺼짐.
     "hierarchy_engine": False,
+    # 화면 테마: "system"(윈도 설정 따름)·"light"·"dark". 몽땅클립보드 상주 프로그램에도 전달한다.
+    "theme_mode": "system",
+    "search_engine": "kfind",
 }
+
+SEARCH_ENGINES = ("kfind", "legacy")
+
+
+def normalize_search_engine(value):
+    return value if isinstance(value, str) and value in SEARCH_ENGINES else "kfind"
+
+
+def validate_search_engine(value):
+    if not isinstance(value, str) or value not in SEARCH_ENGINES:
+        raise ValueError("검색 엔진은 kfind·legacy 중 하나여야 합니다.")
+    return value
+
+
+THEME_MODES = ("system", "light", "dark")
+
+
+def normalize_theme_mode(value):
+    """저장된 테마 값을 돌려준다. 알 수 없는 값이면 "system"."""
+    return value if value in THEME_MODES else "system"
+
+
+def validate_theme_mode(value):
+    """요청한 테마 값을 확인한다. 허용 값이 아니면 ValueError."""
+    if not isinstance(value, str) or value not in THEME_MODES:
+        raise ValueError("화면 테마는 system·light·dark 중 하나여야 합니다.")
+    return value
 
 VARIABLE_BINDINGS = {'prevent_word_split': 'prevent_word_split_var',
  'spacing_enabled': 'spacing_enabled_var',

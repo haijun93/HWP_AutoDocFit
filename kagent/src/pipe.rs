@@ -295,6 +295,17 @@ pub fn handle(v: &Value) -> Value {
                 Err(e) => error(&e),
             }
         }
+        "thumb" => {
+            // 그림 항목 미리보기(앱 목록의 마우스 오버·키보드 선택). 빠른 목록과 같은 캐시를 쓴다.
+            let Some(id) = id_of(v) else { return error("항목을 확인해 주세요.") };
+            let size = v.num("size").filter(|n| n.fract() == 0.0).map(|n| n as i64).unwrap_or(-1);
+            let t0 = std::time::Instant::now();
+            match crate::thumb::get(id, size).and_then(|t| crate::thumb::to_png(&t).map(|p| (t, p))) {
+                Some((t, png)) => ok(vec![("id", id.into()), ("w", (t.w as i64).into()), ("h", (t.h as i64).into()),
+                    ("png", base64(&png).into()), ("ms", (t0.elapsed().as_secs_f64() * 1000.0).into())]),
+                None => error("미리보기를 만들 수 없는 항목입니다."),
+            }
+        }
         "restore" => {
             let Some(id) = id_of(v) else { return error("항목을 확인해 주세요.") };
             // 클립보드 쓰기는 창 스레드에서 해야 한다(소유 창 필요).
@@ -317,6 +328,7 @@ pub fn handle(v: &Value) -> Value {
         }
         "clear" => {
             let n = a.store.lock().unwrap().clear(v.bool("keep_pinned").unwrap_or(true)).unwrap_or(0);
+            crate::thumb::clear_all();
             refresh_recent();
             ok(vec![("deleted", (n as i64).into())])
         }
@@ -324,12 +336,16 @@ pub fn handle(v: &Value) -> Value {
             unsafe { PostMessageW(hwnd, WM_PAUSE, (v.str("cmd") == Some("pause")) as usize, 0) };
             ok(vec![])
         }
-        "settings_get" => ok(vec![("settings", a.settings.lock().unwrap().to_json())]),
+        "settings_get" => ok(vec![("settings", a.settings.lock().unwrap().to_json()),
+            ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into()),
+            ("capture_dirs", crate::capture_plan_json(&a.capture_plan.lock().unwrap()))]),
         "settings_set" => {
             let Some(new) = v.get("settings") else { return error("설정을 확인해 주세요.") };
             // 빠른 목록 설정 메뉴와 같은 길(검사·저장·정리·창 갱신).
             let snapshot = crate::update_settings(new);
-            ok(vec![("settings", snapshot.to_json())])
+            ok(vec![("settings", snapshot.to_json()),
+                ("hotkey_ok", a.hotkey_ok.load(std::sync::atomic::Ordering::Relaxed).into()),
+                ("capture_dirs", crate::capture_plan_json(&a.capture_plan.lock().unwrap()))])
         }
         "quit" => {
             unsafe { PostMessageW(hwnd, WM_CLOSE, 0, 0) };

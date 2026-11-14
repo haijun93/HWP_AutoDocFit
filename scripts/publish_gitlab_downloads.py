@@ -23,7 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 GITHUB = "https://github.com/haijun93/hwp-auto-docfit/releases/download/v{version}/{name}"
 GITLAB = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit.git"
-EXAMPLE = ROOT / "release-assets" / "보고서 예시 파일(한번에 적용).txt"
+EXAMPLE = ROOT / "release-assets" / "[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt"
 PART_SIZE = 80 * 1024 * 1024  # 80 MiB
 SECURITY_CHECKS = ["Gitleaks", "Semgrep", "OSV-Scanner", "Trivy", "Syft"]
 

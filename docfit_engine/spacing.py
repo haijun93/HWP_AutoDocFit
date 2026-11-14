@@ -4,8 +4,140 @@ Original algorithms and comments are preserved. Runtime bindings are session-loc
 see docfit_engine.runtime. This module does not import the application bootstrap.
 """
 from docfit_engine.runtime import bind_function, bind_class
+import os
+
+
+class _줄검사기억:
+    """줄 단위 단어 분리 검사 중 한/글 COM 호출 중복을 줄이기 위한 명시적 상태 및 기억.
+
+    상태:
+      - '없음': 기억 안 함 (기본값)
+      - '편집전': 기억 활성 및 비교 (검증 모드)
+      - '편집후': 편집 발생으로 기억 비움, 같은 줄에서는 다시 기억하지 않음
+    """
+    __slots__ = ('상태', '기억', '적중', '호출', '불일치', '활성', '모드')
+
+    def __init__(self):
+        self.상태 = "없음"
+        self.기억 = {}
+        self.적중 = 0
+        self.호출 = 0
+        self.불일치 = 0
+        self.활성 = False
+        self.모드 = ''
+
+    def 시작(self):
+        mode = os.environ.get('DOCFIT_SPACING_MEMO', '').strip().lower()
+        self.모드 = mode
+        if mode in ('verify', 'reuse'):
+            self.활성 = True
+            self.상태 = "편집전"
+            self.기억.clear()
+            self.적중 = 0
+            self.호출 = 0
+            self.불일치 = 0
+        else:
+            self.활성 = False
+            self.상태 = "없음"
+
+    def 종료(self):
+        if not self.활성:
+            self.상태 = "없음"
+            return None
+        상태 = self.상태
+        적중 = self.적중
+        호출 = self.호출
+        불일치 = self.불일치
+        self.상태 = "없음"
+        self.기억.clear()
+        self.활성 = False
+        msg = f"[줄검사 기억] 기억 적중 {적중} / 실제 호출 {호출} / 상태={상태} / 불일치 {불일치} / 모드={self.모드}"
+        return msg
+
+    def 재사용(self, 함수, pos, 뒤로=None):
+        """검증이 끝난 편집 전 결과만 재사용한다. None 결과도 기억한다."""
+        if self.모드 != 'reuse' or self.상태 != '편집전':
+            return False, None
+        pos_key = tuple(pos) if isinstance(pos, (list, tuple)) else pos
+        key = (함수, pos_key) if 뒤로 is None else (함수, pos_key, bool(뒤로))
+        if key not in self.기억:
+            return False, None
+        self.적중 += 1
+        return True, self.기억[key]
+
+    def 편집발생(self):
+        if self.상태 == "편집전":
+            self.상태 = "편집후"
+            self.기억.clear()
+
+    def 줄바꿈_검사(self, 시작, 끝, 읽기, 진단로그_fn=None):
+        """줄범위 인자가 달라도 동일한 경계의 이동·선택·본문 읽기는 묶는다.
+
+        편집 전의 정확히 같은 두 위치만 재사용한다. 화면줄 시작 위치를
+        다른 인자의 별칭으로 기억하지 않는다(자동 줄바꿈 경계 보호).
+        호출자는 검사 뒤 커서를 읽지 않고 결과를 반환하거나 SetPos한다.
+        """
+        key_pos = (tuple(시작), tuple(끝))
+        적중, 결과 = self.재사용('줄바꿈', key_pos)
+        if 적중:
+            return 결과
+        결과 = 읽기(시작, 끝)
+        if self.활성 and self.상태 == '편집전':
+            key = ('줄바꿈', key_pos)
+            self.호출 += 1
+            if key in self.기억:
+                if self.기억[key] == 결과:
+                    self.적중 += 1
+                else:
+                    self.불일치 += 1
+                    if callable(진단로그_fn):
+                        진단로그_fn(f'[줄검사 기억 불일치] 줄바꿈({key_pos})')
+            self.기억[key] = 결과
+        return 결과
+
+    def 검증_줄범위(self, pos, actual, 진단로그_fn=None):
+        if not self.활성 or self.상태 != "편집전":
+            return
+        pos_key = tuple(pos) if isinstance(pos, (list, tuple)) else pos
+        key = ('단어모드_줄범위', pos_key)
+        self.호출 += 1
+        if key in self.기억:
+            expected = self.기억[key]
+            if expected == actual:
+                self.적중 += 1
+            else:
+                self.불일치 += 1
+                if callable(진단로그_fn):
+                    진단로그_fn(f"[줄검사 기억 불일치] 단어모드_줄범위({pos_key}): 기억={expected} vs 실제={actual}")
+                self.기억[key] = actual
+        else:
+            self.기억[key] = actual
+
+    def 검증_한글자(self, pos, 뒤로, actual, 진단로그_fn=None):
+        if not self.활성 or self.상태 != "편집전":
+            return
+        pos_key = tuple(pos) if isinstance(pos, (list, tuple)) else pos
+        key = ('단어모드_한글자', pos_key, bool(뒤로))
+        self.호출 += 1
+        if key in self.기억:
+            expected = self.기억[key]
+            if expected == actual:
+                self.적중 += 1
+            else:
+                self.불일치 += 1
+                if callable(진단로그_fn):
+                    진단로그_fn(f"[줄검사 기억 불일치] 단어모드_한글자({pos_key}, 뒤로={bool(뒤로)}): 기억={expected} vs 실제={actual}")
+                self.기억[key] = actual
+        else:
+            self.기억[key] = actual
+
 
 def _install(*, _docfit_namespace, _docfit_symbol):
+    if '_줄검사_기억' not in _docfit_namespace:
+        _기억객체 = _줄검사기억()
+        _docfit_namespace['_줄검사_기억'] = _기억객체
+        _docfit_namespace['_줄검사_기억_생성'] = _줄검사기억
+        _docfit_namespace['_줄검사_기억_편집발생'] = _기억객체.편집발생
     global 문단_자간보호_선행부_오프셋, 컨트롤_내부_자간조정, 한칸표_자간조정, 표셀_자간_제외인가, 컨트롤_줄병합_대상인가, 문서_전체_자간_초기화, 자간초기화_hwpx_처리, 현재_페이지번호, 처리중_기록_대체, 검수_문제_기록, 줄경계_어절연속_문자쌍인가, 현재줄_끝_어절분리인가, 현재줄_끝_붙임괄호_분리인가, 현재줄_끝_괄호내부_공백분리인가, 단어문자인가, 단어모드_범위선택, 단어모드_한글자, 단어모드_줄범위, 의미단위_범위, 일반_의미단위_범위, 등_어절인가, 숫자쉼표_어절인가, 숫자끝_어절인가, _숫자쉼표_앞단어인가, 어절_의미단위_범위, 앞어절_묶음_후속인가, _왼쪽_어절_추가, _단어모드_공백전까지, _띄운날짜_어절_확장, _직함이름_어절_확장, 단어모드_분리정보, 칸폭보다_긴_단어인가, 붙임의미단위_줄분리인가, 자간보호_글자수, 자간조정_본문범위, 자간조정_현재줄_본문선택, _단어모드_다음위치, 단어모드_서식보관, 단어모드_자간보관, 단어모드_자간적용, 단어모드_장평보관, 단어모드_장평적용, 최소_성공단계_탐색, 단어_장평_추가축소_시도, 다음단어_당김_시도, 어절분리_앞줄당김인가, 단어모드_마지막줄_짧은잔여인가, 연결부호_구간, 연결부호_단위들, 연결부호_전체_맞춤, _연결단위_맞춤, 단어중간_줄바꿈방지, 자간자동조정, _자간자동조정_본체, 본문_기존자간조정, 문단세트_가능, 문단세트1_글서식_적용, _문단세트_줄순회, 문단세트2_배치_적용, _괄호따옴표_시작문자인가, 문장부호_시작인가, 문장부호_마커_끝위치, 세트문장_시작인가
     if _docfit_symbol == '자간초기화_hwpx_처리':
         def 자간초기화_hwpx_처리(source, target=None, selections=None):
@@ -330,20 +462,34 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '단어모드_한글자':
         def 단어모드_한글자(pos, 뒤로=False):
             """문자열 인덱스 대신 한글의 실제 위치를 사용(컨트롤/UTF-16 안전)."""
+            기억 = globals().get('_줄검사_기억')
+            if 기억 is not None:
+                적중, 결과 = 기억.재사용('단어모드_한글자', pos, 뒤로)
+                if 적중:
+                    return 결과
             hwp.SetPos(*pos)
             hwp_run('MovePrevChar' if 뒤로 else 'MoveNextChar')
             other = hwp.GetPos()
             if other[:2] != pos[:2] or other == pos:
-                return None
-            start, end = (other, pos) if 뒤로 else (pos, other)
-            단어모드_범위선택(start, end)
-            text = 현재선택영역_텍스트()
-            hwp_run('Cancel')
-            return start, end, text
+                결과 = None
+            else:
+                start, end = (other, pos) if 뒤로 else (pos, other)
+                단어모드_범위선택(start, end)
+                text = 현재선택영역_텍스트()
+                hwp_run('Cancel')
+                결과 = (start, end, text)
+            if '_줄검사_기억' in globals():
+                globals()['_줄검사_기억'].검증_한글자(pos, 뒤로, 결과, globals().get('진단로그'))
+            return 결과
         return bind_function(단어모드_한글자, _docfit_namespace)
     if _docfit_symbol == '단어모드_줄범위':
         def 단어모드_줄범위(pos):
             """화면줄의 [시작, 끝) 실제 위치. MoveLineEnd의 커서 위치를 단정하지 않는다."""
+            기억 = globals().get('_줄검사_기억')
+            if 기억 is not None:
+                적중, 결과 = 기억.재사용('단어모드_줄범위', pos)
+                if 적중:
+                    return 결과
             hwp.SetPos(*pos)
             hwp_run('MoveLineBegin')
             start = hwp.GetPos()
@@ -359,12 +505,24 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     # MoveLineBegin은 첫 글자 뒤 위치를 돌려주는 한글 COM 사례가 있다.
                     # 이를 next_start로 쓰면 '맞춤|형'의 '형'을 건너뛰어 분리를 놓친다.
                     # 실제 줄바꿈 문자가 있을 때만 그 문자를 포함한 next_start를 쓴다.
-                    if 두_위치_사이_줄바꿈_문자인가(raw_end, next_start):
-                        return start, next_start
-                    return start, raw_end
+                    if 기억 is not None:
+                        줄바꿈 = 기억.줄바꿈_검사(raw_end, next_start,
+                            두_위치_사이_줄바꿈_문자인가, globals().get('진단로그'))
+                    else:
+                        줄바꿈 = 두_위치_사이_줄바꿈_문자인가(raw_end, next_start)
+                    if 줄바꿈:
+                        결과 = (start, next_start)
+                    else:
+                        결과 = (start, raw_end)
+                    if '_줄검사_기억' in globals():
+                        globals()['_줄검사_기억'].검증_줄범위(pos, 결과, globals().get('진단로그'))
+                    return 결과
             hwp.SetPos(*start)
             hwp_run('MoveParaEnd')
-            return start, hwp.GetPos()
+            결과 = (start, hwp.GetPos())
+            if '_줄검사_기억' in globals():
+                globals()['_줄검사_기억'].검증_줄범위(pos, 결과, globals().get('진단로그'))
+            return 결과
         return bind_function(단어모드_줄범위, _docfit_namespace)
     if _docfit_symbol == '의미단위_범위':
         def 의미단위_범위(text):
@@ -774,6 +932,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(단어모드_자간보관, _docfit_namespace)
     if _docfit_symbol == '단어모드_자간적용':
         def 단어모드_자간적용(runs, delta):
+            if '_줄검사_기억_편집발생' in globals():
+                globals()['_줄검사_기억_편집발생']()
             for start, end, values in runs:
                 단어모드_범위선택(start, end)
                 act = hwp.CreateAction('CharShape')
@@ -792,6 +952,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
         return bind_function(단어모드_장평보관, _docfit_namespace)
     if _docfit_symbol == '단어모드_장평적용':
         def 단어모드_장평적용(runs, delta):
+            if '_줄검사_기억_편집발생' in globals():
+                globals()['_줄검사_기억_편집발생']()
             for start, end, values in runs:
                 단어모드_범위선택(start, end)
                 act = hwp.CreateAction('CharShape')
@@ -1176,204 +1338,217 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '단어중간_줄바꿈방지':
         def 단어중간_줄바꿈방지(최대시도):
             """현재 화면줄을 처리하고 다음 경계는 호출자의 줄 순회에서 처리한다."""
-            # '단어모드_분리정보'는 경계에서 양옆으로 공백을 만나면 즉시 멈추므로
-            # '계약방법(공개모집' | '원칙, 수의계약)이'처럼 괄호 안 공백에서 갈라진
-            # 경우는 감지하지 못한다. 아래 루프에서 먼저 자간을 좁혀 처리한다.
-            if 중단_요청됨():
-                return False
-            if 현재줄_끝_괄호내부_공백분리인가():
-                괄호시작, 괄호끝 = 단어모드_줄범위(hwp.GetPos())
-                괄호보관 = 단어모드_자간보관(괄호시작, 괄호끝)
-                괄호성공 = False
-                괄호변경 = False
-                try:
-                    if 괄호보관 is not None:
-                        # 실제 자간 하한 -50%까지 남은 여유만 탐색한다.
-                        # 예: 기존 -48%이면 추가 축소는 2단계만 허용한다.
-                        상한 = min(최대시도, min(
-                            (v for _, _, values in 괄호보관 for v in values), default=0) - __import__('docfit_core.table_limits', fromlist=['spacing_floor']).spacing_floor(globals()))
-                        def 괄호확인(step):
-                            nonlocal 괄호변경
-                            괄호변경 = True
-                            단어모드_자간적용(괄호보관, -step)
-                            hwp.SetPos(*괄호시작)
-                            return not 현재줄_끝_괄호내부_공백분리인가()
-                        괄호성공 = 최소_성공단계_탐색(상한, 괄호확인) is not None
-                except _단계탐색_중단:
-                    return False
-                finally:
-                    if 괄호변경 and not 괄호성공:
-                        단어모드_자간적용(괄호보관, 0)
-                    hwp.SetPos(*괄호시작)
-                if not 괄호성공:
-                    문제줄 = 현재_화면줄_텍스트()
-                    검수_문제_기록(현재_처리파일, f"[괄호 안 공백 분리] {문제줄.strip()}")
-
-            # 긴 단어 전체가 통째로 다음 줄로 밀려 양쪽정렬 간격이 벌어진 경우도
-            # 같은 방식(자간 우선, 부족하면 장평 추가)으로 먼저 당겨 본다.
-            #
-            # 한 줄에서 딱 한 번만 시도한다 — 예전에는 성공할 때마다 같은 줄에서
-            # 반복 호출했는데, 그러면 짧은 단어가 연달아 이어질 때(예: '대체
-            # 가능'처럼 공백으로 나뉜 두 단어) 매번 새로 5%이내 자간/장평을
-            # 재는 게 아니라 '이미 한 번 줄어든 값'을 기준으로 또 줄이는 식으로
-            # 누적돼, 결국 문장 전체가 한 줄로 욱여넣어질 때까지 압축이 쌓였다.
-            # 한 단어만 당기고 멈추면 각 시도의 상한(다음단어_당김_자간_최대_퍼센트)이
-            # 실제 최종 압축폭의 상한으로도 그대로 유지된다.
-            if 중단_요청됨():
-                return False
-            anchor0, _ = 단어모드_줄범위(hwp.GetPos())
-            if 다음단어_당김_사용:
-                다음단어_당김_시도(anchor0, 최대시도)
-
-            # 다음 단어 당김의 탐색 함수가 경계 주변 문자를 읽으며 커서를 옮긴다.
-            # 원래 화면줄로 복귀하지 않으면 바로 뒤의 분리 어절 검사가 다른 줄에서
-            # 시작해 '맞춤|형' 같은 실제 문제를 놓친다.
-            hwp.SetPos(*anchor0)
-            anchor, _ = 단어모드_줄범위(hwp.GetPos())
-            seen = set()
-            failure_reason = "반복 한도 도달"
-            unit_text = ""
+            if '_줄검사_기억' in globals():
+                # RunContext는 사용자 정의 객체를 공유하므로 줄 진입 시 현재
+                # 실행의 네임스페이스에 새 기억을 두고 편집 훅도 함께 바꾼다.
+                기억 = globals()['_줄검사_기억_생성']()
+                globals()['_줄검사_기억'] = 기억
+                globals()['_줄검사_기억_편집발생'] = 기억.편집발생
+                기억.시작()
             try:
-                # 한 단어를 당긴 뒤 다른 단어가 걸칠 수도 있으므로 같은 줄 재검사.
-                for _ in range(max(1, 최대시도)):
-                    if 중단_요청됨():
+                # '단어모드_분리정보'는 경계에서 양옆으로 공백을 만나면 즉시 멈추므로
+                # '계약방법(공개모집' | '원칙, 수의계약)이'처럼 괄호 안 공백에서 갈라진
+                # 경우는 감지하지 못한다. 아래 루프에서 먼저 자간을 좁혀 처리한다.
+                if 중단_요청됨():
+                    return False
+                if 현재줄_끝_괄호내부_공백분리인가():
+                    괄호시작, 괄호끝 = 단어모드_줄범위(hwp.GetPos())
+                    괄호보관 = 단어모드_자간보관(괄호시작, 괄호끝)
+                    괄호성공 = False
+                    괄호변경 = False
+                    try:
+                        if 괄호보관 is not None:
+                            # 실제 자간 하한 -50%까지 남은 여유만 탐색한다.
+                            # 예: 기존 -48%이면 추가 축소는 2단계만 허용한다.
+                            상한 = min(최대시도, min(
+                                (v for _, _, values in 괄호보관 for v in values), default=0) - __import__('docfit_core.table_limits', fromlist=['spacing_floor']).spacing_floor(globals()))
+                            def 괄호확인(step):
+                                nonlocal 괄호변경
+                                괄호변경 = True
+                                단어모드_자간적용(괄호보관, -step)
+                                hwp.SetPos(*괄호시작)
+                                return not 현재줄_끝_괄호내부_공백분리인가()
+                            괄호성공 = 최소_성공단계_탐색(상한, 괄호확인) is not None
+                    except _단계탐색_중단:
                         return False
-                    info = 단어모드_분리정보(anchor)
-                    if info is None:
-                        return not 중단_요청됨()
-                    start, boundary, word_start, word_end, left, right = info
-                    단어모드_범위선택(word_start, word_end)
-                    unit_text = 현재선택영역_텍스트()
-                    hwp_run('Cancel')
-                    진단로그(f"[단어 판정] {unit_text!r} / {left}:{right}자 / 경계={boundary} / 범위={word_start}~{word_end}")
-                    key = (boundary, word_start, word_end)
-                    if key in seen:
-                        failure_reason = "같은 경계 반복"
-                        break
-                    seen.add(key)
-                    if 칸폭보다_긴_단어인가(info):
-                        진단로그(f"[단어 분리] {unit_text!r} {left}:{right}자: 줄 첫머리부터 넘치는 "
-                                 f"칸 폭보다 긴 단어라 조정 제외")
-                        return not 중단_요청됨()
-                    # 마지막 줄에 빈칸 포함 5자 미만이 남으면 무조건 앞줄로 당긴다.
-                    # 그 외에는 글자 수가 많은 쪽으로 붙인다(같으면 앞줄로 당김).
-                    # 예: '실|질적인'은 '실'이 있는 앞줄 자간을 넓혀 '실'을 다음 줄로
-                    # 밀어낸다. 밀기는 어절 앞까지만 넓혀 어절 전체를 옮기므로
-                    # '맞|춤형'이 '맞춤|형'으로 일부만 이동한 상태는 성공으로 보지 않는다.
-                    마지막줄_짧음 = 단어모드_마지막줄_짧은잔여인가(boundary)
-                    shrink = 어절분리_앞줄당김인가(left, right, 마지막줄_짧음)
-                    # 이전 줄에서 이미 시작한 긴 단어는 어느 방향으로도 옮길 수 없다.
-                    if word_start[2] < start[2] or word_end[2] <= start[2]:
-                        failure_reason = "이전 줄부터 이어진 단어"
-                        break
-                    단어분리_통계["대상"] += 1
-                    failure_reason = f"{최대시도}단계 이내 이동 실패"
-                    방법 = ""
+                    finally:
+                        if 괄호변경 and not 괄호성공:
+                            단어모드_자간적용(괄호보관, 0)
+                        hwp.SetPos(*괄호시작)
+                    if not 괄호성공:
+                        문제줄 = 현재_화면줄_텍스트()
+                        검수_문제_기록(현재_처리파일, f"[괄호 안 공백 분리] {문제줄.strip()}")
 
-                    def 앞줄로_당기기():
-                        보관 = 단어모드_서식보관(start, word_end)
-                        if 보관 is None:
-                            return None
-                        runs = 보관[0]
-                        success = False
-                        changed = False
-                        # 자간은 -50%보다 작게 할 수 없다.
-                        상한 = min(최대시도, min((v for _, _, vs in runs for v in vs), default=0) - __import__('docfit_core.table_limits', fromlist=['spacing_floor']).spacing_floor(globals()))
+                # 긴 단어 전체가 통째로 다음 줄로 밀려 양쪽정렬 간격이 벌어진 경우도
+                # 같은 방식(자간 우선, 부족하면 장평 추가)으로 먼저 당겨 본다.
+                #
+                # 한 줄에서 딱 한 번만 시도한다 — 예전에는 성공할 때마다 같은 줄에서
+                # 반복 호출했는데, 그러면 짧은 단어가 연달아 이어질 때(예: '대체
+                # 가능'처럼 공백으로 나뉜 두 단어) 매번 새로 5%이내 자간/장평을
+                # 재는 게 아니라 '이미 한 번 줄어든 값'을 기준으로 또 줄이는 식으로
+                # 누적돼, 결국 문장 전체가 한 줄로 욱여넣어질 때까지 압축이 쌓였다.
+                # 한 단어만 당기고 멈추면 각 시도의 상한(다음단어_당김_자간_최대_퍼센트)이
+                # 실제 최종 압축폭의 상한으로도 그대로 유지된다.
+                if 중단_요청됨():
+                    return False
+                anchor0, _ = 단어모드_줄범위(hwp.GetPos())
+                if 다음단어_당김_사용:
+                    다음단어_당김_시도(anchor0, 최대시도)
 
-                        def 당김_확인(step):
-                            nonlocal changed
-                            changed = True
-                            단어모드_자간적용(runs, -step)
-                            return 단어모드_줄범위(anchor)[1][2] >= word_end[2]
-
-                        try:
-                            step = 최소_성공단계_탐색(상한, 당김_확인)
-                            success = step is not None
-                            if success:
-                                return f"앞줄 자간 -{step}%로 당김"
-                        except _단계탐색_중단:
-                            return None
-                        finally:
-                            if changed and not success:
-                                단어모드_자간적용(runs, 0)
-                        # 자간만으로 안 되면 장평을 추가로 줄여 본다 — 사람이 수동으로
-                        # 하듯 자간은 적당히만 남기고 장평과 나눠 분담한다.
-                        if 단어_장평_추가축소_시도(start, word_end, anchor, word_end, 최대시도, 보관=보관):
-                            return "앞줄 자간+장평 축소로 당김"
-                        return ""
-
-                    def 다음줄로_밀기():
-                        # 어절 앞까지만 넓혀 어절 전체를 다음 줄로 보낸다. 어절 일부나
-                        # 다음 줄 전체를 넓히지 않으므로 혼합 자간 상태를 남기지 않는다.
-                        if word_start[2] <= start[2]:
-                            return ""
-                        push_runs = 단어모드_자간보관(start, word_start)
-                        if push_runs is None:
-                            return None
-                        success = False
-                        changed = False
-                        # 자간은 +50%보다 크게 할 수 없다.
-                        상한 = min(최대시도, 50 - max((v for _, _, vs in push_runs for v in vs), default=0))
-
-                        def 밀기_확인(push_step):
-                            nonlocal changed
-                            changed = True
-                            단어모드_자간적용(push_runs, push_step)
-                            _, previous_end = 단어모드_줄범위(anchor)
-                            next_start, next_end = 단어모드_줄범위(word_start)
-                            return (previous_end[2] <= word_start[2]
-                                    and next_start[2] <= word_start[2]
-                                    and next_end[2] >= word_end[2])
-
-                        try:
-                            push_step = 최소_성공단계_탐색(상한, 밀기_확인)
-                            success = push_step is not None
-                            if success:
-                                return f"앞 구간 자간 +{push_step}%로 어절 전체를 다음 줄로 밈"
-                        except _단계탐색_중단:
-                            return None
-                        finally:
-                            if changed and not success:
-                                단어모드_자간적용(push_runs, 0)
-                        return ""
-
-                    # 정한 방향을 먼저 시도하고, 한도 안에서 안 되면 반대 방향으로
-                    # 보완해 어절이 갈라진 채 남지 않게 한다.
-                    시도순서 = (앞줄로_당기기, 다음줄로_밀기) if shrink else (다음줄로_밀기, 앞줄로_당기기)
-                    for 시도 in 시도순서:
-                        try:
-                            결과 = 시도()
-                        except RuntimeError as e:
-                            # 서식 보관(읽기 전용) 단계에서 글자 위치를 확인하지 못하면
-                            # 이 방향만 실패로 보고 반대 방향·다음 줄로 넘어간다. 예외를
-                            # 올려 보내면 문서 전체 처리가 중단되고 결과도 저장되지
-                            # 않았다(실측: 보도자료 '건강을' 위치에서 중단).
-                            진단로그(f"[단어 중간 줄바꿈 방지] {unit_text!r} 서식 확인 실패로 이 방향 건너뜀: {e}")
-                            결과 = ""
-                        if 결과 is None:
+                # 다음 단어 당김의 탐색 함수가 경계 주변 문자를 읽으며 커서를 옮긴다.
+                # 원래 화면줄로 복귀하지 않으면 바로 뒤의 분리 어절 검사가 다른 줄에서
+                # 시작해 '맞춤|형' 같은 실제 문제를 놓친다.
+                hwp.SetPos(*anchor0)
+                anchor, _ = 단어모드_줄범위(hwp.GetPos())
+                seen = set()
+                failure_reason = "반복 한도 도달"
+                unit_text = ""
+                try:
+                    # 한 단어를 당긴 뒤 다른 단어가 걸칠 수도 있으므로 같은 줄 재검사.
+                    for _ in range(max(1, 최대시도)):
+                        if 중단_요청됨():
                             return False
-                        if 결과:
-                            방법 = 결과
+                        info = 단어모드_분리정보(anchor)
+                        if info is None:
+                            return not 중단_요청됨()
+                        start, boundary, word_start, word_end, left, right = info
+                        단어모드_범위선택(word_start, word_end)
+                        unit_text = 현재선택영역_텍스트()
+                        hwp_run('Cancel')
+                        진단로그(f"[단어 판정] {unit_text!r} / {left}:{right}자 / 경계={boundary} / 범위={word_start}~{word_end}")
+                        key = (boundary, word_start, word_end)
+                        if key in seen:
+                            failure_reason = "같은 경계 반복"
                             break
-                    if not 방법:
-                        단어분리_통계["실패"] += 1
-                        break
-                    failure_reason = ""
-                    단어분리_통계["성공"] += 1
-                    end = word_end if 방법.startswith("앞줄") else word_start
-                    단어모드_범위선택(start, end)
-                    색상_적용_현재선택()
+                        seen.add(key)
+                        if 칸폭보다_긴_단어인가(info):
+                            진단로그(f"[단어 분리] {unit_text!r} {left}:{right}자: 줄 첫머리부터 넘치는 "
+                                     f"칸 폭보다 긴 단어라 조정 제외")
+                            return not 중단_요청됨()
+                        # 마지막 줄에 빈칸 포함 5자 미만이 남으면 무조건 앞줄로 당긴다.
+                        # 그 외에는 글자 수가 많은 쪽으로 붙인다(같으면 앞줄로 당김).
+                        # 예: '실|질적인'은 '실'이 있는 앞줄 자간을 넓혀 '실'을 다음 줄로
+                        # 밀어낸다. 밀기는 어절 앞까지만 넓혀 어절 전체를 옮기므로
+                        # '맞|춤형'이 '맞춤|형'으로 일부만 이동한 상태는 성공으로 보지 않는다.
+                        마지막줄_짧음 = 단어모드_마지막줄_짧은잔여인가(boundary)
+                        shrink = 어절분리_앞줄당김인가(left, right, 마지막줄_짧음)
+                        # 이전 줄에서 이미 시작한 긴 단어는 어느 방향으로도 옮길 수 없다.
+                        if word_start[2] < start[2] or word_end[2] <= start[2]:
+                            failure_reason = "이전 줄부터 이어진 단어"
+                            break
+                        단어분리_통계["대상"] += 1
+                        failure_reason = f"{최대시도}단계 이내 이동 실패"
+                        방법 = ""
+
+                        def 앞줄로_당기기():
+                            보관 = 단어모드_서식보관(start, word_end)
+                            if 보관 is None:
+                                return None
+                            runs = 보관[0]
+                            success = False
+                            changed = False
+                            # 자간은 -50%보다 작게 할 수 없다.
+                            상한 = min(최대시도, min((v for _, _, vs in runs for v in vs), default=0) - __import__('docfit_core.table_limits', fromlist=['spacing_floor']).spacing_floor(globals()))
+
+                            def 당김_확인(step):
+                                nonlocal changed
+                                changed = True
+                                단어모드_자간적용(runs, -step)
+                                return 단어모드_줄범위(anchor)[1][2] >= word_end[2]
+
+                            try:
+                                step = 최소_성공단계_탐색(상한, 당김_확인)
+                                success = step is not None
+                                if success:
+                                    return f"앞줄 자간 -{step}%로 당김"
+                            except _단계탐색_중단:
+                                return None
+                            finally:
+                                if changed and not success:
+                                    단어모드_자간적용(runs, 0)
+                            # 자간만으로 안 되면 장평을 추가로 줄여 본다 — 사람이 수동으로
+                            # 하듯 자간은 적당히만 남기고 장평과 나눠 분담한다.
+                            if 단어_장평_추가축소_시도(start, word_end, anchor, word_end, 최대시도, 보관=보관):
+                                return "앞줄 자간+장평 축소로 당김"
+                            return ""
+
+                        def 다음줄로_밀기():
+                            # 어절 앞까지만 넓혀 어절 전체를 다음 줄로 보낸다. 어절 일부나
+                            # 다음 줄 전체를 넓히지 않으므로 혼합 자간 상태를 남기지 않는다.
+                            if word_start[2] <= start[2]:
+                                return ""
+                            push_runs = 단어모드_자간보관(start, word_start)
+                            if push_runs is None:
+                                return None
+                            success = False
+                            changed = False
+                            # 자간은 +50%보다 크게 할 수 없다.
+                            상한 = min(최대시도, 50 - max((v for _, _, vs in push_runs for v in vs), default=0))
+
+                            def 밀기_확인(push_step):
+                                nonlocal changed
+                                changed = True
+                                단어모드_자간적용(push_runs, push_step)
+                                _, previous_end = 단어모드_줄범위(anchor)
+                                next_start, next_end = 단어모드_줄범위(word_start)
+                                return (previous_end[2] <= word_start[2]
+                                        and next_start[2] <= word_start[2]
+                                        and next_end[2] >= word_end[2])
+
+                            try:
+                                push_step = 최소_성공단계_탐색(상한, 밀기_확인)
+                                success = push_step is not None
+                                if success:
+                                    return f"앞 구간 자간 +{push_step}%로 어절 전체를 다음 줄로 밈"
+                            except _단계탐색_중단:
+                                return None
+                            finally:
+                                if changed and not success:
+                                    단어모드_자간적용(push_runs, 0)
+                            return ""
+
+                        # 정한 방향을 먼저 시도하고, 한도 안에서 안 되면 반대 방향으로
+                        # 보완해 어절이 갈라진 채 남지 않게 한다.
+                        시도순서 = (앞줄로_당기기, 다음줄로_밀기) if shrink else (다음줄로_밀기, 앞줄로_당기기)
+                        for 시도 in 시도순서:
+                            try:
+                                결과 = 시도()
+                            except RuntimeError as e:
+                                # 서식 보관(읽기 전용) 단계에서 글자 위치를 확인하지 못하면
+                                # 이 방향만 실패로 보고 반대 방향·다음 줄로 넘어간다. 예외를
+                                # 올려 보내면 문서 전체 처리가 중단되고 결과도 저장되지
+                                # 않았다(실측: 보도자료 '건강을' 위치에서 중단).
+                                진단로그(f"[단어 중간 줄바꿈 방지] {unit_text!r} 서식 확인 실패로 이 방향 건너뜀: {e}")
+                                결과 = ""
+                            if 결과 is None:
+                                return False
+                            if 결과:
+                                방법 = 결과
+                                break
+                        if not 방법:
+                            단어분리_통계["실패"] += 1
+                            break
+                        failure_reason = ""
+                        단어분리_통계["성공"] += 1
+                        end = word_end if 방법.startswith("앞줄") else word_start
+                        단어모드_범위선택(start, end)
+                        색상_적용_현재선택()
+                        hwp_run('Cancel')
+                        기준 = "마지막 줄 5자 미만" if 마지막줄_짧음 else ("글자 수 같음" if left == right else "글자 수 많은 쪽")
+                        진단로그(f"[단어 중간 줄바꿈 방지] {unit_text!r} {left}/{right}자 ({기준}): {방법}")
+                    if 단어모드_분리정보(anchor) is not None:
+                        hwp.SetPos(*anchor)
+                        로그(f"[단어 중간 줄바꿈 미해결] {unit_text!r}: {failure_reason}")
+                        검수_문제_기록(현재_처리파일, '[단어 중간 줄바꿈 미해결] ' + 현재_화면줄_텍스트().strip())
+                    return True
+                finally:
                     hwp_run('Cancel')
-                    기준 = "마지막 줄 5자 미만" if 마지막줄_짧음 else ("글자 수 같음" if left == right else "글자 수 많은 쪽")
-                    진단로그(f"[단어 중간 줄바꿈 방지] {unit_text!r} {left}/{right}자 ({기준}): {방법}")
-                if 단어모드_분리정보(anchor) is not None:
                     hwp.SetPos(*anchor)
-                    로그(f"[단어 중간 줄바꿈 미해결] {unit_text!r}: {failure_reason}")
-                    검수_문제_기록(현재_처리파일, '[단어 중간 줄바꿈 미해결] ' + 현재_화면줄_텍스트().strip())
-                return True
             finally:
-                hwp_run('Cancel')
-                hwp.SetPos(*anchor)
+                if '_줄검사_기억' in globals():
+                    요약 = globals()['_줄검사_기억'].종료()
+                    if 요약:
+                        로그(요약)
         return bind_function(단어중간_줄바꿈방지, _docfit_namespace)
     if _docfit_symbol == '자간자동조정':
         def 자간자동조정(최대시도=None):

@@ -39,7 +39,25 @@ class ContinuationTest(unittest.TestCase):
         self.assertEqual(len(changed), 2)
         first, second = root
         self.assertEqual(plain_text(second).strip(), original_second.strip())
-        self.assertEqual(self.pair(header, first)[0], self.pair(header, second)[0])
+        self.assertEqual(self.pair(header, first), (0, -4550))
+        self.assertEqual(self.pair(header, second), (2600, -1950))
+
+    def test_attachment_three_numbers_geometry_and_idempotence(self):
+        for heading in ('붙임  ', '붙임: ', '붙임： '):
+            with self.subTest(heading=heading):
+                text = heading + '1. 계획서 1부.'
+                header, sections = self.make([text, '   2. 둘째', '   3. 셋째'])
+                root = sections['section']
+                _, anchor_index, body_index = inline_item(text)
+                anchor = self.measure(text[:anchor_index], None, None)
+                end = self.measure(text[:body_index], None, None)
+                self.assertEqual(len(align_sections(header, sections, measure=self.measure)), 3)
+                self.assertEqual(self.pair(header, root[0]), (0, -end))
+                for p in root[1:]:
+                    self.assertEqual(self.pair(header, p), (anchor, -(end - anchor)))
+                before = (ET.tostring(header), ET.tostring(root))
+                align_sections(header, sections, measure=self.measure)
+                self.assertEqual(before, (ET.tostring(header), ET.tostring(root)))
 
     def test_parenthesis_and_colon_label_geometry_remain_distinct(self):
         header, sections = self.make(['ㅇ (개요) 본문', '- 제목: 본문'])

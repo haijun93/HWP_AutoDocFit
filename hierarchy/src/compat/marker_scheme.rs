@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::OnceLock;
 
 const LEVELS: [&str; 3] = ["□", "ㅇ", "-"];
-const OFFICIAL: [(&str, &str); 4] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ")];
+const OFFICIAL: [(&str, &str); 5] = [("□", "□"), ("ㅁ", "□"), ("ㅇ", "ㅇ"), ("○", "ㅇ"), ("-", "-")];
 const NOTES: [&str; 3] = ["*", "**", "※"];
 const LEGACY: &str = "◦☞•·∙‧⋅ㆍ";
 const HANGUL: &str = "가나다라마바사아자차카타파하";
@@ -92,9 +92,7 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
             } else if std::ptr::eq(rx, number_re()) && token.ends_with(')') && !token.starts_with('(') {
                 "1)".to_owned()
             } else {
-                let mut out = token.clone();
-                for c in token.chars() { if c.is_ascii_digit() || HANGUL.contains(c) { out = out.replace(c, rep); } }
-                out
+                re(r"[0-9]+|[가나다라마바사아자차카타파하]").replace_all(&token, rep).into_owned()
             };
             return Some((family, lead + stripped[..m.end()].chars().count()));
         }
@@ -115,10 +113,21 @@ pub fn classify_marker(text: &str) -> Option<(String, usize)> {
 }
 
 fn unicode_category(c: char) -> char {
-    let n = c as u32;
-    if matches!(n, 0x0021..=0x002F | 0x003A..=0x0040 | 0x005B..=0x0060 | 0x007B..=0x007E | 0x00A1..=0x00BF | 0x2000..=0x206F | 0x2E00..=0x2E7F | 0x3001..=0x303F | 0xFE10..=0xFE1F | 0xFE30..=0xFE6F | 0xFF01..=0xFF0F | 0xFF1A..=0xFF20 | 0xFF3B..=0xFF40 | 0xFF5B..=0xFF65) { 'P' }
-    else if matches!(n, 0x0024..=0x002B | 0x003C..=0x003E | 0x005E..=0x005E | 0x0060..=0x0060 | 0x007C..=0x007E | 0x00A2..=0x00A9 | 0x20A0..=0x20CF | 0x2100..=0x214F | 0x2190..=0x2BFF | 0x1F000..=0x1FAFF) { 'S' }
-    else { 'O' }
+    // Python accepts So, Sm and Po, not all punctuation (Pd/Ps/Pe/Sc).
+    static CATEGORY: OnceLock<regex::Regex> = OnceLock::new();
+    if CATEGORY.get_or_init(|| regex::Regex::new(r"^[\p{So}\p{Sm}\p{Po}]$").unwrap()).is_match(&c.to_string()) { 'P' } else { 'O' }
+}
+
+#[cfg(test)]
+mod lexical_parity_tests {
+    use super::*;
+    #[test]
+    fn unicode_categories_and_multi_digit_families() {
+        assert_eq!(classify_marker("・ 내용").map(|x|x.0), Some("・".into()));
+        assert_eq!(classify_marker("－ 내용"), None);
+        assert_eq!(classify_marker("- 내용").map(|x|x.0), Some("-".into()));
+        assert_eq!(classify_marker("12. 제목").map(|x|x.0), Some("1.".into()));
+    }
 }
 
 pub fn ordinal(family: &str, token: &str) -> Option<Vec<i64>> {
@@ -159,23 +168,60 @@ pub fn detect_scheme(texts: &[String]) -> MarkerScheme {
     let found: Vec<(&String, Option<(String,usize)>)> = body.iter().copied().filter(|t| !label_re().is_match(t).unwrap_or(false)).map(|t| (t, if t.trim_start().chars().next().map(|c| BLACK_CIRCLED.contains(c)).unwrap_or(false) {None} else {classify_marker(t)})).collect();
     let occupied: Vec<String> = found.iter().filter_map(|(_,m)| m.as_ref().and_then(|(f,_)| OFFICIAL.iter().find(|(k,_)| k==f).map(|(_,v)|v.to_string()))).collect();
     let has_box = occupied.iter().any(|x| x == "□");
-    let order = ["1.", "가.", "1)", "가)", "(1)", "(가)", "Ⅰ", "Ⅱ"];
+    let order = ["1.", "가.", "1)", "가)", "(1)", "(가)", "①", "㉮"];
     let mut ordinals: HashMap<String,Vec<Option<Vec<i64>>>> = HashMap::new(); let mut candidates=Vec::new();
-    for (text, marker) in &found { let Some((family,end))=marker else {continue}; let token_end = char_to_byte(text, *end); if family == "-" || OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if family == "1." && text.trim_start()[..token_end - (text.len()-text.trim_start().len())].chars().take_while(|c| c.is_ascii_digit()).count() >= 4 { continue; } if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅰ.","Ⅱ","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..token_end]); ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
-    let sequential: Vec<String> = ordinals.iter().filter(|(_,v)| v.windows(2).any(|w| matches!((&w[0],&w[1]),(Some(a),Some(b)) if a.len()==b.len() && a[..a.len()-1]==b[..b.len()-1] && b.last()==a.last().map(|x|x+1).as_ref()))).map(|(f,_)|f.clone()).collect();
-    let mut eligible=sequential.clone(); for (f,v) in &ordinals { if v.first().map(Option::is_none).unwrap_or(false) || f.starts_with("1.1") || f.starts_with("1-1") { if !eligible.contains(f){eligible.push(f.clone());} } }
-    let ranks:Vec<Option<usize>>=ordinals.keys().map(|f|order.iter().position(|x|*x==f)).collect(); let official_chain=ranks.len()>1&&ranks.iter().all(Option::is_some)&&ranks.windows(2).all(|w|w[0]<w[1]);
-    let supported=ordinals.len()>1&&(!sequential.is_empty()||ordinals.values().any(|v|v.first().map(Option::is_none).unwrap_or(false))||ordinals.keys().any(|f|f.starts_with("1.1")||f.starts_with("1-1"))||official_chain);
-    if supported { for (f,v) in &ordinals { let distinct:std::collections::HashSet<_>=v.iter().collect(); if distinct.len()==1&&!eligible.contains(f){eligible.push(f.clone());} } }
-    let mut levels=HashMap::new(); let mut stack:Vec<(String,usize)>=Vec::new(); let available=LEVELS.iter().position(|x|!occupied.contains(&x.to_string())).map(|i|i+1).unwrap_or(3);
-    for (text,family,_) in candidates { if !eligible.contains(&family){continue;} let indent=text.len()-text.trim_start().len(); let indent=text[..indent].chars().map(|c|if c=='\t'{4}else{1}).sum::<usize>();
-        if levels.contains_key(&family) { stack.retain(|(f,_)| levels[f] < levels[&family]); }
-        else { if stack.last().map(|x|indent<x.1).unwrap_or(false) {while stack.last().map(|x|indent<=x.1).unwrap_or(false){stack.pop();}} else if stack.last().map(|x|indent==x.1&&indent>0).unwrap_or(false) {let rank=order.iter().position(|x|*x==family); while stack.last().map(|(f,n)|indent==*n&&rank.map(|r|r<=order.iter().position(|x|*x==f).unwrap_or(0)).unwrap_or(false)).unwrap_or(false){stack.pop();}}
-            let mut proposed=stack.last().map(|x|levels[&x.0]+1).unwrap_or(available); while proposed<3&&occupied.contains(&LEVELS[proposed-1].to_string()){proposed+=1;} levels.insert(family.clone(),proposed); }
-        stack.push((family,indent));
+    // Python defaultdict preserves each family's first occurrence in the document.
+    let mut family_order = Vec::new();
+    for (text, marker) in &found { let Some((family,end))=marker else {continue}; let token_end = char_to_byte(text, *end); if family == "-" || OFFICIAL.iter().any(|(f,_)|f==family) || NOTES.contains(&family.as_str()) {continue;} if family == "1." && text.trim_start()[..token_end - (text.len()-text.trim_start().len())].chars().take_while(|c| c.is_ascii_digit()).count() >= 4 { continue; } if LEGACY.contains(family.chars().next().unwrap_or('\0')) && !occupied.is_empty(){continue;} if has_box && ["가.","Ⅰ","Ⅰ.","Ⅱ","I."].contains(&family.as_str()){continue;} let ord=ordinal(family,&text[..token_end]); if !ordinals.contains_key(family) { family_order.push(family.clone()); } ordinals.entry(family.clone()).or_default().push(ord); candidates.push(((*text).clone(),family.clone(),*end)); }
+    let sequential: Vec<String> = family_order.iter().filter(|f| {
+        let v = &ordinals[*f];
+        v.windows(2).any(|w| matches!((&w[0],&w[1]), (Some(a),Some(b)) if a.len()==b.len() && a[..a.len()-1]==b[..b.len()-1] && b.last()==a.last().map(|x|x+1).as_ref()))
+    }).cloned().collect();
+    let mut eligible = sequential.clone();
+    for f in &family_order {
+        let v = &ordinals[f];
+        if v.first().map(Option::is_none).unwrap_or(false) || f.starts_with("1.1") || f.starts_with("1-1") {
+            if !eligible.contains(f) { eligible.push(f.clone()); }
+        }
     }
-    let symbols=levels.iter().filter(|(f,_)|f.chars().count()==1&&ordinal(f,f).is_none()).map(|(f,n)|(f.clone(),LEVELS[(n-1).min(2)].to_string())).collect();
-    let mut scheme=MarkerScheme{decimal:levels.keys().any(|f|f.starts_with("1.1")),symbols,excluded,paragraph_count:0,family_levels:levels};
+    let ranks: Vec<Option<usize>> = family_order.iter().map(|f| order.iter().position(|x| *x == f)).collect();
+    let official_chain = ranks.len() > 1 && ranks.iter().all(Option::is_some) && ranks.windows(2).all(|w| w[0] < w[1]);
+    let shapes_exist = family_order.iter().any(|f| ordinals[f].first().map(Option::is_none).unwrap_or(false));
+    let multi_exist = family_order.iter().any(|f| f.starts_with("1.1") || f.starts_with("1-1"));
+    let supported = ordinals.len() > 1 && (!sequential.is_empty() || shapes_exist || multi_exist || official_chain);
+    if supported {
+        for f in &family_order {
+            let v = &ordinals[f];
+            let distinct: std::collections::HashSet<_> = v.iter().collect();
+            if distinct.len() == 1 && !eligible.contains(f) { eligible.push(f.clone()); }
+        }
+    }
+    let mut levels = HashMap::new();
+    let mut levels_order = Vec::new();
+    let mut stack: Vec<(String, usize)> = Vec::new();
+    let available = LEVELS.iter().position(|x| !occupied.contains(&x.to_string())).map(|i| i + 1).unwrap_or(3);
+    for (text, family, _) in candidates {
+        if !eligible.contains(&family) { continue; }
+        let indent = text.len() - text.trim_start().len();
+        let indent = text[..indent].chars().map(|c| if c == '\t' { 4 } else { 1 }).sum::<usize>();
+        if levels.contains_key(&family) {
+            stack.retain(|(f, _)| levels[f] < levels[&family]);
+        } else {
+            if stack.last().map(|x| indent < x.1).unwrap_or(false) {
+                while stack.last().map(|x| indent <= x.1).unwrap_or(false) { stack.pop(); }
+            } else if stack.last().map(|x| indent == x.1 && indent > 0).unwrap_or(false) {
+                let rank = order.iter().position(|x| *x == family);
+                while stack.last().map(|(f, n)| indent == *n && rank.map(|r| r <= order.iter().position(|x| *x == f).unwrap_or(0)).unwrap_or(false)).unwrap_or(false) { stack.pop(); }
+            }
+            let mut proposed = stack.last().map(|x| levels[&x.0] + 1).unwrap_or(available);
+            while proposed < 3 && occupied.contains(&LEVELS[proposed - 1].to_string()) { proposed += 1; }
+            levels.insert(family.clone(), proposed);
+            levels_order.push(family.clone());
+        }
+        stack.push((family, indent));
+    }
+    let symbols = levels_order.iter().filter(|f| f.chars().count() == 1 && ordinal(f, f).is_none()).map(|f| (f.clone(), LEVELS[(levels[f] - 1).min(2)].to_string())).collect();
+    let mut scheme = MarkerScheme { decimal: levels.keys().any(|f| f.starts_with("1.1")), symbols, excluded, paragraph_count: 0, family_levels: levels };
     scheme.paragraph_count=body.iter().filter(|t|scheme.canonical(t).is_some()).count(); scheme
 }
 
@@ -188,3 +234,43 @@ fn find_attachment_blocks(texts:&[String])->Vec<usize>{let mut out=Vec::new();le
 fn is_numbered(t:&str)->bool{re(r"^[ \t\u{00a0}\u{3000}]*\d+\.(?=\s|$|[^0-9])").is_match(t).unwrap_or(false)||re(r"^\s*붙임\s*[:：]?\s*\d+\.").is_match(t).unwrap_or(false)}
 
 #[cfg(test)] mod tests { use super::*; #[test] fn scheme_smoke(){let s=detect_scheme(&["1. 첫".into(),"2. 둘".into(),"가. 하위".into(),"나. 다음".into()]);assert!(!s.is_empty());assert!(s.canonical("1. 첫").is_some());} }
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    #[test]
+    fn official_chain_follows_first_occurrence() {
+        for _ in 0..1000 {
+            for families in [vec!["1. first", "가. child"], vec!["1. first", "① child"], vec!["1. first", "㉮ child"]] {
+                let texts = families.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+                let scheme = detect_scheme(&texts);
+                assert_eq!(scheme.family_levels.len(), 2);
+                assert_eq!(scheme.family_levels["1."], 1);
+                let child = classify_marker(&texts[1]).unwrap().0;
+                assert_eq!(scheme.family_levels[&child], 2);
+                let reverse = texts.into_iter().rev().collect::<Vec<_>>();
+                assert!(detect_scheme(&reverse).family_levels.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_numbering_ndet_reproduction_is_deterministic_1000_times() {
+        let texts: Vec<String> = vec![
+            "1. 추진 배경".into(),
+            "가. 세부 계획".into(),
+            "ㅇ 사업의 추진 현황을 다음과 같이 보고합니다.".into(),
+            "- 세부 내용 및 향후 일정".into(),
+        ];
+        let first = detect_scheme(&texts);
+        assert_eq!(first.family_levels.get("1."), Some(&1));
+        assert_eq!(first.family_levels.get("가."), Some(&3));
+        for _ in 0..1000 {
+            let s = detect_scheme(&texts);
+            assert_eq!(s.family_levels, first.family_levels);
+            assert_eq!(s.symbols, first.symbols);
+            assert_eq!(s.paragraph_count, first.paragraph_count);
+        }
+    }
+}

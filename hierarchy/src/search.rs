@@ -1,6 +1,8 @@
 //! Small, allocation-conscious document aggregation helpers for hierarchy search.
 //! Tantivy supplies paragraph candidates; this module keeps ranking policy in Rust.
 
+use std::collections::HashMap;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Candidate {
     pub document: usize,
@@ -18,40 +20,20 @@ pub struct DocumentAggregate {
     pub best_score: f32,
 }
 
-/// Candidate rows already restricted by SQL to the winning document set.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct RankedDocument {
-    pub document: usize,
-    pub total_matches: usize,
-    pub best_rank: u8,
-    pub best_score: f64,
-    pub document_date: f64,
-}
-
-/// Preserve the established Python `hierarchy_relevance` ordering.
-pub fn rank_documents(rows: &mut Vec<RankedDocument>, limit: usize) {
-    rows.sort_by(|a, b| {
-        a.best_rank.cmp(&b.best_rank)
-            .then_with(|| b.total_matches.cmp(&a.total_matches))
-            .then_with(|| a.best_score.total_cmp(&b.best_score))
-            .then_with(|| (a.document_date <= 0.0).cmp(&(b.document_date <= 0.0)))
-            .then_with(|| b.document_date.total_cmp(&a.document_date))
-            .then_with(|| a.document.cmp(&b.document))
-    });
-    rows.truncate(limit);
-}
-
 /// Aggregate paragraph hits by document and apply the stable hierarchy search order.
 /// Rank 0 is ordinary body text; smaller positive ranks are higher in the outline.
 pub fn aggregate(candidates: &[Candidate], limit: usize) -> Vec<DocumentAggregate> {
     let mut out: Vec<DocumentAggregate> = Vec::new();
+    let mut positions: HashMap<usize, usize> = HashMap::new();
     for candidate in candidates {
-        if let Some(row) = out.iter_mut().find(|row| row.document == candidate.document) {
+        if let Some(&position) = positions.get(&candidate.document) {
+            let row = &mut out[position];
             row.mentions += 1;
             row.best_rank = best_rank(row.best_rank, candidate.hierarchy_rank);
             row.newest = row.newest.max(candidate.recency);
             row.best_score = row.best_score.max(candidate.score);
         } else {
+            positions.insert(candidate.document, out.len());
             out.push(DocumentAggregate {
                 document: candidate.document,
                 best_rank: candidate.hierarchy_rank,
@@ -109,13 +91,20 @@ mod tests {
     }
 
     #[test]
-    fn preserves_existing_hierarchy_score_order() {
-        let mut rows = vec![
-            RankedDocument { document: 0, total_matches: 100, best_rank: 2, best_score: -0.8, document_date: 1.0 },
-            RankedDocument { document: 1, total_matches: 2, best_rank: 1, best_score: -0.1, document_date: 1.0 },
-            RankedDocument { document: 2, total_matches: 2, best_rank: 1, best_score: -0.5, document_date: 0.0 },
+    fn aggregates_interleaved_sparse_document_ids() {
+        let hits = [
+            Candidate { document: usize::MAX, score: 2.0, hierarchy_rank: 0, recency: 9 },
+            Candidate { document: 42, score: 2.0, hierarchy_rank: 3, recency: 5 },
+            Candidate { document: usize::MAX, score: 1.0, hierarchy_rank: 2, recency: 4 },
+            Candidate { document: 42, score: 3.0, hierarchy_rank: 1, recency: 8 },
+            Candidate { document: usize::MAX, score: 4.0, hierarchy_rank: 0, recency: 7 },
         ];
-        rank_documents(&mut rows, 2);
-        assert_eq!(rows.iter().map(|r| r.document).collect::<Vec<_>>(), [2, 1]);
+        assert_eq!(aggregate(&hits, 10), vec![
+            // 위계 우선: 수준 1인 문서 42가 점수가 더 높은 수준 2 문서보다 먼저 온다.
+            DocumentAggregate { document: 42, best_rank: 1, mentions: 2, newest: 8, best_score: 3.0 },
+            DocumentAggregate { document: usize::MAX, best_rank: 2, mentions: 3, newest: 9, best_score: 4.0 },
+        ]);
+        assert!(aggregate(&hits, 0).is_empty());
+        assert!(aggregate(&[], 10).is_empty());
     }
 }

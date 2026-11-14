@@ -21,3 +21,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 Third-party components keep their own licenses. See THIRD_PARTY_NOTICES.md.
+
+Exception: the search engine folders `kfind/` (including `kfind/core/` and
+`kfind/names/`) and `crates/kfind/` are NOT covered by the MIT License above.
+They are licensed under the PolyForm Strict License 1.0.0 with an additional
+attribution condition. See kfind/LICENSE.
+예외: 검색 엔진 폴더 kfind/(kfind/core/·kfind/names/ 포함)와 crates/kfind/는
+위 MIT 라이선스가 아니라 PolyForm Strict 1.0.0 + 출처 표시 조건을 따릅니다(kfind/LICENSE).

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'doc_preview.dart';
-import 'kiosk_theme.dart';
 
 /// 설정 분류(왼쪽 큰 타일).
 class GuideCategory {
@@ -56,7 +55,7 @@ bool _on(Object? value) => value == true;
 double _num(Object? value, double fallback) =>
     double.tryParse('${value ?? ''}'.trim()) ?? fallback;
 
-const _hl = Color(0xfffff3b0);
+const _hl = Color(0xfffff3b0); // 문서 색(테마 무관): 종이 위 형광 표시
 
 DocPara _item(
   String marker,
@@ -438,7 +437,7 @@ final Map<String, SettingGuide> settingGuides = {
         const DocPara(
           spans: [DocSpan('앞 문단의 마지막 줄')],
           size: 12,
-          color: Kiosk.faint,
+          color: Color(0xff8b95a1), // 문서 색(테마 무관): 흰 종이 위 흐린 앞 문단
         ),
         DocPara(
           marker: entry.value.$1,
@@ -676,7 +675,7 @@ final Map<String, SettingGuide> settingGuides = {
         size: 12,
         spans: [
           const DocSpan('남은 전기버스를 행정서비스에 '),
-          DocSpan('활용하는', mark: _on(v) ? const Color(0xffcfe3ff) : null),
+          DocSpan('활용하는', mark: _on(v) ? const Color(0xffcfe3ff) : null), // 문서 색(테마 무관)
           const DocSpan(' 방안'),
         ],
       ),
@@ -839,6 +838,10 @@ final Map<String, SettingGuide> settingGuides = {
   ),
 
   // ---------------- 프로그램·네트워크 ----------------
+  'search_engine': SettingGuide(
+    'program', '검색 엔진',
+    '기본은 새 검색 엔진이에요. 연결이나 검색 오류가 나면 기존 엔진으로 자동 대체해요. 기존 엔진을 직접 선택할 수도 있어요.',
+  ),
   'check_updates_on_start': SettingGuide(
     'program',
     '시작할 때 업데이트 확인',
@@ -850,6 +853,11 @@ final Map<String, SettingGuide> settingGuides = {
     '현재 사용자에게만 등록해요. Windows 11에서는 파일 우클릭 → 더 많은 옵션 표시 → 한글편집 후처리에서 변환할 수 있어요.',
   ),
   'always_on_top': SettingGuide('program', '항상 위에 표시', '앱 창을 다른 창보다 위에 둬요.'),
+  'mongttang_search': SettingGuide(
+    'general',
+    '몽땅검색 단축키',
+    'Ctrl+Alt+Space를 누르면 어디서든 몽땅검색 창이 떠요. 로그인할 때 자동으로 켜지고, 끄면 상주 프로그램과 자동 실행을 함께 꺼요.',
+  ),
   'hwp_font_folder': SettingGuide(
     'program',
     '한글 글꼴 폴더',

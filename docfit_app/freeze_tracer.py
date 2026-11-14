@@ -30,6 +30,9 @@ class FreezeTracer:
         self._tk_heartbeat = clock()
         self._tk_pending = {}
         self._api = deque(maxlen=20)
+        # _tk 왕복 계측(Tk 제거 0단계): 최근 왕복과 호출 이름별 누계. 이름 수는 호출 지점 수로 한정된다.
+        self._tk_calls = deque(maxlen=50)
+        self._tk_stats = {}
         self._recorded = set()
         self._window = None
 
@@ -56,6 +59,14 @@ class FreezeTracer:
             thread.join(timeout)
         if thread is None or not thread.is_alive():
             self._thread = None
+        try:
+            if self.write_tk_summary() is not None:
+                with self._lock:   # 같은 통계를 두 번 남기지 않는다.
+                    self._tk_calls.clear()
+                    self._tk_stats.clear()
+        except Exception:
+            # Diagnostics must never terminate or impede the host.
+            pass
 
     def heartbeat(self):
         self._heartbeat = self.clock()
@@ -78,6 +89,57 @@ class FreezeTracer:
         with self._lock:
             self._api.append({'name': str(name)[:120], 'duration_seconds': round(elapsed, 3),
                               'outcome': str(outcome)[:40], 'time': datetime.now().astimezone().isoformat()})
+
+    def record_tk(self, name, queued, ran, total, outcome):
+        """_tk 왕복 한 번: 호출 이름, 큐 대기·실행·전체 시간(초), 결과. 실행되지 않았으면 ran은 None."""
+        name = str(name)[:120]
+        entry = {'name': name, 'queue_seconds': round(max(0.0, queued), 3),
+                 'run_seconds': None if ran is None else round(max(0.0, ran), 3),
+                 'total_seconds': round(max(0.0, total), 3), 'outcome': str(outcome)[:40],
+                 'time': datetime.now().astimezone().isoformat()}
+        with self._lock:
+            self._tk_calls.append(entry)
+            stat = self._tk_stats.get(name)
+            if stat is None:
+                if len(self._tk_stats) >= 300:
+                    name = '(other)'
+                stat = self._tk_stats.setdefault(name, {
+                    'count': 0, 'failed': 0, 'total_seconds': 0.0, 'queue_seconds': 0.0,
+                    'max_seconds': 0.0, 'max_queue_seconds': 0.0})
+            stat['count'] += 1
+            if outcome != 'ok':
+                stat['failed'] += 1
+            stat['total_seconds'] += max(0.0, total)
+            stat['queue_seconds'] += max(0.0, queued)
+            stat['max_seconds'] = max(stat['max_seconds'], total)
+            stat['max_queue_seconds'] = max(stat['max_queue_seconds'], queued)
+
+    def tk_summary(self):
+        """호출 이름별 왕복 통계(전체 시간이 큰 순)."""
+        with self._lock:
+            rows = [dict(stat, name=name) for name, stat in self._tk_stats.items()]
+        for row in rows:
+            for key in ('total_seconds', 'queue_seconds', 'max_seconds', 'max_queue_seconds'):
+                row[key] = round(row[key], 3)
+        return sorted(rows, key=lambda row: row['total_seconds'], reverse=True)
+
+    def write_tk_summary(self):
+        """기록한 왕복이 있으면 이름별 통계를 파일로 남긴다(멈춤이 없어도 지연 지점을 볼 수 있게)."""
+        calls = self.tk_summary()
+        if not calls:
+            return None
+        with self._lock:
+            recent = list(self._tk_calls)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')
+        path = self.log_dir / f'tk-roundtrips-{stamp}.json'
+        payload = {'timestamp': datetime.now().astimezone().isoformat(),
+                   'round_trips': sum(row['count'] for row in calls),
+                   'total_seconds': round(sum(row['total_seconds'] for row in calls), 3),
+                   'calls': calls, 'recent': recent}
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        self._prune('tk-roundtrips-*.json')
+        return path
 
     def check_now(self):
         now = self.clock()
@@ -128,6 +190,7 @@ class FreezeTracer:
                 stacks[f'{thread.name} (ident={thread.ident})'] = ''.join(traceback.format_stack(frame))
         with self._lock:
             api = list(self._api)
+            tk_calls = list(self._tk_calls)
         payload = {
             'timestamp': datetime.now().astimezone().isoformat(),
             'causes': list(causes),
@@ -135,6 +198,8 @@ class FreezeTracer:
             'tk_pending': [{'name': p['name'], 'wait_seconds': round(max(0, self.clock()-p['started']), 3)}
                            for p in pending],
             'recent_api_requests': api,
+            'recent_tk_roundtrips': tk_calls,
+            'tk_roundtrip_stats': self.tk_summary(),
             'threads': stacks,
         }
         stamp = datetime.now().astimezone().strftime('%Y%m%d-%H%M%S-%f')
@@ -143,8 +208,8 @@ class FreezeTracer:
         self._prune()
         return path
 
-    def _prune(self):
-        files = sorted(self.log_dir.glob('freeze-*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+    def _prune(self, pattern='freeze-*.json'):
+        files = sorted(self.log_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
         for old in files[self.keep:]:
             try:
                 old.unlink()

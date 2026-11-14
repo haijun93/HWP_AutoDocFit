@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
+import 'style_unify_colors.dart';
 
 class UnifyResultDialog extends StatefulWidget {
   const UnifyResultDialog({super.key, required this.api, required this.data});
@@ -66,25 +67,29 @@ class _UnifyResultDialogState extends State<UnifyResultDialog> {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Text(
                       error,
-                      style: const TextStyle(color: Colors.red),
+                      style: TextStyle(color: StyleUnifyColors.of(context).error),
                     ),
                   ),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: isSuccess
-                        ? Colors.green.withAlpha(25)
-                        : Colors.orange.withAlpha(25),
+                        ? StyleUnifyColors.of(context).success.withAlpha(25)
+                        : StyleUnifyColors.of(context).warning.withAlpha(25),
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(
-                      color: isSuccess ? Colors.green : Colors.orange,
+                      color: isSuccess
+                          ? StyleUnifyColors.of(context).success
+                          : StyleUnifyColors.of(context).warning,
                     ),
                   ),
                   child: Row(
                     children: [
                       Icon(
                         isSuccess ? Icons.check_circle : Icons.warning_amber,
-                        color: isSuccess ? Colors.green : Colors.orange,
+                        color: isSuccess
+                          ? StyleUnifyColors.of(context).success
+                          : StyleUnifyColors.of(context).warning,
                         size: 28,
                       ),
                       const SizedBox(width: 10),
@@ -119,7 +124,7 @@ class _UnifyResultDialogState extends State<UnifyResultDialog> {
                 if (result['error'] != null)
                   Text(
                     '오류: ${result['error']}',
-                    style: const TextStyle(color: Colors.red),
+                    style: TextStyle(color: StyleUnifyColors.of(context).error),
                   ),
                 const Divider(height: 24),
                 if (issues.isNotEmpty) ...[
@@ -149,12 +154,12 @@ class _UnifyResultDialogState extends State<UnifyResultDialog> {
                     ),
                 ],
                 if (unresolved.isNotEmpty) ...[
-                  const Text(
+                  Text(
                     '[대표값 미확정 문단 (빨간색 표시)]',
                     style: TextStyle(
                       fontWeight: FontWeight.bold,
                       fontSize: 13,
-                      color: Colors.red,
+                      color: StyleUnifyColors.of(context).error,
                     ),
                   ),
                   const SizedBox(height: 4),

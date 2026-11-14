@@ -17,6 +17,8 @@ pub struct TextBuffer {
     /// 줄 시작 앞의 글자 수 캐시(`cc[i]` = 줄 i 시작 앞 글자 수). 앞에서부터 채워지는 접두 구간만 유효하다.
     /// 캐시된 마지막 줄 시작보다 앞에서 편집하면 그 줄 뒤쪽을 버리고, 질의 때 필요한 만큼만 다시 채운다.
     cc: RefCell<Vec<usize>>,
+    /// `cc`와 나란한 캐시: 줄 시작 앞의 4바이트 글자(UTF-16 대리 쌍) 수. UTF-16 단위 = 글자 수 + 이 값.
+    cc4: RefCell<Vec<usize>>,
     /// 캐시된 마지막 줄의 시작(논리 오프셋). 편집이 이보다 뒤면 캐시를 건드리지 않는다(이어 입력 경로 보호).
     cc_tail: Cell<usize>,
 }
@@ -29,7 +31,7 @@ impl Default for TextBuffer {
 
 impl TextBuffer {
     pub fn new() -> Self {
-        TextBuffer { buf: Vec::new(), gs: 0, ge: 0, line_starts: vec![0], chars: 0, cc: RefCell::new(vec![0]), cc_tail: Cell::new(0) }
+        TextBuffer { buf: Vec::new(), gs: 0, ge: 0, line_starts: vec![0], chars: 0, cc: RefCell::new(vec![0]), cc4: RefCell::new(vec![0]), cc_tail: Cell::new(0) }
     }
 
     pub fn from_str(s: &str) -> Self {
@@ -234,6 +236,53 @@ impl TextBuffer {
         }
     }
 
+    /// `[start,end)`의 4바이트 글자(UTF-16에서 두 단위) 수.
+    fn count_wide(&self, start: usize, end: usize) -> usize {
+        let g = self.ge - self.gs;
+        let cnt = |b: &[u8]| b.iter().filter(|&&x| x >= 0xF0).count();
+        if end <= self.gs {
+            cnt(&self.buf[start..end])
+        } else if start >= self.gs {
+            cnt(&self.buf[start + g..end + g])
+        } else {
+            cnt(&self.buf[start..self.gs]) + cnt(&self.buf[self.ge..end + g])
+        }
+    }
+    /// 바이트 오프셋 → UTF-16 단위 오프셋. 갭을 옮기지 않고 줄 캐시로 건너뛴다.
+    pub fn byte_to_utf16(&self, pos: usize) -> usize {
+        let l = self.line_of(pos);
+        self.cc_fill(l);
+        let a = self.line_start(l);
+        self.cc.borrow()[l] + self.cc4.borrow()[l] + self.count_chars(a, pos) + self.count_wide(a, pos)
+    }
+    /// UTF-16 단위 오프셋 → 바이트 오프셋. 대리 쌍 한가운데면 `Err(true)`, 범위 밖이면 `Err(false)`.
+    pub fn utf16_to_byte(&self, unit: usize) -> Result<usize, bool> {
+        self.cc_fill(self.line_starts.len() - 1);
+        let (cc, cc4) = (self.cc.borrow(), self.cc4.borrow());
+        let l = {
+            let (mut lo, mut hi) = (0, cc.len());
+            while lo < hi {
+                let m = (lo + hi) / 2;
+                if cc[m] + cc4[m] <= unit { lo = m + 1 } else { hi = m }
+            }
+            lo.saturating_sub(1)
+        };
+        let mut left = unit - (cc[l] + cc4[l]);
+        let (mut pos, end) = (self.line_start(l), self.len());
+        while left > 0 && pos < end {
+            let w = if self.byte_at(pos) >= 0xF0 { 2 } else { 1 };
+            if left < w {
+                return Err(true);
+            }
+            pos += 1;
+            while pos < end && !self.is_char_boundary(pos) {
+                pos += 1;
+            }
+            left -= w;
+        }
+        if left > 0 { Err(false) } else { Ok(pos) }
+    }
+
     // ---- 글자 오프셋 ↔ 바이트/줄 ----
     fn cc_invalidate(&self, pos: usize) {
         if pos >= self.cc_tail.get() {
@@ -242,17 +291,21 @@ impl TextBuffer {
         let l = self.line_of(pos);
         let mut cc = self.cc.borrow_mut();
         cc.truncate(l + 1);
+        self.cc4.borrow_mut().truncate(l + 1);
         self.cc_tail.set(self.line_start(l));
     }
     /// 줄 `upto`까지 캐시를 채운다(이미 있으면 아무것도 안 함).
     fn cc_fill(&self, upto: usize) {
         let upto = upto.min(self.line_starts.len() - 1);
         let mut cc = self.cc.borrow_mut();
+        let mut cc4 = self.cc4.borrow_mut();
         while cc.len() <= upto {
             let l = cc.len() - 1;
             let (a, b) = (self.line_start(l), self.line_start(l + 1));
             let next = cc[l] + self.count_chars(a, b);
+            let next4 = cc4[l] + self.count_wide(a, b);
             cc.push(next);
+            cc4.push(next4);
         }
         self.cc_tail.set(self.line_start(cc.len() - 1));
     }

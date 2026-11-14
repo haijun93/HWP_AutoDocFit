@@ -4,11 +4,13 @@ import 'edit_save_state.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:js_interop';
+import 'dart:js_interop_unsafe';
 import 'dart:math';
 import 'dart:ui_web' as ui_web;
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 import '../../core/api/abbreviation_api.dart';
+import '../../core/theme/app_theme.dart';
 import '../table_units/table_units_screen.dart';
 import 'flow_draft.dart';
 import '../workspace/tab_navigation_shell.dart';
@@ -66,10 +68,8 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
       );
     }
     viewType = 'docfit-flow-${DateTime.now().microsecondsSinceEpoch}';
+    // 주소(src)는 테마를 알 수 있는 didChangeDependencies에서 넣는다.
     frame = web.HTMLIFrameElement()
-      ..src = Uri.base
-          .resolve('assets/assets/flow_editor/index.html')
-          .toString()
       ..title = switch (widget.initialMode) {
         'mindmap' => '마인드맵',
         'paint' => '붙임사진 편집',
@@ -89,6 +89,44 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
       if (data is Map) unawaited(handle(data));
     }).toJS;
     web.window.addEventListener('message', listener);
+  }
+
+  String? _theme;
+
+  /// 편집기 화면 틀 테마: 고대비면 hc, 아니면 밝기에 따라 dark·light.
+  String _editorTheme(BuildContext context) {
+    if (AppColors.of(context).highContrast) return 'hc';
+    return Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light';
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final theme = _editorTheme(context);
+    if (theme == _theme) return;
+    final first = _theme == null;
+    _theme = theme;
+    if (first) {
+      frame.src = Uri.base
+          .resolve('assets/assets/flow_editor/index.html')
+          .replace(queryParameters: {'theme': theme})
+          .toString();
+      return;
+    }
+    _pushTheme();
+  }
+
+  /// 이미 열린 편집기에 현재 테마를 함수로 알린다(같은 출처 iframe).
+  /// 아직 준비 전이면 건너뛰고, 편집기가 ready를 보낼 때 다시 맞춘다.
+  void _pushTheme() {
+    final theme = _theme;
+    if (theme == null) return;
+    try {
+      final target = frame.contentWindow as JSObject?;
+      if (target != null && target.has('docfitSetTheme')) {
+        target.callMethod('docfitSetTheme'.toJS, theme.toJS);
+      }
+    } catch (_) {}
   }
 
   Future<Object?> storage(
@@ -138,6 +176,7 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
     final type = message['type'];
     if (type == 'ready') {
       if (mounted) setState(() => ready = true);
+      _pushTheme();
       post({'type': 'set_mode', 'mode': widget.initialMode});
       unawaited(offerRecovery());
       return;

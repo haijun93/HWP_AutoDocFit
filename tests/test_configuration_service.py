@@ -52,3 +52,17 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(self.store.read()['report_files_rev'],2)
         self.assertTrue(self.service.snapshot()['values']['log_file'])
         self.assertEqual(self.store.read()['custom'],42)
+
+    def test_search_engine_defaults_to_kfind_and_roundtrips(self):
+        snapshot = self.service.snapshot()
+        self.assertEqual(snapshot['values']['search_engine'], 'kfind')
+        choice_field = next(f for f in fields() if f['key'] == 'search_engine')
+        self.assertEqual(choice_field['type'], 'choice')
+        self.assertEqual(choice_field['choices'], ['kfind', 'legacy'])
+
+        result = self.service.save({'search_engine': 'legacy'}, snapshot['revision'])
+        self.assertEqual(result['values']['search_engine'], 'legacy')
+        self.assertEqual(self.store.read()['search_engine'], 'legacy')
+
+        with self.assertRaises(ServiceError):
+            self.service.save({'search_engine': 'unsupported'}, result['revision'])

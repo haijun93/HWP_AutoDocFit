@@ -34,7 +34,7 @@ void main() {
     expect(find.text('다이어그램'), findsOneWidget);
     expect(find.text('마인드맵'), findsOneWidget);
     expect(find.text('파일명 일괄변경'), findsOneWidget);
-    expect(find.text('타임머신'), findsOneWidget);
+    expect(find.text('몽땅검색'), findsOneWidget);
     expect(find.text('파일변환'), findsOneWidget);
 
     await tester.ensureVisible(find.byKey(const Key('workspaceTab-8')));

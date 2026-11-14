@@ -1,4 +1,8 @@
 import os
+import ctypes
+import json
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import Mock, patch
 import stat
 import sys
 import tempfile
@@ -52,6 +56,70 @@ class RealExecutableTests(unittest.TestCase):
         r = hb.analyze_levels(PARAS, {"hierarchy_engine": True}, executable=exe)
         self.assertEqual(len(r["role_sequence"]), 2)
         self.assertEqual(hb.analyze_levels([], {"hierarchy_engine": True})["role_sequence"], [])
+
+
+class CacheTests(unittest.TestCase):
+    def setUp(self):
+        hb._LIBRARIES.clear()
+        hb._SETTINGS_CACHE = None
+
+    def tearDown(self):
+        hb._LIBRARIES.clear()
+        hb._SETTINGS_CACHE = None
+
+    def test_library_loaded_once_per_path_across_threads(self):
+        buffer = ctypes.create_string_buffer(b'{"role_sequence":["title","body"]}')
+        dll = Mock()
+        dll.hierarchy_analyze_json.return_value = ctypes.addressof(buffer)
+        with patch.object(hb.ctypes, "CDLL", return_value=dll) as load:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: hb.run_library("cache-test.dll", PARAS), range(300)))
+            self.assertTrue(all(r == {"role_sequence": ["title", "body"]} for r in results))
+            self.assertEqual(load.call_count, 1)
+            hb.run_library(Path.cwd() / "cache-test.dll", PARAS)
+            self.assertEqual(load.call_count, 1)
+            hb.run_library("cache-other.dll", PARAS)
+            self.assertEqual(load.call_count, 2)
+        self.assertEqual(dll.hierarchy_json_free.call_count, 302)
+
+    def test_settings_reused_and_changes_apply_on_next_analysis(self):
+        from docfit_app.settings_service import SettingsService
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, APPDATA=directory):
+            path = Path(directory) / "HwpAutoDocFit" / "settings.json"
+            path.parent.mkdir()
+            path.write_text('{"hierarchy_engine":true}', encoding="utf-8")
+            read = SettingsService.read
+            with patch.object(SettingsService, "read", autospec=True, side_effect=read) as reads, \
+                    patch.object(hb, "find_library", return_value=None), \
+                    patch.object(hb, "run_executable", return_value={"role_sequence": []}) as run:
+                for _ in range(300):
+                    self.assertIsNotNone(hb.analyze_levels(PARAS, executable="unused"))
+                self.assertEqual(reads.call_count, 1)
+                previous = path.stat()
+                # Same size, different mtime must invalidate.
+                path.write_text('{"hierarchy_engine":null}', encoding="utf-8")
+                os.utime(path, ns=(previous.st_atime_ns, previous.st_mtime_ns + 1000000000))
+                self.assertIsNone(hb.analyze_levels(PARAS, executable="unused"))
+                self.assertEqual(reads.call_count, 2)
+                # Same mtime, different size must also invalidate.
+                stamp = path.stat()
+                path.write_text('{"hierarchy_engine":true,"other":1}', encoding="utf-8")
+                os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+                self.assertIsNotNone(hb.analyze_levels(PARAS, executable="unused"))
+                self.assertEqual(reads.call_count, 3)
+                path.unlink()
+                self.assertEqual(hb._read_settings().get("hierarchy_engine"),
+                                 __import__("docfit_app.settings_schema", fromlist=["DEFAULTS"]).DEFAULTS.get("hierarchy_engine"))
+                path.write_text('{"hierarchy_engine":false}', encoding="utf-8")
+                self.assertIsNone(hb.analyze_levels(PARAS, executable="unused"))
+                self.assertEqual(reads.call_count, 5)
+                self.assertEqual(run.call_count, 301)
+
+    def test_library_failure_is_retried(self):
+        with patch.object(hb.ctypes, "CDLL", side_effect=OSError("missing")) as load:
+            self.assertIsNone(hb.run_library("missing.dll", PARAS))
+            self.assertIsNone(hb.run_library("missing.dll", PARAS))
+            self.assertEqual(load.call_count, 2)
 
 
 if __name__ == "__main__":

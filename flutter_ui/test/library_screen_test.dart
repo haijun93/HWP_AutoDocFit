@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:docfit_ui/features/library/library_api.dart';
+import 'package:docfit_ui/features/library/library_document_search.dart';
 
 import 'package:docfit_ui/features/library/library_screen.dart';
 
@@ -406,6 +407,77 @@ void main() {
     await tester.pumpAndSettle();
     final cardFinder = find.byKey(ValueKey('libraryItem-${item.id}'));
     expect(tester.widget<Card>(find.descendant(of: cardFinder, matching: find.byType(Card))).elevation, 5);
+  });
+
+  testWidgets('ISUI2: 파일명·본문검색·위계검색이 검색어를 함께 쓰고 메뉴를 바꾸면 그 검색어로 다시 찾는다', (tester) async {
+    tester.view.physicalSize = const Size(1600, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final api = InMemoryLibraryApi();
+    final box = await api.createBox('검색 메뉴');
+    const budgetPath = r'C:\자료\예산계획.hwpx';
+    const roadPath = r'C:\자료\도로보고.txt';
+    final budget = await api.addItem(boxId: box.id, kind: LibraryItemKind.file, title: '예산계획.hwpx', space: LibrarySpace.core, x: 16, y: 16, source: budgetPath);
+    final road = await api.addItem(boxId: box.id, kind: LibraryItemKind.file, title: '도로보고.txt', space: LibrarySpace.core, x: 16, y: 200, source: roadPath);
+    final calls = <(String, String)>[];
+    Future<List<LibraryDocumentHit>> documentSearch(String mode, String query) async {
+      calls.add((mode, query));
+      return [
+        // 대소문자·구분자가 달라도 같은 자료로 본다. 가상 폴더에 없는 문서는 버린다.
+        const LibraryDocumentHit(path: 'c:/자료/도로보고.txt', name: '도로보고.txt', snippet: '정비 예산 증액', breadcrumb: 'Ⅰ. 개요'),
+        const LibraryDocumentHit(path: r'C:\다른곳\무관.hwpx', name: '무관.hwpx', snippet: '예산'),
+      ];
+    }
+
+    await tester.pumpWidget(MaterialApp(home: LibraryScreen(api: api, documentSearch: documentSearch)));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('librarySearchMode')), findsOneWidget);
+
+    // 파일명: 1글자는 거르지 않고, 2글자부터 Enter 없이 거른다.
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '예');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('libraryItem-${road.id}')), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '예산');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('libraryItem-${budget.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('libraryItem-${road.id}')), findsNothing);
+    expect(calls, isEmpty);
+
+    // 본문검색으로 바꾸면 같은 검색어로 곧바로 찾고, 이 가상 폴더 자료만 남긴다.
+    await tester.tap(find.byKey(const ValueKey('librarySearchMode-content')));
+    await tester.pumpAndSettle();
+    expect(calls, [('content', '예산')]);
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('librarySearch'))).controller!.text, '예산');
+    expect(find.byKey(ValueKey('libraryItem-${road.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('libraryItem-${budget.id}')), findsNothing);
+    expect(find.text('Ⅰ. 개요 · 정비 예산 증액'), findsOneWidget);
+    expect(find.text('본문검색: 자료 1개'), findsOneWidget);
+
+    // 위계검색도 같은 검색어로 곧바로 찾는다.
+    await tester.tap(find.byKey(const ValueKey('librarySearchMode-related')));
+    await tester.pumpAndSettle();
+    expect(calls.last, ('related', '예산'));
+
+    // 위계검색에서 검색어를 바꾸면 입력만으로 다시 찾는다.
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '정비 예산');
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pumpAndSettle();
+    expect(calls.last, ('related', '정비 예산'));
+
+    // 파일명으로 돌아가면 그 검색어로 이름을 거르고 본문검색 안내는 지운다.
+    await tester.tap(find.byKey(const ValueKey('librarySearchMode-file')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('위계검색:'), findsNothing);
+    expect(calls.length, 3);
+
+    // 검색어를 지우면 전체 자료가 다시 보인다.
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '');
+    await tester.pumpAndSettle();
+    expect(find.byKey(ValueKey('libraryItem-${budget.id}')), findsOneWidget);
+    expect(find.byKey(ValueKey('libraryItem-${road.id}')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('텍스트 자료를 추가하고 검색한다', (tester) async {
@@ -1153,5 +1225,50 @@ void libraryScanTests() {
     expect(s.discovered, 7);
     final t = LibraryScanStatus.fromJson({'state': 'scanning', 'total': 8, 'processed': 2, 'changed': 2});
     expect(t.fraction, 0.25);
+  });
+
+  testWidgets('APP1-H: scopedDocumentSearch가 있으면 서버 범위 검색을 쓰고 count 배지를 보인다', (tester) async {
+    final api = InMemoryLibraryApi(
+      initialBoxes: const [LibraryBox(id: '1', name: '예산함')],
+      initialItems: const [
+        LibraryItem(id: '1', boxId: '1', title: '예산_추진.txt', kind: LibraryItemKind.file, space: LibrarySpace.core, x: 10, y: 10),
+      ],
+    );
+    var searchCalled = false;
+    Future<ScopedLibraryHits> scopedSearch(String boxId, String mode, String query) async {
+      searchCalled = true;
+      return ScopedLibraryHits(
+        rows: [
+          {'title': '예산_추진.txt', 'snippet': '예산 100억 집행', 'item_ids': [1]},
+        ],
+        totalDocs: 1,
+        totalSentences: 3,
+        engine: 'kfind',
+      );
+    }
+
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: LibraryScreen(
+          api: api,
+          scopedDocumentSearch: scopedSearch,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byKey(const ValueKey('librarySearch')), '예산');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(searchCalled, isTrue);
+    expect(find.byKey(const ValueKey('librarySearchCount')), findsOneWidget);
+    expect(find.text('1개 · 3문장'), findsOneWidget);
+    expect(find.textContaining('새 검색'), findsOneWidget);
   });
 }

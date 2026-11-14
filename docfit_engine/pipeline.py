@@ -60,6 +60,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 표:
                     for 줄 in 단계시간_요약줄(표, Path(파일).name):
                         로그(줄)
+                    from docfit_core import com_perf
+                    com_perf.finish_document(Path(파일).name, 표, log=로그, source_path=파일)
         return bind_function(문서_처리, _docfit_namespace)
     if _docfit_symbol == '_문서_처리_본체':
         def _문서_처리_본체(파일, index, total, 문장부호기능=True):
@@ -660,7 +662,6 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     로그(f"작업 범위: {쪽표시(쪽범위_요청[0])} ~ {쪽표시(쪽범위_요청[1])}"
                        " (각 문서에 같은 쪽 번호를 적용, 문서보다 큰 끝 쪽은 마지막쪽까지)")
                 로그(f"표 안 문장 자간조정: {'포함' if 표_자간조정_사용 else '제외'}")
-                중단_event.clear()
                 단어중간_줄바꿈방지_사용 = bool(단어분리방지)
                 색상_설정 = 색상
                 비교보기_사용 = 비교보기

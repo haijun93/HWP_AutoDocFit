@@ -177,64 +177,15 @@ void main() {
     });
   });
 
-  group('문서편집 화면 (Workspace) 표 칸 그림 변환 도구 위젯 시험', () {
-    testWidgets('문서편집 addButtons에 표 칸 그림 버튼 렌더링 및 실행 결과 안내', (
-      WidgetTester tester,
-    ) async {
-      final apiCalls = <List<Object?>>[];
-      Future<Object?> fakeApi(String method, List<Object?> args) async {
-        apiCalls.add([method, ...args]);
-        if (method == 'get_state') {
-          return {
-            'mode': 'spacing',
-            'files': [
-              {'name': '기획서.hwpx', 'path': r'C:\work\기획서.hwpx', 'size': 2048},
-            ],
-            'count': 1,
-            'status': '대기 중',
-            'running': false,
-            'range': {'enabled': false, 'start': '1', 'end': '1'},
-            'conversion_targets': [],
-          };
-        }
-        if (method == 'convert_cell_bg') {
-          return {
-            'ok': true,
-            'source': r'C:\work\기획서.hwpx',
-            'output': r'C:\work\기획서 (표배경변환).hwpx',
-            'converted_count': 5,
-            'message': '표 칸 그림 5개를 셀 배경으로 변환하여 저장했습니다.',
-          };
-        }
-        return {'ok': true};
-      }
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: Workspace(api: fakeApi),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
-
-      // 버튼 검증
-      final toolBtn = find.byKey(const Key('cellBgToolButton'));
-      expect(toolBtn, findsOneWidget);
-
-      // 클릭 실행
-      await tester.tap(toolBtn);
-      await tester.pumpAndSettle();
-
-      // 결과 다이얼로그 확인
-      expect(find.byKey(const Key('workspaceCellBgResultDialog')), findsOneWidget);
-      expect(find.text('바뀐 칸 수: 5개'), findsOneWidget);
-      expect(find.textContaining(r'C:\work\기획서 (표배경변환).hwpx'), findsOneWidget);
-
-      // 닫기
-      await tester.tap(find.byKey(const Key('workspaceCellBgResultCloseButton')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('workspaceCellBgResultDialog')), findsNothing);
-    });
+  testWidgets('문서편집 문서 선택에는 표 칸 그림 변환 버튼이 없다', (tester) async {
+    Future<Object?> api(String method, List<Object?> args) async => method == 'get_state'
+        ? {'mode': 'spacing', 'files': [], 'count': 0, 'status': '대기 중', 'running': false,
+           'range': {'enabled': false, 'start': '1', 'end': '1'}, 'conversion_targets': []}
+        : {'ok': true};
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Workspace(api: api))));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('cellBgToolButton')), findsNothing);
+    expect(find.text('표 칸 그림을 배경으로'), findsNothing);
+    expect(find.text('문서 추가'), findsOneWidget);
   });
 }

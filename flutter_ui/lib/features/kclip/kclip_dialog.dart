@@ -7,9 +7,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../../core/theme/app_theme.dart';
 import 'kclip_category.dart';
 import 'kclip_category_prefs.dart';
+import 'kclip_colors.dart';
 import 'kclip_ffi.dart';
+import 'kclip_preview.dart';
 
 /// 몽땅클립보드 관리: 켜기(동의)·끄기·상태·목록(검색·고정·지우기·클립보드에 올리기)·설정.
 /// 빠른 붙여넣기는 상주 프로그램의 단축키 팝업(기본 Ctrl+Shift+V)이 맡고, 이 화면은 관리용이다.
@@ -284,6 +287,8 @@ class _KClipPanelState extends State<KClipPanel> {
   Map status = const {};
   List<Map> items = const [];
   Map settings = const {};
+  /// 자동 인식한 화면캡처 폴더(에이전트 settings_get의 capture_dirs: 경로·출처·상태).
+  List<Map> captureDirs = const [];
   bool consent = false;
   bool autostart = false;
   bool minimized = false;
@@ -301,6 +306,11 @@ class _KClipPanelState extends State<KClipPanel> {
   final Map<int, bool> _tableItems = {};
   final Set<int> _checkingTables = {};
   KClipFfi? _ffi;
+  // 그림 미리보기(마우스 오버·키보드 포커스): 상태 기계는 빠른 목록과 같은 규칙(kclip_preview.dart).
+  final KClipPreviewMachine _previewMachine = KClipPreviewMachine();
+  final LinkedHashMap<String, Uint8List?> _thumbs = LinkedHashMap();
+  ({double right, double left, double top})? _previewAnchor;
+  OverlayEntry? _previewEntry;
 
   bool get running => status['running'] == true;
   Map get agent => (status['status'] as Map?) ?? const {};
@@ -361,6 +371,8 @@ class _KClipPanelState extends State<KClipPanel> {
 
   @override
   void dispose() {
+    _previewEntry?.remove();
+    _previewEntry = null;
     _debounce?.cancel();
     _memo.dispose();
     unawaited(_setNativeDropTarget('documents'));
@@ -435,6 +447,7 @@ class _KClipPanelState extends State<KClipPanel> {
           ),
         );
         settings = (conf['settings'] as Map?) ?? const {};
+        captureDirs = [for (final d in (conf['capture_dirs'] as List? ?? const [])) if (d is Map) d];
       });
     }
   }
@@ -458,6 +471,84 @@ class _KClipPanelState extends State<KClipPanel> {
       }
     });
     return bytes;
+  }
+
+  /// 마우스·키보드가 가리키는 항목이 바뀌거나 움직일 때. 그림이 아니거나 null이면 숨긴다.
+  void _pointPreview(Map? item, ({double right, double left, double top}) anchor) {
+    final target = item == null ? null : kclipPreviewTarget(item);
+    _previewAnchor = anchor;
+    final cached = target != null && _thumbs[target.key] != null;
+    _runPreview(_previewMachine.point(target, cached: cached));
+  }
+
+  void _hidePreview() => _runPreview(_previewMachine.hide());
+
+  void _runPreview(KClipPreviewAction action) {
+    switch (action) {
+      case KClipPreviewAction.nothing:
+        break;
+      case KClipPreviewAction.hide:
+        _previewEntry?.remove();
+        _previewEntry = null;
+      case KClipPreviewAction.request:
+        _previewEntry?.remove();
+        _previewEntry = null;
+        unawaited(_loadThumb(_previewMachine.target!));
+      case KClipPreviewAction.show:
+      case KClipPreviewAction.move:
+        _showPreview();
+    }
+  }
+
+  /// 에이전트의 thumb 명령(빠른 목록과 같은 메모리·디스크 캐시). 실패해도 화면 알림은 띄우지 않는다.
+  Future<void> _loadThumb(KClipPreviewTarget target) async {
+    Uint8List? bytes;
+    try {
+      final result = await widget.api('kclip', ['thumb', {'id': target.id, 'size': target.size}]);
+      if (result is Map && result['ok'] == true && result['png'] is String) {
+        bytes = base64Decode(result['png'] as String);
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    _thumbs[target.key] = bytes;
+    while (_thumbs.length > 40) {
+      _thumbs.remove(_thumbs.keys.first);
+    }
+    _runPreview(_previewMachine.ready(target, ok: bytes != null));
+  }
+
+  void _showPreview() {
+    final target = _previewMachine.target;
+    final bytes = target == null ? null : _thumbs[target.key];
+    final anchor = _previewAnchor;
+    if (bytes == null || anchor == null) return;
+    final entry = OverlayEntry(builder: (context) {
+      final screen = MediaQuery.sizeOf(context);
+      const box = Size(248, 248);
+      final at = kclipPreviewPlace(right: anchor.right, left: anchor.left, top: anchor.top, box: box, screen: screen);
+      return Positioned(
+        left: at.dx,
+        top: at.dy,
+        child: IgnorePointer(
+          child: Material(
+            key: const ValueKey('kclip-preview'),
+            elevation: 6,
+            color: context.colors.surface,
+            shape: RoundedRectangleBorder(side: BorderSide(color: KclipColors.of(context).previewBorder)),
+            child: Padding(
+              padding: const EdgeInsets.all(4),
+              child: ConstrainedBox(
+                constraints: BoxConstraints.loose(const Size(240, 240)),
+                child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+              ),
+            ),
+          ),
+        ),
+      );
+    });
+    _previewEntry?.remove();
+    _previewEntry = entry;
+    Overlay.of(context).insert(entry);
   }
 
   bool _maybeTable(Map item) =>
@@ -780,6 +871,63 @@ class _KClipPanelState extends State<KClipPanel> {
     );
   }
 
+  /// 화면캡처 폴더 자동 인식: 전체 켜기와 폴더별 끄기(capture_dirs_off, 소문자 경로).
+  Widget _captureFolders(BuildContext context) {
+    final allOn = settings['watch_screenshots'] != false;
+    final off = [for (final p in (settings['capture_dirs_off'] as List? ?? const [])) '$p'.toLowerCase()];
+    String stateText(Object? state) => switch (state) {
+      'watching' => '감시 중',
+      'off' => '끔',
+      'paused' => '일시정지',
+      'all_off' => '전체 꺼짐',
+      _ => '',
+    };
+    return Column(
+      key: const ValueKey('kclip-capture-dirs'),
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Switch(
+            key: const ValueKey('kclip-capture-all'),
+            value: allOn,
+            onChanged: (v) => _act('settings_set', {'settings': {'watch_screenshots': v}}),
+          ),
+          const Flexible(child: Text('화면캡처 폴더 자동 인식(새 캡처 그림을 경로로 기록)')),
+        ]),
+        if (captureDirs.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(left: 12, bottom: 4),
+            child: Text('찾은 화면캡처 폴더가 없습니다.', style: TextStyle(fontSize: 12)),
+          ),
+        for (final d in captureDirs)
+          Padding(
+            padding: const EdgeInsets.only(left: 12),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Checkbox(
+                key: ValueKey('kclip-capture-dir-${d['path']}'),
+                value: !off.contains('${d['path']}'.toLowerCase()),
+                onChanged: allOn
+                    ? (v) {
+                        final path = '${d['path']}'.toLowerCase();
+                        final next = [...off.where((p) => p != path), if (v != true) path];
+                        _act('settings_set', {'settings': {'capture_dirs_off': next}});
+                      }
+                    : null,
+              ),
+              Flexible(
+                child: Tooltip(
+                  message: '${d['path']}',
+                  child: Text('${d['label']} · ${stateText(d['state'])}\n${d['path']}',
+                      style: const TextStyle(fontSize: 12), overflow: TextOverflow.ellipsis, maxLines: 2),
+                ),
+              ),
+            ]),
+          ),
+      ],
+    );
+  }
+
   Widget _on(BuildContext context) {
     final paused = agent['paused'] == true;
     final hotkeyOk = agent['hotkey_ok'] != false;
@@ -795,7 +943,7 @@ class _KClipPanelState extends State<KClipPanel> {
               avatar: Icon(
                 paused ? Icons.pause_circle_outline : Icons.fiber_manual_record,
                 size: 16,
-                color: paused ? null : Colors.red,
+                color: paused ? null : KclipColors.of(context).recording,
               ),
               label: Text(
                 paused ? '일시정지' : '기록 중 · ${agent['items'] ?? items.length}개',
@@ -846,6 +994,7 @@ class _KClipPanelState extends State<KClipPanel> {
         ),
         const SizedBox(height: 4),
         if (!hotkeyMode) _settings(context),
+        if (!hotkeyMode) _captureFolders(context),
         Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
           FilledButton.icon(
             key: const ValueKey('kclip-excel-table'),
@@ -890,7 +1039,7 @@ class _KClipPanelState extends State<KClipPanel> {
                         if (mounted) unawaited(_checkTable(id));
                       });
                     }
-                    return GestureDetector(
+                    final tile = GestureDetector(
                       onDoubleTap: _isWebText(item) ? () => unawaited(_openWeb(item)) : null,
                       child: ListTile(
                       key: ValueKey('kclip-item-${item['id']}'),
@@ -950,6 +1099,27 @@ class _KClipPanelState extends State<KClipPanel> {
                         ],
                       ),
                       ),
+                    );
+                    // 그림 미리보기: 마우스는 커서 옆, 키보드 포커스는 그 줄 오른쪽(자리가 없으면 왼쪽).
+                    return MouseRegion(
+                      onHover: (e) => _pointPreview(item,
+                          (right: e.position.dx + 4, left: e.position.dx - 4, top: e.position.dy + 16)),
+                      onExit: (_) => _hidePreview(),
+                      child: Builder(builder: (tileContext) => Focus(
+                        canRequestFocus: false,
+                        skipTraversal: true,
+                        onFocusChange: (focused) {
+                          final box = tileContext.findRenderObject();
+                          if (!focused || box is! RenderBox || !box.hasSize) {
+                            if (!focused) _hidePreview();
+                            return;
+                          }
+                          final origin = box.localToGlobal(Offset.zero);
+                          _pointPreview(item,
+                              (right: origin.dx + box.size.width, left: origin.dx, top: origin.dy));
+                        },
+                        child: tile,
+                      )),
                     );
                   },
                 ),

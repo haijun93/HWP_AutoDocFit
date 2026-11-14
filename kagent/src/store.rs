@@ -31,6 +31,8 @@ pub struct Settings {
     pub excluded_apps: Vec<String>,
     /// 스크린샷 폴더(Win+PrtScn·캡처 도구 자동 저장)에 새로 생긴 PNG도 기록.
     pub watch_screenshots: bool,
+    /// 자동 인식한 화면캡처 폴더 중 사용자가 끈 폴더(소문자 경로, `capture_dirs::plan`).
+    pub capture_dirs_off: Vec<String>,
     /// 타임머신 조사 폴더(앱이 정해 준다, 비어 있으면 감시 안 함).
     pub timeline_roots: Vec<String>,
     pub timeline_mtime_only: bool,
@@ -43,6 +45,8 @@ pub struct Settings {
     pub popup_collapsed: bool,
     /// 엑셀 표 항목은 앱에 맡겨 '목표 결과'(공백·빈 칸·열 너비·칸 여백 정리)로 붙이기. 앱이 꺼져 있으면 원래대로.
     pub excel_target_paste: bool,
+    /// 네이티브 창 테마: "system"(시스템 따라가기, 기본)·"light"·"dark". 그 밖의 값은 무시(RUSTALL1 DARK1).
+    pub theme: String,
 }
 
 impl Default for Settings {
@@ -64,6 +68,7 @@ impl Default for Settings {
                 .map(|s| s.to_string())
                 .collect(),
             watch_screenshots: true,
+            capture_dirs_off: Vec::new(),
             timeline_roots: Vec::new(),
             timeline_mtime_only: false,
             popup_x: -1,
@@ -72,6 +77,7 @@ impl Default for Settings {
             popup_height: 0,
             popup_collapsed: false,
             excel_target_paste: true,
+            theme: "system".into(),
         }
     }
 }
@@ -100,6 +106,7 @@ impl Settings {
             ("hotkey", self.hotkey.as_str().into()),
             ("excluded_apps", Value::Arr(self.excluded_apps.iter().map(|s| s.as_str().into()).collect())),
             ("watch_screenshots", self.watch_screenshots.into()),
+            ("capture_dirs_off", Value::Arr(self.capture_dirs_off.iter().map(|s| s.as_str().into()).collect())),
             ("timeline_roots", Value::Arr(self.timeline_roots.iter().map(|s| s.as_str().into()).collect())),
             ("timeline_mtime_only", self.timeline_mtime_only.into()),
             ("popup_x", self.popup_x.into()),
@@ -108,6 +115,7 @@ impl Settings {
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
             ("excel_target_paste", self.excel_target_paste.into()),
+            ("theme", self.theme.as_str().into()),
             ("policy_rev", 1i64.into()),
         ])
     }
@@ -156,6 +164,9 @@ impl Settings {
         if let Some(b) = v.bool("watch_screenshots") {
             self.watch_screenshots = b;
         }
+        if let Some(list) = string_list(v, "capture_dirs_off", true, 1000) {
+            self.capture_dirs_off = list.into_iter().take(50).collect();
+        }
         // 조사 폴더: 절대 경로(드라이브 문자)만, 최대 20개.
         if let Some(list) = string_list(v, "timeline_roots", false, 1000) {
             self.timeline_roots = list
@@ -175,6 +186,7 @@ impl Settings {
         if let Some(n) = v.num("popup_height").filter(|n| (150.0..=4000.0).contains(n)) { self.popup_height = n as i64; }
         if let Some(b) = v.bool("popup_collapsed") { self.popup_collapsed = b; }
         if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
+        if let Some(t) = v.str("theme").filter(|t| ui_theme::ThemePref::is_valid(t)) { self.theme = t.to_string(); }
     }
 
     pub fn load(path: &str) -> Settings {
@@ -192,7 +204,7 @@ impl Settings {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Summary {
     pub id: i64,
     pub kind: String,
@@ -229,6 +241,9 @@ impl Summary {
             ("pinned", self.pinned.into()),
             ("used", self.used.into()),
             ("size", self.size.into()),
+            // 빠른 목록과 같은 분류(앱 화면이 경로만 저장한 캡처 항목도 같은 기준으로 거르고 미리보게).
+            ("cats", Value::Arr(crate::category::Category::ALL.iter().filter(|c| self.cats.contains(**c))
+                .map(|c| c.label().into()).collect())),
         ])
     }
 }
@@ -448,6 +463,20 @@ impl Store {
         }
         let cats = category::classify(&entry, &path_kind);
         Info { cats, paths: entry.paths, web_url: entry.web_url }
+    }
+
+    /// (종류, 내용 지문) — 복호화 없이 읽는다(썸네일 디스크 캐시 키).
+    pub fn kind_hash(&self, id: i64) -> Result<Option<(String, String)>, String> {
+        let mut found = None;
+        self.conn.query("SELECT kind, hash FROM items WHERE id = ?", &[Arg::Int(id)], |r| found = Some((r.text(0), r.text(1))))?;
+        Ok(found)
+    }
+
+    /// 저장 크기(목록의 `size`와 같은 값 — 썸네일 메모리 캐시 키).
+    pub fn size_of(&self, id: i64) -> Result<Option<i64>, String> {
+        let mut found = None;
+        self.conn.query("SELECT size FROM items WHERE id = ?", &[Arg::Int(id)], |r| found = Some(r.int(0)))?;
+        Ok(found)
     }
 
     /// (종류, 내용, 서식 묶음).
@@ -691,6 +720,26 @@ mod tests {
         let mut roundtrip = Settings::default();
         roundtrip.apply(&settings.to_json());
         assert!(!roundtrip.watch_screenshots);
+    }
+
+    #[test]
+    fn theme_defaults_to_system_round_trips_and_ignores_unknown_values() {
+        assert_eq!(Settings::default().theme, "system");
+        assert_eq!(Settings::load(&std::env::temp_dir().join("kagent-no-such-dir").join("settings.json").to_string_lossy()).theme, "system");
+        let mut st = Settings::default();
+        st.apply(&json::parse(r#"{"theme":"dark"}"#).unwrap());
+        assert_eq!(st.theme, "dark");
+        for bad in [r#"{"theme":"Dark"}"#, r#"{"theme":"blue"}"#, r#"{"theme":1}"#, r#"{"theme":""}"#] {
+            st.apply(&json::parse(bad).unwrap());
+            assert_eq!(st.theme, "dark", "{bad}");
+        }
+        let mut back = Settings::default();
+        back.apply(&st.to_json());
+        assert_eq!(back.theme, "dark");
+        st.apply(&json::parse(r#"{"theme":"light"}"#).unwrap());
+        assert_eq!(st.theme, "light");
+        st.apply(&json::parse(r#"{"theme":"system"}"#).unwrap());
+        assert_eq!(st.theme, "system");
     }
 
     #[test]

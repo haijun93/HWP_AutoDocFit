@@ -257,16 +257,16 @@ class DocumentConversionTest(unittest.TestCase):
         from docfit_core.style_hierarchy import leading_marker
 
         ns = self.ns
-        asset = Path(__file__).resolve().parents[1] / 'release-assets' / '보고서 예시 파일(한번에 적용).txt'
+        asset = Path(__file__).resolve().parents[1] / 'release-assets' / '[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt'
         raw = asset.read_bytes()
         self.assertFalse(raw.startswith(b'\xef\xbb\xbf'))
         self.assertNotIn(b'\r', raw)
         text = ns['텍스트파일_읽기'](asset)
         lines = text.splitlines()
-        self.assertEqual(len(lines), 95)
-        self.assertEqual(sum(bool(line.strip()) for line in lines), 46)
+        self.assertEqual(len(lines), 91)
+        self.assertEqual(sum(bool(line.strip()) for line in lines), 44)
         self.assertEqual(Counter(leading_marker(line)[0] for line in lines if leading_marker(line)[0]),
-                         {'□': 6, 'ㅇ': 18, '-': 12, '*': 3, '**': 2, '※': 1, '2.': 1})
+                         {'□': 6, 'ㅇ': 18, '-': 12, '*': 3, '**': 2, '※': 1})
         title = '삼체 문명 존속을 위한, 지구 이주·점령 계획(안) 보고'
         overview = ('삼체 행성의 항성계 불안정에 따른 문명 파괴 위기를 극복하고자, 지구 확보를 위한 '
                     '「선(先) 기초과학 봉쇄–후(後) 함대 일괄 점령」 3단계 침공·이주 전략을 보고드림.')
@@ -286,7 +286,7 @@ class DocumentConversionTest(unittest.TestCase):
         actual = self._texts(section)
         self.assertEqual(len(actual), len(lines) - 3)
         self.assertEqual(actual[2:], lines[5:])
-        self.assertEqual(actual[-2:], ['붙임: 1. 지구 침공 세부 시행계획 1부.', '      2. 스케줄표 1부.  끝.'])
+        self.assertEqual(actual[-1], ' ㅇ 현지 협력조직 ETO와 비밀 지휘 체계를 구축하고 지침을 하달하여 정보 수집과 현지 활동의 일관성 확보')
         chars = {c.get('id'): c for c in header.iter() if self.name(c) == 'charPr'}
         for table, height in zip(tables, ('2700', '1500')):
             cell = ns['제목_셀들'](table)[0]

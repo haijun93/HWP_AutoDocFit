@@ -7,21 +7,30 @@
 //! - SQLite는 Windows 내장 winsqlite3.dll, 네트워크 코드 없음.
 #![windows_subsystem = "windows"]
 
+mod boxscale;
+mod capture_dirs;
 mod category;
+mod frame;
+mod hotkey;
 mod lifecycle;
 mod clip;
 mod crypt;
 mod memo;
 mod open_item;
+mod open_rules;
 mod json;
 mod pipe;
 mod popup;
+mod prewarm;
+mod preview;
 mod settings_menu;
 mod sqlite;
 mod store;
+mod thumb;
 mod timeline;
 mod util;
 mod watch;
+mod wic;
 mod xl_target;
 mod excel_target;
 
@@ -38,14 +47,15 @@ use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, RegisterHotKey, UnregisterHotKey,
+    RegisterHotKey, UnregisterHotKey,
 };
 use windows_sys::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_INFO, NIIF_WARNING, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 use crate::clip::Capture;
+use crate::hotkey::{hotkey_failure_body, hotkey_failure_notice, parse_hotkey};
 use crate::store::{Settings, Store, Summary};
 use crate::util::{now, wide};
 
@@ -97,7 +107,8 @@ pub struct App {
     /// 마지막 스크린샷 PNG 지문과 시각(클립보드·파일 경로 공통 중복 제거).
     pub image_dedupe: Mutex<std::collections::VecDeque<(String, u64)>>,
     pub timeline: Mutex<Option<timeline::Timeline>>,
-    pub screenshots: Mutex<String>,
+    /// 화면캡처 폴더별 감시 상태(`capture_dirs::plan`, 설정·일시정지가 바뀔 때마다 다시 계산).
+    pub capture_plan: Mutex<Vec<(capture_dirs::Candidate, capture_dirs::FolderState)>>,
     pub scan_pending: Mutex<HashSet<String>>,
     pub timeline_generation: AtomicU64,
     pub timeline_files: AtomicI64,
@@ -108,76 +119,75 @@ fn now_ms() -> u64 {
     (now() * 1000.0) as u64
 }
 
-/// 스크린샷 폴더(알려진 폴더 FOLDERID_Screenshots, 없으면 사진\Screenshots).
-fn screenshots_folder() -> Option<String> {
-    use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_Screenshots, SHGetKnownFolderPath};
+/// 화면캡처 폴더 후보 중 실제로 있는 것(시험용 환경 변수가 있으면 그 폴더 하나만 — 사용자 폴더를 건드리지 않게).
+fn capture_folders() -> Vec<capture_dirs::Candidate> {
+    let single = |path: String| vec![capture_dirs::Candidate { path, label: capture_dirs::LABEL_WINDOWS, subtree: false }];
     if let Ok(root) = std::env::var("KAGENT_TEST_ROOT") {
         let dir = std::path::Path::new(&root).join("Screenshots");
-        if std::fs::create_dir_all(&dir).is_ok() {
-            return Some(dir.to_string_lossy().into_owned());
-        }
-        return None;
+        return if std::fs::create_dir_all(&dir).is_ok() { single(dir.to_string_lossy().into_owned()) } else { Vec::new() };
     }
     if let Ok(dir) = std::env::var("KAGENT_SCREENSHOTS") {
-        return std::path::Path::new(&dir).is_dir().then_some(dir); // 시험용
+        return if std::path::Path::new(&dir).is_dir() { single(dir) } else { Vec::new() };
     }
-    unsafe {
-        let mut p: windows_sys::core::PWSTR = std::ptr::null_mut();
-        if SHGetKnownFolderPath(&FOLDERID_Screenshots, 0, std::ptr::null_mut(), &mut p) == 0 && !p.is_null() {
-            let mut n = 0;
-            while *p.add(n) != 0 {
-                n += 1;
-            }
-            let path = String::from_utf16_lossy(std::slice::from_raw_parts(p, n));
-            CoTaskMemFree(p as _);
-            if std::path::Path::new(&path).is_dir() {
-                return Some(path);
-            }
-        } else if !p.is_null() {
-            CoTaskMemFree(p as _);
-        }
-    }
-    let fallback = format!("{}\\Pictures\\Screenshots", std::env::var("USERPROFILE").ok()?);
-    std::path::Path::new(&fallback).is_dir().then_some(fallback)
+    capture_dirs::discover(&capture_dirs::Env::from_system(), &|p| std::path::Path::new(p).is_dir())
 }
 
-/// 스크린샷 폴더에 새로 생긴 PNG 한 장을 그림 항목으로 기록한다.
-fn record_screenshot(path: &str) {
-    if !path.to_lowercase().ends_with(".png") {
+/// 표시 경로 → 클립보드 붙여넣기 때 그림으로도 올릴 '캡처 파일' 항목 표시(extra 칸).
+pub const CAPTURE_FILE_MARK: &[u8] = b"kagent:capture-file";
+
+/// 화면캡처 폴더에 새로 생긴 그림 파일을 '화면캡처' 항목으로 기록한다. 내용은 저장하지 않고 경로만(파일 항목).
+fn record_capture(path: &str) {
+    if !capture_dirs::is_capture_image(path) {
         return;
     }
-    let max = app().settings.lock().unwrap().max_item_bytes as u64;
-    // 캡처 도구가 아직 쓰는 중일 수 있어 몇 번 다시 시도한다.
-    let mut data = None;
-    for _ in 0..5 {
-        match std::fs::metadata(path) {
-            Ok(m) if m.len() > max => return,
-            Ok(_) => {
-                if let Ok(bytes) = std::fs::read(path) {
-                    if bytes.starts_with(b"\x89PNG") && bytes.ends_with(b"IEND\xAE\x42\x60\x82") {
-                        data = Some(bytes);
-                        break;
-                    }
-                }
-            }
-            Err(_) => return,
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
+    if capture_dirs::is_clipboard_twin(now_ms(), app().last_clip_image.load(Ordering::Relaxed)) {
+        return;
     }
-    let Some(data) = data else { return };
-    if !claim_image(&data) { return; }
-    let preview = format!("캡처 · {}", clip::preview("image", &data));
-    let settings = app().settings.lock().unwrap().clone();
-    {
-        let store = app().store.lock().unwrap();
-        let t = now();
-        if store.insert("image", &data, &[], &preview, "screenshot", t).is_err() {
+    // 캡처 앱이 아직 쓰는 중일 수 있어 크기가 멈추고(PNG는 끝 표시까지) 나서 기록한다.
+    let png = path.to_ascii_lowercase().ends_with(".png");
+    let mut prev = None;
+    let mut done = false;
+    for _ in 0..8 {
+        let Ok(meta) = std::fs::metadata(path) else { return };
+        if !meta.is_file() {
             return;
         }
-        let _ = store.enforce(&settings, t);
+        let tail = if png { read_tail(path, 12) } else { None };
+        if capture_dirs::looks_complete(prev, meta.len(), if png { Some(tail.as_deref().unwrap_or(&[])) } else { None }) {
+            done = true;
+            break;
+        }
+        prev = Some(meta.len());
+        std::thread::sleep(std::time::Duration::from_millis(120));
     }
+    if !done {
+        return;
+    }
+    let name = path.rsplit(['\\', '/']).next().unwrap_or(path);
+    let preview = format!("캡처 · {name}");
+    let settings = app().settings.lock().unwrap().clone();
+    let id = {
+        let store = app().store.lock().unwrap();
+        let t = now();
+        let Ok((id, _)) = store.insert("files", path.as_bytes(), CAPTURE_FILE_MARK, &preview, "screenshot", t) else {
+            return;
+        };
+        let _ = store.enforce(&settings, t);
+        id
+    };
+    // 상태 파일에 대기가 바로 보이게 목록 갱신(상태 쓰기) 전에 넣는다.
+    prewarm::enqueue(id);
     refresh_recent();
+}
+
+fn read_tail(path: &str, n: u64) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut f = std::fs::File::open(path).ok()?;
+    let len = f.metadata().ok()?.len();
+    f.seek(SeekFrom::Start(len.saturating_sub(n))).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(buf)
 }
 
 fn image_hash(data: &[u8]) -> String { store::content_hash("image", data) }
@@ -308,15 +318,21 @@ pub fn scan_timeline_root(root: &str) {
     schedule_timeline_scan(root.to_string());
 }
 
+/// 화면캡처 폴더 감시 태그 시작값(타임머신 폴더는 1부터).
+const CAPTURE_TAG: u32 = 1_000_000;
+
 /// 설정에 맞춰 폴더 감시(스크린샷·타임머신)를 다시 시작한다. 타임머신 폴더는 먼저 한 번 증분으로 훑는다.
 pub fn restart_watchers() {
     let settings = app().settings.lock().unwrap().clone();
     let mut roots: Vec<(String, u32, bool)> = Vec::new();
-    let shots = if settings.watch_screenshots && !settings.paused { screenshots_folder() } else { None };
-    *app().screenshots.lock().unwrap() = shots.clone().unwrap_or_default();
-    if let Some(dir) = shots {
-        roots.push((dir, 0, false));
+    let plan = capture_dirs::plan(&capture_folders(), settings.watch_screenshots, settings.paused, &settings.capture_dirs_off);
+    let capture_roots: Vec<String> = plan.iter().map(|(c, _)| c.path.clone()).collect();
+    for (i, (c, state)) in plan.iter().enumerate() {
+        if *state == capture_dirs::FolderState::Watching {
+            roots.push((c.path.clone(), CAPTURE_TAG + i as u32, c.subtree));
+        }
     }
+    *app().capture_plan.lock().unwrap() = plan;
     let timeline_roots: Vec<String> =
         settings.timeline_roots.iter().filter(|r| std::path::Path::new(r).is_dir()).cloned().collect();
 
@@ -338,10 +354,11 @@ pub fn restart_watchers() {
     let names = timeline_roots.clone();
     watch::restart(roots, move |batch| {
         for (tag, change) in batch {
-            if tag == 0 {
-                if let watch::Change::Added(rel) | watch::Change::Modified(rel) = change {
-                    let dir = app().screenshots.lock().unwrap().clone();
-                    record_screenshot(&format!("{dir}\\{rel}"));
+            if tag >= CAPTURE_TAG {
+                if let (watch::Change::Added(rel) | watch::Change::Modified(rel), Some(dir)) =
+                    (change, capture_roots.get((tag - CAPTURE_TAG) as usize))
+                {
+                    record_capture(&format!("{dir}\\{rel}"));
                 }
                 continue;
             }
@@ -401,14 +418,44 @@ pub fn refresh_recent() {
 }
 
 /// 상태 파일: 앱이 파이프 없이도 읽을 수 있게 변경 때만 쓴다.
+static STATUS_WRITE: Mutex<Option<(std::path::PathBuf, String)>> = Mutex::new(None);
+
+/// Serialize snapshot creation and replacement; cache only successfully published content.
+fn publish_status(path: &std::path::Path, snapshot: impl FnOnce() -> json::Value) -> std::io::Result<bool> {
+    let mut last = STATUS_WRITE.lock().unwrap();
+    let mut value = snapshot();
+    let content = json::to_string(&value);
+    if last.as_ref().is_some_and(|(p, text)| p == path && text == &content) {
+        return Ok(false);
+    }
+    if let json::Value::Obj(ref mut fields) = value {
+        fields.push(("updated".into(), now().into()));
+    }
+    let temp = path.with_extension("json.tmp");
+    let result = (|| {
+        std::fs::write(&temp, json::to_string(&value))?;
+        // std::fs::rename uses MoveFileExW(REPLACE_EXISTING) on Windows.
+        std::fs::rename(&temp, path)
+    })();
+    if result.is_err() { let _ = std::fs::remove_file(&temp); }
+    result?;
+    *last = Some((path.to_owned(), content));
+    Ok(true)
+}
+
 pub fn write_status() {
     let a = app();
+    let path = std::path::Path::new(&a.dir).join("status.json");
+    let _ = publish_status(&path, || {
     let (items, total) = {
         let s = a.store.lock().unwrap();
         (s.count().unwrap_or(0), s.total_bytes().unwrap_or(0))
     };
     let settings = a.settings.lock().unwrap().clone();
-    let screenshots = a.screenshots.lock().unwrap().clone();
+    let plan = a.capture_plan.lock().unwrap().clone();
+    // 예전 키 "screenshots"(감시 중인 첫 폴더)는 앱 호환을 위해 둔다.
+    let screenshots = plan.iter().find(|(_, s)| *s == capture_dirs::FolderState::Watching)
+        .map(|(c, _)| c.path.clone()).unwrap_or_default();
     let timeline_files = a.timeline_files.load(Ordering::Relaxed);
     let v = json::Value::obj(vec![
         ("version", VERSION.into()),
@@ -420,15 +467,23 @@ pub fn write_status() {
         ("hotkey", settings.hotkey.as_str().into()),
         ("hotkey_ok", a.hotkey_ok.load(Ordering::Relaxed).into()),
         ("screenshots", screenshots.as_str().into()),
+        ("capture_dirs", capture_plan_json(&plan)),
         ("timeline_roots", (settings.timeline_roots.len() as i64).into()),
         ("timeline_files", timeline_files.into()),
-        ("updated", now().into()),
+        ("thumb_prewarm", prewarm::status_json()),
+        ("thumb_steps", thumb::steps_json()),
     ]);
-    let path = format!("{}\\status.json", a.dir);
-    let temp = format!("{path}.tmp");
-    if std::fs::write(&temp, json::to_string(&v)).is_ok() {
-        let _ = std::fs::rename(&temp, &path);
-    }
+    v
+    });
+}
+
+/// 화면캡처 폴더 목록(설정 화면·status.json 공통): 경로·출처·상태.
+pub fn capture_plan_json(plan: &[(capture_dirs::Candidate, capture_dirs::FolderState)]) -> json::Value {
+    json::Value::Arr(plan.iter().map(|(c, s)| json::Value::obj(vec![
+        ("path", c.path.as_str().into()),
+        ("label", c.label.into()),
+        ("state", s.code().into()),
+    ])).collect())
 }
 
 pub fn save_settings() {
@@ -448,8 +503,25 @@ pub fn update_settings(new: &json::Value) -> Settings {
     save_settings();
     let _ = a.store.lock().unwrap().enforce(&snapshot, now());
     refresh_recent();
-    unsafe { PostMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
+    // 잠금을 모두 놓은 뒤 창 스레드의 등록 결과까지 기다린다(타이머·폴링 없음).
+    unsafe { SendMessageW(main_hwnd(), WM_SETTINGS, 0, 0) };
     snapshot
+}
+
+/// 테마 상태 전이(창 스레드에서만): 설정의 선호(`theme`) + 시스템 앱 모드·고대비 → `ui_theme` 상태 하나.
+/// 보이는 색이 바뀌면 창 틀을 맞추고 바로 다시 그린다. 선호가 바뀌었고 `broadcast`면(관리창·설정 메뉴로 바꿈)
+/// 다른 프로세스(kvf)에 알린다. 시작할 때·WM_SETTINGS·테마 메시지에서 부른다.
+fn refresh_theme(broadcast: bool) {
+    let pref = ui_theme::ThemePref::parse(&app().settings.lock().unwrap().theme);
+    let change = ui_theme::refresh(pref);
+    if change.look {
+        ui_theme::apply_window(main_hwnd(), ui_theme::theme().kind);
+        popup::apply_theme();
+        preview::apply_theme();
+    }
+    if change.pref && broadcast {
+        ui_theme::broadcast_changed();
+    }
 }
 
 /// 시간 일시정지가 끝나는 때(ms, 0 = 없음).
@@ -543,6 +615,13 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 }
 
 
+/// 그림 항목 기록 직후: 클립보드 비트맵에서 만든 썸네일이 있으면 캐시에 바로 넣고, 없으면 미리 만들기 대기열로(KCAP2).
+fn prime_or_enqueue(id: i64, dib_thumb: Option<thumb::Thumb>) {
+    if !dib_thumb.is_some_and(|t| thumb::prime(id, t)) {
+        prewarm::enqueue(id);
+    }
+}
+
 /// 작업 스레드: 클립보드에서 복사해 온 내용을 변환·암호화·저장한다(낮은 우선순위).
 fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
     unsafe {
@@ -550,6 +629,8 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
     for (capture, source) in rx {
+        // 클립보드 비트맵이면 PNG로 바꾸기 전 메모리 비트맵에서 바로 썸네일(KCAP3 ③, 측정 4K 약 17ms·추가 버퍼 없음).
+        let mut dib_thumb: Option<thumb::Thumb> = None;
         let (mut kind, data, mut extra, skipped) = match capture {
             Capture::Text(s, formats, skipped) => ("text", s.into_bytes(), clip::pack_formats(&formats), skipped),
             Capture::Files(files) => ("files", files.join("\n").into_bytes(), Vec::new(), Vec::new()),
@@ -559,7 +640,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
                 ("image", b, clip::pack_formats(&formats), skipped)
             }
             Capture::Dib(d, formats, skipped) => match { app().last_clip_image.store(now_ms(), Ordering::Relaxed); clip::dib_to_png(&d) } {
-                Some(p) if claim_image(&p) => ("image", p, clip::pack_formats(&formats), skipped),
+                Some(p) if claim_image(&p) => {
+                    dib_thumb = thumb::from_dib(&d, thumb::MAX_SIDE);
+                    ("image", p, clip::pack_formats(&formats), skipped)
+                }
                 Some(_) => continue,
                 None => continue,
             },
@@ -587,8 +671,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             let preview = format!("{} · 서식 상한 초과: {}", clip::preview(kind, &data), suffix);
             let t = now();
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &trimmed, &preview, &source, t).is_ok() { let _ = store.enforce(&settings, t); }
+            let inserted = store.insert(kind, &data, &trimmed, &preview, &source, t).ok().map(|(id, _)| id);
+            if inserted.is_some() { let _ = store.enforce(&settings, t); }
             drop(store);
+            if let (Some(id), "image") = (inserted, kind) { prime_or_enqueue(id, dib_thumb.take()); }
             refresh_recent();
             continue;
         }
@@ -599,12 +685,17 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
             else if skipped.is_empty() { format!("{} · 서식 포함", clip::preview(kind, &data)) }
             else { format!("{} · 서식 포함 ({}개 형식 생략)", clip::preview(kind, &data), skipped.len()) };
         let t = now();
-        {
+        let id = {
             let store = app().store.lock().unwrap();
-            if store.insert(kind, &data, &extra, &preview, &source, t).is_err() {
+            let Ok((id, _)) = store.insert(kind, &data, &extra, &preview, &source, t) else {
                 continue;
-            }
+            };
             let _ = store.enforce(&settings, t);
+            id
+        };
+        if kind == "image" {
+            // 그림은 쉬는 때 썸네일을 미리 만들어 첫 미리보기를 빠르게(KCAP2). 상태 파일에 대기가 바로 보이게 먼저.
+            prime_or_enqueue(id, dib_thumb.take());
         }
         refresh_recent();
     }
@@ -668,34 +759,32 @@ fn memo_watch(mut child: std::process::Child, path: std::path::PathBuf) {
     let _ = std::fs::remove_file(path);
 }
 
-fn parse_hotkey(text: &str) -> Option<(u32, u32)> {
-    let mut mods = MOD_NOREPEAT;
-    let mut vk = 0u32;
-    for part in text.split('+').map(|p| p.trim().to_ascii_lowercase()) {
-        match part.as_str() {
-            "ctrl" | "control" => mods |= MOD_CONTROL,
-            "shift" => mods |= MOD_SHIFT,
-            "alt" => mods |= MOD_ALT,
-            "win" => mods |= MOD_WIN,
-            p if p.len() == 1 && p.as_bytes()[0].is_ascii_alphanumeric() => vk = p.to_ascii_uppercase().as_bytes()[0] as u32,
-            p if p.starts_with('f') => {
-                let n: u32 = p[1..].parse().ok()?;
-                if !(1..=24).contains(&n) {
-                    return None;
-                }
-                vk = 0x70 + n - 1;
-            }
-            _ => return None,
-        }
+fn notify_hotkey_failure(hwnd: HWND, text: &str, valid: bool) {
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = 1;
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_WARNING;
+        for (dst, unit) in nid.szInfoTitle.iter_mut().take(63).zip("몽땅클립보드 단축키를 쓸 수 없습니다".encode_utf16()) { *dst = unit; }
+        for (dst, unit) in nid.szInfo.iter_mut().take(255).zip(hotkey_failure_body(text, valid).encode_utf16()) { *dst = unit; }
+        Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
-    (vk != 0 && mods != MOD_NOREPEAT).then_some((mods, vk))
 }
 
 fn register_hotkey(hwnd: HWND) {
     unsafe { UnregisterHotKey(hwnd, HOTKEY_ID) };
     let text = app().settings.lock().unwrap().hotkey.clone();
-    let ok = parse_hotkey(&text).map(|(m, vk)| unsafe { RegisterHotKey(hwnd, HOTKEY_ID, m, vk) } != 0).unwrap_or(false);
+    let parsed = parse_hotkey(&text);
+    let ok = parsed.map(|(m, vk)| unsafe { RegisterHotKey(hwnd, HOTKEY_ID, m, vk) } != 0).unwrap_or(false);
     app().hotkey_ok.store(ok, Ordering::Relaxed);
+    static LAST_FAILURE: Mutex<Option<String>> = Mutex::new(None);
+    let mut previous = LAST_FAILURE.lock().unwrap();
+    let (next, notify) = hotkey_failure_notice(previous.as_deref(), &text, ok);
+    *previous = next;
+    drop(previous);
+    if notify { notify_hotkey_failure(hwnd, &text, parsed.is_some()); }
 }
 
 fn set_listening(hwnd: HWND, on: bool) {
@@ -763,9 +852,10 @@ fn tray(hwnd: HWND, op: u32) {
         nid.uCallbackMessage = WM_TRAY;
         nid.hIcon = make_icon(paused);
         let tip = if paused {
-            "몽땅클립보드 — 일시정지".to_string()
+            if app().hotkey_ok.load(Ordering::Relaxed) { "몽땅클립보드 — 일시정지".to_string() } else { "몽땅클립보드 — 일시정지 · 단축키 사용 불가".to_string() }
         } else {
             let hotkey = app().settings.lock().unwrap().hotkey.clone();
+            let hotkey = if app().hotkey_ok.load(Ordering::Relaxed) { hotkey.as_str() } else { "단축키 사용 불가" };
             format!("몽땅클립보드 — 기록 중 ({count}개) · {hotkey}")
         };
         for (i, u) in tip.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
@@ -797,6 +887,7 @@ fn tray_menu(hwnd: HWND) {
             2 => set_paused(hwnd, !paused),
             3 => {
                 let _ = app().store.lock().unwrap().clear(true);
+                thumb::clear_all();
                 refresh_recent();
             }
             4 => {
@@ -911,6 +1002,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_SETTINGS => {
                 register_hotkey(hwnd);
+                refresh_theme(true);
                 popup::apply_settings();
                 let paused = app().settings.lock().unwrap().paused;
                 set_listening(hwnd, !paused);
@@ -927,6 +1019,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let _ = std::fs::remove_file(format!("{}\\status.json", app().dir));
                 PostQuitMessage(0);
                 0
+            }
+            // 시스템 앱 모드·고대비·시스템 색이 바뀌었거나 다른 프로세스가 테마 변경을 알렸다.
+            _ if ui_theme::is_theme_message(msg, wp, lp) => {
+                refresh_theme(false);
+                DefWindowProcW(hwnd, msg, wp, lp)
             }
             _ => DefWindowProcW(hwnd, msg, wp, lp),
         }
@@ -1019,7 +1116,7 @@ fn main() {
         last_clip_image: AtomicU64::new(0),
         image_dedupe: Mutex::new(std::collections::VecDeque::new()),
         timeline: Mutex::new(None),
-        screenshots: Mutex::new(String::new()),
+        capture_plan: Mutex::new(Vec::new()),
         scan_pending: Mutex::new(HashSet::new()),
         timeline_generation: AtomicU64::new(0),
         timeline_files: AtomicI64::new(0),
@@ -1054,7 +1151,11 @@ fn main() {
             std::process::exit(3);
         }
         app().hwnd.store(hwnd as isize, Ordering::Relaxed);
+        // 창을 만들기 전에 테마를 정한다(빠른 목록 창은 만들 때 틀 색을 입힌다). 트레이 메뉴 소유 창도 맞춘다.
+        refresh_theme(false);
+        ui_theme::apply_window(hwnd, ui_theme::theme().kind);
         popup::register(instance);
+        preview::register(instance);
         // 격리 시험 전용: 시험 폴더가 없으면 실제 기록에 시험 항목을 넣지 않도록 무시한다.
         if has("--test-window") && std::env::var_os("KAGENT_TEST_ROOT").is_some() {
             if let Some(root) = std::env::var_os("KAGENT_TEST_ROOT") {
@@ -1087,10 +1188,11 @@ fn main() {
             save_settings();
             popup::show();
         }
+        tray(hwnd, NIM_ADD);
         register_hotkey(hwnd);
         let paused = app().settings.lock().unwrap().paused;
         set_listening(hwnd, !paused);
-        tray(hwnd, NIM_ADD);
+        tray(hwnd, NIM_MODIFY);
         restart_watchers();
         write_status();
         pipe::start();
@@ -1351,6 +1453,7 @@ mod lifecycle_tests {
     use super::*;
     #[test]
     fn lifecycle_installs_upgrades_and_never_touches_registry_in_test_root() {
+        let _env = util::TestEnvironment::lock();
         let root = std::env::temp_dir().join(format!("kagent-lifecycle-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
@@ -1403,6 +1506,43 @@ mod lifecycle_tests {
 mod tests {
     use super::*;
 
+
+    #[test]
+    fn concurrent_status_is_atomic_and_unchanged_content_is_skipped() {
+        let root = std::env::temp_dir().join(format!("kagent-status-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("status.json");
+        publish_status(&path, || json::Value::obj(vec![("text", "initial".into())])).unwrap();
+        let running = AtomicBool::new(true);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while running.load(Ordering::Relaxed) {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    let parsed = json::parse(&text).expect("complete JSON during replacement");
+                    assert!(parsed.str("text").is_some());
+                    assert_eq!(json::to_string(&parsed), text);
+                }
+            });
+            let workers: Vec<_> = (0..8).map(|worker| {
+                let path = &path;
+                scope.spawn(move || {
+                    for i in 0..300 {
+                        let text = format!("{worker}:{i}:{}", "x".repeat((i % 100) * 13));
+                        assert!(publish_status(path, || json::Value::obj(vec![("text", text.into())])).unwrap());
+                    }
+                })
+            }).collect();
+            for worker in workers { worker.join().unwrap(); }
+            running.store(false, Ordering::Relaxed);
+        });
+        assert!(publish_status(&path, || json::Value::obj(vec![("text", "final".into())])).unwrap());
+        let before = std::fs::read(&path).unwrap();
+        assert!(!publish_status(&path, || json::Value::obj(vec![("text", "final".into())])).unwrap());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     fn sample(id: i64) -> Summary {
         Summary { id, kind: "text".into(), preview: format!("항목 {id}"), pinned: false, used: 1.0, size: 1,
                   cats: crate::category::CategorySet::default() }
@@ -1417,14 +1557,6 @@ mod tests {
         let (list, error) = merge_recent(previous, Ok(vec![sample(3)]));
         assert_eq!(list.iter().map(|s| s.id).collect::<Vec<_>>(), vec![3]);
         assert!(error.is_none());
-    }
-
-    #[test]
-    fn hotkeys() {
-        assert_eq!(parse_hotkey("Ctrl+Shift+V"), Some((MOD_NOREPEAT | MOD_CONTROL | MOD_SHIFT, 'V' as u32)));
-        assert_eq!(parse_hotkey("Alt+F2"), Some((MOD_NOREPEAT | MOD_ALT, 0x71)));
-        assert_eq!(parse_hotkey("V"), None);
-        assert_eq!(parse_hotkey("Ctrl+Space"), None);
     }
 
     #[test]

@@ -68,6 +68,141 @@ class TimemachineServiceTests(unittest.TestCase):
     def enable(self, roots=None):
         return self.service.command("settings_set", {"roots": [str(p) for p in (roots or [self.root])], "time_mode":"max", "enabled":True})
 
+    def test_refresh_after_close_does_not_access_database(self):
+        self.service.close()
+        with patch.object(self.service.content_index, "indexed_paths", side_effect=AssertionError("closed DB accessed")):
+            self.service._refresh_content_index_async()
+
+    def test_close_waits_for_content_worker_before_closing_database(self):
+        entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+        def work():
+            entered.set()
+            release.wait(5)
+        worker = threading.Thread(target=work)
+        self.service._content_thread = worker
+        self.service._content_state["running"] = True
+        worker.start()
+        self.assertTrue(entered.wait(2))
+        original_close = self.service.content_index.close
+        def close_db():
+            closed.set()
+            original_close()
+        with patch.object(self.service.content_index, "close", side_effect=close_db):
+            closer = threading.Thread(target=self.service.close)
+            closer.start()
+            try:
+                self.assertFalse(closed.wait(.1))
+            finally:
+                release.set()
+                closer.join(5)
+        self.assertFalse(closer.is_alive())
+        self.assertTrue(closed.is_set())
+
+    def test_content_status_retains_legacy_fields_and_reports_storage_summary(self):
+        self.enable()
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "idle")
+        self.assertIsNone(state["failure_reason"])
+        for key in ("running", "seen", "indexed", "errors", "cancelled", "started_at", "finished_at"):
+            self.assertIn(key, state)
+        file = self.root / "summary.txt"
+        file.write_text("summary", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        self.service.content_index.db.execute("UPDATE content_meta SET hierarchy_schema_version=1")
+        self.service.content_index.db.execute("INSERT INTO content_errors VALUES(?,?,?,?)",
+                                             (str(self.root / "bad.txt"), "failure", 0, 0))
+        self.service.content_index.db.commit()
+        outside = Path(self.temp.name) / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+        self.service.content_index.index_file(outside)
+        self.service.content_index.db.execute("INSERT INTO content_errors VALUES(?,?,?,?)",
+                                             (str(outside), "outside failure", 0, 0))
+        self.service.content_index.db.commit()
+        with patch("os.stat", side_effect=AssertionError("status must not inspect files")):
+            state = self.service.command("content_index_status")
+        self.assertTrue(state["has_index"])
+        self.assertEqual(state["indexed_document_count"], 1)
+        self.assertEqual(state["needs_reindex_count"], 1)
+        self.assertTrue(state["needs_reindex"])
+        self.assertEqual(state["persistent_error_count"], 1)
+        self.assertEqual(state["errors"], 0)
+        self.assertEqual(self.service.command("content_index_cancel"), state)
+        self.assertEqual(self.service.command("content_index_progress"), state)
+
+    def test_content_phase_indexing_cancel_requested_cancelled(self):
+        entered, release = threading.Event(), threading.Event()
+        def work(roots, extensions, cancel_event):
+            entered.set()
+            release.wait(5)
+            self.service._finish_content_index(cancel_event)
+        with patch.object(self.service, "_content_index_worker", side_effect=work):
+            try:
+                start = self.service.command("content_index_start")
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(start["phase"], "indexing")
+                self.assertEqual(self.service.command("content_index_start")["phase"], "indexing")
+                cancel = self.service.command("content_index_cancel")
+                self.assertEqual(cancel["phase"], "cancel_requested")
+                self.assertTrue(cancel["running"])
+            finally:
+                release.set()
+                self.service._content_thread.join(5)
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "cancelled")
+        self.assertTrue(state["cancelled"])
+        self.assertFalse(state["running"])
+
+    def test_content_worker_exception_records_failed_reason(self):
+        with patch("docfit_app.timemachine_service.os.walk", side_effect=OSError("walk failed")):
+            with self.assertLogs("docfit_app.timemachine_service", level="ERROR"):
+                self.service._content_index_worker([str(self.root)], frozenset({"txt"}))
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "failed")
+        self.assertEqual(state["failure_reason"], "OSError: walk failed")
+        self.assertIsNotNone(state["finished_at"])
+        self.assertFalse(state["running"])
+
+    def test_manual_and_automatic_thread_start_failure_records_failed(self):
+        self.enable()
+        file = self.root / "start.txt"
+        file.write_text("start", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        with patch("docfit_app.timemachine_service.threading.Thread.start", side_effect=RuntimeError("start failed")):
+            state = self.service.command("content_index_start")
+            self.assertFalse(state["ok"])
+            self.assertEqual(state["code"], "TM_INDEX_FAILED")
+            self.assertEqual(state["phase"], "failed")
+            self.assertEqual(state["failure_reason"], "RuntimeError: start failed")
+            with self.assertLogs("docfit_app.timemachine_service", level="ERROR"):
+                self.service._refresh_content_index_async()
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "failed")
+        self.assertFalse(state["running"])
+        self.assertEqual(state["failure_reason"], "RuntimeError: start failed")
+
+    def test_automatic_refresh_phase_reindexing_then_finished(self):
+        self.enable()
+        file = self.root / "refresh.txt"
+        file.write_text("refresh", encoding="utf-8")
+        self.service.content_index.index_file(file)
+        entered, release = threading.Event(), threading.Event()
+        original = self.service.content_index.index_file
+        def blocked(path):
+            entered.set()
+            release.wait(5)
+            return original(path)
+        with patch.object(self.service.content_index, "index_file", side_effect=blocked):
+            try:
+                self.service._refresh_content_index_async()
+                self.assertTrue(entered.wait(2))
+                self.assertEqual(self.service.content_status()["phase"], "reindexing")
+            finally:
+                release.set()
+                self.service._content_thread.join(5)
+        state = self.service.content_status()
+        self.assertEqual(state["phase"], "finished")
+        self.assertIsNone(state["failure_reason"])
+
     def test_settings_defaults_disabled_and_default_roots(self):
         settings = self.service.command("settings_get")["settings"]
         self.assertEqual(settings["time_mode"], "max")
@@ -243,6 +378,56 @@ class TimemachineServiceTests(unittest.TestCase):
         res = self.service.command("related_search", {"path": str(doc_body)})
         self.assertTrue(res["ok"])
         self.assertTrue(res["ok"])
+
+    def test_related_search_accepts_query_only_and_ranks_by_hierarchy(self):
+        """ISUI2: 화면 검색창은 기준 문서 없이 검색어만 보낸다. 위계가 높은 문단에서 찾은 문서가 앞에 온다."""
+        self.enable()
+        from tests.test_timemachine_content_search import write_hwpx_paragraphs
+        doc_sq = self.root / "square.hwpx"
+        write_hwpx_paragraphs(doc_sq, [{"text": "ㅁ 위계질의어"}])
+        doc_body = self.root / "body.txt"
+        doc_body.write_text("본문에만 위계질의어 위계질의어 위계질의어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc_sq)})
+        self.service.command("content_index", {"path": str(doc_body)})
+
+        res = self.service.command("related_search", {"query": "위계질의어", "limit": 100, "sort": "hierarchy_relevance"})
+        self.assertTrue(res["ok"], res)
+        self.assertEqual(res["mode"], "query")
+        names = [item["file_name"] for item in res["items"]]
+        self.assertEqual(set(names), {"square.hwpx", "body.txt"})
+        self.assertEqual(names[0], "square.hwpx")  # 'ㅁ' 항목 문단이 본문 문단보다 위계가 높다.
+        first = res["items"][0]
+        for key in ("path", "name", "snippet", "best_level", "relevance_rank"):
+            self.assertIn(key, first)
+        self.assertFalse([key for key in first if key.startswith("_")])
+        # 2글자 검색어도 된다(실시간 검색 기준).
+        self.assertTrue(self.service.command("related_search", {"query": "위계"})["ok"])
+
+    def test_related_search_query_mode_validates_input_and_keeps_path_contract(self):
+        self.enable()
+        doc = self.root / "기준.txt"
+        doc.write_text("기준 문서 검색어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc)})
+        # 경로도 검색어도 없으면 예전처럼 문서를 고르라고 한다.
+        self.assertEqual(self.service.command("related_search", {})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "   "})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "검색어", "limit": 0})["code"], "INVALID_INPUT")
+        self.assertEqual(self.service.command("related_search", {"query": "검색어", "sort": "없는정렬"})["code"], "INVALID_INPUT")
+        # 경로를 주면 검색어가 함께 와도 기존 연관 문서(경로) 방식으로 답한다.
+        by_path = self.service.command("related_search", {"path": str(doc), "query": "검색어"})
+        self.assertTrue(by_path["ok"])
+        self.assertNotEqual(by_path.get("mode"), "query")
+        self.assertFalse(any("path" in item for item in by_path["items"]))
+
+    def test_related_search_query_mode_returns_nothing_without_roots(self):
+        self.enable()
+        doc = self.root / "루트.txt"
+        doc.write_text("루트밖 검색어", encoding="utf-8")
+        self.service.command("content_index", {"path": str(doc)})
+        self.service._settings["roots"] = []
+        res = self.service.command("related_search", {"query": "루트밖"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["items"], [])
 
     def test_content_search_returns_keyword_fields_without_internal_sort_keys(self):
         self.developer_mode = True
@@ -603,6 +788,60 @@ class TimemachineServiceTests(unittest.TestCase):
         row=self.service.store.range(now-1,now+1)[0]
         self.assertTrue(self.service.command("hide",{"id":row["id"]})["ok"])
         self.assertEqual(self.service.command("hide",{"id":987654})["code"],"TM_NOT_FOUND")
+
+    def test_open_and_reveal_content_paths_without_timeline_id(self):
+        self.enable()
+        for extension in ("hwpx", "docx", "pdf"):
+            file = self.root / ("검색 결과." + extension)
+            file.write_bytes(b"test")
+            for action, calls in (("open", self.opened), ("reveal", self.revealed)):
+                with self.subTest(extension=extension, action=action):
+                    self.assertTrue(self.service.command(action, {"path": str(file)})["ok"])
+                    self.assertEqual(calls[-1], str(file))
+
+    def test_path_open_security_and_missing_file_errors(self):
+        self.enable()
+        for action in ("open", "reveal"):
+            for path, code in ((str(self.plain_file), "TM_NOT_AVAILABLE"),
+                               (str(self.root / "bad.exe"), "TM_NOT_AVAILABLE"),
+                               (str(self.root / "missing.pdf"), "TM_MISSING"),
+                               (str(self.root / ".." / self.plain_file.name), "TM_NOT_AVAILABLE"),
+                               ("relative.pdf", "INVALID_INPUT")):
+                with self.subTest(action=action, path=path):
+                    result = self.service.command(action, {"path": path})
+                    self.assertEqual(result["code"], code)
+                    self.assertTrue(result["message"])
+        self.assertEqual(self.opened, [])
+        self.assertEqual(self.revealed, [])
+
+    def test_path_open_rejects_link_escape_and_inactive_roots(self):
+        self.enable()
+        file = self.root / "linked.pdf"
+        file.write_bytes(b"test")
+        with patch("docfit_app.timemachine_service.os.path.realpath", side_effect=lambda value:
+                   str(self.plain_file) if str(value) == str(file) else str(value)):
+            self.assertEqual(self.service.command("open", {"path": str(file)})["code"], "TM_NOT_AVAILABLE")
+        self.service._settings["roots"] = []
+        self.assertEqual(self.service.command("open", {"path": str(file)})["code"], "TM_NOT_AVAILABLE")
+        self.assertEqual(self.opened, [])
+
+    def test_invalid_id_does_not_fall_back_to_path(self):
+        self.enable()
+        file = self.root / "allowed.pdf"
+        file.write_bytes(b"test")
+        for file_id in (False, 0, "1"):
+            self.assertEqual(self.service.command("open", {"id": file_id, "path": str(file)})["code"], "INVALID_INPUT")
+        self.assertEqual(self.opened, [])
+
+    def test_path_open_reports_associated_application_failure(self):
+        self.enable()
+        file = self.root / "allowed.pdf"
+        file.write_bytes(b"test")
+        with patch.object(self.service, "opener", side_effect=OSError("no application")):
+            result = self.service.command("open", {"path": str(file)})
+        self.assertEqual(result["code"], "TM_OPEN_FAILED")
+        self.assertIn("no application", result["message"])
+        self.assertTrue(result["message"])
 
     def test_open_rejects_unknown_id_and_disallowed_extension(self):
         self.assertEqual(self.service.command("open",{"id":55})["code"],"TM_NOT_FOUND")

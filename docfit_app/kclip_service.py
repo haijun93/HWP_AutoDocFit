@@ -39,6 +39,20 @@ def _norm_text(value):
     return str(value or "").replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
+def push_theme(mode, client=None):
+    """이미 켜진 몽땅클립보드 상주 프로그램(kagent)에 화면 테마를 알린다.
+    꺼져 있으면 켜지 않고 건너뛰며, 어떤 오류도 밖으로 내지 않는다. 전달했으면 True."""
+    try:
+        client = client or kc.KAgentClient()
+        if not client.running():
+            return False
+        client.request("settings_set", settings={"theme": mode})
+        return True
+    except Exception:
+        _log.debug("몽땅클립보드 테마 전달 건너뜀", exc_info=True)
+        return False
+
+
 class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
@@ -336,6 +350,7 @@ class KClipService:
             "add_files": ("add_files", ("paths",)),
             "list": ("list", ("limit", "query")),
             "get": ("get", ("id",)),
+            "thumb": ("thumb", ("id", "size")),
             "restore": ("restore", ("id",)),
             "delete": ("delete", ("id",)),
             "pin": ("pin", ("id", "pinned")),
@@ -381,7 +396,7 @@ class KClipService:
                 if not result.get("ok"):
                     return result
         cmd, keys = forwards[action]
-        if action in ("get", "restore", "delete", "pin"):
+        if action in ("get", "thumb", "restore", "delete", "pin"):
             try:
                 item_id = int(payload.get("id"))
                 if isinstance(payload.get("id"), bool) or item_id <= 0:

@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import shutil
+import sys
 import threading
 import time
 import tempfile
@@ -26,6 +27,24 @@ from docfit_core.file_conversion import CONVERSION_INPUTS as SUPPORTED_INPUT_EXT
 from docfit_core.file_conversion import HANCOM_PDF_DIRECT, IMAGE_FORMATS, SAME_FORMAT_SUFFIXES
 
 _TABLE_UNITS_COM_LOCK = threading.Lock()
+
+# 무기한 대기(timeout=None) 명령이 Tk 스레드에서 시작되기를 기다리는 한도(초). 넘기면 요청을 취소하고
+# TkBusyError를 낸다. 이미 시작한 명령(창을 닫을 때까지 기다리는 Tk 창 등)은 끝까지 기다린다.
+_TK_START_TIMEOUT = 5.0
+_TK_START_DEFAULT = object()
+
+# 닫기 확인 창이 떠 있는(confirming) 동안 2번째 닫기를 강제 종료로 인정하기까지의 시한(초).
+# 근거(docs/SM6_DATA_LOSS_RISKS_2026-11-12.md 4절 (나)-C 권고 30초):
+# - 확인 창은 Flutter가 acknowledge_close로 살아 있음을 증명한 뒤에만 뜬다. 그 전의 응답 없음은
+#   기존 5초 감시(_close_unanswered)와 즉시 강제 종료(2번째 닫기)가 그대로 맡는다.
+# - 30초는 확인 문구를 읽는 중의 연타를 보호하면서 확인 응답 후 화면이 멈춘 경우 탈출도 허용하는 절충값이다.
+# - 승인 뒤의 기존 종료 시한(작업 중 10초 한/글 정리·15초 강제 종료, legacy worker_종료확인)보다 길어
+#   그 경로가 먼저 끝난다. 30초가 지나도 답이 없으면 화면이 멈춘 것으로 보고 다음 닫기를 강제 종료로 받는다.
+CLOSE_CONFIRM_FORCE_AFTER = 30.0
+
+
+class TkBusyError(RuntimeError):
+    """Tk 스레드가 바빠 명령을 시작하지 못했다(명령은 실행되지 않았고 나중에도 실행되지 않는다)."""
 
 # 화면에서 바로 켜고 끄는 공통 설정(이름 → 앱의 Tk 변수 속성). 값을 바꾸면 앱이 설정 파일에 저장한다.
 def _format_coverage(analysis):
@@ -183,6 +202,18 @@ class DesktopWebBridge:
     def _cancel_pending_drop(self):
         self._ux().zero_click = {}
 
+    def _raise_if_closing(self):
+        """Tk 왕복 없이 처리하는 명령도 종료 중에는 _tk와 같은 오류로 거절한다."""
+        # 속성 읽기뿐이라 잠금이 필요 없다(시험용으로 __init__ 없이 만든 브리지에도 동작).
+        stopped = getattr(self, "tk_stopped", None)
+        if getattr(self, "_closed", False) or (stopped is not None and stopped.is_set()):
+            raise RuntimeError("앱이 종료 중입니다.")
+
+    def _cancel_pending_drop_direct(self):
+        # 스레드 안전: zero_click에는 항상 같은 값 {}만 넣는 속성 대입 한 번이라 Tk 큐 순서와 무관하다.
+        self._raise_if_closing()
+        self._cancel_pending_drop()
+
     def _update_document_hints(self):
         from docfit_core.doc_inspector import inspect_documents
         ux = self._ux()
@@ -202,12 +233,12 @@ class DesktopWebBridge:
         return {"pending": False}
 
     def cancel_zero_click(self):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def start_zero_click(self, token):
         # 이전 프런트엔드나 저장 설정에서 온 지연 실행 요청도 무시한다.
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return self.get_state()
 
     def set_profile_drop_bounds(self, bounds):
@@ -247,15 +278,41 @@ class DesktopWebBridge:
     def drop_format_file(self, path):
         return self.quick_register_and_activate_profile(path)
 
-    def _tk(self, callback, timeout=120, front=False):
+    def _tk(self, callback, timeout=120, front=False, start_timeout=_TK_START_DEFAULT):
+        """callback을 Tk 스레드에서 실행하고 결과를 기다린다.
+
+        timeout은 전체 대기 한도(None = 무기한). start_timeout은 실행이 시작되기까지의 한도로, 지정하지 않으면
+        무기한 대기 명령에만 _TK_START_TIMEOUT을 쓴다. 한도 안에 시작하지 못하면 요청을 취소하고 TkBusyError를
+        낸다(쓰기 명령은 실행되거나, 실행되지 않고 오류가 나거나 둘 중 하나다). None이면 시작도 무기한 기다린다.
+        """
+        if start_timeout is _TK_START_DEFAULT:
+            start_timeout = _TK_START_TIMEOUT if timeout is None else None
         tracer = self._freeze_tracer
-        tk_token = tracer.begin_tk(getattr(callback, '__name__', type(callback).__name__)) if tracer else None
+        callback_name = getattr(callback, '__name__', type(callback).__name__)
+        # 오류추적이 켜져 있을 때만: 어느 브리지 명령의 왕복인지 알 수 있게 호출한 메서드 이름을 붙인다.
+        tk_name = f"{sys._getframe(1).f_code.co_name}:{callback_name}" if tracer else callback_name
         started_at = time.monotonic()
+        timing = {}   # run_started·run_ended(Tk 스레드가 기록, 오류추적용)
         result = Future()
         with self._request_lock:
             if self._closed or (self.tk_stopped is not None and self.tk_stopped.is_set()):
                 raise RuntimeError("앱이 종료 중입니다.")
             self._requests.add(result)
+        tk_token = tracer.begin_tk(tk_name) if tracer else None
+
+        def traced(outcome):
+            """오류추적: 이 왕복의 큐 대기·실행·전체 시간을 남긴다."""
+            if not tracer:
+                return
+            now = time.monotonic()
+            run_started, run_ended = timing.get('run_started'), timing.get('run_ended')
+            if run_started is None:
+                # 실행되지 않은 요청(시간 초과·종료)은 대기 목록에서 지운다. 실행 중이면 run이 끝날 때 지운다.
+                tracer.end_tk(tk_token)
+            tracer.record_api(callback_name, now - started_at, outcome)
+            tracer.record_tk(tk_name, (now if run_started is None else run_started) - started_at,
+                             None if run_started is None or run_ended is None else run_ended - run_started,
+                             now - started_at, outcome)
 
         def complete(value=None, error=None):
             with self._request_lock:
@@ -276,6 +333,7 @@ class DesktopWebBridge:
                 if not result.set_running_or_notify_cancel():
                     self._requests.discard(result)
                     return
+                timing['run_started'] = time.monotonic()
             temporary_host = False
             if front:
                 try:
@@ -293,8 +351,11 @@ class DesktopWebBridge:
                 except Exception:
                     pass
             try:
-                complete(value=callback())
+                value = callback()
+                timing['run_ended'] = time.monotonic()   # 호출자가 깨어나기 전에 실행 시간을 확정한다.
+                complete(value=value)
             except BaseException as exc:
+                timing.setdefault('run_ended', time.monotonic())
                 complete(error=exc)
             finally:
                 if tracer:
@@ -317,31 +378,43 @@ class DesktopWebBridge:
                 self.gui.root.after(0, run)
         except Exception as exc:
             complete(error=RuntimeError("앱이 종료 중입니다."))
+            traced('not_scheduled')
             raise RuntimeError("앱이 종료 중입니다.") from exc
         try:
-            value = result.result(timeout=timeout)
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'ok')
+            if start_timeout is not None and (timeout is None or timeout > start_timeout):
+                try:
+                    value = result.result(timeout=start_timeout)
+                except TimeoutError as exc:
+                    with self._request_lock:
+                        # 아직 시작하지 않았으면 취소한다(run이 나중에 큐에서 꺼내도 실행하지 않는다).
+                        busy = not result.done() and result.cancel()
+                        if busy:
+                            self._requests.discard(result)
+                    if busy:
+                        raise TkBusyError(
+                            "앱이 다른 작업을 처리하고 있어 요청을 시작하지 못했습니다. 잠시 후 다시 시도해 주세요."
+                        ) from exc
+                    # 이미 시작했거나 끝났다: 원래 한도(없으면 무기한)만큼 마저 기다린다.
+                    value = result.result(timeout=None if timeout is None else timeout - start_timeout)
+            else:
+                value = result.result(timeout=timeout)
+            traced('ok')
             return value
         except TimeoutError as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, 'timeout')
             # callback 자체가 낸 TimeoutError를 큐 응답 시간 초과로 바꾸지 않는다.
             with self._request_lock:
-                if result.done():
-                    return result.result()
-                cancelled = result.cancel()
+                finished = result.done()
+                cancelled = False if finished else result.cancel()
                 if cancelled:
                     self._requests.discard(result)
+            traced('timeout' if finished or cancelled else 'timeout_running')
+            if finished:
+                return result.result()
             if not cancelled:
                 raise RuntimeError("명령이 이미 실행 중입니다. 중복 실행하지 말고 진행 상태를 확인해 주세요.") from exc
             raise RuntimeError("앱 응답 시간이 초과되었습니다.") from exc
         except Exception as exc:
-            if tracer:
-                tracer.record_api(getattr(callback, '__name__', type(callback).__name__),
-                                  time.monotonic() - started_at, type(exc).__name__)
+            traced(type(exc).__name__)
             raise
 
     def freeze_logs_open(self):
@@ -452,6 +525,7 @@ class DesktopWebBridge:
             results=[{"source": Path(item.get("원본", "")).name, "name": Path(item.get("결과", "")).name}
                      for item in getattr(gui, "_결과목록", [])],
             failures=getattr(gui, "_실패목록", {}),
+            conversion_summary=getattr(gui, "_변환_요약", None),
             target=self.conversion_target,
             elapsed=elapsed,
         )
@@ -485,10 +559,11 @@ class DesktopWebBridge:
             return False
 
     def get_state(self):
-        # 파일명 서비스를 처음 만들 때 Tk 호출을 기다리므로 Tk 스레드 밖에서 처리한다.
+        # 파일명 서비스의 목록 추가(파일 I/O)는 Tk 스레드 밖에서 처리한다.
         rename_open = self._drain_rename_paths()
 
         def snapshot():
+            from docfit_app.jobs import job_phase
             gui = self.gui
             mode = gui.selected_mode.get()
             if mode == "spacing" and getattr(self, "_page_fit_card", False):
@@ -502,6 +577,7 @@ class DesktopWebBridge:
                 self._quick_watch = None
             return {
                 "job": self._jobs().latest(),
+                "job_phase": job_phase(gui, self._jobs()),
                 "_open_completed_result": False,
                 "files": [
                     {"name": Path(path).name, "path": path, "folder": str(Path(path).parent),
@@ -556,6 +632,7 @@ class DesktopWebBridge:
                 "drop_target": self.drop_target,
                 "rename_open": rename_open,
                 "sidebar_collapsed": self._sidebar_collapsed_value(),
+                "theme_mode": self._theme_mode_value(),
                 "developer_mode": self._setting_flag('developer_mode'),
                 "always_on_top": self._setting_flag('always_on_top'),
                 "sidebar_mode": self.sidebar_active,
@@ -937,7 +1014,6 @@ class DesktopWebBridge:
         gui._flutter_format_review = {}
         gui.running = True
         gui.closing = False
-        stop_event.clear()
         gui.selected_mode.set('file_format')
         gui._결과_초기화(결과목록도_지우기=True)
         gui._안내키, gui._안내지남 = None, set()
@@ -1179,7 +1255,9 @@ class DesktopWebBridge:
 
     def cancel_job(self, job_id):
         state = self._jobs().cancel(job_id)
-        if self._tk(lambda: getattr(self.gui, '_job_id', None)) == job_id:
+        # 스레드 안전: _job_id는 속성 읽기 한 번이고, 실제 중단은 Tk 스레드의 작업중단이 running을 다시 본다.
+        self._raise_if_closing()
+        if getattr(self.gui, '_job_id', None) == job_id:
             self._tk(self.gui.작업중단)
         return state
 
@@ -1213,7 +1291,9 @@ class DesktopWebBridge:
 
         if mode == "file_format":
             # 화면은 준비되지 않은 형식의 시작 버튼을 끄지만, 늦게 온 요청도 여기서 막는다.
-            files = self._tk(lambda: list(self.gui.files))
+            # 스레드 안전: 리스트 한 번 복사(원자적)이고, 시작은 아래 Tk 호출이 running을 다시 확인한다.
+            self._raise_if_closing()
+            files = list(self.gui.files)
             target = getattr(self, '_single_conversion_target', self.conversion_target) if single_file else self.conversion_target
             targets = {item["format"]: item for item in self._conversion_targets(files)}
             chosen = targets.get(target)
@@ -1263,7 +1343,6 @@ class DesktopWebBridge:
                     manager.report(identifier, 'started', {})
                     gui.running = True
                     gui.closing = False
-                    중단_event.clear()
                     gui.selected_mode.set('file_format')
                     gui._결과_초기화(결과목록도_지우기=True)
                     gui._안내키, gui._안내지남 = None, set()
@@ -1342,6 +1421,12 @@ class DesktopWebBridge:
             self._tk(self.gui.작업중단)
         return self.get_state()
 
+    def _settings_store(self):
+        """설정 저장소(SettingsService)를 Tk 왕복 없이 얻는다."""
+        # 스레드 안전: SettingsService는 경로별 RLock으로 read/update를 직렬화하고 Tk 객체를 갖지 않는다.
+        self._raise_if_closing()
+        return self.gui._준말_서비스().settings
+
     def _configuration(self):
         from docfit_app.configuration_service import ConfigurationService
         return ConfigurationService(self.gui._준말_서비스().settings)
@@ -1356,10 +1441,25 @@ class DesktopWebBridge:
         from docfit_app.shell_menu import status
         snapshot = self._configuration().snapshot(running=self.gui.running)
         snapshot['values']['shell_menu'] = status()['registered']
+        self._attach_ktm_status(snapshot)
         return snapshot
 
+    def _attach_ktm_status(self, snapshot):
+        """설정 화면의 몽땅검색 칸에 지금 상태 한 줄을 붙인다(실패해도 설정 화면은 그대로)."""
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, KtmService, status_text
+            fields = [f for f in snapshot.get('fields', []) if f.get('key') == SETTING_KEY]
+            if fields:
+                text = status_text(KtmService().status())
+                for field in fields:
+                    field['status'] = text
+        except Exception:
+            logging.getLogger(__name__).warning("몽땅검색 상태 확인 실패", exc_info=True)
+
     def get_settings(self):
-        result = self._tk(lambda: response(self._settings_snapshot))
+        # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+        self._raise_if_closing()
+        result = response(self._settings_snapshot)
         if isinstance(result, dict) and result.get('ok') is True and isinstance(result.get('data'), dict):
             result['developer_mode'] = result['data'].get('values', {}).get('developer_mode', False)
         return result
@@ -1367,6 +1467,13 @@ class DesktopWebBridge:
     def save_settings(self, values, revision):
         def save():
             self._configuration().save(values, revision, running=self.gui.running)
+            if 'mongttang_search' in values:
+                # 몽땅검색 켜기·끄기는 상주 프로그램을 끄고 기다릴 수 있어(최대 수 초) Tk 밖 스레드에서 한다.
+                from docfit_app.ktm_service import KtmService
+                enabled = bool(values['mongttang_search'])
+                threading.Thread(target=lambda: logging.getLogger(__name__).info(
+                    "몽땅검색 설정 반영: %s", KtmService().apply_setting(enabled)),
+                    name='ktm-apply', daemon=True).start()
             if 'freeze_tracing' in values:
                 self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
@@ -1473,7 +1580,9 @@ class DesktopWebBridge:
         ) if key in pending}
 
     def get_pending_dialog(self):
-        return self._tk(self._pending_dialog)
+        # 스레드 안전: _flutter_dialog는 다 만든 사전을 속성에 넣고, 여기서는 참조를 한 번 잡아 고정 키만 복사한다.
+        self._raise_if_closing()
+        return self._pending_dialog()
 
     def enable_close_guard(self):
         with self._close_lock:
@@ -1492,6 +1601,11 @@ class DesktopWebBridge:
             if self._close_request is None or self._close_request["id"] != identifier:
                 return {"ok": False}
             self._cancel_close_timer()
+            # 닫기 요청 상태: delivering(전달 중, 5초 감시) → confirming(Flutter가 확인 창을 띄움).
+            # confirming 동안의 2번째 닫기는 CLOSE_CONFIRM_FORCE_AFTER 전까지 강제 종료로 치지 않는다(SM7 나).
+            if self._close_request.get("state") != "confirming":
+                self._close_request["state"] = "confirming"
+                self._close_request["confirming_since"] = time.monotonic()
         return {"ok": True}
 
     def _close_unanswered(self, identifier):
@@ -1545,7 +1659,8 @@ class DesktopWebBridge:
                     closed = True  # Tk commands no longer exist after destroy.
                 return {"accepted": closed or bool(getattr(self.gui, "closing", False))}
             try:
-                return self._tk(finish_close, timeout=None)
+                # 종료 승인은 시작 대기도 제한하지 않는다(_close_unanswered·_force_close가 따로 감시).
+                return self._tk(finish_close, timeout=None, start_timeout=None)
             except RuntimeError:
                 if self.tk_stopped is not None and self.tk_stopped.is_set():
                     return {"accepted": True}
@@ -1681,7 +1796,7 @@ class DesktopWebBridge:
                 return result
             return service.command(name, payload)
         if name != "add_text":
-            folder = self._tk(lambda: self.gui._준말_서비스().settings._path.parent)
+            folder = self._settings_store()._path.parent
             return response(lambda: DocumentToolsService(folder).command(name, payload))
         return self._tk(lambda: response(execute))
 
@@ -1964,7 +2079,9 @@ class DesktopWebBridge:
             return status(False, "지원하지 않는 명령입니다.")
         if running:
             return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
-        if self._tk(lambda: self.gui.running):
+        # 스레드 안전: running은 속성 읽기 한 번이다(table_sketch의 같은 검사도 Tk 밖에서 읽는다).
+        self._raise_if_closing()
+        if self.gui.running:
             return status(False, "다른 문서 작업이 끝난 뒤 시작해 주세요.")
         roots, passwords = payload.get("roots"), payload.get("passwords") or []
         if (not isinstance(roots, list) or not 1 <= len(roots) <= 20 or not isinstance(passwords, list)
@@ -2008,7 +2125,7 @@ class DesktopWebBridge:
         service = getattr(self, "_rename_service", None)
         if service is None:
             from docfit_app.file_rename_service import FileRenameService
-            settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+            settings = self._settings_store()
             service = self._rename_service = FileRenameService(settings._path.parent, dialogs=self._file_dialogs,
                                                                settings=settings)
         return service
@@ -2017,15 +2134,41 @@ class DesktopWebBridge:
         service = getattr(self, "_timemachine_service_instance", None)
         if service is None:
             from docfit_app.timemachine_service import TimemachineService
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             service = self._timemachine_service_instance = TimemachineService(
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
+                idle_scheduler=self._idle_scheduler(),
+                search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
             )
         return service
 
+    def _idle_scheduler(self):
+        """쉬는 시간 색인 스케줄러(IDLE1). 앱 전체에 하나, 자료함 변경분 작업은 처음 한 번만 등록한다."""
+        from docfit_app.idle_scheduler import shared_scheduler
+        scheduler = shared_scheduler()
+        if not getattr(self, "_library_idle_registered", False):
+            from docfit_app.library_idle_refresh import LIBRARY_IDLE_EVERY_SECONDS, LibraryItemRefreshJob
+            folder = self._settings_store()._path.parent
+            # klib를 이번 실행에서 쓴 적이 있을 때만 일한다(쉬는 시간에 klib를 새로 띄우지 않음).
+            job = LibraryItemRefreshJob(lambda: getattr(self, "_library_bridge", None), folder / "library-idle.json")
+            scheduler.register(job, every=LIBRARY_IDLE_EVERY_SECONDS)
+            self._library_idle_registered = True
+        return scheduler
+
+    def _register_notebook_idle_job(self):
+        """업무자료함 출처 변경분 작업(NBIDX1)을 klib 브리지를 처음 만들 때 한 번 등록한다.
+        비교·다시 색인은 klib(nb_source_check·nb_source_refresh), hwp·pdf 추출만 NotebookService가 한다."""
+        scheduler = self._idle_scheduler()
+        if not getattr(self, "_notebook_idle_registered", False):
+            from docfit_app.notebook_idle_refresh import NOTEBOOK_IDLE_EVERY_SECONDS, NotebookSourceRefreshJob
+            job = NotebookSourceRefreshJob(lambda: getattr(self, "_library_bridge", None), self._notebook_service_for)
+            scheduler.register(job, every=NOTEBOOK_IDLE_EVERY_SECONDS)
+            self._notebook_idle_registered = True
+        return scheduler
+
     def _timemachine_send_to_feature(self, feature, paths):
-        """타임머신에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
+        """몽땅검색에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
         if feature == "rename_batch":
             return self._file_rename_service().add_paths(paths)
         if feature in ("convert", "document_edit"):
@@ -2044,20 +2187,24 @@ class DesktopWebBridge:
                 added = self.add_paths(paths, from_drop=False)
                 if not added:
                     return {"ok": False, "code": "FEATURE_FAILED", "message": "파일을 추가하지 못했습니다."}
-                self.gui.status_var.set(f"타임머신에서 문서 추가 · 총 {len(self.gui.files)}개")
+                self.gui.status_var.set(f"몽땅검색에서 문서 추가 · 총 {len(self.gui.files)}개")
                 self._update_document_hints()
                 return {"ok": True}
             return self._tk(add_to_gui)
         return {"ok": False, "code": "FEATURE_UNAVAILABLE", "message": "해당 기능을 사용할 수 없습니다."}
 
     def timemachine(self, action, payload=None):
-        """타임머신 화면 명령을 처리한다."""
+        """몽땅검색 화면 명령을 처리한다."""
         try:
             from docfit_app.timemachine_service import TimemachineService
             return self._timemachine_service().command(action, payload)
         except Exception:
-            logging.getLogger(__name__).exception("타임머신 처리 실패")
-            return {"ok": False, "code": "TM_FAILED", "message": "타임머신 작업을 완료하지 못했습니다."}
+            logging.getLogger(__name__).exception("몽땅검색 처리 실패")
+            return {"ok": False, "code": "TM_FAILED", "message": "몽땅검색 작업을 완료하지 못했습니다."}
+
+    def kvf(self, action, payload=None):
+        from docfit_app.kvf_client import KvfClient
+        return KvfClient().command(action, payload)
 
     def kclip(self, action, payload=None):
         """몽땅클립보드: 상주 프로그램(kagent.exe) 켜기·끄기와 목록·설정(파이프 명령)."""
@@ -2085,7 +2232,7 @@ class DesktopWebBridge:
             _set_window_on_top(window, bool(enabled))
 
         try:
-            store = self._tk(lambda: self.gui._준말_서비스().settings)
+            store = self._settings_store()
             return kclip_window_state.command(store, action, payload, apply_topmost)
         except Exception as exc:
             logging.getLogger(__name__).warning("몽땅클립보드 관리창 처리 실패", exc_info=True)
@@ -2099,7 +2246,7 @@ class DesktopWebBridge:
             service = getattr(self, "_external_apps_service", None)
             if service is None:
                 from docfit_app.external_apps_service import ExternalAppsService
-                settings = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings)
+                settings = self._settings_store()
                 service = self._external_apps_service = ExternalAppsService(settings, dialogs=self._file_dialogs)
             return service.command(action, payload)
         except Exception as exc:
@@ -2288,7 +2435,7 @@ class DesktopWebBridge:
         try:
             if action == "copy" and self.gui.running:
                 return {"ok": False, "message": "문서 작업이 끝난 뒤 다시 눌러 주세요."}
-            folder = self._tk(lambda: getattr(self.gui, "_준말_서비스")().settings._path.parent)
+            folder = self._settings_store()._path.parent
             if action == "take_drop":
                 dropped, self._sketch_drop = getattr(self, "_sketch_drop", None), None
                 return dropped or {"ok": False, "message": "놓은 그림이 없습니다."}
@@ -2423,7 +2570,12 @@ class DesktopWebBridge:
         """klib 브리지는 앱 시작 때 만들지 않고 처음 부를 때 만든다(v2.2.17: 속성 없음 오류 수정)."""
         if getattr(self, "_library_bridge", None) is None:
             from docfit_app.library_bridge import LibraryBridge
-            self._library_bridge = LibraryBridge()
+            self._library_bridge = LibraryBridge(settings_provider=lambda: self._settings_store().read())
+            try:
+                self._idle_scheduler()
+                self._register_notebook_idle_job()
+            except Exception:
+                logging.getLogger(__name__).debug("쉬는 시간 색인 등록 실패", exc_info=True)
         return self._library_bridge
 
     def _library_open_item(self, request):
@@ -2562,15 +2714,20 @@ class DesktopWebBridge:
                 # 노트 HWPX 내보내기 저장 위치(네이티브 저장 대화상자, 경로는 호스트에만 보관).
                 import uuid
                 return self._file_dialogs.select_files(uuid.uuid4().hex, "notebook_hwpx", "save")
-            if getattr(self, "_notebook_service", None) is None:
-                from docfit_app.notebook_service import NotebookService
-                self._notebook_service = NotebookService(self._get_library_bridge())
+            self._notebook_service_for(self._get_library_bridge())
             if cmd == "nb_export_hwpx":
                 target = self._selection_path(request, "notebook_hwpx", "output_selection_id")
                 return self._notebook_service.export_hwpx(request, target)
             return self._notebook_service.handle(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    def _notebook_service_for(self, bridge):
+        """업무자료함 중계 서비스(앱에 하나). 화면 요청과 쉬는 시간 출처 다시 색인이 같은 서비스를 쓴다."""
+        if getattr(self, "_notebook_service", None) is None:
+            from docfit_app.notebook_service import NotebookService
+            self._notebook_service = NotebookService(bridge)
+        return self._notebook_service
 
     def _library_drop_watch(self, active):
         """자료함 화면이 열려 있는 동안 창에 놓은 파일을 자료함 항목으로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
@@ -2632,7 +2789,7 @@ class DesktopWebBridge:
             if action in ("copy", "thumbnails") and self.gui.running:
                 raise ServiceError("JOB_RUNNING", "문서 작업이 끝난 뒤 다시 눌러 주세요.")
             if action not in ("copy", "thumbnails"):
-                settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                settings = self._settings_store()
                 return TableUnitsService(settings=settings).command(action, payload)
             # 스냅샷 생성 중에 복사가 겹치면 한/글·클립보드가 엉키므로 한 번에 하나만 한다.
             if not _TABLE_UNITS_COM_LOCK.acquire(blocking=False):
@@ -2641,7 +2798,7 @@ class DesktopWebBridge:
             try:
                 pythoncom.CoInitialize()
                 try:
-                    settings = self._tk(lambda: self.gui._준말_서비스().settings)
+                    settings = self._settings_store()
                     return TableUnitsService(self._table_units_hwp, settings=settings).command(action, payload)
                 finally:
                     pythoncom.CoUninitialize()
@@ -2860,6 +3017,26 @@ class DesktopWebBridge:
         self._sidebar_collapsed = value
         self.gui._준말_서비스().settings.update(lambda current: current.update({"sidebar_collapsed": value}))
         return value
+
+    def _theme_mode_value(self):
+        """화면 테마 저장값(system·light·dark; 없거나 잘못되면 system). 한 번만 읽는다."""
+        from docfit_app.settings_schema import normalize_theme_mode
+        if not hasattr(self, "_theme_mode"):
+            try:
+                self._theme_mode = normalize_theme_mode(self.gui._준말_서비스().settings.read().get("theme_mode"))
+            except Exception:
+                self._theme_mode = "system"
+        return self._theme_mode
+
+    def set_theme_mode(self, mode):
+        """화면 테마를 설정 파일에 저장하고, 켜져 있는 몽땅클립보드 상주 프로그램에도 알린다."""
+        from docfit_app.settings_schema import validate_theme_mode
+        from docfit_app.kclip_service import push_theme
+        value = validate_theme_mode(mode)
+        self.gui._준말_서비스().settings.update(lambda current: current.update({"theme_mode": value}))
+        self._theme_mode = value
+        push_theme(value, getattr(self, "_kagent_client", None))
+        return {"theme_mode": value}
 
     def set_drop_target(self, target):
         """끌어 놓은 파일을 넣을 곳을 바꾼다: documents(문서 목록) 또는 format(예시 서식 복제)."""
@@ -3100,12 +3277,21 @@ class DesktopWebBridge:
         force = False
         with self._close_lock:
             if self._close_protocol:
-                if self._close_request is not None:
+                request = self._close_request
+                if request is not None and request.get("state") == "confirming" and (
+                        time.monotonic() - request.get("confirming_since", 0.0) < CLOSE_CONFIRM_FORCE_AFTER):
+                    # 사용자가 확인 창(미저장 편집 등)에 답하기 전의 연타: 확인 창을 그대로 두고 닫기를 막는다.
+                    request["repeat_closes"] = request.get("repeat_closes", 0) + 1
+                    logging.getLogger(__name__).info(
+                        "close ignored while confirmation is open (%d)", request["repeat_closes"])
+                    return False
+                if request is not None:
+                    # 전달 전(delivering)이거나 확인 창이 시한을 넘겨 응답이 없으면 기존처럼 강제 종료한다.
                     self._close_request = None
                     self._cancel_close_timer()
                     force = True
                 else:
-                    self._close_request = {"id": uuid.uuid4().hex, "kind": "app_close"}
+                    self._close_request = {"id": uuid.uuid4().hex, "kind": "app_close", "state": "delivering"}
                     self._close_timer = threading.Timer(
                         5.0, self._close_unanswered, args=(self._close_request["id"],))
                     self._close_timer.daemon = True
@@ -3147,7 +3333,8 @@ class DesktopWebBridge:
 
         # 작업 중이면 종료 확인 창이 떠서 사용자의 답을 기다린다.
         try:
-            return self._tk(close, timeout=None, front=True)
+            # 닫기 이벤트에서 '바쁨' 오류를 내면 창이 닫히지 않을 수 있어 시작 대기를 제한하지 않는다.
+            return self._tk(close, timeout=None, front=True, start_timeout=None)
         except RuntimeError:
             # 종료 callback이 root.destroy를 호출하면 자신의 Future도 종료된다.
             if self.tk_stopped is not None and self.tk_stopped.is_set():
@@ -3156,11 +3343,11 @@ class DesktopWebBridge:
 
 
 def _cancel_before_edit(method):
-    """설정·문서·서식 변경은 같은 Tk 큐에서 예약 토큰을 먼저 무효화한다."""
+    """설정·문서·서식 변경 전에 예약 토큰을 먼저 무효화한다(Tk 왕복 없이: 값이 항상 {}라 순서와 무관)."""
     from functools import wraps
     @wraps(method)
     def call(self, *args, **kwargs):
-        self._tk(self._cancel_pending_drop)
+        self._cancel_pending_drop_direct()
         return method(self, *args, **kwargs)
     return call
 
@@ -3239,7 +3426,9 @@ def _initial_window_settings(bridge):
             return ConfigurationService(store).snapshot().get('values', {})
         except Exception:
             return {}
-    return bridge._tk(lambda: bridge._configuration().snapshot(running=bridge.gui.running).get('values', {}))
+    # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
+    bridge._raise_if_closing()
+    return bridge._configuration().snapshot(running=bridge.gui.running).get('values', {})
 
 
 class _Win32WindowApi:
@@ -3453,12 +3642,12 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "external_app", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "kvf", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
             "set_exclude_tables", "set_card_option",
-            "set_sidebar_collapsed", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
+            "set_sidebar_collapsed", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
             "set_conversion_target", "start_single_file_conversion", "convert_cell_bg", "check_update", "start_update", "open_update_page",
         ):
@@ -3799,8 +3988,9 @@ def run_webview(gui):
         try:
             from docfit_app.configuration_service import ConfigurationService
             from docfit_app.freeze_tracer import FreezeTracer, _is_hung
-            settings = bridge._tk(lambda: ConfigurationService(gui._준말_서비스().settings).snapshot(
-                running=gui.running).get('values', {}), timeout=5)
+            # 스레드 안전: 설정 저장소 읽기(경로별 RLock)라 Tk를 기다리지 않는다.
+            settings = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
             if settings.get('freeze_tracing'):
                 bridge._freeze_tracer = FreezeTracer(hung_checker=_is_hung)
                 bridge._freeze_tracer.start(web_window)
@@ -3824,6 +4014,21 @@ def run_webview(gui):
                 logging.getLogger(__name__).exception("몽땅클립보드 에이전트 업그레이드 점검 실패")
 
         threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
+        def upgrade_kvf():
+            from docfit_app.kvf_client import KvfClient
+            result = KvfClient().command("upgrade_if_stale")
+            if not result.get("ok"):
+                logging.getLogger(__name__).warning("가상 폴더 창 교체 실패: %s", result)
+
+        threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
+        # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, sync_in_background
+            ktm_values = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
+            sync_in_background(bool(ktm_values.get(SETTING_KEY, True)))
+        except Exception:
+            logging.getLogger(__name__).exception("몽땅검색 점검 시작 실패")
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

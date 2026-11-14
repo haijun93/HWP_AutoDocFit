@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'preview_colors.dart';
+
 /// 옵션 설명용 적용 전·후 예시 이미지(1.80.3).
 ///
 /// rhwp 조판 미리보기 대신 README와 같은 전·후 비교 그림(docs/media/features)을
@@ -121,11 +123,14 @@ class OptionImagePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     final image = optionImageFor(keyName) ?? fallback;
     if (image == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 8),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Text(
           '예시 이미지 준비 중',
-          style: TextStyle(fontSize: 12, color: Colors.black54),
+          style: TextStyle(
+            fontSize: 12,
+            color: PreviewColors.of(context).caption,
+          ),
         ),
       );
     }
@@ -150,7 +155,10 @@ class OptionImagePreview extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               image.caption,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+              style: TextStyle(
+                fontSize: 12,
+                color: PreviewColors.of(context).caption,
+              ),
             ),
           ],
         ),

@@ -6,6 +6,7 @@ import '../file_rename/file_rename_screen.dart';
 import '../timemachine/timemachine_screen.dart';
 import '../flows/flow_editor_screen.dart';
 import '../library/library_api.dart';
+import '../library/library_document_search.dart';
 import '../library/library_screen.dart';
 import '../notebook/notebook_api.dart';
 import '../notebook/notebook_screen.dart';
@@ -107,7 +108,7 @@ class FileRenameAdapter extends StatelessWidget {
   );
 }
 
-/// Workspace adapter for Tab 8: 타임머신.
+/// Workspace adapter for Tab 8: 몽땅검색.
 class TimemachineAdapter extends StatelessWidget {
   const TimemachineAdapter({super.key, required this.api});
 
@@ -174,7 +175,11 @@ class IntegratedWorkspace extends StatelessWidget {
       savedSidebarExpanded: savedSidebarExpanded,
       onSidebarExpandedChanged: onSidebarExpandedChanged,
       developerMode: developerMode,
-      libraryScreen: libraryScreen ?? LibraryScreen(api: BridgeLibraryApi(api), notebookApi: BridgeNotebookApi(api)),
+      libraryScreen: libraryScreen ?? LibraryScreen(
+            api: BridgeLibraryApi(api),
+            notebookApi: BridgeNotebookApi(api),
+            scopedDocumentSearch: scopedLibraryDocumentSearch(api),
+          ),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
       documentEditor: DocumentEditorAdapter(child: documentEditorWidget),

@@ -3,6 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme/app_theme.dart';
+import 'conversion_colors.dart';
+
 /// 변환 포맷을 키보드 숫자패드 모양의 사각 키패드로 고른다.
 /// 칸 위치가 숫자 키와 같아 마우스·숫자 키 어느 쪽으로도 고를 수 있다.
 class FloatingFormatPicker extends StatefulWidget {
@@ -46,7 +49,6 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
     ('.', 'png'),
     ('+', 'txt'),
   ];
-  static const accent = Color(0xff7664ec);
   static const _digits = [
     LogicalKeyboardKey.digit0,
     LogicalKeyboardKey.digit1,
@@ -193,21 +195,23 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
     final enabled = target['enabled'] == true;
     final hot = hovered == format;
     final selected = widget.selected == format;
+    final p = ConversionColors.of(context);
+    final c = context.colors;
     final foreground = hot && enabled
-        ? Colors.white
+        ? c.onAccent
         : enabled
-        ? const Color(0xff25324a)
-        : const Color(0xff8a94a6);
+        ? p.keyText
+        : p.keyDisabledText;
     return Material(
       color: hot && enabled
-          ? accent
+          ? p.accentFill
           : selected && enabled
-          ? const Color(0xffe9e5ff)
+          ? p.keySelected
           : enabled
-          ? Colors.white
-          : const Color(0xffedf0f5),
+          ? c.surface
+          : p.keyDisabled,
       elevation: hot && enabled ? 5 : 2,
-      shadowColor: const Color(0x500f172a),
+      shadowColor: p.keyShadow,
       borderRadius: BorderRadius.circular(10),
       clipBehavior: Clip.antiAlias,
       child: Tooltip(
@@ -267,11 +271,11 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
   }
 
   Widget _cancelKey(String key, double height) {
-    const muted = Color(0xff64748b);
+    final muted = context.colors.muted;
     return Material(
-      color: const Color(0xfff1f5f9),
+      color: context.colors.surfaceSubtle,
       elevation: 2,
-      shadowColor: const Color(0x500f172a),
+      shadowColor: ConversionColors.of(context).keyShadow,
       borderRadius: BorderRadius.circular(10),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -293,7 +297,7 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
                             ? '첫 파일 · ${widget.fileCount}개'
                             : '${widget.fileCount}개 파일',
                         maxLines: 1,
-                        style: const TextStyle(fontSize: 9, color: muted),
+                        style: TextStyle(fontSize: 9, color: muted),
                       ),
                       const SizedBox(height: 1),
                       _SourceFileName(
@@ -302,8 +306,8 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
                             : widget.fileNames.first,
                       ),
                       const SizedBox(height: 1),
-                      const Icon(Icons.close_rounded, size: 16, color: muted),
-                      const Text(
+                      Icon(Icons.close_rounded, size: 16, color: muted),
+                      Text(
                         '취소',
                         style: TextStyle(fontSize: 9, color: muted),
                       ),
@@ -386,15 +390,15 @@ class _FloatingFormatPickerState extends State<FloatingFormatPicker> {
               fontSize: 11,
               height: 1.4,
               color: activeInfo['enabled'] == true
-                  ? const Color(0xff64748b)
-                  : const Color(0xff9a3412),
+                  ? context.colors.muted
+                  : ConversionColors.of(context).notice,
             ),
           ),
           const SizedBox(height: 6),
-          const Text(
+          Text(
             '포맷을 누르거나 숫자 키로 바로 변환해요 · 5번 또는 Esc로 취소',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 10, color: Color(0xff64748b)),
+            style: TextStyle(fontSize: 10, color: context.colors.muted),
           ),
         ],
       ),
@@ -421,10 +425,10 @@ class _SourceFileName extends StatelessWidget {
         label: filename,
         child: ExcludeSemantics(
           child: DefaultTextStyle(
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w800,
-              color: Color(0xff25324a),
+              color: ConversionColors.of(context).keyText,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.center,

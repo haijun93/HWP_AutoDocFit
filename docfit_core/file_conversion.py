@@ -34,6 +34,22 @@ def cleanup_pending_temp_outputs() -> list[Path]:
             pass
     return removed
 
+def _publish_without_overwrite(temporary: Path, target: Path) -> None:
+    """임시 결과를 최종 이름으로 내놓는다. 이미 있는 파일은 덮어쓰지 않는다.
+
+    하드 링크를 못 쓰는 곳(USB의 exFAT·FAT32, 일부 네트워크 폴더)에서는 새 파일로만 여는 복사로 바꾼다.
+    """
+    try:
+        os.link(temporary, target)
+        return
+    except FileExistsError:
+        raise
+    except OSError:
+        pass
+    with open(temporary, "rb") as source_stream, open(target, "xb") as target_stream:
+        shutil.copyfileobj(source_stream, target_stream)
+
+
 # 결과 형식과 같은 형식의 입력(예: PDF→PDF)은 변환하지 않는다. PDF 압축(pdfz)은 PDF→PDF가 목적이라 뺀다.
 SAME_FORMAT_SUFFIXES = {
     "hwpx": frozenset({".hwpx"}), "pdf": frozenset({".pdf"}), "docx": frozenset({".docx"}),
@@ -138,7 +154,7 @@ def convert_to_pandoc_format(source: str | Path, target: str | Path,
                 raise RuntimeError(message[-2000:])
             if not temp_output.is_file() or temp_output.stat().st_size == 0:
                 raise RuntimeError("Pandoc 결과 파일이 생성되지 않았습니다.")
-            os.link(temp_output, target)
+            _publish_without_overwrite(temp_output, target)
         finally:
             temp_output.unlink(missing_ok=True)
     return target
@@ -178,7 +194,7 @@ def convert_hwpx_to_pdf(app, source: str | Path, target: str | Path) -> Path:
         if not temporary.is_file() or signature != b"%PDF-":
             raise RuntimeError("생성된 파일이 올바른 PDF가 아닙니다.")
         # hard link는 대상 이름이 작업 중 먼저 생성된 경우에도 덮어쓰지 않게 한다.
-        os.link(temporary, target)
+        _publish_without_overwrite(temporary, target)
         return target
     finally:
         if opened:
@@ -329,7 +345,7 @@ def convert_hwp_to_hwpx(app, source: str | Path, target: str | Path) -> Path:
         if app.SaveAs(str(temporary), "HWPX", "") is False:
             raise RuntimeError("한/글에서 HWPX 저장을 완료하지 못했습니다.")
         validate_hwpx(temporary)
-        os.link(temporary, target)
+        _publish_without_overwrite(temporary, target)
         return target
     finally:
         if opened:
@@ -383,11 +399,24 @@ def convert_input_to_hwpx(source: str | Path, target: str | Path) -> Path:
             text = raw.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = raw.decode("cp949")
-    if source.suffix.lower() == ".txt":
-        import string
-        pattern = "([" + re.escape(string.punctuation) + "])"
-        text = "\n".join(re.sub(pattern, r"\\\1", line) + "  " for line in text.splitlines())
     target.parent.mkdir(parents=True, exist_ok=True)
+    if source.suffix.lower() == ".txt":
+        # TXT는 Markdown으로 해석하지 않고 줄마다 한 문단으로 그대로 담는다. Markdown 경로는 줄 머리
+        # 공백(들여쓰기)을 버리고 `-`·`*`를 다른 기호로 바꾸며 `,`·`:` 앞에 역슬래시를 남겼다.
+        from docfit_core.xml_hanging_indent import build_hwpx_from_text_file
+        with tempfile.TemporaryDirectory(prefix="docfit_text_") as folder:
+            plain = Path(folder) / "source.txt"
+            plain.write_text(text, encoding="utf-8", newline="")
+            with tempfile.NamedTemporaryFile(dir=target.parent, suffix=".hwpx", delete=False) as stream:
+                temporary = Path(stream.name)
+            temporary.unlink()
+            try:
+                build_hwpx_from_text_file(plain, temporary)
+                validate_hwpx(temporary)
+                _publish_without_overwrite(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return target
     with tempfile.TemporaryDirectory(prefix="docfit_text_") as folder:
         markdown = Path(folder) / "source.md"
         markdown.write_text(text, encoding="utf-8")
@@ -397,7 +426,7 @@ def convert_input_to_hwpx(source: str | Path, target: str | Path) -> Path:
         try:
             generate_hwpx(markdown, "보고서", temporary)
             validate_hwpx(temporary)
-            os.link(temporary, target)
+            _publish_without_overwrite(temporary, target)
         finally:
             temporary.unlink(missing_ok=True)
     return target
@@ -459,7 +488,7 @@ def convert_image_to_hwpx(source: str | Path, target: str | Path) -> Path:
             temporary.unlink()
             generate_hwpx(markdown, "보고서", temporary, image_dir=work)
             validate_hwpx(temporary)
-            os.link(temporary, target)
+            _publish_without_overwrite(temporary, target)
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -487,7 +516,7 @@ def convert_hwpx_to_text(source: str | Path, target: str | Path) -> Path:
             stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
-        os.link(temporary, target)
+        _publish_without_overwrite(temporary, target)
     finally:
         if temporary is not None:
             temporary.unlink(missing_ok=True)

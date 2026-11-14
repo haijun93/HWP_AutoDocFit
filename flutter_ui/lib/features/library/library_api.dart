@@ -255,6 +255,7 @@ abstract interface class LibraryApi {
 
 class LibrarySearchResult {
   const LibrarySearchResult({
+    this.itemId,
     required this.path,
 
     required this.name,
@@ -263,6 +264,8 @@ class LibrarySearchResult {
   });
 
   final String path;
+
+  final String? itemId;
 
   final String name;
 

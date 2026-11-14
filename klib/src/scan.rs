@@ -249,7 +249,7 @@ fn reconcile(conn: &mut Connection, box_id: i64, root: &str, found: Vec<Found>, 
         for chunk in gone.chunks(BATCH) {
             if sh.cancelled() { return Ok(true); }
             let tx = conn.transaction().map_err(e)?;
-            for p in chunk { removed += tx.execute("DELETE FROM scan_file WHERE box_id=?1 AND path=?2", params![box_id, p]).map_err(e)? as u64; }
+            { let mut del = tx.prepare_cached("DELETE FROM scan_file WHERE box_id=?1 AND path=?2").map_err(e)?; for p in chunk { removed += del.execute(params![box_id, p]).map_err(e)? as u64; } }
             tx.commit().map_err(e)?;
             sh.update(|s| s.removed = removed);
         }

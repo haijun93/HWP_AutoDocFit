@@ -129,8 +129,11 @@ class LibraryBridgeTests(unittest.TestCase):
             file_path = os.path.join(root, "a.txt")
             open(file_path, "wb").close()
             missing = os.path.join(root, "없는파일.txt")
+            # Windows 경로는 대소문자를 구분하지 않으므로 대문자 경로가 같은 파일이다.
+            # 리눅스는 대소문자를 구분해 대문자 경로가 없는 파일이 되므로, 같은 파일을 가리키는 다른 표기를 쓴다.
+            duplicate = file_path.upper() if os.name == "nt" else os.path.join(root, ".", "a.txt")
             bridge, requests = self._drop_bridge([{"ok": True}])
-            result = bridge.library_drop([file_path, missing, file_path.upper()], 0.1, 0.1, 1)
+            result = bridge.library_drop([file_path, missing, duplicate], 0.1, 0.1, 1)
             self.assertFalse(result["ok"])
             self.assertEqual(len(requests), 1)
             self.assertEqual(len(result["failed"]), 1)
@@ -511,6 +514,55 @@ class MemoEditorFileBridgeTests(unittest.TestCase):
             exe = Path(tmp) / "a.exe"
             exe.write_bytes(b"MZ")
             self.assertFalse(self._bridge(self._dialogs(tmp, exe)).notebook({"cmd": "edit_select_file", "mode": "open"})["ok"])
+
+    def test_search_defaults_to_kfind_and_dispatches_to_sync(self):
+        from unittest import mock
+        pipe = FakePipe(b'{"ok":true,"results":[]}\n')
+        bridge = LibraryBridge(pipe_name="fake", connector=lambda _name: pipe, settings_provider=lambda: {})
+        fake_sync = mock.Mock()
+        fake_sync.search.return_value = {"ok": True, "results": [{"path": "a.txt"}], "engine": "kfind"}
+        with mock.patch.object(bridge, "_search_sync", return_value=fake_sync):
+            result = bridge.request({"cmd": "search", "box_id": 1, "query": "예산"})
+            self.assertEqual(result["engine"], "kfind")
+            fake_sync.search.assert_called_once_with({"cmd": "search", "box_id": 1, "query": "예산"})
+
+    def test_search_configured_legacy_falls_back_to_legacy_request(self):
+        from unittest import mock
+        pipe = FakePipe(b'{"ok":true,"results":[{"path":"legacy.txt"}]}\n')
+        bridge = LibraryBridge(pipe_name="fake", connector=lambda _name: pipe,
+                               settings_provider=lambda: {"search_engine": "legacy"})
+        with mock.patch.object(bridge, "_search_sync") as fake_sync:
+            result = bridge.request({"cmd": "search", "box_id": 1, "query": "예산"})
+            self.assertEqual(result["engine"], "legacy")
+            self.assertEqual(result["requested_engine"], "legacy")
+            self.assertEqual(result["engine_reason"], "configured_legacy")
+            self.assertEqual(result["results"], [{"path": "legacy.txt"}])
+            fake_sync.assert_not_called()
+
+    def test_search_kfind_failure_automatically_falls_back_to_legacy(self):
+        from unittest import mock
+        pipe = FakePipe(b'{"ok":true,"results":[{"path":"fallback.txt"}]}\n')
+        bridge = LibraryBridge(pipe_name="fake", connector=lambda _name: pipe, settings_provider=lambda: {"search_engine": "kfind"})
+        fake_sync = mock.Mock()
+        fake_sync.search.side_effect = RuntimeError("kfind_disconnected")
+        with mock.patch.object(bridge, "_search_sync", return_value=fake_sync):
+            result = bridge.request({"cmd": "search", "box_id": 1, "query": "예산"})
+            self.assertEqual(result["engine"], "legacy")
+            self.assertEqual(result["requested_engine"], "kfind")
+            self.assertEqual(result["engine_reason"], "kfind_disconnected")
+            self.assertEqual(result["results"], [{"path": "fallback.txt"}])
+
+    def test_nb_search_dispatches_to_notebook_kfind(self):
+        from unittest import mock
+        pipe = FakePipe(b'{"ok":true,"results":[]}\n')
+        bridge = LibraryBridge(pipe_name="fake", connector=lambda _name: pipe, settings_provider=lambda: {})
+        fake_nb_sync = mock.Mock()
+        fake_nb_sync.search.return_value = {"ok": True, "results": [], "engine": "kfind"}
+        with mock.patch.object(bridge, "_search_sync", return_value=fake_nb_sync) as search_sync_mock:
+            result = bridge.request({"cmd": "nb_search", "notebook_id": 10, "query": "추진"})
+            self.assertEqual(result["engine"], "kfind")
+            search_sync_mock.assert_called_once_with(True)
+            fake_nb_sync.search.assert_called_once_with({"cmd": "nb_search", "notebook_id": 10, "query": "추진"})
 
 
 if __name__ == "__main__":

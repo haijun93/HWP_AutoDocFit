@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import '../../core/theme/app_theme.dart';
+import 'conversion_colors.dart';
+
 class _MergeItem {
   _MergeItem({required this.id, required this.file});
   final int id;
@@ -45,22 +48,24 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
     return Icons.insert_drive_file_outlined;
   }
 
-  static Color _formatIconColor(String name) {
+  static Color _formatIconColor(BuildContext context, String name) {
+    final c = context.colors;
     final lower = name.toLowerCase();
-    if (lower.endsWith('.pdf')) return const Color(0xffdc2626);
+    if (lower.endsWith('.pdf')) return c.danger;
     if (lower.endsWith('.hwp') || lower.endsWith('.hwpx')) {
-      return const Color(0xff2563eb);
+      return c.accent;
     }
     if (lower.endsWith('.png') ||
         lower.endsWith('.jpg') ||
         lower.endsWith('.jpeg')) {
-      return const Color(0xff059669);
+      return ConversionColors.of(context).imageFile;
     }
-    return const Color(0xff64748b);
+    return c.muted;
   }
 
   @override
   Widget build(BuildContext context) {
+    final c = context.colors;
     return Dialog(
       key: const Key('mergeOrderDialog'),
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
@@ -78,33 +83,33 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                   Container(
                     padding: const EdgeInsets.all(8),
                     decoration: BoxDecoration(
-                      color: const Color(0xffedf3ff),
+                      color: c.accentSoft,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
+                    child: Icon(
                       Icons.merge_type,
-                      color: Color(0xff2563eb),
+                      color: c.accent,
                       size: 22,
                     ),
                   ),
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
+                        const Text(
                           'PDF 합칠 순서 정하기',
                           style: TextStyle(
                             fontSize: 17,
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        SizedBox(height: 2),
+                        const SizedBox(height: 2),
                         Text(
                           '맨 위 줄이 PDF 첫 쪽이 됩니다.',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xff64748b),
+                            color: c.muted,
                           ),
                         ),
                       ],
@@ -135,21 +140,21 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                         margin: const EdgeInsets.symmetric(vertical: 3),
                         padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
                         decoration: BoxDecoration(
-                          color: const Color(0xfff8fafc),
+                          color: c.surfaceMuted,
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xffe2e8f0)),
+                          border: Border.all(color: c.line),
                         ),
                         child: Row(
                           children: [
                             CircleAvatar(
                               radius: 11,
-                              backgroundColor: const Color(0xffedf3ff),
+                              backgroundColor: c.accentSoft,
                               child: Text(
                                 '${i + 1}',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
-                                  color: Color(0xff2563eb),
+                                  color: c.accent,
                                 ),
                               ),
                             ),
@@ -157,7 +162,7 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                             Icon(
                               _formatIcon(name),
                               size: 20,
-                              color: _formatIconColor(name),
+                              color: _formatIconColor(context, name),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -167,10 +172,10 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                                   name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w600,
-                                    color: Color(0xff1e293b),
+                                    color: c.text,
                                   ),
                                 ),
                               ),
@@ -188,8 +193,8 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                                 Icons.arrow_upward_rounded,
                                 size: 18,
                                 color: i > 0
-                                    ? const Color(0xff475569)
-                                    : const Color(0xffcbd5e1),
+                                    ? c.textSecondary
+                                    : c.lineStrong,
                               ),
                               onPressed: i > 0
                                   ? () => setState(() {
@@ -211,8 +216,8 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                                 Icons.arrow_downward_rounded,
                                 size: 18,
                                 color: i < _items.length - 1
-                                    ? const Color(0xff475569)
-                                    : const Color(0xffcbd5e1),
+                                    ? c.textSecondary
+                                    : c.lineStrong,
                               ),
                               onPressed: i < _items.length - 1
                                   ? () => setState(() {
@@ -223,14 +228,14 @@ class _MergeOrderDialogState extends State<MergeOrderDialog> {
                             ),
                             ReorderableDragStartListener(
                               index: i,
-                              child: const Tooltip(
+                              child: Tooltip(
                                 message: '끌어서 순서 바꾸기',
                                 child: Padding(
                                   padding: EdgeInsets.symmetric(horizontal: 4),
                                   child: Icon(
                                     Icons.drag_indicator_rounded,
                                     size: 20,
-                                    color: Color(0xff94a3b8),
+                                    color: c.faint,
                                   ),
                                 ),
                               ),

@@ -8,6 +8,155 @@ import 'package:docfit_ui/core/hierarchy_ffi.dart';
 
 void main() {
   _labelsTest();
+  for (final mode in ['파일명', '본문검색', '위계검색']) {
+    for (final withId in [true, false]) {
+      if (mode == '파일명' && !withId) continue;
+      testWidgets('$mode 문서 열기는 더블클릭과 미리보기 버튼에서 ${withId ? 'id' : 'path'}를 보내고 실패 이유를 표시한다', (tester) async {
+        await tester.binding.setSurfaceSize(const Size(1400, 1000));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+        const path = r'C:\TM\보고서.hwpx';
+        final result = <String, Object?>{
+          if (withId) 'id': 42, 'name': '보고서.hwpx', 'file_name': '보고서.hwpx',
+          'path': path, 'folder': r'C:\TM', 'kind': 'hwpx', 'snippet': '검색 본문',
+          'size': 10, 'mtime': 1000.0, 'ctime': 1000.0, 'work_time': 1000.0,
+        };
+        final api = _FakeApi(enabled: true, contentSearchResults: [result], fileSearchResults: [result]);
+        api.relatedResponse = {'ok': true, 'items': [result]};
+        var fail = false;
+        var throwOpen = false;
+        Future<Object?> call(String method, List<Object?> args) async {
+          if (method == 'timemachine' && args[0] == 'open') {
+            await api.call(method, args);
+            if (throwOpen) throw StateError('connection lost');
+            return fail ? {'ok': false, 'message': '활성 검색 폴더 밖의 파일입니다.'} : {'ok': true};
+          }
+          return api.call(method, args);
+        }
+        await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: call))));
+        await tester.pumpAndSettle();
+        if (mode != '파일명') {
+          await tester.tap(find.text(mode));
+        } else {
+          await tester.tap(find.byTooltip('열 보기'));
+        }
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '보고서');
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pumpAndSettle();
+        final row = find.byKey(ValueKey(mode == '파일명' ? 'tm-file-row-42' : 'tm-content-row-${withId ? 42 : path}'));
+        await tester.tap(row);
+        await tester.pump(const Duration(milliseconds: 350));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('문서 열기'));
+        await tester.pumpAndSettle();
+        final payload = withId ? {'id': 42} : {'path': path};
+        expect(api.calls.where((c) => c.$1 == 'open').single.$2, payload);
+        fail = true;
+        await tester.tap(row);
+        await tester.pump(const Duration(milliseconds: 50));
+        await tester.tap(row);
+        await tester.pumpAndSettle();
+        expect(api.calls.where((c) => c.$1 == 'open').length, 2);
+        expect(api.calls.where((c) => c.$1 == 'open').last.$2, payload);
+        expect(find.text('활성 검색 폴더 밖의 파일입니다.'), findsOneWidget);
+        throwOpen = true;
+        await tester.tap(find.text('문서 열기'));
+        await tester.pumpAndSettle();
+        expect(find.text('파일을 열지 못했습니다. 앱 연결을 확인해 주세요.'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
+
+  for (final phase in ['indexing', 'reindexing']) {
+    testWidgets('화면 진입 시 $phase 상태를 읽고 자동 진행을 폴링한다', (tester) async {
+      final api = _FakeApi(enabled: true, developerMode: false);
+      api.contentStatus = {'ok': true, 'phase': phase, 'seen': 5, 'indexed': 3, 'errors': 0};
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+      await tester.pumpAndSettle();
+      expect(api.calls.any((c) => c.$1 == 'content_index_status'), true);
+      await tester.tap(find.text('본문검색'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.byType(LinearProgressIndicator), findsOneWidget);
+      expect(find.text('5건 확인 · 3건 색인 · 실패 0건'), findsOneWidget);
+      expect(api.calls.any((c) => c.$1 == 'content_index_start'), false);
+      final before = api.calls.where((c) => c.$1 == 'content_index_status').length;
+      api.contentStatus = {'ok': true, 'phase': 'finished', 'running': false, 'errors': 0};
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(api.calls.where((c) => c.$1 == 'content_index_status').length, greaterThan(before));
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+    });
+  }
+
+  testWidgets('검색에서 자동 재색인을 발견하고 취소 요청도 진행 상태로 유지한다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    api.contentStatus = {'ok': true, 'phase': 'reindexing', 'seen': 7, 'indexed': 4, 'errors': 1};
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(find.text('7건 확인 · 4건 색인 · 실패 1건'), findsOneWidget);
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'cancel_requested', 'running': true};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'cancelled', 'running': false};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
+  testWidgets('재색인 안내를 상태에서 읽고 완료 시 지운다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    api.contentStatus = {'ok': true, 'phase': 'idle', 'needs_reindex': true,
+      'needs_reindex_count': 2, 'reindex_guide': '기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다.'};
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('재색인 필요: 2건'), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'finished', 'needs_reindex': false, 'needs_reindex_count': 0};
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '사업');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('재색인 필요: 2건'), findsNothing);
+  });
+
+  testWidgets('상태 통신 실패 후 진행을 유지하고 폴링으로 복구한다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    api.contentStatus = {'ok': true, 'phase': 'reindexing'};
+    var failStatus = false;
+    Future<Object?> call(String method, List<Object?> args) async {
+      if (failStatus && method == 'timemachine' && args[0] == 'content_index_status') {
+        throw StateError('temporary connection failure');
+      }
+      return api.call(method, args);
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    failStatus = true;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(find.byType(LinearProgressIndicator), findsOneWidget);
+    failStatus = false;
+    api.contentStatus = {'ok': true, 'phase': 'failed', 'running': false, 'failure_reason': 'test failure'};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
   test('DLL이 없는 환경에서 위계 FFI는 기존 백엔드 대체 경로를 선택한다', () {
     if (!Platform.isWindows) {
       expect(HierarchyFfi.instance.analyze([{'text': '1. 항목'}]), isNull);
@@ -202,7 +351,8 @@ void main() {
     expect(hit!.style!.backgroundColor,const Color(0xFFFFEB3B));
     await tester.tap(find.text('본문 색인').last); await tester.pumpAndSettle();
     expect(api.calls.any((c)=>c.$1=='content_index_start'),true);
-    expect(find.textContaining('추출 실패 2건'),findsOneWidget);
+    // 사용자 지시(2026-11-12): '추출 실패 N건'은 표시하지 않는다(글 없는 파일을 오류로 오해).
+    expect(find.textContaining('추출 실패'),findsNothing);
   });
 
   testWidgets('본문 검색 결과를 Markdown으로 내보낸다', (tester) async {
@@ -596,6 +746,109 @@ void main() {
 
     expect(api.calls.any((c) => c.$1 == 'thumbnail_cache_clear'), true);
     expect(find.text('썸네일 캐시를 지웠습니다.'), findsOneWidget);
+  });
+
+  testWidgets('본문검색 경로 표시는 발췌문 위에 놓인다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {'id': 53, 'file_name': '본문경로.txt', 'folder_path': r'C:\Docs', 'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '위치 발췌문', 'breadcrumb': ['제1장'], 'breadcrumb_text': '제1장'},
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '본문경로');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    final path = find.text('제1장');
+    expect(path, findsOneWidget);
+    expect(tester.getTopLeft(path).dy, lessThan(tester.getTopLeft(find.text('위치 발췌문')).dy));
+  });
+
+  testWidgets('같은 절에서 여러 곳인 묶음만 최대 두 개 표시한다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {
+        'id': 54, 'file_name': '절묶음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '절 묶음 발췌',
+        'sections': [
+          {'parent_text': '제1절 목적', 'count': 4},
+          {'parent_text': '제2절 적용', 'count': 2},
+          {'parent_text': '제3절 제외', 'count': 8},
+        ],
+      },
+      {
+        'id': 55, 'file_name': '절없음.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '묶음 없는 발췌',
+        'sections': [],
+      },
+      {
+        'id': 56, 'file_name': '한곳.txt', 'folder_path': r'C:\Docs',
+        'kind': 'txt', 'mtime': 1791000000.0, 'snippet': '한 곳 발췌',
+        'sections': [
+          {'parent_text': '제4절 한 곳뿐', 'count': 1},
+          {'parent_text': '', 'count': 3},
+        ],
+      },
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    // ISUI1: 1글자는 실시간 검색 기준(2글자) 미만이라 Enter로 찾는다.
+    await tester.enterText(find.byType(TextField), '절');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    expect(find.text('「제1절 목적」에서 4곳'), findsOneWidget);
+    expect(find.text('「제2절 적용」에서 2곳'), findsOneWidget);
+    expect(find.text('「제3절 제외」에서 8곳'), findsNothing);
+    expect(find.text('「제4절 한 곳뿐」에서 1곳'), findsNothing);
+    expect(find.text('절 묶음 발췌'), findsOneWidget);
+    expect(find.text('묶음 없는 발췌'), findsOneWidget);
+    expect(find.text('한 곳 발췌'), findsOneWidget);
+  });
+
+  testWidgets('위계 경로를 발췌문 위에 표시하고 경로가 비면 표시하지 않는다', (tester) async {
+    final api = _FakeApi(enabled: true, contentSearchResults: [
+      {
+        'id': 51,
+        'file_name': '경로있음.hwpx',
+        'folder_path': 'C:\\문서',
+        'kind': 'hwpx',
+        'mtime': 1791000000.0,
+        'snippet': '첫 번째 발췌문',
+        'breadcrumb': ['제2장 총칙', '제3절 적용', '제1항 범위'],
+        'breadcrumb_text': '제2장 총칙 > 제3절 적용 > 제1항 범위',
+        'context_hits': ['총칙'],
+        'hierarchy': '제2장 총칙',
+      },
+      {
+        'id': 52,
+        'file_name': '경로없음.hwpx',
+        'folder_path': 'C:\\문서',
+        'kind': 'hwpx',
+        'mtime': 1791000000.0,
+        'snippet': '두 번째 발췌문',
+        'breadcrumb': [],
+        'breadcrumb_text': '',
+        'context_hits': [],
+      },
+    ]);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '범위');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    final pathFinder = find.text('제2장 총칙 > 제3절 적용 > 제1항 범위');
+    expect(pathFinder, findsOneWidget);
+    expect(find.text('제2장 총칙'), findsWidgets); // 기존 가장 높은 위계 표시 유지
+    final pathY = tester.getTopLeft(pathFinder).dy;
+    final excerptY = tester.getTopLeft(find.text('첫 번째 발췌문')).dy;
+    expect(pathY, lessThan(excerptY));
+    expect(find.text('경로없음.hwpx'), findsOneWidget);
+    expect(find.text('두 번째 발췌문'), findsOneWidget);
   });
 
   testWidgets('본문 검색 신형 응답의 폴더, 전체 경로, 횟수, 위치, 위계를 표시한다', (tester) async {
@@ -1101,6 +1354,56 @@ void main() {
 const _jpeg='/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wgALCAABAAEBAREA/8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPxA=';
 
 void _labelsTest() {
+  testWidgets('ISUI1: 검색어는 파일명·본문검색·위계검색이 공유하고 탭을 바꾸면 그 검색어로 바로 찾는다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '보고');
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '보고');
+
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '보고');
+    expect(api.calls.where((c) => c.$1 == 'content_search').single.$2['query'], '보고');
+    expect(find.text('본문포함.docx'), findsOneWidget);
+
+    await tester.tap(find.text('위계검색'));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'related_search').single.$2['query'], '보고');
+
+    await tester.tap(find.text('파일명'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '보고');
+    expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '보고');
+  });
+
+  testWidgets('ISUI1: 1글자는 실시간으로 찾지 않고 Enter는 바로 찾는다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(api.calls.any((c) => c.$1 == 'content_search'), isFalse);
+    expect(find.textContaining('2글자 이상'), findsOneWidget);
+
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'content_search').single.$2['query'], '회');
+
+    // 2글자가 되면 Enter 없이 짧은 지연(150ms) 뒤 찾는다.
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(api.calls.where((c) => c.$1 == 'content_search').length, 1);
+    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pumpAndSettle();
+    expect(api.calls.where((c) => c.$1 == 'content_search').last.$2['query'], '회의');
+  });
+
   testWidgets('종류 필터는 확장자 이름으로 보인다', (tester) async {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: _FakeApi(enabled: true).call))));
     await tester.pumpAndSettle();
@@ -1131,6 +1434,7 @@ class _FakeApi {
 
   final bool enabled, cloud, scanRunning;
   bool developerMode;
+  Map<String, Object?>? contentStatus;
   final Object? thumbnail;
   Map<String, Object?>? relatedResponse;
   final int itemCount;
@@ -1166,7 +1470,7 @@ class _FakeApi {
       case 'content_index_start':
         return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'content_index_status':
-        return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
+        return contentStatus ?? {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'content_index_cancel':
         return {'ok':true,'running':false,'seen':5,'indexed':3,'errors':2};
       case 'file_search':

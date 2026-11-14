@@ -61,6 +61,7 @@ pub fn stage_01(paragraphs: &Value) -> Value {
         let (marker, marker_role) = super::leading_marker::leading_marker_with_scheme(&text, Some(&scheme));
         let indent = item["left"].as_i64().unwrap_or(0) + item["indent"].as_i64().unwrap_or(0);
         let mut record = item.as_object().cloned().unwrap_or_default();
+        record.entry("left").or_insert(json!(0));
         record.insert("index".into(), json!(index));
         record.insert("marker".into(), json!(marker));
         record.insert("marker_role".into(), json!(marker_role));
@@ -230,4 +231,18 @@ pub fn analyze_hierarchy(input: &Value) -> Value {
     }
     let role_seq:Vec<Value>=classified.iter().map(|r|r["role"].clone()).collect();
     json!({"version":1,"priority":["indentation","font","size","marker"],"auxiliary":"prev_spacing","indent_levels_hwpunit":indent_levels,"ambiguous_marker_roles":{"원문자":["본문","내용","부연설명"]},"styles":styles,"variants":variants,"role_sequence":role_seq,"document_type":document_type(&Value::Array(classified.iter().map(|r|r["role"].clone()).collect()),false),"warnings":[],"page_policy":{"subheading_with_bodies":true,"optional_explanations_after_subheading":true,"body_with_contents":true,"explanation_with_parent":true}})
+}
+
+#[cfg(test)]
+mod ndet_tests {
+    use super::*;
+
+    #[test]
+    fn ndet_matches_python_for_1000_calls() {
+        let input: Value = serde_json::from_str(include_str!("../../../tests/fixtures/T1111_NDET.json")).unwrap();
+        let expected: Value = serde_json::from_str(include_str!("../../tests/ndet_python_expected.json")).unwrap();
+        for iteration in 0..1000 {
+            assert_eq!(analyze_hierarchy(&input), expected, "call {iteration}");
+        }
+    }
 }

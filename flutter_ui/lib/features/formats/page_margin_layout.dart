@@ -1,7 +1,9 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 import '../settings/kiosk_theme.dart';
+import '../settings/settings_colors.dart';
 
 /// 한/글 「편집 용지」(Alt+L) 대화상자 스타일의 쪽 모양·여백 위젯.
 class PageMarginLayout extends StatelessWidget {
@@ -57,7 +59,8 @@ class PageMarginLayout extends StatelessWidget {
     onEdit(path, field, formatted);
   }
 
-  Widget _buildOrientationBadge({
+  Widget _buildOrientationBadge(
+    BuildContext context, {
     required String label,
     required IconData icon,
     required bool isSelected,
@@ -65,10 +68,14 @@ class PageMarginLayout extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: isSelected ? Kiosk.blueSoft : const Color(0xfff2f4f6),
+        color: isSelected
+            ? context.kiosk.blueSoft
+            : context.kiosk.secondaryFill,
         borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: isSelected ? Kiosk.blue : const Color(0xffd5d9de),
+          color: isSelected
+              ? context.kiosk.blue
+              : SettingsColors.of(context).badgeLine,
           width: isSelected ? 1.5 : 1.0,
         ),
       ),
@@ -78,7 +85,7 @@ class PageMarginLayout extends StatelessWidget {
           Icon(
             icon,
             size: 16,
-            color: isSelected ? Kiosk.blue : Kiosk.sub,
+            color: isSelected ? context.kiosk.blue : context.kiosk.sub,
           ),
           const SizedBox(width: 4),
           Text(
@@ -86,7 +93,7 @@ class PageMarginLayout extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-              color: isSelected ? Kiosk.blue : Kiosk.sub,
+              color: isSelected ? context.kiosk.blue : context.kiosk.sub,
             ),
           ),
         ],
@@ -94,7 +101,8 @@ class PageMarginLayout extends StatelessWidget {
     );
   }
 
-  Widget _buildPaper({
+  Widget _buildPaper(
+    BuildContext context, {
     required double width,
     required double height,
     required bool isLandscape,
@@ -123,12 +131,15 @@ class PageMarginLayout extends StatelessWidget {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: Colors.white, // 문서 색(테마 무관): 흰 종이
         borderRadius: BorderRadius.circular(2),
-        border: Border.all(color: const Color(0xffb0b8c1), width: 1.2),
+        border: Border.all(
+          color: const Color(0xffb0b8c1), // 문서 색(테마 무관): 종이 테두리
+          width: 1.2,
+        ),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x18000000),
+            color: Color(0x18000000), // 문서 색(테마 무관): 종이 그림자
             blurRadius: 6,
             offset: Offset(0, 2),
           ),
@@ -138,8 +149,11 @@ class PageMarginLayout extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(padLeft, padTop, padRight, padBottom),
         child: Container(
           decoration: BoxDecoration(
-            color: const Color(0xfff6f8fa),
-            border: Border.all(color: const Color(0xffdbe0e6), width: 0.8),
+            color: const Color(0xfff6f8fa), // 문서 색(테마 무관): 본문 영역
+            border: Border.all(
+              color: const Color(0xffdbe0e6), // 문서 색(테마 무관)
+              width: 0.8,
+            ),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -148,7 +162,7 @@ class PageMarginLayout extends StatelessWidget {
                 Container(
                   height: 1.5,
                   margin: const EdgeInsets.symmetric(horizontal: 4),
-                  color: const Color(0xffced4da),
+                  color: const Color(0xffced4da), // 문서 색(테마 무관): 글줄
                 ),
             ],
           ),
@@ -157,7 +171,7 @@ class PageMarginLayout extends StatelessWidget {
     );
   }
 
-  Widget _buildMarginBox(String key, String label, double width) {
+  Widget _buildMarginBox(BuildContext context, String key, String label, double width) {
     final field = _findField(key);
     if (field == null) {
       return const SizedBox.shrink();
@@ -172,10 +186,12 @@ class PageMarginLayout extends StatelessWidget {
       width: width,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: isChanged ? Kiosk.blueSoft : Colors.white,
+        color: isChanged ? context.kiosk.blueSoft : context.kiosk.card,
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isChanged ? Kiosk.blue : const Color(0xffd0d5dc),
+          color: isChanged
+              ? context.kiosk.blue
+              : SettingsColors.of(context).boxLine,
           width: isChanged ? 1.5 : 1.0,
         ),
       ),
@@ -188,7 +204,7 @@ class PageMarginLayout extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: isChanged ? Kiosk.blue : Kiosk.ink,
+              color: isChanged ? context.kiosk.blue : context.kiosk.ink,
             ),
           ),
           const SizedBox(height: 4),
@@ -201,10 +217,10 @@ class PageMarginLayout extends StatelessWidget {
                     key: ValueKey('$generation:$path:$key:$valStr'),
                     initialValue: valStr,
                     enabled: editable,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w700,
-                      color: Kiosk.ink,
+                      color: context.kiosk.ink,
                     ),
                     decoration: InputDecoration(
                       isDense: true,
@@ -214,8 +230,8 @@ class PageMarginLayout extends StatelessWidget {
                       ),
                       filled: true,
                       fillColor: editable
-                          ? const Color(0xfff2f4f6)
-                          : const Color(0xfff9fafb),
+                          ? context.kiosk.secondaryFill
+                          : SettingsColors.of(context).softFill,
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(6),
                         borderSide: BorderSide.none,
@@ -235,12 +251,12 @@ class PageMarginLayout extends StatelessWidget {
                       key: Key('pageMarginUp_$key'),
                       borderRadius: BorderRadius.circular(4),
                       onTap: editable ? () => _step(field, 0.1) : null,
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: 2),
                         child: Icon(
                           Icons.arrow_drop_up,
                           size: 16,
-                          color: Kiosk.ink,
+                          color: context.kiosk.ink,
                         ),
                       ),
                     ),
@@ -251,12 +267,12 @@ class PageMarginLayout extends StatelessWidget {
                       key: Key('pageMarginDown_$key'),
                       borderRadius: BorderRadius.circular(4),
                       onTap: editable ? () => _step(field, -0.1) : null,
-                      child: const Padding(
+                      child: Padding(
                         padding: EdgeInsets.symmetric(horizontal: 2),
                         child: Icon(
                           Icons.arrow_drop_down,
                           size: 16,
-                          color: Kiosk.ink,
+                          color: context.kiosk.ink,
                         ),
                       ),
                     ),
@@ -286,7 +302,7 @@ class PageMarginLayout extends StatelessWidget {
         landscapeField != null && _currentValue(landscapeField) == '예';
 
     return Container(
-      decoration: Kiosk.cardBox(),
+      decoration: Kiosk.cardBox(context),
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -295,9 +311,9 @@ class PageMarginLayout extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: const Color(0xfff8f9fa),
+              color: SettingsColors.of(context).infoFill,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xffe9ecef)),
+              border: Border.all(color: SettingsColors.of(context).infoLine),
             ),
             child: Row(
               children: [
@@ -305,21 +321,21 @@ class PageMarginLayout extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
+                      Text(
                         '용지 종류',
                         style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Kiosk.ink,
+                          color: context.kiosk.ink,
                         ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         '폭 ${widthVal.toStringAsFixed(1)} mm · 길이 ${heightVal.toStringAsFixed(1)} mm',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w500,
-                          color: Kiosk.sub,
+                          color: context.kiosk.sub,
                         ),
                       ),
                     ],
@@ -329,12 +345,14 @@ class PageMarginLayout extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildOrientationBadge(
+                      context,
                       label: '세로',
                       icon: Icons.stay_current_portrait,
                       isSelected: !isLandscape,
                     ),
                     const SizedBox(width: 6),
                     _buildOrientationBadge(
+                      context,
                       label: '가로',
                       icon: Icons.stay_current_landscape,
                       isSelected: isLandscape,
@@ -345,12 +363,12 @@ class PageMarginLayout extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          const Text(
+          Text(
             '용지 여백',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w700,
-              color: Kiosk.ink,
+              color: context.kiosk.ink,
             ),
           ),
           const SizedBox(height: 12),
@@ -368,6 +386,7 @@ class PageMarginLayout extends StatelessWidget {
               final gap = isNarrow ? 6.0 : 12.0;
 
               final paperWidget = _buildPaper(
+                context,
                 width: paperW,
                 height: paperH,
                 isLandscape: isLandscape,
@@ -376,34 +395,34 @@ class PageMarginLayout extends StatelessWidget {
               final topBoxes = Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildMarginBox('page_top', '위쪽', boxW),
+                  _buildMarginBox(context, 'page_top', '위쪽', boxW),
                   const SizedBox(height: 6),
-                  _buildMarginBox('page_header', '머리말', boxW),
+                  _buildMarginBox(context, 'page_header', '머리말', boxW),
                 ],
               );
 
               final leftBoxes = Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildMarginBox('page_left', '왼쪽', boxW),
+                  _buildMarginBox(context, 'page_left', '왼쪽', boxW),
                   const SizedBox(height: 6),
-                  _buildMarginBox('page_gutter', '제본', boxW),
+                  _buildMarginBox(context, 'page_gutter', '제본', boxW),
                 ],
               );
 
               final rightBoxes = Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildMarginBox('page_right', '오른쪽', boxW),
+                  _buildMarginBox(context, 'page_right', '오른쪽', boxW),
                 ],
               );
 
               final bottomBoxes = Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  _buildMarginBox('page_footer', '꼬리말', boxW),
+                  _buildMarginBox(context, 'page_footer', '꼬리말', boxW),
                   const SizedBox(height: 6),
-                  _buildMarginBox('page_bottom', '아래쪽', boxW),
+                  _buildMarginBox(context, 'page_bottom', '아래쪽', boxW),
                 ],
               );
 

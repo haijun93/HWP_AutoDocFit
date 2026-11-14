@@ -1319,6 +1319,7 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             날짜가 한 글 조각(hp:t) 안에 있으면 그 조각만 고친다(따옴표가 앞 조각에 있으면 그대로 둔다).
             숫자가 여러 조각에 걸쳐 있으면 그 문단 글을 첫 조각에 모아 바꾼다.
             """
+            from docfit_core.writing_aids import refresh_dates as 날짜_현행화
             바꾼수 = 0
             for p in 제목_문단들(cell):
                 조각들 = [t for r in p if 제목_xml이름(r) == 'run' for t in r if 제목_xml이름(t) == 't' and not len(t)]

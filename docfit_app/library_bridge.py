@@ -35,6 +35,9 @@ ALLOWED_COMMANDS = frozenset({
 
     "nb_search", "nb_transform", "nb_note_save", "nb_note_list", "nb_note_delete", "nb_export_md", "nb_compare",
 
+    # NBIDX1: 업무자료함 별도 저장소 — 원본 변경 검사, 같은 번호로 다시 색인, 옮기기 상태·다시 시도.
+    "nb_source_check", "nb_source_refresh", "nb_status", "nb_migrate",
+
 } | frozenset(f"edit_{name}" for name in (
 
     # 메모 편집기 코어(editor_core, klib 파이프 edit_*). docs/EDITOR_CORE_DESIGN.md 4절.
@@ -65,7 +68,7 @@ class LibraryBridge:
 
                  connector=None, popen=None, retries=8, retry_delay=0.05,
 
-                 exe=None, process=None, pipe_factory=None):
+                 exe=None, process=None, pipe_factory=None, settings_provider=None, kfind=None):
 
         self.pipe_name = pipe_name or (pipe_factory() if pipe_factory else _current_user_pipe_name())
 
@@ -95,7 +98,87 @@ class LibraryBridge:
 
         self.retry_delay = retry_delay
 
+        self.settings_provider = settings_provider or (lambda: {})
+        self._kfind = kfind
+        # 독립 klib 전송기를 주입한 호출자는 그 전송 계약을 그대로 유지한다.
+        self._kfind_enabled = kfind is not None or settings_provider is not None or connector is None
+        self._library_kfind = self._notebook_kfind = None
+
+    def _engine(self):
+        return "legacy" if self.settings_provider().get("search_engine") == "legacy" else "kfind"
+
+    def _search_sync(self, notebook=False):
+        from .kfind_client import KfindClient
+        from .library_kfind_sync import LibraryKfindSync, NotebookKfindSync
+        if self._kfind is None:
+            self._kfind = KfindClient()
+        attr = "_notebook_kfind" if notebook else "_library_kfind"
+        sync = getattr(self, attr)
+        if sync is None:
+            sync = (NotebookKfindSync if notebook else LibraryKfindSync)(self._legacy_request, self._kfind)
+            setattr(self, attr, sync)
+        return sync
+
     def request(self, request):
+
+        if not self._kfind_enabled:
+            return self._legacy_request(request)
+
+        # 동일한 입력 검증을 kfind와 legacy 분기 전에 적용한다.
+        if not isinstance(request, dict) or request.get("cmd") not in ALLOWED_COMMANDS:
+            return self._legacy_request(request)
+        try:
+            encoded = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        except (TypeError, ValueError) as exc:
+            raise LibraryBridgeError("가상 폴더 요청을 JSON으로 인코딩할 수 없습니다.") from exc
+        if len(encoded) > MAX_REQUEST_BYTES:
+            raise LibraryBridgeError("가상 폴더 요청이 64 KiB를 초과했습니다.")
+        command = request["cmd"]
+        search = command in {"search", "item_search", "nb_search"} and bool(request.get("query"))
+        engine = self._engine() if search else None
+        reason = "configured_legacy" if engine == "legacy" else None
+        if search and engine == "kfind":
+            try:
+                return self._search_sync(command == "nb_search").search(request)
+            except Exception as exc:
+                reason = str(exc) or type(exc).__name__
+        result = self._legacy_request(request)
+        if result.get("ok") and command == "box_delete" and self._engine() == "kfind":
+            try:
+                self._search_sync().drop_scope(f"box:{int(request['id'])}")
+            except Exception:
+                pass  # klib의 삭제 성공은 유지한다. 서비스 오류로 원본 삭제를 되돌리지 않는다.
+        if search:
+            result = dict(result, engine="legacy", requested_engine=engine, engine_reason=reason)
+            if command == "search" and result.get("ok") and request.get("box_id") is not None:
+                # legacy도 서버에서 자료 ID를 붙인다. 화면에서 경로로 거르지 않는다.
+                items = self._legacy_request({"cmd": "box_get", "id": request["box_id"]}).get("items", [])
+                by_path = {}
+                for item in items:
+                    for path in (item.get("managed_path"), item.get("source_path"), f"text:{item['id']}"):
+                        if path:
+                            by_path.setdefault(os.path.normcase(os.path.normpath(path)), []).append(item["id"])
+                rows = []
+                for row in result.get("results", []):
+                    ids = by_path.get(os.path.normcase(os.path.normpath(row.get("path") or "")), []) if isinstance(row, dict) else []
+                    rows.append(dict(row, item_ids=ids) if ids else row)
+                result.update(results=rows, total_docs=len(rows), total_sentences=None,
+                              count_exact=False)
+        elif result.get("ok") and command.startswith(("item_", "box_", "nb_")) and command not in {
+                "item_get", "item_search", "item_text_get", "box_get", "box_list", "nb_list",
+                "nb_source_list", "nb_source_paragraphs", "nb_source_check", "nb_status"}:
+            for sync in (self._library_kfind, self._notebook_kfind):
+                if sync is not None:
+                    sync.invalidate()
+                    if self._engine() == "kfind":
+                        for scope in list(sync._scope_keys):
+                            try:
+                                sync.sync(scope)
+                            except Exception:
+                                break  # 원본 klib 변경은 성공했다. 다음 검색 때 재시도/legacy 대체.
+        return result
+
+    def _legacy_request(self, request):
 
         if not isinstance(request, dict):
 

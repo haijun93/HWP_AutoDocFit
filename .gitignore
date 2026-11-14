@@ -41,3 +41,18 @@ resources/kagent.exe.sha256
 resources/kclip_ffi.dll
 resources/kclip_ffi.dll.sha256
 editor_core/target/
+
+# 가상 폴더 창 Rust 산출물
+kvf/target/
+
+resources/kvf.exe
+resources/kvf.exe.sha256
+
+/crates/kfind/target/
+kfind/core/target/
+kfind/names/target/
+resources/kfind.exe
+resources/kfind.exe.sha256
+ktm/target/
+resources/ktm.exe
+resources/ktm.exe.sha256

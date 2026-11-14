@@ -44,7 +44,11 @@ windows-sys = { version = "0.59", features = [
 ] }
 # 클립보드 비트맵(DIB) ↔ PNG. 순수 Rust.
 png = "0.17"
+# 썸네일 디스크 캐시 형식(KCAP3: PNG보다 작고 빨리 풀림). MIT OR Apache-2.0, 의존성 없음.
+qoi = { version = "0.4", default-features = false, features = ["alloc"] }
 regex = "1.13.1"
+# 공용 색 표(밝게·어둡게·고대비)와 Windows 테마 감지(RUSTALL1 DARK1).
+ui_theme = { path = "../ui_theme" }
 
 [profile.release]
 opt-level = 3
@@ -52,3 +56,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# 시험(디버그) 빌드도 가볍게 최적화한다 — 썸네일 속도 시험(디버그 2초 한도)이 전체 시험 부하에서 흔들리지 않게(KCAP3).
+# 넘침 검사·debug_assert는 opt-level과 별개라 그대로 켜져 있다. 의존성(png 해독 등)은 더 최적화.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

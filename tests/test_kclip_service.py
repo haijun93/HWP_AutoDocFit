@@ -240,6 +240,14 @@ class KClipServiceTests(unittest.TestCase):
         self.service.command("pin", {"id": 7})
         self.assertEqual(self.client.requests, [("delete", {"id": 7}), ("pin", {"id": 7, "pinned": True})])
 
+    def test_thumb_forwards_id_and_size_only_after_id_check(self):
+        self.client.on = True
+        for bad in (None, "x", 0, True):
+            self.assertEqual(self.service.command("thumb", {"id": bad})["code"], "KCLIP_ITEM")
+        self.assertEqual(self.client.requests, [])
+        self.service.command("thumb", {"id": "9", "size": 1234, "path": "C:\\secret.png"})
+        self.assertEqual(self.client.requests, [("thumb", {"id": 9, "size": 1234})])
+
     def test_clear_keeps_pinned_unless_explicitly_disabled(self):
         self.client.on = True
         self.service.command("clear")

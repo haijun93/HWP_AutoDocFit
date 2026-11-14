@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'progress_colors.dart';
+
 /// 기능별 맞춤 진행 화면(알파, 2026-10-15, docs/PROGRESS_FLOW_DESIGN.md).
 ///
 /// iPhone의 다이내믹 아일랜드·활동 링·부드러운 스프링 전환을 빌려, 지금 무엇을 하는지 한눈에 보이고
@@ -19,21 +21,6 @@ class LiveProgress extends StatefulWidget {
   @override
   State<LiveProgress> createState() => _LiveProgressState();
 }
-
-// main.dart와 같은 팔레트.
-const _ink = Color(0xff172b4d);
-const _muted = Color(0xff64748b);
-const _faint = Color(0xff8b98ad);
-const _line = Color(0xffe2e8f0);
-const _blue = Color(0xff2563eb);
-const _blueDeep = Color(0xff1d4ed8);
-const _blueSoft = Color(0xffedf3ff);
-const _sky = Color(0xff60a5fa);
-const _mint = Color(0xff287c72);
-const _mintBright = Color(0xff34c79a);
-const _mintSoft = Color(0xffdff3ee);
-const _red = Color(0xffdc2626);
-const _island = Color(0xff0f172a);
 
 /// iOS 느낌의 탄성 곡선(살짝 넘쳤다가 제자리).
 const _spring = Curves.easeOutBack;
@@ -77,6 +64,7 @@ class _LiveProgressState extends State<LiveProgress>
   List get tips => live['tips'] as List? ?? const [];
   Map get doc => live['doc'] as Map? ?? const {};
   bool get isConversion => live['mode'] == 'file_format';
+  Map get conversionSummary => live['conversion_summary'] as Map? ?? const {};
 
   @override
   void initState() {
@@ -123,6 +111,8 @@ class _LiveProgressState extends State<LiveProgress>
       _spin.stop();
     }
   }
+
+  ProgressColors get _p => ProgressColors.of(context);
 
   int get _elapsed => running ? _elapsedBase + _sinceSync : _elapsedBase;
 
@@ -202,11 +192,11 @@ class _LiveProgressState extends State<LiveProgress>
         curve: _spring,
         padding: const EdgeInsets.fromLTRB(10, 8, 16, 8),
         decoration: BoxDecoration(
-          color: _island,
+          color: _p.island,
           borderRadius: BorderRadius.circular(999),
           boxShadow: [
             BoxShadow(
-              color: _island.withValues(alpha: running ? 0.22 : 0.08),
+              color: _p.island.withValues(alpha: running ? 0.22 : 0.08),
               blurRadius: running ? 22 : 10,
               offset: const Offset(0, 8),
             ),
@@ -237,8 +227,8 @@ class _LiveProgressState extends State<LiveProgress>
                 child: Text(
                   label,
                   key: ValueKey(label),
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: _p.onIsland,
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
                   ),
@@ -249,7 +239,7 @@ class _LiveProgressState extends State<LiveProgress>
                 Text(
                   '$index/$total',
                   style: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.6),
+                    color: _p.onIsland.withValues(alpha: 0.6),
                     fontSize: 13,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -265,14 +255,14 @@ class _LiveProgressState extends State<LiveProgress>
   Widget _islandDot() {
     if (finished) {
       return _popIn(
-        const CircleAvatar(
+        CircleAvatar(
           radius: 9,
-          backgroundColor: _mintBright,
-          child: Icon(Icons.check_rounded, size: 13, color: Colors.white),
+          backgroundColor: _p.mintBright,
+          child: Icon(Icons.check_rounded, size: 13, color: _p.onIsland),
         ),
       );
     }
-    final color = running ? _mintBright : _faint;
+    final color = running ? _p.mintBright : _p.faint;
     return AnimatedBuilder(
       animation: _pulse,
       builder: (context, _) {
@@ -307,7 +297,7 @@ class _LiveProgressState extends State<LiveProgress>
   Widget _ring() {
     final ratio = ((live['ratio'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0);
     final caption = isConversion
-        ? '파일 ${queue.where((f) => f['state'] == 'done' || f['state'] == 'failed').length}/${queue.length}'
+        ? '파일 ${queue.where((f) => f['state'] == 'done' || f['state'] == 'failed' || f['state'] == 'skipped').length}/${queue.length}'
         : steps.isEmpty
         ? ''
         : '단계 ${steps.where((s) => s['state'] == 'done').length}/${steps.length}';
@@ -326,6 +316,7 @@ class _LiveProgressState extends State<LiveProgress>
               glow: running ? _pulse.value : 0,
               spin: running && value < 0.02 ? _spin.value : null,
               done: finished,
+              colors: _p,
             ),
             child: Center(
               child: AnimatedSwitcher(
@@ -338,11 +329,11 @@ class _LiveProgressState extends State<LiveProgress>
                   child: FadeTransition(opacity: animation, child: child),
                 ),
                 child: finished
-                    ? const Icon(
+                    ? Icon(
                         Icons.check_rounded,
                         key: ValueKey('done'),
                         size: 72,
-                        color: _mint,
+                        color: _p.mint,
                       )
                     : Column(
                         key: const ValueKey('count'),
@@ -350,10 +341,10 @@ class _LiveProgressState extends State<LiveProgress>
                         children: [
                           Text(
                             '${(value * 100).round()}%',
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 40,
                               fontWeight: FontWeight.w800,
-                              color: _ink,
+                              color: _p.ink,
                               letterSpacing: -1,
                               fontFeatures: [FontFeature.tabularFigures()],
                             ),
@@ -361,9 +352,9 @@ class _LiveProgressState extends State<LiveProgress>
                           if (caption.isNotEmpty)
                             Text(
                               caption,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 12,
-                                color: _muted,
+                                color: _p.muted,
                               ),
                             ),
                         ],
@@ -382,20 +373,20 @@ class _LiveProgressState extends State<LiveProgress>
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
-          color: _blueSoft,
+          color: _p.blueSoft,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_modeIcon('${live['icon']}'), size: 15, color: _blueDeep),
+            Icon(_modeIcon('${live['icon']}'), size: 15, color: _p.blueDeep),
             const SizedBox(width: 6),
             Text(
               '${live['name'] ?? ''}',
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: _blueDeep,
+                color: _p.blueDeep,
               ),
             ),
           ],
@@ -403,13 +394,13 @@ class _LiveProgressState extends State<LiveProgress>
       ),
       if (live['elapsed'] != null) ...[
         const SizedBox(width: 10),
-        const Icon(Icons.schedule_rounded, size: 15, color: _faint),
+        Icon(Icons.schedule_rounded, size: 15, color: _p.faint),
         const SizedBox(width: 4),
         Text(
           '${_clock(_elapsed)} ${running ? '경과' : '걸림'}',
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
-            color: _muted,
+            color: _p.muted,
             fontFeatures: [FontFeature.tabularFigures()],
           ),
         ),
@@ -423,23 +414,23 @@ class _LiveProgressState extends State<LiveProgress>
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
       decoration: BoxDecoration(
-        color: const Color(0xfff8fafc),
+        color: _p.panel,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: _line),
+        border: Border.all(color: _p.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Row(
+          Row(
             children: [
-              Icon(Icons.lightbulb_outline_rounded, size: 16, color: _blue),
+              Icon(Icons.lightbulb_outline_rounded, size: 16, color: _p.blue),
               SizedBox(width: 6),
               Text(
                 '알고 계셨나요?',
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  color: _blue,
+                  color: _p.blue,
                 ),
               ),
             ],
@@ -466,7 +457,7 @@ class _LiveProgressState extends State<LiveProgress>
             child: Text(
               '${tips[index]}',
               key: ValueKey(index),
-              style: const TextStyle(fontSize: 13, color: _ink, height: 1.55),
+              style: TextStyle(fontSize: 13, color: _p.ink, height: 1.55),
             ),
           ),
           const SizedBox(height: 10),
@@ -479,7 +470,7 @@ class _LiveProgressState extends State<LiveProgress>
                   width: i == index ? 14 : 5,
                   height: 5,
                   decoration: BoxDecoration(
-                    color: i == index ? _blue : _line,
+                    color: i == index ? _p.blue : _p.line,
                     borderRadius: BorderRadius.circular(3),
                   ),
                 ),
@@ -512,10 +503,10 @@ class _LiveProgressState extends State<LiveProgress>
         '${doc['name'] ?? ''}',
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
-          color: _muted,
+          color: _p.muted,
         ),
       ),
       const SizedBox(height: 8),
@@ -531,10 +522,10 @@ class _LiveProgressState extends State<LiveProgress>
               height: 10,
               decoration: BoxDecoration(
                 color: switch (item['state']) {
-                  'done' => _mintBright,
-                  'failed' => _red,
-                  'active' => _blue,
-                  _ => _line,
+                  'done' => _p.mintBright,
+                  'failed' => _p.red,
+                  'active' => _p.blue,
+                  _ => _p.line,
                 },
                 borderRadius: BorderRadius.circular(5),
               ),
@@ -566,7 +557,7 @@ class _LiveProgressState extends State<LiveProgress>
                         duration: _d(500),
                         width: 2,
                         decoration: BoxDecoration(
-                          color: done ? _mintBright : _line,
+                          color: done ? _p.mintBright : _p.line,
                           borderRadius: BorderRadius.circular(1),
                         ),
                       ),
@@ -586,7 +577,7 @@ class _LiveProgressState extends State<LiveProgress>
                 vertical: active ? 14 : 10,
               ),
               decoration: BoxDecoration(
-                color: active ? _blueSoft : Colors.transparent,
+                color: active ? _p.blueSoft : Colors.transparent,
                 borderRadius: BorderRadius.circular(16),
               ),
               child: AnimatedSize(
@@ -604,10 +595,10 @@ class _LiveProgressState extends State<LiveProgress>
                         height: 1.4,
                         fontWeight: active ? FontWeight.w700 : FontWeight.w500,
                         color: active
-                            ? _blueDeep
+                            ? _p.blueDeep
                             : done
-                            ? const Color(0xff475569)
-                            : const Color(0xff94a3b8),
+                            ? _p.doneText
+                            : _p.waitText,
                       ),
                       child: Text('${step['name']}'),
                     ),
@@ -615,9 +606,9 @@ class _LiveProgressState extends State<LiveProgress>
                       const SizedBox(height: 6),
                       Text(
                         '${step['detail']}',
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
-                          color: _muted,
+                          color: _p.muted,
                           height: 1.55,
                         ),
                       ),
@@ -639,11 +630,11 @@ class _LiveProgressState extends State<LiveProgress>
   Widget _stepNode(String state) {
     final Widget node = switch (state) {
       'done' => _popIn(
-        const CircleAvatar(
+        CircleAvatar(
           key: ValueKey('done'),
           radius: 12,
-          backgroundColor: _mintSoft,
-          child: Icon(Icons.check_rounded, size: 15, color: _mint),
+          backgroundColor: _p.mintSoft,
+          child: Icon(Icons.check_rounded, size: 15, color: _p.mint),
         ),
       ),
       'active' => AnimatedBuilder(
@@ -656,19 +647,19 @@ class _LiveProgressState extends State<LiveProgress>
             height: 24,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: _blue,
+              color: _p.blueFill,
               boxShadow: [
                 BoxShadow(
-                  color: _blue.withValues(alpha: 0.35 * (1 - t)),
+                  color: _p.blueFill.withValues(alpha: 0.35 * (1 - t)),
                   blurRadius: 0,
                   spreadRadius: 2 + 6 * t,
                 ),
               ],
             ),
-            child: const Icon(
+            child: Icon(
               Icons.more_horiz_rounded,
               size: 14,
-              color: Colors.white,
+              color: _p.onBlue,
             ),
           );
         },
@@ -679,7 +670,7 @@ class _LiveProgressState extends State<LiveProgress>
         height: 24,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: _line, width: 2),
+          border: Border.all(color: _p.line, width: 2),
         ),
       ),
     };
@@ -695,7 +686,10 @@ class _LiveProgressState extends State<LiveProgress>
         animation: _spin,
         builder: (context, _) => CustomPaint(
           size: const Size(double.infinity, 4),
-          painter: _ShimmerPainter(_reduceMotion ? 0.5 : _spin.value),
+          painter: _ShimmerPainter(
+            _reduceMotion ? 0.5 : _spin.value,
+            _p,
+          ),
         ),
       ),
     ),
@@ -717,9 +711,11 @@ class _LiveProgressState extends State<LiveProgress>
     children: [
       Text(
         '${live['message'] ?? ''}',
-        style: const TextStyle(fontSize: 13, color: _muted),
+        style: TextStyle(fontSize: 13, color: _p.muted),
       ),
       const SizedBox(height: 12),
+      if (finished && isConversion && conversionSummary.isNotEmpty && (conversionSummary['success'] ?? 0) == 0)
+        Text('변환된 파일이 없어요 — 건너뜀 ${conversionSummary['skipped'] ?? 0}, 실패 ${conversionSummary['failed'] ?? 0}', style: TextStyle(fontSize: 14, color: _p.muted)),
       for (final item in queue) _fileRow(item as Map),
     ],
   );
@@ -730,31 +726,32 @@ class _LiveProgressState extends State<LiveProgress>
     final note = '${item['note'] ?? ''}';
     final Widget icon = switch (state) {
       'done' => _popIn(
-        const Icon(
+        Icon(
           Icons.check_circle_rounded,
           key: ValueKey('done'),
-          color: _mintBright,
+          color: _p.mintBright,
           size: 22,
         ),
       ),
       'failed' => _popIn(
-        const Icon(
+        Icon(
           Icons.error_rounded,
           key: ValueKey('failed'),
-          color: _red,
+          color: _p.red,
           size: 22,
         ),
       ),
-      'active' => const SizedBox(
+      'skipped' => Icon(Icons.skip_next_rounded, color: _p.faint, size: 22),
+      'active' => SizedBox(
         key: ValueKey('active'),
         width: 20,
         height: 20,
-        child: CircularProgressIndicator(strokeWidth: 2.4, color: _blue),
+        child: CircularProgressIndicator(strokeWidth: 2.4, color: _p.blue),
       ),
-      _ => const Icon(
+      _ => Icon(
         Icons.schedule_rounded,
         key: ValueKey('waiting'),
-        color: _faint,
+        color: _p.faint,
         size: 20,
       ),
     };
@@ -764,9 +761,9 @@ class _LiveProgressState extends State<LiveProgress>
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: active ? _blueSoft : const Color(0xfff8fafc),
+        color: active ? _p.blueSoft : _p.panel,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: active ? _sky : _line),
+        border: Border.all(color: active ? _p.sky : _p.line),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -788,19 +785,19 @@ class _LiveProgressState extends State<LiveProgress>
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    color: state == 'waiting' ? _faint : _ink,
+                    color: state == 'waiting' ? _p.faint : _p.ink,
                   ),
                 ),
               ),
               if (state == 'done' && note.isNotEmpty) ...[
-                const Icon(Icons.arrow_forward_rounded, size: 14, color: _faint),
+                Icon(Icons.arrow_forward_rounded, size: 14, color: _p.faint),
                 const SizedBox(width: 6),
                 Flexible(
                   child: Text(
                     note,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 13, color: _mint),
+                    style: TextStyle(fontSize: 13, color: _p.mint),
                   ),
                 ),
               ],
@@ -811,9 +808,11 @@ class _LiveProgressState extends State<LiveProgress>
               padding: const EdgeInsets.only(left: 36, top: 6),
               child: Text(
                 '${note.isEmpty ? '바꾸지 못했어요' : note} · 원본은 그대로예요',
-                style: const TextStyle(fontSize: 12, color: _red),
+                style: TextStyle(fontSize: 12, color: _p.red),
               ),
             ),
+          if (state == 'skipped')
+            Padding(padding: const EdgeInsets.only(left: 36, top: 6), child: Text('$note · 건너뛰었어요', style: TextStyle(fontSize: 12, color: _p.muted))),
           if (active && running)
             Padding(
               padding: const EdgeInsets.only(left: 36, top: 10),
@@ -841,14 +840,14 @@ class _LiveProgressState extends State<LiveProgress>
             label: const Text('취소'),
           ),
         if (live['cancelled'] == true)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text('취소됨', style: TextStyle(color: _muted)),
+            child: Text('취소됨', style: TextStyle(color: _p.muted)),
           ),
         if (live['cancel_requested'] == true && live['cancelled'] != true)
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 12),
-            child: Text('취소 중…', style: TextStyle(color: _muted)),
+            child: Text('취소 중…', style: TextStyle(color: _p.muted)),
           ),
       ],
     ),
@@ -862,12 +861,14 @@ class _RingPainter extends CustomPainter {
     required this.glow,
     required this.spin,
     required this.done,
+    required this.colors,
   });
 
   final double value;
   final double glow;
   final double? spin;
   final bool done;
+  final ProgressColors colors;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -881,11 +882,11 @@ class _RingPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = const Color(0xffedf2f7),
+        ..color = colors.track,
     );
-    final colors = done
-        ? const [_mint, _mintBright, _mint]
-        : const [_blueDeep, _sky, _blueDeep];
+    final ringColors = done
+        ? [colors.mint, colors.mintBright, colors.mint]
+        : [colors.blueDeep, colors.sky, colors.blueDeep];
     // 아직 0%면 짧은 호가 돌며 '시작하는 중'임을 보여 준다.
     final start = -math.pi / 2 + (spin ?? 0) * 2 * math.pi;
     final sweep = spin != null
@@ -897,7 +898,7 @@ class _RingPainter extends CustomPainter {
       ..strokeWidth = stroke
       ..strokeCap = StrokeCap.round
       ..shader = SweepGradient(
-        colors: colors,
+        colors: ringColors,
         transform: GradientRotation(start),
       ).createShader(rect);
     canvas.drawArc(rect, start, sweep, false, paint);
@@ -908,7 +909,7 @@ class _RingPainter extends CustomPainter {
       canvas.drawCircle(
         tip,
         stroke / 2 + 4 * glow,
-        Paint()..color = _sky.withValues(alpha: 0.28 * (1 - glow) + 0.08),
+        Paint()..color = colors.sky.withValues(alpha: 0.28 * (1 - glow) + 0.08),
       );
     }
   }
@@ -918,18 +919,20 @@ class _RingPainter extends CustomPainter {
       old.value != value ||
       old.glow != glow ||
       old.spin != spin ||
-      old.done != done;
+      old.done != done ||
+      old.colors != colors;
 }
 
 /// 흐르는 빛 막대.
 class _ShimmerPainter extends CustomPainter {
-  _ShimmerPainter(this.t);
+  _ShimmerPainter(this.t, this.colors);
 
   final double t;
+  final ProgressColors colors;
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = const Color(0xffdbe7fb));
+    canvas.drawRect(Offset.zero & size, Paint()..color = colors.shimmerTrack);
     final width = size.width * 0.35;
     final left = -width + (size.width + width) * t;
     final rect = Rect.fromLTWH(left, 0, width, size.height);
@@ -938,14 +941,15 @@ class _ShimmerPainter extends CustomPainter {
       Paint()
         ..shader = LinearGradient(
           colors: [
-            _sky.withValues(alpha: 0),
-            _blue,
-            _sky.withValues(alpha: 0),
+            colors.sky.withValues(alpha: 0),
+            colors.blue,
+            colors.sky.withValues(alpha: 0),
           ],
         ).createShader(rect),
     );
   }
 
   @override
-  bool shouldRepaint(_ShimmerPainter old) => old.t != t;
+  bool shouldRepaint(_ShimmerPainter old) =>
+      old.t != t || old.colors != colors;
 }

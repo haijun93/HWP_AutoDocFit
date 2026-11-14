@@ -221,6 +221,9 @@ mod tests {
     use super::*;
     use std::sync::mpsc::channel;
 
+    /// 감시기는 프로세스에 하나(`CURRENT`)라 이를 바꾸는 시험끼리 동시에 돌면 서로의 감시를 끈다.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
     #[test]
     fn parse_records() {
         let mut raw = Vec::new();
@@ -240,6 +243,7 @@ mod tests {
 
     #[test]
     fn watches_real_folder() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         let dir = std::env::temp_dir().join(format!("kagent-watch-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sub")).unwrap();
@@ -258,6 +262,7 @@ mod tests {
 
     #[test]
     fn restart_empty_roots_cleans_up() {
+        let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         restart(vec![], |_| {});
         assert!(CURRENT.lock().unwrap().is_none());
         stop();

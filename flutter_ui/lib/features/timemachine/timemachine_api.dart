@@ -83,6 +83,10 @@ class TimemachineContentResult {
     required this.ctime,
     required this.hierarchy,
     required this.hierarchyRank,
+    required this.breadcrumbText,
+    required this.breadcrumb,
+    required this.sections,
+    required this.contextHits,
     required this.bm25,
     required this.position,
     this.id,
@@ -90,7 +94,10 @@ class TimemachineContentResult {
   });
 
   final int? id;
-  final String fileName, folderName, folderPath, snippet, kind, hierarchy;
+  final String fileName, folderName, folderPath, snippet, kind, hierarchy, breadcrumbText;
+  final List<String> breadcrumb;
+  final List<Map<String, Object?>> sections;
+  final List<Object?> contextHits;
   final String? path;
   final Map<String, int> matchCounts;
   final int totalMatches, size, hierarchyRank;
@@ -153,6 +160,22 @@ class TimemachineContentResult {
     final ctime = _safeDouble(value['ctime']);
     final hierarchy = '${value['hierarchy'] ?? value['highest_hierarchy'] ?? ''}';
     final hierarchyRank = _safeInt(value['hierarchy_rank']) ?? _safeInt(value['rank']) ?? 999999;
+    final breadcrumbText = '${value['breadcrumb_text'] ?? ''}'.trim();
+    final breadcrumb = value['breadcrumb'] is Iterable
+        ? (value['breadcrumb'] as Iterable).map((item) => '$item').toList()
+        : const <String>[];
+    final contextHits = value['context_hits'] is Iterable
+        ? (value['context_hits'] as Iterable).toList()
+        : const <Object?>[];
+    final sections = value['sections'] is Iterable
+        ? (value['sections'] as Iterable)
+            .whereType<Map>()
+            .map((section) => <String, Object?>{
+                  for (final entry in section.entries)
+                    if (entry.key is String) entry.key as String: entry.value,
+                })
+            .toList()
+        : const <Map<String, Object?>>[];
     final bm25 = _safeDouble(value['bm25'], _safeDouble(value['score']));
 
     final page = _safeInt(value['page']) ?? _safeInt(value['page_number']);
@@ -178,6 +201,10 @@ class TimemachineContentResult {
       ctime: ctime,
       hierarchy: hierarchy,
       hierarchyRank: hierarchyRank,
+      breadcrumbText: breadcrumbText,
+      breadcrumb: breadcrumb,
+      sections: sections,
+      contextHits: contextHits,
       bm25: bm25,
       position: pos,
     );
@@ -216,7 +243,7 @@ class TimemachineApi {
       }
       return result;
     }
-    return {'ok': false, 'code': 'TM_RESPONSE', 'message': '타임머신 응답을 읽지 못했습니다.'};
+    return {'ok': false, 'code': 'TM_RESPONSE', 'message': '몽땅검색 응답을 읽지 못했습니다.'};
   }
 
   Future<List<TimemachineContentResult>> contentSearch(

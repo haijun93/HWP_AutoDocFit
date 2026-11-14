@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
 import '../../core/models/abbreviation.dart';
+import 'abbreviation_colors.dart';
 
 class AbbreviationEditor extends StatefulWidget {
   const AbbreviationEditor(
@@ -119,7 +120,7 @@ class _AbbreviationEditorState extends State<AbbreviationEditor> {
                   Padding(
                       padding: const EdgeInsets.only(top: 12),
                       child: Text(error!,
-                          style: const TextStyle(color: Colors.red))),
+                          style: TextStyle(color: AbbreviationColors.of(context).error))),
                 if (busy) const LinearProgressIndicator(),
               ]),
             ),

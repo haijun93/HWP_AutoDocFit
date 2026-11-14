@@ -39,6 +39,32 @@
 **2차(같은 날)**: 서식 보존(글과 함께 HTML·RTF 보관·복원, 스키마 v2 자동 이전), 팝업 찾기(글자를 치면 바로 찾기, 한글 조합 중 글자 반영, Esc로 지우기), 폴더 감시(`watch.rs`: ReadDirectoryChangesW + 완료 포트 한 개, 400ms 묶기, 넘침이면 그 폴더만 다시 훑기) — 스크린샷 폴더의 새 PNG를 '캡처' 항목으로(같은 캡처가 클립보드로 3초 안에 왔으면 한 번만), 타임머신 조사 폴더를 앱과 같은 `timeline.db` 스키마로 실시간 갱신(`timeline.rs`, 설정 `timeline_roots`). 실측(`scripts/kagent_watch_check_pc.py`): 새 파일 반영 0.43초, 지운 폴더 반영, 임시 파일 무시, 앱 `Store`로 읽기 호환, 감시 켠 상태 유휴 CPU 0.0%·개인 메모리 1.95MB, exe 0.72MB.
 남은 것: 코드 서명(인증서 필요), 24시간 누수 측정(K1 과제로 스트레스 측정 스크립트), 타임머신 화면(TM2 과제).
 
+**화면캡처 폴더 자동 인식·그림 미리보기(KCAP1, 2026-11-13, 브랜치 `feature/kclip-capture-preview`)**:
+- 폴더 찾기(`capture_dirs.rs`): 알려진 폴더 Screenshots(캡처 도구·Win+PrtSc, OneDrive가 옮긴 경로 포함)·사진\Screenshots·사진\스크린샷, OneDrive 뿌리(`OneDrive`·`OneDriveConsumer`·`OneDriveCommercial`)의 스크린샷 폴더, 동영상\Captures(Xbox Game Bar), 사진·문서 아래 ALCapture·알캡처·한컴 캡처·HancomCapture·PicPick, 문서\ShareX\Screenshots(하위 폴더까지). **실제로 있는 폴더만** 감시하고 같은 폴더는 한 번. 알캡처·한컴·PicPick 기본 폴더 이름은 추정이며 실기 확인 전이다. 캡처 도구의 '저장 위치 바꾸기'는 알려진 폴더 Screenshots를 옮기는 것으로 보고 따로 읽지 않는다(실기 확인 필요). 새로 설치한 캡처 앱 폴더는 다음 감시 재시작(설정 변경·일시정지 해제·에이전트 재시작) 때 잡힌다.
+- 폴더별 감시 상태(명시적 상태 기계 `plan`): `Watching`·`UserOff`(설정 `capture_dirs_off`)·`AllOff`(`watch_screenshots=false`)·`Paused`, 우선순위 AllOff > Paused > UserOff > Watching. `status.json`·`settings_get/set`의 `capture_dirs`(경로·출처·상태)로 앱·에이전트가 같은 값을 본다.
+- 기록: 새 png·jpg·jpeg·bmp·gif·webp를 **내용 없이 경로만** 파일 항목(출처 `screenshot`, 미리보기 `캡처 · 이름`)으로. 크기가 멈추고 PNG는 IEND까지 쓰인 뒤 기록, 3초 안에 클립보드 그림이 기록됐으면 겹침으로 보고 건너뜀. 붙일 때 PNG·BMP는 그림(PNG·CF_DIB)을 먼저, 파일(CF_HDROP)을 뒤에 올린다. 예전에는 Screenshots 한 곳의 PNG 내용을 저장했다(동작 변경 — 원본 파일을 지우면 항목은 붙지 않는다).
+- 미리보기(`thumb.rs`·`preview.rs`): 그림 항목(저장 그림, 그림 파일이 든 파일 항목)을 마우스로 가리키거나 키보드·휠로 고르면 긴 변 320px 썸네일을 커서(키보드는 창 옆 그 줄) 옆에 띄움. 상태 Hidden/Waiting/Showing(`step` 순수 함수), 썸네일은 작업 스레드 하나가 필요할 때 만들고 메모리 4MB·디스크 16MB(DPAPI 암호화, `thumbs\`) 캐시, 모두 지우기 때 삭제. 앱 화면은 파이프 `thumb`로 같은 캐시를 쓰고 같은 상태 기계(`kclip_preview.dart`)를 따른다.
+- 실측(2026-11-13, 릴리스 빌드·시험 인스턴스, 각 1회): 캡처 파일 생김→항목 기록 598ms(쓰기 완료 확인 대기 포함), 썸네일 첫 생성 1920×1080 PNG 파일 87ms·4K 저장 그림 177ms(목표 50ms 넘음), 메모리 캐시 2.9~3.1ms, 에이전트 재시작 뒤 디스크 캐시 30.8ms, 디스크 캐시 평문 PNG 없음, 폴더 끄기 뒤 새 파일 기록 안 함, 모두 지우기 뒤 `thumbs\` 삭제, 유휴 개인 메모리 3.13MB. 이 PC에서 찾은 폴더: OneDrive로 옮긴 사진\스크린샷(알려진 폴더), 동영상\Captures.
+- **썸네일 미리 만들기(KCAP2, 2026-11-13 사용자 결정)**(`prewarm.rs`): 첫 생성이 목표 50ms를 넘어, 그림(클립보드)·화면캡처 항목을 기록하면 대기열에 넣고 배경 모드 스레드(`THREAD_MODE_BACKGROUND_BEGIN`, CPU·디스크 모두 낮은 우선순위)가 마지막 기록 뒤 300ms 쉬었다가 하나씩 만들어 같은 메모리·디스크 캐시(상한·암호화 그대로)에 둔다. 항목별 상태 `Queued`→`Generating`→`Done`/`Failed`(순수 `Queue`, 생성 중은 하나, 대기열 상한 8 넘으면 가장 오래된 대기 버림, 다시 기록되면 맨 앞으로, 메모리 캐시에 이미 있으면 건너뜀, 생성 중 아닌 항목의 끝은 무시). 미리 만들기 전에 가리키면 기존 즉시 생성 경로 그대로. 모두 지우기(파이프·빠른 목록·트레이 — 트레이 메뉴는 이번에 썸네일 삭제를 빠뜨렸던 것을 고침)는 대기열을 비우고 캐시 세대 번호를 올려, 지우기와 겹친 생성 결과가 캐시에 되살아나지 않게 한다. 요약은 `status.json`의 `thumb_prewarm`(queued·generating·made·skipped·failed·dropped).
+  실측(2026-11-13, 릴리스 빌드·시험 인스턴스, 잡음 PNG — 실제 화면보다 풀기 무거움, 1회, `scripts/kagent_thumb_prewarm_check_pc.py`): 캡처 기록 548ms 뒤 미리 만들기 끝 +401ms(1080p)·+535ms(4K), 그 뒤 첫 미리보기 에이전트 안 1.2ms·1.0ms(파이프 왕복 3.7·2.8ms, 전 87·177ms), 미리 만들기 전에 바로 가리키면 즉시 생성 95.4ms(이후 미리 만들기는 건너뜀), 연속 12장(30ms 간격) 9장 생성·3장 버림·가장 새 것 1.0ms, 쉴 때 CPU 0.0%(5초)·개인 메모리 5.78MB(썸네일 메모리 캐시 최대 4MB 포함, 전 3.13MB), 디스크 캐시 12개 1.66MB 평문 PNG 0, 모두 지우기 뒤 `thumbs\` 없음.
+- **썸네일 최고속도·최저자원(KCAP3, 2026-11-14)**(`thumb.rs` 단계형, `boxscale.rs`, `wic.rs`): 출처별 단계 순서(`thumb::steps`, 순수·시험 대상)대로 해 보고 처음 된 것을 쓴다. 저장 그림 = 메모리 → 디스크(QOI) → PNG 줄 단위 풀기+줄 단위 박스 축소(원본 전체 해상도 버퍼 없음, 값은 예전 축소와 같음 — PSNR ∞). PNG 파일 = 같은 순서 + 마지막 탐색기 썸네일(새 캡처는 탐색기 캐시에 없어 캐시 조회 생략). 그 밖 그림 파일(JPG 등) = 메모리 → 디스크 → 탐색기 캐시만 조회(`SIIGBF_INCACHEONLY`) → WIC 축소 해독(JPEG 1/2·1/4·1/8, `IWICBitmapSourceTransform`; EXIF 회전이 있으면 건너뜀) → 탐색기 썸네일 만들기. 클립보드 비트맵(CF_DIB)은 기록 때 PNG로 바꾸기 전 메모리 비트맵에서 바로 축소해 캐시에 넣고(`thumb::prime`) 미리 만들기 대기열에 넣지 않는다. 디스크 캐시는 QOI(옛 PNG 캐시도 읽음, DPAPI 봉인 그대로). COM은 스레드마다 한 번 켜 둔다(호출마다 켜고 끄면 DLL 재적재로 수십~수백 ms). 단계별 성공 수는 `status.json`의 `thumb_steps`. 시험 빌드는 `opt-level=1`(의존성 2)로 속도 시험이 전체 부하에서 흔들리지 않게 했다.
+  실측(2026-11-14 전날 밤, 릴리스 빌드, 합성 그림만 — UI 화면형 평면 색·글자, 클립보드형, 사진형 JPEG, 후보마다 새 프로세스 1회(첫 호출+이어서 4번 중앙값), `scripts/kagent_thumb_bench`; 최대 메모리 = 프로세스 PeakWorkingSet, 그림 읽기만 하는 `none`이 바탕값):
+
+  | 그림 | 전(현재 방식) ms / 최대 MB | 후(채택) ms / 최대 MB | 채택 | 화질(PSNR) |
+  |---|---:|---:|---|---|
+  | UI 1080p PNG | 34.8 / 15.8 | 16.8 / 9.9 | PNG 줄 단위 | ∞(같음) |
+  | UI 1440p PNG | 54.0 / 20.7 | 28.6 / 10.1 | PNG 줄 단위 | ∞ |
+  | UI 4K PNG | 127.2 / 34.7 | 61.5 / 11.2 | PNG 줄 단위 | ∞ |
+  | 클립보드형 1080p PNG | 34.4 / 18.4 | 22.8 / 10.7 | PNG 줄 단위 | ∞ |
+  | 클립보드형 4K PNG | 127.1 / 45.1 | 52.2 / 13.6 | PNG 줄 단위 | ∞ |
+  | 클립보드 비트맵 1080p | PNG 인코드 뒤 풀기(위 34.4) | +3.6(9.0−읽기 5.4) / +0.4 | 비트맵 바로 축소 | ∞ |
+  | 클립보드 비트맵 4K | PNG 인코드 뒤 풀기(위 127.1) | +16.9(40.1−23.2) / +0.5 | 비트맵 바로 축소 | ∞ |
+  | 사진 1080p JPEG | 26.9 / 10.7(전체 해독+박스) | 16.1 / 10.5 | WIC 축소 해독 | 47.2dB |
+  | 사진 12MP JPEG | 170.0 / 11.4 | 111.8 / 10.8 | WIC 축소 해독 | 51.2dB |
+  | 디스크 캐시 풀기(1080p 썸네일) | PNG 5.0ms·78,662B | QOI 2.1ms·46,822B | QOI | ∞ |
+
+  탈락 후보: zune-png 전체 해독(4K 76ms·57.7MB), zune-png+fast_image_resize(4K 66ms·57.8MB, PSNR 56dB), WIC 줄 묶음 PNG(4K 89ms), WIC 축소기 Fant(4K 90ms, PSNR 55dB), 원시·LZ4 디스크 캐시(풀기 2.7·2.3ms지만 크기 173KB·68KB). 탐색기 썸네일 캐시는 있으면 10~16ms(4K·12MP도 같음)지만 프로세스 첫 호출에 셸 적재 200~600ms·없음 판정 3~5ms·메모리 +10MB여서 PNG에는 쓰지 않고 JPG 등에서 WIC 앞 조회로만 쓴다(PSNR 34~47dB, 탐색기 자체 축소). exe 크기 2,452,992 → 2,470,912B(+17.5KB, qoi 0.4 MIT OR Apache-2.0, 의존성 없음; 측정 전용 zune·fast_image_resize·lz4_flex는 에이전트에 넣지 않음). 시험: 박스 축소가 예전 축소와 모든 형식·홀수 크기에서 같음, PNG 줄 단위=전체 해독, 비트맵 썸네일=저장 PNG 썸네일(24·32비트·반투명), WIC=PNG 해독 결과, QOI 왕복·옛 PNG 캐시 읽기, 단계 순서.
+
 ## 1. 왜 독립 exe인가 (같은 exe 모드와 비교)
 
 | 항목 | 기존 exe의 `--kclip` 모드 | **독립 `kagent.exe`(제안)** |
@@ -153,3 +179,9 @@
 3. 기관 PC에서 **상주 프로그램·자동 시작**(HKCU Run)이 허용되는지.
 4. 팝업은 1차에 **네이티브 최소 구현**(제안)으로 하고 한글 검색(IME)은 2차로 미뤄도 되는지.
 5. 에이전트 데이터 위치(`%LOCALAPPDATA%`)가 기관 정책(프로필 초기화·로밍)에 맞는지.
+
+## 12. 가상 폴더 창(kvf)
+
+`kvf.exe`는 앱과 별도 프로세스로 동작하는 가상 폴더 창이다. 자료함 DB를 읽기 전용으로 열어 `box`의 `id, name, description, created_at, updated_at` 5개 열과 `item`의 `id, box_id, kind, source_path, display_name, space, created_at, origin_path, managed_path` 9개 열을 읽는다. `origin_path`·`managed_path`가 없는 예전 DB는 열 목록을 확인해 빈 문자열로 처리한다. klib는 `klib/tests/test_klib.rs::test_kvf_read_column_contract`로 이 열 이름과 순서를 고정하며, `klib/src/db.rs`의 `box_get` 주석은 kvf가 이 구조를 읽는다고 알린다.
+
+2026-11-13 V10 마무리 시 R6(앱에서 추가 후 F5 새 항목 확인) 0회, R7(앱 쓰기 중 단축키 확인) 0회, R9(숨긴 뒤 1분 자원 측정) 0회, R10(1,000항목 표시 시간·메모리 측정) 0회로 모두 실기 미실시다. 따라서 R6·R7의 동작 결과와 R9·R10의 실측 메모리·CPU·시간 값은 확인되지 않았다. 계획의 R9 기준은 개인 메모리 2.0MB 이하·CPU 0.0%(목표 1.5MB), R10 기준은 100ms 이하·숨김 대비 +1.0MB 이하(시간 목표)이며, 이는 측정값이 아니다.

@@ -1,0 +1,4020 @@
+{
+  "schema": 1,
+  "documents": 2,
+  "queries": 86,
+  "service_checked": true,
+  "comparison_b_backend": "sqlite_keyword",
+  "comparison_a_differences": 0,
+  "comparison_b_unexplained": 15,
+  "deterministic": true,
+  "rows": [
+    {
+      "query": "예산",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "direction": "order"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산을",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 집행 계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "사업 주민 안전 관리",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산을 집행",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "산집",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "가나다라",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산  집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "집행 예산",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 및 집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [
+          "및"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        },
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [
+          "및"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "및",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "및"
+        ],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "및"
+        ],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "ㅇ",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "ㅇ"
+        ],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "ㅇ"
+        ],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행계",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "주민센터",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "주민센터프로그램",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "프로그램",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "센터 주민",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                3
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "budget",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "BUDGET plan",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "budgetplan",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "Budget-Plan",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "e-mail",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "email",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "strasse",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "STRASSE 예산",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "제1조",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "15배",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "1.5배 예산",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "2026",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행 계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "계획 예산집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행 주민센터",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "주민센터프로그램 예산집행계획",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "행계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집 행계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E5",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "도로공사",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "도로공사협의",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "복지문화교육환경",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "시설을",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "시설을관리",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "관리 점검 보고 축제 도로",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "direction": "order"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산,집행",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        },
+        {
+          "kind": "E2",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "(계획)",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        },
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "청소복지",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "환경시설 개선",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "교육을환경",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "결과현황개선청소",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 ext:txt",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 3,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 3,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 ext:md",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 path:문서",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 3,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 3,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 path:없음",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 after:2020",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "direction": "order"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 before:2099",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "direction": "order"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 -집행",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 -없는말",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "direction": "order"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "\"예산 집행\"",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 \"추진 계획\"",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "예산 ext:txt -관리",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "계획 after:2020 before:2099",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "가",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "가"
+        ],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "가"
+        ],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "가 예산",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [
+          "가"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        },
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 4,
+        "dropped": [
+          "가"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 3,
+            "sentences": [
+              [
+                0,
+                0
+              ],
+              [
+                1,
+                1
+              ],
+              [
+                5,
+                6
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "및 계획",
+      "expected": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [
+          "및"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\계획.md",
+          "direction": "added"
+        },
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 2,
+        "total_sentences": 2,
+        "dropped": [
+          "및"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          },
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "ㅇ 관리",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [
+          "ㅇ"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                4,
+                5
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [
+        {
+          "kind": "UNKNOWN",
+          "doc_key": "<CORPUS>\\문서.txt",
+          "direction": "added"
+        }
+      ],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [
+          "ㅇ"
+        ],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                4,
+                5
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "ㄱ",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "ㄱ"
+        ],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [
+          "ㄱ"
+        ],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "ABC",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "1234",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "2026 예산",
+      "expected": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 0,
+        "total_sentences": 0,
+        "dropped": [],
+        "hits": []
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "Plan",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "Budget 2026",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                3,
+                4
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "문화",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "교육",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "환경",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "안전",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                4,
+                5
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                4,
+                5
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "복지",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "도로",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "시설",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                1,
+                1
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "협의",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "지원",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\문서.txt",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                5,
+                6
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "결과",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                0,
+                0
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    },
+    {
+      "query": "현황",
+      "expected": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "legacy_differences": [],
+      "actual": {
+        "total_docs": 1,
+        "total_sentences": 1,
+        "dropped": [],
+        "hits": [
+          {
+            "doc_key": "<CORPUS>\\계획.md",
+            "adjacent": true,
+            "level": 8,
+            "count": 1,
+            "sentences": [
+              [
+                2,
+                2
+              ]
+            ]
+          }
+        ]
+      },
+      "count_equal": true,
+      "equal": true
+    }
+  ]
+}
