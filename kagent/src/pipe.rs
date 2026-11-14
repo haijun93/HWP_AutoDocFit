@@ -271,7 +271,10 @@ pub fn handle(v: &Value) -> Value {
             }
             let payload = accepted.join("\0");
             let preview = accepted.iter().map(|p| std::path::Path::new(p).file_name().and_then(|s| s.to_str()).unwrap_or(p)).collect::<Vec<_>>().join(" · ");
-            match a.store.lock().unwrap().insert("files", payload.as_bytes(), &[], &preview, "drop", now()) {
+            // 잠금을 먼저 푼다: match 조건의 잠금은 분기 끝까지 살아 있어 아래 enforce·refresh_recent의 같은 잠금에서 멈춘다
+            // (preview.rs의 미리보기 프리징과 같은 유형, 2026-11-14).
+            let inserted = a.store.lock().unwrap().insert("files", payload.as_bytes(), &[], &preview, "drop", now());
+            match inserted {
                 Ok((id, created)) => {
                     let _ = a.store.lock().unwrap().enforce(&settings, now());
                     refresh_recent();
