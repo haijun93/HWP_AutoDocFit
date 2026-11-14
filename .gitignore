@@ -43,3 +43,6 @@ resources/kclip_ffi.dll.sha256
 editor_core/target/
 
 /crates/kfind/target/
+ktm/target/
+resources/ktm.exe
+resources/ktm.exe.sha256

@@ -1440,7 +1440,20 @@ class DesktopWebBridge:
         from docfit_app.shell_menu import status
         snapshot = self._configuration().snapshot(running=self.gui.running)
         snapshot['values']['shell_menu'] = status()['registered']
+        self._attach_ktm_status(snapshot)
         return snapshot
+
+    def _attach_ktm_status(self, snapshot):
+        """설정 화면의 몽땅검색 칸에 지금 상태 한 줄을 붙인다(실패해도 설정 화면은 그대로)."""
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, KtmService, status_text
+            fields = [f for f in snapshot.get('fields', []) if f.get('key') == SETTING_KEY]
+            if fields:
+                text = status_text(KtmService().status())
+                for field in fields:
+                    field['status'] = text
+        except Exception:
+            logging.getLogger(__name__).warning("몽땅검색 상태 확인 실패", exc_info=True)
 
     def get_settings(self):
         # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
@@ -1453,6 +1466,13 @@ class DesktopWebBridge:
     def save_settings(self, values, revision):
         def save():
             self._configuration().save(values, revision, running=self.gui.running)
+            if 'mongttang_search' in values:
+                # 몽땅검색 켜기·끄기는 상주 프로그램을 끄고 기다릴 수 있어(최대 수 초) Tk 밖 스레드에서 한다.
+                from docfit_app.ktm_service import KtmService
+                enabled = bool(values['mongttang_search'])
+                threading.Thread(target=lambda: logging.getLogger(__name__).info(
+                    "몽땅검색 설정 반영: %s", KtmService().apply_setting(enabled)),
+                    name='ktm-apply', daemon=True).start()
             if 'freeze_tracing' in values:
                 self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
@@ -3933,6 +3953,14 @@ def run_webview(gui):
                 logging.getLogger(__name__).exception("몽땅클립보드 에이전트 업그레이드 점검 실패")
 
         threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
+        # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, sync_in_background
+            ktm_values = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
+            sync_in_background(bool(ktm_values.get(SETTING_KEY, True)))
+        except Exception:
+            logging.getLogger(__name__).exception("몽땅검색 점검 시작 실패")
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

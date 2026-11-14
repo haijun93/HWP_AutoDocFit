@@ -850,6 +850,11 @@ final Map<String, SettingGuide> settingGuides = {
     '현재 사용자에게만 등록해요. Windows 11에서는 파일 우클릭 → 더 많은 옵션 표시 → 한글편집 후처리에서 변환할 수 있어요.',
   ),
   'always_on_top': SettingGuide('program', '항상 위에 표시', '앱 창을 다른 창보다 위에 둬요.'),
+  'mongttang_search': SettingGuide(
+    'general',
+    '몽땅검색 단축키',
+    'Ctrl+Alt+Space를 누르면 어디서든 몽땅검색 창이 떠요. 로그인할 때 자동으로 켜지고, 끄면 상주 프로그램과 자동 실행을 함께 꺼요.',
+  ),
   'hwp_font_folder': SettingGuide(
     'program',
     '한글 글꼴 폴더',

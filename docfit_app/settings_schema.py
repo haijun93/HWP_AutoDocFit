@@ -1,6 +1,8 @@
 """Shared settings defaults; storage keys and legacy adapter bindings are preserved."""
 DEFAULTS = {
     'shell_menu': False,
+    # 몽땅검색 단축키 앱(ktm.exe, Ctrl+Alt+Space): 기본 켬(MG3 사용자 지시). 끄면 상주 프로그램을 끄고 자동 실행을 푼다.
+    'mongttang_search': True,
     'file_rename_sendto': False,
     'rust_rename_preview': True,
     'rust_timemachine_scan': True,
