@@ -1074,7 +1074,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 0
             }
             WM_ACTIVATE if (wp & 0xFFFF) as u32 == WA_INACTIVE => {
-                if !app().settings.lock().unwrap().sticky_popup { hide(); }
+                let sticky = app().settings.lock().unwrap().sticky_popup;
+                if !sticky { hide(); }
                 0
             }
             WM_MOUSEACTIVATE => {
@@ -1287,7 +1288,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if let Some(i) = row_at(hwnd, lp) {
                     let w = client_width(hwnd);
                     let action_width = scale(hwnd, ROW_PIN_W + ROW_DELETE_W);
-                    if STATE.lock().unwrap().hover == Some(i) && x >= w - action_width {
+                    // 조건식 안에서 잠그면 본문 끝(refresh 등)까지 잠금이 살아 있어
+                    // 본문 안의 STATE.lock() 및 refresh()에서 영구 멈춤(데드락)이 발생한다.
+                    let is_hovered = STATE.lock().unwrap().hover == Some(i);
+                    if is_hovered && x >= w - action_width {
                         let item = { let st = STATE.lock().unwrap(); st.items.get(i).map(|v| (v.id, v.pinned)) };
                         if let Some((id, pinned)) = item {
                             if row_action(x, w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W)) == Some(true) {
