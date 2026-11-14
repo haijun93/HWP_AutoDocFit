@@ -164,7 +164,7 @@ fn test_hwp5_control_characters_handling() {
     // - 서러게이트 페어: 4바이트 유니코드 (예: 훈민정음 특수문자 또는 이모지)
     let items = vec![
         ParaTextItem::String("시작".to_string()),
-        ParaTextItem::Control(9), // 탭
+        ParaTextItem::ExtendedControl(9, [0x20; 14]), // 탭(인라인 컨트롤 8 WCHAR, 규격)
         ParaTextItem::String("탭이후".to_string()),
         ParaTextItem::Control(10), // 줄바꿈
         ParaTextItem::String("줄바꿈이후".to_string()),

@@ -475,10 +475,10 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
             1..=8 | 11 | 14..=23 => {
                 i = (i + 8).min(n_wchars);
             }
-            // 9: 탭
+            // 9: 탭 — 규격상 인라인 컨트롤(8 WCHAR: 코드 + 부가 정보 7). 1만 건너뛰면 부가 정보가 깨진 글자로 나온다.
             9 => {
                 out.push('\t');
-                i += 1;
+                i = (i + 8).min(n_wchars);
             }
             // 10: 줄바꿈, 12: 폼 피드, 13: 문단 끝
             10 | 12 | 13 => {
@@ -882,6 +882,18 @@ mod tests {
         assert!(decoded.contains("앞부분"));
         assert!(decoded.contains("뒷부분글자"));
         assert_eq!(decoded.replace('\n', " "), "앞부분 뒷부분글자");
+    }
+
+    #[test]
+    fn test_hwp5_tab_is_inline_control_8_wchars() {
+        // 탭(9)은 인라인 컨트롤: 코드 1 + 부가 정보 7 WCHAR. 부가 정보가 글자로 새면 안 된다.
+        let mut text_bytes = encode_utf16le("평가");
+        text_bytes.extend_from_slice(&9u16.to_le_bytes());
+        for w in [0x58A0u16, 0x0403, 0, 0, 0, 0, 9] {
+            text_bytes.extend_from_slice(&w.to_le_bytes());
+        }
+        text_bytes.extend_from_slice(&encode_utf16le("1"));
+        assert_eq!(decode_para_text(&text_bytes), "평가\t1");
     }
 
     #[test]

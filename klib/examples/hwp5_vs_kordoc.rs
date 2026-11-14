@@ -140,8 +140,31 @@ fn clean_kordoc_markdown(text: &str) -> String {
     let step3 = re_img.replace_all(&step2, "");
     // 4. 마크다운 링크 [text](url) -> text 보존
     let step4 = re_link.replace_all(&step3, "$1");
-    // 5. 기타 HTML 태그 (<b>, </b>, <span> 등) 제거
-    let step5 = re_tag.replace_all(&step4, "");
+    // 5. 블록 태그(표 칸·행·문단·목록)는 경계이므로 개행으로, 나머지 인라인 태그(<b>, <span> 등)는 제거
+    static RE_BLOCK: OnceLock<Regex> = OnceLock::new();
+    let re_block = RE_BLOCK.get_or_init(|| {
+        Regex::new(r"(?i)</?(td|th|tr|thead|tbody|table|p|div|li|ul|ol|h[1-6])\b[^>]*>").unwrap()
+    });
+    let step4b = re_block.replace_all(&step4, "\n");
+    let step5_tags = re_tag.replace_all(&step4b, "");
+    // 5b. HTML 문자 참조 복원(&lt; &gt; &amp; &quot; &#39; &nbsp; &#NN; &#xNN;)
+    static RE_ENT: OnceLock<Regex> = OnceLock::new();
+    let re_ent = RE_ENT.get_or_init(|| Regex::new(r"&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|amp|quot|apos|nbsp);").unwrap());
+    let step5 = re_ent.replace_all(&step5_tags, |c: &regex::Captures| {
+        let e = &c[1];
+        match e {
+            "lt" => "<".to_owned(),
+            "gt" => ">".to_owned(),
+            "amp" => "&".to_owned(),
+            "quot" => "\"".to_owned(),
+            "apos" => "'".to_owned(),
+            "nbsp" => " ".to_owned(),
+            _ => {
+                let n = if let Some(h) = e.strip_prefix("#x") { u32::from_str_radix(h, 16).ok() } else { e[1..].parse().ok() };
+                n.and_then(char::from_u32).map(String::from).unwrap_or_default()
+            }
+        }
+    });
 
     let mut out = String::with_capacity(step5.len());
     for line in step5.lines() {
