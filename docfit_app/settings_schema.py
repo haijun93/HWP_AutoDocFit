@@ -4,6 +4,8 @@ DEFAULTS = {
     'file_rename_sendto': False,
     'rust_rename_preview': True,
     'rust_timemachine_scan': True,
+    # 검색 위계 판정을 Rust DLL로(HRUST1). False면 Python 규칙으로 되돌린다.
+    'rust_search_hierarchy': True,
     "prevent_word_split": True,
     # 장평 줄이기(가로 비율 축소)는 기본으로 끈다(2026-10-10 사용자 규칙). 끄면 자간 줄이기·늘리기만으로 조정한다.
     "ratio_shrink": False,

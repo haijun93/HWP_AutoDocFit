@@ -31,17 +31,13 @@ pub fn unify_marker(text: &str) -> (String, String, String) {
             }
         }
         if marker.is_empty() {
-            let chars: Vec<char> = stripped.chars().collect();
-            if chars.len() >= 3
-                && chars[0].is_ascii_digit()
-                && chars[1].is_ascii_digit()
-                && matches!(chars[2], '.' | '．')
-                && (chars.len() == 3
-                    || (!chars[3].is_ascii_digit()
-                        && !chars[3].is_whitespace()
-                        && !matches!(chars[3], '.' | '．' | ',' | '，')))
-            {
-                marker = chars[..3].iter().collect();
+            // Python style_unify._TIGHT_NUMBER: one or two digits, a period, then a non-space glyph.
+            static TIGHT: std::sync::OnceLock<crate::compat::lead_regex::LeadRegex> = std::sync::OnceLock::new();
+            let tight = TIGHT.get_or_init(|| {
+                crate::compat::lead_regex::LeadRegex::new(r"^\d{1,2}[.．](?=[^\d\s.．,，])")
+            });
+            if let Some(m) = tight.find(crate::compat::marker_scheme::marker_head(stripped)) {
+                marker = m.to_string();
                 role = "소제목".to_string();
             }
         }
@@ -110,4 +106,20 @@ fn marker_class(marker: &str) -> String {
         return "➊".into();
     }
     marker.to_string()
+}
+
+#[cfg(test)]
+mod tight_number_tests {
+    use super::unify_marker;
+    // HRUST1 실문서 대조: 띄어쓰기 없는 한 자리 번호도 Python처럼 소제목 후보다.
+    #[test]
+    fn tight_numbers_match_python_style_unify() {
+        let marker = |t: &str| unify_marker(t).2;
+        assert_eq!(unify_marker("1.본문"), ("1.".into(), "소제목".into(), "1.".into()));
+        assert_eq!(marker("12.본문"), "12.");
+        assert_eq!(marker("3．항목"), "3．");
+        assert_eq!(marker("123.본문"), "");
+        assert_eq!(marker("1.5배"), "");
+        assert_eq!(marker("1.,가"), "");
+    }
 }

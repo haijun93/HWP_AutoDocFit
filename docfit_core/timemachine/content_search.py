@@ -240,10 +240,17 @@ def _plain_chapter_levels(path, paragraphs):
             for position, number in candidates.items()}
 
 
-def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord]) -> list[ParagraphRecord]:
+def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord],
+                              *, backend: str | None = None) -> list[ParagraphRecord]:
+    """문단 위계를 판정한다(규칙 판 CURRENT_HIERARCHY_SCHEMA_VERSION).
+
+    판정 원본은 Rust(hierarchy DLL, HRUST1)다. 순서: ① 서식 엔진(hierarchy_engine 켜짐) 응답
+    ② Rust 검색 위계(기본, 설정 rust_search_hierarchy=False면 건너뜀) ③ 아래 Python 규칙.
+    Python 규칙은 Rust와 같은 판으로 유지하는 대조 기준이며, backend="python"이면 엔진을 부르지 않는다.
+    """
     if not paragraphs:
         return []
-    from docfit_app.hierarchy_bridge import analyze_levels
+    from docfit_app.hierarchy_bridge import analyze_levels, search_levels
     from ..ai_answer import _LABEL_BY_MARKER
 
     marker_by_label = {label: marker for marker, label in _LABEL_BY_MARKER.items()}
@@ -269,13 +276,16 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 if i in label_levels else record for i, record in enumerate(records)]
 
     plain_chapters = _plain_chapter_levels(path, paragraphs)
-    engine_levels = analyze_levels(
-        [{"text": p.text, "indent": 0, "font_size": 0,
-          "source_path": os.fspath(path), "paragraph_index": p.paragraph_index,
-          "is_table_cell": p.is_table_cell, "style_name": p.style_name,
-          "outline_level": p.outline_level, "table_cell_id": p.table_cell_id,
-          "table_id": p.table_id} for p in paragraphs]
-    )
+    engine_levels = None
+    if backend != "python":
+        payload = [{"text": p.text, "indent": 0, "font_size": 0,
+                    "source_path": os.fspath(path), "paragraph_index": p.paragraph_index,
+                    "is_table_cell": p.is_table_cell, "style_name": p.style_name,
+                    "outline_level": p.outline_level, "table_cell_id": p.table_cell_id,
+                    "table_id": p.table_id} for p in paragraphs]
+        engine_levels = analyze_levels(payload)
+        if engine_levels is None:
+            engine_levels = search_levels(payload)
     engine_search = engine_levels.get("search_levels") if engine_levels is not None else None
     legacy_levels = (engine_levels.get("levels") if engine_levels is not None
                      and "search_levels" not in engine_levels else None)

@@ -57,8 +57,7 @@ def corpus():
 def compare(exe, *, dll=None, klib=None):
     differences, engine_differences, count = [], [], 0
     for path, records in corpus():
-        with patch('docfit_app.hierarchy_bridge.analyze_levels', return_value=None):
-            expected = classify_paragraph_levels(path, records)
+        expected = classify_paragraph_levels(path, records, backend='python')
         payload = {'paragraphs': [dict(asdict(p), source_path=path) for p in records]}
         done = subprocess.run([str(exe)], input=json.dumps(payload, ensure_ascii=False).encode(), capture_output=True, check=True)
         result = json.loads(done.stdout)

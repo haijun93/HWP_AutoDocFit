@@ -9,6 +9,7 @@ pub mod most_common;
 pub mod analyze_hierarchy;
 pub mod hierarchy_summary;
 pub mod marker_scheme;
+pub mod lead_regex;
 
 use std::io::{Read, Write};
 

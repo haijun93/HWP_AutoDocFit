@@ -73,6 +73,17 @@ fn chapter(s: &str) -> Option<(u32, bool)> {
         !tail.trim().is_empty() && s.chars().count() <= 60,
     ))
 }
+/// Python `str.isalpha()` per character: Unicode General_Category L* only.
+/// Rust `char::is_alphabetic` also accepts Nl (Ⅰ·Ⅱ) and Other_Alphabetic (Ⓐ, combining marks).
+fn python_isalpha(c: char) -> bool {
+    static LETTER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    c.is_alphabetic() && {
+        let mut buf = [0u8; 4];
+        LETTER
+            .get_or_init(|| regex::Regex::new(r"^\p{L}$").unwrap())
+            .is_match(c.encode_utf8(&mut buf))
+    }
+}
 fn ordinal(s: &str, f: &str) -> Option<u32> {
     let (_, end) = classify_marker(s)?;
     let token: String = s.chars().take(end).collect();
@@ -218,12 +229,17 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
         .collect();
     if !numbered.is_empty() {
         let order = ["Ⅰ.", "I.", "1.", "가.", "(1)", "①", "㉠", "㉮"];
+        // 문단마다 한 번만 판정한다(계열 8개마다 다시 부르면 긴 문서에서 8배 느림).
+        let families: Vec<Option<String>> =
+            evidence.iter().map(|t| classify_marker(t).map(|v| v.0)).collect();
         let observed: Vec<_> = order
             .iter()
             .filter_map(|f| {
                 let rows: Vec<_> = evidence
                     .iter()
-                    .filter(|t| classify_marker(t).map(|v| v.0 == *f).unwrap_or(false))
+                    .zip(&families)
+                    .filter(|(_, family)| family.as_deref() == Some(*f))
+                    .map(|(t, _)| t)
                     .collect();
                 if rows.is_empty() {
                     None
@@ -414,7 +430,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
                         let s = texts[*i].trim();
                         ((4..=60).contains(&s.chars().count())
                             || !paragraphs[*i]["table_cell_id"].is_null())
-                            && s.chars().any(char::is_alphabetic)
+                            && s.chars().any(python_isalpha)
                     })
                 {
                     let id = &paragraphs[i]["table_cell_id"];
@@ -480,6 +496,19 @@ mod tests {
         assert_eq!(chapter("제3장본문"), None);
         assert_eq!(ordinal("Ⅱ. 계획", "Ⅰ."), Some(2));
         assert_eq!(ordinal("II. 계획", "I."), Some(2));
+    }
+    #[test]
+    fn title_cell_letters_follow_python_isalpha() {
+        // HRUST1 실문서 차이: 로마 숫자(Nl) 한 글자 칸은 Python에서 글자가 아니다.
+        for (c, expected) in [('Ⅰ', false), ('Ⓐ', false), ('가', true), ('A', true), ('ʰ', true), ('1', false)] {
+            assert_eq!(python_isalpha(c), expected, "{c}");
+        }
+        let p = vec![
+            json!({"text":"Ⅰ","source_path":"x.hwpx","is_table_cell":true,"table_cell_id":1}),
+            json!({"text":"계획 보고","is_table_cell":true,"table_cell_id":2}),
+            json!({"text":"□ 본문"}),
+        ];
+        assert_eq!(classify(&p), ["table_cell", "document_title", "square"]);
     }
     #[test]
     fn markdown_context() {

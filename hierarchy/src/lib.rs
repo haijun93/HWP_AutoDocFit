@@ -16,6 +16,20 @@ pub unsafe extern "C" fn hierarchy_analyze_json(input: *const std::ffi::c_char) 
     result.and_then(|s| std::ffi::CString::new(s).ok()).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
 }
 
+/// Search-only C ABI (HRUST1): `{"paragraphs":[...]}` of one whole document →
+/// `{"search_levels":[...]}`. Skips the formatting role analysis that the search index never reads.
+#[no_mangle]
+pub unsafe extern "C" fn hierarchy_search_levels_json(input: *const std::ffi::c_char) -> *mut std::ffi::c_char {
+    if input.is_null() { return std::ptr::null_mut(); }
+    let raw = std::ffi::CStr::from_ptr(input).to_bytes();
+    let result = std::panic::catch_unwind(|| {
+        let value: serde_json::Value = serde_json::from_slice(raw).ok()?;
+        let paragraphs = value.get("paragraphs")?.as_array()?;
+        serde_json::to_string(&serde_json::json!({"search_levels": search_levels::classify(paragraphs)})).ok()
+    }).ok().flatten();
+    result.and_then(|s| std::ffi::CString::new(s).ok()).map_or(std::ptr::null_mut(), std::ffi::CString::into_raw)
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn hierarchy_json_free(value: *mut std::ffi::c_char) {
     if !value.is_null() { drop(std::ffi::CString::from_raw(value)); }

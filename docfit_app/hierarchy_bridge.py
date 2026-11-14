@@ -1,4 +1,8 @@
-"""위계 엔진(hierarchy 실행 파일) 호출 브리지. 설정 hierarchy_engine이 켜졌을 때만 사용한다."""
+"""위계 엔진(hierarchy DLL·실행 파일) 호출 브리지.
+
+- 검색 위계(search_levels): HRUST1부터 기본 경로. 설정 rust_search_hierarchy=False면 Python 규칙.
+- 서식 역할(analyze_levels·engine_role_of_last): 설정 hierarchy_engine이 켜졌을 때만 사용한다.
+"""
 import json
 import os
 from threading import Lock
@@ -27,6 +31,11 @@ def _load_library(library):
             dll.hierarchy_analyze_json.restype = ctypes.c_void_p
             dll.hierarchy_json_free.argtypes = [ctypes.c_void_p]
             dll.hierarchy_json_free.restype = None
+            try:
+                dll.hierarchy_search_levels_json.argtypes = [ctypes.c_char_p]
+                dll.hierarchy_search_levels_json.restype = ctypes.c_void_p
+            except AttributeError:  # HRUST1 이전 DLL: 전체 분석 ABI로 대신한다.
+                pass
             _LIBRARIES[key] = dll
         return _LIBRARIES[key]
 
@@ -130,6 +139,54 @@ def analyze_levels(paragraphs, settings=None, executable=None, timeout=TIMEOUT_S
     if exe is None:
         return None
     return run_executable(exe, paragraphs, timeout)
+
+
+def _call_json(function, dll, payload):
+    ptr = function(payload)
+    if not ptr:
+        return None
+    try:
+        return json.loads(ctypes.string_at(ptr).decode("utf-8"))
+    finally:
+        dll.hierarchy_json_free(ptr)
+
+
+def run_search_library(library, paragraphs):
+    """문서 한 개의 문단 전체를 한 번에 DLL로 판정해 {"search_levels": [...]}를 돌려준다.
+
+    DLL은 처음 한 번 읽어 프로세스에 상주한다. 실패·형식 불일치는 None(호출한 쪽이 Python 규칙 사용).
+    """
+    try:
+        dll = _load_library(library)
+        payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False).encode("utf-8")
+        function = getattr(dll, "hierarchy_search_levels_json", None)
+        result = _call_json(function or dll.hierarchy_analyze_json, dll, payload)
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+    levels = result.get("search_levels") if isinstance(result, dict) else None
+    if not isinstance(levels, list) or len(levels) != len(paragraphs):
+        return None
+    return {"search_levels": levels}
+
+
+def search_backend(settings=None):
+    """검색 위계 판정 경로: "rust"(기본, DLL 상주) 또는 "python"(설정 rust_search_hierarchy=False, 되돌리기)."""
+    if settings is None:
+        try:
+            settings = _read_settings()
+        except Exception:
+            settings = {}
+    return "rust" if (settings or {}).get("rust_search_hierarchy", True) else "python"
+
+
+def search_levels(paragraphs, settings=None, library=None):
+    """검색 위계(이름 배열)를 Rust로 판정한다. Python 경로 설정·DLL 없음·실패면 None."""
+    if not paragraphs or search_backend(settings) != "rust":
+        return None
+    library = library or find_library()
+    if library is None:
+        return None
+    return run_search_library(library, paragraphs)
 
 
 # 엔진 Role 번호(hierarchy/src/lib.rs) → 쪽 맞춤 문단 역할. 그 밖의 값은 판정 보류(None).
