@@ -103,7 +103,11 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     match path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
         "txt" | "md" => extract_text(path),
         "hwpx" => extract_hwpx(path),
-        "hwp" => extract_hwp(path),
+        "hwp" => {
+            let records = extract_hwp(path)?;
+            // 숨은 글(hidden_comment)·메모(memo) 등 검색에 넣으면 안 되는 글은 색인 대상에서 제외 (HWP5-CMP4)
+            Ok(records.into_iter().filter(|p| p.location_kind != "hidden_comment" && p.location_kind != "memo").collect())
+        }
         "docx" => extract_docx(path),
         ext => Err(format!("unsupported: 지원하지 않는 문서 형식: .{ext}")),
     }
@@ -260,7 +264,11 @@ pub fn extract_for_index(path: &Path) -> Result<Vec<Paragraph>, String> {
             }
             Ok(records)
         }
-        "hwp" => extract_hwp(path),
+        "hwp" => {
+            let records = extract_hwp(path)?;
+            // 숨은 글(hidden_comment)·메모(memo) 등 검색에 넣으면 안 되는 글은 색인 대상에서 제외 (HWP5-CMP4)
+            Ok(records.into_iter().filter(|p| p.location_kind != "hidden_comment" && p.location_kind != "memo").collect())
+        }
         "docx" => {
             let mut records = extract_docx(path)?;
             let file = std::fs::File::open(path).map_err(|e| format!("corrupt: DOCX 파일 열기 실패: {e}"))?;
