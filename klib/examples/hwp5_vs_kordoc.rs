@@ -1,10 +1,15 @@
 //! HWP 5.0 Rust 직접 추출기(`hwp5`) vs kordoc(Node.js) 대조 벤치마크 및 정합성 검증 도구.
 //!
-//! 비교 기준 (HWP5-CMP2):
-//! 1. 공백 제거 정규화 전체 글 비교 (문자 일치율, Character Match Rate)
-//! 2. 2글자 조각 집합 일치율 (검색 결과 동일성, Bigram Set Similarity / Jaccard & Dice)
-//! 3. kordoc 대비 빠진 글 상위 5곳 스니펫 출력
-//! 4. 표 셀·머리말/꼬리말·각주 처리 차이 분류 (kordoc의 마크다운 표 행 결합 등)
+//! 비교 기준 (HWP5-CMP3):
+//! 1. kordoc 표시 잡음 정규화:
+//!    - <br>, <br/> 태그는 단어 분리를 위해 공백(' ')으로 치환
+//!    - <b>, </b>, <span> 등 모든 HTML 태그 및 주석 제거
+//!    - 마크다운 표 구분선(|---|---|), 수평선(---), 표 파이프(| -> 공백)
+//!    - 마크다운 서식 기호(헤딩 #, 볼드 **, 이탤릭 *, 취소선 ~~, 코드 ` 등) 제거
+//! 2. 공백 제거 정규화 전체 글 비교 (문자 일치율, Character Match Rate)
+//! 3. 2글자 조각 집합 일치율 (검색 결과 동일성, Bigram Set Similarity / Jaccard & Dice, 목표 99.5% 이상)
+//! 4. kordoc 대비 빠진 글 상위 5곳 스니펫 출력
+//! 5. 처리 차이 분류 (본문, 표 셀, 머리말·꼬리말, 각주·미주, 글상자, 숨은 글, 메모)
 //!
 //! 사용법:
 //!   cargo run --example hwp5_vs_kordoc -- <HWP_폴더_또는_파일경로>
@@ -15,7 +20,10 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use std::time::Instant;
+
+use regex::Regex;
 
 use klib::extract::{extract_hwp_kordoc, Paragraph};
 use klib::hwp5::extract_hwp5;
@@ -31,6 +39,9 @@ struct ParagraphBreakdown {
     footnote: usize,
     endnote: usize,
     textbox: usize,
+    hidden_comment: usize,
+    memo: usize,
+    dutmal: usize,
 }
 
 impl ParagraphBreakdown {
@@ -49,6 +60,9 @@ impl ParagraphBreakdown {
                     "footnote" => b.footnote += 1,
                     "endnote" => b.endnote += 1,
                     "textbox" => b.textbox += 1,
+                    "hidden_comment" => b.hidden_comment += 1,
+                    "memo" => b.memo += 1,
+                    "dutmal" => b.dutmal += 1,
                     _ => b.body += 1,
                 }
             }
@@ -90,20 +104,49 @@ fn collect_hwp_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// kordoc 마크다운에서 표 서식 및 주석 문법을 정규화하여 순수 본문 텍스트를 복원한다.
+static RE_BR: OnceLock<Regex> = OnceLock::new();
+static RE_COMMENT: OnceLock<Regex> = OnceLock::new();
+static RE_IMG: OnceLock<Regex> = OnceLock::new();
+static RE_LINK: OnceLock<Regex> = OnceLock::new();
+static RE_TAG: OnceLock<Regex> = OnceLock::new();
+
+/// kordoc 마크다운에서 표 서식, HTML 태그, 마크다운 기호를 정규화하여 순수 본문 텍스트를 복원한다.
+/// - <br>, <br/> 등은 단어가 붙지 않도록 공백(' ')으로 치환
+/// - <b>, </b>, <span> 등 기타 모든 HTML 태그 및 주석 제거
+/// - 마크다운 표 구분선 행, 수평선 제거
+/// - 마크다운 서식 기호(헤딩 #, 볼드 **, 이탤릭 *, 취소선 ~~, 코드 `, 인용 >, 목록 불릿 등) 제거
+/// - 표 파이프 '|'는 공백으로 치환
 fn clean_kordoc_markdown(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for line in text.lines() {
+    let re_br = RE_BR.get_or_init(|| Regex::new(r"(?i)<br\s*/?>").unwrap());
+    let re_comment = RE_COMMENT.get_or_init(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
+    let re_img = RE_IMG.get_or_init(|| Regex::new(r"!\[[^\]]*\]\([^)]*\)").unwrap());
+    let re_link = RE_LINK.get_or_init(|| Regex::new(r"\[([^\]]+)\]\([^)]*\)").unwrap());
+    let re_tag = RE_TAG.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
+
+    // 1. <br>, <br/> 태그는 단어가 붙지 않도록 공백으로 치환
+    let step1 = re_br.replace_all(text, " ");
+    // 2. HTML/마크다운 주석 제거
+    let step2 = re_comment.replace_all(&step1, "");
+    // 3. 마크다운 이미지 제거
+    let step3 = re_img.replace_all(&step2, "");
+    // 4. 마크다운 링크 [text](url) -> text 보존
+    let step4 = re_link.replace_all(&step3, "$1");
+    // 5. 기타 HTML 태그 (<b>, </b>, <span> 등) 제거
+    let step5 = re_tag.replace_all(&step4, "");
+
+    let mut out = String::with_capacity(step5.len());
+    for line in step5.lines() {
         let trimmed = line.trim();
 
-        // 1. HTML/마크다운 주석 (<!-- page: 1 --> 등) 제외
-        if trimmed.starts_with("<!--") && trimmed.ends_with("-->") {
+        if trimmed.is_empty() {
             continue;
         }
 
-        // 2. 마크다운 표 구분선 행 (예: |---|---| or |:---:|---:|) 제외
-        if trimmed.starts_with('|') && trimmed.ends_with('|') {
-            let inner = &trimmed[1..trimmed.len() - 1];
+        // 6. 마크다운 표 구분선 행 (예: |---|---| or |:---:|---:| or ---|---) 제외
+        if (trimmed.starts_with('|') && trimmed.ends_with('|'))
+            || (trimmed.contains('|') && trimmed.contains('-'))
+        {
+            let inner = trimmed.trim_matches('|');
             let is_divider = inner.split('|').all(|cell| {
                 let c = cell.trim();
                 !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':' || ch.is_whitespace())
@@ -113,19 +156,81 @@ fn clean_kordoc_markdown(text: &str) -> String {
             }
         }
 
-        // 3. 표 셀 구분 파이프 '|'는 공백으로 치환하여 단어가 붙지 않도록 분리
-        let mut cleaned_line = String::with_capacity(line.len());
-        for ch in line.chars() {
-            if ch == '|' {
-                cleaned_line.push(' ');
-            } else {
-                cleaned_line.push(ch);
+        // 7. 수평선 (---, ***, ___) 제외
+        if (trimmed.starts_with("---") || trimmed.starts_with("***") || trimmed.starts_with("___"))
+            && trimmed.chars().all(|c| c == '-' || c == '*' || c == '_' || c.is_whitespace())
+        {
+            continue;
+        }
+
+        // 8. 행 시작 마크다운 서식 기호 제거
+        let mut line_content = trimmed;
+
+        // 헤딩 기호 (#+ 뒤 공백) 제거
+        if line_content.starts_with('#') {
+            line_content = line_content.trim_start_matches('#').trim_start();
+        }
+        // 인용 블록 기호 (> 뒤 공백) 제거
+        if line_content.starts_with('>') {
+            line_content = line_content.trim_start_matches('>').trim_start();
+        }
+        // 체크박스 제거 ([ ] , [x] , [X] )
+        if line_content.starts_with("[ ] ") || line_content.starts_with("[x] ") || line_content.starts_with("[X] ") {
+            line_content = &line_content[4..];
+        }
+        // 목록 불릿 (- , * , + ) 제거
+        if (line_content.starts_with("- ") || line_content.starts_with("* ") || line_content.starts_with("+ "))
+            && line_content.len() >= 2
+        {
+            line_content = line_content[2..].trim_start();
+        }
+
+        // 9. 인라인 마크다운 기호 및 표 기호 제거
+        // - 표 파이프 '|' -> 공백
+        // - 볼드/이탤릭/취소선 기호: '**', '__', '~~', '*', '_' 제거
+        // - 인라인 코드 백틱 '`' 제거
+        // - 잔여 '#' 기호 제거
+        let mut cleaned = String::with_capacity(line_content.len());
+        let chars: Vec<char> = line_content.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            let ch = chars[i];
+            match ch {
+                '|' => {
+                    cleaned.push(' ');
+                    i += 1;
+                }
+                '`' | '#' | '~' => {
+                    i += 1;
+                }
+                '*' => {
+                    if i + 1 < chars.len() && chars[i + 1] == '*' {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                '_' => {
+                    if i + 1 < chars.len() && chars[i + 1] == '_' {
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
+                    cleaned.push(ch);
+                    i += 1;
+                }
             }
         }
 
-        out.push_str(&cleaned_line);
-        out.push('\n');
+        let cleaned_trimmed = cleaned.trim();
+        if !cleaned_trimmed.is_empty() {
+            out.push_str(cleaned_trimmed);
+            out.push('\n');
+        }
     }
+
     out
 }
 
@@ -326,8 +431,8 @@ fn main() {
     };
 
     println!("================================================================================");
-    println!("  HWP 5.0 Rust 직접 파서 vs kordoc(Node.js) 대조 도구 (HWP5-CMP2)");
-    println!("  비교 기준: ① 공백제거 정규화 글 비교 ② 2글자 조각 집합 일치율 ③ 빠진글 상위 5곳");
+    println!("  HWP 5.0 Rust 직접 파서 vs kordoc(Node.js) 대조 도구 (HWP5-CMP3)");
+    println!("  비교 기준: ① kordoc 잡음제거 ② 공백제거 정규화 글 비교 ③ 2글자 조각 집합 일치율 ④ 빠진글");
     println!("  대상 경로: {}", target_path.display());
     println!("================================================================================");
 
@@ -557,8 +662,16 @@ fn main() {
                 sim.missing_in_rust.len()
             );
             println!(
-                "  * 문단 구성 차이 분류: Rust 총 {}문단 [본문 {}, 표 셀 {}, 머리꼬리 {}, 각주미주 {}, 글상자 {}] vs kordoc {}행",
-                brk.total, brk.body, brk.table_cell, brk.header + brk.footer, brk.footnote + brk.endnote, brk.textbox, k_len
+                "  * 문단 구성 차이 분류: Rust 총 {}문단 [본문 {}, 표 셀 {}, 머리꼬리 {}, 각주미주 {}, 글상자 {}, 숨은글 {}, 메모 {}] vs kordoc {}행",
+                brk.total,
+                brk.body,
+                brk.table_cell,
+                brk.header + brk.footer,
+                brk.footnote + brk.endnote,
+                brk.textbox,
+                brk.hidden_comment,
+                brk.memo,
+                k_len
             );
             if brk.table_cell > 0 {
                 println!(
@@ -589,7 +702,7 @@ fn main() {
     }
 
     println!("\n================================================================================");
-    println!("  종합 요약 보고서 (HWP5-CMP2)");
+    println!("  종합 요약 보고서 (HWP5-CMP3)");
     println!("================================================================================");
     println!("- 총 검증 대상 파일 수       : {}개", stats.total_files);
     println!("- 양쪽 모두 추출 성공        : {}개", stats.both_succeeded);
