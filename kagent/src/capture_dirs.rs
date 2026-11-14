@@ -41,7 +41,6 @@ pub struct Env {
 
 pub const LABEL_WINDOWS: &str = "Windows 스크린샷(캡처 도구·Win+PrtSc)";
 pub const LABEL_ONEDRIVE: &str = "OneDrive 스크린샷";
-pub const LABEL_GAMEBAR: &str = "Xbox Game Bar 캡처";
 pub const LABEL_ALCAPTURE: &str = "알캡처";
 pub const LABEL_HANCOM: &str = "한컴 캡처";
 pub const LABEL_SHAREX: &str = "ShareX";
@@ -73,11 +72,7 @@ pub fn candidates(env: &Env) -> Vec<Candidate> {
             push(join(od, rel), LABEL_ONEDRIVE, false);
         }
     }
-    if let Some(v) = &env.videos {
-        // Win+Alt+PrtSc(게임 바)는 동영상\캡처에 PNG를 저장한다(동영상 파일은 확장자로 거른다).
-        push(join(v, "Captures"), LABEL_GAMEBAR, false);
-        push(join(v, "캡처"), LABEL_GAMEBAR, false);
-    }
+    // Xbox Game Bar(동영상\Captures)는 감시하지 않는다(사용자 지시 2026-11-14: 목록에서 삭제).
     for root in [&env.pictures, &env.documents].into_iter().flatten() {
         // 기본 폴더가 판마다 달라 흔한 이름을 모두 본다(실제로 있는 폴더만 감시).
         push(join(root, "ALCapture"), LABEL_ALCAPTURE, false);
@@ -246,7 +241,7 @@ mod tests {
             "D:\\u\\Videos\\Captures"].contains(&p);
         let found = discover(&env(), &exists);
         let got: Vec<_> = found.iter().map(|c| (c.label, c.subtree)).collect();
-        assert_eq!(got, [(LABEL_GAMEBAR, false), (LABEL_ALCAPTURE, false), (LABEL_SHAREX, true)]);
+        assert_eq!(got, [(LABEL_ALCAPTURE, false), (LABEL_SHAREX, true)]); // 게임 바 폴더는 있어도 후보가 아니다
     }
 
     #[test]
