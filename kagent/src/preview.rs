@@ -182,15 +182,18 @@ fn run(action: Action) {
     match action {
         Action::Nothing => {}
         Action::Hide => unsafe {
-            ShowWindow(hwnd(), SW_HIDE);
+            ShowWindowAsync(hwnd(), SW_HIDE);
         },
         Action::Request(t) => {
-            unsafe { ShowWindow(hwnd(), SW_HIDE) };
+            unsafe { ShowWindowAsync(hwnd(), SW_HIDE) };
             request(t);
         }
         Action::Show(t) => show(t),
         Action::Move => {
-            if let Some(t) = match SHARED.lock().unwrap().state { State::Showing(t) => Some(t), _ => None } {
+            // 잠금을 먼저 풀고 show를 부른다. `if let` 조건 안에서 잠그면 잠금이 본문 끝까지 살아 있어
+            // show() 안의 같은 잠금에서 스스로 멈췄다(2026-11-14 gdb로 확인: 단축키 빠른 목록 미리보기 프리징).
+            let shown = match SHARED.lock().unwrap().state { State::Showing(t) => Some(t), _ => None };
+            if let Some(t) = shown {
                 show(t);
             }
         }
@@ -232,7 +235,9 @@ fn show(t: Target) {
         GetMonitorInfoW(MonitorFromPoint(probe, MONITOR_DEFAULTTONEAREST), &mut mi);
         let wa = mi.rcWork;
         let (x, y) = place(right, left, top, w, ht, (wa.left, wa.top, wa.right, wa.bottom), GAP / 2);
-        SetWindowPos(h, HWND_TOPMOST, x, y, w, ht, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        // 미리보기 창은 주 스레드 것이라, 빠른 목록(다른 스레드)이 동기 호출하면 주 스레드가 바쁠 때 서로 기다려 멈춘다
+        // (2026-11-14 재현: 그림 파일 항목에 마우스 → 빠른 목록 영구 멈춤). 비동기로만 바꾼다.
+        SetWindowPos(h, HWND_TOPMOST, x, y, w, ht, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_ASYNCWINDOWPOS);
         InvalidateRect(h, std::ptr::null(), 0);
     }
 }
