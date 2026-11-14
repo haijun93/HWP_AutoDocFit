@@ -45,6 +45,40 @@ pub fn parse_query(q: &str) -> ParsedQuery {
     out
 }
 
+/// 세미콜론(`;`)으로 질의를 묶음으로 나눈다.
+///
+/// - 따옴표(`"…"`) 안의 `;`는 글자로 취급하며 묶음을 나누지 않는다.
+/// - 각 묶음은 앞뒤 공백을 자르고, 빈 묶음은 무시한다.
+/// - `;`가 없으면 전체를 하나의 묶음으로 돌려준다(비어 있으면 빈 목록).
+pub fn parse_groups(q: &str) -> Vec<&str> {
+    let mut groups = Vec::new();
+    let mut in_quote = false;
+    let mut start = 0;
+
+    for (i, c) in q.char_indices() {
+        match c {
+            '"' | '“' | '”' => {
+                in_quote = !in_quote;
+            }
+            ';' if !in_quote => {
+                let piece = q[start..i].trim();
+                if !piece.is_empty() {
+                    groups.push(piece);
+                }
+                start = i + c.len_utf8();
+            }
+            _ => {}
+        }
+    }
+
+    let tail = q[start..].trim();
+    if !tail.is_empty() {
+        groups.push(tail);
+    }
+
+    groups
+}
+
 /// 구문(KFC2)을 검색 낱말로 더한다. 구문은 비교형(공백·기호를 뺀 글)이 붙어 있는 그대로 든 문장만 찾는 낱말 하나이고
 /// 나누지 않는다. 같은 낱말이 이미 있으면 그 낱말의 나누기를 끈다. 비교형이 2글자 미만이면 뺀 낱말에 더하고,
 /// 비교형이 빈 구문은 무시한다. 구문 문법(`"…"`)은 호출하는 쪽(앱)이 해석한다.
@@ -178,6 +212,21 @@ mod tests {
         assert_eq!(p.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["예산", "집행"]);
         assert_eq!(p.dropped, ["및"]);
         assert!(parse_query("ㅇ").words.is_empty());
+    }
+
+    #[test]
+    fn parse_groups_splits_semicolon_and_ignores_empty() {
+        assert_eq!(parse_groups("2026; 공사 계약"), ["2026", "공사 계약"]);
+        assert_eq!(parse_groups("2026;; 공사 계약; "), ["2026", "공사 계약"]);
+        assert_eq!(parse_groups("; ; "), Vec::<&str>::new());
+        assert_eq!(parse_groups("2026"), ["2026"]);
+        assert_eq!(parse_groups(""), Vec::<&str>::new());
+    }
+
+    #[test]
+    fn parse_groups_preserves_semicolon_inside_quotes() {
+        assert_eq!(parse_groups("2026; \"공사; 계약\""), ["2026", "\"공사; 계약\""]);
+        assert_eq!(parse_groups("\"2026; 01\"; 공사; \"계약; 서식\""), ["\"2026; 01\"", "공사", "\"계약; 서식\""]);
     }
 
     #[test]

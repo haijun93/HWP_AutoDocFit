@@ -1,7 +1,7 @@
 //! 읽기 쪽: 목록 파일의 한 세대를 열어 질의한다. 쓰는 쪽이 목록을 바꿔도 이미 연 세대는 그대로 유효하다.
 use crate::manifest::Manifest;
 use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
-use crate::query::{MIN_WORD_CHARS, ParsedQuery, add_phrases, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_query, split_bigram, split_dict};
+use crate::query::{MIN_WORD_CHARS, ParsedQuery, add_phrases, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_groups, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
 use roaring::{RoaringBitmap, RoaringTreemap};
@@ -465,16 +465,37 @@ pub struct Ranking {
     slots: Vec<(u32, u32)>,
     /// 조각별 (일치 문장, 붙어 있는 일치 문장).
     sets: Vec<Arc<SegSets>>,
+    /// 그룹 검색일 때 각 묶음별 조각별 (일치 문장, 붙어 있는 일치 문장).
+    group_sets: Option<Vec<Vec<Arc<SegSets>>>>,
 }
 
 impl Ranking {
     /// `hit`번째 문서의 앞에서부터 `n`개 일치 문장. `index`는 이 순위를 낸 색인(같은 세대)이어야 한다.
+    /// 그룹 검색으로 만든 순위면 각 묶음의 최고 문장을 묶음 순서대로 최대 `n`개 돌려준다.
     pub fn sentences(&self, index: &Index, hit: usize, n: usize) -> Result<Vec<SentenceRef>> {
-        if index.generation != self.result.generation || index.views.len() != self.sets.len() {
+        if index.generation != self.result.generation {
             return Err(Error::Invalid("ranking belongs to another index generation".into()));
         }
         let Some(&(view, local)) = self.slots.get(hit) else { return Err(Error::Invalid(format!("hit {hit} out of range"))) };
-        guard(|| index.doc_sentences(&self.sets, view, local, n))
+        if let Some(groups) = &self.group_sets {
+            guard(|| {
+                let mut out = Vec::new();
+                for g_sets in groups {
+                    if out.len() >= n {
+                        break;
+                    }
+                    if let Some(s) = index.doc_best_sentence(g_sets, view, local)? {
+                        out.push(s);
+                    }
+                }
+                Ok(out)
+            })
+        } else {
+            if index.views.len() != self.sets.len() {
+                return Err(Error::Invalid("ranking belongs to another index generation".into()));
+            }
+            guard(|| index.doc_sentences(&self.sets, view, local, n))
+        }
     }
 }
 
@@ -598,6 +619,38 @@ impl Index {
             out.push(SentenceRef { ord: sid - rec.first_sid, para: seg.para(sid)?, level: seg.level(sid)?, adjacent: adjacent.as_ref().is_none_or(|b| b.contains(sid)) });
         }
         Ok(out)
+    }
+
+    /// 문서 하나의 일치 문장 중 가장 높은 위계의 최고 문장 1개.
+    /// 위계(작은 level) 우선, 같으면 붙어 있는 일치(adjacent) 우선, 같으면 앞선 문장(ord).
+    fn doc_best_sentence(&self, sets: &[Arc<SegSets>], view: u32, local: u32) -> Result<Option<SentenceRef>> {
+        let (matched, adjacent) = &*sets[view as usize];
+        let seg = &*self.views[view as usize].seg;
+        let rec = seg.doc(local)?;
+        let mut best: Option<SentenceRef> = None;
+        for sid in matched.range(rec.first_sid..rec.first_sid + rec.n_sent) {
+            let is_adj = adjacent.as_ref().is_none_or(|b| b.contains(sid));
+            let level = seg.level(sid)?;
+            let ord = sid - rec.first_sid;
+            let cand = SentenceRef {
+                ord,
+                para: seg.para(sid)?,
+                level,
+                adjacent: is_adj,
+            };
+            match &best {
+                None => best = Some(cand),
+                Some(cur) => {
+                    let better = cand.level < cur.level
+                        || (cand.level == cur.level && cand.adjacent && !cur.adjacent)
+                        || (cand.level == cur.level && cand.adjacent == cur.adjacent && cand.ord < cur.ord);
+                    if better {
+                        best = Some(cand);
+                    }
+                }
+            }
+        }
+        Ok(best)
     }
 
     /// 목록 파일이 바뀌었으면 새 세대로 바꾼다(이미 연 조각은 다시 열지 않는다). 바뀌었으면 true.
@@ -938,7 +991,7 @@ impl Index {
             }
         }
         let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
-        Ok(Ranking { result, slots, sets })
+        Ok(Ranking { result, slots, sets, group_sets: None })
     }
 
     /// 개수만: 일치 문장 수와 문서 수. 문서별 모으기·순위·미리보기를 하지 않는다(입력 도중 개수 표시용,
@@ -997,6 +1050,263 @@ impl Index {
             }
             out.sort_unstable_by_key(|m| (m.doc_id, m.sentence.ord));
             Ok(out)
+        })
+    }
+
+    /// 연관 검색어(`;`) 묶음 검색. 각 묶음마다 문장 단위 검색을 하고 문서 단위 교집합을 낸다.
+    ///
+    /// - `;`가 없으면 `search`와 결과가 완전히 같다(결과 차이 0).
+    /// - 순위: 묶음 중 최고 위계 > 묶음별 일치 문장 수 합 > 날짜 최신 > 문서 ID.
+    /// - 미리보기: 묶음마다 최고 문장 1개.
+    /// - 제외어(`SearchOptions::deny`)는 문서 전체 기준으로 적용된다.
+    pub fn search_groups(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
+        guard(|| self.search_groups_inner_by(query, opts, Order::Relevance))
+    }
+
+    /// `search_groups`와 같되 결과 순서를 고른다.
+    pub fn search_groups_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<SearchResult> {
+        guard(|| self.search_groups_inner_by(query, opts, order))
+    }
+
+    /// `search_groups`와 같은 순위를 내되 미리보기 문장은 만들지 않는다.
+    pub fn rank_groups(&self, query: &str, opts: &SearchOptions) -> Result<Ranking> {
+        guard(|| self.rank_groups_inner(query, opts, Order::Relevance))
+    }
+
+    /// `rank_groups`와 같되 결과 순서를 고른다.
+    pub fn rank_groups_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
+        guard(|| self.rank_groups_inner(query, opts, order))
+    }
+
+    /// 연관 검색어(`;`) 개수만: 교집합 문서 수와 일치 문장 수 총합.
+    pub fn count_groups(&self, query: &str, opts: &SearchOptions) -> Result<SearchCounts> {
+        guard(|| self.count_groups_inner(query, opts))
+    }
+
+    fn search_groups_inner_by(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<SearchResult> {
+        let groups = parse_groups(query);
+        if groups.len() <= 1 {
+            let single = groups.first().copied().unwrap_or(query);
+            return self.search_inner_by(single, opts, order);
+        }
+
+        let ranking = self.rank_groups_inner(query, opts, order)?;
+        let mut result = ranking.result;
+
+        if opts.refs_per_doc > 0 {
+            if let Some(group_sets) = &ranking.group_sets {
+                for (hit, &(view, local)) in result.hits.iter_mut().zip(&ranking.slots) {
+                    let mut sentences = Vec::with_capacity(group_sets.len());
+                    for g_sets in group_sets {
+                        if sentences.len() >= opts.refs_per_doc {
+                            break;
+                        }
+                        if let Some(s) = self.doc_best_sentence(g_sets, view, local)? {
+                            sentences.push(s);
+                        }
+                    }
+                    hit.sentences = sentences;
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn rank_groups_inner(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
+        let groups = parse_groups(query);
+        if groups.len() <= 1 {
+            let single = groups.first().copied().unwrap_or(query);
+            return self.rank_inner(single, opts, order);
+        }
+
+        let opts_all = SearchOptions { top: 0, refs_per_doc: 0, ..opts.clone() };
+        let mut group_rankings = Vec::with_capacity(groups.len());
+        for g in &groups {
+            let ranking = self.rank_inner(g, &opts_all, order)?;
+            if ranking.result.hits.is_empty() {
+                let mut words = Vec::new();
+                let mut dropped = Vec::new();
+                for grp in &groups {
+                    if let Ok(parsed) = self.resolve_opts(grp, opts) {
+                        for w in parsed.words {
+                            if !words.iter().any(|existing: &QueryWord| existing.text == w.text) {
+                                words.push(w);
+                            }
+                        }
+                        for d in parsed.dropped {
+                            if !dropped.contains(&d) {
+                                dropped.push(d);
+                            }
+                        }
+                    }
+                }
+                let result = SearchResult {
+                    words,
+                    dropped,
+                    total_docs: 0,
+                    total_sentences: 0,
+                    adjacent_docs: 0,
+                    hits: Vec::new(),
+                    generation: self.generation,
+                };
+                return Ok(Ranking {
+                    result,
+                    slots: Vec::new(),
+                    sets: Vec::new(),
+                    group_sets: None,
+                });
+            }
+            group_rankings.push(ranking);
+        }
+
+        struct DocAcc {
+            view: u32,
+            local: u32,
+            date: i64,
+            best_level: u8,
+            sum_count: u32,
+            all_adjacent: bool,
+            match_count: usize,
+        }
+
+        let mut acc: std::collections::HashMap<u64, DocAcc> = std::collections::HashMap::new();
+
+        let first = &group_rankings[0];
+        for (hit, &(view, local)) in first.result.hits.iter().zip(&first.slots) {
+            acc.insert(hit.doc_id, DocAcc {
+                view,
+                local,
+                date: hit.date,
+                best_level: hit.level,
+                sum_count: hit.count,
+                all_adjacent: hit.adjacent,
+                match_count: 1,
+            });
+        }
+
+        for ranking in &group_rankings[1..] {
+            for hit in &ranking.result.hits {
+                if let Some(entry) = acc.get_mut(&hit.doc_id) {
+                    entry.best_level = entry.best_level.min(hit.level);
+                    entry.sum_count += hit.count;
+                    entry.all_adjacent &= hit.adjacent;
+                    entry.match_count += 1;
+                }
+            }
+        }
+
+        let n_groups = groups.len();
+        acc.retain(|_, v| v.match_count == n_groups);
+
+        let total_docs = acc.len();
+        let mut adjacent_docs = 0usize;
+        let mut total_sentences = 0u64;
+
+        struct IntersectedDoc {
+            key: u64,
+            doc_id: u64,
+            date: i64,
+            view: u32,
+            local: u32,
+            best_level: u8,
+            sum_count: u32,
+            adjacent: bool,
+        }
+
+        let mut candidates: Vec<IntersectedDoc> = Vec::with_capacity(total_docs);
+        for (&doc_id, entry) in &acc {
+            total_sentences += entry.sum_count as u64;
+            if entry.all_adjacent {
+                adjacent_docs += 1;
+            }
+            let key = ((entry.best_level as u64) << 32) | (u32::MAX - entry.sum_count) as u64;
+            candidates.push(IntersectedDoc {
+                key,
+                doc_id,
+                date: entry.date,
+                view: entry.view,
+                local: entry.local,
+                best_level: entry.best_level,
+                sum_count: entry.sum_count,
+                adjacent: entry.all_adjacent,
+            });
+        }
+
+        // 순위: 묶음 중 최고 위계 > 묶음별 일치 문장 수 합 > 날짜 > 문서 ID
+        candidates.sort_unstable_by(|a, b| {
+            a.key.cmp(&b.key)
+                .then_with(|| b.date.cmp(&a.date))
+                .then_with(|| a.doc_id.cmp(&b.doc_id))
+        });
+
+        if opts.top != 0 && candidates.len() > opts.top {
+            candidates.truncate(opts.top);
+        }
+
+        let mut hits = Vec::with_capacity(candidates.len());
+        let mut slots = Vec::with_capacity(candidates.len());
+        for c in candidates {
+            hits.push(DocHit {
+                doc_id: c.doc_id,
+                adjacent: c.adjacent,
+                level: c.best_level,
+                count: c.sum_count,
+                date: c.date,
+                sentences: Vec::new(),
+            });
+            slots.push((c.view, c.local));
+        }
+
+        let mut words = Vec::new();
+        let mut dropped = Vec::new();
+        for r in &group_rankings {
+            for w in &r.result.words {
+                if !words.iter().any(|existing: &QueryWord| existing.text == w.text) {
+                    words.push(w.clone());
+                }
+            }
+            for d in &r.result.dropped {
+                if !dropped.contains(d) {
+                    dropped.push(d.clone());
+                }
+            }
+        }
+
+        let group_sets = Some(group_rankings.into_iter().map(|r| r.sets).collect());
+
+        let result = SearchResult {
+            words,
+            dropped,
+            total_docs,
+            total_sentences,
+            adjacent_docs,
+            hits,
+            generation: self.generation,
+        };
+
+        Ok(Ranking {
+            result,
+            slots,
+            sets: Vec::new(),
+            group_sets,
+        })
+    }
+
+    fn count_groups_inner(&self, query: &str, opts: &SearchOptions) -> Result<SearchCounts> {
+        let groups = parse_groups(query);
+        if groups.len() <= 1 {
+            let single = groups.first().copied().unwrap_or(query);
+            return self.count_inner(single, opts);
+        }
+
+        let ranking = self.rank_groups_inner(query, opts, Order::Relevance)?;
+        Ok(SearchCounts {
+            words: ranking.result.words,
+            dropped: ranking.result.dropped,
+            total_sentences: ranking.result.total_sentences,
+            total_docs: ranking.result.total_docs,
+            generation: ranking.result.generation,
         })
     }
 }

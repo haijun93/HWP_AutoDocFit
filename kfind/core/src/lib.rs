@@ -22,7 +22,7 @@ mod writer;
 pub use fold::{FOLD_RULE_VERSION, UNICODE_VERSION, fold, fold_into, tokens};
 pub use index::{DocHit, Index, Order, Ranking, SearchCounts, SearchOptions, SearchResult, SentenceMatch, SentenceRef};
 pub use qcache::{QueryCacheOptions, QueryCacheStats};
-pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_query, stem_suffixes};
+pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_groups, parse_query, stem_suffixes};
 pub use segment::FORMAT_VERSION;
 /// 문서 범위(`SearchOptions::allow`·`deny`)의 문서 ID 집합. 호출하는 쪽이 같은 판의 roaring을 맞추지 않아도 되게 다시 낸다.
 pub use roaring::RoaringTreemap;
