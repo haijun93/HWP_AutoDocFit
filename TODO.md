@@ -11,14 +11,8 @@
 - [ ] [중] 위계 판정 Rust 기준 전환(HRUST1): RHIER1 5단계 규칙 맞춤 완료를 바탕으로 실제 문서 평가 및 Rust 위계 엔진 기본 켜기 (`docs/HRUST1_2026-11-14.md`, `docs/RHIER1_RUST_PARITY_2026-11-13.md`).
 
 ## 검색 엔진·타임머신 잔여 과제
-- [ ] 독자 검색 엔진(kfind-core) 같은 조건 비교(KB1: Tantivy·SeekStorm) → 지는 항목 개선.
-- [ ] kfind-core 남은 약점: 문서 1개 반영 193ms→50ms, 붙여 쓴 복합어 분할, 다른 프로세스 mmap 읽기 시험, 디스크 316MB/3만 문서 축소.
-- [ ] 색인 서비스 T4: `kfind.exe`·서비스 `HwpAutoDocFit.Index`(Q13~Q17 확정, `docs/TM1_PLAN_2026-11-12.md` 11절).
-- [ ] 검색 질의 이력(N차) 캐시 구현(`reports/IS-QCACHE`), 견고성 요구(작업 프로세스 재활용·시간 상한·패닉 격리).
-- [ ] 타임머신 독립 앱(ktm.exe, Ctrl+Alt+Space)과 가상 폴더 창(kvf V10, V9 배포·앱 연결 완료; R6·R7 실기 0회, R9·R10 측정 0회 — 실기 확인 필요).
-- [ ] 앱 통합 뒤 Everything·Docufinder와 화면 기준 비교 측정.
-- [ ] 엔진 코드 GitHub 공개 여부 결정(특허 검토 폐기, 2026-11-12) — 사용자 결정.
-- [ ] 파일 이름 한글 정규화(NFC1) 결과 시험·병합.
+- [ ] kfind-core 남은 약점: 색인 크기(Tantivy 8.2MB 대 20.2MB)·색인 시간(5.46초 대 8.60초)·색인 때 메모리·개수만 질의(BENCH2, `F:/docfit-tmp/bench2/BENCH2-report.md` 5절).
+- [ ] 앱 통합 뒤 Everything·Docufinder·UFFS와 화면 기준 비교 측정(같은 조건: UFFS도 프로그램 간 직접 호출로).
 
 ## 속도 개선·COM 최적화 (측정 기반, 2026-11-12 수립)
 기준선(v2.2.58, 기능시연용 문서 한 번에 적용): 전체 322.8초 중 한/글 COM 144,274회·269.1초(83%). 최대 단계 「본문 자간·단어 분리 조정」 101.3초. 측정: `scripts/perf_baseline_pc.py`(`DOCFIT_COM_PERF=1`, main 반영됨).
