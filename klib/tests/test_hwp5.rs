@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use klib::extract::extract_hwp;
 use klib::hwp5::{
     build_para_text_bytes, encode_utf16le, extract_hwp5, ParaTextItem, RecordBuilder,
-    SyntheticHwp5Builder, FLAG_COMPRESSED, FLAG_DISTRIBUTED, FLAG_DRM, FLAG_PASSWORD_ENCRYPTED,
+    SyntheticHwp5Builder,
     HWPTAG_CTRL_HEADER, HWPTAG_LIST_HEADER, HWPTAG_PARA_HEADER, HWPTAG_PARA_TEXT, HWPTAG_TABLE,
 };
 
@@ -324,4 +324,48 @@ fn test_hwp5_formfeed_char_12_handling() {
     let decoded = klib::hwp5::decode_para_text(&text_bytes);
     assert!(decoded.contains("앞부분"));
     assert!(decoded.contains("뒷부분글자"));
+}
+
+#[test]
+fn test_hwp5_hidden_comment_and_textbox_classification() {
+    let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+    // 글상자 (b"gso ")
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"gso \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("글상자 내용문")).to_bytes());
+
+    // 숨은 설명 (b"tcmt")
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tcmt\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("숨은 설명 메모")).to_bytes());
+
+    let hwp_bytes = builder.build().unwrap();
+    let temp = TempHwpFile::new("gso_tcmt", &hwp_bytes);
+
+    let paras = extract_hwp5(&temp.path).expect("추출 성공");
+    assert_eq!(paras.len(), 2);
+    assert_eq!(paras[0].location_kind, "textbox");
+    assert_eq!(paras[0].text, "글상자 내용문");
+    assert_eq!(paras[1].location_kind, "hidden_comment");
+    assert_eq!(paras[1].text, "숨은 설명 메모");
+}
+
+#[test]
+fn test_hwp5_inline_control_code_4_skip() {
+    let mut text_bytes = Vec::new();
+    text_bytes.extend_from_slice(&encode_utf16le("본문앞"));
+    // 코드 4 (1 WCHAR) + 부가정보 (6 WCHAR) + 코드 4 (1 WCHAR) = 총 8 WCHAR
+    text_bytes.extend_from_slice(&4u16.to_le_bytes());
+    for _ in 0..7 {
+        text_bytes.extend_from_slice(&0x1234u16.to_le_bytes()); // 가비지 부가정보
+    }
+    text_bytes.extend_from_slice(&encode_utf16le("본문뒤"));
+
+    let decoded = klib::hwp5::decode_para_text(&text_bytes);
+    assert_eq!(decoded, "본문앞본문뒤");
 }

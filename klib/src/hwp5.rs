@@ -6,11 +6,12 @@
 //! 3. `BodyText/Section*` 스트림 추출 및 raw Deflate 압축 해제
 //! 4. 레코드 헤더(Tag ID, Level, Size, 0xFFF 확장 크기) 파싱
 //! 5. HWPTAG_PARA_HEADER(66) 및 HWPTAG_PARA_TEXT(67) 제어 문자(0~31) 처리
-//!    - 1~3, 11~12, 14~18, 21~23: 확장 제어(16바이트 차지, 8 WCHAR 건너뜀)
-//!    - 9: 탭('\t'), 10: 줄바꿈('\n'), 13: 문단 끝('\n')
-//!    - 24~31: 하이픈/공백 등 일반 문자 1개 크기
-//! 6. 표 컨트롤(HWPTAG_CTRL_HEADER 'tbl ') 및 셀(HWPTAG_LIST_HEADER) 안의 문단 감지
-//!    - 표 셀 안 문단은 `is_table_cell = true`로 마킹
+//!    - 1~8, 11, 14~23: 확장 및 인라인 제어 문자 (16바이트 차지, 8 WCHAR 건너뜀)
+//!    - 9: 탭('\t'), 10: 줄바꿈('\n'), 12: 폼 피드('\n'), 13: 문단 끝('\n')
+//!    - 24: 하이픈('-'), 25~31: 공백류 문자
+//! 6. 컨트롤(HWPTAG_CTRL_HEADER) 및 문단 리스트(HWPTAG_LIST_HEADER) 안의 문단 감지
+//!    - 표 셀(tbl): `is_table_cell = true`, `location_kind = "table_cell"`
+//!    - 머리말(head)/꼬리말(foot), 각주(fn)/미주(en), 글상자(gso 등), 숨은글(tcmt), 메모(memo), 덧말(tdut) 등 세분화 분류
 //!
 //! 라이선스: MIT
 
@@ -296,12 +297,15 @@ fn decompress_section(data: &[u8], section_name: &str) -> Result<Vec<u8>, String
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HwpCtrlKind {
     None,
-    Table,     // b"tbl " (표)
-    Header,    // b"head" (머리말)
-    Footer,    // b"foot" (꼬리말)
-    Footnote,  // b"fn  " (각주)
-    Endnote,   // b"en  " (미주)
-    TextBox,   // b"gso " (글상자/도형 컨테이너)
+    Table,         // b"tbl " (표)
+    Header,        // b"head" (머리말)
+    Footer,        // b"foot" (꼬리말)
+    Footnote,      // b"fn  " (각주)
+    Endnote,       // b"en  " (미주)
+    TextBox,       // b"gso " 등 (글상자/도형 컨테이너)
+    HiddenComment, // b"tcmt" (숨은 설명 / 숨은 글)
+    Memo,          // b"memo" (메모)
+    Dutmal,        // b"tdut" (덧말)
 }
 
 /// 레코드 트리 추적을 위한 스택 엔트리
@@ -373,7 +377,12 @@ fn extract_paragraphs_from_section(
                         b"foot" => HwpCtrlKind::Footer,
                         b"fn  " => HwpCtrlKind::Footnote,
                         b"en  " => HwpCtrlKind::Endnote,
-                        b"gso " => HwpCtrlKind::TextBox,
+                        b"gso " | b"$rec" | b"rect" | b"$lin" | b"line" | b"$ell" | b"elli"
+                        | b"$arc" | b"arc " | b"$cur" | b"curv" | b"$pol" | b"poly"
+                        | b"text" | b"tbox" => HwpCtrlKind::TextBox,
+                        b"tcmt" => HwpCtrlKind::HiddenComment,
+                        b"memo" => HwpCtrlKind::Memo,
+                        b"tdut" => HwpCtrlKind::Dutmal,
                         _ => current_kind,
                     };
                     stack.push(HierarchyNode {
@@ -407,6 +416,9 @@ fn extract_paragraphs_from_section(
                         HwpCtrlKind::Footnote => ("footnote".to_string(), false),
                         HwpCtrlKind::Endnote => ("endnote".to_string(), false),
                         HwpCtrlKind::TextBox => ("textbox".to_string(), false),
+                        HwpCtrlKind::HiddenComment => ("hidden_comment".to_string(), false),
+                        HwpCtrlKind::Memo => ("memo".to_string(), false),
+                        HwpCtrlKind::Dutmal => ("dutmal".to_string(), false),
                         HwpCtrlKind::None => ("paragraph".to_string(), false),
                     };
 
@@ -437,14 +449,13 @@ fn extract_paragraphs_from_section(
 /// HWPTAG_PARA_TEXT 바이너리에서 UTF-16LE 텍스트를 디코딩하고 제어 문자(0~31)를 처리한다.
 ///
 /// 제어 문자(0~31) 처리 규격:
-/// - 1~3, 11, 14~18, 21~23: 확장 제어 문자.
-///   총 16바이트(= 8 WCHAR)를 차지하므로 현재 문자 포함 8 WCHAR를 건너뜀 (12는 폼 피드로 제외).
-/// - 9: 탭 ('	')
+/// - 1~8, 11, 14~23: 확장 컨트롤 및 인라인 컨트롤 (16바이트 = 8 WCHAR 건너뜀, 12는 폼 피드로 제외).
+/// - 9: 탭 ('\t')
 /// - 10, 12, 13: 줄바꿈 / 폼 피드 ('\n')
 /// - 24: 하이픈 ('-')
 /// - 25, 26: 묶음 빈칸, 고정폭 빈칸 (' ')
 /// - 27~31: 특수 공백/문자 (' ')
-/// - 0, 4~8, 19, 20: 1 WCHAR 건너뜀
+/// - 0: 사용 불가 제어 문자 (1 WCHAR 건너뜀)
 /// - 일반 문자: UTF-16LE 서러게이트 페어 및 유니코드 복원
 pub fn decode_para_text(bytes: &[u8]) -> String {
     let n_wchars = bytes.len() / 2;
@@ -457,9 +468,11 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
         let code = u16::from_le_bytes([b0, b1]);
 
         match code {
-            // 1~3, 11, 14~18, 21~23: 확장 제어 문자 (16바이트 = 8 WCHAR)
-            // (12는 폼 피드 인라인 문자이므로 확장 제어에서 제외)
-            1..=3 | 11 | 14..=18 | 21..=23 => {
+            // 1~8, 11, 14~23: 확장 컨트롤 및 인라인 컨트롤 (16바이트 = 8 WCHAR)
+            // - 확장 컨트롤: 1..=3, 11, 14..=18, 21..=23
+            // - 인라인 컨트롤: 4..=8 (필드 끝 등), 19, 20
+            // (12는 폼 피드 인라인 줄바꿈이므로 제외)
+            1..=8 | 11 | 14..=23 => {
                 i = (i + 8).min(n_wchars);
             }
             // 9: 탭
@@ -487,8 +500,8 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
                 out.push(' ');
                 i += 1;
             }
-            // 0, 4~8, 19, 20: 1 WCHAR 건너뜀
-            0 | 4..=8 | 19 | 20 => {
+            // 0: 사용 불가 문자 1 WCHAR 건너뜀
+            0 => {
                 i += 1;
             }
 
@@ -909,5 +922,51 @@ mod tests {
         let res_dist = extract_hwp5(&temp_dist.path);
         assert!(res_dist.is_err());
         assert!(res_dist.unwrap_err().contains("encrypted"));
+    }
+
+    #[test]
+    fn test_hwp5_hidden_comment_and_textbox_classification() {
+        let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+        // 글상자 (b"gso ")
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"gso \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("글상자 내용문")).to_bytes());
+
+        // 숨은 설명 (b"tcmt")
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tcmt\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("숨은 설명 메모")).to_bytes());
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("gso_tcmt", &hwp_bytes);
+
+        let paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(paras.len(), 2);
+        assert_eq!(paras[0].location_kind, "textbox");
+        assert_eq!(paras[0].text, "글상자 내용문");
+        assert_eq!(paras[1].location_kind, "hidden_comment");
+        assert_eq!(paras[1].text, "숨은 설명 메모");
+    }
+
+    #[test]
+    fn test_hwp5_inline_control_code_4_skip() {
+        // 코드 4(필드 끝 등 인라인 컨트롤)는 8 WCHAR(16바이트)를 차지하므로,
+        // 코드 4 뒤의 7 WCHAR 가비지 정보가 정상적으로 건너뛰어지는지 검증
+        let mut text_bytes = Vec::new();
+        text_bytes.extend_from_slice(&encode_utf16le("본문앞"));
+        // 코드 4 (1 WCHAR) + 부가정보 (6 WCHAR) + 코드 4 (1 WCHAR) = 총 8 WCHAR
+        text_bytes.extend_from_slice(&4u16.to_le_bytes());
+        for _ in 0..7 {
+            text_bytes.extend_from_slice(&0x1234u16.to_le_bytes()); // 가비지 부가정보
+        }
+        text_bytes.extend_from_slice(&encode_utf16le("본문뒤"));
+
+        let decoded = decode_para_text(&text_bytes);
+        assert_eq!(decoded, "본문앞본문뒤");
     }
 }
