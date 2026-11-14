@@ -109,9 +109,29 @@ pub fn extract(path: &Path) -> Result<Vec<Paragraph>, String> {
     }
 }
 
-/// Extract HWP5 through the same bundled kordoc Markdown conversion used by Python.
-/// HWPX and DOCX retain their independent XML extraction paths above.
-fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
+/// HWP (5.0 이진) 본문 추출:
+/// 1순위로 Rust 순수 엔진(`hwp5::extract_hwp5`)을 시도하고,
+/// 배포용/암호 문서이거나 파싱 실패 시 kordoc(Node.js) 런타임으로 대체(폴백)한다.
+/// 환경변수 `KLIB_HWP_ENGINE=kordoc`으로 지정된 경우 kordoc만 사용한다.
+pub fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
+    if std::env::var("KLIB_HWP_ENGINE")
+        .map(|v| v.eq_ignore_ascii_case("kordoc"))
+        .unwrap_or(false)
+    {
+        return extract_hwp_kordoc(path);
+    }
+
+    match crate::hwp5::extract_hwp5(path) {
+        Ok(records) => Ok(records),
+        Err(_err) => {
+            // 암호화/배포용 문서 또는 Rust 파서 파싱 불가 시 kordoc 경로로 폴백
+            extract_hwp_kordoc(path)
+        }
+    }
+}
+
+/// Extract HWP5 through the bundled kordoc Markdown conversion (fallback/legacy engine).
+pub fn extract_hwp_kordoc(path: &Path) -> Result<Vec<Paragraph>, String> {
     use std::{process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::{Duration, Instant}};
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 

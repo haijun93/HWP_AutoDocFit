@@ -16,6 +16,7 @@ mod nb_split_check;
 mod nb_transform;
 mod scan;
 mod extract;
+pub(crate) mod hwp5;
 mod index_content;
 mod unify_marker;
 mod classify_levels;
