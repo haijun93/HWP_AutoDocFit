@@ -5,11 +5,12 @@
 //! - 커밋(commit): 대기 문서를 새 조각 파일로 쓰고 목록 파일을 원자적으로 교체. 이때부터 읽는 쪽에 보인다.
 //! - 합치기: `plan_merge`(목록 스냅숏) → `MergeJob::run`(다른 스레드, 쓰기 잠금 없이) → `apply_merge`(커밋).
 //!   합치는 동안 들어온 삭제는 `apply_merge`가 새 조각 번호로 옮겨 적는다. 합치기는 한 번에 하나만.
-use crate::docmap::{DocumentMeta, detect_sentence_role};
+use crate::docmap::{DocumentMeta, detect_sentence_role, extract_folder};
 use crate::fold::fold_into;
 use crate::index::load_views;
 use crate::manifest::{MANIFEST_NAME, MANIFEST_TMP_PREFIX, Manifest, SegEntry};
 use crate::segment::{MergedSource, PendingDoc, SegMeta, Segment, merge_segments, seg_file_name, write_segment};
+use crate::topic::{TopicTable, TOPICS_TMP_PREFIX, extract_body_terms, extract_path_terms, extract_title_terms};
 use crate::{Error, Result, corrupt, guard};
 use roaring::RoaringBitmap;
 use std::collections::HashMap;
@@ -101,6 +102,8 @@ pub struct Writer {
     dirty: bool,
     /// 진행 중인 합치기의 새 조각 번호.
     merging: Option<u64>,
+    /// 주제 빈도 순위표 (SEMI3).
+    pub topics: TopicTable,
 }
 
 /// 쓰는 쪽이 방금 쓴 조각을 연다: 메모리 사본이 있으면 그것으로(새 파일을 디스크에서 다시 열고 매핑하는 비용이
@@ -176,7 +179,21 @@ impl Writer {
     fn open_locked(dir: &Path, lock: File, opts: WriterOptions) -> Result<Writer> {
         let (manifest, segs) = load_views(dir, &[])?;
         let docs = index_docs(&manifest, &segs)?;
-        let w = Writer { dir: dir.to_path_buf(), _lock: lock, opts, manifest, segs, docs, pending: Vec::new(), pending_ix: HashMap::new(), pending_sentences: 0, dirty: false, merging: None };
+        let topics = TopicTable::load(dir).unwrap_or_default();
+        let w = Writer {
+            dir: dir.to_path_buf(),
+            _lock: lock,
+            opts,
+            manifest,
+            segs,
+            docs,
+            pending: Vec::new(),
+            pending_ix: HashMap::new(),
+            pending_sentences: 0,
+            dirty: false,
+            merging: None,
+            topics,
+        };
         w.collect_garbage();
         Ok(w)
     }
@@ -211,6 +228,9 @@ impl Writer {
             self.manifest.segs[pos].doc_deleted.insert(local);
             self.dirty = true;
             existed = true;
+        }
+        if existed {
+            self.topics.remove_document(doc_id);
         }
         Ok(existed)
     }
@@ -255,8 +275,26 @@ impl Writer {
             }
             Ok(d)
         })?;
+
+        // 주제 낱말(파일명 + 제목/소제목) 및 본문 낱말 추출 (SEMI3)
+        let mut title_terms = Vec::new();
+        if let Some(path) = &meta.path {
+            title_terms.extend(extract_path_terms(path));
+        }
+        let mut body_terms = Vec::new();
+        for s in sentences {
+            let role = detect_sentence_role(s.level, s.para, s.text);
+            if s.level <= 1 || role == crate::docmap::SentenceRole::Title {
+                title_terms.extend(extract_title_terms(s.text));
+            } else {
+                body_terms.extend(extract_body_terms(s.text));
+            }
+        }
+        let folder = meta.path.as_deref().map(extract_folder).unwrap_or_default();
+
         guard(|| {
             self.remove_existing(doc_id)?;
+            self.topics.add_document(doc_id, date, folder, title_terms, body_terms);
             if !doc.sent_end.is_empty() {
                 self.pending_sentences += doc.sent_end.len();
                 self.pending_ix.insert(doc_id, self.pending.len());
@@ -315,6 +353,7 @@ impl Writer {
         }
         self.manifest.generation += 1;
         self.manifest.save(&self.dir)?;
+        self.topics.save(&self.dir)?;
         self.dirty = false;
         self.collect_garbage();
         Ok(self.manifest.generation)
@@ -327,7 +366,7 @@ impl Writer {
         let merging = self.merging.map(seg_file_name);
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let stale = if name.starts_with(MANIFEST_TMP_PREFIX) {
+            let stale = if name.starts_with(MANIFEST_TMP_PREFIX) || name.starts_with(TOPICS_TMP_PREFIX) {
                 true
             } else if name.starts_with("seg-") {
                 let base = name.strip_suffix(".tmp").unwrap_or(&name);
