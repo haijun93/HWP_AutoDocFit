@@ -433,7 +433,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Text(
                       '지금 상태: ${field['status']}',
                       key: ValueKey('setting-status-$key'),
-                      style: Kiosk.body.copyWith(color: Kiosk.blue),
+                      style: Kiosk.body(context).copyWith(color: context.kiosk.blue),
                     ),
                   ],
                 ],

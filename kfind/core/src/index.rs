@@ -604,7 +604,18 @@ impl Index {
     pub fn reload(&mut self) -> Result<bool> {
         let reuse: Vec<Arc<Segment>> = self.views.iter().map(|v| v.seg.clone()).collect();
         let dir = self.dir.clone();
-        let (manifest, segs) = guard(|| load_views(&dir, &reuse))?;
+        // Windows에서는 쓰는 쪽이 파일을 바꿔 끼우는 순간 읽기가 잠깐 '액세스 거부'(OS 5)를 받을 수 있다.
+        // 실패해도 지금 색인(self)은 그대로이므로 짧게 몇 번 다시 시도한다(다중 프로세스 시험 4회 중 1회 관찰, 2026-11-14).
+        let mut attempt: u64 = 0;
+        let (manifest, segs) = loop {
+            match guard(|| load_views(&dir, &reuse)) {
+                Err(Error::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied && attempt < 5 => {
+                    attempt += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5 * attempt));
+                }
+                other => break other?,
+            }
+        };
         if manifest.generation == self.generation {
             return Ok(false);
         }
