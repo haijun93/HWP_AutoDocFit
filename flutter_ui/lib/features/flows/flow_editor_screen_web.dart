@@ -7,6 +7,7 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'dart:math';
 import 'dart:ui_web' as ui_web;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:web/web.dart' as web;
 import '../../core/api/abbreviation_api.dart';
@@ -21,10 +22,12 @@ class FlowEditorScreen extends StatefulWidget {
     required this.api,
     this.initialMode = 'diagram',
     this.isModal = true,
+    this.photoPasteTrigger,
   });
   final ApiCall api;
   final String initialMode;
   final bool isModal;
+  final ValueListenable<int>? photoPasteTrigger;
   @override
   State<FlowEditorScreen> createState() => _FlowEditorScreenState();
 }
@@ -34,6 +37,7 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
   late final web.HTMLIFrameElement frame;
   late final JSFunction listener;
   void Function()? _stopPaintDrops;
+  void Function()? _stopPhotoPaste;
   late String name = newName;
 
   /// 새 문서 기본 이름은 모드별로('새 다이어그램' / '새 마인드맵').
@@ -66,6 +70,11 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
         'docfit-paint-image-dropped',
         () => unawaited(_takePaintDrop()),
       );
+      _stopPhotoPaste = watchWindowEvent(
+        'docfit-open-photo-edit',
+        () => unawaited(pasteFromClipboard()),
+      );
+      widget.photoPasteTrigger?.addListener(_onPhotoPasteTrigger);
     }
     viewType = 'docfit-flow-${DateTime.now().microsecondsSinceEpoch}';
     // 주소(src)는 테마를 알 수 있는 didChangeDependencies에서 넣는다.
@@ -532,6 +541,12 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
           : AppBar(
               title: Text(name),
               actions: [
+                if (widget.initialMode == 'paint')
+                  IconButton(
+                    tooltip: '클립보드 사진 붙여넣기',
+                    icon: const Icon(Icons.content_paste_go),
+                    onPressed: ready && !busy ? pasteFromClipboard : null,
+                  ),
                 IconButton(
                   tooltip: '사본으로 저장',
                   icon: const Icon(Icons.copy),
@@ -563,6 +578,33 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
       ),
     ),
   );
+  void _onPhotoPasteTrigger() {
+    unawaited(pasteFromClipboard());
+  }
+
+  Future<void> pasteFromClipboard() async {
+    try {
+      final result = await widget.api('table_sketch', ['clipboard_image']);
+      if (result is! Map || result['ok'] != true) {
+        notice((result is Map ? result['message'] : null) ?? '클립보드에서 사진을 읽지 못했습니다.');
+        return;
+      }
+      final kind = result['kind'] == 'png' ? 'png' : 'jpeg';
+      post({
+        'type': 'set_background',
+        'src': 'data:image/$kind;base64,${result['data']}',
+        'width': result['width'],
+        'height': result['height'],
+      });
+      if (mounted) {
+        setState(() => dirty = true);
+        notice('클립보드 사진을 붙임사진으로 넣었습니다.');
+      }
+    } catch (e) {
+      notice('클립보드 사진을 넣지 못했습니다: $e');
+    }
+  }
+
   Future<void> _takePaintDrop() async {
     final result = await widget.api('table_sketch', ['take_drop']);
     if (result is! Map || result['ok'] != true) return;
@@ -578,6 +620,8 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
   @override
   void dispose() {
     _stopPaintDrops?.call();
+    _stopPhotoPaste?.call();
+    widget.photoPasteTrigger?.removeListener(_onPhotoPasteTrigger);
     _closeLease?.release();
     web.window.removeEventListener('message', listener);
     super.dispose();

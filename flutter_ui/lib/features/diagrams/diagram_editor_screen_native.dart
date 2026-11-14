@@ -7,11 +7,13 @@ import 'dart:io';
 import 'dart:math';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/drop_events.dart';
 import '../../core/theme/app_theme.dart';
 import '../workspace/tab_navigation_shell.dart';
 
@@ -25,10 +27,14 @@ class DiagramEditorScreen extends StatefulWidget {
   const DiagramEditorScreen({
     super.key,
     required this.api,
+    this.initialMode = 'diagram',
     this.isModal = true,
+    this.photoPasteTrigger,
   });
   final ApiCall api;
+  final String initialMode;
   final bool isModal;
+  final ValueListenable<int>? photoPasteTrigger;
 
   @override
   State<DiagramEditorScreen> createState() => _DiagramEditorScreenState();
@@ -41,9 +47,11 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
   Set<String> assets = {};
   bool initialized = false;
   final saveState = EditSaveState();
-  late final draftClient = FlowDraftClient(widget.api, 'diagram');
+  late final draftClient = FlowDraftClient(widget.api, widget.initialMode);
   bool dirty = false;
   bool busy = true;
+  bool _pendingPaste = false;
+  void Function()? _stopPhotoPasteEvent;
   String? diagramId, revision;
   String name = '새 업무 흐름도';
   String? failure;
@@ -89,7 +97,16 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
     if (widget.isModal) {
       _closeLease = CloseGuards.register(_prepareHostClose);
     }
+    widget.photoPasteTrigger?.addListener(_onPhotoPasteTrigger);
+    _stopPhotoPasteEvent = watchWindowEvent(
+      'docfit-open-photo-edit',
+      () => unawaited(pasteFromClipboard()),
+    );
     initialize();
+  }
+
+  void _onPhotoPasteTrigger() {
+    unawaited(pasteFromClipboard());
   }
 
   Future<void> initialize() async {
@@ -217,6 +234,7 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
         case 'ready':
           // 불러오는 사이 테마가 바뀌었을 수 있으니 준비되면 한 번 더 맞춘다.
           unawaited(_applyTheme(_theme ?? 'light'));
+          post({'type': 'set_mode', 'mode': widget.initialMode});
           if (diagramId != null) {
             final loaded = await storage('load', {'id': diagramId});
             if (loaded is! Map) throw Exception('저장된 도형 문서 응답이 올바르지 않습니다.');
@@ -230,6 +248,10 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
             });
           }
           unawaited(offerRecovery());
+          if (_pendingPaste) {
+            _pendingPaste = false;
+            unawaited(pasteFromClipboard());
+          }
           break;
         case 'draft':
           await draftClient.save(message, id: diagramId);
@@ -327,6 +349,43 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('도형 작업을 완료하지 못했어요: $error')));
+      }
+    }
+  }
+
+  Future<void> pasteFromClipboard() async {
+    if (!initialized || busy) {
+      _pendingPaste = true;
+      return;
+    }
+    try {
+      final result = await widget.api('table_sketch', ['clipboard_image']);
+      if (result is! Map || result['ok'] != true) {
+        if (mounted) {
+          final msg = (result is Map ? result['message'] : null) ?? '클립보드에서 사진을 읽지 못했습니다.';
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$msg')));
+        }
+        return;
+      }
+      final kind = result['kind'] == 'png' ? 'png' : 'jpeg';
+      final base64Data = result['data'];
+      post({
+        'type': 'set_background',
+        'src': 'data:image/$kind;base64,$base64Data',
+        'width': result['width'],
+        'height': result['height'],
+      });
+      if (mounted) {
+        setState(() => dirty = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('클립보드 사진을 붙임사진으로 넣었습니다.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('클립보드 사진을 넣지 못했습니다: $e')),
+        );
       }
     }
   }
@@ -556,6 +615,12 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
       appBar: AppBar(
         title: Text(name),
         actions: [
+          if (widget.initialMode == 'paint')
+            IconButton(
+              tooltip: '클립보드 사진 붙여넣기',
+              icon: const Icon(Icons.content_paste_go),
+              onPressed: initialized && !busy ? pasteFromClipboard : null,
+            ),
           IconButton(
             tooltip: '사본으로 저장',
             icon: const Icon(Icons.copy),
@@ -597,6 +662,8 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
 
   @override
   void dispose() {
+    _stopPhotoPasteEvent?.call();
+    widget.photoPasteTrigger?.removeListener(_onPhotoPasteTrigger);
     _closeLease?.release();
     for (final subscription in subscriptions) {
       unawaited(subscription.cancel());

@@ -229,6 +229,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   final workspace = GlobalKey<_WorkspaceState>();
   int lastTab = 0;
   bool developerMode = false;
+  void Function()? _stopPhotoEditEvent;
 
   @override
   void initState() {
@@ -241,10 +242,19 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       appThemeChoice.value = AppThemeChoice.parse(value['theme_mode']);
     }).catchError((_) {}));
     HardwareKeyboard.instance.addHandler(_onKClipHotkey);
+    _stopPhotoEditEvent = watchWindowEvent(
+      'docfit-open-photo-edit',
+      () {
+        tabRequest.value = null;
+        tabRequest.value = kTabPaint;
+        photoPasteTrigger.value++;
+      },
+    );
   }
 
   @override
   void dispose() {
+    _stopPhotoEditEvent?.call();
     HardwareKeyboard.instance.removeHandler(_onKClipHotkey);
     super.dispose();
   }
@@ -278,6 +288,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   }
 
   final tabRequest = ValueNotifier<int?>(null);
+  final photoPasteTrigger = ValueNotifier<int>(0);
 
   /// 표그림판 탭에서는 끌어 놓은 사진을 칸 배경 그림으로, 그림판 탭에서는 배경 사진으로 받고,
   /// 나가면 문서 목록으로 되돌린다.
@@ -310,6 +321,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   Widget build(BuildContext context) => IntegratedWorkspace(
     api: widget.api,
     tabRequest: tabRequest,
+    photoPasteTrigger: photoPasteTrigger,
     developerMode: developerMode,
     documentEditorWidget: Workspace(
       key: workspace,
@@ -320,6 +332,11 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       onRenameOpen: () {
         tabRequest.value = null;
         tabRequest.value = kTabFileRename;
+      },
+      onPhotoEditOpen: () {
+        tabRequest.value = null;
+        tabRequest.value = kTabPaint;
+        photoPasteTrigger.value++;
       },
     ),
     fileConversionWidget: ConversionTab(host: () => workspace.currentState),
@@ -478,6 +495,7 @@ class Workspace extends StatefulWidget {
     required this.api,
     this.onSidebarCollapsed,
     this.onRenameOpen,
+    this.onPhotoEditOpen,
     this.developerMode = false,
   });
   final ApiCall api;
@@ -487,6 +505,9 @@ class Workspace extends StatefulWidget {
 
   /// 탐색기 보내기로 파일이 들어와 파일명 일괄변경 탭을 열어야 할 때.
   final VoidCallback? onRenameOpen;
+
+  /// K에이전트로부터 붙임사진 편집 열기 요청이 들어왔을 때.
+  final VoidCallback? onPhotoEditOpen;
   final bool developerMode;
   @override
   State<Workspace> createState() => _WorkspaceState();
@@ -727,6 +748,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     final collapsed = next['sidebar_collapsed'];
     widget.onSidebarCollapsed?.call(collapsed is bool ? collapsed : null);
     if (next['rename_open'] == true) widget.onRenameOpen?.call();
+    if (next['photo_edit_open'] == true) widget.onPhotoEditOpen?.call();
     // 입력 중인 값은 유지하되, 문서 변경·새 작업·백엔드 범위 변경은 반영한다.
     if (range.isNotEmpty &&
         (!rangeLoaded || syncRange || rangeChanged || documentsChanged)) {

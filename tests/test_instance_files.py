@@ -89,3 +89,16 @@ class InstanceFileTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder, patch.dict(os.environ, {'LOCALAPPDATA': folder}):
             instance_files.forward(['--rename', str(Path(folder) / 'missing')])
             self.assertFalse(instance_files._folder().exists())
+
+    def test_photo_paste_argument_sets_startup_flag(self):
+        gui = Mock(running=False)
+        with patch.object(sys, 'argv', ['app', '--photo-paste']):
+            instance_files.start(gui)
+        self.assertTrue(getattr(gui, '_photo_edit_startup', False))
+        gui.파일추가.assert_not_called()
+
+    def test_split_photo_paste_arguments(self):
+        self.assertEqual(instance_files.split_photo_paste_arguments(['--photo-paste', 'file.hwpx']),
+                         (True, ['file.hwpx']))
+        self.assertEqual(instance_files.split_photo_paste_arguments(['file.hwpx']),
+                         (False, ['file.hwpx']))

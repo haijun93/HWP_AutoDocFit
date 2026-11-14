@@ -6,7 +6,9 @@ import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
 
-/// 탭 번호. 파일이름 뒤에 몽땅검색을 두고 파일변환을 맨 끝에 둔다.
+/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7)을 두고 파일변환(8)을 맨 끝에 둔다.
+const kTabPaint = 5;
+const kTabPhotoEdit = 5;
 const kTabFileRename = 6;
 const kTabTimemachine = 7;
 const kTabFileConversion = 8;

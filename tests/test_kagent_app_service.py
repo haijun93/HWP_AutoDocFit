@@ -55,6 +55,21 @@ class HandleTests(unittest.TestCase):
         self.assertFalse(svc.handle(["xl_target"])["ok"])
         self.assertEqual(svc.handle(dict(cmd="ping")), dict(ok=True, protocol=svc.PROTOCOL))
 
+    def test_open_photo_edit_command_invokes_handler(self):
+        called = []
+        svc.set_photo_edit_handler(lambda: called.append(True))
+        try:
+            out = svc.handle(dict(cmd="open_photo_edit"))
+            self.assertTrue(out.get("ok"))
+            self.assertEqual(called, [True])
+
+            called.clear()
+            out_paste = svc.handle(dict(cmd="open_photo_edit_paste"))
+            self.assertTrue(out_paste.get("ok"))
+            self.assertEqual(called, [True])
+        finally:
+            svc.set_photo_edit_handler(None)
+
     def test_handle_line_never_raises(self):
         for line in (b"", b"{", b"\xff\xfe", b"[]", json.dumps(request()).encode()):
             out = json.loads(svc.handle_line(line))

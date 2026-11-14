@@ -27,6 +27,14 @@ MAX_REQUEST = 72 * 1024 * 1024
 
 _log = logging.getLogger(__name__)
 
+_photo_edit_callback = None
+
+
+def set_photo_edit_handler(callback):
+    """K에이전트가 '붙임사진 편집 열고 붙여넣기' 명령을 보낼 때 실행할 콜백을 등록한다."""
+    global _photo_edit_callback
+    _photo_edit_callback = callback
+
 
 def _is_excel_html(raw: bytes) -> bool:
     low = raw[:65536].lower()
@@ -40,6 +48,14 @@ def handle(request) -> dict:
     cmd = request.get("cmd")
     if cmd == "ping":
         return dict(ok=True, protocol=PROTOCOL)
+    if cmd in ("open_photo_edit", "open_photo_edit_paste"):
+        if _photo_edit_callback is not None:
+            try:
+                _photo_edit_callback()
+            except Exception as exc:
+                _log.exception("붙임사진 편집 열기 콜백 실행 실패")
+                return dict(ok=False, message=f"붙임사진 화면을 열지 못했습니다: {exc}")
+        return dict(ok=True)
     if cmd != "xl_target":
         return dict(ok=False, message="지원하지 않는 명령입니다.")
     try:

@@ -10,16 +10,24 @@ def _folder():
     return Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'HWP_AutoDocFit' / 'open_requests'
 
 
-def forward(files):
+def forward(files, photo_paste=False):
     rename, paths = split_rename_arguments(files)
     files = [str(Path(f).resolve()) for f in paths if Path(f).is_file()]
-    if not files:
+    if not files and not photo_paste:
         return
     folder = _folder()
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / (uuid.uuid4().hex + '.tmp')
-    path.write_text(json.dumps({'rename': rename, 'paths': files}, ensure_ascii=False), encoding='utf-8')
+    path.write_text(json.dumps({'rename': rename, 'paths': files, 'photo_paste': photo_paste}, ensure_ascii=False), encoding='utf-8')
     path.replace(path.with_suffix('.json'))
+
+
+def split_photo_paste_arguments(arguments):
+    """Separate `--photo-paste` or `--open-photo-edit` from command line arguments."""
+    values = list(arguments or [])
+    found = any(arg in values for arg in ('--photo-paste', '--open-photo-edit', '--open-photo-edit-paste'))
+    rest = [v for v in values if v not in ('--photo-paste', '--open-photo-edit', '--open-photo-edit-paste')]
+    return found, rest
 
 
 def split_rename_arguments(arguments):
@@ -32,7 +40,9 @@ def split_rename_arguments(arguments):
     return True, [value for value in paths if isinstance(value, str) and not value.startswith('--')]
 
 
-def _deliver(gui, paths, rename=False):
+def _deliver(gui, paths, rename=False, photo_paste=False):
+    if photo_paste:
+        gui._photo_edit_startup = True
     if rename:
         # 화면 쪽 다음 상태 조회가 가져간다(desktop_web_ui._drain_rename_paths).
         queue = getattr(gui, '_rename_startup_paths', None)
@@ -47,8 +57,9 @@ def _deliver(gui, paths, rename=False):
 
 
 def start(gui):
-    rename, paths = split_rename_arguments(sys.argv[1:])
-    _deliver(gui, paths if rename else [value for value in paths if Path(value).is_file()], rename)
+    photo_paste, rest_args = split_photo_paste_arguments(sys.argv[1:])
+    rename, paths = split_rename_arguments(rest_args)
+    _deliver(gui, paths if rename else [value for value in paths if Path(value).is_file()], rename, photo_paste=photo_paste)
 
     def poll():
         folder = _folder()
@@ -56,8 +67,8 @@ def start(gui):
             for path in sorted(folder.glob('*.json')):
                 try:
                     values = json.loads(path.read_text(encoding='utf-8'))
-                    if isinstance(values, dict) and isinstance(values.get('paths'), list):
-                        _deliver(gui, values['paths'], values.get('rename') is True)
+                    if isinstance(values, dict):
+                        _deliver(gui, values.get('paths') or [], values.get('rename') is True, photo_paste=values.get('photo_paste') is True)
                     elif isinstance(values, list):
                         _deliver(gui, values)
                     path.unlink()

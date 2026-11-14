@@ -84,14 +84,15 @@ class MindMapAdapter extends StatelessWidget {
 
 /// Workspace adapter for Tab 6: 그림판 (photo background + pen, shapes, text boxes)
 class PaintAdapter extends StatelessWidget {
-  const PaintAdapter({super.key, required this.api});
+  const PaintAdapter({super.key, required this.api, this.photoPasteTrigger});
 
   final ApiCall api;
+  final ValueListenable<int>? photoPasteTrigger;
 
   @override
   Widget build(BuildContext context) => KeyedSubtree(
     key: const ValueKey('tab-paint-adapter'),
-    child: FlowEditorScreen(api: api, initialMode: 'paint', isModal: false),
+    child: FlowEditorScreen(api: api, initialMode: 'paint', isModal: false, photoPasteTrigger: photoPasteTrigger),
   );
 }
 
@@ -143,6 +144,7 @@ class IntegratedWorkspace extends StatelessWidget {
     required this.fileConversionWidget,
     this.initialIndex = 0,
     this.tabRequest,
+    this.photoPasteTrigger,
     this.onTabChanged,
     this.trailing,
     this.savedSidebarExpanded,
@@ -163,6 +165,7 @@ class IntegratedWorkspace extends StatelessWidget {
   final Widget fileConversionWidget;
   final int initialIndex;
   final ValueListenable<int?>? tabRequest;
+  final ValueListenable<int>? photoPasteTrigger;
   final ValueChanged<int>? onTabChanged;
 
   @override
@@ -188,7 +191,7 @@ class IntegratedWorkspace extends StatelessWidget {
       diagram: DiagramAdapter(api: api),
       mindMap: MindMapAdapter(api: api),
       fileConversion: FileConversionAdapter(child: fileConversionWidget),
-      paint: PaintAdapter(api: api),
+      paint: PaintAdapter(api: api, photoPasteTrigger: photoPasteTrigger),
       fileRename: FileRenameAdapter(api: api),
       timemachine: _LazyTimemachineAdapter(api: api),
     );

@@ -49,6 +49,8 @@ pub struct Settings {
     pub preview_images: bool,
     /// 네이티브 창 테마: "system"(시스템 따라가기, 기본)·"light"·"dark". 그 밖의 값은 무시(RUSTALL1 DARK1).
     pub theme: String,
+    /// 메인 앱 실행 파일 경로(붙임사진 편집 열기 시 앱 미실행이면 이 경로로 실행).
+    pub app_path: String,
 }
 
 impl Default for Settings {
@@ -81,6 +83,7 @@ impl Default for Settings {
             excel_target_paste: true,
             preview_images: true,
             theme: "system".into(),
+            app_path: String::new(),
         }
     }
 }
@@ -120,6 +123,7 @@ impl Settings {
             ("excel_target_paste", self.excel_target_paste.into()),
             ("preview_images", self.preview_images.into()),
             ("theme", self.theme.as_str().into()),
+            ("app_path", self.app_path.as_str().into()),
             ("policy_rev", 1i64.into()),
         ])
     }
@@ -192,6 +196,7 @@ impl Settings {
         if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
         if let Some(b) = v.bool("preview_images") { self.preview_images = b; }
         if let Some(t) = v.str("theme").filter(|t| ui_theme::ThemePref::is_valid(t)) { self.theme = t.to_string(); }
+        if let Some(p) = v.str("app_path") { self.app_path = p.to_string(); }
     }
 
     pub fn load(path: &str) -> Settings {

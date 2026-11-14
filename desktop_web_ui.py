@@ -561,6 +561,7 @@ class DesktopWebBridge:
     def get_state(self):
         # 파일명 서비스의 목록 추가(파일 I/O)는 Tk 스레드 밖에서 처리한다.
         rename_open = self._drain_rename_paths()
+        photo_edit_open = self._drain_photo_edit_request()
 
         def snapshot():
             from docfit_app.jobs import job_phase
@@ -631,6 +632,7 @@ class DesktopWebBridge:
                 "pending_dialog": self._pending_dialog(),
                 "drop_target": self.drop_target,
                 "rename_open": rename_open,
+                "photo_edit_open": photo_edit_open,
                 "sidebar_collapsed": self._sidebar_collapsed_value(),
                 "theme_mode": self._theme_mode_value(),
                 "developer_mode": self._setting_flag('developer_mode'),
@@ -2429,6 +2431,35 @@ class DesktopWebBridge:
             ).start()
         return True
 
+    def request_photo_edit(self):
+        """K에이전트로부터 '붙임사진 편집 열고 붙여넣기' 명령을 받았을 때 호출된다."""
+        self._photo_edit_open = True
+        window = getattr(self, "window", None)
+        if window is not None and hasattr(window, "run_js"):
+            threading.Thread(
+                target=window.run_js,
+                args=("window.dispatchEvent(new CustomEvent('docfit-open-photo-edit', {detail: {paste: true}}));",),
+                daemon=True,
+            ).start()
+
+    def _drain_photo_edit_request(self):
+        """K에이전트나 시작 인자(--photo-paste)로 받은 붙임사진 편집 열기 요청을 확인하고 플래그를 비운다."""
+        from_pipe = bool(getattr(self, "_photo_edit_open", False))
+        self._photo_edit_open = False
+        from_startup = bool(getattr(self.gui, "_photo_edit_startup", False))
+        if hasattr(self.gui, "_photo_edit_startup"):
+            self.gui._photo_edit_startup = False
+        if not from_pipe and not from_startup:
+            return False
+        window = getattr(self, "window", None)
+        if window is not None and hasattr(window, "run_js"):
+            threading.Thread(
+                target=window.run_js,
+                args=("window.dispatchEvent(new CustomEvent('docfit-open-photo-edit', {detail: {paste: true}}));",),
+                daemon=True,
+            ).start()
+        return True
+
     def table_sketch(self, action, payload=None):
         """Table sketch conversion, storage and clipboard API."""
         from docfit_app.table_sketch_service import TableSketchService
@@ -3999,8 +4030,9 @@ def run_webview(gui):
             logging.getLogger(__name__).exception("Could not initialize freeze tracer")
         # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
         try:
-            from docfit_app.kagent_app_service import start_background
+            from docfit_app.kagent_app_service import start_background, set_photo_edit_handler
             start_background()
+            set_photo_edit_handler(bridge.request_photo_edit)
         except Exception:
             logging.getLogger(__name__).exception("Could not start kagent app service pipe")
         # 앱을 업데이트한 뒤에도 예전 몽땅클립보드 에이전트(kagent.exe)가 계속 떠 있으면 새 파일로 바꿔 다시 켠다.

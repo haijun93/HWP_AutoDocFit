@@ -55,6 +55,7 @@ const CAT_H: i32 = 28;
 /// 캡션 단추 하나의 폭(Windows 기본 캡션 단추 46px).
 const CAPTION_W: i32 = 46;
 /// 접힌 창 높이(틀이 없으므로 머리글 + 위아래 테두리 1px).
+const ROW_PHOTO_W: i32 = 28;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
 /// 최소 폭: 제목(약 90) + 단추 7개(322).
@@ -189,9 +190,129 @@ fn list_top(head: i32, cat: i32, search_row: bool, row: i32) -> i32 {
     head + cat + if search_row { row } else { 0 }
 }
 
-fn row_action(x: i32, width: i32, pin_w: i32, delete_w: i32) -> Option<bool> {
-    if x >= width || x < width - pin_w - delete_w { return None; }
-    Some(x < width - delete_w) // true = pin, false = delete
+/// 줄 hover 버튼 동작. 그림 항목이면 [붙임사진][핀][X] 3개, 일반 항목이면 [핀][X] 2개.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    Photo,
+    Pin,
+    Delete,
+}
+
+pub fn is_image_item(item: &Summary) -> bool {
+    item.kind == "image" || (item.kind == "files" && item.cats.contains(Category::Image))
+}
+
+pub fn row_action(x: i32, width: i32, photo_w: i32, pin_w: i32, delete_w: i32) -> Option<Action> {
+    let total = photo_w + pin_w + delete_w;
+    if x >= width || x < width - total {
+        return None;
+    }
+    if x >= width - delete_w {
+        Some(Action::Delete)
+    } else if x >= width - delete_w - pin_w {
+        Some(Action::Pin)
+    } else if photo_w > 0 && x >= width - total {
+        Some(Action::Photo)
+    } else {
+        None
+    }
+}
+
+/// 선 그림 방식(작은 사진+연필 모양) 아이콘 그리기.
+unsafe fn draw_photo_edit_icon(hdc: HDC, r: RECT, color: u32) {
+    let pen = CreatePen(PS_SOLID, 1, color);
+    if pen.is_null() {
+        return;
+    }
+    let old_pen = SelectObject(hdc, pen);
+    let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH as i32));
+
+    let cx = (r.left + r.right) / 2;
+    let cy = (r.top + r.bottom) / 2;
+
+    // 1) 작은 사진 프레임 (폭 약 13px, 높이 약 10px)
+    let left = cx - 7;
+    let top = cy - 6;
+    let right = left + 12;
+    let bottom = top + 9;
+    Rectangle(hdc, left, top, right, bottom);
+
+    // 사진 안 산 모양 꺾은선 (MoveToEx, LineTo)
+    MoveToEx(hdc, left + 2, bottom - 2, std::ptr::null_mut());
+    LineTo(hdc, left + 5, top + 4);
+    LineTo(hdc, left + 7, bottom - 3);
+    LineTo(hdc, left + 9, top + 5);
+    LineTo(hdc, right - 2, bottom - 2);
+
+    // 2) 우측 하단 연필 모양 (대각선 연필 선)
+    let px = cx + 1;
+    let py = cy + 1;
+    MoveToEx(hdc, px + 5, py - 3, std::ptr::null_mut());
+    LineTo(hdc, px, py + 2); // 연필 심
+    LineTo(hdc, px + 2, py + 4);
+    LineTo(hdc, px + 7, py - 1);
+    LineTo(hdc, px + 5, py - 3);
+
+    SelectObject(hdc, old_brush);
+    SelectObject(hdc, old_pen);
+    DeleteObject(pen);
+}
+
+fn send_to_photo_edit() {
+    let req = "{\"cmd\":\"open_photo_edit\"}\n";
+    let pipe = crate::xl_target::pipe_name();
+    let res = crate::xl_target::call_with_timeout(pipe, req.to_string(), 800);
+    let ok = res.as_deref().and_then(crate::json::parse).and_then(|v| v.bool("ok")).unwrap_or(false);
+    if !ok {
+        // 앱이 꺼져 있거나 응답 없음 -> 앱을 실행하며 인자로 넘긴다
+        launch_app_for_photo_paste();
+    }
+}
+
+fn launch_app_for_photo_paste() {
+    let configured_path = app().settings.lock().unwrap().app_path.clone();
+    let exe = find_app_exe(&configured_path);
+    if let Some(path) = exe {
+        std::thread::Builder::new()
+            .name("kagent-launch-app".into())
+            .spawn(move || {
+                let _ = std::process::Command::new(path)
+                    .arg("--photo-paste")
+                    .spawn();
+            })
+            .ok();
+    }
+}
+
+fn find_app_exe(configured: &str) -> Option<std::path::PathBuf> {
+    if !configured.is_empty() {
+        let p = std::path::PathBuf::from(configured);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    // 현재 kagent.exe 위치 주변에서 앱 탐색
+    if let Ok(cur) = std::env::current_exe() {
+        if let Some(dir) = cur.parent() {
+            let same = dir.join("hwp-auto-docfit.exe");
+            if same.is_file() {
+                return Some(same);
+            }
+            if let Some(parent) = dir.parent() {
+                let p = parent.join("hwp-auto-docfit.exe");
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let p = std::path::Path::new(&local).join("HWP_AutoDocFit").join("hwp-auto-docfit.exe");
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    None
 }
 
 /// 고정 항목을 먼저, 그 안과 나머지는 받은 순서(최근 사용 순)를 유지한다.
@@ -238,6 +359,7 @@ struct State {
     hover_btn: Option<HeadButton>,
     pressed_btn: Option<HeadButton>,
     hover_tab: Option<usize>,
+    hover_action: Option<Action>,
     /// 최대화 중이면 이전 창 위치.
     restore_rect: Option<RECT>,
     /// 최소화(숨김) 상태 — 다시 부르면 상태를 그대로 보여 준다.
@@ -246,7 +368,7 @@ struct State {
 
 static STATE: Mutex<State> = Mutex::new(State {
     items: Vec::new(), sel: 0, top: 0, target: 0, hover: None, query: String::new(), comp: String::new(), seq: 0,
-    tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_tab: None, restore_rect: None,
+    tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_tab: None, hover_action: None, restore_rect: None,
     minimized: false,
 });
 static TRACKING: AtomicBool = AtomicBool::new(false);
@@ -411,6 +533,7 @@ pub fn show() {
             st.hover_btn = None;
             st.pressed_btn = None;
             st.hover_tab = None;
+            st.hover_action = None;
         }
         refilter(false);
         // 찾기 결과가 늘 수 있으므로 항목이 적어도 창은 몇 줄 여유를 둔다.
@@ -780,7 +903,12 @@ unsafe fn paint(hwnd: HWND) {
             SetTextColor(mem, p.text_sub);
             let hint = match st.hover_btn {
                 Some(b) => head_button_name(b, pinned, maximized).to_string(),
-                None => "1~9 선택 · ←→ 분류".to_string(),
+                None => match st.hover_action {
+                    Some(Action::Photo) => "붙임사진 편집으로 보내기".to_string(),
+                    Some(Action::Pin) => "목록 상단에 고정".to_string(),
+                    Some(Action::Delete) => "기록에서 삭제".to_string(),
+                    None => "1~9 선택 · ←→ 분류".to_string(),
+                },
             };
             draw(&hint, RECT { left: title_right, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
         }
@@ -884,7 +1012,9 @@ unsafe fn paint(hwnd: HWND) {
             draw(&tag, RECT { left: scale(hwnd, 28), top: y, right: scale(hwnd, 70), bottom: y + row }, 0);
             SelectObject(mem, font);
             SetTextColor(mem, p.row_text(sel, p.text));
-            let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) } else { 0 };
+            let has_photo = is_image_item(&item);
+            let photo_w = if has_photo { scale(hwnd, ROW_PHOTO_W) } else { 0 };
+            let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w } else { 0 };
             draw(&item.preview, RECT { left: scale(hwnd, 72), top: y, right: w - actions - scale(hwnd, 10), bottom: y + row },
                  DT_END_ELLIPSIS);
             if st.hover == Some(i) {
@@ -893,6 +1023,10 @@ unsafe fn paint(hwnd: HWND) {
                 SetTextColor(mem, p.row_text(sel, p.icon));
                 draw("✕", del, DT_CENTER);
                 draw(if item.pinned { "📌" } else { "📍" }, pin, DT_CENTER);
+                if has_photo {
+                    let photo_rc = RECT { left: pin.left - photo_w, top: y, right: pin.left, bottom: y + row };
+                    draw_photo_edit_icon(mem, photo_rc, p.row_text(sel, p.icon));
+                }
             }
         }
         drop(st);
@@ -1254,11 +1388,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let btn = head_button_at(hwnd, x, y);
                 let tab = tab_hit(hwnd, x, y);
                 let i = row_at(hwnd, lp);
+                let w = client_width(hwnd);
+                let action = if let Some(idx) = i {
+                    let st = STATE.lock().unwrap();
+                    if let Some(item) = st.items.get(idx) {
+                        let photo_w = if is_image_item(item) { scale(hwnd, ROW_PHOTO_W) } else { 0 };
+                        row_action(x, w, photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
                 let mut st = STATE.lock().unwrap();
-                if st.hover != i || st.hover_btn != btn || st.hover_tab != tab {
+                if st.hover != i || st.hover_btn != btn || st.hover_tab != tab || st.hover_action != action {
                     st.hover = i;
                     st.hover_btn = btn;
                     st.hover_tab = tab;
+                    st.hover_action = action;
                     drop(st);
                     InvalidateRect(hwnd, std::ptr::null(), 0);
                 } else {
@@ -1276,6 +1423,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 st.hover_btn = None;
                 st.hover_tab = None;
                 st.pressed_btn = None;
+                st.hover_action = None;
                 drop(st);
                 InvalidateRect(hwnd, std::ptr::null(), 0);
                 0
@@ -1315,22 +1463,43 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if let Some(i) = row_at(hwnd, lp) {
                     let w = client_width(hwnd);
-                    let action_width = scale(hwnd, ROW_PIN_W + ROW_DELETE_W);
-                    // 조건식 안에서 잠그면 본문 끝(refresh 등)까지 잠금이 살아 있어
-                    // 본문 안의 STATE.lock() 및 refresh()에서 영구 멈춤(데드락)이 발생한다.
-                    let is_hovered = STATE.lock().unwrap().hover == Some(i);
-                    if is_hovered && x >= w - action_width {
-                        let item = { let st = STATE.lock().unwrap(); st.items.get(i).map(|v| (v.id, v.pinned)) };
-                        if let Some((id, pinned)) = item {
-                            if row_action(x, w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W)) == Some(true) {
-                                let _ = app().store.lock().unwrap().pin(id, !pinned);
-                            } else {
-                                let _ = app().store.lock().unwrap().delete(id);
+                    let item_info = {
+                        let st = STATE.lock().unwrap();
+                        st.items.get(i).map(|v| (v.id, v.pinned, is_image_item(v)))
+                    };
+                    if let Some((id, pinned, has_photo)) = item_info {
+                        let photo_w = if has_photo { scale(hwnd, ROW_PHOTO_W) } else { 0 };
+                        let action_width = scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w;
+                        // 조건식 안에서 잠그면 본문 끝(refresh 등)까지 잠금이 살아 있어
+                        // 본문 안의 STATE.lock() 및 refresh()에서 영구 멈춤(데드락)이 발생한다.
+                        let is_hovered = STATE.lock().unwrap().hover == Some(i);
+                        if is_hovered && x >= w - action_width {
+                            let act = row_action(x, w, photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W));
+                            match act {
+                                Some(Action::Photo) => {
+                                    // 1) 클립보드에 올리기 (기존 복원 경로)
+                                    crate::restore(id, false, std::ptr::null_mut());
+                                    // 2) 앱에 붙임사진 편집 열고 붙여넣기 명령 전송 (미실행 시 실행)
+                                    send_to_photo_edit();
+                                    // 3) 빠른 목록 닫기
+                                    hide();
+                                    return 0;
+                                }
+                                Some(Action::Pin) => {
+                                    let _ = app().store.lock().unwrap().pin(id, !pinned);
+                                    refresh_recent();
+                                    refresh();
+                                    return 0;
+                                }
+                                Some(Action::Delete) => {
+                                    let _ = app().store.lock().unwrap().delete(id);
+                                    refresh_recent();
+                                    refresh();
+                                    return 0;
+                                }
+                                None => {}
                             }
                         }
-                        refresh_recent();
-                        refresh();
-                        return 0;
                     }
                     choose(i);
                 }
@@ -1532,10 +1701,40 @@ mod tests {
 
     #[test]
     fn hover_actions_reserve_right_side_only() {
-        assert_eq!(row_action(543, 600, 28, 28), None);
-        assert_eq!(row_action(544, 600, 28, 28), Some(true));
-        assert_eq!(row_action(572, 600, 28, 28), Some(false));
-        assert_eq!(row_action(600, 600, 28, 28), None);
+        // 1) 그림이 아닌 항목 (버튼 2개: photo_w = 0, [핀][X])
+        assert_eq!(row_action(543, 600, 0, 28, 28), None);
+        assert_eq!(row_action(544, 600, 0, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(571, 600, 0, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(572, 600, 0, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(599, 600, 0, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(600, 600, 0, 28, 28), None);
+
+        // 2) 그림 항목 (버튼 3개: photo_w = 28, [붙임사진][핀][X])
+        // 전체 폭 = 28 + 28 + 28 = 84px -> 시작 600 - 84 = 516
+        assert_eq!(row_action(515, 600, 28, 28, 28), None);
+        assert_eq!(row_action(516, 600, 28, 28, 28), Some(Action::Photo));
+        assert_eq!(row_action(543, 600, 28, 28, 28), Some(Action::Photo));
+        assert_eq!(row_action(544, 600, 28, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(571, 600, 28, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(572, 600, 28, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(599, 600, 28, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(600, 600, 28, 28, 28), None);
+    }
+
+    #[test]
+    fn image_item_detection() {
+        let txt = Summary { kind: "text".into(), ..Default::default() };
+        assert!(!is_image_item(&txt));
+        let img = Summary { kind: "image".into(), ..Default::default() };
+        assert!(is_image_item(&img));
+        let files_plain = Summary { kind: "files".into(), ..Default::default() };
+        assert!(!is_image_item(&files_plain));
+        let files_img = Summary {
+            kind: "files".into(),
+            cats: crate::category::CategorySet::of(&[Category::Image]),
+            ..Default::default()
+        };
+        assert!(is_image_item(&files_img));
     }
 
     fn item(id: i64, pinned: bool, cats: &[Category]) -> Summary {
