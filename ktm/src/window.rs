@@ -4,7 +4,7 @@ mod probe;
 use ktm::{
     backend::{Answer, Backend, Row},
     settings::Settings,
-    tm_state::{self, Effect, Event, Phase, State, Tab},
+    tm_state::{self, DateFilter, Effect, Event, Phase, State, Tab},
     tray,
 };
 use std::{
@@ -32,8 +32,18 @@ use windows_sys::Win32::{
 const READY: u32 = WM_APP + 21;
 const WARMED: u32 = WM_APP + 22;
 pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
-/// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬).
-type Job = (u64, String, Tab, Instant, Arc<AtomicBool>, &'static str);
+/// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬, 기간 필터, 커스텀 기간, 폴더 필터).
+type Job = (
+    u64,
+    String,
+    Tab,
+    Instant,
+    Arc<AtomicBool>,
+    &'static str,
+    DateFilter,
+    Option<(i64, i64)>,
+    Option<String>,
+);
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
 type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
 /// 일꾼 대기열: 검색은 늘 최신 하나, 원문 찾기도 최신 하나(검색 먼저).
@@ -52,6 +62,7 @@ enum Reply {
     /// (세대, 답, 입력 시각, 일꾼 단계 시각).
     Search(u64, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
+    TopTopics(Vec<String>),
 }
 struct Ui {
     state: State,
@@ -118,22 +129,43 @@ fn colors() -> (u32, u32, u32, u32) {
     })
 }
 fn event(h: HWND, e: Event) {
-    let effects = edit(|u| {
+    let (effects, query_changed) = edit(|u| {
+        let prev_query = u.state.query.clone();
         if matches!(
             &e,
-            Event::Input(_) | Event::SwitchTab(_) | Event::Hide | Event::Submit
+            Event::Input(_)
+                | Event::SwitchTab(_)
+                | Event::Hide
+                | Event::Submit
+                | Event::SetDateFilter(_)
+                | Event::SetFolderFilter(_)
+                | Event::ApplyAutocomplete(_)
+                | Event::ApplyTopTopic(_)
         ) {
             u.cancel.store(true, Ordering::Relaxed);
         }
         let (s, fx) = tm_state::step(&u.state, e);
+        let changed = s.query != prev_query;
         u.state = s;
         if u.state.result_count == 0 {
             u.rows.clear();
             u.terms.clear();
             u.top = 0;
         }
-        fx
+        (fx, changed)
     });
+    if query_changed {
+        with(|u| unsafe {
+            let q = wide(&u.state.query);
+            SetWindowTextW(u.edit, q.as_ptr());
+            SendMessageW(
+                u.edit,
+                0x00b1,
+                u.state.query.len() as usize,
+                u.state.query.len() as isize,
+            );
+        });
+    }
     for fx in effects {
         unsafe {
             match fx {
@@ -172,6 +204,9 @@ fn event(h: HWND, e: Event) {
                     generation,
                     query,
                     tab,
+                    date_filter,
+                    custom_date_range,
+                    folder,
                 } => {
                     let tx = with(|u| u.tx.clone());
                     let cancel = Arc::new(AtomicBool::new(false));
@@ -179,7 +214,17 @@ fn event(h: HWND, e: Event) {
                     let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
                     {
                         let mut p = tx.0.lock().unwrap();
-                        p.search = Some((generation, query, tab, Instant::now(), cancel, sort));
+                        p.search = Some((
+                            generation,
+                            query,
+                            tab,
+                            Instant::now(),
+                            cancel,
+                            sort,
+                            date_filter,
+                            custom_date_range,
+                            folder,
+                        ));
                         p.snippets = None;
                     }
                     tx.1.notify_one();
@@ -507,8 +552,186 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     DT_CENTER,
                 );
             }
-            let y = scale(h, 124);
-            let rh = scale(h, 76);
+            // 거르기 줄 (기간 거르기 + 폴더 거르기) — SEMI2 scope API
+            let fy = scale(h, 118);
+            let fh = scale(h, 24);
+            let date_chips = [
+                (DateFilter::All, "전체"),
+                (DateFilter::Today, "오늘"),
+                (DateFilter::ThisWeek, "이번 주"),
+                (DateFilter::ThisMonth, "이번 달"),
+                (DateFilter::ThisYear, "올해"),
+                (DateFilter::Custom, "직접"),
+            ];
+            let mut fx = p;
+            text(
+                "기간:",
+                RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + scale(h, 36),
+                    bottom: fy + fh,
+                },
+                fg,
+                0,
+            );
+            fx += scale(h, 38);
+            for (df, lbl) in &date_chips {
+                let cw = scale(h, 52);
+                let rc = RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + cw,
+                    bottom: fy + fh,
+                };
+                let active = u.state.date_filter == *df;
+                if active {
+                    fill(rc, sel);
+                }
+                text(lbl, rc, if active { selfg } else { fg }, DT_CENTER);
+                fx += cw + scale(h, 4);
+            }
+            if !u.state.folder_counts.is_empty() {
+                fx += scale(h, 8);
+                text(
+                    "폴더:",
+                    RECT {
+                        left: fx,
+                        top: fy,
+                        right: fx + scale(h, 36),
+                        bottom: fy + fh,
+                    },
+                    fg,
+                    0,
+                );
+                fx += scale(h, 38);
+                let all_active = u.state.selected_folder.is_none();
+                let all_rc = RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + scale(h, 44),
+                    bottom: fy + fh,
+                };
+                if all_active {
+                    fill(all_rc, sel);
+                }
+                text("전체", all_rc, if all_active { selfg } else { fg }, DT_CENTER);
+                fx += scale(h, 48);
+                for (folder, count) in &u.state.folder_counts {
+                    let lbl = format!("{folder}({count})");
+                    let cw = scale(h, 75).min(r.right - fx - p);
+                    if cw < scale(h, 30) {
+                        break;
+                    }
+                    let rc = RECT {
+                        left: fx,
+                        top: fy,
+                        right: fx + cw,
+                        bottom: fy + fh,
+                    };
+                    let active = u.state.selected_folder.as_deref() == Some(folder);
+                    if active {
+                        fill(rc, sel);
+                    }
+                    text(
+                        &lbl,
+                        rc,
+                        if active { selfg } else { fg },
+                        DT_CENTER | DT_END_ELLIPSIS,
+                    );
+                    fx += cw + scale(h, 4);
+                }
+            }
+
+            // ② 빈 검색어 첫 화면 주제 1~10위 단추
+            if u.state.query.trim().is_empty() && u.rows.is_empty() {
+                let ty = scale(h, 154);
+                text(
+                    "빈 검색어 첫 화면 · 주요 주제 1~10위",
+                    RECT {
+                        left: p,
+                        top: ty,
+                        right: r.right - p,
+                        bottom: ty + line,
+                    },
+                    fg,
+                    0,
+                );
+                let btn_y = ty + scale(h, 28);
+                let btn_h = scale(h, 32);
+                let col_w = (r.right - 2 * p - scale(h, 16)) / 2;
+                for (i, topic) in u.state.top_topics.iter().take(10).enumerate() {
+                    let col = (i % 2) as i32;
+                    let row = (i / 2) as i32;
+                    let left = p + col * (col_w + scale(h, 16));
+                    let top = btn_y + row * (btn_h + scale(h, 6));
+                    let rc = RECT {
+                        left,
+                        top,
+                        right: left + col_w,
+                        bottom: top + btn_h,
+                    };
+                    let active = u.state.selected_top_topic == Some(i);
+                    if active {
+                        fill(rc, sel);
+                    } else {
+                        fill(rc, if u.theme == "light" { 0xf2f2f2 } else { 0x2e2e2e });
+                    }
+                    let label = format!("{}. {}", i + 1, topic);
+                    text(&label, rc, if active { selfg } else { fg }, DT_CENTER);
+                }
+            }
+
+            // ① 입력 중 자동 완성(SEMI3 빈도순, 2글자부터, 키보드 위·아래 선택)
+            if !u.state.autocompletes.is_empty() {
+                let ay = scale(h, 146);
+                let ah = scale(h, 24);
+                let mut ax = p;
+                text(
+                    "자동완성:",
+                    RECT {
+                        left: ax,
+                        top: ay,
+                        right: ax + scale(h, 60),
+                        bottom: ay + ah,
+                    },
+                    fg,
+                    0,
+                );
+                ax += scale(h, 62);
+                for (i, term) in u.state.autocompletes.iter().take(5).enumerate() {
+                    let cw = scale(h, 85).min(r.right - ax - p);
+                    if cw < scale(h, 35) {
+                        break;
+                    }
+                    let rc = RECT {
+                        left: ax,
+                        top: ay,
+                        right: ax + cw,
+                        bottom: ay + ah,
+                    };
+                    let active = u.state.selected_autocomplete == Some(i);
+                    if active {
+                        fill(rc, sel);
+                    } else {
+                        fill(rc, if u.theme == "light" { 0xfaebd7 } else { 0x3d3020 });
+                    }
+                    text(
+                        term,
+                        rc,
+                        if active { selfg } else { fg },
+                        DT_CENTER | DT_END_ELLIPSIS,
+                    );
+                    ax += cw + scale(h, 6);
+                }
+            }
+
+            let y = if !u.state.autocompletes.is_empty() {
+                scale(h, 174)
+            } else {
+                scale(h, 146)
+            };
+            let rh = scale(h, 72);
             let visible = ((r.bottom - y - line) / rh).max(0) as usize;
             for (n, row) in u.rows.iter().enumerate().skip(u.top).take(visible) {
                 let top = y + (n - u.top) as i32 * rh;
@@ -578,6 +801,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         "{}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
                         u.rows.len()
                     ),
+                    _ if u.state.query.trim().is_empty() => {
+                        "주제 단추를 누르거나 검색어를 입력하세요".into()
+                    }
                     _ => "2글자부터 실시간 검색 · 1글자는 Enter".into(),
                 }
             };
@@ -719,6 +945,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let x = l as i16 as i32;
                 let y = (l >> 16) as i16 as i32;
+                let p = scale(h, 14);
                 if y >= scale(h, 82) && y < scale(h, 116) {
                     let tab = if x < scale(h, 179) {
                         Tab::Body
@@ -728,12 +955,97 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         Tab::Names
                     };
                     event(h, Event::SwitchTab(tab));
-                } else if y >= scale(h, 124) {
-                    let n = with(|u| u.top) + ((y - scale(h, 124)) / scale(h, 76)) as usize;
-                    if n < with(|u| u.rows.len()) && y < client_bottom(h) - scale(h, 24) {
-                        event(h, Event::Select(n));
-                        if msg == WM_LBUTTONDBLCLK {
-                            event(h, Event::Open { folder: false });
+                } else if y >= scale(h, 118) && y < scale(h, 146) {
+                    // 기간 거르기 단추 확인
+                    let mut fx = p + scale(h, 38);
+                    let date_chips = [
+                        DateFilter::All,
+                        DateFilter::Today,
+                        DateFilter::ThisWeek,
+                        DateFilter::ThisMonth,
+                        DateFilter::ThisYear,
+                        DateFilter::Custom,
+                    ];
+                    let mut handled = false;
+                    for df in &date_chips {
+                        let cw = scale(h, 52);
+                        if x >= fx && x < fx + cw {
+                            event(h, Event::SetDateFilter(*df));
+                            handled = true;
+                            break;
+                        }
+                        fx += cw + scale(h, 4);
+                    }
+                    if !handled && !with(|u| u.state.folder_counts.is_empty()) {
+                        fx += scale(h, 8) + scale(h, 38);
+                        if x >= fx && x < fx + scale(h, 44) {
+                            event(h, Event::SetFolderFilter(None));
+                        } else {
+                            fx += scale(h, 48);
+                            let fcs = with(|u| u.state.folder_counts.clone());
+                            for (folder, _) in fcs {
+                                let cw = scale(h, 75);
+                                if x >= fx && x < fx + cw {
+                                    let cur = with(|u| u.state.selected_folder.clone());
+                                    if cur.as_deref() == Some(&folder) {
+                                        event(h, Event::SetFolderFilter(None));
+                                    } else {
+                                        event(h, Event::SetFolderFilter(Some(folder)));
+                                    }
+                                    break;
+                                }
+                                fx += cw + scale(h, 4);
+                            }
+                        }
+                    }
+                } else if with(|u| u.state.query.trim().is_empty() && u.rows.is_empty()) {
+                    // ② 빈 검색어 첫 화면 주제 1~10위 단추 클릭
+                    let ty = scale(h, 154) + scale(h, 28);
+                    let btn_h = scale(h, 32);
+                    let mut rc_w: RECT = std::mem::zeroed();
+                    GetClientRect(h, &mut rc_w);
+                    let col_w = (rc_w.right - 2 * p - scale(h, 16)) / 2;
+                    let n_topics = with(|u| u.state.top_topics.len().min(10));
+                    for i in 0..n_topics {
+                        let col = (i % 2) as i32;
+                        let row = (i / 2) as i32;
+                        let left = p + col * (col_w + scale(h, 16));
+                        let top = ty + row * (btn_h + scale(h, 6));
+                        if x >= left && x < left + col_w && y >= top && y < top + btn_h {
+                            event(h, Event::ApplyTopTopic(i));
+                            break;
+                        }
+                    }
+                } else if !with(|u| u.state.autocompletes.is_empty())
+                    && y >= scale(h, 146)
+                    && y < scale(h, 170)
+                {
+                    // ① 자동 완성 칩 클릭
+                    let mut ax = p + scale(h, 62);
+                    let n_ac = with(|u| u.state.autocompletes.len().min(5));
+                    for i in 0..n_ac {
+                        let cw = scale(h, 85);
+                        if x >= ax && x < ax + cw {
+                            event(h, Event::ApplyAutocomplete(i));
+                            break;
+                        }
+                        ax += cw + scale(h, 6);
+                    }
+                } else {
+                    let y_start = with(|u| {
+                        if !u.state.autocompletes.is_empty() {
+                            scale(h, 174)
+                        } else {
+                            scale(h, 146)
+                        }
+                    });
+                    if y >= y_start {
+                        let n = with(|u| u.top) + ((y - y_start) / scale(h, 72)) as usize;
+                        if n < with(|u| u.rows.len()) && y < client_bottom(h) - scale(h, 24) {
+                            event(h, Event::Select(n));
+                            if msg == WM_LBUTTONDBLCLK {
+                                event(h, Event::Open { folder: false });
+                            }
                         }
                     }
                 }
@@ -754,12 +1066,12 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             READY => {
                 let answers = with(|u| u.rx.try_iter().collect::<Vec<_>>());
                 for reply in answers {
-                    let (g, result, start) = match reply {
-                        Reply::Search(g, result, start, times) => {
-                            phase("search_queue_ms", times.picked - start);
-                            phase("search_work_ms", times.done - times.picked);
-                            phase("search_deliver_ms", times.done.elapsed());
-                            (g, result, start)
+                    match reply {
+                        Reply::TopTopics(topics) => {
+                            edit(|u| {
+                                u.state.top_topics = topics;
+                            });
+                            continue;
                         }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
@@ -773,34 +1085,46 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
-                    };
-                    if g != with(|u| u.state.generation) {
-                        continue;
-                    }
-                    match result {
-                        Ok(Answer { rows, terms }) => {
-                            let count = rows.len();
-                            event(
-                                h,
-                                Event::SearchFinished {
-                                    generation: g,
-                                    count,
-                                },
-                            );
-                            edit(|u| {
-                                u.rows = rows;
-                                u.terms = terms;
-                                u.timing = Some(start);
-                                u.ready_at = Some(Instant::now());
-                            });
+                        Reply::Search(g, result, start, times) => {
+                            phase("search_queue_ms", times.picked - start);
+                            phase("search_work_ms", times.done - times.picked);
+                            phase("search_deliver_ms", times.done.elapsed());
+                            if g != with(|u| u.state.generation) {
+                                continue;
+                            }
+                            match result {
+                                Ok(Answer {
+                                    rows,
+                                    terms,
+                                    folder_counts,
+                                    autocompletes,
+                                }) => {
+                                    let count = rows.len();
+                                    event(
+                                        h,
+                                        Event::SearchFinished {
+                                            generation: g,
+                                            count,
+                                        },
+                                    );
+                                    edit(|u| {
+                                        u.rows = rows;
+                                        u.terms = terms;
+                                        u.state.folder_counts = folder_counts;
+                                        u.state.autocompletes = autocompletes;
+                                        u.timing = Some(start);
+                                        u.ready_at = Some(Instant::now());
+                                    });
+                                }
+                                Err(message) => event(
+                                    h,
+                                    Event::SearchFailed {
+                                        generation: g,
+                                        message,
+                                    },
+                                ),
+                            }
                         }
-                        Err(message) => event(
-                            h,
-                            Event::SearchFailed {
-                                generation: g,
-                                message,
-                            },
-                        ),
                     }
                 }
                 InvalidateRect(h, null(), 0);
@@ -984,6 +1308,9 @@ pub fn run() -> Result<(), String> {
                 backend = open(&root).ok();
                 if let Some(b) = backend.as_mut() {
                     let _ = b.warm();
+                    let top_topics = b.top_topics(10).into_iter().map(|item| item.term).collect();
+                    let _ = tx.send(Reply::TopTopics(top_topics));
+                    PostMessageW(handle as HWND, READY, 0, 0);
                 }
                 PostMessageW(handle as HWND, WARMED, t.elapsed().as_micros() as usize, 0);
             }
@@ -1005,24 +1332,36 @@ pub fn run() -> Result<(), String> {
                     }
                 };
                 let reply = match work {
-                    Work::Search((g, q, tab, start, cancel, sort)) => {
+                    Work::Search((g, q, tab, start, cancel, sort, date_filter, custom_date_range, folder)) => {
                         let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
                                 let rows = ktm::backend::pipe_names(&pipe_name, &q, sort)?;
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
-                                return Ok(Answer { rows, terms });
+                                return Ok(Answer {
+                                    rows,
+                                    terms,
+                                    folder_counts: Vec::new(),
+                                    autocompletes: Vec::new(),
+                                });
                             }
                             if pipe_mode {
                                 let rows = ktm::backend::pipe_search(&pipe_name, &q, hierarchy)?;
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
-                                return Ok(Answer { rows, terms });
+                                return Ok(Answer {
+                                    rows,
+                                    terms,
+                                    folder_counts: Vec::new(),
+                                    autocompletes: Vec::new(),
+                                });
                             }
                             if backend.is_none() {
                                 backend = Some(open(&root)?);
                             }
-                            backend.as_mut().unwrap().search_cancel(&q, hierarchy, Some(cancel))
+                            let b = backend.as_mut().unwrap();
+                            let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
+                            b.search_with_scope(&q, hierarchy, date_range, folder.as_deref(), Some(cancel))
                         })();
                         Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
                     }

@@ -21,7 +21,7 @@ mod textcode;
 mod topic;
 mod writer;
 
-pub use docmap::{DateCount, DateInterval, DocumentMeta, FolderCount, SearchScope, SentenceRole};
+pub use docmap::{DateCount, DateInterval, DocumentMeta, FolderCount, SearchScope, SentenceRole, normalize_date, unix_to_ymd};
 pub use fold::{FOLD_RULE_VERSION, UNICODE_VERSION, fold, fold_into, tokens};
 pub use index::{DocHit, Index, Order, Ranking, SearchCounts, SearchOptions, SearchResult, SentenceMatch, SentenceRef};
 pub use qcache::{QueryCacheOptions, QueryCacheStats};

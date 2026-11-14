@@ -159,6 +159,7 @@ mod tests {
         assert!(status_line("Ctrl+Alt+Space", "중복").starts_with("단축키 없음"));
     }
     #[test]
+    #[cfg(windows)]
     fn isolated_hotkey_registration_is_released() {
         // Thread hotkey avoids creating a window or touching the production chord.
         unsafe {

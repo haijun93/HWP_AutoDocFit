@@ -18,11 +18,13 @@ pub const SNIPPET_PREFETCH: usize = 8;
 const EXCERPT_BEFORE: usize = 16;
 const EXCERPT_MAX: usize = 120;
 
-/// 검색 한 번의 결과: 줄과 강조 낱말(검색어 낱말 + 엔진이 나눈 조각).
+/// 검색 한 번의 결과: 줄과 강조 낱말(검색어 낱말 + 엔진이 나눈 조각), 폴더별 개수 및 자동완성.
 #[derive(Clone, Debug, Default)]
 pub struct Answer {
     pub rows: Vec<Row>,
     pub terms: Vec<String>,
+    pub folder_counts: Vec<(String, u32)>,
+    pub autocompletes: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -119,10 +121,43 @@ impl Backend {
         self.search_cancel(query, hierarchy, None).map(|a| a.rows)
     }
 
+    /// SEMI3: 2글자부터 실시간 접두사 자동 완성 (빈도순).
+    pub fn autocomplete(&self, prefix: &str, limit: usize) -> Vec<kfind_core::TopicItem> {
+        let prefix = prefix.trim();
+        if prefix.chars().count() < 2 {
+            return Vec::new();
+        }
+        self.index.autocomplete(prefix, limit)
+    }
+
+    /// SEMI3: 빈 검색어 첫 화면 주제 1~10위.
+    pub fn top_topics(&self, limit: usize) -> Vec<kfind_core::TopicItem> {
+        self.index.top_topics(limit)
+    }
+
+    /// SEMI2: 현재 검색어에 대한 폴더별 결과 수 집계.
+    pub fn count_by_folder(&self, query: &str) -> Vec<kfind_core::FolderCount> {
+        self.index
+            .count_by_folder(query, &SearchOptions::default())
+            .unwrap_or_default()
+    }
+
     pub fn search_cancel(
         &mut self,
         query: &str,
         hierarchy: bool,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Answer> {
+        self.search_with_scope(query, hierarchy, None, None, cancel)
+    }
+
+    /// SEMI2 scope API(기간 거르기·폴더 거르기)를 반영한 검색.
+    pub fn search_with_scope(
+        &mut self,
+        query: &str,
+        hierarchy: bool,
+        date_range: Option<(i64, i64)>,
+        folder: Option<&str>,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
         self.index.reload().map_err(|e| e.to_string())?;
@@ -130,10 +165,17 @@ impl Backend {
         if query.is_empty() {
             return Ok(Answer::default());
         }
+        let (start_date, end_date) = match date_range {
+            Some((s, e)) => (Some(s), Some(e)),
+            None => (None, None),
+        };
         let opts = SearchOptions {
             top: LIMIT,
             refs_per_doc: 1,
             cancel,
+            start_date,
+            end_date,
+            folder: folder.map(str::to_owned),
             ..SearchOptions::default()
         };
         // 1글자 훑기는 이미 위계 먼저 정렬한다(모든 일치가 붙어 있는 일치).
@@ -172,22 +214,62 @@ impl Backend {
             .collect();
         let n = rows.len().min(SNIPPET_PREFETCH);
         self.fill_snippets(&mut rows[..n], &terms);
-        Ok(Answer { rows, terms })
+
+        // SEMI3: 2글자부터 자동완성 후보
+        let autocompletes = if query.chars().count() >= 2 {
+            self.index
+                .autocomplete(query, 8)
+                .into_iter()
+                .map(|item| item.term)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        // SEMI2: 현재 결과 기준 폴더별 개수 집계
+        let mut folder_map: HashMap<String, u32> = HashMap::new();
+        for r in &rows {
+            if !r.parent.is_empty() {
+                let folder_display = if let Some(pos) = r.parent.rfind('\\').or_else(|| r.parent.rfind('/')) {
+                    r.parent[pos + 1..].to_owned()
+                } else {
+                    r.parent.clone()
+                };
+                if !folder_display.is_empty() {
+                    *folder_map.entry(folder_display).or_insert(0) += 1;
+                }
+            }
+        }
+        let mut folder_counts: Vec<(String, u32)> = folder_map.into_iter().collect();
+        folder_counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        folder_counts.truncate(6);
+
+        Ok(Answer {
+            rows,
+            terms,
+            folder_counts,
+            autocompletes,
+        })
     }
 }
 
 fn row(hit: &DocHit, path: Option<&str>) -> Row {
     let path = path.unwrap_or_default().to_owned();
-    let p = Path::new(&path);
-    let name = p
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("문서 #{} (경로 정보 없음)", hit.doc_id));
-    let parent = p
-        .parent()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    let (parent, name) = if let Some(pos) = path.rfind('\\').or_else(|| path.rfind('/')) {
+        (path[..pos].to_owned(), path[pos + 1..].to_owned())
+    } else {
+        let p = Path::new(&path);
+        let name = p
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("문서 #{} (경로 정보 없음)", hit.doc_id));
+        let parent = p
+            .parent()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        (parent, name)
+    };
     let location = hit
         .sentences
         .first()
@@ -398,6 +480,67 @@ pub fn format_filetime(t: i64) -> Option<String> {
 #[cfg(not(windows))]
 pub fn format_filetime(_t: i64) -> Option<String> {
     None
+}
+
+/// 현재 한국 표준시(KST: UTC+9) 기준 (year, month, day) 반환.
+pub fn current_kst_ymd() -> (u32, u32, u32) {
+    let now = std::time::SystemTime::now();
+    let secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let kst_secs = secs + 9 * 3600;
+    kfind_core::unix_to_ymd(kst_secs)
+}
+
+/// 현재 한국 표준시(KST) 기준 이번 주 월요일~일요일 날짜 (YYYYMMDD, YYYYMMDD) 반환.
+pub fn current_kst_week_range() -> (u32, u32) {
+    let now = std::time::SystemTime::now();
+    let secs = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let kst_secs = secs + 9 * 3600;
+    let days = kst_secs.div_euclid(86400);
+    // 1970-01-01 was Thursday. (days + 3) % 7 -> 0 = Mon, ..., 6 = Sun
+    let dow = (days + 3).rem_euclid(7);
+    let mon_days = days - dow;
+    let sun_days = mon_days + 6;
+    let (sy, sm, sd) = kfind_core::unix_to_ymd(mon_days * 86400);
+    let (ey, em, ed) = kfind_core::unix_to_ymd(sun_days * 86400);
+    (sy * 10000 + sm * 100 + sd, ey * 10000 + em * 100 + ed)
+}
+
+/// 기간 거르기 필터와 직접 입력 범위를 (start_date, end_date)로 변환.
+pub fn date_range_for_filter(
+    filter: crate::tm_state::DateFilter,
+    custom: Option<(i64, i64)>,
+) -> Option<(i64, i64)> {
+    match filter {
+        crate::tm_state::DateFilter::All => None,
+        crate::tm_state::DateFilter::Custom => custom,
+        crate::tm_state::DateFilter::Today => {
+            let (y, m, d) = current_kst_ymd();
+            let ymd = (y * 10000 + m * 100 + d) as i64;
+            Some((ymd, ymd))
+        }
+        crate::tm_state::DateFilter::ThisWeek => {
+            let (start, end) = current_kst_week_range();
+            Some((start as i64, end as i64))
+        }
+        crate::tm_state::DateFilter::ThisMonth => {
+            let (y, m, _) = current_kst_ymd();
+            let start = (y * 10000 + m * 100 + 1) as i64;
+            let end = (y * 10000 + m * 100 + 31) as i64;
+            Some((start, end))
+        }
+        crate::tm_state::DateFilter::ThisYear => {
+            let (y, _, _) = current_kst_ymd();
+            let start = (y * 10000 + 101) as i64;
+            let end = (y * 10000 + 1231) as i64;
+            Some((start, end))
+        }
+    }
 }
 
 fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
@@ -651,5 +794,127 @@ mod tests {
         assert!(rows[0].snippet.is_empty());
         assert_eq!(rows[0].location, "위계 1");
         assert_eq!(rows[0].para, None);
+    }
+
+    #[test]
+    fn test_date_range_for_filter_calculations() {
+        use crate::tm_state::DateFilter;
+        assert_eq!(date_range_for_filter(DateFilter::All, None), None);
+        assert_eq!(
+            date_range_for_filter(DateFilter::Custom, Some((20260101, 20260228))),
+            Some((20260101, 20260228))
+        );
+
+        let today = date_range_for_filter(DateFilter::Today, None).unwrap();
+        assert_eq!(today.0, today.1);
+        assert!(today.0 >= 20260101);
+
+        let week = date_range_for_filter(DateFilter::ThisWeek, None).unwrap();
+        assert!(week.0 <= week.1);
+        assert!(week.1 >= today.0);
+
+        let month = date_range_for_filter(DateFilter::ThisMonth, None).unwrap();
+        assert!(month.0 <= month.1);
+        assert_eq!(month.0 % 100, 1);
+
+        let year = date_range_for_filter(DateFilter::ThisYear, None).unwrap();
+        assert_eq!(year.0 % 10000, 101);
+        assert_eq!(year.1 % 10000, 1231);
+    }
+
+    #[test]
+    fn test_backend_autocomplete_top_topics_and_scope_search() {
+        use kfind_core::DocumentMeta;
+        let t = Temp::new();
+        let mut writer = Writer::open(&t.0, WriterOptions::default()).unwrap();
+        writer
+            .add_document_with_meta(
+                1,
+                20260115,
+                &DocumentMeta {
+                    path: Some("C:\\공문서\\총무과\\청년지원조례.hwp".to_string()),
+                    ..Default::default()
+                },
+                &[Sentence {
+                    para: 0,
+                    level: 0,
+                    text: "청년지원 조례안 제정",
+                }],
+            )
+            .unwrap();
+        writer
+            .add_document_with_meta(
+                2,
+                20260220,
+                &DocumentMeta {
+                    path: Some("C:\\공문서\\복지과\\청년주거지원.hwp".to_string()),
+                    ..Default::default()
+                },
+                &[Sentence {
+                    para: 0,
+                    level: 0,
+                    text: "청년주거 지원 종합대책",
+                }],
+            )
+            .unwrap();
+        writer
+            .add_document_with_meta(
+                3,
+                20260310,
+                &DocumentMeta {
+                    path: Some("C:\\공문서\\총무과\\예산편성.hwp".to_string()),
+                    ..Default::default()
+                },
+                &[Sentence {
+                    para: 0,
+                    level: 0,
+                    text: "2026년도 본예산 편성 계획",
+                }],
+            )
+            .unwrap();
+        writer.commit().unwrap();
+
+        let doctable = concat!(
+            "{\"op\":\"put\",\"key\":\"1\",\"id\":1,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\청년지원조례.hwp\"}}\n",
+            "{\"op\":\"put\",\"key\":\"2\",\"id\":2,\"meta\":{\"path\":\"C:\\\\공문서\\\\복지과\\\\청년주거지원.hwp\"}}\n",
+            "{\"op\":\"put\",\"key\":\"3\",\"id\":3,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\예산편성.hwp\"}}\n"
+        );
+        std::fs::write(t.0.join("doctable.jsonl"), doctable).unwrap();
+
+        let mut backend = Backend::open(&t.0).unwrap();
+
+        // 1. SEMI3 자동 완성 (2글자부터, 빈도순)
+        let ac_short = backend.autocomplete("청", 5);
+        assert!(ac_short.is_empty(), "2글자 미만은 빈 결과");
+        let ac = backend.autocomplete("청년", 5);
+        assert!(!ac.is_empty());
+        let ac_terms: Vec<&str> = ac.iter().map(|item| item.term.as_str()).collect();
+        assert!(ac_terms.contains(&"청년지원") || ac_terms.contains(&"청년주거"));
+
+        // 2. SEMI3 첫 화면 주제 1~10위
+        let top = backend.top_topics(10);
+        assert!(!top.is_empty());
+        assert!(top.len() <= 10);
+
+        // 3. SEMI2 기간 거르기
+        let ans_jan = backend
+            .search_with_scope("청년", false, Some((20260101, 20260131)), None, None)
+            .unwrap();
+        assert_eq!(ans_jan.rows.len(), 1);
+        assert_eq!(ans_jan.rows[0].doc_id, 1);
+
+        // 4. SEMI2 폴더 거르기
+        let ans_bokji = backend
+            .search_with_scope("청년", false, None, Some("복지과"), None)
+            .unwrap();
+        assert_eq!(ans_bokji.rows.len(), 1);
+        assert_eq!(ans_bokji.rows[0].doc_id, 2);
+
+        // 5. 폴더별 개수 집계 반환
+        let ans_all = backend
+            .search_with_scope("청년", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_all.rows.len(), 2);
+        assert!(!ans_all.folder_counts.is_empty());
     }
 }
