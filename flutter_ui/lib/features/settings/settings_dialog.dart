@@ -427,6 +427,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 4),
                     Text(guide.summary, style: Kiosk.body(context)),
                   ],
+                  // 앱이 붙여 주는 지금 상태(예: 몽땅검색 켜짐·꺼짐).
+                  if (field['status'] is String) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '지금 상태: ${field['status']}',
+                      key: ValueKey('setting-status-$key'),
+                      style: Kiosk.body.copyWith(color: Kiosk.blue),
+                    ),
+                  ],
                 ],
               );
               // 넓으면 설명 왼쪽·조절 버튼 오른쪽 끝, 좁으면 설명 아래에 조절 버튼.

@@ -201,6 +201,18 @@ jobs:
           Copy-Item crates/kfind/target/release/kfind.exe resources/kfind.exe -Force
           (Get-FileHash resources/kfind.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kfind.exe.sha256
           if (!(Test-Path resources/kfind.exe) -or !(Test-Path resources/kfind.exe.sha256)) { throw 'kfind bundle missing' }
+      - name: Build Mongttang search hotkey app (ktm.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path ktm/Cargo.toml --lib
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path ktm/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item ktm/target/release/ktm.exe resources/ktm.exe -Force
+          (Get-FileHash resources/ktm.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/ktm.exe.sha256
+          $version = & resources/ktm.exe --version | Out-String
+          if ($version -notmatch '"ok":true') { throw "ktm.exe --version failed: $version" }
 
       - name: Test hierarchy core (Rust)
         shell: pwsh

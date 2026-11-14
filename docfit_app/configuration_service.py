@@ -11,6 +11,7 @@ from .settings_migrations import migrate
 LABELS = {
  'search_engine':'검색 엔진',
  'shell_menu':'탐색기 우클릭 메뉴',
+ 'mongttang_search':'몽땅검색 단축키(Ctrl+Alt+Space)',
  'file_rename_sendto':'탐색기 보내기 메뉴에 파일명 일괄변경 넣기',
  'prevent_word_split':'어절 줄 나눔 방지', 'ratio_shrink':'장평 줄이기', 'punctuation':'문장부호 위치 정리',
  'punctuation_threshold':'문장부호 이동 한도', 'keep_punctuation_set_together':'문장부호 묶음 유지',
@@ -78,6 +79,7 @@ def fields():
                        'group':'글꼴' if root in {'symbol_fonts','table_fonts'} else
                        '개발자 도구' if root in {'developer_mode', 'freeze_tracing'} else
                        '네트워크' if root in {'check_updates_on_start'} else
+                       '몽땅검색' if root == 'mongttang_search' else
                        '표준서식' if root.startswith('std_') or root in {'label_symbols','title_owner_text'} else '작업·프로그램'})
     for field in result:
         if field['key'] == 'search_engine':
