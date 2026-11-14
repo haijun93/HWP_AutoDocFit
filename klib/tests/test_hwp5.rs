@@ -369,3 +369,36 @@ fn test_hwp5_inline_control_code_4_skip() {
     let decoded = klib::hwp5::decode_para_text(&text_bytes);
     assert_eq!(decoded, "본문앞본문뒤");
 }
+
+#[test]
+fn test_hwp5_cmp4_search_indexing_excludes_hidden_comment() {
+    let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+    // 본문 문단
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le("일반 본문 내용")).to_bytes());
+
+    // 숨은 설명 (b"tcmt")
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tcmt\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("비공개 숨은글")).to_bytes());
+
+    let hwp_bytes = builder.build().unwrap();
+    let temp = TempHwpFile::new("index_filter", &hwp_bytes);
+
+    // 1. extract_hwp5는 구조 파악을 위해 hidden_comment를 보존
+    let raw_paras = extract_hwp5(&temp.path).expect("추출 성공");
+    assert_eq!(raw_paras.len(), 2);
+    assert_eq!(raw_paras[0].location_kind, "paragraph");
+    assert_eq!(raw_paras[1].location_kind, "hidden_comment");
+
+    // 2. extract_for_index 및 extract는 검색 색인 품질(정밀도)을 위해 hidden_comment 제외 (HWP5-CMP4)
+    let index_paras = klib::extract::extract_for_index(&temp.path).expect("색인 추출 성공");
+    assert_eq!(index_paras.len(), 1);
+    assert_eq!(index_paras[0].text, "일반 본문 내용");
+    assert_eq!(index_paras[0].location_kind, "paragraph");
+}
+
