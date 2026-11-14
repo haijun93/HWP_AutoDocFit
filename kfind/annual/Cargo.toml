@@ -1,0 +1,32 @@
+[package]
+name = "kfind-annual"
+version = "0.1.0"
+edition = "2024"
+description = "업무 연보 엔진 A1: 문서 유사도 기반 주제 묶기·통계·버전 줄·정기 업무 탐지"
+license-file = "LICENSE"
+publish = false
+
+[workspace]
+
+[lib]
+name = "kfind_annual"
+
+[dependencies]
+kfind-core = { path = "../core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.test]
+opt-level = 2
