@@ -6,18 +6,22 @@ use std::path::{Path, PathBuf};
 /// `quit`(떠 있는 몽땅검색 끄기)·`start`(설치본을 숨긴 채 시작)는 Win32가 필요해 실행 파일 쪽이 맡는다.
 /// 수명 상태: 꺼짐(설치 없음) → `--install` → 켜짐(설치·자동 실행·실행 중) → `--disable` → 꺼짐(설치본만 남음)
 /// → `--uninstall` → 설치 없음. 교체 전에는 항상 먼저 끈다(실행 중인 exe는 지울 수 없음).
-pub fn plan(args: &[String]) -> Option<Vec<&'static str>> {
+/// `disabled`: 사용자가 끈 표시(`--disable`이 남기는 [`disabled_marker`])가 있는지.
+/// `--respect-disabled`(앱 시작·설치 프로그램이 쓰는 갱신)는 끈 사용자에게 다시 켜지 않고 설치본만 바꾼다.
+pub fn plan(args: &[String], disabled: bool) -> Option<Vec<&'static str>> {
     let has = |name: &str| args.iter().any(|a| a == name);
     if has("--uninstall") {
-        Some(vec!["quit", "autostart-off", "uninstall"])
+        Some(vec!["quit", "autostart-off", "uninstall", "enable-mark"])
     } else if has("--install") {
-        if has("--no-autostart") {
-            Some(vec!["quit", "install", "start"])
+        if disabled && has("--respect-disabled") {
+            Some(vec!["quit", "install"])
+        } else if has("--no-autostart") {
+            Some(vec!["enable-mark", "quit", "install", "start"])
         } else {
-            Some(vec!["quit", "install", "autostart-on", "start"])
+            Some(vec!["enable-mark", "quit", "install", "autostart-on", "start"])
         }
     } else if has("--disable") {
-        Some(vec!["quit", "autostart-off"])
+        Some(vec!["disable-mark", "quit", "autostart-off"])
     } else if has("--quit") {
         Some(vec!["quit"])
     } else if has("--autostart-on") {
@@ -219,15 +223,33 @@ pub fn report(
         "installed": destination.is_file(),
         "installed_path": destination.to_string_lossy(),
         "autostart": autostart_points_to(autostart, destination),
+        "disabled": disabled_marker(destination).is_file(),
         "autostart_command": autostart,
         "hotkey_error": status.get("hotkey_error").and_then(|v| v.as_str()).filter(|s| !s.is_empty()),
         "status": status,
     })
 }
 
+/// 사용자가 몽땅검색을 끈 표시 파일(설치본 옆). 있으면 자동 갱신이 다시 켜지 않는다.
+pub fn disabled_marker(destination: &Path) -> PathBuf {
+    destination.with_file_name("ktm.disabled")
+}
+
 pub fn execute(action: &str, source: &Path, destination: &Path) -> Result<(), String> {
     match action.trim_start_matches('-') {
         "install" => install_file(source, destination),
+        "disable-mark" => {
+            let marker = disabled_marker(destination);
+            if let Some(parent) = marker.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| format!("끔 표시 실패: {e}"))?;
+            }
+            std::fs::write(&marker, b"off").map_err(|e| format!("끔 표시 실패: {e}"))
+        }
+        "enable-mark" => match std::fs::remove_file(disabled_marker(destination)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("끔 표시 지우기 실패: {e}")),
+        },
         "uninstall" => {
             // Remove only the named executable; never recursively remove user directories.
             match std::fs::remove_file(destination) {
@@ -345,30 +367,52 @@ mod tests {
     fn install_enables_autostart_by_default() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         assert_eq!(
-            plan(&args(&["ktm", "--install"])).unwrap(),
-            ["quit", "install", "autostart-on", "start"]
+            plan(&args(&["ktm", "--install"]), false).unwrap(),
+            ["enable-mark", "quit", "install", "autostart-on", "start"]
         );
         assert_eq!(
-            plan(&args(&["ktm", "--install", "--no-autostart"])).unwrap(),
-            ["quit", "install", "start"]
+            plan(&args(&["ktm", "--install", "--no-autostart"]), false).unwrap(),
+            ["enable-mark", "quit", "install", "start"]
         );
         assert_eq!(
-            plan(&args(&["ktm", "--uninstall"])).unwrap(),
-            ["quit", "autostart-off", "uninstall"]
+            plan(&args(&["ktm", "--uninstall"]), false).unwrap(),
+            ["quit", "autostart-off", "uninstall", "enable-mark"]
         );
-        assert_eq!(plan(&args(&["ktm", "--autostart-off"])).unwrap(), ["autostart-off"]);
-        assert!(plan(&args(&["ktm", "--show"])).is_none());
-        assert!(plan(&args(&["ktm", "--hidden"])).is_none());
+        assert_eq!(plan(&args(&["ktm", "--autostart-off"]), false).unwrap(), ["autostart-off"]);
+        assert!(plan(&args(&["ktm", "--show"]), false).is_none());
+        assert!(plan(&args(&["ktm", "--hidden"]), false).is_none());
     }
     #[test]
     fn disable_and_quit_keep_the_installed_copy() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(plan(&args(&["ktm", "--disable"])).unwrap(), ["quit", "autostart-off"]);
-        assert_eq!(plan(&args(&["ktm", "--quit"])).unwrap(), ["quit"]);
-        // 교체·제거 계획은 언제나 먼저 끈다(실행 중인 exe는 지울 수 없음).
+        assert_eq!(plan(&args(&["ktm", "--disable"]), false).unwrap(), ["disable-mark", "quit", "autostart-off"]);
+        assert_eq!(plan(&args(&["ktm", "--quit"]), false).unwrap(), ["quit"]);
+        // 교체·제거 계획은 파일을 건드리기 전에 언제나 먼저 끈다(실행 중인 exe는 지울 수 없음).
         for flag in ["--install", "--uninstall", "--disable"] {
-            assert_eq!(plan(&args(&["ktm", flag])).unwrap()[0], "quit");
+            let steps = plan(&args(&["ktm", flag]), false).unwrap();
+            let quit = steps.iter().position(|s| *s == "quit").unwrap();
+            assert!(steps.iter().position(|s| *s == "install" || *s == "uninstall").is_none_or(|i| i > quit));
         }
+    }
+    #[test]
+    fn respect_disabled_only_updates_the_copy() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let refresh = args(&["ktm", "--install", "--respect-disabled"]);
+        assert_eq!(plan(&refresh, true).unwrap(), ["quit", "install"]);
+        assert_eq!(plan(&refresh, false).unwrap(), ["enable-mark", "quit", "install", "autostart-on", "start"]);
+        // 사람이 설정에서 다시 켜면(--respect-disabled 없음) 끔 표시를 지우고 켠다.
+        assert_eq!(plan(&args(&["ktm", "--install"]), true).unwrap()[0], "enable-mark");
+    }
+    #[test]
+    fn disable_marker_round_trip() {
+        let t = Temp::new();
+        let exe = t.destination();
+        execute("disable-mark", &t.source(), &exe).unwrap();
+        assert!(disabled_marker(&exe).is_file());
+        assert_eq!(report(None, &exe, None, serde_json::Value::Null)["disabled"], true);
+        execute("enable-mark", &t.source(), &exe).unwrap();
+        execute("enable-mark", &t.source(), &exe).unwrap();
+        assert!(!disabled_marker(&exe).exists());
     }
     #[test]
     fn autostart_match_is_exact_command() {

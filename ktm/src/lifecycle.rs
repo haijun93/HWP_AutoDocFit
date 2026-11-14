@@ -115,7 +115,9 @@ pub fn run(args: &[String], data: &Path, source: &Path, destination: &Path) -> b
         serde_json::json!({"ok": true, "name": "몽땅검색", "version": env!("CARGO_PKG_VERSION")})
     } else if has("--status") {
         status(data, destination)
-    } else if let Some(actions) = ktm::install::plan(args) {
+    } else if let Some(actions) =
+        ktm::install::plan(args, ktm::install::disabled_marker(destination).is_file())
+    {
         let mut done = Vec::new();
         let mut failure = None;
         for action in actions {
