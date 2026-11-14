@@ -3,13 +3,13 @@
 <a id="korean"></a>
 <p align="center"><a href="#korean">한국어</a> · <a href="#english">English</a></p>
 
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.66</h2>
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.67</h2>
 
 | 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
 |:---:|:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.66/HWP_AutoDocFit_v2.2.66_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.66/HWP_AutoDocFit_v2.2.66_Portable.exe) |
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.67/HWP_AutoDocFit_v2.2.67_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.67/HWP_AutoDocFit_v2.2.67_Portable.exe) |
 
-실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.66/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
+실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.67/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
 **설치형**은 설치 후 시작 메뉴에서 실행하고, **포터블**은 설치 없이 파일을 바로 실행합니다. Windows 10·11용이며, 문서 편집 기능에는 한컴오피스 한/글이 필요합니다.
 
@@ -204,7 +204,7 @@ PC에 흩어진 작업 파일을 파일명·본문·위계로 한곳에서 찾�
 
 #### 독자 개발 검색 엔진 (개발 중)
 
-본문검색·위계검색에 쓸 검색 엔진(kfind)을 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발하고 있습니다. v2.2.66부터 앱 안 검색(본문검색·위계검색)은 이 엔진을 기본으로 쓰고, 엔진이 응답하지 않으면 기존 방식으로 자동 대체합니다. 엔진 코드는 이 저장소의 `kfind/`·`crates/kfind/`에 공개되어 있습니다.
+본문검색·위계검색에 쓸 검색 엔진(kfind)을 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발하고 있습니다. v2.2.67부터 앱 안 검색(본문검색·위계검색)은 이 엔진을 기본으로 쓰고, 엔진이 응답하지 않으면 기존 방식으로 자동 대체합니다. 엔진 코드는 이 저장소의 `kfind/`·`crates/kfind/`에 공개되어 있습니다.
 
 - 문장 단위 다중 단어 검색: 여러 단어가 같은 문장 안에 함께 나오는 경우를 색인 단계에서 바로 판정합니다.
 - 한국어 부분 일치: 2글자 조각 단위로 색인하여 조사·어미가 붙은 단어도 찾습니다.
@@ -295,7 +295,7 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.66**입니다.
+현재 공개 버전은 **v2.2.67**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.
 
@@ -325,7 +325,7 @@ Once a report draft is written, a lot of time still goes into rule-based finishi
 - **AI answer to official-document format** — paste an answer from ChatGPT, Gemini, Claude, etc.; leftover Markdown/HTML marks are cleaned up and the text is restructured into the standard Korean official-document bullet hierarchy (□, ㅇ, -, •).
 - **Mongttang Search (all-in-one search, formerly "Time Machine")** — search your work files by file name, full text or document hierarchy from one place. The three modes share one search box, results appear as you type (two or more characters, no Enter needed), documents open directly from the results, and a timeline shows earlier versions and change history.
 - **Hierarchy search** — ranks results by where the term appears in the document's structure (title, chapter, section, body, tables) and shows the document path of each hit.
-- **In-house search engine (kfind, in development)** — a Rust search engine written from scratch for full-text and hierarchy search: multi-word matching within a single sentence, Korean partial matching by indexing two-character fragments, and a compact index built on an FST term dictionary and Roaring compressed bitmaps. In our own test (3,000 documents) indexing took 8.9 s with a 32 MB index, and a single query took at most 1.4 ms of engine time. From v2.2.66 the app's built-in search uses it by default and falls back to the previous search automatically if the engine does not respond.
+- **In-house search engine (kfind, in development)** — a Rust search engine written from scratch for full-text and hierarchy search: multi-word matching within a single sentence, Korean partial matching by indexing two-character fragments, and a compact index built on an FST term dictionary and Roaring compressed bitmaps. In our own test (3,000 documents) indexing took 8.9 s with a 32 MB index, and a single query took at most 1.4 ms of engine time. From v2.2.67 the app's built-in search uses it by default and falls back to the previous search automatically if the engine does not respond.
 - **Virtual folders** — collect references to original files (not copies) in a lightweight separate window (`kvf.exe`), sorted into areas such as key materials, background materials, references and scratch space; convert to a real folder when needed.
 - **Work Library (offline notebook)** — group laws, manuals, past reports and references by topic and search only within that set; matching passages from each checked source are shown side by side, and you can keep notes.
 - **Mongttang Clipboard** — keeps a history of copied text and images. Press `Ctrl+Shift+V` (default) for a quick list to paste from, screenshot folders are detected automatically so new screenshots join the list, and image items show a large preview.
