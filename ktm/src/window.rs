@@ -155,16 +155,14 @@ fn event(h: HWND, e: Event) {
         (fx, changed)
     });
     if query_changed {
-        with(|u| unsafe {
-            let q = wide(&u.state.query);
-            SetWindowTextW(u.edit, q.as_ptr());
-            SendMessageW(
-                u.edit,
-                0x00b1,
-                u.state.query.len() as usize,
-                u.state.query.len() as isize,
-            );
-        });
+        // 빌림을 먼저 끝낸다: SetWindowTextW가 EN_CHANGE를 동기로 보내 event()가 다시 들어오므로
+        // 빌린 채 호출하면 RefCell 이중 빌림으로 죽는다(검색어 바꿈 적용 때 재현).
+        let (ed, q) = with(|u| (u.edit, wide(&u.state.query)));
+        let caret = q.len().saturating_sub(1); // UTF-16 단위(끝의 0 제외)
+        unsafe {
+            SetWindowTextW(ed, q.as_ptr());
+            SendMessageW(ed, 0x00b1, caret, caret as isize);
+        }
     }
     for fx in effects {
         unsafe {
