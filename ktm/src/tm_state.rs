@@ -1,6 +1,7 @@
 //! Pure popup/search transitions. Native handles and search results live in the adapter.
 //! Hidden input/completions cannot show the window; only `Show` does so.
 use crate::backend::Row;
+use crate::settings::RecentDoc;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,6 +31,9 @@ pub struct State {
     pub result_count: usize,
     pub selected: Option<usize>,
     pub error: Option<String>,
+    pub collapsed_names: bool,
+    pub collapsed_hier: bool,
+    pub collapsed_body: bool,
 }
 
 impl Default for State {
@@ -42,6 +46,9 @@ impl Default for State {
             result_count: 0,
             selected: None,
             error: None,
+            collapsed_names: false,
+            collapsed_hier: false,
+            collapsed_body: false,
         }
     }
 }
@@ -58,15 +65,23 @@ pub enum Event {
     SearchFinished { generation: u64, count: usize },
     SearchFailed { generation: u64, message: String },
     MoveSelection(isize),
+    PageMove(isize),
+    MoveFirst,
+    MoveLast,
     Select(usize),
     Open { folder: bool },
     OpenFailed(String),
+    /// Esc 1회=검색어 지움, 2회(이미 비어있음)=숨김.
+    Escape,
+    /// 단 머리 접기/펼치기 토글 (1: 파일명, 2: 위계, 3: 본문).
+    ToggleCollapse(u8),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     Show,
     Hide,
+    ClearInput,
     Search {
         generation: u64,
         query: String,
@@ -76,6 +91,307 @@ pub enum Effect {
         index: usize,
         folder: bool,
     },
+    CopyClipboard(String),
+    TriggerPreview {
+        index: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyAction {
+    None,
+    Hide,
+    ClearQuery,
+    Submit,
+    OpenFolder,
+    MoveSelection(isize),
+    PageMove(isize),
+    MoveFirst,
+    MoveLast,
+    SwitchTab(Tab),
+    NextTab(bool), // true: 역방향 (Shift+Tab)
+    CopyPath,
+    CopySnippet,
+    Preview,
+    CycleSort,
+    ToggleTheme,
+    FocusEdit,
+}
+
+/// 키 입력 표(순수 함수).
+/// Windows Virtual-Key 코드와 조합 키 상태를 받아 어떤 동작을 수행해야 하는지 결정한다.
+pub fn handle_key(
+    vk: u16,
+    ctrl: bool,
+    shift: bool,
+    alt: bool,
+    query_is_empty: bool,
+) -> KeyAction {
+    const VK_BACK: u16 = 0x08;
+    const VK_TAB: u16 = 0x09;
+    const VK_RETURN: u16 = 0x0D;
+    const VK_ESCAPE: u16 = 0x1B;
+    const VK_PRIOR: u16 = 0x21; // PgUp
+    const VK_NEXT: u16 = 0x22;  // PgDn
+    const VK_END: u16 = 0x23;
+    const VK_HOME: u16 = 0x24;
+    const VK_LEFT: u16 = 0x25;
+    const VK_UP: u16 = 0x26;
+    const VK_RIGHT: u16 = 0x27;
+    const VK_DOWN: u16 = 0x28;
+
+    if alt {
+        match vk {
+            0x31 => return KeyAction::SwitchTab(Tab::All),       // Alt+1
+            0x32 => return KeyAction::SwitchTab(Tab::Names),     // Alt+2
+            0x33 => return KeyAction::SwitchTab(Tab::Hierarchy), // Alt+3
+            0x34 => return KeyAction::SwitchTab(Tab::Body),      // Alt+4
+            VK_RIGHT => return KeyAction::Preview,               // Alt+→ 미리보기 창
+            _ => return KeyAction::None,
+        }
+    }
+
+    if ctrl {
+        match vk {
+            VK_RETURN => return KeyAction::OpenFolder,
+            0x43 => { // Ctrl+C or Ctrl+Shift+C
+                if shift {
+                    return KeyAction::CopySnippet;
+                } else {
+                    return KeyAction::CopyPath;
+                }
+            }
+            0x53 => return KeyAction::CycleSort,  // Ctrl+S
+            0x4C => return KeyAction::ToggleTheme,// Ctrl+L
+            0x46 => return KeyAction::FocusEdit,  // Ctrl+F
+            _ => return KeyAction::None,
+        }
+    }
+
+    match vk {
+        VK_ESCAPE => {
+            if query_is_empty {
+                KeyAction::Hide
+            } else {
+                KeyAction::ClearQuery
+            }
+        }
+        VK_RETURN => KeyAction::Submit,
+        VK_UP => KeyAction::MoveSelection(-1),
+        VK_DOWN => KeyAction::MoveSelection(1),
+        VK_PRIOR => KeyAction::PageMove(-1),
+        VK_NEXT => KeyAction::PageMove(1),
+        VK_HOME => KeyAction::MoveFirst,
+        VK_END => KeyAction::MoveLast,
+        VK_TAB => KeyAction::NextTab(shift),
+        _ => KeyAction::None,
+    }
+}
+
+/// 화면에 표시되는 줄 요소.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DisplayItem {
+    Header {
+        tier: u8,
+        label: &'static str,
+        count: usize,
+        collapsed: bool,
+    },
+    ResultRow {
+        row_index: usize,
+        tier: u8,
+        row: Row,
+    },
+    RecentQueryHeader,
+    RecentQuery {
+        index: usize,
+        query: String,
+    },
+    RecentDocHeader,
+    RecentDoc {
+        index: usize,
+        doc: RecentDoc,
+    },
+}
+
+/// 가상 스크롤용 전체 표시 목록 생성 (순수 함수).
+/// 빈 상태(최근 검색어 5개, 최근 문서 10개) 및 단 머리 접기 상태를 반영한다.
+pub fn build_display_list(
+    query: &str,
+    tab: Tab,
+    rows: &[Row],
+    names_count: usize,
+    hier_count: usize,
+    body_count: usize,
+    collapsed_names: bool,
+    collapsed_hier: bool,
+    collapsed_body: bool,
+    recent_docs: &[RecentDoc],
+    recent_queries: &[String],
+) -> Vec<DisplayItem> {
+    let mut list = Vec::new();
+    let q = query.trim();
+
+    if q.is_empty() {
+        // 빈 상태
+        if !recent_queries.is_empty() {
+            list.push(DisplayItem::RecentQueryHeader);
+            for (i, q_item) in recent_queries.iter().take(5).enumerate() {
+                list.push(DisplayItem::RecentQuery {
+                    index: i,
+                    query: q_item.clone(),
+                });
+            }
+        }
+        if !recent_docs.is_empty() {
+            list.push(DisplayItem::RecentDocHeader);
+            for (i, doc_item) in recent_docs.iter().take(10).enumerate() {
+                list.push(DisplayItem::RecentDoc {
+                    index: i,
+                    doc: doc_item.clone(),
+                });
+            }
+        }
+        return list;
+    }
+
+    match tab {
+        Tab::All => {
+            // 파일명 단
+            if names_count > 0 {
+                list.push(DisplayItem::Header {
+                    tier: 1,
+                    label: "파일명",
+                    count: names_count,
+                    collapsed: collapsed_names,
+                });
+                if !collapsed_names {
+                    for (i, r) in rows.iter().enumerate() {
+                        if r.tier == 1 {
+                            list.push(DisplayItem::ResultRow {
+                                row_index: i,
+                                tier: 1,
+                                row: r.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            // 위계 단
+            if hier_count > 0 {
+                list.push(DisplayItem::Header {
+                    tier: 2,
+                    label: "위계",
+                    count: hier_count,
+                    collapsed: collapsed_hier,
+                });
+                if !collapsed_hier {
+                    for (i, r) in rows.iter().enumerate() {
+                        if r.tier == 2 {
+                            list.push(DisplayItem::ResultRow {
+                                row_index: i,
+                                tier: 2,
+                                row: r.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            // 본문 단
+            if body_count > 0 {
+                list.push(DisplayItem::Header {
+                    tier: 3,
+                    label: "본문",
+                    count: body_count,
+                    collapsed: collapsed_body,
+                });
+                if !collapsed_body {
+                    for (i, r) in rows.iter().enumerate() {
+                        if r.tier == 3 {
+                            list.push(DisplayItem::ResultRow {
+                                row_index: i,
+                                tier: 3,
+                                row: r.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {
+            for (i, r) in rows.iter().enumerate() {
+                list.push(DisplayItem::ResultRow {
+                    row_index: i,
+                    tier: r.tier,
+                    row: r.clone(),
+                });
+            }
+        }
+    }
+    list
+}
+
+/// 선택 가능한 항목(ResultRow, RecentQuery, RecentDoc)의 개수 계산.
+pub fn selectable_count(list: &[DisplayItem]) -> usize {
+    list.iter()
+        .filter(|item| {
+            matches!(
+                item,
+                DisplayItem::ResultRow { .. }
+                    | DisplayItem::RecentQuery { .. }
+                    | DisplayItem::RecentDoc { .. }
+            )
+        })
+        .count()
+}
+
+/// 선택 번호(0..selectable_count)에 해당하는 DisplayItem 인덱스 반환.
+pub fn selectable_to_display_index(list: &[DisplayItem], sel: usize) -> Option<usize> {
+    let mut count = 0;
+    for (i, item) in list.iter().enumerate() {
+        if matches!(
+            item,
+            DisplayItem::ResultRow { .. }
+                | DisplayItem::RecentQuery { .. }
+                | DisplayItem::RecentDoc { .. }
+        ) {
+            if count == sel {
+                return Some(i);
+            }
+            count += 1;
+        }
+    }
+    None
+}
+
+/// DisplayItem 인덱스에 해당하는 선택 번호(0..selectable_count) 반환.
+pub fn display_to_selectable_index(list: &[DisplayItem], disp: usize) -> Option<usize> {
+    if disp >= list.len() {
+        return None;
+    }
+    if !matches!(
+        list[disp],
+        DisplayItem::ResultRow { .. }
+            | DisplayItem::RecentQuery { .. }
+            | DisplayItem::RecentDoc { .. }
+    ) {
+        return None;
+    }
+    let mut sel = 0;
+    for (i, item) in list.iter().enumerate() {
+        if i == disp {
+            return Some(sel);
+        }
+        if matches!(
+            item,
+            DisplayItem::ResultRow { .. }
+                | DisplayItem::RecentQuery { .. }
+                | DisplayItem::RecentDoc { .. }
+        ) {
+            sel += 1;
+        }
+    }
+    None
 }
 
 fn clear_results(state: &mut State) {
@@ -125,6 +441,23 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             }
         }
         _ if state.phase == Phase::Hidden => {}
+        Event::Escape => {
+            if !state.query.is_empty() {
+                state.query.clear();
+                effects.push(Effect::ClearInput);
+                search(&mut state, &mut effects, false);
+            } else {
+                return step(current, Event::Hide);
+            }
+        }
+        Event::ToggleCollapse(tier) => {
+            match tier {
+                1 => state.collapsed_names = !state.collapsed_names,
+                2 => state.collapsed_hier = !state.collapsed_hier,
+                3 => state.collapsed_body = !state.collapsed_body,
+                _ => {}
+            }
+        }
         Event::Input(query) => {
             if state.query != query {
                 state.query = query;
@@ -168,7 +501,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             }
         }
         Event::MoveSelection(delta) => {
-            if state.phase == Phase::Results && state.result_count > 0 {
+            if state.result_count > 0 {
                 let index = state.selected.unwrap_or(0);
                 state.selected = Some(
                     index
@@ -177,16 +510,35 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 );
             }
         }
+        Event::PageMove(delta) => {
+            if state.result_count > 0 {
+                let index = state.selected.unwrap_or(0);
+                let jump = delta.saturating_mul(5);
+                state.selected = Some(
+                    index
+                        .saturating_add_signed(jump)
+                        .min(state.result_count - 1),
+                );
+            }
+        }
+        Event::MoveFirst => {
+            if state.result_count > 0 {
+                state.selected = Some(0);
+            }
+        }
+        Event::MoveLast => {
+            if state.result_count > 0 {
+                state.selected = Some(state.result_count - 1);
+            }
+        }
         Event::Select(index) => {
-            if state.phase == Phase::Results && index < state.result_count {
+            if index < state.result_count {
                 state.selected = Some(index);
             }
         }
         Event::Open { folder } => {
-            if state.phase == Phase::Results {
-                if let Some(index) = state.selected {
-                    effects.push(Effect::Open { index, folder });
-                }
+            if let Some(index) = state.selected {
+                effects.push(Effect::Open { index, folder });
             }
         }
         Event::OpenFailed(message) => {
@@ -654,5 +1006,127 @@ mod tests {
         let (state, fx) = step(&state, Event::SwitchTab(Tab::Body));
         assert_eq!(state.tab, Tab::Body);
         assert_eq!(state.query, "2026; 공사 계약");
+    }
+
+    #[test]
+    fn key_table_actions() {
+        // Esc: 검색어 있을 때 ClearQuery, 비어있을 때 Hide
+        assert_eq!(handle_key(0x1B, false, false, false, false), KeyAction::ClearQuery);
+        assert_eq!(handle_key(0x1B, false, false, false, true), KeyAction::Hide);
+
+        // Alt+1~4: 탭 전환
+        assert_eq!(handle_key(0x31, false, false, true, false), KeyAction::SwitchTab(Tab::All));
+        assert_eq!(handle_key(0x32, false, false, true, false), KeyAction::SwitchTab(Tab::Names));
+        assert_eq!(handle_key(0x33, false, false, true, false), KeyAction::SwitchTab(Tab::Hierarchy));
+        assert_eq!(handle_key(0x34, false, false, true, false), KeyAction::SwitchTab(Tab::Body));
+
+        // Alt+→: 미리보기
+        assert_eq!(handle_key(0x27, false, false, true, false), KeyAction::Preview);
+
+        // Ctrl+C: 경로 복사, Ctrl+Shift+C: 일치 문장 복사
+        assert_eq!(handle_key(0x43, true, false, false, false), KeyAction::CopyPath);
+        assert_eq!(handle_key(0x43, true, true, false, false), KeyAction::CopySnippet);
+
+        // Enter: 열기, Ctrl+Enter: 폴더 열기
+        assert_eq!(handle_key(0x0D, false, false, false, false), KeyAction::Submit);
+        assert_eq!(handle_key(0x0D, true, false, false, false), KeyAction::OpenFolder);
+
+        // 방향키 & PgUp/PgDn, Home/End
+        assert_eq!(handle_key(0x26, false, false, false, false), KeyAction::MoveSelection(-1));
+        assert_eq!(handle_key(0x28, false, false, false, false), KeyAction::MoveSelection(1));
+        assert_eq!(handle_key(0x21, false, false, false, false), KeyAction::PageMove(-1));
+        assert_eq!(handle_key(0x22, false, false, false, false), KeyAction::PageMove(1));
+        assert_eq!(handle_key(0x24, false, false, false, false), KeyAction::MoveFirst);
+        assert_eq!(handle_key(0x23, false, false, false, false), KeyAction::MoveLast);
+
+        // Tab / Shift+Tab
+        assert_eq!(handle_key(0x09, false, false, false, false), KeyAction::NextTab(false));
+        assert_eq!(handle_key(0x09, false, true, false, false), KeyAction::NextTab(true));
+    }
+
+    #[test]
+    fn display_list_collapse_and_empty_state() {
+        let docs = vec![RecentDoc {
+            path: "C:\\Doc.hwp".into(),
+            name: "Doc.hwp".into(),
+            location: "C:\\".into(),
+            modified: "2026-11-14".into(),
+        }];
+        let queries = vec!["최근검색어".to_string()];
+
+        // 1. 빈 상태
+        let empty_list = build_display_list(
+            "",
+            Tab::All,
+            &[],
+            0,
+            0,
+            0,
+            false,
+            false,
+            false,
+            &docs,
+            &queries,
+        );
+        assert_eq!(empty_list.len(), 4); // QueryHeader, Query(0), DocHeader, Doc(0)
+        assert_eq!(selectable_count(&empty_list), 2);
+        assert_eq!(selectable_to_display_index(&empty_list, 0), Some(1));
+        assert_eq!(selectable_to_display_index(&empty_list, 1), Some(3));
+        assert_eq!(display_to_selectable_index(&empty_list, 1), Some(0));
+        assert_eq!(display_to_selectable_index(&empty_list, 3), Some(1));
+
+        // 2. 검색 결과 및 접기 테스트
+        let r1 = Row {
+            name: "파일1.hwp".into(),
+            tier: 1,
+            ..Default::default()
+        };
+        let r2 = Row {
+            name: "위계1.hwp".into(),
+            tier: 2,
+            ..Default::default()
+        };
+        let r3 = Row {
+            name: "본문1.hwp".into(),
+            tier: 3,
+            ..Default::default()
+        };
+        let rows = vec![r1, r2, r3];
+
+        // 모두 펼침
+        let list_all = build_display_list(
+            "검색",
+            Tab::All,
+            &rows,
+            1,
+            1,
+            1,
+            false,
+            false,
+            false,
+            &docs,
+            &queries,
+        );
+        // Header(tier 1) + Row + Header(tier 2) + Row + Header(tier 3) + Row = 6개
+        assert_eq!(list_all.len(), 6);
+        assert_eq!(selectable_count(&list_all), 3);
+
+        // 파일명 단 접기
+        let list_collapsed_names = build_display_list(
+            "검색",
+            Tab::All,
+            &rows,
+            1,
+            1,
+            1,
+            true, // 파일명 접힘
+            false,
+            false,
+            &docs,
+            &queries,
+        );
+        // Header(tier 1, collapsed=true) + Header(tier 2) + Row + Header(tier 3) + Row = 5개
+        assert_eq!(list_collapsed_names.len(), 5);
+        assert_eq!(selectable_count(&list_collapsed_names), 2);
     }
 }

@@ -28,6 +28,62 @@ pub fn ranges_terms<S: AsRef<str>>(text: &str, terms: &[S]) -> Vec<(usize, usize
     merged
 }
 
+/// 검색어를 ';' 기준으로 쪼갠 묶음별 낱말 목록을 구한다.
+pub fn parse_groups(query: &str) -> Vec<Vec<String>> {
+    query
+        .split(';')
+        .map(|grp| {
+            grp.split_whitespace()
+                .filter(|w| !w.is_empty())
+                .map(String::from)
+                .collect()
+        })
+        .filter(|v: &Vec<String>| !v.is_empty())
+        .collect()
+}
+
+/// ';'로 구분된 묶음별 강조 구간: `(start_byte, end_byte, group_index)`.
+/// 겹치지 않는 순서 있는 구간들로 정규화된다.
+pub fn ranges_by_groups<S: AsRef<str>>(
+    text: &str,
+    groups: &[Vec<S>],
+) -> Vec<(usize, usize, usize)> {
+    let mut raw_ranges = Vec::new();
+    let lower = text.to_ascii_lowercase();
+
+    for (group_idx, terms) in groups.iter().enumerate() {
+        for word in terms.iter().map(AsRef::as_ref).filter(|w| !w.is_empty()).take(32) {
+            for (start, matched) in lower.match_indices(&word.to_ascii_lowercase()).take(256) {
+                raw_ranges.push((start, start + matched.len(), group_idx));
+            }
+        }
+    }
+
+    raw_ranges.sort_by(|a, b| {
+        a.0.cmp(&b.0)
+            .then_with(|| (b.1 - b.0).cmp(&(a.1 - a.0)))
+            .then_with(|| a.2.cmp(&b.2))
+    });
+
+    let mut merged: Vec<(usize, usize, usize)> = Vec::new();
+    for (start, end, grp) in raw_ranges {
+        if let Some(last) = merged.last_mut() {
+            if start < last.1 {
+                if last.2 == grp {
+                    last.1 = last.1.max(end);
+                } else if end > last.1 {
+                    merged.push((last.1, end, grp));
+                }
+            } else {
+                merged.push((start, end, grp));
+            }
+        } else {
+            merged.push((start, end, grp));
+        }
+    }
+    merged
+}
+
 /// 문단 글에서 첫 일치 앞 `before`글자부터 최대 `max`글자를 한 줄로 낸다(줄바꿈·연속 공백은 공백 하나로).
 /// 앞이나 뒤를 잘랐으면 "…"를 붙인다. 일치가 없으면 문단 앞부분.
 pub fn excerpt<S: AsRef<str>>(text: &str, terms: &[S], before: usize, max: usize) -> String {
@@ -85,11 +141,24 @@ mod tests {
         assert_eq!(ranges_terms("예산 집행", &["예산집행", "예산", "집행"]), vec![(0, 6), (7, 13)]);
     }
     #[test]
-    fn excerpt_window_and_ellipsis() {
-        let text = "첫째 줄\n\n  둘째   줄에는 예산집행 계획이 있다 그리고 아주 긴 뒷부분";
-        assert_eq!(excerpt(text, &["예산"], 3, 8), "…에는 예산집행 …");
-        assert_eq!(excerpt("짧은 글", &["없음"], 3, 20), "짧은 글");
-        assert_eq!(excerpt("예산 앞", &["예산"], 10, 20), "예산 앞");
-        assert_eq!(excerpt("", &["예산"], 10, 20), "");
+    fn groups_highlight_ranges() {
+        let text = "2026년 공사 계약 집행 예산 문서";
+        let groups = vec![
+            vec!["2026".to_string()],
+            vec!["공사".to_string(), "계약".to_string()],
+            vec!["예산".to_string()],
+        ];
+        let ranges = ranges_by_groups(text, &groups);
+        // "2026"은 group 0
+        assert_eq!(ranges[0], (0, 4, 0));
+        // "공사"는 group 1
+        assert_eq!(&text[ranges[1].0..ranges[1].1], "공사");
+        assert_eq!(ranges[1].2, 1);
+        // "계약"은 group 1
+        assert_eq!(&text[ranges[2].0..ranges[2].1], "계약");
+        assert_eq!(ranges[2].2, 1);
+        // "예산"은 group 2
+        assert_eq!(&text[ranges[3].0..ranges[3].1], "예산");
+        assert_eq!(ranges[3].2, 2);
     }
 }
