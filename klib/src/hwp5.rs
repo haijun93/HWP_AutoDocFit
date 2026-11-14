@@ -292,11 +292,23 @@ fn decompress_section(data: &[u8], section_name: &str) -> Result<Vec<u8>, String
     Ok(decompressed)
 }
 
+/// HWP 5.0 컨트롤 종류 열거형
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HwpCtrlKind {
+    None,
+    Table,     // b"tbl " (표)
+    Header,    // b"head" (머리말)
+    Footer,    // b"foot" (꼬리말)
+    Footnote,  // b"fn  " (각주)
+    Endnote,   // b"en  " (미주)
+    TextBox,   // b"gso " (글상자/도형 컨테이너)
+}
+
 /// 레코드 트리 추적을 위한 스택 엔트리
 #[derive(Debug, Clone)]
 struct HierarchyNode {
     level: u32,
-    is_table: bool,
+    kind: HwpCtrlKind,
 }
 
 /// 섹션의 바이너리 레코드들을 순회하며 문단(Paragraph)을 추출한다.
@@ -310,7 +322,7 @@ fn extract_paragraphs_from_section(
 
     // 계층 추적 스택 (표 및 컨트롤 중첩 파악)
     let mut stack: Vec<HierarchyNode> = Vec::new();
-    let mut current_para_is_table = false;
+    let mut current_para_kind = HwpCtrlKind::None;
 
     while offset < total_len {
         // 남은 바이트가 4바이트 미만이면 헤더를 읽을 수 없음
@@ -341,31 +353,45 @@ fn extract_paragraphs_from_section(
             }
         }
 
-        // 현재 스택 상에 'tbl '(표) 컨텍스트가 있는지 검사
-        let in_table = stack.iter().any(|node| node.is_table);
+        // 현재 스택 상의 가장 안쪽 유효 컨트롤 종류 판별
+        let current_kind = stack.iter().rev().find_map(|node| {
+            if node.kind != HwpCtrlKind::None {
+                Some(node.kind)
+            } else {
+                None
+            }
+        }).unwrap_or(HwpCtrlKind::None);
 
         match record_header.tag_id {
             HWPTAG_CTRL_HEADER => {
                 // 첫 4바이트가 컨트롤 ID
                 if record_bytes.len() >= 4 {
                     let ctrl_id = &record_bytes[0..4];
-                    let is_tbl = ctrl_id == b"tbl ";
+                    let kind = match ctrl_id {
+                        b"tbl " => HwpCtrlKind::Table,
+                        b"head" => HwpCtrlKind::Header,
+                        b"foot" => HwpCtrlKind::Footer,
+                        b"fn  " => HwpCtrlKind::Footnote,
+                        b"en  " => HwpCtrlKind::Endnote,
+                        b"gso " => HwpCtrlKind::TextBox,
+                        _ => current_kind,
+                    };
                     stack.push(HierarchyNode {
                         level: record_level,
-                        is_table: is_tbl || in_table,
+                        kind,
                     });
                 }
             }
             HWPTAG_LIST_HEADER => {
-                // 표 셀의 문단 리스트 헤더 등
+                // 표 셀의 문단 리스트 헤더 등: 부모 컨트롤의 kind 계승
                 stack.push(HierarchyNode {
                     level: record_level,
-                    is_table: in_table,
+                    kind: current_kind,
                 });
             }
             HWPTAG_PARA_HEADER => {
-                // 새 문단 시작: 현재 표 컨텍스트에 있는지 기록
-                current_para_is_table = in_table;
+                // 새 문단 시작: 현재 컨트롤 종류 기록
+                current_para_kind = current_kind;
             }
             HWPTAG_PARA_TEXT => {
                 // 문단 텍스트 디코딩 및 제어 문자 처리
@@ -374,14 +400,24 @@ fn extract_paragraphs_from_section(
 
                 if !trimmed.is_empty() {
                     let seq = records.len() + 1;
+                    let (location_kind, is_table_cell) = match current_para_kind {
+                        HwpCtrlKind::Table => ("table_cell".to_string(), true),
+                        HwpCtrlKind::Header => ("header".to_string(), false),
+                        HwpCtrlKind::Footer => ("footer".to_string(), false),
+                        HwpCtrlKind::Footnote => ("footnote".to_string(), false),
+                        HwpCtrlKind::Endnote => ("endnote".to_string(), false),
+                        HwpCtrlKind::TextBox => ("textbox".to_string(), false),
+                        HwpCtrlKind::None => ("paragraph".to_string(), false),
+                    };
+
                     records.push(Paragraph {
                         text: trimmed.to_owned(),
-                        location_kind: "paragraph".into(),
+                        location_kind,
                         location_label: format!("문단 {seq}"),
                         sequence: seq,
                         section: Some(section_name.to_owned()),
                         hierarchy_level: None,
-                        is_table_cell: current_para_is_table,
+                        is_table_cell,
                         style_name: None,
                         outline_level: None,
                     });
@@ -401,11 +437,10 @@ fn extract_paragraphs_from_section(
 /// HWPTAG_PARA_TEXT 바이너리에서 UTF-16LE 텍스트를 디코딩하고 제어 문자(0~31)를 처리한다.
 ///
 /// 제어 문자(0~31) 처리 규격:
-/// - 1~3, 11~12, 14~18, 21~23: 확장 제어 문자.
-///   총 16바이트(= 8 WCHAR)를 차지하므로 현재 문자(2바이트) 포함 8 WCHAR를 건너뜀.
-/// - 9: 탭 ('\t')
-/// - 10: 강제 줄바꿈 ('\n')
-/// - 13: 문단 끝 / 줄바꿈 ('\n')
+/// - 1~3, 11, 14~18, 21~23: 확장 제어 문자.
+///   총 16바이트(= 8 WCHAR)를 차지하므로 현재 문자 포함 8 WCHAR를 건너뜀 (12는 폼 피드로 제외).
+/// - 9: 탭 ('	')
+/// - 10, 12, 13: 줄바꿈 / 폼 피드 ('\n')
 /// - 24: 하이픈 ('-')
 /// - 25, 26: 묶음 빈칸, 고정폭 빈칸 (' ')
 /// - 27~31: 특수 공백/문자 (' ')
@@ -422,17 +457,18 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
         let code = u16::from_le_bytes([b0, b1]);
 
         match code {
-            // 1~3, 11~12, 14~18, 21~23: 확장 제어 문자 (16바이트 = 8 WCHAR)
-            1..=3 | 11..=12 | 14..=18 | 21..=23 => {
-                i += 8;
+            // 1~3, 11, 14~18, 21~23: 확장 제어 문자 (16바이트 = 8 WCHAR)
+            // (12는 폼 피드 인라인 문자이므로 확장 제어에서 제외)
+            1..=3 | 11 | 14..=18 | 21..=23 => {
+                i = (i + 8).min(n_wchars);
             }
             // 9: 탭
             9 => {
                 out.push('\t');
                 i += 1;
             }
-            // 10, 13: 줄바꿈
-            10 | 13 => {
+            // 10: 줄바꿈, 12: 폼 피드, 13: 문단 끝
+            10 | 12 | 13 => {
                 out.push('\n');
                 i += 1;
             }
@@ -446,7 +482,7 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
                 out.push(' ');
                 i += 1;
             }
-            // 27~31: 일반 문자 1개 크기
+            // 27~31: 일반 문자 1개 크기 공백
             27..=31 => {
                 out.push(' ');
                 i += 1;
@@ -455,6 +491,7 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
             0 | 4..=8 | 19 | 20 => {
                 i += 1;
             }
+
             // 일반 유니코드 문자
             _ => {
                 if (0xD800..=0xDBFF).contains(&code) {
@@ -697,5 +734,180 @@ impl SyntheticHwp5Builder {
 
         let inner = comp.into_inner();
         Ok(inner.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    struct TempTestHwp {
+        path: PathBuf,
+    }
+
+    impl TempTestHwp {
+        fn new(name: &str, bytes: &[u8]) -> Self {
+            let path = std::env::temp_dir().join(format!("klib_test_{name}_{}.hwp", std::process::id()));
+            let mut file = File::create(&path).expect("임시 HWP 생성");
+            file.write_all(bytes).expect("임시 HWP 쓰기");
+            Self { path }
+        }
+    }
+
+    impl Drop for TempTestHwp {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_hwp5_basic_and_table_cell() {
+        let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+        // 본문 문단 1
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(
+                RecordBuilder::new(HWPTAG_PARA_TEXT, 1)
+                    .with_data(encode_utf16le("본문 첫 번째 문단입니다."))
+                    .to_bytes(),
+            );
+
+        // 본문 문단 2 (표 포함)
+        let para2_text_items = vec![
+            ParaTextItem::String("표 안내: ".to_string()),
+            ParaTextItem::ExtendedControl(11, [0u8; 14]),
+        ];
+        let para2_bytes = build_para_text_bytes(&para2_text_items);
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(para2_bytes).to_bytes());
+
+        // 표 컨트롤 및 셀 문단
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 1).with_data(b"tbl \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 2).with_data(vec![0u8; 32]).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 2).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 3).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(
+                RecordBuilder::new(HWPTAG_PARA_TEXT, 4)
+                    .with_data(encode_utf16le("표 셀 내용입니다."))
+                    .to_bytes(),
+            );
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("basic", &hwp_bytes);
+
+        let paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(paras.len(), 3);
+        assert_eq!(paras[0].text, "본문 첫 번째 문단입니다.");
+        assert_eq!(paras[0].location_kind, "paragraph");
+        assert!(!paras[0].is_table_cell);
+
+        assert_eq!(paras[1].text, "표 안내:");
+        assert_eq!(paras[1].location_kind, "paragraph");
+        assert!(!paras[1].is_table_cell);
+
+        assert_eq!(paras[2].text, "표 셀 내용입니다.");
+        assert_eq!(paras[2].location_kind, "table_cell");
+        assert!(paras[2].is_table_cell);
+    }
+
+    #[test]
+    fn test_hwp5_control_kinds_classification() {
+        let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+        // 1. 머리말 (b"head")
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"head\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("머리말 텍스트")).to_bytes());
+
+        // 2. 각주 (b"fn  ")
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"fn  \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("각주 설명문")).to_bytes());
+
+        // 3. 본문 문단
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le("일반 본문")).to_bytes());
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("ctrls", &hwp_bytes);
+
+        let paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(paras.len(), 3);
+        assert_eq!(paras[0].location_kind, "header");
+        assert!(!paras[0].is_table_cell);
+
+        assert_eq!(paras[1].location_kind, "footnote");
+        assert!(!paras[1].is_table_cell);
+
+        assert_eq!(paras[2].location_kind, "paragraph");
+        assert!(!paras[2].is_table_cell);
+    }
+
+    #[test]
+    fn test_hwp5_formfeed_char_12_handling() {
+        // 문자 코드 12(Form Feed)가 8 WCHAR 스킵되지 않고 정상 처리되는지 검증
+        let mut text_bytes = Vec::new();
+        // "앞부분"
+        text_bytes.extend_from_slice(&encode_utf16le("앞부분"));
+        // 코드 12 (0x000C, 폼 피드)
+        text_bytes.extend_from_slice(&12u16.to_le_bytes());
+        // "뒷부분" (만약 12가 8 WCHAR로 스킵되었다면 뒷부분 7글자가 삭제되었을 것임)
+        text_bytes.extend_from_slice(&encode_utf16le("뒷부분글자"));
+
+        let decoded = decode_para_text(&text_bytes);
+        assert!(decoded.contains("앞부분"));
+        assert!(decoded.contains("뒷부분글자"));
+        assert_eq!(decoded.replace('\n', " "), "앞부분 뒷부분글자");
+    }
+
+    #[test]
+    fn test_hwp5_extended_record_size_0xfff() {
+        let mut builder = SyntheticHwp5Builder::new().compressed(false);
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes());
+
+        let large_string = "가".repeat(5000);
+        let large_bytes = encode_utf16le(&large_string);
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(large_bytes).to_bytes());
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("large", &hwp_bytes);
+
+        let paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(paras.len(), 1);
+        assert_eq!(paras[0].text.chars().count(), 5000);
+    }
+
+    #[test]
+    fn test_hwp5_security_flags() {
+        // 암호 문서
+        let encrypted_bytes = SyntheticHwp5Builder::new()
+            .password_encrypted(true)
+            .build()
+            .unwrap();
+        let temp_enc = TempTestHwp::new("enc", &encrypted_bytes);
+        let res_enc = extract_hwp5(&temp_enc.path);
+        assert!(res_enc.is_err());
+        assert!(res_enc.unwrap_err().contains("encrypted"));
+
+        // 배포용 문서
+        let dist_bytes = SyntheticHwp5Builder::new()
+            .distributed(true)
+            .build()
+            .unwrap();
+        let temp_dist = TempTestHwp::new("dist", &dist_bytes);
+        let res_dist = extract_hwp5(&temp_dist.path);
+        assert!(res_dist.is_err());
+        assert!(res_dist.unwrap_err().contains("encrypted"));
     }
 }
