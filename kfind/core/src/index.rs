@@ -1,11 +1,16 @@
 //! 읽기 쪽: 목록 파일의 한 세대를 열어 질의한다. 쓰는 쪽이 목록을 바꿔도 이미 연 세대는 그대로 유효하다.
+use crate::docmap::{
+    DateCount, DateInterval, FolderCount, SearchScope, SentenceRole, normalize_date, ym_to_key,
+    ymd_to_key,
+};
 use crate::manifest::Manifest;
 use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
-use crate::query::{MIN_WORD_CHARS, ParsedQuery, add_phrases, QueryWord, SplitMode, char_bounds, is_word_or_stem, parse_groups, parse_query, split_bigram, split_dict};
+use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, add_phrases, char_bounds, is_word_or_stem, parse_groups, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::{Error, Result, corrupt, guard};
 use roaring::{RoaringBitmap, RoaringTreemap};
 use std::cmp::Ordering;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
@@ -14,6 +19,7 @@ use std::time::{Duration, Instant};
 pub(crate) struct SegView {
     pub seg: Arc<Segment>,
     pub deleted: RoaringBitmap,
+    pub doc_deleted: RoaringBitmap,
 }
 
 /// 목록 파일을 읽고 조각을 연다. 읽는 사이 쓰는 쪽이 조각을 합쳐 지웠으면 새 목록으로 다시 시도한다.
@@ -73,11 +79,38 @@ pub struct SearchOptions {
     /// 구문(KFC2): 나누지 않고 붙어 있는 그대로만 찾는 낱말(검색어 낱말과 AND). 비교형으로 바꾸므로 "예산 집행"은
     /// "예산집행"이 붙어 있는 문장을 찾는다. 같은 낱말이 검색어에 있으면 그 낱말의 나누기를 끈다.
     pub phrases: Vec<String>,
+    /// 검색 범위(Sentence, Document, Folder). 기본값은 Sentence.
+    pub scope: SearchScope,
+    /// 특정 폴더 안에서만 검색.
+    pub folder: Option<String>,
+    /// 기간 검색: 시작 날짜 (YYYYMMDD 또는 Unix 타임스탬프).
+    pub start_date: Option<i64>,
+    /// 기간 검색: 끝 날짜.
+    pub end_date: Option<i64>,
+    /// 특정 파일 형식(확장자)만 검색 (예: ["hwp", "hwpx", "pdf"]).
+    pub file_types: Option<Vec<String>>,
+    /// 제목에만 검색.
+    pub title_only: bool,
 }
 
 impl Default for SearchOptions {
     fn default() -> Self {
-        SearchOptions { top: 20, split: SplitMode::DictLongest, time_limit: Some(Duration::from_secs(2)), cancel: None, refs_per_doc: 3, allow: None, deny: None, phrases: Vec::new() }
+        SearchOptions {
+            top: 20,
+            split: SplitMode::DictLongest,
+            time_limit: Some(Duration::from_secs(2)),
+            cancel: None,
+            refs_per_doc: 3,
+            allow: None,
+            deny: None,
+            phrases: Vec::new(),
+            scope: SearchScope::Sentence,
+            folder: None,
+            start_date: None,
+            end_date: None,
+            file_types: None,
+            title_only: false,
+        }
     }
 }
 
@@ -188,6 +221,204 @@ fn cover_offsets(n: usize) -> Vec<usize> {
         v.push(n - 3);
     }
     v
+}
+
+fn date_range_bitmap(seg: &Segment, start: Option<i64>, end: Option<i64>) -> Result<Option<RoaringBitmap>> {
+    if start.is_none() && end.is_none() {
+        return Ok(None);
+    }
+    let s_date = start.unwrap_or(0);
+    let e_date = end.unwrap_or(21001231);
+    let (sy, sm, sd) = normalize_date(s_date);
+    let (ey, em, ed) = normalize_date(e_date);
+    let start_ymd = ymd_to_key(sy, sm, sd);
+    let end_ymd = ymd_to_key(ey, em, ed);
+
+    let mut out = RoaringBitmap::new();
+    for y in sy..=ey {
+        let y_start_ymd = ymd_to_key(y, 1, 1);
+        let y_end_ymd = ymd_to_key(y, 12, 31);
+        if y_start_ymd >= start_ymd && y_end_ymd <= end_ymd {
+            if let Some(bm) = seg.year_posting(y)? {
+                out |= bm;
+            }
+            continue;
+        }
+        let sm_for_y = if y == sy { sm } else { 1 };
+        let em_for_y = if y == ey { em } else { 12 };
+        for m in sm_for_y..=em_for_y {
+            let m_start_ymd = ymd_to_key(y, m, 1);
+            let m_end_ymd = ymd_to_key(y, m, 31);
+            if m_start_ymd >= start_ymd && m_end_ymd <= end_ymd {
+                if let Some(bm) = seg.month_posting(ym_to_key(y, m))? {
+                    out |= bm;
+                }
+                continue;
+            }
+            let sd_for_m = if y == sy && m == sm { sd } else { 1 };
+            let ed_for_m = if y == ey && m == em { ed } else { 31 };
+            for d in sd_for_m..=ed_for_m {
+                let ymd = ymd_to_key(y, m, d);
+                if ymd >= start_ymd && ymd <= end_ymd {
+                    if let Some(bm) = seg.date_posting(ymd)? {
+                        out |= bm;
+                    }
+                }
+            }
+        }
+    }
+    Ok(Some(out))
+}
+
+fn candidate_docs_for_word(seg: &Segment, w: &str) -> Result<Option<RoaringBitmap>> {
+    let b = char_bounds(w);
+    let n = b.len() - 1;
+    if n < 2 {
+        return Ok(None);
+    }
+    let mut acc: Option<RoaringBitmap> = None;
+    for i in 0..n - 1 {
+        let g2 = &w.as_bytes()[b[i]..b[i + 2]];
+        match seg.doc_posting(g2)? {
+            Some(bm) => {
+                acc = Some(match acc {
+                    None => bm,
+                    Some(mut a) => {
+                        a &= bm;
+                        a
+                    }
+                });
+                if acc.as_ref().is_some_and(|a| a.is_empty()) {
+                    return Ok(Some(RoaringBitmap::new()));
+                }
+            }
+            None => return Ok(Some(RoaringBitmap::new())),
+        }
+    }
+    Ok(acc)
+}
+
+fn candidate_docs_for_qword(seg: &Segment, w: &QueryWord) -> Result<Option<RoaringBitmap>> {
+    let s = candidate_docs_for_word(seg, &w.text)?;
+    match &w.pieces {
+        None => Ok(s),
+        Some(pieces) => {
+            let mut parts_acc: Option<RoaringBitmap> = None;
+            for p in pieces {
+                if let Some(p_bm) = candidate_docs_for_word(seg, p)? {
+                    parts_acc = Some(match parts_acc {
+                        None => p_bm,
+                        Some(mut a) => {
+                            a &= p_bm;
+                            a
+                        }
+                    });
+                }
+            }
+            match (s, parts_acc) {
+                (Some(mut a), Some(b)) => {
+                    a |= b;
+                    Ok(Some(a))
+                }
+                (Some(a), None) => Ok(Some(a)),
+                (None, Some(b)) => Ok(Some(b)),
+                (None, None) => Ok(None),
+            }
+        }
+    }
+}
+
+pub(crate) fn candidate_docs_for_query(view: &SegView, words: &[QueryWord], opts: &SearchOptions) -> Result<Option<RoaringBitmap>> {
+    let seg = &view.seg;
+    let mut cand: Option<RoaringBitmap> = None;
+    for w in words {
+        if let Some(w_bm) = candidate_docs_for_qword(seg, w)? {
+            cand = Some(match cand {
+                None => w_bm,
+                Some(mut a) => {
+                    a &= w_bm;
+                    a
+                }
+            });
+            if cand.as_ref().is_some_and(|c| c.is_empty()) {
+                return Ok(Some(RoaringBitmap::new()));
+            }
+        }
+    }
+
+    // 1등급 비트맵 ①: tombstone (doc_deleted) 즉시 제외
+    if !view.doc_deleted.is_empty() {
+        if let Some(c) = cand.as_mut() {
+            *c -= &view.doc_deleted;
+        } else {
+            let mut all = RoaringBitmap::from_sorted_iter(0..seg.n_docs).unwrap_or_default();
+            all -= &view.doc_deleted;
+            cand = Some(all);
+        }
+    }
+
+    // 폴더 단위 거르기 (요구사항 5)
+    if let Some(folder) = &opts.folder {
+        if let Some(f_bm) = seg.folder_posting(folder)? {
+            cand = Some(match cand {
+                None => f_bm,
+                Some(mut c) => {
+                    c &= f_bm;
+                    c
+                }
+            });
+        } else {
+            return Ok(Some(RoaringBitmap::new()));
+        }
+    }
+
+    // 파일 형식 거르기 (1등급 비트맵 ②, 요구사항 7)
+    if let Some(types) = &opts.file_types {
+        let mut t_bm = RoaringBitmap::new();
+        for t in types {
+            if let Some(b) = seg.file_type_posting(t)? {
+                t_bm |= b;
+            }
+        }
+        cand = Some(match cand {
+            None => t_bm,
+            Some(mut c) => {
+                c &= t_bm;
+                c
+            }
+        });
+    }
+
+    // 시간 단위 거르기 (요구사항 6)
+    if opts.start_date.is_some() || opts.end_date.is_some() {
+        if let Some(d_bm) = date_range_bitmap(seg, opts.start_date, opts.end_date)? {
+            cand = Some(match cand {
+                None => d_bm,
+                Some(mut c) => {
+                    c &= d_bm;
+                    c
+                }
+            });
+        }
+    }
+
+    // allow / deny 범위 거르기
+    if opts.scoped() {
+        if let Some(c) = cand {
+            let tables = seg.tables();
+            let mut filtered = RoaringBitmap::new();
+            for local in c {
+                if let Some(rec) = tables.doc(local) {
+                    if opts.admits(rec.doc_id) {
+                        filtered.insert(local);
+                    }
+                }
+            }
+            cand = Some(filtered);
+        }
+    }
+
+    Ok(cand)
 }
 
 /// 낱말 하나가 붙어 있는 그대로 들어 있는 문장. `restrict`가 있으면 그 안에서만.
@@ -574,7 +805,7 @@ impl Index {
     }
 
     fn from_parts(dir: &Path, manifest: Manifest, segs: Vec<Arc<Segment>>) -> Index {
-        let views = segs.into_iter().zip(manifest.segs).map(|(seg, e)| SegView { seg, deleted: e.deleted }).collect();
+        let views = segs.into_iter().zip(manifest.segs).map(|(seg, e)| SegView { seg, deleted: e.deleted, doc_deleted: e.doc_deleted }).collect();
         Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new(), cache: None }
     }
 
@@ -815,10 +1046,62 @@ impl Index {
     /// `rank`·`count`·`match_sentences`가 모두 이 결과를 쓰므로 세 결과의 범위가 늘 같다.
     fn eval_all(&self, parsed: &ParsedQuery, opts: &SearchOptions, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
         let sets = self.eval_unscoped(parsed, budget)?;
-        if !opts.scoped() {
-            return Ok(sets);
+        let mut out = Vec::with_capacity(self.views.len());
+
+        for (v, s) in self.views.iter().zip(sets) {
+            budget.check()?;
+            let candidate_docs = candidate_docs_for_query(v, &parsed.words, opts)?;
+            if candidate_docs.as_ref().is_some_and(|c| c.is_empty()) {
+                out.push(Arc::new((RoaringBitmap::new(), None)));
+                continue;
+            }
+
+            let mut matched = s.0.clone();
+            let mut adjacent = s.1.clone();
+
+            if let Some(c_docs) = &candidate_docs {
+                let tables = v.seg.tables();
+                let mut filtered_matched = RoaringBitmap::new();
+                for sid in &matched {
+                    if let Some(d) = tables.doc_of(sid) {
+                        if c_docs.contains(d) {
+                            filtered_matched.insert(sid);
+                        }
+                    }
+                }
+                adjacent = adjacent.map(|adj| {
+                    let mut a = RoaringBitmap::new();
+                    for sid in adj {
+                        if filtered_matched.contains(sid) {
+                            a.insert(sid);
+                        }
+                    }
+                    a
+                });
+                matched = filtered_matched;
+            }
+
+            if opts.title_only {
+                if let Some(role_title) = v.seg.role_posting(SentenceRole::Title as u8)? {
+                    matched &= &role_title;
+                    if let Some(adj) = adjacent.as_mut() {
+                        *adj &= &role_title;
+                    }
+                } else {
+                    matched.clear();
+                    if let Some(adj) = adjacent.as_mut() {
+                        adj.clear();
+                    }
+                }
+            }
+
+            out.push(Arc::new((matched, adjacent)));
         }
-        self.views.iter().zip(sets).map(|(v, s)| scope_sets(v, s, opts, budget)).collect()
+
+        if !opts.scoped() {
+            return Ok(out);
+        }
+        self.views.iter().zip(out).map(|(v, s)| scope_sets(v, s, opts, budget)).collect()
     }
 
     fn eval_unscoped(&self, parsed: &ParsedQuery, budget: &mut Budget) -> Result<Vec<Arc<SegSets>>> {
@@ -911,6 +1194,9 @@ impl Index {
     }
 
     fn rank_inner(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
+        if opts.scope == SearchScope::Document {
+            return self.rank_document_scope_inner(query, opts, order);
+        }
         let mut budget = Budget::new(opts);
         budget.check()?;
         let parsed = self.resolve_opts(query, opts)?;
@@ -992,6 +1278,142 @@ impl Index {
         }
         let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
         Ok(Ranking { result, slots, sets, group_sets: None })
+    }
+
+    fn rank_document_scope_inner(&self, query: &str, opts: &SearchOptions, order: Order) -> Result<Ranking> {
+        let mut budget = Budget::new(opts);
+        budget.check()?;
+        let parsed = self.resolve_opts(query, opts)?;
+        if parsed.words.is_empty() {
+            let result = SearchResult {
+                words: parsed.words,
+                dropped: parsed.dropped,
+                generation: self.generation,
+                ..Default::default()
+            };
+            return Ok(Ranking {
+                result,
+                slots: Vec::new(),
+                sets: Vec::new(),
+                group_sets: None,
+            });
+        }
+
+        let static_rank = if opts.top == 0 { Some(self.static_rank()?) } else { None };
+        let mut found = Collector {
+            top: opts.top,
+            order,
+            best: Vec::new(),
+            all: Vec::new(),
+            ranks: static_rank.map_or(&[], |r| &r.per_view),
+            total_docs: 0,
+            adjacent_docs: 0,
+        };
+        let mut total_sentences = 0u64;
+        let mut all_sets = Vec::with_capacity(self.views.len());
+
+        for (vi, view) in self.views.iter().enumerate() {
+            budget.check()?;
+            let cand = candidate_docs_for_query(view, &parsed.words, opts)?;
+            if cand.as_ref().is_some_and(|c| c.is_empty()) {
+                all_sets.push(Arc::new((RoaringBitmap::new(), None)));
+                continue;
+            }
+
+            let mut word_doc_sets: Vec<RoaringBitmap> = Vec::with_capacity(parsed.words.len());
+            let mut word_sentence_sets: Vec<RoaringBitmap> = Vec::with_capacity(parsed.words.len());
+            let tables = view.seg.tables();
+
+            for w in &parsed.words {
+                let sents = eval_seg(&view.seg, std::slice::from_ref(w), None, &mut budget)?.0;
+                let sents = &sents - &view.deleted;
+                let mut docs = RoaringBitmap::new();
+                for sid in &sents {
+                    if let Some(d) = tables.doc_of(sid) {
+                        docs.insert(d);
+                    }
+                }
+                word_doc_sets.push(docs);
+                word_sentence_sets.push(sents);
+            }
+
+            let mut doc_matches = word_doc_sets.first().cloned().unwrap_or_default();
+            for ds in &word_doc_sets[1..] {
+                doc_matches &= ds;
+            }
+            if let Some(c) = cand {
+                doc_matches &= c;
+            }
+
+            let mut combined_sents = RoaringBitmap::new();
+            for ws in &word_sentence_sets {
+                combined_sents |= ws;
+            }
+
+            let mut adjacent_sents = word_sentence_sets.first().cloned().unwrap_or_default();
+            for ws in &word_sentence_sets[1..] {
+                adjacent_sents &= ws;
+            }
+
+            for local in &doc_matches {
+                let Some(rec) = tables.doc(local) else { continue };
+                let mut doc_sent_count = 0u32;
+                let mut best_level = u8::MAX;
+                let mut doc_adjacent = false;
+
+                for sid in rec.first_sid..rec.first_sid + rec.n_sent {
+                    if combined_sents.contains(sid) {
+                        doc_sent_count += 1;
+                        if let Some(lv) = tables.level(sid) {
+                            best_level = best_level.min(lv);
+                        }
+                    }
+                    if adjacent_sents.contains(sid) {
+                        doc_adjacent = true;
+                    }
+                }
+
+                if doc_sent_count > 0 {
+                    total_sentences += doc_sent_count as u64;
+                    let mut a = Agg {
+                        key: 0,
+                        doc_id: rec.doc_id,
+                        date: rec.date,
+                        view: vi as u32,
+                        local,
+                    };
+                    a.set(doc_adjacent, best_level, doc_sent_count);
+                    found.push(a)?;
+                }
+            }
+
+            all_sets.push(Arc::new((combined_sents, Some(adjacent_sents))));
+        }
+
+        let (total_docs, adjacent_docs) = (found.total_docs, found.adjacent_docs);
+        let (mut hits, mut slots) = (Vec::new(), Vec::new());
+        if let Some(sr) = static_rank {
+            let mut all = found.all;
+            all.sort_unstable();
+            hits.reserve(all.len());
+            slots.reserve(all.len());
+            for k in all {
+                let Some(&(view, local)) = sr.inverse.get(k as u32 as usize) else { return corrupt("static rank out of range") };
+                let Some(rec) = self.views.get(view as usize).and_then(|v| v.seg.tables().doc(local)) else { return corrupt("document out of range") };
+                let skey = (k >> 32) as u64;
+                let key = if order == Order::Hierarchy { relevance_key(skey) } else { skey };
+                let a = Agg { key, doc_id: rec.doc_id, date: rec.date, view, local };
+                hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
+                slots.push((view, local));
+            }
+        } else {
+            for a in &found.best {
+                hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
+                slots.push((a.view, a.local));
+            }
+        }
+        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
+        Ok(Ranking { result, slots, sets: all_sets, group_sets: None })
     }
 
     /// 개수만: 일치 문장 수와 문서 수. 문서별 모으기·순위·미리보기를 하지 않는다(입력 도중 개수 표시용,
@@ -1120,6 +1542,65 @@ impl Index {
             return self.rank_inner(single, opts, order);
         }
 
+        // 2단계 최적화: 문서 비트맵으로 후보 문서 교집합 사전 검사
+        // (scope == SearchScope::Folder일 때는 문서 단위 교집합이 아니라 폴더 단위이므로 건너뛴다)
+        if opts.scope != SearchScope::Folder {
+            let mut any_common = false;
+            for view in &self.views {
+                let mut seg_cand: Option<RoaringBitmap> = None;
+                for g in &groups {
+                    if let Ok(parsed) = self.resolve_opts(g, opts) {
+                        if let Ok(Some(cand)) = candidate_docs_for_query(view, &parsed.words, opts) {
+                            seg_cand = Some(match seg_cand {
+                                None => cand,
+                                Some(mut sc) => {
+                                    sc &= cand;
+                                    sc
+                                }
+                            });
+                        }
+                    }
+                }
+                if seg_cand.as_ref().is_none_or(|c| !c.is_empty()) {
+                    any_common = true;
+                    break;
+                }
+            }
+            if !any_common && !self.views.is_empty() {
+                let mut words = Vec::new();
+                let mut dropped = Vec::new();
+                for grp in &groups {
+                    if let Ok(parsed) = self.resolve_opts(grp, opts) {
+                        for w in parsed.words {
+                            if !words.iter().any(|existing: &QueryWord| existing.text == w.text) {
+                                words.push(w);
+                            }
+                        }
+                        for d in parsed.dropped {
+                            if !dropped.contains(&d) {
+                                dropped.push(d);
+                            }
+                        }
+                    }
+                }
+                let result = SearchResult {
+                    words,
+                    dropped,
+                    total_docs: 0,
+                    total_sentences: 0,
+                    adjacent_docs: 0,
+                    hits: Vec::new(),
+                    generation: self.generation,
+                };
+                return Ok(Ranking {
+                    result,
+                    slots: Vec::new(),
+                    sets: Vec::new(),
+                    group_sets: None,
+                });
+            }
+        }
+
         let opts_all = SearchOptions { top: 0, refs_per_doc: 0, ..opts.clone() };
         let mut group_rankings = Vec::with_capacity(groups.len());
         for g in &groups {
@@ -1171,33 +1652,94 @@ impl Index {
         }
 
         let mut acc: std::collections::HashMap<u64, DocAcc> = std::collections::HashMap::new();
+        let n_groups = groups.len();
 
-        let first = &group_rankings[0];
-        for (hit, &(view, local)) in first.result.hits.iter().zip(&first.slots) {
-            acc.insert(hit.doc_id, DocAcc {
-                view,
-                local,
-                date: hit.date,
-                best_level: hit.level,
-                sum_count: hit.count,
-                all_adjacent: hit.adjacent,
-                match_count: 1,
-            });
-        }
+        if opts.scope == SearchScope::Folder {
+            // 폴더 단위 교집합 (scope=folder, 요구사항 5)
+            let mut group_folders: Vec<HashMap<String, Vec<(usize, u64)>>> = Vec::new();
+            for ranking in &group_rankings {
+                let mut folders_for_g: HashMap<String, Vec<(usize, u64)>> = HashMap::new();
+                for (hit_idx, (hit, &(view_idx, local))) in ranking.result.hits.iter().zip(&ranking.slots).enumerate() {
+                    if let Some(view) = self.views.get(view_idx as usize) {
+                        if let Ok(folders) = view.seg.folders() {
+                            for f in folders {
+                                if let Ok(Some(f_bm)) = view.seg.folder_posting(&f) {
+                                    if f_bm.contains(local) {
+                                        folders_for_g.entry(f).or_default().push((hit_idx, hit.doc_id));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                group_folders.push(folders_for_g);
+            }
 
-        for ranking in &group_rankings[1..] {
-            for hit in &ranking.result.hits {
-                if let Some(entry) = acc.get_mut(&hit.doc_id) {
-                    entry.best_level = entry.best_level.min(hit.level);
-                    entry.sum_count += hit.count;
-                    entry.all_adjacent &= hit.adjacent;
-                    entry.match_count += 1;
+            if let Some(first_folders) = group_folders.first() {
+                let mut common_folders: std::collections::HashSet<String> = first_folders.keys().cloned().collect();
+                for other in &group_folders[1..] {
+                    common_folders.retain(|f| other.contains_key(f));
+                }
+
+                if !common_folders.is_empty() {
+                    let mut admitted_doc_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+                    for f in &common_folders {
+                        for g_map in &group_folders {
+                            if let Some(hits) = g_map.get(f) {
+                                for &(_, doc_id) in hits {
+                                    admitted_doc_ids.insert(doc_id);
+                                }
+                            }
+                        }
+                    }
+
+                    for ranking in &group_rankings {
+                        for (hit, &(view, local)) in ranking.result.hits.iter().zip(&ranking.slots) {
+                            if admitted_doc_ids.contains(&hit.doc_id) {
+                                let entry = acc.entry(hit.doc_id).or_insert(DocAcc {
+                                    view,
+                                    local,
+                                    date: hit.date,
+                                    best_level: hit.level,
+                                    sum_count: 0,
+                                    all_adjacent: hit.adjacent,
+                                    match_count: n_groups,
+                                });
+                                entry.best_level = entry.best_level.min(hit.level);
+                                entry.sum_count += hit.count;
+                                entry.all_adjacent &= hit.adjacent;
+                            }
+                        }
+                    }
                 }
             }
-        }
+        } else {
+            let first = &group_rankings[0];
+            for (hit, &(view, local)) in first.result.hits.iter().zip(&first.slots) {
+                acc.insert(hit.doc_id, DocAcc {
+                    view,
+                    local,
+                    date: hit.date,
+                    best_level: hit.level,
+                    sum_count: hit.count,
+                    all_adjacent: hit.adjacent,
+                    match_count: 1,
+                });
+            }
 
-        let n_groups = groups.len();
-        acc.retain(|_, v| v.match_count == n_groups);
+            for ranking in &group_rankings[1..] {
+                for hit in &ranking.result.hits {
+                    if let Some(entry) = acc.get_mut(&hit.doc_id) {
+                        entry.best_level = entry.best_level.min(hit.level);
+                        entry.sum_count += hit.count;
+                        entry.all_adjacent &= hit.adjacent;
+                        entry.match_count += 1;
+                    }
+                }
+            }
+
+            acc.retain(|_, v| v.match_count == n_groups);
+        }
 
         let total_docs = acc.len();
         let mut adjacent_docs = 0usize;
@@ -1307,6 +1849,82 @@ impl Index {
             total_sentences: ranking.result.total_sentences,
             total_docs: ranking.result.total_docs,
             generation: ranking.result.generation,
+        })
+    }
+
+    /// 폴더별 결과 수 집계 API (요구사항 5).
+    pub fn count_by_folder(&self, query: &str, opts: &SearchOptions) -> Result<Vec<FolderCount>> {
+        guard(|| {
+            let ranking = self.rank_groups_inner(query, &SearchOptions { top: 0, refs_per_doc: 0, ..opts.clone() }, Order::Relevance)?;
+            let mut seg_hits: HashMap<u32, RoaringBitmap> = HashMap::new();
+            let mut hit_counts: HashMap<(u32, u32), u32> = HashMap::new();
+
+            for (hit, &(view, local)) in ranking.result.hits.iter().zip(&ranking.slots) {
+                seg_hits.entry(view).or_default().insert(local);
+                hit_counts.insert((view, local), hit.count);
+            }
+
+            let mut folder_counts: HashMap<String, (u32, u64)> = HashMap::new();
+
+            for (&view_idx, hit_locals) in &seg_hits {
+                if let Some(view) = self.views.get(view_idx as usize) {
+                    let folders = view.seg.folders()?;
+                    for f in folders {
+                        if let Some(f_bm) = view.seg.folder_posting(&f)? {
+                            let common = hit_locals & &f_bm;
+                            if !common.is_empty() {
+                                let doc_c = common.len() as u32;
+                                let mut sent_c = 0u64;
+                                for local in &common {
+                                    if let Some(&c) = hit_counts.get(&(view_idx, local)) {
+                                        sent_c += c as u64;
+                                    }
+                                }
+                                let entry = folder_counts.entry(f).or_insert((0, 0));
+                                entry.0 += doc_c;
+                                entry.1 += sent_c;
+                            }
+                        }
+                    }
+                }
+            }
+
+            let mut out: Vec<FolderCount> = folder_counts.into_iter().map(|(folder, (doc_count, sentence_count))| {
+                FolderCount { folder, doc_count, sentence_count }
+            }).collect();
+
+            out.sort_unstable_by(|a, b| b.doc_count.cmp(&a.doc_count).then_with(|| a.folder.cmp(&b.folder)));
+            Ok(out)
+        })
+    }
+
+    /// 날짜별 결과 수 집계 API (요구사항 6, 막대그래프용).
+    pub fn count_by_date_histogram(&self, query: &str, opts: &SearchOptions, interval: DateInterval) -> Result<Vec<DateCount>> {
+        guard(|| {
+            let ranking = self.rank_groups_inner(query, &SearchOptions { top: 0, refs_per_doc: 0, ..opts.clone() }, Order::Relevance)?;
+            let mut buckets: BTreeMap<u32, (String, u32, u64)> = BTreeMap::new();
+
+            for hit in &ranking.result.hits {
+                let (y, m, d) = normalize_date(hit.date);
+                let (key, label) = match interval {
+                    DateInterval::Year => (y, format!("{y}")),
+                    DateInterval::Month => (ym_to_key(y, m), format!("{y}-{m:02}")),
+                    DateInterval::Week => {
+                        let doy = (m - 1) * 30 + d;
+                        let w = (doy / 7) + 1;
+                        (y * 100 + w, format!("{y}-W{w:02}"))
+                    }
+                    DateInterval::Day => (ymd_to_key(y, m, d), format!("{y}-{m:02}-{d:02}")),
+                };
+                let entry = buckets.entry(key).or_insert((label, 0, 0));
+                entry.1 += 1;
+                entry.2 += hit.count as u64;
+            }
+
+            let out = buckets.into_iter().map(|(date_key, (label, doc_count, sentence_count))| {
+                DateCount { date_key, label, doc_count, sentence_count }
+            }).collect();
+            Ok(out)
         })
     }
 }

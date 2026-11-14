@@ -5,6 +5,7 @@
 //! - 커밋(commit): 대기 문서를 새 조각 파일로 쓰고 목록 파일을 원자적으로 교체. 이때부터 읽는 쪽에 보인다.
 //! - 합치기: `plan_merge`(목록 스냅숏) → `MergeJob::run`(다른 스레드, 쓰기 잠금 없이) → `apply_merge`(커밋).
 //!   합치는 동안 들어온 삭제는 `apply_merge`가 새 조각 번호로 옮겨 적는다. 합치기는 한 번에 하나만.
+use crate::docmap::{DocumentMeta, detect_sentence_role};
 use crate::fold::fold_into;
 use crate::index::load_views;
 use crate::manifest::{MANIFEST_NAME, MANIFEST_TMP_PREFIX, Manifest, SegEntry};
@@ -207,6 +208,7 @@ impl Writer {
             let pos = self.manifest.segs.iter().position(|e| e.id == seg_id).ok_or_else(|| Error::Corrupt(format!("document {doc_id} points at a missing segment")))?;
             let rec = self.segs[pos].doc(local)?;
             self.manifest.segs[pos].deleted.insert_range(rec.first_sid..rec.first_sid + rec.n_sent);
+            self.manifest.segs[pos].doc_deleted.insert(local);
             self.dirty = true;
             existed = true;
         }
@@ -216,9 +218,25 @@ impl Writer {
     /// 문서를 넣는다. 같은 ID의 문서가 있으면 바꾼다. 문장이 없으면 삭제와 같다. 커밋해야 읽는 쪽에 보인다.
     /// `date`는 순위의 날짜 비교에 쓰는 값(클수록 최신).
     pub fn add_document(&mut self, doc_id: u64, date: i64, sentences: &[Sentence<'_>]) -> Result<()> {
+        self.add_document_with_meta(doc_id, date, &DocumentMeta::default(), sentences)
+    }
+
+    /// 메타데이터(경로, 파일 형식 등)와 함께 문서를 넣는다.
+    pub fn add_document_with_meta(&mut self, doc_id: u64, date: i64, meta: &DocumentMeta, sentences: &[Sentence<'_>]) -> Result<()> {
         // 비교형 만들기(외부 글을 다루는 부분)를 패닉 경계 안에서 먼저 끝내고, 성공했을 때만 상태를 바꾼다.
         let doc = guard(|| {
-            let mut d = PendingDoc { doc_id, date, text: String::new(), sent_end: Vec::with_capacity(sentences.len()), tok_start: Vec::new(), para: Vec::with_capacity(sentences.len()), level: Vec::with_capacity(sentences.len()) };
+            let mut d = PendingDoc {
+                doc_id,
+                date,
+                path: meta.path.clone(),
+                file_type: meta.file_type.clone(),
+                text: String::new(),
+                sent_end: Vec::with_capacity(sentences.len()),
+                tok_start: Vec::new(),
+                para: Vec::with_capacity(sentences.len()),
+                level: Vec::with_capacity(sentences.len()),
+                roles: Vec::with_capacity(sentences.len()),
+            };
             for s in sentences {
                 for tok in s.text.split(char::is_whitespace) {
                     let before = d.text.len();
@@ -233,6 +251,7 @@ impl Writer {
                 d.sent_end.push(d.text.len() as u32);
                 d.para.push(s.para);
                 d.level.push(s.level);
+                d.roles.push(detect_sentence_role(s.level, s.para, s.text) as u8);
             }
             Ok(d)
         })?;
@@ -278,7 +297,7 @@ impl Writer {
                 self.docs.insert(d.doc_id, (id, local));
                 local += 1;
             }
-            self.manifest.segs.push(SegEntry { id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted: RoaringBitmap::new() });
+            self.manifest.segs.push(SegEntry { id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted: RoaringBitmap::new(), doc_deleted: RoaringBitmap::new() });
             self.segs.push(seg);
         }
         self.pending.clear();
@@ -393,7 +412,7 @@ impl Writer {
                 }
             }
             let opened = match out.meta {
-                Some((meta, copy)) => Some((SegEntry { id: meta.id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted }, Arc::new(open_written(&self.dir, meta.id, copy)?))),
+                Some((meta, copy)) => Some((SegEntry { id: meta.id, n_sent: meta.n_sent, n_docs: meta.n_docs, body_hash: meta.body_hash, deleted, doc_deleted: RoaringBitmap::new() }, Arc::new(open_written(&self.dir, meta.id, copy)?))),
                 None => None,
             };
             let at = positions.iter().copied().min().unwrap_or(0);

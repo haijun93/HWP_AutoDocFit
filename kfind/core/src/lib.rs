@@ -8,6 +8,7 @@
 //! - 문장 나누기: `split_sentences`(규칙 판 `SENTENCE_RULE_VERSION`, Python 기준 `tools/sentence_ref.py`).
 //!
 //! 규칙·형식 설명: `docs/KC1_KFIND_CORE_2026-11-12.md`.
+mod docmap;
 mod fold;
 mod fold_table;
 mod index;
@@ -19,6 +20,7 @@ mod sentence;
 mod textcode;
 mod writer;
 
+pub use docmap::{DateCount, DateInterval, DocumentMeta, FolderCount, SearchScope, SentenceRole};
 pub use fold::{FOLD_RULE_VERSION, UNICODE_VERSION, fold, fold_into, tokens};
 pub use index::{DocHit, Index, Order, Ranking, SearchCounts, SearchOptions, SearchResult, SentenceMatch, SentenceRef};
 pub use qcache::{QueryCacheOptions, QueryCacheStats};

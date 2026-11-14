@@ -22,6 +22,8 @@ pub(crate) struct SegEntry {
     pub body_hash: u64,
     /// 지운 문장(삭제·수정된 문서의 옛 문장).
     pub deleted: RoaringBitmap,
+    /// 지운 문서(삭제·수정된 문서의 로컬 번호, tombstone).
+    pub doc_deleted: RoaringBitmap,
 }
 
 #[derive(Clone, Default)]
@@ -74,6 +76,8 @@ impl Manifest {
             b.extend_from_slice(&s.body_hash.to_le_bytes());
             b.extend_from_slice(&(s.deleted.serialized_size() as u32).to_le_bytes());
             s.deleted.serialize_into(&mut b)?;
+            b.extend_from_slice(&(s.doc_deleted.serialized_size() as u32).to_le_bytes());
+            s.doc_deleted.serialize_into(&mut b)?;
         }
         let h = fnv64(FNV_SEED, &b);
         b.extend_from_slice(&h.to_le_bytes());
@@ -107,10 +111,12 @@ impl Manifest {
             let body_hash = r.u64()?;
             let len = r.u32()? as usize;
             let deleted = RoaringBitmap::deserialize_from(r.take(len)?).map_err(|e| Error::Corrupt(format!("manifest: deleted bitmap: {e}")))?;
-            if deleted.max().is_some_and(|m| m >= n_sent) || id >= next_seg {
+            let doc_len = r.u32()? as usize;
+            let doc_deleted = RoaringBitmap::deserialize_from(r.take(doc_len)?).map_err(|e| Error::Corrupt(format!("manifest: doc_deleted bitmap: {e}")))?;
+            if deleted.max().is_some_and(|m| m >= n_sent) || doc_deleted.max().is_some_and(|m| m >= n_docs) || id >= next_seg {
                 return corrupt("manifest: segment entry out of range");
             }
-            segs.push(SegEntry { id, n_sent, n_docs, body_hash, deleted });
+            segs.push(SegEntry { id, n_sent, n_docs, body_hash, deleted, doc_deleted });
         }
         if r.pos != b.len() - 8 {
             return corrupt("manifest: trailing bytes");
@@ -180,7 +186,9 @@ mod tests {
     fn round_trip_and_corruption() {
         let mut deleted = RoaringBitmap::new();
         deleted.insert_range(3..9);
-        let m = Manifest { generation: 7, next_seg: 5, segs: vec![SegEntry { id: 4, n_sent: 10, n_docs: 2, body_hash: 99, deleted }] };
+        let mut doc_deleted = RoaringBitmap::new();
+        doc_deleted.insert(0);
+        let m = Manifest { generation: 7, next_seg: 5, segs: vec![SegEntry { id: 4, n_sent: 10, n_docs: 2, body_hash: 99, deleted, doc_deleted }] };
         let b = m.to_bytes().unwrap();
         let back = Manifest::from_bytes(&b).unwrap();
         assert_eq!((back.generation, back.next_seg, back.segs.len()), (7, 5, 1));
