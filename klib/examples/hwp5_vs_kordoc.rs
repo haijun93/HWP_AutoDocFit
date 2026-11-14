@@ -1,15 +1,20 @@
 //! HWP 5.0 Rust 직접 추출기(`hwp5`) vs kordoc(Node.js) 대조 벤치마크 및 정합성 검증 도구.
 //!
-//! 비교 기준 (HWP5-CMP3):
+//! 비교 기준 (HWP5-CMP4):
 //! 1. kordoc 표시 잡음 정규화:
-//!    - <br>, <br/> 태그는 단어 분리를 위해 공백(' ')으로 치환
+//!    - <br>, <br/> 태그는 줄바꿈/단어 분리를 위해 개행('\n')으로 치환
 //!    - <b>, </b>, <span> 등 모든 HTML 태그 및 주석 제거
-//!    - 마크다운 표 구분선(|---|---|), 수평선(---), 표 파이프(| -> 공백)
+//!    - 마크다운 표 구분선(|---|---|), 수평선(---) 제거
+//!    - 표 셀 구분 파이프(|)를 개행('\n')으로 분리하여 표 셀 경계를 넘는 가짜 조각 방지
 //!    - 마크다운 서식 기호(헤딩 #, 볼드 **, 이탤릭 *, 취소선 ~~, 코드 ` 등) 제거
 //! 2. 공백 제거 정규화 전체 글 비교 (문자 일치율, Character Match Rate)
-//! 3. 2글자 조각 집합 일치율 (검색 결과 동일성, Bigram Set Similarity / Jaccard & Dice, 목표 99.5% 이상)
-//! 4. kordoc 대비 빠진 글 상위 5곳 스니펫 출력
-//! 5. 처리 차이 분류 (본문, 표 셀, 머리말·꼬리말, 각주·미주, 글상자, 숨은 글, 메모)
+//! 3. 문단(문장) 안에서만 만든 2글자 조각 기준 정합성:
+//!    - kordoc 조각의 Rust 포함률 (재현율, Recall, 목표: 99.5% 이상)
+//!    - Rust 조각의 kordoc 포함률 (정밀도, Precision, 목표: 98.0% 이상)
+//!    - 99.5% 판정은 재현율(Recall) 기준
+//! 4. 재현율 99.5% 미달 시 빠진 조각 상위 10곳 및 원인 분류(표 셀·각주·글상자·머리말·숨은 글·특수문자 변환)
+//! 5. 정밀도 하락 원인(Rust에만 있는 글: 숨은 글·필드 코드 등 검색 제외 대상 여부) 분석 및 제외
+//! 6. 처리 차이 분류 (본문, 표 셀, 머리말·꼬리말, 각주·미주, 글상자, 숨은 글, 메모)
 //!
 //! 사용법:
 //!   cargo run --example hwp5_vs_kordoc -- <HWP_폴더_또는_파일경로>
@@ -79,10 +84,14 @@ struct SummaryStats {
     rust_only: usize,
     kordoc_only: usize,
     both_failed: usize,
-    high_accuracy_count: usize, // 조각 일치율 99.5% 이상 달성 건수
+    recall_pass_count: usize,    // 재현율 99.5% 이상 달성 건수 (판정 기준)
+    precision_pass_count: usize, // 정밀도 98.0% 이상 달성 건수
+    both_target_met_count: usize, // 재현율 99.5% 이상 AND 정밀도 98.0% 이상 달성 건수
     total_rust_duration_ms: f64,
     total_kordoc_duration_ms: f64,
     sum_char_match_pct: f64,
+    sum_recall_pct: f64,
+    sum_precision_pct: f64,
     sum_bigram_jaccard_pct: f64,
     sum_bigram_dice_pct: f64,
 }
@@ -111,11 +120,11 @@ static RE_LINK: OnceLock<Regex> = OnceLock::new();
 static RE_TAG: OnceLock<Regex> = OnceLock::new();
 
 /// kordoc 마크다운에서 표 서식, HTML 태그, 마크다운 기호를 정규화하여 순수 본문 텍스트를 복원한다.
-/// - <br>, <br/> 등은 단어가 붙지 않도록 공백(' ')으로 치환
+/// - <br>, <br/> 등은 단어 분리를 위해 개행('\n')으로 치환
 /// - <b>, </b>, <span> 등 기타 모든 HTML 태그 및 주석 제거
 /// - 마크다운 표 구분선 행, 수평선 제거
 /// - 마크다운 서식 기호(헤딩 #, 볼드 **, 이탤릭 *, 취소선 ~~, 코드 `, 인용 >, 목록 불릿 등) 제거
-/// - 표 파이프 '|'는 공백으로 치환
+/// - 표 파이프 '|'는 표 셀 경계이므로 개행('\n')으로 치환하여 셀 간 가짜 조각 방지
 fn clean_kordoc_markdown(text: &str) -> String {
     let re_br = RE_BR.get_or_init(|| Regex::new(r"(?i)<br\s*/?>").unwrap());
     let re_comment = RE_COMMENT.get_or_init(|| Regex::new(r"(?s)<!--.*?-->").unwrap());
@@ -123,8 +132,8 @@ fn clean_kordoc_markdown(text: &str) -> String {
     let re_link = RE_LINK.get_or_init(|| Regex::new(r"\[([^\]]+)\]\([^)]*\)").unwrap());
     let re_tag = RE_TAG.get_or_init(|| Regex::new(r"<[^>]+>").unwrap());
 
-    // 1. <br>, <br/> 태그는 단어가 붙지 않도록 공백으로 치환
-    let step1 = re_br.replace_all(text, " ");
+    // 1. <br>, <br/> 태그는 줄바꿈/셀 경계를 보존하도록 개행('\n')으로 치환
+    let step1 = re_br.replace_all(text, "\n");
     // 2. HTML/마크다운 주석 제거
     let step2 = re_comment.replace_all(&step1, "");
     // 3. 마크다운 이미지 제거
@@ -186,7 +195,7 @@ fn clean_kordoc_markdown(text: &str) -> String {
         }
 
         // 9. 인라인 마크다운 기호 및 표 기호 제거
-        // - 표 파이프 '|' -> 공백
+        // - 표 파이프 '|' -> 개행 '\n' (표 셀 간 경계를 나누어 셀 경계를 넘는 가짜 조각 방지)
         // - 볼드/이탤릭/취소선 기호: '**', '__', '~~', '*', '_' 제거
         // - 인라인 코드 백틱 '`' 제거
         // - 잔여 '#' 기호 제거
@@ -197,7 +206,7 @@ fn clean_kordoc_markdown(text: &str) -> String {
             let ch = chars[i];
             match ch {
                 '|' => {
-                    cleaned.push(' ');
+                    cleaned.push('\n');
                     i += 1;
                 }
                 '`' | '#' | '~' => {
@@ -224,10 +233,12 @@ fn clean_kordoc_markdown(text: &str) -> String {
             }
         }
 
-        let cleaned_trimmed = cleaned.trim();
-        if !cleaned_trimmed.is_empty() {
-            out.push_str(cleaned_trimmed);
-            out.push('\n');
+        for sub_line in cleaned.lines() {
+            let sub_trimmed = sub_line.trim();
+            if !sub_trimmed.is_empty() {
+                out.push_str(sub_trimmed);
+                out.push('\n');
+            }
         }
     }
 
@@ -273,39 +284,113 @@ fn compute_char_match_rate(norm_rust: &str, norm_kordoc: &str) -> f64 {
     }
 }
 
-/// 2글자 조각(Bigram) 집합 추출 (공백 제외 단락 내 연속 2글자)
-fn extract_bigram_set(paras: &[Paragraph]) -> HashSet<[char; 2]> {
-    let mut set = HashSet::new();
-    for p in paras {
-        let chars: Vec<char> = p.text.chars().filter(|c| !c.is_whitespace()).collect();
-        if chars.len() >= 2 {
-            for i in 0..chars.len() - 1 {
-                set.insert([chars[i], chars[i + 1]]);
+/// 한 줄/문단 내에서 문장 경계를 식별하여 분할한다.
+/// - 개행 문자(`\n`, `\r`, `\t` 등)는 이미 라인 단위로 분리됨.
+/// - 문장 끝맺음 부호(`.`, `?`, `!`, `。`, `．`, `！`, `？`, `;`) 등은 문장 경계.
+/// - 단, 아라비아 숫자 사이의 마침표(예: 3.14, 2026.11.15)는 문장 경계가 아님.
+fn split_into_sentences(text: &str) -> Vec<String> {
+    let mut sentences = Vec::new();
+    let mut current = String::new();
+    let chars: Vec<char> = text.chars().collect();
+    let n = chars.len();
+
+    let is_sentence_terminator = |ch: char| -> bool {
+        matches!(ch, '.' | '?' | '!' | '。' | '．' | '！' | '？' | ';')
+    };
+
+    let mut i = 0;
+    while i < n {
+        let ch = chars[i];
+        if is_sentence_terminator(ch) {
+            // 소수점 또는 날짜 등 숫자 사이의 마침표 확인 (예: 3.14)
+            let is_number_decimal = (ch == '.' || ch == '．')
+                && i > 0
+                && chars[i - 1].is_ascii_digit()
+                && i + 1 < n
+                && chars[i + 1].is_ascii_digit();
+
+            if is_number_decimal {
+                current.push(ch);
+                i += 1;
+                continue;
             }
+
+            // 문장 끝맺음 부호 포함 후 문장 분리
+            current.push(ch);
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                sentences.push(trimmed.to_string());
+            }
+            current.clear();
+            i += 1;
+            continue;
         }
+
+        current.push(ch);
+        i += 1;
     }
-    set
+
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        sentences.push(trimmed.to_string());
+    }
+
+    sentences
 }
 
-/// kordoc 텍스트로부터 2글자 조각 집합 추출
-fn extract_bigram_set_from_raw_text(text: &str) -> HashSet<[char; 2]> {
+/// 단일 문장 안에서 알파뉴메릭 2글자 조각 집합을 추출한다.
+fn extract_sentence_bigrams(sentence: &str, set: &mut HashSet<[char; 2]>) {
+    let chars: Vec<char> = sentence.chars().filter(|c| c.is_alphanumeric()).collect();
+    if chars.len() >= 2 {
+        for i in 0..chars.len() - 1 {
+            set.insert([chars[i], chars[i + 1]]);
+        }
+    }
+}
+
+/// 텍스트(문단 또는 원문)에서 문단(문장) 안에서만 2글자 조각 집합을 추출한다.
+fn extract_bigrams_from_text(text: &str) -> HashSet<[char; 2]> {
     let mut set = HashSet::new();
     for line in text.lines() {
-        let chars: Vec<char> = line.chars().filter(|c| !c.is_whitespace()).collect();
-        if chars.len() >= 2 {
-            for i in 0..chars.len() - 1 {
-                set.insert([chars[i], chars[i + 1]]);
+        let trimmed_line = line.trim();
+        if trimmed_line.is_empty() {
+            continue;
+        }
+        for s in split_into_sentences(trimmed_line) {
+            extract_sentence_bigrams(&s, &mut set);
+        }
+    }
+    set
+}
+
+/// Rust 추출 문단들로부터 검색 색인 대상 2글자 조각 집합 추출 (요구사항 3: 숨은 글·메모 제외)
+fn extract_rust_bigrams(paras: &[Paragraph]) -> HashSet<[char; 2]> {
+    let mut set = HashSet::new();
+    for p in paras {
+        // 요구사항 3: 숨은 글(hidden_comment), 메모(memo) 등 검색에 넣으면 안 되는 글은 제외
+        if p.location_kind == "hidden_comment" || p.location_kind == "memo" {
+            continue;
+        }
+        for line in p.text.lines() {
+            let trimmed_line = line.trim();
+            if trimmed_line.is_empty() {
+                continue;
+            }
+            for s in split_into_sentences(trimmed_line) {
+                extract_sentence_bigrams(&s, &mut set);
             }
         }
     }
     set
 }
 
-/// ② 2글자 조각 집합 일치율 계산 (Jaccard, Dice, Recall)
+/// ② 2글자 조각 집합 일치율 계산 (Recall, Precision, Dice, Jaccard)
+#[derive(Debug, Clone)]
 struct BigramSimResult {
-    jaccard_pct: f64,
-    dice_pct: f64,
-    recall_pct: f64,
+    recall_pct: f64,    // kordoc 조각의 Rust 포함률 (재현율)
+    precision_pct: f64, // Rust 조각의 kordoc 포함률 (정밀도)
+    dice_pct: f64,      // Dice 계수
+    jaccard_pct: f64,   // Jaccard 계수
     total_rust: usize,
     total_kordoc: usize,
     intersect: usize,
@@ -319,9 +404,10 @@ fn compute_bigram_similarity(
 ) -> BigramSimResult {
     if set_rust.is_empty() && set_kordoc.is_empty() {
         return BigramSimResult {
-            jaccard_pct: 100.0,
-            dice_pct: 100.0,
             recall_pct: 100.0,
+            precision_pct: 100.0,
+            dice_pct: 100.0,
+            jaccard_pct: 100.0,
             total_rust: 0,
             total_kordoc: 0,
             intersect: 0,
@@ -333,8 +419,14 @@ fn compute_bigram_similarity(
     let intersect_count = set_rust.intersection(set_kordoc).count();
     let union_count = set_rust.union(set_kordoc).count();
 
-    let jaccard_pct = if union_count > 0 {
-        (intersect_count as f64 / union_count as f64) * 100.0
+    let recall_pct = if !set_kordoc.is_empty() {
+        (intersect_count as f64 / set_kordoc.len() as f64) * 100.0
+    } else {
+        100.0
+    };
+
+    let precision_pct = if !set_rust.is_empty() {
+        (intersect_count as f64 / set_rust.len() as f64) * 100.0
     } else {
         100.0
     };
@@ -346,8 +438,8 @@ fn compute_bigram_similarity(
         100.0
     };
 
-    let recall_pct = if !set_kordoc.is_empty() {
-        (intersect_count as f64 / set_kordoc.len() as f64) * 100.0
+    let jaccard_pct = if union_count > 0 {
+        (intersect_count as f64 / union_count as f64) * 100.0
     } else {
         100.0
     };
@@ -358,9 +450,10 @@ fn compute_bigram_similarity(
         set_rust.difference(set_kordoc).copied().collect();
 
     BigramSimResult {
-        jaccard_pct,
-        dice_pct,
         recall_pct,
+        precision_pct,
+        dice_pct,
+        jaccard_pct,
         total_rust: set_rust.len(),
         total_kordoc: set_kordoc.len(),
         intersect: intersect_count,
@@ -369,18 +462,67 @@ fn compute_bigram_similarity(
     }
 }
 
-/// ③ kordoc 대비 빠진 글 상위 5곳 추출 (주변 문맥 포함 스니펫)
-fn find_top_missing_snippets(
+/// 빠진 조각 정보 및 원인 분류
+#[derive(Debug, Clone)]
+struct MissingSnippetInfo {
+    bigram_str: String,
+    count: usize,
+    snippet: String,
+    cause_category: &'static str,
+}
+
+/// 원인(표 셀·각주·글상자·머리말·숨은 글·특수문자 변환) 추정 분류기
+fn classify_cause_category(pair: [char; 2], context: &str) -> &'static str {
+    // 1. 특수문자 변환 (가운뎃점, 원문자, 로마숫자, 기호 등)
+    let is_special_symbol = |c: char| -> bool {
+        matches!(c, '·' | '•' | '■' | '□' | '○' | '●' | '▶' | '▷' | '◆' | '◇' | '※' | '①'..='⑳' | 'Ⅰ'..='Ⅻ')
+    };
+    if is_special_symbol(pair[0]) || is_special_symbol(pair[1]) {
+        return "특수문자 변환";
+    }
+
+    // 2. 표 셀 (주변에 구분 기호, 셀 형태의 짧은 텍스트 또는 표 서식)
+    if context.contains('|') || context.contains("  ") || context.lines().count() > 1 {
+        return "표 셀";
+    }
+
+    // 3. 각주/미주 (주석 번호 표기나 각주 형식)
+    if context.contains("[^") || context.contains("주석") || context.contains("각주") {
+        return "각주/미주";
+    }
+
+    // 4. 머리말/꼬리말 (쪽 번호, 머리말 형식)
+    if context.contains("- ") && context.contains(" -") || context.contains("쪽") {
+        return "머리말/꼬리말";
+    }
+
+    // 5. 숨은 글/메모
+    if context.contains("메모") || context.contains("숨은") {
+        return "숨은 글/메모";
+    }
+
+    // 6. 글상자/도형
+    if context.contains("글상자") || context.contains("도형") {
+        return "글상자";
+    }
+
+    // 기본 본문
+    "본문/서식 차이"
+}
+
+/// ③ kordoc 대비 빠진 글 상위 10곳 추출 및 원인 분류 (주변 문맥 포함 스니펫)
+fn find_top_missing_snippets_with_cause(
     kordoc_text: &str,
     missing_bigrams: &HashSet<[char; 2]>,
     max_count: usize,
-) -> Vec<String> {
+) -> Vec<MissingSnippetInfo> {
     if missing_bigrams.is_empty() {
         return Vec::new();
     }
 
-    let mut snippets = Vec::new();
-    let mut seen_snippets = HashSet::new();
+    // 각 누락 조각별 빈도 및 첫 스니펫 수집
+    let mut counts: HashMap<[char; 2], usize> = HashMap::new();
+    let mut snippet_map: HashMap<[char; 2], (String, &'static str)> = HashMap::new();
 
     for line in kordoc_text.lines() {
         let trimmed = line.trim();
@@ -394,22 +536,14 @@ fn find_top_missing_snippets(
             if i + 1 < chars.len() {
                 let pair = [chars[i], chars[i + 1]];
                 if missing_bigrams.contains(&pair) {
-                    // 주변 문맥 추출 (앞뒤 최대 12글자)
-                    let start = i.saturating_sub(12);
-                    let end = (i + 15).min(chars.len());
-                    let snippet: String = chars[start..end].iter().collect();
-                    let formatted = format!(
-                        "\"...{}...\" (조각: '{}{}')",
-                        snippet.trim(),
-                        pair[0],
-                        pair[1]
-                    );
+                    *counts.entry(pair).or_insert(0) += 1;
 
-                    if seen_snippets.insert(snippet) {
-                        snippets.push(formatted);
-                        if snippets.len() >= max_count {
-                            return snippets;
-                        }
+                    if !snippet_map.contains_key(&pair) {
+                        let start = i.saturating_sub(12);
+                        let end = (i + 15).min(chars.len());
+                        let snippet: String = chars[start..end].iter().collect();
+                        let cause = classify_cause_category(pair, &snippet);
+                        snippet_map.insert(pair, (snippet, cause));
                     }
                     i += 2;
                     continue;
@@ -419,7 +553,66 @@ fn find_top_missing_snippets(
         }
     }
 
-    snippets
+    // 빈도 내림차순 정렬
+    let mut sorted_pairs: Vec<([char; 2], usize)> = counts.into_iter().collect();
+    sorted_pairs.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let mut results = Vec::new();
+    for (pair, cnt) in sorted_pairs.into_iter().take(max_count) {
+        let (snip, cause) = snippet_map.remove(&pair).unwrap_or_default();
+        results.push(MissingSnippetInfo {
+            bigram_str: format!("'{}{}'", pair[0], pair[1]),
+            count: cnt,
+            snippet: format!("\"...{}...\"", snip.trim()),
+            cause_category: cause,
+        });
+    }
+
+    results
+}
+
+/// Rust에만 있는 추가 조각(정밀도 하락 원인) 분석
+fn find_top_extra_snippets(
+    rust_paras: &[Paragraph],
+    extra_bigrams: &HashSet<[char; 2]>,
+    max_count: usize,
+) -> Vec<String> {
+    if extra_bigrams.is_empty() {
+        return Vec::new();
+    }
+
+    let mut results = Vec::new();
+    let mut seen = HashSet::new();
+
+    for p in rust_paras {
+        let chars: Vec<char> = p.text.chars().collect();
+        let mut i = 0;
+        while i < chars.len() {
+            if i + 1 < chars.len() {
+                let pair = [chars[i], chars[i + 1]];
+                if extra_bigrams.contains(&pair) && seen.insert(pair) {
+                    let start = i.saturating_sub(10);
+                    let end = (i + 14).min(chars.len());
+                    let snippet: String = chars[start..end].iter().collect();
+                    let info = format!(
+                        "'{}' (문맥: \"...{}...\", 위치: {})",
+                        format!("{}{}", pair[0], pair[1]),
+                        snippet.trim(),
+                        p.location_kind
+                    );
+                    results.push(info);
+                    if results.len() >= max_count {
+                        return results;
+                    }
+                    i += 2;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    results
 }
 
 fn main() {
@@ -431,8 +624,9 @@ fn main() {
     };
 
     println!("================================================================================");
-    println!("  HWP 5.0 Rust 직접 파서 vs kordoc(Node.js) 대조 도구 (HWP5-CMP3)");
-    println!("  비교 기준: ① kordoc 잡음제거 ② 공백제거 정규화 글 비교 ③ 2글자 조각 집합 일치율 ④ 빠진글");
+    println!("  HWP 5.0 Rust 직접 파서 vs kordoc(Node.js) 대조 도구 (HWP5-CMP4)");
+    println!("  비교 기준: ① kordoc 잡음제거 ② 공백제거 정규화 글 비교 ③ 문단(문장)안 조각 재현율/정밀도");
+    println!("  목표: 21개 문서 모두 재현율 99.5% 이상, 정밀도 98.0% 이상 (판정: 재현율 기준)");
     println!("  대상 경로: {}", target_path.display());
     println!("================================================================================");
 
@@ -456,8 +650,8 @@ fn main() {
 
     println!("발견된 .hwp 문서 수: {}개\n", hwp_files.len());
 
-    println!("| 번호 | 파일명 | 문자 일치율 | 조각 일치율 (Dice/Jaccard) | Rust 문단 (본문/표셀/기타) | kordoc 문단 | Rust 시간 | kordoc 시간 | 배속 | 판정 |");
-    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---|");
+    println!("| 번호 | 파일명 | 문자 일치율 | 재현율(Recall) | 정밀도(Precision) | 조각 Dice | Rust 문단 (본문/표셀/기타) | kordoc 문단 | Rust 시간 | kordoc 시간 | 배속 | 판정 |");
+    println!("|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|");
 
     let mut stats = SummaryStats {
         total_files: hwp_files.len(),
@@ -513,18 +707,29 @@ fn main() {
                 let char_match_pct = compute_char_match_rate(&norm_rust, &norm_kordoc);
                 stats.sum_char_match_pct += char_match_pct;
 
-                // ② 2글자 조각 집합 일치율 (검색 결과 동일성)
-                let set_rust = extract_bigram_set(&rust_paras);
-                let set_kordoc = extract_bigram_set_from_raw_text(&kordoc_cleaned);
+                // ② 문단(문장) 안에서만 만든 2글자 조각 집합 추출 (HWP5-CMP4)
+                let set_rust = extract_rust_bigrams(&rust_paras);
+                let set_kordoc = extract_bigrams_from_text(&kordoc_cleaned);
                 let sim_res = compute_bigram_similarity(&set_rust, &set_kordoc);
 
+                stats.sum_recall_pct += sim_res.recall_pct;
+                stats.sum_precision_pct += sim_res.precision_pct;
                 stats.sum_bigram_jaccard_pct += sim_res.jaccard_pct;
                 stats.sum_bigram_dice_pct += sim_res.dice_pct;
 
-                // 목표 기준: 조각 집합 일치율(Dice 또는 Recall) 99.5% 이상
-                let is_pass = sim_res.dice_pct >= 99.5 || sim_res.recall_pct >= 99.5;
-                if is_pass {
-                    stats.high_accuracy_count += 1;
+                // 목표 판정: 재현율 99.5% 이상 기준
+                let is_recall_pass = sim_res.recall_pct >= 99.5;
+                let is_precision_pass = sim_res.precision_pct >= 98.0;
+                let is_both_pass = is_recall_pass && is_precision_pass;
+
+                if is_recall_pass {
+                    stats.recall_pass_count += 1;
+                }
+                if is_precision_pass {
+                    stats.precision_pass_count += 1;
+                }
+                if is_both_pass {
+                    stats.both_target_met_count += 1;
                 }
 
                 let speedup = if rust_ms > 0.0 {
@@ -533,10 +738,12 @@ fn main() {
                     "-".into()
                 };
 
-                let status = if is_pass {
-                    "✅ 99.5%이상"
+                let status = if is_both_pass {
+                    "✅ 목표달성"
+                } else if is_recall_pass {
+                    "✅ 재현율99.5%"
                 } else {
-                    "⚠️ 미달"
+                    "⚠️ 재현율미달"
                 };
 
                 let rust_counts_str = format!(
@@ -548,12 +755,13 @@ fn main() {
                 );
 
                 println!(
-                    "| {:>2} | {:<25} | {:>10.2}% | {:>6.2}% / {:>5.2}% | {:>26} | {:>11} | {:>7.2}ms | {:>9.2}ms | {:>6} | {} |",
+                    "| {:>2} | {:<25} | {:>10.2}% | {:>13.2}% | {:>16.2}% | {:>8.2}% | {:>26} | {:>11} | {:>7.2}ms | {:>9.2}ms | {:>6} | {} |",
                     idx + 1,
                     file_name,
                     char_match_pct,
+                    sim_res.recall_pct,
+                    sim_res.precision_pct,
                     sim_res.dice_pct,
-                    sim_res.jaccard_pct,
                     rust_counts_str,
                     kordoc_paras.len(),
                     rust_ms,
@@ -562,11 +770,18 @@ fn main() {
                     status
                 );
 
-                // ③ 빠진 글 상위 5곳 추출 및 상세 리포트 수집
-                let missing_snippets = find_top_missing_snippets(
+                // ③ 빠진 글 상위 10곳 추출 및 원인 분류
+                let missing_snippets = find_top_missing_snippets_with_cause(
                     &kordoc_cleaned,
                     &sim_res.missing_in_rust,
-                    5,
+                    10,
+                );
+
+                // Rust 추가 조각 상위 예시
+                let extra_snippets = find_top_extra_snippets(
+                    &rust_paras,
+                    &sim_res.extra_in_rust,
+                    10,
                 );
 
                 detail_reports.push((
@@ -577,6 +792,7 @@ fn main() {
                     breakdown_r,
                     kordoc_paras.len(),
                     missing_snippets,
+                    extra_snippets,
                 ));
             }
             (Ok(rust_paras), Err(e_kordoc)) => {
@@ -585,9 +801,11 @@ fn main() {
                 let breakdown_r = ParagraphBreakdown::from_paragraphs(&rust_paras);
                 let err_brief = e_kordoc.split(':').next().unwrap_or(&e_kordoc);
                 println!(
-                    "| {:>2} | {:<25} | {:>10} | {:>17} | {:>26} | {:>11} | {:>7.2}ms | {:>11} | {:>6} | 🔵 Rust단독성공 |",
+                    "| {:>2} | {:<25} | {:>10} | {:>13} | {:>16} | {:>8} | {:>26} | {:>11} | {:>7.2}ms | {:>11} | {:>6} | 🔵 Rust단독성공 |",
                     idx + 1,
                     file_name,
+                    "-",
+                    "-",
                     "-",
                     "-",
                     format!("{} ({} / {} / -)", breakdown_r.total, breakdown_r.body, breakdown_r.table_cell),
@@ -602,9 +820,11 @@ fn main() {
                 stats.total_kordoc_duration_ms += kordoc_ms;
                 let err_brief = e_rust.split(':').next().unwrap_or(&e_rust);
                 println!(
-                    "| {:>2} | {:<25} | {:>10} | {:>17} | {:>26} | {:>11} | {:>9} | {:>9.2}ms | {:>6} | 🟡 kordoc단독성공 ({}) |",
+                    "| {:>2} | {:<25} | {:>10} | {:>13} | {:>16} | {:>8} | {:>26} | {:>11} | {:>9} | {:>9.2}ms | {:>6} | 🟡 kordoc단독성공 ({}) |",
                     idx + 1,
                     file_name,
+                    "-",
+                    "-",
                     "-",
                     "-",
                     "-",
@@ -620,9 +840,11 @@ fn main() {
                 let r_brief = e_rust.split(':').next().unwrap_or(&e_rust);
                 let k_brief = e_kordoc.split(':').next().unwrap_or(&e_kordoc);
                 println!(
-                    "| {:>2} | {:<25} | {:>10} | {:>17} | {:>26} | {:>11} | {:>9} | {:>11} | {:>6} | ❌ 양쪽실패 ({}/{}) |",
+                    "| {:>2} | {:<25} | {:>10} | {:>13} | {:>16} | {:>8} | {:>26} | {:>11} | {:>9} | {:>11} | {:>6} | ❌ 양쪽실패 ({}/{}) |",
                     idx + 1,
                     file_name,
+                    "-",
+                    "-",
                     "-",
                     "-",
                     "-",
@@ -637,32 +859,35 @@ fn main() {
         }
     }
 
-    // 문서별 상세 분석 (빠진 글 상위 5곳 & 문단 처리 차이 분류)
+    // 문서별 상세 분석 (빠진 조각 상위 10곳 & 원인 분류 & 정밀도 하락 분석)
     if !detail_reports.is_empty() {
         println!("\n================================================================================");
-        println!("  문서별 상세 대조 분석 및 빠진 글 상위 5곳 (HWP5-CMP2)");
+        println!("  문서별 상세 대조 분석 및 빠진 조각 상위 10곳 / 원인 분류 (HWP5-CMP4)");
         println!("================================================================================");
-        for (num, fname, char_pct, sim, brk, k_len, snippets) in &detail_reports {
-            let pass_mark = if sim.dice_pct >= 99.5 || sim.recall_pct >= 99.5 {
-                "✅ 통과 (99.5% 이상)"
+        for (num, fname, char_pct, sim, brk, k_len, missing_items, extra_items) in &detail_reports {
+            let pass_mark = if sim.recall_pct >= 99.5 && sim.precision_pct >= 98.0 {
+                "✅ 목표 달성 (재현율 99.5%·정밀도 98%)"
+            } else if sim.recall_pct >= 99.5 {
+                "✅ 재현율 99.5% 이상 달성"
             } else {
-                "⚠️ 미달"
+                "⚠️ 재현율 미달 (99.5% 미만)"
             };
 
             println!("\n[{}] 파일명: {} ({})", num, fname, pass_mark);
             println!(
-                "  * 문자 일치율: {:.2}% | 조각 Dice: {:.2}% | Jaccard: {:.2}% | kordoc 재현율(Recall): {:.2}%",
-                char_pct, sim.dice_pct, sim.jaccard_pct, sim.recall_pct
+                "  * 문자 일치율: {:.2}% | kordoc 재현율(Recall): {:.2}% | Rust 정밀도(Precision): {:.2}% | 조각 Dice: {:.2}%",
+                char_pct, sim.recall_pct, sim.precision_pct, sim.dice_pct
             );
             println!(
-                "  * 조각 수: Rust {}개 / kordoc {}개 (공통 교집합 {}개, Rust 미달 조각 {}개)",
+                "  * 조각 수: Rust {}개 / kordoc {}개 (공통 교집합 {}개, Rust 누락 {}개, Rust 추가 {}개)",
                 sim.total_rust,
                 sim.total_kordoc,
                 sim.intersect,
-                sim.missing_in_rust.len()
+                sim.missing_in_rust.len(),
+                sim.extra_in_rust.len()
             );
             println!(
-                "  * 문단 구성 차이 분류: Rust 총 {}문단 [본문 {}, 표 셀 {}, 머리꼬리 {}, 각주미주 {}, 글상자 {}, 숨은글 {}, 메모 {}] vs kordoc {}행",
+                "  * 문단 구성 분류: Rust 총 {}문단 [본문 {}, 표 셀 {}, 머리꼬리 {}, 각주미주 {}, 글상자 {}, 숨은글 {}, 메모 {}] vs kordoc {}행",
                 brk.total,
                 brk.body,
                 brk.table_cell,
@@ -673,51 +898,64 @@ fn main() {
                 brk.memo,
                 k_len
             );
-            if brk.table_cell > 0 {
-                println!(
-                    "    (참고: kordoc은 표 셀 {}개를 마크다운 표 행으로 결합하여 문단 수가 적음)",
-                    brk.table_cell
-                );
-            }
 
-            if snippets.is_empty() {
-                println!("  * kordoc 대비 빠진 글: 없음 (조각 100% 포괄)");
+            if missing_items.is_empty() {
+                println!("  * kordoc 대비 빠진 조각: 없음 (kordoc 조각 100% 포괄)");
             } else {
-                println!("  * kordoc 대비 빠진 글 상위 {}곳:", snippets.len());
-                for (s_idx, s) in snippets.iter().enumerate() {
-                    println!("    {}. {}", s_idx + 1, s);
+                println!("  * kordoc 대비 빠진 조각 상위 {}곳 (원인 분류 포함):", missing_items.len());
+                for (s_idx, item) in missing_items.iter().enumerate() {
+                    println!(
+                        "    {:>2}. 조각 {} (빈도: {}회) [원인: {}] 문맥: {}",
+                        s_idx + 1,
+                        item.bigram_str,
+                        item.count,
+                        item.cause_category,
+                        item.snippet
+                    );
                 }
             }
 
-            if !sim.extra_in_rust.is_empty() {
-                let sample_extra: Vec<String> = sim
-                    .extra_in_rust
-                    .iter()
-                    .take(3)
-                    .map(|pair| format!("'{}{}'", pair[0], pair[1]))
-                    .collect();
-                println!("  * Rust 추가 조각 예시: {}", sample_extra.join(", "));
+            if !extra_items.is_empty() {
+                println!("  * Rust 단독 추가 조각 예시 (정밀도 영향, 상위 {}곳):", extra_items.len());
+                for (e_idx, extra_str) in extra_items.iter().enumerate() {
+                    println!("    {:>2}. {}", e_idx + 1, extra_str);
+                }
             }
         }
     }
 
     println!("\n================================================================================");
-    println!("  종합 요약 보고서 (HWP5-CMP3)");
+    println!("  종합 요약 보고서 (HWP5-CMP4)");
     println!("================================================================================");
     println!("- 총 검증 대상 파일 수       : {}개", stats.total_files);
     println!("- 양쪽 모두 추출 성공        : {}개", stats.both_succeeded);
     if stats.both_succeeded > 0 {
-        let pass_rate = (stats.high_accuracy_count as f64 / stats.both_succeeded as f64) * 100.0;
+        let recall_pass_rate = (stats.recall_pass_count as f64 / stats.both_succeeded as f64) * 100.0;
+        let precision_pass_rate = (stats.precision_pass_count as f64 / stats.both_succeeded as f64) * 100.0;
+        let both_pass_rate = (stats.both_target_met_count as f64 / stats.both_succeeded as f64) * 100.0;
         let avg_char = stats.sum_char_match_pct / stats.both_succeeded as f64;
-        let avg_jaccard = stats.sum_bigram_jaccard_pct / stats.both_succeeded as f64;
+        let avg_recall = stats.sum_recall_pct / stats.both_succeeded as f64;
+        let avg_precision = stats.sum_precision_pct / stats.both_succeeded as f64;
         let avg_dice = stats.sum_bigram_dice_pct / stats.both_succeeded as f64;
+        let avg_jaccard = stats.sum_bigram_jaccard_pct / stats.both_succeeded as f64;
+
         println!(
-            "  * 조각 일치율 99.5% 이상 달성: {} / {}개 ({:.1}%)",
-            stats.high_accuracy_count, stats.both_succeeded, pass_rate
+            "  * 재현율 99.5% 이상 달성 (판정 기준) : {} / {}개 ({:.1}%)",
+            stats.recall_pass_count, stats.both_succeeded, recall_pass_rate
         );
-        println!("  * 평균 문자 일치율         : {:.2}%", avg_char);
-        println!("  * 평균 조각 Dice 일치율     : {:.2}%", avg_dice);
-        println!("  * 평균 조각 Jaccard 일치율  : {:.2}%", avg_jaccard);
+        println!(
+            "  * 정밀도 98.0% 이상 달성             : {} / {}개 ({:.1}%)",
+            stats.precision_pass_count, stats.both_succeeded, precision_pass_rate
+        );
+        println!(
+            "  * 최종 목표 달성 (재현율&정밀도 동시): {} / {}개 ({:.1}%)",
+            stats.both_target_met_count, stats.both_succeeded, both_pass_rate
+        );
+        println!("  * 평균 문자 일치율                   : {:.2}%", avg_char);
+        println!("  * 평균 kordoc 재현율 (Recall)        : {:.2}%", avg_recall);
+        println!("  * 평균 Rust 정밀도 (Precision)       : {:.2}%", avg_precision);
+        println!("  * 평균 조각 Dice 일치율               : {:.2}%", avg_dice);
+        println!("  * 평균 조각 Jaccard 일치율            : {:.2}%", avg_jaccard);
     }
     println!("- Rust 단독 성공             : {}개", stats.rust_only);
     println!("- kordoc 단독 성공           : {}개 (암호화/배포용 폴백 대상)", stats.kordoc_only);
