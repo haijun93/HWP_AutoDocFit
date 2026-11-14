@@ -20,7 +20,11 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn(r"{localappdata}\Programs\HWP_AutoDocFit", iss)
         # AppMutex aborts before Restart Manager can close the running copy.
         self.assertNotRegex(iss, r"(?m)^AppMutex=")
-        self.assertIn("CloseApplications=yes", iss)
+        # force: 창 없는 도우미도 끝내야 _internal DLL을 바꿀 수 있다(v2.2.65 DeleteFile 코드 5).
+        self.assertIn("CloseApplications=force", iss)
+        self.assertIn("function PrepareToInstall", iss)
+        for helper in ("kagent.exe", "klib.exe", "kvf.exe", "kfind.exe", "hierarchy.exe"):
+            self.assertIn(f"StopHelper('{helper}')", iss)
         self.assertIn("CloseApplicationsFilter=*.exe,*.dll,*.pyd", iss)
         self.assertIn('Flags: nowait; Check: WizardSilent', iss)
         self.assertIn("{autoprograms}", iss)

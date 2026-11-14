@@ -236,6 +236,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item klib/target/release/klib.exe resources/klib.exe -Force
           (Get-FileHash resources/klib.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/klib.exe.sha256
+      - name: Verify Rust binaries do not need the VC++ runtime
+        # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
+        shell: pwsh
+        run: |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
+            ForEach-Object { Join-Path 'resources' $_ }
+          $bad = @()
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "$file missing" }
+            $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($file))
+            foreach ($dll in @('VCRUNTIME140', 'MSVCP140', 'api-ms-win-crt-')) {
+              if ($text.IndexOf($dll, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) { $bad += "$file -> $dll" }
+            }
+          }
+          if ($bad.Count) { throw ("Rust binaries still import the dynamic C runtime:`n" + ($bad -join "`n")) }
+          Write-Host "OK: no VC++ runtime imports in $($files.Count) Rust binaries"
       - name: Rust/Python content index level parity (RLEV)
         shell: pwsh
         run: |
