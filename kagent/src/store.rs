@@ -45,6 +45,8 @@ pub struct Settings {
     pub popup_collapsed: bool,
     /// 엑셀 표 항목은 앱에 맡겨 '목표 결과'(공백·빈 칸·열 너비·칸 여백 정리)로 붙이기. 앱이 꺼져 있으면 원래대로.
     pub excel_target_paste: bool,
+    /// 빠른 목록의 그림 미리보기(끄면 미리보기를 띄우지 않고 썸네일 미리 만들기도 멈춤).
+    pub preview_images: bool,
     /// 네이티브 창 테마: "system"(시스템 따라가기, 기본)·"light"·"dark". 그 밖의 값은 무시(RUSTALL1 DARK1).
     pub theme: String,
 }
@@ -77,6 +79,7 @@ impl Default for Settings {
             popup_height: 0,
             popup_collapsed: false,
             excel_target_paste: true,
+            preview_images: true,
             theme: "system".into(),
         }
     }
@@ -115,6 +118,7 @@ impl Settings {
             ("popup_height", self.popup_height.into()),
             ("popup_collapsed", self.popup_collapsed.into()),
             ("excel_target_paste", self.excel_target_paste.into()),
+            ("preview_images", self.preview_images.into()),
             ("theme", self.theme.as_str().into()),
             ("policy_rev", 1i64.into()),
         ])
@@ -186,6 +190,7 @@ impl Settings {
         if let Some(n) = v.num("popup_height").filter(|n| (150.0..=4000.0).contains(n)) { self.popup_height = n as i64; }
         if let Some(b) = v.bool("popup_collapsed") { self.popup_collapsed = b; }
         if let Some(b) = v.bool("excel_target_paste") { self.excel_target_paste = b; }
+        if let Some(b) = v.bool("preview_images") { self.preview_images = b; }
         if let Some(t) = v.str("theme").filter(|t| ui_theme::ThemePref::is_valid(t)) { self.theme = t.to_string(); }
     }
 
@@ -751,5 +756,22 @@ mod tests {
         let mut loaded = Settings::default();
         loaded.apply(&settings.to_json());
         assert!(loaded.popup_collapsed);
+    }
+
+    #[test]
+    fn preview_images_defaults_on_and_round_trips() {
+        assert!(Settings::default().preview_images, "기본 켬");
+        // 키가 없는 예전 설정 파일도 기본 켬
+        assert!(Settings::load(&std::env::temp_dir().join("kagent-no-such-dir").join("settings.json").to_string_lossy()).preview_images);
+        let mut st = Settings::default();
+        st.apply(&json::parse(r#"{"preview_images":false}"#).unwrap());
+        assert!(!st.preview_images, "끄기 적용");
+        st.apply(&json::parse(r#"{"preview_images":"invalid"}"#).unwrap());
+        assert!(!st.preview_images, "참/거짓이 아니면 무시");
+        let mut back = Settings::default();
+        back.apply(&st.to_json());
+        assert!(!back.preview_images, "to_json -> apply 왕복");
+        st.apply(&json::parse(r#"{"preview_images":true}"#).unwrap());
+        assert!(st.preview_images, "다시 켜기 적용");
     }
 }

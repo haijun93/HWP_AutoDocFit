@@ -73,6 +73,16 @@ pub fn step(state: State, ev: Event) -> (State, Action) {
     }
 }
 
+/// 설정(enabled)을 고려한 미리보기 상태 전이(순수 함수 — 시험 대상).
+/// 끄면(enabled=false) 어떤 대상이 오더라도 요청(Request·Show)하지 않고, 떠 있던 미리보기는 숨긴다(Hide).
+pub fn plan_point(enabled: bool, state: State, target: Option<Target>, cached: bool) -> (State, Action) {
+    if !enabled {
+        (State::Hidden, if state == State::Hidden { Action::Nothing } else { Action::Hide })
+    } else {
+        step(state, Event::Point { target, cached })
+    }
+}
+
 /// 미리보기할 그림 항목인지: 저장한 그림, 또는 그림 파일이 든 파일 항목(화면캡처 폴더·탐색기 복사).
 pub fn target_of(item: &Summary) -> Option<Target> {
     let image = item.kind == "image" || (item.kind == "files" && item.cats.contains(Category::Image));
@@ -157,11 +167,16 @@ pub fn apply_theme() {
 
 /// 마우스·키보드가 가리키는 항목이 바뀌거나 움직일 때 부른다(창 스레드).
 pub fn point(target: Option<Target>, anchor: Anchor) {
+    let enabled = { crate::app().settings.lock().unwrap().preview_images };
+    if !enabled {
+        hide();
+        return;
+    }
     let cached = target.is_some_and(|t| crate::thumb::is_cached(t.id, t.size));
     let action = {
         let mut sh = SHARED.lock().unwrap();
         sh.anchor = Some(anchor);
-        let (next, action) = step(sh.state, Event::Point { target, cached });
+        let (next, action) = plan_point(enabled, sh.state, target, cached);
         sh.state = next;
         action
     };
@@ -369,5 +384,21 @@ mod tests {
         assert_eq!(place(100, 100, 780, 200, 100, work, 8), (108, 700));
         // 양쪽 다 모자라면 화면 안에 붙인다.
         assert_eq!(place(950, 20, 0, 300, 100, work, 8), (0, 0));
+    }
+
+    #[test]
+    fn disabled_point_never_requests_and_hides_any_visible_preview() {
+        // 끔(enabled=false)일 때: 어떤 타깃(캐시 여부 불문)이 주어져도 요청(Request·Show)이 없다.
+        assert_eq!(plan_point(false, State::Hidden, Some(A), false), (State::Hidden, Action::Nothing));
+        assert_eq!(plan_point(false, State::Hidden, Some(A), true), (State::Hidden, Action::Nothing));
+        assert_eq!(plan_point(false, State::Hidden, None, false), (State::Hidden, Action::Nothing));
+        // 이미 떠 있거나(Showing) 대기 중(Waiting)이었으면 Hide 액션으로 숨긴다.
+        assert_eq!(plan_point(false, State::Showing(A), Some(A), true), (State::Hidden, Action::Hide));
+        assert_eq!(plan_point(false, State::Showing(A), None, false), (State::Hidden, Action::Hide));
+        assert_eq!(plan_point(false, State::Waiting(A), Some(A), false), (State::Hidden, Action::Hide));
+        assert_eq!(plan_point(false, State::Waiting(A), Some(B), false), (State::Hidden, Action::Hide));
+        // 켬(enabled=true)일 때는 기존 step 동작과 일치
+        assert_eq!(plan_point(true, State::Hidden, Some(A), false), (State::Waiting(A), Action::Request(A)));
+        assert_eq!(plan_point(true, State::Hidden, Some(A), true), (State::Showing(A), Action::Show(A)));
     }
 }

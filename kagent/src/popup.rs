@@ -454,11 +454,17 @@ pub fn show() {
     }
 }
 
-/// 설정 화면에서 항상 위 상태를 바꾸면 열린 창에도 즉시 반영한다.
+/// 설정 화면에서 항상 위나 그림 미리보기 상태를 바꾸면 열린 창에도 즉시 반영한다.
 pub fn apply_settings() {
     let hwnd = popup_hwnd();
     if hwnd.is_null() { return; }
-    let topmost = app().settings.lock().unwrap().always_on_top;
+    let (topmost, preview_images) = {
+        let s = app().settings.lock().unwrap();
+        (s.always_on_top, s.preview_images)
+    };
+    if !preview_images {
+        crate::preview::hide();
+    }
     unsafe {
         SetWindowPos(hwnd, if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST }, 0, 0, 0, 0,
                      SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -586,9 +592,26 @@ fn move_sel(delta: isize) {
     }
 }
 
+/// 미리보기 대상 항목 판정(순수 함수 — 시험 대상).
+/// 설정이 꺼져(enabled=false) 있거나 그림이 아니면 None.
+pub fn hover_target(enabled: bool, item: Option<&Summary>) -> Option<crate::preview::Target> {
+    if !enabled {
+        return None;
+    }
+    item.and_then(crate::preview::target_of)
+}
+
 /// 마우스가 가리키는 줄의 그림 미리보기(커서 옆).
 fn preview_hover(index: Option<usize>) {
-    let target = index.and_then(|i| STATE.lock().unwrap().items.get(i).and_then(crate::preview::target_of));
+    let enabled = { app().settings.lock().unwrap().preview_images };
+    if !enabled {
+        crate::preview::hide();
+        return;
+    }
+    let target = {
+        let st = STATE.lock().unwrap();
+        hover_target(enabled, index.and_then(|i| st.items.get(i)))
+    };
     let mut pt = POINT { x: 0, y: 0 };
     unsafe { GetCursorPos(&mut pt) };
     crate::preview::point(target, crate::preview::Anchor::Cursor(pt));
@@ -596,9 +619,14 @@ fn preview_hover(index: Option<usize>) {
 
 /// 키보드(·휠)로 고른 줄의 그림 미리보기(빠른 목록 창 옆, 그 줄 높이).
 fn preview_selected(hwnd: HWND) {
+    let enabled = { app().settings.lock().unwrap().preview_images };
+    if !enabled {
+        crate::preview::hide();
+        return;
+    }
     let (target, offset, search) = {
         let st = STATE.lock().unwrap();
-        (st.items.get(st.sel).and_then(crate::preview::target_of), st.sel.saturating_sub(st.top) as i32,
+        (hover_target(enabled, st.items.get(st.sel)), st.sel.saturating_sub(st.top) as i32,
          st.current() == Tab::Search)
     };
     unsafe {
@@ -1550,5 +1578,14 @@ mod tests {
 
         assert_eq!(popup_items.len(), 1);
         assert_eq!(popup_items[0].preview, "격리 통합 시험 복사 항목");
+    }
+
+    #[test]
+    fn hover_target_yields_none_when_disabled() {
+        let img = Summary { id: 10, kind: "image".into(), size: 200, ..Default::default() };
+        assert!(hover_target(false, Some(&img)).is_none(), "끄기 설정이면 None");
+        assert_eq!(hover_target(true, Some(&img)), Some(crate::preview::Target { id: 10, size: 200 }));
+        let txt = Summary { id: 11, kind: "text".into(), size: 50, ..Default::default() };
+        assert!(hover_target(true, Some(&txt)).is_none(), "그림이 아니면 None");
     }
 }

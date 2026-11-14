@@ -175,8 +175,10 @@ fn record_capture(path: &str) {
         let _ = store.enforce(&settings, t);
         id
     };
-    // 상태 파일에 대기가 바로 보이게 목록 갱신(상태 쓰기) 전에 넣는다.
-    prewarm::enqueue(id);
+    // 상태 파일에 대기가 바로 보이게 목록 갱신(상태 쓰기) 전에 넣는다(그림 미리보기가 켜져 있을 때만).
+    if settings.preview_images {
+        prewarm::enqueue(id);
+    }
     refresh_recent();
 }
 
@@ -500,6 +502,10 @@ pub fn update_settings(new: &json::Value) -> Settings {
         s.apply(new);
         s.clone()
     };
+    if !snapshot.preview_images {
+        prewarm::clear();
+        preview::hide();
+    }
     save_settings();
     let _ = a.store.lock().unwrap().enforce(&snapshot, now());
     refresh_recent();
@@ -617,6 +623,10 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
 
 /// 그림 항목 기록 직후: 클립보드 비트맵에서 만든 썸네일이 있으면 캐시에 바로 넣고, 없으면 미리 만들기 대기열로(KCAP2).
 fn prime_or_enqueue(id: i64, dib_thumb: Option<thumb::Thumb>) {
+    let enabled = { app().settings.lock().unwrap().preview_images };
+    if !enabled {
+        return;
+    }
     if !dib_thumb.is_some_and(|t| thumb::prime(id, t)) {
         prewarm::enqueue(id);
     }
@@ -1004,7 +1014,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 register_hotkey(hwnd);
                 refresh_theme(true);
                 popup::apply_settings();
-                let paused = app().settings.lock().unwrap().paused;
+                let (paused, preview_images) = {
+                    let s = app().settings.lock().unwrap();
+                    (s.paused, s.preview_images)
+                };
+                if !preview_images {
+                    prewarm::clear();
+                    preview::hide();
+                }
                 set_listening(hwnd, !paused);
                 tray(hwnd, NIM_MODIFY);
                 restart_watchers();

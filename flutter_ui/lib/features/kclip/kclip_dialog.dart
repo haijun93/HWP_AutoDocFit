@@ -867,6 +867,19 @@ class _KClipPanelState extends State<KClipPanel> {
             ],
           ),
         ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Switch(
+              key: const ValueKey('kclip-preview-images'),
+              value: settings['preview_images'] != false,
+              onChanged: (v) => _act('settings_set', {
+                'settings': {'preview_images': v},
+              }),
+            ),
+            const Text('그림 미리보기'),
+          ],
+        ),
       ],
     );
   }

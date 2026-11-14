@@ -155,6 +155,10 @@ static WAKE: Condvar = Condvar::new();
 
 /// 그림·화면캡처 항목을 기록한 직후 부른다(어느 스레드에서나, 바로 돌아온다).
 pub fn enqueue(id: i64) {
+    let enabled = { crate::app().settings.lock().unwrap().preview_images };
+    if !enabled {
+        return;
+    }
     let mut sh = SHARED.lock().unwrap();
     sh.queue.push(id);
     sh.last_push = Some(Instant::now());
@@ -169,7 +173,7 @@ pub fn enqueue(id: i64) {
     WAKE.notify_one();
 }
 
-/// 모두 지우기 때(`thumb::clear_all`).
+/// 모두 지우기 때(`thumb::clear_all`), 또는 미리보기 끄기 설정 때.
 pub fn clear() {
     SHARED.lock().unwrap().queue.clear();
 }
@@ -190,6 +194,11 @@ fn run() {
             let mut sh = SHARED.lock().unwrap();
             loop {
                 if sh.queue.has_pending() {
+                    let enabled = { crate::app().settings.lock().unwrap().preview_images };
+                    if !enabled {
+                        sh.queue.clear();
+                        continue;
+                    }
                     let since = sh.last_push.map(|t| t.elapsed()).unwrap_or(settle);
                     if since < settle {
                         sh = WAKE.wait_timeout(sh, settle - since).unwrap().0;
@@ -202,6 +211,12 @@ fn run() {
                 sh = WAKE.wait(sh).unwrap();
             }
         };
+        let enabled = { crate::app().settings.lock().unwrap().preview_images };
+        if !enabled {
+            SHARED.lock().unwrap().queue.finish(id, Outcome::Skipped);
+            crate::write_status();
+            continue;
+        }
         let outcome = make(id);
         SHARED.lock().unwrap().queue.finish(id, outcome);
         crate::write_status();
