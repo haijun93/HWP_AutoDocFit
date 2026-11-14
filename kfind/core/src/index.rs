@@ -7,6 +7,7 @@ use crate::manifest::Manifest;
 use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
 use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, add_phrases, char_bounds, is_word_or_stem, parse_groups, parse_query, split_bigram, split_dict};
 use crate::segment::{Segment, seg_file_name, word_key};
+use crate::topic::{RelatedTopic, TopicItem, TopicTable, TrendingTopic};
 use crate::{Error, Result, corrupt, guard};
 use roaring::{RoaringBitmap, RoaringTreemap};
 use std::cmp::Ordering;
@@ -91,6 +92,8 @@ pub struct SearchOptions {
     pub file_types: Option<Vec<String>>,
     /// 제목에만 검색.
     pub title_only: bool,
+    /// 주제 랭킹 가중치(SEMI3): 드문 말 일치 가산, 흔한 말 가산 낮춤.
+    pub topic_rank_weight: f32,
 }
 
 impl Default for SearchOptions {
@@ -110,6 +113,7 @@ impl Default for SearchOptions {
             end_date: None,
             file_types: None,
             title_only: false,
+            topic_rank_weight: 0.0,
         }
     }
 }
@@ -738,6 +742,8 @@ pub struct Index {
     ranks: OnceLock<StaticRank>,
     /// 질의 이력 캐시(켜면). 세대가 바뀌어도(`reload`) 같은 것을 쓴다.
     cache: Option<Arc<Mutex<QueryCache>>>,
+    /// 주제 빈도 순위표 (SEMI3).
+    pub topics: Arc<Mutex<TopicTable>>,
 }
 
 /// 캐시 잠금. 잠근 채 패닉이 났더라도 캐시 상태는 늘 일관되므로(담기·버리기가 끝난 뒤에만 바뀐다) 그대로 쓴다.
@@ -806,7 +812,8 @@ impl Index {
 
     fn from_parts(dir: &Path, manifest: Manifest, segs: Vec<Arc<Segment>>) -> Index {
         let views = segs.into_iter().zip(manifest.segs).map(|(seg, e)| SegView { seg, deleted: e.deleted, doc_deleted: e.doc_deleted }).collect();
-        Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new(), cache: None }
+        let topics = Arc::new(Mutex::new(TopicTable::load(dir).unwrap_or_default()));
+        Index { dir: dir.to_path_buf(), generation: manifest.generation, views, ranks: OnceLock::new(), cache: None, topics }
     }
 
     /// 문서 고정 순위표(처음 부를 때 만든다).
@@ -1276,6 +1283,22 @@ impl Index {
                 slots.push((a.view, a.local));
             }
         }
+        if opts.topic_rank_weight > 0.0 && !hits.is_empty() {
+            let mut indexed: Vec<(DocHit, (u32, u32))> = hits.into_iter().zip(slots).collect();
+            indexed.sort_by(|(a, _), (b, _)| {
+                let a_score = self.topic_match_score(a, &parsed.words);
+                let b_score = self.topic_match_score(b, &parsed.words);
+                b_score
+                    .partial_cmp(&a_score)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a.level.cmp(&b.level))
+                    .then_with(|| b.count.cmp(&a.count))
+                    .then_with(|| b.date.cmp(&a.date))
+                    .then_with(|| a.doc_id.cmp(&b.doc_id))
+            });
+            hits = indexed.iter().map(|(h, _)| h.clone()).collect();
+            slots = indexed.iter().map(|(_, s)| *s).collect();
+        }
         let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
         Ok(Ranking { result, slots, sets, group_sets: None })
     }
@@ -1411,6 +1434,22 @@ impl Index {
                 hits.push(DocHit { doc_id: a.doc_id, adjacent: a.adjacent(), level: a.level(), count: a.count(), date: a.date, sentences: Vec::new() });
                 slots.push((a.view, a.local));
             }
+        }
+        if opts.topic_rank_weight > 0.0 && !hits.is_empty() {
+            let mut indexed: Vec<(DocHit, (u32, u32))> = hits.into_iter().zip(slots).collect();
+            indexed.sort_by(|(a, _), (b, _)| {
+                let a_score = self.topic_match_score(a, &parsed.words);
+                let b_score = self.topic_match_score(b, &parsed.words);
+                b_score
+                    .partial_cmp(&a_score)
+                    .unwrap_or(Ordering::Equal)
+                    .then_with(|| a.level.cmp(&b.level))
+                    .then_with(|| b.count.cmp(&a.count))
+                    .then_with(|| b.date.cmp(&a.date))
+                    .then_with(|| a.doc_id.cmp(&b.doc_id))
+            });
+            hits = indexed.iter().map(|(h, _)| h.clone()).collect();
+            slots = indexed.iter().map(|(_, s)| *s).collect();
         }
         let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
         Ok(Ranking { result, slots, sets: all_sets, group_sets: None })
@@ -1926,6 +1965,67 @@ impl Index {
             }).collect();
             Ok(out)
         })
+    }
+
+    /// 단어의 IDF 값을 조회한다 (SEMI3).
+    pub fn idf(&self, term: &str) -> f32 {
+        let t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.idf(term)
+    }
+
+    /// 문서와 검색어의 주제 점수 계산 (드문 말 일치 가산, 흔한 말 가산 낮춤).
+    pub fn topic_match_score(&self, hit: &DocHit, words: &[QueryWord]) -> f32 {
+        let t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = 0.0f32;
+        if let Some(entry) = t.doc_entries.get(&hit.doc_id) {
+            for w in words {
+                let idf = t.idf(&w.text);
+                let in_title = entry.title_terms.contains(&w.text);
+                let in_body = entry.body_terms.contains(&w.text);
+                if in_title {
+                    s += idf * 2.0; // 제목/파일명 드문 말 일치 가산
+                } else if in_body {
+                    s += idf * 1.0; // 본문 일치 가산
+                } else {
+                    s += idf * 0.5;
+                }
+            }
+        } else {
+            for w in words {
+                s += t.idf(&w.text);
+            }
+        }
+        s
+    }
+
+    /// 기능 1: 자동 완성 (빈도순).
+    pub fn autocomplete(&self, prefix: &str, limit: usize) -> Vec<TopicItem> {
+        let mut t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.autocomplete(prefix, limit)
+    }
+
+    /// 기능 2: 빈 검색어 첫 화면 주제 1~10위.
+    pub fn top_topics(&self, limit: usize) -> Vec<TopicItem> {
+        let mut t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.top_topics(limit)
+    }
+
+    /// 기능 3: `;` 관련어 추천 (교집합 개수).
+    pub fn related_topics(&self, word: &str, limit: usize) -> Vec<RelatedTopic> {
+        let t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.related_topics(word, limit)
+    }
+
+    /// 기능 4: 기간별 급증 주제 (시간 비트맵/날짜 기반).
+    pub fn trending_topics(&self, start_date: i64, end_date: i64, limit: usize) -> Vec<TrendingTopic> {
+        let t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.trending_topics(start_date, end_date, limit)
+    }
+
+    /// 기능 5: 폴더 대표 주제.
+    pub fn folder_topics(&self, folder: &str, limit: usize) -> Vec<TopicItem> {
+        let t = self.topics.lock().unwrap_or_else(|e| e.into_inner());
+        t.folder_topics(folder, limit)
     }
 }
 

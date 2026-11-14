@@ -18,6 +18,7 @@ mod query;
 mod segment;
 mod sentence;
 mod textcode;
+mod topic;
 mod writer;
 
 pub use docmap::{DateCount, DateInterval, DocumentMeta, FolderCount, SearchScope, SentenceRole};
@@ -26,6 +27,7 @@ pub use index::{DocHit, Index, Order, Ranking, SearchCounts, SearchOptions, Sear
 pub use qcache::{QueryCacheOptions, QueryCacheStats};
 pub use query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, parse_groups, parse_query, stem_suffixes};
 pub use segment::FORMAT_VERSION;
+pub use topic::{RelatedTopic, TopicItem, TopicTable, TrendingTopic, is_common_stopword};
 /// 문서 범위(`SearchOptions::allow`·`deny`)의 문서 ID 집합. 호출하는 쪽이 같은 판의 roaring을 맞추지 않아도 되게 다시 낸다.
 pub use roaring::RoaringTreemap;
 pub use sentence::{SENTENCE_RULE_VERSION, SentenceSpan, index_sentences, is_indexable, split_sentences};
