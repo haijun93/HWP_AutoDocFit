@@ -72,7 +72,8 @@ pub fn ranges_by_groups<S: AsRef<str>>(
                 if last.2 == grp {
                     last.1 = last.1.max(end);
                 } else if end > last.1 {
-                    merged.push((last.1, end, grp));
+                    let from = last.1;
+                    merged.push((from, end, grp));
                 }
             } else {
                 merged.push((start, end, grp));

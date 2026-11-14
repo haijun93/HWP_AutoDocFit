@@ -1851,7 +1851,7 @@ pub fn run() -> Result<(), String> {
                         let pipe_name_clone = pipe_name.clone();
                         let q_names = q.clone();
                         let sort_names = sort;
-                        let h_names = handle as HWND;
+                        let h_names = handle as usize; // HWND는 스레드로 못 넘겨 정수로 옮긴다
                         let cancel_names = cancel.clone();
                         std::thread::spawn(move || {
                             let picked = Instant::now();
@@ -1871,7 +1871,7 @@ pub fn run() -> Result<(), String> {
                                 start,
                                 times: WorkTimes { picked, done },
                             });
-                            unsafe { PostMessageW(h_names, READY, 0, 0) };
+                            unsafe { PostMessageW(h_names as HWND, READY, 0, 0) };
                         });
 
                         let picked = Instant::now();
