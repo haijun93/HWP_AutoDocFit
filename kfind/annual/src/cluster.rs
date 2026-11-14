@@ -167,8 +167,8 @@ pub fn cluster_topics(
             if keywords.len() >= 3 {
                 break;
             }
-            // 너무 일반적이거나 공백/기호가 섞인 것 제외 (fold된 것이므로 한글/영숫자)
-            if bg.chars().count() == 2 {
+            // 너무 일반적이거나 공백/기호가 섞인 것, SEMI3 불용어 제외
+            if bg.chars().count() == 2 && !crate::sim::is_common_word(&bg) {
                 keywords.push(bg);
             }
         }

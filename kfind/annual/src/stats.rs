@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
 use crate::cluster::Topic;
-use crate::date::{Date, IsoWeek, KST_OFFSET_SECS, Period, timestamp_to_iso_week, timestamp_to_weekday};
+use crate::date::{Date, IsoWeek, Period, timestamp_to_iso_week, timestamp_to_weekday};
 
 /// 상위 주제 요약.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -170,6 +170,7 @@ pub fn calculate_stats(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::date::KST_OFFSET_SECS;
 
     #[test]
     fn test_stats_and_crunch_weeks() {

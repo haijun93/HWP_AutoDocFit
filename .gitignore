@@ -51,6 +51,7 @@ resources/kvf.exe.sha256
 /crates/kfind/target/
 kfind/core/target/
 kfind/names/target/
+kfind/annual/target/
 resources/kfind.exe
 resources/kfind.exe.sha256
 ktm/target/
