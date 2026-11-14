@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import '../../core/api/abbreviation_api.dart';
 
 class FlowEditorScreen extends StatelessWidget {
-  const FlowEditorScreen({super.key, required this.api, this.initialMode = 'diagram', this.isModal = true});
+  const FlowEditorScreen({super.key, required this.api, this.initialMode = 'diagram', this.isModal = true, this.photoPasteTrigger});
+  final ValueListenable<int>? photoPasteTrigger;
   final ApiCall api;
   final String initialMode;
   final bool isModal;
