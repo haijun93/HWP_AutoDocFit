@@ -103,6 +103,81 @@ class KfindProcessTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual([c.args[1] for c in run.call_args_list], ["--install", "--start"])
 
+    def test_service_status_stopped_when_pipe_not_alive(self):
+        st = kp.service_status(pipe_checker=lambda: False, sc_checker=lambda: None)
+        self.assertEqual(st["status"], "stopped")
+        self.assertEqual(st["status_text"], "꺼짐")
+
+    def test_service_status_service_when_sc_running(self):
+        st = kp.service_status(pipe_checker=lambda: True, sc_checker=lambda: "RUNNING")
+        self.assertEqual(st["status"], "service")
+        self.assertEqual(st["status_text"], "관리자 서비스")
+
+    def test_service_status_user_mode_when_pipe_alive_without_service(self):
+        st = kp.service_status(pipe_checker=lambda: True, sc_checker=lambda: None)
+        self.assertEqual(st["status"], "user")
+        self.assertEqual(st["status_text"], "사용자 모드 실행 중")
+
+    def test_service_status_reads_client_mode(self):
+        client = MagicMock()
+        client.status.return_value = {"mode": "service"}
+        st = kp.service_status(pipe_checker=lambda: True, sc_checker=lambda: None, client=client)
+        self.assertEqual(st["status"], "service")
+        self.assertEqual(st["status_text"], "관리자 서비스")
+
+    def test_handle_kfind_service_status(self):
+        fake_st = {"ok": True, "status": "user", "status_text": "사용자 모드 실행 중"}
+        res = kp.handle_kfind_service("status", status_checker=lambda: fake_st)
+        self.assertEqual(res, fake_st)
+
+    def test_handle_kfind_service_install_success(self):
+        fake_st = {"ok": True, "status": "service", "status_text": "관리자 서비스"}
+        res = kp.handle_kfind_service("install", installer=lambda: (True, "성공"),
+                                      status_checker=lambda: fake_st)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["status"], "service")
+        self.assertEqual(res["status_text"], "관리자 서비스")
+
+    def test_handle_kfind_service_install_failure_reports_reason_and_user_fallback(self):
+        res = kp.handle_kfind_service("install", installer=lambda: (False, "UAC 거부"),
+                                      status_checker=lambda: {"status": "user"})
+        self.assertFalse(res["ok"])
+        self.assertIn("UAC 거부", res["message"])
+        self.assertEqual(res["status"], "user")
+        self.assertEqual(res["status_text"], "사용자 모드 실행 중")
+        self.assertIn("사용자 모드로 계속 사용", res["fallback_notice"])
+
+    def test_handle_kfind_service_uninstall(self):
+        fake_st = {"ok": True, "status": "stopped", "status_text": "꺼짐"}
+        res = kp.handle_kfind_service("uninstall", uninstaller=lambda: (True, "제거됨"),
+                                      status_checker=lambda: fake_st)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["status"], "stopped")
+        self.assertEqual(res["status_text"], "꺼짐")
+
+    def test_handle_kfind_service_fallback_get_and_set(self):
+        res = kp.handle_kfind_service("set_fallback", {"mode": "task"})
+        self.assertTrue(res["ok"])
+        self.assertEqual(kp.get_fallback_mode(), "task")
+        res = kp.handle_kfind_service("get_fallback")
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["mode"], "task")
+
+
+class KfindServiceDispatchTests(unittest.TestCase):
+    def test_application_service_dispatches_kfind_service(self):
+        from docfit_app.application_service import ApplicationService
+        from docfit_app.settings_service import SettingsService
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = SettingsService(Path(tmp.name) / "settings.json")
+        app = ApplicationService(store=store)
+        with patch("docfit_app.kfind_process.handle_kfind_service", return_value={"ok": True, "status": "service"}) as handle:
+            res = app.dispatch("kfind_service", ["status"])
+        self.assertTrue(res["ok"])
+        handle.assert_called_once_with("status", None)
+
+
 
 class AppStartupWiringTests(unittest.TestCase):
     def test_entry_point_starts_kfind_in_background_and_keeps_crlf(self):

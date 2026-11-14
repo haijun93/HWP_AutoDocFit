@@ -129,10 +129,10 @@ class ApplicationService:
         counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'kfind_service':2,'search_service':2})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
-        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app') and len(args) in (1, 2)) and len(args)!=counts[method]:
+        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'kfind_service', 'search_service') and len(args) in (1, 2)) and len(args)!=counts[method]:
             raise ServiceError('INVALID_INPUT','입력 항목 수를 확인해 주세요.')
         if self.data.closing and method != 'shutdown':
             raise ServiceError('BACKEND_CLOSING','백엔드가 종료 중입니다.')
@@ -279,6 +279,11 @@ class ApplicationService:
             # 네이티브 실행기: 창 항상 위는 Dart 쪽이 맡으므로 저장·복원만 한다.
             from . import kclip_window_state
             return kclip_window_state.command(self.store, *args)
+        if method in ('kfind_service', 'search_service'):
+            from .kfind_process import handle_kfind_service
+            action = args[0]
+            payload = args[1] if len(args) > 1 and isinstance(args[1], dict) else None
+            return handle_kfind_service(action, payload)
         if method=='file_rename':
             if getattr(self, '_rename_service', None) is None:
                 from .file_rename_service import FileRenameService

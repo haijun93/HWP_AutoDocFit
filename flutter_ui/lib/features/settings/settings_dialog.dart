@@ -11,6 +11,7 @@ import '../preview/option_images.dart';
 import 'idiom_panel.dart';
 import 'kvf_panel.dart';
 import 'kiosk_theme.dart';
+import 'search_service_card.dart';
 import 'setting_guides.dart';
 
 /// 전체 설정: 분류 타일을 고르고, 설정마다 한글 문서 예시로 무엇이 달라지는지 보여 준다.
@@ -463,6 +464,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
             const SizedBox(height: 16),
             guide!.preview!(_value(key)),
           ],
+          if (key == 'search_engine')
+            SearchServiceCard(api: widget.api, locked: locked),
         ],
       ),
     );

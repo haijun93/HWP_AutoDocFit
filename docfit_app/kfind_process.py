@@ -255,3 +255,99 @@ def uninstall_service(exe: Path | str | None = None, timeout: float = 120.0) -> 
     if not exe_path:
         return False, "kfind.exe를 찾을 수 없습니다."
     return _run_elevated(exe_path, "--uninstall", timeout)
+
+
+def query_windows_service(service_name: str = SERVICE_NAME) -> str | None:
+    """Windows sc.exe로 서비스 상태를 확인한다('RUNNING', 'STOPPED', None)."""
+    if os.name != "nt":
+        return None
+    try:
+        res = subprocess.run(
+            ["sc.exe", "query", service_name],
+            capture_output=True, text=True, timeout=5,
+            creationflags=_creation_flags(), stdin=subprocess.DEVNULL)
+        if res.returncode == 0:
+            for line in res.stdout.splitlines():
+                if "STATE" in line:
+                    parts = line.split(":")
+                    if len(parts) > 1:
+                        val = parts[1].strip()
+                        if "RUNNING" in val:
+                            return "RUNNING"
+                        if "STOPPED" in val:
+                            return "STOPPED"
+            return "INSTALLED"
+    except Exception:
+        pass
+    return None
+
+
+def service_status(*, pipe_checker=None, sc_checker=None, client=None) -> dict:
+    """kfind 서비스 상태: '관리자 서비스' / '사용자 모드 실행 중' / '꺼짐'."""
+    check_pipe = pipe_checker if pipe_checker is not None else is_pipe_alive
+    pipe_alive = check_pipe()
+
+    svc_state = (sc_checker if sc_checker is not None else query_windows_service)()
+    if svc_state == "RUNNING":
+        status_key = "service"
+        status_text = "관리자 서비스"
+    elif pipe_alive:
+        mode = None
+        if client is not None:
+            try:
+                mode = client.status().get("mode")
+            except Exception:
+                pass
+        if mode == "service":
+            status_key = "service"
+            status_text = "관리자 서비스"
+        else:
+            status_key = "user"
+            status_text = "사용자 모드 실행 중"
+    else:
+        status_key = "stopped"
+        status_text = "꺼짐"
+
+    return {
+        "ok": True,
+        "status": status_key,
+        "status_text": status_text,
+        "fallback": get_fallback_mode(),
+    }
+
+
+def handle_kfind_service(action: str, payload: dict | None = None, *,
+                         installer=install_service, uninstaller=uninstall_service,
+                         status_checker=service_status) -> dict:
+    """설정 화면 브리지 명령 디스패처."""
+    if action == "status":
+        return status_checker()
+    elif action == "install":
+        ok, msg = installer()
+        if ok:
+            st = status_checker()
+            return {"ok": True, "message": msg, "status": st.get("status", "service"),
+                    "status_text": st.get("status_text", "관리자 서비스")}
+        return {
+            "ok": False,
+            "message": msg or "관리자 서비스 설치에 실패했습니다.",
+            "status": "user",
+            "status_text": "사용자 모드 실행 중",
+            "fallback_notice": "관리자 서비스 설치에 실패하여 사용자 모드로 계속 사용합니다.",
+        }
+    elif action == "uninstall":
+        ok, msg = uninstaller()
+        st = status_checker()
+        return {"ok": ok, "message": msg, "status": st.get("status"),
+                "status_text": st.get("status_text")}
+    elif action == "set_fallback":
+        mode = (payload or {}).get("mode", "user")
+        try:
+            set_fallback_mode(mode)
+            return {"ok": True, "mode": mode}
+        except Exception as exc:
+            return {"ok": False, "message": str(exc)}
+    elif action == "get_fallback":
+        return {"ok": True, "mode": get_fallback_mode()}
+    return {"ok": False, "message": f"지원하지 않는 명령입니다: {action}"}
+
