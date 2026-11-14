@@ -55,6 +55,7 @@ const CAT_H: i32 = 28;
 /// 캡션 단추 하나의 폭(Windows 기본 캡션 단추 46px).
 const CAPTION_W: i32 = 46;
 /// 접힌 창 높이(틀이 없으므로 머리글 + 위아래 테두리 1px).
+const ROW_OPEN_W: i32 = 28;
 const ROW_PHOTO_W: i32 = 28;
 const ROW_PIN_W: i32 = 28;
 const ROW_DELETE_W: i32 = 28;
@@ -190,9 +191,12 @@ fn list_top(head: i32, cat: i32, search_row: bool, row: i32) -> i32 {
     head + cat + if search_row { row } else { 0 }
 }
 
-/// 줄 hover 버튼 동작. 그림 항목이면 [붙임사진][핀][X] 3개, 일반 항목이면 [핀][X] 2개.
+/// 줄 hover 버튼 동작.
+/// 그림 항목: [열기][붙임사진][핀][X] 4개
+/// 일반 항목: [열기][핀][X] 3개
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
+    Open,
     Photo,
     Pin,
     Delete,
@@ -202,8 +206,8 @@ pub fn is_image_item(item: &Summary) -> bool {
     item.kind == "image" || (item.kind == "files" && item.cats.contains(Category::Image))
 }
 
-pub fn row_action(x: i32, width: i32, photo_w: i32, pin_w: i32, delete_w: i32) -> Option<Action> {
-    let total = photo_w + pin_w + delete_w;
+pub fn row_action(x: i32, width: i32, open_w: i32, photo_w: i32, pin_w: i32, delete_w: i32) -> Option<Action> {
+    let total = open_w + photo_w + pin_w + delete_w;
     if x >= width || x < width - total {
         return None;
     }
@@ -211,10 +215,66 @@ pub fn row_action(x: i32, width: i32, photo_w: i32, pin_w: i32, delete_w: i32) -
         Some(Action::Delete)
     } else if x >= width - delete_w - pin_w {
         Some(Action::Pin)
-    } else if photo_w > 0 && x >= width - total {
+    } else if photo_w > 0 && x >= width - delete_w - pin_w - photo_w {
         Some(Action::Photo)
+    } else if open_w > 0 && x >= width - total {
+        Some(Action::Open)
     } else {
         None
+    }
+}
+
+/// 선 그림 방식(창 + 우상단 바깥으로 나가는 화살표) 아이콘 그리기.
+unsafe fn draw_open_icon(hdc: HDC, r: RECT, color: u32) {
+    let pen = CreatePen(PS_SOLID, 1, color);
+    if pen.is_null() {
+        return;
+    }
+    let old_pen = SelectObject(hdc, pen);
+    let old_brush = SelectObject(hdc, GetStockObject(NULL_BRUSH as i32));
+
+    let cx = (r.left + r.right) / 2;
+    let cy = (r.top + r.bottom) / 2;
+
+    // 1) 창/박스 모양 (우상단이 트인 직사각형)
+    let left = cx - 5;
+    let top = cy - 2;
+    let right = cx + 2;
+    let bottom = cy + 5;
+
+    // 상단 가로선 일부 (우상단 화살표 통로 비움)
+    MoveToEx(hdc, left, top, std::ptr::null_mut());
+    LineTo(hdc, cx - 1, top);
+
+    // 좌측 세로선
+    MoveToEx(hdc, left, top, std::ptr::null_mut());
+    LineTo(hdc, left, bottom);
+
+    // 하단 가로선
+    LineTo(hdc, right, bottom);
+
+    // 우측 세로선 일부
+    LineTo(hdc, right, cy + 1);
+
+    // 2) 바깥(우상단)으로 나가는 대각선 화살표
+    // 대각선 줄: (cx - 1, cy + 1) -> (cx + 5, cy - 5)
+    MoveToEx(hdc, cx - 1, cy + 1, std::ptr::null_mut());
+    LineTo(hdc, cx + 5, cy - 5);
+
+    // 화살표 머리 (촉)
+    MoveToEx(hdc, cx + 2, cy - 5, std::ptr::null_mut());
+    LineTo(hdc, cx + 5, cy - 5);
+    LineTo(hdc, cx + 5, cy - 2);
+
+    SelectObject(hdc, old_brush);
+    SelectObject(hdc, old_pen);
+    DeleteObject(pen);
+}
+
+fn open_item_by_id(hwnd: HWND, id: i64) {
+    let payload = app().store.lock().unwrap().payload(id).ok().flatten();
+    if let Some((kind, data, extra)) = payload {
+        crate::open_item::open(hwnd, id, &kind, &data, &extra, false);
     }
 }
 
@@ -904,6 +964,7 @@ unsafe fn paint(hwnd: HWND) {
             let hint = match st.hover_btn {
                 Some(b) => head_button_name(b, pinned, maximized).to_string(),
                 None => match st.hover_action {
+                    Some(Action::Open) => "연결 프로그램으로 열기".to_string(),
                     Some(Action::Photo) => "붙임사진 편집으로 보내기".to_string(),
                     Some(Action::Pin) => "목록 상단에 고정".to_string(),
                     Some(Action::Delete) => "기록에서 삭제".to_string(),
@@ -1014,7 +1075,8 @@ unsafe fn paint(hwnd: HWND) {
             SetTextColor(mem, p.row_text(sel, p.text));
             let has_photo = is_image_item(&item);
             let photo_w = if has_photo { scale(hwnd, ROW_PHOTO_W) } else { 0 };
-            let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w } else { 0 };
+            let open_w = scale(hwnd, ROW_OPEN_W);
+            let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w + open_w } else { 0 };
             draw(&item.preview, RECT { left: scale(hwnd, 72), top: y, right: w - actions - scale(hwnd, 10), bottom: y + row },
                  DT_END_ELLIPSIS);
             if st.hover == Some(i) {
@@ -1023,10 +1085,14 @@ unsafe fn paint(hwnd: HWND) {
                 SetTextColor(mem, p.row_text(sel, p.icon));
                 draw("✕", del, DT_CENTER);
                 draw(if item.pinned { "📌" } else { "📍" }, pin, DT_CENTER);
+                let mut next_left = pin.left;
                 if has_photo {
-                    let photo_rc = RECT { left: pin.left - photo_w, top: y, right: pin.left, bottom: y + row };
+                    let photo_rc = RECT { left: next_left - photo_w, top: y, right: next_left, bottom: y + row };
                     draw_photo_edit_icon(mem, photo_rc, p.row_text(sel, p.icon));
+                    next_left = photo_rc.left;
                 }
+                let open_rc = RECT { left: next_left - open_w, top: y, right: next_left, bottom: y + row };
+                draw_open_icon(mem, open_rc, p.row_text(sel, p.icon));
             }
         }
         drop(st);
@@ -1301,6 +1367,17 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         set_tab(next_tab(cur, if back { -1 } else { 1 }));
                     }
                     0x46 if GetKeyState(VK_CONTROL as i32) < 0 => set_tab(SEARCH_TAB), // Ctrl+F
+                    0x4F if GetKeyState(VK_CONTROL as i32) < 0 => { // Ctrl+O: 연결 프로그램으로 열기
+                        let id = {
+                            let st = STATE.lock().unwrap();
+                            st.items.get(st.sel).map(|i| i.id)
+                        };
+                        if let Some(id) = id {
+                            open_item_by_id(hwnd, id);
+                            hide();
+                            return 0;
+                        }
+                    }
                     VK_RETURN => {
                         let sel = STATE.lock().unwrap().sel;
                         choose(sel);
@@ -1393,7 +1470,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     let st = STATE.lock().unwrap();
                     if let Some(item) = st.items.get(idx) {
                         let photo_w = if is_image_item(item) { scale(hwnd, ROW_PHOTO_W) } else { 0 };
-                        row_action(x, w, photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W))
+                        row_action(x, w, scale(hwnd, ROW_OPEN_W), photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W))
                     } else {
                         None
                     }
@@ -1469,13 +1546,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     };
                     if let Some((id, pinned, has_photo)) = item_info {
                         let photo_w = if has_photo { scale(hwnd, ROW_PHOTO_W) } else { 0 };
-                        let action_width = scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w;
+                        let open_w = scale(hwnd, ROW_OPEN_W);
+                        let action_width = scale(hwnd, ROW_PIN_W + ROW_DELETE_W) + photo_w + open_w;
                         // 조건식 안에서 잠그면 본문 끝(refresh 등)까지 잠금이 살아 있어
                         // 본문 안의 STATE.lock() 및 refresh()에서 영구 멈춤(데드락)이 발생한다.
-                        let is_hovered = STATE.lock().unwrap().hover == Some(i);
+                        let is_hovered = { STATE.lock().unwrap().hover == Some(i) };
                         if is_hovered && x >= w - action_width {
-                            let act = row_action(x, w, photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W));
+                            let act = row_action(x, w, open_w, photo_w, scale(hwnd, ROW_PIN_W), scale(hwnd, ROW_DELETE_W));
                             match act {
+                                Some(Action::Open) => {
+                                    // 1) 항목 종류별 연결 프로그램으로 열기
+                                    open_item_by_id(hwnd, id);
+                                    // 2) 빠른 목록 닫음(설정 '고르면 바로 붙여넣기'와 무관)
+                                    hide();
+                                    return 0;
+                                }
                                 Some(Action::Photo) => {
                                     // 1) 클립보드에 올리기 (기존 복원 경로)
                                     crate::restore(id, false, std::ptr::null_mut());
@@ -1535,12 +1620,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
                 if command == 1 || command == 2 || command == 3 {
                     let payload = app().store.lock().unwrap().payload(id).ok().flatten();
-                    if let Some((_, data, extra)) = payload {
+                    if let Some((kind, data, extra)) = payload {
                         if command == 3 {
                             if restore(id, false, std::ptr::null_mut()) {
-                                open_item::open(hwnd, &app().dir, "text", &data, &[], true);
+                                open_item::open(hwnd, id, "text", &data, &[], true);
                             }
-                        } else { open_item::open(hwnd, &app().dir, &kind, &data, &extra, command == 2); }
+                        } else { open_item::open(hwnd, id, &kind, &data, &extra, command == 2); }
                     }
                 }
                 0
@@ -1701,24 +1786,31 @@ mod tests {
 
     #[test]
     fn hover_actions_reserve_right_side_only() {
-        // 1) 그림이 아닌 항목 (버튼 2개: photo_w = 0, [핀][X])
-        assert_eq!(row_action(543, 600, 0, 28, 28), None);
-        assert_eq!(row_action(544, 600, 0, 28, 28), Some(Action::Pin));
-        assert_eq!(row_action(571, 600, 0, 28, 28), Some(Action::Pin));
-        assert_eq!(row_action(572, 600, 0, 28, 28), Some(Action::Delete));
-        assert_eq!(row_action(599, 600, 0, 28, 28), Some(Action::Delete));
-        assert_eq!(row_action(600, 600, 0, 28, 28), None);
+        // 1) 그림이 아닌 항목 (버튼 3개: open_w = 28, photo_w = 0, pin_w = 28, delete_w = 28)
+        // 전체 폭 = 28 + 0 + 28 + 28 = 84px -> 시작 600 - 84 = 516
+        // 순서: [열기][핀][X]
+        assert_eq!(row_action(515, 600, 28, 0, 28, 28), None);
+        assert_eq!(row_action(516, 600, 28, 0, 28, 28), Some(Action::Open));
+        assert_eq!(row_action(543, 600, 28, 0, 28, 28), Some(Action::Open));
+        assert_eq!(row_action(544, 600, 28, 0, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(571, 600, 28, 0, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(572, 600, 28, 0, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(599, 600, 28, 0, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(600, 600, 28, 0, 28, 28), None);
 
-        // 2) 그림 항목 (버튼 3개: photo_w = 28, [붙임사진][핀][X])
-        // 전체 폭 = 28 + 28 + 28 = 84px -> 시작 600 - 84 = 516
-        assert_eq!(row_action(515, 600, 28, 28, 28), None);
-        assert_eq!(row_action(516, 600, 28, 28, 28), Some(Action::Photo));
-        assert_eq!(row_action(543, 600, 28, 28, 28), Some(Action::Photo));
-        assert_eq!(row_action(544, 600, 28, 28, 28), Some(Action::Pin));
-        assert_eq!(row_action(571, 600, 28, 28, 28), Some(Action::Pin));
-        assert_eq!(row_action(572, 600, 28, 28, 28), Some(Action::Delete));
-        assert_eq!(row_action(599, 600, 28, 28, 28), Some(Action::Delete));
-        assert_eq!(row_action(600, 600, 28, 28, 28), None);
+        // 2) 그림 항목 (버튼 4개: open_w = 28, photo_w = 28, pin_w = 28, delete_w = 28)
+        // 전체 폭 = 28 + 28 + 28 + 28 = 112px -> 시작 600 - 112 = 488
+        // 순서: [열기][붙임사진][핀][X]
+        assert_eq!(row_action(487, 600, 28, 28, 28, 28), None);
+        assert_eq!(row_action(488, 600, 28, 28, 28, 28), Some(Action::Open));
+        assert_eq!(row_action(515, 600, 28, 28, 28, 28), Some(Action::Open));
+        assert_eq!(row_action(516, 600, 28, 28, 28, 28), Some(Action::Photo));
+        assert_eq!(row_action(543, 600, 28, 28, 28, 28), Some(Action::Photo));
+        assert_eq!(row_action(544, 600, 28, 28, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(571, 600, 28, 28, 28, 28), Some(Action::Pin));
+        assert_eq!(row_action(572, 600, 28, 28, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(599, 600, 28, 28, 28, 28), Some(Action::Delete));
+        assert_eq!(row_action(600, 600, 28, 28, 28, 28), None);
     }
 
     #[test]
