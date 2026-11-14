@@ -25,7 +25,7 @@ pub struct Answer {
     pub terms: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Row {
     pub doc_id: u64,
     pub path: String,
@@ -39,6 +39,18 @@ pub struct Row {
     pub para: Option<u32>,
     /// 원문 찾기를 이미 해 봤는지(없어도 다시 찾지 않음).
     pub snippet_tried: bool,
+    /// 검색 단(1: 파일명, 2: 위계, 3: 본문).
+    pub tier: u8,
+}
+
+/// 위계·본문 통합 검색 결과.
+#[derive(Clone, Debug, Default)]
+pub struct UnifiedContentAnswer {
+    pub hier_rows: Vec<Row>,
+    pub body_rows: Vec<Row>,
+    pub terms: Vec<String>,
+    pub hier_count: usize,
+    pub body_count: usize,
 }
 
 pub struct Backend {
@@ -117,6 +129,111 @@ impl Backend {
 
     pub fn search(&mut self, query: &str, hierarchy: bool) -> Result<Vec<Row>> {
         self.search_cancel(query, hierarchy, None).map(|a| a.rows)
+    }
+
+    /// 통합 검색용: 위계(level < 8)와 본문(level >= 8)을 분리하여 각각 상위 50건과 전체 개수를 반환한다.
+    /// 연관 검색어(';')가 있으면 묶음 검색(search_groups)을 적용한다.
+    pub fn search_unified(
+        &mut self,
+        query: &str,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<UnifiedContentAnswer> {
+        self.index.reload().map_err(|e| e.to_string())?;
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(UnifiedContentAnswer::default());
+        }
+        let opts = SearchOptions {
+            top: 0,
+            refs_per_doc: 1,
+            cancel,
+            ..SearchOptions::default()
+        };
+        let is_one_char = kfind_core::fold(query).chars().count() == 1;
+        let is_groups = kfind_core::parse_groups(query).len() > 1;
+        let result = if is_one_char {
+            self.index.search_character(query, &opts)
+        } else if is_groups {
+            self.index.search_groups_by(query, &opts, Order::Hierarchy)
+        } else {
+            self.index.search_by(query, &opts, Order::Hierarchy)
+        }
+        .map_err(|e| e.to_string())?;
+
+        let mut terms: Vec<String> = query
+            .split([' ', ';'])
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        for w in &result.words {
+            terms.push(w.text.clone());
+            terms.extend(w.pieces.iter().flatten().cloned());
+        }
+        if terms.is_empty() || is_one_char {
+            terms.push(kfind_core::fold(query));
+        }
+        terms.sort();
+        terms.dedup();
+
+        let path = self.root.join("doctable.jsonl");
+        let stamp = match std::fs::metadata(&path) {
+            Ok(m) => Some((m.len(), m.modified().ok())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.to_string()),
+        };
+        if stamp != self.table_stamp {
+            let paths = read_paths(&path, None)?;
+            self.paths = paths;
+            self.table_stamp = stamp;
+        }
+
+        let mut hier_hits = Vec::new();
+        let mut body_hits = Vec::new();
+        for h in result.hits {
+            if h.level < 8 {
+                hier_hits.push(h);
+            } else {
+                body_hits.push(h);
+            }
+        }
+
+        let hier_count = hier_hits.len();
+        let body_count = body_hits.len();
+
+        hier_hits.truncate(LIMIT);
+        body_hits.truncate(LIMIT);
+
+        let mut hier_rows: Vec<Row> = hier_hits
+            .iter()
+            .map(|h| {
+                let mut r = row(h, self.paths.get(&h.doc_id).map(String::as_str));
+                r.tier = 2;
+                r
+            })
+            .collect();
+
+        let mut body_rows: Vec<Row> = body_hits
+            .iter()
+            .map(|h| {
+                let mut r = row(h, self.paths.get(&h.doc_id).map(String::as_str));
+                r.tier = 3;
+                r
+            })
+            .collect();
+
+        let n_hier = hier_rows.len().min(SNIPPET_PREFETCH);
+        self.fill_snippets(&mut hier_rows[..n_hier], &terms);
+        let n_body = body_rows.len().min(SNIPPET_PREFETCH);
+        self.fill_snippets(&mut body_rows[..n_body], &terms);
+
+        Ok(UnifiedContentAnswer {
+            hier_rows,
+            body_rows,
+            terms,
+            hier_count,
+            body_count,
+        })
     }
 
     pub fn search_cancel(
@@ -204,6 +321,7 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         count: hit.count,
         para: hit.sentences.first().map(|s| s.para),
         snippet_tried: false,
+        tier: if hit.level < 8 { 2 } else { 3 },
     }
 }
 
@@ -322,11 +440,20 @@ pub const NAME_SORTS: [(&str, &str); 4] = [("relevance", "관련도"), ("name", 
 
 /// 파일명 탭: 서비스가 메모리에 쥔 드라이브 전체 이름 색인에 `names_query`(서비스 SID 범위, 다른 사용자 프로필 제외).
 pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
+    pipe_names_total(name, query, sort).map(|(rows, _)| rows)
+}
+
+/// 파일명 검색: (줄 목록, 전체 개수).
+pub fn pipe_names_total(name: &str, query: &str, sort: &str) -> Result<(Vec<Row>, usize)> {
     let bytes = pipe_call(name, &json!({"command":"names_query","id":1,"text":query,"limit":LIMIT,"sort":sort}))?;
-    decode_names(&bytes)
+    decode_names_total(&bytes)
 }
 
 fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
+    decode_names_total(bytes).map(|(rows, _)| rows)
+}
+
+fn decode_names_total(bytes: &[u8]) -> Result<(Vec<Row>, usize)> {
     let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if value["ok"] != true {
         let e = value["error"].as_str().unwrap_or("색인 서비스 오류");
@@ -336,8 +463,9 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
             e.to_owned()
         });
     }
+    let total = value["result"]["total"].as_u64().unwrap_or(0) as usize;
     let items = value["result"]["items"].as_array().ok_or("파일명 응답에 결과가 없습니다.")?;
-    Ok(items
+    let rows = items
         .iter()
         .map(|i| {
             let name = i["name"].as_str().unwrap_or_default().to_owned();
@@ -359,9 +487,11 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
             if let Some(t) = i["mtime"].as_i64().and_then(format_filetime) {
                 info.push(t);
             }
-            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, ..Row::default() }
+            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, tier: 1, ..Row::default() }
         })
-        .collect())
+        .collect();
+    let effective_total = if total > 0 { total } else { items.len() };
+    Ok((rows, effective_total))
 }
 
 /// 크기 글: 1023 B · 1.5 KB · 12.3 MB · 1.2 GB.
@@ -651,5 +781,58 @@ mod tests {
         assert!(rows[0].snippet.is_empty());
         assert_eq!(rows[0].location, "위계 1");
         assert_eq!(rows[0].para, None);
+    }
+    #[test]
+    fn search_unified_splits_hierarchy_and_body_and_supports_semicolon() {
+        let t = Temp::new();
+        let mut writer = Writer::open(&t.0, WriterOptions::default()).unwrap();
+        writer
+            .add_document(
+                1,
+                10,
+                &[Sentence {
+                    para: 0,
+                    level: 1,
+                    text: "2026년 공사 계약 집행",
+                }],
+            )
+            .unwrap();
+        writer
+            .add_document(
+                2,
+                20,
+                &[Sentence {
+                    para: 1,
+                    level: 8,
+                    text: "공사 계약 추진 내역",
+                }],
+            )
+            .unwrap();
+        writer.commit().unwrap();
+
+        let table = concat!(
+            "{\"op\":\"put\",\"key\":\"k1\",\"id\":1,\"meta\":{\"path\":\"C:\\\\d\\\\1.hwp\"}}\n",
+            "{\"op\":\"put\",\"key\":\"k2\",\"id\":2,\"meta\":{\"path\":\"C:\\\\d\\\\2.hwp\"}}\n"
+        );
+        std::fs::write(t.0.join("doctable.jsonl"), table).unwrap();
+
+        let mut backend = Backend::open(&t.0).unwrap();
+
+        let ans = backend.search_unified("공사 계약", None).unwrap();
+        assert_eq!(ans.hier_rows.len(), 1);
+        assert_eq!(ans.hier_rows[0].doc_id, 1);
+        assert_eq!(ans.hier_rows[0].tier, 2);
+        assert_eq!(ans.body_rows.len(), 1);
+        assert_eq!(ans.body_rows[0].doc_id, 2);
+        assert_eq!(ans.body_rows[0].tier, 3);
+        assert_eq!(ans.hier_count, 1);
+        assert_eq!(ans.body_count, 1);
+
+        let ans_grp = backend.search_unified("2026; 공사 계약", None).unwrap();
+        assert_eq!(ans_grp.hier_rows.len(), 1);
+        assert_eq!(ans_grp.hier_rows[0].doc_id, 1);
+        assert_eq!(ans_grp.body_rows.len(), 0);
+        assert_eq!(ans_grp.hier_count, 1);
+        assert_eq!(ans_grp.body_count, 0);
     }
 }

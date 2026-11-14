@@ -48,15 +48,37 @@ struct WorkTimes {
     picked: Instant,
     done: Instant,
 }
+#[derive(Default)]
+struct SearchBuffer {
+    generation: u64,
+    names: Option<Vec<Row>>,
+    hier: Option<Vec<Row>>,
+    body: Option<Vec<Row>>,
+    names_count: usize,
+    hier_count: usize,
+    body_count: usize,
+}
 enum Reply {
-    /// (세대, 답, 입력 시각, 일꾼 단계 시각).
-    Search(u64, Result<Answer, String>, Instant, WorkTimes),
+    Names {
+        generation: u64,
+        result: Result<Vec<Row>, String>,
+        total: usize,
+        start: Instant,
+        times: WorkTimes,
+    },
+    Content {
+        generation: u64,
+        result: Result<ktm::backend::UnifiedContentAnswer, String>,
+        start: Instant,
+        times: WorkTimes,
+    },
     Snippets(u64, Vec<(usize, Row)>),
 }
 struct Ui {
     state: State,
     rows: Vec<Row>,
     terms: Vec<String>,
+    buffer: SearchBuffer,
     edit: HWND,
     font: HFONT,
     brush: HBRUSH,
@@ -282,9 +304,15 @@ fn key(h: HWND, key: usize) -> bool {
             VK_PRIOR => event(h, Event::MoveSelection(-5)),
             VK_TAB => {
                 let tab = with(|u| match (u.state.tab, shift) {
-                    (Tab::Body, false) | (Tab::Names, true) => Tab::Hierarchy,
-                    (Tab::Hierarchy, false) | (Tab::Body, true) => Tab::Names,
-                    _ => Tab::Body,
+                    (Tab::All, false) => Tab::Names,
+                    (Tab::Names, false) => Tab::Hierarchy,
+                    (Tab::Hierarchy, false) => Tab::Body,
+                    (Tab::Body, false) => Tab::All,
+
+                    (Tab::All, true) => Tab::Body,
+                    (Tab::Names, true) => Tab::All,
+                    (Tab::Hierarchy, true) => Tab::Names,
+                    (Tab::Body, true) => Tab::Hierarchy,
                 });
                 event(h, Event::SwitchTab(tab));
             }
@@ -483,18 +511,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         );
         with(|u| {
             let names_label = format!("파일명 · {}", ktm::backend::NAME_SORTS[u.name_sort % 4].1);
-            for (i, (label, tab)) in [
-                ("본문", Tab::Body),
-                ("위계", Tab::Hierarchy),
+            let tabs = [
+                ("모두", Tab::All),
                 (names_label.as_str(), Tab::Names),
-            ]
-            .iter()
-            .enumerate()
-            {
+                ("위계", Tab::Hierarchy),
+                ("본문", Tab::Body),
+            ];
+            let tab_w = (r.right - 2 * p) / 4;
+            for (i, (label, tab)) in tabs.iter().enumerate() {
                 let rc = RECT {
-                    left: p + i as i32 * scale(h, 165),
+                    left: p + i as i32 * tab_w,
                     top: scale(h, 82),
-                    right: p + (i as i32 + 1) * scale(h, 165),
+                    right: p + (i as i32 + 1) * tab_w,
                     bottom: scale(h, 116),
                 };
                 if u.state.tab == *tab {
@@ -570,14 +598,30 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => "검색 중…".into(),
-                    Phase::Results if u.state.tab == Tab::Names => format!(
-                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
-                        u.rows.len()
-                    ),
-                    Phase::Results => format!(
-                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
-                        u.rows.len()
-                    ),
+                    Phase::Results => {
+                        let n_cnt = u.buffer.names_count;
+                        let h_cnt = u.buffer.hier_count;
+                        let b_cnt = u.buffer.body_count;
+                        let tot = n_cnt + h_cnt + b_cnt;
+                        match u.state.tab {
+                            Tab::All => format!(
+                                "파일명 {}건 · 위계 {}건 · 본문 {}건 (총 {}건) · Enter 열기 · Ctrl+Enter 폴더",
+                                n_cnt, h_cnt, b_cnt, tot
+                            ),
+                            Tab::Names => format!(
+                                "파일명 {}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
+                                n_cnt
+                            ),
+                            Tab::Hierarchy => format!(
+                                "위계 {}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
+                                h_cnt
+                            ),
+                            Tab::Body => format!(
+                                "본문 {}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
+                                b_cnt
+                            ),
+                        }
+                    }
                     _ => "2글자부터 실시간 검색 · 1글자는 Enter".into(),
                 }
             };
@@ -637,6 +681,24 @@ fn flush_metrics() {
         }
     }
 }
+fn apply_buffer(u: &mut Ui) {
+    let names = u.buffer.names.clone().unwrap_or_default();
+    let hier = u.buffer.hier.clone().unwrap_or_default();
+    let body = u.buffer.body.clone().unwrap_or_default();
+    let merged = tm_state::merge_tiers(names, hier, body);
+    let filtered: Vec<Row> = match u.state.tab {
+        Tab::All => merged,
+        Tab::Names => merged.into_iter().filter(|r| r.tier == 1).collect(),
+        Tab::Hierarchy => merged.into_iter().filter(|r| r.tier == 2).collect(),
+        Tab::Body => merged.into_iter().filter(|r| r.tier == 3).collect(),
+    };
+    u.rows = filtered;
+    u.state.result_count = u.rows.len();
+    if u.state.result_count > 0 && u.state.selected.is_none() {
+        u.state.selected = Some(0);
+    }
+}
+
 unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
     unsafe {
         match msg {
@@ -720,12 +782,18 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let x = l as i16 as i32;
                 let y = (l >> 16) as i16 as i32;
                 if y >= scale(h, 82) && y < scale(h, 116) {
-                    let tab = if x < scale(h, 179) {
-                        Tab::Body
-                    } else if x < scale(h, 344) {
+                    let mut r: RECT = std::mem::zeroed();
+                    GetClientRect(h, &mut r);
+                    let p = scale(h, 14);
+                    let tab_w = (r.right - 2 * p).max(1) / 4;
+                    let tab = if x < p + tab_w {
+                        Tab::All
+                    } else if x < p + 2 * tab_w {
+                        Tab::Names
+                    } else if x < p + 3 * tab_w {
                         Tab::Hierarchy
                     } else {
-                        Tab::Names
+                        Tab::Body
                     };
                     event(h, Event::SwitchTab(tab));
                 } else if y >= scale(h, 124) {
@@ -754,12 +822,90 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             READY => {
                 let answers = with(|u| u.rx.try_iter().collect::<Vec<_>>());
                 for reply in answers {
-                    let (g, result, start) = match reply {
-                        Reply::Search(g, result, start, times) => {
-                            phase("search_queue_ms", times.picked - start);
-                            phase("search_work_ms", times.done - times.picked);
-                            phase("search_deliver_ms", times.done.elapsed());
-                            (g, result, start)
+                    match reply {
+                        Reply::Names {
+                            generation: g,
+                            result,
+                            total,
+                            start,
+                            times,
+                        } => {
+                            phase("names_queue_ms", times.picked - start);
+                            phase("names_work_ms", times.done - times.picked);
+                            phase("names_deliver_ms", times.done.elapsed());
+                            if g != with(|u| u.state.generation) {
+                                continue;
+                            }
+                            match result {
+                                Ok(rows) => {
+                                    edit(|u| {
+                                        if u.buffer.generation != g {
+                                            u.buffer = SearchBuffer {
+                                                generation: g,
+                                                ..Default::default()
+                                            };
+                                        }
+                                        u.buffer.names = Some(rows);
+                                        u.buffer.names_count = total;
+                                        apply_buffer(u);
+                                        u.timing = Some(start);
+                                        u.ready_at = Some(Instant::now());
+                                    });
+                                    let count = with(|u| u.rows.len());
+                                    event(h, Event::SearchFinished { generation: g, count });
+                                }
+                                Err(_) => {
+                                    edit(|u| {
+                                        if u.buffer.generation != g {
+                                            u.buffer = SearchBuffer {
+                                                generation: g,
+                                                ..Default::default()
+                                            };
+                                        }
+                                        u.buffer.names = Some(Vec::new());
+                                        u.buffer.names_count = 0;
+                                        apply_buffer(u);
+                                    });
+                                }
+                            }
+                        }
+                        Reply::Content {
+                            generation: g,
+                            result,
+                            start,
+                            times,
+                        } => {
+                            phase("content_queue_ms", times.picked - start);
+                            phase("content_work_ms", times.done - times.picked);
+                            phase("content_deliver_ms", times.done.elapsed());
+                            if g != with(|u| u.state.generation) {
+                                continue;
+                            }
+                            match result {
+                                Ok(ans) => {
+                                    edit(|u| {
+                                        if u.buffer.generation != g {
+                                            u.buffer = SearchBuffer {
+                                                generation: g,
+                                                ..Default::default()
+                                            };
+                                        }
+                                        u.buffer.hier = Some(ans.hier_rows);
+                                        u.buffer.body = Some(ans.body_rows);
+                                        u.buffer.hier_count = ans.hier_count;
+                                        u.buffer.body_count = ans.body_count;
+                                        u.terms = ans.terms;
+                                        apply_buffer(u);
+                                        u.timing = Some(start);
+                                        u.ready_at = Some(Instant::now());
+                                    });
+                                    let count = with(|u| u.rows.len());
+                                    event(h, Event::SearchFinished { generation: g, count });
+                                }
+                                Err(message) => {
+                                    event(h, Event::SearchFailed { generation: g, message });
+                                }
+                            }
                         }
                         Reply::Snippets(g, rows) => {
                             edit(|u| {
@@ -773,34 +919,6 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
-                    };
-                    if g != with(|u| u.state.generation) {
-                        continue;
-                    }
-                    match result {
-                        Ok(Answer { rows, terms }) => {
-                            let count = rows.len();
-                            event(
-                                h,
-                                Event::SearchFinished {
-                                    generation: g,
-                                    count,
-                                },
-                            );
-                            edit(|u| {
-                                u.rows = rows;
-                                u.terms = terms;
-                                u.timing = Some(start);
-                                u.ready_at = Some(Instant::now());
-                            });
-                        }
-                        Err(message) => event(
-                            h,
-                            Event::SearchFailed {
-                                generation: g,
-                                message,
-                            },
-                        ),
                     }
                 }
                 InvalidateRect(h, null(), 0);
@@ -947,6 +1065,7 @@ pub fn run() -> Result<(), String> {
                 state: State::default(),
                 rows: Vec::new(),
                 terms: Vec::new(),
+                buffer: SearchBuffer::default(),
                 edit: ed,
                 font: null_mut(),
                 brush: null_mut(),
@@ -1004,27 +1123,55 @@ pub fn run() -> Result<(), String> {
                         slot = worker_pending.1.wait(slot).unwrap();
                     }
                 };
-                let reply = match work {
-                    Work::Search((g, q, tab, start, cancel, sort)) => {
+                match work {
+                    Work::Search((g, q, _tab, start, cancel, sort)) => {
+                        let tx_names = tx.clone();
+                        let pipe_name_clone = pipe_name.clone();
+                        let q_names = q.clone();
+                        let sort_names = sort;
+                        let h_names = handle as HWND;
+                        let cancel_names = cancel.clone();
+                        std::thread::spawn(move || {
+                            let picked = Instant::now();
+                            let res = ktm::backend::pipe_names_total(&pipe_name_clone, &q_names, sort_names);
+                            let done = Instant::now();
+                            if cancel_names.load(Ordering::Relaxed) {
+                                return;
+                            }
+                            let (rows_res, total) = match res {
+                                Ok((rows, tot)) => (Ok(rows), tot),
+                                Err(e) => (Err(e), 0),
+                            };
+                            let _ = tx_names.send(Reply::Names {
+                                generation: g,
+                                result: rows_res,
+                                total,
+                                start,
+                                times: WorkTimes { picked, done },
+                            });
+                            unsafe { PostMessageW(h_names, READY, 0, 0) };
+                        });
+
                         let picked = Instant::now();
-                        let hierarchy = tab == Tab::Hierarchy;
-                        let answer = (|| {
-                            if tab == Tab::Names {
-                                let rows = ktm::backend::pipe_names(&pipe_name, &q, sort)?;
-                                let terms = q.split_whitespace().map(str::to_owned).collect();
-                                return Ok(Answer { rows, terms });
-                            }
-                            if pipe_mode {
-                                let rows = ktm::backend::pipe_search(&pipe_name, &q, hierarchy)?;
-                                let terms = q.split_whitespace().map(str::to_owned).collect();
-                                return Ok(Answer { rows, terms });
-                            }
+                        let content_res = (|| {
                             if backend.is_none() {
                                 backend = Some(open(&root)?);
                             }
-                            backend.as_mut().unwrap().search_cancel(&q, hierarchy, Some(cancel))
+                            backend.as_mut().unwrap().search_unified(&q, Some(cancel.clone()))
                         })();
-                        Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
+                        let done = Instant::now();
+                        if tx
+                            .send(Reply::Content {
+                                generation: g,
+                                result: content_res,
+                                start,
+                                times: WorkTimes { picked, done },
+                            })
+                            .is_err()
+                        {
+                            break;
+                        }
+                        PostMessageW(handle as HWND, READY, 0, 0);
                     }
                     Work::Snippets((g, mut rows, terms)) => {
                         if let Some(b) = backend.as_mut() {
@@ -1034,13 +1181,12 @@ pub fn run() -> Result<(), String> {
                                 slot.1 = r;
                             }
                         }
-                        Reply::Snippets(g, rows)
+                        if tx.send(Reply::Snippets(g, rows)).is_err() {
+                            break;
+                        }
+                        PostMessageW(handle as HWND, READY, 0, 0);
                     }
-                };
-                if tx.send(reply).is_err() {
-                    break;
                 }
-                PostMessageW(handle as HWND, READY, 0, 0);
             }
         });
         let hotkey = arg("--hotkey").unwrap_or(settings.hotkey);

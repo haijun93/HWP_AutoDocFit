@@ -1,5 +1,7 @@
 //! Pure popup/search transitions. Native handles and search results live in the adapter.
 //! Hidden input/completions cannot show the window; only `Show` does so.
+use crate::backend::Row;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Phase {
@@ -13,9 +15,10 @@ pub enum Phase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
-    Body,
-    Hierarchy,
+    All,
     Names,
+    Hierarchy,
+    Body,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,7 +37,7 @@ impl Default for State {
         Self {
             phase: Phase::Hidden,
             query: String::new(),
-            tab: Tab::Body,
+            tab: Tab::All,
             generation: 0,
             result_count: 0,
             selected: None,
@@ -191,6 +194,128 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         }
     }
     (state, effects)
+}
+
+/// 전체 경로 정규화 (중복 제거 열쇠: 소문자화, 슬래시 통일, 공백 제거)
+pub fn normalize_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    trimmed.replace('/', "\\").to_lowercase()
+}
+
+fn row_key(row: &Row) -> String {
+    let p = normalize_path(&row.path);
+    if !p.is_empty() {
+        p
+    } else if row.doc_id != 0 {
+        format!("doc_id:{}", row.doc_id)
+    } else {
+        row.name.trim().to_lowercase()
+    }
+}
+
+/// 1순위 파일명(names), 2순위 위계(hier), 3순위 본문(body) 결과를 통합 순서로 병합한다.
+/// - 같은 문서가 여러 단에 걸리면 가장 높은 단에 한 번만 둔다.
+/// - "제목에도 있음·본문 n문장" 같은 표시를 붙인다 (중복 제거 열쇠: 정규화한 전체 경로).
+/// - 반환 목록은 항상 1단(파일명) -> 2단(위계) -> 3단(본문) 순서이다.
+pub fn merge_tiers(names: Vec<Row>, hier: Vec<Row>, body: Vec<Row>) -> Vec<Row> {
+    let mut hier_map: HashMap<String, Row> = HashMap::with_capacity(hier.len());
+    for r in &hier {
+        let k = row_key(r);
+        hier_map.entry(k).or_insert_with(|| r.clone());
+    }
+
+    let mut body_map: HashMap<String, Row> = HashMap::with_capacity(body.len());
+    for r in &body {
+        let k = row_key(r);
+        body_map.entry(k).or_insert_with(|| r.clone());
+    }
+
+    let mut seen: HashSet<String> = HashSet::with_capacity(names.len() + hier.len() + body.len());
+    let mut out: Vec<Row> = Vec::with_capacity(names.len() + hier.len() + body.len());
+
+    // 1단: 파일명 일치
+    for mut r in names {
+        let k = row_key(&r);
+        r.tier = 1;
+        let h_opt = hier_map.get(&k);
+        let b_opt = body_map.get(&k);
+        let has_hier = h_opt.is_some();
+        let has_body = b_opt.is_some();
+        let body_count = b_opt.map(|b| b.count).unwrap_or(0);
+
+        let note = if has_hier && has_body {
+            Some(format!("제목에도 있음 · 본문 {}문장", body_count))
+        } else if has_hier {
+            Some("제목에도 있음".to_string())
+        } else if has_body {
+            Some(format!("본문 {}문장", body_count))
+        } else {
+            None
+        };
+
+        if let Some(n) = note {
+            if r.location.is_empty() {
+                r.location = n;
+            } else {
+                r.location = format!("{} · {}", r.location, n);
+            }
+        }
+
+        if r.doc_id == 0 {
+            if let Some(h) = h_opt {
+                r.doc_id = h.doc_id;
+                r.para = h.para;
+                if !h.snippet.is_empty() {
+                    r.snippet = h.snippet.clone();
+                }
+            } else if let Some(b) = b_opt {
+                r.doc_id = b.doc_id;
+                r.para = b.para;
+                if !b.snippet.is_empty() {
+                    r.snippet = b.snippet.clone();
+                }
+            }
+        }
+
+        seen.insert(k);
+        out.push(r);
+    }
+
+    // 2단: 위계 일치 (본문보다 높은 위계에서 일치)
+    for mut r in hier {
+        let k = row_key(&r);
+        if seen.contains(&k) {
+            continue;
+        }
+        r.tier = 2;
+        let b_opt = body_map.get(&k);
+        if let Some(b) = b_opt {
+            let note = format!("본문 {}문장", b.count);
+            if r.location.is_empty() {
+                r.location = note;
+            } else {
+                r.location = format!("{} · {}", r.location, note);
+            }
+        }
+        seen.insert(k);
+        out.push(r);
+    }
+
+    // 3단: 본문 일치 (본문에서만 일치)
+    for mut r in body {
+        let k = row_key(&r);
+        if seen.contains(&k) {
+            continue;
+        }
+        r.tier = 3;
+        seen.insert(k);
+        out.push(r);
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -387,5 +512,147 @@ mod tests {
             (state.clone(), vec![])
         );
         assert_eq!(step(&state, Event::SwitchTab(state.tab)), (state, vec![]));
+    }
+
+    #[test]
+    fn merge_tiers_order_and_deduplication() {
+        let n1 = Row {
+            path: "C:\\Docs\\Report.hwp".into(),
+            name: "Report.hwp".into(),
+            location: "1.2 MB · 2026-11-14".into(),
+            ..Row::default()
+        };
+        let n2 = Row {
+            path: "C:\\Docs\\OnlyName.hwp".into(),
+            name: "OnlyName.hwp".into(),
+            location: "500 KB".into(),
+            ..Row::default()
+        };
+
+        // Report.hwp는 hier에도 있고, body에도 있음 (대소문자/슬래시 다름)
+        let h1 = Row {
+            path: "c:/docs/report.hwp".into(),
+            name: "Report.hwp".into(),
+            location: "문단 1 · 위계 1".into(),
+            level: 1,
+            count: 2,
+            ..Row::default()
+        };
+        let h2 = Row {
+            path: "C:\\Docs\\OnlyHier.hwp".into(),
+            name: "OnlyHier.hwp".into(),
+            location: "문단 3 · 위계 2".into(),
+            level: 2,
+            count: 1,
+            ..Row::default()
+        };
+
+        let b1 = Row {
+            path: "C:\\docs\\REPORT.HWP".into(),
+            name: "Report.hwp".into(),
+            location: "문단 10 · 위계 8".into(),
+            level: 8,
+            count: 5,
+            ..Row::default()
+        };
+        let b2 = Row {
+            path: "c:/docs/onlyhier.hwp".into(),
+            name: "OnlyHier.hwp".into(),
+            location: "문단 20 · 위계 8".into(),
+            level: 8,
+            count: 3,
+            ..Row::default()
+        };
+        let b3 = Row {
+            path: "C:\\Docs\\OnlyBody.hwp".into(),
+            name: "OnlyBody.hwp".into(),
+            location: "문단 5 · 위계 8".into(),
+            level: 8,
+            count: 4,
+            ..Row::default()
+        };
+
+        let merged = merge_tiers(vec![n1, n2], vec![h1, h2], vec![b1, b2, b3]);
+
+        // 결과 문서 수: Report, OnlyName, OnlyHier, OnlyBody 총 4건
+        assert_eq!(merged.len(), 4);
+
+        // 1순위: 파일명(Report, OnlyName) -> 2순위: 위계(OnlyHier) -> 3순위: 본문(OnlyBody)
+        assert_eq!(merged[0].name, "Report.hwp");
+        assert_eq!(merged[0].tier, 1);
+        // Report는 hier와 body에 모두 있으므로: "제목에도 있음 · 본문 5문장"
+        assert!(
+            merged[0].location.contains("제목에도 있음 · 본문 5문장"),
+            "location: {}",
+            merged[0].location
+        );
+
+        assert_eq!(merged[1].name, "OnlyName.hwp");
+        assert_eq!(merged[1].tier, 1);
+        assert_eq!(merged[1].location, "500 KB");
+
+        assert_eq!(merged[2].name, "OnlyHier.hwp");
+        assert_eq!(merged[2].tier, 2);
+        // OnlyHier는 body에도 있으므로 "본문 3문장"이 붙어야 함
+        assert!(
+            merged[2].location.contains("본문 3문장"),
+            "location: {}",
+            merged[2].location
+        );
+
+        assert_eq!(merged[3].name, "OnlyBody.hwp");
+        assert_eq!(merged[3].tier, 3);
+    }
+
+    #[test]
+    fn state_machine_drops_late_results() {
+        let (state, fx) = step(&visible(), Event::Input("공사".into()));
+        assert_eq!(state.phase, Phase::Searching);
+        let g1 = state.generation;
+
+        // 사용자가 다음 글자 입력 ("공사 계약")
+        let (state2, fx2) = step(&state, Event::Input("공사 계약".into()));
+        assert_eq!(state2.phase, Phase::Searching);
+        let g2 = state2.generation;
+        assert!(g2 > g1);
+
+        // 이전 세대(g1)의 검색 완료 결과가 늦게 도착함 -> 버려져야 함!
+        let (state_stale, _) = step(&state2, Event::SearchFinished { generation: g1, count: 10 });
+        assert_eq!(state_stale.phase, Phase::Searching);
+        assert_eq!(state_stale.result_count, 0);
+
+        // 현재 세대(g2)의 검색 완료 결과 도착 -> 반영됨!
+        let (state_curr, _) = step(&state2, Event::SearchFinished { generation: g2, count: 5 });
+        assert_eq!(state_curr.phase, Phase::Results);
+        assert_eq!(state_curr.result_count, 5);
+        assert_eq!(state_curr.selected, Some(0));
+    }
+
+    #[test]
+    fn search_groups_query_with_semicolon_and_tabs() {
+        let state = visible();
+        assert_eq!(state.tab, Tab::All);
+
+        // 연관 검색어 ';' 입력
+        let (state, fx) = step(&state, Event::Input("2026; 공사 계약".into()));
+        assert_eq!(state.phase, Phase::Searching);
+        assert_eq!(state.query, "2026; 공사 계약");
+        assert!(matches!(
+            &fx[..],
+            [Effect::Search { query, tab, .. }] if query == "2026; 공사 계약" && *tab == Tab::All
+        ));
+
+        // 탭 전환 (모두 -> 파일명 -> 위계 -> 본문) 검색어는 공유 유지
+        let (state, fx) = step(&state, Event::SwitchTab(Tab::Names));
+        assert_eq!(state.tab, Tab::Names);
+        assert_eq!(state.query, "2026; 공사 계약");
+
+        let (state, fx) = step(&state, Event::SwitchTab(Tab::Hierarchy));
+        assert_eq!(state.tab, Tab::Hierarchy);
+        assert_eq!(state.query, "2026; 공사 계약");
+
+        let (state, fx) = step(&state, Event::SwitchTab(Tab::Body));
+        assert_eq!(state.tab, Tab::Body);
+        assert_eq!(state.query, "2026; 공사 계약");
     }
 }
