@@ -262,7 +262,8 @@ pub fn handle(v: &Value) -> Value {
             let mut added = 0i64;
             for (_, data) in images {
                 let preview = format!("그림 · {}", crate::clip::preview("image", &data));
-                if let Ok((_, created)) = a.store.lock().unwrap().insert("image", &data, &[], &preview, "drop", now()) { if created { added += 1; } }
+                let inserted = a.store.lock().unwrap().insert("image", &data, &[], &preview, "drop", now());
+                if let Ok((_, created)) = inserted { if created { added += 1; } }
             }
             if accepted.is_empty() {
                 let _ = a.store.lock().unwrap().enforce(&settings, now());
@@ -285,7 +286,8 @@ pub fn handle(v: &Value) -> Value {
         }
         "get" => {
             let Some(id) = id_of(v) else { return error("항목을 확인해 주세요.") };
-            match a.store.lock().unwrap().payload(id) {
+            let payload = a.store.lock().unwrap().payload(id);
+            match payload {
                 Ok(Some((kind, data, extra))) => {
                     let body: Value = match kind.as_str() {
                         "image" => base64(&data).into(),
