@@ -3,16 +3,23 @@
 use std::path::{Path, PathBuf};
 
 /// 명령줄 → 차례로 실행할 설치 동작. 설치 명령이 없으면 None(일반 상주 실행).
+/// `quit`(떠 있는 몽땅검색 끄기)·`start`(설치본을 숨긴 채 시작)는 Win32가 필요해 실행 파일 쪽이 맡는다.
+/// 수명 상태: 꺼짐(설치 없음) → `--install` → 켜짐(설치·자동 실행·실행 중) → `--disable` → 꺼짐(설치본만 남음)
+/// → `--uninstall` → 설치 없음. 교체 전에는 항상 먼저 끈다(실행 중인 exe는 지울 수 없음).
 pub fn plan(args: &[String]) -> Option<Vec<&'static str>> {
     let has = |name: &str| args.iter().any(|a| a == name);
     if has("--uninstall") {
-        Some(vec!["autostart-off", "uninstall"])
+        Some(vec!["quit", "autostart-off", "uninstall"])
     } else if has("--install") {
         if has("--no-autostart") {
-            Some(vec!["install"])
+            Some(vec!["quit", "install", "start"])
         } else {
-            Some(vec!["install", "autostart-on"])
+            Some(vec!["quit", "install", "autostart-on", "start"])
         }
+    } else if has("--disable") {
+        Some(vec!["quit", "autostart-off"])
+    } else if has("--quit") {
+        Some(vec!["quit"])
     } else if has("--autostart-on") {
         Some(vec!["autostart-on"])
     } else if has("--autostart-off") {
@@ -98,10 +105,8 @@ pub fn startup_command(destination: &Path) -> Result<String, String> {
 fn autostart(destination: &Path, enabled: bool) -> Result<(), String> {
     use windows_sys::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_SUCCESS};
     use windows_sys::Win32::System::Registry::*;
-    let key: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Run\0"
-        .encode_utf16()
-        .collect();
-    let name: Vec<u16> = "HwpAutoDocFit.MongttangSearch\0".encode_utf16().collect();
+    let key: Vec<u16> = RUN_KEY.encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = RUN_NAME.encode_utf16().chain(Some(0)).collect();
     let mut handle = std::ptr::null_mut();
     let command = if enabled {
         Some(startup_command(destination)?)
@@ -150,9 +155,74 @@ fn autostart(destination: &Path, enabled: bool) -> Result<(), String> {
     }
 }
 
+const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+pub const RUN_NAME: &str = "HwpAutoDocFit.MongttangSearch";
+
+/// HKCU Run에 등록된 몽땅검색 명령(없으면 None).
+#[cfg(windows)]
+pub fn autostart_command() -> Option<String> {
+    use windows_sys::Win32::System::Registry::*;
+    let key: Vec<u16> = RUN_KEY.encode_utf16().chain(Some(0)).collect();
+    let name: Vec<u16> = RUN_NAME.encode_utf16().chain(Some(0)).collect();
+    let mut buffer = vec![0u16; 1024];
+    let mut size = (buffer.len() * 2) as u32;
+    let code = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_SZ,
+            std::ptr::null_mut(),
+            buffer.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    if code != 0 {
+        return None;
+    }
+    let len = (size as usize / 2).saturating_sub(1).min(buffer.len());
+    Some(String::from_utf16_lossy(&buffer[..len]))
+}
+
+#[cfg(not(windows))]
+pub fn autostart_command() -> Option<String> {
+    None
+}
+
+/// 자동 실행 명령이 이 설치본을 가리키는지(경로 대소문자 무시).
+pub fn autostart_points_to(command: Option<&str>, destination: &Path) -> bool {
+    match (command, startup_command(destination)) {
+        (Some(c), Ok(expected)) => c.eq_ignore_ascii_case(&expected),
+        _ => false,
+    }
+}
+
 #[cfg(not(windows))]
 fn autostart(_: &Path, _: bool) -> Result<(), String> {
     Err("Windows에서만 자동 실행을 설정할 수 있습니다".into())
+}
+
+/// 앱 설정 화면이 읽는 상태 한 줄(`--status`, 설치 명령 결과 공통).
+/// `status`는 실행 중인 몽땅검색이 쓰는 status.json(없으면 Null).
+pub fn report(
+    running_pid: Option<u32>,
+    destination: &Path,
+    autostart: Option<&str>,
+    status: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "name": "몽땅검색",
+        "version": env!("CARGO_PKG_VERSION"),
+        "running": running_pid.is_some(),
+        "pid": running_pid,
+        "installed": destination.is_file(),
+        "installed_path": destination.to_string_lossy(),
+        "autostart": autostart_points_to(autostart, destination),
+        "autostart_command": autostart,
+        "hotkey_error": status.get("hotkey_error").and_then(|v| v.as_str()).filter(|s| !s.is_empty()),
+        "status": status,
+    })
 }
 
 pub fn execute(action: &str, source: &Path, destination: &Path) -> Result<(), String> {
@@ -274,11 +344,63 @@ mod tests {
     #[test]
     fn install_enables_autostart_by_default() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(plan(&args(&["ktm", "--install"])).unwrap(), ["install", "autostart-on"]);
-        assert_eq!(plan(&args(&["ktm", "--install", "--no-autostart"])).unwrap(), ["install"]);
-        assert_eq!(plan(&args(&["ktm", "--uninstall"])).unwrap(), ["autostart-off", "uninstall"]);
+        assert_eq!(
+            plan(&args(&["ktm", "--install"])).unwrap(),
+            ["quit", "install", "autostart-on", "start"]
+        );
+        assert_eq!(
+            plan(&args(&["ktm", "--install", "--no-autostart"])).unwrap(),
+            ["quit", "install", "start"]
+        );
+        assert_eq!(
+            plan(&args(&["ktm", "--uninstall"])).unwrap(),
+            ["quit", "autostart-off", "uninstall"]
+        );
         assert_eq!(plan(&args(&["ktm", "--autostart-off"])).unwrap(), ["autostart-off"]);
         assert!(plan(&args(&["ktm", "--show"])).is_none());
+        assert!(plan(&args(&["ktm", "--hidden"])).is_none());
+    }
+    #[test]
+    fn disable_and_quit_keep_the_installed_copy() {
+        let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(plan(&args(&["ktm", "--disable"])).unwrap(), ["quit", "autostart-off"]);
+        assert_eq!(plan(&args(&["ktm", "--quit"])).unwrap(), ["quit"]);
+        // 교체·제거 계획은 언제나 먼저 끈다(실행 중인 exe는 지울 수 없음).
+        for flag in ["--install", "--uninstall", "--disable"] {
+            assert_eq!(plan(&args(&["ktm", flag])).unwrap()[0], "quit");
+        }
+    }
+    #[test]
+    fn autostart_match_is_exact_command() {
+        let exe = Path::new("C:/Users/a/AppData/Local/HwpAutoDocFit/ktm/bin/ktm.exe");
+        let command = startup_command(exe).unwrap();
+        assert!(autostart_points_to(Some(&command), exe));
+        assert!(autostart_points_to(Some(&command.to_uppercase()), exe));
+        assert!(!autostart_points_to(Some("\"C:/other/ktm.exe\" --hidden"), exe));
+        assert!(!autostart_points_to(None, exe));
+    }
+    #[test]
+    fn report_reflects_install_autostart_and_hotkey_error() {
+        let t = Temp::new();
+        let exe = t.destination();
+        let r = report(None, &exe, None, serde_json::Value::Null);
+        assert_eq!((r["running"].as_bool(), r["installed"].as_bool(), r["autostart"].as_bool()), (Some(false), Some(false), Some(false)));
+        assert!(r["hotkey_error"].is_null());
+        std::fs::write(&exe, b"x").unwrap();
+        let command = startup_command(&exe).unwrap();
+        let status = serde_json::json!({"pid": 7, "hotkey_error": "몽땅검색 단축키를 등록하지 못했습니다"});
+        let r = report(Some(7), &exe, Some(&command), status);
+        assert_eq!((r["running"].as_bool(), r["installed"].as_bool(), r["autostart"].as_bool()), (Some(true), Some(true), Some(true)));
+        assert_eq!(r["pid"], 7);
+        assert_eq!(r["hotkey_error"], "몽땅검색 단축키를 등록하지 못했습니다");
+        assert_eq!(r["name"], "몽땅검색");
+    }
+    #[test]
+    fn quit_and_start_are_not_file_actions() {
+        // Win32가 필요한 단계는 실행 파일 쪽에서만 처리하고 여기서는 거부한다(실수로 무시되지 않게).
+        let t = Temp::new();
+        assert!(execute("quit", &t.source(), &t.destination()).is_err());
+        assert!(execute("start", &t.source(), &t.destination()).is_err());
     }
     #[test]
     fn unknown_action_is_rejected() {

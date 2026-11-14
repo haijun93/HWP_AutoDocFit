@@ -16,6 +16,16 @@ pub const MESSAGE: u32 = WM_APP + 31;
 pub const HOTKEY_ID: i32 = 0x4d47;
 pub const SHOW: u32 = 1;
 pub const QUIT: u32 = 2;
+pub const AUTOSTART: u32 = 3;
+
+/// 트레이 메뉴 첫 줄(누를 수 없는 상태 표시): 단축키가 살아 있으면 단축키, 아니면 오류.
+pub fn status_line(hotkey: &str, hotkey_error: &str) -> String {
+    if hotkey_error.is_empty() {
+        format!("몽땅검색 켜짐 · {hotkey}")
+    } else {
+        format!("단축키 없음 · {hotkey_error}")
+    }
+}
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
@@ -93,19 +103,28 @@ impl Drop for Tray {
     }
 }
 
-/// Returns SHOW, QUIT, or zero when dismissed.
-pub fn menu(hwnd: HWND) -> u32 {
+/// Returns SHOW, QUIT, AUTOSTART, or zero when dismissed.
+pub fn menu(hwnd: HWND, status: &str, autostart: bool) -> u32 {
     unsafe {
         let popup = CreatePopupMenu();
         if popup.is_null() {
             return 0;
         }
+        AppendMenuW(popup, MF_STRING | MF_GRAYED, 0, wide(status).as_ptr());
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(
             popup,
             MF_STRING,
             SHOW as usize,
             wide("몽땅검색 열기").as_ptr(),
         );
+        AppendMenuW(
+            popup,
+            MF_STRING | if autostart { MF_CHECKED } else { MF_UNCHECKED },
+            AUTOSTART as usize,
+            wide("로그인할 때 자동 실행").as_ptr(),
+        );
+        AppendMenuW(popup, MF_SEPARATOR, 0, std::ptr::null());
         AppendMenuW(popup, MF_STRING, QUIT as usize, wide("종료").as_ptr());
         let mut point = std::mem::zeroed();
         GetCursorPos(&mut point);
@@ -133,6 +152,11 @@ mod tests {
         assert!(parse_hotkey("Ctrl+Alt+Space").is_ok());
         assert!(parse_hotkey("Ctrl+Alt+Shift+F24").is_ok());
         assert!(parse_hotkey("Space").is_err());
+    }
+    #[test]
+    fn status_line_shows_hotkey_or_error() {
+        assert_eq!(status_line("Ctrl+Alt+Space", ""), "몽땅검색 켜짐 · Ctrl+Alt+Space");
+        assert!(status_line("Ctrl+Alt+Space", "중복").starts_with("단축키 없음"));
     }
     #[test]
     fn isolated_hotkey_registration_is_released() {

@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+mod lifecycle;
 mod window;
 fn main() {
     if let Err(error) = window::run() {

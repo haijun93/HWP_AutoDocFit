@@ -31,7 +31,7 @@ use windows_sys::Win32::{
 };
 const READY: u32 = WM_APP + 21;
 const WARMED: u32 = WM_APP + 22;
-const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
+pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
 /// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬).
 type Job = (u64, String, Tab, Instant, Arc<AtomicBool>, &'static str);
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
@@ -68,6 +68,7 @@ struct Ui {
     timing: Option<Instant>,
     /// 결과를 받은 시각(READY 처리) — 그리기까지 구간 계측.
     ready_at: Option<Instant>,
+    hotkey: String,
     hotkey_error: String,
     cancel: Arc<AtomicBool>,
     settings_path: PathBuf,
@@ -815,16 +816,32 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             m if m == tray::MESSAGE => {
                 if l as u32 == WM_RBUTTONUP {
-                    match tray::menu(h) {
-                        1 => event(h, Event::Show),
-                        2 => {
+                    let exe = std::env::current_exe().unwrap_or_default();
+                    let autostart = ktm::install::autostart_points_to(
+                        ktm::install::autostart_command().as_deref(),
+                        &exe,
+                    );
+                    let line = with(|u| tray::status_line(&u.hotkey, &u.hotkey_error));
+                    match tray::menu(h, &line, autostart) {
+                        tray::SHOW => event(h, Event::Show),
+                        tray::QUIT => {
                             DestroyWindow(h);
+                        }
+                        tray::AUTOSTART => {
+                            let action = if autostart { "autostart-off" } else { "autostart-on" };
+                            if let Err(e) = ktm::install::execute(action, &exe, &exe) {
+                                event(h, Event::OpenFailed(e));
+                            }
                         }
                         _ => {}
                     }
                 } else if l as u32 == WM_LBUTTONUP {
                     event(h, Event::Show);
                 }
+                0
+            }
+            m if m == crate::lifecycle::QUIT => {
+                DestroyWindow(h);
                 0
             }
             WM_DESTROY => {
@@ -853,16 +870,16 @@ pub fn run() -> Result<(), String> {
         let destination = arg("--install-path")
             .map(PathBuf::from)
             .unwrap_or_else(|| data.join("bin/ktm.exe"));
-        if let Some(actions) = ktm::install::plan(&args) {
-            for action in actions {
-                ktm::install::execute(action, &source, &destination)?;
-            }
+        if crate::lifecycle::run(&args, &data, &source, &destination) {
             return Ok(());
         }
         let pipe_mode_early = arg("--backend").as_deref() == Some("pipe");
         let previous = FindWindowW(wide(CLASS).as_ptr(), null());
         if !previous.is_null() && std::env::var_os("KTM_TEST_ROOT").is_none() {
-            PostMessageW(previous, WM_HOTKEY, 0, 0);
+            // 이미 떠 있음: 자동 실행(--hidden)이면 그대로 두고, 사람이 다시 실행했으면 창을 보인다.
+            if !args.iter().any(|a| a == "--hidden") {
+                PostMessageW(previous, WM_HOTKEY, 0, 0);
+            }
             return Ok(());
         }
         let root = match arg("--index-root") {
@@ -940,6 +957,7 @@ pub fn run() -> Result<(), String> {
                 top: 0,
                 timing: None,
                 ready_at: None,
+                hotkey: String::new(),
                 hotkey_error: String::new(),
                 cancel: Arc::new(AtomicBool::new(false)),
                 settings_path: data.join("settings.json"),
@@ -1026,6 +1044,7 @@ pub fn run() -> Result<(), String> {
             }
         });
         let hotkey = arg("--hotkey").unwrap_or(settings.hotkey);
+        edit(|u| u.hotkey = hotkey.clone());
         let _tray = match tray::Tray::new(h, &hotkey) {
             Ok(t) => { if let Some(error)=&t.error {edit(|u|u.hotkey_error=error.clone());} Some(t) },
             Err(e) => {
