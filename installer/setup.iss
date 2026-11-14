@@ -16,7 +16,9 @@ SetupIconFile=..\resources\app_icon.ico
 UninstallDisplayIcon={app}\{#AppExe}
 ArchitecturesInstallIn64BitMode=x64
 ArchitecturesAllowed=x64
-CloseApplications=yes
+; force: 창 없는 도우미(앱이 띄운 숨은 프로세스)도 Restart Manager가 끝낸다. 그대로 두면 _internal의 DLL을 못 바꿔
+; "DeleteFile 실패; 코드 5"가 난다(v2.2.65 오류 보고, 2026-11-14).
+CloseApplications=force
 RestartApplications=no
 CloseApplicationsFilter=*.exe,*.dll,*.pyd
 Compression=lzma2
@@ -68,6 +70,30 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpg\shell\HwpAutoD
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpeg\shell\HwpAutoDocFit"; Flags: dontcreatekey uninsdeletekey
 
 [Code]
+// 설치(업데이트) 전에 이 계정에서 돌고 있는 앱 도우미를 끝낸다(v2.2.65 오류 보고, 2026-11-14).
+// 몽땅클립보드(kagent)·자료함(klib)·가상 폴더(kvf)·색인(kfind 사용자 모드)·위계(hierarchy)는 창이 없어
+// Restart Manager가 정상 종료를 요청하지 못하고, 붙잡은 {app} 안 파일(_internal\VCRUNTIME140.dll 등) 교체가 실패한다.
+// 관리자 서비스로 도는 kfind는 다른 계정이라 /FI USERNAME 조건으로 건드리지 않는다. 주 앱 창은 Restart Manager가 묻고 닫는다.
+procedure StopHelper(const ExeName: String);
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'),
+       '/F /IM ' + ExeName + ' /FI "USERNAME eq ' + GetUserNameString + '"',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  StopHelper('kagent.exe');
+  StopHelper('klib.exe');
+  StopHelper('kvf.exe');
+  StopHelper('kfind.exe');
+  StopHelper('hierarchy.exe');
+  Sleep(500);
+  Result := '';
+end;
+
 // 설정에서 관리자 서비스(HwpAutoDocFit.Index)를 설치했다면 서비스가 {app} 안의 kfind.exe를 가리킨다.
 // 파일을 지우기 전에 관리자 권한으로 kfind --uninstall(서비스 중지·삭제·공개 색인 삭제)을 부른다.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
