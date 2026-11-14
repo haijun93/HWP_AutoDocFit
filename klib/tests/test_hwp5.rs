@@ -402,3 +402,115 @@ fn test_hwp5_cmp4_search_indexing_excludes_hidden_comment() {
     assert_eq!(index_paras[0].location_kind, "paragraph");
 }
 
+#[test]
+fn test_hwp5_cmp5_field_end_single_wchar_preserves_following_text() {
+    // HWP5-CMP5: 필드 끝(코드 4)이 단일 WCHAR(2바이트)인 경우, 뒤따르는 본문 7글자가 잘리지 않고 온전히 보존되는지 검증
+    let mut text_bytes = Vec::new();
+    text_bytes.extend_from_slice(&encode_utf16le("필드앞"));
+    text_bytes.extend_from_slice(&4u16.to_le_bytes()); // 코드 4 단 1 WCHAR
+    text_bytes.extend_from_slice(&encode_utf16le("필드뒤에오는일곱글자본문"));
+
+    let decoded = klib::hwp5::decode_para_text(&text_bytes);
+    assert_eq!(decoded, "필드앞필드뒤에오는일곱글자본문");
+}
+
+#[test]
+fn test_hwp5_cmp5_pua_and_special_character_mapping() {
+    // HWP5-CMP5: 한양 PUA 및 한컴 특수문자가 표준 유니코드 문자로 변환되는지 검증
+    let mut text_bytes = Vec::new();
+    text_bytes.extend_from_slice(&0xE000u16.to_le_bytes()); // 한양 PUA 원문자 1 -> '①'
+    text_bytes.extend_from_slice(&0xE074u16.to_le_bytes()); // 한양 PUA 로마숫자 1 -> 'Ⅰ'
+    text_bytes.extend_from_slice(&0xF001u16.to_le_bytes()); // 한컴 심볼 -> '■'
+    text_bytes.extend_from_slice(&0xF0B7u16.to_le_bytes()); // 한컴 가운뎃점 -> '·'
+    text_bytes.extend_from_slice(&encode_utf16le("테스트"));
+
+    let decoded = klib::hwp5::decode_para_text(&text_bytes);
+    assert_eq!(decoded, "①Ⅰ■·테스트");
+}
+
+#[test]
+fn test_hwp5_cmp5_nested_tables() {
+    // HWP5-CMP5: 표 안 표 (중첩 표, Nested Table) 계층 및 셀 문단 추출 검증
+    let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+    // 바깥 표 본문 문단
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le("바깥본문")).to_bytes());
+
+    // 바깥 표 컨트롤
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tbl \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 1).with_data(vec![0u8; 32]).to_bytes());
+
+    // 바깥 표 셀 1
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 26]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("바깥셀문단")).to_bytes());
+
+    // 안쪽 중첩 표 컨트롤 (셀 1 내부)
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 2).with_data(b"tbl \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 3).with_data(vec![0u8; 32]).to_bytes());
+
+    // 안쪽 표 셀
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 3).with_data(vec![0u8; 26]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 4).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 5).with_data(encode_utf16le("안쪽중첩표셀문단")).to_bytes());
+
+    // 바깥 표 셀 2 (안쪽 표 종료 후 복원)
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 26]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("바깥셀2문단")).to_bytes());
+
+    let hwp_bytes = builder.build().expect("HWP 생성");
+    let temp = TempHwpFile::new("nested_tbl", &hwp_bytes);
+
+    let paras = extract_hwp5(&temp.path).expect("추출 성공");
+    assert_eq!(paras.len(), 4);
+    assert_eq!(paras[0].text, "바깥본문");
+    assert_eq!(paras[0].is_table_cell, false);
+    assert_eq!(paras[1].text, "바깥셀문단");
+    assert_eq!(paras[1].is_table_cell, true);
+    assert_eq!(paras[2].text, "안쪽중첩표셀문단");
+    assert_eq!(paras[2].is_table_cell, true);
+    assert_eq!(paras[3].text, "바깥셀2문단");
+    assert_eq!(paras[3].is_table_cell, true);
+}
+
+#[test]
+fn test_hwp5_cmp5_dutmal_and_case_insensitive_ctrl_ids() {
+    // HWP5-CMP5: 대소문자 무관 컨트롤 ID 인식 및 덧말(dutmal) 색인 필터링 검증
+    let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+    // 1. 대문자 TBL 표 컨트롤
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"TBL \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("대문자표셀")).to_bytes());
+
+    // 2. 덧말 (tdut)
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tdut\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("덧말글씨")).to_bytes());
+
+    let hwp_bytes = builder.build().expect("HWP 생성");
+    let temp = TempHwpFile::new("ctrl_id_dutmal", &hwp_bytes);
+
+    // extract_hwp5는 구조 파악을 위해 dutmal도 유지
+    let raw_paras = extract_hwp5(&temp.path).expect("추출 성공");
+    assert_eq!(raw_paras.len(), 2);
+    assert_eq!(raw_paras[0].location_kind, "table_cell");
+    assert_eq!(raw_paras[0].is_table_cell, true);
+    assert_eq!(raw_paras[1].location_kind, "dutmal");
+
+    // extract_for_index는 정밀도 보장을 위해 dutmal 제외
+    let index_paras = klib::extract::extract_for_index(&temp.path).expect("색인 추출 성공");
+    assert_eq!(index_paras.len(), 1);
+    assert_eq!(index_paras[0].text, "대문자표셀");
+}
+

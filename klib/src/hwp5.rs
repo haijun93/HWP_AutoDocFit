@@ -370,16 +370,21 @@ fn extract_paragraphs_from_section(
             HWPTAG_CTRL_HEADER => {
                 // 첫 4바이트가 컨트롤 ID
                 if record_bytes.len() >= 4 {
-                    let ctrl_id = &record_bytes[0..4];
-                    let kind = match ctrl_id {
-                        b"tbl " => HwpCtrlKind::Table,
+                    // 4바이트 ID를 소문자로 정규화하여 대소문자/패딩 무관 판정
+                    let mut id_lower = [0u8; 4];
+                    for (b_out, b_in) in id_lower.iter_mut().zip(&record_bytes[0..4]) {
+                        *b_out = b_in.to_ascii_lowercase();
+                    }
+                    let kind = match &id_lower {
+                        b"tbl " | b"tbl\0" => HwpCtrlKind::Table,
                         b"head" => HwpCtrlKind::Header,
                         b"foot" => HwpCtrlKind::Footer,
-                        b"fn  " => HwpCtrlKind::Footnote,
-                        b"en  " => HwpCtrlKind::Endnote,
-                        b"gso " | b"$rec" | b"rect" | b"$lin" | b"line" | b"$ell" | b"elli"
-                        | b"$arc" | b"arc " | b"$cur" | b"curv" | b"$pol" | b"poly"
-                        | b"text" | b"tbox" => HwpCtrlKind::TextBox,
+                        b"fn  " | b"fn\0\0" | b"fn\0 " => HwpCtrlKind::Footnote,
+                        b"en  " | b"en\0\0" | b"en\0 " => HwpCtrlKind::Endnote,
+                        b"gso " | b"gso\0" | b"$rec" | b"rect" | b"$lin" | b"line" | b"$ell" | b"elli"
+                        | b"$arc" | b"arc " | b"arc\0" | b"$cur" | b"curv" | b"$pol" | b"poly"
+                        | b"text" | b"tbox" | b"txbx" | b"cont" | b"$con" | b"draw" | b"form"
+                        | b"$pic" | b"pict" | b"$ole" | b"ole " => HwpCtrlKind::TextBox,
                         b"tcmt" => HwpCtrlKind::HiddenComment,
                         b"memo" => HwpCtrlKind::Memo,
                         b"tdut" => HwpCtrlKind::Dutmal,
@@ -446,17 +451,120 @@ fn extract_paragraphs_from_section(
     Ok(())
 }
 
+/// 뒤따라오는 WCHAR가 일반 한국어 문서 본문(한글, 영숫자, CJK 한자, 기본 구두점)인지 판정한다.
+fn is_likely_korean_text_wchar(code: u16) -> bool {
+    matches!(
+        code,
+        // 한글 음절 (가 ~ 힣)
+        0xAC00..=0xD7A3
+        // 한글 자모 및 호환 자모
+        | 0x1100..=0x11FF | 0x3130..=0x318F
+        // ASCII 영문, 숫자, 기본 구두점 및 기호
+        | 0x0020..=0x007E
+        // 일반 CJK 통합 한자 및 호환 한자
+        | 0x4E00..=0x9FFF | 0xF900..=0xFAFF
+        // 전각 기호, 구두점, 괄호
+        | 0x3000..=0x303F | 0xFF00..=0xFFEF
+        // 유니코드 원문자, 로마숫자, 특수기호
+        | 0x2460..=0x24FF | 0x2160..=0x217F | 0x25A0..=0x25FF | 0x2010..=0x2027
+    )
+}
+
+/// 한컴 HWP 전용 PUA(Private Use Area, 0xE000~0xF8FF) 및 특수 기호를 표준 유니코드 문자로 변환한다.
+pub fn map_hwp_special_char(code: u16) -> Option<char> {
+    match code {
+        // 1. 한양 PUA 원문자 (동그라미 숫자 1~20, 21~35)
+        0xE000..=0xE013 => {
+            // 0xE000 -> '①' (U+2460) ~ 0xE013 -> '⑳' (U+2473)
+            let offset = code - 0xE000;
+            char::from_u32(0x2460 + offset as u32)
+        }
+        0xE014..=0xE022 => {
+            // 0xE014 -> '㉑' (U+3251) ~ 0xE022 -> '㉟' (U+325F)
+            let offset = code - 0xE014;
+            char::from_u32(0x3251 + offset as u32)
+        }
+        // 괄호 숫자 ⑴ ~ ⑮
+        0xE023..=0xE031 => {
+            // 0xE023 -> '⑴' (U+2474) ~ 0xE031 -> '⑮' (U+2482)
+            let offset = code - 0xE023;
+            char::from_u32(0x2474 + offset as u32)
+        }
+        // 원문자 한글 ㉠ ~ ㉭
+        0xE032..=0xE045 => {
+            let offset = code - 0xE032;
+            char::from_u32(0x3260 + offset as u32)
+        }
+        // 괄호 한글 ㈀ ~ ㈍
+        0xE046..=0xE059 => {
+            let offset = code - 0xE046;
+            char::from_u32(0x3200 + offset as u32)
+        }
+        // 원문자 알파벳 소문자 ⓐ ~ ⓩ
+        0xE05A..=0xE073 => {
+            let offset = code - 0xE05A;
+            char::from_u32(0x24D0 + offset as u32)
+        }
+        // 로마 숫자 대문자 Ⅰ ~ Ⅻ
+        0xE074..=0xE07F => {
+            // 0xE074 -> 'Ⅰ' (U+2160) ~ 0xE07F -> 'Ⅻ' (U+216B)
+            let offset = code - 0xE074;
+            char::from_u32(0x2160 + offset as u32)
+        }
+        // 로마 숫자 소문자 ⅰ ~ ⅻ
+        0xE080..=0xE08B => {
+            let offset = code - 0xE080;
+            char::from_u32(0x2170 + offset as u32)
+        }
+        // 2. 한컴 심볼 PUA (0xF000 ~ 0xF0FF)
+        0xF000 => Some(' '),
+        0xF001 => Some('■'), // U+25A0
+        0xF002 => Some('□'), // U+25A1
+        0xF003 => Some('▲'), // U+25B2
+        0xF004 => Some('△'), // U+25B3
+        0xF005 => Some('▼'), // U+25BC
+        0xF006 => Some('▽'), // U+25BD
+        0xF007 => Some('◆'), // U+25C6
+        0xF008 => Some('◇'), // U+25C7
+        0xF009 => Some('○'), // U+25CB
+        0xF00A => Some('●'), // U+25CF
+        0xF00B => Some('◎'), // U+25CE
+        0xF00C => Some('▶'), // U+25B6
+        0xF00D => Some('▷'), // U+25B7
+        0xF00E => Some('◀'), // U+25C0
+        0xF00F => Some('◁'), // U+25C1
+        0xF020 => Some(' '),
+        0xF022 => Some('•'), // U+2022
+        0xF0B7 => Some('·'), // U+00B7 가운뎃점
+        0xF0A7 => Some('§'), // U+00A7
+        0xF0A8 => Some('※'), // U+203B
+        0xF0DA => Some('★'), // U+2605
+        0xF0DB => Some('☆'), // U+2606
+        0xF0DC => Some('☎'), // U+260E
+        0xF0DD => Some('☏'), // U+260F
+        0xF0E0 => Some('☞'), // U+261E
+        0xF0E1 => Some('☜'), // U+261C
+        // 일반 유니코드 호환 가운뎃점/아래아 통일
+        0x318D => Some('·'), // 옛한글 아래아(ㆍ) -> 가운뎃점(·)
+        0x2027 => Some('·'), // hyphenation point -> 가운뎃점
+        0x2219 => Some('·'), // bullet operator -> 가운뎃점
+        _ => None,
+    }
+}
+
 /// HWPTAG_PARA_TEXT 바이너리에서 UTF-16LE 텍스트를 디코딩하고 제어 문자(0~31)를 처리한다.
 ///
-/// 제어 문자(0~31) 처리 규격:
-/// - 1~8, 11, 14~23: 확장 컨트롤 및 인라인 컨트롤 (16바이트 = 8 WCHAR 건너뜀, 12는 폼 피드로 제외).
+/// 제어 문자(0~31) 처리 규격 (HWP5-CMP5):
+/// - 1~3, 11, 14~18, 21~23: 확장 컨트롤 (ch info[6] ch 구조의 16바이트 = 8 WCHAR)
+/// - 4: 필드 끝 (원칙상 1 WCHAR 문자 컨트롤. 단, 8 WCHAR 가비지 구조체인 경우 자동 판별)
+/// - 5~8, 19, 20: 인라인 컨트롤 및 문자 컨트롤 자동 판정
 /// - 9: 탭 ('\t')
 /// - 10, 12, 13: 줄바꿈 / 폼 피드 ('\n')
 /// - 24: 하이픈 ('-')
 /// - 25, 26: 묶음 빈칸, 고정폭 빈칸 (' ')
 /// - 27~31: 특수 공백/문자 (' ')
 /// - 0: 사용 불가 제어 문자 (1 WCHAR 건너뜀)
-/// - 일반 문자: UTF-16LE 서러게이트 페어 및 유니코드 복원
+/// - 일반 문자: 한양 PUA 및 한컴 특수문자 변환, UTF-16LE 서러게이트 페어 및 유니코드 복원
 pub fn decode_para_text(bytes: &[u8]) -> String {
     let n_wchars = bytes.len() / 2;
     let mut out = String::with_capacity(n_wchars);
@@ -468,13 +576,6 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
         let code = u16::from_le_bytes([b0, b1]);
 
         match code {
-            // 1~8, 11, 14~23: 확장 컨트롤 및 인라인 컨트롤 (16바이트 = 8 WCHAR)
-            // - 확장 컨트롤: 1..=3, 11, 14..=18, 21..=23
-            // - 인라인 컨트롤: 4..=8 (필드 끝 등), 19, 20
-            // (12는 폼 피드 인라인 줄바꿈이므로 제외)
-            1..=8 | 11 | 14..=23 => {
-                i = (i + 8).min(n_wchars);
-            }
             // 9: 탭
             9 => {
                 out.push('\t');
@@ -505,8 +606,55 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
                 i += 1;
             }
 
+            // 4: 필드 끝 (Field End)
+            // 규격상 문자 컨트롤(1 WCHAR)이지만, 비표준/테스트 환경의 8 WCHAR 부가정보 형태도 안전하게 판별
+            4 => {
+                if i + 1 < n_wchars {
+                    let next_code = u16::from_le_bytes([bytes[(i + 1) * 2], bytes[(i + 1) * 2 + 1]]);
+                    if is_likely_korean_text_wchar(next_code) {
+                        // 뒤따라오는 문자가 실제 본문 글자이므로 1 WCHAR만 건너뜀 (본문 7글자 잘림 방지)
+                        i += 1;
+                        continue;
+                    }
+                }
+                // 뒤따라오는 문자가 본문 글자가 아닌 경우 8 WCHAR 건너뜀
+                i = (i + 8).min(n_wchars);
+            }
+
+            // 1~3, 11, 14~18, 21~23: 규격상 16바이트(8 WCHAR) 확장 컨트롤
+            1..=3 | 11 | 14..=18 | 21..=23 => {
+                i = (i + 8).min(n_wchars);
+            }
+
+            // 5~8, 19, 20: 인라인/문자 컨트롤 판별
+            5..=8 | 19 | 20 => {
+                if i + 7 < n_wchars {
+                    let end_code = u16::from_le_bytes([bytes[(i + 7) * 2], bytes[(i + 7) * 2 + 1]]);
+                    if end_code == code {
+                        // ch info[6] ch 형태의 8 WCHAR 컨트롤
+                        i += 8;
+                        continue;
+                    }
+                }
+                if i + 1 < n_wchars {
+                    let next_code = u16::from_le_bytes([bytes[(i + 1) * 2], bytes[(i + 1) * 2 + 1]]);
+                    if is_likely_korean_text_wchar(next_code) {
+                        i += 1;
+                        continue;
+                    }
+                }
+                i = (i + 8).min(n_wchars);
+            }
+
             // 일반 유니코드 문자
             _ => {
+                // 1. 한양 PUA 및 한컴 특수문자 변환
+                if let Some(mapped) = map_hwp_special_char(code) {
+                    out.push(mapped);
+                    i += 1;
+                    continue;
+                }
+
                 if (0xD800..=0xDBFF).contains(&code) {
                     // High surrogate
                     if i + 1 < n_wchars {
@@ -527,7 +675,16 @@ pub fn decode_para_text(bytes: &[u8]) -> String {
                     i += 1;
                 } else {
                     if let Some(ch) = char::from_u32(code as u32) {
-                        out.push(ch);
+                        // CJK 호환 한자(0xF900~0xFAFF)인 경우 유니코드 표준 통합 한자로 정규화
+                        if (0xF900..=0xFAFF).contains(&code) {
+                            let mut buf = String::new();
+                            buf.push(ch);
+                            use unicode_normalization::UnicodeNormalization;
+                            let normalized: String = buf.nfkd().collect();
+                            out.push_str(&normalized);
+                        } else {
+                            out.push(ch);
+                        }
                     }
                     i += 1;
                 }
@@ -1011,5 +1168,117 @@ mod tests {
         let index_paras = crate::extract::extract_for_index(&temp.path).expect("색인 추출 성공");
         assert_eq!(index_paras.len(), 1);
         assert_eq!(index_paras[0].text, "검색 대상 본문 문장입니다.");
+    }
+
+    #[test]
+    fn test_hwp5_cmp5_field_end_single_wchar_preserves_following_text() {
+        // HWP5-CMP5: 필드 끝(코드 4)이 단일 WCHAR(2바이트)인 경우, 뒤따르는 본문 7글자가 잘리지 않고 온전히 보존되는지 검증
+        let mut text_bytes = Vec::new();
+        text_bytes.extend_from_slice(&encode_utf16le("필드앞"));
+        text_bytes.extend_from_slice(&4u16.to_le_bytes()); // 코드 4 단 1 WCHAR
+        text_bytes.extend_from_slice(&encode_utf16le("필드뒤에오는일곱글자본문"));
+
+        let decoded = decode_para_text(&text_bytes);
+        assert_eq!(decoded, "필드앞필드뒤에오는일곱글자본문");
+    }
+
+    #[test]
+    fn test_hwp5_cmp5_pua_and_special_character_mapping() {
+        // HWP5-CMP5: 한양 PUA 및 한컴 특수문자가 표준 유니코드 문자로 변환되는지 검증
+        let mut text_bytes = Vec::new();
+        text_bytes.extend_from_slice(&0xE000u16.to_le_bytes()); // 한양 PUA 원문자 1 -> '①'
+        text_bytes.extend_from_slice(&0xE074u16.to_le_bytes()); // 한양 PUA 로마숫자 1 -> 'Ⅰ'
+        text_bytes.extend_from_slice(&0xF001u16.to_le_bytes()); // 한컴 심볼 -> '■'
+        text_bytes.extend_from_slice(&0xF0B7u16.to_le_bytes()); // 한컴 가운뎃점 -> '·'
+        text_bytes.extend_from_slice(&encode_utf16le("테스트"));
+
+        let decoded = decode_para_text(&text_bytes);
+        assert_eq!(decoded, "①Ⅰ■·테스트");
+    }
+
+    #[test]
+    fn test_hwp5_cmp5_nested_tables() {
+        // HWP5-CMP5: 표 안 표 (중첩 표, Nested Table) 계층 및 셀 문단 추출 검증
+        let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+        // 바깥 표 본문 문단
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le("바깥본문")).to_bytes());
+
+        // 바깥 표 컨트롤
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tbl \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 1).with_data(vec![0u8; 32]).to_bytes());
+
+        // 바깥 표 셀 1
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 26]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("바깥셀문단")).to_bytes());
+
+        // 안쪽 중첩 표 컨트롤 (셀 1 내부)
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 2).with_data(b"tbl \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 3).with_data(vec![0u8; 32]).to_bytes());
+
+        // 안쪽 표 셀
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 3).with_data(vec![0u8; 26]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 4).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 5).with_data(encode_utf16le("안쪽중첩표셀문단")).to_bytes());
+
+        // 바깥 표 셀 2 (안쪽 표 종료 후 복원)
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 26]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("바깥셀2문단")).to_bytes());
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("nested_tbl", &hwp_bytes);
+
+        let paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(paras.len(), 4);
+        assert_eq!(paras[0].text, "바깥본문");
+        assert_eq!(paras[0].is_table_cell, false);
+        assert_eq!(paras[1].text, "바깥셀문단");
+        assert_eq!(paras[1].is_table_cell, true);
+        assert_eq!(paras[2].text, "안쪽중첩표셀문단");
+        assert_eq!(paras[2].is_table_cell, true);
+        assert_eq!(paras[3].text, "바깥셀2문단");
+        assert_eq!(paras[3].is_table_cell, true);
+    }
+
+    #[test]
+    fn test_hwp5_cmp5_dutmal_and_case_insensitive_ctrl_ids() {
+        // HWP5-CMP5: 대소문자 무관 컨트롤 ID 인식 및 덧말(dutmal) 색인 필터링 검증
+        let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+        // 1. 대문자 TBL 표 컨트롤
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"TBL \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("대문자표셀")).to_bytes());
+
+        // 2. 덧말 (tdut)
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"tdut\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+        builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+        builder = builder
+            .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+            .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("덧말글씨")).to_bytes());
+
+        let hwp_bytes = builder.build().expect("HWP 생성");
+        let temp = TempTestHwp::new("ctrl_id_dutmal", &hwp_bytes);
+
+        // extract_hwp5는 구조 파악을 위해 dutmal도 유지
+        let raw_paras = extract_hwp5(&temp.path).expect("추출 성공");
+        assert_eq!(raw_paras.len(), 2);
+        assert_eq!(raw_paras[0].location_kind, "table_cell");
+        assert_eq!(raw_paras[0].is_table_cell, true);
+        assert_eq!(raw_paras[1].location_kind, "dutmal");
+
+        // extract_for_index는 정밀도 보장을 위해 dutmal 제외
+        let index_paras = crate::extract::extract_for_index(&temp.path).expect("색인 추출 성공");
+        assert_eq!(index_paras.len(), 1);
+        assert_eq!(index_paras[0].text, "대문자표셀");
     }
 }

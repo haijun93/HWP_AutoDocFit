@@ -367,8 +367,8 @@ fn extract_bigrams_from_text(text: &str) -> HashSet<[char; 2]> {
 fn extract_rust_bigrams(paras: &[Paragraph]) -> HashSet<[char; 2]> {
     let mut set = HashSet::new();
     for p in paras {
-        // 요구사항 3: 숨은 글(hidden_comment), 메모(memo) 등 검색에 넣으면 안 되는 글은 제외
-        if p.location_kind == "hidden_comment" || p.location_kind == "memo" {
+        // 요구사항 3: 숨은 글(hidden_comment), 메모(memo), 덧말(dutmal) 등 검색에 넣으면 안 되는 글은 제외
+        if p.location_kind == "hidden_comment" || p.location_kind == "memo" || p.location_kind == "dutmal" {
             continue;
         }
         for line in p.text.lines() {
