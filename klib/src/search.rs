@@ -238,8 +238,15 @@ impl Columns {
 fn io_error(e: std::io::Error) -> tantivy::TantivyError { tantivy::TantivyError::InternalError(e.to_string()) }
 /// 다시 만들기 잠금을 잡는다. 다른 프로세스가 쥐고 있으면 None.
 fn rebuild_lock(dir: &Path) -> Option<std::fs::File> {
-    use std::os::windows::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new().write(true).create(true).truncate(false).share_mode(0).open(dir.join(LOCK_FILE)).ok()
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new().write(true).create(true).truncate(false).share_mode(0).open(dir.join(LOCK_FILE)).ok()
+    }
+    #[cfg(not(windows))]
+    {
+        std::fs::OpenOptions::new().write(true).create(true).truncate(false).open(dir.join(LOCK_FILE)).ok()
+    }
 }
 /// 색인 폴더 바로 아래의 색인 파일을 지운다. 사용자 동의어 파일과 하위 폴더(data)는 남긴다.
 fn wipe_index_files(dir: &Path) -> std::io::Result<()> {
