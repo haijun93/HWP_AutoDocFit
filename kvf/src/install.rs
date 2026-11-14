@@ -308,7 +308,7 @@ fn sha256_bytes(data:&[u8])->Option<String>{
  use super::*;
  use crate::json::Value;
  fn fixture(name:&str)->std::path::PathBuf{
-  let root=std::path::PathBuf::from("E:/docfit-tmp").join(format!("vfv8-{name}-{}",std::process::id()));
+  let root=std::env::temp_dir().join(format!("vfv8-{name}-{}",std::process::id()));
   std::fs::create_dir_all(&root).unwrap();root
  }
  #[test]fn run_value_targets_installed_copy(){assert_eq!(autostart_command(Path::new(r"E:\한글 폴더\kvf.exe")),"\"E:\\한글 폴더\\kvf.exe\" --hidden --delay 30");assert_ne!(RUN_NAME,"HwpAutoDocFit.KAgent");}

@@ -380,7 +380,7 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.64"
+APP_VERSION = "2.2.65"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"
@@ -3437,6 +3437,12 @@ def main():
                 pass
 
         threading.Thread(target=_배경_런타임_배포, name="kordoc-deploy", daemon=True).start()
+
+    try:
+        from docfit_app.kfind_process import ensure_kfind_running
+        threading.Thread(target=ensure_kfind_running, name="kfind-ensure", daemon=True).start()
+    except Exception:
+        pass
 
     # WebView2가 있으면 반응형 웹 화면을 주 UI로 사용하고, 문서 처리·설정 창은
     # 기존 Tk 백엔드에 연결한다. WebView 초기화 문제 진단·복구 시 환경변수로

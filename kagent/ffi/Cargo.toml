@@ -8,6 +8,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+ui_theme = { path = "../../ui_theme" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

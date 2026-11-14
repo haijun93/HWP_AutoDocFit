@@ -6,6 +6,17 @@ import {freehandNode,freehandPath,withBackground,withoutBackground,fitSize,paint
 import {defaultLayers,addLayer,updateLayer,moveLayer,removeLayer,assignLayer,layeredNodes,layeredEdges,layerOf} from './layers.js';
 import '@xyflow/react/dist/style.css';
 import './style.css';
+
+/** 화면 틀 테마(light·dark·hc). 앱이 주소 ?theme= 로 처음 값을 주고, 바뀌면 window.docfitSetTheme(t)를 부른다.
+ *  문서 내용 색은 바꾸지 않고 style.css의 화면 틀 변수만 바뀐다. 모르는 값은 light. */
+const EDITOR_THEMES=new Set(['light','dark','hc']);
+function setEditorTheme(theme){
+ const value=EDITOR_THEMES.has(theme)?theme:'light';
+ document.documentElement.dataset.theme=value;
+ return value;
+}
+window.docfitSetTheme=setEditorTheme;
+{const initialTheme=new URLSearchParams(window.location.search).get('theme');if(initialTheme)setEditorTheme(initialTheme);}
 import {FORMAT,PALETTE,templates,template,node,edge,id,decode,validate,svg,layoutGraph,computeNodeAutoFitBox,edgeLabelBox,LINE_HEIGHT,nodeFont,nodePaint,edgePath,EDGE_DEFAULT,rotationFromPointer,normalizeRotation,moveHistory} from './model.js';
 import {SHAPE_GROUPS,SHAPES,LINE_SHAPES,shapePath,DASHES,MARKERS,dashArray} from './shapes.js';
 import {sampleMindmap,mindmapGraph,addChild,addSibling,removeNode,updateNode,moveNode,findNode,positionMindmap,reparentNode,autoLayoutMindmap,restyleNodes,MINDMAP_SHAPES,MINDMAP_SCOPES,MINDMAP_THEME_SHAPES,MINDMAP_PALETTES,MINDMAP_GROUNDS,themeOf,clearBranchStyles} from './mindmap.js';

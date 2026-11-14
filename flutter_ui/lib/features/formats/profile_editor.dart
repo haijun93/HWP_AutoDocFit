@@ -2,8 +2,10 @@ import '../../core/close_guards.dart';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/api/abbreviation_api.dart';
 import '../settings/kiosk_theme.dart';
+import '../settings/settings_colors.dart';
 import 'element_preview.dart';
 import 'page_margin_layout.dart';
 
@@ -192,10 +194,10 @@ class _ProfileEditorState extends State<ProfileEditor> {
     ];
     final label = Text(
       '${field['label']}',
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 15,
         fontWeight: FontWeight.w600,
-        color: Kiosk.ink,
+        color: context.kiosk.ink,
       ),
     );
     Widget control;
@@ -204,8 +206,8 @@ class _ProfileEditorState extends State<ProfileEditor> {
         choices.contains('아니오')) {
       control = Switch(
         key: ValueKey('$generation:$path:${field['key']}'),
-        activeThumbColor: Colors.white,
-        activeTrackColor: Kiosk.blue,
+        activeThumbColor: context.kiosk.onBlue,
+        activeTrackColor: context.kiosk.blueFill,
         value: value == '예',
         onChanged: editable
             ? (on) => edit(path, field, on ? '예' : '아니오')
@@ -220,9 +222,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
             ChoiceChip(
               label: Text(choice),
               selected: value == choice,
-              selectedColor: Kiosk.blueSoft,
+              selectedColor: context.kiosk.blueSoft,
               labelStyle: TextStyle(
-                color: value == choice ? Kiosk.blue : Kiosk.sub,
+                color: value == choice ? context.kiosk.blue : context.kiosk.sub,
                 fontWeight: value == choice ? FontWeight.w700 : FontWeight.w500,
               ),
               onSelected: editable ? (_) => edit(path, field, choice) : null,
@@ -241,8 +243,8 @@ class _ProfileEditorState extends State<ProfileEditor> {
             isDense: true,
             filled: true,
             fillColor: editable
-                ? const Color(0xfff2f4f6)
-                : const Color(0xfff9fafb),
+                ? context.kiosk.secondaryFill
+                : SettingsColors.of(context).softFill,
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(12),
               borderSide: BorderSide.none,
@@ -257,7 +259,9 @@ class _ProfileEditorState extends State<ProfileEditor> {
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: changed ? Kiosk.blueSoft : const Color(0xfffafbfc),
+        color: changed
+            ? context.kiosk.blueSoft
+            : SettingsColors.of(context).unchangedFill,
         borderRadius: BorderRadius.circular(14),
       ),
       child: Row(
@@ -268,7 +272,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
               children: [
                 label,
                 if (field['editable'] != true)
-                  const Text('문서에서 읽은 값(바꿀 수 없음)', style: Kiosk.caption),
+                  Text('문서에서 읽은 값(바꿀 수 없음)', style: Kiosk.caption(context)),
               ],
             ),
           ),
@@ -283,7 +287,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
 
   /// 요소 미리보기: 지금 값으로 그린 앱 내 미리보기(1.80.3부터 rhwp 조판 엔진은 쓰지 않음).
   Widget _typeset(Map node, Map<String, String> values) =>
-      elementPreview(node['path'] as List, '${node['label']}', values);
+      elementPreview(context, node['path'] as List, '${node['label']}', values);
 
   Widget _detail(Map node) {
     final fields = [for (final f in node['fields'] as List) f as Map];
@@ -310,13 +314,13 @@ class _ProfileEditorState extends State<ProfileEditor> {
       children: [
         Container(
           padding: const EdgeInsets.all(20),
-          decoration: Kiosk.cardBox(),
+          decoration: Kiosk.cardBox(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${node['label']}', style: Kiosk.cardTitle),
+              Text('${node['label']}', style: Kiosk.cardTitle(context)),
               const SizedBox(height: 4),
-              const Text('문서에서 이렇게 보여요. 아래 값을 바꾸면 바로 반영돼요.', style: Kiosk.body),
+              Text('문서에서 이렇게 보여요. 아래 값을 바꾸면 바로 반영돼요.', style: Kiosk.body(context)),
               const SizedBox(height: 14),
               _typeset(node, values),
             ],
@@ -338,16 +342,16 @@ class _ProfileEditorState extends State<ProfileEditor> {
           Container(
             margin: const EdgeInsets.only(top: 12),
             padding: const EdgeInsets.all(18),
-            decoration: Kiosk.cardBox(),
+            decoration: Kiosk.cardBox(context),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w700,
-                    color: Kiosk.ink,
+                    color: context.kiosk.ink,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -372,7 +376,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
           Padding(
             padding: const EdgeInsets.only(bottom: 8, right: 8),
             child: Material(
-              color: i == selected ? Kiosk.blueSoft : Colors.white,
+              color: i == selected ? context.kiosk.blueSoft : context.kiosk.card,
               borderRadius: BorderRadius.circular(14),
               child: InkWell(
                 key: ValueKey('element-$i'),
@@ -390,7 +394,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
                       fontWeight: i == selected
                           ? FontWeight.w700
                           : FontWeight.w500,
-                      color: i == selected ? Kiosk.blue : Kiosk.ink,
+                      color: i == selected ? context.kiosk.blue : context.kiosk.ink,
                     ),
                   ),
                 ),
@@ -400,7 +404,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
       ],
     );
     return Dialog(
-      backgroundColor: Kiosk.canvas,
+      backgroundColor: context.kiosk.canvas,
       insetPadding: EdgeInsets.all(compact ? 8 : 24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       child: SizedBox(
@@ -414,13 +418,13 @@ class _ProfileEditorState extends State<ProfileEditor> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${data['name'] ?? '서식 세부 편집'}', style: Kiosk.title),
+                  Text('${data['name'] ?? '서식 세부 편집'}', style: Kiosk.title(context)),
                   const SizedBox(height: 4),
                   Text(
                     coverage is Map
                         ? '예시 문서에서 찾은 서식 요소 ${coverage['total']}개 중 ${coverage['applied']}개를 적용해요.'
                         : '분석 자료 없음',
-                    style: Kiosk.body,
+                    style: Kiosk.body(context),
                   ),
                   if (busy)
                     const Padding(
@@ -432,7 +436,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Text(
                         error,
-                        style: const TextStyle(color: Kiosk.red),
+                        style: TextStyle(color: context.kiosk.red),
                       ),
                     ),
                 ],
@@ -442,10 +446,10 @@ class _ProfileEditorState extends State<ProfileEditor> {
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: nodes.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Text(
                           '편집할 분석 자료가 없습니다. 예시 HWPX에서 서식을 분석한 뒤 계층·칸별 속성을 수정하세요.',
-                          style: Kiosk.body,
+                          style: Kiosk.body(context),
                         ),
                       )
                     : compact
@@ -468,10 +472,10 @@ class _ProfileEditorState extends State<ProfileEditor> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.fromLTRB(24, 14, 24, 18),
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: Kiosk.line)),
-                borderRadius: BorderRadius.vertical(
+              decoration: BoxDecoration(
+                color: context.kiosk.card,
+                border: Border(top: BorderSide(color: context.kiosk.line)),
+                borderRadius: const BorderRadius.vertical(
                   bottom: Radius.circular(24),
                 ),
               ),
@@ -486,7 +490,7 @@ class _ProfileEditorState extends State<ProfileEditor> {
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w600,
-                      color: edits.isEmpty ? Kiosk.faint : Kiosk.blue,
+                      color: edits.isEmpty ? context.kiosk.faint : context.kiosk.blue,
                     ),
                   ),
                   KioskSecondaryButton(

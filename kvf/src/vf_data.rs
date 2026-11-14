@@ -66,7 +66,7 @@ pub fn filter<'a>(items:&'a [Item],space:Option<&str>,query:&str)->Vec<&'a Item>
     struct Fixture { root:std::path::PathBuf }
     impl Fixture {
         fn new(legacy:bool)->Self {
-            let root=std::path::PathBuf::from("E:/docfit-tmp").join(format!("kvf-data-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
+            let root=std::env::temp_dir().join(format!("kvf-data-{}-{}",std::process::id(),NEXT.fetch_add(1,Ordering::Relaxed)));
             std::fs::create_dir_all(&root).unwrap();
             let c=Connection::open(root.join("library.db").to_str().unwrap()).unwrap();
             c.exec("CREATE TABLE box(id INTEGER PRIMARY KEY,name TEXT,description TEXT,created_at REAL,updated_at REAL); CREATE TABLE item(id INTEGER PRIMARY KEY,box_id INTEGER,kind TEXT,source_path TEXT,display_name TEXT,space TEXT,created_at REAL)").unwrap();

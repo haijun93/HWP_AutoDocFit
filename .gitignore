@@ -47,3 +47,12 @@ kvf/target/
 
 resources/kvf.exe
 resources/kvf.exe.sha256
+
+/crates/kfind/target/
+kfind/core/target/
+kfind/names/target/
+resources/kfind.exe
+resources/kfind.exe.sha256
+ktm/target/
+resources/ktm.exe
+resources/ktm.exe.sha256

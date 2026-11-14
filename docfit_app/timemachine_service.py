@@ -1,27 +1,35 @@
-"""타임머신 화면 명령과 기존 KAgent 색인 저장소의 앱 측 연결."""
+"""몽땅검색 화면 명령과 기존 KAgent 색인 저장소의 앱 측 연결."""
 from __future__ import annotations
 
 import base64
+import hashlib
+import itertools
 import json
 import logging
 import math
 import os
 import queue
+import secrets
 import stat
 import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.content_search import ContentSearchIndex
+from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
+from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
 from docfit_core.timemachine.related import related_documents
 from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
 from docfit_core.timemachine.scan import default_roots, scan_roots
 from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
+from .kfind_client import KfindClient, KfindError
+from .settings_schema import normalize_search_engine
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -37,13 +45,20 @@ ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
 class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
-                 developer_mode=None, idle_scheduler=None):
+                 developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None):
+        self.search_engine_provider = search_engine_provider
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
         excluded_rows = self.store.purge_excluded()
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
+        self.kfind = kfind_client if kfind_client is not None else KfindClient()
+        self._kfind_ids = itertools.count(secrets.randbits(63))
+        self._kfind_pending = {}
+        self._kfind_synced = False
+        self._kfind_generation = None
+        self._engine_state = {"engine": "legacy", "engine_reason": "not_connected", "corpus": "pending"}
         self.agent = agent if agent is not None else KAgentClient()
         self.opener = opener if opener is not None else self._open_file
         self.revealer = revealer if revealer is not None else self._reveal_file
@@ -87,7 +102,120 @@ class TimemachineService:
 
     def _defaults(self):
         return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
+                "search_engine": "kfind",
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
+
+    def _search_engine(self):
+        if self.search_engine_provider is not None:
+            return normalize_search_engine(self.search_engine_provider())
+        value = self._settings.get("search_engine", "kfind")
+        return value if value in {"kfind", "legacy", "shadow"} else "kfind"
+
+    def _engine_status(self):
+        with self._content_lock:
+            state = dict(self._engine_state)
+            requested = self._search_engine()
+            if requested == "legacy":
+                state.update(engine="legacy", engine_reason="configured_legacy")
+            connection = self.kfind.state()
+            # 전환 상태는 표시할 때마다 한곳에서 계산한다. configured_legacy는 자동 대체가 아니다.
+            transition = ("legacy" if requested == "legacy" else
+                          "ready" if state["engine"] == "kfind" else
+                          "seeding" if state["corpus"] == "seeding" else
+                          "pending" if state["corpus"] == "pending" else "fallback")
+            bundle = {**state, "requested_engine": requested, "connection": connection,
+                      "transition": transition}
+            return {**bundle, "search_engine_status": bundle}
+
+    def _kfind_sync(self, path, result):
+        """색인/위계/삭제 후 동기화 대기열. legacy에서는 연결·대기열 모두 건드리지 않는다."""
+        if self._search_engine() == "legacy" or result.get("error"):
+            return
+        with self._content_lock:
+            self._kfind_pending[os.path.abspath(path)] = dict(result)
+            self._kfind_synced = False
+            self._engine_state.update(corpus="pending", engine="legacy", engine_reason="kfind_pending")
+
+    def _seed_kfind(self, cancel_event):
+        """pending → seeding → synced|pending|failed. 실패는 기존 색인 작업을 실패시키지 않는다."""
+        if self._search_engine() == "legacy" or cancel_event.is_set():
+            return
+        with self._content_lock:
+            pending = dict(self._kfind_pending)
+            self._content_state["phase"] = "kfind_seeding"
+            self._engine_state.update(corpus="seeding", engine="legacy", engine_reason="kfind_seeding")
+        try:
+            initial_status = self.kfind.status()
+            paths = self.content_index.indexed_paths(roots=self._settings["roots"]) if self._settings["roots"] else []
+            path_keys = {doc_key(path=p) for p in paths}
+            for path, result in pending.items():
+                if cancel_event.is_set():
+                    return
+                if result.get("removed") or doc_key(path=path) not in path_keys:
+                    self.kfind.remove([doc_key(path=path)])
+            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경은 다시 seeding.
+            if pending and initial_status["generation"] == self._kfind_generation:
+                changed = {doc_key(path=p) for p in pending}
+                paths = [p for p in paths if doc_key(path=p) in changed]
+            for path in paths:
+                if cancel_event.is_set() or self._closing:
+                    return
+                if self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
+                    cancel_event.set()
+                    return
+                if self.content_index.stale_hierarchy_paths([path]):
+                    self.content_index.relevel_file(path)
+                    if self.content_index.stale_hierarchy_paths([path]):
+                        raise KfindError("kfind_hierarchy_pending")
+                # 원문과 stat은 같은 SQLite 스냅숏. 사용자 문서를 다시 열지 않는다.
+                with self.content_index._lock:
+                    meta = self.content_index.db.execute("SELECT * FROM content_meta WHERE path=?", (path,)).fetchone()
+                    if meta is None:
+                        continue
+                    records = self.content_index.paragraphs_for_kfind(path)
+                    doc = doc_from_records(path, records, SimpleNamespace(st_size=meta["size"],
+                        st_mtime=meta["mtime"], st_ctime=meta["ctime"]), meta["reference_date"], ["tm"])
+                result = self.kfind.ingest(doc)
+                with self.content_index._lock:
+                    self.content_index.db.execute("UPDATE content_meta SET kfind_level_rule=?, kfind_gen=? WHERE path=?",
+                        (doc["level_rule"], result["generation"], path))
+                    self.content_index.db.commit()
+            status = self.kfind.status()
+            with self._content_lock:
+                for path, result in pending.items():
+                    if self._kfind_pending.get(path) is result:
+                        self._kfind_pending.pop(path)
+                self._kfind_synced = not self._kfind_pending
+                self._kfind_generation = status["generation"]
+                self._engine_state.update(corpus="synced" if self._kfind_synced else "pending",
+                    engine="kfind" if self._kfind_synced else "legacy",
+                    engine_reason=None if self._kfind_synced else "kfind_pending")
+        except Exception as exc:
+            with self._content_lock:
+                self._kfind_synced = False
+                self._engine_state.update(corpus="failed", engine="legacy", engine_reason=str(exc))
+        finally:
+            if cancel_event.is_set():
+                with self._content_lock:
+                    self._kfind_synced = False
+                    self._engine_state.update(corpus="pending", engine="legacy", engine_reason="kfind_seed_cancelled")
+
+    def _start_kfind_seeding(self):
+        with self._content_lock:
+            if self._closing or self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
+                return
+            self._content_cancel = threading.Event()
+            self._content_state = self._new_content_state(running=True, phase="kfind_seeding", trigger="auto")
+            def run():
+                try:
+                    self._seed_kfind(self._content_cancel)
+                    with self._content_lock:
+                        if self._engine_state["corpus"] == "failed":
+                            self._content_state["failure_reason"] = self._engine_state["engine_reason"]
+                finally:
+                    self._finish_content_index(self._content_cancel)
+            self._content_thread = threading.Thread(target=run, name="kfind-seeding", daemon=True)
+            self._content_thread.start()
 
     @staticmethod
     def _idle_values(source, fallback):
@@ -217,6 +345,7 @@ class TimemachineService:
         for worker in (scan_worker, self._content_thread):
             if worker and worker.ident is not None and worker is not threading.current_thread():
                 worker.join()
+        self.kfind.close()
         self.content_index.close()
         self.store.close()
 
@@ -228,7 +357,7 @@ class TimemachineService:
         if ctx is not None and state.get("running"):
             state["yielded"] = bool(ctx.yielded)
         idle = self.idle_scheduler.status() if self.idle_scheduler is not None else None
-        return {"ok": True, **state, "idle": idle,
+        return {"ok": True, **state, "idle": idle, **self._engine_status(),
                 **self.content_index.status_summary(roots=self._settings["roots"])}
 
     @staticmethod
@@ -329,6 +458,7 @@ class TimemachineService:
                 for path in relevel_paths:
                     if not proceed(): break
                     result = self.content_index.relevel_file(path)
+                    self._kfind_sync(path, result)
                     errors += bool(result["error"])
                     with self._content_lock:
                         self._content_state.update(errors=errors)
@@ -336,6 +466,7 @@ class TimemachineService:
                 for path in python_paths:
                     if not proceed(): break
                     result = self.content_index.index_file(path)
+                    self._kfind_sync(path, result)
                     seen += 1
                     indexed += bool(result["indexed"])
                     errors += bool(result["error"])
@@ -347,6 +478,7 @@ class TimemachineService:
                 for path in stale_paths:
                     if cancel_event.is_set(): break
                     self.content_index.remove_file(path)
+                    self._kfind_sync(path, {"removed": True})
             # 연결이 끊긴 드라이브의 문서는 지워진 것으로 보지 않는다.
             available = [os.path.normcase(os.path.abspath(root)) + os.sep for root in roots if os.path.isdir(root)]
             active_roots = [os.path.normcase(os.path.abspath(root)) + os.sep
@@ -362,8 +494,11 @@ class TimemachineService:
                 extension_allowed = Path(path).suffix.lower().lstrip(".") in self._settings["extensions"]
                 if in_scan_roots and (not in_active_roots or not extension_allowed or not os.path.exists(path)):
                     self.content_index.remove_file(path)
+                    self._kfind_sync(path, {"removed": True})
+            if not cancel_event.is_set():
+                self._seed_kfind(cancel_event)
         except Exception as exc:
-            logging.getLogger(__name__).exception("타임머신 본문 색인 실패")
+            logging.getLogger(__name__).exception("몽땅검색 본문 색인 실패")
             with self._content_lock:
                 self._content_state.update(phase="failed", failure_reason=f"{type(exc).__name__}: {exc}")
         finally:
@@ -431,6 +566,7 @@ class TimemachineService:
             rust_content_index = data.get("rust_content_index", True)
             if type(rust_content_index) is not bool: raise ValueError("settings")
             return {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                    "search_engine": data.get("search_engine", "kfind") if data.get("search_engine") in {"legacy", "kfind", "shadow"} else "kfind",
                     "rust_content_index": rust_content_index, **self._idle_values(data, defaults)}
         except (OSError, ValueError, TypeError, KeyError):
             return defaults
@@ -486,7 +622,7 @@ class TimemachineService:
                 raise ValueError("조사 폴더는 절대 경로로 지정해 주세요.")
             path = os.path.abspath(raw)
             if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
-                raise ValueError("Windows 휴지통($Recycle.Bin)은 타임머신 조사 폴더로 선택할 수 없습니다.")
+                raise ValueError("Windows 휴지통($Recycle.Bin)은 몽땅검색 조사 폴더로 선택할 수 없습니다.")
             try:
                 info = os.lstat(path)
             except OSError as exc:
@@ -586,14 +722,14 @@ class TimemachineService:
 
     @staticmethod
     def _agent_settings(settings):
-        # 꺼진 타임머신의 폴더를 에이전트가 계속 감시하면 안 되므로 빈 목록을 보낸다.
+        # 꺼진 몽땅검색의 폴더를 에이전트가 계속 감시하면 안 되므로 빈 목록을 보낸다.
         return {"timeline_roots": settings["roots"] if settings["enabled"] else [],
                 "timeline_mtime_only": settings["time_mode"] == "mtime"}
 
     def _sync_agent(self, *, force=False):
         """에이전트에 조사 폴더를 맡긴다. 맡았으면 True, 아니면 앱이 색인해야 하므로 False.
 
-        에이전트를 타임머신보다 나중에 켜면 에이전트 설정에 폴더가 없으므로, 보내기 전에 비교한다.
+        에이전트를 몽땅검색보다 나중에 켜면 에이전트 설정에 폴더가 없으므로, 보내기 전에 비교한다.
         """
         wanted = self._agent_settings(self._settings)
         try:
@@ -635,7 +771,7 @@ class TimemachineService:
                                         errors=[str(item[1]) for item in result.errors])
             self._schedule_content_refresh()
         except Exception as exc:
-            logging.getLogger(__name__).exception("타임머신 색인 갱신 실패")
+            logging.getLogger(__name__).exception("몽땅검색 색인 갱신 실패")
             with self._scan_lock:
                 self._scan_state["errors"] = [type(exc).__name__]
         finally:
@@ -647,7 +783,7 @@ class TimemachineService:
 
     def _start_scan(self, *, agent_ready=None, restart=False):
         if not self._settings["enabled"]:
-            return self._error("TM_DISABLED", "타임머신을 켠 뒤 다시 훑어 주세요.")
+            return self._error("TM_DISABLED", "몽땅검색을 켠 뒤 다시 훑어 주세요.")
         if agent_ready is None:
             agent_ready = self._sync_agent()
         with self._scan_lock:
@@ -699,7 +835,7 @@ class TimemachineService:
                 self._content_state.update(running=False, finished_at=time.time(), phase="failed",
                                            failure_reason=f"{type(exc).__name__}: {exc}")
                 self._content_idle_ctx = None
-                logging.getLogger(__name__).exception("타임머신 본문 자동 색인 시작 실패")
+                logging.getLogger(__name__).exception("몽땅검색 본문 자동 색인 시작 실패")
                 return False
             return True
 
@@ -707,6 +843,87 @@ class TimemachineService:
     DEVELOPER_ONLY_ACTIONS = frozenset()
 
     RELATED_QUERY_SORTS = frozenset({"hierarchy_relevance", "mentions", "relevance"})
+
+    def _search_rows(self, query, *, hierarchy=False, limit=100, offset=0, sort="hierarchy_relevance"):
+        parsed = self.content_index.parse_query(query)
+        if not parsed["terms"] and not parsed["phrases"]:
+            raise ValueError("본문 검색어를 입력해 주세요.")
+        if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
+            raise ValueError("결과 개수와 시작 위치를 확인해 주세요.")
+        def legacy():
+            if not self._settings["roots"]:
+                return []
+            if hierarchy:
+                return self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
+            return self.content_index.keyword_search(query, roots=self._settings["roots"], limit=limit, offset=offset)
+        requested = self._search_engine()
+        if requested == "legacy":
+            with self._content_lock:
+                self._engine_state.update(engine="legacy", engine_reason="configured_legacy")
+            return legacy()
+        if not self._settings["roots"]:
+            return []
+        try:
+            if parsed["near"] is not None:
+                raise KfindError("legacy_near_filter")
+            status = self.kfind.status()
+            with self._content_lock:
+                ready = self._kfind_synced and status["generation"] == self._kfind_generation
+                if not ready:
+                    self._kfind_synced = False
+            if not ready:
+                self._start_kfind_seeding()
+                raise KfindError("kfind_seeding")
+            # tm은 공유 서비스 범위. 조사 폴더는 앱 설정마다 달라 전체 순위 뒤 현재 폴더로 거른다.
+            filters = {key: parsed[key] for key in ("ext", "path", "after", "before", "exclude", "phrases")}
+            if not hierarchy:
+                extensions = set(filters["ext"])
+                for group in ({"hwp", "hwpx"}, {"doc", "docx"}, {"xls", "xlsx"}, {"ppt", "pptx"}):
+                    if extensions & group:
+                        extensions.update(group)
+                filters["ext"] = sorted(extensions)
+            response = self.kfind.query(" ".join(parsed["terms"]), "tm", top=0, refs=3,
+                filters=filters,
+                request_id=next(self._kfind_ids))
+            with self._content_lock:
+                if response["generation"] != status["generation"] or not self._kfind_synced:
+                    self._kfind_synced = False
+                    raise KfindError("kfind_generation_changed")
+            response = dict(response, hits=[hit for hit in response["hits"]
+                if isinstance(hit.get("path"), str) and self._path_in_active_root(hit["path"])])
+            if sort == "mentions":
+                response["hits"].sort(key=lambda hit: -hit["count"])
+            response["hits"] = response["hits"][offset:offset + limit]
+            converter = to_hierarchy_rows if hierarchy else to_keyword_rows
+            rows = converter(response, self.content_index, **({} if hierarchy else {"offset": offset}))
+            with self._content_lock:
+                self._kfind_generation = response["generation"]
+                self._engine_state.update(engine="kfind", engine_reason=None, corpus="synced")
+            if requested == "shadow":
+                old = legacy()
+                self._record_search_shadow(query, old, rows)
+                with self._content_lock:
+                    self._engine_state.update(engine="legacy", engine_reason="shadow")
+                return old
+            return rows
+        except Exception as exc:
+            with self._content_lock:
+                self._engine_state.update(engine="legacy", engine_reason=str(exc))
+            return legacy()
+
+    def _record_search_shadow(self, query, old, new):
+        """비교의 원문은 남기지 않는다. APP1-J의 정밀 E1~E8 판정은 별도 도구가 맡는다."""
+        directory = self.settings_root / "logs"
+        directory.mkdir(parents=True, exist_ok=True)
+        target = directory / "search-shadow.jsonl"
+        entry = {"query_hash": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+                 "legacy_count": len(old), "kfind_count": len(new),
+                 "same_paths": [r["path"] for r in old] == [r["path"] for r in new]}
+        with self._content_lock:
+            if target.exists() and target.stat().st_size >= 1024 * 1024:
+                target.replace(target.with_suffix(".jsonl.1"))
+            with target.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(entry) + "\n")
 
     def _related_query_search(self, query, payload):
         """검색어만으로 하는 위계검색. 결과 형태는 본문검색(content_search)과 같다(path·file_name 포함)."""
@@ -719,10 +936,10 @@ class TimemachineService:
         if not self._settings["roots"]:
             # search()는 roots가 비면 전체 색인을 찾으므로, 조사 폴더가 없으면 아무것도 돌려주지 않는다.
             return {"ok": True, "mode": "query", "items": []}
-        rows = self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
+        rows = self._search_rows(query, hierarchy=True, limit=limit, sort=sort)
         for row in rows:
             row["file_name"] = row["name"]
-        return {"ok": True, "mode": "query", "items": rows}
+        return {"ok": True, "mode": "query", "items": rows, **self._engine_status()}
 
     def _command(self, action, payload):
         if action in self.DEVELOPER_ONLY_ACTIONS:
@@ -732,7 +949,7 @@ class TimemachineService:
         if action == "status":
             return self._status()
         if action == "settings_get" or (action == "settings" and not payload):
-            return {"ok": True, "settings": dict(self._settings, roots=list(self._settings["roots"]))}
+            return {"ok": True, "settings": dict(self._settings, roots=list(self._settings["roots"]), search_engine=self._search_engine())}
         if action in ("settings_set", "settings"):
             roots = self._validate_roots(payload.get("roots"))
             mode, enabled = payload.get("time_mode"), payload.get("enabled")
@@ -745,14 +962,20 @@ class TimemachineService:
             if type(idle_enabled) is not bool: raise ValueError("설정 값을 확인해 주세요.")
             idle_seconds = clamp_idle_seconds(payload.get("idle_seconds", self._settings.get("idle_seconds", DEFAULT_IDLE_SECONDS)))
             settings = {"roots": roots, "time_mode": mode, "enabled": enabled, "extensions": extensions,
+                        "search_engine": payload.get("search_engine", self._search_engine()),
                         "rust_content_index": rust_content_index, "idle_indexing": idle_enabled,
                         "idle_seconds": idle_seconds}
+            if settings["search_engine"] not in {"legacy", "kfind", "shadow"}:
+                raise ValueError("검색 엔진을 확인해 주세요.")
             with self._settings_lock:
                 old_roots = list(self._settings["roots"])
+                old_engine = self._search_engine()
                 changed = self._settings != settings
                 removed = {self._root_key(root) for root in old_roots} - {self._root_key(root) for root in roots}
                 self._save_settings(settings)
                 self._settings = settings
+                if old_roots != roots or settings["search_engine"] != old_engine:
+                    self._kfind_synced = False
                 for root in old_roots:
                     if self._root_key(root) in removed:
                         self.store.drop_root(root)
@@ -772,6 +995,7 @@ class TimemachineService:
                     content_rules.skip_file(Path(path).name)):
                 return self._error("INVALID_INPUT", "현재 조사 폴더의 허용된 문서를 선택해 주세요.")
             result = self.content_index.index_file(path)
+            self._kfind_sync(path, result)
             return {"ok": True, **result}
         if action in ("content_index_all", "content_index_start"):
             return self._start_content_index()
@@ -781,11 +1005,11 @@ class TimemachineService:
             return self.cancel_content_index(wait=bool(payload.get("wait", False)), timeout=float(payload.get("timeout", 2.0)))
         if action == "content_search":
             query = payload.get("query")
-            rows = self.content_index.keyword_search(query, roots=self._settings["roots"],
+            rows = self._search_rows(query,
                 limit=payload.get("limit", 100), offset=payload.get("offset", 0))
             for row in rows:
                 row["file_name"] = row["name"]
-            return {"ok": True, "items": rows}
+            return {"ok": True, "items": rows, **self._engine_status()}
         if action == "content_export_markdown":
             target = payload.get("path")
             if not isinstance(target, str) or not target.strip():
@@ -925,7 +1149,7 @@ class TimemachineService:
             try:
                 (self.opener if action == "open" else self.revealer)(path)
             except Exception as exc:
-                logging.getLogger(__name__).exception("타임머신 파일 작업 실패")
+                logging.getLogger(__name__).exception("몽땅검색 파일 작업 실패")
                 return self._error("TM_OPEN_FAILED" if action == "open" else "TM_REVEAL_FAILED",
                                    f"파일을 열지 못했습니다: {exc}" if action == "open" else f"폴더를 열지 못했습니다: {exc}")
             return {"ok": True}
@@ -941,7 +1165,7 @@ class TimemachineService:
             return {"ok": True, "removed": self.thumbnails.clear()}
         if action == "send_to_feature":
             return self._send_to_feature(payload.get("feature"), payload.get("ids"))
-        return self._error("NOT_AVAILABLE", "지원하지 않는 타임머신 명령입니다.")
+        return self._error("NOT_AVAILABLE", "지원하지 않는 몽땅검색 명령입니다.")
 
     def _send_to_feature(self, feature, file_ids):
         if feature not in ALLOWED_FEATURES:
@@ -1007,7 +1231,7 @@ class TimemachineService:
         if type(file_id) is not int or file_id <= 0:
             raise ValueError("파일 항목을 확인해 주세요.")
         if not self._settings["enabled"]:
-            return self._error("TM_DISABLED", "타임머신이 꺼져 있습니다.")
+            return self._error("TM_DISABLED", "몽땅검색이 꺼져 있습니다.")
         row = self.store.get(file_id)
         if not row:
             return self._error("TM_NOT_FOUND", "파일 항목을 찾지 못했습니다.")
@@ -1080,12 +1304,12 @@ class TimemachineService:
         except ValueError as exc:
             return self._error("INVALID_INPUT", str(exc))
         except Exception:
-            logging.getLogger(__name__).exception("타임머신 명령 처리 실패")
-            return self._error("TM_FAILED", "타임머신 작업을 완료하지 못했습니다.")
+            logging.getLogger(__name__).exception("몽땅검색 명령 처리 실패")
+            return self._error("TM_FAILED", "몽땅검색 작업을 완료하지 못했습니다.")
 
 
 class _ContentIdleJob:
-    """타임머신 본문 변경분 색인을 쉬는 시간 스케줄러 작업(IdleJob)으로 감싼 것."""
+    """몽땅검색 본문 변경분 색인을 쉬는 시간 스케줄러 작업(IdleJob)으로 감싼 것."""
 
     name = CONTENT_IDLE_JOB
 

@@ -164,11 +164,8 @@ class WindowsIdleProbe:
         self._clock = clock
         self._cpu_prev = None
         self._disk_prev = None
-        if psutil_module is None:
-            try:
-                import psutil as psutil_module  # 선택 의존성: 없으면 디스크 부하는 판정에서 뺀다
-            except Exception:
-                psutil_module = False
+        # 디스크 부하는 Win32 API(IOCTL_DISK_PERFORMANCE·GetProcessIoCounters)로 잰다. psutil은 배포판에 들어가지 않을 수
+        # 있어(requirements에 없음) 기본으로 쓰지 않고, 시험에서 넘겨 준 경우나 Win32 측정이 실패할 때만 쓴다.
         self._psutil = psutil_module or None
 
     def sample(self):
@@ -207,16 +204,25 @@ class WindowsIdleProbe:
             return None
         return cpu_percent_from_times(previous, current)
 
-    def _disk(self):
+    def _disk_totals(self):
+        """(전체 물리 디스크 읽기+쓰기 바이트, 이 프로세스 읽기+쓰기 바이트). Win32 API가 기본, 실패하면 psutil(있을 때)."""
+        totals = win32_disk_bytes(), win32_own_io_bytes()
+        if totals[0] is not None and totals[1] is not None:
+            return totals
         if self._psutil is None:
             return None
         try:
             counters = self._psutil.disk_io_counters()
-            total = counters.read_bytes + counters.write_bytes
             own = self._psutil.Process().io_counters()
-            own_total = own.read_bytes + own.write_bytes
+            return counters.read_bytes + counters.write_bytes, own.read_bytes + own.write_bytes
         except Exception:
             return None
+
+    def _disk(self):
+        totals = self._disk_totals()
+        if totals is None:
+            return None
+        total, own_total = totals
         now = self._clock()
         previous, self._disk_prev = self._disk_prev, (now, total, own_total)
         if previous is None or now <= previous[0]:
@@ -243,6 +249,90 @@ class WindowsIdleProbe:
             return state.value in _BUSY_NOTIFICATION_STATES
         except Exception:
             return None
+
+
+# ---------------------------------------------------------------- 디스크 I/O(의존성 없이 Win32)
+class _DISK_PERFORMANCE(ctypes.Structure):
+    _fields_ = [("BytesRead", ctypes.c_int64), ("BytesWritten", ctypes.c_int64),
+                ("ReadTime", ctypes.c_int64), ("WriteTime", ctypes.c_int64), ("IdleTime", ctypes.c_int64),
+                ("ReadCount", ctypes.c_uint32), ("WriteCount", ctypes.c_uint32),
+                ("QueueDepth", ctypes.c_uint32), ("SplitCount", ctypes.c_uint32),
+                ("QueryTime", ctypes.c_int64), ("StorageDeviceNumber", ctypes.c_uint32),
+                ("StorageManagerName", ctypes.c_wchar * 8)]
+
+
+class _IO_COUNTERS(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_uint64) for name in (
+        "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+        "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+
+_IOCTL_DISK_PERFORMANCE = 0x00070020
+_MAX_PHYSICAL_DRIVES = 32
+_FILE_SHARE_READ_WRITE = 0x1 | 0x2
+_OPEN_EXISTING = 3
+_DISK_API = None
+
+
+def _disk_api():
+    global _DISK_API
+    if _DISK_API is None:
+        dll = ctypes.WinDLL("kernel32", use_last_error=True)
+        handle = ctypes.c_void_p
+        dll.CreateFileW.restype = handle
+        dll.CreateFileW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p,
+                                    ctypes.c_uint32, ctypes.c_uint32, handle]
+        dll.DeviceIoControl.restype = ctypes.c_int
+        dll.DeviceIoControl.argtypes = [handle, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p,
+                                        ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p]
+        dll.CloseHandle.restype = ctypes.c_int
+        dll.CloseHandle.argtypes = [handle]
+        dll.GetCurrentProcess.restype = handle
+        dll.GetCurrentProcess.argtypes = []
+        dll.GetProcessIoCounters.restype = ctypes.c_int
+        dll.GetProcessIoCounters.argtypes = [handle, ctypes.c_void_p]
+        _DISK_API = dll
+    return _DISK_API
+
+
+def win32_disk_bytes():
+    """모든 물리 디스크(\\\\.\\PhysicalDriveN)의 누적 읽기+쓰기 바이트. 관리자 권한 없이 접근 권한 0으로 연다(psutil과 같은 방법).
+    하나도 못 읽으면 None."""
+    if os.name != "nt":
+        return None
+    try:
+        api = _disk_api()
+    except Exception:
+        return None
+    invalid = ctypes.c_void_p(-1).value
+    total, found = 0, False
+    for number in range(_MAX_PHYSICAL_DRIVES):
+        h = api.CreateFileW(f"\\\\.\\PhysicalDrive{number}", 0, _FILE_SHARE_READ_WRITE, None, _OPEN_EXISTING, 0, None)
+        if h is None or h == invalid:
+            continue
+        try:
+            perf, returned = _DISK_PERFORMANCE(), ctypes.c_uint32(0)
+            if api.DeviceIoControl(h, _IOCTL_DISK_PERFORMANCE, None, 0, ctypes.byref(perf), ctypes.sizeof(perf),
+                                   ctypes.byref(returned), None):
+                total += max(0, perf.BytesRead) + max(0, perf.BytesWritten)
+                found = True
+        finally:
+            api.CloseHandle(h)
+    return total if found else None
+
+
+def win32_own_io_bytes():
+    """이 프로세스의 누적 읽기+쓰기 바이트(GetProcessIoCounters). 실패하면 None."""
+    if os.name != "nt":
+        return None
+    try:
+        api = _disk_api()
+        counters = _IO_COUNTERS()
+        if not api.GetProcessIoCounters(api.GetCurrentProcess(), ctypes.byref(counters)):
+            return None
+        return counters.ReadTransferCount + counters.WriteTransferCount
+    except Exception:
+        return None
 
 
 def cpu_percent_from_times(previous, current):

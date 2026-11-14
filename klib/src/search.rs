@@ -85,6 +85,8 @@ pub struct SearchIndex {
     /// 옛 스키마 색인을 버려서 DB의 원본 목록으로 다시 채워야 하는 상태(`reindex::rebuild`가 끝내면 꺼진다).
     rebuild: AtomicBool,
     rebuild_lock: Mutex<Option<std::fs::File>>,
+    /// writer 스레드 수(0이면 tantivy 기본). 업무자료함 색인은 1: 넣은 순서대로 한 세그먼트에 쌓여 같은 점수의 순서가 실행마다 같다.
+    writer_threads: usize,
     /// 시험 전용: 옛(버전 1) 스키마로 연 색인의 `body_ko` 필드.
     #[cfg(test)]
     legacy_body_ko: Option<Field>,
@@ -290,7 +292,7 @@ impl SearchIndex {
     /// 재사용 writer로 변경을 넣는다. 묶음 밖이면 돌아오기 전에 커밋·reload해 바로 검색에 보인다.
     fn write<R>(&self, f: impl FnOnce(&mut IndexWriter<TantivyDocument>) -> tantivy::Result<R>) -> tantivy::Result<R> {
         let mut st = self.state();
-        if st.writer.is_none() { st.writer = Some(self.index.writer::<TantivyDocument>(WRITER_HEAP)?); }
+        if st.writer.is_none() { st.writer = Some(if self.writer_threads == 0 { self.index.writer::<TantivyDocument>(WRITER_HEAP)? } else { self.index.writer_with_num_threads::<TantivyDocument>(self.writer_threads, WRITER_HEAP)? }); }
         let value = match f(st.writer.as_mut().expect("writer")) {
             Ok(value) => value,
             Err(e) => { st.writer = None; st.dirty = false; return Err(e); }
@@ -342,6 +344,14 @@ impl SearchIndex {
     pub fn remove_notebook_source(&self,source_id:i64)->tantivy::Result<()> {
         self.write(|writer| { writer.delete_term(tantivy::Term::from_field_u64(self.fields.source_id,source_id as u64)); Ok(()) })
     }
+    /// 업무자료함 문단(ext=nb)을 모두 지운다. 업무자료함을 별도 색인으로 옮긴 뒤 공용 색인을 정리할 때 쓴다.
+    pub fn remove_all_notebook_docs(&self)->tantivy::Result<()> {
+        self.write(|writer| { writer.delete_term(tantivy::Term::from_field_text(self.fields.ext,"nb")); Ok(()) })
+    }
+    /// 모든 문서를 지운다(별도 색인을 DB로 다시 채우기 전).
+    pub fn clear(&self)->tantivy::Result<()> { self.write(|writer| { writer.delete_all_documents()?; Ok(()) }) }
+    /// 지금 검색에 보이는 문서(문단) 수.
+    pub fn doc_count(&self)->u64 { self.reader.searcher().num_docs() }
     pub fn remove_notebook(&self,notebook_id:i64)->tantivy::Result<()> {
         self.write(|writer| { writer.delete_term(tantivy::Term::from_field_u64(self.fields.notebook_id,notebook_id as u64)); Ok(()) })
     }
@@ -369,6 +379,12 @@ impl SearchIndex {
             score,body:d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("").into()});}
         Ok(hits)
     }
+    /// writer 스레드 수를 정해 연다(업무자료함 별도 색인은 1).
+    pub fn open_or_create_with_threads(path: impl AsRef<Path>, threads: usize) -> tantivy::Result<Self> {
+        let mut ix = Self::open_or_create(path)?;
+        ix.writer_threads = threads;
+        Ok(ix)
+    }
     /// 색인을 연다. 색인 폴더의 스키마 버전 표시가 지금과 다르거나(옛 색인은 표시가 없다) 다시 만들다 만 표시가 있으면
     /// 옛 색인 파일을 버리고 빈 색인으로 시작하며 `needs_rebuild()`가 켜진다. 채우는 일은 `reindex::rebuild`가 한다.
     pub fn open_or_create(path: impl AsRef<Path>) -> tantivy::Result<Self> {
@@ -395,7 +411,7 @@ impl SearchIndex {
         let fields=fields_of(&index.schema())?;
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(rebuild), rebuild_lock: Mutex::new(lock), #[cfg(test)] legacy_body_ko: None})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(rebuild), rebuild_lock: Mutex::new(lock), writer_threads: 0, #[cfg(test)] legacy_body_ko: None})
     }
     /// 시험 전용: 버전 1(옛) 스키마 색인을 버전 표시 없이 만든다(옛 프로그램이 남긴 색인 폴더와 같다).
     #[cfg(test)]
@@ -407,7 +423,7 @@ impl SearchIndex {
         let legacy_body_ko=Some(index.schema().get_field("body_ko")?);
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(false), rebuild_lock: Mutex::new(None), legacy_body_ko})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(false), rebuild_lock: Mutex::new(None), writer_threads: 0, legacy_body_ko})
     }
     /// 옛 색인을 버려서 원본으로 다시 채워야 하는지.
     pub fn needs_rebuild(&self) -> bool { self.rebuild.load(Ordering::SeqCst) }

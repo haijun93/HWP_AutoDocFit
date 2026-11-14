@@ -108,7 +108,7 @@ class FileRenameAdapter extends StatelessWidget {
   );
 }
 
-/// Workspace adapter for Tab 8: 타임머신.
+/// Workspace adapter for Tab 8: 몽땅검색.
 class TimemachineAdapter extends StatelessWidget {
   const TimemachineAdapter({super.key, required this.api});
 
@@ -178,7 +178,7 @@ class IntegratedWorkspace extends StatelessWidget {
       libraryScreen: libraryScreen ?? LibraryScreen(
             api: BridgeLibraryApi(api),
             notebookApi: BridgeNotebookApi(api),
-            documentSearch: timemachineLibraryDocumentSearch(api),
+            scopedDocumentSearch: scopedLibraryDocumentSearch(api),
           ),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),

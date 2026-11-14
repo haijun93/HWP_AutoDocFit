@@ -6,6 +6,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'editor_colors.dart';
 import 'editor_files.dart';
 
 /// 대화상자 결과: 저장할 형식, 또는 변환 불가 글자 자리로 이동.
@@ -154,7 +155,7 @@ class _MemoSaveDialogState extends State<MemoSaveDialog> {
                     _encoding == 'CP949' ? '저장 전에 CP949로 바꿀 수 없는 글자(이모지 등)가 있는지 확인합니다.' : '파일 위치는 다음 창에서 고릅니다.',
                     style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
-                  if (_error != null) Text(_error!, key: const ValueKey('memo-save-error'), style: const TextStyle(color: Colors.red)),
+                  if (_error != null) Text(_error!, key: const ValueKey('memo-save-error'), style: TextStyle(color: EditorColors.of(context).error)),
                 ],
               ),
       ),

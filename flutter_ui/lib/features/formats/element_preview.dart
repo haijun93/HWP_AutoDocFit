@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 import '../settings/doc_preview.dart';
 import '../settings/kiosk_theme.dart';
@@ -29,7 +30,12 @@ String _markerOf(String label) {
 }
 
 /// 미리보기를 그릴 수 있는 요소인지(쪽·문장·표·칸·문단).
-Widget elementPreview(List path, String label, Map<String, String> values) {
+Widget elementPreview(
+  BuildContext context,
+  List path,
+  String label,
+  Map<String, String> values,
+) {
   final kind = path.isEmpty ? '' : '${path.first}';
   final size = (_number(values['size']) ?? 13).clamp(6, 40).toDouble();
   final spacing = _number(values['spacing']) ?? 0;
@@ -60,11 +66,13 @@ Widget elementPreview(List path, String label, Map<String, String> values) {
           width: 170,
           height: 240,
           decoration: BoxDecoration(
-            color: Colors.white,
-            border: Border.all(color: const Color(0xffdfe3e8)),
-            boxShadow: const [
+            color: Colors.white, // 문서 색(테마 무관): 흰 종이
+            border: Border.all(
+              color: const Color(0xffdfe3e8), // 문서 색(테마 무관): 종이 테두리
+            ),
+            boxShadow: [
               BoxShadow(
-                color: Color(0x14000000),
+                color: context.colors.shadow,
                 blurRadius: 10,
                 offset: Offset(0, 3),
               ),
@@ -80,13 +88,19 @@ Widget elementPreview(List path, String label, Map<String, String> values) {
             ),
             child: Container(
               decoration: BoxDecoration(
-                border: Border.all(color: Kiosk.blue.withValues(alpha: 0.5)),
-                color: Kiosk.blueSoft.withValues(alpha: 0.5),
+                // 문서 색(테마 무관): 흰 종이 위 본문 영역 표시라 테마와 무관하게 둔다.
+                border: Border.all(
+                  color: const Color(0xff3182f6).withValues(alpha: 0.5),
+                ),
+                color: const Color(0xffe8f3ff).withValues(alpha: 0.5),
               ),
               child: const Center(
                 child: Text(
                   '글이 들어가는 곳',
-                  style: TextStyle(fontSize: 11, color: Kiosk.blue),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Color(0xff3182f6), // 문서 색(테마 무관)
+                  ),
                 ),
               ),
             ),
@@ -95,7 +109,7 @@ Widget elementPreview(List path, String label, Map<String, String> values) {
         const SizedBox(height: 6),
         Text(
           '여백 위 ${values['page_top'] ?? '-'} · 아래 ${values['page_bottom'] ?? '-'} · 왼쪽 ${values['page_left'] ?? '-'} · 오른쪽 ${values['page_right'] ?? '-'}',
-          style: Kiosk.caption,
+          style: Kiosk.caption(context),
         ),
       ],
     );
@@ -117,7 +131,7 @@ Widget elementPreview(List path, String label, Map<String, String> values) {
           headerBold: header ? _yes(values['bold']) : true,
           bodyBold: !header && _yes(values['bold']),
           headerFill: values['fill'] != null && values['fill'] != '-'
-              ? const Color(0xffeef1f5)
+              ? const Color(0xffeef1f5) // 문서 색(테마 무관): 표 머리 칸 배경
               : null,
           spacing: spacing,
         ),
@@ -152,7 +166,11 @@ Widget elementPreview(List path, String label, Map<String, String> values) {
     caption: caption,
     children: [
       const DocParagraph(
-        DocPara(spans: [DocSpan('앞 문단')], size: 11, color: Kiosk.faint),
+        DocPara(
+          spans: [DocSpan('앞 문단')],
+          size: 11,
+          color: Color(0xff8b95a1), // 문서 색(테마 무관)
+        ),
       ),
       DocParagraph(para),
     ],

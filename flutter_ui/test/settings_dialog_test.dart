@@ -161,4 +161,42 @@ void mainGuided() {
       'r2',
     ]);
   });
+  testWidgets('app-provided status line shows under Mongttang search toggle', (
+    tester,
+  ) async {
+    Future<Object?> api(String method, List<Object?> args) async => {
+      'api_version': 1,
+      'ok': true,
+      'data': {
+        'revision': 'r1',
+        'running': false,
+        'fields': [
+          {
+            'key': 'mongttang_search',
+            'label': '몽땅검색 단축키(Ctrl+Alt+Space)',
+            'type': 'boolean',
+            'default': true,
+            'status': '켜짐 · Ctrl+Alt+Space로 열기',
+          },
+        ],
+        'values': {'mongttang_search': true},
+      },
+    };
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: SettingsDialog(api: api)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('category-general')));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('setting-status-mongttang_search')),
+      findsOneWidget,
+    );
+    expect(find.text('지금 상태: 켜짐 · Ctrl+Alt+Space로 열기'), findsOneWidget);
+  });
 }

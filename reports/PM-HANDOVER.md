@@ -1,3 +1,14 @@
+# APP1-G·I·J·H 인계 (2026-11-14)
+
+`feature/kfind-app`, `2335d18c` 이후 Gemini 미커밋 변경을 검토·보완해 채택. github/main은 이미 병합되어 있었으며 fetch 후 추가 커밋 0건. 상자/NBIDX1 kfind 동기화와 legacy 대체, 공통 search_engine 설정·상태 표시, 실제 시험 파이프 동등성 도구, 서버 상자 범위 검색·count 배지·자료 ID로 메모 열기 구현. Python 관련 104개 및 상자 삭제 보강 55개 통과. Flutter 관련 37개, 같은 이름 메모 보강 4개, ISUI/타임머신/업무자료함 연결 109개 통과, 최신 analyze 0건. 합성 문서 2개·86질의 실제 서비스 비교 A 차이 0, 두 번 독립 실행 JSON 바이트 동일. 비교 B 미설명 15건·Tantivy·실사용 지연·실문서군·되돌리기 관문은 APP1-K 후속. E:도 exFAT라 전체 시험은 NTFS C: 작업 트리와 TEMP에서 실행(잠금 2개). 전체 시작 시점 3,095개(1,188.755초): 기존 조회 속도 기준 실패 1·제외 13, 같은 실패 1개 단독 재확인 통과. 최신 보강분 NTFS 관련 106개 통과. 최종 discovery는 3,101개이며 최신 전체 재실행은 하지 않았다. 생성 fixture 4개 복원·잠금 2개 해제 확인. `reports/APP1_GIJH_2026-11-14.md`, `reports/APP1-equiv-2026-11-14.md`. main/GitLab/태그/릴리스 변경 금지 유지.
+
+# APP1-D·E·F 인계 (2026-11-14)
+
+`feature/kfind-app`, `8c0eaefd` 위에 `github/main` 먼저 병합(`553ff982`, 충돌 없음). 결과 4종 변환·문장/조각 강조, IPC 잠금 포함 가짜 서버 지연 1회(count p95 4.2449ms/query 4.1488ms/별도 연결 취소 3.9917ms), 기본 kfind·오류 시 legacy와 사유 표시·seeding phase 및 변경 훅 구현. 관련 254개 통과 뒤 보강한 최종 관련 41개 통과. 전체 3,057개는 E: exFAT TEMP 탓에 실패 3·오류 19·제외 15, 같은 실패 22개 NTFS TEMP에서 전부 통과(단일 전체 통과는 아님). 생성 fixture 4개 원복, 전체/COM 잠금 해제. 실제 Flutter/서비스 속도와 동등성 정밀 대조는 미측정(APP1-J/K 후속). ktm.exe는 isearch 읽기 전용 범위라 수정하지 않음. 보고서 `reports/APP1_DEF_2026-11-14.md`. GitHub 기능 브랜치에만 푸시, main/GitLab 금지 유지.
+
+# APP1-A·C 인계 (2026-11-13)
+
+`feature/kfind-app`: APP1-A `4f3b7ee1`, APP1-C `8e9b9a63` 구현. 기존 시험 2,941개 유지·새 시험 6개 추가. 지정 명령의 최종 전체 2,947개 OK(제외 10), 실패·오류 0, 1,830.883초. 래퍼 실행의 문서 진단 1건 실패와 재검증 이력은 `reports/APP1_AC_2026-11-13.md` 참조. 생성 fixture 4개 복원, GitHub `feature/kfind-app`에만 푸시. main 병합·푸시·GitLab 접근 금지 유지. 후속 APP1-B·D 이후 연결 작업은 이 카드 범위 밖이다.
 # FIX13 인계 (2026-11-13)
 
 `fix/todo-1113`에서 타임머신 open/reveal에 path 요청을 지원했다. ID가 있으면 기존 색인 항목을 우선하며 잘못된 ID를 path로 우회하지 않는다. 활성 조사 폴더·실제 연결 경로·지원 형식·제외 이름/폴더·파일 존재를 검사하고, 실패 이유를 화면에 표시한다. 파일명 열 보기의 단일 클릭은 미리보기, 더블클릭과 미리보기 문서 열기는 공통 명령 경로를 사용한다. 본문/위계검색도 ID 유무에 따라 같은 열기 경로를 사용한다.
@@ -36,8 +47,18 @@ feature/hs2-hsa에서 3단계 구현 완료. 종료 수명 관리 5d061082, 상�
 
 상세 변경·실패 시도·실행 시간·미확인 범위는 docs/SM2_INDEX_STATE_IMPLEMENTATION_2026-11-12.md 참조. 실제 앱/EXE·COM·전체 시험은 미확인. 다음 단계인 main 병합·게시는 총괄 범위다.
 
+# APP1-B 인계 (2026-11-14)
+
+feature/kfind-app에서 github/main 최신 병합 확인, kapp 보존 stash 적용·원본 보존. 연결 상태 6개·36조합, KFS1 프레임·64KB 분할 ingest·취소·시간 한도 구현. APP1-A 메타데이터 보완, APP1-C 조건 충족 확인. 관련 25개 통과(1.457초), 이후 긴 문단 분할의 반복 직렬화 축소는 최종 전체 시험에서 확인 필요. 다른 comx 측정의 COM 잠금과 별도 전체 시험 종료 대기로 전체 시험·푸시 미완료. 대기 래퍼 G:/docfit-tmp/kapp-app1b-run-full.py, 로그 예정 G:/docfit-tmp/kapp-app1b-full.log. 상세 reports/APP1_B_2026-11-14.md. 후속 APP1-F/I의 기본 engine=kfind·오류 때 legacy 대체 결정 유지.
+
 # RHIER1 인계 (2026-11-13)
 
 fix/rust-hierarchy-parity(기준 3a69b3e4)에서 Python 검색 위계 규칙 판 5를 Rust 공용 분류기로 옮겼다. role_sequence와 검색 위계를 구분하는 search_levels 계약, 구형 정수 계약/실패 폴백, 제목 표·Markdown·번호·라벨·개요·기호 단계와 klib 연결을 구현했다. 기본 hierarchy_engine=False 유지.
 
 합성 82문서·229문단: 기준 CLI 응답 누락 포함 차이 229→0, CLI·DLL·klib 687판정 차이 0. hierarchy 56 통과, klib 175 통과·기존 제외 2. Python 고유 관련 시험 58개 중 53 통과·제외 5(선택 실행 56개와 최종 계약/네이티브 7개는 5개 중복). 전체 Python·COM·실제 문서 평가·설치/배포는 미확인. 보고서 docs/RHIER1_RUST_PARITY_2026-11-13.md, 원시 결과 reports/RHIER1-parity.json. 검증 바이너리는 E:/docfit-tmp/rhier1-verified-binaries에 보존. E: 공간 부족과 공용 Cargo target의 의존성 타입 충돌을 겪었으므로 debug=0·incremental=0, crate별 target 분리로 빌드한다. main 병합·푸시·GitLab 접근은 하지 않는다.
+
+# T4 1단계 인계 (2026-11-13)
+작업 브랜치 feature/kfind-service, 기준 f2355aca. 새 실행 크레이트 crates/kfind가 기존 kfind/core를 재사용한다.
+SCM 명령·SID별 검색 파이프·대체 방식 저장·공개 색인 제거를 구현했다. 실제 SCM 등록과 예약 작업 생성은 시험하지 않는다.
+구현 범위·프로토콜·시험 결과·후속 작업은 docs/T4_KFIND_SERVICE_2026-11-13.md에 기록한다.
+이번 지시는 로컬 커밋만 허용한다. 푸시·태그·GitLab 접근 금지.

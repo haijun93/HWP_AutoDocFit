@@ -1,35 +1,88 @@
-html,body,#root{width:100%;height:100%;margin:0;overflow:hidden;font-family:"Malgun Gothic","Noto Sans KR",sans-serif;color:#172b4d}
-*{box-sizing:border-box}.editor-shell{height:100%;display:flex;flex-direction:column;background:#f8fafc}header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:white;border-bottom:1px solid #cbd5e1;flex-wrap:wrap}.document-name{font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav{display:flex;gap:6px;flex-wrap:wrap}.mm-shape-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 0}.mm-shape-grid button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;margin:0}.mm-shape-grid button.active{background:#dbeafe;border-color:#2563eb}.mm-shape-grid small{font-size:11px}button,select,input,textarea{font:inherit;font-size:13px;border:1px solid #94a3b8;border-radius:6px;padding:8px;background:white;color:#172b4d}button{cursor:pointer}button:hover{background:#e0ecff}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid #2563eb}button:disabled{opacity:.5}.workspace{display:flex;flex:1;min-height:0}aside{width:210px;padding:12px;overflow:auto;background:white;border-right:1px solid #cbd5e1}aside button{display:block;width:100%;margin-bottom:8px}h2{font-size:14px}aside label{display:block;font-size:13px;margin-top:12px}aside textarea,aside input,aside select{width:100%;margin-top:6px}aside textarea{min-height:110px}aside p{font-size:12px;line-height:1.8;color:#475569}main{flex:1;min-width:0}.react-flow__node-flow{width:220px;height:90px}.node-body{width:100%;height:100%;border:2px solid #475569;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden}.node-body.diamond{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border-radius:0;outline:2px solid #475569;padding:18px 45px}.node-body.ellipse{border-radius:50%}.node-body.text{border:0;background:transparent!important}.react-flow__handle{width:10px;height:10px;background:#2563eb;z-index:5}.react-flow__handle.connectingto,.react-flow__handle.valid{background:#16a34a;width:16px;height:16px;box-shadow:0 0 0 4px rgba(22,163,74,.25)}.react-flow.connecting .react-flow__node .react-flow__handle{width:13px;height:13px;opacity:1}label.check{display:flex;gap:6px;align-items:center}.react-flow__edge-text{font-size:13px}footer{padding:6px 12px;border-top:1px solid #cbd5e1;font-size:12px;background:white}@media(max-width:650px){aside{width:155px;padding:8px}header{padding:8px}.document-name{display:none}nav{margin-left:0}}
+/* 화면 틀(도구 막대·패널·메뉴·배경) 색 토큰(DARK1, 2026-11-13). 라이트 값은 예전 하드코딩 값과 같다.
+   테마는 <html data-theme="light|dark|hc">(main.jsx의 ?theme= 또는 window.docfitSetTheme)로 고른다.
+   도형·연결선·칠하기 등 문서 내용 색(paint.js·shapes.js·model.js)과 문서 종이(캔버스·표 미리보기)는 테마와 상관없이 그대로 둔다. */
+:root,
+:root[data-theme] :is(.flow-layer,.flow-strip,.grid-preview,.org,.bar,.catalog-preview-card){
+ color-scheme:light;
+ --ui-bg:#f8fafc;--ui-surface:white;--ui-text:#172b4d;--ui-text2:#334155;--ui-muted:#475569;--ui-muted2:#64748b;
+ --ui-line:#cbd5e1;--ui-line-soft:#e2e8f0;--ui-line-faint:#f1f5f9;
+ --ui-control-bg:white;--ui-control-text:#172b4d;--ui-control-border:#94a3b8;--ui-hover:#e0ecff;
+ --ui-accent:#2563eb;--ui-accent-strong:#1d4ed8;--ui-on-accent:white;--ui-focus:#2563eb;
+ --ui-selected:#dbeafe;--ui-selected-soft:#eff6ff;--ui-accent-text:#1d4ed8;--ui-link:#2563eb;
+ --ui-icon:#334155;--ui-icon-fill:#dbeafe;--ui-icon-accent:#2563eb;--ui-icon-accent2:#1d4ed8;--ui-icon-paper:white;
+ /* 문서 종이(흐름도 캔버스): 다크에서도 밝게 둔다(문서 내용 색이 종이 위에서 읽히도록). */
+ --canvas:#f8fafc;
+}
+/* 다크: 글자/바탕 대비 최소 4.9:1(본문 e2e8f0·보조 9eabbb·강조 글자 8db6ff·6ea2ff × 바탕 0f141a·171d26·1f2733·22314d·1d3459·182a45). */
+:root[data-theme="dark"]{
+ color-scheme:dark;
+ --ui-bg:#0f141a;--ui-surface:#171d26;--ui-text:#e2e8f0;--ui-text2:#e2e8f0;--ui-muted:#9eabbb;--ui-muted2:#9eabbb;
+ --ui-line:#334155;--ui-line-soft:#2a3340;--ui-line-faint:#222a35;
+ --ui-control-bg:#1f2733;--ui-control-text:#e2e8f0;--ui-control-border:#6b7a90;--ui-hover:#22314d;
+ --ui-accent:#6ea2ff;--ui-accent-strong:#8db6ff;--ui-on-accent:#0f141a;--ui-focus:#6ea2ff;
+ --ui-selected:#1d3459;--ui-selected-soft:#182a45;--ui-accent-text:#8db6ff;--ui-link:#6ea2ff;
+ --ui-icon:#cbd5e1;--ui-icon-fill:#2b3f63;--ui-icon-accent:#6ea2ff;--ui-icon-accent2:#6ea2ff;--ui-icon-paper:#1f2733;
+}
+/* 고대비: 시스템 색. 앱이 고대비(hc)를 알려 주거나 Windows 고대비(forced-colors)가 켜져 있을 때. */
+:root[data-theme="hc"]{
+ --ui-bg:Canvas;--ui-surface:Canvas;--ui-text:CanvasText;--ui-text2:CanvasText;--ui-muted:CanvasText;--ui-muted2:CanvasText;
+ --ui-line:CanvasText;--ui-line-soft:CanvasText;--ui-line-faint:CanvasText;
+ --ui-control-bg:ButtonFace;--ui-control-text:ButtonText;--ui-control-border:ButtonText;--ui-hover:Highlight;
+ --ui-accent:Highlight;--ui-accent-strong:Highlight;--ui-on-accent:HighlightText;--ui-focus:Highlight;
+ --ui-selected:Highlight;--ui-selected-soft:Canvas;--ui-accent-text:CanvasText;--ui-link:LinkText;
+ --ui-icon:ButtonText;--ui-icon-fill:ButtonFace;--ui-icon-accent:ButtonText;--ui-icon-accent2:ButtonText;--ui-icon-paper:ButtonFace;
+}
+@media (forced-colors:active){
+ :root,:root[data-theme]{
+  --ui-bg:Canvas;--ui-surface:Canvas;--ui-text:CanvasText;--ui-text2:CanvasText;--ui-muted:CanvasText;--ui-muted2:CanvasText;
+  --ui-line:CanvasText;--ui-line-soft:CanvasText;--ui-line-faint:CanvasText;
+  --ui-control-bg:ButtonFace;--ui-control-text:ButtonText;--ui-control-border:ButtonText;--ui-hover:Highlight;
+  --ui-accent:Highlight;--ui-accent-strong:Highlight;--ui-on-accent:HighlightText;--ui-focus:Highlight;
+  --ui-selected:Highlight;--ui-selected-soft:Canvas;--ui-accent-text:CanvasText;--ui-link:LinkText;
+  --ui-icon:ButtonText;--ui-icon-fill:ButtonFace;--ui-icon-accent:ButtonText;--ui-icon-accent2:ButtonText;--ui-icon-paper:ButtonFace;
+ }
+ button:hover{color:HighlightText}
+ /* 흐름도 캔버스는 문서 종이: 도형·글자 색을 시스템 색으로 바꾸지 않는다. */
+ .flow-layer .react-flow{forced-color-adjust:none}
+}
+/* 단추 속 작은 그림(도형 갤러리·지도 테마)의 색. 라이트 값은 그림에 적힌 값과 같다. */
+aside svg [stroke="#334155"]{stroke:var(--ui-icon)}aside svg [fill="#334155"]{fill:var(--ui-icon)}
+aside svg [fill="#dbeafe"]{fill:var(--ui-icon-fill)}aside svg [fill="white"]{fill:var(--ui-icon-paper)}
+aside svg [stroke="#2563eb"]{stroke:var(--ui-icon-accent)}aside svg [fill="#2563eb"]{fill:var(--ui-icon-accent)}
+aside svg [stroke="#1d4ed8"]{stroke:var(--ui-icon-accent2)}aside svg [fill="#1d4ed8"]{fill:var(--ui-icon-accent2)}
+
+html,body,#root{width:100%;height:100%;margin:0;overflow:hidden;font-family:"Malgun Gothic","Noto Sans KR",sans-serif;color:var(--ui-text)}
+*{box-sizing:border-box}.editor-shell{height:100%;display:flex;flex-direction:column;background:var(--ui-bg)}header{display:flex;align-items:center;gap:14px;padding:10px 16px;background:var(--ui-surface);border-bottom:1px solid var(--ui-line);flex-wrap:wrap}.document-name{font-size:13px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}nav{display:flex;gap:6px;flex-wrap:wrap}.mm-shape-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:8px 0}.mm-shape-grid button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 2px;margin:0}.mm-shape-grid button.active{background:var(--ui-selected);border-color:var(--ui-accent)}.mm-shape-grid small{font-size:11px}button,select,input,textarea{font:inherit;font-size:13px;border:1px solid var(--ui-control-border);border-radius:6px;padding:8px;background:var(--ui-control-bg);color:var(--ui-control-text)}button{cursor:pointer}button:hover{background:var(--ui-hover)}button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px solid var(--ui-focus)}button:disabled{opacity:.5}.workspace{display:flex;flex:1;min-height:0}aside{width:210px;padding:12px;overflow:auto;background:var(--ui-surface);border-right:1px solid var(--ui-line)}aside button{display:block;width:100%;margin-bottom:8px}h2{font-size:14px}aside label{display:block;font-size:13px;margin-top:12px}aside textarea,aside input,aside select{width:100%;margin-top:6px}aside textarea{min-height:110px}aside p{font-size:12px;line-height:1.8;color:var(--ui-muted)}main{flex:1;min-width:0}.flow-layer{background:var(--canvas)}.react-flow__node-flow{width:220px;height:90px}.node-body{width:100%;height:100%;border:2px solid #475569;border-radius:8px;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;overflow:hidden}.node-body.diamond{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%);border-radius:0;outline:2px solid #475569;padding:18px 45px}.node-body.ellipse{border-radius:50%}.node-body.text{border:0;background:transparent!important}.react-flow__handle{width:10px;height:10px;background:#2563eb;z-index:5}.react-flow__handle.connectingto,.react-flow__handle.valid{background:#16a34a;width:16px;height:16px;box-shadow:0 0 0 4px rgba(22,163,74,.25)}.react-flow.connecting .react-flow__node .react-flow__handle{width:13px;height:13px;opacity:1}label.check{display:flex;gap:6px;align-items:center}.react-flow__edge-text{font-size:13px}footer{padding:6px 12px;border-top:1px solid var(--ui-line);font-size:12px;background:var(--ui-surface)}@media(max-width:650px){aside{width:155px;padding:8px}header{padding:8px}.document-name{display:none}nav{margin-left:0}}
 
 .node-body.diamond{position:relative;clip-path:none;outline:0;border:0;background:transparent!important}.diamond-background{position:absolute;inset:0;width:100%;height:100%}.node-body.diamond span{position:relative}
 
 .node-body,.node-body.diamond{padding:0}.node-lines{white-space:pre;font-size:16px;line-height:24px;font-family:"Malgun Gothic","Noto Sans KR",sans-serif}
 
 /* 표/다이어그램: 탭·표 만들기(2026-10-15). 기존 편집기 색(#2563eb 강조, #cbd5e1 선)을 그대로 쓴다. */
-nav button.primary{background:#2563eb;color:white;border-color:#2563eb;font-weight:700}
-nav button.primary:hover{background:#1d4ed8}
+nav button.primary{background:var(--ui-accent);color:var(--ui-on-accent);border-color:var(--ui-accent);font-weight:700}
+nav button.primary:hover{background:var(--ui-accent-strong)}
 .flow-layer{width:100%;height:100%}
 .presets{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-bottom:10px}
 .presets button,.role-tabs button{margin:0;padding:7px 0}
-.presets button.active,.role-tabs button.active{background:#2563eb;color:white;border-color:#2563eb}
+.presets button.active,.role-tabs button.active{background:var(--ui-accent);color:var(--ui-on-accent);border-color:var(--ui-accent)}
 .role-tabs{display:flex;gap:4px;margin-bottom:8px}.role-tabs button{flex:1;display:block}
 .stepper-row{display:flex;align-items:center;justify-content:space-between;font-size:13px;margin:8px 0}
 .stepper{display:inline-flex;align-items:center;gap:4px}
 .stepper button{width:30px;height:30px;padding:0;margin:0;display:inline-block}
 .stepper output,.stepper input{width:46px;text-align:center;font-weight:700}
 aside .stepper input{width:52px;margin-top:0}
-.text-style{border:1px solid #e2e8f0;border-radius:10px;padding:8px 10px;margin:0 0 10px}
-.text-style legend{font-size:12px;color:#64748b;padding:0 4px}
+.text-style{border:1px solid var(--ui-line-soft);border-radius:10px;padding:8px 10px;margin:0 0 10px}
+.text-style legend{font-size:12px;color:var(--ui-muted2);padding:0 4px}
 .style-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
 .style-row label{margin-top:0!important;display:flex;align-items:center;gap:6px}
 .style-row label.size{flex-wrap:nowrap}
 .toggle{margin:0!important;display:inline-block!important;width:auto!important}
-.toggle.on{background:#1d4ed8;color:white;border-color:#1d4ed8}
+.toggle.on{background:var(--ui-accent-strong);color:var(--ui-on-accent);border-color:var(--ui-accent-strong)}
 .color input[type=color]{width:34px!important;height:28px;padding:2px;margin:0!important}
 .mini{width:auto!important;display:inline-block!important;margin:0!important;padding:4px 6px;font-size:12px}
 label.check{display:flex!important;align-items:center;gap:6px}label.check input{width:auto!important;margin:0!important}
-.table-canvas{height:100%;overflow:auto;padding:32px;background:#f8fafc}
-.hint{font-size:12px;color:#64748b;margin-top:16px}
+.table-canvas{height:100%;overflow:auto;padding:32px;background:var(--ui-bg)}
+.hint{font-size:12px;color:var(--ui-muted2);margin-top:16px}
 .flow-strip{display:grid;align-items:stretch;min-width:min-content}
 .flow-step{position:relative;display:flex;flex-direction:column;border:2px solid #4c4c4c;background:white;min-width:110px}
 .flow-step .cell{border:0;border-radius:0;text-align:center;padding:14px 6px;width:100%}
@@ -49,17 +102,17 @@ label.check{display:flex!important;align-items:center;gap:6px}label.check input{
 .style-row label.size{white-space:nowrap}
 .flow-step textarea.cell{resize:none;min-height:0;margin:0;font:inherit;line-height:1.35;overflow:hidden}
 /* 도형 갤러리·색 견본·연결선·표 종류(2026-10-16) */
-.shape-group{margin-bottom:6px}.shape-group summary{cursor:pointer;font-size:12px;color:#475569;padding:4px 0;font-weight:600}
+.shape-group{margin-bottom:6px}.shape-group summary{cursor:pointer;font-size:12px;color:var(--ui-muted);padding:4px 0;font-weight:600}
 .shape-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:3px}
 .shape-grid button{margin:0;padding:3px;display:flex;align-items:center;justify-content:center;height:30px}
 .tool-row{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}.tool-row button{flex:1 1 auto;margin:0!important;width:auto!important;padding:6px 4px;font-size:12px}
-.color-row{margin-top:8px;font-size:12px}.color-row>span{display:block;margin-bottom:4px;color:#475569}
+.color-row{margin-top:8px;font-size:12px}.color-row>span{display:block;margin-bottom:4px;color:var(--ui-muted)}
 .swatches{display:flex;flex-wrap:wrap;gap:3px;align-items:center}
-.swatch{width:16px!important;height:16px;padding:0!important;margin:0!important;border:1px solid #cbd5e1;border-radius:3px;display:inline-block!important}
-.swatch.on{outline:2px solid #2563eb;outline-offset:1px}
+.swatch{width:16px!important;height:16px;padding:0!important;margin:0!important;border:1px solid var(--ui-line);border-radius:3px;display:inline-block!important}
+.swatch.on{outline:2px solid var(--ui-accent);outline-offset:1px}
 .swatch.none{background:linear-gradient(135deg,#fff 45%,#ef4444 47%,#ef4444 53%,#fff 55%)}
 .swatches input[type=color]{width:24px!important;height:20px;padding:0;margin:0!important;border:0}
-.border-part{margin-bottom:10px}.border-part b{font-size:12px;color:#334155}
+.border-part{margin-bottom:10px}.border-part b{font-size:12px;color:var(--ui-text2)}
 .border-sample{height:0;margin-top:6px}
 .node-body{position:relative;display:flex;align-items:center;justify-content:center;border:0!important;background:transparent!important;padding:0}
 .shape-svg{position:absolute;inset:0;overflow:visible}
@@ -85,11 +138,11 @@ label.check{display:flex!important;align-items:center;gap:6px}label.check input{
 .bar input:first-child{padding:10px 16px;border-radius:0;min-width:180px;text-align:center}
 .bar-line{flex:1;height:0}
 .bar input:last-child{border:0;text-align:center;min-width:160px;background:transparent}
-.catalog-menu{overflow:auto;max-height:240px;margin-bottom:10px;border:1px solid #e2e8f0;border-radius:8px;padding:4px}
+.catalog-menu{overflow:auto;max-height:240px;margin-bottom:10px;border:1px solid var(--ui-line-soft);border-radius:8px;padding:4px}
 .catalog-menu>button{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;margin:3px 0;padding:8px 10px}
-.catalog-menu>button.active{border-color:#2563eb;background:#eff6ff;color:#1d4ed8}
-.catalog-menu>button small{font-size:11px;color:#64748b;white-space:nowrap}
-.catalog-preview{height:100%;overflow:auto;padding:32px;background:#f8fafc}
+.catalog-menu>button.active{border-color:var(--ui-accent);background:var(--ui-selected-soft);color:var(--ui-accent-text)}
+.catalog-menu>button small{font-size:11px;color:var(--ui-muted2);white-space:nowrap}
+.catalog-preview{height:100%;overflow:auto;padding:32px;background:var(--ui-bg)}
 .catalog-preview-card{max-width:1000px;margin:0 auto;background:white;border:1px solid #e2e8f0;border-radius:12px;padding:24px;box-shadow:0 4px 16px #0f172a0a}
 .catalog-table-scroll{max-height:calc(100vh - 350px);overflow:auto}
 .catalog-table-scroll table{border-collapse:collapse;background:white;min-width:60%;margin:20px auto}
@@ -100,18 +153,18 @@ label.check{display:flex!important;align-items:center;gap:6px}label.check input{
 .catalog-cell:hover,.catalog-cell:focus{border-color:#2563eb;background:#eff6ff44;outline:none}
 .catalog-structure-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:12px 0}.catalog-structure-tools span{margin-left:auto;color:#526071;font-size:13px}
 .catalog-preview-card>.primary{margin-top:8px}
-.mm-theme small{display:block;font-size:11px;color:#64748b}.mm-theme-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:6px 0}.mm-theme-row button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px;margin:0}.mm-theme-row button.active{background:#dbeafe;border-color:#2563eb}.mm-swatch{display:flex;height:10px;width:44px;border-radius:3px;overflow:hidden}.mm-swatch i{flex:1}
-.flow-layer{position:relative}.pen-layer{position:absolute;inset:0;z-index:6;cursor:crosshair;touch-action:none}.pen-layer svg{position:absolute;inset:0;pointer-events:none}.paint-aside .tool-row button.active{background:#dbeafe;border-color:#2563eb}.file-button{display:block;border:1px solid #94a3b8;border-radius:6px;padding:8px;text-align:center;cursor:pointer;margin-bottom:8px;background:white;font-size:13px}.file-button input{display:none}.shape-image img{user-select:none}
-.paint-drop-zone{border:2px dashed #2563eb;border-radius:10px;background:#eff6ff;padding:14px 10px;text-align:center;margin-bottom:8px;display:flex;flex-direction:column;gap:6px}.paint-drop-zone b{font-size:15px;color:#1d4ed8}.paint-drop-zone span{font-size:12px;color:#475569}.paint-drop-zone .file-link{font-size:12px;color:#2563eb;text-decoration:underline;cursor:pointer}.paint-drop-zone .file-link input{display:none}.paint-empty{position:absolute;inset:24px;z-index:4;pointer-events:none;border:3px dashed #93c5fd;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#1d4ed8;background:rgba(239,246,255,.55)}.paint-empty b{font-size:22px}.paint-empty span{font-size:14px;color:#475569}
+.mm-theme small{display:block;font-size:11px;color:var(--ui-muted2)}.mm-theme-row{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;margin:6px 0}.mm-theme-row button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px 2px;margin:0}.mm-theme-row button.active{background:var(--ui-selected);border-color:var(--ui-accent)}.mm-swatch{display:flex;height:10px;width:44px;border-radius:3px;overflow:hidden}.mm-swatch i{flex:1}
+.flow-layer{position:relative}.pen-layer{position:absolute;inset:0;z-index:6;cursor:crosshair;touch-action:none}.pen-layer svg{position:absolute;inset:0;pointer-events:none}.paint-aside .tool-row button.active{background:var(--ui-selected);border-color:var(--ui-accent)}.file-button{display:block;border:1px solid var(--ui-control-border);border-radius:6px;padding:8px;text-align:center;cursor:pointer;margin-bottom:8px;background:var(--ui-control-bg);color:var(--ui-control-text);font-size:13px}.file-button input{display:none}.shape-image img{user-select:none}
+.paint-drop-zone{border:2px dashed var(--ui-accent);border-radius:10px;background:var(--ui-selected-soft);padding:14px 10px;text-align:center;margin-bottom:8px;display:flex;flex-direction:column;gap:6px}.paint-drop-zone b{font-size:15px;color:var(--ui-accent-text)}.paint-drop-zone span{font-size:12px;color:var(--ui-muted)}.paint-drop-zone .file-link{font-size:12px;color:var(--ui-link);text-decoration:underline;cursor:pointer}.paint-drop-zone .file-link input{display:none}.paint-empty{position:absolute;inset:24px;z-index:4;pointer-events:none;border:3px dashed #93c5fd;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;color:#1d4ed8;background:rgba(239,246,255,.55)}.paint-empty b{font-size:22px}.paint-empty span{font-size:14px;color:#475569}
 .rotate-handle{position:absolute;left:50%;top:-30px;width:14px;height:14px;margin-left:-7px;border-radius:50%;background:#fff;border:2px solid #2563eb;cursor:grab;z-index:7;touch-action:none}.rotate-handle:active{cursor:grabbing}.rotate-handle::after{content:'';position:absolute;left:5px;top:12px;width:1.5px;height:16px;background:#2563eb}.rotate-row{display:flex;align-items:center;gap:6px;font-size:13px;margin:6px 0}.rotate-row input[type=range]{flex:1;min-width:60px}.rotate-row input[type=number]{width:52px}
 .node-rot{position:relative;transform-origin:50% 50%}
-.layer-panel{margin-top:10px;border-top:1px solid #e2e8f0;padding-top:6px}
-.layer-list{list-style:none;margin:4px 0;padding:0;border:1px solid #e2e8f0;border-radius:6px;max-height:220px;overflow:auto}
-.layer-list li{display:flex;align-items:center;gap:4px;padding:3px 6px;border-bottom:1px solid #f1f5f9;cursor:pointer;font-size:13px}
+.layer-panel{margin-top:10px;border-top:1px solid var(--ui-line-soft);padding-top:6px}
+.layer-list{list-style:none;margin:4px 0;padding:0;border:1px solid var(--ui-line-soft);border-radius:6px;max-height:220px;overflow:auto}
+.layer-list li{display:flex;align-items:center;gap:4px;padding:3px 6px;border-bottom:1px solid var(--ui-line-faint);cursor:pointer;font-size:13px}
 .layer-list li:last-child{border-bottom:0}
-.layer-list li.active{background:#dbeafe}
+.layer-list li.active{background:var(--ui-selected)}
 .layer-list li button{display:inline-block;width:auto;flex:none;margin:0;padding:0 2px;min-width:22px;border:0;background:transparent;font-size:13px}
 .layer-list li .layer-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .layer-list li input{flex:1;min-width:0;font-size:13px}
-.layer-list li small{color:#64748b}
+.layer-list li small{color:var(--ui-muted2)}
 .layer-assign{width:100%;margin-top:4px}

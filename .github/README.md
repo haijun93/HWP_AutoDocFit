@@ -1,12 +1,15 @@
 <h1 align="center">한글편집 후처리</h1>
 
-<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.64</h2>
+<a id="korean"></a>
+<p align="center"><a href="#korean">한국어</a> · <a href="#english">English</a></p>
+
+<h2 align="center">⬇️ 지금 내려받기 · 최신 v2.2.65</h2>
 
 | 내려받는 곳 | 설치형 (Setup, 187MB) | 포터블 (Portable, 209MB) |
 |:---:|:---:|:---:|
-| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.64/HWP_AutoDocFit_v2.2.64_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.64/HWP_AutoDocFit_v2.2.64_Portable.exe) |
+| GitHub | [설치형 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.65/HWP_AutoDocFit_v2.2.65_Setup.exe) | [포터블 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.65/HWP_AutoDocFit_v2.2.65_Portable.exe) |
 
-실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.64/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
+실행 파일과 함께 **기능시연용 예시문서** [예시문서 내려받기](https://github.com/haijun93/hwp-auto-docfit/releases/download/v2.2.65/report-example-all-in-one.txt) (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`)도 받아 두세요. 프로그램의 「한 번에 적용」에 이 문서를 넣으면 시연 영상과 같은 결과를 바로 확인할 수 있습니다.
 
 **설치형**은 설치 후 시작 메뉴에서 실행하고, **포터블**은 설치 없이 파일을 바로 실행합니다. Windows 10·11용이며, 문서 편집 기능에는 한컴오피스 한/글이 필요합니다.
 
@@ -15,9 +18,6 @@
 <p align="center"><strong>오프라인 · 폐쇄망 사용 가능 · 원본 보존 · 한/글 연동</strong></p>
 
 <p align="center"><img src="../docs/media/cardnews/02-work-modes.png" alt="문서 편집 작업 방식 선택" width="860"></p>
-
-
-가상 폴더 창(`kvf.exe`)에서 자료함을 빠르게 열고 영역별로 찾아볼 수 있습니다. DB의 읽기 구조는 klib 시험으로 고정하며, R6·R7 실기 확인과 R9·R10 자원 측정은 아직 0회입니다.
 
 <!-- DEMO:START -->
 
@@ -73,7 +73,7 @@ https://github.com/user-attachments/assets/ed8a6b89-70c6-4459-8cff-bebefb8c4d54
 
 예시 보고서를 프로그램에 끌어 놓으면 제목표, 개요표, 장·절·소제목, 본문, 표 등 문서 구조와 서식을 분석하여 사용자 서식 프로파일로 등록할 수 있습니다.
 
-처음 사용할 때는 함께 제공되는 예시 보고서 `[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`로 「한 번에 적용」을 바로 체험해 볼 수 있습니다. v2.2.57부터 이 예시는 시연 영상에 쓰인 보고서와 같습니다.
+처음 사용할 때는 함께 제공되는 예시 보고서 `[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`로 「한 번에 적용」을 바로 체험해 볼 수 있습니다. 이 예시는 시연 영상에 쓰인 보고서와 같습니다.
 
 </details>
 
@@ -160,11 +160,23 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 </details>
 
-### 7. 위계검색
+### 7. 몽땅검색
 
-위계검색은 문서의 목차와 구조를 분석하여 검색 결과의 우선순위를 정하는 기능입니다.
+PC에 흩어진 작업 파일을 파일명·본문·위계로 한곳에서 찾고, 시간순 타임라인으로 이전 버전과 변경 이력을 확인할 수 있습니다. (이전 이름: 타임머신)
 
-타임머신의 타임라인에서 선택한 문서와 관련된 문서를 찾는 기능도 같은 이름인 「위계검색」으로 제공합니다.
+<p align="center"><img src="../docs/media/cardnews/09-timeline.png" alt="몽땅검색의 파일 타임라인" width="860"></p>
+
+- **세 가지 검색**: 파일명 검색, 본문검색, 위계검색을 메뉴로 바꿔 가며 쓸 수 있습니다.
+- **검색어 공유**: 세 메뉴가 같은 검색어를 함께 쓰므로, 메뉴를 바꾸면 입력한 검색어로 바로 다시 찾습니다.
+- **실시간 검색**: 2글자 이상 입력하면 Enter 없이 바로 결과를 보여 줍니다.
+- **문서 열기**: 검색 결과나 타임라인에서 문서를 바로 엽니다.
+- **연관 문서 찾기**: 타임라인에서 선택한 문서와 관련된 문서를 「위계검색」으로 찾을 수 있습니다.
+
+문서를 언제 수정했는지, 어떤 작업본이 최신인지, 이전 결과물을 다시 찾아야 하는지 확인할 때 활용할 수 있습니다.
+
+### 8. 위계검색
+
+위계검색은 문서의 목차와 구조를 분석하여 검색 결과의 우선순위를 정하는 기능입니다. 몽땅검색과 업무자료함에서 사용할 수 있습니다.
 
 <details>
 <summary>세부 기능과 사용 방법</summary>
@@ -188,26 +200,17 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 > 2026년 업무보고 > 제2장 주요 추진사업 > 2.1 공공 AI 대전환
 
-#### 독자 개발 검색 엔진
-
-본문검색·위계검색에는 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발한 독자 검색 엔진(kfind-core)을 사용하도록 개발하고 있습니다.
-
-- 문장 단위 다중 단어 검색: 여러 단어가 같은 문장 안에 함께 나오는 경우를 색인 단계에서 바로 판정합니다.
-- 한국어 부분 일치: 2글자 단위로 색인하여 조사·어미가 붙은 단어도 찾습니다.
-- 가벼운 색인: 압축 단어 사전(FST)과 압축 비트맵(Roaring)으로 색인 크기와 메모리 사용을 줄였습니다.
-- 실시간 검색: 검색창에 2글자 이상 입력하면 Enter 없이 바로 결과를 보여 줍니다.
-
-자체 시험(문서 3,000개)에서 색인 8.9초·색인 크기 32MB, 검색 1회 엔진 처리 시간 1.4ms 이하로 측정되었습니다.
-
 </details>
 
-### 8. 타임머신
+#### 독자 개발 검색 엔진 (개발 중)
 
-작업 파일을 시간순으로 검색하여 이전 버전과 변경 이력을 확인할 수 있습니다.
+본문검색·위계검색에 쓸 검색 엔진(kfind)을 외부 검색 엔진을 가져다 쓰지 않고 Rust로 직접 개발하고 있습니다. v2.2.65부터 앱 안 검색(본문검색·위계검색)은 이 엔진을 기본으로 쓰고, 엔진이 응답하지 않으면 기존 방식으로 자동 대체합니다. 엔진 코드는 이 저장소의 `kfind/`·`crates/kfind/`에 공개되어 있습니다.
 
-<p align="center"><img src="../docs/media/cardnews/09-timeline.png" alt="타임머신의 파일 타임라인" width="860"></p>
+- 문장 단위 다중 단어 검색: 여러 단어가 같은 문장 안에 함께 나오는 경우를 색인 단계에서 바로 판정합니다.
+- 한국어 부분 일치: 2글자 조각 단위로 색인하여 조사·어미가 붙은 단어도 찾습니다.
+- 가벼운 색인: 압축 단어 사전(FST)과 압축 비트맵(Roaring)으로 색인 크기와 메모리 사용을 줄입니다.
 
-문서를 언제 수정했는지, 어떤 작업본이 최신인지, 이전 결과물을 다시 찾아야 하는지 확인할 때 활용할 수 있습니다.
+개발 중인 엔진의 자체 시험(문서 3,000개)에서 색인 8.9초·색인 크기 32MB, 검색 1회 엔진 처리 시간 1.4ms 이하로 측정되었습니다. 실제 사용 환경의 성능은 자료의 양과 PC 사양에 따라 다릅니다.
 
 ### 9. 가상 폴더
 
@@ -215,29 +218,35 @@ AI 답변을 공문서 보고서에 바로 활용할 수 있도록 정리합니�
 
 <p align="center"><img src="../docs/media/cardnews/11-virtual-folder.png" alt="가상 폴더 화면: 핵심자료·기초자료·참고자료·임시저장소 영역" width="860"></p>
 
+가상 폴더는 별도의 가벼운 창(`kvf.exe`)으로 열리며, 자료를 핵심자료·기초자료·참고자료·임시저장소 영역별로 나누어 빠르게 찾아볼 수 있습니다.
 
 이 기능을 사용하면 원본과 복사본이 뒤섞이는 문제를 줄일 수 있습니다. 필요한 경우 가상 폴더의 자료를 실제 물리 폴더로 전환할 수도 있습니다.
 
-### 10. 오프라인 노트북
+### 10. 업무자료함 (오프라인 노트북)
 
 Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기능입니다.
 
-프로그램에서는 「업무자료함」 메뉴로 제공합니다.
-
 <p align="center"><img src="../docs/media/cardnews/12-work-library.png" alt="업무자료함 화면: 출처 목록, 본문검색, 노트" width="860"></p>
 
-
-업무 관련 법령, 매뉴얼, 과거 보고서, 참고자료 등을 주제별 정보 묶음으로 관리하고, 해당 자료 안에서만 검색하여 필요한 내용을 빠르게 찾을 수 있습니다.
+업무 관련 법령, 매뉴얼, 과거 보고서, 참고자료 등을 주제별 정보 묶음(출처 목록)으로 관리하고, 해당 자료 안에서만 검색하여 필요한 내용을 빠르게 찾을 수 있습니다. 검색어를 넣으면 체크한 출처마다 근거 문단을 나란히 보여 주고, 찾은 내용은 노트로 정리할 수 있습니다.
 
 외부 서버로 자료를 전송하지 않으므로 폐쇄망에서도 사용할 수 있습니다.
 
 ### 11. 몽땅클립보드
 
-복사한 문장을 기록해 두었다가 필요할 때 다시 불러올 수 있습니다.
+복사한 문장과 그림을 기록해 두었다가 필요할 때 다시 불러올 수 있습니다.
 
-<p align="center"><img src="../docs/media/cardnews/10-mongttang-clipboard.png" alt="몽땅클립보드 복사 기록" width="860"></p>
+<p align="center"><img src="../docs/media/cardnews/10-mongttang-clipboard.png" alt="몽땅클립보드 복사 기록" width="460"></p>
 
-`Ctrl+Shift+V`를 사용하면 이전에 복사한 여러 문장과 자료를 다시 선택하여 붙여 넣을 수 있어 반복적인 자료 수집과 문서 작성에 유용합니다.
+- **단축키 빠른 목록**: `Ctrl+Shift+V`(기본값)를 누르면 이전에 복사한 문장과 자료 목록이 떠서 바로 골라 붙여 넣을 수 있습니다.
+- **화면캡처 폴더 자동 인식**: Windows 스크린샷 폴더 등 화면캡처가 저장되는 폴더를 자동으로 찾아, 새로 찍은 화면캡처도 목록에 모아 줍니다.
+- **그림 미리보기**: 그림 항목에 마우스를 올리거나 키보드로 고르면 큰 미리보기를 보여 줍니다.
+
+반복적인 자료 수집과 문서 작성에 유용합니다.
+
+### 12. 쉬는 시간 색인
+
+몽땅검색 본문 색인과 업무자료함 자료 변경분 색인을 PC를 쓰지 않는 쉬는 시간에 자동으로 처리합니다. 사용자가 작업 중이거나 CPU·디스크 사용이 많을 때는 색인을 멈추고 기다리므로 업무를 방해하지 않습니다. 설정에서 끄거나 대기 시간을 바꿀 수 있습니다.
 
 ## 통합 업무 지원 도구
 
@@ -257,11 +266,12 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 | PDF 병합과 압축 | 전자결재 첨부파일 용량 제한 대응 |
 | 파일명 일괄 변경 | 날짜·문서 종류·순번·기관명 규칙 적용 |
 | AI 답변의 공문서 변환 | 기호·잔여 서식 정리와 개조식 체계 변환 |
+| 몽땅검색 | 파일명·본문·위계검색, 실시간 검색, 파일 타임라인 |
 | 위계검색 | 문서 목차와 구조를 고려한 검색 |
-| 타임머신 | 이전 버전과 변경 이력 확인 |
 | 가상 폴더 | 원본에 대한 참조를 모아 관리 |
-| 오프라인 노트북 | 주제별 정보 묶음 안에서 검색 |
-| 클립보드 기록 관리 | 복사 기록을 다시 선택하여 붙여넣기 |
+| 업무자료함 | 주제별 정보 묶음 안에서 검색 |
+| 몽땅클립보드 | 복사 기록·화면캡처를 단축키로 다시 붙여넣기 |
+| 쉬는 시간 색인 | PC를 쓰지 않을 때 검색 색인 자동 갱신 |
 
 여러 프로그램을 번갈아 실행하거나 작업 파일을 별도로 복사하지 않고, 문서 작성부터 편집·변환·정리·검색까지 하나의 프로그램에서 처리할 수 있습니다.
 
@@ -275,11 +285,72 @@ Gemini Notebook과 유사한 개념을 오프라인 환경에서 구현한 기�
 - 문서 구조와 위계를 활용한 검색 지원
 - 파일 변환과 행정업무용 편의 기능 통합
 - 설치형 및 포터블 실행 파일 제공
-- MIT 라이선스 기반 배포
 - 4만 줄 이상의 자동화 시험 코드와 CI를 통한 안정성 관리
+
+## 라이선스
+
+- **앱**: [MIT 라이선스](../LICENSE)로 배포합니다.
+- **독자 검색 엔진(kfind)**: `kfind/`(`kfind/core/`·`kfind/names/` 포함)·`crates/kfind/` 폴더는 MIT가 아니라 [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/) + 출처 표시 조건으로 배포합니다(전문: [`kfind/LICENSE`](../kfind/LICENSE)). 비상업적 사용만 허용하며, 수정·재배포는 허용하지 않습니다.
+- 함께 쓰는 오픈소스의 라이선스는 [사용한 오픈소스](../THIRD_PARTY_NOTICES.md)를 참고하세요.
 
 ## 배포 현황
 
-현재 공개 버전은 **v2.2.64**입니다.
+현재 공개 버전은 **v2.2.65**입니다.
 
 설치형과 포터블 Windows 실행 파일로 제공되며, 한컴오피스 한/글과 연동하여 행정 보고서 작성, 문서 후처리, 파일 변환, 자료 검색 업무를 지원합니다.
+
+---
+
+<a id="english"></a>
+
+## English
+
+### Overview
+
+**HWP AutoDocFit** is an offline desktop tool that takes the repetitive work out of preparing reports in Hancom Office Hangul (HWP/HWPX), the word processor used throughout Korean public administration. It was built by a civil servant at Mapo-gu Office, Seoul, for public-sector staff who work on closed (air-gapped) networks.
+
+Once a report draft is written, a lot of time still goes into rule-based finishing work: hanging indents, character spacing, bullet hierarchies, tables, page fitting and file conversion. AutoDocFit automates that work and brings the other everyday office tasks — conversion, renaming, search, clipboard history — into one program.
+
+- Fully offline: no external AI services or servers are called, so it works on closed networks.
+- Your originals are never modified; results are saved as new files.
+- Works with Hancom Office Hangul through its COM automation interface.
+
+### Key features
+
+- **Document formatting automation** — character spacing, hanging indents and paragraph hierarchy, bullet and outline numbering, style unification, page fitting, table formatting. Drop in a sample report and the tool learns its structure and styles as a reusable profile.
+- **Table templates and Table Sketchpad** — save frequently used table styles, or draw a new table, merge/split cells and edit borders and shading.
+- **Diagrams, mind maps and photo attachments** — workflow charts, shapes and connectors, mind maps, photo pages with captions and layout.
+- **File conversion** — HWP/HWPX, PDF, images (PNG, JPG), TXT/Markdown, DOCX, XLSX/CSV; PDF merging and compression to stay within e-approval attachment size limits.
+- **Batch file renaming** — rename many files at once using rules such as date, document type, sequence number and organization name.
+- **AI answer to official-document format** — paste an answer from ChatGPT, Gemini, Claude, etc.; leftover Markdown/HTML marks are cleaned up and the text is restructured into the standard Korean official-document bullet hierarchy (□, ㅇ, -, •).
+- **Mongttang Search (all-in-one search, formerly "Time Machine")** — search your work files by file name, full text or document hierarchy from one place. The three modes share one search box, results appear as you type (two or more characters, no Enter needed), documents open directly from the results, and a timeline shows earlier versions and change history.
+- **Hierarchy search** — ranks results by where the term appears in the document's structure (title, chapter, section, body, tables) and shows the document path of each hit.
+- **In-house search engine (kfind, in development)** — a Rust search engine written from scratch for full-text and hierarchy search: multi-word matching within a single sentence, Korean partial matching by indexing two-character fragments, and a compact index built on an FST term dictionary and Roaring compressed bitmaps. In our own test (3,000 documents) indexing took 8.9 s with a 32 MB index, and a single query took at most 1.4 ms of engine time. From v2.2.65 the app's built-in search uses it by default and falls back to the previous search automatically if the engine does not respond.
+- **Virtual folders** — collect references to original files (not copies) in a lightweight separate window (`kvf.exe`), sorted into areas such as key materials, background materials, references and scratch space; convert to a real folder when needed.
+- **Work Library (offline notebook)** — group laws, manuals, past reports and references by topic and search only within that set; matching passages from each checked source are shown side by side, and you can keep notes.
+- **Mongttang Clipboard** — keeps a history of copied text and images. Press `Ctrl+Shift+V` (default) for a quick list to paste from, screenshot folders are detected automatically so new screenshots join the list, and image items show a large preview.
+- **Idle-time indexing** — search indexes for Mongttang Search and the Work Library are refreshed while the PC is idle, and paused while you are working or the CPU/disk is busy.
+
+### Installation
+
+Download the installer (**Setup**) or the **Portable** executable from the download links at the top of this page.
+
+- **Setup**: install, then launch from the Start menu.
+- **Portable**: run the file directly without installing.
+- Also download the sample document (`[모의데이터]문서편집_작업방식(한번에적용) 기능시연용문서.txt`) and drop it into "Apply all at once" (「한 번에 적용」) to reproduce the demo video.
+
+The user interface and documentation are in Korean.
+
+### System requirements
+
+- Windows 10 or 11
+- Hancom Office Hangul 2020, which the document editing features drive through its COM automation interface
+- No internet connection is required.
+
+### License
+
+- **Application**: [MIT License](../LICENSE).
+- **kfind search engine**: the `kfind/` (including `kfind/core/` and `kfind/names/`) and `crates/kfind/` folders are not MIT; they are licensed under [PolyForm Strict 1.0.0](https://polyformproject.org/licenses/strict/1.0.0/) with an attribution requirement (full text: [`kfind/LICENSE`](../kfind/LICENSE)). Noncommercial use only; modification and redistribution are not permitted.
+- Third-party components: see [Third-party notices](../THIRD_PARTY_NOTICES.md).
+
+See the [user guide](../docs/USER_GUIDE.md) and [development guide](../docs/DEVELOPMENT.md) (both in Korean) for details.

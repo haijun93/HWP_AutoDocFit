@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
+import 'formats_colors.dart';
 import '../../core/api/abbreviation_api.dart';
 
 class FormatExampleEditDialog extends StatefulWidget {
@@ -43,13 +45,15 @@ class _FormatExampleEditDialogState extends State<FormatExampleEditDialog> {
             '서식 이름은 첫 문장의 앞 8글자로 정하며 나중에 \'이름 바꾸기…\'로 고칠 수 있습니다.';
     final dataError = widget.data['error']?.toString() ?? '';
     final displayError = error.isNotEmpty ? error : dataError;
+    final c = context.colors;
+    final fc = FormatsColors.of(context);
 
     return PopScope(
       canPop: false,
       child: AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.edit_note_rounded, color: Color(0xff2563eb)),
+            Icon(Icons.edit_note_rounded, color: c.accent),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -72,25 +76,25 @@ class _FormatExampleEditDialogState extends State<FormatExampleEditDialog> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: const Color(0xffeff6ff),
+                    color: fc.noticeFill,
                     borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: const Color(0xffbfdbfe)),
+                    border: Border.all(color: fc.noticeLine),
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.description_outlined,
-                        color: Color(0xff2563eb),
+                        color: c.accent,
                         size: 24,
                       ),
                       const SizedBox(width: 10),
-                      const Expanded(
+                      Expanded(
                         child: Text(
                           '열린 한/글 창에서 예시 문서를 작성하세요.',
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xff1e3a8a),
+                            color: fc.noticeText,
                           ),
                         ),
                       ),
@@ -100,10 +104,10 @@ class _FormatExampleEditDialogState extends State<FormatExampleEditDialog> {
                 const SizedBox(height: 12),
                 Text(
                   message,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 13,
                     height: 1.5,
-                    color: Color(0xff334155),
+                    color: c.textBody,
                   ),
                 ),
                 if (displayError.isNotEmpty) ...[
@@ -112,25 +116,25 @@ class _FormatExampleEditDialogState extends State<FormatExampleEditDialog> {
                     key: const Key('formatExampleError'),
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: const Color(0xfffef2f2),
+                      color: c.dangerSoft,
                       borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: const Color(0xfffca5a5)),
+                      border: Border.all(color: fc.errorLine),
                     ),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Icon(
+                        Icon(
                           Icons.error_outline_rounded,
-                          color: Color(0xffdc2626),
+                          color: c.danger,
                           size: 18,
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             displayError,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
-                              color: Color(0xffb91c1c),
+                              color: c.dangerDeep,
                             ),
                           ),
                         ),

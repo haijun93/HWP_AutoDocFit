@@ -632,6 +632,7 @@ class DesktopWebBridge:
                 "drop_target": self.drop_target,
                 "rename_open": rename_open,
                 "sidebar_collapsed": self._sidebar_collapsed_value(),
+                "theme_mode": self._theme_mode_value(),
                 "developer_mode": self._setting_flag('developer_mode'),
                 "always_on_top": self._setting_flag('always_on_top'),
                 "sidebar_mode": self.sidebar_active,
@@ -1440,7 +1441,20 @@ class DesktopWebBridge:
         from docfit_app.shell_menu import status
         snapshot = self._configuration().snapshot(running=self.gui.running)
         snapshot['values']['shell_menu'] = status()['registered']
+        self._attach_ktm_status(snapshot)
         return snapshot
+
+    def _attach_ktm_status(self, snapshot):
+        """설정 화면의 몽땅검색 칸에 지금 상태 한 줄을 붙인다(실패해도 설정 화면은 그대로)."""
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, KtmService, status_text
+            fields = [f for f in snapshot.get('fields', []) if f.get('key') == SETTING_KEY]
+            if fields:
+                text = status_text(KtmService().status())
+                for field in fields:
+                    field['status'] = text
+        except Exception:
+            logging.getLogger(__name__).warning("몽땅검색 상태 확인 실패", exc_info=True)
 
     def get_settings(self):
         # 스레드 안전: 설정 읽기는 SettingsService의 경로별 RLock 안에서 하고 running은 속성 읽기 한 번이다.
@@ -1453,6 +1467,13 @@ class DesktopWebBridge:
     def save_settings(self, values, revision):
         def save():
             self._configuration().save(values, revision, running=self.gui.running)
+            if 'mongttang_search' in values:
+                # 몽땅검색 켜기·끄기는 상주 프로그램을 끄고 기다릴 수 있어(최대 수 초) Tk 밖 스레드에서 한다.
+                from docfit_app.ktm_service import KtmService
+                enabled = bool(values['mongttang_search'])
+                threading.Thread(target=lambda: logging.getLogger(__name__).info(
+                    "몽땅검색 설정 반영: %s", KtmService().apply_setting(enabled)),
+                    name='ktm-apply', daemon=True).start()
             if 'freeze_tracing' in values:
                 self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
@@ -2118,6 +2139,7 @@ class DesktopWebBridge:
                 folder, feature_api=self._timemachine_send_to_feature,
                 developer_mode=lambda: bool(self._configuration().store.read().get("developer_mode", False)),
                 idle_scheduler=self._idle_scheduler(),
+                search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
             )
         return service
 
@@ -2134,8 +2156,19 @@ class DesktopWebBridge:
             self._library_idle_registered = True
         return scheduler
 
+    def _register_notebook_idle_job(self):
+        """업무자료함 출처 변경분 작업(NBIDX1)을 klib 브리지를 처음 만들 때 한 번 등록한다.
+        비교·다시 색인은 klib(nb_source_check·nb_source_refresh), hwp·pdf 추출만 NotebookService가 한다."""
+        scheduler = self._idle_scheduler()
+        if not getattr(self, "_notebook_idle_registered", False):
+            from docfit_app.notebook_idle_refresh import NOTEBOOK_IDLE_EVERY_SECONDS, NotebookSourceRefreshJob
+            job = NotebookSourceRefreshJob(lambda: getattr(self, "_library_bridge", None), self._notebook_service_for)
+            scheduler.register(job, every=NOTEBOOK_IDLE_EVERY_SECONDS)
+            self._notebook_idle_registered = True
+        return scheduler
+
     def _timemachine_send_to_feature(self, feature, paths):
-        """타임머신에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
+        """몽땅검색에서 보낸 승인된 파일 목록을 실제 기능 대기열에 연결한다."""
         if feature == "rename_batch":
             return self._file_rename_service().add_paths(paths)
         if feature in ("convert", "document_edit"):
@@ -2154,20 +2187,20 @@ class DesktopWebBridge:
                 added = self.add_paths(paths, from_drop=False)
                 if not added:
                     return {"ok": False, "code": "FEATURE_FAILED", "message": "파일을 추가하지 못했습니다."}
-                self.gui.status_var.set(f"타임머신에서 문서 추가 · 총 {len(self.gui.files)}개")
+                self.gui.status_var.set(f"몽땅검색에서 문서 추가 · 총 {len(self.gui.files)}개")
                 self._update_document_hints()
                 return {"ok": True}
             return self._tk(add_to_gui)
         return {"ok": False, "code": "FEATURE_UNAVAILABLE", "message": "해당 기능을 사용할 수 없습니다."}
 
     def timemachine(self, action, payload=None):
-        """타임머신 화면 명령을 처리한다."""
+        """몽땅검색 화면 명령을 처리한다."""
         try:
             from docfit_app.timemachine_service import TimemachineService
             return self._timemachine_service().command(action, payload)
         except Exception:
-            logging.getLogger(__name__).exception("타임머신 처리 실패")
-            return {"ok": False, "code": "TM_FAILED", "message": "타임머신 작업을 완료하지 못했습니다."}
+            logging.getLogger(__name__).exception("몽땅검색 처리 실패")
+            return {"ok": False, "code": "TM_FAILED", "message": "몽땅검색 작업을 완료하지 못했습니다."}
 
     def kvf(self, action, payload=None):
         from docfit_app.kvf_client import KvfClient
@@ -2537,9 +2570,10 @@ class DesktopWebBridge:
         """klib 브리지는 앱 시작 때 만들지 않고 처음 부를 때 만든다(v2.2.17: 속성 없음 오류 수정)."""
         if getattr(self, "_library_bridge", None) is None:
             from docfit_app.library_bridge import LibraryBridge
-            self._library_bridge = LibraryBridge()
+            self._library_bridge = LibraryBridge(settings_provider=lambda: self._settings_store().read())
             try:
                 self._idle_scheduler()
+                self._register_notebook_idle_job()
             except Exception:
                 logging.getLogger(__name__).debug("쉬는 시간 색인 등록 실패", exc_info=True)
         return self._library_bridge
@@ -2680,15 +2714,20 @@ class DesktopWebBridge:
                 # 노트 HWPX 내보내기 저장 위치(네이티브 저장 대화상자, 경로는 호스트에만 보관).
                 import uuid
                 return self._file_dialogs.select_files(uuid.uuid4().hex, "notebook_hwpx", "save")
-            if getattr(self, "_notebook_service", None) is None:
-                from docfit_app.notebook_service import NotebookService
-                self._notebook_service = NotebookService(self._get_library_bridge())
+            self._notebook_service_for(self._get_library_bridge())
             if cmd == "nb_export_hwpx":
                 target = self._selection_path(request, "notebook_hwpx", "output_selection_id")
                 return self._notebook_service.export_hwpx(request, target)
             return self._notebook_service.handle(request)
         except Exception as exc:
             return {"ok": False, "message": str(exc)}
+
+    def _notebook_service_for(self, bridge):
+        """업무자료함 중계 서비스(앱에 하나). 화면 요청과 쉬는 시간 출처 다시 색인이 같은 서비스를 쓴다."""
+        if getattr(self, "_notebook_service", None) is None:
+            from docfit_app.notebook_service import NotebookService
+            self._notebook_service = NotebookService(bridge)
+        return self._notebook_service
 
     def _library_drop_watch(self, active):
         """자료함 화면이 열려 있는 동안 창에 놓은 파일을 자료함 항목으로 받고, 닫히면 이전 놓기 대상으로 되돌린다."""
@@ -2978,6 +3017,26 @@ class DesktopWebBridge:
         self._sidebar_collapsed = value
         self.gui._준말_서비스().settings.update(lambda current: current.update({"sidebar_collapsed": value}))
         return value
+
+    def _theme_mode_value(self):
+        """화면 테마 저장값(system·light·dark; 없거나 잘못되면 system). 한 번만 읽는다."""
+        from docfit_app.settings_schema import normalize_theme_mode
+        if not hasattr(self, "_theme_mode"):
+            try:
+                self._theme_mode = normalize_theme_mode(self.gui._준말_서비스().settings.read().get("theme_mode"))
+            except Exception:
+                self._theme_mode = "system"
+        return self._theme_mode
+
+    def set_theme_mode(self, mode):
+        """화면 테마를 설정 파일에 저장하고, 켜져 있는 몽땅클립보드 상주 프로그램에도 알린다."""
+        from docfit_app.settings_schema import validate_theme_mode
+        from docfit_app.kclip_service import push_theme
+        value = validate_theme_mode(mode)
+        self.gui._준말_서비스().settings.update(lambda current: current.update({"theme_mode": value}))
+        self._theme_mode = value
+        push_theme(value, getattr(self, "_kagent_client", None))
+        return {"theme_mode": value}
 
     def set_drop_target(self, target):
         """끌어 놓은 파일을 넣을 곳을 바꾼다: documents(문서 목록) 또는 format(예시 서식 복제)."""
@@ -3588,7 +3647,7 @@ class _BrowserApi:
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
             "set_exclude_tables", "set_card_option",
-            "set_sidebar_collapsed", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
+            "set_sidebar_collapsed", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
             "set_conversion_target", "start_single_file_conversion", "convert_cell_bg", "check_update", "start_update", "open_update_page",
         ):
@@ -3962,6 +4021,14 @@ def run_webview(gui):
                 logging.getLogger(__name__).warning("가상 폴더 창 교체 실패: %s", result)
 
         threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
+        # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.
+        try:
+            from docfit_app.ktm_service import SETTING_KEY, sync_in_background
+            ktm_values = ConfigurationService(bridge._settings_store()).snapshot(
+                running=gui.running).get('values', {})
+            sync_in_background(bool(ktm_values.get(SETTING_KEY, True)))
+        except Exception:
+            logging.getLogger(__name__).exception("몽땅검색 점검 시작 실패")
         threading.Thread(
             target=stop_webview_when_app_exits,
             args=(web_window,),

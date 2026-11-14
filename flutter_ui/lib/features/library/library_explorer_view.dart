@@ -5,7 +5,9 @@ import 'package:flutter/gestures.dart' show kPrimaryButton, kSecondaryButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme/app_theme.dart';
 import 'library_api.dart';
+import 'library_colors.dart';
 import 'library_screen.dart' show LibraryFileDrop;
 
 /// 자료함 '탐색기 형식' 보기. 캔버스형과 같은 자료를 Windows 파일 탐색기처럼 폴더 트리·목록으로 보여 준다.
@@ -707,7 +709,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
             key: const ValueKey('libraryExplorerAddress'),
             height: 32,
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            decoration: BoxDecoration(border: Border.all(color: Colors.black26), borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(border: Border.all(color: LibraryColors.of(context).borderStrong), borderRadius: BorderRadius.circular(4)),
             child: Row(children: [
               const Icon(Icons.inventory_2_outlined, size: 16),
               const SizedBox(width: 4),
@@ -751,7 +753,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
   }
 
   Widget _buildTree() => Material(
-        color: Colors.white,
+        color: context.colors.surface,
         child: ListView(key: const ValueKey('libraryExplorerTree'), children: [
           ListTile(
             key: const ValueKey('libraryExplorerTree-root'),
@@ -766,11 +768,11 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                   key: ValueKey('libraryExplorerTree-${space.name}'),
                   dense: true,
                   contentPadding: const EdgeInsets.only(left: 32, right: 8),
-                  tileColor: hovering ? const Color(0xFFBBDEFB) : null,
+                  tileColor: hovering ? LibraryColors.of(context).hoverFill : null,
                   selected: _c.folder == space,
-                  leading: Icon(_c.folder == space ? Icons.folder_open : Icons.folder, size: 18, color: const Color(0xFFE0A526)),
+                  leading: Icon(_c.folder == space ? Icons.folder_open : Icons.folder, size: 18, color: context.colors.warning),
                   title: Text(widget.spaceNames[space]!, overflow: TextOverflow.ellipsis),
-                  trailing: Text('${_countIn(space)}', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                  trailing: Text('${_countIn(space)}', style: TextStyle(fontSize: 12, color: LibraryColors.of(context).secondaryText)),
                   onTap: () => _open(space),
                 )),
         ]),
@@ -786,7 +788,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
     if (entries.isEmpty) {
       body = Stack(children: [
         body,
-        const Center(child: Text('이 폴더는 비어 있습니다.', style: TextStyle(color: Colors.black45))),
+        Center(child: Text('이 폴더는 비어 있습니다.', style: TextStyle(color: LibraryColors.of(context).hintText))),
       ]);
     }
     // 빈 곳을 누르면 선택 해제, 탐색기에서 끌어 온 파일은 지금 폴더에 넣는다.
@@ -800,7 +802,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       onWillAcceptWithDetails: (d) => d.data is LibraryFileDrop,
       onAcceptWithDetails: (d) => unawaited(widget.onFileDrop(d.data as LibraryFileDrop, folder)),
       builder: (context, candidates, _) => Container(
-        color: candidates.isNotEmpty ? const Color(0xFFE3F2FD) : null,
+        color: candidates.isNotEmpty ? LibraryColors.of(context).selectedFill : null,
         child: pane,
       ),
     );
@@ -851,16 +853,17 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
     final item = entry.item;
     final missing = item != null && (_c.info[item.id]?.missing ?? false);
     final selected = item != null && _isSelected(item);
+    final p = LibraryColors.of(context);
     return Row(children: [
       if (item == null)
-        Icon(Icons.folder, size: iconSize, color: const Color(0xFFE0A526))
+        Icon(Icons.folder, size: iconSize, color: context.colors.warning)
       else
-        Icon(selected ? Icons.check_circle : libraryKindIcon(item.kind), size: iconSize, color: selected ? Colors.blue : (missing ? Colors.black38 : null)),
+        Icon(selected ? Icons.check_circle : libraryKindIcon(item.kind), size: iconSize, color: selected ? p.selectedBorder : (missing ? p.disabledText : null)),
       const SizedBox(width: 6),
       Flexible(child: Text(
         item?.title ?? widget.spaceNames[entry.space]!,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(color: missing ? Colors.black38 : null),
+        style: TextStyle(color: missing ? p.disabledText : null),
       )),
       if (missing) ...[
         const SizedBox(width: 4),
@@ -868,7 +871,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
             message: item.managedPath?.isNotEmpty == true
                 ? '자료함의 복사본을 찾을 수 없습니다.'
                 : '원본 파일을 찾을 수 없습니다(옮겨졌거나 삭제되었을 수 있습니다).',
-          child: Icon(Icons.warning_amber_rounded, key: ValueKey('libraryExplorerMissing-${item.id}'), size: 16, color: Colors.orange),
+          child: Icon(Icons.warning_amber_rounded, key: ValueKey('libraryExplorerMissing-${item.id}'), size: 16, color: p.missingIcon),
         ),
       ],
     ]);
@@ -895,9 +898,9 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
   }
 
   Color? _rowColor(bool selected, bool focused, bool hovering) => selected
-      ? const Color(0xFFCCE8FF)
+      ? LibraryColors.of(context).rowSelectedFill
       : hovering
-          ? const Color(0xFFBBDEFB)
+          ? LibraryColors.of(context).hoverFill
           : null;
 
   Widget _buildDetails(List<_Entry> entries, List<LibraryItem> ordered) => LayoutBuilder(builder: (context, constraints) {
@@ -934,7 +937,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                           key: ValueKey(item != null ? 'libraryExplorerRow-${item.id}' : 'libraryExplorerFolder-${entry.space!.name}'),
                           decoration: BoxDecoration(
                             color: _rowColor(selected, focused, hovering),
-                            border: focused && _listFocus.hasFocus ? Border.all(color: Colors.blue.shade200) : null,
+                            border: focused && _listFocus.hasFocus ? Border.all(color: LibraryColors.of(context).focusBorder) : null,
                           ),
                           padding: const EdgeInsets.only(left: 6),
                           child: Row(children: [
@@ -952,7 +955,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                                           textAlign: column == LibraryExplorerColumn.size ? TextAlign.right : TextAlign.left,
                                           style: TextStyle(
                                             fontSize: 13,
-                                            color: item != null && (_c.info[item.id]?.missing ?? false) ? Colors.black38 : Colors.black87,
+                                            color: item != null && (_c.info[item.id]?.missing ?? false) ? LibraryColors.of(context).disabledText : LibraryColors.of(context).bodyText,
                                           ),
                                         ),
                                 ),
@@ -971,7 +974,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
 
   Widget _buildHeader(List<LibraryExplorerColumn> columns) => Container(
         height: 30,
-        color: const Color(0xFFF7F7F7),
+        color: LibraryColors.of(context).headerFill,
         padding: const EdgeInsets.only(left: 6),
         child: Row(children: [
           for (final column in columns)
@@ -1066,17 +1069,18 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
             label: _rowLabel(entry),
             child: _interactive(entry, ordered, (selected, hovering) {
               final missing = item != null && (_c.info[item.id]?.missing ?? false);
+              final p = LibraryColors.of(context);
               final icon = Icon(
                 item == null ? Icons.folder : libraryKindIcon(item.kind),
                 size: iconSize,
-                color: item == null ? const Color(0xFFE0A526) : (missing ? Colors.black38 : (selected ? Colors.blue : null)),
+                color: item == null ? context.colors.warning : (missing ? p.disabledText : (selected ? p.selectedBorder : null)),
               );
               return Container(
                 key: ValueKey(item != null ? 'libraryExplorerRow-${item.id}' : 'libraryExplorerFolder-${entry.space!.name}'),
                 decoration: BoxDecoration(
                   color: _rowColor(selected, focused, hovering),
                   borderRadius: BorderRadius.circular(4),
-                  border: selected ? Border.all(color: const Color(0xFF99D1FF)) : null,
+                  border: selected ? Border.all(color: p.rowSelectedBorder) : null,
                 ),
                 padding: const EdgeInsets.all(4),
                 child: horizontal
@@ -1085,7 +1089,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                         Stack(clipBehavior: Clip.none, children: [
                           icon,
                           if (missing)
-                            Positioned(right: -4, bottom: -4, child: Icon(Icons.warning_amber_rounded, key: ValueKey('libraryExplorerMissing-${item.id}'), size: 16, color: Colors.orange)),
+                            Positioned(right: -4, bottom: -4, child: Icon(Icons.warning_amber_rounded, key: ValueKey('libraryExplorerMissing-${item.id}'), size: 16, color: p.missingIcon)),
                         ]),
                         const SizedBox(height: 4),
                         Expanded(child: Text(
@@ -1093,7 +1097,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
                           maxLines: 2,
                           textAlign: TextAlign.center,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 12, color: missing ? Colors.black38 : null),
+                          style: TextStyle(fontSize: 12, color: missing ? p.disabledText : null),
                         )),
                       ]),
               );
@@ -1116,7 +1120,7 @@ class _LibraryExplorerViewState extends State<LibraryExplorerView> {
       liveRegion: true,
       child: Container(
         width: double.infinity,
-        color: const Color(0xFFF7F7F7),
+        color: LibraryColors.of(context).headerFill,
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         child: Text(text, key: const ValueKey('libraryExplorerStatus'), style: const TextStyle(fontSize: 12)),
       ),

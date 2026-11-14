@@ -66,6 +66,9 @@ fn ensure()->Result<(),String>{
  let h=CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),wide("가상 폴더").as_ptr(),WS_POPUP|WS_THICKFRAME|WS_MAXIMIZEBOX,r[0],r[1],r[2],r[3],null_mut(),null_mut(),instance,null());
  if h.is_null(){return Err("목록 창 생성 실패".into());}edit(|s|s.hwnd=h);frame::style_frame(h);topmost(h);Ok(())
  }}
+/// 테마 상태 전이(창 스레드): kagent 설정의 선호 + 시스템 → `ui_theme` 상태 하나. 색이 바뀌면 틀을 맞추고 다시 그린다.
+/// 시작할 때·테마 메시지(시스템 변경, kagent의 DocFitThemeChanged 방송)·reload에서 부른다.
+pub fn refresh_theme(){let change=ui_theme::refresh(crate::settings::agent_theme(&crate::paths::agent_settings()));let h=with(|s|s.hwnd);if change.look&&!h.is_null(){unsafe{frame::apply_theme(h);}draw_later();}}
 fn place(saved:Option<[i32;4]>,mouse:[i32;2],work:RECT)->[i32;4]{let mut r=saved.unwrap_or([mouse[0]+12,mouse[1]+12,600,420]);r[2]=r[2].max(360).min((work.right-work.left).max(1));r[3]=r[3].max(160).min((work.bottom-work.top).max(1));r[0]=r[0].clamp(work.left,(work.right-r[2]).max(work.left));r[1]=r[1].clamp(work.top,(work.bottom-r[3]).max(work.top));r}
 fn topmost(h:HWND){unsafe{SetWindowPos(h,if with(|s|s.model.sticky){HWND_TOPMOST}else{HWND_NOTOPMOST},0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);}}
 fn xy(l:isize)->(i32,i32){((l as u16)as i16 as i32,((l>>16)as u16)as i16 as i32)}
@@ -82,16 +85,18 @@ unsafe fn paint(h:HWND){unsafe{
  let mem=CreateCompatibleDC(dc);let bmp=CreateCompatibleBitmap(dc,rc.right,rc.bottom);let old=SelectObject(mem,bmp);let font=CreateFontW(-frame::scale(h,14),0,0,0,400,0,0,0,DEFAULT_CHARSET as u32,0,0,0,0,wide("맑은 고딕").as_ptr());let oldfont=SelectObject(mem,font);SetBkMode(mem,TRANSPARENT as i32);
  let fill=|r:RECT,color|{let b=CreateSolidBrush(color);FillRect(mem,&r,b);DeleteObject(b);};
  let text=|s:&str,mut r:RECT,flags|{let v=wide(s);DrawTextW(mem,v.as_ptr(),(v.len()-1)as i32,&mut r,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|flags);};
- fill(rc,0x00ffffff);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},0x00f4f4f4);
+ // 색은 현재 테마 하나에서(밝게 = 예전 하드코딩 값 그대로, RUSTALL1 DARK1).
+ let p=ui_theme::palette();
+ fill(rc,p.bg);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},p.plain_head_bg);
  with(|s|{
- let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,0x00222222);text(&format!("가상 폴더 · {name} ▾"),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
+ let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,p.text);text(&format!("가상 폴더 · {name} ▾"),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
  for(i,label)in ["✕","□","―",if s.model.sticky{"◆"}else{"◇"}].iter().enumerate(){let right=rc.right-i as i32*frame::scale(h,40);text(label,RECT{left:right-frame::scale(h,40),top:0,right,bottom:head},DT_CENTER);}
- for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},0x00cc7733);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);}
+ for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},p.accent_line);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);}
  let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),RECT{left:pad,top:head+tab,right:rc.right-pad,bottom:y},DT_END_ELLIPSIS);}
  let message=match &s.model.view{View::Loading(_)=>"불러오는 중",View::Failed{error,..}=>error,View::Empty{reason,..}=>reason,_ if s.filtered.is_empty()=>"항목이 없습니다. 다른 상자·영역을 고르거나 F5로 다시 불러오세요",_=>""};
  if !message.is_empty(){text(message,RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row},DT_END_ELLIPSIS);}
- for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};if c.and_then(|c|c.selection)==Some(*id){fill(r,0x00f7e3cf);}text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
- if s.truncated{text("5,000개까지만 보입니다. 앱에서 보세요",RECT{left:pad,top:rc.bottom-row,right:rc.right,bottom:rc.bottom},DT_END_ELLIPSIS);}
+ for (n,id) in s.filtered.iter().enumerate().skip(s.top).take(if matches!(s.model.view,View::Loading(_)){0}else{((rc.bottom-y)/row).max(0)as usize}){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+(n-s.top)as i32*row;let r=RECT{left:0,top,right:rc.right,bottom:top+row};let sel=c.and_then(|c|c.selection)==Some(*id);if sel{fill(r,p.selected);}SetTextColor(mem,p.row_text(sel,p.text));text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:pad,right:rc.right-pad,..r},DT_END_ELLIPSIS);}}
+ SetTextColor(mem,p.text);if s.truncated{text("5,000개까지만 보입니다. 앱에서 보세요",RECT{left:pad,top:rc.bottom-row,right:rc.right,bottom:rc.bottom},DT_END_ELLIPSIS);}
  });frame::own_border(mem,rc);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
 }}
 unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{match msg{
@@ -128,7 +133,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  use super::*;
  struct Isolated {root:std::path::PathBuf,old_root:Option<std::ffi::OsString>,old_library:Option<std::ffi::OsString>,mutex:HANDLE}
  impl Isolated {fn new()->Self{unsafe{
-  let root=std::path::PathBuf::from(format!("E:/docfit-tmp/kvf-window-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();
+  let root=std::env::temp_dir().join(format!("kvf-window-test-{}",std::process::id()));std::fs::create_dir_all(&root).unwrap();
   let old_root=std::env::var_os("KVF_TEST_ROOT");let old_library=std::env::var_os("KLIB_TEST_ROOT");
   std::env::set_var("KVF_TEST_ROOT",root.join("kvf"));std::env::set_var("KLIB_TEST_ROOT",root.join("library"));std::fs::create_dir_all(root.join("library")).unwrap();
   let name=wide(&crate::paths::object_name("Local\\HwpAutoDocFit.kvf",Some(root.to_str().unwrap())));let mutex=windows_sys::Win32::System::Threading::CreateMutexW(null(),0,name.as_ptr());assert!(!mutex.is_null());
@@ -139,7 +144,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
   match &self.old_root{Some(v)=>std::env::set_var("KVF_TEST_ROOT",v),None=>std::env::remove_var("KVF_TEST_ROOT")};
   match &self.old_library{Some(v)=>std::env::set_var("KLIB_TEST_ROOT",v),None=>std::env::remove_var("KLIB_TEST_ROOT")};
   // 고정된 시험 디렉터리만 정리한다.
-  assert!(self.root.starts_with("E:/docfit-tmp"));let _=std::fs::remove_dir_all(&self.root);
+  assert!(self.root.starts_with(std::env::temp_dir()));let _=std::fs::remove_dir_all(&self.root);
  }}}
  #[test]fn isolated_window_events_and_rendering(){
   let fixture=Isolated::new();

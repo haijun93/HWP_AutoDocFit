@@ -10,7 +10,9 @@ import '../../core/instant_search.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../notebook/notebook_api.dart';
+import '../../core/theme/app_theme.dart';
 import 'library_api.dart';
+import 'library_colors.dart';
 import 'library_document_search.dart';
 import 'library_explorer_view.dart';
 import 'library_layout.dart';
@@ -19,7 +21,7 @@ import 'library_view_prefs.dart';
 String _errorText(Object error) => error.toString().replaceFirst(RegExp(r'^(Bad state|StateError): '), '');
 
 /// 검색 한 번의 결과: 위 띠에 보일 결과와 영역에 남길 자료. 검색 중 가상 폴더를 바꾸면 버리려고 상자 id를 둔다.
-typedef _LibrarySearchOutcome = ({String boxId, List<LibrarySearchResult> results, List<LibraryItem> items});
+typedef _LibrarySearchOutcome = ({String boxId, List<LibrarySearchResult> results, List<LibraryItem> items, ScopedLibraryHits? scoped});
 
 /// 검색창 메뉴(ISUI2). 탭 이름은 컨트롤러 탭 이름과 같다.
 const _librarySearchModes = [('file', '파일명'), ('content', '본문검색'), ('related', '위계검색')];
@@ -146,11 +148,14 @@ class LibraryScreen extends StatefulWidget {
     this.fileInfoApi,
     this.initialPaneCount,
     this.documentSearch,
+    this.scopedDocumentSearch,
   });
 
   /// 검색창의 본문검색·위계검색(ISUI2). 있으면 검색창 옆에 파일명·본문검색·위계검색 메뉴가 나타나고
-  /// 세 메뉴가 검색어를 함께 쓴다. 기본 앱은 타임머신 명령을 쓴다([timemachineLibraryDocumentSearch]).
+  /// 세 메뉴가 검색어를 함께 쓴다. 기존 호출자의 검색 어댑터를 주입할 때 사용한다.
   final LibraryDocumentSearch? documentSearch;
+  /// 기본 앱의 본문·위계검색: 서버가 상자 범위와 자료 ID를 반환한다.
+  final ScopedLibraryDocumentSearch? scopedDocumentSearch;
 
   /// 보기 방식(캔버스·탐색기 형식) 저장소(시험에서 대체). 기본은 앱 창 저장소.
   final LibraryViewPrefs? viewPrefs;
@@ -897,11 +902,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final box = _selectedBox;
     if (box == null) return null;
     final query = request.query;
+    final scopedSearch = widget.scopedDocumentSearch;
+    if (request.tab != 'file' && scopedSearch != null) {
+      final response = await scopedSearch(box.id, request.tab, query);
+      final all = await widget.api.listItems(box.id);
+      final ids = <String>{for (final row in response.rows)
+        for (final id in row['item_ids'] as List? ?? const []) '$id'};
+      final results = <LibrarySearchResult>[for (final row in response.rows)
+        LibrarySearchResult(itemId: (row['item_ids'] as List?)?.firstOrNull?.toString(),
+          path: '${row['path'] ?? ''}', name: '${row['title'] ?? row['name'] ?? ''}',
+          snippet: '${row['breadcrumb_text'] ?? ''} ${row['snippet'] ?? ''}'.trim())];
+      return (boxId: box.id, results: results, items: all.where((i) => ids.contains(i.id)).toList(), scoped: response);
+    }
     final documentSearch = widget.documentSearch;
     if (request.tab == 'file' || documentSearch == null) {
       final results = await widget.api.searchContent(box.id, query);
       final items = await widget.api.listItems(box.id, query: query);
-      return (boxId: box.id, results: results, items: items);
+      return (boxId: box.id, results: results, items: items, scoped: null);
     }
     final hits = await documentSearch(request.tab, query);
     final all = await widget.api.listItems(box.id);
@@ -920,22 +937,26 @@ class _LibraryScreenState extends State<LibraryScreen> {
       final snippet = hit.breadcrumb.isEmpty ? hit.snippet : '${hit.breadcrumb} · ${hit.snippet}';
       results.add(LibrarySearchResult(path: hit.path, name: item.title, snippet: snippet));
     }
-    return (boxId: box.id, results: results, items: matched.values.toList());
+    return (boxId: box.id, results: results, items: matched.values.toList(), scoped: null);
   }
 
   void _applySearchResult(InstantSearchRequest request, _LibrarySearchOutcome? outcome) {
     if (outcome == null || !mounted || _selectedBox?.id != outcome.boxId) return;
-    final document = request.tab != 'file' && widget.documentSearch != null;
+    final document = request.tab != 'file' && (widget.documentSearch != null || widget.scopedDocumentSearch != null);
     final label = _librarySearchModes.firstWhere((m) => m.$1 == request.tab, orElse: () => _librarySearchModes.first).$2;
     setState(() {
+      _scopedHits = outcome.scoped;
       _searchResults..clear()..addAll(outcome.results);
       _items = outcome.items;
       _documentMatchIds = document ? {for (final i in outcome.items) i.id} : null;
       _highlightedItemId = null;
       _showSearchResults = true;
-      if (document) {
+      if (outcome.scoped case final info?) {
+        final reason = info.reason == 'configured_legacy' ? ' (설정)' : info.reason == null ? '' : ' (자동 대체: ${info.reason})';
+        _statusMessage = _searchStatus = '$label: ${info.countLabel} · ${info.engine == 'kfind' ? '새 검색' : '기존 검색'}$reason';
+      } else if (document) {
         _statusMessage = _searchStatus = outcome.items.isEmpty
-            ? '$label: 이 가상 폴더 자료에서 찾지 못했습니다. 타임머신 조사 폴더에서 본문 색인된 문서만 찾습니다.'
+            ? '$label: 이 가상 폴더 자료에서 찾지 못했습니다. 몽땅검색 조사 폴더에서 본문 색인된 문서만 찾습니다.'
             : '$label: 자료 ${outcome.items.length}개';
       } else {
         _dropSearchStatus();
@@ -945,10 +966,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   /// 본문·위계검색이 띄운 안내(다른 작업의 안내는 건드리지 않으려고 따로 기억한다).
   String? _searchStatus;
+  ScopedLibraryHits? _scopedHits;
 
   void _dropSearchStatus() {
     if (_searchStatus != null && _statusMessage == _searchStatus) _statusMessage = null;
     _searchStatus = null;
+    _scopedHits = null;
   }
 
   /// 검색어가 기준 미만이 되면 결과를 비우고 가상 폴더 전체를 다시 보인다.
@@ -982,7 +1005,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final items = await widget.api.listItems(box.id);
     final wanted = normalizeLibraryPath(result.path);
     bool samePath(String? path) => path != null && path.isNotEmpty && normalizeLibraryPath(path) == wanted;
-    final match = items.where((i) => i.source == result.path || i.title == result.name).firstOrNull ??
+    final match = (result.itemId == null ? null : items.where((i) => i.id == result.itemId).firstOrNull) ??
+        items.where((i) => i.source == result.path || i.title == result.name).firstOrNull ??
         (wanted.isEmpty ? null : items.where((i) => samePath(i.source) || samePath(i.managedPath)).firstOrNull);
     if (!mounted) return;
     setState(() { _items = items; _highlightedItemId = match?.id; });
@@ -1491,7 +1515,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
 
   Widget _buildSidebar() => Material(
-        color: Colors.white,
+        color: context.colors.surface,
         child: Padding(
           padding: const EdgeInsets.all(12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1618,7 +1642,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               ),
               onSubmitted: (_) => _searchBox.submit(),
             )),
-            if (widget.documentSearch != null)
+            if (widget.documentSearch != null || widget.scopedDocumentSearch != null)
               SegmentedButton<String>(
                 key: const ValueKey('librarySearchMode'),
                 showSelectedIcon: false,
@@ -1630,6 +1654,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 selected: {_searchBox.tab},
                 onSelectionChanged: (tabs) => _selectSearchMode(tabs.single),
               ),
+            if (_scopedHits != null && _activeQuery.isNotEmpty)
+              Padding(padding: const EdgeInsets.symmetric(horizontal: 6),
+                child: Chip(key: const ValueKey('librarySearchCount'),
+                  label: Text(_scopedHits!.countLabel))),
             SizedBox(width: 180, height: 38, child: TextField(
               key: const ValueKey('libraryNewItemText'),
               controller: _newItemController,
@@ -1748,7 +1776,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return Container(
       key: const ValueKey('librarySelectionBar'),
       width: double.infinity,
-      color: const Color(0xFFE3F2FD),
+      color: LibraryColors.of(context).selectedFill,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Wrap(crossAxisAlignment: WrapCrossAlignment.center, spacing: 4, children: [
         Text('${_selectedIds.length}개 선택', key: const ValueKey('librarySelectionCount'), style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -1930,7 +1958,7 @@ class _TransferDialogState extends State<_TransferDialog> {
             onChanged: (s) { if (s != null) setState(() => _space = s); },
           ),
           const SizedBox(height: 8),
-          const Text('가상 폴더의 복사본을 옮기거나 새로 복사합니다. 원본 파일은 그대로 유지됩니다.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          Text('가상 폴더의 복사본을 옮기거나 새로 복사합니다. 원본 파일은 그대로 유지됩니다.', style: TextStyle(fontSize: 12, color: LibraryColors.of(context).secondaryText)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
@@ -2038,7 +2066,7 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
     final cardWidth = widget.cardWidth;
     final cardHeight = widget.cardHeight;
     return Container(
-      decoration: BoxDecoration(border: Border.all(color: Colors.black12), color: _spaceColor(space)),
+      decoration: BoxDecoration(border: Border.all(color: LibraryColors.of(context).border), color: _spaceColor(LibraryColors.of(context), space)),
       child: Column(children: [
         Padding(
           padding: const EdgeInsets.all(6),
@@ -2106,12 +2134,12 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
                           CustomPaint(
                             key: const ValueKey('libraryRelationPainter'),
                             size: size,
-                            painter: _RelationPainter(relations: widget.relations, items: shown, cardWidth: cardWidth, cardHeight: cardHeight),
+                            painter: _RelationPainter(relations: widget.relations, items: shown, cardWidth: cardWidth, cardHeight: cardHeight, color: LibraryColors.of(context).relationLine),
                           ),
                         for (final item in ordered) _card(item, items.firstWhere((i) => i.id == item.id)),
                         if (space == LibrarySpace.core)
                           for (final relation in widget.relations) _relationLabel(relation, shown, size),
-                        if (items.isEmpty) const Center(child: Text('자료가 없습니다.', style: TextStyle(color: Colors.black45))),
+                        if (items.isEmpty) Center(child: Text('자료가 없습니다.', style: TextStyle(color: LibraryColors.of(context).hintText))),
                       ],
                     ),
                   ),
@@ -2144,8 +2172,8 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
               if (dragCount > 1)
                 Positioned(right: -6, top: -6, child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(color: Colors.blue, borderRadius: BorderRadius.circular(10)),
-                  child: Text('$dragCount개', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                  decoration: BoxDecoration(color: LibraryColors.of(context).badgeFill, borderRadius: BorderRadius.circular(10)),
+                  child: Text('$dragCount개', style: TextStyle(color: context.colors.onAccent, fontSize: 12)),
                 )),
             ]),
           ),
@@ -2179,18 +2207,18 @@ class _LibraryQuadrantState extends State<_LibraryQuadrant> {
     return Positioned(
       left: center.dx.clamp(0.0, math.max(0.0, size.width - 110)),
       top: center.dy.clamp(0.0, math.max(0.0, size.height - 36)),
-      child: Material(color: Colors.white.withValues(alpha: .9), borderRadius: BorderRadius.circular(12), child: Row(mainAxisSize: MainAxisSize.min, children: [
+      child: Material(color: context.colors.surface.withValues(alpha: .9), borderRadius: BorderRadius.circular(12), child: Row(mainAxisSize: MainAxisSize.min, children: [
         InkWell(key: ValueKey('libraryRelation-${relation.id}'), onTap: () => widget.onEditRelation(relation), child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), child: Text(relation.label?.isNotEmpty == true ? relation.label! : '관계'))),
         IconButton(key: ValueKey('libraryRelationDelete-${relation.id}'), tooltip: '관계선 삭제', onPressed: () => widget.onDeleteRelation(relation.id), constraints: const BoxConstraints.tightFor(width: 26, height: 26), padding: EdgeInsets.zero, icon: const Icon(Icons.close, size: 14)),
       ])),
     );
   }
 
-  Color _spaceColor(LibrarySpace space) => switch (space) {
-        LibrarySpace.core => const Color(0xFFF0F5FF),
-        LibrarySpace.basis => const Color(0xFFF4F7F0),
-        LibrarySpace.reference => const Color(0xFFFFF8EA),
-        LibrarySpace.temp => const Color(0xFFF5F1F8),
+  Color _spaceColor(LibraryColors p, LibrarySpace space) => switch (space) {
+        LibrarySpace.core => p.spaceCore,
+        LibrarySpace.basis => p.spaceBasis,
+        LibrarySpace.reference => p.spaceReference,
+        LibrarySpace.temp => p.spaceTemp,
       };
 }
 
@@ -2223,9 +2251,9 @@ class _LibraryCard extends StatelessWidget {
         height: height,
         child: Card(
           elevation: selected ? 5 : 2,
-          color: selected ? const Color(0xFFE3F2FD) : null,
+          color: selected ? LibraryColors.of(context).selectedFill : null,
           shape: RoundedRectangleBorder(
-            side: BorderSide(color: selected ? Colors.blue : Colors.white, width: selected ? 2 : 1),
+            side: BorderSide(color: selected ? LibraryColors.of(context).selectedBorder : context.colors.surface, width: selected ? 2 : 1),
             borderRadius: BorderRadius.circular(8),
           ),
           child: InkWell(
@@ -2236,7 +2264,7 @@ class _LibraryCard extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.fromLTRB(8, 8, _hasMenu ? 0 : 8, 8),
               child: Row(children: [
-                Icon(selected ? Icons.check_circle : _icon, size: 20, color: selected ? Colors.blue : null),
+                Icon(selected ? Icons.check_circle : _icon, size: 20, color: selected ? LibraryColors.of(context).selectedBorder : null),
                 const SizedBox(width: 6),
                 Expanded(child: Text(item.title, maxLines: 2, overflow: TextOverflow.ellipsis)),
                 if (_hasMenu)
@@ -2286,15 +2314,16 @@ class _LibraryCard extends StatelessWidget {
 }
 
 class _RelationPainter extends CustomPainter {
-  _RelationPainter({required this.relations, required this.items, required this.cardWidth, required this.cardHeight});
+  _RelationPainter({required this.relations, required this.items, required this.cardWidth, required this.cardHeight, required this.color});
   final List<LibraryRelation> relations;
+  final Color color;
   final List<LibraryItem> items;
   final double cardWidth;
   final double cardHeight;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = Colors.indigo..strokeWidth = 2..style = PaintingStyle.stroke;
+    final paint = Paint()..color = color..strokeWidth = 2..style = PaintingStyle.stroke;
     for (final relation in relations) {
       final from = items.where((item) => item.id == relation.fromItemId).firstOrNull;
       final to = items.where((item) => item.id == relation.toItemId).firstOrNull;
@@ -2370,7 +2399,7 @@ class _NotebookPickDialogState extends State<_NotebookPickDialog> {
             Text('“${widget.itemTitle}”을(를) 넣을 업무자료함을 고르세요.', maxLines: 2, overflow: TextOverflow.ellipsis),
             const SizedBox(height: 8),
             if (_loading) const LinearProgressIndicator(minHeight: 2),
-            if (_error != null) Text(_error!, key: const ValueKey('libraryNbPickError'), style: const TextStyle(color: Colors.red)),
+            if (_error != null) Text(_error!, key: const ValueKey('libraryNbPickError'), style: TextStyle(color: LibraryColors.of(context).error)),
             Expanded(
               child: !_loading && _notebooks.isEmpty
                   ? const Center(child: Text('업무자료함이 없습니다. 아래에서 새로 만드세요.'))

@@ -851,6 +851,10 @@ class ContentSearchIndex:
                 self.db.execute("ALTER TABLE content_meta ADD COLUMN ctime REAL")
             if "hierarchy_schema_version" not in cols:
                 self.db.execute("ALTER TABLE content_meta ADD COLUMN hierarchy_schema_version INTEGER NOT NULL DEFAULT 0")
+            # 0은 아직 kfind에 반영하지 않은 상태. 응답을 확인한 동기화 코드만 갱신한다.
+            for column in ("kfind_level_rule", "kfind_gen"):
+                if column not in cols:
+                    self.db.execute(f"ALTER TABLE content_meta ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0")
 
             self.db.execute("""
                 UPDATE content_meta
@@ -1281,6 +1285,29 @@ class ContentSearchIndex:
                 if row is not None and (row[0] or 0) < CURRENT_HIERARCHY_SCHEMA_VERSION:
                     stale.append(path)
         return stale
+
+    def paragraphs_for_kfind(self, path):
+        """문서를 열지 않고 저장된 원문·위계를 문단 번호순으로 읽는다.
+
+        위계가 낡았는지는 호출자가 stale_hierarchy_paths로 확인하고 재판정한다.
+        이 읽기 자체는 위계 판정이나 kfind 동기화 상태를 바꾸지 않는다.
+        """
+        path = os.path.abspath(os.fspath(path))
+        with self._lock:
+            self._ensure_paragraph_map()
+            rows = self.db.execute(
+                "SELECT m.paragraph_index, f.body, f.level, f.level_rank, c.cell_id"
+                " FROM content_paragraph_map m"
+                " JOIN content_paragraph_fts f ON f.rowid=m.para_rowid"
+                " LEFT JOIN content_table_cells c ON c.path=m.path"
+                " AND c.paragraph_index=m.paragraph_index"
+                " WHERE m.path=? ORDER BY m.paragraph_index, m.para_rowid", (path,)).fetchall()
+        return [ParagraphRecord(
+            paragraph_index=int(row["paragraph_index"]), text=row["body"],
+            level=row["level"], level_rank=int(row["level_rank"]),
+            is_table_cell=row["level"] == "table_cell" or row["cell_id"] is not None,
+            table_cell_id=row["cell_id"],
+        ) for row in rows]
 
     def relevel_file(self, path):
         """다른 색인기(klib index-content)가 쓴 본문 행은 두고 위계만 현재 Python 규칙으로 다시 매긴다.

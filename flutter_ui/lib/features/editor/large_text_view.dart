@@ -13,6 +13,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'editor_colors.dart';
 import 'large_text_session.dart';
 import 'text_offsets.dart';
 
@@ -358,7 +359,7 @@ class LargeTextViewState extends State<LargeTextView> {
               ? TextSpan(text: text)
               : TextSpan(children: [
                   TextSpan(text: text.substring(0, hl.start)),
-                  TextSpan(text: text.substring(hl.start, hl.end), style: const TextStyle(backgroundColor: Color(0x66FFC107))),
+                  TextSpan(text: text.substring(hl.start, hl.end), style: TextStyle(backgroundColor: EditorColors.of(context).findMark)),
                   TextSpan(text: text.substring(hl.end)),
                 ]),
           key: ValueKey('memo-large-line-$index'),

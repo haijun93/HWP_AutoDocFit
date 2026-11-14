@@ -466,6 +466,16 @@ pub fn apply_settings() {
     }
 }
 
+/// 테마가 바뀌면(설정·시스템) 창 틀(DWM 어두운 모드·테두리 색)을 맞추고 바로 다시 그린다.
+pub fn apply_theme() {
+    let hwnd = popup_hwnd();
+    if hwnd.is_null() { return; }
+    unsafe {
+        crate::frame::apply_theme(hwnd);
+        InvalidateRect(hwnd, std::ptr::null(), 0);
+    }
+}
+
 /// 목록이 바뀌면(보이는 동안) 같은 분류·찾기로 다시 거른다(선택한 항목 유지).
 pub fn refresh() {
     let hwnd = popup_hwnd();
@@ -648,9 +658,6 @@ impl Drop for PaintGuard {
     }
 }
 
-const ACCENT: u32 = 0x00D9731F; // BGR — 파랑(#1F73D9)
-const HEAD_BG: u32 = 0x00F5EFE8;
-
 unsafe fn paint(hwnd: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
@@ -706,41 +713,43 @@ unsafe fn paint(hwnd: HWND) {
             DrawTextW(mem, wide(s).as_ptr(), -1, &mut r, flags | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
         };
         let pinned = { let s = app().settings.lock().unwrap(); s.sticky_popup && s.always_on_top };
+        // 색은 현재 테마 하나에서(밝게 = 예전 하드코딩 값 그대로, RUSTALL1 DARK1).
+        let p = ui_theme::palette();
         let head = scale(hwnd, HEAD_H);
         let cat_h = scale(hwnd, CAT_H);
         let row = scale(hwnd, ROW_H);
         let bw = scale(hwnd, CAPTION_W);
-        fill(rc, 0x00FFFFFF);
+        fill(rc, p.bg);
 
         let mut st = STATE.lock().unwrap();
         let maximized = st.restore_rect.is_some();
 
         // ① 상단 메뉴바
-        fill(RECT { left: 0, top: 0, right: w, bottom: head }, HEAD_BG);
+        fill(RECT { left: 0, top: 0, right: w, bottom: head }, p.head_bg);
         for b in HEAD_BUTTONS {
             let (l, r) = head_button_span(b, w, bw);
             let br = RECT { left: l, top: 0, right: r, bottom: head };
             let hovered = st.hover_btn == Some(b);
             let on = b == HeadButton::Pin && pinned;
             if hovered {
-                fill(br, if b == HeadButton::Close { 0x002311E8 } else if st.pressed_btn == Some(b) { 0x00CFC6BC } else { 0x00E0D8CF });
+                fill(br, if b == HeadButton::Close { p.close_hover } else if st.pressed_btn == Some(b) { p.head_button_pressed } else { p.head_button_hover });
             } else if on {
-                fill(br, 0x00F2DCC4);
+                fill(br, p.toggle_on_bg);
             }
-            SetTextColor(mem, if hovered && b == HeadButton::Close { 0x00FFFFFF } else if on { ACCENT } else { 0x00333333 });
+            SetTextColor(mem, if hovered && b == HeadButton::Close { p.on_close_hover } else if on { p.toggle_on_text } else { p.head_glyph });
             let big = matches!(b, HeadButton::Settings | HeadButton::Capture | HeadButton::Memo | HeadButton::Pin);
             SelectObject(mem, if big { glyph_big } else { glyph });
             draw(&head_button_glyph(b, pinned, maximized).to_string(), br, DT_CENTER);
         }
         let buttons_left = head_button_span(HEAD_BUTTONS[0], w, bw).0;
         SelectObject(mem, title_font);
-        SetTextColor(mem, 0x00222222);
+        SetTextColor(mem, p.text);
         let title_left = scale(hwnd, 10);
         draw("몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
         let title_right = title_left + text_width(mem, "몽땅클립보드") + scale(hwnd, 8);
         if title_right < buttons_left - scale(hwnd, 24) {
             SelectObject(mem, small);
-            SetTextColor(mem, 0x00777777);
+            SetTextColor(mem, p.text_sub);
             let hint = match st.hover_btn {
                 Some(b) => head_button_name(b, pinned, maximized).to_string(),
                 None => "1~9 선택 · ←→ 분류".to_string(),
@@ -759,8 +768,8 @@ unsafe fn paint(hwnd: HWND) {
         }
 
         // ② 분류 메뉴바
-        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, 0x00FAFAFA);
-        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, 0x00E3E3E3);
+        fill(RECT { left: 0, top: head, right: w, bottom: head + cat_h }, p.tab_bg);
+        fill(RECT { left: 0, top: head + cat_h - 1, right: w, bottom: head + cat_h }, p.divider);
         SelectObject(mem, small_bold);
         let long: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(false))).collect();
         let short: Vec<i32> = TABS.iter().map(|t| text_width(mem, t.label(true))).collect();
@@ -772,17 +781,17 @@ unsafe fn paint(hwnd: HWND) {
             let tr = RECT { left: l, top: head, right: r, bottom: head + cat_h - 1 };
             let selected = i == st.tab;
             if selected {
-                fill(tr, 0x00FFFFFF);
+                fill(tr, p.bg);
                 fill(RECT { left: l + scale(hwnd, 3), top: head + cat_h - scale(hwnd, 3), right: r - scale(hwnd, 3),
-                            bottom: head + cat_h - 1 }, ACCENT);
+                            bottom: head + cat_h - 1 }, p.accent);
                 SelectObject(mem, small_bold);
-                SetTextColor(mem, ACCENT);
+                SetTextColor(mem, p.accent);
             } else {
                 if st.hover_tab == Some(i) {
-                    fill(tr, 0x00EFEFEF);
+                    fill(tr, p.tab_hover);
                 }
                 SelectObject(mem, small);
-                SetTextColor(mem, 0x00444444);
+                SetTextColor(mem, p.tab_text);
             }
             draw(tab.label(use_short), tr, DT_CENTER | DT_END_ELLIPSIS);
         }
@@ -795,7 +804,7 @@ unsafe fn paint(hwnd: HWND) {
             let y = head + cat_h;
             let pad = scale(hwnd, 6);
             let boxr = RECT { left: pad, top: y + scale(hwnd, 3), right: w - pad, bottom: y + row - scale(hwnd, 3) };
-            let border = CreateSolidBrush(ACCENT);
+            let border = CreateSolidBrush(p.accent);
             if !border.is_null() {
                 FrameRect(mem, &boxr, border);
                 DeleteObject(border);
@@ -803,10 +812,10 @@ unsafe fn paint(hwnd: HWND) {
             SelectObject(mem, small);
             let text_r = RECT { left: boxr.left + pad, top: boxr.top, right: boxr.right - pad, bottom: boxr.bottom };
             if needle.is_empty() {
-                SetTextColor(mem, 0x00888888);
+                SetTextColor(mem, p.text_faint);
                 draw("▏찾을 글자를 입력하세요 · 저장된 모든 항목에서 찾기", text_r, DT_END_ELLIPSIS);
             } else {
-                SetTextColor(mem, 0x00222222);
+                SetTextColor(mem, p.text);
                 draw(&format!("{}{}▏  · {}개 · Esc 지우기", st.query, st.comp, st.items.len()), text_r, DT_END_ELLIPSIS);
             }
         }
@@ -816,7 +825,7 @@ unsafe fn paint(hwnd: HWND) {
         let visible_rows = ((h - top_y).max(0) / row).max(1) as usize;
         if st.items.is_empty() {
             SelectObject(mem, font);
-            SetTextColor(mem, 0x00666666);
+            SetTextColor(mem, p.text_muted);
             let load_error = app().recent_error.lock().unwrap().clone();
             let msg = match tab {
                 // 저장소를 읽지 못해 비어 있는 경우를 "기록 없음"으로 잘못 알리지 않는다.
@@ -830,29 +839,30 @@ unsafe fn paint(hwnd: HWND) {
         for (i, item) in st.items.iter().enumerate().skip(st.top).take(visible_rows) {
             let y = top_y + (i - st.top) as i32 * row;
             let r = RECT { left: 0, top: y, right: w, bottom: y + row };
-            if i == st.sel {
-                fill(r, 0x00F7E3CF);
+            let sel = i == st.sel;
+            if sel {
+                fill(r, p.selected);
             } else if st.hover == Some(i) {
-                fill(r, 0x00FBF3EC);
+                fill(r, p.hover);
             }
             SelectObject(mem, small);
-            SetTextColor(mem, 0x00EB6325);
+            SetTextColor(mem, p.row_text(sel, p.number));
             let shortcut = if i - st.top < 9 && needle.is_empty() { format!("{}", i - st.top + 1) } else { String::new() };
             draw(&shortcut, RECT { left: scale(hwnd, 8), top: y, right: scale(hwnd, 24), bottom: y + row }, DT_CENTER);
-            SetTextColor(mem, 0x00888888);
+            SetTextColor(mem, p.row_text(sel, p.text_faint));
             let tag = format!("{}{}{}{}", if item.pinned { "★" } else { "" }, kind_tag(&item.kind),
                 if item.preview.contains("웹 ·") { " · 웹" } else { "" },
                 if item.preview.contains("서식 포함") { " · 서식 포함" } else { "" });
             draw(&tag, RECT { left: scale(hwnd, 28), top: y, right: scale(hwnd, 70), bottom: y + row }, 0);
             SelectObject(mem, font);
-            SetTextColor(mem, 0x00222222);
+            SetTextColor(mem, p.row_text(sel, p.text));
             let actions = if st.hover == Some(i) { scale(hwnd, ROW_PIN_W + ROW_DELETE_W) } else { 0 };
             draw(&item.preview, RECT { left: scale(hwnd, 72), top: y, right: w - actions - scale(hwnd, 10), bottom: y + row },
                  DT_END_ELLIPSIS);
             if st.hover == Some(i) {
                 let del = RECT { left: w - scale(hwnd, ROW_DELETE_W), top: y, right: w, bottom: y + row };
                 let pin = RECT { left: del.left - scale(hwnd, ROW_PIN_W), top: y, right: del.left, bottom: y + row };
-                SetTextColor(mem, 0x00555555);
+                SetTextColor(mem, p.row_text(sel, p.icon));
                 draw("✕", del, DT_CENTER);
                 draw(if item.pinned { "📌" } else { "📍" }, pin, DT_CENTER);
             }
@@ -1026,7 +1036,7 @@ fn run_settings_command(hwnd: HWND, c: Command) {
                 PostMessageW(main_hwnd(), WM_CLOSE, 0, 0);
             }
         },
-        Command::Set(..) | Command::Toggle(_) => {}
+        Command::Set(..) | Command::Toggle(_) | Command::Theme(_) => {}
     }
     refresh();
 }

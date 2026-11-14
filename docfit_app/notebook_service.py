@@ -2,6 +2,8 @@
 
 - klib nb_source_add가 txt·md·hwpx·docx·pptx·xlsx를 직접 읽는다(hwpx·docx는 개요 수준·표 행 포함).
 - 구형 hwp·pdf는 타임머신 content_search 추출기로 문단을 만든 뒤 nb_source_add(첫 묶음)·nb_index(나머지 묶음)로 넣는다.
+- 업무자료함 자료는 klib의 별도 저장소(`library/notebook/notebook.db`·별도 색인)에 있다(NBIDX1). 옮기기·다시 색인은 klib가 하고
+  Python은 호출만 한다. 출처 다시 색인(nb_source_refresh)은 같은 출처 번호로 문단을 바꿔 메모·인용 연결을 지킨다.
 - 원본 파일은 읽기만 한다(쓰기·이동·삭제 없음). AI·네트워크 호출 없음.
 """
 
@@ -22,6 +24,7 @@ NOTEBOOK_COMMANDS = frozenset({
     "nb_source_list", "nb_source_remove", "nb_source_paragraphs",
     "nb_index", "nb_search", "nb_transform",
     "nb_note_save", "nb_note_list", "nb_note_delete", "nb_export_md", "nb_compare",
+    "nb_source_check", "nb_source_refresh", "nb_status", "nb_migrate",
 })
 # klib(Rust)가 직접 읽지 못해 Python이 추출하는 형식.
 PYTHON_EXTRACT_EXTENSIONS = frozenset({"hwp", "pdf"})
@@ -307,7 +310,32 @@ class NotebookService:
             return self.add_source(request.get("notebook_id"), path, display_name=request.get("display_name"))
         if cmd == "nb_source_from_item" and "paragraphs" not in request:
             return self.add_source_from_item(request)
+        if cmd == "nb_source_refresh" and "paragraphs" not in request:
+            return self.refresh_source(request.get("notebook_id"), request.get("source_id"))
         return self.bridge.request(request)
+
+    def refresh_source(self, notebook_id, source_id):
+        """출처를 같은 번호로 다시 색인한다. klib가 읽는 형식은 klib가 직접, hwp·pdf는 Python 추출 문단을 나눠 보낸다."""
+        result = self.bridge.request({"cmd": "nb_source_refresh", "notebook_id": notebook_id, "source_id": source_id})
+        if not isinstance(result, dict) or result.get("code") != "NEEDS_PARAGRAPHS":
+            return result
+        path = result.get("path")
+        if not isinstance(path, str) or not os.path.isfile(path):
+            return {"ok": False, "code": "MISSING", "message": "출처 파일을 찾을 수 없습니다."}
+        try:
+            paragraphs = self.extractor(path)
+        except Exception as exc:
+            return {"ok": False, "message": f"본문을 읽지 못했습니다: {exc or exc.__class__.__name__}"}
+        batches = list(_batches(paragraphs))
+        if not batches:
+            return {"ok": False, "message": "출처에서 본문 문단을 찾지 못했습니다."}
+        reply = None
+        for part, batch in enumerate(batches):
+            reply = self.bridge.request({"cmd": "nb_source_refresh", "notebook_id": notebook_id, "source_id": source_id,
+                                         "part": part, "last": part == len(batches) - 1, "paragraphs": batch})
+            if not isinstance(reply, dict) or not reply.get("ok"):
+                return reply if isinstance(reply, dict) else {"ok": False, "message": "다시 색인하지 못했습니다."}
+        return reply
 
     def add_source_from_item(self, request):
         """자료함 항목을 출처로 추가. 구형 hwp·pdf 항목은 Python으로 추출해 넘기고, 이미 출처면 klib가 재사용해 알려 준다."""

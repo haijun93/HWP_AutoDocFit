@@ -12,7 +12,14 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter_windows/webview_flutter_windows.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/theme/app_theme.dart';
 import '../workspace/tab_navigation_shell.dart';
+
+/// 편집기(diagram_editor) 화면 틀 테마 이름: 고대비면 hc, 아니면 밝기에 따라 dark·light.
+String _editorThemeOf(BuildContext context) {
+  if (AppColors.of(context).highContrast) return 'hc';
+  return Theme.of(context).brightness == Brightness.dark ? 'dark' : 'light';
+}
 
 class DiagramEditorScreen extends StatefulWidget {
   const DiagramEditorScreen({
@@ -40,8 +47,35 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
   String? diagramId, revision;
   String name = '새 업무 흐름도';
   String? failure;
+  String? _theme;
+  Color _background = AppColors.light.canvas;
 
   CloseLease? _closeLease;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final theme = _editorThemeOf(context);
+    _background = AppColors.of(context).canvas;
+    if (theme == _theme) return;
+    final first = _theme == null;
+    _theme = theme;
+    if (!first && controller.value.isInitialized) {
+      unawaited(_applyTheme(theme));
+    }
+  }
+
+  /// 앱 테마가 바뀌면 이미 열린 편집기에도 알린다(페이지를 다시 불러오지 않음).
+  Future<void> _applyTheme(String theme) async {
+    try {
+      await controller.setBackgroundColor(_background);
+      await controller.executeScript(
+        'window.docfitSetTheme&&window.docfitSetTheme(${jsonEncode(theme)})',
+      );
+    } catch (_) {
+      // 편집기가 아직 준비되지 않았으면 다음 테마 변경 때 다시 맞춘다.
+    }
+  }
   Future<bool> _prepareHostClose() async {
     if (saveState.saving || busy || !canCloseEditor(context)) return false;
     if (!await confirmDiscard() || !mounted) return false;
@@ -88,9 +122,12 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
       );
       await controller.initialize();
       await controller.setPopupWindowPolicy(WebviewPopupWindowPolicy.deny);
-      await controller.setBackgroundColor(const Color(0xfff4f7fb));
+      await controller.setBackgroundColor(_background);
       subscriptions.add(controller.webMessage.listen(handleMessage));
-      await controller.loadUrl('http://127.0.0.1:${server!.port}/index.html');
+      final theme = Uri.encodeQueryComponent(_theme ?? 'light');
+      await controller.loadUrl(
+        'http://127.0.0.1:${server!.port}/index.html?theme=$theme',
+      );
       if (mounted) {
         setState(() {
           initialized = true;
@@ -178,6 +215,8 @@ class _DiagramEditorScreenState extends State<DiagramEditorScreen> {
     try {
       switch (type) {
         case 'ready':
+          // 불러오는 사이 테마가 바뀌었을 수 있으니 준비되면 한 번 더 맞춘다.
+          unawaited(_applyTheme(_theme ?? 'light'));
           if (diagramId != null) {
             final loaded = await storage('load', {'id': diagramId});
             if (loaded is! Map) throw Exception('저장된 도형 문서 응답이 올바르지 않습니다.');

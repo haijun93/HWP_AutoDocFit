@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/theme/app_theme.dart';
+import 'conversion_colors.dart';
 import 'hwp_bulk_panel.dart';
 
 /// 파일변환 탭이 문서편집 상태에서 읽고 부르는 것(2.0.7: 파일변환 탭 한 화면에서 넣기 → 고르기 → 결과까지).
@@ -33,9 +35,6 @@ class ConversionWorkspace extends StatelessWidget {
 
   final ConversionHost host;
 
-  static const accent = Color(0xff7664ec);
-  static const ink = Color(0xff1e293b);
-  static const faint = Color(0xff64748b);
   static const layout = <String?>[
     'hwpx', 'docx', 'epub', //
     'html', null, 'md',
@@ -66,7 +65,7 @@ class ConversionWorkspace extends StatelessWidget {
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
     valueListenable: host.stateVersion,
     builder: (context, _, _) => ColoredBox(
-      color: const Color(0xfff6f7fc),
+      color: ConversionColors.of(context).canvas,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 980;
@@ -80,9 +79,12 @@ class ConversionWorkspace extends StatelessWidget {
             child: Container(
               key: const Key('conversionWorkspace'),
               decoration: BoxDecoration(
-                color: Colors.white,
+                color: context.colors.surface,
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: const Color(0xffcfc6f3), width: 2),
+                border: Border.all(
+                  color: ConversionColors.of(context).frameBorder,
+                  width: 2,
+                ),
               ),
               padding: const EdgeInsets.all(16),
               child: wide
@@ -112,14 +114,14 @@ class ConversionWorkspace extends StatelessWidget {
     ),
   );
 
-  Widget _title(String text) => Padding(
+  Widget _title(BuildContext context, String text) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Text(
       text,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w800,
-        color: ink,
+        color: context.colors.text,
       ),
     ),
   );
@@ -143,7 +145,7 @@ class ConversionWorkspace extends StatelessWidget {
             value: i,
             child: Row(
               children: [
-                Icon(items[i].$2, size: 18, color: faint),
+                Icon(items[i].$2, size: 18, color: context.colors.muted),
                 const SizedBox(width: 10),
                 Text(items[i].$1),
               ],
@@ -184,7 +186,7 @@ class ConversionWorkspace extends StatelessWidget {
                     : 0.42,
                 child: Row(
                   children: [
-                    Icon(icon(format), size: 18, color: faint),
+                    Icon(icon(format), size: 18, color: context.colors.muted),
                     const SizedBox(width: 10),
                     Text('${targets[format]?['label'] ?? format.toUpperCase()}'),
                   ],
@@ -225,22 +227,24 @@ class ConversionWorkspace extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _title('올린 파일 (${files.length}개)'),
+          _title(context, '올린 파일 (${files.length}개)'),
           Expanded(
             child: files.isEmpty
                 ? Container(
                     key: const Key('conversionDropZone'),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: const Color(0xfff4f1ff),
+                      color: ConversionColors.of(context).dropSurface,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xffb9a8e0)),
+                      border: Border.all(
+                        color: ConversionColors.of(context).dropBorder,
+                      ),
                     ),
                     padding: const EdgeInsets.all(16),
-                    child: const Text(
+                    child: Text(
                       '여기에 파일을 놓으세요\nHWP·HWPX·PDF·DOCX·그림·텍스트',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: faint, height: 1.6),
+                      style: TextStyle(color: context.colors.muted, height: 1.6),
                     ),
                   )
                 : _FilesScrollbar(
@@ -290,11 +294,11 @@ class ConversionWorkspace extends StatelessWidget {
                             vertical: 10,
                           ),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: context.colors.surface,
                             borderRadius: BorderRadius.circular(12),
-                            boxShadow: const [
+                            boxShadow: [
                               BoxShadow(
-                                color: Color(0x14000000),
+                                color: context.colors.shadow,
                                 blurRadius: 6,
                                 offset: Offset(0, 2),
                               ),
@@ -302,9 +306,9 @@ class ConversionWorkspace extends StatelessWidget {
                           ),
                           child: Row(
                             children: [
-                              const Icon(
+                              Icon(
                                 Icons.description_outlined,
-                                color: faint,
+                                color: context.colors.muted,
                               ),
                               const SizedBox(width: 10),
                               Expanded(
@@ -322,9 +326,9 @@ class ConversionWorkspace extends StatelessWidget {
                                     if (sizeText(file['size']).isNotEmpty)
                                       Text(
                                         sizeText(file['size']),
-                                        style: const TextStyle(
+                                        style: TextStyle(
                                           fontSize: 12,
-                                          color: faint,
+                                          color: context.colors.muted,
                                         ),
                                       ),
                                   ],
@@ -410,7 +414,7 @@ class ConversionWorkspace extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Center(child: _title('변환할 포맷 선택')),
+        Center(child: _title(context, '변환할 포맷 선택')),
         Expanded(
           child: LayoutBuilder(
             builder: (context, box) {
@@ -425,8 +429,8 @@ class ConversionWorkspace extends StatelessWidget {
                       width: cellW,
                       height: cellH,
                       child: format == null
-                          ? _centerCell()
-                          : _formatCell(format, targets[format]),
+                          ? _centerCell(context)
+                          : _formatCell(context, format, targets[format]),
                     ),
                 ],
               );
@@ -434,18 +438,18 @@ class ConversionWorkspace extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
-        const Text(
+        Text(
           '포맷을 누르면 바로 변환해요. 결과는 원본 옆에 저장돼요.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 13, color: faint),
+          style: TextStyle(fontSize: 13, color: context.colors.muted),
         ),
       ],
     );
   }
 
-  Widget _centerCell() => Container(
+  Widget _centerCell(BuildContext context) => Container(
     decoration: BoxDecoration(
-      color: const Color(0xffeef2ff),
+      color: ConversionColors.of(context).centerCell,
       borderRadius: BorderRadius.circular(14),
     ),
     alignment: Alignment.center,
@@ -457,22 +461,24 @@ class ConversionWorkspace extends StatelessWidget {
           ? '파일을\n먼저 넣으세요'
           : '${host.files.length}개 파일',
       textAlign: TextAlign.center,
-      style: const TextStyle(
+      style: TextStyle(
         fontSize: 13,
         fontWeight: FontWeight.w600,
-        color: faint,
+        color: context.colors.muted,
       ),
     ),
   );
 
-  Widget _formatCell(String format, Map? target) {
+  Widget _formatCell(BuildContext context, String format, Map? target) {
+    final p = ConversionColors.of(context);
+    final c = context.colors;
     final enabled = target != null && target['enabled'] == true && !host.locked;
     final label = '${target?['label'] ?? format.toUpperCase()}';
     final reason = '${target?['reason'] ?? '변환할 문서를 추가하세요.'}';
     return Tooltip(
       message: enabled ? '$label로 변환' : reason,
       child: Material(
-        color: enabled ? const Color(0xfff8f7ff) : const Color(0xfff1f5f9),
+        color: enabled ? p.cellEnabled : c.surfaceSubtle,
         borderRadius: BorderRadius.circular(14),
         child: InkWell(
           key: Key('conversionFormat-$format'),
@@ -483,16 +489,16 @@ class ConversionWorkspace extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon(format), color: enabled ? accent : faint, size: 26),
+                Icon(icon(format), color: enabled ? p.accent : c.muted, size: 26),
                 const SizedBox(height: 6),
                 Text(
                   label,
                   textAlign: TextAlign.center,
                   maxLines: 2,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w700,
-                    color: ink,
+                    color: c.text,
                   ),
                 ),
               ],
@@ -509,16 +515,19 @@ class ConversionWorkspace extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _title('변환 결과'),
+        _title(context, '변환 결과'),
         if (host.hwpBulk case final Map bulk
             when '${bulk['phase'] ?? 'idle'}' != 'idle')
           HwpBulkCard(bulk: bulk, call: host.apiCall),
         if (host.running) ...[
-          LinearProgressIndicator(value: host.progressValue, color: accent),
+          LinearProgressIndicator(
+            value: host.progressValue,
+            color: ConversionColors.of(context).accent,
+          ),
           const SizedBox(height: 6),
           Text(
             host.statusText,
-            style: const TextStyle(fontSize: 12, color: faint),
+            style: TextStyle(fontSize: 12, color: context.colors.muted),
           ),
           Align(
             alignment: Alignment.centerRight,
@@ -531,10 +540,10 @@ class ConversionWorkspace extends StatelessWidget {
         ],
         Expanded(
           child: results.isEmpty && failures.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
                     '변환한 파일이 여기에 나와요.',
-                    style: TextStyle(color: faint),
+                    style: TextStyle(color: context.colors.muted),
                   ),
                 )
               : ListView(
@@ -573,11 +582,11 @@ class ConversionWorkspace extends StatelessWidget {
                           margin: const EdgeInsets.only(bottom: 8),
                           padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
                           decoration: BoxDecoration(
-                            color: Colors.white,
+                            color: context.colors.surface,
                             borderRadius: BorderRadius.circular(12),
-                            boxShadow: const [
+                            boxShadow: [
                               BoxShadow(
-                                color: Color(0x14000000),
+                                color: context.colors.shadow,
                                 blurRadius: 6,
                                 offset: Offset(0, 2),
                               ),
@@ -597,19 +606,19 @@ class ConversionWorkspace extends StatelessWidget {
                                         fontWeight: FontWeight.w600,
                                       ),
                                     ),
-                                    const Row(
+                                    Row(
                                       children: [
                                         Icon(
                                           Icons.check_circle_outline,
                                           size: 14,
-                                          color: Color(0xff16a34a),
+                                          color: ConversionColors.of(context).done,
                                         ),
                                         SizedBox(width: 4),
                                         Text(
                                           '변환 완료',
                                           style: TextStyle(
                                             fontSize: 12,
-                                            color: faint,
+                                            color: context.colors.muted,
                                           ),
                                         ),
                                       ],
@@ -643,14 +652,14 @@ class ConversionWorkspace extends StatelessWidget {
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: const Color(0xfffef2f2),
+                          color: context.colors.dangerSoft,
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Text(
                           '${failure.key}\n${failure.value}',
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 12,
-                            color: Color(0xffb91c1c),
+                            color: context.colors.dangerDeep,
                           ),
                         ),
                       ),
@@ -665,7 +674,10 @@ class ConversionWorkspace extends StatelessWidget {
           children: [
             FilledButton.icon(
               key: const Key('conversionOpenFolder'),
-              style: FilledButton.styleFrom(backgroundColor: accent),
+              style: FilledButton.styleFrom(
+                backgroundColor: ConversionColors.of(context).accentFill,
+                foregroundColor: context.colors.onAccent,
+              ),
               onPressed: results.isEmpty || host.running
                   ? null
                   : () => host.command('show_result', [0]),
@@ -709,9 +721,12 @@ class ConversionWorkspace extends StatelessWidget {
           context: context,
           builder: (ctx) => AlertDialog(
             key: const Key('cellBgResultDialog'),
-            title: const Row(
+            title: Row(
               children: [
-                Icon(Icons.check_circle_outline, color: Color(0xff16a34a)),
+                Icon(
+                  Icons.check_circle_outline,
+                  color: ConversionColors.of(context).done,
+                ),
                 SizedBox(width: 8),
                 Text('표 칸 그림 → 배경 변환 완료'),
               ],
@@ -729,7 +744,7 @@ class ConversionWorkspace extends StatelessWidget {
                 const SizedBox(height: 8),
                 Text(
                   '$message',
-                  style: const TextStyle(color: faint, fontSize: 13),
+                  style: TextStyle(color: context.colors.muted, fontSize: 13),
                 ),
               ],
             ),

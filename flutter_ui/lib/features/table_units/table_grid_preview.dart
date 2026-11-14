@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import '../../core/api/table_units_api.dart';
+import '../../core/theme/app_theme.dart';
+import 'table_units_colors.dart';
 
 Color? parseHexColor(String? hex) {
   if (hex == null) return null;
@@ -15,7 +17,7 @@ Color? parseHexColor(String? hex) {
   }
   if (str.length == 6) {
     final val = int.tryParse(str, radix: 16);
-    if (val != null) return Color(0xff000000 | val);
+    if (val != null) return Color(0xff000000 | val); // 문서 색(테마 무관)
   } else if (str.length == 8) {
     final val = int.tryParse(str, radix: 16);
     if (val != null) return Color(val);
@@ -125,13 +127,16 @@ class TableGridPreview extends StatelessWidget {
         height: maxHeight ?? 160,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: const Color(0xfff8fafc),
+          color: context.colors.surfaceMuted,
           borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xffe2e8f0)),
+          border: Border.all(color: context.colors.line),
         ),
-        child: const Text(
+        child: Text(
           '표 데이터가 없습니다.',
-          style: TextStyle(color: Color(0xff8b95a1), fontSize: 13),
+          style: TextStyle(
+            color: TableUnitsColors.of(context).emptyText,
+            fontSize: 13,
+          ),
         ),
       );
     }
@@ -240,13 +245,13 @@ class TableGridPreview extends StatelessWidget {
           width: renderWidth,
           height: renderHeight,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: Colors.white, // 문서 색(테마 무관): 종이 미리보기의 흰 종이
             borderRadius: BorderRadius.circular(4),
-            boxShadow: const [
+            boxShadow: [
               BoxShadow(
-                color: Color(0x0d000000),
+                color: TableUnitsColors.of(context).paperShadow,
                 blurRadius: 4,
-                offset: Offset(0, 1),
+                offset: const Offset(0, 1),
               ),
             ],
           ),
@@ -267,6 +272,7 @@ class TableGridPreview extends StatelessWidget {
                     totalWidth: totalWidth,
                     totalHeight: totalHeight,
                     editedCellKeys: editedCellKeys,
+                    editAccent: context.colors.accent,
                     fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
                   ),
                 ),
@@ -387,6 +393,7 @@ class _TableGridPainter extends CustomPainter {
     required this.totalWidth,
     required this.totalHeight,
     required this.editedCellKeys,
+    required this.editAccent,
     this.fontFamilyFallback = const ['NotoSansSymbols2', 'STIXTwoMath'],
   });
 
@@ -398,6 +405,9 @@ class _TableGridPainter extends CustomPainter {
   final double totalWidth;
   final double totalHeight;
   final Set<String> editedCellKeys;
+
+  /// 직접 입력한 칸 표시 색(화면 장식이라 테마 강조색). 바탕은 0x33 알파.
+  final Color editAccent;
   final List<String> fontFamilyFallback;
 
   @override
@@ -481,7 +491,7 @@ class _TableGridPainter extends CustomPainter {
       final cellKey = '${cell.row},${cell.col}';
       if (editedKeys.contains(cellKey)) {
         final editHighlightPaint = Paint()
-          ..color = const Color(0x332563eb)
+          ..color = editAccent.withAlpha(0x33)
           ..style = PaintingStyle.fill;
         canvas.drawRect(cellRect, editHighlightPaint);
       }
@@ -549,7 +559,7 @@ class _TableGridPainter extends CustomPainter {
       if (rectWidth < 12 || rectHeight < 8) continue;
 
       final textColor =
-          parseHexColor(cell.style.color) ?? const Color(0xff1e293b);
+          parseHexColor(cell.style.color) ?? const Color(0xff1e293b); // 문서 색(테마 무관)
       final fontSize = (rectHeight * 0.42).clamp(depth > 0 ? 6.0 : 8.0, 13.0);
 
       TextAlign align = TextAlign.left;
@@ -610,7 +620,7 @@ class _TableGridPainter extends CustomPainter {
       void drawBorderLine(CellBorderSide side, Offset p1, Offset p2) {
         final type = side.type.toUpperCase();
         if (type == 'NONE') return;
-        final color = parseHexColor(side.color) ?? const Color(0xff94a3b8);
+        final color = parseHexColor(side.color) ?? const Color(0xff94a3b8); // 문서 색(테마 무관)
         // 한/글 선 종류를 비슷하게: 이중선 계열은 두 줄, 파선·점선은 끊어 그린다(2.0.6).
         final doubled = type.contains('DOUBLE') || type.contains('SLIM') || type.contains('THICK');
         final strokeW = doubled ? 0.8 : (side.width * 1.5).clamp(0.5, 3.0).toDouble();
@@ -664,7 +674,7 @@ class _TableGridPainter extends CustomPainter {
       // 사용자가 직접 입력한 칸 테두리 강조 표시 (depth == 0인 경우)
       if (depth == 0 && editedKeys.contains('${cell.row},${cell.col}')) {
         final highlightBorderPaint = Paint()
-          ..color = const Color(0xff2563eb)
+          ..color = editAccent
           ..strokeWidth = 1.5
           ..style = PaintingStyle.stroke;
         canvas.drawRect(
@@ -739,7 +749,8 @@ class _TableGridPainter extends CustomPainter {
         oldDelegate.cells != cells ||
         oldDelegate.totalWidth != totalWidth ||
         oldDelegate.totalHeight != totalHeight ||
-        oldDelegate.editedCellKeys != editedCellKeys;
+        oldDelegate.editedCellKeys != editedCellKeys ||
+        oldDelegate.editAccent != editAccent;
   }
 }
 
@@ -854,7 +865,7 @@ class TableShapesPainter extends CustomPainter {
     Color? fillColor,
     Color? lineColor,
   ) {
-    final effectiveFill = fillColor ?? const Color(0xff475569);
+    final effectiveFill = fillColor ?? const Color(0xff475569); // 문서 색(테마 무관)
     final path = Path();
 
     switch (dir) {
@@ -934,7 +945,7 @@ class TableShapesPainter extends CustomPainter {
     Color? fillColor,
     Color? lineColor,
   ) {
-    final effectiveFill = fillColor ?? const Color(0xff475569);
+    final effectiveFill = fillColor ?? const Color(0xff475569); // 문서 색(테마 무관)
     final path = Path();
 
     switch (dir) {
@@ -980,7 +991,7 @@ class TableShapesPainter extends CustomPainter {
   }
 
   void _drawLine(Canvas canvas, Rect rect, String dir, Color? lineColor) {
-    final effectiveColor = lineColor ?? const Color(0xff475569);
+    final effectiveColor = lineColor ?? const Color(0xff475569); // 문서 색(테마 무관)
     final paint = Paint()
       ..color = effectiveColor
       ..strokeWidth = 1.8
@@ -1018,7 +1029,7 @@ class TableShapesPainter extends CustomPainter {
         ..style = PaintingStyle.fill;
       canvas.drawRect(rect, fillPaint);
     }
-    final effectiveLine = lineColor ?? const Color(0xff64748b);
+    final effectiveLine = lineColor ?? const Color(0xff64748b); // 문서 색(테마 무관)
     final borderPaint = Paint()
       ..color = effectiveLine
       ..strokeWidth = 1.2
@@ -1038,7 +1049,7 @@ class TableShapesPainter extends CustomPainter {
         ..style = PaintingStyle.fill;
       canvas.drawOval(rect, fillPaint);
     }
-    final effectiveLine = lineColor ?? const Color(0xff64748b);
+    final effectiveLine = lineColor ?? const Color(0xff64748b); // 문서 색(테마 무관)
     final borderPaint = Paint()
       ..color = effectiveLine
       ..strokeWidth = 1.2
@@ -1053,7 +1064,7 @@ class TableShapesPainter extends CustomPainter {
     Color? lineColor,
   ) {
     final bgPaint = Paint()
-      ..color = fillColor ?? const Color(0xfff1f5f9)
+      ..color = fillColor ?? const Color(0xfff1f5f9) // 문서 색(테마 무관)
       ..style = PaintingStyle.fill;
     canvas.drawRRect(
       RRect.fromRectAndRadius(rect, const Radius.circular(2)),
@@ -1061,7 +1072,7 @@ class TableShapesPainter extends CustomPainter {
     );
 
     final borderPaint = Paint()
-      ..color = lineColor ?? const Color(0xffcbd5e1)
+      ..color = lineColor ?? const Color(0xffcbd5e1) // 문서 색(테마 무관)
       ..strokeWidth = 1.0
       ..style = PaintingStyle.stroke;
     canvas.drawRRect(
@@ -1081,7 +1092,7 @@ class TableShapesPainter extends CustomPainter {
       );
 
       final iconPaint = Paint()
-        ..color = const Color(0xff94a3b8)
+        ..color = const Color(0xff94a3b8) // 문서 색(테마 무관): 종이 위 그림 자리 표시
         ..style = PaintingStyle.fill;
 
       final mountain1 = Path();
@@ -1116,11 +1127,11 @@ class TableShapesPainter extends CustomPainter {
   void _drawShapeText(Canvas canvas, Rect rect, String text, Color? fillColor) {
     if (rect.width < 10 || rect.height < 8) return;
 
-    Color textColor = const Color(0xff1e293b);
+    Color textColor = const Color(0xff1e293b); // 문서 색(테마 무관)
     if (fillColor != null &&
         (fillColor.r * 0.299 + fillColor.g * 0.587 + fillColor.b * 0.114) <
             140) {
-      textColor = Colors.white;
+      textColor = Colors.white; // 문서 색(테마 무관): 진한 도형 위 글자
     }
 
     final fontSize = (rect.height * 0.35).clamp(8.0, 12.0);

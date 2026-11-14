@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
 import '../../core/instant_search.dart';
 import '../../core/models/abbreviation.dart';
+import 'abbreviation_colors.dart';
 import 'abbreviation_editor.dart';
 
 class AbbreviationManager extends StatefulWidget {
@@ -170,7 +171,7 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
                   padding: const EdgeInsets.symmetric(vertical: 8),
                   child: Text(
                     error!,
-                    style: const TextStyle(color: Colors.red),
+                    style: TextStyle(color: AbbreviationColors.of(context).error),
                   ),
                 ),
               if (data?.running == true) const Text('작업 중에는 준말을 바꿀 수 없어요.'),
@@ -250,7 +251,7 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
       margin: const EdgeInsets.symmetric(vertical: 8),
       padding: const EdgeInsets.all(8),
       decoration: BoxDecoration(
-        border: Border.all(color: Colors.black12),
+        border: Border.all(color: AbbreviationColors.of(context).border),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Column(
@@ -331,7 +332,7 @@ class _AbbreviationManagerState extends State<AbbreviationManager> {
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
                   '⚠ $message',
-                  style: const TextStyle(color: Colors.red, fontSize: 12),
+                  style: TextStyle(color: AbbreviationColors.of(context).error, fontSize: 12),
                 ),
               ),
           ],

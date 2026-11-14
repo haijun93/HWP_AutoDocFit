@@ -1,0 +1,22 @@
+[package]
+name = "ui_theme"
+version = "0.1.0"
+edition = "2024"
+description = "Rust 네이티브 창 공용 색 표(밝게·어둡게·고대비)와 Windows 테마 감지(RUSTALL1 DARK1, UI0 공용 부품)"
+license = "MIT"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+# 순수 부분(팔레트·선호 해석·대비 계산·상태 전이)은 의존성 없이 모든 OS에서 시험한다.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+] }

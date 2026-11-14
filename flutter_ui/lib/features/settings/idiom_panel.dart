@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../core/theme/app_theme.dart';
 
 import '../../core/api/abbreviation_api.dart';
 import '../../core/instant_search.dart';
@@ -215,7 +216,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
             child: const Text('취소'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Kiosk.red),
+            style: FilledButton.styleFrom(backgroundColor: context.kiosk.red),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('삭제'),
           ),
@@ -248,11 +249,11 @@ class _IdiomPanelState extends State<IdiomPanel> {
       children: [
         Container(
           padding: const EdgeInsets.all(20),
-          decoration: Kiosk.cardBox(),
+          decoration: Kiosk.cardBox(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(widget.body ? '본문 상용구' : '글자 상용구', style: Kiosk.cardTitle),
+              Text(widget.body ? '본문 상용구' : '글자 상용구', style: Kiosk.cardTitle(context)),
               const SizedBox(height: 6),
             Text(
                 directConfig
@@ -260,7 +261,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
                     : widget.body
                     ? '준말을 치고 Alt+I를 누르면 미리 만들어 둔 문서(표·서식)가 통째로 들어가요. HWP·HWPX 문서를 골라 추가하세요.'
                     : '준말을 치고 Alt+I를 누르면 본말 글자로 바뀌어요. 예: ㅁ → □, ㅇ123 → ①②③',
-                style: Kiosk.body,
+                style: Kiosk.body(context),
               ),
               const SizedBox(height: 4),
               Text(
@@ -269,7 +270,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
                     : available
                     ? '한/글이 쓰는 상용구 파일을 바로 고쳐요. 저장할 때마다 이전 파일을 백업하고, 한/글을 다시 열면 반영돼요.'
                     : '${data['reason'] ?? '상용구 파일을 불러오는 중이에요.'}',
-                style: Kiosk.caption,
+                style: Kiosk.caption(context),
               ),
               if (directConfig) ...[
                 const SizedBox(height: 12),
@@ -294,7 +295,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text('반영 전에 한/글을 종료하세요. 기존 상용구 파일은 자동 백업됩니다.', style: Kiosk.caption),
+                Text('반영 전에 한/글을 종료하세요. 기존 상용구 파일은 자동 백업됩니다.', style: Kiosk.caption(context)),
               ],
               const SizedBox(height: 16),
               if (!directConfig) Row(
@@ -341,14 +342,14 @@ class _IdiomPanelState extends State<IdiomPanel> {
               if (error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(error!, style: const TextStyle(color: Kiosk.red)),
+                  child: Text(error!, style: TextStyle(color: context.kiosk.red)),
                 ),
               if (notice != null && error == null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     notice!,
-                    style: const TextStyle(color: Kiosk.green),
+                    style: TextStyle(color: context.kiosk.green),
                   ),
                 ),
             ],
@@ -363,10 +364,10 @@ class _IdiomPanelState extends State<IdiomPanel> {
                 controller: search.text,
                 onSubmitted: (_) => search.submit(),
                 decoration: InputDecoration(
-                  prefixIcon: const Icon(Icons.search, color: Kiosk.faint),
+                  prefixIcon: Icon(Icons.search, color: context.kiosk.faint),
                   hintText: '상용구 찾기 (${all.length}개)',
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: context.kiosk.card,
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(14),
                     borderSide: BorderSide.none,
@@ -397,7 +398,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
             child: Center(
               child: Text(
                 query.isEmpty ? '아직 상용구가 없어요.' : '“$query”와 맞는 상용구가 없어요.',
-                style: Kiosk.body,
+                style: Kiosk.body(context),
               ),
             ),
           ),
@@ -413,9 +414,9 @@ class _IdiomPanelState extends State<IdiomPanel> {
       margin: const EdgeInsets.only(bottom: 6),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: context.kiosk.card,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Kiosk.line),
+        border: Border.all(color: context.kiosk.line),
       ),
       child: Row(
         children: [
@@ -423,24 +424,24 @@ class _IdiomPanelState extends State<IdiomPanel> {
             constraints: const BoxConstraints(minWidth: 72),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
-              color: Kiosk.blueSoft,
+              color: context.kiosk.blueSoft,
               borderRadius: BorderRadius.circular(10),
             ),
             child: Text(
               '${item['key']}',
               textAlign: TextAlign.center,
-              style: const TextStyle(
+              style: TextStyle(
                 fontWeight: FontWeight.w700,
-                color: Kiosk.blue,
+                color: context.kiosk.blue,
               ),
             ),
           ),
-          const Padding(
+          Padding(
             padding: EdgeInsets.symmetric(horizontal: 10),
             child: Icon(
               Icons.arrow_forward_rounded,
               size: 16,
-              color: Kiosk.faint,
+              color: context.kiosk.faint,
             ),
           ),
           Expanded(
@@ -448,15 +449,15 @@ class _IdiomPanelState extends State<IdiomPanel> {
               value,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 15, color: Kiosk.ink),
+              style: TextStyle(fontSize: 15, color: context.kiosk.ink),
             ),
           ),
           if (widget.body && item['has_file'] != true)
-            const Padding(
+            Padding(
               padding: EdgeInsets.only(right: 6),
               child: Text(
                 '문서 없음',
-                style: TextStyle(color: Kiosk.red, fontSize: 12),
+                style: TextStyle(color: context.kiosk.red, fontSize: 12),
               ),
             ),
           if (widget.body && !directConfig)
@@ -526,34 +527,34 @@ class AppInfoPanel extends StatelessWidget {
     children: [
       Container(
         padding: const EdgeInsets.all(24),
-        decoration: Kiosk.cardBox(),
+        decoration: Kiosk.cardBox(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('앱 정보', style: Kiosk.cardTitle),
+            Text('앱 정보', style: Kiosk.cardTitle(context)),
             const SizedBox(height: 16),
-            _line('개발자', '도토리만두'),
-            if (version != null && version!.isNotEmpty) _line('버전', version!),
+            _line(context, '개발자', '도토리만두'),
+            if (version != null && version!.isNotEmpty) _line(context, '버전', version!),
           ],
         ),
       ),
       const SizedBox(height: 16),
       Container(
         padding: const EdgeInsets.all(24),
-        decoration: Kiosk.cardBox(),
+        decoration: Kiosk.cardBox(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('함께 쓰는 프로그램·코드', style: Kiosk.cardTitle),
+            Text('함께 쓰는 프로그램·코드', style: Kiosk.cardTitle(context)),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               '이 앱은 아래 공개 프로그램과 코드를 함께 씁니다. 한/글 프로그램은 포함하지 않고 PC에 설치된 한/글을 씁니다. '
               '자세한 저작권·라이선스 고지는 THIRD_PARTY_NOTICES.md에 있습니다.',
-              style: Kiosk.caption,
+              style: Kiosk.caption(context),
             ),
             const SizedBox(height: 14),
             for (final (name, use, license) in thirdPartyComponents)
-              _component(name, use, license),
+              _component(context, name, use, license),
           ],
         ),
       ),
@@ -561,29 +562,31 @@ class AppInfoPanel extends StatelessWidget {
       Container(
         key: const ValueKey('about-external-programs'),
         padding: const EdgeInsets.all(24),
-        decoration: Kiosk.cardBox(),
+        decoration: Kiosk.cardBox(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('개발자 모드 연결 프로그램', style: Kiosk.cardTitle),
+            Text('개발자 모드 연결 프로그램', style: Kiosk.cardTitle(context)),
             const SizedBox(height: 6),
-            const Text(
+            Text(
               '개발자 모드 사이드메뉴의 사진첩·아웃라이너·사진관리는 이 앱과 따로 실행되는 별도 프로그램입니다. '
               '앱 설치 파일에는 들어 있지 않고, 메뉴를 처음 누를 때 공식 배포처에서 자동으로 받아 '
               '이 PC 사용자 폴더(%LOCALAPPDATA% 아래 HWP_AutoDocFit/tools)에 설치합니다. '
               '각 프로그램의 저작권·라이선스는 원저작자에게 있으며, 고친 소스는 위 포크 저장소에 공개합니다.',
-              style: Kiosk.caption,
+              style: Kiosk.caption(context),
             ),
             const SizedBox(height: 14),
             for (final (menu, program, origin, license) in externalPrograms)
-              _component('$menu — $program', '원본: $origin', license),
+              _component(context, '$menu — $program', '원본: $origin', license),
           ],
         ),
       ),
     ],
   );
 
-  Widget _component(String name, String use, String license) => Padding(
+  Widget _component(
+    BuildContext context,
+    String name, String use, String license) => Padding(
     padding: const EdgeInsets.only(bottom: 12),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -595,33 +598,33 @@ class AppInfoPanel extends StatelessWidget {
             children: [
               Text(
                 name,
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.w700,
-                  color: Kiosk.ink,
+                  color: context.kiosk.ink,
                 ),
               ),
-              Text(use, style: Kiosk.caption),
+              Text(use, style: Kiosk.caption(context)),
             ],
           ),
         ),
         const SizedBox(width: 12),
-        Expanded(flex: 2, child: Text(license, style: Kiosk.body)),
+        Expanded(flex: 2, child: Text(license, style: Kiosk.body(context))),
       ],
     ),
   );
 
-  Widget _line(String label, String value) => Padding(
+  Widget _line(BuildContext context, String label, String value) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Row(
       children: [
-        SizedBox(width: 80, child: Text(label, style: Kiosk.body)),
+        SizedBox(width: 80, child: Text(label, style: Kiosk.body(context))),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 17,
             fontWeight: FontWeight.w700,
-            color: Kiosk.ink,
+            color: context.kiosk.ink,
           ),
         ),
       ],
