@@ -60,7 +60,14 @@ impl Backend {
         if !root.join("MANIFEST.kfm").is_file() {
             return Err("본문 색인이 없습니다. 색인 서비스에서 먼저 색인해 주세요.".into());
         }
-        let index = Index::open(root).map_err(|e| e.to_string())?;
+        let index = Index::open(root).map_err(|e| match e {
+            kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. } => {
+                // 업데이트 직후 옛 형식 색인: 서비스에 질의 한 번을 보내 즉시 새로 만들게 한다(응답은 쓰지 않음).
+                let _ = pipe_call(PIPE_NAME, &json!({"command":"query","id":1,"text":"색인","top":1}));
+                "색인을 새 형식으로 다시 만드는 중입니다. 잠시 뒤 다시 검색해 주세요.".to_string()
+            }
+            other => other.to_string(),
+        })?;
         Ok(Self {
             root: root.to_owned(),
             index,

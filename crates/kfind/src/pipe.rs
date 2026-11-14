@@ -345,6 +345,16 @@ impl Handler {
         if indices.len() >= 64 {
             return Err("too many user indices".into());
         }
+        if is_stale(&dir) {
+            // 옛 형식 색인: 목록 잠금을 풀고 문서 표를 열어 즉시 새로 만들게 한 뒤 다시 연다.
+            drop(indices);
+            if let Some(s) = self.store(sid, false)? {
+                // 이미 열려 있던 문서 표면 store()가 새로 만들지 않으므로 여기서 쓰기 쪽을 열어 새로 만든다.
+                let mut guard = s.lock().map_err(|_| "store poisoned")?;
+                self.writer(sid, &mut guard)?;
+            }
+            indices = self.indices.lock().map_err(|_| "index registry poisoned")?;
+        }
         let index = Arc::new(Mutex::new(Index::open(&dir)?));
         indices.insert(sid.to_owned(), index.clone());
         Ok(index)
@@ -365,10 +375,16 @@ impl Handler {
         if stores.len() >= 64 {
             return Err("too many user indices".into());
         }
-        let s = Arc::new(Mutex::new(Store {
+        let mut store = Store {
             table: DocTable::load(&dir)?,
             writer: None,
-        }));
+        };
+        // 업데이트로 색인 형식·규칙 판이 바뀌었으면 여는 즉시 새로 만든다(문서 표도 비움 → 앱이 전부 다시 보냄).
+        // 쓰기 때까지 미루면 바뀐 문서가 없는 동안 옛 색인이 남아 읽기가 계속 실패한다(v2.2.67 현상).
+        if dir.join("MANIFEST.kfm").is_file() && is_stale(&dir) {
+            self.writer(sid, &mut store)?;
+        }
+        let s = Arc::new(Mutex::new(store));
         stores.insert(sid.to_owned(), s.clone());
         Ok(Some(s))
     }
@@ -978,6 +994,27 @@ mod tests {
         assert_eq!(h.handle("S-1-5-18", query()).unwrap()["total_docs"], 2);
         assert!(h.handle("S-1-5-19", query()).is_err());
     }
+    #[test]
+    fn stale_format_index_is_rebuilt_on_first_query() {
+        // 업데이트 직후 옛 형식 색인: 쓰기를 기다리지 않고 첫 질의에서 새로 만들어 오류 대신 빈 결과를 낸다.
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().join("S-1-5-18");
+        let mut w = kfind_core::Writer::create(&dir, Default::default()).unwrap();
+        w.add_document(1, 0, &[kfind_core::Sentence { para: 0, level: 0, text: "예산 집행" }]).unwrap();
+        w.commit().unwrap();
+        drop(w);
+        let m = dir.join("MANIFEST.kfm");
+        let mut b = std::fs::read(&m).unwrap();
+        b[8..12].copy_from_slice(&(kfind_core::FORMAT_VERSION - 1).to_le_bytes());
+        std::fs::write(&m, b).unwrap();
+        assert!(is_stale(&dir));
+        let h = Handler::new(d.path().to_owned());
+        let r = h
+            .handle("S-1-5-18", Request::Query { id: 1, text: "예산".into(), top: 20 })
+            .unwrap();
+        assert_eq!(r["total_docs"], 0);
+        assert!(!is_stale(&dir));
+    }
     #[tokio::test]
     async fn oversized_pipe_frame_is_rejected() {
         let d = tempfile::tempdir().unwrap();
@@ -1422,4 +1459,12 @@ mod tests {
         assert_eq!(q["hits"][0]["sentences"][0]["len"], 8);
         assert!(part(2, json!([])).is_err(), "part without part 0");
     }
+}
+
+/// 색인 형식·규칙 판이 이 엔진과 다른지(업데이트 직후 옛 색인). 그 밖의 열기 오류는 여기서 판단하지 않는다.
+fn is_stale(dir: &std::path::Path) -> bool {
+    matches!(
+        Index::open(dir),
+        Err(kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. })
+    )
 }
