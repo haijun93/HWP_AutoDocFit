@@ -13,7 +13,7 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 
-use klib::extract::{extract_hwp, Paragraph};
+use klib::extract::extract_hwp;
 use klib::hwp5::{
     build_para_text_bytes, encode_utf16le, extract_hwp5, ParaTextItem, RecordBuilder,
     SyntheticHwp5Builder, FLAG_COMPRESSED, FLAG_DISTRIBUTED, FLAG_DRM, FLAG_PASSWORD_ENCRYPTED,
@@ -281,4 +281,47 @@ fn test_extract_hwp_top_level_fallback() {
     let records = extract_hwp(&temp_file.path).expect("최상위 extract_hwp 호출 성공");
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].text, "통합 추출 성공");
+}
+
+#[test]
+fn test_hwp5_control_kinds_classification() {
+    // 머리말(head), 각주(fn), 일반 본문 구분 검증
+    let mut builder = SyntheticHwp5Builder::new().compressed(true);
+
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"head\0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("머리말 텍스트")).to_bytes());
+
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 0).with_data(b"fn  \0\0\0\0\0\0\0\0\0\0\0\0".to_vec()).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 1).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 2).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 3).with_data(encode_utf16le("각주 설명문")).to_bytes());
+
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le("일반 본문")).to_bytes());
+
+    let hwp_bytes = builder.build().unwrap();
+    let temp = TempHwpFile::new("ctrls", &hwp_bytes);
+
+    let paras = extract_hwp5(&temp.path).expect("추출 성공");
+    assert_eq!(paras.len(), 3);
+    assert_eq!(paras[0].location_kind, "header");
+    assert_eq!(paras[1].location_kind, "footnote");
+    assert_eq!(paras[2].location_kind, "paragraph");
+}
+
+#[test]
+fn test_hwp5_formfeed_char_12_handling() {
+    let mut text_bytes = Vec::new();
+    text_bytes.extend_from_slice(&encode_utf16le("앞부분"));
+    text_bytes.extend_from_slice(&12u16.to_le_bytes()); // 코드 12 (폼 피드)
+    text_bytes.extend_from_slice(&encode_utf16le("뒷부분글자"));
+
+    let decoded = klib::hwp5::decode_para_text(&text_bytes);
+    assert!(decoded.contains("앞부분"));
+    assert!(decoded.contains("뒷부분글자"));
 }

@@ -13,6 +13,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "klib"
 path = "src/main.rs"
+test = false
 
 [dependencies]
 rusqlite = { version = "0.41", features = ["bundled"] }
