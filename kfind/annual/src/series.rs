@@ -2,7 +2,7 @@
 use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
 
-use crate::date::{Date, KST_OFFSET_SECS, SECS_PER_DAY, ymd_to_days};
+use crate::date::{Date, KST_OFFSET_SECS, SECS_PER_DAY};
 
 /// 주기 유형.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
