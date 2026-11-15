@@ -27,6 +27,8 @@ use windows_sys::Win32::{
     System::{Pipes::*, Threading::*},
 };
 pub const MAX_REQUEST: usize = 65536;
+/// DocumentMeta가 실제로 저장되기 시작한 판. 기존 문서는 다시 보내야 한다.
+pub const META_RULE_VERSION: u32 = 1;
 #[derive(Deserialize, Debug)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
@@ -79,6 +81,8 @@ pub enum Request {
         #[serde(default)]
         scope: Option<String>,
         level_rule: u32,
+        #[serde(default)]
+        meta_rule: u32,
         /// 이 열쇠 다음부터(앞 응답의 마지막 열쇠).
         #[serde(default)]
         after: Option<String>,
@@ -459,12 +463,14 @@ impl Handler {
         for w in &filters.exclude {
             deny |= index.doc_set(w)?;
         }
+        let file_types = (!filters.ext.is_empty()).then(|| filters.ext.clone());
         Ok(SearchOptions {
             split: split_mode(split)?,
             cancel: Some(flag),
             allow: allow.map(Arc::new),
             deny: (!deny.is_empty()).then(|| Arc::new(deny)),
             phrases: filters.phrases.clone(),
+            file_types,
             ..Default::default()
         })
     }
@@ -561,9 +567,10 @@ impl Handler {
             Request::Stale {
                 scope,
                 level_rule,
+                meta_rule,
                 after,
                 limit,
-            } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
+            } => self.stale(sid, scope.as_deref(), level_rule, meta_rule, after.as_deref(), limit),
             Request::NamesQuery {
                 id,
                 text,
@@ -697,7 +704,13 @@ impl Handler {
         }
         let id = s.table.id_for(&doc_key);
         let n = sents.len();
-        let generation = self.write(sid, s, |w| w.add_document(id, meta.date, &sents))?;
+        let index_meta = kfind_core::DocumentMeta {
+            path: Some(meta.path.clone()),
+            file_type: None, // kfind-core derives a lowercase extension from path.
+        };
+        let generation = self.write(sid, s, |w| {
+            w.add_document_with_meta(id, meta.date, &index_meta, &sents)
+        })?;
         s.table.put(&doc_key, id, meta, spans)?;
         Ok(
             json!({"doc_key":doc_key,"indexed":true,"doc_id":id,"sentences":n,"generation":generation}),
@@ -736,6 +749,7 @@ impl Handler {
         sid: &str,
         scope: Option<&str>,
         level_rule: u32,
+        meta_rule: u32,
         after: Option<&str>,
         limit: usize,
     ) -> Result<Value> {
@@ -751,7 +765,9 @@ impl Handler {
         let mut more = false;
         for (k, e) in s.table.iter_after(after) {
             if in_scope(wants.as_deref(), &e.meta.scopes)
-                && (e.meta.level_src != LevelSrc::Py || e.meta.level_rule < level_rule)
+                && (e.meta.level_src != LevelSrc::Py
+                    || e.meta.level_rule < level_rule
+                    || meta_rule < META_RULE_VERSION)
             {
                 if keys.len() == limit {
                     more = true;
@@ -815,6 +831,7 @@ impl Handler {
             "state":"ready","version":env!("CARGO_PKG_VERSION"),"sid":sid,"index_available":available,
             "mode":self.mode,"generation":generation,"docs":docs,"sentences":sentences,
             "format":kfind_core::FORMAT_VERSION,"fold_rule":kfind_core::FOLD_RULE_VERSION,"sentence_rule":kfind_core::SENTENCE_RULE_VERSION,
+            "meta_rule":META_RULE_VERSION,
             "level_rule_counts":counts,"uploads":uploads,"last_error":last_error
         }))
     }
@@ -1246,6 +1263,18 @@ mod tests {
     }
 
     #[test]
+    fn ingest_indexes_file_type_and_folder_metadata() {
+        let d = tempfile::tempdir().unwrap();
+        let h = Handler::new(d.path().to_owned());
+        let p = json!([{"p":0,"lv":8,"t":"예산 집행"}]);
+        ingest(&h, "txt", r"D:\자료\보고서.txt", &["tm"], "py", 1, p.clone()).unwrap();
+        ingest(&h, "pdf", r"D:\자료\하위\보고서.pdf", &["tm"], "py", 2, p).unwrap();
+        assert_eq!(keys(&query(&h, "예산", json!({"filters":{"ext":["txt"]}}))), ["txt"]);
+        assert_eq!(keys(&query(&h, "예산", json!({"filters":{"path":["자료"]}}))), ["txt", "pdf"]);
+        assert_eq!(keys(&query(&h, "예산", json!({"filters":{"path":["하위"]}}))), ["pdf"]);
+    }
+
+    #[test]
     fn scopes_sources_and_filters_limit_query_and_count_alike() {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
@@ -1418,6 +1447,17 @@ mod tests {
         drop(h);
         let h2 = Handler::new(d.path().to_owned());
         assert_eq!(keys(&query(&h2, "예산", json!({"scope":"tm"}))), ["c", "e"]);
+    }
+
+    #[test]
+    fn old_documents_are_stale_until_meta_rule_is_current() {
+        let d = tempfile::tempdir().unwrap();
+        let h = Handler::new(d.path().to_owned());
+        ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
+        let old = req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":0}));
+        assert_eq!(h.handle(SID, old).unwrap()["doc_keys"], json!(["old"]));
+        let current = req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":META_RULE_VERSION}));
+        assert_eq!(h.handle(SID, current).unwrap()["doc_keys"], json!([]));
     }
 
     #[test]

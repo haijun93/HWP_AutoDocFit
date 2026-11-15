@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.content_search import ContentSearchIndex
 from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
+from docfit_core.timemachine.content_search import CURRENT_HIERARCHY_SCHEMA_VERSION
 from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
 from docfit_core.timemachine.related import related_documents
 from docfit_core.timemachine.rules import DEFAULT_EXTENSIONS, IMAGE_EXTENSIONS, KINDS, Rules, SUPPORTED_EXTENSIONS, excluded_name
@@ -179,6 +180,23 @@ class TimemachineService:
         try:
             initial_status = self.kfind.status()
             paths = self.content_index.indexed_paths(roots=self._settings["roots"]) if self._settings["roots"] else []
+            # 기존 kfind 색인도 파일 형식·폴더 비트맵이 비어 있으므로 앱 메타 판으로 재전송 대상을 합친다.
+            stale_keys = set()
+            if (initial_status.get("docs", initial_status.get("count", 0))
+                    and self._kfind_generation is not None):
+                after = None
+                while True:
+                    page = self.kfind.stale("tm", CURRENT_HIERARCHY_SCHEMA_VERSION,
+                                            meta_rule=1, after=after)
+                    batch = page.get("doc_keys", [])
+                    stale_keys.update(batch)
+                    if not page.get("more"):
+                        break
+                    if not batch or batch[-1] == after:
+                        raise KfindError("kfind_stale_inventory_stalled")
+                    after = batch[-1]
+            if stale_keys:
+                paths = [p for p in paths if doc_key(path=p) in stale_keys]
             doc_count = initial_status.get("docs")
             if doc_count is None:
                 doc_count = initial_status.get("count")
@@ -196,7 +214,7 @@ class TimemachineService:
                 if result.get("removed") or doc_key(path=path) not in path_keys:
                     self.kfind.remove([doc_key(path=path)])
             # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경·복구 seeding은 다시 전체 seeding.
-            if pending and initial_status["generation"] == self._kfind_generation and not is_recovery:
+            if pending and initial_status["generation"] == self._kfind_generation and not is_recovery and not stale_keys:
                 changed = {doc_key(path=p) for p in pending}
                 paths = [p for p in paths if doc_key(path=p) in changed]
             if is_recovery and self._content_idle_ctx is not None:

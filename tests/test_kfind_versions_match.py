@@ -25,6 +25,7 @@ class KfindVersionsMatchTests(unittest.TestCase):
             "format": _const("kfind/core/src/segment.rs", "FORMAT_VERSION"),
             "fold_rule": _const("kfind/core/src/fold_table.rs", "FOLD_RULE_VERSION"),
             "sentence_rule": _const("kfind/core/src/sentence.rs", "SENTENCE_RULE_VERSION"),
+            "meta_rule": _const("crates/kfind/src/pipe.rs", "META_RULE_VERSION"),
         }
         self.assertEqual(EXPECTED_VERSIONS, rust)
 

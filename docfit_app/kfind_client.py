@@ -30,7 +30,7 @@ TRANSITIONS = {
 # 검색 서비스(kfind)가 status로 알려 주는 판 번호. Rust kfind_core의 FORMAT_VERSION·FOLD_RULE_VERSION·
 # SENTENCE_RULE_VERSION과 같아야 한다. 어긋나면 모든 요청이 version_mismatch로 실패해 앱 검색이 옛 방식으로만
 # 돌고 색인 seeding도 안 된다(v2.2.67에서 형식 3→4 변경 뒤 실제로 발생). tests/test_kfind_versions_match.py가 맞춘다.
-EXPECTED_VERSIONS = {"format": 4, "fold_rule": 1, "sentence_rule": 1}
+EXPECTED_VERSIONS = {"format": 4, "fold_rule": 1, "sentence_rule": 1, "meta_rule": 1}
 
 
 class KfindError(RuntimeError):
@@ -282,8 +282,9 @@ class KfindClient:
     def remove(self, keys):
         return self._request("remove", doc_keys=list(keys))
 
-    def stale(self, scope, level_rule, *, after=None, limit=1000):
-        return self._request("stale", scope=scope, level_rule=level_rule, after=after, limit=limit)
+    def stale(self, scope, level_rule, *, meta_rule=1, after=None, limit=1000):
+        return self._request("stale", scope=scope, level_rule=level_rule, meta_rule=meta_rule,
+                             after=after, limit=limit)
 
     def ingest(self, doc):
         header = {k: v for k, v in doc.items() if k != "paras"}
