@@ -409,4 +409,13 @@ mod tests {
         let cases=[(1,vec![Rect{left:0,top:0,right:1000,bottom:600}]),(2,vec![Rect{left:0,top:0,right:497,bottom:600},Rect{left:503,top:0,right:1000,bottom:600}]),(3,vec![Rect{left:0,top:0,right:497,bottom:600},Rect{left:503,top:0,right:1000,bottom:297},Rect{left:503,top:303,right:1000,bottom:600}]),(4,vec![Rect{left:0,top:0,right:497,bottom:297},Rect{left:503,top:0,right:1000,bottom:297},Rect{left:0,top:303,right:497,bottom:600},Rect{left:503,top:303,right:1000,bottom:600}])];
         for(n,want)in cases{let l=Layout::for_count(n);assert_eq!(l.panel_rects(1000,600,6),want);if n>1{assert_eq!(l.split_hit(1000,600,6,500,100,3),Some(SplitHit::Column(0)));}if n>=3{assert_eq!(l.split_hit(1000,600,6,700,300,3),Some(SplitHit::Row(0)));}assert_eq!(l.split_hit(1000,600,6,20,20,3),None);}
     }
+    #[test] fn single_panel_uses_full_client_rect(){let l=Layout::for_count(1);assert_eq!(l.panel_rects(321,123,9),vec![Rect{left:0,top:0,right:321,bottom:123}]);}
+    #[test] fn columns_partition_height_and_respect_gutter(){let r=Layout::for_count(2).panel_rects(800,400,8);assert_eq!(r[0],Rect{left:0,top:0,right:396,bottom:400});assert_eq!(r[1],Rect{left:404,top:0,right:800,bottom:400});}
+    #[test] fn three_panel_right_column_is_split_horizontally(){let r=Layout::for_count(3).panel_rects(800,400,8);assert_eq!(r[0].bottom,400);assert_eq!(r[1].left,404);assert_eq!(r[1].bottom,196);assert_eq!(r[2].top,204);}
+    #[test] fn grid_has_four_non_overlapping_quadrants(){let r=Layout::for_count(4).panel_rects(800,400,8);assert_eq!(r.len(),4);assert_eq!(r[0],Rect{left:0,top:0,right:396,bottom:196});assert_eq!(r[3],Rect{left:404,top:204,right:800,bottom:400});}
+    #[test] fn column_split_hit_is_limited_to_vertical_gutter(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,400,200,2),Some(SplitHit::Column(0)));assert_eq!(l.split_hit(800,400,8,400,410,2),None);}
+    #[test] fn row_split_hit_is_limited_to_horizontal_gutter(){let l=Layout::for_count(4);assert_eq!(l.split_hit(800,400,8,200,200,2),Some(SplitHit::Row(0)));assert_eq!(l.split_hit(800,400,8,410,200,2),None);}
+    #[test] fn three_panel_row_hit_only_applies_to_right_side(){let l=Layout::for_count(3);assert_eq!(l.split_hit(800,400,8,600,200,2),Some(SplitHit::Row(0)));assert_eq!(l.split_hit(800,400,8,200,200,2),None);}
+    #[test] fn split_hit_tolerance_includes_nearby_cursor(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,405,200,2),Some(SplitHit::Column(0)));}
+    #[test] fn split_hit_rejects_distant_cursor(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,430,200,2),None);}
 }
