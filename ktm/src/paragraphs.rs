@@ -140,6 +140,8 @@ pub fn default_path() -> Option<PathBuf> {
     Some(base.join("timeline-content.sqlite"))
 }
 
+const BODY_AND_LOC_SQL: &str = "SELECT b.body, b.location_label FROM content_paragraph_map m JOIN content_paragraph_fts b \
+    ON b.rowid=m.para_rowid WHERE m.path=?1 AND m.paragraph_index=?2 LIMIT 1\0";
 const BODY_SQL: &str = "SELECT b.body FROM content_paragraph_map m JOIN content_paragraph_fts b \
     ON b.rowid=m.para_rowid WHERE m.path=?1 AND m.paragraph_index=?2 LIMIT 1\0";
 
@@ -148,6 +150,7 @@ pub struct Paragraphs {
     api: &'static Api,
     db: Db,
     stmt: Stmt,
+    has_loc: bool,
 }
 // 연결은 NOMUTEX로 열고 한 스레드(검색 일꾼)만 쓴다. 다른 스레드로 옮길 때만 Send가 필요하다.
 unsafe impl Send for Paragraphs {}
@@ -164,17 +167,23 @@ impl Paragraphs {
         unsafe {
             let mut db = std::ptr::null_mut();
             let rc = (api.open_v2)(name.as_ptr(), &mut db, OPEN_READONLY | OPEN_NOMUTEX, std::ptr::null());
-            let mut me = Self { api, db, stmt: std::ptr::null_mut() };
+            let mut me = Self { api, db, stmt: std::ptr::null_mut(), has_loc: false };
             if rc != SQLITE_OK {
                 return Err(me.error("문단 표 열기"));
             }
             (api.busy_timeout)(db, 200);
             // 쉴 때 메모리를 작게: 쪽 캐시 256KB.
             me.exec("PRAGMA cache_size=-256;PRAGMA query_only=1;")?;
-            let rc = (api.prepare_v2)(db, BODY_SQL.as_ptr(), -1, &mut me.stmt, std::ptr::null_mut());
-            if rc != SQLITE_OK {
+            let mut has_loc = true;
+            let mut prep_rc = (api.prepare_v2)(db, BODY_AND_LOC_SQL.as_ptr(), -1, &mut me.stmt, std::ptr::null_mut());
+            if prep_rc != SQLITE_OK {
+                has_loc = false;
+                prep_rc = (api.prepare_v2)(db, BODY_SQL.as_ptr(), -1, &mut me.stmt, std::ptr::null_mut());
+            }
+            if prep_rc != SQLITE_OK {
                 return Err(me.error("문단 표 형식"));
             }
+            me.has_loc = has_loc;
             Ok(me)
         }
     }
@@ -200,8 +209,8 @@ impl Paragraphs {
         if rc == SQLITE_OK { Ok(()) } else { Err(self.error("문단 표 설정")) }
     }
 
-    /// (경로, 문단 번호)의 문단 글. 없으면 None.
-    pub fn body(&mut self, path: &str, para: u32) -> Result<Option<String>, String> {
+    /// (경로, 문단 번호)의 문단 글과 위치 라벨. 없으면 None.
+    pub fn body_and_location(&mut self, path: &str, para: u32) -> Result<Option<(String, Option<String>)>, String> {
         unsafe {
             let a = self.api;
             (a.reset)(self.stmt);
@@ -215,7 +224,21 @@ impl Paragraphs {
                         Ok(None)
                     } else {
                         let bytes = std::slice::from_raw_parts(p, n);
-                        Ok(Some(String::from_utf8_lossy(bytes).into_owned()))
+                        let body = String::from_utf8_lossy(bytes).into_owned();
+                        let loc = if self.has_loc {
+                            let lp = (a.column_text)(self.stmt, 1);
+                            let ln = ((a.column_bytes)(self.stmt, 1).max(0) as usize).min(256);
+                            if lp.is_null() {
+                                None
+                            } else {
+                                let lbytes = std::slice::from_raw_parts(lp, ln);
+                                let s = String::from_utf8_lossy(lbytes).trim().to_string();
+                                if s.is_empty() { None } else { Some(s) }
+                            }
+                        } else {
+                            None
+                        };
+                        Ok(Some((body, loc)))
                     }
                 }
                 SQLITE_DONE => Ok(None),
@@ -224,6 +247,11 @@ impl Paragraphs {
             (a.reset)(self.stmt);
             out
         }
+    }
+
+    /// (경로, 문단 번호)의 문단 글. 없으면 None.
+    pub fn body(&mut self, path: &str, para: u32) -> Result<Option<String>, String> {
+        self.body_and_location(path, para).map(|opt| opt.map(|(b, _)| b))
     }
 }
 
@@ -243,6 +271,13 @@ impl Drop for Paragraphs {
 /// 시험·합성 자료 전용: 앱과 같은 꼴의 문단 표를 **새 파일**로 만든다(있으면 거부). 사용자 자료에는 쓰지 않는다.
 #[doc(hidden)]
 pub fn create_fixture(path: &Path, rows: &[(&str, u32, &str)]) -> Result<(), String> {
+    let with_locs: Vec<(&str, u32, &str, &str)> = rows.iter().map(|(p, para, body)| (*p, *para, *body, "")).collect();
+    create_fixture_with_locations(path, &with_locs)
+}
+
+/// 시험·합성 자료 전용: 위치 라벨이 포함된 문단 표를 만든다.
+#[doc(hidden)]
+pub fn create_fixture_with_locations(path: &Path, rows: &[(&str, u32, &str, &str)]) -> Result<(), String> {
     if path.exists() {
         return Err("이미 있는 파일에는 쓰지 않습니다.".into());
     }
@@ -252,7 +287,7 @@ pub fn create_fixture(path: &Path, rows: &[(&str, u32, &str)]) -> Result<(), Str
     unsafe {
         let mut db = std::ptr::null_mut();
         let rc = (api.open_v2)(name.as_ptr(), &mut db, OPEN_READWRITE | OPEN_CREATE | OPEN_NOMUTEX, std::ptr::null());
-        let me = Paragraphs { api, db, stmt: std::ptr::null_mut() };
+        let me = Paragraphs { api, db, stmt: std::ptr::null_mut(), has_loc: true };
         if rc != SQLITE_OK {
             return Err(me.error("합성 문단 표 만들기"));
         }
@@ -265,14 +300,15 @@ pub fn create_fixture(path: &Path, rows: &[(&str, u32, &str)]) -> Result<(), Str
              BEGIN;",
         )?;
         let quote = |s: &str| format!("'{}'", s.replace('\'', "''"));
-        for (i, (p, para, body)) in rows.iter().enumerate() {
+        for (i, (p, para, body, loc)) in rows.iter().enumerate() {
             let rowid = i + 1;
             me.exec(&format!(
                 "INSERT INTO content_paragraph_fts(rowid,path,name,paragraph_index,level,level_rank,body,location_label)\
-                 VALUES({rowid},{},'',{para},'body',8,{},'');\
+                 VALUES({rowid},{},'',{para},'body',8,{},{});\
                  INSERT INTO content_paragraph_map VALUES({},{para},{rowid});",
                 quote(p),
                 quote(body),
+                quote(loc),
                 quote(p)
             ))?;
         }
@@ -326,6 +362,31 @@ mod tests {
         let db = dir.join("x.sqlite");
         std::fs::write(&db, b"").unwrap();
         assert!(Paragraphs::open(&db).is_err());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reads_body_and_location_label() {
+        let dir = temp("loc");
+        let db = dir.join("timeline-content.sqlite");
+        create_fixture_with_locations(
+            &db,
+            &[
+                ("C:\\doc.pdf", 0, "PDF 첫 문단", "1쪽"),
+                ("C:\\sheet.xlsx", 1, "스프레드시트 셀", "시트1 12행"),
+                ("C:\\plain.txt", 2, "일반 문단", ""),
+            ],
+        )
+        .unwrap();
+        let mut p = Paragraphs::open(&db).unwrap();
+        let r0 = p.body_and_location("C:\\doc.pdf", 0).unwrap();
+        assert_eq!(r0, Some(("PDF 첫 문단".into(), Some("1쪽".into()))));
+
+        let r1 = p.body_and_location("C:\\sheet.xlsx", 1).unwrap();
+        assert_eq!(r1, Some(("스프레드시트 셀".into(), Some("시트1 12행".into()))));
+
+        let r2 = p.body_and_location("C:\\plain.txt", 2).unwrap();
+        assert_eq!(r2, Some(("일반 문단".into(), None)));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

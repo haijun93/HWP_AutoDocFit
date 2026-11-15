@@ -41,6 +41,78 @@ pub struct Row {
     pub para: Option<u32>,
     /// 원문 찾기를 이미 해 봤는지(없어도 다시 찾지 않음).
     pub snippet_tried: bool,
+    /// 일치 문단 전체 원문(결과 선택 시 3줄 미리보기용).
+    pub preview: String,
+    /// 수정일시(수정일순 정렬용).
+    pub date: i64,
+    /// 원래 검색 순위(관련도순 복원용).
+    pub rank: usize,
+}
+
+/// QMS-RESULTS: 위치 메타로부터 표시할 배지 텍스트를 계산한다.
+/// 쪽·시트·행 등 kfind 위치 메타가 있는 것만 반환하고, 일반 문단이나 위계는 생략(None).
+pub fn compute_location_badge(location: &str) -> Option<String> {
+    let trimmed = location
+        .trim()
+        .trim_matches(|c| c == '⟦' || c == '⟧' || c == '[' || c == ']' || c == '(' || c == ')')
+        .trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // 쪽 메타: "3쪽", "12쪽", "1쪽", "3p" 등
+    let has_page = trimmed.contains('쪽') || trimmed.ends_with('p') || trimmed.ends_with('P');
+    // 시트 메타: "시트1 12행", "시트 4행", "절대경로시트 1행" 등
+    let has_sheet = trimmed.contains("시트");
+    // 행 메타: "1행", "12행", "매출 12행" 등
+    let has_row = trimmed.contains('행');
+
+    if has_page || has_sheet || has_row {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+/// QMS-RESULTS: 본문 탭 결과 정렬 옵션 (관련도·수정일·이름).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum BodySort {
+    #[default]
+    Relevance,
+    Date,
+    Name,
+}
+
+impl BodySort {
+    pub fn next(&self) -> Self {
+        match self {
+            BodySort::Relevance => BodySort::Date,
+            BodySort::Date => BodySort::Name,
+            BodySort::Name => BodySort::Relevance,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            BodySort::Relevance => "관련도순",
+            BodySort::Date => "수정일순",
+            BodySort::Name => "이름순",
+        }
+    }
+}
+
+/// QMS-RESULTS: 본문 탭 결과를 지정한 정렬 방식에 따라 정렬한다.
+pub fn sort_rows(rows: &mut [Row], sort: BodySort) {
+    match sort {
+        BodySort::Relevance => {
+            rows.sort_by_key(|r| r.rank);
+        }
+        BodySort::Date => {
+            rows.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.rank.cmp(&b.rank)));
+        }
+        BodySort::Name => {
+            rows.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.rank.cmp(&b.rank)));
+        }
+    }
 }
 
 pub struct Backend {
@@ -118,8 +190,14 @@ impl Backend {
             if row.path.is_empty() {
                 continue;
             }
-            if let Ok(Some(body)) = p.body(&row.path, para) {
+            if let Ok(Some((body, loc_label))) = p.body_and_location(&row.path, para) {
                 row.snippet = crate::highlight::excerpt(&body, terms, EXCERPT_BEFORE, EXCERPT_MAX);
+                row.preview = body;
+                if let Some(lbl) = loc_label {
+                    if !lbl.is_empty() {
+                        row.location = lbl;
+                    }
+                }
             }
         }
     }
@@ -281,6 +359,9 @@ impl Backend {
             .iter()
             .map(|h| row(h, self.paths.get(&h.doc_id).map(String::as_str)))
             .collect();
+        for (i, r) in rows.iter_mut().enumerate() {
+            r.rank = i;
+        }
         let n = rows.len().min(SNIPPET_PREFETCH);
         self.fill_snippets(&mut rows[..n], &terms);
 
@@ -350,11 +431,14 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         name,
         parent,
         snippet: String::new(),
+        preview: String::new(),
         location,
         level: hit.level,
         count: hit.count,
+        date: hit.date,
         para: hit.sentences.first().map(|s| s.para),
         snippet_tried: false,
+        rank: 0,
     }
 }
 
@@ -520,7 +604,8 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
             if let Some(t) = i["mtime"].as_i64().and_then(format_filetime) {
                 info.push(t);
             }
-            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, ..Row::default() }
+            let mtime_i64 = i["mtime"].as_i64().unwrap_or(0);
+            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, date: mtime_i64, ..Row::default() }
         })
         .collect())
 }
@@ -640,7 +725,8 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
     let hits = value["result"]["hits"]
         .as_array()
         .ok_or("검색 응답에 결과가 없습니다.")?;
-    hits.iter()
+    let mut rows: Vec<Row> = hits
+        .iter()
         .map(|h| {
             let hit = DocHit {
                 doc_id: h["doc_id"].as_u64().ok_or("문서 번호가 없습니다.")?,
@@ -663,7 +749,11 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
             };
             Ok(row(&hit, h["path"].as_str()))
         })
-        .collect()
+        .collect::<Result<Vec<Row>>>()?;
+    for (i, r) in rows.iter_mut().enumerate() {
+        r.rank = i;
+    }
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -1078,5 +1168,82 @@ mod tests {
             .search_with_scope("청년 ext:hwp", false, None, None, None)
             .unwrap();
         assert_eq!(ans_ext_token.rows.len(), 2); // doc 1, doc 2
+    }
+
+    #[test]
+    fn test_compute_location_badge() {
+        // 쪽 메타
+        assert_eq!(compute_location_badge("3쪽"), Some("3쪽".into()));
+        assert_eq!(compute_location_badge("12쪽"), Some("12쪽".into()));
+        assert_eq!(compute_location_badge("1쪽"), Some("1쪽".into()));
+        assert_eq!(compute_location_badge("3p"), Some("3p".into()));
+        assert_eq!(compute_location_badge("⟦3쪽⟧"), Some("3쪽".into()));
+        assert_eq!(compute_location_badge("[12쪽]"), Some("12쪽".into()));
+
+        // 시트 및 행 메타
+        assert_eq!(compute_location_badge("시트1 12행"), Some("시트1 12행".into()));
+        assert_eq!(compute_location_badge("매출 12행"), Some("매출 12행".into()));
+        assert_eq!(compute_location_badge("1행"), Some("1행".into()));
+        assert_eq!(compute_location_badge("시트 4행"), Some("시트 4행".into()));
+        assert_eq!(compute_location_badge("절대경로시트 1행"), Some("절대경로시트 1행".into()));
+
+        // 일반 문단 번호·위계 등은 배지 생략(None)
+        assert_eq!(compute_location_badge("문단 1 · 위계 8"), None);
+        assert_eq!(compute_location_badge("문단 3"), None);
+        assert_eq!(compute_location_badge("위계 2"), None);
+        assert_eq!(compute_location_badge("section0 문단 1"), None);
+        assert_eq!(compute_location_badge("본문"), None);
+        assert_eq!(compute_location_badge(""), None);
+        assert_eq!(compute_location_badge("   "), None);
+    }
+
+    #[test]
+    fn test_body_sort_cycle_and_sort_rows() {
+        assert_eq!(BodySort::Relevance.next(), BodySort::Date);
+        assert_eq!(BodySort::Date.next(), BodySort::Name);
+        assert_eq!(BodySort::Name.next(), BodySort::Relevance);
+
+        assert_eq!(BodySort::Relevance.label(), "관련도순");
+        assert_eq!(BodySort::Date.label(), "수정일순");
+        assert_eq!(BodySort::Name.label(), "이름순");
+
+        let mut rows = vec![
+            Row {
+                name: "다.hwp".into(),
+                date: 100,
+                rank: 0,
+                ..Row::default()
+            },
+            Row {
+                name: "가.hwp".into(),
+                date: 300,
+                rank: 1,
+                ..Row::default()
+            },
+            Row {
+                name: "나.hwp".into(),
+                date: 200,
+                rank: 2,
+                ..Row::default()
+            },
+        ];
+
+        // 수정일순 정렬: 최신 날짜(300 -> 200 -> 100)
+        sort_rows(&mut rows, BodySort::Date);
+        assert_eq!(rows[0].name, "가.hwp");
+        assert_eq!(rows[1].name, "나.hwp");
+        assert_eq!(rows[2].name, "다.hwp");
+
+        // 이름순 정렬: 오름차순(가 -> 나 -> 다)
+        sort_rows(&mut rows, BodySort::Name);
+        assert_eq!(rows[0].name, "가.hwp");
+        assert_eq!(rows[1].name, "나.hwp");
+        assert_eq!(rows[2].name, "다.hwp");
+
+        // 관련도순 정렬: 원래 순위(rank 0 -> rank 1 -> rank 2, 다 -> 가 -> 나)
+        sort_rows(&mut rows, BodySort::Relevance);
+        assert_eq!(rows[0].name, "다.hwp");
+        assert_eq!(rows[1].name, "가.hwp");
+        assert_eq!(rows[2].name, "나.hwp");
     }
 }

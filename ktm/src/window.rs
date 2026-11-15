@@ -101,6 +101,7 @@ struct Ui {
     settings_path: PathBuf,
     warmed: bool,
     name_sort: usize,
+    body_sort: ktm::backend::BodySort,
     // 호버 상태
     hover_head_btn: Option<HeadButton>,
     hover_row: Option<usize>,
@@ -286,7 +287,8 @@ fn event(h: HWND, e: Event) {
             }
             let top_y = list_top_coord(h, u);
             let rh = scale(h, ROW_H);
-            let count = ((rc.bottom - top_y - scale(h, STATUS_H)).max(0) / rh).max(1) as usize;
+            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 };
+            let count = ((rc.bottom - top_y - scale(h, STATUS_H) - preview_h).max(0) / rh).max(1) as usize;
             if index < u.top {
                 u.top = index;
             } else if index >= u.top + count {
@@ -391,13 +393,17 @@ fn key(h: HWND, key: usize) -> bool {
                 event(h, Event::SwitchTab(tab));
             }
             _ if ctrl && key == b'S' as usize => {
-                let names = edit(|u| {
-                    u.name_sort = (u.name_sort + 1) % 4;
-                    u.state.tab == Tab::Names
-                });
-                if names {
+                let tab = with(|u| u.state.tab);
+                if tab == Tab::Names {
+                    edit(|u| {
+                        u.name_sort = (u.name_sort + 1) % 4;
+                    });
                     event(h, Event::Refresh);
-                } else {
+                } else if tab == Tab::Body || tab == Tab::Hierarchy {
+                    edit(|u| {
+                        u.body_sort = u.body_sort.next();
+                        ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+                    });
                     InvalidateRect(h, null(), 0);
                 }
             }
@@ -605,6 +611,68 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
     }
 }
 
+unsafe fn draw_preview_lines(
+    dc: HDC,
+    text_content: &str,
+    terms: &[String],
+    rc: RECT,
+    line_step: i32,
+    fg: u32,
+    bg: u32,
+) {
+    unsafe {
+        let max_w = (rc.right - rc.left).max(10);
+        let lines = split_into_lines(dc, text_content, max_w, 3);
+        for (i, line) in lines.iter().enumerate().take(3) {
+            let line_top = rc.top + i as i32 * line_step;
+            let line_bottom = line_top + line_step;
+            let line_rc = RECT {
+                left: rc.left,
+                top: line_top,
+                right: rc.right,
+                bottom: line_bottom,
+            };
+            highlighted(dc, line, terms, line_rc, fg, bg);
+        }
+    }
+}
+
+unsafe fn split_into_lines(dc: HDC, text: &str, max_w: i32, max_lines: usize) -> Vec<String> {
+    unsafe {
+        let mut lines = Vec::new();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.is_empty() {
+            return lines;
+        }
+        let mut current = String::new();
+        for (i, word) in words.iter().enumerate() {
+            let test = if current.is_empty() {
+                (*word).to_string()
+            } else {
+                format!("{current} {word}")
+            };
+            let w_wide = wide(&test);
+            let mut size: SIZE = std::mem::zeroed();
+            GetTextExtentPoint32W(dc, w_wide.as_ptr(), (w_wide.len() - 1) as i32, &mut size);
+            if size.cx > max_w && !current.is_empty() {
+                lines.push(current);
+                if lines.len() == max_lines - 1 {
+                    let remainder = words[i..].join(" ");
+                    lines.push(remainder);
+                    return lines;
+                }
+                current = (*word).to_string();
+            } else {
+                current = test;
+            }
+        }
+        if !current.is_empty() && lines.len() < max_lines {
+            lines.push(current);
+        }
+        lines
+    }
+}
+
 unsafe fn draw_open_icon(hdc: HDC, r: RECT, color: u32) {
     unsafe {
         let pen = CreatePen(PS_SOLID, 1, color);
@@ -802,9 +870,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         fill(RECT { left: 0, top: tab_y + tab_h - 1, right: r.right, bottom: tab_y + tab_h }, p.divider);
 
         with(|u| {
+            let body_label = format!("본문 · {}", u.body_sort.label());
             let names_label = format!("파일명 · {}", ktm::backend::NAME_SORTS[u.name_sort % 4].1);
             let tabs = [
-                ("본문", Tab::Body),
+                (body_label.as_str(), Tab::Body),
                 ("위계", Tab::Hierarchy),
                 (names_label.as_str(), Tab::Names),
             ];
@@ -1063,7 +1132,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let top_y = list_top_coord(h, u);
             let rh = scale(h, ROW_H);
             let status_h = scale(h, STATUS_H);
-            let visible = ((r.bottom - top_y - status_h).max(0) / rh).max(0) as usize;
+            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 };
+            let visible = ((r.bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
 
             let line_h1 = scale(h, 22);
             let line_h2 = scale(h, 20);
@@ -1138,7 +1208,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     DT_PATH_ELLIPSIS,
                 );
 
-                // 셋째 줄: 발췌 문장 (강조 하이라이트)
+                // 셋째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
                 let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
                     (&row.location, &[])
                 } else {
@@ -1146,19 +1216,88 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 };
                 let highlight_bg = if theme_str == "light" { 0x70eaff } else { 0x805020 };
                 SelectObject(mem, u.small);
+
+                let mut snip_left = scale(h, 68);
+                let line_top = y + line_h1 + line_h2;
+                let line_bottom = line_top + line_h3;
+
+                // ① 일치 문장 옆 위치 배지 (쪽·시트·행 등 kfind 위치 메타가 있는 것만, 없으면 생략)
+                if let Some(badge) = ktm::backend::compute_location_badge(&row.location) {
+                    let bw_wide = wide(&badge);
+                    let mut bsize: SIZE = std::mem::zeroed();
+                    GetTextExtentPoint32W(mem, bw_wide.as_ptr(), (bw_wide.len() - 1) as i32, &mut bsize);
+                    let badge_pad_x = scale(h, 4);
+                    let badge_w = bsize.cx + badge_pad_x * 2;
+                    let badge_h = bsize.cy + scale(h, 2);
+                    let badge_top = line_top + (line_h3 - badge_h) / 2;
+                    let badge_rc = RECT {
+                        left: snip_left,
+                        top: badge_top,
+                        right: snip_left + badge_w,
+                        bottom: badge_top + badge_h,
+                    };
+                    fill(badge_rc, p.tab_hover);
+                    let b_brush = CreateSolidBrush(p.divider);
+                    FrameRect(mem, &badge_rc, b_brush);
+                    DeleteObject(b_brush);
+                    text(&badge, badge_rc, p.text_sub, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    snip_left += badge_w + scale(h, 6);
+                }
+
                 highlighted(
                     mem,
                     snippet,
                     terms,
                     RECT {
-                        left: scale(h, 68),
-                        top: y + line_h1 + line_h2,
+                        left: snip_left,
+                        top: line_top,
                         right: r.right - pad,
-                        bottom: y + line_h1 + line_h2 + line_h3,
+                        bottom: line_bottom,
                     },
                     p.row_text(sel, p.text),
                     highlight_bg,
                 );
+            }
+
+            // ② 결과 선택 시 미리보기 줄 (선택 행의 일치 문단 전체 3줄)
+            if let Some(sel_idx) = u.state.selected {
+                if let Some(sel_r) = u.rows.get(sel_idx) {
+                    let prev_y = r.bottom - status_h - preview_h;
+                    let prev_rc = RECT { left: 0, top: prev_y, right: r.right, bottom: r.bottom - status_h };
+                    fill(prev_rc, p.tab_bg);
+                    fill(RECT { left: 0, top: prev_y, right: r.right, bottom: prev_y + 1 }, p.divider);
+
+                    // 문단 전체 본문
+                    let preview_text = if !sel_r.preview.is_empty() {
+                        &sel_r.preview
+                    } else if !sel_r.snippet.is_empty() {
+                        &sel_r.snippet
+                    } else {
+                        &sel_r.location
+                    };
+
+                    let pad_l = scale(h, 12);
+                    let pad_r = r.right - scale(h, 12);
+                    let line_step = scale(h, 18);
+                    let content_top = prev_y + scale(h, 6);
+                    let highlight_bg = if theme_str == "light" { 0x70eaff } else { 0x805020 };
+
+                    SelectObject(mem, u.small);
+                    draw_preview_lines(
+                        mem,
+                        preview_text,
+                        &u.terms,
+                        RECT {
+                            left: pad_l,
+                            top: content_top,
+                            right: pad_r,
+                            bottom: r.bottom - status_h - scale(h, 4),
+                        },
+                        line_step,
+                        p.text,
+                        highlight_bg,
+                    );
+                }
             }
 
             // ⑧ 하단 상태 표시줄
@@ -1173,12 +1312,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => "검색 중…".into(),
-                    Phase::Results if u.state.tab == Tab::Names => format!(
-                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
-                        u.rows.len()
-                    ),
                     Phase::Results => format!(
-                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · ↑↓ 선택",
+                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
                         u.rows.len()
                     ),
                     _ if u.state.query.trim().is_empty() => {
@@ -1365,7 +1500,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
 
                 let top_y = with(|u| list_top_coord(h, u));
                 let rh = scale(h, ROW_H);
-                let (new_row, new_folder_btn) = if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) {
+                let preview_h = with(|u| if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 });
+                let (new_row, new_folder_btn) = if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
                     let row_idx = frame::row_index(y, top_y, rh, with(|u| u.top), with(|u| u.rows.len()));
                     let is_folder = if let Some(idx) = row_idx {
                         let row_top = top_y + (idx.saturating_sub(with(|u| u.top))) as i32 * rh;
@@ -1595,7 +1731,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     let top_y = with(|u| list_top_coord(h, u));
                     let rh = scale(h, ROW_H);
                     let folder_w = scale(h, ROW_FOLDER_W);
-                    if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) {
+                    let preview_h = with(|u| if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 });
+                    if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
                         let n = with(|u| u.top) + ((y - top_y) / rh) as usize;
                         if n < with(|u| u.rows.len()) {
                             let row_top = top_y + ((y - top_y) / rh) * rh;
@@ -1643,6 +1780,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     for (i, r) in rows {
                                         if let Some(slot) = u.rows.get_mut(i) {
                                             slot.snippet = r.snippet;
+                                            slot.preview = r.preview;
+                                            if !r.location.is_empty() {
+                                                slot.location = r.location;
+                                            }
                                         }
                                     }
                                 }
@@ -1673,6 +1814,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     );
                                     edit(|u| {
                                         u.rows = rows;
+                                        if u.state.tab == Tab::Body || u.state.tab == Tab::Hierarchy {
+                                            ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+                                        }
                                         u.terms = terms;
                                         u.state.folder_counts = folder_counts;
                                         u.state.autocompletes = autocompletes;
@@ -1872,6 +2016,7 @@ pub fn run() -> Result<(), String> {
                 settings_path: data.join("settings.json"),
                 warmed: pipe_mode_early,
                 name_sort: 0,
+                body_sort: ktm::backend::BodySort::default(),
                 hover_head_btn: None,
                 hover_row: None,
                 hover_folder_btn: None,

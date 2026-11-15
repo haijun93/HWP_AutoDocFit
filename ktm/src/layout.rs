@@ -12,6 +12,7 @@ pub const FILTER_H: i32 = 24;
 pub const ROW_H: i32 = 70;
 pub const ROW_FOLDER_W: i32 = 28;
 pub const STATUS_H: i32 = 24;
+pub const PREVIEW_H: i32 = 64;
 
 /// 상단 캡션 단추.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -259,5 +260,26 @@ mod tests {
         assert_eq!(hit(698, 200, false), Hit::Right);
         assert_eq!(hit(350, 508, false), Hit::Bottom);
         assert_eq!(hit(698, 508, false), Hit::BottomRight);
+    }
+
+    #[test]
+    fn test_preview_layout_and_visible_count() {
+        let bottom = 600;
+        let top_y = 140;
+        let status_h = 24;
+        let rh = 70;
+
+        // 선택 없을 때: preview_h = 0
+        let visible_without_sel = ((bottom - top_y - status_h).max(0) / rh).max(0) as usize;
+        assert_eq!(visible_without_sel, (600 - 140 - 24) / 70); // 436 / 70 = 6
+
+        // 선택 있을 때: preview_h = PREVIEW_H (64)
+        let preview_h = PREVIEW_H;
+        let visible_with_sel = ((bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
+        assert_eq!(visible_with_sel, (600 - 140 - 24 - 64) / 70); // 372 / 70 = 5
+
+        // 미리보기 영역 상단 및 하단 좌표
+        let prev_y = bottom - status_h - preview_h;
+        assert_eq!(prev_y, 600 - 24 - 64); // 512
     }
 }
