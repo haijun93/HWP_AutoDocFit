@@ -15,8 +15,8 @@ use std::path::PathBuf;
 
 use klib::extract::extract_hwp;
 use klib::hwp5::{
-    build_para_text_bytes, encode_utf16le, extract_hwp5, ParaTextItem, RecordBuilder,
-    SyntheticHwp5Builder,
+    build_para_text_bytes, encode_utf16le, extract_hwp5, extract_hwp5_preview,
+    ImageFormat, ParaTextItem, Preview, RecordBuilder, SyntheticHwp5Builder,
     HWPTAG_CTRL_HEADER, HWPTAG_LIST_HEADER, HWPTAG_PARA_HEADER, HWPTAG_PARA_TEXT, HWPTAG_TABLE,
 };
 
@@ -400,5 +400,260 @@ fn test_hwp5_cmp4_search_indexing_excludes_hidden_comment() {
     assert_eq!(index_paras.len(), 1);
     assert_eq!(index_paras[0].text, "일반 본문 내용");
     assert_eq!(index_paras[0].location_kind, "paragraph");
+}
+
+// =========================================================================
+// DVF1: HWP 5.0 미리보기(PrvImage, PrvText) 추출 통합 시험
+// =========================================================================
+
+const SAMPLE_PNG_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4";
+const SAMPLE_GIF_BYTES: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+const SAMPLE_BMP_BYTES: &[u8] = b"BM\x3a\x00\x00\x00\x00\x00\x00\x00\x36\x00\x00\x00\x28\x00\x00\x00\x01\x00\x00\x00\x01\x00\x00\x00\x01\x00\x18\x00\x00\x00\x00\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xff\xff\xff\x00";
+
+#[test]
+fn test_dvf1_preview_png_and_text() {
+    let text = "문서 미리보기 첫 번째 문장입니다. 몽땅사진첩 연동.";
+    let hwp_bytes = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text(text)
+        .build()
+        .expect("합성 HWP 생성 성공");
+
+    let temp = TempHwpFile::new("dvf1_png", &hwp_bytes);
+    let preview: Preview = extract_hwp5_preview(&temp.path).expect("미리보기 추출 성공");
+
+    assert!(preview.has_image());
+    assert_eq!(preview.image_format, Some(ImageFormat::Png));
+    assert_eq!(preview.format(), Some(ImageFormat::Png));
+    assert_eq!(preview.image.as_deref(), Some(SAMPLE_PNG_BYTES));
+    assert_eq!(preview.text, text);
+    assert!(!preview.is_empty());
+}
+
+#[test]
+fn test_dvf1_preview_gif_and_bmp_formats() {
+    // 1. GIF 형식
+    let gif_hwp = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_GIF_BYTES.to_vec())
+        .prv_text("GIF 미리보기")
+        .build()
+        .unwrap();
+    let temp_gif = TempHwpFile::new("dvf1_gif", &gif_hwp);
+    let preview_gif = extract_hwp5_preview(&temp_gif.path).expect("GIF 미리보기 추출");
+    assert_eq!(preview_gif.image_format, Some(ImageFormat::Gif));
+    assert_eq!(preview_gif.image.as_deref(), Some(SAMPLE_GIF_BYTES));
+    assert_eq!(preview_gif.text, "GIF 미리보기");
+
+    // 2. BMP 형식
+    let bmp_hwp = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_BMP_BYTES.to_vec())
+        .prv_text("BMP 미리보기")
+        .build()
+        .unwrap();
+    let temp_bmp = TempHwpFile::new("dvf1_bmp", &bmp_hwp);
+    let preview_bmp = extract_hwp5_preview(&temp_bmp.path).expect("BMP 미리보기 추출");
+    assert_eq!(preview_bmp.image_format, Some(ImageFormat::Bmp));
+    assert_eq!(preview_bmp.image.as_deref(), Some(SAMPLE_BMP_BYTES));
+    assert_eq!(preview_bmp.text, "BMP 미리보기");
+}
+
+#[test]
+fn test_dvf1_preview_empty_when_no_streams() {
+    // PrvImage, PrvText 모두 없는 정상 문서 -> 둘 다 없으면 빈 값 반환
+    let hwp_bytes = SyntheticHwp5Builder::new().build().unwrap();
+    let temp = TempHwpFile::new("dvf1_empty", &hwp_bytes);
+
+    let preview = extract_hwp5_preview(&temp.path).expect("빈 미리보기 추출 성공");
+    assert!(preview.is_empty());
+    assert!(!preview.has_image());
+    assert!(!preview.has_text());
+    assert_eq!(preview.image, None);
+    assert_eq!(preview.image_format, None);
+    assert_eq!(preview.text, "");
+}
+
+#[test]
+fn test_dvf1_preview_text_max_1024_chars_and_bom_strip() {
+    // 1,024자 초과 텍스트 (1,500자)
+    let long_text = "가나다라마바사".repeat(250); // 7 * 250 = 1750자
+    assert!(long_text.chars().count() > 1024);
+
+    let hwp_bytes = SyntheticHwp5Builder::new()
+        .prv_text(&long_text)
+        .build()
+        .unwrap();
+    let temp = TempHwpFile::new("dvf1_long_text", &hwp_bytes);
+
+    let preview = extract_hwp5_preview(&temp.path).expect("미리보기 추출");
+    assert_eq!(preview.text.chars().count(), 1024);
+    let expected: String = long_text.chars().take(1024).collect();
+    assert_eq!(preview.text, expected);
+
+    // UTF-16LE BOM(0xFEFF) 포함 텍스트 검증
+    let mut bom_bytes = vec![0xFF, 0xFE]; // UTF-16LE BOM
+    bom_bytes.extend_from_slice(&encode_utf16le("BOM 제외 테스트"));
+    let bom_hwp = SyntheticHwp5Builder::new()
+        .prv_text_bytes(bom_bytes)
+        .build()
+        .unwrap();
+    let temp_bom = TempHwpFile::new("dvf1_bom", &bom_hwp);
+    let preview_bom = extract_hwp5_preview(&temp_bom.path).expect("BOM 미리보기 추출");
+    assert_eq!(preview_bom.text, "BOM 제외 테스트");
+}
+
+#[test]
+fn test_dvf1_preview_encrypted_and_distributed_docs() {
+    // 암호·배포용 문서는 내용 스트림을 열지 않고 PrvImage/PrvText만 시도(실패해도 오류 대신 빈 값).
+    // 1. 암호 문서에 미리보기가 있는 경우
+    let enc_with_preview = SyntheticHwp5Builder::new()
+        .password_encrypted(true)
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text("암호화 문서 미리보기 글")
+        .build()
+        .unwrap();
+    let temp_enc1 = TempHwpFile::new("dvf1_enc_with", &enc_with_preview);
+    let preview_enc1 = extract_hwp5_preview(&temp_enc1.path).expect("암호 문서 미리보기 추출 성공");
+    assert_eq!(preview_enc1.image_format, Some(ImageFormat::Png));
+    assert_eq!(preview_enc1.text, "암호화 문서 미리보기 글");
+
+    // 2. 암호 문서에 미리보기가 없는 경우 -> 오류 대신 빈 값
+    let enc_no_preview = SyntheticHwp5Builder::new()
+        .password_encrypted(true)
+        .build()
+        .unwrap();
+    let temp_enc2 = TempHwpFile::new("dvf1_enc_none", &enc_no_preview);
+    let preview_enc2 = extract_hwp5_preview(&temp_enc2.path).expect("암호 문서 빈 미리보기 성공");
+    assert!(preview_enc2.is_empty());
+
+    // 3. 배포용 문서에 미리보기가 있는 경우
+    let dist_with_preview = SyntheticHwp5Builder::new()
+        .distributed(true)
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text("배포용 문서 미리보기")
+        .build()
+        .unwrap();
+    let temp_dist1 = TempHwpFile::new("dvf1_dist_with", &dist_with_preview);
+    let preview_dist1 = extract_hwp5_preview(&temp_dist1.path).expect("배포용 미리보기 추출 성공");
+    assert_eq!(preview_dist1.image_format, Some(ImageFormat::Png));
+    assert_eq!(preview_dist1.text, "배포용 문서 미리보기");
+
+    // 4. 배포용 문서에 미리보기가 없는 경우 -> 오류 대신 빈 값
+    let dist_no_preview = SyntheticHwp5Builder::new()
+        .distributed(true)
+        .build()
+        .unwrap();
+    let temp_dist2 = TempHwpFile::new("dvf1_dist_none", &dist_no_preview);
+    let preview_dist2 = extract_hwp5_preview(&temp_dist2.path).expect("배포용 빈 미리보기 성공");
+    assert!(preview_dist2.is_empty());
+}
+
+#[test]
+fn test_dvf1_preview_corrupt_defense_sector_cycle() {
+    // 손상 파일 방어: 섹터 순환 감지
+    let mut hwp_bytes = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text("섹터 순환 테스트")
+        .build()
+        .unwrap();
+
+    // CFB 헤더에서 섹터 크기 및 첫 번째 FAT 섹터 위치 확인
+    let sector_shift = u16::from_le_bytes([hwp_bytes[30], hwp_bytes[31]]) as usize;
+    let sector_size = 1usize << sector_shift;
+    let fat_sec_id = u32::from_le_bytes([hwp_bytes[76], hwp_bytes[77], hwp_bytes[78], hwp_bytes[79]]) as usize;
+    let fat_offset = (fat_sec_id + 1) * sector_size;
+
+    // FAT 테이블 내에서 섹터 4 -> 섹터 5 -> 섹터 4 순환 루프 강제 주입
+    let sec4_offset = fat_offset + 4 * 4;
+    let sec5_offset = fat_offset + 5 * 4;
+    if sec5_offset + 4 <= hwp_bytes.len() {
+        hwp_bytes[sec4_offset..sec4_offset + 4].copy_from_slice(&5u32.to_le_bytes());
+        hwp_bytes[sec5_offset..sec5_offset + 4].copy_from_slice(&4u32.to_le_bytes());
+    }
+
+    let temp = TempHwpFile::new("dvf1_cycle", &hwp_bytes);
+    let res = extract_hwp5_preview(&temp.path);
+    assert!(res.is_err(), "섹터 순환 손상 파일은 Err를 반환해야 함");
+    let err_msg = res.unwrap_err();
+    assert!(
+        err_msg.contains("순환") || err_msg.contains("cycle"),
+        "에러 메시지에 섹터 순환 감지 내용이 포함되어야 함: {err_msg}"
+    );
+}
+
+#[test]
+fn test_dvf1_preview_corrupt_defense_stream_size_4mb_limit() {
+    // 손상 파일 방어: 스트림 크기 상한 4MB 초과 조작
+    let mut hwp_bytes = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text("4MB 초과 방어")
+        .build()
+        .unwrap();
+
+    // 디렉토리 엔트리에서 "PrvImage" 스트림의 크기 필드(120..128)를 5MB(5,242,880바이트)로 조작
+    let prv_name_utf16 = encode_utf16le("PrvImage");
+    let mut found = false;
+    let mut pos = 512;
+    while pos + 128 <= hwp_bytes.len() {
+        if &hwp_bytes[pos..pos + prv_name_utf16.len()] == &prv_name_utf16[..] {
+            // 크기 필드(120..128) 조작
+            let oversized: u64 = 5 * 1024 * 1024;
+            hwp_bytes[pos + 120..pos + 128].copy_from_slice(&oversized.to_le_bytes());
+            found = true;
+            break;
+        }
+        pos += 128;
+    }
+    assert!(found, "디렉토리 엔트리에서 PrvImage 탐색 성공해야 함");
+
+    let temp = TempHwpFile::new("dvf1_oversized", &hwp_bytes);
+    let res = extract_hwp5_preview(&temp.path);
+    assert!(res.is_err(), "4MB 초과 스트림은 Err를 반환해야 함");
+    let err_msg = res.unwrap_err();
+    assert!(
+        err_msg.contains("4MB") || err_msg.contains("제한을 초과"),
+        "에러 메시지에 4MB 크기 제한 초과 내용이 포함되어야 함: {err_msg}"
+    );
+}
+
+#[test]
+fn test_dvf1_preview_corrupt_truncated_file() {
+    // 완전히 잘린 파일 (헤더 100바이트만 존재)
+    let temp = TempHwpFile::new("dvf1_truncated", &[0u8; 100]);
+    let res = extract_hwp5_preview(&temp.path);
+    assert!(res.is_err());
+    assert!(res.unwrap_err().contains("corrupt"));
+}
+
+#[test]
+fn test_dvf1_preview_cli_command() {
+    let text = "CLI 하위 명령 연동 시험 텍스트";
+    let hwp_bytes = SyntheticHwp5Builder::new()
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text(text)
+        .build()
+        .unwrap();
+
+    let temp_hwp = TempHwpFile::new("dvf1_cli", &hwp_bytes);
+    let out_png_path = std::env::temp_dir().join(format!("klib_test_out_{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&out_png_path);
+
+    let klib_bin = env!("CARGO_BIN_EXE_klib");
+    let output = std::process::Command::new(klib_bin)
+        .args(["preview", temp_hwp.path.to_str().unwrap(), out_png_path.to_str().unwrap()])
+        .output()
+        .expect("klib preview CLI 실행 성공");
+
+    assert!(output.status.success(), "CLI 반환 코드가 0이어야 함");
+    let stdout_str = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout_str.contains("\"has_image\":true"));
+    assert!(stdout_str.contains("\"format\":\"png\""));
+    assert!(stdout_str.contains(text));
+
+    // 출력 파일이 실제로 작성되었고 원본 이미지와 일치하는지 검증
+    assert!(out_png_path.is_file(), "출력 PNG 파일이 생성되어야 함");
+    let written_bytes = std::fs::read(&out_png_path).expect("출력 PNG 파일 읽기");
+    assert_eq!(written_bytes, SAMPLE_PNG_BYTES);
+
+    let _ = std::fs::remove_file(&out_png_path);
 }
 

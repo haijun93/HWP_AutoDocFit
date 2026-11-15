@@ -24,15 +24,24 @@ mod legacy_records;
 mod rename;
 mod tm_scan;
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::AtomicBool;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+#[cfg(windows)]
+use std::sync::Arc;
+#[cfg(windows)]
 use std::time::Duration;
 
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError};
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::CreateMutexW;
 
 use crate::db::Database;
-use crate::util::{data_dir, now_ms, wide};
+use crate::util::data_dir;
+#[cfg(windows)]
+use crate::util::{now_ms, wide};
 
 static SEARCH_INDEX: std::sync::OnceLock<Result<search::SearchIndex, String>> = std::sync::OnceLock::new();
 
@@ -43,6 +52,7 @@ pub(crate) fn search_index() -> Result<&'static search::SearchIndex, String> {
     }).as_ref().map_err(Clone::clone)
 }
 
+#[cfg(windows)]
 fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
     use windows_sys::Win32::Storage::FileSystem::{
         CreateFileW, ReadFile, WriteFile, FILE_GENERIC_READ, FILE_GENERIC_WRITE, OPEN_EXISTING,
@@ -78,6 +88,11 @@ fn send_pipe_cmd(cmd_json: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+#[cfg(not(windows))]
+fn send_pipe_cmd(_cmd_json: &str) -> Option<String> {
+    None
 }
 
 fn main() {
@@ -142,6 +157,44 @@ fn main() {
         }
         return;
     }
+    if args.first().is_some_and(|a| a == "preview") {
+        let Some(path) = args.get(1) else {
+            eprintln!("usage: klib preview <hwp> <out.png>");
+            std::process::exit(2);
+        };
+        let Some(out_path) = args.get(2) else {
+            eprintln!("usage: klib preview <hwp> <out.png>");
+            std::process::exit(2);
+        };
+        match hwp5::extract_hwp5_preview(std::path::Path::new(path)) {
+            Ok(preview) => {
+                let has_image = preview.has_image();
+                if let Some(ref img_bytes) = preview.image {
+                    if let Err(e) = std::fs::write(out_path, img_bytes) {
+                        eprintln!("failed to write preview image to {out_path}: {e}");
+                        std::process::exit(1);
+                    }
+                }
+                let obj = json::Value::obj(vec![
+                    ("has_image", json::Value::Bool(has_image)),
+                    (
+                        "format",
+                        preview
+                            .image_format
+                            .map(|f| json::Value::Str(f.as_str().to_string()))
+                            .unwrap_or(json::Value::Null),
+                    ),
+                    ("text", json::Value::Str(preview.text)),
+                ]);
+                println!("{}", json::to_string(&obj));
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(pos) = args.iter().position(|a| a == "--rename-preview-json") {
         if let Some(request) = args.get(pos + 1) {
             let request = if let Some(path) = request.strip_prefix('@') {
@@ -180,70 +233,79 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mutex_name = format!("Local\\HwpAutoDocFit.klib{}", util::instance_suffix().unwrap_or_default());
-    let instance_mutex = unsafe { CreateMutexW(std::ptr::null(), 0, wide(&mutex_name).as_ptr()) };
-    if instance_mutex.is_null() {
-        std::process::exit(1);
-    }
-
-    unsafe {
-        if GetLastError() == ERROR_ALREADY_EXISTS {
-            CloseHandle(instance_mutex);
-            if has("--quit") {
-                let _ = send_pipe_cmd(r#"{"cmd":"quit"}"#);
-            }
-            return;
+    #[cfg(windows)]
+    {
+        let mutex_name = format!("Local\\HwpAutoDocFit.klib{}", util::instance_suffix().unwrap_or_default());
+        let instance_mutex = unsafe { CreateMutexW(std::ptr::null(), 0, wide(&mutex_name).as_ptr()) };
+        if instance_mutex.is_null() {
+            std::process::exit(1);
         }
-        if has("--quit") {
-            CloseHandle(instance_mutex);
-            return;
-        }
-    }
 
-    let dir = data_dir();
-    let _ = std::fs::create_dir_all(&dir);
-    let db_path = format!("{dir}\\library.db");
-    let db = match Database::open(&db_path) {
-        Ok(d) => Arc::new(Mutex::new(d)),
-        Err(_) => {
-            unsafe { CloseHandle(instance_mutex) };
-            std::process::exit(2);
-        }
-    };
-
-    let running = Arc::new(AtomicBool::new(true));
-    let last_activity = Arc::new(AtomicU64::new(now_ms()));
-
-    // 유휴 자동 종료 제한 시간(초) - 기본 60초, KLIB_IDLE_SECS 환경변수 지원
-    let idle_limit_secs = std::env::var("KLIB_IDLE_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(60);
-
-    // Watchdog 스레드: 60초(또는 지정값) 유휴 시 running을 false로 설정하여 정상 정리 종료 유도
-    let r_clone = running.clone();
-    let act_clone = last_activity.clone();
-    std::thread::Builder::new()
-        .name("klib-watchdog".into())
-        .spawn(move || {
-            while r_clone.load(Ordering::Relaxed) {
-                std::thread::sleep(Duration::from_millis(500));
-                if scan::is_running() || reindex::is_running() { act_clone.store(now_ms(), Ordering::Relaxed); } // 스캔·색인 다시 만들기 중에는 유휴 종료하지 않음
-                let elapsed = (now_ms().saturating_sub(act_clone.load(Ordering::Relaxed))) / 1000;
-                if elapsed >= idle_limit_secs {
-                    r_clone.store(false, Ordering::Relaxed);
-                    // 서버 루프가 대기에서 깨어나 정리 후 종료될 수 있도록 여유 대기 후 안전 종료
-                    std::thread::sleep(Duration::from_millis(1000));
-                    std::process::exit(0);
+        unsafe {
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                CloseHandle(instance_mutex);
+                if has("--quit") {
+                    let _ = send_pipe_cmd(r#"{"cmd":"quit"}"#);
                 }
+                return;
             }
-        })
-        .ok();
+            if has("--quit") {
+                CloseHandle(instance_mutex);
+                return;
+            }
+        }
 
-    // Pipe 서버 구동 (메인 스레드 대기)
-    pipe::serve(db, running, last_activity);
+        let dir = data_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = format!("{dir}\\library.db");
+        let db = match Database::open(&db_path) {
+            Ok(d) => Arc::new(Mutex::new(d)),
+            Err(_) => {
+                unsafe { CloseHandle(instance_mutex) };
+                std::process::exit(2);
+            }
+        };
 
-    unsafe {
-        CloseHandle(instance_mutex);
+        let running = Arc::new(AtomicBool::new(true));
+        let last_activity = Arc::new(AtomicU64::new(now_ms()));
+
+        // 유휴 자동 종료 제한 시간(초) - 기본 60초, KLIB_IDLE_SECS 환경변수 지원
+        let idle_limit_secs = std::env::var("KLIB_IDLE_SECS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(60);
+
+        // Watchdog 스레드: 60초(또는 지정값) 유휴 시 running을 false로 설정하여 정상 정리 종료 유도
+        let r_clone = running.clone();
+        let act_clone = last_activity.clone();
+        std::thread::Builder::new()
+            .name("klib-watchdog".into())
+            .spawn(move || {
+                while r_clone.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if scan::is_running() || reindex::is_running() { act_clone.store(now_ms(), Ordering::Relaxed); } // 스캔·색인 다시 만들기 중에는 유휴 종료하지 않음
+                    let elapsed = (now_ms().saturating_sub(act_clone.load(Ordering::Relaxed))) / 1000;
+                    if elapsed >= idle_limit_secs {
+                        r_clone.store(false, Ordering::Relaxed);
+                        // 서버 루프가 대기에서 깨어나 정리 후 종료될 수 있도록 여유 대기 후 안전 종료
+                        std::thread::sleep(Duration::from_millis(1000));
+                        std::process::exit(0);
+                    }
+                }
+            })
+            .ok();
+
+        // Pipe 서버 구동 (메인 스레드 대기)
+        pipe::serve(db, running, last_activity);
+
+        unsafe {
+            CloseHandle(instance_mutex);
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        eprintln!("klib daemon is only supported on Windows");
+        std::process::exit(1);
     }
 }

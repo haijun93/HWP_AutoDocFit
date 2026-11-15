@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(windows)]
 use windows_sys::Win32::Foundation::{
 
     CloseHandle, ERROR_IO_INCOMPLETE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE, HLOCAL,
@@ -12,26 +13,31 @@ use windows_sys::Win32::Foundation::{
 
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::Security::Authorization::{
 
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::Security::{
 
     GetTokenInformation, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER, TokenUser,
 
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::Storage::FileSystem::{
 
     FILE_FLAG_OVERLAPPED, FlushFileBuffers, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 
+#[cfg(windows)]
 use windows_sys::Win32::System::Pipes::{
 
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
@@ -40,6 +46,7 @@ use windows_sys::Win32::System::Pipes::{
 
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
 
     CreateEventW, GetCurrentProcess, OpenProcessToken, WaitForMultipleObjects,
@@ -50,10 +57,12 @@ use crate::db::Database;
 
 use crate::json::{self, Value};
 
+#[cfg(windows)]
 use crate::util::{now_ms, wide};
 
 const MAX_REQUEST: usize = 64 * 1024;
 
+#[cfg(windows)]
 pub fn user_sid() -> String {
 
     static SID: OnceLock<String> = OnceLock::new();
@@ -112,6 +121,11 @@ pub fn user_sid() -> String {
 
 }
 
+#[cfg(not(windows))]
+pub fn user_sid() -> String {
+    "S-1-5-21-0-0-0-1000".to_string()
+}
+
 pub fn pipe_name() -> String {
 
     let suffix = crate::util::instance_suffix().unwrap_or_default();
@@ -153,6 +167,7 @@ pub fn take_line(data: &mut Vec<u8>) -> Line {
     }
 }
 
+#[cfg(windows)]
 /// 서버 루프가 연결마다 넘겨 쓰는 공용 상태. 요청은 이 스레드 하나에서 차례로만 처리한다.
 struct Ctx<'a> {
     db: &'a Mutex<Database>,
@@ -162,6 +177,7 @@ struct Ctx<'a> {
     write_event: HANDLE,
 }
 
+#[cfg(windows)]
 /// 파이프 인스턴스 하나. OVERLAPPED와 읽기 버퍼는 입출력이 걸려 있는 동안 주소가 바뀌면 안 되므로 Box에 둔다.
 struct Conn {
     h: HANDLE,
@@ -179,6 +195,7 @@ struct Conn {
     line_start: u64,
 }
 
+#[cfg(windows)]
 impl Conn {
     /// 새 인스턴스를 만들고 연결 대기를 건다. 이미 붙은 클라이언트가 있으면 connected=true로 돌려준다.
     fn listen(name: &[u16], sa: &SECURITY_ATTRIBUTES) -> Option<Conn> {
@@ -313,6 +330,7 @@ pub fn serve(db: Arc<Mutex<Database>>, running: Arc<AtomicBool>, last_activity: 
     serve_on(&pipe_name(), &db, &running, &last_activity);
 }
 
+#[cfg(windows)]
 /// 이름을 받아 파이프 서버를 돈다(시험은 사용자 파이프와 겹치지 않는 이름으로 직접 띄운다).
 /// 스레드 하나가 여러 연결의 이벤트를 함께 기다린다: 요청은 한 번에 하나씩만 처리하므로 상태 경합이 없고,
 /// 긴 요청 중에도 대기 인스턴스가 있어 다음 클라이언트가 연결해 차례를 기다릴 수 있다.
@@ -396,6 +414,12 @@ pub fn serve_on(name: &str, db: &Mutex<Database>, running: &AtomicBool, last_act
     }
 }
 
+#[cfg(not(windows))]
+pub fn serve_on(_name: &str, _db: &Mutex<Database>, _running: &AtomicBool, _last_activity: &AtomicU64) {
+    eprintln!("Named pipe server is only supported on Windows");
+}
+
+#[cfg(windows)]
 /// OVERLAPPED로 연 핸들에 응답을 끝까지 쓴다. 클라이언트가 읽지 않아 밀리면 끝날 때까지 기다린다. 실패하면 false.
 fn write_all(h: HANDLE, event: HANDLE, mut data: &[u8]) -> bool {
     while !data.is_empty() {
