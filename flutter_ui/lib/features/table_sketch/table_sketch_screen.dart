@@ -243,7 +243,6 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Offset? _panStartOffset;
 
   Offset _toCanvas(Offset screenPos) => screenPos - _panOffset;
-  Offset _toScreen(Offset canvasPos) => canvasPos + _panOffset;
 
   // 백엔드 미리보기 및 복사 상태
   TableSketchPreviewResult? _previewResult;
@@ -2463,12 +2462,14 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               ],
             ),
             actions: [
-              OutlinedButton.icon(
-                key: const Key('sketchNewButton'),
-                icon: const Icon(Icons.note_add_outlined, size: 18),
-                label: const Text('새로 그리기'),
-                tooltip: '새로 그리기 (Ctrl+N): 작업 내용 저장 여부를 묻고 전체 초기화',
-                onPressed: _handleNewSketch,
+              Tooltip(
+                message: '새로 그리기 (Ctrl+N): 작업 내용 저장 여부를 묻고 전체 초기화',
+                child: OutlinedButton.icon(
+                  key: const Key('sketchNewButton'),
+                  icon: const Icon(Icons.note_add_outlined, size: 18),
+                  label: const Text('새로 그리기'),
+                  onPressed: _handleNewSketch,
+                ),
               ),
               const SizedBox(width: 8),
               // 좁은 창(폭 600 미만)에서는 글 없는 아이콘 버튼으로 도구 줄이 넘치지 않게 한다.
@@ -2838,7 +2839,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               icon: Icon(
                 _showPaperGuide ? Icons.description : Icons.description_outlined,
                 size: 18,
-                color: _showPaperGuide ? context.colors.primary : null,
+                color: _showPaperGuide ? context.colors.highlight : null,
               ),
               onPressed: () => setState(() => _showPaperGuide = !_showPaperGuide),
               padding: EdgeInsets.zero,
@@ -3851,7 +3852,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                 final isSpace = HardwareKeyboard.instance.isLogicalKeyPressed(
                   LogicalKeyboardKey.space,
                 );
-                final isMiddleClick = (e.buttons & kTertiaryMouseButton) != 0;
+                final isMiddleClick = (e.buttons & kMiddleMouseButton) != 0;
                 if (isSpace || isMiddleClick) {
                   _isPanning = true;
                   _panStartPos = e.position;

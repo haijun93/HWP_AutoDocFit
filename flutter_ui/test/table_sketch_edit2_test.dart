@@ -103,11 +103,11 @@ void main() {
         ],
       );
       // 세로 기준 (maxCols 32): 40 > 32 이므로 scale = 32 / 40 = 0.8
-      final fittedPortrait = fitRecognizedSketch(wideDoc, 'portrait');
+      final fittedPortrait = fitRecognizedSketch(wideDoc, orientation: 'portrait');
       expect(fittedPortrait.lines.single.x2, (40 * 0.8).round());
 
       // 가로 기준 (maxCols 48): 40 <= 48 이므로 scale = 1.0
-      final fittedLandscape = fitRecognizedSketch(wideDoc, 'landscape');
+      final fittedLandscape = fitRecognizedSketch(wideDoc, orientation: 'landscape');
       expect(fittedLandscape.lines.single.x2, 40);
     });
   });
