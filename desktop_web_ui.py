@@ -1169,6 +1169,9 @@ class DesktopWebBridge:
         "unify_exclude_pagefit": ("unify_exclude_pagefit_var", "unify"),
         "unify_keep_layout": ("unify_keep_layout_var", "unify"),
         "unify_quick_mode": ("unify_quick_mode_var", "unify"),
+        # 화면(Flutter)의 '전체 서식 맞추기' 켜기 단추가 보내는 키(2026-11-15: 목록에 없어 "지원하지 않는 카드 옵션" 오류).
+        # legacy.py가 unify_quick_mode_var와 서로 반대값으로 맞춘다.
+        "unify_full_format": ("unify_full_format_var", "unify"),
     }
 
     def _card_options(self):

@@ -629,7 +629,7 @@ class BrowserApiTests(unittest.TestCase):
                           "spacing_cell_image_to_bg": False, "all_cell_image_to_bg": False,
                           "all_exclude_pagefit": False, "all_exclude_linespacing": False, "unify_exclude_tables": False,
                           "unify_exclude_spacing": False, "unify_exclude_pagefit": False,
-                          "unify_keep_layout": False, "unify_quick_mode": True})
+                          "unify_keep_layout": False, "unify_quick_mode": True, "unify_full_format": False})
         gui.spacing_cell_image_to_bg_var = _Var(False)
         state = bridge.set_card_option("spacing_cell_image_to_bg", True)
         self.assertEqual((state["mode"], state["card_options"]["spacing_cell_image_to_bg"]), ("spacing", True))
@@ -648,10 +648,26 @@ class BrowserApiTests(unittest.TestCase):
         self.assertEqual((state["mode"], state["card_options"]["unify_exclude_spacing"]), ("unify", True))
         state = bridge.set_card_option("all_exclude_pagefit", True)
         self.assertEqual((state["mode"], state["card_options"]["all_exclude_pagefit"]), ("all", True))
+        # '전체 서식 맞추기'(2026-11-15 오류 수정): 화면이 보내는 키를 받아 서식 통일 카드를 고른다.
+        gui.unify_full_format_var = _Var(False)
+        state = bridge.set_card_option("unify_full_format", True)
+        self.assertEqual((state["mode"], state["card_options"]["unify_full_format"]), ("unify", True))
         with self.assertRaises(ValueError):
             bridge.set_card_option("unknown", True)
         gui.running = True
         self.assertTrue(bridge.set_card_option("all_exclude_pagefit", False)["card_options"]["all_exclude_pagefit"])
+
+    def test_flutter_card_option_keys_are_all_accepted_by_backend(self):
+        # 재발 방지(2026-11-15): 화면이 set_card_option으로 보내는 키가 모두 백엔드 허용 목록에 있어야 한다.
+        import re
+        from desktop_web_ui import DesktopWebBridge
+        source = (Path(__file__).resolve().parents[1] / "flutter_ui" / "lib" / "main.dart").read_text(encoding="utf-8")
+        keys = set(re.findall(r"command\('set_card_option', \['([a-z_]+)'", source))
+        start = source.index("if (optionMode == 'unify')")
+        block = source[start:source.index("command('set_card_option', [o.$1", start)]
+        keys |= set(re.findall(r"\(\s*'((?:spacing|all|unify)_[a-z_]+)',", block))
+        self.assertIn("unify_full_format", keys)
+        self.assertEqual(sorted(keys - set(DesktopWebBridge._CARD_OPTIONS)), [])
 
     def test_format_manager_profiles_drop_routing_and_edits(self):
         # 서식 목록은 이름·기관·기본 서식 여부·예시 파일·사용 중 여부를 함께 준다.
