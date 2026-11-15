@@ -72,6 +72,16 @@ export function clearBranchStyles(map){
  return next;
 }
 export function mindmapNode(text='새 가지',style={}){return {id:rid(),text,style:{...style},children:[]};}
+export function emptyMindmap(text='중심 주제'){return {root:mindmapNode(text),layout:'both'};}
+/** 모든 하위 가지를 지우고 가운데 주제 하나만 남긴다(가운데 주제 글은 남김, 서식·수동 위치 초기화). */
+export function clearMindmapBranches(map){
+ const next=clone(map);
+ next.root.children=[];
+ next.root.style={};
+ delete next.root.position;
+ delete next.root.size;
+ return next;
+}
 export function sampleMindmap(){
  const root=mindmapNode('2026 업무 계획');
  const add=(parent,text,kids=[])=>{const n=mindmapNode(text);n.children=kids.map(k=>mindmapNode(k));parent.children.push(n);return n;};

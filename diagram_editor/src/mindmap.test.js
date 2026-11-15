@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {sampleMindmap,mindmapNode,addChild,addSibling,findNode,removeNode,updateNode,validateMindmap,mindmapGraph,positionMindmap,reparentNode,autoLayoutMindmap} from './mindmap.js';
+import {sampleMindmap,emptyMindmap,clearMindmapBranches,mindmapNode,addChild,addSibling,findNode,removeNode,updateNode,validateMindmap,mindmapGraph,positionMindmap,reparentNode,autoLayoutMindmap} from './mindmap.js';
 import {decode,svg} from './model.js';
 
 test('manual placement survives save/reload/export, with other branches stationary',()=>{
@@ -105,4 +105,57 @@ test('map themes: shape × palette × ground drive every branch unless a branch 
  assert.throws(()=>validateMindmap({...map,theme:{shape:'star',palette:'office',ground:'light'}}));
  const saved=decode(JSON.parse(JSON.stringify({format:'docfit-flow',version:1,nodes:[],edges:[],mindmap:{...map,theme:{shape:'capsule',palette:'berry',ground:'tint'}}})));
  assert.deepEqual(saved.mindmap.theme,{shape:'capsule',palette:'berry',ground:'tint'});
+});
+
+test('emptyMindmap generates new document with single central topic and layout', ()=>{
+ const mm=emptyMindmap('중심 주제');
+ assert.equal(mm.root.text, '중심 주제');
+ assert.deepEqual(mm.root.children, []);
+ assert.equal(mm.layout, 'both');
+ const validated=validateMindmap(mm);
+ assert.equal(validated.root.text, '중심 주제');
+ const graph=mindmapGraph(validated);
+ assert.equal(graph.nodes.length, 1);
+ assert.equal(graph.edges.length, 0);
+ assert.equal(graph.nodes[0].data.label, '중심 주제');
+});
+
+test('clearMindmapBranches removes all children, keeps root text, and is undoable', ()=>{
+ const initial=sampleMindmap();
+ const rootText=initial.root.text;
+ assert.ok(initial.root.children.length > 0);
+ // 커스텀 서식과 수동 위치 설정
+ initial.root.style={fill:'#FF0000'};
+ initial.root.position={x:100,y:200};
+
+ // 되돌리기용 이전 스냅샷 보관 (undo 히스토리 역할)
+ const history=[structuredClone(initial)];
+
+ // 전체 지우기 실행
+ const cleared=clearMindmapBranches(initial);
+ assert.equal(cleared.root.text, rootText);
+ assert.deepEqual(cleared.root.children, []);
+ assert.deepEqual(cleared.root.style, {});
+ assert.equal(cleared.root.position, undefined);
+ assert.equal(cleared.root.size, undefined);
+
+ const validated=validateMindmap(cleared);
+ const graph=mindmapGraph(validated);
+ assert.equal(graph.nodes.length, 1);
+ assert.equal(graph.nodes[0].data.label, rootText);
+
+ // undo 복원: 이전 스냅샷으로 되돌림
+ const restored=history.pop();
+ assert.equal(restored.root.children.length, 4);
+ assert.equal(restored.root.style.fill, '#FF0000');
+ assert.deepEqual(restored.root.position, {x:100,y:200});
+});
+
+test('snapshot without mindmap falls back cleanly to emptyMindmap in mindmap mode', ()=>{
+ const emptySnapshot=decode(JSON.parse(JSON.stringify({format:'docfit-flow',version:1,nodes:[],edges:[]})));
+ assert.equal(emptySnapshot.mindmap, undefined);
+ // 마인드맵 모드에서 mindmap이 없으면 emptyMindmap()으로 초기화
+ const fallback=emptySnapshot.mindmap??emptyMindmap();
+ assert.equal(fallback.root.text, '중심 주제');
+ assert.equal(mindmapGraph(fallback).nodes.length, 1);
 });
