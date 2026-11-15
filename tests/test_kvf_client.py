@@ -88,6 +88,28 @@ class KvfClientTests(unittest.TestCase):
         self.assertIn("(str(root / 'resources'), 'resources')", spec)
         self.assertIn('recursesubdirs', (root / 'installer/setup.iss').read_text('utf-8'))
 
+    def test_sync_calls_install_with_respect_disabled(self):
+        client, runner = self.client()
+        client.sync()
+        self.assertEqual(runner.call_args_list[0].args[0][1:], ['--install', '--respect-disabled'])
+        self.assertEqual(runner.call_args_list[1].args[0][1:], ['--status'])
+
+    def test_installer_creates_kvf_run_entry(self):
+        root = Path(__file__).resolve().parents[1]
+        iss = (root / 'installer/setup.iss').read_text('utf-8')
+        # setup.iss의 [Run] 섹션에 kvf Run 항목 생성 확인
+        self.assertRegex(
+            iss,
+            r'Filename:\s*"{app}\\(_internal\\resources\\kvf\.exe)";\s*Parameters:\s*"--install --respect-disabled"',
+        )
+        # [UninstallRun] 섹션에 kvf.exe --uninstall 항목 생성 확인
+        self.assertRegex(
+            iss,
+            r'Filename:\s*"{localappdata}\\HwpAutoDocFit\\kvf\\kvf\.exe";\s*Parameters:\s*"--uninstall"',
+        )
+        # PrepareToInstall에서 업데이트 전 kvf.exe 종료(StopHelper) 확인
+        self.assertIn("StopHelper('kvf.exe')", iss)
+
     def test_browser_bridge_exposes_independent_command(self):
         from desktop_web_ui import DesktopWebBridge, _BrowserApi
         with patch('docfit_app.kvf_client.KvfClient') as factory:

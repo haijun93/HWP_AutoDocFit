@@ -45,7 +45,7 @@ class _KvfPanelState extends State<KvfPanel> {
       const ListTile(
         title: Text('가상 폴더 창'),
         subtitle: Text(
-          'Win+Shift+F로 자료함을 엽니다. 몽땅클립보드와 따로 켜고 끕니다. 기본은 꺼짐입니다.\n'
+          'Win+Shift+F로 자료함을 엽니다. 몽땅클립보드와 따로 켜고 끕니다.\n'
           '사본이 없는 항목은 앱에서 한 번 열어 주세요.',
         ),
       ),
@@ -59,12 +59,23 @@ class _KvfPanelState extends State<KvfPanel> {
         ),
       SwitchListTile(
         title: const Text('가상 폴더 창 켜기'),
-        subtitle: Text(status['running'] == true ? '켜짐' : '꺼짐'),
+        subtitle: Text(status['running'] == true ? '실행 중' : '꺼짐'),
         value: status['running'] == true,
         onChanged: busy
             ? null
             : (value) => command(value ? 'enable' : 'disable'),
       ),
+      if (status['running'] != true)
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 4.0),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton(
+              onPressed: busy ? null : () => command('enable'),
+              child: const Text('지금 켜기'),
+            ),
+          ),
+        ),
       SwitchListTile(
         title: const Text('Windows 로그인 때 자동 시작'),
         value: status['autostart'] == true,

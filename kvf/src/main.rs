@@ -70,7 +70,7 @@ fn run() -> Result<(),String> {
     if args.command == Command::Version { println!("{{\"version\":\"{}\"}}",env!("CARGO_PKG_VERSION")); return Ok(()); }
     if !matches!(args.command,Command::Show|Command::Hidden|Command::Quit|Command::Reload) {
         let raw=std::env::args().skip(1).collect::<Vec<_>>();
-        let command=match args.command {Command::Status=>"--status",Command::Install=>"--install",Command::Enable=>"--enable",Command::Upgrade=>"--upgrade-if-stale",Command::Disable=>"--disable",_=>unreachable!()};
+        let command=match args.command {Command::Status=>"--status",Command::Install=>"--install",Command::Enable=>"--enable",Command::Upgrade=>"--upgrade-if-stale",Command::Disable=>"--disable",Command::Uninstall=>"--uninstall",_=>unreachable!()};
         let result=install::lifecycle_command(command,&raw);
         println!("{}",json::to_string(&result));
         if result.bool("ok")==Some(false){std::process::exit(1);}

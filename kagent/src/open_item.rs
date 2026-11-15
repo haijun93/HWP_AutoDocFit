@@ -121,7 +121,7 @@ fn shell_open(hwnd: HWND, path: &str, verb: &str) -> bool {
 }
 
 fn notify(hwnd: HWND, text: &str) {
-    unsafe { windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(hwnd, wide(text).as_ptr(), wide("몽땅클립보드").as_ptr(), windows_sys::Win32::UI::WindowsAndMessaging::MB_OK | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION); }
+    unsafe { windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(hwnd, wide(text).as_ptr(), wide("퀵몽땅클립보드").as_ptr(), windows_sys::Win32::UI::WindowsAndMessaging::MB_OK | windows_sys::Win32::UI::WindowsAndMessaging::MB_ICONINFORMATION); }
 }
 
 /// 항목을 연결 프로그램으로 직접 열기.

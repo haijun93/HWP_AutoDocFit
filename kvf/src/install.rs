@@ -228,6 +228,10 @@ impl lifecycle::Runtime for NativeLifecycle<'_> {
     }
 }
 
+pub fn disabled_marker(root: &std::path::Path) -> std::path::PathBuf {
+    root.join("kvf.disabled")
+}
+
 pub fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
     use crate::json::Value;
     let root = crate::paths::data_dir();
@@ -245,12 +249,22 @@ pub fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             let running = lifecycle_alive(&status);
 
             return Value::obj(vec![("ok", true.into()), ("available", bundled.is_some().into()),
-                ("running", running.into()), ("status", status), ("autostart", autostart_enabled().unwrap_or(false).into())]);
+                ("running", running.into()), ("status", status), ("autostart", autostart_enabled().unwrap_or(false).into()),
+                ("disabled", disabled_marker(&root).is_file().into())]);
         }
         "--install" | "--enable" | "--upgrade-if-stale" => {
             let Some(source) = bundled else { return Value::obj(vec![("ok", false.into()), ("reason", "no_bundle".into())]); };
             if command=="--upgrade-if-stale" && !target.exists() && !lifecycle_status(&root).as_ref().is_some_and(lifecycle_alive){return Value::obj(vec![("ok",true.into()),("upgraded",false.into()),("restarted",false.into()),("reason","not_installed".into())])}
             if args.iter().any(|a|a=="--autostart") && std::env::var_os("KVF_TEST_ROOT").is_some(){return lifecycle_error(&root,"시험 실행에서는 자동 실행 등록을 바꾸지 않습니다.")}
+            let is_disabled = disabled_marker(&root).is_file();
+            let respect_disabled = args.iter().any(|a| a == "--respect-disabled");
+            let should_enable = if command == "--install" {
+                if is_disabled && respect_disabled { false } else { true }
+            } else if command == "--enable" {
+                true
+            } else {
+                false
+            };
             let current=match verified(source){Ok(b)=>b,Err(e)=>return lifecycle_error(&root,&e)};
             let old = match std::fs::read(&target) {
                 Ok(bytes) => Some(bytes),
@@ -267,17 +281,26 @@ pub fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             let stale = lifecycle::stale(old.as_deref() != Some(current.as_slice()), was_running,
                 status.as_ref().and_then(|s| s.str("version")), env!("CARGO_PKG_VERSION"));
             let mut runtime = NativeLifecycle { root: &root, target: &target, current: &current, old: old.as_deref(), pending: None };
-            match lifecycle::update(&mut runtime, was_running, stale, command == "--enable") {
+            match lifecycle::update(&mut runtime, was_running, stale, should_enable) {
                 Ok((upgraded, restarted)) => {
                     let _ = std::fs::remove_file(root.join("kvf.previous"));
-                    if command == "--enable" {
-                        if std::env::var_os("KVF_TEST_ROOT").is_none() { if let Err(error) = set_autostart(args.iter().any(|a| a == "--autostart")) {
-                            return lifecycle_error(&root, &error);
-                        }}
+                    if should_enable {
+                        let _ = std::fs::remove_file(disabled_marker(&root));
+                        if std::env::var_os("KVF_TEST_ROOT").is_none() {
+                            let autostart_on = if command == "--install" {
+                                true
+                            } else {
+                                args.iter().any(|a| a == "--autostart")
+                            };
+                            if let Err(error) = set_autostart(autostart_on) {
+                                return lifecycle_error(&root, &error);
+                            }
+                        }
                     }
                     Value::obj(vec![("ok", true.into()), ("upgraded", upgraded.into()),
                         ("restarted", restarted.into()), ("installed", target.to_string_lossy().into_owned().into()),
-                        ("version", env!("CARGO_PKG_VERSION").into())])
+                        ("version", env!("CARGO_PKG_VERSION").into()),
+                        ("disabled", disabled_marker(&root).is_file().into())])
                 }
                 Err(error) => lifecycle_error(&root, &error),
             }
@@ -286,8 +309,18 @@ pub fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
         "--disable" => {
             let mut rt=NativeLifecycle{root:&root,target:&target,current:&[],old:None,pending:None};
             if let Err(e)=lifecycle::Runtime::quit_and_wait(&mut rt){return lifecycle_error(&root,&e)}
+            let _ = std::fs::write(disabled_marker(&root), b"off");
             if std::env::var_os("KVF_TEST_ROOT").is_none(){if let Err(e)=set_autostart(false){return lifecycle_error(&root,&e)}}
-            Value::obj(vec![("ok",true.into()),("running",false.into()),("autostart",false.into())])
+            Value::obj(vec![("ok",true.into()),("running",false.into()),("autostart",false.into()),("disabled",true.into())])
+        }
+
+        "--uninstall" => {
+            let mut rt=NativeLifecycle{root:&root,target:&target,current:&[],old:None,pending:None};
+            let _ = lifecycle::Runtime::quit_and_wait(&mut rt);
+            if std::env::var_os("KVF_TEST_ROOT").is_none(){let _ = set_autostart(false);}
+            let _ = std::fs::remove_file(&target);
+            let _ = std::fs::remove_file(disabled_marker(&root));
+            Value::obj(vec![("ok",true.into()),("uninstalled",true.into())])
         }
         _ => return Value::obj(vec![("ok", false.into())]),
     }
@@ -317,6 +350,6 @@ fn sha256_bytes(data:&[u8])->Option<String>{
  #[test]fn atomic_replace_preserves_other_files(){let root=fixture("atomic");let target=root.join("kvf.exe");std::fs::write(root.join("settings.json"),b"settings").unwrap();atomic_agent_write(&target,b"old").unwrap();atomic_agent_write(&target,b"new").unwrap();assert_eq!(std::fs::read(&target).unwrap(),b"new");assert_eq!(std::fs::read(root.join("settings.json")).unwrap(),b"settings");assert_eq!(std::fs::read_dir(&root).unwrap().count(),2);std::fs::remove_dir_all(root).unwrap();}
  #[test]fn locked_replacement_keeps_old_and_backup(){use std::os::windows::fs::OpenOptionsExt;let root=fixture("locked");let target=root.join("kvf.exe");std::fs::write(&target,b"old").unwrap();let lock=std::fs::OpenOptions::new().read(true).share_mode(1).open(&target).unwrap();let mut rt=NativeLifecycle{root:&root,target:&target,current:b"new",old:Some(b"old"),pending:None};assert!(lifecycle::Runtime::install(&mut rt).is_err());assert_eq!(std::fs::read(&target).unwrap(),b"old");assert_eq!(std::fs::read(root.join("kvf.previous")).unwrap(),b"old");drop(lock);std::fs::remove_dir_all(root).unwrap();}
  #[test]fn native_rollback_restores_previous_bytes(){let root=fixture("rollback");let target=root.join("kvf.exe");std::fs::write(&target,b"old").unwrap();let mut rt=NativeLifecycle{root:&root,target:&target,current:b"new",old:Some(b"old"),pending:None};lifecycle::Runtime::install(&mut rt).unwrap();assert_eq!(std::fs::read(&target).unwrap(),b"new");lifecycle::Runtime::rollback(&mut rt).unwrap();assert_eq!(std::fs::read(&target).unwrap(),b"old");std::fs::remove_dir_all(root).unwrap();}
- #[test]fn test_root_blocks_registry_and_absent_upgrade_is_noop(){let _env=util::TestEnvironment::lock();let root=fixture("isolated");unsafe{std::env::set_var("KVF_TEST_ROOT",&root)}assert!(set_autostart(true).is_err());assert!(set_autostart(false).is_err());assert_eq!(autostart_enabled(),None);let v=lifecycle_command("--upgrade-if-stale",&[]);assert_eq!(v.str("reason"),Some("not_installed"));assert!(!root.join("kvf.exe").exists());assert_eq!(lifecycle_command("--disable",&[]).bool("ok"),Some(true));unsafe{std::env::remove_var("KVF_TEST_ROOT")}std::fs::remove_dir_all(root).unwrap();}
+ #[test]fn test_root_blocks_registry_and_absent_upgrade_is_noop(){let _env=util::TestEnvironment::lock();let root=fixture("isolated");unsafe{std::env::set_var("KVF_TEST_ROOT",&root)}assert!(set_autostart(true).is_err());assert!(set_autostart(false).is_err());assert_eq!(autostart_enabled(),None);let v=lifecycle_command("--upgrade-if-stale",&[]);assert_eq!(v.str("reason"),Some("not_installed"));assert!(!root.join("kvf.exe").exists());assert_eq!(lifecycle_command("--disable",&[]).bool("ok"),Some(true));assert!(disabled_marker(&root).is_file());assert_eq!(lifecycle_command("--uninstall",&[]).bool("ok"),Some(true));assert!(!disabled_marker(&root).is_file());unsafe{std::env::remove_var("KVF_TEST_ROOT")}std::fs::remove_dir_all(root).unwrap();}
  #[test]fn status_does_not_trust_reused_pid(){let _env=util::TestEnvironment::lock();let root=fixture("pid");unsafe{std::env::set_var("KVF_TEST_ROOT",&root)}let v=Value::obj(vec![("pid",(std::process::id() as i64).into())]);assert!(!lifecycle_alive(&v));unsafe{std::env::remove_var("KVF_TEST_ROOT")}std::fs::remove_dir_all(root).unwrap();}
 }
