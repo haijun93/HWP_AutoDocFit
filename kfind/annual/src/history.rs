@@ -63,6 +63,24 @@ fn cadence(days: f64) -> Option<&'static str> {
     else { None }
 }
 
+fn next_occurrence(last: Date, cadence: &str) -> Date {
+    let (year, month) = match cadence {
+        "월간" => {
+            if last.month == 12 { (last.year + 1, 1) } else { (last.year, last.month + 1) }
+        }
+        "분기" => {
+            let total_month = last.year * 12 + last.month as i32 - 1 + 3;
+            (total_month.div_euclid(12), total_month.rem_euclid(12) as u32 + 1)
+        }
+        "연간" => (last.year + 1, last.month),
+        _ => return last,
+    };
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days_in_month = match month { 2 if leap => 29, 2 => 28, 4 | 6 | 9 | 11 => 30, _ => 31 };
+    let day = last.day.min(days_in_month);
+    Date::new(year, month, day)
+}
+
 /// 기존 클러스터에 속한 문서의 날짜를 비교해 주기 업무를 찾는다.
 /// A2 날짜가 있으면 이를 사용하고, 없으면 파일 수정일을 KST 날짜로 사용한다.
 pub fn detect_periodic_topics(
@@ -74,7 +92,7 @@ pub fn detect_periodic_topics(
             let d = docs.get(i)?;
             let date = document_dates.get(i).copied().flatten()
                 .unwrap_or_else(|| Date::from_timestamp(d.modified, KST_OFFSET_SECS));
-            Some((date.to_timestamp(KST_OFFSET_SECS).div_euclid(SECS_PER_DAY), i))
+            Some(((date.to_timestamp(KST_OFFSET_SECS) + KST_OFFSET_SECS).div_euclid(SECS_PER_DAY), i))
         }).collect();
         dated.sort_unstable();
         dated.dedup_by_key(|x| x.0);
@@ -85,8 +103,7 @@ pub fn detect_periodic_topics(
         let last_day = dated.last().unwrap().0;
         let (ly, lm, ld) = crate::date::days_to_ymd(last_day);
         let last_date = Date::new(ly, lm, ld);
-        let (ny, nm, nd) = crate::date::days_to_ymd(last_day + med.round() as i64);
-        let next_date = Date::new(ny, nm, nd);
+        let next_date = next_occurrence(last_date, kind);
         out.push(PeriodicPrediction {
             topic_id: topic.id, topic: topic.rep_title.clone(), cadence: kind.to_string(),
             median_interval_days: med, occurrence_count: dated.len(), last_date,
@@ -148,7 +165,10 @@ mod tests {
         let dates=vec![Some(Date::new(2024,3,1)),Some(Date::new(2025,3,1)),Some(Date::new(2026,3,1))];
         let p=detect_periodic_topics(&docs,&topics,&dates);
         assert_eq!(p[0].cadence,"연간"); assert_eq!(p[0].next_expected_date,Date::new(2027,3,1));
-        let fallback=detect_periodic_topics(&docs,&topics,&[None,None,None]);
+        let fallback_docs = vec![
+            doc("x/a", ts(2018,1,1)), doc("x/b", ts(2019,1,1)), doc("x/c", ts(2020,1,1)),
+        ];
+        let fallback=detect_periodic_topics(&fallback_docs,&topics,&[None,None,None]);
         assert_eq!(fallback[0].last_date,Date::new(2020,1,1));
     }
     #[test] fn periodic_detects_quarterly_and_monthly_topics() {
