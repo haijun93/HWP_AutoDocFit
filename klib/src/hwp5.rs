@@ -1092,6 +1092,15 @@ impl SyntheticHwp5Builder {
         self
     }
 
+    pub fn drm(mut self, yes: bool) -> Self {
+        if yes {
+            self.flags |= FLAG_DRM;
+        } else {
+            self.flags &= !FLAG_DRM;
+        }
+        self
+    }
+
     pub fn prv_image(mut self, bytes: Vec<u8>) -> Self {
         self.prv_image = Some(bytes);
         self

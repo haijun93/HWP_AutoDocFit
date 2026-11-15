@@ -23,6 +23,7 @@ mod classify_levels;
 mod legacy_records;
 mod rename;
 mod tm_scan;
+pub(crate) mod scan_hwp;
 
 use std::sync::atomic::AtomicBool;
 #[cfg(windows)]
@@ -97,6 +98,15 @@ fn send_pipe_cmd(_cmd_json: &str) -> Option<String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "scan-hwp") {
+        if args.len() < 2 {
+            eprintln!("usage: klib scan-hwp <roots...>");
+            std::process::exit(2);
+        }
+        let roots: Vec<std::path::PathBuf> = args[1..].iter().map(std::path::PathBuf::from).collect();
+        scan_hwp::run(&roots);
+        return;
+    }
     if args.first().is_some_and(|a| a == "tm-scan") {
         let Some(root) = args.get(1) else { eprintln!("usage: klib tm-scan <root> [request-json]"); std::process::exit(2); };
         let request = args.get(2).and_then(|s| crate::json::parse(s)).unwrap_or_else(|| crate::json::Value::obj(vec![]));
