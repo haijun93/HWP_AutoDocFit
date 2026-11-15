@@ -176,6 +176,7 @@ class DocGridService:
         thumb_dir: Path | str | None = None,
         klib_path: Path | str | None = None,
         max_slots: int = MAX_SLOTS,
+        opener: Any | None = None,
     ):
         if thumb_dir is None:
             try:
@@ -187,6 +188,7 @@ class DocGridService:
         self._klib_executable_path = Path(klib_path) if klib_path else None
         self._slots = threading.BoundedSemaphore(max_slots)
         self.max_slots = max_slots
+        self.opener = opener
 
     def _get_klib_exe(self) -> Path | None:
         if self._klib_executable_path and self._klib_executable_path.is_file():
@@ -478,3 +480,79 @@ class DocGridService:
             })
         finally:
             self._slots.release()
+
+    @staticmethod
+    def _default_open(path: str) -> None:
+        if hasattr(os, "startfile"):
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+
+    def open_file(self, path: str | Path) -> dict[str, Any]:
+        """지정된 문서를 시스템 기본 연결 프로그램으로 연다."""
+        p = Path(path).resolve()
+        if not p.is_file():
+            return {
+                "ok": False,
+                "code": "FILE_NOT_FOUND",
+                "message": f"파일을 찾을 수 없습니다: {path}",
+            }
+        try:
+            fn = self.opener or self._default_open
+            fn(str(p))
+            return {"ok": True, "path": str(p)}
+        except Exception as exc:
+            logger.exception("문서 열기 실패: %s", p)
+            return {
+                "ok": False,
+                "code": "OPEN_FAILED",
+                "message": f"문서를 열지 못했습니다: {exc}",
+            }
+
+    def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """외부 IPC / 브리지 명령을 라우팅한다."""
+        if not isinstance(action, str):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "명령 입력을 확인해 주세요."}
+        payload = payload or {}
+        if not isinstance(payload, dict):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "명령 매개변수를 확인해 주세요."}
+
+        try:
+            if action == "list":
+                folder = payload.get("folder")
+                if not folder or not isinstance(folder, str):
+                    return {"ok": False, "code": "INVALID_FOLDER", "message": "폴더 경로를 지정해 주세요."}
+                recursive = bool(payload.get("recursive", False))
+                docs = self.list_documents(folder, recursive=recursive)
+                return {"ok": True, "documents": docs, "folder": folder}
+
+            if action == "thumbnail":
+                path = payload.get("path")
+                if not path or not isinstance(path, str):
+                    return {"ok": False, "code": "INVALID_PATH", "message": "파일 경로를 지정해 주세요."}
+                timeout = float(payload.get("timeout", SLOT_TIMEOUT))
+                return self.get_thumbnail(path, timeout=timeout, as_base64=True)
+
+            if action == "open":
+                path = payload.get("path")
+                if not path or not isinstance(path, str):
+                    return {"ok": False, "code": "INVALID_PATH", "message": "파일 경로를 지정해 주세요."}
+                return self.open_file(path)
+
+            if action == "clear_cache":
+                cleared = self.clear_cache()
+                return {"ok": True, "cleared": cleared}
+
+            return {
+                "ok": False,
+                "code": "NOT_AVAILABLE",
+                "message": f"지원하지 않는 문서뷰폴더 명령입니다: {action}",
+            }
+        except FileNotFoundError as exc:
+            return {"ok": False, "code": "NOT_FOUND", "message": str(exc)}
+        except Exception as exc:
+            logger.exception("문서뷰폴더 명령 실패 (%s): %s", action, exc)
+            return {"ok": False, "code": "DOC_GRID_ERROR", "message": f"작업을 완료하지 못했습니다: {exc}"}
+

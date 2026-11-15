@@ -24,10 +24,11 @@ void main() {
           paint: const _Canvas(),
           fileRename: const _Canvas(),
           timemachine: const _Canvas(),
+          docGrid: const _Canvas(),
         ),
       ),
     );
-    const labels = ['문서편집', '표템플릿', '표그림판', '다이어그램', '마인드맵', '붙임사진 편집', '파일명 일괄변경', '몽땅검색', '파일변환'];
+    const labels = ['문서편집', '표템플릿', '표그림판', '다이어그램', '마인드맵', '붙임사진 편집', '파일명 일괄변경', '몽땅검색', '문서뷰폴더', '파일변환'];
     expect(find.text('파일명 일괄변경'), findsOneWidget);
     // 하단 탭은 이 순서로 놓이고 파일변환이 항상 맨 끝이다(2026-10-30 사용자 지시).
     for (var i = 1; i < labels.length; i++) {
@@ -83,6 +84,7 @@ Widget _shell({
     paint: const SizedBox(),
     fileRename: const SizedBox(),
     timemachine: const SizedBox(),
+    docGrid: const SizedBox(),
     hiddenTabs: hidden,
     savedSidebarExpanded: saved,
     onSidebarExpandedChanged: onChanged,
@@ -122,17 +124,18 @@ void main2() {
             paint: const SizedBox(),
             fileRename: const SizedBox(),
             timemachine: const SizedBox(),
+            docGrid: const SizedBox(),
             onTabChanged: selected.add,
           ),
         ),
       );
       expect(_sidebarWidth(tester), width >= kSidebarAutoExpandWidth ? kSidebarExpandedWidth : kSidebarCollapsedWidth);
-      for (final i in const [8, 7, 5, 4, 3, 2, 1, 0]) {
+      for (final i in const [9, 8, 7, 5, 4, 3, 2, 1, 0]) {
         await tester.tap(find.byKey(Key('workspaceTab-$i')));
         await tester.pump();
         expect(tester.takeException(), isNull);
       }
-      expect(selected, const [8, 7, 5, 4, 3, 2, 1, 0]);
+      expect(selected, const [9, 8, 7, 5, 4, 3, 2, 1, 0]);
     });
   }
 
@@ -152,6 +155,7 @@ void main2() {
           paint: const SizedBox(),
           fileRename: const SizedBox(),
           timemachine: const SizedBox(),
+          docGrid: const SizedBox(),
           onTabChanged: selected.add,
           tabRequest: request,
         ),
@@ -212,6 +216,7 @@ void main2() {
           paint: const SizedBox(),
           fileRename: const SizedBox(),
           timemachine: const SizedBox(),
+          docGrid: const SizedBox(),
           onTabChanged: selected.add,
           hiddenTabs: const {kTabFileRename},
         ),
@@ -227,7 +232,7 @@ void main2() {
 
     await press(LogicalKeyboardKey.digit2);
     await press(LogicalKeyboardKey.digit7); // 파일명 일괄변경(숨김)
-    await press(LogicalKeyboardKey.digit9);
+    await press(LogicalKeyboardKey.digit0); // 10번째 탭 = 파일변환
     expect(selected, const [1, kTabFileConversion]);
     expect(find.byKey(const Key('workspaceTab-$kTabFileRename')), findsNothing);
   });

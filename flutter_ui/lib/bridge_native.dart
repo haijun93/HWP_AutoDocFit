@@ -65,6 +65,13 @@ Future<Object?> callApi(String method, List<Object?> args) async {
     // HWP 일괄 변환: 찾을 폴더 고르기(창은 앱에서 띄운다).
     return {'ok': true, 'folder': await getDirectoryPath()};
   }
+  if (method == 'doc_grid' && args.isNotEmpty && args[0] == 'pick_folder') {
+    final folder = await getDirectoryPath();
+    if (folder == null) return {'ok': false, 'cancelled': true};
+    final payload = args.length > 1 && args[1] is Map ? Map<String, Object?>.from(args[1] as Map) : <String, Object?>{};
+    payload['folder'] = folder;
+    return _client.call('doc_grid', ['list', payload]);
+  }
   if (method == 'add_folder') {
     final folder = await getDirectoryPath();
     if (folder != null) {
