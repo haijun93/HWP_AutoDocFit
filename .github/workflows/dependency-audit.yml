@@ -1,0 +1,78 @@
+name: Dependency vulnerability and license audit
+
+# 2026-11-15: 의존성 취약점 검사(OSV)와 잠금 파일 기준 제3자 구성요소·라이선스 목록 생성.
+# GitLab 서버 검사를 쓰지 않게 되어 GitHub에서 같은 종류의 검사를 돌린다.
+on:
+  push:
+    branches: [main]
+    paths:
+      - '**/Cargo.lock'
+      - '**/Cargo.toml'
+      - '**/package-lock.json'
+      - '**/pubspec.lock'
+      - 'requirements*.txt'
+      - 'constraints.txt'
+      - 'scripts/third_party_inventory.py'
+      - '.github/workflows/dependency-audit.yml'
+  pull_request:
+  schedule:
+    - cron: '17 21 * * 0' # 매주 월요일 06:17(한국 시각): 새로 알려진 취약점 확인
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.14'
+
+      - name: Third-party inventory (licenses from lock files)
+        run: python scripts/third_party_inventory.py --out dist/third-party
+
+      - name: Upload inventory
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: third-party-inventory
+          path: dist/third-party/
+
+      - name: Install OSV-Scanner (fixed version, Go checksum database)
+        run: |
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Scan lock files for known vulnerabilities
+        # 저장소의 Cargo.lock·package-lock.json·pubspec.lock 전체와 Python 해시 잠금 파일을 검사한다.
+        # 취약점이 있으면 실패하고 요약에 목록을 남긴다(배포 빌드는 막지 않는 별도 작업).
+        run: |
+          set +e
+          osv-scanner scan source --recursive \
+            --lockfile "requirements.txt:requirements-lock.txt" \
+            --lockfile "requirements.txt:requirements-mcp.txt" \
+            --format markdown --output osv-report.md .
+          code=$?
+          osv-scanner scan source --recursive \
+            --lockfile "requirements.txt:requirements-lock.txt" \
+            --lockfile "requirements.txt:requirements-mcp.txt" \
+            --format json --output osv-report.json . >/dev/null 2>&1
+          {
+            echo '### OSV vulnerability scan'
+            if [ -s osv-report.md ]; then cat osv-report.md; else echo 'No report produced.'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
+
+      - name: Upload vulnerability report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: osv-report
+          path: |
+            osv-report.md
+            osv-report.json
+          if-no-files-found: ignore
