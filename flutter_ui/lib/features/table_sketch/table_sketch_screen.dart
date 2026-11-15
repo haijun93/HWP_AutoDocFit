@@ -232,8 +232,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Rect? _previewRect;
   bool _dragChangedLines = false;
 
-  // 뷰포트 확대/축소 및 기본 크기
+  // 뷰포트 확대/축소 및 이동 오프셋
   double _zoom = 1.0;
+  Offset _panOffset = Offset.zero;
+  bool _isCanvasPanning = false;
+  Offset? _lastPanPos;
+  bool _pointerHandledByCanvas = false;
   static const double _baseCellSize = 16.0;
   double get _cellSize => _baseCellSize * _zoom;
 
@@ -474,6 +478,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _smartGuides = true;
       _keepRatio = false;
       _zoom = 1.0;
+      _panOffset = Offset.zero;
       _sel = SketchSelection();
       _lassoPath = null;
       _regionSel.clear();
@@ -1191,8 +1196,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         });
         _beginSelectionDrag(pos);
       } else {
-        final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-            gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+        final gx = (pos.dx / _cellSize).round(),
+            gy = (pos.dy / _cellSize).round();
         setState(() => _dragStart = Offset(gx * _cellSize, gy * _cellSize));
       }
     } else if (_tool == SketchToolMode.eraser) {
@@ -1287,8 +1292,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _openTextDialogAt(pos);
     } else if (_isArrowTool &&
         shapeSelect(_doc, pos / _cellSize, _hitTolerance).isEmpty) {
-      final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-          gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+      final gx = (pos.dx / _cellSize).round(),
+          gy = (pos.dy / _cellSize).round();
       final (x2, y2) = switch (_tool) {
         SketchToolMode.arrowLeft => (gx - 1, gy),
         SketchToolMode.arrowRight => (gx + 1, gy),
@@ -1297,10 +1302,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       };
       _commitArrow(
         Offset(gx * _cellSize, gy * _cellSize),
-        Offset(
-          x2.clamp(0, _doc.grid.cols) * _cellSize,
-          y2.clamp(0, _doc.grid.rows) * _cellSize,
-        ),
+        Offset(x2 * _cellSize, y2 * _cellSize),
       );
     } else if (_tool == SketchToolMode.select ||
         _tool == SketchToolMode.lasso) {
@@ -1346,18 +1348,16 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   // --- 선 / 사각형 스냅 및 커밋 ---
 
   void _updateLinePreview(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final rawGx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final rawGy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final gx1 = (start.dx / _cellSize).round();
+    final gy1 = (start.dy / _cellSize).round();
+    final rawGx2 = (current.dx / _cellSize).round();
+    final rawGy2 = (current.dy / _cellSize).round();
 
     final snapped = snapLineCoords(
       gx1,
       gy1,
       rawGx2,
       rawGy2,
-      _doc.grid.cols,
-      _doc.grid.rows,
     );
     if (snapped != null) {
       setState(() {
@@ -1377,18 +1377,16 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _commitLine(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final rawGx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final rawGy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final gx1 = (start.dx / _cellSize).round();
+    final gy1 = (start.dy / _cellSize).round();
+    final rawGx2 = (current.dx / _cellSize).round();
+    final rawGy2 = (current.dy / _cellSize).round();
 
     final snapped = snapLineCoords(
       gx1,
       gy1,
       rawGx2,
       rawGy2,
-      _doc.grid.cols,
-      _doc.grid.rows,
     );
     if (snapped != null) {
       _saveSnapshot();
@@ -1409,10 +1407,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _updateRectPreview(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final gx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final gx1 = (start.dx / _cellSize).round();
+    final gy1 = (start.dy / _cellSize).round();
+    final gx2 = (current.dx / _cellSize).round();
+    final gy2 = (current.dy / _cellSize).round();
 
     final minX = math.min(gx1, gx2);
     final maxX = math.max(gx1, gx2);
@@ -1447,10 +1445,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _commitRect(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final gx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final gx1 = (start.dx / _cellSize).round();
+    final gy1 = (start.dy / _cellSize).round();
+    final gx2 = (current.dx / _cellSize).round();
+    final gy2 = (current.dy / _cellSize).round();
 
     final minX = math.min(gx1, gx2);
     final maxX = math.max(gx1, gx2);
@@ -1527,10 +1525,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _tool == SketchToolMode.arrowDown;
 
   void _commitArrow(Offset start, Offset end) {
-    final x1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-        y1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    var x2 = (end.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-        y2 = (end.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final x1 = (start.dx / _cellSize).round(),
+        y1 = (start.dy / _cellSize).round();
+    var x2 = (end.dx / _cellSize).round(),
+        y2 = (end.dy / _cellSize).round();
     if (_tool == SketchToolMode.arrowLeft && x2 > x1 ||
         _tool == SketchToolMode.arrowRight && x2 < x1 ||
         _tool == SketchToolMode.arrowUp && y2 > y1 ||
@@ -1539,17 +1537,13 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       // 도구 방향은 시작/끝 좌표 순서로 보존한다. 사용자가 반대쪽에서 끌어도 선택한 방향을 유지한다.
       if (_tool == SketchToolMode.arrowLeft ||
           _tool == SketchToolMode.arrowRight) {
-        final step = (x2 - x1).abs().clamp(1, _doc.grid.cols);
-        x2 = _tool == SketchToolMode.arrowLeft
-            ? (tx - step).clamp(0, _doc.grid.cols)
-            : (tx + step).clamp(0, _doc.grid.cols);
+        final step = math.max(1, (x2 - x1).abs());
+        x2 = _tool == SketchToolMode.arrowLeft ? (tx - step) : (tx + step);
       }
       if (_tool == SketchToolMode.arrowUp ||
           _tool == SketchToolMode.arrowDown) {
-        final step = (y2 - y1).abs().clamp(1, _doc.grid.rows);
-        y2 = _tool == SketchToolMode.arrowUp
-            ? (ty - step).clamp(0, _doc.grid.rows)
-            : (ty + step).clamp(0, _doc.grid.rows);
+        final step = math.max(1, (y2 - y1).abs());
+        y2 = _tool == SketchToolMode.arrowUp ? (ty - step) : (ty + step);
       }
     }
     if (x1 == x2 && y1 == y2) return;
@@ -1892,8 +1886,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   /// 끝점 하나를 (pos)로 옮긴다. 가로·세로·45° 모양은 그대로 지킨다(다른 끝은 고정).
   void _dragEndpoint(({bool arrow, int index, int end}) end, Offset pos) {
-    final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final gx = (pos.dx / _cellSize).round();
+    final gy = (pos.dy / _cellSize).round();
     final (ox1, oy1, ox2, oy2) = end.arrow
         ? (
             _doc.arrows[end.index].x1,
@@ -2349,8 +2343,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   // --- 글 입력 대화상자 ---
 
   void _openTextDialogAt(Offset pos, {String? insert}) {
-    final cx = (pos.dx / _cellSize).floor().clamp(0, _doc.grid.cols - 1);
-    final cy = (pos.dy / _cellSize).floor().clamp(0, _doc.grid.rows - 1);
+    final cx = (pos.dx / _cellSize).floor();
+    final cy = (pos.dy / _cellSize).floor();
     final existing = _doc.findText(cx, cy);
 
     showDialog<SketchText?>(
@@ -2390,6 +2384,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   void _zoomReset() {
     setState(() {
       _zoom = 1.0;
+      _panOffset = Offset.zero;
     });
   }
 
@@ -3912,6 +3907,72 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
     return Listener(
       onPointerSignal: _handlePointerSignal,
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (e) {
+        final isMiddle = (e.buttons & kMiddleMouseButton) != 0;
+        final isSpace = HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.space);
+        if (isMiddle || isSpace) {
+          _isCanvasPanning = true;
+          _lastPanPos = e.position;
+          return;
+        }
+        if (!_pointerHandledByCanvas) {
+          final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box != null) {
+            final localPos = box.globalToLocal(e.position);
+            _keyboardFocus.requestFocus();
+            _handlePanStart(
+              DragStartDetails(
+                globalPosition: e.position,
+                localPosition: localPos,
+              ),
+            );
+          }
+        }
+      },
+      onPointerMove: (e) {
+        if (_isCanvasPanning && _lastPanPos != null) {
+          final delta = e.position - _lastPanPos!;
+          _lastPanPos = e.position;
+          setState(() {
+            _panOffset += delta;
+          });
+          return;
+        }
+        if (!_pointerHandledByCanvas && _dragStart != null) {
+          final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box != null) {
+            final localPos = box.globalToLocal(e.position);
+            _handlePanUpdate(
+              DragUpdateDetails(
+                globalPosition: e.position,
+                localPosition: localPos,
+              ),
+            );
+          }
+        }
+      },
+      onPointerUp: (e) {
+        if (_isCanvasPanning) {
+          _isCanvasPanning = false;
+          _lastPanPos = null;
+          return;
+        }
+        if (!_pointerHandledByCanvas && _dragStart != null) {
+          final box = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+          if (box != null) {
+            final localPos = box.globalToLocal(e.position);
+            _handlePanUpdate(
+              DragUpdateDetails(
+                globalPosition: e.position,
+                localPosition: localPos,
+              ),
+            );
+          }
+          _handlePanEnd(DragEndDetails());
+        }
+        _pointerHandledByCanvas = false;
+      },
       child: Container(
         color: context.colors.surfaceSubtle,
         child: Center(
@@ -3932,55 +3993,82 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                   physics: const NeverScrollableScrollPhysics(),
                   scrollDirection: Axis.horizontal,
                   child: Center(
-                    child: Container(
-                      width: canvasWidth,
-                      height: canvasHeight,
-                      decoration: BoxDecoration(
-                        color: TableSketchColors.paper,
-                        boxShadow: [
-                          BoxShadow(
-                            color: TableSketchColors.of(context).paperShadow,
-                            blurRadius: 16,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Listener(
-                        key: _canvasKey,
-                        // 누름·이동·뗌을 직접 받아 뗀 위치를 끝점으로 쓴다(한 번에 멀리 옮겨도 선이 그려지게).
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: (e) {
-                          _keyboardFocus.requestFocus();
-                          _handlePanStart(
-                            DragStartDetails(
-                              globalPosition: e.position,
-                              localPosition: e.localPosition,
+                    child: Transform.translate(
+                      offset: _panOffset,
+                      child: Container(
+                        width: canvasWidth,
+                        height: canvasHeight,
+                        decoration: BoxDecoration(
+                          color: TableSketchColors.paper,
+                          boxShadow: [
+                            BoxShadow(
+                              color: TableSketchColors.of(context).paperShadow,
+                              blurRadius: 16,
+                              offset: const Offset(0, 4),
                             ),
-                          );
-                        },
-                        onPointerMove: (e) => _handlePanUpdate(
-                          DragUpdateDetails(
-                            globalPosition: e.position,
-                            localPosition: e.localPosition,
-                          ),
+                          ],
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        onPointerUp: (e) {
-                          _handlePanUpdate(
-                            DragUpdateDetails(
-                              globalPosition: e.position,
-                              localPosition: e.localPosition,
-                            ),
-                          );
-                          _handlePanEnd(DragEndDetails());
-                        },
-                        child: GestureDetector(
+                        child: Listener(
+                          key: _canvasKey,
+                          // 누름·이동·뗌을 직접 받아 뗀 위치를 끝점으로 쓴다(한 번에 멀리 옮겨도 선이 그려지게).
                           behavior: HitTestBehavior.opaque,
-                          // 정밀 지우개 탭은 Listener의 Down/Up에서 이미 처리한다.
-                          onTapUp: _tool == SketchToolMode.preciseEraser
-                              ? null
-                              : _handleTapUp,
-                          child: CustomPaint(
+                          onPointerDown: (e) {
+                            _pointerHandledByCanvas = true;
+                            _keyboardFocus.requestFocus();
+                            final isMiddle = (e.buttons & kMiddleMouseButton) != 0;
+                            final isSpace = HardwareKeyboard.instance.isLogicalKeyPressed(LogicalKeyboardKey.space);
+                            if (isMiddle || isSpace) {
+                              _isCanvasPanning = true;
+                              _lastPanPos = e.position;
+                              return;
+                            }
+                            _handlePanStart(
+                              DragStartDetails(
+                                globalPosition: e.position,
+                                localPosition: e.localPosition,
+                              ),
+                            );
+                          },
+                          onPointerMove: (e) {
+                            if (_isCanvasPanning) {
+                              if (_lastPanPos != null) {
+                                final delta = e.position - _lastPanPos!;
+                                _lastPanPos = e.position;
+                                setState(() {
+                                  _panOffset += delta;
+                                });
+                              }
+                              return;
+                            }
+                            _handlePanUpdate(
+                              DragUpdateDetails(
+                                globalPosition: e.position,
+                                localPosition: e.localPosition,
+                              ),
+                            );
+                          },
+                          onPointerUp: (e) {
+                            if (_isCanvasPanning) {
+                              _isCanvasPanning = false;
+                              _lastPanPos = null;
+                              return;
+                            }
+                            _handlePanUpdate(
+                              DragUpdateDetails(
+                                globalPosition: e.position,
+                                localPosition: e.localPosition,
+                              ),
+                            );
+                            _handlePanEnd(DragEndDetails());
+                          },
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            // 정밀 지우개 탭은 Listener의 Down/Up에서 이미 처리한다.
+                            onTapUp: (_tool == SketchToolMode.preciseEraser || _isCanvasPanning)
+                                ? null
+                                : _handleTapUp,
+                            child: CustomPaint(
                             key: const Key('sketchCanvas'),
                             size: Size(canvasWidth, canvasHeight),
                             painter: TableSketchPainter(
@@ -4021,6 +4109,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                         ),
                       ),
                     ),
+                  ),
                   ),
                 ),
               ),
