@@ -93,21 +93,25 @@ bool hasMazeExamplePath(List<String> rows) {
 }
 
 /// 이미지에서 인식한 표(칸 하나 = 격자 1눈금)를 그림판에서 고치기 좋은 크기로 키운다.
-/// 칸 하나를 최대 4눈금(20mm)으로, 표 폭은 32눈금(A4 본문 폭 정도) 안으로 맞추고,
+/// 칸 하나를 최대 4눈금(20mm)으로, 표 폭은 방향에 따라 A4 본문 폭(세로 32눈금·가로 47눈금) 안으로 맞추고,
 /// 격자는 지금 그림판 크기([base]) 이상·200눈금 이하로 둔다.
 TableSketchDoc fitRecognizedSketch(
   TableSketchDoc recognized, {
   GridConfig base = const GridConfig(),
+  String orientation = 'portrait',
 }) {
   final cols = math.max(1, recognized.grid.cols);
   final rows = math.max(1, recognized.grid.rows);
+  final isLandscape = orientation == 'landscape';
+  final maxTargetCols = isLandscape ? 47 : 32;
   final scale = [
     4,
-    32 ~/ cols,
+    maxTargetCols ~/ cols,
     200 ~/ cols,
     200 ~/ rows,
   ].reduce(math.min).clamp(1, 4);
   return TableSketchDoc(
+    orientation: orientation,
     grid: GridConfig(
       cols: math.min(200, math.max(base.cols, cols * scale)),
       rows: math.min(200, math.max(base.rows, rows * scale)),
@@ -164,6 +168,8 @@ class TableSketchScreen extends StatefulWidget {
 
   /// '한/글 문서에서 표 가져오기'의 HWPX 고르기(시험에서 바꿔 끼운다). 없으면 [pickHwpxFilePath].
   final Future<String?> Function()? pickHwpx;
+
+  static void resetLastOrientation() => _TableSketchScreenState._lastOrientation = 'portrait';
 
   @override
   State<TableSketchScreen> createState() => _TableSketchScreenState();
@@ -256,11 +262,20 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     text: '새 표 서식',
   );
 
+  static String _lastOrientation = 'portrait';
+
   @override
   void initState() {
     super.initState();
     _sketchApi = TableSketchApi(widget.api);
-    _doc = TableSketchDoc();
+    final orient = _lastOrientation;
+    _doc = TableSketchDoc(
+      orientation: orient,
+      grid: GridConfig(
+        cols: orient == 'landscape' ? 50 : 36,
+        rows: orient == 'landscape' ? 36 : 50,
+      ),
+    );
     _stopImageDrops = watchWindowEvent(
       'docfit-sketch-image-dropped',
       () => unawaited(takeDroppedImage()),
@@ -2595,6 +2610,26 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
             ),
           ]),
           _toolGroup([
+            Tooltip(
+              message: '가로 문서에 넣을 표를 그릴 때 쓰는 기준선 (한/글 문서 자체 용지 방향은 바뀌지 않음)',
+              child: Text(
+                '용지:',
+                style: TextStyle(fontSize: 12, color: context.colors.muted),
+              ),
+            ),
+            const SizedBox(width: 4),
+            _orientationChip(
+              'portrait',
+              'A4 세로',
+              const Key('paperOrientationPortrait'),
+            ),
+            _orientationChip(
+              'landscape',
+              'A4 가로',
+              const Key('paperOrientationLandscape'),
+            ),
+          ]),
+          _toolGroup([
             IconButton(
               tooltip: '축소',
               icon: const Icon(Icons.remove, size: 18),
@@ -2815,6 +2850,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         found = fitRecognizedSketch(
           TableSketchDoc.fromJson(sketch),
           base: _doc.grid,
+          orientation: _doc.orientation,
         );
       } catch (_) {
         found = null;
@@ -3413,6 +3449,88 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     );
   }
 
+  Widget _orientationChip(String orientation, String label, Key key) {
+    final isSelected = _doc.orientation == orientation;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: Tooltip(
+        message: orientation == 'landscape'
+            ? 'A4 가로 (297×210mm, 본문 폭 237mm)'
+            : 'A4 세로 (210×297mm, 본문 폭 150mm)',
+        child: ChoiceChip(
+          key: key,
+          label: Text(label, style: const TextStyle(fontSize: 12)),
+          selected: isSelected,
+          onSelected: (selected) {
+            if (selected) {
+              _setOrientation(orientation);
+            }
+          },
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+      ),
+    );
+  }
+
+  void _setOrientation(String orientation) {
+    if (_doc.orientation == orientation) return;
+    _saveSnapshot();
+    setState(() {
+      _doc.orientation = orientation;
+      _lastOrientation = orientation;
+      final isLandscape = orientation == 'landscape';
+      final minCols = isLandscape ? 50 : 36;
+      final minRows = isLandscape ? 36 : 50;
+
+      var maxX = 0;
+      var maxY = 0;
+      for (final l in _doc.lines) {
+        maxX = math.max(maxX, math.max(l.x1, l.x2));
+        maxY = math.max(maxY, math.max(l.y1, l.y2));
+      }
+      for (final a in _doc.arrows) {
+        maxX = math.max(maxX, math.max(a.x1, a.x2));
+        maxY = math.max(maxY, math.max(a.y1, a.y2));
+      }
+      for (final t in _doc.texts) {
+        maxX = math.max(maxX, t.x + 1);
+        maxY = math.max(maxY, t.y + 1);
+      }
+      for (final f in _doc.fills) {
+        maxX = math.max(maxX, f.x2);
+        maxY = math.max(maxY, f.y2);
+      }
+      for (final i in _doc.images) {
+        maxX = math.max(maxX, i.x + 1);
+        maxY = math.max(maxY, i.y + 1);
+      }
+
+      _doc.grid = _doc.grid.copyWith(
+        cols: math.max(minCols, maxX),
+        rows: math.max(minRows, maxY),
+      );
+    });
+    _triggerPreviewDebounced();
+  }
+
+  List<String> _previewWarnings() {
+    final baseWarnings = _previewResult?.warnings ?? const [];
+    final res = _previewResult;
+    if (res == null || !res.ok) return baseWarnings;
+
+    final isLandscape = _doc.orientation == 'landscape';
+    final maxBodyWidthMm = isLandscape ? 237.0 : 150.0;
+    if (res.widthMm > maxBodyWidthMm) {
+      final orientLabel = isLandscape ? '가로' : '세로';
+      return [
+        ...baseWarnings,
+        '표 폭(${res.widthMm.toStringAsFixed(1)}mm)이 A4 $orientLabel 본문 폭(${maxBodyWidthMm.toStringAsFixed(0)}mm)을 넘습니다.',
+      ];
+    }
+    return baseWarnings;
+  }
+
   /// 한/글 굵기 목록(0.1~5mm, 선 모양 미리보기). 여러 개를 골랐는데 굵기가 다르면 '혼합'.
   Widget _widthMenu() {
     final shown = _shownLineWidth;
@@ -3754,13 +3872,13 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '용지 차지: ${_previewResult!.widthMm.toStringAsFixed(1)}mm × ${_previewResult!.heightMm.toStringAsFixed(1)}mm',
+                      '용지 차지: ${_previewResult!.widthMm.toStringAsFixed(1)}mm × ${_previewResult!.heightMm.toStringAsFixed(1)}mm (A4 ${_doc.orientation == 'landscape' ? '가로' : '세로'})',
                       style: TextStyle(
                         fontSize: 12,
                         color: context.colors.muted,
                       ),
                     ),
-                    if (_previewResult!.warnings.isNotEmpty) ...[
+                    if (_previewWarnings().isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(8),
@@ -3770,7 +3888,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: _previewResult!.warnings
+                          children: _previewWarnings()
                               .map(
                                 (w) => Text(
                                   '• $w',
