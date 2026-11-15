@@ -25,10 +25,10 @@ math.Point<int>? snapLineCoords(
   int gx1,
   int gy1,
   int rawGx2,
-  int rawGy2,
-  int maxCols,
-  int maxRows,
-) {
+  int rawGy2, [
+  int? maxCols,
+  int? maxRows,
+]) {
   final dx = rawGx2 - gx1;
   final dy = rawGy2 - gy1;
   if (dx == 0 && dy == 0) return null;
@@ -45,12 +45,12 @@ math.Point<int>? snapLineCoords(
 
   if (adx > 0 && (ady == 0 || (ady / adx) < 0.41421356)) {
     // 가로선 (y1 == y2)
-    gx2 = rawGx2.clamp(0, maxCols);
+    gx2 = maxCols != null ? rawGx2.clamp(0, maxCols) : rawGx2;
     gy2 = gy1;
   } else if (ady > 0 && (adx == 0 || (adx / ady) < 0.41421356)) {
     // 세로선 (x1 == x2)
     gx2 = gx1;
-    gy2 = rawGy2.clamp(0, maxRows);
+    gy2 = maxRows != null ? rawGy2.clamp(0, maxRows) : rawGy2;
   } else {
     // 45° 대각선 (|x2-x1| == |y2-y1|)
     final sx = dx >= 0 ? 1 : -1;
@@ -58,10 +58,12 @@ math.Point<int>? snapLineCoords(
     var step = ((adx + ady) / 2.0).round();
     if (step < 1) step = 1;
 
-    final maxStepX = sx > 0 ? (maxCols - gx1) : gx1;
-    final maxStepY = sy > 0 ? (maxRows - gy1) : gy1;
-    final maxStep = math.min(maxStepX, maxStepY);
-    step = math.min(step, maxStep);
+    if (maxCols != null && maxRows != null) {
+      final maxStepX = sx > 0 ? (maxCols - gx1) : gx1;
+      final maxStepY = sy > 0 ? (maxRows - gy1) : gy1;
+      final maxStep = math.min(maxStepX, maxStepY);
+      step = math.min(step, maxStep);
+    }
 
     if (step < 1) return null;
     gx2 = gx1 + step * sx;
@@ -172,14 +174,62 @@ class TableSketchPainter extends CustomPainter {
     r.centerLeft,
   ];
 
+  (int, int, int, int) get _bounds {
+    var minC = 0;
+    var maxC = doc.grid.cols;
+    var minR = 0;
+    var maxR = doc.grid.rows;
+    for (final l in [...doc.lines, ...doc.lockedLines]) {
+      minC = math.min(minC, math.min(l.x1, l.x2));
+      maxC = math.max(maxC, math.max(l.x1, l.x2));
+      minR = math.min(minR, math.min(l.y1, l.y2));
+      maxR = math.max(maxR, math.max(l.y1, l.y2));
+    }
+    for (final a in [...doc.arrows, ...doc.lockedArrows]) {
+      minC = math.min(minC, math.min(a.x1, a.x2));
+      maxC = math.max(maxC, math.max(a.x1, a.x2));
+      minR = math.min(minR, math.min(a.y1, a.y2));
+      maxR = math.max(maxR, math.max(a.y1, a.y2));
+    }
+    for (final t in [...doc.texts, ...doc.lockedTexts]) {
+      minC = math.min(minC, t.x);
+      maxC = math.max(maxC, t.x + 1);
+      minR = math.min(minR, t.y);
+      maxR = math.max(maxR, t.y + 1);
+    }
+    for (final f in doc.fills) {
+      minC = math.min(minC, math.min(f.x1, f.x2));
+      maxC = math.max(maxC, math.max(f.x1, f.x2));
+      minR = math.min(minR, math.min(f.y1, f.y2));
+      maxR = math.max(maxR, math.max(f.y1, f.y2));
+    }
+    if (previewLine != null) {
+      minC = math.min(minC, math.min(previewLine!.x1, previewLine!.x2));
+      maxC = math.max(maxC, math.max(previewLine!.x1, previewLine!.x2));
+      minR = math.min(minR, math.min(previewLine!.y1, previewLine!.y2));
+      maxR = math.max(maxR, math.max(previewLine!.y1, previewLine!.y2));
+    }
+    return (minC, maxC, minR, maxR);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
+    final (minC, maxC, minR, maxR) = _bounds;
+
     // 1. 종이 바탕색 (흰색)
     final bgPaint = Paint()..color = TableSketchColors.paper;
-    canvas.drawRect(Offset.zero & size, bgPaint);
+    canvas.drawRect(
+      Rect.fromLTRB(
+        minC * cellSize,
+        minR * cellSize,
+        math.max(size.width, maxC * cellSize),
+        math.max(size.height, maxR * cellSize),
+      ),
+      bgPaint,
+    );
 
     // 2. 바둑판 점선 격자 (연회색 점선)
-    _drawGrid(canvas, size);
+    _drawGrid(canvas, size, minC, maxC, minR, maxR);
 
     // 2-guide. 종이 경계(가이드) 및 본문 폭 기준선
     _drawA4Guides(canvas, size);
@@ -421,22 +471,19 @@ class TableSketchPainter extends CustomPainter {
     canvas.drawRect(Offset.zero & size, borderPaint);
   }
 
-  void _drawGrid(Canvas canvas, Size size) {
-    final cols = doc.grid.cols;
-    final rows = doc.grid.rows;
-
+  void _drawGrid(Canvas canvas, Size size, int minC, int maxC, int minR, int maxR) {
     final gridPath = Path();
     // 세로선들
-    for (int c = 0; c <= cols; c++) {
+    for (int c = minC; c <= maxC; c++) {
       final x = c * cellSize;
-      gridPath.moveTo(x, 0);
-      gridPath.lineTo(x, rows * cellSize);
+      gridPath.moveTo(x, minR * cellSize);
+      gridPath.lineTo(x, maxR * cellSize);
     }
     // 가로선들
-    for (int r = 0; r <= rows; r++) {
+    for (int r = minR; r <= maxR; r++) {
       final y = r * cellSize;
-      gridPath.moveTo(0, y);
-      gridPath.lineTo(cols * cellSize, y);
+      gridPath.moveTo(minC * cellSize, y);
+      gridPath.lineTo(maxC * cellSize, y);
     }
 
     final dashedGrid = createDashedPath(gridPath, 2.0, 3.0);
