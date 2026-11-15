@@ -1,6 +1,6 @@
-import React,{useRef,useState,useEffect,createContext,useContext} from 'react';
+import React,{useRef,useState,useEffect,createContext,useContext,useCallback} from 'react';
 import {createRoot} from 'react-dom/client';
-import {ReactFlow,ReactFlowProvider,Background,Controls,MiniMap,Handle,Position,ConnectionMode,applyNodeChanges,applyEdgeChanges,NodeResizer,BaseEdge,useReactFlow,ViewportPortal,reconnectEdge} from '@xyflow/react';
+import {ReactFlow,ReactFlowProvider,Background,Controls,MiniMap,Handle,Position,ConnectionMode,applyNodeChanges,applyEdgeChanges,NodeResizer,BaseEdge,useReactFlow,ViewportPortal,reconnectEdge,EdgeLabelRenderer} from '@xyflow/react';
 import {autoRoute,nodeAt,facingSides,smartGuides} from './magnet.js';
 import {freehandNode,freehandPath,withBackground,withoutBackground,fitSize,paintStyle,BACKGROUND_ID,isImageSrc} from './paint.js';
 import {defaultLayers,addLayer,updateLayer,moveLayer,removeLayer,assignLayer,layeredNodes,layeredEdges,layerOf} from './layers.js';
@@ -19,7 +19,7 @@ window.docfitSetTheme=setEditorTheme;
 {const initialTheme=new URLSearchParams(window.location.search).get('theme');if(initialTheme)setEditorTheme(initialTheme);}
 import {FORMAT,PALETTE,templates,template,node,edge,id,decode,validate,svg,layoutGraph,computeNodeAutoFitBox,edgeLabelBox,LINE_HEIGHT,nodeFont,nodePaint,edgePath,EDGE_DEFAULT,rotationFromPointer,normalizeRotation,moveHistory} from './model.js';
 import {SHAPE_GROUPS,SHAPES,LINE_SHAPES,shapePath,DASHES,MARKERS,dashArray} from './shapes.js';
-import {sampleMindmap,mindmapGraph,addChild,addSibling,removeNode,updateNode,moveNode,findNode,positionMindmap,reparentNode,autoLayoutMindmap,restyleNodes,MINDMAP_SHAPES,MINDMAP_SCOPES,MINDMAP_THEME_SHAPES,MINDMAP_PALETTES,MINDMAP_GROUNDS,themeOf,clearBranchStyles} from './mindmap.js';
+import {sampleMindmap,emptyMindmap,clearMindmapBranches,mindmapGraph,addChild,addSibling,removeNode,updateNode,moveNode,findNode,positionMindmap,reparentNode,autoLayoutMindmap,restyleNodes,MINDMAP_SHAPES,MINDMAP_SCOPES,MINDMAP_THEME_SHAPES,MINDMAP_PALETTES,MINDMAP_GROUNDS,themeOf,clearBranchStyles} from './mindmap.js';
 import {FONTS,registerFonts,ARROWS,DOWN_ARROWS,FLOW_PRESETS,MAX_FLOW_STEPS,MAX_FLOW_ROWS,MAX_ROWS,MAX_COLS,MAX_ORG,ROLE_NAMES,BORDER_TYPES,BORDER_WIDTHS,BORDER_NAMES,
  flowTable,gridTable,orgTable,barTable,flowDetails,resizeFlow,resizeFlowRows,insertStep,removeStep,resizeGrid,insertRow,removeRow,insertCol,removeCol,resizeOrg,
  setStyle,setBorder,exportSpec,cssOf,cssBorder,
@@ -33,7 +33,68 @@ function send(message){
  else if(host)host.postMessage(JSON.stringify(message));
 }
 const HistoryContext=createContext(()=>{});
+const EditingContext=createContext(null);
 const safeId=v=>String(v).replace(/[^A-Za-z0-9_-]/g,'');
+
+/** 인라인 글 입력창: 도형 더블클릭 시 도형 자리에서 직접 편집 */
+function InlineNodeEditor({value,font,width,height,shape,line,onChange,onFinish,onCancel}){
+ const ref=useRef(null);
+ useEffect(()=>{
+  if(ref.current){
+   ref.current.focus();
+   ref.current.select();
+  }
+ },[]);
+ const isDiamond=shape==='diamond';
+ const maxW=isDiamond?Math.max(40,width*0.55):Math.max(40,width-16);
+ const maxH=isDiamond?Math.max(24,height*0.55):Math.max(24,height-12);
+ return <textarea
+  ref={ref}
+  className="inline-node-editor nodrag nowheel nopan"
+  aria-label="도형 글 입력"
+  value={value}
+  onChange={e=>onChange(e.target.value)}
+  onKeyDown={e=>{
+   if(e.nativeEvent.isComposing)return;
+   if(e.key==='Escape'){
+    e.stopPropagation();
+    onCancel();
+   }else if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){
+    e.preventDefault();
+    e.stopPropagation();
+    onFinish();
+   }else if(e.key==='Enter'){
+    e.stopPropagation();
+   }else if(e.key==='Backspace'||e.key==='Delete'){
+    e.stopPropagation();
+   }
+  }}
+  onBlur={()=>onFinish()}
+  style={{
+   position:'relative',
+   zIndex:25,
+   width:maxW+'px',
+   height:maxH+'px',
+   maxWidth:maxW+'px',
+   maxHeight:maxH+'px',
+   fontFamily:font.family,
+   fontSize:font.px+'px',
+   lineHeight:font.lineHeight+'px',
+   fontWeight:font.weight,
+   color:font.color,
+   textAlign:'center',
+   background:'rgba(255, 255, 255, 0.95)',
+   border:'1.5px dashed #2563eb',
+   borderRadius:'4px',
+   padding:'2px 4px',
+   resize:'none',
+   outline:'none',
+   boxSizing:'border-box',
+   marginTop:line?-font.lineHeight*1.4:0,
+   overflow:'auto'
+  }}
+ />;
+}
 
 /** 화살표 머리(<marker>)를 React 요소로 그린다(HTML 문자열을 끼워 넣지 않는다). */
 function Marker({id:markerId,kind,color}){
@@ -68,6 +129,8 @@ const Rotated=({data,w,h,children})=><div className="node-rot" style={{width:w,h
 function FlowNode({id:nodeId,data,selected,width,height}){
  const box=computeNodeAutoFitBox({data,width,height}),f=nodeFont(data),p=nodePaint(data);
  const resizeStart=useContext(HistoryContext);
+ const editCtx=useContext(EditingContext);
+ const isEditing=editCtx?.editing?.type==='node'&&editCtx.editing.id===nodeId;
  const w=width??220,h=height??90,inset=Math.max(1,p.width/2+1),line=LINE_SHAPES.has(data.shape);
  const key='n'+safeId(nodeId);
  if(data.shape==='image')return <>{!data.background&&<NodeResizer onResizeStart={resizeStart} isVisible={selected} minWidth={20} minHeight={20} keepAspectRatio/>}
@@ -89,9 +152,10 @@ function FlowNode({id:nodeId,data,selected,width,height}){
      stroke={p.stroke} strokeWidth={p.width} strokeDasharray={p.dash||undefined} strokeLinejoin="round"
      markerStart={line&&start!=='none'?`url(#${key}s)`:undefined} markerEnd={line&&end!=='none'?`url(#${key}e)`:undefined}/>}
    </svg>
-   <span className="node-lines" style={{fontFamily:f.family,fontSize:f.px,lineHeight:f.lineHeight+'px',fontWeight:f.weight,color:f.color,marginTop:line?-f.lineHeight*1.4:0}}>
-    {box.lines.map((l,i)=><span key={i} style={{display:'block',height:f.lineHeight}}>{l||' '}</span>)}
-   </span>
+   {isEditing?<InlineNodeEditor value={editCtx.editing.current} font={f} width={w} height={h} shape={data.shape} line={line} onChange={editCtx.updateEditing} onFinish={editCtx.finishEditing} onCancel={editCtx.cancelEditing}/>
+    :<span className="node-lines" style={{fontFamily:f.family,fontSize:f.px,lineHeight:f.lineHeight+'px',fontWeight:f.weight,color:f.color,marginTop:line?-f.lineHeight*1.4:0}}>
+     {box.lines.map((l,i)=><span key={i} style={{display:'block',height:f.lineHeight}}>{l||' '}</span>)}
+    </span>}
   </div></Rotated></>;
 }
 /** 연결선: 꺾은선·직선·곡선, 색·굵기·선 모양, 양 끝 화살표 머리. */
@@ -99,14 +163,31 @@ function FlowEdge(props){
  const flow=useReactFlow(),nodes=flow.getNodes(),a=nodes.find(n=>n.id===props.source),b=nodes.find(n=>n.id===props.target);
  if(!a||!b)return null;
  const s=props.data??EDGE_DEFAULT,key='e'+safeId(props.id);
+ const editCtx=useContext(EditingContext);
+ const isEditing=editCtx?.editing?.type==='edge'&&editCtx.editing.id===props.id;
  const e={...props,sourceHandle:props.sourcePosition,targetHandle:props.targetPosition};
  const box=edgeLabelBox(e,nodes);
  const path=edgePath(props.sourceX,props.sourceY,props.targetX,props.targetY,props.sourcePosition,props.targetPosition,s.line);
  return <><defs><Marker id={key+'s'} kind={s.start} color={s.color}/><Marker id={key+'e'} kind={s.end} color={s.color}/></defs>
   <BaseEdge id={props.id} path={path} markerStart={s.start!=='none'?`url(#${key}s)`:undefined} markerEnd={s.end!=='none'?`url(#${key}e)`:undefined}
    style={{stroke:s.color,strokeWidth:props.selected?s.width+1.5:s.width,strokeDasharray:dashArray(s.dash)||undefined}}/>
-  {props.label&&<g><rect x={box.x-box.width/2} y={box.y-box.height/2} width={box.width} height={box.height} fill="white"/>
-  {box.lines.map((line,i)=><text xmlSpace="preserve" key={i} x={box.x} y={box.y+(i-(box.lines.length-1)/2)*LINE_HEIGHT} textAnchor="middle" dominantBaseline="central" style={{fontSize:16,fontFamily:'"Malgun Gothic","Noto Sans KR",sans-serif'}}>{line}</text>)}</g>}</>;
+  {props.label&&!isEditing&&<g><rect x={box.x-box.width/2} y={box.y-box.height/2} width={box.width} height={box.height} fill="white"/>
+  {box.lines.map((line,i)=><text xmlSpace="preserve" key={i} x={box.x} y={box.y+(i-(box.lines.length-1)/2)*LINE_HEIGHT} textAnchor="middle" dominantBaseline="central" style={{fontSize:16,fontFamily:'"Malgun Gothic","Noto Sans KR",sans-serif'}}>{line}</text>)}</g>}
+  {isEditing&&<EdgeLabelRenderer>
+   <div style={{position:'absolute',transform:`translate(-50%, -50%) translate(${box.x}px,${box.y}px)`,pointerEvents:'all',zIndex:25}} className="nodrag nopan">
+    <input autoFocus type="text" aria-label="연결선 설명 입력" value={editCtx.editing.current}
+     onChange={e=>editCtx.updateEditing(e.target.value)}
+     onKeyDown={e=>{
+      if(e.nativeEvent.isComposing)return;
+      if(e.key==='Escape'){e.stopPropagation();editCtx.cancelEditing();}
+      else if(e.key==='Enter'){e.preventDefault();e.stopPropagation();editCtx.finishEditing();}
+      else if(e.key==='Backspace'||e.key==='Delete'){e.stopPropagation();}
+     }}
+     onBlur={()=>editCtx.finishEditing()}
+     style={{fontSize:14,fontFamily:'"Malgun Gothic","Noto Sans KR",sans-serif',border:'1.5px dashed #2563eb',borderRadius:4,padding:'2px 6px',background:'white',outline:'none',textAlign:'center',minWidth:80}}
+    />
+   </div>
+  </EdgeLabelRenderer>}</>;
 }
 const edgeTypes={smoothstep:FlowEdge};
 const nodeTypes={flow:FlowNode};
@@ -323,6 +404,7 @@ function App(){
  const [catalogCellSel,setCatalogCellSel]=useState({r:0,c:0}),[catalogScope,setCatalogScope]=useState('cell'),[catalogCustomBorder,setCatalogCustomBorder]=useState(false);
  const [mmSelected,setMmSelected]=useState(null);
  const [activeLayer,setActiveLayer]=useState(null);
+ const [editing,setEditing]=useState(null); // {type:'node'|'edge',id,initial,current}
  // 도형 묶음 펼침 상태(도형을 넣어도 펼친 묶음이 접히지 않게 기억한다).
  const [openGroups,setOpenGroups]=useState(()=>new Set(['사각형','기본 도형','선']));
  const flow=useRef(null),current=useRef(graph),history=useRef([]),future=useRef([]),nameRef=useRef(name),clipboard=useRef(null);
@@ -441,12 +523,90 @@ function App(){
    }[next]??'도형을 추가하고 연결점을 끌어 연결하세요.');
   if(next==='diagram'||next==='mindmap')fit();
  };
+ const startNodeEdit=useCallback(node=>{
+  if(node.data?.shape==='image'||node.data?.shape==='freehand')return;
+  checkpoint();
+  const initial=(mode==='mindmap'?(findNode(current.current.mindmap??mindmap,node.id)?.node.text??''):(node.data?.label??''));
+  setEditing({type:'node',id:node.id,initial,current:initial});
+ },[mode,mindmap]);
+ const startEdgeEdit=useCallback(edge=>{
+  checkpoint();
+  const initial=edge.label??edge.data?.label??'';
+  setEditing({type:'edge',id:edge.id,initial,current:initial});
+ },[]);
+ const updateEditing=useCallback(text=>{
+  if(!editing)return;
+  setEditing(prev=>prev?{...prev,current:text}:null);
+  if(editing.type==='node'){
+   if(mode==='mindmap'){
+    const m=current.current.mindmap??mindmap;
+    const next=updateNode(m,editing.id,{text});
+    current.current={...current.current,mindmap:next};
+    setGraph(current.current);
+   }else{
+    const nextNodes=current.current.nodes.map(n=>n.id===editing.id?{...n,data:{...n.data,label:text}}:n);
+    let next={...current.current,nodes:nextNodes};
+    next=layoutGraph(next);
+    current.current=next;
+    setGraph(next);
+   }
+  }else if(editing.type==='edge'){
+   const nextEdges=current.current.edges.map(e=>e.id===editing.id?{...e,label:text}:e);
+   current.current={...current.current,edges:nextEdges};
+   setGraph(current.current);
+  }
+ },[editing,mode,mindmap]);
+ const finishEditing=useCallback(()=>{
+  if(!editing)return;
+  if(editing.current!==editing.initial){
+   mark();
+  }
+  setEditing(null);
+ },[editing]);
+ const cancelEditing=useCallback(()=>{
+  if(!editing)return;
+  if(editing.current!==editing.initial){
+   if(editing.type==='node'){
+    if(mode==='mindmap'){
+     const m=current.current.mindmap??mindmap;
+     const next=updateNode(m,editing.id,{text:editing.initial});
+     current.current={...current.current,mindmap:next};
+     setGraph(current.current);
+    }else{
+     const nextNodes=current.current.nodes.map(n=>n.id===editing.id?{...n,data:{...n.data,label:editing.initial}}:n);
+     let next={...current.current,nodes:nextNodes};
+     next=layoutGraph(next);
+     current.current=next;
+     setGraph(next);
+    }
+   }else if(editing.type==='edge'){
+    const nextEdges=current.current.edges.map(e=>e.id===editing.id?{...e,label:editing.initial}:e);
+    current.current={...current.current,edges:nextEdges};
+    setGraph(current.current);
+   }
+  }
+  setEditing(null);
+ },[editing,mode,mindmap]);
  const handle=useRef(null);
  handle.current=async message=>{
   if(!message||typeof message!=='object')return;
   try{
    switch(message.type){case 'set_mode':{if(message.mode==='diagram'||message.mode==='mindmap'||message.mode==='paint'){switchMode(message.mode);if(nameRef.current==='새 다이어그램'||nameRef.current==='새 마인드맵'||nameRef.current==='새 그림')setName(newName(message.mode));}break;}
-    case 'new':tables.current=newTables();setMmSelected(null);replace({nodes:[],edges:[]},newName(mode),false);send({type:'document_new'});break;
+    case 'new':{
+     tables.current=newTables();
+     setEditing(null);
+     let initialDoc={nodes:[],edges:[]};
+     if(mode==='mindmap'){
+      const mm=emptyMindmap();
+      initialDoc.mindmap=mm;
+      setMmSelected(mm.root.id);
+     }else{
+      setMmSelected(null);
+     }
+     replace(initialDoc,newName(mode),false);
+     send({type:'document_new'});
+     break;
+    }
     case 'set_background':{
      // 앱 창에 끌어 놓은 사진(앱이 받아 알맞은 크기로 바꿔 넘김)을 그림판 배경으로.
      if(mode!=='paint'||!isImageSrc(message.src))break;
@@ -461,7 +621,16 @@ function App(){
     case 'load':{
      const loaded=decode(message.snapshot);
      if(loaded.table)tables.current[loaded.table.kind]=loaded.table;
-     setActiveLayer(null);replace({nodes:loaded.nodes,edges:loaded.edges,...(loaded.table?{table:loaded.table}:{}),...(loaded.mindmap?{mindmap:loaded.mindmap}:{}),...(loaded.layers?{layers:loaded.layers}:{})},message.name,loaded.converted||message.recovered===true);
+     let mm=loaded.mindmap;
+     if(mode==='mindmap'&&!mm){
+      mm=emptyMindmap();
+     }
+     setEditing(null);
+     setActiveLayer(null);
+     replace({nodes:loaded.nodes,edges:loaded.edges,...(loaded.table?{table:loaded.table}:{}),...(mm?{mindmap:mm}:{}),...(loaded.layers?{layers:loaded.layers}:{})},message.name,loaded.converted||message.recovered===true);
+     if(mode==='mindmap'&&mm){
+      setMmSelected(mm.root.id);
+     }
      send({type:'document_loaded',converted:loaded.converted});break;
     }
     case 'apply_template':{
@@ -660,7 +829,7 @@ function App(){
  const canvas=mode==='diagram'||mode==='mindmap'||mode==='paint';
  const hasBackground=graph.nodes.some(n=>n.id===BACKGROUND_ID);
  const scopeLabel=CATALOG_SCOPES.find(([k])=>k===catalogScope)?.[1]??'선택 칸';
- return <HistoryContext.Provider value={checkpoint}><div className="editor-shell">
+ return <HistoryContext.Provider value={checkpoint}><EditingContext.Provider value={{editing,updateEditing,finishEditing,cancelEditing}}><div className="editor-shell">
   <header>
    <nav>
    <button onClick={()=>send({type:'request_new'})}>새 문서</button>
@@ -717,7 +886,7 @@ function App(){
     {layerPanel}
     <p>모든 펜 선·도형·글상자는 따로 옮기고 크기·색을 바꿀 수 있어요.<br/>Delete: 지우기 · Ctrl+C/V 복사 · Ctrl+D 복제</p>
    </aside>}
-   {mode==='mindmap'&&mindmap&&<aside><h2>마인드맵</h2>
+   {mode==='mindmap'&&(mindmap?<aside><h2>마인드맵</h2>
     <Select label="배치" value={mindmap.layout} options={[['both','가운데에서 좌우로'],['right','오른쪽으로'],['down','위에서 아래로(조직도형)']]} onChange={layout=>{changeMindmap(autoLayoutMindmap(mindmap,layout));fit();}}/>
     {(()=>{const th=themeOf(mindmap),setTheme=patch=>{const m=current.current.mindmap??mindmap;changeMindmap({...m,theme:{...themeOf(m),...patch}});};return <fieldset className="text-style mm-theme" aria-label="지도 테마"><legend>지도 테마</legend>
      <small>지도 전체에 한 번에 적용해요(가지마다 따로 고친 서식은 그대로).</small>
@@ -732,6 +901,12 @@ function App(){
      <button onClick={()=>changeMindmap(clearBranchStyles(mindmap))}>가지별 서식 지우기 (테마로 통일)</button>
     </fieldset>;})()}
     <button onClick={()=>{changeMindmap(autoLayoutMindmap(mindmap));fit();}}>자동 정렬 (수동 위치 초기화)</button>
+    <button onClick={()=>{
+     if(!window.confirm('모든 가지를 지우시겠습니까?'))return;
+     const next=clearMindmapBranches(mindmap);
+     changeMindmap(next,next.root.id);
+     fit();
+    }}>전체 지우기</button>
     <p>도형을 끌어 이동 · 연결점을 끌어 부모 변경<br/>하위 가지는 단계 제한 없이 추가 (문서당 300개)</p>
     {mmNode?<><h2>선택 가지</h2>
      <label>내용<textarea aria-label="가지 내용" maxLength={200} value={mmNode.text} onChange={e=>changeMindmap(updateNode(mindmap,mmSelected,{text:e.target.value}))}/></label>
@@ -756,7 +931,7 @@ function App(){
       <TextStyleControls label="가지 글자" value={{font:shown.font,size:shown.size,bold:shown.bold,textColor:shown.textColor}} onChange={patch=>restyle(patch)}/></>;})()}
     </>:<p>가지를 눌러 고르세요.</p>}
     <button onClick={()=>undo()}>실행 취소 (Ctrl+Z)</button>
-   </aside>}
+   </aside>:<aside><h2>마인드맵</h2><p>마인드맵 데이터가 없습니다.</p><button onClick={()=>{const mm=emptyMindmap();changeMindmap(mm,mm.root.id);fit();}}>새 마인드맵 시작</button></aside>)}
    {mode==='catalog'&&<aside>
     <div className="catalog-menu">
      <h2>서식 이름</h2>
@@ -806,10 +981,10 @@ function App(){
     <button onClick={()=>undo()}>실행 취소 (Ctrl+Z)</button>
    </aside>}
    <main><div className="flow-layer" style={{display:canvas?'block':'none'}}>{mode==='paint'&&!hasBackground&&<div className="paint-empty" aria-hidden="true"><b>📷 배경 사진을 여기에 끌어 놓으세요</b><span>탐색기에서 사진을 끌어 오면 바로 배경이 돼요(Ctrl+V도 돼요)</span></div>}<ReactFlow style={mmGraph?.background?{background:mmGraph.background}:undefined} nodes={shownNodes} edges={shownEdges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} connectionMode={ConnectionMode.Loose} snapToGrid snapGrid={[10,10]}
-    nodesDraggable={canvas} nodesConnectable={canvas} elementsSelectable
+    nodesDraggable={canvas&&!editing} nodesConnectable={canvas&&!editing} elementsSelectable={!editing} zoomOnDoubleClick={false} panOnDrag={!editing}
     onInit={instance=>{flow.current=instance;send({type:'ready',protocol_version:1,editor:FORMAT});}}
     onNodeClick={(_,n)=>{if(mode==='mindmap')setMmSelected(n.id);}}
-    onPaneClick={()=>{if(mode==='mindmap')setMmSelected(null);}}
+    onPaneClick={()=>{if(editing)finishEditing();if(mode==='mindmap')setMmSelected(null);}}
     onNodesChange={changes=>{
      if(mode==='mindmap'){
       const positions=Object.fromEntries(changes.filter(c=>c.type==='position'&&c.position).map(c=>[c.id,c.position]));
@@ -871,8 +1046,8 @@ function App(){
      commit({...current.current,edges:current.current.edges.map(e=>e.id===old.id?{...e,source:a.id,target:b.id,sourceHandle:s,targetHandle:t,data:{...(e.data??EDGE_DEFAULT),autoSide:true}}:e)});
     }}
     onNodeDragStop={()=>setGuides([])}
-    onSelectionDragStart={()=>checkpoint()} onNodeDoubleClick={()=>{setStatus('왼쪽 내용 입력에서 수정하세요.');}}
-    fitView deleteKeyCode={drawable?['Backspace','Delete']:null}><Background gap={20}/><Controls/><MiniMap/>
+    onSelectionDragStart={()=>checkpoint()} onNodeDoubleClick={(_,n)=>startNodeEdit(n)} onEdgeDoubleClick={(_,e)=>startEdgeEdit(e)}
+    fitView deleteKeyCode={drawable&&!editing?['Backspace','Delete']:null}><Background gap={20}/><Controls/><MiniMap/>
     {guides.length>0&&<ViewportPortal><svg className="smart-guides" style={{position:'absolute',left:0,top:0,overflow:'visible',pointerEvents:'none'}}>
      {guides.map((l,i)=><line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="#EF4444" strokeWidth="1" strokeDasharray="4 3"/>)}</svg></ViewportPortal>}</ReactFlow>
     {mode==='paint'&&paintTool==='pen'&&<div className="pen-layer" aria-label="펜으로 그리기" onPointerDown={penDown} onPointerMove={penMove} onPointerUp={penUp} onPointerCancel={penUp}>
@@ -918,7 +1093,7 @@ function App(){
     {mode==='org'&&table&&<OrgTableView table={table} onChange={changeTable}/>}
     {mode==='bar'&&table&&<BarTableView table={table} onChange={changeTable}/>}</main>
   </div><footer role="status">{status} · 로컬 저장</footer>
- </div></HistoryContext.Provider>;
+ </div></EditingContext.Provider></HistoryContext.Provider>;
 }
 function mmGraphCount(map){let count=0,stack=[map.root];while(stack.length){const node=stack.pop();count++;stack.push(...node.children);}return count;}
 createRoot(document.getElementById('root')).render(<ReactFlowProvider><App/></ReactFlowProvider>);
