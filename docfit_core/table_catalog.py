@@ -12,6 +12,7 @@ from defusedxml import ElementTree as ET
 
 from .batch_format import _serialize
 from .hwpx import open_hwpx_safely
+from .hwp_pua import replace_pua_chars
 from .table_builder import BORDER_TYPES, BORDER_WIDTHS, FONTS, _Header, _installed_fonts
 
 _HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
@@ -342,7 +343,7 @@ def _cell_shapes(cell, width, height, header_info, align):
         item = {"kind": kind, "x": x / width, "y": y / height, "w": w / width, "h": h / height,
                 "direction": direction, "fill": color(brush.get("faceColor")) if brush is not None else None,
                 "line": color(line.get("color")) if line is not None and line.get("style") != "NONE" and float(line.get("width", 1)) > 0 else None,
-                "text": " ".join(n.text or "" for n in drawing.iter(_HP + "t"))}
+                "text": replace_pua_chars(" ".join(n.text or "" for n in drawing.iter(_HP + "t")))}
         img = next((n for n in drawing.iter() if _tag(n) == "img"), None)
         if img is not None and img.get("binaryItemIDRef") in images:
             item["src"] = _oriented_picture(images[img.get("binaryItemIDRef")], drawing)
@@ -421,7 +422,7 @@ def _table_preview(table, header_info: dict | None = None) -> dict:
         for c_idx, cell in enumerate(row.findall(_HP + "tc")[:30]):
             # Avoid text from a nested table leaking into the containing cell's label.
             parts = [node.text or "" for node in _cell_text_nodes(cell)]
-            text = " ".join("".join(parts).split())[:80]
+            text = replace_pua_chars(" ".join("".join(parts).split())[:80])
             cells.append(text)
             c_meta = _cell_meta(cell, r_idx, c_idx, text, header_info)
             nested_tables = []

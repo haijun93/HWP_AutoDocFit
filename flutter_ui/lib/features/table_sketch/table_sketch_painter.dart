@@ -603,6 +603,7 @@ class TableSketchPainter extends CustomPainter {
     // 모든 한글·○ 같은 기호가 보인다(지정하지 않으면 일부 글자가 □로 보였음, 2.0.5).
     final textStyle = TextStyle(
       fontFamily: 'NotoSansKR',
+      fontFamilyFallback: const ['NotoSansSymbols2', 'STIXTwoMath'],
       color: const Color(0xFF0F172A), // 문서 색(테마 무관)
       fontSize: math.max(10.0, cellSize * 0.7),
       fontWeight: textItem.bold ? FontWeight.bold : FontWeight.normal,

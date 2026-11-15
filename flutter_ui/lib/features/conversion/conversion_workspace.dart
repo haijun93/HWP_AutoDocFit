@@ -208,11 +208,6 @@ class ConversionWorkspace extends StatelessWidget {
       Icons.create_new_folder_outlined,
       () => host.command('add_folder'),
     ),
-    (
-      '표 칸 그림을 배경으로',
-      Icons.table_chart_outlined,
-      () => _convertCellBg(context),
-    ),
     if (host.files.isNotEmpty)
       ('목록 비우기', Icons.clear_all_rounded, () => host.command('clear_files')),
   ]);
@@ -275,12 +270,6 @@ class ConversionWorkspace extends StatelessWidget {
                                   Icons.swap_horiz,
                                   () => _singleFileMenu(context, d.globalPosition, i),
                                 ),
-                                if ('${file['path'] ?? ''}'.toLowerCase().endsWith('.hwpx'))
-                                  (
-                                    '표 칸 그림을 배경으로',
-                                    Icons.table_chart_outlined,
-                                    () => _executeConvertCellBg(context, '${file['path']}'),
-                                  ),
                                 (
                                   '목록에서 빼기',
                                   Icons.close_rounded,
@@ -386,17 +375,6 @@ class ConversionWorkspace extends StatelessWidget {
                       : () => showHwpBulkDialog(context, host.apiCall),
                   icon: const Icon(Icons.manage_search_rounded),
                   label: const Text('HWP 찾아 HWPX로 바꾸기'),
-                ),
-              ),
-              Tooltip(
-                message: '표 셀 안 그림을 셀 배경 이미지로 변환하여 원본 옆에 사본으로 저장',
-                child: TextButton.icon(
-                  key: const Key('conversionCellBg'),
-                  onPressed: host.locked
-                      ? null
-                      : () => _convertCellBg(context),
-                  icon: const Icon(Icons.table_chart_outlined),
-                  label: const Text('표 칸 그림을 배경으로'),
                 ),
               ),
             ],
@@ -705,151 +683,6 @@ class ConversionWorkspace extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  Future<void> _executeConvertCellBg(BuildContext context, String filePath) async {
-    try {
-      final res = await host.apiCall('convert_cell_bg', [
-        {'path': filePath}
-      ]);
-      if (!context.mounted) return;
-      if (res is Map && res['ok'] == true) {
-        final count = res['converted_count'] ?? 0;
-        final output = res['output'] ?? '';
-        final message = res['message'] ?? '$count개 칸의 그림을 배경으로 변환했습니다.';
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            key: const Key('cellBgResultDialog'),
-            title: Row(
-              children: [
-                Icon(
-                  Icons.check_circle_outline,
-                  color: ConversionColors.of(context).done,
-                ),
-                SizedBox(width: 8),
-                Text('표 칸 그림 → 배경 변환 완료'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '바뀐 칸 수: $count개',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Text('결과 사본 저장 위치:\n$output'),
-                const SizedBox(height: 8),
-                Text(
-                  '$message',
-                  style: TextStyle(color: context.colors.muted, fontSize: 13),
-                ),
-              ],
-            ),
-            actions: [
-              FilledButton(
-                key: const Key('cellBgResultCloseButton'),
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('확인'),
-              ),
-            ],
-          ),
-        );
-      } else {
-        final err = (res is Map && res['error'] is Map)
-            ? res['error']['message'] ?? '변환에 실패했습니다.'
-            : (res is Map && res['message'] != null)
-                ? res['message']
-                : '변환에 실패했습니다.';
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            key: const Key('cellBgErrorDialog'),
-            title: const Text('표 칸 그림 변환 안내'),
-            content: Text('$err'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('확인'),
-              ),
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      if (!context.mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Text('오류'),
-          content: Text('$e'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('확인'),
-            ),
-          ],
-        ),
-      );
-    }
-  }
-
-  Future<void> _convertCellBg(BuildContext context) async {
-    final hwpxFiles = host.files
-        .whereType<Map>()
-        .where((f) => '${f['path'] ?? f['name'] ?? ''}'.toLowerCase().endsWith('.hwpx'))
-        .toList();
-
-    if (hwpxFiles.isEmpty) {
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          key: const Key('cellBgNoFileDialog'),
-          title: const Text('표 칸 그림 변환 안내'),
-          content: const Text(
-            '변환할 HWPX 문서를 먼저 목록에 추가해 주세요.\n'
-            '표 셀 안의 그림을 셀 배경 이미지로 변환하여 원본 옆에 사본으로 저장합니다.',
-          ),
-          actions: [
-            TextButton(
-              key: const Key('cellBgNoFileConfirm'),
-              onPressed: () => Navigator.of(ctx).pop(),
-              child: const Text('확인'),
-            ),
-          ],
-        ),
-      );
-      return;
-    }
-
-    if (hwpxFiles.length == 1) {
-      final path = '${hwpxFiles.first['path'] ?? ''}';
-      await _executeConvertCellBg(context, path);
-      return;
-    }
-
-    final picked = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: const Text('변환할 HWPX 문서 선택'),
-        children: [
-          for (final f in hwpxFiles)
-            SimpleDialogOption(
-              onPressed: () => Navigator.of(ctx).pop('${f['path'] ?? ''}'),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text('${f['name'] ?? f['path'] ?? ''}'),
-              ),
-            ),
-        ],
-      ),
-    );
-
-    if (picked != null && picked.isNotEmpty && context.mounted) {
-      await _executeConvertCellBg(context, picked);
-    }
   }
 }
 
