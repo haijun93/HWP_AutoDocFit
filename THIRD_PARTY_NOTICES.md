@@ -67,7 +67,14 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | pypdfium2 | PDF 렌더링 | Apache-2.0 OR BSD-3-Clause (동봉 PDFium은 BSD-3-Clause) | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
 | xlrd 2.0.1 | 엑셀(.xls) 읽기 | BSD-3-Clause | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
 | windows-sys 0.59, png 0.17, qoi 0.4(썸네일 디스크 캐시, KCAP3) | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml`, 라이선스는 일반 지식 |
-| rusqlite 0.33(SQLite 포함), tantivy 0.27 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
+| rusqlite 0.41.1(SQLite 포함), tantivy 0.27.0 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
+| quick-xml 0.41.0, zip 9.4.0(deflate), cfb 0.7.3, flate2 1.1.10, encoding_rs 0.8.44, regex 1.13.1, time 0.3.55, md5 0.7.0, sha2 0.10.9, unicode-normalization 0.1.26, rayon 1.12.0 | 자료함·문서 추출·HWP5 직접 읽기(`klib`, Rust) | quick-xml·zip·cfb: MIT, md5: Apache-2.0/MIT, encoding_rs: (Apache-2.0 OR MIT) AND BSD-3-Clause, unicode-normalization: (MIT OR Apache-2.0) AND Unicode-3.0, 나머지: MIT OR Apache-2.0 | 의존성: `klib/Cargo.toml`, 라이선스: `scripts/third_party_inventory.py`(cargo metadata) |
+| fancy-regex 0.14.0, regex 1.13.1, serde_json 1.0 | 위계 엔진(`hierarchy`, `hierarchy.exe`·`hierarchy.dll`, Rust) | fancy-regex: MIT, regex·serde_json: MIT OR Apache-2.0 | 의존성: `hierarchy/Cargo.toml` |
+| regex 1.13.1 | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml` |
+| fst 0.4.7, roaring 0.12.0, memmap2 0.9.12, serde 1.0, serde_json 1.0, windows-sys 0.59 | 몽땅검색 단축키 앱(`ktm`, `ktm.exe`, Rust, kfind-core 사용) | fst·memchr: Unlicense OR MIT, 나머지: MIT OR Apache-2.0 | 의존성: `ktm/Cargo.toml` |
+| windows-sys 0.59 | 가상 폴더 창(`kvf`, `kvf.exe`, Rust) | MIT OR Apache-2.0 | 의존성: `kvf/Cargo.toml` |
+| ffi 2.2.0 | Flutter 화면(위계 엔진 DLL 연결) | BSD-3-Clause | 의존성: `flutter_ui/pubspec.yaml`, 라이선스는 일반 지식 |
+| pythonnet 3.2.1, clr_loader 0.3.1, proxy_tools 0.1.0, bottle 0.13.4, cffi 2.1.1, pycparser 3.12, typing_extensions 4.16.0, pywin32-ctypes 0.2.3 | pywebview·cryptography가 함께 쓰는 하위 의존성(실행 파일에 포함) | pythonnet·proxy_tools·bottle: MIT, cffi: MIT-0, pycparser·pywin32-ctypes: BSD-3-Clause, typing_extensions: PSF-2.0, clr_loader: MIT(PyPI에 표기 없음 — 원본 저장소 기준, 확인 필요) | 버전: `requirements-lock.txt` |
 | fst 0.4.7, roaring 0.12.0, memmap2 0.9.12, memchr 2.8, unicode-normalization 0.1.26 | 독자 검색 엔진 문장 색인(`kfind/core`, Rust) | fst·memchr: Unlicense OR MIT, roaring·memmap2·unicode-normalization: MIT OR Apache-2.0 | 의존성: `kfind/core/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
 | rayon 1.12, memchr 2.8, memmap2 0.9.12, windows-sys 0.59 | 독자 검색 엔진 파일명 색인(`kfind/names`, Rust) | MIT OR Apache-2.0 (memchr: Unlicense OR MIT) | 의존성: `kfind/names/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
 | tokio 1.54, windows-service 0.8.1, serde 1.0, serde_json 1.0, windows-sys 0.59 | 색인 서비스 실행 파일(`crates/kfind`, `kfind.exe`, Rust) | tokio: MIT, 나머지: MIT OR Apache-2.0 | 의존성: `crates/kfind/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
@@ -83,7 +90,8 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 #### 아직 확인하지 못한 항목 (배포 전 점검 필요)
 
 - `kordoc_pack/package-lock.json`의 전이 의존성 180개는 잠금 파일에 라이선스 표기가 없어 이번에 판단하지 못했다. 설치 후 `npm ls`나 라이선스 점검 도구로 확인해야 한다.
-- Rust 전이 크레이트(`Cargo.lock`)와 Flutter 전이 패키지의 라이선스, Flutter 엔진·Skia 등 동봉 구성요소의 고지.
+- Rust 전이 크레이트·npm·Python 패키지의 라이선스는 이제 `scripts/third_party_inventory.py`가 잠금 파일에서 자동으로 목록을 만든다(GitHub CI `dependency-audit.yml`의 `third-party-inventory` 결과물, 2026-11-15). 2026-11-15 실행 결과 사람이 볼 항목 5개: sharp Windows 바이너리(LGPL-3.0, 위에 기재), jszip(MIT OR GPL-3.0 중 MIT 선택), clr_loader(PyPI 라이선스 표기 없음), htmlescape(Apache-2.0/MIT/MPL-2.0 중 선택), 그 밖은 카피레프트 없음.
+- Flutter 전이 패키지의 라이선스와 Flutter 엔진·Skia 등 동봉 구성요소의 고지(잠금 파일에 라이선스가 없어 자동 목록에서 판정하지 않음).
 - `tkinterdnd2`가 동봉하는 tkdnd 확장과 `webview_flutter_windows`가 쓰는 WebView2 로더의 라이선스 표기.
 - 위 "일반 지식" 근거 항목 전체의 라이선스 문구.
 - 한컴 보안 모듈 DLL의 재배포 조건(위 표 참고).

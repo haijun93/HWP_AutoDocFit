@@ -4,6 +4,7 @@ from __future__ import annotations
 import codecs
 import io
 import sys
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -417,6 +418,70 @@ class TimeMachineExtractorsTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0].location_label, "절대경로시트 1행")
         self.assertEqual(records[0].text, "절대경로 데이터")
+
+
+class HwpRustExtractorTests(unittest.TestCase):
+    """kordoc 의존 줄이기 1단계(2026-11-15): HWP 본문은 Rust(klib extract) 우선, 실패하면 kordoc."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.hwp = Path(self.tmp.name) / "sample.hwp"
+        self.hwp.write_bytes(b"fake")
+        self.exe = Path(self.tmp.name) / "klib.exe"
+        self.exe.write_bytes(b"")
+
+    def _run(self, stdout, returncode=0):
+        import subprocess as sp
+        return sp.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=b"")
+
+    def test_rust_records_map_to_extraction_records_without_kordoc(self):
+        import json as js
+        from docfit_core.timemachine import extractors_hwp as mod
+        payload = js.dumps({"paragraphs": [
+            {"text": "Ⅰ. 추진 배경", "location_kind": "paragraph", "location_label": "문단 1", "sequence": 1,
+             "section": None, "hierarchy_level": None, "is_table_cell": False, "style_name": "개요 1", "outline_level": 1},
+            {"text": "  ", "location_kind": "paragraph", "location_label": "문단 2", "sequence": 2},
+            {"text": "예산 1,200", "location_kind": "table_cell", "location_label": "표 1", "sequence": 3},
+            {"text": "쪽 머리", "location_kind": "header", "location_label": "머리말", "sequence": 4},
+        ]}, ensure_ascii=False).encode("utf-8")
+        with patch.object(mod, "_klib_executable", return_value=self.exe), \
+                patch.object(mod.subprocess, "run", return_value=self._run(payload)) as run, \
+                patch("docfit_core.kordoc_bridge.parse_document") as kordoc:
+            records = mod.extract_hwp(self.hwp)
+        kordoc.assert_not_called()
+        self.assertEqual(run.call_args.args[0][1:], ["extract", str(self.hwp)])
+        self.assertEqual([r.text for r in records], ["Ⅰ. 추진 배경", "예산 1,200", "쪽 머리"])
+        self.assertEqual([r.sequence for r in records], [1, 2, 3])
+        self.assertTrue(all(r.location_kind == "paragraph" for r in records))
+        self.assertEqual((records[0].style_name, records[0].outline_level), ("개요 1", 1))
+        self.assertTrue(records[1].is_table_cell)
+        self.assertEqual(records[2].section, "머리말")
+
+    def test_falls_back_to_kordoc_when_rust_fails_or_is_missing(self):
+        from docfit_core.timemachine import extractors_hwp as mod
+
+        def fake_parse(src, target, output_format="markdown"):
+            Path(target).write_text("kordoc 본문", encoding="utf-8")
+        for exe, result in ((self.exe, self._run(b"", returncode=1)), (None, None)):
+            with self.subTest(exe=exe), patch.object(mod, "_klib_executable", return_value=exe), \
+                    patch.object(mod.subprocess, "run", return_value=result), \
+                    patch("docfit_core.kordoc_bridge.parse_document", side_effect=fake_parse) as kordoc:
+                records = mod.extract_hwp(self.hwp)
+                kordoc.assert_called_once()
+                self.assertEqual(records[0].text, "kordoc 본문")
+
+    def test_environment_can_force_kordoc(self):
+        from docfit_core.timemachine import extractors_hwp as mod
+
+        def fake_parse(src, target, output_format="markdown"):
+            Path(target).write_text("kordoc 강제", encoding="utf-8")
+        with patch.dict(os.environ, {"DOCFIT_HWP_ENGINE": "kordoc"}), \
+                patch.object(mod, "_klib_executable") as find, \
+                patch("docfit_core.kordoc_bridge.parse_document", side_effect=fake_parse):
+            records = mod.extract_hwp(self.hwp)
+        find.assert_not_called()
+        self.assertEqual(records[0].text, "kordoc 강제")
 
 
 if __name__ == "__main__":

@@ -354,23 +354,12 @@ from docfit_core import format_elements as 서식요소
 from docfit_core.table_width import fit_table as 표너비_맞춤, host_reserve as 표너비_앞자리, is_target as 표너비_대상인가
 from docfit_core import (
     KordocUnavailableError,
-    analyze_form,
-    analyze_tables,
     compare_documents,
-    compare_documents_advanced,
-    export_advanced_markdown,
-    export_common_ir,
     export_markdown,
-    export_rag_chunks,
-    fill_form,
     generate_hwpx,
     inspect_hwpx,
     validate_and_inspect_hwpx,
-    kordoc_engine_version,
-    lint_document,
     parse_document,
-    patch_document,
-    render_preview,
     validate_hwpx,
     open_hwpx_safely,
 )

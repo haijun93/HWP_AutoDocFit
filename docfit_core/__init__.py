@@ -10,21 +10,12 @@ from .hwpx import (
     validate_hwpx,
     open_hwpx_safely,
 )
+# kordoc 의존 줄이기 1단계(2026-11-15): 앱이 쓰지 않던 고급 기능 9개(양식 분석·채우기, 패치, 검사, 미리보기,
+# 고급 비교·마크다운·IR·RAG 내보내기, 표 분석)는 패키지 공개 목록에서 뺐다. 필요하면 kordoc_bridge에서 직접 불러온다.
 from .kordoc_bridge import (
     KordocUnavailableError,
-    analyze_form,
-    analyze_tables,
-    compare_documents as compare_documents_advanced,
-    engine_version as kordoc_engine_version,
-    export_advanced_markdown,
-    export_common_ir,
-    export_rag_chunks,
-    fill_form,
     generate_hwpx,
-    lint_document,
     parse_document,
-    patch_document,
-    render_preview,
 )
 
 __all__ = [
@@ -37,17 +28,6 @@ __all__ = [
     "validate_hwpx",
     "open_hwpx_safely",
     "KordocUnavailableError",
-    "analyze_form",
-    "analyze_tables",
-    "compare_documents_advanced",
-    "kordoc_engine_version",
-    "export_advanced_markdown",
-    "export_common_ir",
-    "export_rag_chunks",
-    "fill_form",
     "generate_hwpx",
-    "lint_document",
     "parse_document",
-    "patch_document",
-    "render_preview",
 ]

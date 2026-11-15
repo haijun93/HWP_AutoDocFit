@@ -268,7 +268,7 @@ class ApplicationService:
                 self._kclip_service = KClipService()
             return self._kclip_service.command(*args)
         if method=='external_app':
-            # 사진첩·아웃라이너·사진관리(포크 별도 프로그램): 개발자 모드 전용 공용 실행기.
+            # 사진첩2·아웃라이너·사진관리(포크 별도 프로그램): 개발자 모드 전용 공용 실행기.
             if not bool(self.store.read().get('developer_mode', False)):
                 return {'ok':False,'code':'DEVELOPER_MODE_REQUIRED','message':'개발자 모드에서만 사용할 수 있습니다.'}
             if getattr(self, '_external_apps_service', None) is None:
