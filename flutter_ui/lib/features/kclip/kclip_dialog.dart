@@ -756,7 +756,7 @@ class _KClipPanelState extends State<KClipPanel> {
         const SizedBox(height: 12),
         const Text(
           '켜면 작은 상주 프로그램이 따로 실행됩니다(약 0.6MB, 메모리 2MB 안팎, 쉴 때 CPU 0%). '
-          '아무 창에서나 Ctrl+Shift+V를 누르면 최근 항목이 바로 뜨고, 숫자나 Enter로 고르면 그 자리에 붙여넣습니다.',
+          '아무 창에서나 Ctrl+Shift+V를 누르면 퀵몽땅클립보드가 바로 뜨고, 숫자나 Enter로 고르면 그 자리에 붙여넣습니다.',
           style: TextStyle(fontSize: 12),
         ),
         CheckboxListTile(
@@ -991,7 +991,7 @@ class _KClipPanelState extends State<KClipPanel> {
             ),
             Tooltip(
               message: hotkeyOk
-                  ? '아무 창에서나 누르면 최근 항목이 뜹니다'
+                  ? '아무 창에서나 누르면 퀵몽땅클립보드가 뜹니다'
                   : '다른 프로그램이 이 단축키를 쓰고 있습니다',
               child: Chip(
                 label: Text(

@@ -511,7 +511,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         let p = scale(h, 14);
         let line = scale(h, 24);
         text(
-            "몽땅검색",
+            "퀵몽땅검색",
             RECT {
                 left: p,
                 top: 0,
@@ -1243,7 +1243,7 @@ pub fn run() -> Result<(), String> {
         let h = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             class.as_ptr(),
-            wide("몽땅검색").as_ptr(),
+            wide("퀵몽땅검색").as_ptr(),
             WS_POPUP | WS_THICKFRAME | WS_CLIPCHILDREN,
             0,
             0,

@@ -43,7 +43,8 @@ def _catalog_paths(path: str | Path | None = None) -> list[Path]:
     if path is not None:
         return [Path(path)]
     primary = default_catalog_path()
-    return [primary]
+    additions = primary.parent / "표 서식모음 추진절차.hwpx"
+    return [primary, additions] if additions.is_file() else [primary]
 
 
 def _safe_archive(path: Path) -> zipfile.ZipFile:
@@ -466,10 +467,11 @@ def _scan(path: str | Path) -> list[dict]:
             root = ET.fromstring(archive.read(section_name))
             for paragraph_index, paragraph in enumerate(root.findall(_HP + "p")):
                 label = _text(paragraph)
-                if label.startswith("#"):
-                    current_category = label[1:].strip()
+                is_bracket_heading = label.startswith("[") and label.endswith("]") and "추진절차(가로)" in label
+                if label.startswith("#") or is_bracket_heading:
+                    current_category = label[1:].strip() if label.startswith("#") else label[1:-1].strip()
                     if not current_category:
-                        current_category = "이름 없는 서식"
+                        current_category = "이름 없는 그룹"
                     category_index += 1
                 if current_category is None:
                     continue
@@ -494,20 +496,26 @@ def _scan(path: str | Path) -> list[dict]:
 
 
 def _scan_catalogs(paths: list[Path]) -> list[dict]:
-    """여러 내장 카탈로그를 합치되 첫 파일의 기존 ID를 보존한다."""
+    """Merge catalogs while retaining existing IDs in the first catalog."""
     result = []
+    category_offset = 0
     for source in paths:
         records = _scan(source)
+        local_categories = sorted({item["category_index"] for item in records})
+        remap = {old: category_offset + i for i, old in enumerate(local_categories)}
         for item in records:
             item["source_path"] = source
+            item["category_index"] = remap[item["category_index"]]
+            item["id"] = f"{item['category_index']}:{item['number']}"
             result.append(item)
+        category_offset += len(local_categories)
     return result
 
 
 def list_catalog(path: str | Path | None = None) -> dict:
     """이름 구획과 각 표 모양의 구조·텍스트·서식 미리보기를 반환한다."""
     paths = _catalog_paths(path)
-    records = _scan(paths[0])
+    records = _scan_catalogs(paths)
     categories = []
     for record in records:
         if not categories or categories[-1]["id"] != str(record["category_index"]):
@@ -1087,7 +1095,7 @@ def export_template(template_id: str, output_path: str | Path,
         raise ValueError("표 서식 수정 정보가 올바르지 않습니다.")
     paths = _catalog_paths(catalog_path)
     requested_id = str(template_id)
-    records = _scan(paths[0])
+    records = _scan_catalogs(paths)
     record = _find_template(records, requested_id)
     source = Path(record.get("source_path", paths[0]))
     target = Path(output_path)

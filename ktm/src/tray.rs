@@ -21,7 +21,7 @@ pub const AUTOSTART: u32 = 3;
 /// 트레이 메뉴 첫 줄(누를 수 없는 상태 표시): 단축키가 살아 있으면 단축키, 아니면 오류.
 pub fn status_line(hotkey: &str, hotkey_error: &str) -> String {
     if hotkey_error.is_empty() {
-        format!("몽땅검색 켜짐 · {hotkey}")
+        format!("퀵몽땅검색 켜짐 · {hotkey}")
     } else {
         format!("단축키 없음 · {hotkey_error}")
     }
@@ -58,7 +58,7 @@ impl Tray {
                     registered = RegisterHotKey(hwnd, HOTKEY_ID, modifiers, key) != 0;
                     if !registered {
                         error = Some(
-                            "몽땅검색 단축키를 등록하지 못했습니다 (다른 앱과 중복 확인)".into(),
+                            "퀵몽땅검색 단축키를 등록하지 못했습니다 (다른 앱과 중복 확인)".into(),
                         );
                     }
                 }
@@ -71,13 +71,13 @@ impl Tray {
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             data.uCallbackMessage = MESSAGE;
             data.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
-            let tip = wide("몽땅검색");
+            let tip = wide("퀵몽땅검색");
             data.szTip[..tip.len()].copy_from_slice(&tip);
             if Shell_NotifyIconW(NIM_ADD, &data) == 0 {
                 if registered {
                     UnregisterHotKey(hwnd, HOTKEY_ID);
                 }
-                return Err("몽땅검색 트레이를 만들지 못했습니다".into());
+                return Err("퀵몽땅검색 트레이를 만들지 못했습니다".into());
             }
         }
         Ok(Self {
@@ -116,7 +116,7 @@ pub fn menu(hwnd: HWND, status: &str, autostart: bool) -> u32 {
             popup,
             MF_STRING,
             SHOW as usize,
-            wide("몽땅검색 열기").as_ptr(),
+            wide("퀵몽땅검색 열기").as_ptr(),
         );
         AppendMenuW(
             popup,
@@ -155,7 +155,7 @@ mod tests {
     }
     #[test]
     fn status_line_shows_hotkey_or_error() {
-        assert_eq!(status_line("Ctrl+Alt+Space", ""), "몽땅검색 켜짐 · Ctrl+Alt+Space");
+        assert_eq!(status_line("Ctrl+Alt+Space", ""), "퀵몽땅검색 켜짐 · Ctrl+Alt+Space");
         assert!(status_line("Ctrl+Alt+Space", "중복").starts_with("단축키 없음"));
     }
     #[test]

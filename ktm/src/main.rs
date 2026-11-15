@@ -11,7 +11,7 @@ fn main() {
             windows_sys::Win32::UI::WindowsAndMessaging::MessageBoxW(
                 std::ptr::null_mut(),
                 window::wide(&error).as_ptr(),
-                window::wide("몽땅검색").as_ptr(),
+                window::wide("퀵몽땅검색").as_ptr(),
                 0x10,
             );
         }
