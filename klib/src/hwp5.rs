@@ -34,6 +34,84 @@ pub const FILE_HEADER_SIZE: usize = 256;
 pub const MAX_SECTION_DECOMPRESSED_SIZE: u64 = 128 * 1024 * 1024;
 pub const MAX_TOTAL_DECOMPRESSED_SIZE: u64 = 512 * 1024 * 1024;
 
+/// HWP 5.0 미리보기 스트림 크기 상한 (4MB)
+pub const MAX_PREVIEW_STREAM_SIZE: u64 = 4 * 1024 * 1024;
+
+/// HWP 5.0 미리보기 텍스트 최대 글자 수 (최대 1,024자)
+pub const MAX_PREVIEW_TEXT_CHARS: usize = 1024;
+
+/// HWP 5.0 미리보기 이미지 형식
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Gif,
+    Bmp,
+}
+
+impl ImageFormat {
+    /// 바이너리 시그니처로부터 이미지 형식(PNG, GIF, BMP)을 판별한다.
+    pub fn detect(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() >= 8 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some(ImageFormat::Png)
+        } else if bytes.len() >= 6 && (bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+            Some(ImageFormat::Gif)
+        } else if bytes.len() >= 2 && bytes.starts_with(b"BM") {
+            Some(ImageFormat::Bmp)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Png => "png",
+            Self::Gif => "gif",
+            Self::Bmp => "bmp",
+        }
+    }
+
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::Png => ".png",
+            Self::Gif => ".gif",
+            Self::Bmp => ".bmp",
+        }
+    }
+}
+
+/// HWP 5.0 미리보기 정보
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Preview {
+    /// PrvImage 스트림 바이너리 (PNG, GIF, BMP 형식 시그니처 일치 시 원본 바이트 그대로)
+    pub image: Option<Vec<u8>>,
+    /// 이미지 형식 (PNG, GIF, BMP)
+    pub image_format: Option<ImageFormat>,
+    /// PrvText 스트림 텍스트 (UTF-16LE 디코딩, 최대 1,024자)
+    pub text: String,
+}
+
+impl Preview {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn format(&self) -> Option<ImageFormat> {
+        self.image_format
+    }
+
+    pub fn has_image(&self) -> bool {
+        self.image.as_ref().map_or(false, |img| !img.is_empty())
+    }
+
+    pub fn has_text(&self) -> bool {
+        !self.text.is_empty()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.has_image() && !self.has_text()
+    }
+}
+
 /// HWP 5.0 주요 레코드 태그 ID
 pub const HWPTAG_BEGIN: u32 = 0x010;
 pub const HWPTAG_DOCUMENT_PROPERTIES: u32 = HWPTAG_BEGIN; // 16
@@ -226,6 +304,326 @@ pub fn extract_hwp5(path: &Path) -> Result<Vec<Paragraph>, String> {
     }
 
     Ok(records)
+}
+
+/// HWP 5.0 파일에서 미리보기 정보(PrvImage, PrvText)를 안전하게 추출한다.
+///
+/// 1. `PrvImage` 스트림을 읽어 형식(PNG·GIF·BMP)을 시그니처로 판별해 바이트 그대로 반환.
+///    `PrvText` 스트림(UTF-16LE)을 글로 반환(최대 1,024자). 둘 다 없으면 빈 값(`Preview::default()`).
+/// 2. 암호·배포용 문서는 내용 스트림(BodyText)을 열지 않고 PrvImage/PrvText만 시도(실패해도 오류 대신 빈 값).
+/// 3. 손상 파일 방어: 스트림 크기 상한 4MB, 섹터 순환 감지.
+pub fn extract_hwp5_preview(path: &Path) -> Result<Preview, String> {
+    let mut file = File::open(path).map_err(|e| format!("corrupt: HWP 파일 열기 실패: {e}"))?;
+    let mut data = Vec::new();
+    file.read_to_end(&mut data).map_err(|e| format!("corrupt: HWP 파일 읽기 실패: {e}"))?;
+    extract_hwp5_preview_from_bytes(&data)
+}
+
+const CFB_SIGNATURE: &[u8] = &[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+const MAX_REG_SECTOR: u32 = 0xFFFFFFFA;
+
+/// CFB 파일의 손상 방어 검사: 섹터 순환(FAT/MiniFAT/DIFAT/디렉토리) 감지 및 미리보기 스트림 4MB 상한 사전 점검.
+pub fn check_cfb_safety(data: &[u8]) -> Result<(), String> {
+    if data.len() < 512 {
+        return Err("corrupt: CFB 헤더 크기(512바이트)보다 작습니다".into());
+    }
+    if &data[..8] != CFB_SIGNATURE {
+        return Err("corrupt: CFB 복합 파일 시그니처가 일치하지 않습니다".into());
+    }
+
+    let sector_shift = u16::from_le_bytes([data[30], data[31]]) as usize;
+    if sector_shift < 9 || sector_shift > 12 {
+        return Err(format!("corrupt: 유효하지 않은 섹터 시프트: {sector_shift}"));
+    }
+    let sector_size = 1usize << sector_shift;
+
+    let _num_fat_sectors = u32::from_le_bytes([data[44], data[45], data[46], data[47]]) as usize;
+    let first_dir_sector = u32::from_le_bytes([data[48], data[49], data[50], data[51]]);
+    let first_minifat_sector = u32::from_le_bytes([data[60], data[61], data[62], data[63]]);
+    let num_minifat_sectors = u32::from_le_bytes([data[64], data[65], data[66], data[67]]) as usize;
+    let first_difat_sector = u32::from_le_bytes([data[68], data[69], data[70], data[71]]);
+    let num_difat_sectors = u32::from_le_bytes([data[72], data[73], data[74], data[75]]) as usize;
+
+    // 1. DIFAT로부터 FAT 섹터 위치 수집
+    let mut fat_sector_ids = Vec::new();
+    for i in 0..109 {
+        let offset = 76 + i * 4;
+        let sec_id = u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]);
+        if sec_id <= MAX_REG_SECTOR {
+            fat_sector_ids.push(sec_id);
+        }
+    }
+
+    if num_difat_sectors > 0 && first_difat_sector <= MAX_REG_SECTOR {
+        let mut curr_difat = first_difat_sector;
+        let mut visited_difat = std::collections::HashSet::new();
+        while curr_difat <= MAX_REG_SECTOR {
+            if !visited_difat.insert(curr_difat) {
+                return Err("corrupt: DIFAT 섹터 순환 감지".into());
+            }
+            if visited_difat.len() > num_difat_sectors + 1 {
+                return Err("corrupt: DIFAT 섹터 수 초과 (순환 의심)".into());
+            }
+            let difat_offset = (curr_difat as usize + 1) * sector_size;
+            if difat_offset + sector_size > data.len() {
+                return Err("corrupt: DIFAT 섹터 오프셋이 파일 범위를 벗어납니다".into());
+            }
+            let entries_per_sector = (sector_size / 4) - 1;
+            for i in 0..entries_per_sector {
+                let off = difat_offset + i * 4;
+                let sec_id = u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+                if sec_id <= MAX_REG_SECTOR {
+                    fat_sector_ids.push(sec_id);
+                }
+            }
+            let next_off = difat_offset + entries_per_sector * 4;
+            curr_difat = u32::from_le_bytes([data[next_off], data[next_off + 1], data[next_off + 2], data[next_off + 3]]);
+        }
+    }
+
+    // 2. 전체 FAT 테이블 구성
+    let mut fat = Vec::with_capacity(fat_sector_ids.len() * (sector_size / 4));
+    for &sec_id in &fat_sector_ids {
+        let sec_offset = (sec_id as usize + 1) * sector_size;
+        if sec_offset + sector_size > data.len() {
+            return Err("corrupt: FAT 섹터 오프셋이 파일 범위를 벗어납니다".into());
+        }
+        for chunk in data[sec_offset..sec_offset + sector_size].chunks_exact(4) {
+            fat.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+        }
+    }
+
+    // 3. FAT 체인 섹터 순환 감지 (3-state DFS cycle detection)
+    let mut state = vec![0u8; fat.len()];
+    for start in 0..fat.len() {
+        if state[start] != 0 {
+            continue;
+        }
+        let mut curr = start as u32;
+        let mut path = Vec::new();
+        while curr <= MAX_REG_SECTOR {
+            let idx = curr as usize;
+            if idx >= fat.len() {
+                break;
+            }
+            if state[idx] == 1 {
+                return Err("corrupt: FAT 섹터 순환 감지 (sector cycle detected)".into());
+            }
+            if state[idx] == 2 {
+                break;
+            }
+            state[idx] = 1;
+            path.push(idx);
+            curr = fat[idx];
+        }
+        for &p in &path {
+            state[p] = 2;
+        }
+    }
+
+    // 4. MiniFAT 체인 순환 감지
+    if num_minifat_sectors > 0 && first_minifat_sector <= MAX_REG_SECTOR {
+        let mut minifat_sector_ids = Vec::new();
+        let mut curr_mf = first_minifat_sector;
+        let mut visited_mf = std::collections::HashSet::new();
+        while curr_mf <= MAX_REG_SECTOR {
+            if !visited_mf.insert(curr_mf) {
+                return Err("corrupt: MiniFAT 섹터 체인 순환 감지".into());
+            }
+            minifat_sector_ids.push(curr_mf);
+            let idx = curr_mf as usize;
+            if idx >= fat.len() {
+                break;
+            }
+            curr_mf = fat[idx];
+        }
+
+        let mut minifat = Vec::with_capacity(minifat_sector_ids.len() * (sector_size / 4));
+        for &sec_id in &minifat_sector_ids {
+            let sec_offset = (sec_id as usize + 1) * sector_size;
+            if sec_offset + sector_size <= data.len() {
+                for chunk in data[sec_offset..sec_offset + sector_size].chunks_exact(4) {
+                    minifat.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+                }
+            }
+        }
+
+        let mut mf_state = vec![0u8; minifat.len()];
+        for start in 0..minifat.len() {
+            if mf_state[start] != 0 {
+                continue;
+            }
+            let mut curr = start as u32;
+            let mut path = Vec::new();
+            while curr <= MAX_REG_SECTOR {
+                let idx = curr as usize;
+                if idx >= minifat.len() {
+                    break;
+                }
+                if mf_state[idx] == 1 {
+                    return Err("corrupt: MiniFAT 섹터 순환 감지 (minifat sector cycle detected)".into());
+                }
+                if mf_state[idx] == 2 {
+                    break;
+                }
+                mf_state[idx] = 1;
+                path.push(idx);
+                curr = minifat[idx];
+            }
+            for &p in &path {
+                mf_state[p] = 2;
+            }
+        }
+    }
+
+    // 5. 디렉토리 엔트리 순회 및 PrvImage/PrvText 크기 상한(4MB) 검증
+    if first_dir_sector <= MAX_REG_SECTOR {
+        let mut dir_sector_ids = Vec::new();
+        let mut curr_dir = first_dir_sector;
+        let mut visited_dir = std::collections::HashSet::new();
+        while curr_dir <= MAX_REG_SECTOR {
+            if !visited_dir.insert(curr_dir) {
+                return Err("corrupt: 디렉토리 스트림 섹터 순환 감지".into());
+            }
+            dir_sector_ids.push(curr_dir);
+            let idx = curr_dir as usize;
+            if idx >= fat.len() {
+                break;
+            }
+            curr_dir = fat[idx];
+        }
+
+        for &sec_id in &dir_sector_ids {
+            let sec_offset = (sec_id as usize + 1) * sector_size;
+            if sec_offset + sector_size > data.len() {
+                continue;
+            }
+            let sec_bytes = &data[sec_offset..sec_offset + sector_size];
+            for entry_chunk in sec_bytes.chunks_exact(128) {
+                let obj_type = entry_chunk[66];
+                if obj_type != 2 {
+                    continue;
+                }
+                let name_len = u16::from_le_bytes([entry_chunk[64], entry_chunk[65]]) as usize;
+                if name_len < 2 || name_len > 64 {
+                    continue;
+                }
+                let mut u16_chars = Vec::new();
+                for c in entry_chunk[..name_len.saturating_sub(2)].chunks_exact(2) {
+                    u16_chars.push(u16::from_le_bytes([c[0], c[1]]));
+                }
+                let name = String::from_utf16_lossy(&u16_chars);
+                let stream_size = u64::from_le_bytes([
+                    entry_chunk[120], entry_chunk[121], entry_chunk[122], entry_chunk[123],
+                    entry_chunk[124], entry_chunk[125], entry_chunk[126], entry_chunk[127],
+                ]);
+
+                if name.eq_ignore_ascii_case("PrvImage") || name.eq_ignore_ascii_case("PrvText") {
+                    if stream_size > MAX_PREVIEW_STREAM_SIZE {
+                        return Err(format!("corrupt: {name} 스트림 크기({stream_size}바이트)가 4MB 제한을 초과했습니다"));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// CFB 바이트 버퍼로부터 HWP 5.0 미리보기 정보(PrvImage, PrvText)를 안전하게 추출한다.
+pub fn extract_hwp5_preview_from_bytes(data: &[u8]) -> Result<Preview, String> {
+    // 손상 파일 방어: 섹터 순환 감지 및 4MB 상한 점검
+    check_cfb_safety(data)?;
+
+    let cursor = Cursor::new(data);
+    let mut comp = match CompoundFile::open(cursor) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("corrupt: CFB 복합 문서 파싱 실패: {e}")),
+    };
+
+    // FileHeader 읽기 및 암호/배포용 플래그 점검
+    let mut is_encrypted_or_distributed = false;
+    if let Ok(header_bytes) = read_cfb_stream_limited(&mut comp, "FileHeader", MAX_PREVIEW_STREAM_SIZE) {
+        if let Ok(header) = HwpFileHeader::parse(&header_bytes) {
+            if header.is_encrypted || header.is_distributed || header.is_drm {
+                is_encrypted_or_distributed = true;
+            }
+        } else if header_bytes.len() >= HWP5_SIGNATURE.len() && &header_bytes[..HWP5_SIGNATURE.len()] != HWP5_SIGNATURE {
+            return Err("unsupported: HWP 5.0 시그니처가 일치하지 않습니다".into());
+        }
+    }
+
+    let mut preview = Preview::default();
+
+    // 1. PrvImage 스트림 읽기
+    if let Some(path) = find_entry_path_case_insensitive(&comp, "PrvImage") {
+        match read_cfb_stream_limited(&mut comp, &path, MAX_PREVIEW_STREAM_SIZE) {
+            Ok(img_bytes) => {
+                if let Some(fmt) = ImageFormat::detect(&img_bytes) {
+                    preview.image = Some(img_bytes);
+                    preview.image_format = Some(fmt);
+                }
+            }
+            Err(e) => {
+                if !is_encrypted_or_distributed && e.contains("제한을 초과") {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    // 2. PrvText 스트림 읽기 (UTF-16LE, 최대 1,024자)
+    if let Some(path) = find_entry_path_case_insensitive(&comp, "PrvText") {
+        match read_cfb_stream_limited(&mut comp, &path, MAX_PREVIEW_STREAM_SIZE) {
+            Ok(text_bytes) => {
+                let mut u16_chars = Vec::with_capacity(text_bytes.len() / 2);
+                for chunk in text_bytes.chunks_exact(2) {
+                    u16_chars.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+                }
+                let decoded = String::from_utf16_lossy(&u16_chars);
+                let cleaned = decoded.strip_prefix('\u{FEFF}').unwrap_or(&decoded);
+                let text_clean = cleaned.split('\0').next().unwrap_or("");
+                let limited: String = text_clean.chars().take(MAX_PREVIEW_TEXT_CHARS).collect();
+                preview.text = limited;
+            }
+            Err(e) => {
+                if !is_encrypted_or_distributed && e.contains("제한을 초과") {
+                    return Err(e);
+                }
+            }
+        }
+    }
+
+    Ok(preview)
+}
+
+/// 스트림 크기 상한(max_size)을 적용하여 CFB 스트림을 읽는다.
+fn read_cfb_stream_limited<R: Read + std::io::Seek>(
+    comp: &mut CompoundFile<R>,
+    path: &str,
+    max_size: u64,
+) -> Result<Vec<u8>, String> {
+    let mut stream = comp.open_stream(path).map_err(|e| format!("스트림 '{path}' 열기 실패: {e}"))?;
+    let mut buf = Vec::new();
+    let mut take = (&mut stream).take(max_size.saturating_add(1));
+    take.read_to_end(&mut buf).map_err(|e| format!("스트림 '{path}' 읽기 실패: {e}"))?;
+    if buf.len() as u64 > max_size {
+        return Err(format!("corrupt: 스트림 '{path}' 크기가 {max_size}바이트 제한을 초과했습니다"));
+    }
+    Ok(buf)
+}
+
+/// CFB 내에서 대소문자 구분 없이 지정한 이름의 스트림 경로를 찾는다.
+fn find_entry_path_case_insensitive<R: Read + std::io::Seek>(
+    comp: &CompoundFile<R>,
+    target_name: &str,
+) -> Option<String> {
+    for entry in comp.walk() {
+        if entry.is_stream() && entry.name().eq_ignore_ascii_case(target_name) {
+            return Some(entry.path().to_string_lossy().to_string());
+        }
+    }
+    None
 }
 
 /// CFB 파일 내에서 지정된 경로의 스트림 데이터를 읽어온다.
@@ -645,6 +1043,9 @@ pub struct SyntheticHwp5Builder {
     version: u32,
     flags: u32,
     section_records: Vec<Vec<u8>>,
+    prv_image: Option<Vec<u8>>,
+    prv_text: Option<Vec<u8>>,
+    include_body_text: bool,
 }
 
 impl SyntheticHwp5Builder {
@@ -653,6 +1054,9 @@ impl SyntheticHwp5Builder {
             version: 0x05000000, // 5.0.0.0
             flags: FLAG_COMPRESSED, // 기본값: 압축
             section_records: Vec::new(),
+            prv_image: None,
+            prv_text: None,
+            include_body_text: true,
         }
     }
 
@@ -685,6 +1089,26 @@ impl SyntheticHwp5Builder {
         } else {
             self.flags &= !FLAG_DISTRIBUTED;
         }
+        self
+    }
+
+    pub fn prv_image(mut self, bytes: Vec<u8>) -> Self {
+        self.prv_image = Some(bytes);
+        self
+    }
+
+    pub fn prv_text(mut self, text: &str) -> Self {
+        self.prv_text = Some(encode_utf16le(text));
+        self
+    }
+
+    pub fn prv_text_bytes(mut self, bytes: Vec<u8>) -> Self {
+        self.prv_text = Some(bytes);
+        self
+    }
+
+    pub fn include_body_text(mut self, yes: bool) -> Self {
+        self.include_body_text = yes;
         self
     }
 
@@ -721,28 +1145,42 @@ impl SyntheticHwp5Builder {
             s.write_all(&doc_info).map_err(|e| format!("DocInfo 쓰기 실패: {e}"))?;
         }
 
-        // 3. BodyText 스토리지 생성 및 Section0 스트림 쓰기
-        comp.create_storage("/BodyText").map_err(|e| format!("BodyText 스토리지 생성 실패: {e}"))?;
-
-        let mut section_data = Vec::new();
-        for rec in self.section_records {
-            section_data.extend_from_slice(&rec);
+        // 3. PrvImage 스트림 (있는 경우)
+        if let Some(ref img_bytes) = self.prv_image {
+            let mut s = comp.create_stream("/PrvImage").map_err(|e| format!("PrvImage 생성 실패: {e}"))?;
+            s.write_all(img_bytes).map_err(|e| format!("PrvImage 쓰기 실패: {e}"))?;
         }
 
-        let is_comp = (self.flags & FLAG_COMPRESSED) != 0;
-        let final_section_bytes = if is_comp {
-            use flate2::write::DeflateEncoder;
-            use flate2::Compression;
-            let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-            encoder.write_all(&section_data).map_err(|e| format!("섹션 압축 실패: {e}"))?;
-            encoder.finish().map_err(|e| format!("섹션 압축 마감 실패: {e}"))?
-        } else {
-            section_data
-        };
+        // 4. PrvText 스트림 (있는 경우)
+        if let Some(ref text_bytes) = self.prv_text {
+            let mut s = comp.create_stream("/PrvText").map_err(|e| format!("PrvText 생성 실패: {e}"))?;
+            s.write_all(text_bytes).map_err(|e| format!("PrvText 쓰기 실패: {e}"))?;
+        }
 
-        {
-            let mut s = comp.create_stream("/BodyText/Section0").map_err(|e| format!("Section0 생성 실패: {e}"))?;
-            s.write_all(&final_section_bytes).map_err(|e| format!("Section0 쓰기 실패: {e}"))?;
+        // 5. BodyText 스토리지 생성 및 Section0 스트림 쓰기
+        if self.include_body_text {
+            comp.create_storage("/BodyText").map_err(|e| format!("BodyText 스토리지 생성 실패: {e}"))?;
+
+            let mut section_data = Vec::new();
+            for rec in self.section_records {
+                section_data.extend_from_slice(&rec);
+            }
+
+            let is_comp = (self.flags & FLAG_COMPRESSED) != 0;
+            let final_section_bytes = if is_comp {
+                use flate2::write::DeflateEncoder;
+                use flate2::Compression;
+                let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(&section_data).map_err(|e| format!("섹션 압축 실패: {e}"))?;
+                encoder.finish().map_err(|e| format!("섹션 압축 마감 실패: {e}"))?
+            } else {
+                section_data
+            };
+
+            {
+                let mut s = comp.create_stream("/BodyText/Section0").map_err(|e| format!("Section0 생성 실패: {e}"))?;
+                s.write_all(&final_section_bytes).map_err(|e| format!("Section0 쓰기 실패: {e}"))?;
+            }
         }
 
         let inner = comp.into_inner();
@@ -1023,5 +1461,31 @@ mod tests {
         let index_paras = crate::extract::extract_for_index(&temp.path).expect("색인 추출 성공");
         assert_eq!(index_paras.len(), 1);
         assert_eq!(index_paras[0].text, "검색 대상 본문 문장입니다.");
+    }
+
+    #[test]
+    fn test_hwp5_preview_unit_tests() {
+        let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4";
+        let text = "단위 시험 미리보기 텍스트";
+        let hwp_bytes = SyntheticHwp5Builder::new()
+            .prv_image(png.to_vec())
+            .prv_text(text)
+            .build()
+            .unwrap();
+
+        let temp = TempTestHwp::new("preview_unit", &hwp_bytes);
+        let preview = extract_hwp5_preview(&temp.path).expect("미리보기 추출");
+        assert_eq!(preview.image_format, Some(ImageFormat::Png));
+        assert_eq!(preview.image.as_deref(), Some(&png[..]));
+        assert_eq!(preview.text, text);
+        assert!(preview.has_image());
+        assert!(preview.has_text());
+
+        // 형식 판별 단위 테스트
+        assert_eq!(ImageFormat::detect(b"\x89PNG\r\n\x1a\n123"), Some(ImageFormat::Png));
+        assert_eq!(ImageFormat::detect(b"GIF87a123"), Some(ImageFormat::Gif));
+        assert_eq!(ImageFormat::detect(b"GIF89a123"), Some(ImageFormat::Gif));
+        assert_eq!(ImageFormat::detect(b"BM123"), Some(ImageFormat::Bmp));
+        assert_eq!(ImageFormat::detect(b"RIFF123"), None);
     }
 }
