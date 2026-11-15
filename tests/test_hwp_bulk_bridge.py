@@ -56,6 +56,33 @@ class HwpBulkBridgeTest(unittest.TestCase):
             self.assertEqual(self.bridge.hwp_bulk("drives")["drives"], ["C:\\"])
         self.assertTrue(callable(getattr(_BrowserApi(self.bridge), "hwp_bulk")))
 
+    def test_retry_failed_action(self):
+        # 1) failures가 없으면 에러
+        res = self.bridge.hwp_bulk("retry_failed")
+        self.assertFalse(res["ok"])
+        self.assertIn("실패 문서가 없습니다", res["message"])
+
+        # 2) failures가 있으면 해당 문서들만 다시 실행
+        from docfit_core import hwp_bulk as bulk
+        sample_hwp = self.root / "실패문서.hwp"
+        sample_hwp.write_bytes(bulk.OLE_SIGNATURE + b"\0" * 32)
+        state = self.bridge._bulk_state = bulk.BulkState(
+            phase="done",
+            failures=[{"source": str(sample_hwp), "message": "임시 실패", "kind": "잠김"}]
+        )
+        seen, finished = {}, threading.Event()
+
+        def fake_run(roots, **kwargs):
+            seen["roots"] = roots
+            kwargs["state"].phase = "done"
+            finished.set()
+
+        with patch("docfit_core.hwp_bulk.run_bulk", side_effect=fake_run):
+            res = self.bridge.hwp_bulk("retry_failed")
+            self.assertTrue(res["ok"])
+            self.assertTrue(finished.wait(5))
+        self.assertEqual(seen["roots"], [sample_hwp.resolve()])
+
 
 if __name__ == "__main__":
     unittest.main()

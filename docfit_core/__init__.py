@@ -8,6 +8,7 @@ from .hwpx import (
     inspect_hwpx,
     validate_and_inspect_hwpx,
     validate_hwpx,
+    validate_hwpx_structure,
     open_hwpx_safely,
 )
 # kordoc 의존 줄이기 1단계(2026-11-15): 앱이 쓰지 않던 고급 기능 9개(양식 분석·채우기, 패치, 검사, 미리보기,
@@ -26,6 +27,7 @@ __all__ = [
     "inspect_hwpx",
     "validate_and_inspect_hwpx",
     "validate_hwpx",
+    "validate_hwpx_structure",
     "open_hwpx_safely",
     "KordocUnavailableError",
     "generate_hwpx",

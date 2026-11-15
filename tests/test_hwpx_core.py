@@ -198,6 +198,64 @@ class HwpxCoreTest(unittest.TestCase):
                     validate_and_inspect_hwpx(source)
 
 
+    def test_large_hwpx_structure_mode_bypasses_bomb_limit_while_strict_mode_blocks(self):
+        """그림 많은 큰 합성 HWPX: 한도를 작게 주입했을 때 strict 모드는 차단하고 structure 모드는 통과한다."""
+        from docfit_core.hwpx import HwpxLimits, validate_hwpx_structure
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "large_images.hwpx"
+            with ZipFile(source, "w", ZIP_DEFLATED) as archive:
+                archive.writestr("Contents/header.xml", HEADER)
+                archive.writestr("Contents/section0.xml", SECTION)
+                # 그림 많은 대형 문서 모사 (합성 이미지 데이터)
+                archive.writestr("BinData/image1.bin", b"A" * 4096)
+                archive.writestr("BinData/image2.bin", b"B" * 4096)
+
+            # 1) 압축 해제 크기 한도(예: 1024바이트)를 작게 주입해 외부 입력 검증 시뮬레이션
+            small_limits = HwpxLimits(max_total_size=1024)
+            with self.assertRaises(HwpxSecurityError) as ctx:
+                validate_hwpx(source, limits=small_limits)
+            self.assertIn("압축 해제 예상 크기", str(ctx.exception))
+
+            # 2) 결과 검증(structure_only=True / mode='structure' / validate_hwpx_structure)은 한도 초과에도 통과
+            res1 = validate_hwpx(source, limits=small_limits, structure_only=True)
+            self.assertEqual(res1["section_names"], ["Contents/section0.xml"])
+            self.assertGreater(res1["total_uncompressed_size"], 8000)
+
+            res2 = validate_hwpx(source, limits=small_limits, mode="structure")
+            self.assertEqual(res2["section_names"], ["Contents/section0.xml"])
+
+            res3 = validate_hwpx_structure(source)
+            self.assertEqual(res3["section_names"], ["Contents/section0.xml"])
+
+    def test_structure_mode_validates_xml_and_required_files(self):
+        """structure 모드라도 필수 파일·섹션 누락이나 깨진 XML은 거부한다."""
+        with tempfile.TemporaryDirectory() as folder:
+            # 1) header.xml 누락
+            no_header = Path(folder) / "no_header.hwpx"
+            with ZipFile(no_header, "w") as z:
+                z.writestr("Contents/section0.xml", SECTION)
+            with self.assertRaises(HwpxSecurityError) as ctx:
+                validate_hwpx(no_header, structure_only=True)
+            self.assertIn("Contents/header.xml", str(ctx.exception))
+
+            # 2) section 누락
+            no_section = Path(folder) / "no_section.hwpx"
+            with ZipFile(no_section, "w") as z:
+                z.writestr("Contents/header.xml", HEADER)
+            with self.assertRaises(HwpxSecurityError) as ctx:
+                validate_hwpx(no_section, structure_only=True)
+            self.assertIn("본문 섹션", str(ctx.exception))
+
+            # 3) XML 구문 오류 (열리지 않는 깨진 XML)
+            bad_xml = Path(folder) / "bad_xml.hwpx"
+            with ZipFile(bad_xml, "w") as z:
+                z.writestr("Contents/header.xml", b"<unclosed>")
+                z.writestr("Contents/section0.xml", SECTION)
+            with self.assertRaises(HwpxSecurityError) as ctx:
+                validate_hwpx(bad_xml, structure_only=True)
+            self.assertIn("XML 파싱 실패", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
 

@@ -344,7 +344,7 @@ def convert_hwp_to_hwpx(app, source: str | Path, target: str | Path) -> Path:
             raise RuntimeError("한/글에서 HWP 원본을 열지 못했습니다. 암호 문서는 'HWP 찾아 HWPX로'에서 암호를 넣어 변환하세요.")
         if app.SaveAs(str(temporary), "HWPX", "") is False:
             raise RuntimeError("한/글에서 HWPX 저장을 완료하지 못했습니다.")
-        validate_hwpx(temporary)
+        validate_hwpx(temporary, structure_only=True)
         _publish_without_overwrite(temporary, target)
         return target
     finally:
