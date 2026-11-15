@@ -109,6 +109,14 @@ def _serialize(root, original):
         end = value.index(">")
         opening = value[:end]
         for prefix, uri in namespaces.items():
+            if re.fullmatch(r"ns\d+", prefix):
+                prefix = {
+                    "http://www.hancom.co.kr/hwpml/2011/app": "ha",
+                    "http://www.hancom.co.kr/hwpml/2011/paragraph": "hp",
+                    "http://www.hancom.co.kr/hwpml/2011/head": "hh",
+                    "http://www.hancom.co.kr/hwpml/2011/core": "hc",
+                    "http://www.hancom.co.kr/hwpml/2011/section": "hs",
+                }.get(uri, prefix)
             attr = "xmlns:" + prefix if prefix else "xmlns"
             if not re.search(r"\s" + re.escape(attr) + r"=", opening):
                 opening += " " + attr + '="' + escape(uri, quote=True) + '"'

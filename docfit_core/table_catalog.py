@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import io
 import re
 import sys
 import zipfile
@@ -24,6 +25,81 @@ _DEFAULT_BORDER_SIDE = {"type": "SOLID", "width": "0.12 mm", "color": "#000000"}
 _DEFAULT_BORDERS = {side: dict(_DEFAULT_BORDER_SIDE) for side in ("top", "bottom", "left", "right")}
 _DEFAULT_STYLE = {"font": "한컴돋움", "size": 11.0, "bold": False, "color": "#000000", "fill": ""}
 
+_CANONICAL_PREFIXES = {
+    "http://www.hancom.co.kr/hwpml/2011/app": "ha",
+    "http://www.hancom.co.kr/hwpml/2011/paragraph": "hp",
+    "http://www.hancom.co.kr/hwpml/2011/head": "hh",
+    "http://www.hancom.co.kr/hwpml/2011/core": "hc",
+    "http://www.hancom.co.kr/hwpml/2011/section": "hs",
+}
+
+
+def _canonicalize_prefixes(original: bytes) -> bytes:
+    namespaces = {}
+    declared = {}
+    for _, (prefix, uri) in ET.iterparse(io.BytesIO(original), events=("start-ns",)):
+        declared[prefix] = uri
+        if prefix.startswith("ns") and prefix[2:].isdigit():
+            canonical = _CANONICAL_PREFIXES.get(uri)
+            if canonical:
+                namespaces[prefix] = (canonical, uri)
+    if not namespaces:
+        return original
+    text = original.decode("utf-8")
+    for old, (new, uri) in namespaces.items():
+        text = text.replace("xmlns:" + old + '=\"' + uri + '\"', '')
+        text = re.sub(r"(</?)" + re.escape(old) + r":", r"\1" + new + ":", text)
+    start = text.find("<", text.find("?>") + 2)
+    end = text.find(">", start)
+    opening = text[start:end]
+    for _, (prefix, uri) in namespaces.items():
+        if not re.search(r"\sxmlns:" + prefix + r"=", opening):
+            opening += ' xmlns:' + prefix + '=\"' + uri + '\"'
+    for prefix, uri in declared.items():
+        if prefix not in namespaces and prefix.startswith("ns") and not re.search(r"\sxmlns:" + prefix + r"=", opening):
+            opening += ' xmlns:' + prefix + '=\"' + uri + '\"'
+    return (text[:start] + opening + text[end:]).encode("utf-8")
+
+
+def _serialize_catalog_xml(root, original: bytes) -> bytes:
+    declarations = {}
+    for _, (prefix, uri) in ET.iterparse(io.BytesIO(original), events=("start-ns",)):
+        declarations[prefix] = uri
+    normalized = _canonicalize_prefixes(original)
+    text = normalized.decode("utf-8")
+    start = text.find("<", text.find("?>") + 2)
+    end = text.find(">", start)
+    opening = text[start:end]
+    for prefix, uri in declarations.items():
+        if prefix.startswith("ns") and not re.search(r"\sxmlns:" + re.escape(prefix) + r"=", opening):
+            opening += ' xmlns:' + prefix + '=\"' + uri + '\"'
+    normalized = (text[:start] + opening + text[end:]).encode("utf-8")
+    namespaces = {}
+    for _, (prefix, uri) in ET.iterparse(io.BytesIO(normalized), events=("start-ns",)):
+        if prefix in namespaces and namespaces[prefix] != uri:
+            raise ValueError("중첩 네임스페이스 재정의는 표 서식 내보내기에서 지원하지 않습니다.")
+        namespaces[prefix] = uri
+    registry = ET.tostring.__globals__["_namespace_map"]
+    previous = dict(registry)
+    try:
+        for prefix, uri in namespaces.items():
+            if prefix.startswith("ns"):
+                continue
+            for key, value in list(registry.items()):
+                if key == uri or value == prefix:
+                    del registry[key]
+            registry[uri] = prefix
+        value = ET.tostring(root, encoding="unicode")
+        end = value.find(">")
+        opening = value[:end]
+        for prefix, uri in declarations.items():
+            attr = "xmlns:" + prefix
+            if not re.search(r"\s" + re.escape(attr) + r"=", opening):
+                opening += " " + attr + '=\"' + uri + '\"'
+        return ('<?xml version="1.0" encoding="utf-8"?>\n' + opening + value[end:]).encode("utf-8")
+    finally:
+        registry.clear()
+        registry.update(previous)
 
 def _tag(element) -> str:
     return element.tag.rsplit("}", 1)[-1]
@@ -1110,7 +1186,7 @@ def export_template(template_id: str, output_path: str | Path,
             arrow_header = ET.fromstring(header_bytes) if header_bytes is not None else None
             extra_files = table_arrows.apply(_top_tables(output_paragraph)[0], arrow_cells, arrow, arrow_header)
             if header_bytes is not None:
-                header_data = _serialize(arrow_header, header_bytes)
+                header_data = _serialize_catalog_xml(arrow_header, header_bytes)
         if table_transform is not None:
             table_transform(_top_tables(output_paragraph)[0])
         if structure_edits:
@@ -1133,7 +1209,7 @@ def export_template(template_id: str, output_path: str | Path,
                 header_bytes = header_data
             header_root = ET.fromstring(header_bytes) if header_bytes is not None else None
             if _apply_style_edits(selected_tables[0], header_root, style_edits) and header_bytes is not None:
-                header_data = _serialize(header_root, header_bytes)
+                header_data = _serialize_catalog_xml(header_root, header_bytes)
 
         properties = _section_properties_paragraph(root)
 
@@ -1144,7 +1220,7 @@ def export_template(template_id: str, output_path: str | Path,
                 for child in list(section_root):
                     section_root.remove(child)
                 section_root.extend(keep)
-                section_data = ET.tostring(section_root, encoding="utf-8", xml_declaration=True)
+                section_data = _serialize_catalog_xml(section_root, section_bytes)
             else:
                 other_root = ET.fromstring(archive.read(section_name))
                 other_properties = _section_properties_paragraph(other_root)
@@ -1152,7 +1228,7 @@ def export_template(template_id: str, output_path: str | Path,
                     other_root.remove(child)
                 if other_properties is not None:
                     other_root.append(other_properties)
-                section_data = ET.tostring(other_root, encoding="utf-8", xml_declaration=True)
+                section_data = _serialize_catalog_xml(other_root, archive.read(section_name))
             if section_name == record["section"]:
                 chosen_data = section_data
                 break

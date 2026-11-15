@@ -40,6 +40,35 @@ class TableCatalogTests(unittest.TestCase):
         ids = [template["id"] for item in catalog["categories"] for template in item["templates"]]
         self.assertEqual(len(ids), len(set(ids)))
 
+    def test_process_shapes_6_to_8_preview_and_resize_plans(self):
+        from docfit_core.table_units import plan_for
+
+        catalog = list_catalog()
+        category = next(item for item in catalog["categories"] if item["name"] == "추진절차(가로)")
+        templates = category["templates"]
+        self.assertEqual([template["id"] for template in templates], [f"6:{n}" for n in range(1, 9)])
+        expected = ((5, 3), (4, 13), (11, 5))
+        for template, dimensions in zip(templates[-3:], expected):
+            with self.subTest(template=template["id"]):
+                self.assertEqual((template["rows"], template["cols"]), dimensions)
+                plan = plan_for({**template, "category": category["name"] + "", "name": f"{category['name']} · 모양 {int(template['id'].split(':')[1])}"})
+                self.assertIsNotNone(plan["col"] if dimensions != (4, 13) else plan["row"])
+        self.assertEqual(templates[-3]["cells"][0][1], "▶")
+        self.assertEqual(templates[-2]["cells"][2][1], "▶")
+        self.assertEqual(templates[-1]["cells"][5][4], "▼")
+        self.assertEqual(templates[-1]["cells"][6][1], "◀")
+
+    def test_exported_xml_retains_original_hwpx_namespace_prefixes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            target = Path(folder) / "prefixes.hwpx"
+            export_template("6:6", target, structure_edits=["add_row"])
+            with zipfile.ZipFile(target) as archive:
+                section = archive.read("Contents/section0.xml")
+                header = archive.read("Contents/header.xml")
+            self.assertIn(b"<hs:sec", section)
+            self.assertIn(b"<hp:p", section)
+            self.assertNotIn(b"ns0:", section)
+
     def test_tpl8_templates_are_not_in_bundled_catalog(self):
         catalog = list_catalog()
         self.assertGreaterEqual(catalog["category_count"], 16)
