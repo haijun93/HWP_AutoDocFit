@@ -21,6 +21,17 @@ mod win;
 #[cfg(windows)]
 pub use win::*;
 
+#[cfg(not(windows))]
+pub unsafe fn apply_window<T>(_hwnd: T, _kind: Kind) {}
+#[cfg(not(windows))]
+pub fn refresh(_pref: ThemePref) -> Change {
+    Change { look: false, pref: false }
+}
+#[cfg(not(windows))]
+pub fn is_theme_message(_msg: u32, _w: usize, _l: isize) -> bool {
+    false
+}
+
 /// RGB를 GDI COLORREF(0x00BBGGRR)로.
 pub const fn rgb(r: u8, g: u8, b: u8) -> u32 {
     (r as u32) | ((g as u32) << 8) | ((b as u32) << 16)

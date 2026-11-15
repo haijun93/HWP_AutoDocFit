@@ -2,6 +2,11 @@
 use crate::{settings,hotkey,util::wide};
 use windows_sys::Win32::{Foundation::*,UI::{Shell::*,WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};
 pub const MESSAGE:u32=WM_APP+3;
+pub const HOTKEY_ERROR_TITLE:&str="퀵가상폴더 단축키를 쓸 수 없습니다";
+pub const MENU_OPEN:&str="퀵가상폴더 열기";
+pub const MENU_EXIT:&str="퀵가상폴더 끝내기";
+pub fn status_tooltip(hotkey:&str)->String{format!("퀵가상폴더 — {hotkey}")}
+
 pub struct Tray {pub ok:bool,pub error:String,pub settings:settings::Settings,failed:Option<String>,shown:bool}
 impl Tray {
  pub fn new()->Self{Self{ok:false,error:String::new(),settings:Default::default(),failed:None,shown:false}}
@@ -14,8 +19,8 @@ impl Tray {
   self.error=if h.is_empty()||self.ok{String::new()}else if same{"몽땅클립보드와 같은 단축키입니다".into()}else{hotkey::hotkey_failure_body(h,parsed.is_some())};
   let (failed,notice)=hotkey::hotkey_failure_notice(self.failed.as_deref(),h,self.error.is_empty());self.failed=failed;
   let show=self.settings.tray||!self.error.is_empty();let mut n=self.data(hwnd);
-  if show {n.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;n.uCallbackMessage=MESSAGE;n.hIcon=icon();copy(&mut n.szTip,&format!("가상 폴더 — {h}"));Shell_NotifyIconW(if self.shown{NIM_MODIFY}else{NIM_ADD},&n);DestroyIcon(n.hIcon);}else if self.shown{Shell_NotifyIconW(NIM_DELETE,&n);}self.shown=show;
-  if notice&&!self.error.is_empty(){self.notice(hwnd,"가상 폴더 단축키를 쓸 수 없습니다",&self.error);}
+  if show {n.uFlags=NIF_MESSAGE|NIF_ICON|NIF_TIP;n.uCallbackMessage=MESSAGE;n.hIcon=icon();copy(&mut n.szTip,&status_tooltip(h));Shell_NotifyIconW(if self.shown{NIM_MODIFY}else{NIM_ADD},&n);DestroyIcon(n.hIcon);}else if self.shown{Shell_NotifyIconW(NIM_DELETE,&n);}self.shown=show;
+  if notice&&!self.error.is_empty(){self.notice(hwnd,HOTKEY_ERROR_TITLE,&self.error);}
  }}
  pub unsafe fn notice(&self,hwnd:HWND,title:&str,body:&str){unsafe{let mut n=self.data(hwnd);n.uFlags=NIF_INFO;n.dwInfoFlags=NIIF_WARNING;copy(&mut n.szInfoTitle,title);copy(&mut n.szInfo,body);Shell_NotifyIconW(NIM_MODIFY,&n);}}
  pub unsafe fn remove(&mut self,hwnd:HWND){unsafe{UnregisterHotKey(hwnd,1);if self.shown{Shell_NotifyIconW(NIM_DELETE,&self.data(hwnd));}self.shown=false;}}
@@ -26,7 +31,7 @@ unsafe fn icon()->HICON{unsafe{
  let mut pixels=[0u8;16*16*4];for y in 3..13{for x in 1..15{if y>=5||x<8{let p=(y*16+x)*4;pixels[p..p+4].copy_from_slice(&[40,185,245,255]);}}}
  let mask=[0u8;32];CreateIcon(std::ptr::null_mut(),16,16,1,32,mask.as_ptr(),pixels.as_ptr())
 }}
-pub unsafe fn menu(hwnd:HWND)->u32{unsafe{let m=CreatePopupMenu();AppendMenuW(m,MF_STRING,1,wide("가상 폴더 열기").as_ptr());AppendMenuW(m,MF_STRING,2,wide("가상 폴더 끝내기").as_ptr());let mut p=POINT{x:0,y:0};GetCursorPos(&mut p);SetForegroundWindow(hwnd);let c=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,hwnd,std::ptr::null());DestroyMenu(m);c as u32}}
+pub unsafe fn menu(hwnd:HWND)->u32{unsafe{let m=CreatePopupMenu();AppendMenuW(m,MF_STRING,1,wide(MENU_OPEN).as_ptr());AppendMenuW(m,MF_STRING,2,wide(MENU_EXIT).as_ptr());let mut p=POINT{x:0,y:0};GetCursorPos(&mut p);SetForegroundWindow(hwnd);let c=TrackPopupMenu(m,TPM_RETURNCMD|TPM_RIGHTBUTTON,p.x,p.y,0,hwnd,std::ptr::null());DestroyMenu(m);c as u32}}
 
 #[cfg(test)] mod tests {
  use super::*;
@@ -41,4 +46,10 @@ pub unsafe fn menu(hwnd:HWND)->u32{unsafe{let m=CreatePopupMenu();AppendMenuW(m,
   assert_ne!(UnregisterHotKey(std::ptr::null_mut(),0x4f51),0);
  }}
  #[test]fn folder_icon_has_owned_handle(){unsafe{let i=icon();assert!(!i.is_null());assert_ne!(DestroyIcon(i),0);}}
+ #[test]fn tray_strings_match_quick_naming(){
+  assert_eq!(status_tooltip("Win+Shift+F"),"퀵가상폴더 — Win+Shift+F");
+  assert_eq!(HOTKEY_ERROR_TITLE,"퀵가상폴더 단축키를 쓸 수 없습니다");
+  assert_eq!(MENU_OPEN,"퀵가상폴더 열기");
+  assert_eq!(MENU_EXIT,"퀵가상폴더 끝내기");
+ }
 }
