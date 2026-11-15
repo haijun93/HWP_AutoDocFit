@@ -211,6 +211,7 @@ mod tests {
             scopes: vec!["tm".into()],
             level_src: LevelSrc::Py,
             level_rule: 4,
+            meta_rule: crate::pipe::META_RULE_VERSION,
         }
     }
     fn para(p: u32, lv: u8, t: &str) -> Para {

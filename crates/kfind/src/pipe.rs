@@ -1461,7 +1461,15 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
         ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
-        let stale = || req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":META_RULE_VERSION}));
+        let stale = || req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":0}));
+        ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
+        let table = d.path().join(SID).join("doctable.jsonl");
+        let saved = std::fs::read_to_string(&table).unwrap();
+        let old_saved = saved.replace(&format!(",\"meta_rule\":{META_RULE_VERSION}"), "");
+        assert_ne!(saved, old_saved, "test fixture must represent a pre-meta_rule table");
+        std::fs::write(&table, old_saved).unwrap();
+        drop(h);
+        let h = Handler::new(d.path().to_owned());
         assert_eq!(h.handle(SID, stale()).unwrap()["doc_keys"], json!(["old"]));
         ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
         assert_eq!(h.handle(SID, stale()).unwrap()["doc_keys"], json!([]));

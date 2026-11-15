@@ -427,6 +427,7 @@ mod tests {
             scopes: vec!["tm".into()],
             level_src: src,
             level_rule: 4,
+            meta_rule: crate::pipe::META_RULE_VERSION,
         }
     }
 
