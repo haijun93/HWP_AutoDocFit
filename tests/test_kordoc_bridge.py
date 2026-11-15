@@ -83,6 +83,97 @@ class KordocBridgeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             kordoc_bridge.generate_hwpx("input.md", "알 수 없음")
 
+    def test_hwp_render_preview_rust_first(self):
+        """kordoc 의존 줄이기 2단계: HWP 미리보기는 Rust 우선."""
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "sample.hwp"
+            hwp.write_bytes(b"hwp")
+            with patch.object(kordoc_bridge, "_render_preview_rust", return_value=True) as mock_rust, \
+                    patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                out_dir = kordoc_bridge.render_preview(hwp)
+            mock_rust.assert_called_once()
+            mock_kordoc.assert_not_called()
+            self.assertEqual(out_dir, hwp.with_name("sample_preview"))
+
+    def test_hwp_render_preview_fallback_to_kordoc(self):
+        """Rust 미리보기 실패 시 kordoc render로 대체."""
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "sample.hwp"
+            hwp.write_bytes(b"hwp")
+            with patch.object(kordoc_bridge, "_render_preview_rust", return_value=False) as mock_rust, \
+                    patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                out_dir = kordoc_bridge.render_preview(hwp)
+            mock_rust.assert_called_once()
+            mock_kordoc.assert_called_once()
+            args = mock_kordoc.call_args.args[0]
+            self.assertIn("render", args)
+            self.assertEqual(out_dir, hwp.with_name("sample_preview"))
+
+    def test_hwp_render_preview_forced_kordoc_env(self):
+        """DOCFIT_HWP_ENGINE=kordoc이면 Rust를 거치지 않고 바로 kordoc render."""
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "sample.hwp"
+            hwp.write_bytes(b"hwp")
+            with patch.dict(os.environ, {"DOCFIT_HWP_ENGINE": "kordoc"}), \
+                    patch.object(kordoc_bridge, "_render_preview_rust") as mock_rust, \
+                    patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                kordoc_bridge.render_preview(hwp)
+            mock_rust.assert_not_called()
+            mock_kordoc.assert_called_once()
+
+    def test_hwp_parse_document_rust_first(self):
+        """kordoc 의존 줄이기 2단계: HWP 파싱은 Rust 우선."""
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "doc.hwp"
+            hwp.write_bytes(b"hwp")
+            target = Path(folder) / "doc.md"
+            with patch.object(kordoc_bridge, "_parse_hwp_rust", return_value=True) as mock_rust, \
+                    patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                res = kordoc_bridge.parse_document(hwp, target)
+            mock_rust.assert_called_once()
+            mock_kordoc.assert_not_called()
+            self.assertEqual(res, target)
+
+    def test_hwp_parse_document_fallback_to_kordoc(self):
+        """Rust 파싱 실패 시 kordoc parse로 대체."""
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "doc.hwp"
+            hwp.write_bytes(b"hwp")
+            target = Path(folder) / "doc.md"
+            with patch.object(kordoc_bridge, "_parse_hwp_rust", return_value=False) as mock_rust, \
+                    patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                res = kordoc_bridge.parse_document(hwp, target)
+            mock_rust.assert_called_once()
+            mock_kordoc.assert_called_once()
+            args = mock_kordoc.call_args.args[0]
+            self.assertEqual(args[0], str(hwp))
+            self.assertEqual(res, target)
+
+    def test_hwp_parse_document_identity_with_synthetic_hwp(self):
+        """합성 HWP 문단 추출 결과 동일성 검증."""
+        fake_paragraphs = [
+            {"text": "1. 사업 개요", "location_kind": "paragraph"},
+            {"text": "추진 기간: 2026년", "location_kind": "table_cell"},
+            {"text": "예산: 50백만원", "location_kind": "table_cell"},
+        ]
+        payload = json.dumps({"paragraphs": fake_paragraphs}).encode("utf-8")
+        import subprocess as sp
+        mock_proc = sp.CompletedProcess(args=[], returncode=0, stdout=payload, stderr=b"")
+
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "test.hwp"
+            hwp.write_bytes(b"synthetic")
+            target = Path(folder) / "test.md"
+            with patch.object(kordoc_bridge, "_klib_executable", return_value=Path("/bin/klib")), \
+                    patch("subprocess.run", return_value=mock_proc):
+                res = kordoc_bridge.parse_document(hwp, target)
+            self.assertTrue(res.is_file())
+            content = res.read_text(encoding="utf-8")
+            self.assertIn("1. 사업 개요", content)
+            self.assertIn("추진 기간: 2026년", content)
+            self.assertIn("예산: 50백만원", content)
+
 
 if __name__ == "__main__":
     unittest.main()

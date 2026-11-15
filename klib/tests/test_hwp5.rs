@@ -657,3 +657,67 @@ fn test_dvf1_preview_cli_command() {
     let _ = std::fs::remove_file(&out_png_path);
 }
 
+#[test]
+fn test_kordoc23_synthetic_hwp_identity_and_preview() {
+    // KORDOC23 2단계: 합성 HWP 생성 및 결과 동일성 검증
+    let text1 = "제1조(목적) 이 조례는 주민 복리 증진을 목적으로 한다.";
+    let text2 = "제2조(정의) 이 조례에서 사용하는 용어의 뜻은 다음과 같다.";
+    let cell_text = "별표 1 관련 산출 내역";
+
+    let mut builder = SyntheticHwp5Builder::new()
+        .compressed(true)
+        .prv_image(SAMPLE_PNG_BYTES.to_vec())
+        .prv_text(&format!("{text1}\n{text2}"));
+
+    // 문단 1
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le(text1)).to_bytes());
+
+    // 문단 2
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(encode_utf16le(text2)).to_bytes());
+
+    // 표 문단
+    let para3_items = vec![
+        ParaTextItem::String("참고 표: ".to_string()),
+        ParaTextItem::ExtendedControl(11, [0u8; 14]),
+    ];
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 0).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 1).with_data(build_para_text_bytes(&para3_items)).to_bytes());
+
+    let mut ctrl_tbl = b"tbl ".to_vec();
+    ctrl_tbl.extend_from_slice(&[0u8; 12]);
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_CTRL_HEADER, 1).with_data(ctrl_tbl).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_TABLE, 2).with_data(vec![0u8; 32]).to_bytes());
+    builder = builder.add_record(RecordBuilder::new(HWPTAG_LIST_HEADER, 2).with_data(vec![0u8; 16]).to_bytes());
+    builder = builder
+        .add_record(RecordBuilder::new(HWPTAG_PARA_HEADER, 3).with_data(vec![0u8; 18]).to_bytes())
+        .add_record(RecordBuilder::new(HWPTAG_PARA_TEXT, 4).with_data(encode_utf16le(cell_text)).to_bytes());
+
+    let hwp_bytes = builder.build().expect("합성 HWP 빌드 성공");
+    let temp = TempHwpFile::new("kordoc23_synth", &hwp_bytes);
+
+    // 1. 本文 문단 추출 동일성 검증
+    let records = extract_hwp(&temp.path).expect("HWP 본문 추출 성공");
+    assert_eq!(records.len(), 4, "문단 총 4개(본문 3 + 표 셀 1)");
+    assert_eq!(records[0].text, text1);
+    assert_eq!(records[1].text, text2);
+    assert_eq!(records[2].text, "참고 표:");
+    assert_eq!(records[3].text, cell_text);
+    assert!(records[3].is_table_cell, "표 셀 문단 표시");
+
+    // 2. preview 추출 동일성 검증
+    let out_png = std::env::temp_dir().join(format!("klib_kordoc23_out_{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&out_png);
+    let (has_image, format, prev_text) = klib::extract::preview_hwp(&temp.path, &out_png).expect("미리보기 추출");
+    assert!(has_image);
+    assert_eq!(format.as_deref(), Some("png"));
+    assert!(prev_text.contains("제1조(목적)"));
+    assert!(out_png.is_file());
+    assert_eq!(std::fs::read(&out_png).unwrap(), SAMPLE_PNG_BYTES);
+    let _ = std::fs::remove_file(&out_png);
+}
+
