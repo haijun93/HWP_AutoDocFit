@@ -5,7 +5,10 @@ use crate::docmap::{
 };
 use crate::manifest::Manifest;
 use crate::qcache::{Plan, QueryCache, QueryCacheOptions, QueryCacheStats, SegKey, SegSets, query_key};
-use crate::query::{MIN_WORD_CHARS, ParsedQuery, QueryWord, SplitMode, add_phrases, char_bounds, is_word_or_stem, parse_groups, parse_query, split_bigram, split_dict};
+use crate::query::{
+    MIN_WORD_CHARS, ParsedQuery, QuerySyntax, QueryWord, SplitMode, add_phrases, char_bounds,
+    is_word_or_stem, parse_groups, parse_query, parse_query_syntax, split_bigram, split_dict,
+};
 use crate::segment::{Segment, seg_file_name, word_key};
 use crate::topic::{RelatedTopic, TopicItem, TopicTable, TrendingTopic};
 use crate::{Error, Result, corrupt, guard};
@@ -1066,6 +1069,38 @@ impl Index {
             }
             Ok(out)
         })
+    }
+
+    /// QuerySyntax의 모든 옵션(phrases, excludes, file_types, folder, start_date, end_date)을
+    /// SearchOptions에 연결한다 (QMS-QUERY).
+    ///
+    /// - 제외어(excludes)는 doc_set으로 살아 있는 문서 ID 집합을 찾아 opts.deny에 합친다(union).
+    /// - 2글자 미만 제외어 등 doc_set 실패는 검색을 막지 않고 무시된다.
+    pub fn apply_syntax(&self, syntax: &QuerySyntax, opts: &mut SearchOptions) -> Result<()> {
+        syntax.apply_to_options(opts);
+        if !syntax.excludes.is_empty() {
+            let mut deny_map = match &opts.deny {
+                Some(existing) => (**existing).clone(),
+                None => RoaringTreemap::new(),
+            };
+            for ex in &syntax.excludes {
+                if let Ok(bm) = self.doc_set(ex) {
+                    deny_map |= bm;
+                }
+            }
+            if !deny_map.is_empty() {
+                opts.deny = Some(Arc::new(deny_map));
+            }
+        }
+        Ok(())
+    }
+
+    /// 고급 질의 문법을 파싱하고 세미콜론 묶음 검색까지 수행하는 통합 진입점 (QMS-QUERY).
+    pub fn search_syntax(&self, query: &str, opts: &SearchOptions) -> Result<SearchResult> {
+        let syntax = parse_query_syntax(query);
+        let mut new_opts = opts.clone();
+        self.apply_syntax(&syntax, &mut new_opts)?;
+        self.search_groups(&syntax.clean_text, &new_opts)
     }
 
     /// 조각마다 (일치 문장, 붙어 있는 일치 문장): 지운 문장과 범위 밖 문서(`opts.allow`·`deny`)를 뺀 것.

@@ -144,8 +144,18 @@ impl Backend {
 
     /// SEMI2: 현재 검색어에 대한 폴더별 결과 수 집계.
     pub fn count_by_folder(&self, query: &str) -> Vec<kfind_core::FolderCount> {
+        let syntax = kfind_core::parse_query_syntax(query);
+        let mut opts = SearchOptions::default();
+        let _ = self.index.apply_syntax(&syntax, &mut opts);
+        let q = if syntax.clean_text.is_empty() && !syntax.phrases.is_empty() {
+            ""
+        } else if syntax.clean_text.is_empty() {
+            query
+        } else {
+            &syntax.clean_text
+        };
         self.index
-            .count_by_folder(query, &SearchOptions::default())
+            .count_by_folder(q, &opts)
             .unwrap_or_default()
     }
 
@@ -158,7 +168,7 @@ impl Backend {
         self.search_with_scope(query, hierarchy, None, None, cancel)
     }
 
-    /// SEMI2 scope API(기간 거르기·폴더 거르기)를 반영한 검색.
+    /// SEMI2 scope API(기간 거르기·폴더 거르기) 및 QMS-QUERY 문법을 반영한 검색.
     pub fn search_with_scope(
         &mut self,
         query: &str,
@@ -176,7 +186,8 @@ impl Backend {
             Some((s, e)) => (Some(s), Some(e)),
             None => (None, None),
         };
-        let opts = SearchOptions {
+        let syntax = kfind_core::parse_query_syntax(query);
+        let mut opts = SearchOptions {
             top: LIMIT,
             refs_per_doc: 1,
             cancel,
@@ -185,21 +196,34 @@ impl Backend {
             folder: folder.map(str::to_owned),
             ..SearchOptions::default()
         };
+        self.index.apply_syntax(&syntax, &mut opts).map_err(|e| e.to_string())?;
+
+        let search_text = if syntax.clean_text.is_empty() && !syntax.phrases.is_empty() {
+            ""
+        } else if syntax.clean_text.is_empty() {
+            query
+        } else {
+            &syntax.clean_text
+        };
+
         // 1글자 훑기는 이미 위계 먼저 정렬한다(모든 일치가 붙어 있는 일치).
         let order = if hierarchy { Order::Hierarchy } else { Order::Relevance };
-        let result = if kfind_core::fold(query).chars().count() == 1 {
-            self.index.search_character(query, &opts)
+        let result = if kfind_core::fold(search_text).chars().count() == 1 {
+            self.index.search_character(search_text, &opts)
         } else {
-            self.index.search_by(query, &opts, order)
+            self.index.search_groups_by(search_text, &opts, order)
         }
         .map_err(|e| e.to_string())?;
-        let mut terms: Vec<String> = query.split_whitespace().map(str::to_owned).collect();
+        let mut terms: Vec<String> = search_text.split_whitespace().map(str::to_owned).collect();
+        for p in &syntax.phrases {
+            terms.push(p.clone());
+        }
         for w in &result.words {
             terms.push(w.text.clone());
             terms.extend(w.pieces.iter().flatten().cloned());
         }
-        if terms.is_empty() || kfind_core::fold(query).chars().count() == 1 {
-            terms.push(kfind_core::fold(query));
+        if terms.is_empty() || kfind_core::fold(search_text).chars().count() == 1 {
+            terms.push(kfind_core::fold(search_text));
         }
         terms.sort();
         terms.dedup();
@@ -485,8 +509,18 @@ pub fn format_filetime(t: i64) -> Option<String> {
 }
 
 #[cfg(not(windows))]
-pub fn format_filetime(_t: i64) -> Option<String> {
-    None
+pub fn format_filetime(t: i64) -> Option<String> {
+    if t <= 0 {
+        return None;
+    }
+    const WINDOWS_TICK: i64 = 10_000_000;
+    const SEC_TO_UNIX_EPOCH: i64 = 11_644_473_600;
+    let sec = (t / WINDOWS_TICK) - SEC_TO_UNIX_EPOCH;
+    let (y, m, d) = kfind_core::unix_to_ymd(sec + 9 * 3600);
+    let day_sec = (sec + 9 * 3600).rem_euclid(86400);
+    let hour = day_sec / 3600;
+    let minute = (day_sec % 3600) / 60;
+    Some(format!("{y:04}-{m:02}-{d:02} {hour:02}:{minute:02}"))
 }
 
 /// 현재 한국 표준시(KST: UTC+9) 기준 (year, month, day) 반환.
@@ -923,5 +957,39 @@ mod tests {
             .unwrap();
         assert_eq!(ans_all.rows.len(), 2);
         assert!(!ans_all.folder_counts.is_empty());
+
+        // 6. QMS-QUERY 질의 문법 통합 검증
+        // 6-1. 정확 구문 ("청년지원 조례안")
+        let ans_phrase = backend
+            .search_with_scope("\"청년지원 조례안\"", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_phrase.rows.len(), 1);
+        assert_eq!(ans_phrase.rows[0].doc_id, 1);
+
+        // 6-2. 제외어 (-조례안) -> 1번 제외, 2번만 일치
+        let ans_ex = backend
+            .search_with_scope("청년 -조례안", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_ex.rows.len(), 1);
+        assert_eq!(ans_ex.rows[0].doc_id, 2);
+
+        // 6-3. 폴더 path:복지과
+        let ans_path = backend
+            .search_with_scope("청년 path:복지과", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_path.rows.len(), 1);
+        assert_eq!(ans_path.rows[0].doc_id, 2);
+
+        // 6-4. 날짜 after:2026-02-01
+        let ans_after = backend
+            .search_with_scope("청년 after:2026-02-01", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_after.rows.len(), 1);
+        assert_eq!(ans_after.rows[0].doc_id, 2);
+
+        // 6-5. 문법 오류 복구: 검색이 막히지 않고 정상 반환
+        let ans_err = backend
+            .search_with_scope("청년 ext: - after:invalid", false, None, None, None);
+        assert!(ans_err.is_ok());
     }
 }
