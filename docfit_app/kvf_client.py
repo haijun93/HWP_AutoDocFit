@@ -43,15 +43,25 @@ class KvfClient:
         except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
             return dict(ok=False, message=str(error))
 
+    def sync(self):
+        """앱 시작 때: 상주 프로그램이 꺼져 있으면 다시 띄우고(단 사용자가 끈 경우는 제외), 최신본으로 갱신한다."""
+        return self.command("sync")
+
     def command(self, action, payload=None):
         payload = payload or {}
-        if action not in ("status", "enable", "disable", "upgrade_if_stale"):
+        if action not in ("status", "enable", "disable", "upgrade_if_stale", "install", "sync", "uninstall"):
             return dict(ok=False, message="지원하지 않는 가상 폴더 창 명령입니다.")
         with _LOCK:
             command = {"status": "--status", "enable": "--enable",
-                       "disable": "--disable", "upgrade_if_stale": "--upgrade-if-stale"}[action]
-            args = ["--autostart"] if action == "enable" and payload.get("autostart", True) is True else []
+                       "disable": "--disable", "upgrade_if_stale": "--upgrade-if-stale",
+                       "install": "--install", "sync": "--install",
+                       "uninstall": "--uninstall"}[action]
+            args = []
+            if action == "enable":
+                args = ["--autostart"] if payload.get("autostart", True) is True else []
+            elif action in ("install", "sync"):
+                args = ["--respect-disabled"] if payload.get("respect_disabled", True if action == "sync" else False) else []
             result = self._request(command, *args)
-            if result.get("ok") and action in ("enable", "disable"):
+            if result.get("ok") and action in ("enable", "disable", "install", "sync"):
                 return self._request("--status")
             return result

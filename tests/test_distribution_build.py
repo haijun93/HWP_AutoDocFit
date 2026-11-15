@@ -25,6 +25,8 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn("function PrepareToInstall", iss)
         for helper in ("kagent.exe", "klib.exe", "kvf.exe", "kfind.exe", "hierarchy.exe"):
             self.assertIn(f"StopHelper('{helper}')", iss)
+        self.assertIn(r"{app}\_internal\resources\ktm.exe", iss)
+        self.assertIn(r"{app}\_internal\resources\kvf.exe", iss)
         self.assertIn("CloseApplicationsFilter=*.exe,*.dll,*.pyd", iss)
         self.assertIn('Flags: nowait; Check: WizardSilent', iss)
         self.assertIn("{autoprograms}", iss)
