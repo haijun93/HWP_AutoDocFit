@@ -190,6 +190,20 @@ impl Backend {
         ext: Option<&str>,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
+        self.search_with_scope_ext_limit(query, hierarchy, date_range, folder, ext, LIMIT, cancel)
+    }
+
+    /// QMS-EXPORT: 지정 상한(최대 1,000건 등)을 반영한 범위 검색.
+    pub fn search_with_scope_ext_limit(
+        &mut self,
+        query: &str,
+        hierarchy: bool,
+        date_range: Option<(i64, i64)>,
+        folder: Option<&str>,
+        ext: Option<&str>,
+        top: usize,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Answer> {
         self.index.reload().map_err(|e| e.to_string())?;
         let query = query.trim();
         if query.is_empty() {
@@ -201,7 +215,7 @@ impl Backend {
         };
         let syntax = kfind_core::parse_query_syntax(query);
         let mut opts = SearchOptions {
-            top: LIMIT,
+            top,
             refs_per_doc: 1,
             cancel,
             start_date,
@@ -420,6 +434,11 @@ fn read_paths(path: &Path, ids: Option<&HashSet<u64>>) -> Result<HashMap<u64, St
 /// Blocking alternative; call only on the search worker. The service has a
 /// ten-second operation timeout. Responses are length-prefixed and capped here.
 pub fn pipe_search(name: &str, query: &str, hierarchy: bool) -> Result<Vec<Row>> {
+    pipe_search_limit(name, query, hierarchy, LIMIT)
+}
+
+/// QMS-EXPORT: 지정 상한을 반영한 파이프 검색.
+pub fn pipe_search_limit(name: &str, query: &str, hierarchy: bool, top: usize) -> Result<Vec<Row>> {
     if kfind_core::fold(query).chars().count() < 2 {
         return Err(
             "서비스 파이프는 2글자부터 검색합니다. 1글자는 직접 색인 읽기가 필요합니다.".into(),
@@ -428,7 +447,7 @@ pub fn pipe_search(name: &str, query: &str, hierarchy: bool) -> Result<Vec<Row>>
     if hierarchy {
         return Err("서비스 파이프는 전체 위계 순위 질의를 아직 지원하지 않습니다.".into());
     }
-    let bytes = pipe_call(name, &json!({"command":"query", "id":1, "text":query,"top":LIMIT,"refs":1}))?;
+    let bytes = pipe_call(name, &json!({"command":"query", "id":1, "text":query,"top":top,"refs":1}))?;
     decode_rows(&bytes)
 }
 
@@ -459,7 +478,12 @@ pub const NAME_SORTS: [(&str, &str); 4] = [("relevance", "관련도"), ("name", 
 
 /// 파일명 탭: 서비스가 메모리에 쥔 드라이브 전체 이름 색인에 `names_query`(서비스 SID 범위, 다른 사용자 프로필 제외).
 pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
-    let bytes = pipe_call(name, &json!({"command":"names_query","id":1,"text":query,"limit":LIMIT,"sort":sort}))?;
+    pipe_names_limit(name, query, sort, LIMIT)
+}
+
+/// QMS-EXPORT: 지정 상한을 반영한 파일명 색인 질의.
+pub fn pipe_names_limit(name: &str, query: &str, sort: &str, limit: usize) -> Result<Vec<Row>> {
+    let bytes = pipe_call(name, &json!({"command":"names_query","id":1,"text":query,"limit":limit,"sort":sort}))?;
     decode_names(&bytes)
 }
 

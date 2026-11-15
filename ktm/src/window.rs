@@ -60,6 +60,7 @@ type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
 struct Pending {
     search: Option<Job>,
     snippets: Option<SnipJob>,
+    export: Option<(Job, ktm::export::ExportFormat)>,
 }
 
 #[derive(Clone, Copy)]
@@ -404,6 +405,58 @@ fn key(h: HWND, key: usize) -> bool {
             _ if ctrl && key == b'F' as usize => {
                 SetFocus(with(|u| u.edit));
                 SendMessageW(with(|u| u.edit), 0x00b1, 0, -1);
+            }
+            _ if ctrl && key == b'E' as usize => {
+                let chosen = {
+                    #[cfg(windows)]
+                    {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::*;
+                        let menu = CreatePopupMenu();
+                        let csv_label = wide("CSV로 내보내기 (Excel 호환, UTF-8 BOM)");
+                        let tsv_label = wide("TSV로 내보내기 (탭 구분 텍스트, UTF-8 BOM)");
+                        AppendMenuW(menu, MF_STRING, 1, csv_label.as_ptr());
+                        AppendMenuW(menu, MF_STRING, 2, tsv_label.as_ptr());
+                        let mut pt = POINT { x: 0, y: 0 };
+                        GetCursorPos(&mut pt);
+                        let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, h, null());
+                        DestroyMenu(menu);
+                        SetFocus(with(|u| u.edit));
+                        match cmd {
+                            1 => Some(ktm::export::ExportFormat::Csv),
+                            2 => Some(ktm::export::ExportFormat::Tsv),
+                            _ => None,
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Some(ktm::export::ExportFormat::Csv)
+                    }
+                };
+
+                if let Some(format) = chosen {
+                    let (tx, job) = with(|u| {
+                        let cancel = Arc::new(AtomicBool::new(false));
+                        let sort = ktm::backend::NAME_SORTS[u.name_sort % 4].0;
+                        let job = (
+                            u.state.generation,
+                            u.state.query.clone(),
+                            u.state.tab,
+                            Instant::now(),
+                            cancel,
+                            sort,
+                            u.state.date_filter,
+                            u.state.custom_date_range,
+                            u.state.selected_folder.clone(),
+                            u.state.selected_ext.clone(),
+                        );
+                        (u.tx.clone(), job)
+                    });
+                    {
+                        let mut p = tx.0.lock().unwrap();
+                        p.export = Some((job, format));
+                        tx.1.notify_one();
+                    }
+                }
             }
             0x31..=0x39 if alt || with(|u| u.state.query.is_empty()) => {
                 let n = (key as u16 - 0x31) as usize;
@@ -1775,6 +1828,7 @@ pub fn run() -> Result<(), String> {
                 enum Work {
                     Search(Job),
                     Snippets(SnipJob),
+                    Export(Job, ktm::export::ExportFormat),
                 }
                 let work = {
                     let mut slot = worker_pending.0.lock().unwrap();
@@ -1784,6 +1838,9 @@ pub fn run() -> Result<(), String> {
                         }
                         if let Some(j) = slot.snippets.take() {
                             break Work::Snippets(j);
+                        }
+                        if let Some(j) = slot.export.take() {
+                            break Work::Export(j.0, j.1);
                         }
                         slot = worker_pending.1.wait(slot).unwrap();
                     }
@@ -1821,6 +1878,45 @@ pub fn run() -> Result<(), String> {
                             b.search_with_scope_ext(&q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), Some(cancel))
                         })();
                         Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
+                    }
+                    Work::Export((_g, q, tab, _start, cancel, sort, date_filter, custom_date_range, folder, ext), format) => {
+                        let hierarchy = tab == Tab::Hierarchy;
+                        let kind = ktm::export::ExportKind::from(tab);
+                        let rows_result: Result<Vec<Row>, String> = (|| {
+                            if q.trim().is_empty() {
+                                return Ok(Vec::new());
+                            }
+                            if tab == Tab::Names {
+                                return ktm::backend::pipe_names_limit(&pipe_name, &q, sort, ktm::export::EXPORT_LIMIT);
+                            }
+                            if pipe_mode {
+                                return ktm::backend::pipe_search_limit(&pipe_name, &q, hierarchy, ktm::export::EXPORT_LIMIT);
+                            }
+                            if backend.is_none() {
+                                backend = Some(open(&root)?);
+                            }
+                            let b = backend.as_mut().unwrap();
+                            let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
+                            let ans = b.search_with_scope_ext_limit(
+                                &q,
+                                hierarchy,
+                                date_range,
+                                folder.as_deref(),
+                                ext.as_deref(),
+                                ktm::export::EXPORT_LIMIT,
+                                Some(cancel),
+                            )?;
+                            let mut rows = ans.rows;
+                            b.fill_snippets(&mut rows, &ans.terms);
+                            Ok(rows)
+                        })();
+
+                        if let Ok(rows) = rows_result {
+                            if let Ok(saved_path) = ktm::export::export_to_file(format, kind, &rows, None, None) {
+                                let _ = ktm::export::open_export_folder(&saved_path);
+                            }
+                        }
+                        continue;
                     }
                     Work::Snippets((g, mut rows, terms)) => {
                         if let Some(b) = backend.as_mut() {
