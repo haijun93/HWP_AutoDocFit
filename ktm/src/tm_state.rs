@@ -61,6 +61,43 @@ pub struct State {
     pub selected_folder: Option<String>,
     pub folder_counts: Vec<(String, u32)>,
     pub selected_ext: Option<String>,
+    // QMS-HISTORY: 최근 검색(최대 30)·즐겨찾기 검색
+    pub recent_queries: Vec<String>,
+    pub favorite_queries: Vec<crate::settings::FavoriteQuery>,
+    pub selected_history: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    pub query: String,
+    pub name: String,
+    pub is_favorite: bool,
+}
+
+impl State {
+    pub fn history_entries(&self) -> Vec<HistoryEntry> {
+        let mut entries = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for fav in &self.favorite_queries {
+            if seen.insert(fav.query.clone()) {
+                entries.push(HistoryEntry {
+                    query: fav.query.clone(),
+                    name: if fav.name.is_empty() { fav.query.clone() } else { fav.name.clone() },
+                    is_favorite: true,
+                });
+            }
+        }
+        for rec in &self.recent_queries {
+            if seen.insert(rec.clone()) {
+                entries.push(HistoryEntry {
+                    query: rec.clone(),
+                    name: rec.clone(),
+                    is_favorite: false,
+                });
+            }
+        }
+        entries
+    }
 }
 
 impl Default for State {
@@ -82,6 +119,9 @@ impl Default for State {
             selected_folder: None,
             folder_counts: Vec::new(),
             selected_ext: None,
+            recent_queries: Vec::new(),
+            favorite_queries: Vec::new(),
+            selected_history: None,
         }
     }
 }
@@ -113,6 +153,14 @@ pub enum Event {
     ApplyAutocomplete(usize),
     SelectTopTopic(Option<usize>),
     ApplyTopTopic(usize),
+    // QMS-HISTORY
+    SetHistory {
+        recent: Vec<String>,
+        favorites: Vec<crate::settings::FavoriteQuery>,
+    },
+    ToggleFavorite,
+    SelectHistory(Option<usize>),
+    ApplyHistory(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +192,7 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
     clear_results(state);
     state.selected_autocomplete = None;
     state.selected_top_topic = None;
+    state.selected_history = None;
     // Increment even for an empty/short query: an older completion is now invalid.
     state.generation = state.generation.wrapping_add(1);
     let query = state.query.trim();
@@ -579,6 +628,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             if state.phase != Phase::Hidden {
                 state.generation = state.generation.wrapping_add(1);
                 state.phase = Phase::Hidden;
+                state.selected_history = None;
                 clear_results(&mut state);
                 effects.push(Effect::Hide);
             }
@@ -587,6 +637,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         Event::Input(query) => {
             if state.query != query {
                 state.query = query;
+                state.selected_history = None;
                 let syntax = kfind_core::parse_query_syntax(&state.query);
                 state.selected_folder = syntax.folder.clone();
                 state.selected_ext = syntax.file_types.as_ref().map(|v| v.join(","));
@@ -611,6 +662,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 if idx < state.autocompletes.len() {
                     state.query = state.autocompletes[idx].clone();
                     state.selected_autocomplete = None;
+                    crate::settings::push_recent_query(&mut state.recent_queries, &state.query);
                     search(&mut state, &mut effects, true);
                     return (state, effects);
                 }
@@ -619,8 +671,21 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 if idx < state.top_topics.len() {
                     state.query = state.top_topics[idx].clone();
                     state.selected_top_topic = None;
+                    crate::settings::push_recent_query(&mut state.recent_queries, &state.query);
                     search(&mut state, &mut effects, true);
                     return (state, effects);
+                }
+            }
+            if state.query.trim().is_empty() {
+                if let Some(idx) = state.selected_history {
+                    let entries = state.history_entries();
+                    if let Some(entry) = entries.get(idx) {
+                        state.query = entry.query.clone();
+                        state.selected_history = None;
+                        crate::settings::push_recent_query(&mut state.recent_queries, &state.query);
+                        search(&mut state, &mut effects, true);
+                        return (state, effects);
+                    }
                 }
             }
             if state.phase == Phase::Results && state.selected.is_some() {
@@ -629,6 +694,9 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                     folder: false,
                 });
             } else {
+                if !state.query.trim().is_empty() {
+                    crate::settings::push_recent_query(&mut state.recent_queries, &state.query);
+                }
                 search(&mut state, &mut effects, true);
             }
         }
@@ -637,6 +705,9 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 state.phase = Phase::Results;
                 state.result_count = count;
                 state.selected = if count > 0 { Some(0) } else { None };
+                if count > 0 && !state.query.trim().is_empty() {
+                    crate::settings::push_recent_query(&mut state.recent_queries, &state.query);
+                }
             }
         }
         Event::SearchFailed {
@@ -649,15 +720,32 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             }
         }
         Event::MoveSelection(delta) => {
-            if state.phase == Phase::Visible && !state.top_topics.is_empty() {
-                let n = state.top_topics.len();
-                let current = state.selected_top_topic.unwrap_or(0);
-                if delta > 0 {
-                    state.selected_top_topic = Some((current + delta as usize).min(n - 1));
-                } else if current as isize + delta >= 0 {
-                    state.selected_top_topic = Some((current as isize + delta) as usize);
-                } else {
-                    state.selected_top_topic = None;
+            if state.query.trim().is_empty() {
+                let entries = state.history_entries();
+                let n = entries.len();
+                if n > 0 {
+                    let current = state.selected_history;
+                    if let Some(cur) = current {
+                        if delta < 0 && cur == 0 {
+                            state.selected_history = None;
+                        } else if delta < 0 {
+                            state.selected_history = Some(cur.saturating_sub(1));
+                        } else if cur + 1 < n {
+                            state.selected_history = Some(cur + 1);
+                        }
+                    } else if delta > 0 {
+                        state.selected_history = Some(0);
+                    }
+                } else if state.phase == Phase::Visible && !state.top_topics.is_empty() {
+                    let n = state.top_topics.len();
+                    let current = state.selected_top_topic.unwrap_or(0);
+                    if delta > 0 {
+                        state.selected_top_topic = Some((current + delta as usize).min(n - 1));
+                    } else if current as isize + delta >= 0 {
+                        state.selected_top_topic = Some((current as isize + delta) as usize);
+                    } else {
+                        state.selected_top_topic = None;
+                    }
                 }
             } else if !state.autocompletes.is_empty() && (state.phase == Phase::Typing || state.phase == Phase::Searching || state.selected.is_none()) {
                 let n = state.autocompletes.len();
@@ -770,6 +858,40 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             if idx < state.top_topics.len() {
                 state.query = state.top_topics[idx].clone();
                 state.selected_top_topic = None;
+                search(&mut state, &mut effects, true);
+            }
+        }
+        Event::SetHistory { recent, favorites } => {
+            state.recent_queries = recent;
+            state.favorite_queries = favorites;
+        }
+        Event::ToggleFavorite => {
+            let target_query = if !state.query.trim().is_empty() {
+                Some(state.query.trim().to_string())
+            } else if let Some(idx) = state.selected_history {
+                let entries = state.history_entries();
+                entries.get(idx).map(|e| e.query.clone())
+            } else {
+                None
+            };
+            if let Some(q) = target_query {
+                if let Some(pos) = state.favorite_queries.iter().position(|f| f.query == q) {
+                    state.favorite_queries.remove(pos);
+                } else {
+                    state.favorite_queries.push(crate::settings::FavoriteQuery::new(q.clone(), q));
+                }
+            }
+        }
+        Event::SelectHistory(idx) => {
+            state.selected_history = idx;
+        }
+        Event::ApplyHistory(idx) => {
+            let entries = state.history_entries();
+            if let Some(entry) = entries.get(idx) {
+                state.query = entry.query.clone();
+                state.selected_history = None;
+                let q = state.query.clone();
+                crate::settings::push_recent_query(&mut state.recent_queries, &q);
                 search(&mut state, &mut effects, true);
             }
         }
@@ -1167,5 +1289,110 @@ mod tests {
         assert_eq!(scope_after.folder.as_deref(), Some("감사과"));
         assert_eq!(scope_after.date_filter, DateFilter::Custom);
         assert_eq!(scope_after.custom_date_range, Some((20260301, 20260315)));
+    }
+
+    #[test]
+    fn test_history_up_down_selection_and_submit() {
+        let mut initial = visible();
+        initial.favorite_queries = vec![crate::settings::FavoriteQuery::new("즐겨찾기검색", "즐겨찾기")];
+        initial.recent_queries = vec!["최근검색1".into(), "최근검색2".into()];
+
+        let entries = initial.history_entries();
+        assert_eq!(entries.len(), 3);
+        assert!(entries[0].is_favorite);
+        assert_eq!(entries[0].query, "즐겨찾기검색");
+        assert!(!entries[1].is_favorite);
+        assert_eq!(entries[1].query, "최근검색1");
+
+        // 아래 화살표로 0번(즐겨찾기검색) 선택
+        let (state, _) = step(&initial, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(0));
+
+        // 아래 화살표로 1번(최근검색1) 선택
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(1));
+
+        // 아래 화살표로 2번(최근검색2) 선택
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(2));
+
+        // 끝에서 더 아래로 내려가지 않음 (클램프)
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(2));
+
+        // 위로 이동
+        let (state, _) = step(&state, Event::MoveSelection(-1));
+        assert_eq!(state.selected_history, Some(1));
+        let (state, _) = step(&state, Event::MoveSelection(-1));
+        assert_eq!(state.selected_history, Some(0));
+
+        // 0번에서 위로 이동하면 선택 해제
+        let (state, _) = step(&state, Event::MoveSelection(-1));
+        assert_eq!(state.selected_history, None);
+
+        // 다시 1번(최근검색1) 선택 후 Enter로 불러오기
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(1));
+
+        let (state, effects) = step(&state, Event::Submit);
+        assert_eq!(state.query, "최근검색1");
+        assert_eq!(state.phase, Phase::Searching);
+        assert_eq!(state.selected_history, None);
+        assert!(matches!(&effects[..], [Effect::Search { query, .. }] if query == "최근검색1"));
+        // 최근 검색 최신으로 갱신
+        assert_eq!(state.recent_queries[0], "최근검색1");
+    }
+
+    #[test]
+    fn test_toggle_favorite_for_current_query_and_history_selection() {
+        let (state, _) = step(&visible(), Event::Input("특정보고서".into()));
+        assert_eq!(state.query, "특정보고서");
+        assert!(state.favorite_queries.is_empty());
+
+        // Ctrl+D (ToggleFavorite) -> 추가
+        let (state, _) = step(&state, Event::ToggleFavorite);
+        assert_eq!(state.favorite_queries.len(), 1);
+        assert_eq!(state.favorite_queries[0].query, "특정보고서");
+
+        // 다시 ToggleFavorite -> 제거
+        let (state, _) = step(&state, Event::ToggleFavorite);
+        assert!(state.favorite_queries.is_empty());
+
+        // 빈 검색창에서 선택된 히스토리 항목 토글
+        let mut state = visible();
+        state.recent_queries = vec!["지출결의서".into()];
+        let (state, _) = step(&state, Event::MoveSelection(1));
+        assert_eq!(state.selected_history, Some(0));
+
+        let (state, _) = step(&state, Event::ToggleFavorite);
+        assert_eq!(state.favorite_queries.len(), 1);
+        assert_eq!(state.favorite_queries[0].query, "지출결의서");
+    }
+
+    #[test]
+    fn test_apply_history_item_and_query_sync() {
+        let mut state = visible();
+        state.favorite_queries = vec![crate::settings::FavoriteQuery::new("공문서", "공문")];
+        state.recent_queries = vec!["기안문".into()];
+
+        let (state, effects) = step(&state, Event::ApplyHistory(1));
+        assert_eq!(state.query, "기안문");
+        assert_eq!(state.phase, Phase::Searching);
+        assert!(matches!(&effects[..], [Effect::Search { query, .. }] if query == "기안문"));
+        assert_eq!(state.recent_queries[0], "기안문");
+    }
+
+    #[test]
+    fn test_recent_queries_max_30_limit_in_state() {
+        let mut state = visible();
+        for i in 1..=35 {
+            let (next, _) = step(&state, Event::Input(format!("검색어{i}")));
+            let (next, _) = step(&next, Event::Submit);
+            state = next;
+        }
+        assert_eq!(state.recent_queries.len(), 30);
+        assert_eq!(state.recent_queries[0], "검색어35");
+        assert_eq!(state.recent_queries[29], "검색어6");
     }
 }

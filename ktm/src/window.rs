@@ -152,8 +152,10 @@ fn sync_theme(theme_str: &str) {
 
 fn event(h: HWND, e: Event) {
     let user_input = matches!(e, Event::Input(_));
-    let (effects, query_changed) = edit(|u| {
+    let (effects, query_changed, history_changed) = edit(|u| {
         let prev_query = u.state.query.clone();
+        let prev_recent = u.state.recent_queries.clone();
+        let prev_fav = u.state.favorite_queries.clone();
         if matches!(
             &e,
             Event::Input(_)
@@ -164,19 +166,29 @@ fn event(h: HWND, e: Event) {
                 | Event::SetFolderFilter(_)
                 | Event::ApplyAutocomplete(_)
                 | Event::ApplyTopTopic(_)
+                | Event::ApplyHistory(_)
         ) {
             u.cancel.store(true, Ordering::Relaxed);
         }
         let (s, fx) = tm_state::step(&u.state, e);
         let changed = !user_input && s.query != prev_query;
+        let hist_changed = s.recent_queries != prev_recent || s.favorite_queries != prev_fav;
         u.state = s;
         if u.state.result_count == 0 {
             u.rows.clear();
             u.terms.clear();
             u.top = 0;
         }
-        (fx, changed)
+        (fx, changed, hist_changed)
     });
+    if history_changed {
+        let path = with(|u| u.settings_path.clone());
+        let (recent, favorites) = with(|u| (u.state.recent_queries.clone(), u.state.favorite_queries.clone()));
+        let mut s = Settings::load(&path).unwrap_or_default();
+        s.recent_queries = recent;
+        s.favorite_queries = favorites;
+        let _ = s.save(&path);
+    }
     if query_changed {
         let (ed, q) = with(|u| (u.edit, wide(&u.state.query)));
         let caret = q.len().saturating_sub(1);
@@ -397,10 +409,15 @@ fn key(h: HWND, key: usize) -> bool {
                 });
                 frame::apply_theme(h);
                 let path = with(|u| u.settings_path.clone());
-                let hotkey = Settings::load(&path).unwrap_or_default().hotkey;
-                let _ = Settings { theme: t, hotkey }.save(&path);
+                let mut loaded = Settings::load(&path).unwrap_or_default();
+                loaded.theme = t;
+                let _ = loaded.save(&path);
                 InvalidateRect(h, null(), 1);
                 InvalidateRect(ed, null(), 1);
+            }
+            _ if ctrl && (key == b'D' as usize || key == b'd' as usize) => {
+                event(h, Event::ToggleFavorite);
+                InvalidateRect(h, null(), 0);
             }
             _ if ctrl && key == b'F' as usize => {
                 SetFocus(with(|u| u.edit));
@@ -970,37 +987,75 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
             }
 
-            // ⑥ 빈 검색어 첫 화면 주요 주제 1~10위 그리드
+            // ⑥ 빈 검색어 첫 화면 최근/즐겨찾기 목록 또는 주요 주제 1~10위
             if u.state.query.trim().is_empty() && u.rows.is_empty() {
                 let ty = fy + fh + scale(h, 14);
-                SelectObject(mem, u.small_bold);
-                text(
-                    "주요 주제 1~10위",
-                    RECT { left: pad, top: ty, right: r.right - pad, bottom: ty + scale(h, 20) },
-                    p.text_sub,
-                    0,
-                );
-                let btn_y = ty + scale(h, 24);
-                let btn_h = scale(h, 32);
-                let col_w = (r.right - 2 * pad - scale(h, 16)) / 2;
-                SelectObject(mem, u.font);
-                for (i, topic) in u.state.top_topics.iter().take(10).enumerate() {
-                    let col = (i % 2) as i32;
-                    let row = (i / 2) as i32;
-                    let left = pad + col * (col_w + scale(h, 16));
-                    let top = btn_y + row * (btn_h + scale(h, 6));
-                    let rc = RECT { left, top, right: left + col_w, bottom: top + btn_h };
-                    let active = u.state.selected_top_topic == Some(i);
-                    if active {
-                        fill(rc, p.selected);
-                        let b_brush = CreateSolidBrush(p.accent);
-                        FrameRect(mem, &rc, b_brush);
-                        DeleteObject(b_brush);
-                    } else {
-                        fill(rc, p.tab_hover);
+                let entries = u.state.history_entries();
+                if !entries.is_empty() {
+                    SelectObject(mem, u.small_bold);
+                    text(
+                        "최근 및 즐겨찾기 검색  (↑↓ 선택 · Enter 불러오기 · Ctrl+D 즐겨찾기 토글)",
+                        RECT { left: pad, top: ty, right: r.right - pad, bottom: ty + scale(h, 20) },
+                        p.text_sub,
+                        0,
+                    );
+                    let btn_y = ty + scale(h, 24);
+                    let rh = scale(h, 28);
+                    let status_h = scale(h, STATUS_H);
+                    let max_visible = ((r.bottom - status_h - btn_y).max(0) / rh).max(0) as usize;
+                    SelectObject(mem, u.font);
+                    for (i, entry) in entries.iter().take(max_visible).enumerate() {
+                        let top = btn_y + i as i32 * rh;
+                        let rc = RECT { left: pad, top, right: r.right - pad, bottom: top + rh };
+                        let active = u.state.selected_history == Some(i);
+                        if active {
+                            fill(rc, p.selected);
+                            let b_brush = CreateSolidBrush(p.accent);
+                            FrameRect(mem, &rc, b_brush);
+                            DeleteObject(b_brush);
+                        } else {
+                            fill(rc, p.tab_hover);
+                        }
+                        let prefix = if entry.is_favorite { "★ " } else { "🕒 " };
+                        let label = if entry.is_favorite && !entry.name.is_empty() && entry.name != entry.query {
+                            format!("{prefix}{}: {}", entry.name, entry.query)
+                        } else {
+                            format!("{prefix}{}", entry.query)
+                        };
+                        let pad_x = scale(h, 8);
+                        let text_rc = RECT { left: pad + pad_x, top, right: r.right - pad - pad_x, bottom: top + rh };
+                        text(&label, text_rc, if active { p.accent } else { p.text }, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
                     }
-                    let label = format!("{}. {}", i + 1, topic);
-                    text(&label, rc, if active { p.accent } else { p.text }, DT_CENTER | DT_END_ELLIPSIS);
+                } else {
+                    SelectObject(mem, u.small_bold);
+                    text(
+                        "주요 주제 1~10위",
+                        RECT { left: pad, top: ty, right: r.right - pad, bottom: ty + scale(h, 20) },
+                        p.text_sub,
+                        0,
+                    );
+                    let btn_y = ty + scale(h, 24);
+                    let btn_h = scale(h, 32);
+                    let col_w = (r.right - 2 * pad - scale(h, 16)) / 2;
+                    SelectObject(mem, u.font);
+                    for (i, topic) in u.state.top_topics.iter().take(10).enumerate() {
+                        let col = (i % 2) as i32;
+                        let row = (i / 2) as i32;
+                        let left = pad + col * (col_w + scale(h, 16));
+                        let top = btn_y + row * (btn_h + scale(h, 6));
+                        let rc = RECT { left, top, right: left + col_w, bottom: top + btn_h };
+                        let active = u.state.selected_top_topic == Some(i);
+                        if active {
+                            fill(rc, p.selected);
+                            let b_brush = CreateSolidBrush(p.accent);
+                            FrameRect(mem, &rc, b_brush);
+                            DeleteObject(b_brush);
+                        } else {
+                            fill(rc, p.tab_hover);
+                        }
+                        let label = format!("{}. {}", i + 1, topic);
+                        text(&label, rc, if active { p.accent } else { p.text }, DT_CENTER | DT_END_ELLIPSIS);
+                    }
                 }
             }
 
@@ -1127,7 +1182,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         u.rows.len()
                     ),
                     _ if u.state.query.trim().is_empty() => {
-                        "주제 단추를 누르거나 검색어를 입력하세요".into()
+                        if !u.state.history_entries().is_empty() {
+                            "↑↓ 선택 · Enter 불러오기 · Ctrl+D 즐겨찾기 토글".into()
+                        } else {
+                            "주제 단추를 누르거나 검색어를 입력하세요".into()
+                        }
                     }
                     _ => "2글자부터 실시간 검색 · 1글자는 Enter".into(),
                 }
@@ -1482,19 +1541,38 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         }
                     }
                 } else if with(|u| u.state.query.trim().is_empty() && u.rows.is_empty()) {
-                    // ④ 빈 검색어 첫 화면 주제 1~10위 단추
-                    let ty = fy + fh + scale(h, 14) + scale(h, 24);
-                    let btn_h = scale(h, 32);
-                    let col_w = (rc_w.right - 2 * pad - scale(h, 16)) / 2;
-                    let n_topics = with(|u| u.state.top_topics.len().min(10));
-                    for i in 0..n_topics {
-                        let col = (i % 2) as i32;
-                        let row = (i / 2) as i32;
-                        let left = pad + col * (col_w + scale(h, 16));
-                        let top = ty + row * (btn_h + scale(h, 6));
-                        if x >= left && x < left + col_w && y >= top && y < top + btn_h {
-                            event(h, Event::ApplyTopTopic(i));
-                            break;
+                    let entries = with(|u| u.state.history_entries());
+                    if !entries.is_empty() {
+                        let btn_y = fy + fh + scale(h, 14) + scale(h, 24);
+                        let rh = scale(h, 28);
+                        let status_h = scale(h, STATUS_H);
+                        let max_visible = ((rc_w.bottom - status_h - btn_y).max(0) / rh).max(0) as usize;
+                        let n_hist = entries.len().min(max_visible);
+                        for i in 0..n_hist {
+                            let top = btn_y + i as i32 * rh;
+                            let left = pad;
+                            let right = rc_w.right - pad;
+                            let bottom = top + rh;
+                            if x >= left && x < right && y >= top && y < bottom {
+                                event(h, Event::ApplyHistory(i));
+                                break;
+                            }
+                        }
+                    } else {
+                        // ④ 빈 검색어 첫 화면 주제 1~10위 단추
+                        let ty = fy + fh + scale(h, 14) + scale(h, 24);
+                        let btn_h = scale(h, 32);
+                        let col_w = (rc_w.right - 2 * pad - scale(h, 16)) / 2;
+                        let n_topics = with(|u| u.state.top_topics.len().min(10));
+                        for i in 0..n_topics {
+                            let col = (i % 2) as i32;
+                            let row = (i / 2) as i32;
+                            let left = pad + col * (col_w + scale(h, 16));
+                            let top = ty + row * (btn_h + scale(h, 6));
+                            if x >= left && x < left + col_w && y >= top && y < top + btn_h {
+                                event(h, Event::ApplyTopTopic(i));
+                                break;
+                            }
                         }
                     }
                 } else if !with(|u| u.state.autocompletes.is_empty())
@@ -1765,7 +1843,11 @@ pub fn run() -> Result<(), String> {
 
         UI.with(|u| {
             *u.borrow_mut() = Some(Ui {
-                state: State::default(),
+                state: State {
+                    recent_queries: settings.recent_queries.clone(),
+                    favorite_queries: settings.favorite_queries.clone(),
+                    ..State::default()
+                },
                 rows: Vec::new(),
                 terms: Vec::new(),
                 edit: ed,

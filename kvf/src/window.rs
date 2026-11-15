@@ -71,9 +71,10 @@ fn ensure()->Result<(),String>{
  let settings=Settings::load(&crate::paths::data_dir().join("settings.json"));let mut pt=POINT{x:0,y:0};GetCursorPos(&mut pt);
  let mut monitor:MONITORINFO=std::mem::zeroed();monitor.cbSize=std::mem::size_of_val(&monitor) as u32;GetMonitorInfoW(MonitorFromPoint(pt,MONITOR_DEFAULTTONEAREST),&mut monitor);
  let r=place(settings.rect,[pt.x,pt.y],monitor.rcWork);
- let h=CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),wide("가상 폴더").as_ptr(),WS_POPUP|WS_THICKFRAME|WS_MAXIMIZEBOX,r[0],r[1],r[2],r[3],null_mut(),null_mut(),instance,null());
+ let h=CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),wide("퀵가상폴더").as_ptr(),WS_POPUP|WS_THICKFRAME|WS_MAXIMIZEBOX,r[0],r[1],r[2],r[3],null_mut(),null_mut(),instance,null());
  if h.is_null(){return Err("목록 창 생성 실패".into());}edit(|s|{s.hwnd=h;s.model.explorer=load_layout();});frame::style_frame(h);topmost(h);Ok(())
  }}
+pub fn window_title(name: &str) -> String { format!("퀵가상폴더 · {name} ▾") }
 /// 테마 상태 전이(창 스레드): kagent 설정의 선호 + 시스템 → `ui_theme` 상태 하나. 색이 바뀌면 틀을 맞추고 다시 그린다.
 /// 시작할 때·테마 메시지(시스템 변경, kagent의 DocFitThemeChanged 방송)·reload에서 부른다.
 pub fn refresh_theme(){let change=ui_theme::refresh(crate::settings::agent_theme(&crate::paths::agent_settings()));let h=with(|s|s.hwnd);if change.look&&!h.is_null(){unsafe{frame::apply_theme(h);}draw_later();}}
@@ -97,7 +98,7 @@ unsafe fn paint(h:HWND){unsafe{
  let p=ui_theme::palette();
  fill(rc,p.bg);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},p.plain_head_bg);
  with(|s|{
- let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,p.text);text(&format!("가상 폴더 · {name} ▾"),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
+ let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,p.text);text(&window_title(name),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
  for(i,label)in ["✕","□","―",if s.model.sticky{"◆"}else{"◇"}].iter().enumerate(){let right=rc.right-i as i32*frame::scale(h,40);text(label,RECT{left:right-frame::scale(h,40),top:0,right,bottom:head},DT_CENTER);}
  for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},p.accent_line);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);}
  let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),RECT{left:pad,top:head+tab,right:rc.right-pad,bottom:y},DT_END_ELLIPSIS);}
@@ -135,6 +136,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  #[test]fn saved_offscreen_clamps(){assert_eq!(place(Some([9999,-9999,600,420]),[0,0],RECT{left:0,top:0,right:1920,bottom:1080}),[1320,0,600,420]);}
  #[test]fn first_position_near_mouse(){assert_eq!(place(None,[100,100],RECT{left:0,top:0,right:1920,bottom:1080}),[112,112,600,420]);}
  #[test]fn tabs_match_data_spaces(){assert_eq!(SPACES,[None,Some("core"),Some("basis"),Some("reference"),Some("temp")]);}
+ #[test]fn window_title_formats_correctly(){assert_eq!(window_title("상자 선택"),"퀵가상폴더 · 상자 선택 ▾");assert_eq!(window_title("업무"),"퀵가상폴더 · 업무 ▾");}
 }
 
 #[cfg(test)] mod integration_tests {
