@@ -12,7 +12,10 @@ pub fn extract_extension(path_or_name: &str) -> String {
     if let Some(pos) = name.rfind('.') {
         if pos > 0 && pos + 1 < name.len() {
             let ext = &name[pos + 1..];
-            if ext.len() <= 10 && ext.chars().all(|c| c.is_ascii_alphanumeric()) && ext.chars().any(|c| c.is_ascii_alphabetic()) {
+            if ext.len() <= 10
+                && ext.chars().all(|c| c.is_ascii_alphanumeric())
+                && ext.chars().any(|c| c.is_ascii_alphabetic())
+            {
                 return ext.to_ascii_lowercase();
             }
         }
@@ -90,8 +93,9 @@ fn is_date_pattern_2digit(s: &str) -> bool {
 /// v2, V1, ver3, ver.2, v.1, v1.0, _2, -2, (1), [1], 최종, 수정본, 수정, 사본, copy 등
 fn is_version_or_modifier(token: &str) -> bool {
     let lower = token.to_ascii_lowercase();
-    let trimmed = lower
-        .trim_matches(|c: char| c == '(' || c == ')' || c == '[' || c == ']' || c == '_' || c == '-');
+    let trimmed = lower.trim_matches(|c: char| {
+        c == '(' || c == ')' || c == '[' || c == ']' || c == '_' || c == '-'
+    });
 
     if trimmed.is_empty() {
         return false;
@@ -99,14 +103,20 @@ fn is_version_or_modifier(token: &str) -> bool {
 
     // 키워드
     match trimmed {
-        "최종" | "수정본" | "수정" | "사본" | "copy" | "초안" | "배포용" | "제출용" => return true,
+        "최종" | "수정본" | "수정" | "사본" | "copy" | "초안" | "배포용" | "제출용" =>
+        {
+            return true;
+        }
         _ => {}
     }
 
     // 괄호 안 숫자 또는 단독 숫자: (1), [2], _2, -1 등
     if trimmed.chars().all(|c| c.is_ascii_digit()) {
         // 원래 토큰에 괄호나 언더스코어, 하이픈이 감싸져 있었거나 숫자인 경우
-        let wrapped = token.starts_with('(') || token.starts_with('[') || token.starts_with('_') || token.starts_with('-');
+        let wrapped = token.starts_with('(')
+            || token.starts_with('[')
+            || token.starts_with('_')
+            || token.starts_with('-');
         if wrapped || token.chars().all(|c| c.is_ascii_digit()) {
             return true;
         }
@@ -222,7 +232,10 @@ pub fn normalize_name(path_or_name: &str) -> String {
         // 괄호 감싸진 것: (1), [수정본], (최종) 등
         if (t.starts_with('(') && t.ends_with(')')) || (t.starts_with('[') && t.ends_with(']')) {
             let inner = &t[1..t.len() - 1].trim();
-            if inner.is_empty() || inner.chars().all(|c| c.is_ascii_digit()) || is_version_or_modifier(inner) {
+            if inner.is_empty()
+                || inner.chars().all(|c| c.is_ascii_digit())
+                || is_version_or_modifier(inner)
+            {
                 continue;
             }
             // 대괄호로 둘러싸인 태그 (예: [기획], [서식]) 등은 내부 단어로 유지

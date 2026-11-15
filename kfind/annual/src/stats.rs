@@ -1,6 +1,6 @@
 //! 통계 모듈: 주제×월, 주제×ISO주, 주×요일 열지도 수, 상위 주제, 집중 시기(평균+2표준편차 넘는 주).
-use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::cluster::Topic;
 use crate::date::{Date, IsoWeek, Period, timestamp_to_iso_week, timestamp_to_weekday};
