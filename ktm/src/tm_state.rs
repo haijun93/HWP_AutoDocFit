@@ -60,6 +60,7 @@ pub struct State {
     pub custom_date_range: Option<(i64, i64)>,
     pub selected_folder: Option<String>,
     pub folder_counts: Vec<(String, u32)>,
+    pub selected_ext: Option<String>,
 }
 
 impl Default for State {
@@ -80,6 +81,7 @@ impl Default for State {
             custom_date_range: None,
             selected_folder: None,
             folder_counts: Vec::new(),
+            selected_ext: None,
         }
     }
 }
@@ -103,6 +105,7 @@ pub enum Event {
     SetDateFilter(DateFilter),
     SetCustomDate(i64, i64),
     SetFolderFilter(Option<String>),
+    SetExtFilter(Option<String>),
     SetAutocompletes(Vec<String>),
     SetTopTopics(Vec<String>),
     SetFolderCounts(Vec<(String, u32)>),
@@ -123,6 +126,7 @@ pub enum Effect {
         date_filter: DateFilter,
         custom_date_range: Option<(i64, i64)>,
         folder: Option<String>,
+        ext: Option<String>,
     },
     Open {
         index: usize,
@@ -152,6 +156,7 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
             date_filter: state.date_filter,
             custom_date_range: state.custom_date_range,
             folder: state.selected_folder.clone(),
+            ext: state.selected_ext.clone(),
         });
     } else {
         if query.is_empty() {
@@ -161,6 +166,402 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
             state.phase = Phase::Typing;
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchScope {
+    pub folder: Option<String>,
+    pub ext: Option<String>,
+    pub date_filter: DateFilter,
+    pub custom_date_range: Option<(i64, i64)>,
+}
+
+impl State {
+    pub fn scope(&self) -> SearchScope {
+        SearchScope {
+            folder: self.selected_folder.clone(),
+            ext: self.selected_ext.clone(),
+            date_filter: self.date_filter,
+            custom_date_range: self.custom_date_range,
+        }
+    }
+}
+
+/// 질의 토큰 종류 (QMS-SCOPE: 질의 문법 ↔ 범위 UI 양방향 반영)
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum QueryToken {
+    Path(String),
+    Ext(String),
+    After(String),
+    Before(String),
+    Text(String),
+}
+
+fn strip_case_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if s.len() >= prefix.len()
+        && s.is_char_boundary(prefix.len())
+        && s[..prefix.len()].eq_ignore_ascii_case(prefix)
+    {
+        Some(&s[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+pub fn parse_query_tokens(raw: &str) -> Vec<QueryToken> {
+    let mut tokens = Vec::new();
+    let chars: Vec<(usize, char)> = raw.char_indices().collect();
+    let len = raw.len();
+    let mut i = 0;
+
+    while i < chars.len() {
+        let (byte_idx, c) = chars[i];
+        if c.is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        let slice = &raw[byte_idx..];
+
+        // 1. path:"..." 또는 path:...
+        if let Some(rest) = strip_case_prefix(slice, "path:") {
+            let path_start = byte_idx + 5;
+            if let Some(first_char) = rest.chars().next() {
+                if first_char == '"' || first_char == '“' {
+                    let content_start = path_start + first_char.len_utf8();
+                    let mut j = i;
+                    while j < chars.len() && chars[j].0 < content_start {
+                        j += 1;
+                    }
+                    let mut close_idx = None;
+                    let mut escaped = false;
+                    while j < chars.len() {
+                        let (_, c2) = chars[j];
+                        if escaped {
+                            escaped = false;
+                        } else if c2 == '\\' {
+                            escaped = true;
+                        } else if c2 == '"' || c2 == '”' {
+                            close_idx = Some(j);
+                            break;
+                        }
+                        j += 1;
+                    }
+                    if let Some(c_idx) = close_idx {
+                        let content_end = chars[c_idx].0;
+                        let content = &raw[content_start..content_end];
+                        tokens.push(QueryToken::Path(content.replace("\\\"", "\"")));
+                        i = c_idx + 1;
+                        continue;
+                    } else {
+                        let content = &raw[content_start..];
+                        tokens.push(QueryToken::Path(content.replace("\\\"", "\"")));
+                        break;
+                    }
+                }
+            }
+            // 일반 path:경로 (다음 공백까지)
+            let mut j = i;
+            let mut end_pos = len;
+            while j < chars.len() {
+                let (pos, c2) = chars[j];
+                if c2.is_whitespace() {
+                    end_pos = pos;
+                    break;
+                }
+                j += 1;
+            }
+            let val = &raw[path_start..end_pos];
+            if !val.is_empty() {
+                tokens.push(QueryToken::Path(val.to_string()));
+            }
+            i = j;
+            continue;
+        }
+
+        // 2. ext:...
+        if let Some(_) = strip_case_prefix(slice, "ext:") {
+            let ext_start = byte_idx + 4;
+            let mut j = i;
+            let mut end_pos = len;
+            while j < chars.len() {
+                let (pos, c2) = chars[j];
+                if c2.is_whitespace() {
+                    end_pos = pos;
+                    break;
+                }
+                j += 1;
+            }
+            let val = &raw[ext_start..end_pos];
+            if !val.is_empty() {
+                tokens.push(QueryToken::Ext(val.to_string()));
+            }
+            i = j;
+            continue;
+        }
+
+        // 3. after:...
+        if let Some(_) = strip_case_prefix(slice, "after:") {
+            let after_start = byte_idx + 6;
+            let mut j = i;
+            let mut end_pos = len;
+            while j < chars.len() {
+                let (pos, c2) = chars[j];
+                if c2.is_whitespace() {
+                    end_pos = pos;
+                    break;
+                }
+                j += 1;
+            }
+            let val = &raw[after_start..end_pos];
+            if !val.is_empty() {
+                tokens.push(QueryToken::After(val.to_string()));
+            }
+            i = j;
+            continue;
+        }
+
+        // 4. before:...
+        if let Some(_) = strip_case_prefix(slice, "before:") {
+            let before_start = byte_idx + 7;
+            let mut j = i;
+            let mut end_pos = len;
+            while j < chars.len() {
+                let (pos, c2) = chars[j];
+                if c2.is_whitespace() {
+                    end_pos = pos;
+                    break;
+                }
+                j += 1;
+            }
+            let val = &raw[before_start..end_pos];
+            if !val.is_empty() {
+                tokens.push(QueryToken::Before(val.to_string()));
+            }
+            i = j;
+            continue;
+        }
+
+        // 5. 따옴표 구문 "..."
+        if c == '"' || c == '“' {
+            let mut j = i + 1;
+            let mut close_idx = None;
+            let mut escaped = false;
+            while j < chars.len() {
+                let (_, c2) = chars[j];
+                if escaped {
+                    escaped = false;
+                } else if c2 == '\\' {
+                    escaped = true;
+                } else if c2 == '"' || c2 == '”' {
+                    close_idx = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            if let Some(c_idx) = close_idx {
+                let end_pos = if c_idx + 1 < chars.len() {
+                    chars[c_idx + 1].0
+                } else {
+                    len
+                };
+                tokens.push(QueryToken::Text(raw[byte_idx..end_pos].to_string()));
+                i = c_idx + 1;
+                continue;
+            } else {
+                tokens.push(QueryToken::Text(raw[byte_idx..].to_string()));
+                break;
+            }
+        }
+
+        // 6. 일반 낱말
+        let mut j = i;
+        let mut end_pos = len;
+        while j < chars.len() {
+            let (pos, c2) = chars[j];
+            if c2.is_whitespace() {
+                end_pos = pos;
+                break;
+            }
+            j += 1;
+        }
+        tokens.push(QueryToken::Text(raw[byte_idx..end_pos].to_string()));
+        i = j;
+    }
+
+    tokens
+}
+
+pub fn tokens_to_query(tokens: &[QueryToken]) -> String {
+    let mut parts = Vec::with_capacity(tokens.len());
+    for t in tokens {
+        match t {
+            QueryToken::Path(p) => {
+                if p.contains(' ') || p.contains('\t') {
+                    parts.push(format!("path:\"{}\"", p));
+                } else {
+                    parts.push(format!("path:{}", p));
+                }
+            }
+            QueryToken::Ext(e) => parts.push(format!("ext:{}", e)),
+            QueryToken::After(a) => parts.push(format!("after:{}", a)),
+            QueryToken::Before(b) => parts.push(format!("before:{}", b)),
+            QueryToken::Text(t) => parts.push(t.clone()),
+        }
+    }
+    parts.join(" ")
+}
+
+pub fn set_folder_token(query: &str, folder: Option<&str>) -> String {
+    let mut tokens = parse_query_tokens(query);
+    if let Some(f) = folder {
+        let trimmed = f.trim();
+        if trimmed.is_empty() {
+            tokens.retain(|t| !matches!(t, QueryToken::Path(_)));
+        } else {
+            let mut replaced = false;
+            for t in &mut tokens {
+                if let QueryToken::Path(p) = t {
+                    *p = trimmed.to_string();
+                    replaced = true;
+                    break;
+                }
+            }
+            if !replaced {
+                tokens.push(QueryToken::Path(trimmed.to_string()));
+            }
+        }
+    } else {
+        tokens.retain(|t| !matches!(t, QueryToken::Path(_)));
+    }
+    tokens_to_query(&tokens)
+}
+
+pub fn set_ext_token(query: &str, ext: Option<&str>) -> String {
+    let mut tokens = parse_query_tokens(query);
+    if let Some(e) = ext {
+        let trimmed = e.trim();
+        if trimmed.is_empty() {
+            tokens.retain(|t| !matches!(t, QueryToken::Ext(_)));
+        } else {
+            let mut replaced = false;
+            for t in &mut tokens {
+                if let QueryToken::Ext(val) = t {
+                    *val = trimmed.to_string();
+                    replaced = true;
+                    break;
+                }
+            }
+            if !replaced {
+                tokens.push(QueryToken::Ext(trimmed.to_string()));
+            }
+        }
+    } else {
+        tokens.retain(|t| !matches!(t, QueryToken::Ext(_)));
+    }
+    tokens_to_query(&tokens)
+}
+
+pub fn set_date_tokens(
+    query: &str,
+    after: Option<&str>,
+    before: Option<&str>,
+) -> String {
+    let mut tokens = parse_query_tokens(query);
+    tokens.retain(|t| !matches!(t, QueryToken::After(_) | QueryToken::Before(_)));
+    if let Some(a) = after {
+        let tr = a.trim();
+        if !tr.is_empty() {
+            tokens.push(QueryToken::After(tr.to_string()));
+        }
+    }
+    if let Some(b) = before {
+        let tr = b.trim();
+        if !tr.is_empty() {
+            tokens.push(QueryToken::Before(tr.to_string()));
+        }
+    }
+    tokens_to_query(&tokens)
+}
+
+pub fn format_ymd(ymd: i64) -> String {
+    let y = ymd / 10000;
+    let m = (ymd % 10000) / 100;
+    let d = ymd % 100;
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+pub fn date_filter_to_tokens(
+    filter: DateFilter,
+    custom: Option<(i64, i64)>,
+) -> (Option<String>, Option<String>) {
+    match filter {
+        DateFilter::All => (None, None),
+        DateFilter::Today => {
+            let (y, m, d) = crate::backend::current_kst_ymd();
+            let s = format!("{y:04}-{m:02}-{d:02}");
+            (Some(s.clone()), Some(s))
+        }
+        DateFilter::ThisWeek => {
+            let (s_ymd, e_ymd) = crate::backend::current_kst_week_range();
+            (Some(format_ymd(s_ymd as i64)), Some(format_ymd(e_ymd as i64)))
+        }
+        DateFilter::ThisMonth => {
+            let (y, m, _) = crate::backend::current_kst_ymd();
+            let s = format!("{y:04}-{m:02}-01");
+            let e = format!("{y:04}-{m:02}-31");
+            (Some(s), Some(e))
+        }
+        DateFilter::ThisYear => {
+            let (y, _, _) = crate::backend::current_kst_ymd();
+            let s = format!("{y:04}-01-01");
+            let e = format!("{y:04}-12-31");
+            (Some(s), Some(e))
+        }
+        DateFilter::Custom => {
+            if let Some((s_val, e_val)) = custom {
+                (Some(format_ymd(s_val)), Some(format_ymd(e_val)))
+            } else {
+                (None, None)
+            }
+        }
+    }
+}
+
+pub fn detect_date_filter_from_range(
+    start: Option<i64>,
+    end: Option<i64>,
+) -> (DateFilter, Option<(i64, i64)>) {
+    if start.is_none() && end.is_none() {
+        return (DateFilter::All, None);
+    }
+    let s = start.unwrap_or(0);
+    let e = end.unwrap_or(99991231);
+
+    let (ty, tm, td) = crate::backend::current_kst_ymd();
+    let today_val = (ty * 10000 + tm * 100 + td) as i64;
+    if s == today_val && e == today_val {
+        return (DateFilter::Today, None);
+    }
+
+    let (ws, we) = crate::backend::current_kst_week_range();
+    if s == ws as i64 && e == we as i64 {
+        return (DateFilter::ThisWeek, None);
+    }
+
+    let m_start = (ty * 10000 + tm * 100 + 1) as i64;
+    let m_end = (ty * 10000 + tm * 100 + 31) as i64;
+    if s == m_start && e == m_end {
+        return (DateFilter::ThisMonth, None);
+    }
+
+    let y_start = (ty * 10000 + 101) as i64;
+    let y_end = (ty * 10000 + 1231) as i64;
+    if s == y_start && e == y_end {
+        return (DateFilter::ThisYear, None);
+    }
+
+    (DateFilter::Custom, Some((s, e)))
 }
 
 /// Returns the next state and work for the native adapter. No I/O or Win32 calls.
@@ -186,6 +587,12 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         Event::Input(query) => {
             if state.query != query {
                 state.query = query;
+                let syntax = kfind_core::parse_query_syntax(&state.query);
+                state.selected_folder = syntax.folder.clone();
+                state.selected_ext = syntax.file_types.as_ref().map(|v| v.join(","));
+                let (df, custom) = detect_date_filter_from_range(syntax.start_date, syntax.end_date);
+                state.date_filter = df;
+                state.custom_date_range = custom;
                 search(&mut state, &mut effects, false);
             }
         }
@@ -301,8 +708,11 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             state.error = Some(message);
         }
         Event::SetDateFilter(df) => {
-            if state.date_filter != df {
+            if state.date_filter != df || state.custom_date_range.is_some() {
                 state.date_filter = df;
+                state.custom_date_range = None;
+                let (after, before) = date_filter_to_tokens(df, None);
+                state.query = set_date_tokens(&state.query, after.as_deref(), before.as_deref());
                 let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
                 search(&mut state, &mut effects, explicit);
             }
@@ -310,12 +720,24 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         Event::SetCustomDate(start, end) => {
             state.date_filter = DateFilter::Custom;
             state.custom_date_range = Some((start, end));
+            let s = format_ymd(start);
+            let e = format_ymd(end);
+            state.query = set_date_tokens(&state.query, Some(&s), Some(&e));
             let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
             search(&mut state, &mut effects, explicit);
         }
         Event::SetFolderFilter(f) => {
             if state.selected_folder != f {
-                state.selected_folder = f;
+                state.selected_folder = f.clone();
+                state.query = set_folder_token(&state.query, f.as_deref());
+                let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
+                search(&mut state, &mut effects, explicit);
+            }
+        }
+        Event::SetExtFilter(e) => {
+            if state.selected_ext != e {
+                state.selected_ext = e.clone();
+                state.query = set_ext_token(&state.query, e.as_deref());
                 let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
                 search(&mut state, &mut effects, explicit);
             }
@@ -625,5 +1047,125 @@ mod tests {
             &effects[..],
             [Effect::Search { date_filter: DateFilter::Today, folder: Some(f), .. }] if f == "총무과"
         ));
+    }
+
+    #[test]
+    fn test_scope_buttons_to_query_tokens_and_back() {
+        let state = step(&visible(), Event::Input("예산".into())).0;
+        assert_eq!(state.query, "예산");
+
+        // 1. 확장자 단추: HWP 선택
+        let (state, effects) = step(&state, Event::SetExtFilter(Some("hwp".into())));
+        assert_eq!(state.selected_ext.as_deref(), Some("hwp"));
+        assert_eq!(state.query, "예산 ext:hwp");
+        assert!(matches!(&effects[..], [Effect::Search { ext: Some(e), query, .. }] if e == "hwp" && query == "예산 ext:hwp"));
+
+        // 2. 폴더 단추: "총무과" 선택 -> 기존 ext 보존
+        let (state, effects) = step(&state, Event::SetFolderFilter(Some("총무과".into())));
+        assert_eq!(state.selected_folder.as_deref(), Some("총무과"));
+        assert_eq!(state.query, "예산 ext:hwp path:총무과");
+        assert!(matches!(&effects[..], [Effect::Search { folder: Some(f), ext: Some(e), .. }] if f == "총무과" && e == "hwp"));
+
+        // 3. 폴더 변경: 공백이 있는 폴더 -> 따옴표 감싸기
+        let (state, _) = step(&state, Event::SetFolderFilter(Some("C:\\공문서 2026".into())));
+        assert_eq!(state.selected_folder.as_deref(), Some("C:\\공문서 2026"));
+        assert_eq!(state.query, "예산 ext:hwp path:\"C:\\공문서 2026\"");
+
+        // 4. 확장자 변경: pdf로 교체
+        let (state, _) = step(&state, Event::SetExtFilter(Some("pdf".into())));
+        assert_eq!(state.selected_ext.as_deref(), Some("pdf"));
+        assert_eq!(state.query, "예산 ext:pdf path:\"C:\\공문서 2026\"");
+
+        // 5. 기간 필터: 직접 날짜 지정 (20260101 ~ 20261231)
+        let (state, _) = step(&state, Event::SetCustomDate(20260101, 20261231));
+        assert_eq!(state.date_filter, DateFilter::Custom);
+        assert_eq!(state.custom_date_range, Some((20260101, 20261231)));
+        assert_eq!(state.query, "예산 ext:pdf path:\"C:\\공문서 2026\" after:2026-01-01 before:2026-12-31");
+
+        // 6. 확장자 해제 (None)
+        let (state, _) = step(&state, Event::SetExtFilter(None));
+        assert_eq!(state.selected_ext, None);
+        assert_eq!(state.query, "예산 path:\"C:\\공문서 2026\" after:2026-01-01 before:2026-12-31");
+
+        // 7. 폴더 해제 (None)
+        let (state, _) = step(&state, Event::SetFolderFilter(None));
+        assert_eq!(state.selected_folder, None);
+        assert_eq!(state.query, "예산 after:2026-01-01 before:2026-12-31");
+
+        // 8. 기간 해제 (DateFilter::All)
+        let (state, _) = step(&state, Event::SetDateFilter(DateFilter::All));
+        assert_eq!(state.date_filter, DateFilter::All);
+        assert_eq!(state.custom_date_range, None);
+        assert_eq!(state.query, "예산");
+    }
+
+    #[test]
+    fn test_query_tokens_input_synchronizes_scope_state() {
+        // 검색창에 직접 path, ext, after, before 입력
+        let (state, _) = step(
+            &visible(),
+            Event::Input("공사 계약 ext:pdf,hwp path:\"기안\\2026\" after:2026-05-01 before:2026-05-31".into()),
+        );
+
+        assert_eq!(state.selected_ext.as_deref(), Some("pdf,hwp"));
+        assert_eq!(state.selected_folder.as_deref(), Some("기안\\2026"));
+        assert_eq!(state.date_filter, DateFilter::Custom);
+        assert_eq!(state.custom_date_range, Some((20260501, 20260531)));
+
+        // 검색창에서 범위 토큰을 지우면 상태도 리셋
+        let (state, _) = step(&state, Event::Input("공사 계약".into()));
+        assert_eq!(state.selected_ext, None);
+        assert_eq!(state.selected_folder, None);
+        assert_eq!(state.date_filter, DateFilter::All);
+        assert_eq!(state.custom_date_range, None);
+    }
+
+    #[test]
+    fn test_token_parser_and_quote_protection() {
+        // 따옴표 안의 문법 키워드는 보호되어야 함
+        let tokens = parse_query_tokens("\"path:보호\" \"ext:pdf\" ext:hwp path:문서");
+        assert_eq!(
+            tokens,
+            vec![
+                QueryToken::Text("\"path:보호\"".into()),
+                QueryToken::Text("\"ext:pdf\"".into()),
+                QueryToken::Ext("hwp".into()),
+                QueryToken::Path("문서".into()),
+            ]
+        );
+
+        let query = tokens_to_query(&tokens);
+        assert_eq!(query, "\"path:보호\" \"ext:pdf\" ext:hwp path:문서");
+
+        // 토큰 치환 헬퍼
+        let replaced_ext = set_ext_token(&query, Some("docx"));
+        assert_eq!(replaced_ext, "\"path:보호\" \"ext:pdf\" ext:docx path:문서");
+
+        let removed_path = set_folder_token(&replaced_ext, None);
+        assert_eq!(removed_path, "\"path:보호\" \"ext:pdf\" ext:docx");
+    }
+
+    #[test]
+    fn test_scope_roundtrip_fidelity() {
+        let original_query = "보고서";
+        let (state, _) = step(&visible(), Event::Input(original_query.into()));
+
+        // 단추 조작으로 범위 설정
+        let (state, _) = step(&state, Event::SetExtFilter(Some("pdf".into())));
+        let (state, _) = step(&state, Event::SetFolderFilter(Some("감사과".into())));
+        let (state, _) = step(&state, Event::SetCustomDate(20260301, 20260315));
+
+        let generated_query = state.query.clone();
+        let scope_before = state.scope();
+
+        // 생성된 문자열로 새로운 창에서 Event::Input을 발생시킴
+        let (reconstructed, _) = step(&visible(), Event::Input(generated_query));
+        let scope_after = reconstructed.scope();
+
+        assert_eq!(scope_before, scope_after);
+        assert_eq!(scope_after.ext.as_deref(), Some("pdf"));
+        assert_eq!(scope_after.folder.as_deref(), Some("감사과"));
+        assert_eq!(scope_after.date_filter, DateFilter::Custom);
+        assert_eq!(scope_after.custom_date_range, Some((20260301, 20260315)));
     }
 }

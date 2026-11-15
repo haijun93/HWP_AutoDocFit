@@ -39,7 +39,7 @@ const WARMED: u32 = WM_APP + 22;
 pub(crate) const CLASS: &str = "HwpAutoDocFit.MongttangSearch";
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
-/// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬, 기간 필터, 커스텀 기간, 폴더 필터).
+/// (세대, 검색어, 칸, 시작 시각, 취소, 파일명 정렬, 기간 필터, 커스텀 기간, 폴더 필터, 확장자 필터).
 type Job = (
     u64,
     String,
@@ -49,6 +49,7 @@ type Job = (
     &'static str,
     DateFilter,
     Option<(i64, i64)>,
+    Option<String>,
     Option<String>,
 );
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
@@ -228,7 +229,23 @@ fn event(h: HWND, e: Event) {
                     date_filter,
                     custom_date_range,
                     folder,
+                    ext,
                 } => {
+                    #[cfg(windows)]
+                    {
+                        let edit_hwnd = with(|u| u.edit);
+                        let mut buf = [0u16; 512];
+                        let len = unsafe { GetWindowTextW(edit_hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
+                        let cur_edit_text = String::from_utf16_lossy(&buf[..len]);
+                        if cur_edit_text != query {
+                            let wtext = wide(&query);
+                            unsafe {
+                                SetWindowTextW(edit_hwnd, wtext.as_ptr());
+                                let clen = query.encode_utf16().count() as i32;
+                                SendMessageW(edit_hwnd, EM_SETSEL, clen as usize, clen as isize);
+                            }
+                        }
+                    }
                     let tx = with(|u| u.tx.clone());
                     let cancel = Arc::new(AtomicBool::new(false));
                     edit(|u| u.cancel = cancel.clone());
@@ -245,6 +262,7 @@ fn event(h: HWND, e: Event) {
                             date_filter,
                             custom_date_range,
                             folder,
+                            ext,
                         ));
                         p.snippets = None;
                     }
@@ -763,27 +781,27 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
             }
 
-            // ④ 기간 / 폴더 거르기 줄
+            // ④ 통합 검색 범위 줄 (기간 / 형식 / 폴더)
             let fy = tab_y + tab_h + scale(h, 6);
             let fh = scale(h, FILTER_H);
             SelectObject(mem, u.small);
             text(
                 "기간:",
-                RECT { left: pad, top: fy, right: pad + scale(h, 36), bottom: fy + fh },
+                RECT { left: pad, top: fy, right: pad + scale(h, 32), bottom: fy + fh },
                 p.text_sub,
                 0,
             );
-            let mut fx = pad + scale(h, 38);
+            let mut fx = pad + scale(h, 34);
             let date_chips = [
-                (DateFilter::All, "전체"),
-                (DateFilter::Today, "오늘"),
-                (DateFilter::ThisWeek, "이번 주"),
-                (DateFilter::ThisMonth, "이번 달"),
-                (DateFilter::ThisYear, "올해"),
-                (DateFilter::Custom, "직접"),
+                (DateFilter::All, "전체", 36),
+                (DateFilter::Today, "오늘", 36),
+                (DateFilter::ThisWeek, "이번 주", 46),
+                (DateFilter::ThisMonth, "이번 달", 46),
+                (DateFilter::ThisYear, "올해", 36),
+                (DateFilter::Custom, "직접", 36),
             ];
-            for (df, lbl) in &date_chips {
-                let cw = scale(h, 52);
+            for (df, lbl, w) in &date_chips {
+                let cw = scale(h, *w);
                 let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
                 let active = u.state.date_filter == *df;
                 if active {
@@ -793,20 +811,55 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     fill(rc, p.tab_hover);
                     text(lbl, rc, p.tab_text, DT_CENTER);
                 }
-                fx += cw + scale(h, 4);
+                fx += cw + scale(h, 3);
             }
 
-            if !u.state.folder_counts.is_empty() {
-                fx += scale(h, 8);
+            // 확장자(형식) 칩
+            fx += scale(h, 6);
+            text(
+                "형식:",
+                RECT { left: fx, top: fy, right: fx + scale(h, 32), bottom: fy + fh },
+                p.text_sub,
+                0,
+            );
+            fx += scale(h, 34);
+            let ext_chips: [(Option<&'static str>, &'static str, i32); 5] = [
+                (None, "전체", 36),
+                (Some("hwp"), "HWP", 40),
+                (Some("pdf"), "PDF", 38),
+                (Some("docx"), "DOC", 40),
+                (Some("xlsx"), "XLS", 38),
+            ];
+            for (opt, lbl, w) in &ext_chips {
+                let cw = scale(h, *w);
+                let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
+                let active = match opt {
+                    None => u.state.selected_ext.is_none(),
+                    Some(e) => u.state.selected_ext.as_deref().map(|s| s.contains(e)).unwrap_or(false),
+                };
+                if active {
+                    fill(rc, p.accent);
+                    text(lbl, rc, p.bg, DT_CENTER);
+                } else {
+                    fill(rc, p.tab_hover);
+                    text(lbl, rc, p.tab_text, DT_CENTER);
+                }
+                fx += cw + scale(h, 3);
+            }
+
+            // 폴더 칩
+            let has_folder_info = !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some();
+            if has_folder_info && fx + scale(h, 80) < r.right - pad {
+                fx += scale(h, 6);
                 text(
                     "폴더:",
-                    RECT { left: fx, top: fy, right: fx + scale(h, 36), bottom: fy + fh },
+                    RECT { left: fx, top: fy, right: fx + scale(h, 32), bottom: fy + fh },
                     p.text_sub,
                     0,
                 );
-                fx += scale(h, 38);
+                fx += scale(h, 34);
                 let all_active = u.state.selected_folder.is_none();
-                let all_rc = RECT { left: fx, top: fy, right: fx + scale(h, 44), bottom: fy + fh };
+                let all_rc = RECT { left: fx, top: fy, right: fx + scale(h, 38), bottom: fy + fh };
                 if all_active {
                     fill(all_rc, p.accent);
                     text("전체", all_rc, p.bg, DT_CENTER);
@@ -814,16 +867,30 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     fill(all_rc, p.tab_hover);
                     text("전체", all_rc, p.tab_text, DT_CENTER);
                 }
-                fx += scale(h, 48);
+                fx += scale(h, 41);
 
-                for (folder, count) in &u.state.folder_counts {
-                    let lbl = format!("{folder}({count})");
-                    let cw = scale(h, 75).min(r.right - fx - pad);
-                    if cw < scale(h, 30) {
+                let mut folders_to_show: Vec<(String, Option<u32>)> = Vec::new();
+                if let Some(ref sel) = u.state.selected_folder {
+                    if !u.state.folder_counts.iter().any(|(f, _)| f == sel) {
+                        folders_to_show.push((sel.clone(), None));
+                    }
+                }
+                for (f, c) in &u.state.folder_counts {
+                    folders_to_show.push((f.clone(), Some(*c)));
+                }
+
+                for (folder, count) in folders_to_show {
+                    let lbl = if let Some(c) = count {
+                        format!("{folder}({c})")
+                    } else {
+                        folder.clone()
+                    };
+                    let cw = scale(h, 68).min(r.right - fx - pad);
+                    if cw < scale(h, 28) {
                         break;
                     }
                     let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
-                    let active = u.state.selected_folder.as_deref() == Some(folder);
+                    let active = u.state.selected_folder.as_deref() == Some(&folder);
                     if active {
                         fill(rc, p.accent);
                         text(&lbl, rc, p.bg, DT_CENTER | DT_END_ELLIPSIS);
@@ -831,7 +898,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         fill(rc, p.tab_hover);
                         text(&lbl, rc, p.tab_text, DT_CENTER | DT_END_ELLIPSIS);
                     }
-                    fx += cw + scale(h, 4);
+                    fx += cw + scale(h, 3);
                 }
             }
 
@@ -1283,45 +1350,96 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         event(h, Event::SwitchTab(tab));
                     }
                 } else if y >= fy && y < fy + fh {
-                    // ③ 기간 / 폴더 거르기 단추
-                    let mut fx = pad + scale(h, 38);
+                    // ③ 통합 검색 범위 단추 (기간 / 형식 / 폴더)
+                    let mut fx = pad + scale(h, 34);
                     let date_chips = [
-                        DateFilter::All,
-                        DateFilter::Today,
-                        DateFilter::ThisWeek,
-                        DateFilter::ThisMonth,
-                        DateFilter::ThisYear,
-                        DateFilter::Custom,
+                        (DateFilter::All, 36),
+                        (DateFilter::Today, 36),
+                        (DateFilter::ThisWeek, 46),
+                        (DateFilter::ThisMonth, 46),
+                        (DateFilter::ThisYear, 36),
+                        (DateFilter::Custom, 36),
                     ];
                     let mut handled = false;
-                    for df in &date_chips {
-                        let cw = scale(h, 52);
+                    for (df, w) in &date_chips {
+                        let cw = scale(h, *w);
                         if x >= fx && x < fx + cw {
                             event(h, Event::SetDateFilter(*df));
                             handled = true;
                             break;
                         }
-                        fx += cw + scale(h, 4);
+                        fx += cw + scale(h, 3);
                     }
-                    if !handled && !with(|u| u.state.folder_counts.is_empty()) {
-                        fx += scale(h, 8) + scale(h, 38);
-                        if x >= fx && x < fx + scale(h, 44) {
-                            event(h, Event::SetFolderFilter(None));
-                        } else {
-                            fx += scale(h, 48);
-                            let fcs = with(|u| u.state.folder_counts.clone());
-                            for (folder, _) in fcs {
-                                let cw = scale(h, 75);
-                                if x >= fx && x < fx + cw {
-                                    let cur = with(|u| u.state.selected_folder.clone());
-                                    if cur.as_deref() == Some(&folder) {
-                                        event(h, Event::SetFolderFilter(None));
-                                    } else {
-                                        event(h, Event::SetFolderFilter(Some(folder)));
+
+                    // 형식(확장자) 칩 클릭
+                    if !handled {
+                        fx += scale(h, 6) + scale(h, 34);
+                        let ext_chips: [(Option<&'static str>, i32); 5] = [
+                            (None, 36),
+                            (Some("hwp"), 40),
+                            (Some("pdf"), 38),
+                            (Some("docx"), 40),
+                            (Some("xlsx"), 38),
+                        ];
+                        for (opt, w) in &ext_chips {
+                            let cw = scale(h, *w);
+                            if x >= fx && x < fx + cw {
+                                let cur = with(|u| u.state.selected_ext.clone());
+                                match opt {
+                                    None => event(h, Event::SetExtFilter(None)),
+                                    Some(ext) => {
+                                        if cur.as_deref() == Some(*ext) {
+                                            event(h, Event::SetExtFilter(None));
+                                        } else {
+                                            event(h, Event::SetExtFilter(Some(ext.to_string())));
+                                        }
                                     }
-                                    break;
                                 }
-                                fx += cw + scale(h, 4);
+                                handled = true;
+                                break;
+                            }
+                            fx += cw + scale(h, 3);
+                        }
+                    }
+
+                    // 폴더 칩 클릭
+                    if !handled {
+                        let has_folder_info = with(|u| !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some());
+                        if has_folder_info && fx + scale(h, 80) < rc_w.right - pad {
+                            fx += scale(h, 6) + scale(h, 34);
+                            let all_w = scale(h, 38);
+                            if x >= fx && x < fx + all_w {
+                                event(h, Event::SetFolderFilter(None));
+                            } else {
+                                fx += scale(h, 41);
+                                let mut folders_to_check: Vec<String> = Vec::new();
+                                let sel_opt = with(|u| u.state.selected_folder.clone());
+                                let fcs = with(|u| u.state.folder_counts.clone());
+                                if let Some(ref sel) = sel_opt {
+                                    if !fcs.iter().any(|(f, _)| f == sel) {
+                                        folders_to_check.push(sel.clone());
+                                    }
+                                }
+                                for (f, _) in fcs {
+                                    folders_to_check.push(f);
+                                }
+
+                                for folder in folders_to_check {
+                                    let cw = scale(h, 68).min(rc_w.right - fx - pad);
+                                    if cw < scale(h, 28) {
+                                        break;
+                                    }
+                                    if x >= fx && x < fx + cw {
+                                        let cur = with(|u| u.state.selected_folder.clone());
+                                        if cur.as_deref() == Some(&folder) {
+                                            event(h, Event::SetFolderFilter(None));
+                                        } else {
+                                            event(h, Event::SetFolderFilter(Some(folder)));
+                                        }
+                                        break;
+                                    }
+                                    fx += cw + scale(h, 3);
+                                }
                             }
                         }
                     }
@@ -1686,7 +1804,7 @@ pub fn run() -> Result<(), String> {
                     }
                 };
                 let reply = match work {
-                    Work::Search((g, q, tab, start, cancel, sort, date_filter, custom_date_range, folder)) => {
+                    Work::Search((g, q, tab, start, cancel, sort, date_filter, custom_date_range, folder, ext)) => {
                         let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
@@ -1715,7 +1833,7 @@ pub fn run() -> Result<(), String> {
                             }
                             let b = backend.as_mut().unwrap();
                             let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            b.search_with_scope(&q, hierarchy, date_range, folder.as_deref(), Some(cancel))
+                            b.search_with_scope_ext(&q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), Some(cancel))
                         })();
                         Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
                     }
