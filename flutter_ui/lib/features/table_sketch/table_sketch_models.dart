@@ -256,6 +256,20 @@ class SketchFill {
     'color': color,
   };
 
+  SketchFill copyWith({
+    int? x1,
+    int? y1,
+    int? x2,
+    int? y2,
+    String? color,
+  }) => SketchFill(
+    x1: x1 ?? this.x1,
+    y1: y1 ?? this.y1,
+    x2: x2 ?? this.x2,
+    y2: y2 ?? this.y2,
+    color: color ?? this.color,
+  );
+
   bool sameArea(SketchFill o) =>
       o.x1 == x1 && o.y1 == y1 && o.x2 == x2 && o.y2 == y2;
 }
@@ -714,23 +728,112 @@ class TableSketchDoc {
   Map<String, dynamic> toJson({bool forTable = false}) {
     claimUnassigned();
     bool keep(String? id) => !forTable || layerOf(id).visible;
-    final allLines = [...lines, ..._parkedLines].where((l) => keep(l.layer));
-    final allTexts = [...texts, ..._parkedTexts].where((t) => keep(t.layer));
-    final allImages = [...images, ..._parkedImages].where((i) => keep(i.layer));
-    final allArrows = [...arrows, ..._parkedArrows].where((a) => keep(a.layer));
+    final allLines = [...lines, ..._parkedLines].where((l) => keep(l.layer)).toList();
+    final allTexts = [...texts, ..._parkedTexts].where((t) => keep(t.layer)).toList();
+    final allImages = [...images, ..._parkedImages].where((i) => keep(i.layer)).toList();
+    final allArrows = [...arrows, ..._parkedArrows].where((a) => keep(a.layer)).toList();
+
+    int dx = 0;
+    int dy = 0;
+    int maxGridCols = grid.cols;
+    int maxGridRows = grid.rows;
+
+    if (forTable) {
+      int? minX;
+      int? minY;
+      int? maxX;
+      int? maxY;
+
+      void updateBounds(int x1, int y1, [int? x2, int? y2]) {
+        final right = x2 ?? x1;
+        final bottom = y2 ?? y1;
+        final lx = math.min(x1, right);
+        final rx = math.max(x1, right);
+        final ty = math.min(y1, bottom);
+        final by = math.max(y1, bottom);
+        minX = minX == null ? lx : math.min(minX!, lx);
+        maxX = maxX == null ? rx : math.max(maxX!, rx);
+        minY = minY == null ? ty : math.min(minY!, ty);
+        maxY = maxY == null ? by : math.max(maxY!, by);
+      }
+
+      for (final l in allLines) {
+        updateBounds(l.x1, l.y1, l.x2, l.y2);
+      }
+      for (final t in allTexts) {
+        updateBounds(t.x, t.y, t.x + 1, t.y + 1);
+      }
+      for (final i in allImages) {
+        updateBounds(i.x, i.y, i.x + 1, i.y + 1);
+      }
+      for (final f in fills) {
+        updateBounds(f.x1, f.y1, f.x2, f.y2);
+      }
+      for (final a in allArrows) {
+        updateBounds(a.x1, a.y1, a.x2, a.y2);
+      }
+
+      if (minX != null && minY != null) {
+        if (minX! < 0 || minY! < 0) {
+          dx = -minX!;
+          dy = -minY!;
+        }
+        if (maxX != null && maxY != null) {
+          maxGridCols = math.max(maxGridCols, maxX! + dx);
+          maxGridRows = math.max(maxGridRows, maxY! + dy);
+        }
+      }
+    }
+
     // 한/글 표로 바꿀 때는 레이어 표시가 필요 없다(표 변환은 레이어를 모른다).
     Map<String, dynamic> item(Map<String, dynamic> json) =>
         forTable ? (json..remove('layer')..remove('group')) : json;
     return {
       'orientation': orientation,
-      'grid': grid.toJson(),
-      'lines': allLines.map((l) => item(l.toJson())).toList(),
-      'texts': allTexts.map((t) => item(t.toJson())).toList(),
+      'grid': (forTable && (dx != 0 || dy != 0 || maxGridCols != grid.cols || maxGridRows != grid.rows))
+          ? grid.copyWith(cols: maxGridCols, rows: maxGridRows).toJson()
+          : grid.toJson(),
+      'lines': [
+        for (final l in allLines)
+          item(
+            (dx != 0 || dy != 0)
+                ? l.copyWith(x1: l.x1 + dx, y1: l.y1 + dy, x2: l.x2 + dx, y2: l.y2 + dy).toJson()
+                : l.toJson(),
+          ),
+      ],
+      'texts': [
+        for (final t in allTexts)
+          item(
+            (dx != 0 || dy != 0)
+                ? t.copyWith(x: t.x + dx, y: t.y + dy).toJson()
+                : t.toJson(),
+          ),
+      ],
       if (allImages.isNotEmpty)
-        'images': allImages.map((i) => item(i.toJson())).toList(),
-      if (fills.isNotEmpty) 'fills': fills.map((f) => f.toJson()).toList(),
+        'images': [
+          for (final i in allImages)
+            item(
+              (dx != 0 || dy != 0)
+                  ? i.copyWith(x: i.x + dx, y: i.y + dy).toJson()
+                  : i.toJson(),
+            ),
+        ],
+      if (fills.isNotEmpty)
+        'fills': [
+          for (final f in fills)
+            (dx != 0 || dy != 0)
+                ? f.copyWith(x1: f.x1 + dx, y1: f.y1 + dy, x2: f.x2 + dx, y2: f.y2 + dy).toJson()
+                : f.toJson(),
+        ],
       if (allArrows.isNotEmpty)
-        'arrows': allArrows.map((a) => item(a.toJson())).toList(),
+        'arrows': [
+          for (final a in allArrows)
+            item(
+              (dx != 0 || dy != 0)
+                  ? a.copyWith(x1: a.x1 + dx, y1: a.y1 + dy, x2: a.x2 + dx, y2: a.y2 + dy).toJson()
+                  : a.toJson(),
+            ),
+        ],
       if (!forTable) 'layers': layers.map((l) => l.toJson()).toList(),
       if (!forTable) 'active_layer': activeLayer,
     };
