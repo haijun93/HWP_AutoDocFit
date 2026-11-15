@@ -64,7 +64,7 @@ void main() {
             children: [
               const DocumentEditorAdapter(child: Text('Child 1')),
               const FileConversionAdapter(child: Text('Child 2')),
-              DocGridAdapter(api: (endpoint, params) async => {'ok': true}),
+              Expanded(child: DocGridAdapter(api: (endpoint, params) async => {'ok': true})),
             ],
           ),
         ),
