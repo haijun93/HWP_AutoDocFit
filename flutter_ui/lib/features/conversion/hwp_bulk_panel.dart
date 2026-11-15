@@ -268,17 +268,20 @@ class HwpBulkCard extends StatelessWidget {
     final phase = '${bulk['phase'] ?? ''}';
     final found = bulk['found'] ?? 0;
     final done = bulk['done'] ?? 0;
+    final protected = bulk['protected'] ?? 0;
     final active = phase == 'scan' || phase == 'convert';
     final failures = (bulk['failures'] as List? ?? [])
         .whereType<Map>()
         .toList();
     final title = switch (phase) {
       'scan' => 'HWP 찾는 중… $found개 찾음',
-      'convert' => 'HWPX로 바꾸는 중 $done / $found',
+      'convert' => 'HWPX로 바꾸는 중 $done / $found'
+          '${protected is num && protected > 0 ? ' · 보호 문서 $protected개 건너뜀' : ''}',
       'error' => 'HWPX 일괄 변환을 하지 못했어요',
       'stopped' => 'HWPX 일괄 변환을 멈췄어요',
       _ =>
         'HWPX 일괄 변환 끝: 변환 ${bulk['succeeded'] ?? 0} · 실패 ${bulk['failed'] ?? 0}'
+            '${protected is num && protected > 0 ? ' · 보호 문서 $protected개 건너뜀' : ''}'
             ' · 이미 있어 건너뜀 ${bulk['skipped_existing'] ?? 0}',
     };
     final current = '${bulk['current'] ?? ''}';
