@@ -689,3 +689,36 @@ class TableSketchExampleTests(unittest.TestCase):
             self.assertIn("미로예시", names)
             self.assertIn("공룡예시", names)
 
+    def test_orientation_and_content_width_warning(self):
+        # 32칸 @ 5.0mm = 160mm (세로 기준 150mm 초과, 가로 기준 237mm 이내)
+        wide_lines = box(0, 0, 32, 4)
+        sketch_portrait = drawing(wide_lines)
+        sketch_portrait["orientation"] = "portrait"
+        res_portrait = ts.preview(sketch_portrait)
+        self.assertTrue(res_portrait["ok"])
+        self.assertTrue(any("본문 폭(150mm)을 초과" in w for w in res_portrait["warnings"]))
+
+        sketch_landscape = drawing(wide_lines)
+        sketch_landscape["orientation"] = "landscape"
+        res_landscape = ts.preview(sketch_landscape)
+        self.assertTrue(res_landscape["ok"])
+        self.assertFalse(any("본문 폭" in w for w in res_landscape["warnings"]))
+
+        # 50칸 @ 5.0mm = 250mm (가로 기준 237mm 초과)
+        wider_lines = box(0, 0, 50, 4)
+        sketch_landscape_over = dict(grid=dict(cols=60, rows=50, cell_mm=5.0), lines=wider_lines, texts=[], orientation="landscape")
+        res_landscape_over = ts.preview(sketch_landscape_over)
+        self.assertTrue(res_landscape_over["ok"])
+        self.assertTrue(any("본문 폭(237mm)을 초과" in w for w in res_landscape_over["warnings"]))
+
+    def test_negative_coordinates_reorigin(self):
+        # 음수 좌표 (-5, -5) ~ (5, 5) -> reorigin 시 (0, 0) ~ (10, 10)으로 재정렬
+        neg_box = box(-5, -5, 5, 5)
+        sketch = dict(grid=dict(cols=36, rows=50, cell_mm=5.0), lines=neg_box, texts=[], reorigin=True)
+        res = ts.preview(sketch)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["rows"], 1)
+        self.assertEqual(res["cols"], 1)
+        self.assertEqual(res["width_mm"], 50.0)
+
+

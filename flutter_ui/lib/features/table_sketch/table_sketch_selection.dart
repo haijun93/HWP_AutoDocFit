@@ -221,7 +221,7 @@ Rect? selectionBounds(TableSketchDoc doc, SketchSelection sel) {
   return l == null ? null : Rect.fromLTRB(l!, t!, r!, b!);
 }
 
-/// 고른 개체를 (dx, dy)칸 옮긴다. 종이 밖으로 나가거나 다른 칸 글을 덮으면 옮기지 않고 false.
+/// 고른 개체를 (dx, dy)칸 옮긴다. 다른 칸 글을 덮으면 옮기지 않고 false.
 bool translateSelection(
   TableSketchDoc doc,
   SketchSelection sel,
@@ -229,13 +229,6 @@ bool translateSelection(
   int dy,
 ) {
   if (sel.isEmpty || (dx == 0 && dy == 0)) return false;
-  final cols = doc.grid.cols, rows = doc.grid.rows;
-  for (final i in sel.lines) {
-    final s = doc.lines[i];
-    for (final (x, y) in [(s.x1 + dx, s.y1 + dy), (s.x2 + dx, s.y2 + dy)]) {
-      if (x < 0 || y < 0 || x > cols || y > rows) return false;
-    }
-  }
   final moving = {for (final i in sel.texts) i};
   final occupied = {
     for (var i = 0; i < doc.texts.length; i++)
@@ -244,21 +237,7 @@ bool translateSelection(
   for (final i in sel.texts) {
     final s = doc.texts[i];
     final x = s.x + dx, y = s.y + dy;
-    if (x < 0 || y < 0 || x >= cols || y >= rows) return false;
     if (occupied.contains((x, y))) return false;
-  }
-  for (final i in sel.arrows) {
-    final a = doc.arrows[i];
-    if (a.x1 + dx < 0 ||
-        a.x2 + dx < 0 ||
-        a.x1 + dx > cols ||
-        a.x2 + dx > cols ||
-        a.y1 + dy < 0 ||
-        a.y2 + dy < 0 ||
-        a.y1 + dy > rows ||
-        a.y2 + dy > rows) {
-      return false;
-    }
   }
   final before = sel.lines.isEmpty ? null : selectionBounds(doc, sel);
   if (before != null) {

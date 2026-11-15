@@ -93,17 +93,19 @@ bool hasMazeExamplePath(List<String> rows) {
 }
 
 /// 이미지에서 인식한 표(칸 하나 = 격자 1눈금)를 그림판에서 고치기 좋은 크기로 키운다.
-/// 칸 하나를 최대 4눈금(20mm)으로, 표 폭은 32눈금(A4 본문 폭 정도) 안으로 맞추고,
+/// 칸 하나를 최대 4눈금(20mm)으로, 표 폭은 A4 본문 폭(세로 32눈금·가로 48눈금 정도) 안으로 맞추고,
 /// 격자는 지금 그림판 크기([base]) 이상·200눈금 이하로 둔다.
 TableSketchDoc fitRecognizedSketch(
   TableSketchDoc recognized, {
   GridConfig base = const GridConfig(),
+  String orientation = 'portrait',
 }) {
   final cols = math.max(1, recognized.grid.cols);
   final rows = math.max(1, recognized.grid.rows);
+  final targetWidthUnits = orientation == 'landscape' ? 48 : 32;
   final scale = [
     4,
-    32 ~/ cols,
+    targetWidthUnits ~/ cols,
     200 ~/ cols,
     200 ~/ rows,
   ].reduce(math.min).clamp(1, 4);
@@ -122,6 +124,7 @@ TableSketchDoc fitRecognizedSketch(
           y2: l.y2 * scale,
         ),
     ],
+    orientation: orientation,
   );
 }
 
@@ -231,6 +234,17 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   static const double _baseCellSize = 16.0;
   double get _cellSize => _baseCellSize * _zoom;
 
+  // 무한 캔버스 이동 및 가이드
+  Offset _panOffset = Offset.zero;
+  bool _showPaperGuide = true;
+  String _orientation = 'portrait'; // 'portrait' | 'landscape'
+  bool _isPanning = false;
+  Offset? _panStartPos;
+  Offset? _panStartOffset;
+
+  Offset _toCanvas(Offset screenPos) => screenPos - _panOffset;
+  Offset _toScreen(Offset canvasPos) => canvasPos + _panOffset;
+
   // 백엔드 미리보기 및 복사 상태
   TableSketchPreviewResult? _previewResult;
   bool _previewLoading = false;
@@ -284,6 +298,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       setState(() {
         _doc = TableSketchDoc.fromJson(draft['sketch'] as Map);
         _sel = SketchSelection();
+        _orientation = _doc.orientation;
+        _panOffset = Offset(_doc.viewOffsetX, _doc.viewOffsetY);
+        _zoom = _doc.zoom;
       });
       _triggerPreviewDebounced();
     } else {
@@ -304,15 +321,15 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Future<void> _persistDraft() async {
     if (!mounted) return;
     try {
+      _doc.orientation = _orientation;
+      _doc.viewOffsetX = _panOffset.dx;
+      _doc.viewOffsetY = _panOffset.dy;
+      _doc.zoom = _zoom;
       await _sketchApi.saveDraft(_doc.toJson());
     } catch (_) {
       // 저장 실패는 편집을 막지 않는다. 다음 변경 때 다시 저장한다.
     }
   }
-
-  // 끌기는 언제나 그리기에 쓰고(스크롤 상자가 끌기를 가져가면 선이 그려지지 않았다), 화면 이동은 휠·스크롤 막대로 한다.
-  final ScrollController _vScroll = ScrollController();
-  final ScrollController _hScroll = ScrollController();
 
   @override
   void dispose() {
@@ -325,20 +342,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       image.dispose();
     }
     _saveNameController.dispose();
-    _vScroll.dispose();
-    _hScroll.dispose();
     super.dispose();
-  }
-
-  void _scrollBy(ScrollController controller, double delta) {
-    if (!controller.hasClients) return;
-    final position = controller.position;
-    controller.jumpTo(
-      (position.pixels + delta).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      ),
-    );
   }
 
   // --- 실행 취소 / 다시 실행 ---
@@ -405,6 +409,169 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         _triggerPreviewDebounced();
       }
     });
+  }
+
+  bool get _isSketchDirty {
+    final hasElements = _doc.lines.isNotEmpty ||
+        _doc.texts.isNotEmpty ||
+        _doc.images.isNotEmpty ||
+        _doc.fills.isNotEmpty ||
+        _doc.arrows.isNotEmpty;
+    final hasNonDefault = _lineWidth != 'thin' ||
+        _lineStyle != 'solid' ||
+        _lineColor != sketchBlack ||
+        _orientation != 'portrait' ||
+        _zoom != 1.0 ||
+        _panOffset != Offset.zero ||
+        _doc.layers.length > 1 ||
+        _saveNameController.text.trim() != '새 표 서식' ||
+        !_smartGuides ||
+        _keepRatio;
+    return hasElements || hasNonDefault;
+  }
+
+  void _resetEverything() {
+    setState(() {
+      _doc = TableSketchDoc();
+      _undoStack.clear();
+      _redoStack.clear();
+      _sel = SketchSelection();
+      _lassoPath = null;
+      _movingSelection = false;
+      _resizeHandle = null;
+      _resizeStart = null;
+      _resizeBase = null;
+      _endpointDrag = null;
+      _regionSel.clear();
+      _imageTarget = null;
+      _previewLine = null;
+      _previewRect = null;
+      _tool = SketchToolMode.line;
+      _lineWidth = 'thin';
+      _lineStyle = 'solid';
+      _lineColor = sketchBlack;
+      _smartGuides = true;
+      _keepRatio = false;
+      _orientation = 'portrait';
+      _zoom = 1.0;
+      _panOffset = Offset.zero;
+      _saveNameController.text = '새 표 서식';
+    });
+    _scheduleDraftSave();
+    _triggerPreviewDebounced();
+  }
+
+  Future<void> _handleNewSketch() async {
+    if (!_isSketchDirty) {
+      _resetEverything();
+      return;
+    }
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('sketchNewDialog'),
+        title: const Text('새로 그리기'),
+        content: const Text('작업 내용을 저장하시겠습니까?'),
+        actions: [
+          TextButton(
+            key: const Key('sketchNewCancel'),
+            onPressed: () => Navigator.of(ctx).pop('cancel'),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            key: const Key('sketchNewDiscard'),
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: const Text('저장 안 함'),
+          ),
+          FilledButton(
+            key: const Key('sketchNewSave'),
+            onPressed: () => Navigator.of(ctx).pop('save'),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || action == null || action == 'cancel') return;
+
+    if (action == 'discard') {
+      _resetEverything();
+      return;
+    }
+
+    if (action == 'save') {
+      var name = _saveNameController.text.trim();
+      if (name.isEmpty) {
+        final entered = await _promptSketchName();
+        if (entered == null || entered.trim().isEmpty) return;
+        name = entered.trim();
+        _saveNameController.text = name;
+      }
+      final ok = await _saveSketchDirect(name);
+      if (ok && mounted) {
+        _resetEverything();
+      }
+    }
+  }
+
+  Future<String?> _promptSketchName() async {
+    final controller = TextEditingController(text: _saveNameController.text.trim());
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        key: const Key('sketchNamePromptDialog'),
+        title: const Text('서식 이름 입력'),
+        content: TextField(
+          key: const Key('sketchNamePromptInput'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '서식 이름',
+            hintText: '예: 새 표 서식',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (val) => Navigator.of(ctx).pop(val),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            key: const Key('sketchNamePromptConfirm'),
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool> _saveSketchDirect([String? explicitName]) async {
+    final name = (explicitName ?? _saveNameController.text).trim();
+    if (name.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('저장할 이름을 입력하세요.')),
+        );
+      }
+      return false;
+    }
+    _doc.orientation = _orientation;
+    _doc.viewOffsetX = _panOffset.dx;
+    _doc.viewOffsetY = _panOffset.dy;
+    _doc.zoom = _zoom;
+    final res = await _sketchApi.save(name, _doc.toJson());
+    final ok = res['ok'] == true;
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(ok ? '저장되었습니다.' : '저장 실패: ${res['message']}'),
+        ),
+      );
+    }
+    return ok;
   }
 
   // --- 백엔드 미리보기 (0.5초 디바운스) ---
@@ -879,23 +1046,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   // --- 저장 / 불러오기 / 삭제 ---
 
   Future<void> _saveSketch() async {
-    final name = _saveNameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('저장할 이름을 입력하세요.')));
-      return;
-    }
-    final res = await _sketchApi.save(name, _doc.toJson());
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            res['ok'] == true ? '저장되었습니다.' : '저장 실패: ${res['message']}',
-          ),
-        ),
-      );
-    }
+    await _saveSketchDirect();
   }
 
   Future<void> _openListDialog() async {
@@ -969,7 +1120,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _lastErasePos = pos;
       _erasePrecisionAt(pos, inDrag: true);
     } else if (_isArrowTool) {
-      final hit = shapeSelect(_doc, pos / _cellSize, _hitTolerance);
+      final cPos = _toCanvas(pos);
+      final hit = shapeSelect(_doc, cPos / _cellSize, _hitTolerance);
       if (hit.arrows.isNotEmpty) {
         setState(() {
           _tool = SketchToolMode.select;
@@ -977,9 +1129,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         });
         _beginSelectionDrag(pos);
       } else {
-        final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-            gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-        setState(() => _dragStart = Offset(gx * _cellSize, gy * _cellSize));
+        final gx = (cPos.dx / _cellSize).round(),
+            gy = (cPos.dy / _cellSize).round();
+        setState(() => _dragStart = Offset(gx * _cellSize, gy * _cellSize) + _panOffset);
       }
     } else if (_tool == SketchToolMode.eraser) {
       _eraseLineAt(pos);
@@ -1069,12 +1221,13 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   void _handleTapUp(TapUpDetails details) {
     final pos = details.localPosition;
+    final cPos = _toCanvas(pos);
     if (_tool == SketchToolMode.text) {
       _openTextDialogAt(pos);
     } else if (_isArrowTool &&
-        shapeSelect(_doc, pos / _cellSize, _hitTolerance).isEmpty) {
-      final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-          gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+        shapeSelect(_doc, cPos / _cellSize, _hitTolerance).isEmpty) {
+      final gx = (cPos.dx / _cellSize).round(),
+          gy = (cPos.dy / _cellSize).round();
       final (x2, y2) = switch (_tool) {
         SketchToolMode.arrowLeft => (gx - 1, gy),
         SketchToolMode.arrowRight => (gx + 1, gy),
@@ -1082,18 +1235,15 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         _ => (gx, gy + 1),
       };
       _commitArrow(
-        Offset(gx * _cellSize, gy * _cellSize),
-        Offset(
-          x2.clamp(0, _doc.grid.cols) * _cellSize,
-          y2.clamp(0, _doc.grid.rows) * _cellSize,
-        ),
+        Offset(gx * _cellSize, gy * _cellSize) + _panOffset,
+        Offset(x2 * _cellSize, y2 * _cellSize) + _panOffset,
       );
     } else if (_tool == SketchToolMode.select ||
         _tool == SketchToolMode.lasso) {
       _selectLineAt(pos);
     } else if (_tool == SketchToolMode.line || _tool == SketchToolMode.rect) {
       // 그리기 도구로 이미 있는 사각형·직선을 한 번 누르면 그 모형을 골라 바로 옮길 수 있게 한다.
-      if (shapeSelect(_doc, pos / _cellSize, _hitTolerance).lines.isNotEmpty) {
+      if (shapeSelect(_doc, cPos / _cellSize, _hitTolerance).lines.isNotEmpty) {
         setState(() => _tool = SketchToolMode.select);
         _selectLineAt(pos);
       }
@@ -1110,7 +1260,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   /// '칸 색' 도구: 누른 칸(선으로 닫힌 영역)을 고른다. Shift면 더하거나(이미 고른 칸이면) 뺀다.
   void _pickRegionAt(Offset pos) {
-    final x = (pos.dx / _cellSize).floor(), y = (pos.dy / _cellSize).floor();
+    final cPos = _toCanvas(pos);
+    final x = (cPos.dx / _cellSize).floor(), y = (cPos.dy / _cellSize).floor();
     final cells = regionCells(_doc, x, y);
     final shift = HardwareKeyboard.instance.isShiftPressed;
     if (cells == null) {
@@ -1132,19 +1283,14 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   // --- 선 / 사각형 스냅 및 커밋 ---
 
   void _updateLinePreview(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final rawGx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final rawGy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cStart = _toCanvas(start);
+    final cCurrent = _toCanvas(current);
+    final gx1 = (cStart.dx / _cellSize).round();
+    final gy1 = (cStart.dy / _cellSize).round();
+    final rawGx2 = (cCurrent.dx / _cellSize).round();
+    final rawGy2 = (cCurrent.dy / _cellSize).round();
 
-    final snapped = snapLineCoords(
-      gx1,
-      gy1,
-      rawGx2,
-      rawGy2,
-      _doc.grid.cols,
-      _doc.grid.rows,
-    );
+    final snapped = snapLineCoords(gx1, gy1, rawGx2, rawGy2);
     if (snapped != null) {
       setState(() {
         _previewLine = SketchLine(
@@ -1163,19 +1309,14 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _commitLine(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final rawGx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final rawGy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cStart = _toCanvas(start);
+    final cCurrent = _toCanvas(current);
+    final gx1 = (cStart.dx / _cellSize).round();
+    final gy1 = (cStart.dy / _cellSize).round();
+    final rawGx2 = (cCurrent.dx / _cellSize).round();
+    final rawGy2 = (cCurrent.dy / _cellSize).round();
 
-    final snapped = snapLineCoords(
-      gx1,
-      gy1,
-      rawGx2,
-      rawGy2,
-      _doc.grid.cols,
-      _doc.grid.rows,
-    );
+    final snapped = snapLineCoords(gx1, gy1, rawGx2, rawGy2);
     if (snapped != null) {
       _saveSnapshot();
       final newLine = SketchLine(
@@ -1195,10 +1336,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _updateRectPreview(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final gx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cStart = _toCanvas(start);
+    final cCurrent = _toCanvas(current);
+    final gx1 = (cStart.dx / _cellSize).round();
+    final gy1 = (cStart.dy / _cellSize).round();
+    final gx2 = (cCurrent.dx / _cellSize).round();
+    final gy2 = (cCurrent.dy / _cellSize).round();
 
     final minX = math.min(gx1, gx2);
     final maxX = math.max(gx1, gx2);
@@ -1221,22 +1364,24 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   /// 사각형 도구로 한 번 누르면 기본 크기(8×4칸) 사각형을 놓는다. 이미 있는 모형을 누르면 고르기로 넘긴다.
   void _placeRect(Offset at) {
-    if (shapeSelect(_doc, at / _cellSize, _hitTolerance).isNotEmpty) return;
-    final cols = _doc.grid.cols, rows = _doc.grid.rows;
-    final w = math.min(8, cols), h = math.min(4, rows);
-    final x = (at.dx / _cellSize).round().clamp(0, cols - w);
-    final y = (at.dy / _cellSize).round().clamp(0, rows - h);
+    final cAt = _toCanvas(at);
+    if (shapeSelect(_doc, cAt / _cellSize, _hitTolerance).isNotEmpty) return;
+    const w = 8, h = 4;
+    final x = (cAt.dx / _cellSize).round();
+    final y = (cAt.dy / _cellSize).round();
     _commitRect(
-      Offset(x * _cellSize, y * _cellSize),
-      Offset((x + w) * _cellSize, (y + h) * _cellSize),
+      Offset(x * _cellSize, y * _cellSize) + _panOffset,
+      Offset((x + w) * _cellSize, (y + h) * _cellSize) + _panOffset,
     );
   }
 
   void _commitRect(Offset start, Offset current) {
-    final gx1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    final gx2 = (current.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy2 = (current.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cStart = _toCanvas(start);
+    final cCurrent = _toCanvas(current);
+    final gx1 = (cStart.dx / _cellSize).round();
+    final gy1 = (cStart.dy / _cellSize).round();
+    final gx2 = (cCurrent.dx / _cellSize).round();
+    final gy2 = (cCurrent.dy / _cellSize).round();
 
     final minX = math.min(gx1, gx2);
     final maxX = math.max(gx1, gx2);
@@ -1313,10 +1458,12 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       _tool == SketchToolMode.arrowDown;
 
   void _commitArrow(Offset start, Offset end) {
-    final x1 = (start.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-        y1 = (start.dy / _cellSize).round().clamp(0, _doc.grid.rows);
-    var x2 = (end.dx / _cellSize).round().clamp(0, _doc.grid.cols),
-        y2 = (end.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cStart = _toCanvas(start);
+    final cEnd = _toCanvas(end);
+    final x1 = (cStart.dx / _cellSize).round(),
+        y1 = (cStart.dy / _cellSize).round();
+    var x2 = (cEnd.dx / _cellSize).round(),
+        y2 = (cEnd.dy / _cellSize).round();
     if (_tool == SketchToolMode.arrowLeft && x2 > x1 ||
         _tool == SketchToolMode.arrowRight && x2 < x1 ||
         _tool == SketchToolMode.arrowUp && y2 > y1 ||
@@ -1325,17 +1472,13 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       // 도구 방향은 시작/끝 좌표 순서로 보존한다. 사용자가 반대쪽에서 끌어도 선택한 방향을 유지한다.
       if (_tool == SketchToolMode.arrowLeft ||
           _tool == SketchToolMode.arrowRight) {
-        final step = (x2 - x1).abs().clamp(1, _doc.grid.cols);
-        x2 = _tool == SketchToolMode.arrowLeft
-            ? (tx - step).clamp(0, _doc.grid.cols)
-            : (tx + step).clamp(0, _doc.grid.cols);
+        final step = math.max(1, (x2 - x1).abs());
+        x2 = _tool == SketchToolMode.arrowLeft ? (tx - step) : (tx + step);
       }
       if (_tool == SketchToolMode.arrowUp ||
           _tool == SketchToolMode.arrowDown) {
-        final step = (y2 - y1).abs().clamp(1, _doc.grid.rows);
-        y2 = _tool == SketchToolMode.arrowUp
-            ? (ty - step).clamp(0, _doc.grid.rows)
-            : (ty + step).clamp(0, _doc.grid.rows);
+        final step = math.max(1, (y2 - y1).abs());
+        y2 = _tool == SketchToolMode.arrowUp ? (ty - step) : (ty + step);
       }
     }
     if (x1 == x2 && y1 == y2) return;
@@ -1362,9 +1505,10 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   void _erasePrecisionAt(Offset pos, {bool inDrag = false}) {
     // 칸 끝(격자점) 근처는 어느 칸에도 속하지 않게 해, 끌어 지날 때 이웃 칸까지 지우지 않는다
     // (2026-10-30 실제 앱 시험: 가운데 4칸을 끌었는데 6칸이 모두 지워졌다).
+    final cPos = _toCanvas(pos);
     final hit = unitSegmentAt(
       _doc,
-      pos / _cellSize,
+      cPos / _cellSize,
       perpendicular: math.max(.45, 6 / _cellSize),
     );
     if (hit == null) return;
@@ -1381,6 +1525,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _eraseLineAt(Offset pos) {
+    final cPos = _toCanvas(pos);
     final threshold = math.max(16.0, _cellSize * 0.8);
     int? bestIdx;
     double bestDist = double.infinity;
@@ -1389,7 +1534,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       final line = _doc.lines[i];
       final p1 = Offset(line.x1 * _cellSize, line.y1 * _cellSize);
       final p2 = Offset(line.x2 * _cellSize, line.y2 * _cellSize);
-      final dist = distanceToSegment(pos, p1, p2);
+      final dist = distanceToSegment(cPos, p1, p2);
       if (dist < threshold && dist < bestDist) {
         bestDist = dist;
         bestIdx = i;
@@ -1411,10 +1556,11 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   /// 눌러 고르기: 사각형은 네 변을, 직선은 한 줄 전체를 한 모형으로 고른다.
   /// Shift를 누르고 있으면 더하고, 이미 고른 모형이면 뺀다.
   void _selectLineAt(Offset pos) {
+    final cPos = _toCanvas(pos);
     // 묶음에 든 모형을 누르면 묶음 전체가 골라진다.
     final hit = expandGroups(
       _doc,
-      shapeSelect(_doc, pos / _cellSize, _hitTolerance),
+      shapeSelect(_doc, cPos / _cellSize, _hitTolerance),
     );
     final shift = HardwareKeyboard.instance.isShiftPressed;
     final already =
@@ -1451,7 +1597,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _beginSelectionDrag(Offset pos) {
-    final grid = pos / _cellSize;
+    final cPos = _toCanvas(pos);
+    final grid = cPos / _cellSize;
     final shift = HardwareKeyboard.instance.isShiftPressed;
     _movingSelection = false;
     _lassoPath = null;
@@ -1472,7 +1619,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     if (box != null) {
       final handles = TableSketchPainter.handlePoints(box);
       for (var i = 0; i < handles.length; i++) {
-        if ((handles[i] * _cellSize - pos).distance <= 10) {
+        if ((handles[i] * _cellSize - cPos).distance <= 10) {
           _resizeHandle = i;
           _resizeStart = box;
           if (selectedRectangle(_doc, _sel) == null) {
@@ -1517,25 +1664,16 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _updateSelectionDrag(Offset pos) {
+    final cPos = _toCanvas(pos);
     final handle = _resizeHandle, start = _resizeStart;
     if (handle != null && start != null) {
-      final gx = (pos.dx / _cellSize)
-          .round()
-          .clamp(0, _doc.grid.cols)
-          .toDouble();
-      final gy = (pos.dy / _cellSize)
-          .round()
-          .clamp(0, _doc.grid.rows)
-          .toDouble();
+      final gx = (cPos.dx / _cellSize).roundToDouble();
+      final gy = (cPos.dy / _cellSize).roundToDouble();
       final keepRatio = _keepRatio || HardwareKeyboard.instance.isShiftPressed;
       var next = resizeBounds(start, handle, gx, gy, keepRatio: keepRatio);
       final targets = _guideTargets;
       if (targets != null && !keepRatio) {
         next = snapResize(next, handle, targets, _snapCells);
-      }
-      final cols = _doc.grid.cols.toDouble(), rows = _doc.grid.rows.toDouble();
-      if (next.left < 0 || next.top < 0 || next.right > cols || next.bottom > rows) {
-        return; // 종이 밖으로는 늘이지 않는다.
       }
       final base = _resizeBase;
       if (base == null && next == selectionBounds(_doc, _sel)) return;
@@ -1561,7 +1699,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       return;
     }
     if (_movingSelection && _moveOrigin != null) {
-      final grid = pos / _cellSize;
+      final grid = cPos / _cellSize;
       var totalDx = (grid.dx - _moveOrigin!.dx).round();
       var totalDy = (grid.dy - _moveOrigin!.dy).round();
       final targets = _guideTargets, startBounds = _moveStartBounds;
@@ -1581,7 +1719,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         _moveSnapshotTaken = true;
       }
       setState(() {
-        // 종이 밖·다른 글 칸에 막히면 가로·세로를 따로 시도한다.
+        // 다른 글 칸에 막히면 가로·세로를 따로 시도한다.
         if (translateSelection(_doc, _sel, stepX, stepY)) {
           _movedDx += stepX;
           _movedDy += stepY;
@@ -1648,7 +1786,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     final shift = HardwareKeyboard.instance.isShiftPressed;
     setState(() {
       final picked = lassoSelect(_doc, [
-        for (final p in polygon) p / _cellSize,
+        for (final p in polygon) _toCanvas(p) / _cellSize,
       ], keep: shift ? _sel.lines : const {});
       _sel = shift
           ? SketchSelection(
@@ -1678,8 +1816,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   /// 끝점 하나를 (pos)로 옮긴다. 가로·세로·45° 모양은 그대로 지킨다(다른 끝은 고정).
   void _dragEndpoint(({bool arrow, int index, int end}) end, Offset pos) {
-    final gx = (pos.dx / _cellSize).round().clamp(0, _doc.grid.cols);
-    final gy = (pos.dy / _cellSize).round().clamp(0, _doc.grid.rows);
+    final cPos = _toCanvas(pos);
+    final gx = (cPos.dx / _cellSize).round();
+    final gy = (cPos.dy / _cellSize).round();
     final (ox1, oy1, ox2, oy2) = end.arrow
         ? (
             _doc.arrows[end.index].x1,
@@ -1699,8 +1838,6 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       fy,
       gx,
       gy,
-      _doc.grid.cols,
-      _doc.grid.rows,
     );
     if (snapped == null || (snapped.x == fx && snapped.y == fy)) return;
     final (nx1, ny1, nx2, ny2) = end.end == 0
@@ -2135,8 +2272,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   // --- 글 입력 대화상자 ---
 
   void _openTextDialogAt(Offset pos, {String? insert}) {
-    final cx = (pos.dx / _cellSize).floor().clamp(0, _doc.grid.cols - 1);
-    final cy = (pos.dy / _cellSize).floor().clamp(0, _doc.grid.rows - 1);
+    final cPos = _toCanvas(pos);
+    final cx = (cPos.dx / _cellSize).floor();
+    final cy = (cPos.dy / _cellSize).floor();
     final existing = _doc.findText(cx, cy);
 
     showDialog<SketchText?>(
@@ -2163,36 +2301,92 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   void _zoomIn() {
     setState(() {
-      _zoom = (_zoom + 0.15).clamp(0.5, 3.0);
+      _zoom = (_zoom + 0.15).clamp(0.2, 5.0);
     });
   }
 
   void _zoomOut() {
     setState(() {
-      _zoom = (_zoom - 0.15).clamp(0.5, 3.0);
+      _zoom = (_zoom - 0.15).clamp(0.2, 5.0);
     });
   }
 
   void _zoomReset() {
     setState(() {
       _zoom = 1.0;
+      _panOffset = Offset.zero;
+    });
+  }
+
+  void _fitToScreen() {
+    final renderBox = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    final viewSize = renderBox?.size ?? const Size(800, 600);
+
+    Rect targetRect;
+    if (_doc.lines.isNotEmpty) {
+      final xs = <int>[];
+      final ys = <int>[];
+      for (final l in _doc.lines) {
+        xs.addAll([l.x1, l.x2]);
+        ys.addAll([l.y1, l.y2]);
+      }
+      final minX = xs.reduce(math.min);
+      final maxX = xs.reduce(math.max);
+      final minY = ys.reduce(math.min);
+      final maxY = ys.reduce(math.max);
+      targetRect = Rect.fromLTRB(
+        minX * _baseCellSize,
+        minY * _baseCellSize,
+        math.max(minX + 1, maxX) * _baseCellSize,
+        math.max(minY + 1, maxY) * _baseCellSize,
+      );
+    } else {
+      final isLandscape = _orientation == 'landscape';
+      final paperW = ((isLandscape ? 297.0 : 210.0) / _doc.grid.cellMm) * _baseCellSize;
+      final paperH = ((isLandscape ? 210.0 : 297.0) / _doc.grid.cellMm) * _baseCellSize;
+      targetRect = Rect.fromLTWH(0, 0, paperW, paperH);
+    }
+
+    const padding = 40.0;
+    final availW = math.max(100.0, viewSize.width - padding * 2);
+    final availH = math.max(100.0, viewSize.height - padding * 2);
+    final scaleX = availW / targetRect.width;
+    final scaleY = availH / targetRect.height;
+    final fitZoom = math.min(scaleX, scaleY).clamp(0.3, 3.0);
+
+    final scaledTargetW = targetRect.width * fitZoom;
+    final scaledTargetH = targetRect.height * fitZoom;
+    final offsetX = (viewSize.width - scaledTargetW) / 2 - targetRect.left * fitZoom;
+    final offsetY = (viewSize.height - scaledTargetH) / 2 - targetRect.top * fitZoom;
+
+    setState(() {
+      _zoom = fitZoom;
+      _panOffset = Offset(offsetX, offsetY);
     });
   }
 
   void _handlePointerSignal(PointerSignalEvent event) {
     if (event is PointerScrollEvent) {
-      // Ctrl + 마우스 휠
       if (HardwareKeyboard.instance.isControlPressed) {
-        if (event.scrollDelta.dy < 0) {
-          _zoomIn();
-        } else if (event.scrollDelta.dy > 0) {
-          _zoomOut();
-        }
-      } else if (HardwareKeyboard.instance.isShiftPressed) {
-        _scrollBy(_hScroll, event.scrollDelta.dy + event.scrollDelta.dx);
+        // Ctrl + 휠: 커서 위치 기준 줌
+        final cursorPos = event.localPosition;
+        final canvasPos = cursorPos - _panOffset;
+        final gridX = canvasPos.dx / _cellSize;
+        final gridY = canvasPos.dy / _cellSize;
+
+        final zoomDelta = -event.scrollDelta.dy * 0.002;
+        final newZoom = (_zoom + zoomDelta).clamp(0.2, 5.0);
+        final newCellSize = _baseCellSize * newZoom;
+
+        setState(() {
+          _zoom = newZoom;
+          _panOffset = cursorPos - Offset(gridX * newCellSize, gridY * newCellSize);
+        });
       } else {
-        _scrollBy(_vScroll, event.scrollDelta.dy);
-        _scrollBy(_hScroll, event.scrollDelta.dx);
+        // 일반 휠: 캔버스 이동 (팬)
+        setState(() {
+          _panOffset -= event.scrollDelta;
+        });
       }
     }
   }
@@ -2243,6 +2437,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
           control: true,
           shift: true,
         ): _redo,
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+            _handleNewSketch,
       },
       child: Focus(
         focusNode: _keyboardFocus,
@@ -2267,6 +2463,14 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               ],
             ),
             actions: [
+              OutlinedButton.icon(
+                key: const Key('sketchNewButton'),
+                icon: const Icon(Icons.note_add_outlined, size: 18),
+                label: const Text('새로 그리기'),
+                tooltip: '새로 그리기 (Ctrl+N): 작업 내용 저장 여부를 묻고 전체 초기화',
+                onPressed: _handleNewSketch,
+              ),
+              const SizedBox(width: 8),
               // 좁은 창(폭 600 미만)에서는 글 없는 아이콘 버튼으로 도구 줄이 넘치지 않게 한다.
               if (MediaQuery.sizeOf(context).width < 600)
                 IconButton(
@@ -2620,6 +2824,59 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             ),
+            IconButton(
+              key: const Key('fitToScreenButton'),
+              tooltip: '화면에 맞추기',
+              icon: const Icon(Icons.fit_screen_outlined, size: 18),
+              onPressed: _fitToScreen,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            ),
+            IconButton(
+              key: const Key('togglePaperGuide'),
+              tooltip: _showPaperGuide ? '종이 가이드 숨기기' : '종이 가이드 보이기',
+              icon: Icon(
+                _showPaperGuide ? Icons.description : Icons.description_outlined,
+                size: 18,
+                color: _showPaperGuide ? context.colors.primary : null,
+              ),
+              onPressed: () => setState(() => _showPaperGuide = !_showPaperGuide),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+            ),
+          ]),
+          _toolGroup([
+            Tooltip(
+              message:
+                  '가로 문서에 넣을 표를 그릴 때 쓰는 기준선입니다 (한/글에 붙여 넣을 때 문서 용지 방향은 바꾸지 않습니다)',
+              child: SegmentedButton<String>(
+                key: const Key('sketchOrientationToggle'),
+                segments: const [
+                  ButtonSegment<String>(
+                    value: 'portrait',
+                    label: Text('A4 세로', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.portrait, size: 16),
+                  ),
+                  ButtonSegment<String>(
+                    value: 'landscape',
+                    label: Text('A4 가로', style: TextStyle(fontSize: 12)),
+                    icon: Icon(Icons.landscape, size: 16),
+                  ),
+                ],
+                selected: {_orientation},
+                onSelectionChanged: (val) {
+                  setState(() {
+                    _orientation = val.first;
+                    _doc.orientation = val.first;
+                  });
+                  _triggerPreviewDebounced();
+                },
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+              ),
+            ),
           ]),
           // 폭 600 미만에서는 위 제목줄에 자리가 없어 이 줄(다음 줄로 내려감)에 둔다.
           if (MediaQuery.sizeOf(context).width < 600)
@@ -2700,7 +2957,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   }
 
   void _pickImageCell(Offset pos) {
-    final x = (pos.dx / _cellSize).floor(), y = (pos.dy / _cellSize).floor();
+    final cPos = _toCanvas(pos);
+    final x = (cPos.dx / _cellSize).floor(), y = (cPos.dy / _cellSize).floor();
     if (cellRegion(_doc, x, y) == null) {
       setState(() => _imageTarget = null);
       _notice('선으로 둘러싸인 표 칸을 눌러 주세요.');
@@ -2736,12 +2994,13 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
       if (box != null && cx is num && cy is num) {
         local = box.globalToLocal(Offset(cx.toDouble(), cy.toDouble()));
       }
+      final cLocal = local != null ? _toCanvas(local) : null;
       final onCell =
-          local != null &&
+          cLocal != null &&
           cellRegion(
                 _doc,
-                (local.dx / _cellSize).floor(),
-                (local.dy / _cellSize).floor(),
+                (cLocal.dx / _cellSize).floor(),
+                (cLocal.dy / _cellSize).floor(),
               ) !=
               null;
       if (!onCell) {
@@ -2815,6 +3074,7 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         found = fitRecognizedSketch(
           TableSketchDoc.fromJson(sketch),
           base: _doc.grid,
+          orientation: _orientation,
         );
       } catch (_) {
         found = null;
@@ -3121,8 +3381,9 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   /// 캔버스 좌표에 놓인 사진을 그 칸에 넣는다(시험에서도 쓴다).
   bool applyDroppedImageAt(Offset local, String data) {
-    final x = (local.dx / _cellSize).floor(),
-        y = (local.dy / _cellSize).floor();
+    final cLocal = _toCanvas(local);
+    final x = (cLocal.dx / _cellSize).floor(),
+        y = (cLocal.dy / _cellSize).floor();
     if (_tool != SketchToolMode.cellImage) {
       setState(() => _tool = SketchToolMode.cellImage);
     }
@@ -3564,12 +3825,6 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   Widget _buildCanvas() {
     final pending = _recognized;
-    final canvasWidth =
-        math.max(_doc.grid.cols, pending?.grid.cols ?? 0) * _cellSize;
-    final canvasHeight =
-        math.max(_doc.grid.rows, pending?.grid.rows ?? 0) * _cellSize;
-    // 옮기거나 크기를 바꾸는 동안 다른 개체와 맞는 곳에 빨간 안내선(다이어그램처럼).
-    // 같은 간격·같은 크기도 함께 보인다. '가이드'를 끄면 보이지 않고 붙지도 않는다.
     final targets = _guideTargets;
     final bounds = targets == null
         ? null
@@ -3581,129 +3836,127 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
         ? smartGuides(bounds, targets)
         : const SmartGuides();
 
-    return Listener(
-      onPointerSignal: _handlePointerSignal,
-      child: Container(
-        color: context.colors.surfaceSubtle,
-        child: Center(
-          child: Scrollbar(
-            controller: _vScroll,
-            thumbVisibility: true,
-            child: SingleChildScrollView(
-              controller: _vScroll,
-              physics: const NeverScrollableScrollPhysics(),
-              scrollDirection: Axis.vertical,
-              padding: const EdgeInsets.all(24),
-              child: Scrollbar(
-                controller: _hScroll,
-                thumbVisibility: true,
-                notificationPredicate: (n) => n.depth == 0,
-                child: SingleChildScrollView(
-                  controller: _hScroll,
-                  physics: const NeverScrollableScrollPhysics(),
-                  scrollDirection: Axis.horizontal,
-                  child: Center(
-                    child: Container(
-                      width: canvasWidth,
-                      height: canvasHeight,
-                      decoration: BoxDecoration(
-                        color: TableSketchColors.paper,
-                        boxShadow: [
-                          BoxShadow(
-                            color: TableSketchColors.of(context).paperShadow,
-                            blurRadius: 16,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Listener(
-                        key: _canvasKey,
-                        // 누름·이동·뗌을 직접 받아 뗀 위치를 끝점으로 쓴다(한 번에 멀리 옮겨도 선이 그려지게).
-                        behavior: HitTestBehavior.opaque,
-                        onPointerDown: (e) {
-                          _keyboardFocus.requestFocus();
-                          _handlePanStart(
-                            DragStartDetails(
-                              globalPosition: e.position,
-                              localPosition: e.localPosition,
-                            ),
-                          );
-                        },
-                        onPointerMove: (e) => _handlePanUpdate(
-                          DragUpdateDetails(
-                            globalPosition: e.position,
-                            localPosition: e.localPosition,
-                          ),
-                        ),
-                        onPointerUp: (e) {
-                          _handlePanUpdate(
-                            DragUpdateDetails(
-                              globalPosition: e.position,
-                              localPosition: e.localPosition,
-                            ),
-                          );
-                          _handlePanEnd(DragEndDetails());
-                        },
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          // 정밀 지우개 탭은 Listener의 Down/Up에서 이미 처리한다.
-                          onTapUp: _tool == SketchToolMode.preciseEraser
-                              ? null
-                              : _handleTapUp,
-                          child: CustomPaint(
-                            key: const Key('sketchCanvas'),
-                            size: Size(canvasWidth, canvasHeight),
-                            painter: TableSketchPainter(
-                              doc: _doc,
-                              cellSize: _cellSize,
-                              selectedLines: _sel.lines,
-                              selectedTexts: _sel.texts,
-                              selectedArrows: _sel.arrows,
-                              lassoPath: _lassoPath,
-                              marquee: _tool == SketchToolMode.select,
-                              cellImages: _cellImagesToPaint(),
-                              imageTarget: _tool == SketchToolMode.cellImage
-                                  ? _imageTargetRegion()
-                                  : null,
-                              previewLine: _previewLine,
-                              previewArrow: _isArrowTool,
-                              previewRect: _previewRect,
-                              resizeBox: _resizeBox,
-                              guideXs: guides.xs,
-                              guideYs: guides.ys,
-                              guideSpacing: guides.spacing,
-                              guideSameSize: guides.sameSize,
-                              selectedBounds: guides.sameSize.isEmpty
-                                  ? null
-                                  : bounds,
-                              regionCells: _tool == SketchToolMode.cellFill
-                                  ? _regionSel
-                                  : const {},
-                              colors: TableSketchColors.of(context),
-                            ),
-                            child: pending == null
-                                ? null
-                                : _buildRecognizedOverlay(
-                                    canvasWidth,
-                                    canvasHeight,
-                                  ),
-                          ),
-                        ),
-                      ),
-                    ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        return Listener(
+          onPointerSignal: _handlePointerSignal,
+          child: Container(
+            color: context.colors.surfaceSubtle,
+            child: Listener(
+              key: _canvasKey,
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (e) {
+                _keyboardFocus.requestFocus();
+                final isSpace = HardwareKeyboard.instance.isLogicalKeyPressed(
+                  LogicalKeyboardKey.space,
+                );
+                final isMiddleClick = (e.buttons & kTertiaryMouseButton) != 0;
+                if (isSpace || isMiddleClick) {
+                  _isPanning = true;
+                  _panStartPos = e.position;
+                  _panStartOffset = _panOffset;
+                  return;
+                }
+                _handlePanStart(
+                  DragStartDetails(
+                    globalPosition: e.position,
+                    localPosition: e.localPosition,
                   ),
+                );
+              },
+              onPointerMove: (e) {
+                if (_isPanning &&
+                    _panStartPos != null &&
+                    _panStartOffset != null) {
+                  final delta = e.position - _panStartPos!;
+                  setState(() => _panOffset = _panStartOffset! + delta);
+                  return;
+                }
+                _handlePanUpdate(
+                  DragUpdateDetails(
+                    globalPosition: e.position,
+                    localPosition: e.localPosition,
+                  ),
+                );
+              },
+              onPointerUp: (e) {
+                if (_isPanning) {
+                  _isPanning = false;
+                  return;
+                }
+                _handlePanUpdate(
+                  DragUpdateDetails(
+                    globalPosition: e.position,
+                    localPosition: e.localPosition,
+                  ),
+                );
+                _handlePanEnd(DragEndDetails());
+              },
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                // 정밀 지우개 탭은 Listener의 Down/Up에서 이미 처리한다.
+                onTapUp: _tool == SketchToolMode.preciseEraser
+                    ? null
+                    : _handleTapUp,
+                child: CustomPaint(
+                  key: const Key('sketchCanvas'),
+                  size: size,
+                  painter: TableSketchPainter(
+                    doc: _doc,
+                    cellSize: _cellSize,
+                    panOffset: _panOffset,
+                    showPaperGuide: _showPaperGuide,
+                    orientation: _orientation,
+                    selectedLines: _sel.lines,
+                    selectedTexts: _sel.texts,
+                    selectedArrows: _sel.arrows,
+                    lassoPath: _lassoPath,
+                    marquee: _tool == SketchToolMode.select,
+                    cellImages: _cellImagesToPaint(),
+                    imageTarget: _tool == SketchToolMode.cellImage
+                        ? _imageTargetRegion()
+                        : null,
+                    previewLine: _previewLine,
+                    previewArrow: _isArrowTool,
+                    previewRect: _previewRect,
+                    resizeBox: _resizeBox,
+                    guideXs: guides.xs,
+                    guideYs: guides.ys,
+                    guideSpacing: guides.spacing,
+                    guideSameSize: guides.sameSize,
+                    selectedBounds: guides.sameSize.isEmpty
+                        ? null
+                        : bounds,
+                    regionCells: _tool == SketchToolMode.cellFill
+                        ? _regionSel
+                        : const {},
+                    colors: TableSketchColors.of(context),
+                  ),
+                  child: pending == null
+                      ? null
+                      : _buildRecognizedOverlay(
+                          size.width,
+                          size.height,
+                        ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
   /// 미리보기 및 컨트롤 패널 (우측 또는 하단)
   Widget _buildBottomOrRightPanel({required bool isNarrow}) {
+    final isLandscape = _orientation == 'landscape';
+    final paperW = isLandscape ? 297.0 : 210.0;
+    final paperH = isLandscape ? 210.0 : 297.0;
+    final pr = _previewResult;
+    final pctW = pr != null ? (pr.widthMm / paperW * 100).toStringAsFixed(0) : '0';
+    final pctH = pr != null ? (pr.heightMm / paperH * 100).toStringAsFixed(0) : '0';
+
     return Container(
       constraints: isNarrow ? const BoxConstraints(maxHeight: 260) : null,
       padding: const EdgeInsets.all(16),
@@ -3754,7 +4007,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '용지 차지: ${_previewResult!.widthMm.toStringAsFixed(1)}mm × ${_previewResult!.heightMm.toStringAsFixed(1)}mm',
+                      '용지 차지: ${_previewResult!.widthMm.toStringAsFixed(1)}mm × ${_previewResult!.heightMm.toStringAsFixed(1)}mm ($pctW% × $pctH%, A4 ${isLandscape ? '가로' : '세로'})',
+                      key: const Key('sketchPaperOccupancyText'),
                       style: TextStyle(
                         fontSize: 12,
                         color: context.colors.muted,

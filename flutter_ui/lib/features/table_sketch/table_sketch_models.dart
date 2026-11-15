@@ -477,6 +477,10 @@ class TableSketchDoc {
     List<SketchLayer>? layers,
     String? activeLayer,
     TableSketchDoc? parked,
+    this.orientation = 'portrait',
+    this.viewOffsetX = 0.0,
+    this.viewOffsetY = 0.0,
+    this.zoom = 1.0,
   }) : lines = lines ?? <SketchLine>[],
        fills = fills ?? <SketchFill>[],
        arrows = arrows ?? <SketchArrow>[],
@@ -495,6 +499,16 @@ class TableSketchDoc {
   List<SketchLine> lines;
   List<SketchText> texts;
   List<SketchImage> images;
+
+  /// 용지 방향: 'portrait' (세로, 210x297mm) | 'landscape' (가로, 297x210mm).
+  String orientation;
+
+  /// 보기 위치 오프셋 (캔버스 패닝 x, y)
+  double viewOffsetX;
+  double viewOffsetY;
+
+  /// 보기 확대 배율 (기본 1.0 = 100%)
+  double zoom;
 
   /// 사각형 배경색(레이어와 무관, 그린 순서대로 겹친다).
   List<SketchFill> fills;
@@ -634,6 +648,10 @@ class TableSketchDoc {
     arrows: arrows.map((a) => a.copyWith()).toList(),
     layers: List.of(layers),
     activeLayer: activeLayer,
+    orientation: orientation,
+    viewOffsetX: viewOffsetX,
+    viewOffsetY: viewOffsetY,
+    zoom: zoom,
     parked: TableSketchDoc(
       lines: List.of(_parkedLines),
       texts: List.of(_parkedTexts),
@@ -694,6 +712,10 @@ class TableSketchDoc {
       activeLayer: json['active_layer'] is String
           ? json['active_layer'] as String
           : null,
+      orientation: json['orientation'] == 'landscape' ? 'landscape' : 'portrait',
+      viewOffsetX: (json['view_offset_x'] as num?)?.toDouble() ?? 0.0,
+      viewOffsetY: (json['view_offset_y'] as num?)?.toDouble() ?? 0.0,
+      zoom: (json['zoom'] as num?)?.toDouble() ?? 1.0,
     );
     if (!doc.layers.any((l) => l.id == doc.activeLayer)) {
       doc.activeLayer = doc.layers.last.id;
@@ -706,22 +728,95 @@ class TableSketchDoc {
   Map<String, dynamic> toJson({bool forTable = false}) {
     claimUnassigned();
     bool keep(String? id) => !forTable || layerOf(id).visible;
-    final allLines = [...lines, ..._parkedLines].where((l) => keep(l.layer));
-    final allTexts = [...texts, ..._parkedTexts].where((t) => keep(t.layer));
-    final allImages = [...images, ..._parkedImages].where((i) => keep(i.layer));
-    final allArrows = [...arrows, ..._parkedArrows].where((a) => keep(a.layer));
+    final allLines = [...lines, ..._parkedLines].where((l) => keep(l.layer)).toList();
+    final allTexts = [...texts, ..._parkedTexts].where((t) => keep(t.layer)).toList();
+    final allImages = [...images, ..._parkedImages].where((i) => keep(i.layer)).toList();
+    final allArrows = [...arrows, ..._parkedArrows].where((a) => keep(a.layer)).toList();
+    final allFills = [...fills];
+
+    var outGrid = grid;
+    var outLines = allLines;
+    var outTexts = allTexts;
+    var outImages = allImages;
+    var outArrows = allArrows;
+    var outFills = allFills;
+
+    if (forTable && allLines.isNotEmpty) {
+      // 표로 만들 때는 그린 선들의 범위로 원점을 다시 잡는다
+      final xs = <int>[];
+      final ys = <int>[];
+      for (final l in allLines) {
+        xs.add(l.x1);
+        xs.add(l.x2);
+        ys.add(l.y1);
+        ys.add(l.y2);
+      }
+      final minX = xs.reduce(math.min);
+      final minY = ys.reduce(math.min);
+      final maxX = xs.reduce(math.max);
+      final maxY = ys.reduce(math.max);
+      if (minX != 0 || minY != 0) {
+        final shiftX = -minX;
+        final shiftY = -minY;
+        outLines = [
+          for (final l in allLines)
+            l.copyWith(
+              x1: l.x1 + shiftX,
+              y1: l.y1 + shiftY,
+              x2: l.x2 + shiftX,
+              y2: l.y2 + shiftY,
+            ),
+        ];
+        outTexts = [
+          for (final t in allTexts)
+            t.copyWith(x: t.x + shiftX, y: t.y + shiftY),
+        ];
+        outImages = [
+          for (final img in allImages)
+            img.copyWith(x: img.x + shiftX, y: img.y + shiftY),
+        ];
+        outArrows = [
+          for (final a in allArrows)
+            a.copyWith(
+              x1: a.x1 + shiftX,
+              y1: a.y1 + shiftY,
+              x2: a.x2 + shiftX,
+              y2: a.y2 + shiftY,
+            ),
+        ];
+        outFills = [
+          for (final f in allFills)
+            SketchFill(
+              x1: f.x1 + shiftX,
+              y1: f.y1 + shiftY,
+              x2: f.x2 + shiftX,
+              y2: f.y2 + shiftY,
+              color: f.color,
+            ),
+        ];
+        outGrid = grid.copyWith(
+          cols: math.max(grid.cols, maxX - minX),
+          rows: math.max(grid.rows, maxY - minY),
+        );
+      }
+    }
+
     // 한/글 표로 바꿀 때는 레이어 표시가 필요 없다(표 변환은 레이어를 모른다).
     Map<String, dynamic> item(Map<String, dynamic> json) =>
         forTable ? (json..remove('layer')..remove('group')) : json;
     return {
-      'grid': grid.toJson(),
-      'lines': allLines.map((l) => item(l.toJson())).toList(),
-      'texts': allTexts.map((t) => item(t.toJson())).toList(),
-      if (allImages.isNotEmpty)
-        'images': allImages.map((i) => item(i.toJson())).toList(),
-      if (fills.isNotEmpty) 'fills': fills.map((f) => f.toJson()).toList(),
-      if (allArrows.isNotEmpty)
-        'arrows': allArrows.map((a) => item(a.toJson())).toList(),
+      'grid': outGrid.toJson(),
+      'lines': outLines.map((l) => item(l.toJson())).toList(),
+      'texts': outTexts.map((t) => item(t.toJson())).toList(),
+      if (outImages.isNotEmpty)
+        'images': outImages.map((i) => item(i.toJson())).toList(),
+      if (outFills.isNotEmpty) 'fills': outFills.map((f) => f.toJson()).toList(),
+      if (outArrows.isNotEmpty)
+        'arrows': outArrows.map((a) => item(a.toJson())).toList(),
+      'orientation': orientation,
+      if (!forTable) 'view_offset_x': viewOffsetX,
+      if (!forTable) 'view_offset_y': viewOffsetY,
+      if (!forTable) 'zoom': zoom,
       if (!forTable) 'layers': layers.map((l) => l.toJson()).toList(),
       if (!forTable) 'active_layer': activeLayer,
     };
