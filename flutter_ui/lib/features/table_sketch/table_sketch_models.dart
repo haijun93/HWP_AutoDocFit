@@ -468,6 +468,7 @@ const defaultSketchLayerId = 'layer-1';
 /// 개체는 [parked]에 따로 두어 선택·지우개·이동이 닿지 않게 하고, 그리기·저장·복사 때 다시 합친다.
 class TableSketchDoc {
   TableSketchDoc({
+    this.orientation = 'portrait',
     this.grid = const GridConfig(),
     List<SketchLine>? lines,
     List<SketchText>? texts,
@@ -491,6 +492,8 @@ class TableSketchDoc {
        _parkedImages = parked?.images ?? <SketchImage>[],
        _parkedArrows = parked?.arrows ?? <SketchArrow>[];
 
+  /// 용지 방향 ('portrait': A4 세로, 'landscape': A4 가로).
+  String orientation;
   GridConfig grid;
   List<SketchLine> lines;
   List<SketchText> texts;
@@ -626,6 +629,7 @@ class TableSketchDoc {
   }
 
   TableSketchDoc clone() => TableSketchDoc(
+    orientation: orientation,
     grid: grid,
     lines: lines.map((l) => l.copyWith()).toList(),
     texts: texts.map((t) => t.copyWith()).toList(),
@@ -635,6 +639,7 @@ class TableSketchDoc {
     layers: List.of(layers),
     activeLayer: activeLayer,
     parked: TableSketchDoc(
+      orientation: orientation,
       lines: List.of(_parkedLines),
       texts: List.of(_parkedTexts),
       images: List.of(_parkedImages),
@@ -684,6 +689,9 @@ class TableSketchDoc {
       }
     }
     final doc = TableSketchDoc(
+      orientation: json['orientation'] == 'landscape'
+          ? 'landscape'
+          : 'portrait',
       grid: GridConfig.fromJson(json['grid'] as Map?),
       lines: lines,
       texts: texts,
@@ -714,6 +722,7 @@ class TableSketchDoc {
     Map<String, dynamic> item(Map<String, dynamic> json) =>
         forTable ? (json..remove('layer')..remove('group')) : json;
     return {
+      'orientation': orientation,
       'grid': grid.toJson(),
       'lines': allLines.map((l) => item(l.toJson())).toList(),
       'texts': allTexts.map((t) => item(t.toJson())).toList(),
