@@ -25,7 +25,7 @@ void main() {
     await tester.scrollUntilVisible(find.byKey(const ValueKey('about-external-programs')), 300);
     await tester.pumpAndSettle();
     expect(find.text('개발자 모드 연결 프로그램'), findsOneWidget);
-    expect(find.textContaining('사진첩 — mongdangview'), findsOneWidget);
+    expect(find.textContaining('사진첩2 — mongdangview'), findsOneWidget);
     expect(find.textContaining('아웃라이너 — mongdangoutliner'), findsOneWidget);
     expect(find.textContaining('사진관리 — mondangpics'), findsOneWidget);
     expect(find.text('AGPL-3.0'), findsOneWidget);
