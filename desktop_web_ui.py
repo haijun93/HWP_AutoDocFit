@@ -2241,7 +2241,7 @@ class DesktopWebBridge:
             return {"ok": False, "message": str(exc) or "관리창 설정을 처리하지 못했습니다."}
 
     def external_app(self, action, payload=None):
-        """외부 프로그램(사진첩·아웃라이너·사진관리, 별도 프로세스) 실행·경로 지정. 개발자 모드 전용."""
+        """외부 프로그램(사진첩2·아웃라이너·사진관리, 별도 프로세스) 실행·경로 지정. 개발자 모드 전용."""
         if not self._developer_mode_enabled():
             return {"ok": False, "code": "DEVELOPER_MODE_REQUIRED", "message": "개발자 모드에서만 사용할 수 있습니다."}
         try:

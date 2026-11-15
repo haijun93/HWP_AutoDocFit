@@ -111,7 +111,7 @@ class TabNavigationShell extends StatefulWidget {
   final Widget? libraryScreen;
   /// 개발자 모드 전용 업무자료함 화면(자료함 버튼 옆).
   final Widget? notebookScreen;
-  /// 개발자 모드 전용 외부 프로그램(사진첩·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
+  /// 개발자 모드 전용 외부 프로그램(사진첩2·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
   final ExternalAppOpener? onOpenExternalApp;
   final ValueChanged<int>? onTabChanged;
 
@@ -489,7 +489,7 @@ class WorkspaceTabBar extends StatelessWidget {
                       onPreviewCancel: onPreviewCancel,
                       onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '업무자료함', notebookScreen!),
                     ),
-                  // 외부 프로그램(사진첩·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
+                  // 외부 프로그램(사진첩2·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
                   // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
                   if (developerMode && onOpenExternalApp != null)
                     for (final app in kExternalApps)

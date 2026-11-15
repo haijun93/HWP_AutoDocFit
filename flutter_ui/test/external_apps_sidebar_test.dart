@@ -3,7 +3,7 @@ import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-/// 개발자 모드 외부 프로그램(사진첩·아웃라이너·사진관리) 사이드메뉴: 개발자 모드에서만 보이고,
+/// 개발자 모드 외부 프로그램(사진첩2·아웃라이너·사진관리) 사이드메뉴: 개발자 모드에서만 보이고,
 /// 누르면 공용 실행기(`external_app`)에 실행을 요청한다. 실행 파일이 없으면 설치 안내·지정 창.
 Future<void> _size(
   WidgetTester tester, [
@@ -56,7 +56,7 @@ void main() {
     );
     expect(
       [for (final a in kExternalApps) a.label],
-      ['사진첩', '아웃라이너', '사진관리', 'PDF편집'],
+      ['사진첩2', '아웃라이너', '사진관리', 'PDF편집'],
     );
     expect({for (final a in kExternalApps) a.icon}.length, 4);
   });
