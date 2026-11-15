@@ -109,7 +109,9 @@ jobs:
       - name: Install build dependencies
         run: |
           python -m venv .venv
-          & ".\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check -c constraints.txt -r "requirements.txt" pyinstaller playwright psutil
+          # 해시 고정 설치(2026-11-15): 하위 의존성까지 버전·SHA-256이 맞아야 설치된다. 버전을 바꾸면 requirements-lock.txt를 다시 만든다.
+          & ".\.venv\Scripts\python.exe" -m pip install --disable-pip-version-check --require-hashes -r "requirements-lock.txt"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Check Pillow image support
         run: |
