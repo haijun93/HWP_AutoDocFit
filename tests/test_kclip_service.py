@@ -206,6 +206,23 @@ class KClipServiceTests(unittest.TestCase):
         self.assertEqual(result["reason"], "still_running")
         self.assertEqual(calls, [[str(self.exe), "--upgrade-if-stale"]])
 
+    def test_production_enable_uses_native_lifecycle_and_returns_status(self):
+        import subprocess
+        calls = []
+        status_payload = '{"ok":true,"running":true,"available":true,"autostart":true,"consent":"안내","status":{"items":1}}'
+        def runner(args, **kwargs):
+            calls.append(args)
+            if "--enable" in args:
+                return subprocess.CompletedProcess(args, 0, '{"ok":true,"restarted":true}')
+            if "--status" in args:
+                return subprocess.CompletedProcess(args, 0, status_payload)
+            return subprocess.CompletedProcess(args, 0, '{"ok":true}')
+        service = KClipService(bundled=lambda: self.exe, command_runner=runner, sleep=lambda _s: None)
+        result = service.enable({"consent": True, "autostart": True})
+        self.assertTrue(result["running"])
+        self.assertTrue(any("--enable" in c for c in calls))
+        self.assertTrue(any("--status" in c for c in calls))
+
     def test_enable_requires_consent_then_installs_starts_autostarts(self):
         self.assertEqual(self.service.command("enable", {})["code"], "KCLIP_CONSENT")
         self.assertEqual(self.calls, [])

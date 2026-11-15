@@ -417,7 +417,10 @@ class _KClipPanelState extends State<KClipPanel> {
         ? response
         : {'ok': false, 'message': '올바르지 않은 응답입니다.'};
     if (map['ok'] == false && mounted) {
-      setState(() => message = '${map['message'] ?? ''}');
+      final failMsg = (map['message'] as String?)?.isNotEmpty == true
+          ? map['message'] as String
+          : (action == 'enable' ? '몽땅클립보드를 켜지 못했습니다.' : '');
+      setState(() => message = failMsg);
     }
     return map;
   }
@@ -637,10 +640,34 @@ class _KClipPanelState extends State<KClipPanel> {
     setState(() => busy = true);
     try {
       final result = await _call(action, payload);
-      if (result['ok'] != false && done != null && mounted) {
-        setState(() => message = done);
+      if (result['ok'] == false) return;
+      if (action == 'enable') {
+        if (result['running'] == true && mounted) {
+          setState(() {
+            status = result;
+            autostart = result['autostart'] == true;
+          });
+        }
+        for (var attempt = 0; attempt < 30; attempt++) {
+          await _reload();
+          if (running || !mounted) break;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+        if (mounted) {
+          setState(() {
+            if (running) {
+              if (done != null) message = done;
+            } else {
+              message = '몽땅클립보드 상주 프로그램을 시작하지 못했습니다.';
+            }
+          });
+        }
+      } else {
+        if (result['ok'] != false && done != null && mounted) {
+          setState(() => message = done);
+        }
+        await _reload();
       }
-      await _reload();
     } finally {
       if (mounted) setState(() => busy = false);
     }
