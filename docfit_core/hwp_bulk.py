@@ -23,15 +23,81 @@ SKIP_DIRS = frozenset({
     "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "$windows.~bt",
     "$windows.~ws", "$winreagent", "system volume information", "recovery", "appdata", "msocache",
     "perflogs", "node_modules", ".git", ".svn", "__pycache__", "onedrivetemp", "config.msi",
+    # 프로그램 설치 폴더 및 서식 폴더 보강 (TODO 2026-11-15 ⑥)
+    "hnc", "hncutils", "hancom", "hancom office", "hancomoffice", "서식", "서식예시", "template", "templates",
+})
+# 프로그램이 넣은 HWP 모듈 파일 등 기본 건너뛸 파일명
+SKIP_FILES = frozenset({
+    "hanwp.hwp",
 })
 OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 HWP3_SIGNATURE = b"HWP Document File"
 MAX_FILES = 200_000
 
+# 결과 종류 분류 (TODO 2026-11-15 ④)
+KIND_DRM = "DRM"
+KIND_DISTRIBUTED = "배포용"
+KIND_PASSWORD = "암호"
+KIND_HWP3 = "HWP3"
+KIND_CORRUPT = "손상"
+KIND_NO_PERMISSION = "쓰기 권한 없음"
+KIND_PATH_TOO_LONG = "경로 길이 초과"
+KIND_EXISTING = "이미 있음"
+KIND_NORMAL = "일반"
+
 MSG_PASSWORD = "암호 문서: 입력한 암호가 맞지 않거나 암호를 넣지 않았습니다. '암호'칸에 문서 암호를 넣고 다시 변환하세요."
-MSG_DRM = ("기관 보안(DRM) 문서: 이 PC의 문서보안 프로그램이 열기를 허용하지 않았습니다. "
-           "보안 프로그램에서 해제(복호화)하거나 보안 프로그램이 설치된 PC에서 변환하세요.")
+MSG_DRM = "이 PC의 보안 프로그램에서 해제한 뒤 다시 변환"
+MSG_DISTRIBUTED = "작성자에게 일반 문서를 받거나 한/글에서 직접 열어 보기만 가능"
 MSG_SAVE = "한/글이 HWPX 저장을 거부했습니다(배포용 문서처럼 저장이 막힌 문서일 수 있습니다)."
+MSG_PERMISSION = "파일을 읽을 수 없거나 대상 폴더에 쓸 권한이 없습니다."
+MSG_PATH_TOO_LONG = "파일 경로 길이가 제한을 초과했습니다."
+MSG_CORRUPT = "파일이 손상되어 열 수 없습니다."
+MSG_HWP3_FAIL = "HWP 3.0 문서: 한/글에서 열지 못했거나 변환할 수 없습니다."
+MSG_EXISTING = "이미 HWPX가 있어 건너뛰었습니다."
+
+
+@dataclass
+class HwpHeaderInfo:
+    version: int = 0
+    flags: int = 0
+    is_compressed: bool = False
+    is_encrypted: bool = False
+    is_distributed: bool = False
+    is_drm: bool = False
+
+
+def read_hwp5_header(path: str | Path) -> HwpHeaderInfo | None:
+    """HWP 5.0 OLE 파일에서 FileHeader 스트림 플래그를 읽는다."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read(65536)
+    except OSError:
+        return None
+
+    target = b"HWP Document File"
+    pos = 0
+    import struct
+    while True:
+        idx = data.find(target, pos)
+        if idx == -1:
+            break
+        # 64바이트(미니섹터) 또는 512바이트 섹터 경계
+        if idx % 64 == 0 and len(data) >= idx + 256:
+            buf = data[idx:idx + 256]
+            version = struct.unpack_from("<I", buf, 32)[0]
+            major = (version >> 24) & 0xFF
+            if major >= 5:
+                flags = struct.unpack_from("<I", buf, 36)[0]
+                return HwpHeaderInfo(
+                    version=version,
+                    flags=flags,
+                    is_compressed=bool(flags & 0x01),
+                    is_encrypted=bool(flags & 0x02),
+                    is_distributed=bool(flags & 0x04),
+                    is_drm=bool(flags & 0x10),
+                )
+        pos = idx + len(target)
+    return None
 
 
 def classify(path: str | Path) -> str:
@@ -73,7 +139,7 @@ def find_hwp(roots, *, recursive=True, skip_existing=True, stop=None, on_progres
     for root in roots:
         path = Path(root)
         if path.is_file():
-            if path.suffix.lower() == ".hwp" and not path.is_symlink():
+            if path.suffix.lower() == ".hwp" and not path.is_symlink() and path.name.lower() not in SKIP_FILES:
                 if skip_existing and target_for(path).exists():
                     skipped += 1
                 else:
@@ -95,6 +161,8 @@ def find_hwp(roots, *, recursive=True, skip_existing=True, stop=None, on_progres
                     if recursive and not _skip_dir(entry):
                         stack.append(Path(entry.path))
                 elif entry.name.lower().endswith(".hwp") and entry.is_file(follow_symlinks=False):
+                    if entry.name.lower() in SKIP_FILES:
+                        continue
                     source = Path(entry.path)
                     if skip_existing and target_for(source).exists():
                         skipped += 1
@@ -247,21 +315,55 @@ class DialogResponder:
 @dataclass
 class BulkResult:
     source: str
-    status: str  # success | failed | skipped
+    status: str  # success | failed | skipped | protected
     output: str = ""
     message: str = ""
+    kind: str = ""  # DRM | 배포용 | 암호 | HWP3 | 손상 | 쓰기 권한 없음 | 경로 길이 초과 | 이미 있음 | 일반
 
 
 def convert_one(app, source: Path, responder: DialogResponder | None = None) -> BulkResult:
     from docfit_core.hwpx import validate_hwpx
+    source_str = str(source)
+
+    # 1) 경로 길이 한도 검사 (255자 초과)
+    if len(source_str) > 255:
+        return BulkResult(source_str, "failed", message=MSG_PATH_TOO_LONG, kind=KIND_PATH_TOO_LONG)
+
     target = target_for(source)
-    if target.exists():
-        return BulkResult(str(source), "skipped", str(target), "이미 HWPX가 있어 건너뛰었습니다.")
+    if len(str(target)) > 255:
+        return BulkResult(source_str, "failed", message=MSG_PATH_TOO_LONG, kind=KIND_PATH_TOO_LONG)
+
+    # 2) 이미 HWPX가 있는 경우 건너뜀
+    try:
+        if target.exists():
+            return BulkResult(source_str, "skipped", str(target), MSG_EXISTING, kind=KIND_EXISTING)
+    except OSError:
+        pass
+
+    # 3) 파일 분류: 한/글 COM을 띄우기 전에 미리 판별
     kind = classify(source)
     if kind == "unreadable":
-        return BulkResult(str(source), "failed", message="파일을 읽을 수 없습니다(다른 프로그램이 쓰는 중이거나 권한 없음).")
+        return BulkResult(source_str, "failed", message=MSG_PERMISSION, kind=KIND_NO_PERMISSION)
+
+    # ① 기관 보안(DRM) 문서는 파일 머리로 미리 판별해 변환 시도 없이 '보안 문서(변환 불가)'로 분류
+    if kind == "protected":
+        return BulkResult(source_str, "protected", message=MSG_DRM, kind=KIND_DRM)
+
+    # HWP 5.0인 경우 FileHeader 배포용 및 DRM 플래그 미리 확인
+    if kind == "hwp":
+        info = read_hwp5_header(source)
+        if info:
+            if info.is_drm:
+                return BulkResult(source_str, "protected", message=MSG_DRM, kind=KIND_DRM)
+            if info.is_distributed:
+                return BulkResult(source_str, "protected", message=MSG_DISTRIBUTED, kind=KIND_DISTRIBUTED)
+
     temporary = target.with_name(f".~docfit_{os.getpid()}_{target.name}")
-    temporary.unlink(missing_ok=True)
+    try:
+        temporary.unlink(missing_ok=True)
+    except OSError:
+        return BulkResult(source_str, "failed", message=MSG_PERMISSION, kind=KIND_NO_PERMISSION)
+
     opened = False
     try:
         opened = True
@@ -269,8 +371,6 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
         # 1) 암호 창 없이 연다(일반·배포용·보안 프로그램이 풀어 주는 DRM 문서).
         ok = app.Open(str(source), fmt, "forceopen:true;suspendpassword:true")
         used_password = False
-        if ok is False and kind == "protected":
-            return BulkResult(str(source), "failed", message=MSG_DRM)
         if ok is False and kind == "hwp" and responder and responder.pid and responder.passwords:
             # 2) 암호 문서: 암호마다 다시 연다(틀리면 한/글이 열기를 끝내므로 한 번에 하나씩).
             for password in responder.passwords:
@@ -285,22 +385,35 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
                     used_password = True
                     break
         if ok is False:
-            return BulkResult(str(source), "failed",
-                              message=MSG_PASSWORD if kind == "hwp" else "한/글에서 문서를 열지 못했습니다.")
+            if kind == "hwp":
+                return BulkResult(source_str, "failed", message=MSG_PASSWORD, kind=KIND_PASSWORD)
+            elif kind == "hwp3":
+                return BulkResult(source_str, "failed", message=MSG_HWP3_FAIL, kind=KIND_HWP3)
+            return BulkResult(source_str, "failed", message="한/글에서 문서를 열지 못했습니다.", kind=KIND_CORRUPT)
+
         if responder:
             responder.begin("save")
-        if app.SaveAs(str(temporary), "HWPX", "") is False or not temporary.exists():
-            return BulkResult(str(source), "failed", message=MSG_SAVE)
+        saved = app.SaveAs(str(temporary), "HWPX", "")
+        if saved is False or not temporary.exists():
+            return BulkResult(source_str, "protected", message=MSG_DISTRIBUTED, kind=KIND_DISTRIBUTED)
+
         validate_hwpx(temporary)
-        os.link(temporary, target)
+        try:
+            os.link(temporary, target)
+        except OSError:
+            import shutil
+            shutil.move(str(temporary), str(target))
         note = ""
         if used_password:
             note = "암호 문서 → 같은 암호의 HWPX"
-        elif kind == "protected":
-            note = "기관 보안 문서를 이 PC의 보안 프로그램이 열어 변환"
-        return BulkResult(str(source), "success", str(target), note)
+        kind_result = KIND_PASSWORD if used_password else KIND_NORMAL
+        return BulkResult(source_str, "success", str(target), note, kind=kind_result)
+    except OSError as exc:
+        if getattr(exc, "errno", None) in (13,):
+            return BulkResult(source_str, "failed", message=MSG_PERMISSION, kind=KIND_NO_PERMISSION)
+        return BulkResult(source_str, "failed", message=f"변환 오류: {exc}", kind=KIND_CORRUPT)
     except Exception as exc:  # 한/글 COM 오류는 파일 하나만 실패로 남기고 계속한다.
-        return BulkResult(str(source), "failed", message=f"변환 오류: {exc}")
+        return BulkResult(source_str, "failed", message=f"변환 오류: {exc}", kind=KIND_CORRUPT)
     finally:
         if responder:
             responder.begin(None)
@@ -309,7 +422,10 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
                 app.Clear(1)  # 저장 묻지 않고 닫는다(원본을 덮어쓰지 않게).
             except Exception:
                 pass
-        temporary.unlink(missing_ok=True)
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 @dataclass
@@ -317,6 +433,7 @@ class BulkState:
     phase: str = "idle"  # idle | scan | convert | done | stopped | error
     found: int = 0
     skipped_existing: int = 0
+    protected: int = 0  # 변환 불가(보호 문서) 건너뜀 수
     done: int = 0
     succeeded: int = 0
     failed: int = 0
@@ -326,8 +443,9 @@ class BulkState:
     failures: list = field(default_factory=list)
 
     def as_dict(self):
-        return dict(phase=self.phase, found=self.found, skipped_existing=self.skipped_existing, done=self.done,
-                    succeeded=self.succeeded, failed=self.failed, current=self.current, report=self.report,
+        return dict(phase=self.phase, found=self.found, skipped_existing=self.skipped_existing,
+                    protected=self.protected, done=self.done, succeeded=self.succeeded,
+                    failed=self.failed, current=self.current, report=self.report,
                     error=self.error, failures=self.failures[-200:])
 
 
@@ -336,10 +454,22 @@ def write_report(results, folder: Path) -> Path:
     path = folder / f"HWPX변환_결과_{datetime.now():%Y%m%d_%H%M%S}.csv"
     with open(path, "w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.writer(stream)
-        writer.writerow(["결과", "원본", "HWPX", "설명"])
-        labels = {"success": "변환", "failed": "실패", "skipped": "건너뜀"}
+        writer.writerow(["결과", "종류", "원본", "HWPX", "설명"])
         for item in results:
-            writer.writerow([labels.get(item.status, item.status), item.source, item.output, item.message])
+            if item.status == "success":
+                label = "변환"
+            elif item.status == "skipped":
+                label = "건너뜀"
+            elif item.status == "protected":
+                label = "보안 문서(변환 불가)"
+            elif item.status == "failed":
+                label = "실패"
+            else:
+                label = item.status
+            kind_str = item.kind or (
+                "DRM" if item.status == "protected" else ("일반" if item.status == "success" else "기타")
+            )
+            writer.writerow([label, kind_str, item.source, item.output, item.message])
     return path
 
 
@@ -372,9 +502,11 @@ def run_bulk(roots, *, app_factory, state: BulkState, stop: threading.Event, pas
                 state.done += 1
                 if result.status == "success":
                     state.succeeded += 1
+                elif result.status == "protected":
+                    state.protected += 1
                 elif result.status == "failed":
                     state.failed += 1
-                    state.failures.append(dict(source=result.source, message=result.message))
+                    state.failures.append(dict(source=result.source, message=result.message, kind=result.kind))
     finally:
         try:
             app.Quit()
