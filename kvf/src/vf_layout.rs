@@ -1,6 +1,12 @@
 //! 패널 배치와 패널별 문맥. 렌더링과 화면 좌표를 다루지 않는다.
 use crate::json::{self, Value};
 
+/// 레이아웃 계산의 순수 화면 결과. Win32/GDI 타입을 모델에 노출하지 않는다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect { pub left:i32, pub top:i32, pub right:i32, pub bottom:i32 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SplitHit { Column(usize), Row(usize) }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Template {
     Single,
@@ -70,6 +76,27 @@ impl Default for Layout {
     }
 }
 impl Layout {
+    /// 클라이언트 좌표에서 각 패널 사각형을 계산한다. split 값은 축별 가중치다.
+    pub fn panel_rects(&self, width:i32, height:i32, gutter:i32) -> Vec<Rect> {
+        let w=width.max(0); let h=height.max(0); let g=gutter.max(0);
+        let cw=if self.panel_count==1 { vec![w] } else { weighted(w-g,&self.column_splits) };
+        let rh=if self.panel_count<=2 { vec![h] } else { weighted(h-g,&self.row_splits) };
+        match self.template {
+            Template::Single=>vec![Rect{left:0,top:0,right:w,bottom:h}],
+            Template::Columns=>{let x=cw.first().copied().unwrap_or(w);vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+g,top:0,right:w,bottom:h}]},
+            Template::LeftOneRightTwo=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+g;vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+g,top:0,right:w,bottom:y},Rect{left:x+g,top:y2,right:w,bottom:h}]},
+            Template::Grid=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+g;vec![Rect{left:0,top:0,right:x,bottom:y},Rect{left:x+g,top:0,right:w,bottom:y},Rect{left:0,top:y2,right:x,bottom:h},Rect{left:x+g,top:y2,right:w,bottom:h}]},
+        }
+    }
+    /// 분할선에 대한 포인터 히트 테스트. 끝점은 각 분할선의 실제 범위로 제한한다.
+    pub fn split_hit(&self,width:i32,height:i32,gutter:i32,x:i32,y:i32,tolerance:i32)->Option<SplitHit>{
+        let rects=self.panel_rects(width,height,gutter);let g=gutter.max(0);let t=tolerance.max(1);
+        let col=match self.template {Template::Single=>None,Template::Columns=>Some(rects[0].right),Template::LeftOneRightTwo|Template::Grid=>Some(rects[0].right)};
+        if let Some(cx)=col {let (a,b)=if self.template==Template::LeftOneRightTwo{(0,height)}else if self.template==Template::Grid{(0,height)}else{(0,height)};if (x-cx).abs()<=t.max(g/2)&&y>=a&&y<=b{return Some(SplitHit::Column(0));}}
+        let row=match self.template {Template::LeftOneRightTwo=>Some(rects[1].bottom),Template::Grid=>Some(rects[0].bottom),_=>None};
+        if let Some(ry)=row {let (a,b)=if self.template==Template::LeftOneRightTwo{(rects[1].left,width)}else{(0,width)};if (y-ry).abs()<=t.max(g/2)&&x>=a&&x<=b{return Some(SplitHit::Row(0));}}
+        None
+    }
     pub fn for_count(count: u8) -> Self {
         let n = count.clamp(1, 4);
         let template = match n {
@@ -304,6 +331,7 @@ impl Layout {
         l
     }
 }
+fn weighted(total:i32,weights:&[u16])->Vec<i32>{if weights.is_empty(){return vec![total.max(0)];}let sum=weights.iter().map(|x|*x as i64).sum::<i64>().max(1);let mut used=0;let mut out=Vec::with_capacity(weights.len());for (i,v) in weights.iter().enumerate(){let n=if i+1==weights.len(){total.max(0)-used}else{((total.max(0) as i64*(*v as i64))/sum) as i32};out.push(n.max(0));used+=n.max(0);}out}
 fn array_u16(v: Option<&Value>) -> Option<Vec<u16>> {
     let Value::Arr(a) = v? else { return None };
     a.iter()
@@ -376,5 +404,9 @@ mod tests {
             10000
         );
         assert!(Layout::normalize_splits(&[0, 1], 2).is_none());
+    }
+    #[test] fn panel_rectangles_and_split_hits_cover_templates(){
+        let cases=[(1,vec![Rect{left:0,top:0,right:1000,bottom:600}]),(2,vec![Rect{left:0,top:0,right:497,bottom:600},Rect{left:503,top:0,right:1000,bottom:600}]),(3,vec![Rect{left:0,top:0,right:497,bottom:600},Rect{left:503,top:0,right:1000,bottom:297},Rect{left:503,top:303,right:1000,bottom:600}]),(4,vec![Rect{left:0,top:0,right:497,bottom:297},Rect{left:503,top:0,right:1000,bottom:297},Rect{left:0,top:303,right:497,bottom:600},Rect{left:503,top:303,right:1000,bottom:600}])];
+        for(n,want)in cases{let l=Layout::for_count(n);assert_eq!(l.panel_rects(1000,600,6),want);if n>1{assert_eq!(l.split_hit(1000,600,6,500,100,3),Some(SplitHit::Column(0)));}if n>=3{assert_eq!(l.split_hit(1000,600,6,700,300,3),Some(SplitHit::Row(0)));}assert_eq!(l.split_hit(1000,600,6,20,20,3),None);}
     }
 }
