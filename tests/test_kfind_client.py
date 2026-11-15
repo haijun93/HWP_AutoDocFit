@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 
 from docfit_app.kfind_client import (
+    EXPECTED_VERSIONS,
     KfindClient, KfindError, KfindTimeout, MAX_REQUEST, TRANSITIONS, _read,
 )
 from docfit_core.timemachine.kfind_records import doc_from_records
@@ -16,7 +17,7 @@ class FakeServer:
     """실제 바이트 스트림·길이 프레임을 쓰는 가짜 KFS1 서버."""
     def __init__(self):
         self.requests = []
-        self.status = dict(state="ready", format=3, fold_rule=1, sentence_rule=1,
+        self.status = dict(state="ready", **EXPECTED_VERSIONS,
                            generation=7)
         self.error = None
         self.handler = None

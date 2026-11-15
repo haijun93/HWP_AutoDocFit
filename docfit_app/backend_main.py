@@ -38,6 +38,14 @@ def main():
                     app.jobs.shutdown()
                     server.shutdown()
                 threading.Thread(target=parent_closed,daemon=True).start()
+                # 몽땅검색 서비스는 화면을 처음 열 때 만들어져, 업데이트로 검색 색인이 비었을 때의 복구 점검이
+                # 앱만 켜서는 돌지 않았다(v2.2.69 후보 실기). 시작 30초 뒤 백그라운드에서 미리 만든다.
+                def prepare_timemachine():
+                    if app.data.closing: return
+                    try: app.timemachine_service()
+                    except Exception: pass
+                if getattr(sys,'frozen',False):
+                    prepare=threading.Timer(30,prepare_timemachine); prepare.daemon=True; prepare.start()
                 server.serve_forever(poll_interval=0.1)
     except LockUnavailable:
         print(json.dumps({'protocol_version':1,'ready':False,'error':{
