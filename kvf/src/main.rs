@@ -130,6 +130,8 @@ fn run() -> Result<(),String> {
 fn main() { if let Err(e) = run() { eprintln!("{e}"); std::process::exit(1); } }
 mod vf_data;
 mod vf_state;
+mod vf_store;
+mod vf_layout;
 
 fn notice(hwnd: HWND, body: &str){
     let visible=TRAY.lock().unwrap().as_ref().map(|t|t.settings.tray||!t.error.is_empty());

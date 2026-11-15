@@ -1,4 +1,5 @@
 //! 창 상태 전이. Win32·DB·파일 접근 없이 다음 상태와 할 일만 반환한다.
+use crate::vf_layout::Layout;
 #[derive(Clone,Debug,Default,PartialEq,Eq)]
 pub struct Context { pub box_id:Option<i64>,pub space:Option<String>,pub query:String,pub selection:Option<i64> }
 #[derive(Clone,Debug,PartialEq,Eq)]
@@ -12,18 +13,25 @@ impl View {
     fn visible(&self)->bool {!matches!(self,Self::Hidden|Self::Minimized(_))}
 }
 #[derive(Clone,Debug,PartialEq,Eq)]
-pub struct Model { pub view:View,pub seq:u64,pub sticky:bool,pub pending_open:Option<u64> }
-impl Default for Model {fn default()->Self {Self{view:View::Hidden,seq:0,sticky:false,pending_open:None}}}
+pub struct Model { pub view:View,pub seq:u64,pub sticky:bool,pub pending_open:Option<u64>,pub explorer:Layout,pub pending_operation:Option<PendingOperation> }
+#[derive(Clone,Debug,PartialEq,Eq)] pub struct PendingOperation {pub seq:u64,pub operation_id:String,pub kind:VirtualOperationKind}
+#[derive(Clone,Debug,PartialEq,Eq)] pub enum VirtualOperationKind {Move{source_panel:String,target_panel:String,item_ids:Vec<String>},Copy{source_panel:String,target_panel:String,item_ids:Vec<String>}}
+impl Default for Model {fn default()->Self {Self{view:View::Hidden,seq:0,sticky:false,pending_open:None,explorer:Layout::default(),pending_operation:None}}}
 #[derive(Clone,Copy,Debug,PartialEq,Eq)] pub enum Caller {Hotkey,Tray,SecondRun}
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum ReadResult { Items{box_id:i64}, Empty(String), EmptyBox{box_id:i64,reason:String}, Failed(String) }
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Event {
     Call(Caller), Loaded{seq:u64,result:ReadResult}, Query(String), Escape, Close, Outside,
     Minimize, ChangeBox(i64), ChangeSpace(Option<String>), Select(Option<i64>), Refresh,
     LocateCopy, LocateOrigin, Open, Opened{seq:u64,result:Result<(),String>}, SetSticky(bool),
+    SetPanelCount(u8), ActivatePanel(String), SelectPanel{panel_id:String,selection:Vec<String>},
+    RequestVirtualMove{operation_id:String,source_panel:String,target_panel:String,item_ids:Vec<String>},
+    RequestVirtualCopy{operation_id:String,source_panel:String,target_panel:String,item_ids:Vec<String>},
+    VirtualOperationCompleted{seq:u64,result:Result<(),String>},
 }
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Effect {
     Show, Foreground, Hide, ClearItems, Read{seq:u64,context:Context}, Draw, Filter,
     Locate{seq:u64,item_id:i64,origin:bool}, Open{seq:u64,item_id:i64}, Notice(String),
+    PersistLayout(Layout), PersistVirtualOperation{seq:u64,operation_id:String,kind:VirtualOperationKind},
 }
 fn loading(mut m:Model,c:Context,mut effects:Vec<Effect>)->(Model,Vec<Effect>) {
     m.seq+=1; m.pending_open=None; m.view=View::Loading(c.clone());
@@ -37,6 +45,16 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
     let mut m=current.clone();
     match event {
         Event::SetSticky(value)=>{m.sticky=value;(m,vec![])},
+        Event::SetPanelCount(count) if (1..=4).contains(&count)=>{m.explorer.set_count(count);let layout=m.explorer.clone();(m,vec![Effect::PersistLayout(layout),Effect::Draw])},
+        Event::ActivatePanel(id) if m.explorer.panels.iter().any(|p|p.id==id)=>{m.explorer.active_panel=id;(m,vec![Effect::Draw])},
+        Event::SelectPanel{panel_id,selection} if m.explorer.panels.iter().any(|p|p.id==panel_id)=>{m.explorer.panels.iter_mut().find(|p|p.id==panel_id).unwrap().selection=selection;(m,vec![Effect::Draw])},
+        Event::RequestVirtualMove{operation_id,source_panel,target_panel,item_ids} if m.pending_operation.is_none()&&!item_ids.is_empty()&&source_panel!=target_panel&&m.explorer.panels.iter().any(|p|p.id==source_panel)&&m.explorer.panels.iter().any(|p|p.id==target_panel)=>{
+            m.seq+=1;let seq=m.seq;let kind=VirtualOperationKind::Move{source_panel,target_panel,item_ids};m.pending_operation=Some(PendingOperation{seq,operation_id:operation_id.clone(),kind:kind.clone()});(m,vec![Effect::PersistVirtualOperation{seq,operation_id,kind}])
+        },
+        Event::RequestVirtualCopy{operation_id,source_panel,target_panel,item_ids} if m.pending_operation.is_none()&&!item_ids.is_empty()&&source_panel!=target_panel&&m.explorer.panels.iter().any(|p|p.id==source_panel)&&m.explorer.panels.iter().any(|p|p.id==target_panel)=>{
+            m.seq+=1;let seq=m.seq;let kind=VirtualOperationKind::Copy{source_panel,target_panel,item_ids};m.pending_operation=Some(PendingOperation{seq,operation_id:operation_id.clone(),kind:kind.clone()});(m,vec![Effect::PersistVirtualOperation{seq,operation_id,kind}])
+        },
+        Event::VirtualOperationCompleted{seq,result} if m.pending_operation.as_ref().is_some_and(|p|p.seq==seq)=>{m.pending_operation=None;let effects=match result{Ok(())=>vec![Effect::Draw],Err(e)=>vec![Effect::Notice(e),Effect::Draw]};(m,effects)},
         Event::Call(caller)=>match &m.view {
             View::Hidden=>loading(m,Context::default(),vec![Effect::Show]),
             View::Minimized(saved)=>{let c=saved.context().cloned().unwrap_or_default();loading(m,c,vec![Effect::Show])},
@@ -96,7 +114,7 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
 #[cfg(test)] mod tests {
     use super::*;
     fn context()->Context {Context{box_id:Some(7),space:Some("core".into()),query:String::new(),selection:Some(42)}}
-    fn model(view:View)->Model {Model{view,seq:3,sticky:false,pending_open:None}}
+    fn model(view:View)->Model {Model{view,seq:3,sticky:false,pending_open:None,..Model::default()}}
     fn list()->Model {model(View::List(context()))}
     fn search()->Model {let mut c=context();c.query="자료".into();model(View::Search(c))}
     fn visible()->Vec<Model> {vec![model(View::Loading(context())),list(),search(),model(View::Empty{reason:"없음".into(),context:context()}),model(View::Failed{error:"오류".into(),context:context()})]}
@@ -146,6 +164,14 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
 #[cfg(test)]mod window_extension_tests{
  use super::*;
  #[test]fn empty_box_retains_id_and_can_switch(){let(load,_)=step(&Model::default(),Event::Call(Caller::Tray));let(empty,_)=step(&load,Event::Loaded{seq:load.seq,result:ReadResult::EmptyBox{box_id:2,reason:"빈 상자".into()}});assert_eq!(empty.view.context().unwrap().box_id,Some(2));assert_eq!(step(&empty,Event::Open).0,empty);let(next,e)=step(&empty,Event::ChangeBox(1));assert!(matches!(next.view,View::Loading(_)));assert!(matches!(e[0],Effect::Read{..}));}
+}
+
+#[cfg(test)]mod explorer_state_tests{
+ use super::*;
+ #[test]fn panel_focus_and_selection_are_independent(){let mut m=Model::default();m=step(&m,Event::SetPanelCount(3)).0;assert_eq!(m.explorer.template,crate::vf_layout::Template::LeftOneRightTwo);m=step(&m,Event::SelectPanel{panel_id:"p1".into(),selection:vec!["a".into()]}).0;m=step(&m,Event::SelectPanel{panel_id:"p2".into(),selection:vec!["b".into()]}).0;m=step(&m,Event::ActivatePanel("p2".into())).0;assert_eq!(m.explorer.active_panel,"p2");assert_eq!(m.explorer.panels[0].selection,vec!["a"]);assert_eq!(m.explorer.panels[1].selection,vec!["b"]);}
+ #[test]fn panel_count_bounds_and_persist_effect(){for n in 1..=4{let(m,e)=step(&Model::default(),Event::SetPanelCount(n));assert_eq!(m.explorer.panel_count,n);assert!(matches!(&e[0],Effect::PersistLayout(_)));}let(m,e)=step(&Model::default(),Event::SetPanelCount(5));assert_eq!(m,Model::default());assert!(e.is_empty());}
+ #[test]fn virtual_move_and_copy_are_async_and_stale_safe(){let mut base=Model::default();base.explorer.set_count(2);for event in [Event::RequestVirtualMove{operation_id:"m".into(),source_panel:"p1".into(),target_panel:"p2".into(),item_ids:vec!["x".into()]},Event::RequestVirtualCopy{operation_id:"c".into(),source_panel:"p1".into(),target_panel:"p2".into(),item_ids:vec!["x".into()]}]{let(p,e)=step(&base,event);assert!(matches!(e[0],Effect::PersistVirtualOperation{..}));let seq=p.pending_operation.as_ref().unwrap().seq;let(n,e)=step(&p,Event::VirtualOperationCompleted{seq:seq+1,result:Ok(())});assert_eq!(n,p);assert!(e.is_empty());let(n,e)=step(&p,Event::VirtualOperationCompleted{seq,result:Ok(())});assert!(n.pending_operation.is_none());assert_eq!(e,vec![Effect::Draw]);}}
+ #[test]fn invalid_virtual_operation_does_not_start(){let mut m=Model::default();m.explorer.set_count(2);let bad=Event::RequestVirtualMove{operation_id:"x".into(),source_panel:"p1".into(),target_panel:"p9".into(),item_ids:vec!["a".into()]};assert_eq!(step(&m,bad),(m,vec![]));}
 }
 
 #[cfg(test)]mod locate_state_tests{

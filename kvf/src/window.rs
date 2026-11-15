@@ -1,6 +1,7 @@
 //! GDI 이중 버퍼·공용 frame·직접 키/IME 입력. Model은 event의 step 한 곳에서만 갱신한다.
 use std::{cell::RefCell,ptr::{null,null_mut}};
-use crate::{vf_state::{self,Model,View,Event,Effect,Caller,ReadResult,Context},vf_data::{self,Item,BoxRow,Snapshot},settings::Settings,util::wide,frame};
+use std::time::{SystemTime,UNIX_EPOCH};
+use crate::{vf_state::{self,Model,View,Event,Effect,Caller,ReadResult,Context},vf_data::{self,Item,BoxRow,Snapshot},settings::Settings,util::wide,frame,vf_store};
 use windows_sys::Win32::{Foundation::*,Graphics::Gdi::*,System::LibraryLoader::GetModuleHandleW,UI::{WindowsAndMessaging::*,Input::{KeyboardAndMouse::*,Ime::*}}};
 const HEAD:i32=32;const TAB:i32=30;const ROW:i32=30;
 const SPACES:[Option<&str>;5]=[None,Some("core"),Some("basis"),Some("reference"),Some("temp")];
@@ -29,9 +30,16 @@ pub fn event(e:Event){
   Effect::Notice(message)=>notify(&message),
   Effect::Open{seq,item_id}=>open_item(seq,item_id,crate::open::Action::Open),
   Effect::Locate{seq,item_id,origin}=>open_item(seq,item_id,if origin{crate::open::Action::LocateOrigin}else{crate::open::Action::LocateCopy}),
+  Effect::PersistLayout(layout)=>{if let Err(error)=persist_layout(&layout){notify(&format!("패널 설정 저장 실패: {error}"));}},
+  Effect::PersistVirtualOperation{seq,operation_id,kind}=>{let result=persist_virtual(&operation_id,&kind);event(Event::VirtualOperationCompleted{seq,result});},
  }}
  let(v,_,_,_)=snapshot();let _=crate::status(&v);
 }
+fn layout_path()->std::path::PathBuf{crate::paths::data_dir().join("settings.json")}
+fn store_path()->std::path::PathBuf{crate::paths::data_dir().join("virtual.db")}
+fn persist_layout(layout:&crate::vf_layout::Layout)->Result<(),String>{let p=layout_path();let mut value=Settings::load(&p).value();if let crate::json::Value::Obj(ref mut entries)=value{entries.retain(|(k,_)|!matches!(k.as_str(),"layout_version"|"panel_count"|"layout"|"active_panel"|"split"|"panels"));if let crate::json::Value::Obj(layout)=layout.value(){entries.extend(layout);}}crate::settings::write_changed(&p,&crate::json::to_string(&value)).map(|_|()).map_err(|e|e.to_string())}
+fn load_layout()->crate::vf_layout::Layout{let p=layout_path();match std::fs::read_to_string(&p){Ok(text) if crate::json::parse(&text).and_then(|v|v.num("panel_count")).is_some()=>crate::vf_layout::Layout::parse(&text),Ok(text)=>crate::vf_layout::Layout::migrate_legacy(&text),Err(_)=>crate::vf_layout::Layout::default()}}
+fn persist_virtual(operation_id:&str,kind:&vf_state::VirtualOperationKind)->Result<(),String>{let store=vf_store::Store::open(&store_path())?;match kind{vf_state::VirtualOperationKind::Move{source_panel:_,target_panel,item_ids}=>store.move_many(operation_id,item_ids,target_panel),vf_state::VirtualOperationKind::Copy{source_panel:_,target_panel,item_ids}=>store.copy_many(operation_id,item_ids,target_panel,SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64)}}
 fn read(seq:u64,mut c:Context){
  edit(|s|s.truncated=false);draw_later();let h=with(|s|s.hwnd);unsafe{UpdateWindow(h);}
  if c.box_id.is_none(){c.box_id=Settings::load(&crate::paths::data_dir().join("settings.json")).last_box;}
@@ -64,7 +72,7 @@ fn ensure()->Result<(),String>{
  let mut monitor:MONITORINFO=std::mem::zeroed();monitor.cbSize=std::mem::size_of_val(&monitor) as u32;GetMonitorInfoW(MonitorFromPoint(pt,MONITOR_DEFAULTTONEAREST),&mut monitor);
  let r=place(settings.rect,[pt.x,pt.y],monitor.rcWork);
  let h=CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),wide("퀵가상폴더").as_ptr(),WS_POPUP|WS_THICKFRAME|WS_MAXIMIZEBOX,r[0],r[1],r[2],r[3],null_mut(),null_mut(),instance,null());
- if h.is_null(){return Err("목록 창 생성 실패".into());}edit(|s|s.hwnd=h);frame::style_frame(h);topmost(h);Ok(())
+ if h.is_null(){return Err("목록 창 생성 실패".into());}edit(|s|{s.hwnd=h;s.model.explorer=load_layout();});frame::style_frame(h);topmost(h);Ok(())
  }}
 pub fn window_title(name: &str) -> String { format!("퀵가상폴더 · {name} ▾") }
 /// 테마 상태 전이(창 스레드): kagent 설정의 선호 + 시스템 → `ui_theme` 상태 하나. 색이 바뀌면 틀을 맞추고 다시 그린다.
