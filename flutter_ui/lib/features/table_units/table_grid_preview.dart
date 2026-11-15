@@ -569,6 +569,106 @@ class _TableGridPainter extends CustomPainter {
         align = TextAlign.right;
       }
 
+      // 사각형 번호 기호 감지:
+      // 1) 한컴 PUA U+F02B1 ~ U+F02C4 (1~20)
+      // 2) 카탈로그 표시 마커 [1] ~ [20]
+      String? boxNumberStr;
+      String tailText = text;
+      final runesList = text.runes.toList();
+      if (runesList.isNotEmpty && runesList[0] >= 0xF02B1 && runesList[0] <= 0xF02C4) {
+        boxNumberStr = '${runesList[0] - 0xF02B1 + 1}';
+        tailText = String.fromCharCodes(runesList.skip(1)).trimLeft();
+      } else {
+        final m = RegExp(r'^\[(\d{1,2})\](?:\s*)(.*)$').firstMatch(text);
+        if (m != null) {
+          final n = int.tryParse(m.group(1)!);
+          if (n != null && n >= 1 && n <= 20) {
+            boxNumberStr = '$n';
+            tailText = m.group(2) ?? '';
+          }
+        }
+      }
+
+      const paddingH = 3.0;
+
+      if (boxNumberStr != null) {
+        final numFontSize = (fontSize * 0.8).clamp(6.0, 11.0);
+        final numSpan = TextSpan(
+          text: boxNumberStr,
+          style: TextStyle(
+            fontFamily: 'NotoSansKR',
+            fontFamilyFallback: fontFamilyFallback,
+            color: textColor,
+            fontSize: numFontSize,
+            fontWeight: FontWeight.bold,
+          ),
+        );
+        final numPainter = TextPainter(
+          text: numSpan,
+          textDirection: TextDirection.ltr,
+        )..layout();
+
+        final boxH = (fontSize * 1.2).clamp(10.0, rectHeight - 2.0);
+        final boxW = math.max(boxH, numPainter.width + 4.0);
+        const gap = 4.0;
+        final availableForTail = math.max(4.0, rectWidth - paddingH * 2 - boxW - gap);
+
+        final tailSpan = TextSpan(
+          text: tailText,
+          style: TextStyle(
+            fontFamily: 'NotoSansKR',
+            fontFamilyFallback: fontFamilyFallback,
+            color: textColor,
+            fontSize: fontSize,
+            fontWeight: cell.style.bold ? FontWeight.bold : FontWeight.normal,
+          ),
+        );
+        final tailPainter = TextPainter(
+          text: tailSpan,
+          textAlign: align,
+          textDirection: TextDirection.ltr,
+          maxLines: math.max(1, (rectHeight / (fontSize * 1.3)).floor()),
+          ellipsis: '…',
+        )..layout(minWidth: 0, maxWidth: availableForTail);
+
+        final totalW = boxW + (tailText.isNotEmpty ? gap + tailPainter.width : 0.0);
+        double startX = left + paddingH;
+        if (align == TextAlign.center) {
+          startX = left + (rectWidth - totalW) / 2;
+        } else if (align == TextAlign.right) {
+          startX = right - paddingH - totalW;
+        }
+        final centerY = top + rectHeight / 2;
+
+        final boxRect = Rect.fromCenter(
+          center: Offset(startX + boxW / 2, centerY),
+          width: boxW,
+          height: boxH,
+        );
+        final boxPaint = Paint()
+          ..color = textColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0;
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(boxRect, const Radius.circular(2.0)),
+          boxPaint,
+        );
+
+        numPainter.paint(
+          canvas,
+          Offset(
+            boxRect.center.dx - numPainter.width / 2,
+            boxRect.center.dy - numPainter.height / 2,
+          ),
+        );
+
+        if (tailText.isNotEmpty) {
+          final tailY = centerY - tailPainter.height / 2;
+          tailPainter.paint(canvas, Offset(startX + boxW + gap, tailY));
+        }
+        continue;
+      }
+
       final textSpan = TextSpan(
         text: text,
         style: TextStyle(
@@ -590,7 +690,6 @@ class _TableGridPainter extends CustomPainter {
         ellipsis: '…',
       );
 
-      const paddingH = 3.0;
       final availableWidth = math.max(4.0, rectWidth - paddingH * 2);
       textPainter.layout(minWidth: 0, maxWidth: availableWidth);
 
