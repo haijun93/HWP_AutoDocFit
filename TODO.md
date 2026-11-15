@@ -109,7 +109,7 @@
   - **3단계(선택)**: 자르기·간단 보정, 장소명 묶기(지도 없이), 슬라이드쇼. 인물 인식은 넣지 않는다.
   - **구조**: 엔진은 Rust로 klib에 `photo_*` 명령(스캔, EXIF 촬영일·회전 방향·카메라·GPS, 썸네일, 태그 DB)을 추가한다. 화면을 Flutter에서 Rust 네이티브로 바꾸는 전환(UI2~UI10)이 진행 중이므로 엔진을 분리해 화면만 갈아 끼우게 한다. **외부 라이브러리는 늘리지 않는다**(WIC + 직접 만든 EXIF 파서, GitLab 보안 검사 부담 회피). 규모 추정: 1단계는 엔진 명령 6~8개, 화면 2개(격자, 크게 보기).
   - **화면 위치(사용자 결정, 2026-11-15)**: **앱 안의 새 탭**으로 둔다(사진대지 연계에 유리). 단축키로 뜨는 별도 창은 만들지 않는다. 탭 추가 위치는 앱 왼쪽 탭 목록(`flutter_ui/lib/features/workspace/tab_navigation_shell.dart`)이며, Rust 네이티브 화면 전환 뒤에도 같은 탭으로 옮긴다.
-  - **사용자 결정 필요**: 기존 개발자 모드 외부 프로그램 '사진첩' 진입점(`photo_album`)을 이 탭으로 바꿀지(대체), 그대로 둘지.
+  - **기존 메뉴 처리(사용자 결정, 2026-11-15, 반영 완료)**: 개발자 모드 외부 프로그램의 '사진첩'(mongdangview, `photo_album`)은 그대로 두고 이름만 **'사진첩2'**로 바꿨다(새 사진첩 탭과 구별). 내부 식별자 `photo_album`과 저장된 실행 파일 경로 설정은 그대로다. 바꾼 곳: `flutter_ui/lib/features/external_apps/external_app_launcher.dart`, `docfit_app/external_apps_service.py`, 앱 정보의 연결 프로그램 목록(`flutter_ui/lib/features/settings/idiom_panel.dart`), 관련 주석과 Python·Flutter 시험. Python 시험 통과, Flutter 시험은 이 클라우드에 Flutter가 없어 CI에서 확인.
 - [ ] [중] MCP(AI 답변 → 서식 적용 HWPX): 사용자 서식 프로필, 한/글 내어쓰기·최종검수, 장시간 작업 취소, 실기 연결·보안 시험(`docs/MCP_INTEGRATION_DESIGN.md`).
 
 ## 보안

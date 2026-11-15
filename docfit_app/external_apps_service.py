@@ -1,10 +1,10 @@
-"""개발자 모드 외부 프로그램(사진첩·아웃라이너·사진관리) 공용 실행기.
+"""개발자 모드 외부 프로그램(사진첩2·아웃라이너·사진관리) 공용 실행기.
 
 세 프로그램은 본 앱에 이식하지 않은 별도 프로그램(별도 프로세스)이다. 자세한 라이선스·배포 설계는
 docs/EXTERNAL_APPS.md.
 
 | app_id        | 메뉴     | 포크(haijun93)     | 원본           | 실행 파일    |
-| photo_album   | 사진첩   | mongdangview       | neelabo/NeeView | NeeView.exe |
+| photo_album   | 사진첩2  | mongdangview       | neelabo/NeeView | NeeView.exe |
 | outliner      | 아웃라이너 | mongdangoutliner | logseq/logseq   | Logseq.exe  |
 | photo_manager | 사진관리 | mondangpics        | KDE/digikam     | digikam.exe |
 
@@ -53,7 +53,7 @@ class ExternalApp:
 
 
 APPS = {app.app_id: app for app in (
-    ExternalApp("photo_album", "사진첩", "mongdangview", "NeeView.exe", "NeeView", "MIT (7-Zip·SevenZipSharp는 LGPL)",
+    ExternalApp("photo_album", "사진첩2", "mongdangview", "NeeView.exe", "NeeView", "MIT (7-Zip·SevenZipSharp는 LGPL)",
                 "https://github.com/haijun93/mongdangview", "https://github.com/neelabo/NeeView/releases"),
     ExternalApp("outliner", "아웃라이너", "mongdangoutliner", "Logseq.exe", "Logseq", "AGPL-3.0",
                 "https://github.com/haijun93/mongdangoutliner", "https://github.com/logseq/logseq/releases"),

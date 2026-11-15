@@ -512,7 +512,7 @@ const thirdPartyComponents = [
 /// 개발자 모드 사이드메뉴에서 실행하는 별도 프로그램(앱에 포함하지 않고, 처음 실행할 때 자동으로 받는다).
 /// (메뉴, 프로그램(포크 저장소), 원본, 라이선스)
 const externalPrograms = <(String, String, String, String)>[
-  ('사진첩', 'mongdangview (github.com/haijun93/mongdangview)', 'NeeView — neelabo/NeeView', 'MIT (7-Zip·SevenZipSharp는 LGPL)'),
+  ('사진첩2', 'mongdangview (github.com/haijun93/mongdangview)', 'NeeView — neelabo/NeeView', 'MIT (7-Zip·SevenZipSharp는 LGPL)'),
   ('아웃라이너', 'mongdangoutliner (github.com/haijun93/mongdangoutliner)', 'Logseq — logseq/logseq', 'AGPL-3.0'),
   ('사진관리', 'mondangpics (github.com/haijun93/mondangpics)', 'digiKam — KDE/digikam', 'GPL-2.0'),
 ];
@@ -569,7 +569,7 @@ class AppInfoPanel extends StatelessWidget {
             Text('개발자 모드 연결 프로그램', style: Kiosk.cardTitle(context)),
             const SizedBox(height: 6),
             Text(
-              '개발자 모드 사이드메뉴의 사진첩·아웃라이너·사진관리는 이 앱과 따로 실행되는 별도 프로그램입니다. '
+              '개발자 모드 사이드메뉴의 사진첩2·아웃라이너·사진관리는 이 앱과 따로 실행되는 별도 프로그램입니다. '
               '앱 설치 파일에는 들어 있지 않고, 메뉴를 처음 누를 때 공식 배포처에서 자동으로 받아 '
               '이 PC 사용자 폴더(%LOCALAPPDATA% 아래 HWP_AutoDocFit/tools)에 설치합니다. '
               '각 프로그램의 저작권·라이선스는 원저작자에게 있으며, 고친 소스는 위 포크 저장소에 공개합니다.',
