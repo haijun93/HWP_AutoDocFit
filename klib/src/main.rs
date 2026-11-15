@@ -166,25 +166,15 @@ fn main() {
             eprintln!("usage: klib preview <hwp> <out.png>");
             std::process::exit(2);
         };
-        match hwp5::extract_hwp5_preview(std::path::Path::new(path)) {
-            Ok(preview) => {
-                let has_image = preview.has_image();
-                if let Some(ref img_bytes) = preview.image {
-                    if let Err(e) = std::fs::write(out_path, img_bytes) {
-                        eprintln!("failed to write preview image to {out_path}: {e}");
-                        std::process::exit(1);
-                    }
-                }
+        match extract::preview_hwp(std::path::Path::new(path), std::path::Path::new(out_path)) {
+            Ok((has_image, format, text)) => {
                 let obj = json::Value::obj(vec![
                     ("has_image", json::Value::Bool(has_image)),
                     (
                         "format",
-                        preview
-                            .image_format
-                            .map(|f| json::Value::Str(f.as_str().to_string()))
-                            .unwrap_or(json::Value::Null),
+                        format.map(json::Value::Str).unwrap_or(json::Value::Null),
                     ),
-                    ("text", json::Value::Str(preview.text)),
+                    ("text", json::Value::Str(text)),
                 ]);
                 println!("{}", json::to_string(&obj));
             }

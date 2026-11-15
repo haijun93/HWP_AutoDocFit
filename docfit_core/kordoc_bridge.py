@@ -18,6 +18,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import hashlib
 from pathlib import Path
@@ -336,8 +337,68 @@ def run_kordoc_result(arguments: list[str], timeout: int = 600) -> dict[str, Any
             "stdout": completed.stdout}
 
 
+def _klib_executable() -> Path | None:
+    explicit = os.environ.get("KLIB_EXE")
+    if explicit and Path(explicit).is_file():
+        return Path(explicit)
+    repository = Path(__file__).resolve().parents[1]
+    base = Path(getattr(sys, "_MEIPASS", repository))
+    name = "klib.exe" if os.name == "nt" else "klib"
+    for candidate in (base / "resources" / name, repository / "resources" / name,
+                      repository / "klib" / "target" / "release" / name,
+                      repository / "klib" / "target" / "debug" / name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _parse_hwp_rust(source: Path, target: Path, output_format: str = "markdown") -> bool:
+    """klib(Rust) hwp5 리더로 HWP5 본문을 읽어 마크다운/텍스트 파일로 저장한다. 실패 시 False."""
+    executable = _klib_executable()
+    if executable is None:
+        return False
+    try:
+        done = subprocess.run(
+            [str(executable), "extract", str(source)],
+            capture_output=True, timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if done.returncode != 0:
+            return False
+        data = json.loads(done.stdout.decode("utf-8"))
+        paragraphs = data.get("paragraphs")
+        if not isinstance(paragraphs, list) or not paragraphs:
+            return False
+        lines: list[str] = []
+        for p in paragraphs:
+            if not isinstance(p, dict):
+                continue
+            t = str(p.get("text") or "").strip()
+            if t:
+                lines.append(t)
+        if not lines:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        content = "\n\n".join(lines) + "\n"
+        target.write_text(content, encoding="utf-8")
+        return target.is_file() and target.stat().st_size > 0
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
+
+
 def parse_document(source: str | Path, target: str | Path, *, output_format: str = "markdown",
                    pages: str | None = None, ocr: bool = False) -> Path:
+    source_p, target_p = Path(source), Path(target)
+    # kordoc 의존 줄이기 2단계: HWP5 문서는 Rust(klib extract) 우선, 실패 시 kordoc parse 대체
+    if (source_p.suffix.lower() == ".hwp"
+            and output_format.lower() in ("markdown", "text")
+            and pages is None
+            and not ocr
+            and os.environ.get("DOCFIT_HWP_ENGINE", "").strip().lower() != "kordoc"):
+        if _parse_hwp_rust(source_p, target_p, output_format=output_format):
+            return target_p
+
     args = [str(source), "--format", output_format, "-o", str(target), "--silent"]
     if pages:
         args.extend(["--pages", pages])
@@ -432,10 +493,39 @@ def analyze_form(source: str | Path) -> Path:
     return target
 
 
+def _render_preview_rust(source: Path, target_png: Path) -> bool:
+    """klib(Rust)로 HWP 미리보기를 추출한다. PrvImage가 있어 PNG를 저장했으면 True, 실패/이미지 없음 시 False."""
+    executable = _klib_executable()
+    if executable is None:
+        return False
+    try:
+        done = subprocess.run(
+            [str(executable), "preview", str(source), str(target_png)],
+            capture_output=True, timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if done.returncode != 0:
+            return False
+        info = json.loads(done.stdout.decode("utf-8"))
+        if not info.get("has_image"):
+            return False
+        return target_png.is_file() and target_png.stat().st_size > 0
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
+        return False
+
+
 def render_preview(source: str | Path) -> Path:
     source = Path(source)
     output_dir = source.with_name(source.stem + "_preview")
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # kordoc 의존 줄이기 2단계: HWP5 문서는 Rust(klib preview) 우선, 실패 시 kordoc render 대체
+    if source.suffix.lower() == ".hwp" and os.environ.get("DOCFIT_HWP_ENGINE", "").strip().lower() != "kordoc":
+        target_png = output_dir / "preview-0.png"
+        if _render_preview_rust(source, target_png):
+            return output_dir
+
     run_kordoc(["render", str(source), "--format", "png", "-d", str(output_dir), "--silent"])
     return output_dir
 

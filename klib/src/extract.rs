@@ -1,7 +1,7 @@
 //! Text and HWPX paragraph extraction shared by the CLI and index pipeline.
 use crate::json::Value;
 use encoding_rs::EUC_KR;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::io::Read;
 use zip::ZipArchive;
 
@@ -134,11 +134,7 @@ pub fn extract_hwp(path: &Path) -> Result<Vec<Paragraph>, String> {
     }
 }
 
-/// Extract HWP5 through the bundled kordoc Markdown conversion (fallback/legacy engine).
-pub fn extract_hwp_kordoc(path: &Path) -> Result<Vec<Paragraph>, String> {
-    use std::{process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::{Duration, Instant}};
-    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
-
+pub fn find_kordoc_runtime() -> Result<(PathBuf, PathBuf, PathBuf), String> {
     let app_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf));
     let mut roots = Vec::new();
     if let Some(dir) = app_dir {
@@ -150,13 +146,21 @@ pub fn extract_hwp_kordoc(path: &Path) -> Result<Vec<Paragraph>, String> {
     if let Some(base) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
         roots.push(Path::new(&base).join("HwpAutoDocFit").join("kordoc-runtime").join("4.24.9"));
     }
-    let runtime = roots.into_iter().find_map(|root| {
+    roots.into_iter().find_map(|root| {
         let manifest = std::fs::read_to_string(root.join("runtime.json")).ok()?;
         if crate::json::parse(&manifest)?.str("kordoc") != Some("4.24.9") { return None; }
         let node = [root.join("node/node.exe"), root.join("node/node")].into_iter().find(|p| p.is_file())?;
         let cli = root.join("app/node_modules/kordoc/dist/cli.js");
         cli.is_file().then_some((root, node, cli))
-    }).ok_or_else(|| "runtime_unavailable: kordoc HWP 변환 런타임을 찾을 수 없음".to_owned())?;
+    }).ok_or_else(|| "runtime_unavailable: kordoc HWP 변환 런타임을 찾을 수 없음".to_owned())
+}
+
+/// Extract HWP5 through the bundled kordoc Markdown conversion (fallback/legacy engine).
+pub fn extract_hwp_kordoc(path: &Path) -> Result<Vec<Paragraph>, String> {
+    use std::{process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::{Duration, Instant}};
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    let runtime = find_kordoc_runtime()?;
 
     let temp_root = std::env::temp_dir();
     let (temp_dir, target) = loop {
@@ -242,6 +246,128 @@ pub fn extract_hwp_kordoc(path: &Path) -> Result<Vec<Paragraph>, String> {
 fn hwp_record(text: String, kind: &str, label: String, sequence: usize) -> Paragraph {
     Paragraph { text, location_kind: kind.into(), location_label: label, sequence,
         section: None, hierarchy_level: None, is_table_cell: false, style_name: None, outline_level: None }
+}
+
+/// kordoc(Node.js) 번들 런타임을 통해 HWP 미리보기 PNG를 생성한다.
+pub fn preview_hwp_kordoc(path: &Path, out_path: &Path) -> Result<bool, String> {
+    use std::{process::{Command, Stdio}, sync::atomic::{AtomicU64, Ordering}, thread, time::{Duration, Instant}};
+    static NEXT_TEMP_PREVIEW: AtomicU64 = AtomicU64::new(0);
+
+    let runtime = find_kordoc_runtime()?;
+    let temp_root = std::env::temp_dir();
+    let temp_dir = loop {
+        let id = NEXT_TEMP_PREVIEW.fetch_add(1, Ordering::Relaxed);
+        let candidate = temp_root.join(format!("kprv-hwp-{}-{id}", std::process::id()));
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("corrupt: 미리보기 임시 폴더 생성 실패: {e}")),
+        }
+    };
+
+    let mut child = Command::new(&runtime.1)
+        .arg(&runtime.2)
+        .arg("render")
+        .arg(path)
+        .arg("--format")
+        .arg("png")
+        .arg("-d")
+        .arg(&temp_dir)
+        .arg("--silent")
+        .env("KORDOC_OFFLINE", "1")
+        .env("ORT_DISABLE_TELEMETRY", "1")
+        .env("npm_config_offline", "true")
+        .env("npm_config_update_notifier", "false")
+        .env("NO_UPDATE_NOTIFIER", "1")
+        .env("KORDOC_MODEL_CACHE", runtime.0.join("models"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            format!("runtime_unavailable: kordoc render 실행 실패: {e}")
+        })?;
+
+    let started = Instant::now();
+    while child.try_wait().map_err(|e| format!("extract_failed: kordoc 상태 확인 실패: {e}"))?.is_none() {
+        if started.elapsed() > Duration::from_secs(60) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Err("extract_failed: kordoc 미리보기 생성 시간 초과".into());
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+
+    let output = child.wait_with_output().map_err(|e| format!("extract_failed: kordoc 결과 읽기 실패: {e}"))?;
+    if !output.status.success() {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(format!("extract_failed: kordoc render 실패: {message}"));
+    }
+
+    // temp_dir 안의 생성된 png 파일 탐색 (예: preview-0.png, output.png 등)
+    let mut found_png = None;
+    if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.extension().and_then(|e| e.to_str()).map(|e| e.eq_ignore_ascii_case("png")).unwrap_or(false) {
+                found_png = Some(p);
+                break;
+            }
+        }
+    }
+
+    if let Some(png_file) = found_png {
+        let res = std::fs::copy(&png_file, out_path).map_err(|e| format!("failed to copy preview image to {}: {e}", out_path.display()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        res.map(|_| true)
+    } else {
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        Ok(false)
+    }
+}
+
+/// HWP 5.0 미리보기 추출:
+/// 1순위: Rust 순수 엔진(`hwp5::extract_hwp5_preview`), PrvImage가 있으면 저장.
+/// 실패하거나 이미지가 없거나 환경변수 `KLIB_HWP_ENGINE=kordoc`이면 kordoc render로 폴백 대체.
+pub fn preview_hwp(path: &Path, out_path: &Path) -> Result<(bool, Option<String>, String), String> {
+    let force_kordoc = std::env::var("KLIB_HWP_ENGINE")
+        .map(|v| v.eq_ignore_ascii_case("kordoc"))
+        .unwrap_or(false);
+
+    if !force_kordoc {
+        match crate::hwp5::extract_hwp5_preview(path) {
+            Ok(preview) => {
+                if preview.has_image() {
+                    if let Some(ref img_bytes) = preview.image {
+                        if let Err(e) = std::fs::write(out_path, img_bytes) {
+                            return Err(format!("failed to write preview image to {}: {e}", out_path.display()));
+                        }
+                        let fmt = preview.image_format.map(|f| f.as_str().to_string());
+                        return Ok((true, fmt, preview.text));
+                    }
+                }
+                // 이미지가 없는 경우 (또는 텍스트만 있는 경우) kordoc 폴백 시도
+                if let Ok(true) = preview_hwp_kordoc(path, out_path) {
+                    return Ok((true, Some("png".to_string()), preview.text));
+                }
+                let fmt = preview.image_format.map(|f| f.as_str().to_string());
+                return Ok((false, fmt, preview.text));
+            }
+            Err(_err) => {
+                // Rust 파싱 오류 시 kordoc 폴백 시도
+            }
+        }
+    }
+
+    // kordoc 폴백
+    match preview_hwp_kordoc(path, out_path) {
+        Ok(true) => Ok((true, Some("png".to_string()), String::new())),
+        Ok(false) => Ok((false, None, String::new())),
+        Err(e) => Err(e),
+    }
 }
 
 /// Extraction used by content indexing, retaining HWPX metadata from the legacy index walker.
