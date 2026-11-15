@@ -8,6 +8,7 @@
 pub mod cluster;
 pub mod date;
 pub mod document_date;
+pub mod history;
 pub mod norm;
 pub mod series;
 pub mod sim;
@@ -20,6 +21,10 @@ pub use date::{
 };
 pub use document_date::{
     DateContext, DocumentDateCandidate, extract_document_dates, preferred_document_date,
+};
+pub use history::{
+    ComparisonPeriod, FolderHistory, PeriodicPrediction, TopicChange,
+    compare_periods, detect_periodic_topics, folder_histories,
 };
 pub use norm::{extract_extension, normalize_name, strip_extension};
 pub use series::{
