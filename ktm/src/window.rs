@@ -129,6 +129,9 @@ fn colors() -> (u32, u32, u32, u32) {
     })
 }
 fn event(h: HWND, e: Event) {
+    // 사용자가 직접 친 입력(EN_CHANGE)은 검색칸이 이미 그 글이다. 다시 써 넣으면 한글 IME 조합 중 글자가
+    // 확정돼 "공사"가 "ㄱ고공공사사"로 쌓인다(v2.2.68 오류). 검색칸 다시 쓰기는 프로그램이 바꾼 경우만.
+    let user_input = matches!(e, Event::Input(_));
     let (effects, query_changed) = edit(|u| {
         let prev_query = u.state.query.clone();
         if matches!(
@@ -145,7 +148,7 @@ fn event(h: HWND, e: Event) {
             u.cancel.store(true, Ordering::Relaxed);
         }
         let (s, fx) = tm_state::step(&u.state, e);
-        let changed = s.query != prev_query;
+        let changed = !user_input && s.query != prev_query;
         u.state = s;
         if u.state.result_count == 0 {
             u.rows.clear();
@@ -160,8 +163,13 @@ fn event(h: HWND, e: Event) {
         let (ed, q) = with(|u| (u.edit, wide(&u.state.query)));
         let caret = q.len().saturating_sub(1); // UTF-16 단위(끝의 0 제외)
         unsafe {
-            SetWindowTextW(ed, q.as_ptr());
-            SendMessageW(ed, 0x00b1, caret, caret as isize);
+            // 검색칸 글이 이미 같으면 건드리지 않는다(IME 조합 보호).
+            let mut cur = vec![0u16; caret + 2];
+            let n = GetWindowTextW(ed, cur.as_mut_ptr(), cur.len() as i32) as usize;
+            if !(n == caret && cur[..n] == q[..caret]) {
+                SetWindowTextW(ed, q.as_ptr());
+                SendMessageW(ed, 0x00b1, caret, caret as isize);
+            }
         }
     }
     for fx in effects {
