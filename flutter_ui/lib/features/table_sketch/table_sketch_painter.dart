@@ -25,10 +25,10 @@ math.Point<int>? snapLineCoords(
   int gx1,
   int gy1,
   int rawGx2,
-  int rawGy2,
-  int maxCols,
-  int maxRows,
-) {
+  int rawGy2, [
+  int? maxCols,
+  int? maxRows,
+]) {
   final dx = rawGx2 - gx1;
   final dy = rawGy2 - gy1;
   if (dx == 0 && dy == 0) return null;
@@ -45,25 +45,18 @@ math.Point<int>? snapLineCoords(
 
   if (adx > 0 && (ady == 0 || (ady / adx) < 0.41421356)) {
     // 가로선 (y1 == y2)
-    gx2 = rawGx2.clamp(0, maxCols);
+    gx2 = rawGx2;
     gy2 = gy1;
   } else if (ady > 0 && (adx == 0 || (adx / ady) < 0.41421356)) {
     // 세로선 (x1 == x2)
     gx2 = gx1;
-    gy2 = rawGy2.clamp(0, maxRows);
+    gy2 = rawGy2;
   } else {
     // 45° 대각선 (|x2-x1| == |y2-y1|)
     final sx = dx >= 0 ? 1 : -1;
     final sy = dy >= 0 ? 1 : -1;
     var step = ((adx + ady) / 2.0).round();
     if (step < 1) step = 1;
-
-    final maxStepX = sx > 0 ? (maxCols - gx1) : gx1;
-    final maxStepY = sy > 0 ? (maxRows - gy1) : gy1;
-    final maxStep = math.min(maxStepX, maxStepY);
-    step = math.min(step, maxStep);
-
-    if (step < 1) return null;
     gx2 = gx1 + step * sx;
     gy2 = gy1 + step * sy;
   }
@@ -101,6 +94,9 @@ class TableSketchPainter extends CustomPainter {
   TableSketchPainter({
     required this.doc,
     required this.cellSize,
+    this.panOffset = Offset.zero,
+    this.showPaperGuide = true,
+    this.orientation = 'portrait',
     this.selectedLines = const {},
     this.selectedTexts = const {},
     this.selectedArrows = const {},
@@ -120,6 +116,15 @@ class TableSketchPainter extends CustomPainter {
     this.regionCells = const {},
     this.colors = TableSketchColors.light,
   });
+
+  /// 캔버스 뷰포트 이동 오프셋 (팬 위치)
+  final Offset panOffset;
+
+  /// A4 종이 가이드 보이기 여부
+  final bool showPaperGuide;
+
+  /// 용지 방향 ('portrait' | 'landscape')
+  final String orientation;
 
   /// 캔버스 위 격자·선택·손잡이·안내선 색(지역 팔레트, 화면이 테마에서 골라 넘긴다).
   final TableSketchColors colors;
@@ -174,14 +179,61 @@ class TableSketchPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // 1. 종이 바탕색 (흰색)
-    final bgPaint = Paint()..color = TableSketchColors.paper;
+    // 1. 무한 캔버스 전체 바탕색 (은은한 회색)
+    final bgPaint = Paint()..color = const Color(0xFFF1F3F5);
     canvas.drawRect(Offset.zero & size, bgPaint);
 
-    // 2. 바둑판 점선 격자 (연회색 점선)
+    // 2. 종이 A4 영역 가이드 (세로: 210×297mm, 가로: 297×210mm)
+    final isLandscape = orientation == 'landscape';
+    final paperCols = (isLandscape ? 297.0 : 210.0) / doc.grid.cellMm;
+    final paperRows = (isLandscape ? 210.0 : 297.0) / doc.grid.cellMm;
+    final paperRect = Rect.fromLTWH(
+      panOffset.dx,
+      panOffset.dy,
+      paperCols * cellSize,
+      paperRows * cellSize,
+    );
+
+    if (showPaperGuide) {
+      // 종이 흰색 바탕
+      canvas.drawRect(paperRect, Paint()..color = TableSketchColors.paper);
+      // 종이 테두리
+      canvas.drawRect(
+        paperRect,
+        Paint()
+          ..color = colors.paperBorder
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.0,
+      );
+
+      // 본문 폭 기준선 (한/글 기본 여백: 좌우 30mm = 6칸, 본문 폭: 세로 150mm = 30칸, 가로 237mm = 47.4칸)
+      final marginPx = (30.0 / doc.grid.cellMm) * cellSize;
+      final contentWidthPx = ((isLandscape ? 237.0 : 150.0) / doc.grid.cellMm) * cellSize;
+      final contentLeft = paperRect.left + marginPx;
+      final contentRight = contentLeft + contentWidthPx;
+
+      final marginGuide = Paint()
+        ..color = const Color(0x663B82F6) // 연한 파란 점선
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0;
+      final leftPath = Path()
+        ..moveTo(contentLeft, paperRect.top)
+        ..lineTo(contentLeft, paperRect.bottom);
+      final rightPath = Path()
+        ..moveTo(contentRight, paperRect.top)
+        ..lineTo(contentRight, paperRect.bottom);
+      canvas.drawPath(createDashedPath(leftPath, 4.0, 4.0), marginGuide);
+      canvas.drawPath(createDashedPath(rightPath, 4.0, 4.0), marginGuide);
+    }
+
+    // 3. 바둑판 점선 격자 (보이는 영역만 계산하여 그린다)
     _drawGrid(canvas, size);
 
-    // 2-0. 사각형 배경색(그림·선 아래)
+    // 4. 개체 그리기 (원점 + panOffset 적용)
+    canvas.save();
+    canvas.translate(panOffset.dx, panOffset.dy);
+
+    // 4-0. 사각형 배경색(그림·선 아래)
     for (final fill in doc.fills) {
       canvas.drawRect(
         Rect.fromLTRB(
@@ -194,7 +246,7 @@ class TableSketchPainter extends CustomPainter {
       );
     }
 
-    // 2-1. 칸 배경 그림(선 아래)
+    // 4-1. 칸 배경 그림(선 아래)
     for (final (region, image) in cellImages) {
       final dst = Rect.fromLTRB(
         region.left * cellSize,
@@ -237,7 +289,7 @@ class TableSketchPainter extends CustomPainter {
       );
     }
 
-    // 3. 잠근 레이어의 선·글(고를 수 없지만 보인다)과 기존에 그려진 선들
+    // 4-2. 잠근 레이어의 선·글(고를 수 없지만 보인다)과 기존에 그려진 선들
     for (final line in doc.lockedLines) {
       _drawSketchLine(canvas, line);
     }
@@ -268,7 +320,7 @@ class TableSketchPainter extends CustomPainter {
       );
     }
 
-    // 4. 드래그 중인 미리보기 선 / 사각형
+    // 4-3. 드래그 중인 미리보기 선 / 사각형
     if (previewLine != null) {
       if (previewArrow) {
         drawArrowPreview(canvas, previewLine!);
@@ -280,7 +332,7 @@ class TableSketchPainter extends CustomPainter {
       _drawPreviewRect(canvas, previewRect!);
     }
 
-    // 5. 텍스트 렌더링(고른 칸은 파란 바탕)
+    // 4-4. 텍스트 렌더링(고른 칸은 파란 바탕)
     for (var i = 0; i < doc.texts.length; i++) {
       if (selectedTexts.contains(i)) {
         final t = doc.texts[i];
@@ -292,7 +344,7 @@ class TableSketchPainter extends CustomPainter {
       _drawSketchText(canvas, doc.texts[i]);
     }
 
-    // 6. 여러 개를 고르면 감싸는 점선 상자
+    // 4-5. 여러 개를 고르면 감싸는 점선 상자
     if (selectedLines.length + selectedTexts.length + selectedArrows.length >
         1) {
       final bounds = _selectionRect();
@@ -307,21 +359,21 @@ class TableSketchPainter extends CustomPainter {
       }
     }
 
-    // 6-1. 맞춤 안내선(다이어그램처럼 빨간 점선)
+    // 4-6. 맞춤 안내선(다이어그램처럼 빨간 점선)
     final guide = Paint()
       ..color = colors.guide
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     for (final x in guideXs) {
       final path = Path()
-        ..moveTo(x * cellSize, 0)
-        ..lineTo(x * cellSize, size.height);
+        ..moveTo(x * cellSize, -100000)
+        ..lineTo(x * cellSize, 100000);
       canvas.drawPath(createDashedPath(path, 6.0, 4.0), guide);
     }
     for (final y in guideYs) {
       final path = Path()
-        ..moveTo(0, y * cellSize)
-        ..lineTo(size.width, y * cellSize);
+        ..moveTo(-100000, y * cellSize)
+        ..lineTo(100000, y * cellSize);
       canvas.drawPath(createDashedPath(path, 6.0, 4.0), guide);
     }
     // 같은 간격: 사이 구간을 빨간 점선과 양끝 짧은 막대로.
@@ -372,7 +424,7 @@ class TableSketchPainter extends CustomPainter {
       }
     }
 
-    // 6-2. 사각형 크기 조절 손잡이
+    // 4-7. 사각형 크기 조절 손잡이
     final box = resizeBox;
     if (box != null) {
       final fill = Paint()..color = colors.handleFill;
@@ -387,7 +439,9 @@ class TableSketchPainter extends CustomPainter {
       }
     }
 
-    // 7. 올가미·선택 상자(끌고 있는 동안)
+    canvas.restore();
+
+    // 5. 올가미·선택 상자(끌고 있는 동안 - 화면 좌표 그대로)
     final path = lassoPath;
     if (path != null && path.length >= 2) {
       final outline = Path();
@@ -409,31 +463,26 @@ class TableSketchPainter extends CustomPainter {
           ..strokeWidth = 1.2,
       );
     }
-
-    // 6. 종이 테두리 (가장자리 회색 선)
-    final borderPaint = Paint()
-      ..color = colors.paperBorder
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-    canvas.drawRect(Offset.zero & size, borderPaint);
   }
 
   void _drawGrid(Canvas canvas, Size size) {
-    final cols = doc.grid.cols;
-    final rows = doc.grid.rows;
+    final startCol = ((-panOffset.dx) / cellSize).floor() - 1;
+    final endCol = ((size.width - panOffset.dx) / cellSize).ceil() + 1;
+    final startRow = ((-panOffset.dy) / cellSize).floor() - 1;
+    final endRow = ((size.height - panOffset.dy) / cellSize).ceil() + 1;
 
     final gridPath = Path();
     // 세로선들
-    for (int c = 0; c <= cols; c++) {
-      final x = c * cellSize;
+    for (int c = startCol; c <= endCol; c++) {
+      final x = panOffset.dx + c * cellSize;
       gridPath.moveTo(x, 0);
-      gridPath.lineTo(x, rows * cellSize);
+      gridPath.lineTo(x, size.height);
     }
     // 가로선들
-    for (int r = 0; r <= rows; r++) {
-      final y = r * cellSize;
+    for (int r = startRow; r <= endRow; r++) {
+      final y = panOffset.dy + r * cellSize;
       gridPath.moveTo(0, y);
-      gridPath.lineTo(cols * cellSize, y);
+      gridPath.lineTo(size.width, y);
     }
 
     final dashedGrid = createDashedPath(gridPath, 2.0, 3.0);

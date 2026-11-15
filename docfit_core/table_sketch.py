@@ -98,6 +98,25 @@ def normalize(sketch):
     texts = sketch.get("texts", [])
     if not isinstance(raw, list) or len(raw) > 10000 or not isinstance(texts, list) or len(texts) > 10000:
         raise ValueError("선·글 데이터가 너무 많거나 형식이 잘못되었습니다.")
+
+    # reorigin 옵션 또는 명시적 원점 재정렬 지원
+    if sketch.get("reorigin"):
+        valid_lx, valid_ly = [], []
+        for l in raw:
+            if isinstance(l, dict):
+                x1, y1, x2, y2 = l.get("x1"), l.get("y1"), l.get("x2"), l.get("y2")
+                if all(type(v) is int for v in (x1, y1, x2, y2)):
+                    valid_lx.extend([x1, x2])
+                    valid_ly.extend([y1, y2])
+        if valid_lx and valid_ly:
+            shift_x = -min(valid_lx)
+            shift_y = -min(valid_ly)
+            raw = [{**l, "x1": l["x1"] + shift_x, "y1": l["y1"] + shift_y,
+                    "x2": l["x2"] + shift_x, "y2": l["y2"] + shift_y} if isinstance(l, dict) and all(type(l.get(k)) is int for k in ("x1", "y1", "x2", "y2")) else l for l in raw]
+            texts = [{**t, "x": t["x"] + shift_x, "y": t["y"] + shift_y} if isinstance(t, dict) and type(t.get("x")) is int and type(t.get("y")) is int else t for t in texts]
+            cols = max(cols, max(valid_lx) + shift_x)
+            rows = max(rows, max(valid_ly) + shift_y)
+
     groups, warnings = {}, []
     for i, line in enumerate(raw):
         try:
@@ -306,8 +325,15 @@ def _layout(sketch, _split_lines=()):
         if not xs[0] <= image["x"] < xs[-1] or not ys[0] <= image["y"] < ys[-1]:
             warnings.append("표 범위 밖의 칸 그림을 제외했습니다.")
     mm = drawing["grid"]["cell_mm"]
+    width_mm = (xs[-1] - xs[0]) * mm
+    height_mm = (ys[-1] - ys[0]) * mm
+    orientation = sketch.get("orientation", "portrait")
+    max_content_width_mm = 237.0 if orientation == "landscape" else 150.0
+    if width_mm > max_content_width_mm:
+        ori_label = "A4 가로" if orientation == "landscape" else "A4 세로"
+        warnings.append(f"표 폭({width_mm:.1f}mm)이 {ori_label} 본문 폭({max_content_width_mm:.0f}mm)을 초과했습니다.")
     return dict(ok=True, rows=len(ys)-1, cols=len(xs)-1, cells=sorted(cells,key=lambda c:(c["row"],c["col"])),
-                width_mm=(xs[-1]-xs[0])*mm, height_mm=(ys[-1]-ys[0])*mm,
+                width_mm=width_mm, height_mm=height_mm,
                 warnings=warnings, x_coords=xs, y_coords=ys)
 
 
