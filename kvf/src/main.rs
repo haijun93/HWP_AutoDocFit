@@ -103,7 +103,7 @@ fn run() -> Result<(),String> {
         let instance = GetModuleHandleW(std::ptr::null());
         let wc = WNDCLASSW { lpfnWndProc: Some(wndproc),hInstance:instance,lpszClassName:class.as_ptr(),..std::mem::zeroed() };
         if RegisterClassW(&wc) == 0 { dispatch(Event::Failed); return Err("창 클래스 등록 실패".into()); }
-        let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),util::wide("가상 폴더").as_ptr(),WS_POPUP,0,0,0,0,std::ptr::null_mut(),std::ptr::null_mut(),instance,std::ptr::null());
+        let hwnd = CreateWindowExW(WS_EX_TOOLWINDOW,class.as_ptr(),util::wide("퀵가상폴더").as_ptr(),WS_POPUP,0,0,0,0,std::ptr::null_mut(),std::ptr::null_mut(),instance,std::ptr::null());
         if hwnd.is_null() { dispatch(Event::Failed); return Err("주 창 생성 실패".into()); }
         let mut tray=tray::Tray::new(); tray.reload(hwnd); *TRAY.lock().unwrap()=Some(tray);
         let settings=TRAY.lock().unwrap().as_ref().unwrap().settings.clone(); window::refresh_theme(); ui_theme::apply_window(hwnd,ui_theme::theme().kind); window::configure(hwnd,&settings);
@@ -134,9 +134,9 @@ mod vf_state;
 fn notice(hwnd: HWND, body: &str){
     let visible=TRAY.lock().unwrap().as_ref().map(|t|t.settings.tray||!t.error.is_empty());
     match visible {
-        Some(true)=>{if let Some(t)=TRAY.lock().unwrap().as_ref(){unsafe{t.notice(hwnd,"가상 폴더",body);}}},
+        Some(true)=>{if let Some(t)=TRAY.lock().unwrap().as_ref(){unsafe{t.notice(hwnd,"퀵가상폴더",body);}}},
         // 메시지 상자는 창 사건을 재진입시키므로 TRAY 잠금을 잡은 채 열지 않는다.
-        Some(false)=>unsafe{MessageBoxW(hwnd,util::wide(body).as_ptr(),util::wide("가상 폴더").as_ptr(),MB_OK|MB_ICONINFORMATION);},
+        Some(false)=>unsafe{MessageBoxW(hwnd,util::wide(body).as_ptr(),util::wide("퀵가상폴더").as_ptr(),MB_OK|MB_ICONINFORMATION);},
         None=>{}
     }
 }
