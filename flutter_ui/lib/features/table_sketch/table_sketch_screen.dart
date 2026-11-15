@@ -407,6 +407,153 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
     });
   }
 
+  bool get _hasChanges {
+    // 1. 선·글·그림·색·화살표 등 작업 내용 및 레이어, 격자
+    if (_doc.lines.isNotEmpty ||
+        _doc.texts.isNotEmpty ||
+        _doc.images.isNotEmpty ||
+        _doc.fills.isNotEmpty ||
+        _doc.arrows.isNotEmpty ||
+        _doc.lockedLines.isNotEmpty ||
+        _doc.lockedTexts.isNotEmpty ||
+        _doc.lockedArrows.isNotEmpty ||
+        _doc.layers.length > 1 ||
+        (_doc.layers.isNotEmpty && _doc.layers.first.name != '레이어 1') ||
+        _doc.grid.cols != 36 ||
+        _doc.grid.rows != 50 ||
+        _doc.grid.cellMm != 5.0) {
+      return true;
+    }
+    // 2. 실행 취소 / 다시 실행 기록
+    if (_undoStack.isNotEmpty || _redoStack.isNotEmpty) {
+      return true;
+    }
+    // 3. 선택·올가미 상태
+    if (_sel.isNotEmpty || _regionSel.isNotEmpty || _imageTarget != null) {
+      return true;
+    }
+    // 4. 도구 및 속성 설정
+    if (_tool != SketchToolMode.line ||
+        _lineWidth != 'thin' ||
+        _lineStyle != 'solid' ||
+        _lineColor != sketchBlack ||
+        !_smartGuides ||
+        _keepRatio ||
+        _zoom != 1.0) {
+      return true;
+    }
+    // 5. '표 서식 보관' 이름 칸
+    if (_saveNameController.text.trim() != '새 표 서식') {
+      return true;
+    }
+    return false;
+  }
+
+  void _resetAll() {
+    setState(() {
+      _doc = TableSketchDoc(grid: const GridConfig());
+      _tool = SketchToolMode.line;
+      _lineWidth = 'thin';
+      _lineStyle = 'solid';
+      _lineColor = sketchBlack;
+      _smartGuides = true;
+      _keepRatio = false;
+      _zoom = 1.0;
+      _sel = SketchSelection();
+      _lassoPath = null;
+      _regionSel.clear();
+      _imageTarget = null;
+      _movingSelection = false;
+      _moveOrigin = null;
+      _movedDx = 0;
+      _movedDy = 0;
+      _moveSnapshotTaken = false;
+      _resizeHandle = null;
+      _resizeStart = null;
+      _resizeBase = null;
+      _endpointDrag = null;
+      _previewLine = null;
+      _previewRect = null;
+      _dragStart = null;
+      _dragCurrent = null;
+      _dragChangedLines = false;
+      _guideTargets = null;
+      _moveStartBounds = null;
+      _clipboard = null;
+      _clipboardSeq = null;
+      _pasteShift = 0;
+      _lastErasePos = null;
+      _undoStack.clear();
+      _redoStack.clear();
+      _recognized = null;
+      _recognizedRows = 0;
+      _recognizedCols = 0;
+      _recognizedWarnings = const [];
+      _recognizedImage = null;
+      _recognizeError = null;
+      _recognizing = false;
+      _importingHwpx = false;
+      _pastingHwp = false;
+      _saveNameController.text = '새 표 서식';
+    });
+    if (_vScroll.hasClients) {
+      _vScroll.jumpTo(0);
+    }
+    if (_hScroll.hasClients) {
+      _hScroll.jumpTo(0);
+    }
+    _triggerPreviewDebounced();
+    unawaited(_sketchApi.clearDraft());
+  }
+
+  Future<void> _newSketch() async {
+    if (!_hasChanges) {
+      _resetAll();
+      return;
+    }
+
+    final action = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('새로 그리기'),
+        content: const Text('작업 내용을 저장하시겠습니까?'),
+        actions: [
+          TextButton(
+            key: const Key('sketchNewCancelButton'),
+            onPressed: () => Navigator.of(ctx).pop('cancel'),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            key: const Key('sketchNewDiscardButton'),
+            onPressed: () => Navigator.of(ctx).pop('discard'),
+            child: const Text('저장 안 함'),
+          ),
+          FilledButton(
+            key: const Key('sketchNewSaveButton'),
+            onPressed: () => Navigator.of(ctx).pop('save'),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || action == null || action == 'cancel') {
+      return;
+    }
+
+    if (action == 'discard') {
+      _resetAll();
+      return;
+    }
+
+    if (action == 'save') {
+      final saved = await _saveSketch(promptIfEmpty: true);
+      if (saved && mounted) {
+        _resetAll();
+      }
+    }
+  }
+
   // --- 백엔드 미리보기 (0.5초 디바운스) ---
 
   void _triggerPreviewDebounced() {
@@ -878,23 +1025,75 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
 
   // --- 저장 / 불러오기 / 삭제 ---
 
-  Future<void> _saveSketch() async {
-    final name = _saveNameController.text.trim();
-    if (name.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('저장할 이름을 입력하세요.')));
-      return;
-    }
-    final res = await _sketchApi.save(name, _doc.toJson());
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            res['ok'] == true ? '저장되었습니다.' : '저장 실패: ${res['message']}',
+  Future<String?> _promptSaveName() async {
+    final controller = TextEditingController();
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('표 서식 저장'),
+        content: TextField(
+          key: const Key('sketchSaveNameInput'),
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: '서식 이름',
+            hintText: '저장할 서식 이름을 입력하세요',
           ),
+          onSubmitted: (val) => Navigator.of(ctx).pop(val.trim()),
         ),
-      );
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Future<bool> _saveSketch({bool promptIfEmpty = false}) async {
+    var name = _saveNameController.text.trim();
+    if (name.isEmpty) {
+      if (promptIfEmpty) {
+        final prompted = await _promptSaveName();
+        if (prompted == null || prompted.trim().isEmpty) {
+          return false;
+        }
+        name = prompted.trim();
+        _saveNameController.text = name;
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('저장할 이름을 입력하세요.')));
+        return false;
+      }
+    }
+    try {
+      final res = await _sketchApi.save(name, _doc.toJson());
+      final ok = res['ok'] == true;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              ok ? '저장되었습니다.' : '저장 실패: ${res['message']}',
+            ),
+          ),
+        );
+      }
+      return ok;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('저장 실패: $e')));
+      }
+      return false;
     }
   }
 
@@ -2203,6 +2402,8 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
   Widget build(BuildContext context) {
     return CallbackShortcuts(
       bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyN, control: true):
+            _newSketch,
         const SingleActivator(LogicalKeyboardKey.delete): _deleteKey,
         const SingleActivator(LogicalKeyboardKey.backspace): _deleteKey,
         const SingleActivator(LogicalKeyboardKey.keyA, control: true):
@@ -2369,6 +2570,14 @@ class _TableSketchScreenState extends State<TableSketchScreen> {
                 tooltip: '다시 실행 (Ctrl+Y)',
                 icon: const Icon(Icons.redo_rounded),
                 onPressed: _redoStack.isNotEmpty ? _redo : null,
+              ),
+              Tooltip(
+                message: '새로 그리기 (Ctrl+N)',
+                child: IconButton(
+                  key: const Key('newSketchButton'),
+                  icon: const Icon(Icons.note_add_outlined),
+                  onPressed: _newSketch,
+                ),
               ),
               IconButton(
                 key: const Key('clearAllButton'),
