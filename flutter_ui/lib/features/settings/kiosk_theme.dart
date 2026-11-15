@@ -39,6 +39,7 @@ class Kiosk {
 }
 
 /// 큼직한 파란 기본 버튼(키오스크의 '다음' 버튼).
+// 단추 textStyle은 테마 글꼴을 물려받지 않는다(2026-11-15 설정 창 단추 한글이 □로 깨짐): 글꼴을 꼭 지정한다.
 class KioskPrimaryButton extends StatelessWidget {
   const KioskPrimaryButton({
     super.key,
@@ -58,7 +59,7 @@ class KioskPrimaryButton extends StatelessWidget {
         disabledBackgroundColor: k.disabledFill,
         minimumSize: const Size(160, 52),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+        textStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 16, fontWeight: FontWeight.w700),
       ),
       onPressed: onPressed,
       child: Text(label),
@@ -85,7 +86,7 @@ class KioskSecondaryButton extends StatelessWidget {
         foregroundColor: k.sub,
         minimumSize: const Size(110, 52),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(fontFamily: 'NotoSansKR', fontSize: 15, fontWeight: FontWeight.w600),
       ),
       onPressed: onPressed,
       child: Text(label),
