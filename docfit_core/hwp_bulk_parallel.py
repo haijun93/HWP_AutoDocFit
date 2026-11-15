@@ -51,7 +51,10 @@ def _scan_record(row: dict) -> tuple[str | None, bool]:
     if not isinstance(path, str) or not path:
         return None, False
     # klib versions expose flags either as a category/type or HWP FileHeader bits.
-    category = str(row.get("kind", row.get("type", row.get("classification", "")))).casefold()
+    # scan-hwp uses kind="existing" when a sibling HWPX already exists, while
+    # file_kind retains the underlying classification (for example "normal").
+    category = str(row.get("file_kind") if row.get("kind") == "existing" else
+                    row.get("kind", row.get("type", row.get("classification", "")))).casefold()
     if row.get("hwpx_exists") is True:
         return path, False
     if any(term in category for term in ("password", "encrypted", "암호", "drm", "distributed", "배포", "hwp3", "hwp 3")):
@@ -69,6 +72,12 @@ def _scan_record(row: dict) -> tuple[str | None, bool]:
         return path, False
     if isinstance(version, str) and version and int(version.split(".", 1)[0]) < 5:
         return path, False
+    # The scanner's own "normal" classification is authoritative. Do not let
+    # unknown/error rows pass just because their optional flags are absent.
+    if row.get("kind") is not None and str(row["kind"]).casefold() not in {"normal", "existing"}:
+        return path, False
+    if row.get("kind") == "existing" and str(row.get("file_kind", "")).casefold() != "normal":
+        return path, False
     return path, True
 
 
@@ -78,7 +87,11 @@ def read_scan_jsonl(lines: Iterable[str]) -> list[Path]:
     for line in lines:
         if not line.strip():
             continue
-        row = json.loads(line)
+        try:
+            row = json.loads(line)
+        except (json.JSONDecodeError, TypeError):
+            # A damaged line should not discard the rest of a large scan stream.
+            continue
         if not isinstance(row, dict):
             continue
         raw, normal = _scan_record(row)
@@ -114,6 +127,8 @@ def _convert_worker(index: int, files: list[Path], app_factory: Callable, restar
             if on_result:
                 on_result(result)
             processed += 1
+            if stop.is_set():
+                break
             if restart_every > 0 and processed % restart_every == 0:
                 try:
                     app.Quit()
