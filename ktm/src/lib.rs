@@ -1,6 +1,8 @@
 pub mod backend;
+pub mod frame;
 pub mod highlight;
 pub mod install;
+pub mod layout;
 pub mod open;
 pub mod paragraphs;
 pub mod paths;
