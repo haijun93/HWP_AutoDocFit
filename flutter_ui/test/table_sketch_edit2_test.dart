@@ -96,19 +96,21 @@ void main() {
     });
 
     test('fitRecognizedSketch respects orientation', () {
-      final wideDoc = TableSketchDoc(
-        grid: const GridConfig(cols: 50, rows: 20),
+      final doc10 = TableSketchDoc(
+        grid: const GridConfig(cols: 10, rows: 5),
         lines: [
-          const SketchLine(x1: 0, y1: 0, x2: 40, y2: 0),
+          const SketchLine(x1: 0, y1: 0, x2: 10, y2: 0),
         ],
       );
-      // 세로 기준 (maxCols 32): 40 > 32 이므로 scale = 32 / 40 = 0.8
-      final fittedPortrait = fitRecognizedSketch(wideDoc, 'portrait');
-      expect(fittedPortrait.lines.single.x2, (40 * 0.8).round());
+      // 세로 기준 (targetWidthUnits 32): 32 ~/ 10 = scale 3
+      final fittedPortrait = fitRecognizedSketch(doc10, orientation: 'portrait');
+      expect(fittedPortrait.lines.single.x2, 30);
+      expect(fittedPortrait.orientation, 'portrait');
 
-      // 가로 기준 (maxCols 48): 40 <= 48 이므로 scale = 1.0
-      final fittedLandscape = fitRecognizedSketch(wideDoc, 'landscape');
+      // 가로 기준 (targetWidthUnits 48): 48 ~/ 10 = scale 4 (최대 4)
+      final fittedLandscape = fitRecognizedSketch(doc10, orientation: 'landscape');
       expect(fittedLandscape.lines.single.x2, 40);
+      expect(fittedLandscape.orientation, 'landscape');
     });
   });
 
