@@ -58,28 +58,28 @@ fn quit() -> Result<(), String> {
 
 /// 설치본을 숨긴 채(단축키만 등록) 따로 시작한다.
 fn start(destination: &Path) -> Result<(), String> {
-    use std::os::windows::process::CommandExt;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     let mut command = std::process::Command::new(destination);
     command
         .arg("--hidden")
-        .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    // 시험(KTM_TEST_ROOT)에서는 같은 격리 폴더를 쓰게 그대로 물려준다.
-    // 상주할 자식이 이 명령의 출력 파이프를 물려받으면 출력을 읽는 앱이 EOF를 영원히 기다린다.
-    // CreateProcess가 상속 가능한 손잡이를 모두 넘기므로 우리 표준 손잡이의 상속 표시를 먼저 끈다.
-    unsafe {
-        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
-        use windows_sys::Win32::System::Console::{
-            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
-        };
-        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            let handle = GetStdHandle(which);
-            if !handle.is_null() && handle as isize != -1 {
-                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
+        unsafe {
+            use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+            use windows_sys::Win32::System::Console::{
+                GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+            };
+            for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+                let handle = GetStdHandle(which);
+                if !handle.is_null() && handle as isize != -1 {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
             }
         }
     }

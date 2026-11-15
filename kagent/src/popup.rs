@@ -539,7 +539,7 @@ pub fn register(instance: HINSTANCE) {
         RegisterClassExW(&wc);
         let topmost = app().settings.lock().unwrap().always_on_top;
         let ex_style = WS_EX_TOOLWINDOW | if topmost { WS_EX_TOPMOST } else { 0 };
-        let hwnd = CreateWindowExW(ex_style, class.as_ptr(), wide("몽땅클립보드").as_ptr(),
+        let hwnd = CreateWindowExW(ex_style, class.as_ptr(), wide("퀵몽땅클립보드").as_ptr(),
                                    // WS_THICKFRAME은 크기 조절·DWM 그림자용으로만 두고 틀 자체는 WM_NCCALCSIZE로 없앤다.
                                    WS_POPUP | WS_THICKFRAME, 0, 0, BASE_W, 200, std::ptr::null_mut(),
                                    std::ptr::null_mut(), instance, std::ptr::null());
@@ -956,8 +956,8 @@ unsafe fn paint(hwnd: HWND) {
         SelectObject(mem, title_font);
         SetTextColor(mem, p.text);
         let title_left = scale(hwnd, 10);
-        draw("몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
-        let title_right = title_left + text_width(mem, "몽땅클립보드") + scale(hwnd, 8);
+        draw("퀵몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
+        let title_right = title_left + text_width(mem, "퀵몽땅클립보드") + scale(hwnd, 8);
         if title_right < buttons_left - scale(hwnd, 24) {
             SelectObject(mem, small);
             SetTextColor(mem, p.text_sub);
@@ -1250,7 +1250,7 @@ fn run_settings_command(hwnd: HWND, c: Command) {
         Command::Autostart(on) => {
             if let Err(message) = crate::set_autostart(on) {
                 unsafe {
-                    MessageBoxW(hwnd, wide(&message).as_ptr(), wide("몽땅클립보드").as_ptr(), MB_OK | MB_ICONWARNING);
+                    MessageBoxW(hwnd, wide(&message).as_ptr(), wide("퀵몽땅클립보드").as_ptr(), MB_OK | MB_ICONWARNING);
                 }
             }
         }
@@ -1258,7 +1258,7 @@ fn run_settings_command(hwnd: HWND, c: Command) {
         Command::Quit => unsafe {
             let text = "몽땅클립보드를 끌까요?\n\n복사 기록과 빠른 목록 단축키가 멈춥니다. 기록은 지워지지 않으며, \
                         앱의 몽땅클립보드 화면에서 다시 켤 수 있습니다.";
-            if MessageBoxW(hwnd, wide(text).as_ptr(), wide("몽땅클립보드").as_ptr(),
+            if MessageBoxW(hwnd, wide(text).as_ptr(), wide("퀵몽땅클립보드").as_ptr(),
                            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) == IDYES {
                 hide();
                 PostMessageW(main_hwnd(), WM_CLOSE, 0, 0);
