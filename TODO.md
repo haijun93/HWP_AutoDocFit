@@ -110,6 +110,16 @@
   - **구조**: 엔진은 Rust로 klib에 `photo_*` 명령(스캔, EXIF 촬영일·회전 방향·카메라·GPS, 썸네일, 태그 DB)을 추가한다. 화면을 Flutter에서 Rust 네이티브로 바꾸는 전환(UI2~UI10)이 진행 중이므로 엔진을 분리해 화면만 갈아 끼우게 한다. **외부 라이브러리는 늘리지 않는다**(WIC + 직접 만든 EXIF 파서, GitLab 보안 검사 부담 회피). 규모 추정: 1단계는 엔진 명령 6~8개, 화면 2개(격자, 크게 보기).
   - **화면 위치(사용자 결정, 2026-11-15)**: **앱 안의 새 탭**으로 둔다(사진대지 연계에 유리). 단축키로 뜨는 별도 창은 만들지 않는다. 탭 추가 위치는 앱 왼쪽 탭 목록(`flutter_ui/lib/features/workspace/tab_navigation_shell.dart`)이며, Rust 네이티브 화면 전환 뒤에도 같은 탭으로 옮긴다.
   - **기존 메뉴 처리(사용자 결정, 2026-11-15, 반영 완료)**: 개발자 모드 외부 프로그램의 '사진첩'(mongdangview, `photo_album`)은 그대로 두고 이름만 **'사진첩2'**로 바꿨다(새 몽땅사진첩 탭과 구별). 내부 식별자 `photo_album`과 저장된 실행 파일 경로 설정은 그대로다. 바꾼 곳: `flutter_ui/lib/features/external_apps/external_app_launcher.dart`, `docfit_app/external_apps_service.py`, 앱 정보의 연결 프로그램 목록(`flutter_ui/lib/features/settings/idiom_panel.dart`), 관련 주석과 Python·Flutter 시험. Python 시험 통과, Flutter 시험은 이 클라우드에 Flutter가 없어 CI에서 확인.
+  - **만드는 순서(사용자 결정, 2026-11-15)**: 바로 아래 '문서뷰폴더'와 **함께 만든다.** 격자 화면·썸네일 캐시·폴더 스캔·동시 생성 제한을 두 기능이 공용으로 쓰게 설계한다.
+- [ ] [중] **문서뷰폴더(문서 전용 썸네일 격자 보기) 기능 추가 (사용자 요청, 2026-11-15 검토 완료)**: 사진을 제외한 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF)를 몽땅사진첩과 같은 썸네일 격자 방식으로 보여 준다. 참고 저장소 `haijun93/all-for-all-agent`의 문서 미리보기 코드를 검토한 결과 **코드는 쓰지 않는다**: HWP는 파일 앞 512KB에서 PNG 표시를 찾아 그 뒤 전부를 그림으로 쓰는 잘못된 방식(`src-tauri/src/extractor.rs`의 `find_embedded_png_cover`, 문서 안 다른 그림이나 깨진 그림이 됨), PDF·Excel은 글만 뽑고, PPT는 없고, `pdf-extract`·`calamine`·`quick-xml`·`image` 등 외부 라이브러리를 늘린다. 참고할 것은 썸네일이 없을 때 첫 줄 글로 카드 그림을 만드는 방식(`src/services/docRenderer.ts`)과 화면에 보일 때만 만드는 2단계 방식뿐이다.
+  - **화면 위치(사용자 결정, 2026-11-15)**: **앱 안의 새 탭**. 타임머신(몽땅검색) 화면의 모드로 넣지 않는다.
+  - **만드는 순서(사용자 결정, 2026-11-15)**: **몽땅사진첩과 함께 만든다**(격자 화면·썸네일 캐시·폴더 스캔 공용).
+  - **재사용할 기존 자산**: 타임머신 썸네일 엔진(`docfit_core/timemachine/thumbs.py`: 160px JPEG·디스크 캐시 200MB·손상 파일 방어 한도, HWPX `Preview/PrvImage.png`, DOCX·XLSX·PPTX `docProps/thumbnail.jpeg`, PDF는 pdfium 별도 프로세스), Windows 탐색기 썸네일(`kagent/src/thumb.rs`의 `shell_thumbnail`), 폴더 스캔·검색(klib·몽땅검색), 클라우드 전용 파일 내용 안 읽기 규칙.
+  - **빈칸(새로 만들 것)**: ① **HWP(구형) 미리보기** — 공문서에서 가장 많은 형식인데 지금 없다. HWP5 복합 파일(OLE)의 `PrvImage` 스트림(PNG·GIF·BMP)을 정식으로 읽어 썸네일로, `PrvText` 스트림(UTF-16 미리보기 글)은 글자 카드로 쓴다(한/글 없이 동작). 복합 파일 읽기는 외부 라이브러리 없이 직접 구현하거나 기존 HWP 처리 코드를 재사용한다. ② **XLS·PPT(구형)와 썸네일 없는 XLSX** — 탐색기 썸네일(한컴오피스·MS Office 설치 PC), 그것도 없으면 글자 카드. ③ **썸네일이 아예 없는 문서의 글자 카드** — HWP는 `PrvText`, HWPX·Office는 첫 문단.
+  - **미리보기를 얻는 순서**: 파일 안 저장 미리보기 → Windows 탐색기 썸네일 → PDF 첫 쪽 그림 → 글자 카드 → 종류 아이콘.
+  - **화면 기능**: 폴더별·날짜별 묶음 격자, 썸네일 크기 조절, 크게 보기(여러 쪽 넘기기는 PDF부터), 열기·폴더 열기·한/글로 열기. 몽땅사진첩과 같은 키보드 조작.
+  - **엔진·구조**: 처음에는 타임머신 썸네일 엔진에 HWP 미리보기·탐색기 썸네일·글자 카드를 더해 바로 쓰고, Rust 네이티브 화면 전환(UI2~UI10)에 맞춰 Rust로 옮긴다(몽땅클립보드 썸네일 엔진 공용, PDF는 Windows 기본 PDF 기능 `Windows.Data.Pdf` 검토). 외부 라이브러리는 늘리지 않는다.
+  - **안전**: 원본은 열기만 하고 고치지 않는다. HWP 복합 파일 읽기에도 기존 크기·항목 수 한도를 똑같이 적용한다(손상·악성 파일 방어). 시험 문서는 사본으로.
 - [ ] [중] MCP(AI 답변 → 서식 적용 HWPX): 사용자 서식 프로필, 한/글 내어쓰기·최종검수, 장시간 작업 취소, 실기 연결·보안 시험(`docs/MCP_INTEGRATION_DESIGN.md`).
 
 ## 보안
