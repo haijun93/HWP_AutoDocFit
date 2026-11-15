@@ -207,7 +207,7 @@ fn claim_image(data: &[u8]) -> bool {
 
 pub fn confirm_clear(hwnd: HWND) -> bool {
     unsafe {
-        MessageBoxW(hwnd, wide("고정 항목을 제외한 기록을 모두 지울까요?").as_ptr(), wide("몽땅클립보드").as_ptr(), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES
+        MessageBoxW(hwnd, wide("고정 항목을 제외한 기록을 모두 지울까요?").as_ptr(), wide("퀵몽땅클립보드").as_ptr(), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES
     }
 }
 
@@ -777,7 +777,7 @@ fn notify_hotkey_failure(hwnd: HWND, text: &str, valid: bool) {
         nid.uID = 1;
         nid.uFlags = NIF_INFO;
         nid.dwInfoFlags = NIIF_WARNING;
-        for (dst, unit) in nid.szInfoTitle.iter_mut().take(63).zip("몽땅클립보드 단축키를 쓸 수 없습니다".encode_utf16()) { *dst = unit; }
+        for (dst, unit) in nid.szInfoTitle.iter_mut().take(63).zip("퀵몽땅클립보드 단축키를 쓸 수 없습니다".encode_utf16()) { *dst = unit; }
         for (dst, unit) in nid.szInfo.iter_mut().take(255).zip(hotkey_failure_body(text, valid).encode_utf16()) { *dst = unit; }
         Shell_NotifyIconW(NIM_MODIFY, &nid);
     }
@@ -862,11 +862,11 @@ fn tray(hwnd: HWND, op: u32) {
         nid.uCallbackMessage = WM_TRAY;
         nid.hIcon = make_icon(paused);
         let tip = if paused {
-            if app().hotkey_ok.load(Ordering::Relaxed) { "몽땅클립보드 — 일시정지".to_string() } else { "몽땅클립보드 — 일시정지 · 단축키 사용 불가".to_string() }
+            if app().hotkey_ok.load(Ordering::Relaxed) { "퀵몽땅클립보드 — 일시정지".to_string() } else { "퀵몽땅클립보드 — 일시정지 · 단축키 사용 불가".to_string() }
         } else {
             let hotkey = app().settings.lock().unwrap().hotkey.clone();
             let hotkey = if app().hotkey_ok.load(Ordering::Relaxed) { hotkey.as_str() } else { "단축키 사용 불가" };
-            format!("몽땅클립보드 — 기록 중 ({count}개) · {hotkey}")
+            format!("퀵몽땅클립보드 — 기록 중 ({count}개) · {hotkey}")
         };
         for (i, u) in tip.encode_utf16().take(nid.szTip.len() - 1).enumerate() {
             nid.szTip[i] = u;
@@ -882,7 +882,7 @@ fn tray_menu(hwnd: HWND) {
     let paused = app().settings.lock().unwrap().paused;
     unsafe {
         let menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, 1, wide("최근 항목 열기").as_ptr());
+        AppendMenuW(menu, MF_STRING, 1, wide("퀵몽땅클립보드 열기").as_ptr());
         AppendMenuW(menu, MF_STRING, 2, wide(if paused { "다시 기록" } else { "일시정지" }).as_ptr());
         AppendMenuW(menu, MF_STRING, 3, wide("모두 지우기(고정 제외)").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());

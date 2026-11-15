@@ -432,11 +432,11 @@ mod tests {
         assert!(r["hotkey_error"].is_null());
         std::fs::write(&exe, b"x").unwrap();
         let command = startup_command(&exe).unwrap();
-        let status = serde_json::json!({"pid": 7, "hotkey_error": "몽땅검색 단축키를 등록하지 못했습니다"});
+        let status = serde_json::json!({"pid": 7, "hotkey_error": "퀵몽땅검색 단축키를 등록하지 못했습니다"});
         let r = report(Some(7), &exe, Some(&command), status);
         assert_eq!((r["running"].as_bool(), r["installed"].as_bool(), r["autostart"].as_bool()), (Some(true), Some(true), Some(true)));
         assert_eq!(r["pid"], 7);
-        assert_eq!(r["hotkey_error"], "몽땅검색 단축키를 등록하지 못했습니다");
+        assert_eq!(r["hotkey_error"], "퀵몽땅검색 단축키를 등록하지 못했습니다");
         assert_eq!(r["name"], "몽땅검색");
     }
     #[test]

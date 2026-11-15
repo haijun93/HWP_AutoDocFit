@@ -24,14 +24,23 @@ void main() {
     await tester.pumpAndSettle();
     expect(calls, ['status']);
     expect(find.text('꺼짐'), findsOneWidget);
+    expect(find.text('지금 켜기'), findsOneWidget);
     await tester.tap(find.text('가상 폴더 창 켜기'));
     await tester.pumpAndSettle();
     expect(calls, ['status', 'enable']);
-    expect(find.text('켜짐'), findsOneWidget);
+    expect(find.text('실행 중'), findsOneWidget);
+    expect(find.text('지금 켜기'), findsNothing);
     await tester.tap(find.text('가상 폴더 창 켜기'));
     await tester.pumpAndSettle();
     expect(calls.last, 'disable');
     expect(find.text('꺼짐'), findsOneWidget);
+    expect(find.text('지금 켜기'), findsOneWidget);
+
+    await tester.tap(find.text('지금 켜기'));
+    await tester.pumpAndSettle();
+    expect(calls.last, 'enable');
+    expect(find.text('실행 중'), findsOneWidget);
+    expect(find.text('지금 켜기'), findsNothing);
   });
 
   testWidgets('켜기 실패 때 꺼짐 유지하고 오류 표시', (tester) async {

@@ -4037,9 +4037,9 @@ def run_webview(gui):
         threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
         def upgrade_kvf():
             from docfit_app.kvf_client import KvfClient
-            result = KvfClient().command("upgrade_if_stale")
+            result = KvfClient().sync()
             if not result.get("ok"):
-                logging.getLogger(__name__).warning("가상 폴더 창 교체 실패: %s", result)
+                logging.getLogger(__name__).warning("가상 폴더 창 점검 실패: %s", result)
 
         threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
         # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.

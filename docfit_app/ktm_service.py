@@ -1,4 +1,4 @@
-"""몽땅검색 단축키 앱(ktm.exe) 연결: 상태·켜기·끄기·앱 시작 때 갱신.
+"""퀵몽땅검색 단축키 앱(ktm.exe) 연결: 상태·켜기·끄기·앱 시작 때 갱신.
 
 ktm.exe는 Ctrl+Alt+Space로 뜨는 독립 상주 프로그램이다(기본 켬). 앱은 수명 명령만 보낸다.
 - 켜기: ``--install`` (사용자 폴더로 복사·로그인 자동 실행·숨긴 채 시작, 끈 표시 지움)
@@ -62,20 +62,20 @@ class KtmService:
 
     def _run(self, exe, *args):
         if exe is None:
-            return {"ok": False, "error": "몽땅검색 실행 파일이 앱에 없어요."}
+            return {"ok": False, "error": "퀵몽땅검색 실행 파일이 앱에 없어요."}
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:
             done = self._runner([str(exe), *args], capture_output=True, timeout=_TIMEOUT,
                                 creationflags=flags, stdin=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
-            return {"ok": False, "error": f"몽땅검색 실행 실패: {exc}"}
+            return {"ok": False, "error": f"퀵몽땅검색 실행 실패: {exc}"}
         line = (done.stdout or b"").decode("utf-8", "replace").strip().splitlines()
         try:
             result = json.loads(line[-1]) if line else None
         except ValueError:
             result = None
         if not isinstance(result, dict):
-            return {"ok": False, "error": f"몽땅검색 응답을 읽지 못했어요(종료 코드 {done.returncode})."}
+            return {"ok": False, "error": f"퀵몽땅검색 응답을 읽지 못했어요(종료 코드 {done.returncode})."}
         return result
 
     def status(self):
