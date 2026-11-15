@@ -1,4 +1,4 @@
-"""외부 프로그램(사진첩·아웃라이너·사진관리) 공용 실행기 시험: 찾기·경로 검증·인자 목록 실행·개발자 모드 제한."""
+"""외부 프로그램(사진첩2·아웃라이너·사진관리) 공용 실행기 시험: 찾기·경로 검증·인자 목록 실행·개발자 모드 제한."""
 import os
 import subprocess
 import tempfile
@@ -38,7 +38,7 @@ class FakeDialogs:
 class RegistryTests(unittest.TestCase):
     def test_registered_apps_have_renamed_fork_urls(self):
         self.assertEqual(list(APPS), ["photo_album", "outliner", "photo_manager", "pdf_editor"])
-        self.assertEqual([a.label for a in APPS.values()], ["사진첩", "아웃라이너", "사진관리", "PDF편집"])
+        self.assertEqual([a.label for a in APPS.values()], ["사진첩2", "아웃라이너", "사진관리", "PDF편집"])
         self.assertEqual([a.folder for a in APPS.values()], ["mongdangview", "mongdangoutliner", "mondangpics", "mongdangpdf"])
         for app in APPS.values():
             self.assertEqual(app.fork_url, f"https://github.com/haijun93/{app.folder}")

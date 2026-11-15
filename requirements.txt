@@ -1,9 +1,11 @@
-pywin32
-tkinterdnd2
-Pillow
-defusedxml
-pywebview
-pypdfium2
+# 앱 실행 의존성(직접 쓰는 것만). 버전은 constraints.txt·requirements-lock.txt와 같게 고정한다(2026-11-15).
+# 하위 의존성까지 해시로 고정한 설치는 requirements-lock.txt를 쓴다(CI 빌드).
+pywin32==312; sys_platform == "win32"
+tkinterdnd2==0.7.0
+Pillow==13.0.0
+defusedxml==0.7.1
+pywebview==6.2.1
+pypdfium2==5.14.0
 pypdf==6.21.4
 cryptography==50.0.2
 xlrd==2.0.1
