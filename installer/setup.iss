@@ -34,7 +34,7 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "바탕 화면 바로 가기 만들기"; GroupDescription: "추가 바로 가기:"; Flags: unchecked
 
 [Files]
-; kvf.exe와 SHA256은 resources 꾸러미에 포함. 설치만으로 자동 실행하지 않는다.
+; kvf.exe와 SHA256은 resources 꾸러미에 포함.
 Source: "..\dist\HWP_AutoDocFit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -44,6 +44,8 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 [Run]
 ; 몽땅검색(ktm.exe, Ctrl+Alt+Space): 기본 켬. 사용자가 설정에서 끈 경우(ktm.disabled)는 설치본만 바꾸고 켜지 않는다.
 Filename: "{app}\_internal\resources\ktm.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist
+; 퀵가상폴더(kvf.exe, Win+Shift+F): 기본 켬. 사용자가 설정에서 끈 경우(kvf.disabled)는 설치본만 바꾸고 켜지 않는다.
+Filename: "{app}\_internal\resources\kvf.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist
 Filename: "{app}\{#AppExe}"; Description: "한글편집 후처리 실행"; Flags: nowait postinstall skipifsilent
 
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
@@ -53,6 +55,8 @@ Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM kfind.exe /FI ""USERNAME eq {username}"""; Flags: runhidden; RunOnceId: "StopKfindUserMode"
 ; 앱을 지우면 몽땅검색도 끄고 자동 실행·설치본을 지운다(사용자 데이터 폴더의 설정·기록은 남김).
 Filename: "{localappdata}\HwpAutoDocFit\ktm\bin\ktm.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "MongttangSearchUninstall"
+; 앱을 지우면 퀵가상폴더도 끄고 자동 실행·설치본을 지운다.
+Filename: "{localappdata}\HwpAutoDocFit\kvf\kvf.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: "KvfUninstall"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
