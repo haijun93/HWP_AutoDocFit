@@ -177,6 +177,19 @@ impl Backend {
         folder: Option<&str>,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
+        self.search_with_scope_ext(query, hierarchy, date_range, folder, None, cancel)
+    }
+
+    /// QMS-SCOPE: 기간·폴더·확장자 범위와 문법을 함께 반영한 검색.
+    pub fn search_with_scope_ext(
+        &mut self,
+        query: &str,
+        hierarchy: bool,
+        date_range: Option<(i64, i64)>,
+        folder: Option<&str>,
+        ext: Option<&str>,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Answer> {
         self.index.reload().map_err(|e| e.to_string())?;
         let query = query.trim();
         if query.is_empty() {
@@ -197,6 +210,17 @@ impl Backend {
             ..SearchOptions::default()
         };
         self.index.apply_syntax(&syntax, &mut opts).map_err(|e| e.to_string())?;
+        if let Some(ext_val) = ext {
+            if let Some(parsed_exts) = kfind_core::parse_ext_term(ext_val) {
+                let mut list = opts.file_types.take().unwrap_or_default();
+                for e in parsed_exts {
+                    if !list.contains(&e) {
+                        list.push(e);
+                    }
+                }
+                opts.file_types = Some(list);
+            }
+        }
 
         let search_text = if syntax.clean_text.is_empty() && !syntax.phrases.is_empty() {
             ""
@@ -625,13 +649,16 @@ mod tests {
     struct Temp(PathBuf);
     impl Temp {
         fn new() -> Self {
+            static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let seq = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
-                "ktm-backend-{}-{}",
+                "ktm-backend-{}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .as_nanos()
+                    .as_nanos(),
+                seq,
             ));
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -874,6 +901,7 @@ mod tests {
                 20260115,
                 &DocumentMeta {
                     path: Some("C:\\공문서\\총무과\\청년지원조례.hwp".to_string()),
+                    file_type: Some("hwp".to_string()),
                     ..Default::default()
                 },
                 &[Sentence {
@@ -889,6 +917,7 @@ mod tests {
                 20260220,
                 &DocumentMeta {
                     path: Some("C:\\공문서\\복지과\\청년주거지원.hwp".to_string()),
+                    file_type: Some("hwp".to_string()),
                     ..Default::default()
                 },
                 &[Sentence {
@@ -904,6 +933,7 @@ mod tests {
                 20260310,
                 &DocumentMeta {
                     path: Some("C:\\공문서\\총무과\\예산편성.hwp".to_string()),
+                    file_type: Some("hwp".to_string()),
                     ..Default::default()
                 },
                 &[Sentence {
@@ -913,12 +943,29 @@ mod tests {
                 }],
             )
             .unwrap();
+        writer
+            .add_document_with_meta(
+                4,
+                20260401,
+                &DocumentMeta {
+                    path: Some("C:\\공문서\\총무과\\청년지원계획.pdf".to_string()),
+                    file_type: Some("pdf".to_string()),
+                    ..Default::default()
+                },
+                &[Sentence {
+                    para: 0,
+                    level: 0,
+                    text: "청년지원 추진 세부 계획",
+                }],
+            )
+            .unwrap();
         writer.commit().unwrap();
 
         let doctable = concat!(
             "{\"op\":\"put\",\"key\":\"1\",\"id\":1,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\청년지원조례.hwp\"}}\n",
             "{\"op\":\"put\",\"key\":\"2\",\"id\":2,\"meta\":{\"path\":\"C:\\\\공문서\\\\복지과\\\\청년주거지원.hwp\"}}\n",
-            "{\"op\":\"put\",\"key\":\"3\",\"id\":3,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\예산편성.hwp\"}}\n"
+            "{\"op\":\"put\",\"key\":\"3\",\"id\":3,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\예산편성.hwp\"}}\n",
+            "{\"op\":\"put\",\"key\":\"4\",\"id\":4,\"meta\":{\"path\":\"C:\\\\공문서\\\\총무과\\\\청년지원계획.pdf\"}}\n"
         );
         std::fs::write(t.0.join("doctable.jsonl"), doctable).unwrap();
 
@@ -955,7 +1002,7 @@ mod tests {
         let ans_all = backend
             .search_with_scope("청년", false, None, None, None)
             .unwrap();
-        assert_eq!(ans_all.rows.len(), 2);
+        assert_eq!(ans_all.rows.len(), 3);
         assert!(!ans_all.folder_counts.is_empty());
 
         // 6. QMS-QUERY 질의 문법 통합 검증
@@ -966,12 +1013,13 @@ mod tests {
         assert_eq!(ans_phrase.rows.len(), 1);
         assert_eq!(ans_phrase.rows[0].doc_id, 1);
 
-        // 6-2. 제외어 (-조례안) -> 1번 제외, 2번만 일치
+        // 6-2. 제외어 (-조례안) -> 1번 제외, 2번과 4번 일치 (최신순: 4번 -> 2번)
         let ans_ex = backend
             .search_with_scope("청년 -조례안", false, None, None, None)
             .unwrap();
-        assert_eq!(ans_ex.rows.len(), 1);
-        assert_eq!(ans_ex.rows[0].doc_id, 2);
+        assert_eq!(ans_ex.rows.len(), 2);
+        let ex_ids: Vec<u64> = ans_ex.rows.iter().map(|r| r.doc_id).collect();
+        assert!(ex_ids.contains(&2) && ex_ids.contains(&4) && !ex_ids.contains(&1));
 
         // 6-3. 폴더 path:복지과
         let ans_path = backend
@@ -980,16 +1028,31 @@ mod tests {
         assert_eq!(ans_path.rows.len(), 1);
         assert_eq!(ans_path.rows[0].doc_id, 2);
 
-        // 6-4. 날짜 after:2026-02-01
+        // 6-4. 날짜 after:2026-02-01 (20260220인 2번, 20260401인 4번)
         let ans_after = backend
             .search_with_scope("청년 after:2026-02-01", false, None, None, None)
             .unwrap();
-        assert_eq!(ans_after.rows.len(), 1);
-        assert_eq!(ans_after.rows[0].doc_id, 2);
+        assert_eq!(ans_after.rows.len(), 2);
+        let after_ids: Vec<u64> = ans_after.rows.iter().map(|r| r.doc_id).collect();
+        assert!(after_ids.contains(&2) && after_ids.contains(&4));
 
         // 6-5. 문법 오류 복구: 검색이 막히지 않고 정상 반환
         let ans_err = backend
             .search_with_scope("청년 ext: - after:invalid", false, None, None, None);
         assert!(ans_err.is_ok());
+
+        // 7. QMS-SCOPE 확장자 범위 및 연동 검증
+        // 7-1. 인자로 ext: Some("pdf") 전달
+        let ans_pdf = backend
+            .search_with_scope_ext("청년", false, None, None, Some("pdf"), None)
+            .unwrap();
+        assert_eq!(ans_pdf.rows.len(), 1);
+        assert_eq!(ans_pdf.rows[0].doc_id, 4);
+
+        // 7-2. 질의 토큰 ext:hwp
+        let ans_ext_token = backend
+            .search_with_scope("청년 ext:hwp", false, None, None, None)
+            .unwrap();
+        assert_eq!(ans_ext_token.rows.len(), 2); // doc 1, doc 2
     }
 }
