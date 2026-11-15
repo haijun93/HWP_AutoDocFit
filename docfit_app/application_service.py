@@ -27,6 +27,18 @@ class ApplicationService:
         from .jobs import JobManager
         self.jobs = JobManager(state_path=Path(settings_path).parent / 'native-jobs.json')
 
+    def timemachine_service(self):
+        """몽땅검색 서비스(처음 부를 때 만든다). 앱 시작 직후 미리 부르면 색인 복구 점검이 예약된다."""
+        with self.lock:
+            if getattr(self, '_timemachine_service', None) is None:
+                from .idle_scheduler import shared_scheduler
+                from .timemachine_service import TimemachineService
+                # 쉬는 시간 색인(IDLE1): 자동 재색인은 사용자가 쉬는 동안에만, 낮은 우선순위로.
+                self._timemachine_service = TimemachineService(self.store._path.parent,
+                                                               idle_scheduler=shared_scheduler(),
+                                                               search_engine_provider=lambda: normalize_search_engine(self.store.read().get("search_engine")))
+            return self._timemachine_service
+
     def start_job(self, kind, params=None):
         if params is not None and not isinstance(params, dict):
             raise ServiceError('INVALID_INPUT', '작업 입력을 확인해 주세요.')
@@ -297,14 +309,7 @@ class ApplicationService:
                 return self._rename_service.add_paths(paths, recursive=payload.get('recursive') is True)
             return self._rename_service.command(*args)
         if method=='timemachine':
-            if getattr(self, '_timemachine_service', None) is None:
-                from .idle_scheduler import shared_scheduler
-                from .timemachine_service import TimemachineService
-                # 쉬는 시간 색인(IDLE1): 자동 재색인은 사용자가 쉬는 동안에만, 낮은 우선순위로.
-                self._timemachine_service = TimemachineService(self.store._path.parent,
-                                                               idle_scheduler=shared_scheduler(),
-                                                               search_engine_provider=lambda: normalize_search_engine(self.store.read().get("search_engine")))
-            return self._timemachine_service.command(*args)
+            return self.timemachine_service().command(*args)
         if method=='library':
             return self._library().command(*args)
         if method=='table_units':
