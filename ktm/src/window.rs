@@ -235,15 +235,13 @@ fn event(h: HWND, e: Event) {
                     {
                         let edit_hwnd = with(|u| u.edit);
                         let mut buf = [0u16; 512];
-                        let len = unsafe { GetWindowTextW(edit_hwnd, buf.as_mut_ptr(), buf.len() as i32) } as usize;
+                        let len = GetWindowTextW(edit_hwnd, buf.as_mut_ptr(), buf.len() as i32) as usize;
                         let cur_edit_text = String::from_utf16_lossy(&buf[..len]);
                         if cur_edit_text != query {
                             let wtext = wide(&query);
-                            unsafe {
-                                SetWindowTextW(edit_hwnd, wtext.as_ptr());
-                                let clen = query.encode_utf16().count() as i32;
-                                SendMessageW(edit_hwnd, EM_SETSEL, clen as usize, clen as isize);
-                            }
+                            SetWindowTextW(edit_hwnd, wtext.as_ptr());
+                            let clen = query.encode_utf16().count() as i32;
+                            SendMessageW(edit_hwnd, 0x00b1, clen as usize, clen as isize);
                         }
                     }
                     let tx = with(|u| u.tx.clone());
