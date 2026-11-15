@@ -2,13 +2,18 @@
 use std::path::{Path, PathBuf};
 
 pub fn validate_path(path: &str) -> Result<(), String> {
+    if path.contains('\0') {
+        return Err("로컬 드라이브의 절대 경로만 열 수 있습니다".into());
+    }
     let bytes = path.as_bytes();
-    if path.contains('\0')
-        || bytes.len() < 3
-        || !bytes[0].is_ascii_alphabetic()
-        || bytes[1] != b':'
-        || !matches!(bytes[2], b'\\' | b'/')
-        || path[2..].contains(':')
+    let is_win_abs = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+        && !path[2..].contains(':');
+    let is_unix_abs = cfg!(not(windows)) && path.starts_with('/') && !path.contains(':');
+
+    if (!is_win_abs && !is_unix_abs)
         || path
             .split(['\\', '/'])
             .skip(1)

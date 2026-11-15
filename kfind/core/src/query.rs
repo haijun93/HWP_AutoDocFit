@@ -79,6 +79,404 @@ pub fn parse_groups(q: &str) -> Vec<&str> {
     groups
 }
 
+/// 고급 질의 문법 파싱 결과 (QMS-QUERY).
+///
+/// - 정확 구문: `"…"` / `“…”` -> `phrases`
+/// - 제외어: `-낱말`, `-"…"` -> `excludes`
+/// - 확장자 필터: `ext:hwp,pdf` -> `file_types`
+/// - 폴더 필터: `path:폴더`, `path:"경로"` -> `folder`
+/// - 날짜 필터: `after:날짜` -> `start_date`, `before:날짜` -> `end_date`
+/// - 연산자·구문·제외어가 빠진 일반 검색어 -> `clean_text`, `groups`
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuerySyntax {
+    /// 연산자/구문/제외어가 제거된 순수 검색어 문자열 (그룹별 `; `로 결합)
+    pub clean_text: String,
+    /// 정확 구문 목록 ("…")
+    pub phrases: Vec<String>,
+    /// 제외어 목록 (-낱말, -"구문")
+    pub excludes: Vec<String>,
+    /// 파일 확장자 필터 (ext:hwp,pdf)
+    pub file_types: Option<Vec<String>>,
+    /// 폴더 필터 (path:...)
+    pub folder: Option<String>,
+    /// 시작 날짜 (after:...) -> YYYYMMDD i64
+    pub start_date: Option<i64>,
+    /// 종료 날짜 (before:...) -> YYYYMMDD i64
+    pub end_date: Option<i64>,
+    /// 세미콜론(;)으로 분리된 각 그룹의 clean_text
+    pub groups: Vec<String>,
+}
+
+impl QuerySyntax {
+    /// 파싱된 문법 옵션을 기존 SearchOptions에 적용한다.
+    /// phrases, file_types, folder, start_date, end_date를 반영한다.
+    pub fn apply_to_options(&self, opts: &mut crate::index::SearchOptions) {
+        if !self.phrases.is_empty() {
+            for p in &self.phrases {
+                if !opts.phrases.contains(p) {
+                    opts.phrases.push(p.clone());
+                }
+            }
+        }
+        if let Some(types) = &self.file_types {
+            let mut current = opts.file_types.take().unwrap_or_default();
+            for t in types {
+                if !current.contains(t) {
+                    current.push(t.clone());
+                }
+            }
+            opts.file_types = Some(current);
+        }
+        if let Some(f) = &self.folder {
+            opts.folder = Some(f.clone());
+        }
+        if let Some(s) = self.start_date {
+            opts.start_date = Some(s);
+        }
+        if let Some(e) = self.end_date {
+            opts.end_date = Some(e);
+        }
+    }
+}
+
+fn is_quote_open(c: char) -> bool {
+    c == '"' || c == '“'
+}
+
+fn is_quote_close(c: char) -> bool {
+    c == '"' || c == '”'
+}
+
+fn unescape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next == '"' || next == '\\' || next == '“' || next == '”' {
+                    out.push(next);
+                    chars.next();
+                    continue;
+                }
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn strip_case_prefix<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
+    if s.len() >= prefix.len() && s.is_char_boundary(prefix.len()) && s[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        Some(&s[prefix.len()..])
+    } else {
+        None
+    }
+}
+
+/// 날짜 문자열(YYYY-MM-DD, YYYY/MM/DD, YYYY.MM.DD, YYYYMMDD, YYYY)을 YYYYMMDD i64로 파싱한다.
+/// 유효하지 않은 경우 None을 돌려준다(파싱 에러 시 일반 낱말로 취급하기 위함).
+pub fn parse_date_term(s: &str, is_after: bool) -> Option<i64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+    let digits_only: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    match digits_only.len() {
+        8 => {
+            let val: i64 = digits_only.parse().ok()?;
+            let y = val / 10000;
+            let m = (val / 100) % 100;
+            let d = val % 100;
+            if (1900..=2100).contains(&y) && (1..=12).contains(&m) && (1..=31).contains(&d) {
+                Some(val)
+            } else {
+                None
+            }
+        }
+        6 => {
+            let val: i64 = digits_only.parse().ok()?;
+            let y = val / 100;
+            let m = val % 100;
+            if (1900..=2100).contains(&y) && (1..=12).contains(&m) {
+                if is_after {
+                    Some(val * 100 + 1)
+                } else {
+                    Some(val * 100 + 31)
+                }
+            } else {
+                None
+            }
+        }
+        4 => {
+            let y: i64 = digits_only.parse().ok()?;
+            if (1900..=2100).contains(&y) {
+                if is_after {
+                    Some(y * 10000 + 101)
+                } else {
+                    Some(y * 10000 + 1231)
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// 확장자 목록 문자열(`hwp,pdf` 또는 `.hwp,.pdf`)을 소문자 목록으로 파싱한다.
+pub fn parse_ext_term(s: &str) -> Option<Vec<String>> {
+    let mut exts = Vec::new();
+    for part in s.split(',') {
+        let clean = part.trim().trim_start_matches('.').to_ascii_lowercase();
+        if !clean.is_empty() && clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            if !exts.contains(&clean) {
+                exts.push(clean);
+            }
+        }
+    }
+    if exts.is_empty() {
+        None
+    } else {
+        Some(exts)
+    }
+}
+
+fn parse_group_tokens(g: &str, syntax: &mut QuerySyntax) -> String {
+    let chars: Vec<(usize, char)> = g.char_indices().collect();
+    let len = g.len();
+    let mut i = 0;
+    let mut clean_words = Vec::new();
+
+    while i < chars.len() {
+        let (byte_idx, ch) = chars[i];
+        if ch.is_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        // 1. 따옴표 구문 시작 ("...")
+        if is_quote_open(ch) {
+            let content_start = byte_idx + ch.len_utf8();
+            let mut close_idx = None;
+            let mut j = i + 1;
+            let mut escaped = false;
+            while j < chars.len() {
+                let (_, c2) = chars[j];
+                if escaped {
+                    escaped = false;
+                } else if c2 == '\\' {
+                    escaped = true;
+                } else if is_quote_close(c2) {
+                    close_idx = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+
+            if let Some(c_idx) = close_idx {
+                let content_end = chars[c_idx].0;
+                let raw_content = &g[content_start..content_end];
+                let unescaped = unescape_string(raw_content);
+                let trimmed = unescaped.trim();
+                if !trimmed.is_empty() {
+                    syntax.phrases.push(trimmed.to_string());
+                }
+                i = c_idx + 1;
+                continue;
+            } else {
+                // 닫는 따옴표 없음: 타이핑 중인 미완성 입력으로 보고 일반 텍스트로 보존
+                let rest = g[content_start..].trim();
+                if !rest.is_empty() {
+                    clean_words.push(rest.to_string());
+                }
+                break;
+            }
+        }
+
+        // 2. 접두사 확인
+        let sub = &g[byte_idx..];
+
+        // 2-1. 제외 구문: -"..."
+        if sub.starts_with("-\"") || sub.starts_with("-“") {
+            let quote_ch_len = if sub.starts_with("-\"") { 1 } else { '“'.len_utf8() };
+            let content_start = byte_idx + 1 + quote_ch_len;
+            let mut j = i + 2;
+            let mut close_idx = None;
+            let mut escaped = false;
+            while j < chars.len() {
+                let (_, c2) = chars[j];
+                if escaped {
+                    escaped = false;
+                } else if c2 == '\\' {
+                    escaped = true;
+                } else if is_quote_close(c2) {
+                    close_idx = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            if let Some(c_idx) = close_idx {
+                let content_end = chars[c_idx].0;
+                let raw_content = &g[content_start..content_end];
+                let unescaped = unescape_string(raw_content);
+                let trimmed = unescaped.trim();
+                if !trimmed.is_empty() {
+                    syntax.excludes.push(trimmed.to_string());
+                }
+                i = c_idx + 1;
+                continue;
+            } else {
+                let rest = g[content_start..].trim();
+                if !rest.is_empty() {
+                    clean_words.push(rest.to_string());
+                }
+                break;
+            }
+        }
+
+        // 2-2. 폴더 구문: path:"..."
+        let path_quote = if let Some(rest) = strip_case_prefix(sub, "path:") {
+            if rest.starts_with('"') || rest.starts_with('“') {
+                Some(rest)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(rest) = path_quote {
+            let quote_ch_len = if rest.starts_with('"') { 1 } else { '“'.len_utf8() };
+            let content_start = byte_idx + 5 + quote_ch_len;
+            let mut j = i + 1;
+            while j < chars.len() && chars[j].0 < content_start {
+                j += 1;
+            }
+            let mut close_idx = None;
+            let mut escaped = false;
+            while j < chars.len() {
+                let (_, c2) = chars[j];
+                if escaped {
+                    escaped = false;
+                } else if c2 == '\\' {
+                    escaped = true;
+                } else if is_quote_close(c2) {
+                    close_idx = Some(j);
+                    break;
+                }
+                j += 1;
+            }
+            if let Some(c_idx) = close_idx {
+                let content_end = chars[c_idx].0;
+                let raw_content = &g[content_start..content_end];
+                let unescaped = unescape_string(raw_content);
+                let trimmed = unescaped.trim();
+                if !trimmed.is_empty() {
+                    syntax.folder = Some(trimmed.to_string());
+                }
+                i = c_idx + 1;
+                continue;
+            } else {
+                let rest = g[content_start..].trim();
+                if !rest.is_empty() {
+                    syntax.folder = Some(rest.to_string());
+                }
+                break;
+            }
+        }
+
+        // 3. 공백 전까지의 일반 토큰 읽기
+        let mut j = i;
+        let mut token_end = len;
+        while j < chars.len() {
+            let (pos, c2) = chars[j];
+            if c2.is_whitespace() {
+                token_end = pos;
+                break;
+            }
+            j += 1;
+        }
+        let token = &g[byte_idx..token_end];
+        i = j;
+
+        // 토큰별 연산자 해석
+        // 3-1. 제외어: -낱말
+        if token.starts_with('-') && token.len() > 1 {
+            let word = &token[1..];
+            syntax.excludes.push(word.to_string());
+            continue;
+        }
+
+        // 3-2. ext:확장자
+        if let Some(rest) = strip_case_prefix(token, "ext:") {
+            if let Some(exts) = parse_ext_term(rest) {
+                let mut list = syntax.file_types.take().unwrap_or_default();
+                for e in exts {
+                    if !list.contains(&e) {
+                        list.push(e);
+                    }
+                }
+                syntax.file_types = Some(list);
+                continue;
+            }
+        }
+
+        // 3-3. path:경로
+        if let Some(rest) = strip_case_prefix(token, "path:") {
+            let trimmed = rest.trim();
+            if !trimmed.is_empty() {
+                syntax.folder = Some(trimmed.to_string());
+                continue;
+            }
+        }
+
+        // 3-4. after:날짜
+        if let Some(rest) = strip_case_prefix(token, "after:") {
+            if let Some(d) = parse_date_term(rest, true) {
+                syntax.start_date = Some(d);
+                continue;
+            }
+        }
+
+        // 3-5. before:날짜
+        if let Some(rest) = strip_case_prefix(token, "before:") {
+            if let Some(d) = parse_date_term(rest, false) {
+                syntax.end_date = Some(d);
+                continue;
+            }
+        }
+
+        // 3-6. 연산자에 해당하지 않거나 파싱 실패 시 일반 검색어 낱말로 취급
+        clean_words.push(token.to_string());
+    }
+
+    clean_words.join(" ")
+}
+
+/// 질의 문자열 전체를 고급 문법으로 파싱한다.
+///
+/// 기존 세미콜론(`;`) 묶음 검색과 충돌하지 않으며, 파싱 오류는 검색을 막지 않고 낱말로 안전하게 취급한다.
+pub fn parse_query_syntax(raw: &str) -> QuerySyntax {
+    let mut syntax = QuerySyntax::default();
+    let groups = parse_groups(raw);
+
+    if groups.is_empty() {
+        return syntax;
+    }
+
+    let mut clean_groups = Vec::new();
+    for g in groups {
+        let clean = parse_group_tokens(g, &mut syntax);
+        let trimmed = clean.trim();
+        if !trimmed.is_empty() {
+            clean_groups.push(trimmed.to_string());
+        }
+    }
+
+    syntax.clean_text = clean_groups.join("; ");
+    syntax.groups = clean_groups;
+    syntax
+}
+
 /// 구문(KFC2)을 검색 낱말로 더한다. 구문은 비교형(공백·기호를 뺀 글)이 붙어 있는 그대로 든 문장만 찾는 낱말 하나이고
 /// 나누지 않는다. 같은 낱말이 이미 있으면 그 낱말의 나누기를 끈다. 비교형이 2글자 미만이면 뺀 낱말에 더하고,
 /// 비교형이 빈 구문은 무시한다. 구문 문법(`"…"`)은 호출하는 쪽(앱)이 해석한다.
@@ -279,5 +677,467 @@ mod tests {
         assert!(split_dict("주민예산", is).is_none());
         assert!(stem_suffixes().contains(&"을") && stem_suffixes().contains(&"한다"));
         assert!(stem_suffixes().iter().all(|s| !s.is_empty() && !s.starts_with('#') && crate::fold::fold(s) == *s));
+    }
+
+    struct SyntaxTestCase {
+        label: &'static str,
+        query: &'static str,
+        clean_text: &'static str,
+        phrases: &'static [&'static str],
+        excludes: &'static [&'static str],
+        file_types: Option<&'static [&'static str]>,
+        folder: Option<&'static str>,
+        start_date: Option<i64>,
+        end_date: Option<i64>,
+        groups: &'static [&'static str],
+    }
+
+    #[test]
+    fn table_driven_query_syntax_tests() {
+        let cases = [
+            // 1. 기본 낱말
+            SyntaxTestCase {
+                label: "1. 기본 낱말",
+                query: "공사 계약",
+                clean_text: "공사 계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["공사 계약"],
+            },
+            // 2. 정확 구문 (기본 따옴표)
+            SyntaxTestCase {
+                label: "2. 정확 구문 (기본 따옴표)",
+                query: "\"예산 집행\"",
+                clean_text: "",
+                phrases: &["예산 집행"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &[],
+            },
+            // 3. 정확 구문 (유니코드 따옴표)
+            SyntaxTestCase {
+                label: "3. 정확 구문 (유니코드 따옴표)",
+                query: "“공사 계약”",
+                clean_text: "",
+                phrases: &["공사 계약"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &[],
+            },
+            // 4. 일반 낱말 + 정확 구문
+            SyntaxTestCase {
+                label: "4. 일반 낱말 + 정확 구문",
+                query: "2026 \"예산 집행\" 계획",
+                clean_text: "2026 계획",
+                phrases: &["예산 집행"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["2026 계획"],
+            },
+            // 5. 제외어 단일
+            SyntaxTestCase {
+                label: "5. 제외어 단일",
+                query: "예산 -보류",
+                clean_text: "예산",
+                phrases: &[],
+                excludes: &["보류"],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["예산"],
+            },
+            // 6. 제외어 복수
+            SyntaxTestCase {
+                label: "6. 제외어 복수",
+                query: "공사 -보류 -취소 계약",
+                clean_text: "공사 계약",
+                phrases: &[],
+                excludes: &["보류", "취소"],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["공사 계약"],
+            },
+            // 7. 제외 구문
+            SyntaxTestCase {
+                label: "7. 제외 구문",
+                query: "공사 -\"임시 보류\" 계약",
+                clean_text: "공사 계약",
+                phrases: &[],
+                excludes: &["임시 보류"],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["공사 계약"],
+            },
+            // 8. 제외 구문 유니코드 따옴표
+            SyntaxTestCase {
+                label: "8. 제외 구문 유니코드 따옴표",
+                query: "공사 -“임시 보류” 계약",
+                clean_text: "공사 계약",
+                phrases: &[],
+                excludes: &["임시 보류"],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["공사 계약"],
+            },
+            // 9. 확장자 단일
+            SyntaxTestCase {
+                label: "9. 확장자 단일",
+                query: "계약 ext:hwp",
+                clean_text: "계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: Some(&["hwp"]),
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["계약"],
+            },
+            // 10. 확장자 다중
+            SyntaxTestCase {
+                label: "10. 확장자 다중",
+                query: "계약 ext:hwp,pdf",
+                clean_text: "계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: Some(&["hwp", "pdf"]),
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["계약"],
+            },
+            // 11. 확장자 점 접두사 및 대문자
+            SyntaxTestCase {
+                label: "11. 확장자 점 접두사 및 대문자",
+                query: "계약 ext:.HWP,.PDF",
+                clean_text: "계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: Some(&["hwp", "pdf"]),
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["계약"],
+            },
+            // 12. 폴더 단독
+            SyntaxTestCase {
+                label: "12. 폴더 단독",
+                query: "path:기안",
+                clean_text: "",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: Some("기안"),
+                start_date: None,
+                end_date: None,
+                groups: &[],
+            },
+            // 13. 폴더 + 낱말
+            SyntaxTestCase {
+                label: "13. 폴더 + 낱말",
+                query: "path:공문서/2026 계약",
+                clean_text: "계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: Some("공문서/2026"),
+                start_date: None,
+                end_date: None,
+                groups: &["계약"],
+            },
+            // 14. 폴더 따옴표 (공백 포함)
+            SyntaxTestCase {
+                label: "14. 폴더 따옴표 (공백 포함)",
+                query: "path:\"C:/My Documents/2026\" 보고서",
+                clean_text: "보고서",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: Some("C:/My Documents/2026"),
+                start_date: None,
+                end_date: None,
+                groups: &["보고서"],
+            },
+            // 15. 폴더 유니코드 따옴표
+            SyntaxTestCase {
+                label: "15. 폴더 유니코드 따옴표",
+                query: "path:“공문서 보관함” 보고서",
+                clean_text: "보고서",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: Some("공문서 보관함"),
+                start_date: None,
+                end_date: None,
+                groups: &["보고서"],
+            },
+            // 16. 시작 날짜 (대시 구분)
+            SyntaxTestCase {
+                label: "16. 시작 날짜 (대시 구분)",
+                query: "after:2026-05-01 예산",
+                clean_text: "예산",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: Some(20260501),
+                end_date: None,
+                groups: &["예산"],
+            },
+            // 17. 종료 날짜 (대시 구분)
+            SyntaxTestCase {
+                label: "17. 종료 날짜 (대시 구분)",
+                query: "before:2026-12-31 결산",
+                clean_text: "결산",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: Some(20261231),
+                groups: &["결산"],
+            },
+            // 18. 날짜 범위 (슬래시 및 점 구분)
+            SyntaxTestCase {
+                label: "18. 날짜 범위 (슬래시 및 점 구분)",
+                query: "after:2026/01/01 before:2026.06.30 예산",
+                clean_text: "예산",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: Some(20260101),
+                end_date: Some(20260630),
+                groups: &["예산"],
+            },
+            // 19. 날짜 연속 숫자 8자리
+            SyntaxTestCase {
+                label: "19. 날짜 연속 숫자 8자리",
+                query: "after:20260101 before:20261231 보고",
+                clean_text: "보고",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: Some(20260101),
+                end_date: Some(20261231),
+                groups: &["보고"],
+            },
+            // 20. 연도만 지정 (after는 1월 1일, before는 12월 31일)
+            SyntaxTestCase {
+                label: "20. 연도만 지정",
+                query: "after:2026 before:2026 집행",
+                clean_text: "집행",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: Some(20260101),
+                end_date: Some(20261231),
+                groups: &["집행"],
+            },
+            // 21. 세미콜론 묶음 검색 기본
+            SyntaxTestCase {
+                label: "21. 세미콜론 묶음 검색 기본",
+                query: "2026; 공사 계약",
+                clean_text: "2026; 공사 계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["2026", "공사 계약"],
+            },
+            // 22. 세미콜론 + 연산자 복합
+            SyntaxTestCase {
+                label: "22. 세미콜론 + 연산자 복합",
+                query: "2026; 공사 계약 ext:hwp -보류",
+                clean_text: "2026; 공사 계약",
+                phrases: &[],
+                excludes: &["보류"],
+                file_types: Some(&["hwp"]),
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["2026", "공사 계약"],
+            },
+            // 23. 따옴표 내부 세미콜론 보호
+            SyntaxTestCase {
+                label: "23. 따옴표 내부 세미콜론 보호",
+                query: "\"공사; 계약\"; 2026",
+                clean_text: "2026",
+                phrases: &["공사; 계약"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["2026"],
+            },
+            // 24. 따옴표 이스케이프
+            SyntaxTestCase {
+                label: "24. 따옴표 이스케이프",
+                query: "\"그는 \\\"계약\\\"이라 했다\"",
+                clean_text: "",
+                phrases: &["그는 \"계약\"이라 했다"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &[],
+            },
+            // 25. 타이핑 중 미완성 따옴표 (오류 복구)
+            SyntaxTestCase {
+                label: "25. 타이핑 중 미완성 따옴표 (오류 복구)",
+                query: "\"예산",
+                clean_text: "예산",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["예산"],
+            },
+            // 26. 타이핑 중 미완성 제외 따옴표 (오류 복구)
+            SyntaxTestCase {
+                label: "26. 타이핑 중 미완성 제외 따옴표 (오류 복구)",
+                query: "-\"보류",
+                clean_text: "보류",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["보류"],
+            },
+            // 27. 단독 하이픈 (오류 복구)
+            SyntaxTestCase {
+                label: "27. 단독 하이픈 (오류 복구)",
+                query: "공사 - 계약",
+                clean_text: "공사 - 계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["공사 - 계약"],
+            },
+            // 28. 잘못된 확장자 / 빈 콜론 (오류 복구)
+            SyntaxTestCase {
+                label: "28. 잘못된 확장자 / 빈 콜론 (오류 복구)",
+                query: "ext: 공사",
+                clean_text: "ext: 공사",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["ext: 공사"],
+            },
+            // 29. 잘못된 날짜 형식 (오류 복구)
+            SyntaxTestCase {
+                label: "29. 잘못된 날짜 형식 (오류 복구)",
+                query: "after:invalid-date 계약",
+                clean_text: "after:invalid-date 계약",
+                phrases: &[],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["after:invalid-date 계약"],
+            },
+            // 30. 한글 자모 및 조합 중 입력 보호
+            SyntaxTestCase {
+                label: "30. 한글 자모 및 조합 중 입력 보호",
+                query: "예산 ㅎ ext:hwp",
+                clean_text: "예산 ㅎ",
+                phrases: &[],
+                excludes: &[],
+                file_types: Some(&["hwp"]),
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &["예산 ㅎ"],
+            },
+            // 31. 따옴표 내부 연산자 접두사 무시
+            SyntaxTestCase {
+                label: "31. 따옴표 내부 연산자 접두사 무시",
+                query: "\"ext:pdf\"",
+                clean_text: "",
+                phrases: &["ext:pdf"],
+                excludes: &[],
+                file_types: None,
+                folder: None,
+                start_date: None,
+                end_date: None,
+                groups: &[],
+            },
+            // 32. 복합 전체 연산자 쿼리
+            SyntaxTestCase {
+                label: "32. 복합 전체 연산자 쿼리",
+                query: "\"핵심 과제\" 2026 -임시 ext:hwp,pdf path:기안 after:2026-01-01 before:2026-12-31",
+                clean_text: "2026",
+                phrases: &["핵심 과제"],
+                excludes: &["임시"],
+                file_types: Some(&["hwp", "pdf"]),
+                folder: Some("기안"),
+                start_date: Some(20260101),
+                end_date: Some(20261231),
+                groups: &["2026"],
+            },
+        ];
+
+        for case in cases {
+            let res = parse_query_syntax(case.query);
+            assert_eq!(res.clean_text, case.clean_text, "Failed on [{}]: clean_text", case.label);
+            assert_eq!(res.phrases.as_slice(), case.phrases, "Failed on [{}]: phrases", case.label);
+            assert_eq!(res.excludes.as_slice(), case.excludes, "Failed on [{}]: excludes", case.label);
+            let actual_file_types = res.file_types.as_ref().map(|v| v.iter().map(|s| s.as_str()).collect::<Vec<_>>());
+            let expected_file_types = case.file_types.map(|v| v.to_vec());
+            assert_eq!(actual_file_types, expected_file_types, "Failed on [{}]: file_types", case.label);
+            assert_eq!(res.folder.as_deref(), case.folder, "Failed on [{}]: folder", case.label);
+            assert_eq!(res.start_date, case.start_date, "Failed on [{}]: start_date", case.label);
+            assert_eq!(res.end_date, case.end_date, "Failed on [{}]: end_date", case.label);
+            assert_eq!(res.groups.as_slice(), case.groups, "Failed on [{}]: groups", case.label);
+        }
+    }
+
+    #[test]
+    fn query_syntax_apply_to_search_options() {
+        let syntax = parse_query_syntax("\"주민 센터\" 2026 ext:hwp path:보고서 after:2026-01-01 before:2026-12-31");
+        let mut opts = crate::index::SearchOptions::default();
+        syntax.apply_to_options(&mut opts);
+
+        assert_eq!(opts.phrases, vec!["주민 센터"]);
+        assert_eq!(opts.file_types, Some(vec!["hwp".into()]));
+        assert_eq!(opts.folder, Some("보고서".into()));
+        assert_eq!(opts.start_date, Some(20260101));
+        assert_eq!(opts.end_date, Some(20261231));
     }
 }

@@ -77,7 +77,50 @@ fn load() -> Result<Api, String> {
 
 #[cfg(not(windows))]
 fn load() -> Result<Api, String> {
-    Err("winsqlite3는 Windows에서만 씁니다.".into())
+    unsafe extern "C" {
+        fn dlopen(filename: *const u8, flag: i32) -> *mut c_void;
+        fn dlsym(handle: *mut c_void, symbol: *const u8) -> *mut c_void;
+    }
+    unsafe {
+        let handle = dlopen(b"/usr/lib/libsqlite3.dylib\0".as_ptr(), 1);
+        let handle = if handle.is_null() {
+            dlopen(b"libsqlite3.dylib\0".as_ptr(), 1)
+        } else {
+            handle
+        };
+        let handle = if handle.is_null() {
+            dlopen(b"libsqlite3.so\0".as_ptr(), 1)
+        } else {
+            handle
+        };
+        if handle.is_null() {
+            return Err("sqlite3 라이브러리를 불러올 수 없습니다.".into());
+        }
+        macro_rules! f {
+            ($n:literal) => {{
+                let p = dlsym(handle, concat!($n, "\0").as_ptr());
+                if p.is_null() {
+                    return Err(concat!("sqlite3 함수 없음: ", $n).into());
+                }
+                std::mem::transmute::<*mut c_void, _>(p)
+            }};
+        }
+        Ok(Api {
+            open_v2: f!("sqlite3_open_v2"),
+            close_v2: f!("sqlite3_close_v2"),
+            prepare_v2: f!("sqlite3_prepare_v2"),
+            bind_text: f!("sqlite3_bind_text"),
+            bind_int64: f!("sqlite3_bind_int64"),
+            step: f!("sqlite3_step"),
+            column_text: f!("sqlite3_column_text"),
+            column_bytes: f!("sqlite3_column_bytes"),
+            reset: f!("sqlite3_reset"),
+            finalize: f!("sqlite3_finalize"),
+            exec: f!("sqlite3_exec"),
+            busy_timeout: f!("sqlite3_busy_timeout"),
+            errmsg: f!("sqlite3_errmsg"),
+        })
+    }
 }
 
 fn api() -> Result<&'static Api, String> {
