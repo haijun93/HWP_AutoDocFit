@@ -58,6 +58,9 @@ pub struct DocMeta {
     pub scopes: Vec<String>,
     pub level_src: LevelSrc,
     pub level_rule: u32,
+    /// Document metadata extraction rule version. Missing in older tables means version 0.
+    #[serde(default)]
+    pub meta_rule: u32,
 }
 
 /// 표 한 줄.

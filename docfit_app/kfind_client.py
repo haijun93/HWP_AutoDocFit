@@ -282,8 +282,8 @@ class KfindClient:
     def remove(self, keys):
         return self._request("remove", doc_keys=list(keys))
 
-    def stale(self, scope, level_rule, *, meta_rule=1, after=None, limit=1000):
-        return self._request("stale", scope=scope, level_rule=level_rule, meta_rule=meta_rule,
+    def stale(self, scope, level_rule, *, after=None, limit=1000):
+        return self._request("stale", scope=scope, level_rule=level_rule,
                              after=after, limit=limit)
 
     def ingest(self, doc):

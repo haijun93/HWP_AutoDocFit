@@ -106,7 +106,8 @@ class TimemachineService:
         try:
             if self._closing or self._search_engine() == "legacy" or not self._settings["roots"]:
                 return
-            if int(self.kfind.status().get("docs") or 0) != 0:
+            stale = self.kfind.stale("tm", 0xffffffff, limit=1).get("doc_keys", [])
+            if not stale:
                 return
             if not self.content_index.indexed_paths(roots=self._settings["roots"]):
                 return

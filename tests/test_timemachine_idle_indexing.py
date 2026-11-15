@@ -45,12 +45,16 @@ class FakeKfind:
         self.generation = generation
         self.ingested = []
         self.removed = []
+        self.stale_keys = []
 
     def state(self):
         return {"state": "connected", "reason": None}
 
     def status(self):
         return {"state": "ready", "generation": self.generation, "count": self.count, "docs": self.count}
+
+    def stale(self, scope, level_rule, *, after=None, limit=1000):
+        return {"doc_keys": self.stale_keys[:limit], "more": len(self.stale_keys) > limit}
 
     def ingest(self, doc):
         self.ingested.append(doc)
@@ -246,9 +250,10 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
         self.assertTrue(service._kfind_synced)
 
     def test_startup_recovery_starts_seeding_only_when_kfind_empty(self):
-        """앱 시작 복구: 서비스 문서 0건이고 내용 색인에 문서가 있을 때만 seeding 시작."""
-        for count, expected in ((0, 1), (3, 0)):
+        """앱 시작 복구: stale 문서가 있고 내용 색인이 있을 때만 seeding 시작."""
+        for count, stale_keys, expected in ((0, ["old"], 1), (3, ["old"], 1), (3, [], 0)):
             kfind = FakeKfind(count=count)
+            kfind.stale_keys = stale_keys
             service = self.make_service(kfind_client=kfind)
             self.service.close()
             self.service = service  # tearDown이 임시 폴더보다 먼저 닫는다
@@ -258,7 +263,7 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
             service.content_index.index_file(p)
             with patch.object(service, "_start_kfind_seeding") as start:
                 service._recover_empty_kfind()
-            self.assertEqual(start.call_count, expected, count)
+            self.assertEqual(start.call_count, expected, (count, stale_keys))
 
     def test_startup_schedules_recovery_even_when_reindex_pending(self):
         """재색인할 문서가 남아 있어도(쉬는 시간 예약) 시작 때 복구 점검 타이머를 건다(v2.2.69 후보 회귀)."""
