@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import '../../core/close_guards.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,10 +10,12 @@ class DocumentToolsWorkspace extends StatefulWidget {
     super.key,
     required this.api,
     this.initial = 'convert',
+    this.loadSaved = false,
     this.isModal = true,
   });
   final ApiCall api;
   final String initial;
+  final bool loadSaved;
   final bool isModal;
   @override
   State<DocumentToolsWorkspace> createState() => _ToolsState();
@@ -19,27 +23,31 @@ class DocumentToolsWorkspace extends StatefulWidget {
 
 class _ToolsState extends State<DocumentToolsWorkspace> {
   final input = TextEditingController(), output = TextEditingController();
-  late String mode;
+
+  // 개조식 정리 묶음: 'convert' (개조식 변환), 'labels' (라벨 텍스트 변환), 'clean' (AI 답변 기호 정리), 'none'
+  String outlineOption = 'convert';
+
+  // 일괄 옵션 체크 (다중 선택): 'commas', 'amount', 'weekdays', 'mask_rrn'
+  final Set<String> extraOptions = <String>{};
+
+  // 독립 계산 도구: 'date_diff', 'age', 'table_calc'
+  String? calcMode;
+
   String status = '', calculation = 'col_sum';
   bool busy = false, closing = false;
   CloseLease? _closeLease;
-  static const modes = {
-    'clean': 'AI 답변 기호 정리',
-    'convert': '개조식 변환',
-    'labels': '라벨 텍스트 변환',
-    'amount': '금액 한글화',
-    'commas': '숫자 쉼표',
-    'weekdays': '날짜·요일',
-    'date_diff': '날짜 차이 (두 날짜를 줄로 구분)',
-    'age': '만 나이',
-    'mask_rrn': '주민번호 가리기',
-    'table_calc': '표 합계',
-  };
+  Timer? _debounceTimer;
+  int _requestId = 0;
+
+  static const int maxRealtimeBytes = 200 * 1024; // 200KB
 
   @override
   void initState() {
     super.initState();
-    mode = modes.containsKey(widget.initial) ? widget.initial : 'convert';
+    _initInitialMode();
+    input.addListener(_onInputChanged);
+    _loadSavedOptions();
+
     if (widget.isModal) {
       _closeLease = CloseGuards.register(() async {
         if (busy || !canCloseEditor(context)) return false;
@@ -49,12 +57,85 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
     }
   }
 
+  void _initInitialMode() {
+    if (widget.initial == 'date_diff' ||
+        widget.initial == 'age' ||
+        widget.initial == 'table_calc') {
+      calcMode = widget.initial;
+      outlineOption = 'none';
+    } else if (widget.initial == 'clean' ||
+        widget.initial == 'convert' ||
+        widget.initial == 'labels') {
+      outlineOption = widget.initial;
+      calcMode = null;
+    } else if (const ['commas', 'amount', 'weekdays', 'mask_rrn']
+        .contains(widget.initial)) {
+      outlineOption = 'none';
+      extraOptions.add(widget.initial);
+      calcMode = null;
+    } else {
+      outlineOption = 'convert';
+      calcMode = null;
+    }
+  }
+
+  Future<void> _loadSavedOptions() async {
+    if (!widget.loadSaved || widget.initial != 'convert') return;
+    try {
+      final res = await widget.api('document_tool', ['get_options', {}]);
+      if (res is Map && res['ok'] == true && res['data'] is Map) {
+        final raw = res['data']['options'];
+        if (raw is List) {
+          final opts = raw.cast<String>();
+          if (!mounted || opts.isEmpty) return;
+          setState(() {
+            extraOptions.clear();
+            String? foundOutline;
+            for (final opt in opts) {
+              if (opt == 'convert' || opt == 'labels' || opt == 'clean') {
+                foundOutline ??= opt;
+              } else if (const ['commas', 'amount', 'weekdays', 'mask_rrn']
+                  .contains(opt)) {
+                extraOptions.add(opt);
+              }
+            }
+            outlineOption = foundOutline ?? 'none';
+          });
+        }
+      }
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
+    _debounceTimer?.cancel();
+    input.removeListener(_onInputChanged);
     _closeLease?.release();
     input.dispose();
     output.dispose();
     super.dispose();
+  }
+
+  void _onInputChanged() {
+    _debounceTimer?.cancel();
+    final text = input.text;
+    if (text.isEmpty) {
+      if (output.text.isNotEmpty) setState(() => output.text = '');
+      return;
+    }
+    final byteLen = utf8.encode(text).length;
+    if (byteLen > maxRealtimeBytes) {
+      setState(() {
+        status = '입력이 커서 자동 변환을 멈췄습니다. 실행 버튼을 눌러 변환하세요.';
+      });
+      return;
+    }
+    // 150ms debounce
+    _debounceTimer = Timer(const Duration(milliseconds: 150), () {
+      if (mounted) {
+        run();
+      }
+    });
   }
 
   Future<Map> call(String name, Map payload) async {
@@ -69,18 +150,55 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
   }
 
   Future<void> run() async {
-    if (busy) return;
+    _debounceTimer?.cancel();
+    final currentRequestId = ++_requestId;
     setState(() => busy = true);
+
     try {
-      final data = await call(mode, {
-        'text': input.text,
-        'operation': calculation,
-      });
-      if (mounted) setState(() => output.text = '${data['text'] ?? ''}');
+      Map data;
+      if (calcMode != null) {
+        data = await call(calcMode!, {
+          'text': input.text,
+          'operation': calculation,
+        });
+      } else {
+        final active = <String>[];
+        if (outlineOption != 'none') {
+          active.add(outlineOption);
+        }
+        for (final opt in const ['commas', 'amount', 'weekdays', 'mask_rrn']) {
+          if (extraOptions.contains(opt)) {
+            active.add(opt);
+          }
+        }
+
+        if (active.length == 1) {
+          data = await call(active.first, {
+            'text': input.text,
+            'operation': calculation,
+          });
+        } else {
+          data = await call('pipeline', {
+            'text': input.text,
+            'options': active,
+          });
+        }
+      }
+
+      if (mounted && currentRequestId == _requestId) {
+        setState(() {
+          output.text = '${data['text'] ?? ''}';
+          if (status.startsWith('입력이 커서')) status = '';
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() => status = '$e');
+      if (mounted && currentRequestId == _requestId) {
+        setState(() => status = '$e');
+      }
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted && currentRequestId == _requestId) {
+        setState(() => busy = false);
+      }
     }
   }
 
@@ -101,7 +219,7 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
 
   void leave() {
     if (busy || closing) return;
-    if (!Navigator.of(context).canPop()) return; // 탭 안에서는 닫을 화면이 없다(앱 멈춤 방지)
+    if (!Navigator.of(context).canPop()) return;
     setState(() => closing = true);
     Navigator.pop(context);
   }
@@ -118,6 +236,172 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
     ),
   );
 
+  Widget _buildOptionSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text(
+              '개조식 정리:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            ChoiceChip(
+              label: const Text('개조식 변환'),
+              selected: calcMode == null && outlineOption == 'convert',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  outlineOption = selected ? 'convert' : 'none';
+                });
+                run();
+              },
+            ),
+            ChoiceChip(
+              label: const Text('라벨 텍스트 변환'),
+              selected: calcMode == null && outlineOption == 'labels',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  outlineOption = selected ? 'labels' : 'none';
+                });
+                run();
+              },
+            ),
+            ChoiceChip(
+              label: const Text('AI 답변 기호 정리'),
+              selected: calcMode == null && outlineOption == 'clean',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  outlineOption = selected ? 'clean' : 'none';
+                });
+                run();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text(
+              '일괄 옵션:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            FilterChip(
+              label: const Text('숫자 쉼표'),
+              selected: calcMode == null && extraOptions.contains('commas'),
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  if (selected) {
+                    extraOptions.add('commas');
+                  } else {
+                    extraOptions.remove('commas');
+                  }
+                });
+                run();
+              },
+            ),
+            FilterChip(
+              label: const Text('금액 한글화'),
+              selected: calcMode == null && extraOptions.contains('amount'),
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  if (selected) {
+                    extraOptions.add('amount');
+                  } else {
+                    extraOptions.remove('amount');
+                  }
+                });
+                run();
+              },
+            ),
+            FilterChip(
+              label: const Text('날짜·요일'),
+              selected: calcMode == null && extraOptions.contains('weekdays'),
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  if (selected) {
+                    extraOptions.add('weekdays');
+                  } else {
+                    extraOptions.remove('weekdays');
+                  }
+                });
+                run();
+              },
+            ),
+            FilterChip(
+              label: const Text('주민번호 가리기'),
+              selected: calcMode == null && extraOptions.contains('mask_rrn'),
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = null;
+                  if (selected) {
+                    extraOptions.add('mask_rrn');
+                  } else {
+                    extraOptions.remove('mask_rrn');
+                  }
+                });
+                run();
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            const Text(
+              '계산 도구:',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            ChoiceChip(
+              label: const Text('날짜 차이 (두 날짜를 줄로 구분)'),
+              selected: calcMode == 'date_diff',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = selected ? 'date_diff' : null;
+                });
+                run();
+              },
+            ),
+            ChoiceChip(
+              label: const Text('만 나이'),
+              selected: calcMode == 'age',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = selected ? 'age' : null;
+                });
+                run();
+              },
+            ),
+            ChoiceChip(
+              label: const Text('표 합계'),
+              selected: calcMode == 'table_calc',
+              onSelected: (selected) {
+                setState(() {
+                  calcMode = selected ? 'table_calc' : null;
+                });
+                run();
+              },
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) => PopScope(
     canPop: closing || !busy,
@@ -126,7 +410,6 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
     },
     child: Scaffold(
       appBar: AppBar(
-        // 탭 안에서는 ← 버튼을 보이지 않는다. 새 화면으로 열었을 때만 표시.
         automaticallyImplyLeading: false,
         leading: !Navigator.of(context).canPop()
             ? null
@@ -139,21 +422,11 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<String>(
-              initialValue: mode,
-              items: [
-                for (final item in modes.entries)
-                  DropdownMenuItem(value: item.key, child: Text(item.value)),
-              ],
-              onChanged: busy
-                  ? null
-                  : (value) {
-                      if (value != null) setState(() => mode = value);
-                    },
-            ),
-            const SizedBox(height: 8),
-            if (mode == 'table_calc')
+            _buildOptionSection(),
+            if (calcMode == 'table_calc') ...[
+              const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 initialValue: calculation,
                 items: const [
@@ -164,9 +437,13 @@ class _ToolsState extends State<DocumentToolsWorkspace> {
                 ],
                 onChanged: busy
                     ? null
-                    : (value) =>
-                          setState(() => calculation = value ?? 'col_sum'),
+                    : (value) {
+                        setState(() => calculation = value ?? 'col_sum');
+                        run();
+                      },
               ),
+            ],
+            const SizedBox(height: 8),
             Wrap(
               spacing: 8,
               runSpacing: 4,
