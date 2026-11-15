@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from docfit_app.idle_gate import IdleGate, IdleSignals
-from docfit_app.idle_scheduler import IdleIndexScheduler
+from docfit_app.idle_scheduler import IdleContext, IdleIndexScheduler
 from docfit_app.timemachine_service import CONTENT_IDLE_JOB, TimemachineService
 
 QUIET = IdleSignals(input_idle_seconds=600, cpu_percent=0)
@@ -39,6 +39,31 @@ class StubResult:
     errors = []
 
 
+class FakeKfind:
+    def __init__(self, count=0, generation=1):
+        self.count = count
+        self.generation = generation
+        self.ingested = []
+        self.removed = []
+
+    def state(self):
+        return {"state": "connected", "reason": None}
+
+    def status(self):
+        return {"state": "ready", "generation": self.generation, "count": self.count, "docs": self.count}
+
+    def ingest(self, doc):
+        self.ingested.append(doc)
+        return {"generation": self.generation}
+
+    def remove(self, doc_keys):
+        self.removed.extend(doc_keys)
+        return {"removed": len(doc_keys)}
+
+    def close(self):
+        pass
+
+
 def stub_scanner(store, roots, rules, progress=None):
     return StubResult()
 
@@ -63,10 +88,11 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
                                             sleep_seconds=0.05)
         self.service = self.make_service()
 
-    def make_service(self, scheduler="default"):
+    def make_service(self, scheduler="default", kfind_client=None):
         return TimemachineService(self.base / "설정", db_path=self.base / "timeline.db", agent=Agent(),
                                   scanner=stub_scanner, thumb_dir=self.base / "thumbs",
-                                  idle_scheduler=self.scheduler if scheduler == "default" else scheduler)
+                                  idle_scheduler=self.scheduler if scheduler == "default" else scheduler,
+                                  kfind_client=kfind_client)
 
     def tearDown(self):
         self.service.close()
@@ -189,6 +215,110 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
         settings = self.service.command("settings_get")["settings"]
         self.assertEqual(settings["roots"], [str(self.root)])
         self.assertEqual((settings["idle_indexing"], settings["idle_seconds"]), (True, 120))
+
+    def test_recovery_seeding_bypasses_idle_gate_when_kfind_empty(self):
+        """가짜 kfind(status count 0)·content_meta 3건으로 유휴 아님 상태에서도 3건 ingest 되는지."""
+        kfind = FakeKfind(count=0)
+        service = self.make_service(kfind_client=kfind)
+        self.addCleanup(service.close)
+        service.command("settings_set", {"roots": [str(self.root)], "time_mode": "max", "enabled": True})
+
+        for name in ("doc1.txt", "doc2.txt", "doc3.txt"):
+            p = self.root / name
+            p.write_text(f"{name} 본문 내용", encoding="utf-8")
+            service.content_index.index_file(p)
+
+        self.probe.signals = BUSY
+        ctx = IdleContext(self.scheduler.gate, CONTENT_IDLE_JOB, poll_seconds=0.01)
+        service._content_idle_ctx = ctx
+        cancel = threading.Event()
+
+        with patch("time.sleep") as mock_sleep:
+            service._seed_kfind(cancel)
+            # 3건 ingest 사이에 time.sleep(0.01) 양보가 2회(idx 1, 2) 호출됨
+            self.assertEqual(mock_sleep.call_count, 2)
+            for call in mock_sleep.call_args_list:
+                self.assertAlmostEqual(call.args[0], 0.01, places=3)
+
+        self.assertEqual(len(kfind.ingested), 3)
+        self.assertFalse(ctx.yielded)
+        self.assertTrue(service._kfind_synced)
+
+    def test_normal_seeding_respects_idle_gate_when_kfind_has_index(self):
+        """평소(색인 있음: count > 0)엔 기존처럼 유휴 조건을 지키는지."""
+        kfind = FakeKfind(count=3)
+        service = self.make_service(kfind_client=kfind)
+        self.addCleanup(service.close)
+        service.command("settings_set", {"roots": [str(self.root)], "time_mode": "max", "enabled": True})
+
+        for name in ("doc1.txt", "doc2.txt", "doc3.txt"):
+            p = self.root / name
+            p.write_text(f"{name} 본문 내용", encoding="utf-8")
+            service.content_index.index_file(p)
+
+        self.probe.signals = BUSY
+        ctx = IdleContext(self.scheduler.gate, CONTENT_IDLE_JOB, poll_seconds=0.01)
+        service._content_idle_ctx = ctx
+        cancel = threading.Event()
+
+        # 평소 상태에서 _seed_kfind를 돌리면 BUSY이므로 checkpoint에서 yielded=True가 되고 대기해야 함
+        worker = threading.Thread(target=lambda: service._seed_kfind(cancel))
+        worker.start()
+        try:
+            self.assertTrue(wait_for(lambda: ctx.yielded, timeout=2.0))
+            self.assertEqual(len(kfind.ingested), 0)
+        finally:
+            cancel.set()
+            worker.join(timeout=2.0)
+
+    def test_recovery_seeding_respects_cancel_and_closing(self):
+        """복구 seeding 중에도 취소 신호를 존중하여 즉시 중단되는지."""
+        kfind = FakeKfind(count=0)
+        service = self.make_service(kfind_client=kfind)
+        self.addCleanup(service.close)
+        service.command("settings_set", {"roots": [str(self.root)], "time_mode": "max", "enabled": True})
+
+        for name in ("doc1.txt", "doc2.txt", "doc3.txt"):
+            p = self.root / name
+            p.write_text(f"{name} 본문 내용", encoding="utf-8")
+            service.content_index.index_file(p)
+
+        self.probe.signals = BUSY
+        ctx = IdleContext(self.scheduler.gate, CONTENT_IDLE_JOB, poll_seconds=0.01)
+        service._content_idle_ctx = ctx
+        cancel = threading.Event()
+        cancel.set()
+
+        service._seed_kfind(cancel)
+        self.assertEqual(len(kfind.ingested), 0)
+
+    def test_recovery_seeding_uses_sqlite_snapshot_without_reopening_documents(self):
+        """복구 seeding은 사용자 문서를 다시 열지 않고 SQLite 스냅숏만 사용한다."""
+        kfind = FakeKfind(count=0)
+        service = self.make_service(kfind_client=kfind)
+        self.addCleanup(service.close)
+        service.command("settings_set", {"roots": [str(self.root)], "time_mode": "max", "enabled": True})
+
+        files = []
+        for name in ("doc1.txt", "doc2.txt", "doc3.txt"):
+            p = self.root / name
+            p.write_text(f"{name} 원본 본문", encoding="utf-8")
+            service.content_index.index_file(p)
+            files.append(p)
+
+        # 원본 문서를 디스크에서 삭제해도 SQLite 스냅숏으로 ingest됨
+        for p in files:
+            p.unlink()
+
+        self.probe.signals = BUSY
+        ctx = IdleContext(self.scheduler.gate, CONTENT_IDLE_JOB, poll_seconds=0.01)
+        service._content_idle_ctx = ctx
+        cancel = threading.Event()
+
+        service._seed_kfind(cancel)
+        self.assertEqual(len(kfind.ingested), 3)
+        self.assertEqual(kfind.ingested[0]["paras"][0]["t"], "doc1.txt 원본 본문")
+        self.assertTrue(service._kfind_synced)
 
     def test_close_unregisters_job(self):
         self.service.close()

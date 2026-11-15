@@ -147,20 +147,37 @@ class TimemachineService:
         try:
             initial_status = self.kfind.status()
             paths = self.content_index.indexed_paths(roots=self._settings["roots"]) if self._settings["roots"] else []
+            doc_count = initial_status.get("docs")
+            if doc_count is None:
+                doc_count = initial_status.get("count")
+            try:
+                doc_count = int(doc_count) if doc_count is not None else None
+            except (TypeError, ValueError):
+                doc_count = None
+            generation = initial_status.get("generation")
+            generation_changed = (self._kfind_generation is not None and generation != self._kfind_generation)
+            is_recovery = bool(paths) and ((doc_count == 0) or (generation_changed and doc_count == 0))
             path_keys = {doc_key(path=p) for p in paths}
             for path, result in pending.items():
                 if cancel_event.is_set():
                     return
                 if result.get("removed") or doc_key(path=path) not in path_keys:
                     self.kfind.remove([doc_key(path=path)])
-            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경은 다시 seeding.
-            if pending and initial_status["generation"] == self._kfind_generation:
+            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경·복구 seeding은 다시 전체 seeding.
+            if pending and initial_status["generation"] == self._kfind_generation and not is_recovery:
                 changed = {doc_key(path=p) for p in pending}
                 paths = [p for p in paths if doc_key(path=p) in changed]
-            for path in paths:
+            if is_recovery and self._content_idle_ctx is not None:
+                self._content_idle_ctx.enter_background()
+            for idx, path in enumerate(paths):
                 if cancel_event.is_set() or self._closing:
                     return
-                if self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
+                if is_recovery:
+                    if idx > 0:
+                        time.sleep(0.01)
+                        if cancel_event.is_set() or self._closing:
+                            return
+                elif self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
                     cancel_event.set()
                     return
                 if self.content_index.stale_hierarchy_paths([path]):
