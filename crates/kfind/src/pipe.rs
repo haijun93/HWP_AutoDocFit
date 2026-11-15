@@ -27,11 +27,8 @@ use windows_sys::Win32::{
     System::{Pipes::*, Threading::*},
 };
 pub const MAX_REQUEST: usize = 65536;
-/// DocumentMeta가 실제로 저장되기 시작한 판. 기존 문서는 다시 보내야 한다.
+/// 문서 메타 규칙 판. 이전 저장 문서는 다시 보내야 한다.
 pub const META_RULE_VERSION: u32 = 2;
-fn default_meta_rule() -> u32 {
-    META_RULE_VERSION
-}
 #[derive(Deserialize, Debug)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
@@ -84,7 +81,7 @@ pub enum Request {
         #[serde(default)]
         scope: Option<String>,
         level_rule: u32,
-        #[serde(default = "default_meta_rule")]
+        #[serde(default)]
         meta_rule: u32,
         /// 이 열쇠 다음부터(앞 응답의 마지막 열쇠).
         #[serde(default)]
@@ -563,6 +560,7 @@ impl Handler {
                     scopes,
                     level_src,
                     level_rule,
+                    meta_rule: META_RULE_VERSION,
                 };
                 self.ingest(sid, doc_key, meta, paras, part, parts)
             }
@@ -570,10 +568,10 @@ impl Handler {
             Request::Stale {
                 scope,
                 level_rule,
-                meta_rule,
+                meta_rule: _,
                 after,
                 limit,
-            } => self.stale(sid, scope.as_deref(), level_rule, meta_rule, after.as_deref(), limit),
+            } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
             Request::NamesQuery {
                 id,
                 text,
@@ -751,13 +749,12 @@ impl Handler {
         }
         Ok(json!({"removed":ids.len(),"missing":doc_keys.len()-ids.len(),"generation":generation}))
     }
-    /// 위계를 다시 보내야 하는 문서: 범위 안이고 출처가 `py`가 아니거나 규칙 판이 `level_rule`보다 낮은 것(열쇠 순서).
+    /// 위계 또는 메타를 다시 보내야 하는 문서(열쇠 순서). 요청의 meta_rule은 호환용으로 무시한다.
     fn stale(
         &self,
         sid: &str,
         scope: Option<&str>,
         level_rule: u32,
-        meta_rule: u32,
         after: Option<&str>,
         limit: usize,
     ) -> Result<Value> {
@@ -775,7 +772,7 @@ impl Handler {
             if in_scope(wants.as_deref(), &e.meta.scopes)
                 && (e.meta.level_src != LevelSrc::Py
                     || (level_rule != u32::MAX && e.meta.level_rule < level_rule)
-                    || meta_rule < META_RULE_VERSION)
+                    || e.meta.meta_rule < META_RULE_VERSION)
             {
                 if keys.len() == limit {
                     more = true;
@@ -1464,10 +1461,21 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let h = Handler::new(d.path().to_owned());
         ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
-        let old = req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":0}));
-        assert_eq!(h.handle(SID, old).unwrap()["doc_keys"], json!(["old"]));
-        let current = req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":META_RULE_VERSION}));
-        assert_eq!(h.handle(SID, current).unwrap()["doc_keys"], json!([]));
+        let stale = || req(json!({"command":"stale","scope":"tm","level_rule":u32::MAX,"meta_rule":0}));
+        ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
+        let table = d.path().join(SID).join("doctable.jsonl");
+        let saved = std::fs::read_to_string(&table).unwrap();
+        let old_saved = saved.replace(&format!(",\"meta_rule\":{META_RULE_VERSION}"), "");
+        assert_ne!(saved, old_saved, "test fixture must represent a pre-meta_rule table");
+        std::fs::write(&table, old_saved).unwrap();
+        drop(h);
+        let h = Handler::new(d.path().to_owned());
+        assert_eq!(h.handle(SID, stale()).unwrap()["doc_keys"], json!(["old"]));
+        ingest(&h, "old", "a.txt", &["tm"], "py", 1, json!([{"p":0,"lv":8,"t":"예산"}])).unwrap();
+        assert_eq!(h.handle(SID, stale()).unwrap()["doc_keys"], json!([]));
+        drop(h);
+        let h = Handler::new(d.path().to_owned());
+        assert_eq!(h.handle(SID, stale()).unwrap()["doc_keys"], json!([]));
     }
 
     #[test]

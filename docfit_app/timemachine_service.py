@@ -38,7 +38,7 @@ THUMBNAIL_TIME_LIMIT = 5.0
 # 쉬는 시간 색인(IDLE1): 스케줄러 작업 이름과, 쉬는 시간마다 변경분을 다시 훑는 최소 간격(초)
 CONTENT_IDLE_JOB = "timemachine-content"
 CONTENT_IDLE_EVERY_SECONDS = 1800
-RECOVERY_SEED_DELAY_SECONDS = 20
+RECOVERY_SEED_DELAY_SECONDS = 30
 
 
 ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
@@ -60,6 +60,7 @@ class TimemachineService:
         self._kfind_pending = {}
         self._kfind_synced = False
         self._kfind_generation = None
+        self._kfind_recovery_requested = False
         self._engine_state = {"engine": "legacy", "engine_reason": "not_connected", "corpus": "pending"}
         self.agent = agent if agent is not None else KAgentClient()
         self.opener = opener if opener is not None else self._open_file
@@ -106,13 +107,14 @@ class TimemachineService:
         try:
             if self._closing or self._search_engine() == "legacy" or not self._settings["roots"]:
                 return
-            if int(self.kfind.status().get("docs") or 0) != 0:
-                return
-            if not self.content_index.indexed_paths(roots=self._settings["roots"]):
+            stale = self.kfind.stale("tm", 0xffffffff, limit=1).get("doc_keys", [])
+            if not stale:
                 return
             with self._content_lock:
                 self._kfind_synced = False
                 busy = self._content_state["running"] or (self._content_thread and self._content_thread.is_alive())
+                if not busy:
+                    self._kfind_recovery_requested = True
             if busy:
                 # 다른 내용 색인 작업 중이면 1분 뒤 다시(그 작업 끝의 seeding이 먼저 채우면 문서 수가 0이 아니어서 멈춤).
                 self._recovery_tries = getattr(self, "_recovery_tries", 0) + 1
@@ -186,8 +188,7 @@ class TimemachineService:
                     and self._kfind_generation is not None):
                 after = None
                 while True:
-                    page = self.kfind.stale("tm", CURRENT_HIERARCHY_SCHEMA_VERSION,
-                                            meta_rule=2, after=after)
+                    page = self.kfind.stale("tm", CURRENT_HIERARCHY_SCHEMA_VERSION, after=after)
                     batch = page.get("doc_keys", [])
                     stale_keys.update(batch)
                     if not page.get("more"):
@@ -206,7 +207,7 @@ class TimemachineService:
                 doc_count = None
             generation = initial_status.get("generation")
             generation_changed = (self._kfind_generation is not None and generation != self._kfind_generation)
-            is_recovery = bool(paths) and ((doc_count == 0) or (generation_changed and doc_count == 0))
+            is_recovery = self._kfind_recovery_requested or (bool(paths) and doc_count == 0)
             path_keys = {doc_key(path=p) for p in paths}
             for path, result in pending.items():
                 if cancel_event.is_set():
@@ -219,6 +220,7 @@ class TimemachineService:
                 paths = [p for p in paths if doc_key(path=p) in changed]
             if is_recovery and self._content_idle_ctx is not None:
                 self._content_idle_ctx.enter_background()
+            self._kfind_recovery_requested = False
             for idx, path in enumerate(paths):
                 if cancel_event.is_set() or self._closing:
                     return
