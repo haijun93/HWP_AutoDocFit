@@ -163,7 +163,15 @@ class KClipService:
         args = ["--consent"]
         if payload.get("autostart", True) is True:
             args.append("--autostart")
-        return self._lifecycle("--enable", *args)
+        res = self._lifecycle("--enable", *args)
+        if not res.get("ok"):
+            return res
+        for _ in range(100):
+            st = self.status()
+            if st.get("ok") and st.get("running"):
+                return st
+            self._sleep(0.02)
+        return self.status()
 
     def upgrade_if_stale(self):
         """앱 시작·켜기 때 번들과 실행 중인 버전을 확인한다. 데이터·설정은 건드리지 않는다."""

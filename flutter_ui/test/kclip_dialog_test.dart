@@ -663,4 +663,152 @@ void main() {
     final clear = sent.firstWhere((c) => c[0] == 'clear');
     expect((clear[1] as Map)['keep_pinned'], true);
   });
+
+  group('몽땅클립보드 켜기 후 화면 전환', () {
+    testWidgets('켜기 성공→관리 창으로 전환되고 소개 창 위젯은 사라진다', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      var isRunning = false;
+      final calls = <String>[];
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        final action = args[0] as String;
+        calls.add(action);
+        switch (action) {
+          case 'status':
+            return {
+              'ok': true,
+              'running': isRunning,
+              'available': true,
+              'consent': '복사 기록 안내문',
+              'status': isRunning ? {'items': 5, 'paused': false} : {},
+            };
+          case 'enable':
+            isRunning = true;
+            return {'ok': true, 'running': true};
+          case 'list':
+            return {'ok': true, 'items': []};
+          case 'settings_get':
+            return {'ok': true, 'settings': {}};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+
+      // 소개·동의 화면 확인
+      expect(find.text('복사 기록 안내문'), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-consent')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-clear-all')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsNothing);
+
+      // 동의 체크 및 켜기 단추 누름
+      await tester.tap(find.byKey(const ValueKey('kclip-consent')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pumpAndSettle();
+
+      // 성공 시 소개 창 위젯은 닫히고(사라지고) 관리 창 위젯이 뜸
+      expect(calls, contains('enable'));
+      expect(find.byKey(const ValueKey('kclip-consent')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-clear-all')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
+      expect(find.textContaining('기록 중 · 5개'), findsOneWidget);
+      expect(find.text('몽땅클립보드를 켰습니다.'), findsOneWidget);
+    });
+
+    testWidgets('켜기 실패→소개 창 유지 및 오류 표시', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <String>[];
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        final action = args[0] as String;
+        calls.add(action);
+        switch (action) {
+          case 'status':
+            return {
+              'ok': true,
+              'running': false,
+              'available': true,
+              'consent': '복사 기록 안내문',
+              'status': {},
+            };
+          case 'enable':
+            return {
+              'ok': false,
+              'code': 'KCLIP_INTEGRITY',
+              'message': '몽땅클립보드 프로그램 파일이 손상됐습니다.',
+            };
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+
+      // 동의 체크 후 켜기 단추 누름
+      await tester.tap(find.byKey(const ValueKey('kclip-consent')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pumpAndSettle();
+
+      // 실패 시 소개 창 유지 및 오류 문구 표시
+      expect(calls, contains('enable'));
+      expect(find.byKey(const ValueKey('kclip-consent')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-clear-all')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsNothing);
+      expect(find.text('몽땅클립보드 프로그램 파일이 손상됐습니다.'), findsOneWidget);
+    });
+
+    testWidgets('이미 켜져 있으면 진입 시 바로 기록 관리 창', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        final action = args[0] as String;
+        switch (action) {
+          case 'status':
+            return {
+              'ok': true,
+              'running': true,
+              'available': true,
+              'consent': '복사 기록 안내문',
+              'status': {'items': 10, 'paused': false},
+            };
+          case 'list':
+            return {'ok': true, 'items': []};
+          case 'settings_get':
+            return {'ok': true, 'settings': {}};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+
+      // 진입 시 바로 관리 창 표시, 소개 창 위젯은 없음
+      expect(find.byKey(const ValueKey('kclip-consent')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-clear-all')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
+      expect(find.textContaining('기록 중 · 10개'), findsOneWidget);
+    });
+  });
 }
