@@ -272,6 +272,45 @@ def _shape_direction(shape):
     return direction
 
 
+def _oriented_picture(src, drawing):
+    """한/글이 그림 개체에 적용하는 뒤집기·회전(rotateimage="1")을 그림 자체에 미리 적용한 data URL.
+
+    신구대조표·모양 1 화살표: 원본 그림은 위쪽 화살표(가로로 넓음)이고 한/글은 flip(가로·세로)과
+    rotationInfo angle=270을 적용해 세로로 긴 오른쪽 화살표로 그린다. 미리보기도 같은 결과를 그려야 한다.
+    한/글 각도는 시계 방향이다. 실패하면 원본을 그대로 돌려준다(미리보기만 영향).
+    """
+    flip = drawing.find(_HP + "flip")
+    rotation = drawing.find(_HP + "rotationInfo")
+    flip_h = flip is not None and flip.get("horizontal") == "1"
+    flip_v = flip is not None and flip.get("vertical") == "1"
+    angle = 0
+    if rotation is not None and rotation.get("rotateimage", "1") == "1":
+        try:
+            angle = round(float(rotation.get("angle", 0)) / 90) * 90 % 360
+        except ValueError:
+            angle = 0
+    if not (flip_h or flip_v or angle) or not src.startswith("data:"):
+        return src
+    try:
+        import base64
+        import io
+        from PIL import Image, ImageOps
+        head, data = src.split(",", 1)
+        image = Image.open(io.BytesIO(base64.b64decode(data)))
+        image.load()
+        if flip_h:
+            image = ImageOps.mirror(image)
+        if flip_v:
+            image = ImageOps.flip(image)
+        if angle:
+            image = image.rotate(-angle, expand=True)  # PIL은 반시계, 한/글은 시계 방향
+        out = io.BytesIO()
+        image.save(out, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+    except Exception:
+        return src
+
+
 def _cell_shapes(cell, width, height, header_info, align):
     images = (header_info or {}).get("images", {})
     shapes = []
@@ -306,9 +345,9 @@ def _cell_shapes(cell, width, height, header_info, align):
                 "text": " ".join(n.text or "" for n in drawing.iter(_HP + "t"))}
         img = next((n for n in drawing.iter() if _tag(n) == "img"), None)
         if img is not None and img.get("binaryItemIDRef") in images:
-            item["src"] = images[img.get("binaryItemIDRef")]
+            item["src"] = _oriented_picture(images[img.get("binaryItemIDRef")], drawing)
         shapes.append(item)
-    # Background images (e.g. 신구대조표's arrow) are not hp:pic objects.
+    # 칸 바탕 그림(borderFill의 image). 신구대조표 화살표는 바탕이 아니라 위의 hp:pic 개체다.
     background = (header_info or {}).get("borders", {}).get(cell.get("borderFillIDRef"), {}).get("image")
     if background:
         item = {"kind": "pic", "x": 0., "y": 0., "w": 1., "h": 1., "direction": "none",
