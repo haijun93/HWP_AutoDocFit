@@ -83,8 +83,10 @@ pub fn detect_periodic_topics(
         let med = median(gaps);
         let Some(kind) = cadence(med) else { continue; };
         let last_day = dated.last().unwrap().0;
-        let last_date = Date::from_timestamp(last_day * SECS_PER_DAY - KST_OFFSET_SECS, KST_OFFSET_SECS);
-        let next_date = Date::from_timestamp((last_day + med.round() as i64) * SECS_PER_DAY - KST_OFFSET_SECS, KST_OFFSET_SECS);
+        let (ly, lm, ld) = crate::date::days_to_ymd(last_day);
+        let last_date = Date::new(ly, lm, ld);
+        let (ny, nm, nd) = crate::date::days_to_ymd(last_day + med.round() as i64);
+        let next_date = Date::new(ny, nm, nd);
         out.push(PeriodicPrediction {
             topic_id: topic.id, topic: topic.rep_title.clone(), cadence: kind.to_string(),
             median_interval_days: med, occurrence_count: dated.len(), last_date,
