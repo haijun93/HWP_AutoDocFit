@@ -101,7 +101,7 @@
 ## 서식·조판 규칙
 
 ## 새 기능 (설계·착수 전)
-- [ ] [중] **사진첩(사진 라이브러리 전용) 기능 추가 (사용자 요청, 2026-11-15 검토 완료)**: 참고 저장소 `haijun93/all-for-all-agent`(React·TypeScript + Tauri 2 사진 관리 앱)를 검토한 결과, **코드는 가져오지 않고 기능 구성·일부 설계만 참고해 이 앱의 Rust 엔진 위에 새로 만든다.** 일반 사진 관리 앱이 아니라 **공문서 작업에 바로 이어지는 사진첩**을 목표로 한다. 참고 저장소 README가 "Picasa 재현"을 표방하므로 그 이름·화면 모양은 따르지 않는다. 현재 '사진첩'은 개발자 모드 외부 프로그램 진입점(`flutter_ui/lib/features/external_apps/external_app_launcher.dart`의 `photo_album`)뿐이다.
+- [ ] [중] **몽땅사진첩(사진 라이브러리 전용) 기능 추가 (사용자 요청, 2026-11-15 검토 완료)**: **기능 이름은 '몽땅사진첩'(사용자 결정, 2026-11-15)** — 탭·메뉴·안내 문구에 이 이름을 쓴다. 참고 저장소 `haijun93/all-for-all-agent`(React·TypeScript + Tauri 2 사진 관리 앱)를 검토한 결과, **코드는 가져오지 않고 기능 구성·일부 설계만 참고해 이 앱의 Rust 엔진 위에 새로 만든다.** 일반 사진 관리 앱이 아니라 **공문서 작업에 바로 이어지는 사진첩**을 목표로 한다. 참고 저장소 README가 "Picasa 재현"을 표방하므로 그 이름·화면 모양은 따르지 않는다. 현재 '사진첩'은 개발자 모드 외부 프로그램 진입점(`flutter_ui/lib/features/external_apps/external_app_launcher.dart`의 `photo_album`)뿐이다.
   - **참고 코드 판단**: 2단계 색인(먼저 목록 → 화면에 보일 때 썸네일, 동시 3개 제한, `src/services/photoLightningIndexer.ts`)은 설계만 참고. 썸네일 생성(`src-tauri/src/photo.rs`, `image` 라이브러리 + JSON 캐시)은 쓰지 않음 — 우리 `kagent/src/thumb.rs`·`wic.rs`(WIC 디코딩·디스크 캐시)가 더 가볍다. EXIF 추출(`exifExtractor.ts`)은 위치 없는 사진에 서울 좌표를 기본값으로 넣는 문제가 있어 쓰지 않음. 인물 보기(`aiFaceEngine.ts`)는 실제 얼굴 인식이 아닌 8×8 밝기 격자 비교라 제외(정확도·개인정보). 장소 보기는 구글 지도 외부 링크라 공공기관 망에서 막힘 — 지도 없이 장소명 묶기만 나중에 고려. 편집·크게 보기·슬라이드쇼는 화면 구성·기능 목록만 참고. 콜라주는 보류.
   - **재사용할 기존 자산**: 썸네일(kagent `thumb.rs`·`wic.rs`), 촬영일 EXIF 읽기(`klib/src/rename.rs`의 `read_exif_datetime`, `docfit_core/file_rename/datetime_rules.py`), 폴더 증분 스캔·SQLite(klib `scan.rs`·`db.rs`), 검색(klib 색인·몽땅검색 kfind), 날짜별 보기(타임머신 달력).
   - **1단계(MVP)**: 사진 폴더 등록·증분 스캔 → 연·월 묶음 격자(썸네일은 화면에 보일 때만, 동시 생성 수 제한) → 크게 보기·키보드 넘기기(좌우·Esc) → 즐겨찾기·태그 → 파일명·날짜·태그 검색. **EXIF 회전 방향(Orientation, 0x0112)을 반드시 반영**(세로 사진이 눕지 않게). 원본은 절대 고치지 않는다.
@@ -109,7 +109,7 @@
   - **3단계(선택)**: 자르기·간단 보정, 장소명 묶기(지도 없이), 슬라이드쇼. 인물 인식은 넣지 않는다.
   - **구조**: 엔진은 Rust로 klib에 `photo_*` 명령(스캔, EXIF 촬영일·회전 방향·카메라·GPS, 썸네일, 태그 DB)을 추가한다. 화면을 Flutter에서 Rust 네이티브로 바꾸는 전환(UI2~UI10)이 진행 중이므로 엔진을 분리해 화면만 갈아 끼우게 한다. **외부 라이브러리는 늘리지 않는다**(WIC + 직접 만든 EXIF 파서, GitLab 보안 검사 부담 회피). 규모 추정: 1단계는 엔진 명령 6~8개, 화면 2개(격자, 크게 보기).
   - **화면 위치(사용자 결정, 2026-11-15)**: **앱 안의 새 탭**으로 둔다(사진대지 연계에 유리). 단축키로 뜨는 별도 창은 만들지 않는다. 탭 추가 위치는 앱 왼쪽 탭 목록(`flutter_ui/lib/features/workspace/tab_navigation_shell.dart`)이며, Rust 네이티브 화면 전환 뒤에도 같은 탭으로 옮긴다.
-  - **기존 메뉴 처리(사용자 결정, 2026-11-15, 반영 완료)**: 개발자 모드 외부 프로그램의 '사진첩'(mongdangview, `photo_album`)은 그대로 두고 이름만 **'사진첩2'**로 바꿨다(새 사진첩 탭과 구별). 내부 식별자 `photo_album`과 저장된 실행 파일 경로 설정은 그대로다. 바꾼 곳: `flutter_ui/lib/features/external_apps/external_app_launcher.dart`, `docfit_app/external_apps_service.py`, 앱 정보의 연결 프로그램 목록(`flutter_ui/lib/features/settings/idiom_panel.dart`), 관련 주석과 Python·Flutter 시험. Python 시험 통과, Flutter 시험은 이 클라우드에 Flutter가 없어 CI에서 확인.
+  - **기존 메뉴 처리(사용자 결정, 2026-11-15, 반영 완료)**: 개발자 모드 외부 프로그램의 '사진첩'(mongdangview, `photo_album`)은 그대로 두고 이름만 **'사진첩2'**로 바꿨다(새 몽땅사진첩 탭과 구별). 내부 식별자 `photo_album`과 저장된 실행 파일 경로 설정은 그대로다. 바꾼 곳: `flutter_ui/lib/features/external_apps/external_app_launcher.dart`, `docfit_app/external_apps_service.py`, 앱 정보의 연결 프로그램 목록(`flutter_ui/lib/features/settings/idiom_panel.dart`), 관련 주석과 Python·Flutter 시험. Python 시험 통과, Flutter 시험은 이 클라우드에 Flutter가 없어 CI에서 확인.
 - [ ] [중] MCP(AI 답변 → 서식 적용 HWPX): 사용자 서식 프로필, 한/글 내어쓰기·최종검수, 장시간 작업 취소, 실기 연결·보안 시험(`docs/MCP_INTEGRATION_DESIGN.md`).
 
 ## 보안
