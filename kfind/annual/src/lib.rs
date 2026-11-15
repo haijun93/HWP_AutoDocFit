@@ -7,6 +7,7 @@
 
 pub mod cluster;
 pub mod date;
+pub mod document_date;
 pub mod norm;
 pub mod series;
 pub mod sim;
@@ -16,6 +17,9 @@ pub use cluster::{Topic, UnionFind, cluster_topics};
 pub use date::{
     Date, IsoWeek, KST_OFFSET_SECS, Period, SECS_PER_DAY, days_to_iso_week, days_to_weekday,
     days_to_ymd, timestamp_to_iso_week, timestamp_to_weekday, ymd_to_days,
+};
+pub use document_date::{
+    DateContext, DocumentDateCandidate, extract_document_dates, preferred_document_date,
 };
 pub use norm::{extract_extension, normalize_name, strip_extension};
 pub use series::{
@@ -206,7 +210,11 @@ pub fn analyze(docs: &[Doc], period: Option<Period>, threshold: Option<f64>) -> 
             // 주제 안의 세부 버전줄 단위 검사
             for vl in &version_lines {
                 // 해당 주제에 속한 버전줄만
-                if vl.doc_indices.iter().all(|idx| topic.doc_indices.contains(idx)) {
+                if vl
+                    .doc_indices
+                    .iter()
+                    .all(|idx| topic.doc_indices.contains(idx))
+                {
                     if let Some(task) = detect_periodic_task_for_group(
                         topic.id,
                         &vl.name_norm,
@@ -258,11 +266,41 @@ mod tests {
         let old_ts = Date::new(2025, 12, 1).to_timestamp(KST_OFFSET_SECS);
 
         let docs = vec![
-            Doc::new("2026-01-15_월간_업무_보고_v1.hwpx", d1_ts, d1_ts, "1월 업무보고", vec!["주요 실적".into()]),
-            Doc::new("2026-02-15_월간_업무_보고_v2.hwpx", d2_ts, d2_ts, "2월 업무보고", vec!["주요 실적".into()]),
-            Doc::new("2026-03-17_월간_업무_보고_최종.hwpx", d3_ts, d3_ts, "3월 업무보고", vec!["주요 실적".into()]),
-            Doc::new("디지털 혁신 추진 계획서.docx", plan1_ts, plan1_ts, "추진 계획서", vec!["추진 배경".into()]),
-            Doc::new("디지털 혁신 추진 계획서_수정본.docx", plan2_ts, plan2_ts, "추진 계획서 수정", vec!["추진 배경".into()]),
+            Doc::new(
+                "2026-01-15_월간_업무_보고_v1.hwpx",
+                d1_ts,
+                d1_ts,
+                "1월 업무보고",
+                vec!["주요 실적".into()],
+            ),
+            Doc::new(
+                "2026-02-15_월간_업무_보고_v2.hwpx",
+                d2_ts,
+                d2_ts,
+                "2월 업무보고",
+                vec!["주요 실적".into()],
+            ),
+            Doc::new(
+                "2026-03-17_월간_업무_보고_최종.hwpx",
+                d3_ts,
+                d3_ts,
+                "3월 업무보고",
+                vec!["주요 실적".into()],
+            ),
+            Doc::new(
+                "디지털 혁신 추진 계획서.docx",
+                plan1_ts,
+                plan1_ts,
+                "추진 계획서",
+                vec!["추진 배경".into()],
+            ),
+            Doc::new(
+                "디지털 혁신 추진 계획서_수정본.docx",
+                plan2_ts,
+                plan2_ts,
+                "추진 계획서 수정",
+                vec!["추진 배경".into()],
+            ),
             Doc::new("2025년도_과거문서.hwp", old_ts, old_ts, "과거 보고", vec![]),
         ];
 
@@ -283,7 +321,10 @@ mod tests {
             .periodic_tasks
             .iter()
             .find(|t| t.periodicity == Periodicity::Monthly);
-        assert!(monthly_task.is_some(), "Monthly recurring task must be detected");
+        assert!(
+            monthly_task.is_some(),
+            "Monthly recurring task must be detected"
+        );
 
         // 통계 검증: 1, 2, 3월에 작업 기록이 있어야 함
         assert_eq!(report.stats.total_docs, 5);

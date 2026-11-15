@@ -1,6 +1,6 @@
 //! 주제 묶기 모듈 (Union-Find, 대표 문서 및 2글자 핵심어 추출).
-use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::sim::{DocFeatures, calculate_weighted_similarity};
 
@@ -134,7 +134,11 @@ pub fn cluster_topics(
                     sum_sim += sim;
                     count += 1;
                 }
-                let avg = if count > 0 { sum_sim / count as f64 } else { 0.0 };
+                let avg = if count > 0 {
+                    sum_sim / count as f64
+                } else {
+                    0.0
+                };
                 if avg > max_avg_sim {
                     max_avg_sim = avg;
                     best_doc = i;

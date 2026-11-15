@@ -1,6 +1,6 @@
 //! 버전 줄(Version Line) 및 정기 업무(Periodic Task) 탐지 모듈.
-use std::collections::{BTreeMap, HashMap};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 
 use crate::date::{Date, KST_OFFSET_SECS, SECS_PER_DAY};
 
@@ -201,7 +201,10 @@ mod tests {
         let lines = detect_version_lines(&indices, &name_norms, &created_ts);
         assert_eq!(lines.len(), 2);
 
-        let report_line = lines.iter().find(|l| l.name_norm == "주간업무보고").unwrap();
+        let report_line = lines
+            .iter()
+            .find(|l| l.name_norm == "주간업무보고")
+            .unwrap();
         // 1000초인 인덱스 1이 인덱스 0보다 먼저 와야 함
         assert_eq!(report_line.doc_indices, vec![1, 0]);
     }
