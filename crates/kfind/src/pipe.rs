@@ -28,7 +28,10 @@ use windows_sys::Win32::{
 };
 pub const MAX_REQUEST: usize = 65536;
 /// DocumentMeta가 실제로 저장되기 시작한 판. 기존 문서는 다시 보내야 한다.
-pub const META_RULE_VERSION: u32 = 1;
+pub const META_RULE_VERSION: u32 = 2;
+fn default_meta_rule() -> u32 {
+    META_RULE_VERSION
+}
 #[derive(Deserialize, Debug)]
 #[serde(tag = "command", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
@@ -81,7 +84,7 @@ pub enum Request {
         #[serde(default)]
         scope: Option<String>,
         level_rule: u32,
-        #[serde(default)]
+        #[serde(default = "default_meta_rule")]
         meta_rule: u32,
         /// 이 열쇠 다음부터(앞 응답의 마지막 열쇠).
         #[serde(default)]
@@ -704,9 +707,14 @@ impl Handler {
         }
         let id = s.table.id_for(&doc_key);
         let n = sents.len();
+        let file_type = std::path::Path::new(&meta.path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .filter(|ext| !ext.is_empty());
         let index_meta = kfind_core::DocumentMeta {
             path: Some(meta.path.clone()),
-            file_type: None, // kfind-core derives a lowercase extension from path.
+            file_type,
         };
         let generation = self.write(sid, s, |w| {
             w.add_document_with_meta(id, meta.date, &index_meta, &sents)
@@ -766,7 +774,7 @@ impl Handler {
         for (k, e) in s.table.iter_after(after) {
             if in_scope(wants.as_deref(), &e.meta.scopes)
                 && (e.meta.level_src != LevelSrc::Py
-                    || e.meta.level_rule < level_rule
+                    || (level_rule != u32::MAX && e.meta.level_rule < level_rule)
                     || meta_rule < META_RULE_VERSION)
             {
                 if keys.len() == limit {
@@ -1270,7 +1278,9 @@ mod tests {
         ingest(&h, "txt", r"D:\자료\보고서.txt", &["tm"], "py", 1, p.clone()).unwrap();
         ingest(&h, "pdf", r"D:\자료\하위\보고서.pdf", &["tm"], "py", 2, p).unwrap();
         assert_eq!(keys(&query(&h, "예산", json!({"filters":{"ext":["txt"]}}))), ["txt"]);
-        assert_eq!(keys(&query(&h, "예산", json!({"filters":{"path":["자료"]}}))), ["txt", "pdf"]);
+        let mut in_folder = keys(&query(&h, "예산", json!({"filters":{"path":["자료"]}})));
+        in_folder.sort();
+        assert_eq!(in_folder, ["pdf", "txt"]);
         assert_eq!(keys(&query(&h, "예산", json!({"filters":{"path":["하위"]}}))), ["pdf"]);
     }
 

@@ -187,7 +187,7 @@ class TimemachineService:
                 after = None
                 while True:
                     page = self.kfind.stale("tm", CURRENT_HIERARCHY_SCHEMA_VERSION,
-                                            meta_rule=1, after=after)
+                                            meta_rule=2, after=after)
                     batch = page.get("doc_keys", [])
                     stale_keys.update(batch)
                     if not page.get("more"):
