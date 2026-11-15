@@ -27,7 +27,16 @@ class TableCatalogTests(unittest.TestCase):
         self.assertGreaterEqual(catalog["template_count"], 34)
         categories = {item["name"]: item for item in catalog["categories"]}
         self.assertEqual(len(categories["부연설명"]["templates"]), 6)
-        self.assertEqual(len(categories["추진절차(가로)"]["templates"]), 5)
+        process_templates = categories["\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C)"]["templates"]
+        self.assertEqual(len(process_templates), 8)
+        self.assertEqual([(item["rows"], item["cols"]) for item in process_templates[-3:]], [(5, 3), (4, 13), (11, 5)])
+        self.assertEqual([item["id"] for item in process_templates], [f"6:{n}" for n in range(1, 9)])
+        self.assertEqual(process_templates[-3]["cells"][0], ["\u2460 1\ub2e8\uacc4", "\u25b6", "\u2461 2\ub2e8\uacc4"])
+        self.assertEqual(process_templates[-2]["cells"][0][0], "\uacf5\ubaa8")
+        self.assertEqual(process_templates[-2]["cells"][1][1], "\uc608\ube44\uac80\ud1a0")
+        self.assertEqual(process_templates[-1]["cells"][0], ["\u2460 1\ub2e8\uacc4", "\u25b6", "\u2461 2\ub2e8\uacc4", "\u25b6", "\u2462 3\ub2e8\uacc4"])
+        self.assertEqual(process_templates[-1]["cells"][5][4], "\u25bc")
+        self.assertEqual(process_templates[-1]["cells"][6], ["\u2465 6\ub2e8\uacc4", "\u25c0", "\u2464 5\ub2e8\uacc4", "\u25c0", "\u2463 4\ub2e8\uacc4"])
         ids = [template["id"] for item in catalog["categories"] for template in item["templates"]]
         self.assertEqual(len(ids), len(set(ids)))
 

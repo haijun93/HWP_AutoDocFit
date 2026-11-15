@@ -674,6 +674,19 @@ class C13TableUnitsTests(unittest.TestCase):
         for number in range(1, 6):
             self.check_axes(f"추진절차(가로) · 모양 {number}", ("row", "col"))
 
+        for number, axes in ((6, ("col",)), (8, ("col",)), (7, ("row",))):
+            name = f"\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \xb7 \uBAA8\uC591 {number}"
+            record = next(item for item in catalog._scan(SOURCE) if item["name"] == name)
+            for axis in axes:
+                p = units.plan_for(record)[axis]
+                self.assertIsNotNone(p)
+                for target in (p["count"], p["count"] + 1, p["min"]):
+                    _, table, _ = units._load(record["id"], SOURCE)
+                    units.resize_table(table, units.plan_for(record), **{axis + "_count": target})
+                    self.grid(table, width=axis == "col")
+            if number == 7:
+                self.assertIsNone(units.plan_for(record)["col"])
+
     def test_c13_03_both_process_axes(self):
         self.check_axes("추진절차(가로세로) · 모양 1", ("row", "col"))
         for source in self.sources:

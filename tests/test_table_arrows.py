@@ -24,7 +24,10 @@ class TableArrowsTest(unittest.TestCase):
         for record in flow:
             found = table_arrows.detect(record)
             self.assertTrue(found, record["name"])
-            self.assertEqual(set(found.values()), {"right"}, record["name"])
+            if record["id"] == "6:8":
+                self.assertEqual(found, {(0, 1): "right", (0, 3): "right"})
+            else:
+                self.assertEqual(set(found.values()), {"right"}, record["name"])
         # 화살표가 없는 표는 화살표 고르기를 보이지 않는다.
         plain = next(r for n, r in records.items() if n.startswith("일정표(연간)"))
         self.assertEqual(table_arrows.detect(plain), {})

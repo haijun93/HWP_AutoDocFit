@@ -26,6 +26,8 @@ UNIT_MAX = 50
 # 50개로 늘리면 표가 깨지는 축(칸 폭이 원래 가장 좁은 칸의 60%·2.5mm 아래로 줄거나 배치 불가)은 30 -> 15 -> 그 아래
 # 순서로 실측해 정한 값(2026-10-23, 내장·사용자 표 서식모음 모두 측정, 사용자 지시).
 AXIS_CAPS = {
+    ("\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \u00b7 \uBAA8\uC591 6", "col"): 15,
+    ("\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \u00b7 \uBAA8\uC591 8", "col"): 15,
     ("기본형(가로) · 모양 1", "col"): 15,
     ("분야별과제표 · 모양 1", "col"): 15,
     ("일정표(연간) · 모양 1", "col"): 13,
@@ -142,6 +144,9 @@ def _plans():
         add(f"추진절차(가로) · 모양 {number}",
             (0, 1, 1) if number == 1 else (1, 1, 1 if number == 5 else 2),
             (0, 1, count, 1))
+    add("\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \u00b7 \uBAA8\uC591 6", col=(0, 2, 1))
+    add("\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \u00b7 \uBAA8\uC591 7", row=(2, 1, 2), col=None)
+    add("\uCD94\uC9C4\uC808\uCC28(\uAC00\uB85C) \u00b7 \uBAA8\uC591 8", col=(0, 2, 2))
     # v3.0 replacement source: 3 box rows × 2 box columns, with arrows in separator cells.
     add("추진절차(가로세로) · 모양 1", (0, 1, 3, 1), (0, 1, 2, 1))
     result["추진절차(가로세로) · 모양 1"]["row"]["kind"] = "grid_flow"

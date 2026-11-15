@@ -70,6 +70,9 @@ def detect(record) -> dict:
         narrow = width <= total_w * 0.15 or height <= total_h * 0.2
         key = (int(cell["row"]), int(cell["col"]))
         if len(text) == 1 and text in _KNOWN:
+            # Preserve the zigzag-flow left and downward markers as template text.
+            if text in ("\u25c0", "\u25bc"):
+                continue
             found[key] = _CHAR_DIRECTION.get(text, "right")
         elif not text and cell.get("shapes") and narrow:
             # 도형에 방향이 있으면 그것을, 없으면 칸 모양을 따른다.
