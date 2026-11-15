@@ -154,78 +154,90 @@ class _DocGridScreenState extends State<DocGridScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(56),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            border: Border(
-              bottom: BorderSide(
-                color: Theme.of(context).dividerColor.withValues(alpha: 0.2),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final content = Scaffold(
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(56),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(context).dividerColor.withValues(alpha: 0.2),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  FilledButton.icon(
+                    key: const ValueKey('docGridPickFolderButton'),
+                    onPressed: _loading ? null : _pickFolder,
+                    icon: const Icon(Icons.folder_open, size: 18),
+                    label: const Text('폴더 선택'),
+                  ),
+                  const SizedBox(width: 12),
+                  if (_currentFolder != null) ...[
+                    Expanded(
+                      child: Row(
+                        children: [
+                          const Icon(Icons.folder_outlined, size: 18, color: Colors.grey),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              _currentFolder!,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primaryContainer,
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${_documents.length}개 문서',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Theme.of(context).colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '새로고침',
+                      icon: const Icon(Icons.refresh, size: 20),
+                      onPressed: _loading ? null : () => _loadFolder(_currentFolder!),
+                    ),
+                  ] else
+                    const Expanded(
+                      child: Text(
+                        '폴더를 선택하면 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF) 목록과 썸네일이 격자로 표시됩니다.',
+                        style: TextStyle(color: Colors.grey, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
-          child: Row(
-            children: [
-              FilledButton.icon(
-                key: const ValueKey('docGridPickFolderButton'),
-                onPressed: _loading ? null : _pickFolder,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('폴더 선택'),
-              ),
-              const SizedBox(width: 12),
-              if (_currentFolder != null) ...[
-                Expanded(
-                  child: Row(
-                    children: [
-                      const Icon(Icons.folder_outlined, size: 18, color: Colors.grey),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          _currentFolder!,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.primaryContainer,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Text(
-                          '${_documents.length}개 문서',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Theme.of(context).colorScheme.onPrimaryContainer,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  tooltip: '새로고침',
-                  icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: _loading ? null : () => _loadFolder(_currentFolder!),
-                ),
-              ] else
-                const Expanded(
-                  child: Text(
-                    '폴더를 선택하면 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF) 목록과 썸네일이 격자로 표시됩니다.',
-                    style: TextStyle(color: Colors.grey, fontSize: 13),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-      body: _buildBody(),
+          body: _buildBody(),
+        );
+
+        if (!constraints.hasBoundedHeight) {
+          return SizedBox(
+            height: 600,
+            child: content,
+          );
+        }
+        return content;
+      },
     );
   }
 
@@ -334,7 +346,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Scrollbar(
+        final grid = Scrollbar(
           child: GridView.builder(
             key: const ValueKey('docGridView'),
             padding: const EdgeInsets.all(16),
@@ -361,6 +373,14 @@ class _DocGridScreenState extends State<DocGridScreen> {
             },
           ),
         );
+
+        if (!constraints.hasBoundedHeight) {
+          return SizedBox(
+            height: 600,
+            child: grid,
+          );
+        }
+        return grid;
       },
     );
   }
