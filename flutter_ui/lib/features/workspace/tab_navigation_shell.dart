@@ -6,13 +6,14 @@ import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
 
-/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7)을 두고 파일변환(8)을 맨 끝에 둔다.
+/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7), 문서뷰폴더(8)를 두고 파일변환(9)을 맨 끝에 둔다.
 const kTabPaint = 5;
 const kTabPhotoEdit = 5;
 const kTabFileRename = 6;
 const kTabTimemachine = 7;
-const kTabFileConversion = 8;
-const kTabCount = 9;
+const kTabDocGrid = 8;
+const kTabFileConversion = 9;
+const kTabCount = 10;
 
 /// 왼쪽 메뉴 폭. 저장값이 없으면 창 폭이 기준 이상일 때 펼친다.
 const kSidebarCollapsedWidth = 56.0;
@@ -39,7 +40,7 @@ class WorkspaceTabScope extends InheritedWidget {
 
   final VoidCallback goHome;
 
-  /// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 파일변환)로 이동한다.
+  /// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 문서뷰폴더·9 파일변환)로 이동한다.
   final ValueChanged<int> selectTab;
 
   static WorkspaceTabScope? maybeOf(BuildContext context) =>
@@ -77,6 +78,7 @@ class TabNavigationShell extends StatefulWidget {
     required this.paint,
     required this.fileRename,
     required this.timemachine,
+    this.docGrid = const SizedBox(),
     this.initialIndex = 0,
     this.onTabChanged,
     this.trailing,
@@ -103,6 +105,7 @@ class TabNavigationShell extends StatefulWidget {
   /// 탭 6: 파일이름(여러 파일 이름을 규칙으로 한꺼번에 바꾸기).
   final Widget fileRename;
   final Widget timemachine;
+  final Widget docGrid;
   final int initialIndex;
 
   /// 메뉴에 보이지 않고 화면도 만들지 않는 탭.
@@ -167,6 +170,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '붙임사진 편집',
     '파일명 일괄변경',
     '몽땅검색',
+    '문서뷰폴더',
     // 파일변환은 항상 맨 끝(2026-10-30 사용자 지시).
     '파일변환',
   ];
@@ -179,6 +183,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     Icons.brush_outlined,
     Icons.drive_file_rename_outline,
     Icons.history_toggle_off,
+    Icons.grid_view_outlined,
     Icons.transform,
   ];
 
@@ -250,6 +255,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       widget.paint,
       widget.fileRename,
       widget.timemachine,
+      widget.docGrid,
       widget.fileConversion,
     ];
     _built = true;
@@ -276,7 +282,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
             for (var i = 0; i < kTabCount; i++)
               LogicalKeySet(
                 LogicalKeyboardKey.control,
-                LogicalKeyboardKey(LogicalKeyboardKey.digit1.keyId + i),
+                i == 9
+                    ? LogicalKeyboardKey.digit0
+                    : LogicalKeyboardKey(LogicalKeyboardKey.digit1.keyId + i),
               ): _SelectWorkspaceTabIntent(i),
           },
           child: Actions(

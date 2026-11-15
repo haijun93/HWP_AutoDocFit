@@ -11,6 +11,7 @@ import '../library/library_screen.dart';
 import '../notebook/notebook_api.dart';
 import '../notebook/notebook_screen.dart';
 import '../external_apps/external_app_launcher.dart';
+import '../doc_grid/doc_grid_screen.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import 'tab_navigation_shell.dart';
@@ -122,7 +123,21 @@ class TimemachineAdapter extends StatelessWidget {
   );
 }
 
-/// Workspace adapter for Tab 9 (always last): File Format Conversion & Merge
+/// Workspace adapter for Tab 9: 문서뷰폴더 (Document thumbnail grid view).
+class DocGridAdapter extends StatelessWidget {
+  const DocGridAdapter({super.key, required this.api, this.directoryPicker});
+
+  final ApiCall api;
+  final Future<String?> Function()? directoryPicker;
+
+  @override
+  Widget build(BuildContext context) => KeyedSubtree(
+    key: const ValueKey('tab-doc-grid-adapter'),
+    child: DocGridScreen(api: api, directoryPicker: directoryPicker),
+  );
+}
+
+/// Workspace adapter for Tab 10 (always last): File Format Conversion & Merge
 class FileConversionAdapter extends StatelessWidget {
   const FileConversionAdapter({super.key, required this.child});
 
@@ -148,10 +163,11 @@ class IntegratedWorkspace extends StatelessWidget {
     this.onTabChanged,
     this.trailing,
     this.savedSidebarExpanded,
-      this.onSidebarExpandedChanged,
-      this.developerMode = false,
+    this.onSidebarExpandedChanged,
+    this.developerMode = false,
     this.libraryScreen,
     this.notebookScreen,
+    this.docGridScreen,
   });
 
   final Widget? trailing;
@@ -160,6 +176,7 @@ class IntegratedWorkspace extends StatelessWidget {
   final bool developerMode;
   final Widget? libraryScreen;
   final Widget? notebookScreen;
+  final Widget? docGridScreen;
   final ApiCall api;
   final Widget documentEditorWidget;
   final Widget fileConversionWidget;
@@ -194,6 +211,7 @@ class IntegratedWorkspace extends StatelessWidget {
       paint: PaintAdapter(api: api, photoPasteTrigger: photoPasteTrigger),
       fileRename: FileRenameAdapter(api: api),
       timemachine: _LazyTimemachineAdapter(api: api),
+      docGrid: docGridScreen ?? _LazyDocGridAdapter(api: api),
     );
   }
 }
@@ -215,6 +233,27 @@ class _LazyTimemachineAdapterState extends State<_LazyTimemachineAdapter> {
     if (active && !_visited) _visited = true;
     return _visited
         ? TimemachineAdapter(api: widget.api)
+        : const SizedBox.expand();
+  }
+}
+
+class _LazyDocGridAdapter extends StatefulWidget {
+  const _LazyDocGridAdapter({required this.api});
+  final ApiCall api;
+
+  @override
+  State<_LazyDocGridAdapter> createState() => _LazyDocGridAdapterState();
+}
+
+class _LazyDocGridAdapterState extends State<_LazyDocGridAdapter> {
+  bool _visited = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = TickerMode.valuesOf(context).enabled;
+    if (active && !_visited) _visited = true;
+    return _visited
+        ? DocGridAdapter(api: widget.api)
         : const SizedBox.expand();
   }
 }

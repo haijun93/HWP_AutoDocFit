@@ -36,7 +36,8 @@ void main() {
       paint: _page('그림판 화면'),
       fileRename: _page('파일이름 화면'),
       timemachine: _page('몽땅검색 화면'),
-      initialIndex: 8,
+      docGrid: _page('문서뷰폴더 화면'),
+      initialIndex: 9,
     )));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('back-파일변환 화면')));
@@ -175,17 +176,18 @@ void main() {
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
           timemachine: _page('몽땅검색 화면'),
+          docGrid: _page('문서뷰폴더 화면'),
         ),
       ),
     );
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-8')));
-    await tester.tap(find.byKey(const Key('workspaceTab-8')));
+    await tester.ensureVisible(find.byKey(const Key('workspaceTab-9')));
+    await tester.tap(find.byKey(const Key('workspaceTab-9')));
     await tester.pumpAndSettle();
     expect(
       tester
           .widget<WorkspaceTabBar>(find.byType(WorkspaceTabBar))
           .selectedIndex,
-      8, // 파일변환은 항상 맨 끝
+      9, // 파일변환은 항상 맨 끝
     );
     expect(find.text('파일변환 화면'), findsOneWidget);
   });
