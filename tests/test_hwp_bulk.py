@@ -249,6 +249,88 @@ class ConvertTests(unittest.TestCase):
         self.assertEqual(len(state.failures), 1)
         self.assertEqual(state.as_dict()["failures"][0]["message"], hwp_bulk.MSG_PASSWORD)
 
+    def test_large_image_hwpx_passes_result_validation_while_external_blocked(self):
+        """그림 많은 큰 합성 HWPX: 한도를 작게 주입했을 때 결과 검증(convert_one)은 통과하고 외부 입력 검증은 차단된다."""
+        from docfit_core.hwpx import HwpxLimits, HwpxSecurityError, validate_hwpx
+
+        class FakeHwpLargeImages(FakeHwp):
+            def SaveAs(self, path, fmt, arg):
+                with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+                    z.writestr("mimetype", "application/hwp+zip")
+                    z.writestr("Contents/header.xml", "<hh:head xmlns:hh='urn:head' />")
+                    z.writestr("Contents/section0.xml", "<hs:sec xmlns:hs='urn:section' />")
+                    for i in range(5):
+                        z.writestr(f"BinData/image{i}.jpg", b"X" * 2000)
+                return True
+
+        hwp_file = self._file("큰그림문서.hwp")
+        app = FakeHwpLargeImages()
+        small_limits = HwpxLimits(max_total_size=1024)
+
+        # 1) convert_one 실행 -> 방금 한/글이 만든 결과물이므로 압축 폭탄 한도 대신 구조 검증을 적용하여 통과!
+        with mock.patch("docfit_core.hwpx.HwpxLimits", return_value=small_limits):
+            res = hwp_bulk.convert_one(app, hwp_file, None)
+        self.assertEqual(res.status, "success")
+        self.assertEqual(res.kind, hwp_bulk.KIND_NORMAL)
+        out_hwpx = Path(res.output)
+        self.assertTrue(out_hwpx.exists())
+
+        # 2) 반면 외부 입력 검증(validate_hwpx 기본/strict 모드에 작은 한도 주입)은 여전히 막힘!
+        with self.assertRaises(HwpxSecurityError) as ctx:
+            validate_hwpx(out_hwpx, limits=small_limits)
+        self.assertIn("압축 해제 예상 크기", str(ctx.exception))
+
+    def test_cloud_placeholder_is_skipped_without_downloading(self):
+        """클라우드 전용(온라인 전용) 파일은 내용을 내려받지 않고 건너뛴다."""
+        cloud_file = self._file("클라우드.hwp")
+        app = FakeHwp()
+        with mock.patch("docfit_core.hwp_bulk.is_cloud_placeholder", return_value=True):
+            result = hwp_bulk.convert_one(app, cloud_file, None)
+        self.assertEqual(result.status, "skipped")
+        self.assertEqual(result.kind, hwp_bulk.KIND_CLOUD)
+        self.assertEqual(result.message, hwp_bulk.MSG_CLOUD)
+        self.assertEqual(app.calls, [])
+
+    def test_locked_file_auto_retries_at_end_of_bulk(self):
+        """잠김(다른 프로그램 사용 중) 문서는 일괄 변환 끝에 1회 자동 재시도되어 성공 시 반영된다."""
+        locked_file = self._file("잠김문서.hwp")
+
+        attempts = {"count": 0}
+        orig_classify = hwp_bulk.classify
+
+        def fake_classify(path):
+            if str(path) == str(locked_file):
+                attempts["count"] += 1
+                if attempts["count"] == 1:
+                    exc = OSError("Sharing violation")
+                    exc.winerror = 32
+                    raise exc
+            return orig_classify(path)
+
+        state = hwp_bulk.BulkState()
+        with mock.patch("docfit_core.hwp_bulk.classify", side_effect=fake_classify):
+            with mock.patch.object(hwp_bulk, "hwp_pids", return_value=set()):
+                results = hwp_bulk.run_bulk([locked_file], app_factory=FakeHwp, state=state,
+                                             stop=threading.Event(), report_dir=self.root / "report")
+
+        self.assertEqual(state.succeeded, 1)
+        self.assertEqual(state.failed, 0)
+        self.assertEqual(len(state.failures), 0)
+        self.assertEqual(results[0].status, "success")
+        self.assertEqual(results[0].kind, hwp_bulk.KIND_NORMAL)
+
+    def test_retry_failures_runs_only_failed_sources(self):
+        """실패한 파일 목록만 대상으로 다시 일괄 변환을 돌릴 수 있다."""
+        fail_file = self._file("재시도시작.hwp")
+        failures = [{"source": str(fail_file), "message": "실패", "kind": hwp_bulk.KIND_PASSWORD}]
+        state = hwp_bulk.BulkState()
+        with mock.patch.object(hwp_bulk, "hwp_pids", return_value=set()):
+            results = hwp_bulk.retry_failures(failures, app_factory=FakeHwp, state=state,
+                                               stop=threading.Event(), report_dir=self.root / "report")
+        self.assertEqual(state.succeeded, 1)
+        self.assertEqual(state.failed, 0)
+        self.assertEqual(results[0].status, "success")
+
 
 if __name__ == "__main__":
     unittest.main()

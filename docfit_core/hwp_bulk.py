@@ -44,6 +44,8 @@ KIND_NO_PERMISSION = "쓰기 권한 없음"
 KIND_PATH_TOO_LONG = "경로 길이 초과"
 KIND_EXISTING = "이미 있음"
 KIND_NORMAL = "일반"
+KIND_LOCKED = "잠김"
+KIND_CLOUD = "클라우드 전용"
 
 MSG_PASSWORD = "암호 문서: 입력한 암호가 맞지 않거나 암호를 넣지 않았습니다. '암호'칸에 문서 암호를 넣고 다시 변환하세요."
 MSG_DRM = "이 PC의 보안 프로그램에서 해제한 뒤 다시 변환"
@@ -54,6 +56,8 @@ MSG_PATH_TOO_LONG = "파일 경로 길이가 제한을 초과했습니다."
 MSG_CORRUPT = "파일이 손상되어 열 수 없습니다."
 MSG_HWP3_FAIL = "HWP 3.0 문서: 한/글에서 열지 못했거나 변환할 수 없습니다."
 MSG_EXISTING = "이미 HWPX가 있어 건너뛰었습니다."
+MSG_LOCKED = "다른 프로그램(한/글 등)이 문서를 사용 중이어서 열 수 없습니다(잠김)."
+MSG_CLOUD = "클라우드 전용(온라인 전용) 파일이어서 내려받지 않고 건너뛰었습니다."
 
 
 @dataclass
@@ -98,6 +102,61 @@ def read_hwp5_header(path: str | Path) -> HwpHeaderInfo | None:
                 )
         pos = idx + len(target)
     return None
+
+
+def is_cloud_placeholder(path: str | Path) -> bool:
+    """OneDrive 등 클라우드 전용(온라인 전용, 자리표시자) 파일인지 확인."""
+    try:
+        p = Path(path)
+        info = p.stat(follow_symlinks=False)
+    except OSError:
+        return False
+    attrs = getattr(info, "st_file_attributes", 0)
+    # 0x00400000: FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+    # 0x00040000: FILE_ATTRIBUTE_RECALL_ON_OPEN
+    # 0x00001000: FILE_ATTRIBUTE_OFFLINE
+    if attrs & (0x00400000 | 0x00040000 | 0x00001000):
+        return True
+    return False
+
+
+def check_read_error(path: str | Path, exc: Exception | None = None) -> tuple[str, str]:
+    """파일 읽기/접근 실패 시 구체적인 종류(kind)와 안내 문구(message)를 판정한다.
+
+    원인 후보 (TODO 2026-11-15 ④): 잠김·권한·클라우드·경로 길이.
+    """
+    p = Path(path)
+    if is_cloud_placeholder(p):
+        return KIND_CLOUD, MSG_CLOUD
+
+    if exc is None:
+        try:
+            with open(p, "rb") as stream:
+                stream.read(32)
+            return KIND_NORMAL, ""
+        except Exception as e:
+            exc = e
+
+    winerror = getattr(exc, "winerror", None)
+    if winerror in (32, 33):  # ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION
+        return KIND_LOCKED, MSG_LOCKED
+
+    errno_val = getattr(exc, "errno", None)
+    import errno
+    if errno_val in (errno.EACCES,):
+        return KIND_NO_PERMISSION, MSG_PERMISSION
+    if errno_val in (errno.EBUSY, getattr(errno, "ETXTBSY", None)):
+        return KIND_LOCKED, MSG_LOCKED
+
+    msg = str(exc).lower() if exc else ""
+    if "sharing violation" in msg or "locked" in msg or "busy" in msg or "used by another process" in msg:
+        return KIND_LOCKED, MSG_LOCKED
+    if "permission" in msg or "access is denied" in msg:
+        return KIND_NO_PERMISSION, MSG_PERMISSION
+    if "cloud" in msg or "offline" in msg or "recall" in msg:
+        return KIND_CLOUD, MSG_CLOUD
+
+    return KIND_CORRUPT, MSG_CORRUPT
 
 
 def classify(path: str | Path) -> str:
@@ -333,17 +392,31 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
     if len(str(target)) > 255:
         return BulkResult(source_str, "failed", message=MSG_PATH_TOO_LONG, kind=KIND_PATH_TOO_LONG)
 
-    # 2) 이미 HWPX가 있는 경우 건너뜀
+    # 2) 클라우드 전용(온라인 전용) 파일은 내용을 내려받지 않고 건너뜀 (TODO 2026-11-15 ④)
+    if is_cloud_placeholder(source):
+        return BulkResult(source_str, "skipped", message=MSG_CLOUD, kind=KIND_CLOUD)
+
+    # 3) 이미 HWPX가 있는 경우 건너뜀
     try:
         if target.exists():
             return BulkResult(source_str, "skipped", str(target), MSG_EXISTING, kind=KIND_EXISTING)
     except OSError:
         pass
 
-    # 3) 파일 분류: 한/글 COM을 띄우기 전에 미리 판별
-    kind = classify(source)
+    # 4) 파일 분류: 한/글 COM을 띄우기 전에 미리 판별
+    try:
+        kind = classify(source)
+    except OSError as exc:
+        err_kind, err_msg = check_read_error(source, exc)
+        if err_kind == KIND_CLOUD:
+            return BulkResult(source_str, "skipped", message=err_msg, kind=err_kind)
+        return BulkResult(source_str, "failed", message=err_msg, kind=err_kind)
+
     if kind == "unreadable":
-        return BulkResult(source_str, "failed", message=MSG_PERMISSION, kind=KIND_NO_PERMISSION)
+        err_kind, err_msg = check_read_error(source)
+        if err_kind == KIND_CLOUD:
+            return BulkResult(source_str, "skipped", message=err_msg, kind=err_kind)
+        return BulkResult(source_str, "failed", message=err_msg, kind=err_kind)
 
     # ① 기관 보안(DRM) 문서는 파일 머리로 미리 판별해 변환 시도 없이 '보안 문서(변환 불가)'로 분류
     if kind == "protected":
@@ -397,7 +470,8 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
         if saved is False or not temporary.exists():
             return BulkResult(source_str, "protected", message=MSG_DISTRIBUTED, kind=KIND_DISTRIBUTED)
 
-        validate_hwpx(temporary)
+        # 한/글이 방금 만든 결과 HWPX 검증: 압축 폭탄 한도 대신 구조 검증(필수 파일·XML 열림·섹션 존재)만 수행
+        validate_hwpx(temporary, structure_only=True)
         try:
             os.link(temporary, target)
         except OSError:
@@ -409,9 +483,8 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
         kind_result = KIND_PASSWORD if used_password else KIND_NORMAL
         return BulkResult(source_str, "success", str(target), note, kind=kind_result)
     except OSError as exc:
-        if getattr(exc, "errno", None) in (13,):
-            return BulkResult(source_str, "failed", message=MSG_PERMISSION, kind=KIND_NO_PERMISSION)
-        return BulkResult(source_str, "failed", message=f"변환 오류: {exc}", kind=KIND_CORRUPT)
+        err_kind, err_msg = check_read_error(source, exc)
+        return BulkResult(source_str, "failed", message=err_msg, kind=err_kind)
     except Exception as exc:  # 한/글 COM 오류는 파일 하나만 실패로 남기고 계속한다.
         return BulkResult(source_str, "failed", message=f"변환 오류: {exc}", kind=KIND_CORRUPT)
     finally:
@@ -493,6 +566,7 @@ def run_bulk(roots, *, app_factory, state: BulkState, stop: threading.Event, pas
     pid = next(iter(hwp_pids() - before), None)
     try:
         with DialogResponder(pid, passwords) as responder:
+            locked_sources = []
             for source in files:
                 if stop.is_set():
                     break
@@ -507,6 +581,25 @@ def run_bulk(roots, *, app_factory, state: BulkState, stop: threading.Event, pas
                 elif result.status == "failed":
                     state.failed += 1
                     state.failures.append(dict(source=result.source, message=result.message, kind=result.kind))
+                    if result.kind == KIND_LOCKED:
+                        locked_sources.append(source)
+
+            # 잠김(다른 프로그램 사용 중) 문서는 일괄 변환 끝에 한 번 자동 재시도 (TODO 2026-11-15 ④)
+            if locked_sources and not stop.is_set():
+                time.sleep(0.5)
+                for source in locked_sources:
+                    if stop.is_set():
+                        break
+                    state.current = f"[재시도] {source}"
+                    retry_result = convert_one(app, source, responder)
+                    if retry_result.status == "success":
+                        for idx, res in enumerate(results):
+                            if res.source == retry_result.source:
+                                results[idx] = retry_result
+                                break
+                        state.succeeded += 1
+                        state.failed -= 1
+                        state.failures = [f for f in state.failures if f.get("source") != retry_result.source]
     finally:
         try:
             app.Quit()
@@ -516,3 +609,12 @@ def run_bulk(roots, *, app_factory, state: BulkState, stop: threading.Event, pas
     state.current = ""
     state.phase = "stopped" if stop.is_set() else "done"
     return results
+
+
+def retry_failures(failures: list, *, app_factory, state: BulkState, stop: threading.Event, passwords=(),
+                   report_dir: Path):
+    """결과표의 실패 문서 목록으로 '실패만 다시 변환' (TODO 2026-11-15 우선순위)."""
+    roots = [Path(f["source"] if isinstance(f, dict) else f) for f in failures]
+    return run_bulk(roots, app_factory=app_factory, state=state, stop=stop, passwords=passwords,
+                    skip_existing=False, report_dir=report_dir, recursive=False)
+

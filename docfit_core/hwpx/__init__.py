@@ -75,9 +75,14 @@ def _safe_member_name(info: ZipInfo) -> None:
         raise HwpxSecurityError(f"심볼릭 링크가 포함되어 있습니다: {info.filename}")
 
 
-def _check_archive_limits(infos: list[ZipInfo], limits: HwpxLimits) -> tuple[set[str], int]:
+def _check_archive_limits(
+    infos: list[ZipInfo],
+    limits: HwpxLimits,
+    *,
+    structure_only: bool = False,
+) -> tuple[set[str], int]:
     """Check entry count, names, sizes and compression ratio; return (names, total size)."""
-    if len(infos) > limits.max_entries:
+    if not structure_only and len(infos) > limits.max_entries:
         raise HwpxSecurityError(
             f"압축 항목이 너무 많습니다({len(infos):,} > {limits.max_entries:,})."
         )
@@ -89,19 +94,20 @@ def _check_archive_limits(infos: list[ZipInfo], limits: HwpxLimits) -> tuple[set
         if normalized_name in names:
             raise HwpxSecurityError(f"중복 압축 항목입니다: {info.filename}")
         names.add(normalized_name)
-        if info.file_size > limits.max_file_size:
-            raise HwpxSecurityError(
-                f"압축 내부 파일이 너무 큽니다: {info.filename} ({info.file_size:,}바이트)"
-            )
         total += info.file_size
-        if total > limits.max_total_size:
-            raise HwpxSecurityError(
-                f"압축 해제 예상 크기가 제한을 넘습니다({total:,}바이트)."
-            )
-        if info.file_size and info.compress_size == 0:
-            raise HwpxSecurityError(f"비정상 압축 항목입니다: {info.filename}")
-        if info.compress_size and info.file_size / info.compress_size > limits.max_compression_ratio:
-            raise HwpxSecurityError(f"비정상 압축률이 감지되었습니다: {info.filename}")
+        if not structure_only:
+            if info.file_size > limits.max_file_size:
+                raise HwpxSecurityError(
+                    f"압축 내부 파일이 너무 큽니다: {info.filename} ({info.file_size:,}바이트)"
+                )
+            if total > limits.max_total_size:
+                raise HwpxSecurityError(
+                    f"압축 해제 예상 크기가 제한을 넘습니다({total:,}바이트)."
+                )
+            if info.file_size and info.compress_size == 0:
+                raise HwpxSecurityError(f"비정상 압축 항목입니다: {info.filename}")
+            if info.compress_size and info.file_size / info.compress_size > limits.max_compression_ratio:
+                raise HwpxSecurityError(f"비정상 압축률이 감지되었습니다: {info.filename}")
     return names, total
 
 
@@ -123,8 +129,19 @@ def open_zip_safely(path, limits: HwpxLimits | None = None) -> ZipFile:
     return archive
 
 
-def validate_hwpx(path: str | Path, limits: HwpxLimits | None = None) -> dict:
-    """Validate archive structure without extracting anything to disk."""
+def validate_hwpx(
+    path: str | Path,
+    limits: HwpxLimits | None = None,
+    *,
+    structure_only: bool = False,
+    mode: str = "strict",
+) -> dict:
+    """Validate archive structure without extracting anything to disk.
+
+    mode: 'strict' (default, checks compression bomb / size limits for untrusted input)
+          'structure' (checks essential files, valid XML parsing, section existence, testzip)
+    """
+    is_structure = structure_only or mode == "structure"
     limits = limits or HwpxLimits()
     source = Path(path)
     if not source.is_file():
@@ -132,7 +149,7 @@ def validate_hwpx(path: str | Path, limits: HwpxLimits | None = None) -> dict:
     try:
         with ZipFile(source) as archive:
             infos = archive.infolist()
-            names, total = _check_archive_limits(infos, limits)
+            names, total = _check_archive_limits(infos, limits, structure_only=is_structure)
             section_names = sorted(
                 (name for name in names if re.fullmatch(r"Contents/section\d+\.xml", name)),
                 key=lambda value: int(re.search(r"\d+", value).group()),
@@ -144,6 +161,21 @@ def validate_hwpx(path: str | Path, limits: HwpxLimits | None = None) -> dict:
             bad = archive.testzip()
             if bad:
                 raise HwpxSecurityError(f"CRC 검사가 실패했습니다: {bad}")
+
+            if is_structure:
+                # 방금 생성된 결과물 검증: 필수 XML 파일이 정상적으로 열리고 파싱되는지 검증
+                try:
+                    with archive.open("Contents/header.xml") as f:
+                        ET.fromstring(f.read())
+                except Exception as exc:
+                    raise HwpxSecurityError(f"HWPX 필수 XML 파싱 실패(Contents/header.xml): {exc}") from exc
+                for sname in section_names:
+                    try:
+                        with archive.open(sname) as f:
+                            ET.fromstring(f.read())
+                    except Exception as exc:
+                        raise HwpxSecurityError(f"HWPX 본문 섹션 XML 파싱 실패({sname}): {exc}") from exc
+
             return {
                 "entry_count": len(infos),
                 "total_uncompressed_size": total,
@@ -151,6 +183,11 @@ def validate_hwpx(path: str | Path, limits: HwpxLimits | None = None) -> dict:
             }
     except BadZipFile as exc:
         raise HwpxSecurityError("올바른 HWPX ZIP 문서가 아닙니다.") from exc
+
+
+def validate_hwpx_structure(path: str | Path) -> dict:
+    """한/글 등이 생성한 결과 HWPX에 대해 압축 폭탄 한도 대신 구조 검증(필수 파일·XML 열림·섹션 존재)만 수행."""
+    return validate_hwpx(path, structure_only=True)
 
 
 def open_hwpx_safely(path: str | Path, mode: str = "r", *, limits: HwpxLimits | None = None) -> ZipFile:

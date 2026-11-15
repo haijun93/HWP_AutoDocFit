@@ -2055,7 +2055,7 @@ class DesktopWebBridge:
         return app
 
     def hwp_bulk(self, action, payload=None):
-        """HWP → HWPX 일괄 변환(2.0.7): drives · start · stop · status · open_report · show_report."""
+        """HWP → HWPX 일괄 변환(2.0.7): drives · start · stop · status · open_report · show_report · retry_failed."""
         from docfit_core import hwp_bulk as bulk
         payload = payload if isinstance(payload, dict) else {}
         state = getattr(self, "_bulk_state", None)
@@ -2077,6 +2077,14 @@ class DesktopWebBridge:
             opener = self._open_path if action == "open_report" else self._reveal
             self._tk(lambda: opener(path, "변환 결과표가 아직 없습니다."))
             return status()
+        if action == "retry_failed":
+            if running:
+                return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
+            if not state or not state.failures:
+                return status(False, "다시 시도할 실패 문서가 없습니다.")
+            fail_roots = [f["source"] for f in state.failures if isinstance(f, dict) and "source" in f]
+            payload = dict(payload, roots=fail_roots, recursive=False)
+            action = "start"
         if action != "start":
             return status(False, "지원하지 않는 명령입니다.")
         if running:
