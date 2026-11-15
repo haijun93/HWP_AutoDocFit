@@ -92,10 +92,13 @@ class TimemachineService:
             idle_scheduler.register(_ContentIdleJob(self), every=CONTENT_IDLE_EVERY_SECONDS)
         if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
             self._schedule_content_refresh()
-        elif idle_scheduler is not None:
+        if idle_scheduler is not None:
             # 업데이트로 검색 서비스 색인이 비었으면(형식 변경 재구축) 앱 검색을 기다리지 않고 복구 seeding.
             # 단축키 창만 쓰는 사용자도 본문 검색이 곧 돌아오게 한다. 앱 시작을 막지 않게 별도 스레드·짧은 지연.
-            threading.Timer(RECOVERY_SEED_DELAY_SECONDS, self._recover_empty_kfind).start()
+            # 재색인할 문서가 남아 있어도(쉬는 시간 예약만 됨) 항상 점검한다 — elif였을 때 v2.2.69 후보에서 복구가 안 돌았다.
+            timer = threading.Timer(RECOVERY_SEED_DELAY_SECONDS, self._recover_empty_kfind)
+            timer.daemon = True
+            timer.start()
 
     def _recover_empty_kfind(self):
         """검색 서비스 문서 수가 0인데 앱 내용 색인에 문서가 있으면 seeding을 시작한다(실패는 조용히 무시)."""
@@ -108,6 +111,15 @@ class TimemachineService:
                 return
             with self._content_lock:
                 self._kfind_synced = False
+                busy = self._content_state["running"] or (self._content_thread and self._content_thread.is_alive())
+            if busy:
+                # 다른 내용 색인 작업 중이면 1분 뒤 다시(그 작업 끝의 seeding이 먼저 채우면 문서 수가 0이 아니어서 멈춤).
+                self._recovery_tries = getattr(self, "_recovery_tries", 0) + 1
+                if self._recovery_tries <= 30:
+                    timer = threading.Timer(60, self._recover_empty_kfind)
+                    timer.daemon = True
+                    timer.start()
+                return
             self._start_kfind_seeding()
         except Exception:
             pass

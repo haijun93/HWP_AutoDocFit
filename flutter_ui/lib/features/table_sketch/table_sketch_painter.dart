@@ -181,6 +181,9 @@ class TableSketchPainter extends CustomPainter {
     // 2. 바둑판 점선 격자 (연회색 점선)
     _drawGrid(canvas, size);
 
+    // 2-guide. 종이 경계(가이드) 및 본문 폭 기준선
+    _drawA4Guides(canvas, size);
+
     // 2-0. 사각형 배경색(그림·선 아래)
     for (final fill in doc.fills) {
       canvas.drawRect(
@@ -442,6 +445,38 @@ class TableSketchPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
     canvas.drawPath(dashedGrid, gridPaint);
+  }
+
+  void _drawA4Guides(Canvas canvas, Size size) {
+    final cellMm = doc.grid.cellMm > 0 ? doc.grid.cellMm : 5.0;
+    final isLandscape = doc.orientation == 'landscape';
+    final paperWidthMm = isLandscape ? 297.0 : 210.0;
+    final paperHeightMm = isLandscape ? 210.0 : 297.0;
+    final bodyWidthMm = isLandscape ? 237.0 : 150.0;
+
+    final paperW = (paperWidthMm / cellMm) * cellSize;
+    final paperH = (paperHeightMm / cellMm) * cellSize;
+    final bodyX = (bodyWidthMm / cellMm) * cellSize;
+
+    // 1. 종이 경계 가이드 (A4 테두리)
+    final paperGuidePaint = Paint()
+      ..color = colors.paperBorder
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    canvas.drawRect(Rect.fromLTWH(0, 0, paperW, paperH), paperGuidePaint);
+
+    // 2. 본문 폭 기준선 (한/글 기본 여백 기준: 세로 150mm, 가로 237mm)
+    if (bodyX > 0 && bodyX <= size.width) {
+      final bodyPath = Path()
+        ..moveTo(bodyX, 0)
+        ..lineTo(bodyX, math.min(paperH, size.height));
+      final dashedBody = createDashedPath(bodyPath, 4.0, 4.0);
+      final bodyPaint = Paint()
+        ..color = colors.paperBorder
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawPath(dashedBody, bodyPaint);
+    }
   }
 
   void _drawSketchLine(

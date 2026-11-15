@@ -260,6 +260,21 @@ class TimemachineIdleIndexingTests(unittest.TestCase):
                 service._recover_empty_kfind()
             self.assertEqual(start.call_count, expected, count)
 
+    def test_startup_schedules_recovery_even_when_reindex_pending(self):
+        """재색인할 문서가 남아 있어도(쉬는 시간 예약) 시작 때 복구 점검 타이머를 건다(v2.2.69 후보 회귀)."""
+        import docfit_app.timemachine_service as tm
+        started = []
+        real_timer = threading.Timer
+        def fake_timer(delay, fn, *a, **k):
+            t = real_timer(3600, lambda: None)
+            started.append(getattr(fn, "__name__", ""))
+            return t
+        with patch.object(tm.TimemachineService, "_schedule_content_refresh"),              patch("docfit_app.timemachine_service.ContentSearchIndex.needs_reindex_count", return_value=5),              patch("threading.Timer", side_effect=fake_timer):
+            service = self.make_service(kfind_client=FakeKfind(count=0))
+        self.service.close()
+        self.service = service  # tearDown이 임시 폴더보다 먼저 닫는다
+        self.assertIn("_recover_empty_kfind", started)
+
     def test_normal_seeding_respects_idle_gate_when_kfind_has_index(self):
         """평소(색인 있음: count > 0)엔 기존처럼 유휴 조건을 지키는지."""
         kfind = FakeKfind(count=3)

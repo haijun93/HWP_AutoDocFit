@@ -142,6 +142,21 @@ class DesktopWebBridge:
         self._close_timer = None
         self._freeze_tracer = None
         self._tk_heartbeat_after = None
+        # 몽땅검색 서비스는 화면을 처음 열 때 만들어지므로, 업데이트로 검색 색인이 비었을 때의 복구 점검이
+        # 앱만 켜서는 돌지 않았다(v2.2.69 후보 실기). 시작 30초 뒤 백그라운드에서 한 번 만들어 둔다.
+        # 배포 앱(묶음 실행 파일)에서만: 시험이 만든 화면 연결부가 실제 사용자 폴더에 서비스를 만들지 않게.
+        if getattr(sys, "frozen", False):
+            startup = threading.Timer(30, self._prepare_timemachine_service)
+            startup.daemon = True
+            startup.start()
+
+    def _prepare_timemachine_service(self):
+        if self._closed or self.user_closing:
+            return
+        try:
+            self._timemachine_service()
+        except Exception:
+            logging.getLogger(__name__).debug("몽땅검색 서비스 미리 준비 실패", exc_info=True)
 
     def _shutdown(self):
         """Tk 종료 시 대기·실행 중 요청의 호출자를 종료 오류로 해제한다."""
