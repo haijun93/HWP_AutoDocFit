@@ -390,9 +390,11 @@ def _parse_hwp_rust(source: Path, target: Path, output_format: str = "markdown")
 def parse_document(source: str | Path, target: str | Path, *, output_format: str = "markdown",
                    pages: str | None = None, ocr: bool = False) -> Path:
     source_p, target_p = Path(source), Path(target)
-    # kordoc 의존 줄이기 2단계: HWP5 문서는 Rust(klib extract) 우선, 실패 시 kordoc parse 대체
+    # kordoc 의존 줄이기 2단계: HWP5 문서의 '텍스트' 출력만 Rust(klib extract) 우선, 실패 시 kordoc parse 대체.
+    # 마크다운은 파일변환(HWP→DOCX·MD)의 중간 결과라 표·제목 구조가 필요하다 — Rust 리더는 본문 글만 내므로
+    # 표가 사라질 수 있어 kordoc을 그대로 쓴다(2026-11-15 검토).
     if (source_p.suffix.lower() == ".hwp"
-            and output_format.lower() in ("markdown", "text")
+            and output_format.lower() == "text"
             and pages is None
             and not ocr
             and os.environ.get("DOCFIT_HWP_ENGINE", "").strip().lower() != "kordoc"):

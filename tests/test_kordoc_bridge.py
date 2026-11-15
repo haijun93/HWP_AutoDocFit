@@ -130,10 +130,21 @@ class KordocBridgeTest(unittest.TestCase):
             target = Path(folder) / "doc.md"
             with patch.object(kordoc_bridge, "_parse_hwp_rust", return_value=True) as mock_rust, \
                     patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
-                res = kordoc_bridge.parse_document(hwp, target)
+                res = kordoc_bridge.parse_document(hwp, target, output_format="text")
             mock_rust.assert_called_once()
             mock_kordoc.assert_not_called()
             self.assertEqual(res, target)
+
+    def test_hwp_markdown_keeps_kordoc_for_table_structure(self):
+        """마크다운(파일변환 중간 결과)은 표·제목 구조가 필요해 Rust를 쓰지 않고 kordoc으로 간다."""
+        with tempfile.TemporaryDirectory() as folder:
+            hwp = Path(folder) / "doc.hwp"
+            hwp.write_bytes(b"hwp")
+            target = Path(folder) / "doc.md"
+            with patch.object(kordoc_bridge, "_parse_hwp_rust", return_value=True) as mock_rust,                     patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
+                kordoc_bridge.parse_document(hwp, target, output_format="markdown")
+            mock_rust.assert_not_called()
+            mock_kordoc.assert_called_once()
 
     def test_hwp_parse_document_fallback_to_kordoc(self):
         """Rust 파싱 실패 시 kordoc parse로 대체."""
@@ -143,7 +154,7 @@ class KordocBridgeTest(unittest.TestCase):
             target = Path(folder) / "doc.md"
             with patch.object(kordoc_bridge, "_parse_hwp_rust", return_value=False) as mock_rust, \
                     patch.object(kordoc_bridge, "run_kordoc") as mock_kordoc:
-                res = kordoc_bridge.parse_document(hwp, target)
+                res = kordoc_bridge.parse_document(hwp, target, output_format="text")
             mock_rust.assert_called_once()
             mock_kordoc.assert_called_once()
             args = mock_kordoc.call_args.args[0]
@@ -167,7 +178,7 @@ class KordocBridgeTest(unittest.TestCase):
             target = Path(folder) / "test.md"
             with patch.object(kordoc_bridge, "_klib_executable", return_value=Path("/bin/klib")), \
                     patch("subprocess.run", return_value=mock_proc):
-                res = kordoc_bridge.parse_document(hwp, target)
+                res = kordoc_bridge.parse_document(hwp, target, output_format="text")
             self.assertTrue(res.is_file())
             content = res.read_text(encoding="utf-8")
             self.assertIn("1. 사업 개요", content)
