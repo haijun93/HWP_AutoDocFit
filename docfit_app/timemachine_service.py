@@ -37,6 +37,7 @@ THUMBNAIL_TIME_LIMIT = 5.0
 # 쉬는 시간 색인(IDLE1): 스케줄러 작업 이름과, 쉬는 시간마다 변경분을 다시 훑는 최소 간격(초)
 CONTENT_IDLE_JOB = "timemachine-content"
 CONTENT_IDLE_EVERY_SECONDS = 1800
+RECOVERY_SEED_DELAY_SECONDS = 20
 
 
 ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
@@ -91,6 +92,25 @@ class TimemachineService:
             idle_scheduler.register(_ContentIdleJob(self), every=CONTENT_IDLE_EVERY_SECONDS)
         if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
             self._schedule_content_refresh()
+        elif idle_scheduler is not None:
+            # 업데이트로 검색 서비스 색인이 비었으면(형식 변경 재구축) 앱 검색을 기다리지 않고 복구 seeding.
+            # 단축키 창만 쓰는 사용자도 본문 검색이 곧 돌아오게 한다. 앱 시작을 막지 않게 별도 스레드·짧은 지연.
+            threading.Timer(RECOVERY_SEED_DELAY_SECONDS, self._recover_empty_kfind).start()
+
+    def _recover_empty_kfind(self):
+        """검색 서비스 문서 수가 0인데 앱 내용 색인에 문서가 있으면 seeding을 시작한다(실패는 조용히 무시)."""
+        try:
+            if self._closing or self._search_engine() == "legacy" or not self._settings["roots"]:
+                return
+            if int(self.kfind.status().get("docs") or 0) != 0:
+                return
+            if not self.content_index.indexed_paths(roots=self._settings["roots"]):
+                return
+            with self._content_lock:
+                self._kfind_synced = False
+            self._start_kfind_seeding()
+        except Exception:
+            pass
 
     @staticmethod
     def _open_file(path):
@@ -147,20 +167,37 @@ class TimemachineService:
         try:
             initial_status = self.kfind.status()
             paths = self.content_index.indexed_paths(roots=self._settings["roots"]) if self._settings["roots"] else []
+            doc_count = initial_status.get("docs")
+            if doc_count is None:
+                doc_count = initial_status.get("count")
+            try:
+                doc_count = int(doc_count) if doc_count is not None else None
+            except (TypeError, ValueError):
+                doc_count = None
+            generation = initial_status.get("generation")
+            generation_changed = (self._kfind_generation is not None and generation != self._kfind_generation)
+            is_recovery = bool(paths) and ((doc_count == 0) or (generation_changed and doc_count == 0))
             path_keys = {doc_key(path=p) for p in paths}
             for path, result in pending.items():
                 if cancel_event.is_set():
                     return
                 if result.get("removed") or doc_key(path=path) not in path_keys:
                     self.kfind.remove([doc_key(path=path)])
-            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경은 다시 seeding.
-            if pending and initial_status["generation"] == self._kfind_generation:
+            # 같은 서비스 세대의 변경분이면 그 문서만 보낸다. 첫 연결·재시작·외부 변경·복구 seeding은 다시 전체 seeding.
+            if pending and initial_status["generation"] == self._kfind_generation and not is_recovery:
                 changed = {doc_key(path=p) for p in pending}
                 paths = [p for p in paths if doc_key(path=p) in changed]
-            for path in paths:
+            if is_recovery and self._content_idle_ctx is not None:
+                self._content_idle_ctx.enter_background()
+            for idx, path in enumerate(paths):
                 if cancel_event.is_set() or self._closing:
                     return
-                if self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
+                if is_recovery:
+                    if idx > 0:
+                        time.sleep(0.01)
+                        if cancel_event.is_set() or self._closing:
+                            return
+                elif self._content_idle_ctx is not None and not self._content_idle_ctx.checkpoint(cancel_event):
                     cancel_event.set()
                     return
                 if self.content_index.stale_hierarchy_paths([path]):
