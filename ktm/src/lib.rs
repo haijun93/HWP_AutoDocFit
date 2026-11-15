@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod export;
 pub mod frame;
 pub mod highlight;
 pub mod install;
