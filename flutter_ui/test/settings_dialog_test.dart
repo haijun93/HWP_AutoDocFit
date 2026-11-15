@@ -173,7 +173,7 @@ void mainGuided() {
         'fields': [
           {
             'key': 'mongttang_search',
-            'label': '몽땅검색 단축키(Ctrl+Alt+Space)',
+            'label': '퀵몽땅검색 단축키(Ctrl+Alt+Space)',
             'type': 'boolean',
             'default': true,
             'status': '켜짐 · Ctrl+Alt+Space로 열기',
