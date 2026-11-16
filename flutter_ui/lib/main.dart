@@ -3624,12 +3624,6 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                           : () => command('show_result', [i]),
                       icon: const Icon(Icons.folder_open_outlined),
                     ),
-                    IconButton(
-                      key: Key('compareItem-$i'),
-                      tooltip: '원본·결과 비교',
-                      onPressed: busy ? null : () => openDiff(i),
-                      icon: const Icon(Icons.compare_arrows_rounded),
-                    ),
                   ],
                 ),
               ),
@@ -3641,87 +3635,11 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               icon: const Icon(Icons.open_in_new),
               label: Text(results.length > 1 ? '결과 모두 열기' : '결과 파일 열기'),
             ),
-            const SizedBox(height: 8),
-            if (compareError != null) ...[
-              Container(
-                key: const Key('compareErrorMessage'),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 8,
-                ),
-                decoration: BoxDecoration(
-                  color: _s.errorSoft,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.error_outline,
-                      size: 18,
-                      color: _c.danger,
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Text(
-                        compareError!,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: _c.danger,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-            ],
-            OutlinedButton.icon(
-              key: const Key('compareResultButton'),
-              onPressed: results.isEmpty || busy ? null : () => openDiff(0),
-              icon: const Icon(Icons.compare_arrows_rounded),
-              label: const Text('원본·결과 비교'),
-            ),
           ],
         ),
       ),
     ],
   );
-
-  String? compareError;
-
-  Future<void> openDiff([int index = 0]) async {
-    setState(() => compareError = null);
-    try {
-      final res = await widget.api('open_diff', [index]);
-      if (!mounted) return;
-      if (res is! Map || res['ok'] != true) {
-        final message = res is Map ? res['error'] : null;
-        final err = '${message ?? '비교 창을 열지 못했습니다.'}';
-        setState(() => compareError = err);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(err),
-              backgroundColor: _s.dangerFill,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      final err = '비교 창을 여는 중 오류가 발생했습니다: $e';
-      setState(() => compareError = err);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(err),
-            backgroundColor: _s.dangerFill,
-          ),
-        );
-      }
-    }
-  }
 
   Map get completion => state['completion'] as Map? ?? const {};
   Map get formatReview => state['format_review'] as Map? ?? const {};
@@ -3800,7 +3718,6 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                         await command('next_job');
                         if (mounted) {
                           setState(() {
-                            compareError = null;
                             tab = 0;
                           });
                         }
