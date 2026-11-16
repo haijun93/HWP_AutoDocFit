@@ -42,9 +42,7 @@ def default_catalog_path() -> Path:
 def _catalog_paths(path: str | Path | None = None) -> list[Path]:
     if path is not None:
         return [Path(path)]
-    primary = default_catalog_path()
-    additions = primary.parent / "표 서식모음 추진절차.hwpx"
-    return [primary, additions] if additions.is_file() else [primary]
+    return [default_catalog_path()]
 
 
 def _safe_archive(path: Path) -> zipfile.ZipFile:
@@ -467,11 +465,10 @@ def _scan(path: str | Path) -> list[dict]:
             root = ET.fromstring(archive.read(section_name))
             for paragraph_index, paragraph in enumerate(root.findall(_HP + "p")):
                 label = _text(paragraph)
-                is_bracket_heading = label.startswith("[") and label.endswith("]") and "추진절차(가로)" in label
-                if label.startswith("#") or is_bracket_heading:
-                    current_category = label[1:].strip() if label.startswith("#") else label[1:-1].strip()
+                if label.startswith("#"):
+                    current_category = label[1:].strip()
                     if not current_category:
-                        current_category = "이름 없는 그룹"
+                        current_category = "이름 없는 서식"
                     category_index += 1
                 if current_category is None:
                     continue

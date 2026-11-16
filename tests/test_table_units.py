@@ -674,6 +674,61 @@ class C13TableUnitsTests(unittest.TestCase):
         for number in range(1, 6):
             self.check_axes(f"추진절차(가로) · 모양 {number}", ("row", "col"))
 
+    def test_c13_02b_horizontal_shapes_6_7_8(self):
+        for number in (6, 7, 8):
+            self.check_axes(f"추진절차(가로) · 모양 {number}", ("col",))
+
+        # 모양 7: 세부 단계 늘리기/줄이기 시 상단 '심사' 병합 칸(colSpan) 검증
+        for source in self.sources:
+            rec7 = self.records[source]["추진절차(가로) · 모양 7"]
+            _, table7, _ = units._load(rec7["id"], source)
+            plan7 = units.plan_for(rec7)
+            # 5 -> 6단계
+            units.resize_table(table7, plan7, col_count=6)
+            self.assertEqual(int(table7.get("colCnt")), 15)
+            r0_cells = table7.findall(HP + "tr")[0].findall(HP + "tc")
+            simsa_cell = next(c for c in r0_cells if "심사" in "".join(t.text or "" for t in c.findall(".//" + HP + "t")))
+            self.assertEqual(simsa_cell.find(HP + "cellSpan").get("colSpan"), "11")
+
+            # 6 -> 4단계
+            units.resize_table(table7, plan7, col_count=4)
+            self.assertEqual(int(table7.get("colCnt")), 11)
+            r0_cells = table7.findall(HP + "tr")[0].findall(HP + "tc")
+            simsa_cell = next(c for c in r0_cells if "심사" in "".join(t.text or "" for t in c.findall(".//" + HP + "t")))
+            self.assertEqual(simsa_cell.find(HP + "cellSpan").get("colSpan"), "7")
+
+        # 모양 8: 지그재그 번호 및 화살표('▼', '◀') 검증
+        for source in self.sources:
+            rec8 = self.records[source]["추진절차(가로) · 모양 8"]
+            _, table8, _ = units._load(rec8["id"], source)
+            plan8 = units.plan_for(rec8)
+            # 3 -> 4열
+            units.resize_table(table8, plan8, col_count=4)
+            self.assertEqual(int(table8.get("colCnt")), 7)
+            r0 = table8.findall(HP + "tr")[0]
+            r5 = table8.findall(HP + "tr")[5]
+            r6 = table8.findall(HP + "tr")[6]
+            r0_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r0.findall(HP + "tc")]
+            r5_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r5.findall(HP + "tc")]
+            r6_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r6.findall(HP + "tc")]
+            self.assertEqual(r0_txt, ["① 1단계", "▶", "② 2단계", "▶", "③ 3단계", "▶", "④ 4단계"])
+            self.assertEqual(r5_txt[-1], "▼")
+            self.assertTrue(all(t == "" for t in r5_txt[:-1]))
+            self.assertEqual(r6_txt, ["⑧ 8단계", "◀", "⑦ 7단계", "◀", "⑥ 6단계", "◀", "⑤ 5단계"])
+
+            # 4 -> 2열
+            units.resize_table(table8, plan8, col_count=2)
+            self.assertEqual(int(table8.get("colCnt")), 3)
+            r0 = table8.findall(HP + "tr")[0]
+            r5 = table8.findall(HP + "tr")[5]
+            r6 = table8.findall(HP + "tr")[6]
+            r0_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r0.findall(HP + "tc")]
+            r5_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r5.findall(HP + "tc")]
+            r6_txt = ["".join(t.text or "" for t in c.findall(".//" + HP + "t")) for c in r6.findall(HP + "tc")]
+            self.assertEqual(r0_txt, ["① 1단계", "▶", "② 2단계"])
+            self.assertEqual(r5_txt[-1], "▼")
+            self.assertEqual(r6_txt, ["④ 4단계", "◀", "③ 3단계"])
+
     def test_c13_03_both_process_axes(self):
         self.check_axes("추진절차(가로세로) · 모양 1", ("row", "col"))
         for source in self.sources:
