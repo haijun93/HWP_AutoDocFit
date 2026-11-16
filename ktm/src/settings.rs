@@ -65,6 +65,23 @@ pub struct Settings {
     pub recent_query_times: Vec<u64>,
     pub favorite_queries: Vec<FavoriteQuery>,
     pub smart_presets: Vec<SmartPreset>,
+    pub ui_theme: String,
+    pub default_search_mode: String,
+    pub max_results: usize,
+    pub ui_scale: u32,
+    pub result_density: String,
+    pub open_clicks: u8,
+    pub show_location: bool,
+    pub show_modified: bool,
+    pub include_subfolders: bool,
+    pub excluded_directories: Vec<String>,
+    pub version_grouping: bool,
+    pub autostart: bool,
+    pub minimize_to_tray: bool,
+    pub start_hidden: bool,
+    pub max_file_size_mb: u64,
+    pub skip_cloud_network: bool,
+    pub allow_system_folders: bool,
 }
 
 impl Default for Settings {
@@ -76,6 +93,23 @@ impl Default for Settings {
             recent_query_times: Vec::new(),
             favorite_queries: Vec::new(),
             smart_presets: Vec::new(),
+            ui_theme: "system".into(),
+            default_search_mode: "keyword".into(),
+            max_results: 100,
+            ui_scale: 100,
+            result_density: "comfortable".into(),
+            open_clicks: 2,
+            show_location: true,
+            show_modified: true,
+            include_subfolders: true,
+            excluded_directories: Vec::new(),
+            version_grouping: false,
+            autostart: false,
+            minimize_to_tray: true,
+            start_hidden: false,
+            max_file_size_mb: 0,
+            skip_cloud_network: true,
+            allow_system_folders: false,
         }
     }
 }
@@ -151,6 +185,8 @@ mod tests {
         assert_eq!(settings, Settings::default());
         let settings: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
         assert_eq!(settings.hotkey, "Ctrl+Alt+Space");
+        assert_eq!(settings.max_results, 100);
+        assert!(settings.include_subfolders);
     }
     #[test]
     fn settings_roundtrip() {
@@ -166,6 +202,29 @@ mod tests {
     #[test]
     fn malformed_settings_are_reported() {
         assert!(serde_json::from_str::<Settings>("{").is_err());
+    }
+    #[test]
+    fn legacy_settings_without_new_fields_load() {
+        let s:Settings=serde_json::from_str(r#"{"theme":"dark","hotkey":"Ctrl+Alt+Space","recent_queries":["a"],"favorite_queries":[],"smart_presets":[]}"#).unwrap();
+        assert_eq!(s.max_results, 100);
+        assert_eq!(s.ui_theme, "system");
+        assert!(s.include_subfolders);
+    }
+    #[test]
+    fn new_settings_fields_roundtrip() {
+        let mut s = Settings::default();
+        s.ui_theme = "light".into();
+        s.max_results = 200;
+        s.excluded_directories = vec!["C:\\Temp".into()];
+        s.autostart = true;
+        let t: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(t, s);
+    }
+    #[test]
+    fn settings_defaults_bound_click_policy() {
+        let s = Settings::default();
+        assert_eq!(s.open_clicks, 2);
+        assert_eq!(s.ui_scale, 100);
     }
     #[test]
     fn file_save_load_and_missing_default() {

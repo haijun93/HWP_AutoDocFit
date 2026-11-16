@@ -114,6 +114,9 @@ struct Ui {
     status_text: String,
     smart_presets: Vec<ktm::settings::SmartPreset>,
     recent_query_times: Vec<u64>,
+    modal: Option<ktm::layout::ModalKind>,
+    modal_tab: usize,
+    settings: Settings,
 }
 
 thread_local! {
@@ -125,24 +128,45 @@ pub fn wide(s: &str) -> Vec<u16> {
 }
 
 fn local_drives() -> Vec<PathBuf> {
-    ('A'..='G').filter_map(|c| {
-        let path = PathBuf::from(format!("{c}:\\"));
-        path.is_dir().then_some(path)
-    }).collect()
+    ('A'..='G')
+        .filter_map(|c| {
+            let path = PathBuf::from(format!("{c}:\\"));
+            path.is_dir().then_some(path)
+        })
+        .collect()
 }
 
 fn pick_folder(owner: HWND) -> Option<String> {
     unsafe {
-        use windows_sys::Win32::UI::Shell::{BIF_RETURNONLYFSDIRS, BROWSEINFOW, ILFree, SHBrowseForFolderW, SHGetPathFromIDListW};
+        use windows_sys::Win32::UI::Shell::{
+            BIF_RETURNONLYFSDIRS, BROWSEINFOW, ILFree, SHBrowseForFolderW, SHGetPathFromIDListW,
+        };
         let mut display = [0u16; 260];
         let title = wide("검색 범위에 추가할 폴더를 선택하세요");
-        let info = BROWSEINFOW { hwndOwner: owner, pidlRoot: null_mut(), pszDisplayName: display.as_mut_ptr(), lpszTitle: title.as_ptr(), ulFlags: BIF_RETURNONLYFSDIRS, lpfn: None, lParam: 0, iImage: 0 };
+        let info = BROWSEINFOW {
+            hwndOwner: owner,
+            pidlRoot: null_mut(),
+            pszDisplayName: display.as_mut_ptr(),
+            lpszTitle: title.as_ptr(),
+            ulFlags: BIF_RETURNONLYFSDIRS,
+            lpfn: None,
+            lParam: 0,
+            iImage: 0,
+        };
         let pidl = SHBrowseForFolderW(&info);
-        if pidl.is_null() { return None; }
+        if pidl.is_null() {
+            return None;
+        }
         let mut path = [0u16; 32768];
         let selected = SHGetPathFromIDListW(pidl, path.as_mut_ptr()) != 0;
         ILFree(pidl);
-        if selected { Some(String::from_utf16_lossy(&path[..path.iter().position(|c| *c == 0).unwrap_or(path.len())])) } else { None }
+        if selected {
+            Some(String::from_utf16_lossy(
+                &path[..path.iter().position(|c| *c == 0).unwrap_or(path.len())],
+            ))
+        } else {
+            None
+        }
     }
 }
 
@@ -508,6 +532,28 @@ fn copy_text_to_clipboard(value: &str) -> Result<(), String> {
 
 fn key(h: HWND, key: usize) -> bool {
     unsafe {
+        if with(|u| u.modal.is_some()) {
+            match key as u16 {
+                VK_ESCAPE => {
+                    edit(|u| u.modal = None);
+                    InvalidateRect(h, null(), 0);
+                    return true;
+                }
+                VK_TAB | VK_LEFT | VK_RIGHT => {
+                    edit(|u| {
+                        let n = if u.modal == Some(ktm::layout::ModalKind::Statistics) {
+                            2
+                        } else {
+                            4
+                        };
+                        u.modal_tab = (u.modal_tab + 1) % n;
+                    });
+                    InvalidateRect(h, null(), 0);
+                    return true;
+                }
+                _ => return true,
+            }
+        }
         let ed = with(|u| u.edit);
         let imc = ImmGetContext(ed);
         let composing = if !imc.is_null() {
@@ -722,6 +768,7 @@ unsafe fn layout(h: HWND) {
     unsafe {
         let mut r: RECT = std::mem::zeroed();
         GetClientRect(h, &mut r);
+        let modal_open = with(|u| u.modal.is_some());
         let head = scale(h, HEAD_H);
         let pad = scale(h, 12);
         let box_y = head + scale(h, 6);
@@ -738,6 +785,7 @@ unsafe fn layout(h: HWND) {
             box_h - 2 * ed_margin_y,
             1,
         );
+        ShowWindow(with(|u| u.edit), if modal_open { SW_HIDE } else { SW_SHOW });
         let spans = option_spans(pad + side_w, r.right - pad);
         let within = spans[5];
         let within_hwnd = with(|u| u.within_edit);
@@ -751,7 +799,7 @@ unsafe fn layout(h: HWND) {
         );
         ShowWindow(
             within_hwnd,
-            if with(|u| u.within_open) {
+            if !modal_open && with(|u| u.within_open) {
                 SW_SHOW
             } else {
                 SW_HIDE
@@ -768,7 +816,11 @@ unsafe fn layout(h: HWND) {
         );
         ShowWindow(
             days,
-            if with(|u| u.state.options.options_open) { SW_SHOW } else { SW_HIDE },
+            if !modal_open && with(|u| u.state.options.options_open) {
+                SW_SHOW
+            } else {
+                SW_HIDE
+            },
         );
     }
 }
@@ -1072,7 +1124,17 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     DT_END_ELLIPSIS,
                 );
                 if i == 1 {
-                    text("+", RECT { left: side_w - scale(h, 38), top: scale(h, 40 + SIDEBAR_ROW_H), right: side_w - scale(h, 8), bottom: scale(h, 40 + 2 * SIDEBAR_ROW_H) }, p.accent, DT_CENTER);
+                    text(
+                        "+",
+                        RECT {
+                            left: side_w - scale(h, 38),
+                            top: scale(h, 40 + SIDEBAR_ROW_H),
+                            right: side_w - scale(h, 8),
+                            bottom: scale(h, 40 + 2 * SIDEBAR_ROW_H),
+                        },
+                        p.accent,
+                        DT_CENTER,
+                    );
                 }
             }
         }
@@ -1131,6 +1193,27 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 DT_CENTER,
             );
         }
+
+        let chip_y = scale(h, 3);
+        let chip_h = (head - scale(h, 6)).max(1);
+        let chips = header_chip_rects(r.right, bw, scale(h, 1));
+        let stats_rc = RECT {
+            left: chips[0].0,
+            top: chip_y,
+            right: chips[0].1,
+            bottom: chip_y + chip_h,
+        };
+        let settings_rc = RECT {
+            left: chips[1].0,
+            top: chip_y,
+            right: chips[1].1,
+            bottom: chip_y + chip_h,
+        };
+        fill(stats_rc, p.head_button_hover);
+        fill(settings_rc, p.head_button_hover);
+        SelectObject(mem, with(|u| u.small_bold));
+        text("◷ 통계", stats_rc, p.head_glyph, DT_CENTER);
+        text("⚙ 설정", settings_rc, p.head_glyph, DT_CENTER);
 
         let buttons_left = head_button_span(HEAD_BUTTONS[0], r.right, bw).0;
         SelectObject(mem, with(|u| u.title_font));
@@ -1299,7 +1382,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         &u.state.options.within_query
                     }
                 ),
-                if u.state.options.options_open { "[옵션 ▾]".into() } else { "[옵션]".into() },
+                if u.state.options.options_open {
+                    "[옵션 ▾]".into()
+                } else {
+                    "[옵션]".into()
+                },
             ];
             let spans = option_spans(pad + side_w, r.right - pad);
             for (label, (left, right)) in option_labels.iter().zip(spans) {
@@ -1318,18 +1405,68 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
             let second_y = oy + scale(h, OPTION_H / 2);
             if u.state.options.options_open {
-                let modes = [(tm_state::MatchMode::AllTerms, "모두 포함"), (tm_state::MatchMode::AnyTerm, "하나 이상"), (tm_state::MatchMode::Exact, "정확히 일치")];
+                let modes = [
+                    (tm_state::MatchMode::AllTerms, "모두 포함"),
+                    (tm_state::MatchMode::AnyTerm, "하나 이상"),
+                    (tm_state::MatchMode::Exact, "정확히 일치"),
+                ];
                 let mut mx = pad + side_w + scale(h, 2);
                 for (mode, label) in modes {
-                    let rc = RECT { left: mx, top: second_y, right: mx + scale(h, 82), bottom: second_y + scale(h, 22) };
-                    fill(rc, if u.state.options.match_mode == mode { p.accent } else { p.tab_hover });
-                    text(label, rc, if u.state.options.match_mode == mode { p.bg } else { p.tab_text }, DT_CENTER);
+                    let rc = RECT {
+                        left: mx,
+                        top: second_y,
+                        right: mx + scale(h, 82),
+                        bottom: second_y + scale(h, 22),
+                    };
+                    fill(
+                        rc,
+                        if u.state.options.match_mode == mode {
+                            p.accent
+                        } else {
+                            p.tab_hover
+                        },
+                    );
+                    text(
+                        label,
+                        rc,
+                        if u.state.options.match_mode == mode {
+                            p.bg
+                        } else {
+                            p.tab_text
+                        },
+                        DT_CENTER,
+                    );
                     mx += scale(h, 86);
                 }
                 SelectObject(mem, u.small);
-                text("직접 일수", RECT { left: mx, top: second_y, right: mx + scale(h, 326), bottom: second_y + scale(h, 22) }, p.text_sub, DT_CENTER);
-                text("일", RECT { left: mx + scale(h, 326), top: second_y, right: mx + scale(h, 340), bottom: second_y + scale(h, 22) }, p.text_sub, DT_CENTER);
-                let apply_rc = RECT { left: mx + scale(h, 100), top: second_y, right: mx + scale(h, 140), bottom: second_y + scale(h, 22) };
+                text(
+                    "직접 일수",
+                    RECT {
+                        left: mx,
+                        top: second_y,
+                        right: mx + scale(h, 326),
+                        bottom: second_y + scale(h, 22),
+                    },
+                    p.text_sub,
+                    DT_CENTER,
+                );
+                text(
+                    "일",
+                    RECT {
+                        left: mx + scale(h, 326),
+                        top: second_y,
+                        right: mx + scale(h, 340),
+                        bottom: second_y + scale(h, 22),
+                    },
+                    p.text_sub,
+                    DT_CENTER,
+                );
+                let apply_rc = RECT {
+                    left: mx + scale(h, 100),
+                    top: second_y,
+                    right: mx + scale(h, 140),
+                    bottom: second_y + scale(h, 22),
+                };
                 fill(apply_rc, p.tab_hover);
                 text("적용", apply_rc, p.text, DT_CENTER);
             }
@@ -1867,15 +2004,39 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 SelectObject(mem, u.font_bold);
                 let text_right =
                     (if grid { row_rc.right } else { r.right }) - folder_w - scale(h, 8);
-                let name_left = if grid { row_rc.left + scale(h, 8) } else { scale(h, 68) };
+                let name_left = if grid {
+                    row_rc.left + scale(h, 8)
+                } else {
+                    scale(h, 68)
+                };
                 let badge_w = scale(h, 48);
-                let badge_right = if grid { row_rc.right - scale(h, 8) } else { text_right };
+                let badge_right = if grid {
+                    row_rc.right - scale(h, 8)
+                } else {
+                    text_right
+                };
                 let ext = ktm::backend::extension_label(&row.name);
-                let ext_rc = RECT { left: badge_right - badge_w, top: gy + scale(h, 3), right: badge_right, bottom: gy + line_h1 - scale(h, 2) };
+                let ext_rc = RECT {
+                    left: badge_right - badge_w,
+                    top: gy + scale(h, 3),
+                    right: badge_right,
+                    bottom: gy + line_h1 - scale(h, 2),
+                };
                 fill(ext_rc, p.tab_hover);
                 text(ext, ext_rc, p.text_sub, DT_CENTER);
-                highlighted(mem, &row.name, &u.terms, RECT { left: name_left, top: gy + scale(h, 2), right: badge_right - badge_w - scale(h, 4), bottom: gy + line_h1 }, p.row_text(sel, p.text), 0x8AF0FE);
-
+                highlighted(
+                    mem,
+                    &row.name,
+                    &u.terms,
+                    RECT {
+                        left: name_left,
+                        top: gy + scale(h, 2),
+                        right: badge_right - badge_w - scale(h, 4),
+                        bottom: gy + line_h1,
+                    },
+                    p.row_text(sel, p.text),
+                    0x8AF0FE,
+                );
 
                 // 오른쪽: 작은 단추 [폴더 열기]
                 let folder_rc = calc_folder_button_rect(
@@ -1895,9 +2056,30 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 // 둘째 줄: 경로 (흐리게)
                 SelectObject(mem, u.small);
                 let date = ktm::backend::format_korean_datetime(row.date).unwrap_or_default();
-                let meta = if date.is_empty() { row.parent.clone() } else { format!("{}  |  {date}", row.parent) };
-                text(&meta, RECT { left: if grid { row_rc.left + scale(h, 8) } else { scale(h, 68) }, top: gy + line_h1, right: if grid { row_rc.right - scale(h, 8) } else { text_right }, bottom: gy + line_h1 + line_h2 }, p.row_text(sel, p.text_faint), DT_PATH_ELLIPSIS);
-
+                let meta = if date.is_empty() {
+                    row.parent.clone()
+                } else {
+                    format!("{}  |  {date}", row.parent)
+                };
+                text(
+                    &meta,
+                    RECT {
+                        left: if grid {
+                            row_rc.left + scale(h, 8)
+                        } else {
+                            scale(h, 68)
+                        },
+                        top: gy + line_h1,
+                        right: if grid {
+                            row_rc.right - scale(h, 8)
+                        } else {
+                            text_right
+                        },
+                        bottom: gy + line_h1 + line_h2,
+                    },
+                    p.row_text(sel, p.text_faint),
+                    DT_PATH_ELLIPSIS,
+                );
 
                 // 셋째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
                 let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
@@ -2051,19 +2233,377 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 match u.state.phase {
                     Phase::Searching => ("Searching".into(), String::new()),
-                    Phase::Results => (format!("{} documents", u.rows.len()), format!("{} folders | v2.2.71", u.state.folder_counts.len())),
-                    _ if u.state.query.trim().is_empty() && !u.state.history_entries().is_empty() => ("Up/down select | Enter load | Ctrl+D favorite".into(), String::new()),
-                    _ if u.state.query.trim().is_empty() => ("Type a topic or search term".into(), String::new()),
-                    _ => ("Live search from 2 chars | Enter for 1".into(), String::new()),
+                    Phase::Results => (
+                        format!("{} documents", u.rows.len()),
+                        format!("{} folders | v2.2.71", u.state.folder_counts.len()),
+                    ),
+                    _ if u.state.query.trim().is_empty()
+                        && !u.state.history_entries().is_empty() =>
+                    {
+                        (
+                            "Up/down select | Enter load | Ctrl+D favorite".into(),
+                            String::new(),
+                        )
+                    }
+                    _ if u.state.query.trim().is_empty() => {
+                        ("Type a topic or search term".into(), String::new())
+                    }
+                    _ => (
+                        "Live search from 2 chars | Enter for 1".into(),
+                        String::new(),
+                    ),
                 }
             };
             SelectObject(mem, u.small);
-            text(&status_left, RECT { left: pad, top: status_y, right: r.right / 2, bottom: r.bottom }, p.text_sub, DT_END_ELLIPSIS);
-            text(&status_right, RECT { left: r.right / 2, top: status_y, right: r.right - pad, bottom: r.bottom }, p.text_sub, DT_RIGHT | DT_END_ELLIPSIS);
+            text(
+                &status_left,
+                RECT {
+                    left: pad,
+                    top: status_y,
+                    right: r.right / 2,
+                    bottom: r.bottom,
+                },
+                p.text_sub,
+                DT_END_ELLIPSIS,
+            );
+            text(
+                &status_right,
+                RECT {
+                    left: r.right / 2,
+                    top: status_y,
+                    right: r.right - pad,
+                    bottom: r.bottom,
+                },
+                p.text_sub,
+                DT_RIGHT | DT_END_ELLIPSIS,
+            );
         });
 
         // 틀 없는 창 테두리 1px
         frame::own_border(mem, r);
+
+        if let Some(kind) = with(|u| u.modal) {
+            fill(r, 0x70000000);
+            let count = if kind == ktm::layout::ModalKind::Statistics {
+                2
+            } else {
+                4
+            };
+            let mr = modal_rects(r.right, r.bottom, count);
+            fill(mr.panel, p.bg);
+            let frame_brush = CreateSolidBrush(p.divider);
+            FrameRect(mem, &mr.panel, frame_brush);
+            DeleteObject(frame_brush);
+            SelectObject(mem, with(|u| u.title_font));
+            let title = if kind == ktm::layout::ModalKind::Statistics {
+                "문서 통계"
+            } else {
+                "설정"
+            };
+            text(
+                title,
+                RECT {
+                    left: mr.panel.left + 16,
+                    top: mr.panel.top,
+                    right: mr.close.left,
+                    bottom: mr.panel.top + 48,
+                },
+                p.text,
+                0,
+            );
+            let close_rc = mr.close;
+            fill(close_rc, p.tab_hover);
+            SelectObject(mem, with(|u| u.glyph));
+            text("✕", close_rc, p.text, DT_CENTER);
+            let labels: [&str; 4] = if kind == ktm::layout::ModalKind::Statistics {
+                ["문서 통계", "검색 히스토리", "", ""]
+            } else {
+                ["일반", "검색", "시스템", "진단"]
+            };
+            let active = with(|u| u.modal_tab);
+            for i in 0..count {
+                let rc = mr.tabs[i];
+                fill(rc, if i == active { p.bg } else { p.tab_bg });
+                SelectObject(
+                    mem,
+                    with(|u| if i == active { u.small_bold } else { u.small }),
+                );
+                text(
+                    labels[i],
+                    rc,
+                    if i == active { p.accent } else { p.text_sub },
+                    DT_CENTER,
+                );
+            }
+            SelectObject(mem, with(|u| u.small));
+            if kind == ktm::layout::ModalKind::Statistics {
+                if active == 0 {
+                    let rows = with(|u| u.rows.clone());
+                    let s = ktm::backend::document_stats(&rows);
+                    let line = scale(h, 26);
+                    let left = mr.content.left;
+                    let right = mr.content.right;
+                    let summary = format!(
+                        "현재 결과 {}건    색인된 결과 {}건    전체 인덱스 요약은 미제공",
+                        s.total, s.indexed
+                    );
+                    text(
+                        &summary,
+                        RECT {
+                            left,
+                            top: mr.content.top,
+                            right,
+                            bottom: mr.content.top + line,
+                        },
+                        p.text,
+                        DT_END_ELLIPSIS,
+                    );
+                    let mut y = mr.content.top + line + scale(h, 8);
+                    text(
+                        "파일 유형",
+                        RECT {
+                            left,
+                            top: y,
+                            right,
+                            bottom: y + line,
+                        },
+                        p.text,
+                        0,
+                    );
+                    y += line;
+                    for (label, count) in s.by_type.iter().take(6) {
+                        let ratio = if s.total == 0 {
+                            0.0
+                        } else {
+                            *count as f64 * 100.0 / s.total as f64
+                        };
+                        let bar_w = ((right - left - 150) as f64 * ratio / 100.0) as i32;
+                        fill(
+                            RECT {
+                                left: left + 142,
+                                top: y + scale(h, 8),
+                                right: left + 142 + bar_w,
+                                bottom: y + scale(h, 18),
+                            },
+                            p.accent,
+                        );
+                        text(
+                            &format!("{label}  {count}  ({ratio:.0}%)"),
+                            RECT {
+                                left,
+                                top: y,
+                                right: left + 138,
+                                bottom: y + line,
+                            },
+                            p.text_sub,
+                            DT_END_ELLIPSIS,
+                        );
+                        y += line;
+                    }
+                    y += scale(h, 4);
+                    text(
+                        "연도별 문서",
+                        RECT {
+                            left,
+                            top: y,
+                            right,
+                            bottom: y + line,
+                        },
+                        p.text,
+                        0,
+                    );
+                    y += line;
+                    for (year, count) in s.by_year.iter().take(5) {
+                        text(
+                            &format!("{year}  {count}건"),
+                            RECT {
+                                left,
+                                top: y,
+                                right,
+                                bottom: y + line,
+                            },
+                            p.text_sub,
+                            0,
+                        );
+                        y += line;
+                    }
+                    y += scale(h, 4);
+                    text(
+                        "최근 수정 상위 문서",
+                        RECT {
+                            left,
+                            top: y,
+                            right,
+                            bottom: y + line,
+                        },
+                        p.text,
+                        0,
+                    );
+                    y += line;
+                    for row in s.recent.iter().take(5) {
+                        text(
+                            &format!("{}  {}", row.name, row.date),
+                            RECT {
+                                left,
+                                top: y,
+                                right,
+                                bottom: y + line,
+                            },
+                            p.text_sub,
+                            DT_END_ELLIPSIS,
+                        );
+                        y += line;
+                    }
+                    text(
+                        "전체 폴더별 수·크기 및 최근/최대 문서는 인덱스 메타데이터에 없습니다.",
+                        RECT {
+                            left,
+                            top: mr.content.bottom - scale(h, 28),
+                            right,
+                            bottom: mr.content.bottom,
+                        },
+                        p.text_faint,
+                        DT_END_ELLIPSIS,
+                    );
+                } else {
+                    let (queries, times) =
+                        with(|u| (u.state.recent_queries.clone(), u.recent_query_times.clone()));
+                    let left = mr.content.left;
+                    let right = mr.content.right;
+                    let line = scale(h, 28);
+                    text(
+                        &format!(
+                            "총 검색 {}회    고유 검색어 {}개",
+                            queries.len(),
+                            queries
+                                .iter()
+                                .collect::<std::collections::HashSet<_>>()
+                                .len()
+                        ),
+                        RECT {
+                            left,
+                            top: mr.content.top,
+                            right,
+                            bottom: mr.content.top + line,
+                        },
+                        p.text,
+                        0,
+                    );
+                    for (i, q) in queries.iter().enumerate().take(20) {
+                        let ts = times.get(i).copied().unwrap_or(0);
+                        let when = if ts == 0 {
+                            String::new()
+                        } else {
+                            ktm::settings::relative_time_label(
+                                std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs(),
+                                ts,
+                            )
+                        };
+                        text(
+                            &format!("{q}    {when}"),
+                            RECT {
+                                left,
+                                top: mr.content.top + line * (i as i32 + 1),
+                                right,
+                                bottom: mr.content.top + line * (i as i32 + 2),
+                            },
+                            p.text_sub,
+                            DT_END_ELLIPSIS,
+                        );
+                    }
+                }
+            } else {
+                let s = with(|u| u.settings.clone());
+                let labels: &[&str] = match active {
+                    0 => &[
+                        "테마",
+                        "기본 검색 모드",
+                        "최대 검색 결과",
+                        "UI 크기",
+                        "결과 밀도",
+                        "파일 열기 방식",
+                    ],
+                    1 => &[
+                        "저장 위치 표시",
+                        "수정 날짜 표시",
+                        "하위 폴더 포함",
+                        "제외 디렉터리",
+                        "문서 버전 그룹핑",
+                    ],
+                    2 => &[
+                        "Windows 로그인 자동 실행",
+                        "트레이 최소화",
+                        "启动 시 숨김",
+                        "최대 파일 크기 MB",
+                        "클라우드/네트워크 본문 스킵",
+                        "시스템 폴더 허용",
+                    ],
+                    _ => &["설정과 인덱스 상태", "오류 로그 폴더 열기"],
+                };
+                let vals: Vec<String> = match active {
+                    0 => vec![
+                        s.ui_theme,
+                        s.default_search_mode,
+                        s.max_results.to_string(),
+                        format!("{}%", s.ui_scale),
+                        s.result_density,
+                        format!("{}회 클릭", s.open_clicks),
+                    ],
+                    1 => vec![
+                        s.show_location.to_string(),
+                        s.show_modified.to_string(),
+                        s.include_subfolders.to_string(),
+                        s.excluded_directories.join("; "),
+                        s.version_grouping.to_string(),
+                    ],
+                    2 => vec![
+                        s.autostart.to_string(),
+                        s.minimize_to_tray.to_string(),
+                        s.start_hidden.to_string(),
+                        s.max_file_size_mb.to_string(),
+                        s.skip_cloud_network.to_string(),
+                        s.allow_system_folders.to_string(),
+                    ],
+                    _ => vec![
+                        format!(
+                            "인덱스 준비: {} · 최근 검색 {}",
+                            with(|u| u.warmed),
+                            s.recent_queries.len()
+                        ),
+                        "클릭하여 로그 폴더 열기".into(),
+                    ],
+                };
+                let line = scale(h, 38);
+                for (i, label) in labels.iter().enumerate() {
+                    let y = mr.content.top + line * i as i32;
+                    text(
+                        label,
+                        RECT {
+                            left: mr.content.left,
+                            top: y,
+                            right: mr.content.left + (mr.content.right - mr.content.left) / 2,
+                            bottom: y + line,
+                        },
+                        p.text,
+                        0,
+                    );
+                    text(
+                        vals.get(i).map(String::as_str).unwrap_or(""),
+                        RECT {
+                            left: mr.content.left + (mr.content.right - mr.content.left) / 2,
+                            top: y,
+                            right: mr.content.right,
+                            bottom: y + line,
+                        },
+                        p.accent,
+                        DT_END_ELLIPSIS,
+                    );
+                }
+            }
+        }
 
         BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
         SelectObject(mem, oldfont);
@@ -2233,6 +2773,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             WM_MOUSEMOVE => {
                 let x = l as i16 as i32;
                 let y = (l >> 16) as i16 as i32;
+                if with(|u| u.modal.is_some()) {
+                    return 0;
+                }
                 let mut r: RECT = std::mem::zeroed();
                 GetClientRect(h, &mut r);
                 let head = scale(h, HEAD_H);
@@ -2316,15 +2859,158 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let y = (l >> 16) as i16 as i32;
                 let mut rc_w: RECT = std::mem::zeroed();
                 GetClientRect(h, &mut rc_w);
+                if let Some(kind) = with(|u| u.modal) {
+                    let count = if kind == ktm::layout::ModalKind::Statistics {
+                        2
+                    } else {
+                        4
+                    };
+                    let hit = hit_modal(x, y, rc_w.right, rc_w.bottom, count);
+                    match hit {
+                        ModalHit::Outside | ModalHit::Close => {
+                            edit(|u| u.modal = None);
+                            layout(h);
+                            SetFocus(with(|u| u.edit));
+                        }
+                        ModalHit::Tab(i) => edit(|u| u.modal_tab = i),
+                        ModalHit::Content
+                            if kind == ktm::layout::ModalKind::Statistics
+                                && with(|u| u.modal_tab == 1) =>
+                        {
+                            let top = modal_rects(rc_w.right, rc_w.bottom, count).content.top;
+                            let line = scale(h, 28);
+                            let idx = ((y - top) / line - 1).max(0) as usize;
+                            if let Some(q) = with(|u| u.state.recent_queries.get(idx).cloned()) {
+                                edit(|u| u.modal = None);
+                                layout(h);
+                                event(h, Event::Input(q));
+                                event(h, Event::Submit);
+                            }
+                        }
+                        ModalHit::Content if kind == ktm::layout::ModalKind::Settings => {
+                            let top = modal_rects(rc_w.right, rc_w.bottom, count).content.top;
+                            let idx = ((y - top) / scale(h, 38)).max(0) as usize;
+                            let current_tab = with(|u| u.modal_tab);
+                            if current_tab == 3 && idx == 1 {
+                                let log_dir = std::env::var_os("LOCALAPPDATA")
+                                    .map(PathBuf::from)
+                                    .unwrap_or_else(std::env::temp_dir)
+                                    .join("HwpAutoDocFit")
+                                    .join("logs");
+                                let _ = std::fs::create_dir_all(&log_dir);
+                                let _ = ktm::open::open(log_dir.to_string_lossy().as_ref(), true);
+                            }
+                            let settings_tab = with(|u| u.modal_tab);
+                            edit(|u| {
+                                let s = &mut u.settings;
+                                match (u.modal_tab, idx) {
+                                    (0, 0) => {
+                                        s.ui_theme = match s.ui_theme.as_str() {
+                                            "system" => "light",
+                                            "light" => "dark",
+                                            _ => "system",
+                                        }
+                                        .into()
+                                    }
+                                    (0, 1) => {
+                                        s.default_search_mode =
+                                            if s.default_search_mode == "keyword" {
+                                                "filename"
+                                            } else {
+                                                "keyword"
+                                            }
+                                            .into()
+                                    }
+                                    (0, 2) => {
+                                        s.max_results = match s.max_results {
+                                            50 => 100,
+                                            100 => 200,
+                                            _ => 50,
+                                        }
+                                    }
+                                    (0, 3) => {
+                                        s.ui_scale = match s.ui_scale {
+                                            80 => 100,
+                                            100 => 120,
+                                            _ => 80,
+                                        }
+                                    }
+                                    (0, 4) => {
+                                        s.result_density = if s.result_density == "compact" {
+                                            "comfortable"
+                                        } else {
+                                            "compact"
+                                        }
+                                        .into()
+                                    }
+                                    (0, 5) => {
+                                        s.open_clicks = if s.open_clicks == 1 { 2 } else { 1 }
+                                    }
+                                    (1, 0) => s.show_location = !s.show_location,
+                                    (1, 1) => s.show_modified = !s.show_modified,
+                                    (1, 2) => s.include_subfolders = !s.include_subfolders,
+                                    (1, 4) => s.version_grouping = !s.version_grouping,
+                                    (2, 0) => s.autostart = !s.autostart,
+                                    (2, 1) => s.minimize_to_tray = !s.minimize_to_tray,
+                                    (2, 2) => s.start_hidden = !s.start_hidden,
+                                    (2, 3) => {
+                                        s.max_file_size_mb =
+                                            if s.max_file_size_mb == 0 { 100 } else { 0 }
+                                    }
+                                    (2, 4) => s.skip_cloud_network = !s.skip_cloud_network,
+                                    (2, 5) => s.allow_system_folders = !s.allow_system_folders,
+                                    _ => {}
+                                }
+                            });
+                            let (s, path) = with(|u| (u.settings.clone(), u.settings_path.clone()));
+                            let _ = s.save(&path);
+                            if settings_tab == 2 && matches!(idx, 0 | 1) {
+                                let exe = std::env::current_exe().unwrap_or_default();
+                                let enabled = with(|u| u.settings.autostart);
+                                let _ = ktm::install::execute(
+                                    if enabled {
+                                        "autostart-on"
+                                    } else {
+                                        "autostart-off"
+                                    },
+                                    &exe,
+                                    &exe,
+                                );
+                            }
+                        }
+                        _ => {}
+                    }
+                    layout(h);
+                    InvalidateRect(h, null(), 0);
+                    return 0;
+                }
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
                 let pad = scale(h, 12);
+                if y < head {
+                    if let Some(chip) = hit_header_chip(x, y, rc_w.right, bw, head, scale(h, 1)) {
+                        edit(|u| {
+                            u.modal = Some(if chip == 0 {
+                                ktm::layout::ModalKind::Statistics
+                            } else {
+                                ktm::layout::ModalKind::Settings
+                            });
+                            u.modal_tab = 0;
+                        });
+                        layout(h);
+                        InvalidateRect(h, null(), 0);
+                        return 0;
+                    }
+                }
                 let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, rc_w.right));
                 let logical_sidebar_x = x * SIDEBAR_W / side_w.max(1);
                 let sidebar_top = scale(h, 40);
-                let logical_sidebar_y = 40 + (y - sidebar_top) * SIDEBAR_ROW_H / scale(h, SIDEBAR_ROW_H).max(1);
+                let logical_sidebar_y =
+                    40 + (y - sidebar_top) * SIDEBAR_ROW_H / scale(h, SIDEBAR_ROW_H).max(1);
                 if hit_sidebar_add(logical_sidebar_x, logical_sidebar_y, SIDEBAR_W, side_w > 0) {
-                    if let Some(path) = pick_folder(h) { event(h, Event::SetFolderFilter(Some(path))); }
+                    if let Some(path) = pick_folder(h) {
+                        event(h, Event::SetFolderFilter(Some(path)));
+                    }
                     return 0;
                 }
 
@@ -2439,9 +3125,15 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 if y >= oy && y < oy + scale(h, OPTION_H) {
                     match hit_option(x, y, oy, scale(h, OPTION_H), pad + side_w, rc_w.right - pad) {
                         Some(OptionControl::MatchMode) => {
-                let modes = [(tm_state::MatchMode::AllTerms, "모두 포함"), (tm_state::MatchMode::AnyTerm, "하나 이상"), (tm_state::MatchMode::Exact, "정확히 일치")];
+                            let modes = [
+                                (tm_state::MatchMode::AllTerms, "모두 포함"),
+                                (tm_state::MatchMode::AnyTerm, "하나 이상"),
+                                (tm_state::MatchMode::Exact, "정확히 일치"),
+                            ];
                             let start = pad + side_w + scale(h, 2);
-                            let idx = ktm::layout::hit_match_chip(x, start, scale(h, 86), 3).unwrap_or(0).min(2);
+                            let idx = ktm::layout::hit_match_chip(x, start, scale(h, 86), 3)
+                                .unwrap_or(0)
+                                .min(2);
                             event(h, Event::SetMatchMode(modes[idx].0));
                         }
                         Some(OptionControl::CustomDays) => {
@@ -2455,8 +3147,15 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     if (1..=36500).contains(&days) {
                                         event(h, Event::SetDays(Some(days)));
                                         let today = ktm::backend::current_kst_ymd();
-                                        let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
-                                        event(h, Event::SetCustomDate(ktm::backend::shift_ymd(end, -(days as i64)), end));
+                                        let end =
+                                            (today.0 * 10000 + today.1 * 100 + today.2) as i64;
+                                        event(
+                                            h,
+                                            Event::SetCustomDate(
+                                                ktm::backend::shift_ymd(end, -(days as i64)),
+                                                end,
+                                            ),
+                                        );
                                     }
                                 }
                                 SetFocus(with(|u| u.edit));
@@ -2469,7 +3168,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 }
                             }
                         }
-                        Some(OptionControl::SearchMode) if y >= oy + scale(h, OPTION_H / 2) => event(h, Event::ToggleOptions),
+                        Some(OptionControl::SearchMode) if y >= oy + scale(h, OPTION_H / 2) => {
+                            event(h, Event::ToggleOptions)
+                        }
                         Some(OptionControl::SearchMode) => {
                             let mode = with(|u| u.state.options.search_mode);
                             let next = if mode == tm_state::SearchMode::Keyword {
@@ -2505,7 +3206,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     tm_state::SortMode::Relevance => {
                                         ktm::backend::BodySort::Relevance
                                     }
-                                    tm_state::SortMode::Confidence => ktm::backend::BodySort::Confidence,
+                                    tm_state::SortMode::Confidence => {
+                                        ktm::backend::BodySort::Confidence
+                                    }
                                     tm_state::SortMode::Newest => ktm::backend::BodySort::Date,
                                     tm_state::SortMode::Oldest => ktm::backend::BodySort::Oldest,
                                     tm_state::SortMode::Name => ktm::backend::BodySort::Name,
@@ -2557,24 +3260,76 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         }
                         Some(OptionControl::Period) => {
                             let menu = CreatePopupMenu();
-                            let labels = ["기간 없음", "오늘", "7일", "30일", "90일", "6개월", "1년", "직접 일수 입력…"];
-                            for (i, label) in labels.iter().enumerate() { AppendMenuW(menu, MF_STRING, 300 + i, wide(label).as_ptr()); }
+                            let labels = [
+                                "기간 없음",
+                                "오늘",
+                                "7일",
+                                "30일",
+                                "90일",
+                                "6개월",
+                                "1년",
+                                "직접 일수 입력…",
+                            ];
+                            for (i, label) in labels.iter().enumerate() {
+                                AppendMenuW(menu, MF_STRING, 300 + i, wide(label).as_ptr());
+                            }
                             let mut pt = POINT { x: 0, y: 0 };
                             GetCursorPos(&mut pt);
-                            let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, h, null());
+                            let cmd = TrackPopupMenu(
+                                menu,
+                                TPM_RETURNCMD | TPM_NONOTIFY,
+                                pt.x,
+                                pt.y,
+                                0,
+                                h,
+                                null(),
+                            );
                             DestroyMenu(menu);
-                            let choices = [None, Some(0), Some(7), Some(30), Some(90), Some(180), Some(365)];
+                            let choices = [
+                                None,
+                                Some(0),
+                                Some(7),
+                                Some(30),
+                                Some(90),
+                                Some(180),
+                                Some(365),
+                            ];
                             if (300..307).contains(&cmd) {
                                 let days = choices[(cmd - 300) as usize];
                                 event(h, Event::SetDays(days));
                                 if let Some(n) = days {
                                     let today = ktm::backend::current_kst_ymd();
                                     let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
-                                    if n == 0 { event(h, Event::SetDateFilter(DateFilter::Today)); }
-                                    else if cmd == 305 { event(h, Event::SetCustomDate(ktm::backend::shift_ymd_months(end, -6), end)); }
-                                    else if cmd == 306 { event(h, Event::SetCustomDate(ktm::backend::shift_ymd_months(end, -12), end)); }
-                                    else { event(h, Event::SetCustomDate(ktm::backend::shift_ymd(end, -(n as i64)), end)); }
-                                } else { event(h, Event::SetDateFilter(DateFilter::All)); }
+                                    if n == 0 {
+                                        event(h, Event::SetDateFilter(DateFilter::Today));
+                                    } else if cmd == 305 {
+                                        event(
+                                            h,
+                                            Event::SetCustomDate(
+                                                ktm::backend::shift_ymd_months(end, -6),
+                                                end,
+                                            ),
+                                        );
+                                    } else if cmd == 306 {
+                                        event(
+                                            h,
+                                            Event::SetCustomDate(
+                                                ktm::backend::shift_ymd_months(end, -12),
+                                                end,
+                                            ),
+                                        );
+                                    } else {
+                                        event(
+                                            h,
+                                            Event::SetCustomDate(
+                                                ktm::backend::shift_ymd(end, -(n as i64)),
+                                                end,
+                                            ),
+                                        );
+                                    }
+                                } else {
+                                    event(h, Event::SetDateFilter(DateFilter::All));
+                                }
                             } else if cmd == 307 {
                                 event(h, Event::ToggleOptions);
                                 layout(h);
@@ -2593,8 +3348,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         Some(OptionControl::Preset) => {
                             event(h, Event::ToggleOptions);
                             layout(h);
-                            if with(|u| u.state.options.options_open) { SetFocus(with(|u| u.days_edit)); }
-                            else { SetFocus(with(|u| u.edit)); }
+                            if with(|u| u.state.options.options_open) {
+                                SetFocus(with(|u| u.days_edit));
+                            } else {
+                                SetFocus(with(|u| u.edit));
+                            }
                         }
                         None => {}
                     }
@@ -3139,7 +3897,20 @@ pub fn run() -> Result<(), String> {
             null(),
         );
         SendMessageW(within_ed, 0x00c5, 1024, 0);
-        let days_ed = CreateWindowExW(0, wide("EDIT").as_ptr(), wide("").as_ptr(), WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL as u32, 0, 0, 1, 1, h, 3 as _, inst, null());
+        let days_ed = CreateWindowExW(
+            0,
+            wide("EDIT").as_ptr(),
+            wide("").as_ptr(),
+            WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL as u32,
+            0,
+            0,
+            1,
+            1,
+            h,
+            3 as _,
+            inst,
+            null(),
+        );
         SendMessageW(days_ed, 0x00c5, 5, 0);
 
         let initial_theme = arg("--theme").unwrap_or(settings.theme.clone());
@@ -3187,6 +3958,9 @@ pub fn run() -> Result<(), String> {
                 status_text: String::new(),
                 smart_presets: settings.smart_presets.clone(),
                 recent_query_times: settings.recent_query_times.clone(),
+                modal: None,
+                modal_tab: 0,
+                settings: settings.clone(),
             })
         });
 
