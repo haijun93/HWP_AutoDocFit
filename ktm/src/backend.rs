@@ -12,6 +12,10 @@ use std::path::{Path, PathBuf};
 pub type Result<T> = std::result::Result<T, String>;
 pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";
 const LIMIT: usize = 50;
+pub const MAX_SEARCH_RESULTS: usize = 200;
+pub fn clamp_search_limit(limit: usize) -> usize {
+    limit.clamp(1, MAX_SEARCH_RESULTS)
+}
 /// 검색 직후 원문을 함께 가져올 앞 결과 수(기본 창 크기에서 보이는 줄 + 여유). 나머지는 스크롤할 때.
 pub const SNIPPET_PREFETCH: usize = 8;
 /// 발췌: 첫 일치 앞 글자 수, 최대 글자 수.
@@ -551,7 +555,7 @@ impl Backend {
         let query_text = query_for_match_mode(query, match_mode);
         let syntax = kfind_core::parse_query_syntax(&query_text);
         let mut opts = SearchOptions {
-            top,
+            top: clamp_search_limit(top),
             refs_per_doc: 1,
             cancel,
             start_date,
