@@ -26,12 +26,14 @@ impl Default for Model {fn default()->Self {Self{view:View::Hidden,seq:0,sticky:
     SetPanelCount(u8), ActivatePanel(String), SelectPanel{panel_id:String,selection:Vec<String>},
     RequestVirtualMove{operation_id:String,source_panel:String,target_panel:String,item_ids:Vec<String>},
     RequestVirtualCopy{operation_id:String,source_panel:String,target_panel:String,item_ids:Vec<String>},
+    RequestUndo{operation_id:String}, RequestRedo{operation_id:String},
     VirtualOperationCompleted{seq:u64,result:Result<(),String>},
 }
 #[derive(Clone,Debug,PartialEq,Eq)] pub enum Effect {
     Show, Foreground, Hide, ClearItems, Read{seq:u64,context:Context}, Draw, Filter,
     Locate{seq:u64,item_id:i64,origin:bool}, Open{seq:u64,item_id:i64}, Notice(String),
     PersistLayout(Layout), PersistVirtualOperation{seq:u64,operation_id:String,kind:VirtualOperationKind},
+    PersistVirtualHistory{seq:u64,operation_id:String,redo:bool},
 }
 fn loading(mut m:Model,c:Context,mut effects:Vec<Effect>)->(Model,Vec<Effect>) {
     m.seq+=1; m.pending_open=None; m.view=View::Loading(c.clone());
@@ -54,6 +56,8 @@ pub fn step(current:&Model,event:Event)->(Model,Vec<Effect>) {
         Event::RequestVirtualCopy{operation_id,source_panel,target_panel,item_ids} if m.pending_operation.is_none()&&!item_ids.is_empty()&&source_panel!=target_panel&&m.explorer.panels.iter().any(|p|p.id==source_panel)&&m.explorer.panels.iter().any(|p|p.id==target_panel)=>{
             m.seq+=1;let seq=m.seq;let kind=VirtualOperationKind::Copy{source_panel,target_panel,item_ids};m.pending_operation=Some(PendingOperation{seq,operation_id:operation_id.clone(),kind:kind.clone()});(m,vec![Effect::PersistVirtualOperation{seq,operation_id,kind}])
         },
+        Event::RequestUndo{operation_id} if m.pending_operation.is_none()&&!operation_id.is_empty()=>{m.seq+=1;let seq=m.seq;let kind=VirtualOperationKind::Move{source_panel:String::new(),target_panel:String::new(),item_ids:vec![]};m.pending_operation=Some(PendingOperation{seq,operation_id:operation_id.clone(),kind});(m,vec![Effect::PersistVirtualHistory{seq,operation_id,redo:false}])},
+        Event::RequestRedo{operation_id} if m.pending_operation.is_none()&&!operation_id.is_empty()=>{m.seq+=1;let seq=m.seq;let kind=VirtualOperationKind::Copy{source_panel:String::new(),target_panel:String::new(),item_ids:vec![]};m.pending_operation=Some(PendingOperation{seq,operation_id:operation_id.clone(),kind});(m,vec![Effect::PersistVirtualHistory{seq,operation_id,redo:true}])},
         Event::VirtualOperationCompleted{seq,result} if m.pending_operation.as_ref().is_some_and(|p|p.seq==seq)=>{m.pending_operation=None;let effects=match result{Ok(())=>vec![Effect::Draw],Err(e)=>vec![Effect::Notice(e),Effect::Draw]};(m,effects)},
         Event::Call(caller)=>match &m.view {
             View::Hidden=>loading(m,Context::default(),vec![Effect::Show]),

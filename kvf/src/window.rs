@@ -33,6 +33,7 @@ pub fn event(e:Event){
   Effect::Locate{seq,item_id,origin}=>open_item(seq,item_id,if origin{crate::open::Action::LocateOrigin}else{crate::open::Action::LocateCopy}),
   Effect::PersistLayout(layout)=>{if let Err(error)=persist_layout(&layout){notify(&format!("패널 설정 저장 실패: {error}"));}},
   Effect::PersistVirtualOperation{seq,operation_id,kind}=>{let result=persist_virtual(&operation_id,&kind);event(Event::VirtualOperationCompleted{seq,result});},
+  Effect::PersistVirtualHistory{seq,operation_id,redo}=>{let result=(||{let store=vf_store::Store::open(&store_path())?;if redo{store.redo(&operation_id)}else{store.undo(&operation_id)}})();event(Event::VirtualOperationCompleted{seq,result});},
  }}
  let(v,_,_,_)=snapshot();let _=crate::status(&v);
 }
@@ -40,7 +41,7 @@ fn layout_path()->std::path::PathBuf{crate::paths::data_dir().join("settings.jso
 fn store_path()->std::path::PathBuf{crate::paths::data_dir().join("virtual.db")}
 fn persist_layout(layout:&crate::vf_layout::Layout)->Result<(),String>{let p=layout_path();let mut value=Settings::load(&p).value();if let crate::json::Value::Obj(ref mut entries)=value{entries.retain(|(k,_)|!matches!(k.as_str(),"layout_version"|"panel_count"|"layout"|"active_panel"|"split"|"panels"));if let crate::json::Value::Obj(layout)=layout.value(){entries.extend(layout);}}crate::settings::write_changed(&p,&crate::json::to_string(&value)).map(|_|()).map_err(|e|e.to_string())}
 fn load_layout()->crate::vf_layout::Layout{let p=layout_path();match std::fs::read_to_string(&p){Ok(text) if crate::json::parse(&text).and_then(|v|v.num("panel_count")).is_some()=>crate::vf_layout::Layout::parse(&text),Ok(text)=>crate::vf_layout::Layout::migrate_legacy(&text),Err(_)=>crate::vf_layout::Layout::default()}}
-fn persist_virtual(operation_id:&str,kind:&vf_state::VirtualOperationKind)->Result<(),String>{let store=vf_store::Store::open(&store_path())?;match kind{vf_state::VirtualOperationKind::Move{source_panel:_,target_panel,item_ids}=>store.move_many(operation_id,item_ids,target_panel),vf_state::VirtualOperationKind::Copy{source_panel:_,target_panel,item_ids}=>store.copy_many(operation_id,item_ids,target_panel,SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64)}}
+fn latest_operation_id()->String{vf_store::Store::open(&store_path()).ok().and_then(|s|s.journal().ok()).and_then(|v|v.first().map(|e|e.operation_id.split(":").next().unwrap_or(&e.operation_id).to_string())).unwrap_or_default()}fn persist_virtual(operation_id:&str,kind:&vf_state::VirtualOperationKind)->Result<(),String>{let store=vf_store::Store::open(&store_path())?;match kind{vf_state::VirtualOperationKind::Move{source_panel:_,target_panel,item_ids}=>store.move_many(operation_id,item_ids,target_panel),vf_state::VirtualOperationKind::Copy{source_panel:_,target_panel,item_ids}=>store.copy_many(operation_id,item_ids,target_panel,SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64)}}
 fn read(seq:u64,mut c:Context){
  edit(|s|s.truncated=false);draw_later();let h=with(|s|s.hwnd);unsafe{UpdateWindow(h);}
  if c.box_id.is_none(){c.box_id=Settings::load(&crate::paths::data_dir().join("settings.json")).last_box;}
@@ -343,7 +344,7 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  WM_RBUTTONUP=>{if let Some(i)=row_at(h,l){choose(i);item_menu(h,l);}0},
  WM_MOUSEWHEEL=>{move_selection(h,if ((w>>16)as u16)as i16>0{-3}else{3});0},
  WM_KEYDOWN=>{match w as u16{
- VK_ESCAPE=>{edit(|s|{s.committed.clear();s.comp.clear();});event(Event::Escape);},VK_F5=>event(Event::Refresh),
+ VK_ESCAPE=>{edit(|s|{s.committed.clear();s.comp.clear();});event(Event::Escape);},VK_F5=>event(Event::Refresh),VK_Z if GetKeyState(VK_CONTROL as i32)<0=>event(Event::RequestUndo{operation_id:latest_operation_id()}),VK_Y if GetKeyState(VK_CONTROL as i32)<0=>event(Event::RequestRedo{operation_id:latest_operation_id()}),
  VK_BACK=>{edit(|s|{s.committed.pop();s.comp.clear();});query();},VK_RETURN=>event(if GetKeyState(VK_CONTROL as i32)<0{Event::LocateCopy}else{Event::Open}),
  VK_LEFT=>change_tab(-1),VK_RIGHT=>change_tab(1),VK_TAB=>change_tab(if GetKeyState(VK_SHIFT as i32)<0{-1}else{1}),
  VK_UP=>move_selection(h,-1),VK_DOWN=>move_selection(h,1),VK_PRIOR=>move_selection(h,-(((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize)),VK_NEXT=>move_selection(h,((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as isize),VK_HOME=>move_selection(h,-100000),VK_END=>move_selection(h,100000),_=>{}}
