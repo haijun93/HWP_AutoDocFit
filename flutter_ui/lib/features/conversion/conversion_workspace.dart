@@ -65,6 +65,23 @@ class ConversionWorkspace extends StatelessWidget {
     return '${(bytes / 1024).ceil()} KB';
   }
 
+  static String? _resultInfoText(Map result) {
+    if (result['info'] case final String info when info.trim().isNotEmpty) {
+      return info.trim();
+    }
+    final parts = <String>[];
+    if (result['final_size'] case final Object finalSize) {
+      final s = sizeText(finalSize);
+      final text = s.isNotEmpty ? s : '$finalSize'.trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    if (result['steps'] case final Object steps) {
+      final text = '$steps'.trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    return parts.isNotEmpty ? parts.join(' · ') : null;
+  }
+
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<int>(
     valueListenable: host.stateVersion,
@@ -102,14 +119,17 @@ class ConversionWorkspace extends StatelessWidget {
                         Expanded(flex: 4, child: panels[2]),
                       ],
                     )
-                  : ListView(
-                      children: [
-                        SizedBox(height: 260, child: panels[0]),
-                        const SizedBox(height: 16),
-                        SizedBox(height: 420, child: panels[1]),
-                        const SizedBox(height: 16),
-                        SizedBox(height: 320, child: panels[2]),
-                      ],
+                  : SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(height: 260, child: panels[0]),
+                          const SizedBox(height: 16),
+                          SizedBox(height: 420, child: panels[1]),
+                          const SizedBox(height: 16),
+                          SizedBox(height: 320, child: panels[2]),
+                        ],
+                      ),
                     ),
             ),
           );
@@ -649,12 +669,13 @@ class ConversionWorkspace extends StatelessWidget {
                                         ),
                                       ],
                                     ),
-                                    if (results[i]['info'] case final String info
-                                        when info.trim().isNotEmpty) ...[
+                                    if (_resultInfoText(results[i])
+                                        case final String infoText
+                                        when infoText.isNotEmpty) ...[
                                       const SizedBox(height: 2),
                                       Text(
-                                        info.trim(),
-                                        key: Key('conversionResultInfo-$i'),
+                                        infoText,
+                                        key: ValueKey('conversionResultInfo-$i'),
                                         style: TextStyle(
                                           fontSize: 11,
                                           color: context.colors.muted,
