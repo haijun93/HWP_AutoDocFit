@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -14,10 +15,10 @@ String _formatBytes(int bytes) {
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
-/// 사진뷰 화면 (MPLB2).
-/// 사진 폴더 등록·새로고침, 연·월 묶음 격자 보기(화면에 보일 때만 썸네일 요청),
-/// 썸네일 크기 조절, 사진 클릭 시 크게 보기 모달(키보드 좌/우/Esc 조작),
-/// 즐겨찾기·태그 추가/삭제, 파일명/날짜/태그 검색,
+/// 사진뷰 화면 (MPLB2·MPLB4).
+/// 사진 폴더 등록·새로고침, 날짜별/폴더별/카메라별/위치별 묶음 격자 보기,
+/// 썸네일 크기 조절, 사진 클릭 시 크게 보기 모달(키보드 좌/우/Esc, 슬라이드쇼, 사본 편집),
+/// 유사·중복 사진 찾기, 즐겨찾기·태그 추가/삭제, 파일명/날짜/태그 검색,
 /// 사진 다중 선택 시 '공문 첨부용 사본 저장'·'사진대지 만들기(2×2·2×3)' 실행 UI를 제공한다.
 class PhotoAlbumScreen extends StatefulWidget {
   const PhotoAlbumScreen({
@@ -45,7 +46,14 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   bool _loading = false;
   String? _errorMessage;
 
-  // 썸네일 크기 (120 ~ 240, 기본 160)
+  // 보기 모드: 'date'(날짜별), 'folder'(폴더별), 'camera'(카메라별), 'location'(위치별)
+  String _currentViewMode = 'date';
+
+  // 유사·중복 사진 탐지 결과 상태
+  bool _showDuplicates = false;
+  List<Map<String, Object?>> _duplicateGroups = [];
+
+  // 썸네일 크기 (100 ~ 240, 기본 160)
   double _thumbSize = 160.0;
 
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
@@ -189,6 +197,18 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     }
   }
 
+  Future<void> _switchViewMode(String mode) async {
+    if (_currentViewMode == mode && !_showDuplicates) return;
+    setState(() {
+      _currentViewMode = mode;
+      _showDuplicates = false;
+      _searchResults = null;
+    });
+    if (_currentFolder != null) {
+      await _loadPhotos(_currentFolder!);
+    }
+  }
+
   Future<void> _loadPhotos(String folder) async {
     setState(() {
       _loading = true;
@@ -197,13 +217,22 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       _searchResults = null;
       _selectedPaths.clear();
       _selectionMode = false;
+      _showDuplicates = false;
     });
 
     try {
-      final res = await widget.api('photo_album', [
-        'list_by_date',
-        {'folder': folder},
-      ]);
+      final Object? res;
+      if (_currentViewMode == 'date') {
+        res = await widget.api('photo_album', [
+          'list_by_date',
+          {'folder': folder},
+        ]);
+      } else {
+        res = await widget.api('photo_album', [
+          'place_groups',
+          {'folder': folder, 'group_by': _currentViewMode},
+        ]);
+      }
 
       if (!mounted) return;
 
@@ -214,12 +243,25 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           for (final g in rawGroups) {
             if (g is Map) {
               final groupMap = Map<String, Object?>.from(g);
-              final rawPhotos = groupMap['photos'];
+              final rawPhotos = groupMap['photos'] ?? groupMap['items'];
+              final photos = <Map<String, Object?>>[];
               if (rawPhotos is List) {
-                groupMap['photos'] = [
-                  for (final p in rawPhotos)
-                    if (p is Map) Map<String, Object?>.from(p),
-                ];
+                for (final p in rawPhotos) {
+                  if (p is Map) {
+                    final pMap = Map<String, Object?>.from(p);
+                    pMap['filename'] = pMap['filename'] ?? pMap['name'] ?? '';
+                    pMap['date_taken'] = pMap['date_taken'] ?? pMap['date'] ?? '';
+                    photos.add(pMap);
+                  }
+                }
+              }
+              groupMap['photos'] = photos;
+              if (groupMap['label'] == null) {
+                if (groupMap['year'] != null && groupMap['month'] != null) {
+                  groupMap['label'] = '${groupMap['year']}년 ${groupMap['month']}월';
+                } else {
+                  groupMap['label'] = '기타';
+                }
               }
               groups.add(groupMap);
             }
@@ -267,6 +309,70 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     }
   }
 
+  Future<void> _findDuplicates() async {
+    if (_currentFolder == null) return;
+
+    setState(() {
+      _loading = true;
+      _errorMessage = null;
+      _searchResults = null;
+      _selectedPaths.clear();
+      _selectionMode = false;
+    });
+
+    try {
+      final res = await widget.api('photo_album', [
+        'find_duplicates',
+        {'folder': _currentFolder, 'threshold': 6},
+      ]);
+
+      if (!mounted) return;
+
+      if (res is Map && res['ok'] == true) {
+        final rawGroups = res['groups'];
+        final dupGroups = <Map<String, Object?>>[];
+        if (rawGroups is List) {
+          for (final g in rawGroups) {
+            if (g is Map) {
+              final gMap = Map<String, Object?>.from(g);
+              final rawItems = gMap['items'];
+              final items = <Map<String, Object?>>[];
+              if (rawItems is List) {
+                for (final it in rawItems) {
+                  if (it is Map) {
+                    final itMap = Map<String, Object?>.from(it);
+                    itMap['filename'] = itMap['filename'] ?? itMap['name'] ?? '';
+                    itMap['date_taken'] = itMap['date_taken'] ?? itMap['date'] ?? '';
+                    items.add(itMap);
+                  }
+                }
+              }
+              gMap['items'] = items;
+              dupGroups.add(gMap);
+            }
+          }
+        }
+        setState(() {
+          _duplicateGroups = dupGroups;
+          _showDuplicates = true;
+          _loading = false;
+        });
+      } else {
+        final msg = (res is Map ? res['message'] : null) ?? '중복 사진 찾기에 실패했습니다.';
+        setState(() {
+          _errorMessage = '$msg';
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '중복 사진 찾기 중 오류가 발생했습니다: $e';
+        _loading = false;
+      });
+    }
+  }
+
   Future<void> _performSearch() async {
     final query = _searchController.text.trim();
     if (query.isEmpty && !_favoriteFilter) {
@@ -279,6 +385,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     setState(() {
       _loading = true;
       _errorMessage = null;
+      _showDuplicates = false;
     });
 
     try {
@@ -339,7 +446,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         final newFav = res['favorite'] == true;
         setState(() {
           photo['favorite'] = newFav;
-          // 검색 결과와 연·월 그룹 모두 갱신
           for (final group in _groups) {
             final photos = group['photos'] as List<Map<String, Object?>>?;
             if (photos != null) {
@@ -354,6 +460,16 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             for (final p in _searchResults!) {
               if (p['path'] == path) {
                 p['favorite'] = newFav;
+              }
+            }
+          }
+          for (final dg in _duplicateGroups) {
+            final items = dg['items'] as List<Map<String, Object?>>?;
+            if (items != null) {
+              for (final it in items) {
+                if (it['path'] == path) {
+                  it['favorite'] = newFav;
+                }
               }
             }
           }
@@ -402,6 +518,16 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               }
             }
           }
+          for (final dg in _duplicateGroups) {
+            final items = dg['items'] as List<Map<String, Object?>>?;
+            if (items != null) {
+              for (final it in items) {
+                if (it['path'] == path) {
+                  it['tags'] = tags;
+                }
+              }
+            }
+          }
         });
       }
     } catch (e) {
@@ -447,6 +573,16 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               }
             }
           }
+          for (final dg in _duplicateGroups) {
+            final items = dg['items'] as List<Map<String, Object?>>?;
+            if (items != null) {
+              for (final it in items) {
+                if (it['path'] == path) {
+                  it['tags'] = tags;
+                }
+              }
+            }
+          }
         });
       }
     } catch (e) {
@@ -472,8 +608,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     return all;
   }
 
-  void _openViewerModal(int initialIndex) {
-    final photos = _getAllCurrentPhotos();
+  void _openViewerModal(int initialIndex, {List<Map<String, Object?>>? customPhotos}) {
+    final photos = customPhotos ?? _getAllCurrentPhotos();
     if (photos.isEmpty || initialIndex < 0 || initialIndex >= photos.length) return;
 
     showDialog<void>(
@@ -487,6 +623,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         onToggleFavorite: _toggleFavorite,
         onAddTag: _addTag,
         onRemoveTag: _removeTag,
+        onPhotoEdited: _refreshCurrentFolder,
       ),
     );
   }
@@ -594,7 +731,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       builder: (context, constraints) {
         final content = Scaffold(
           appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(60),
+            preferredSize: Size.fromHeight(_currentFolder != null ? 110 : 64),
             child: _buildTopBar(context),
           ),
           body: _buildBody(),
@@ -614,7 +751,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   Widget _buildTopBar(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
@@ -623,164 +760,221 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           ),
         ),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          FilledButton.icon(
-            key: const ValueKey('photoAlbumPickFolderButton'),
-            onPressed: _loading ? null : _pickFolder,
-            icon: const Icon(Icons.folder_open, size: 18),
-            label: const Text('사진 폴더 선택'),
-          ),
-          const SizedBox(width: 12),
-          if (_currentFolder != null) ...[
-            if (_registeredFolders.length > 1) ...[
-              DropdownButton<String>(
-                value: _registeredFolders.any((f) => f['path'] == _currentFolder)
-                    ? _currentFolder
-                    : null,
-                icon: const Icon(Icons.arrow_drop_down),
-                underline: const SizedBox(),
-                items: [
-                  for (final f in _registeredFolders)
-                    DropdownMenuItem(
-                      value: '${f['path']}',
-                      child: Text(
-                        '${f['path']}'.split(Platform.pathSeparator).last,
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                      ),
+          // 1행: 폴더 선택 / 드롭다운 / 새로고침 + 검색창 / 즐겨찾기 / 슬라이더 / 선택 모드
+          Row(
+            children: [
+              FilledButton.icon(
+                key: const ValueKey('photoAlbumPickFolderButton'),
+                onPressed: _loading ? null : _pickFolder,
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('사진 폴더 선택'),
+              ),
+              const SizedBox(width: 12),
+              if (_currentFolder != null) ...[
+                if (_registeredFolders.length > 1) ...[
+                  DropdownButton<String>(
+                    value: _registeredFolders.any((f) => f['path'] == _currentFolder)
+                        ? _currentFolder
+                        : null,
+                    icon: const Icon(Icons.arrow_drop_down),
+                    underline: const SizedBox(),
+                    items: [
+                      for (final f in _registeredFolders)
+                        DropdownMenuItem(
+                          value: '${f['path']}',
+                          child: Text(
+                            '${f['path']}'.split(Platform.pathSeparator).last,
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                    ],
+                    onChanged: _loading ? null : (val) {
+                      if (val != null) _loadPhotos(val);
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                ] else ...[
+                  Flexible(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.photo_library_outlined, size: 18, color: Colors.grey),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _currentFolder!,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
                     ),
+                  ),
+                  const SizedBox(width: 8),
                 ],
-                onChanged: _loading ? null : (val) {
-                  if (val != null) _loadPhotos(val);
+                IconButton(
+                  key: const ValueKey('photoAlbumRefreshButton'),
+                  tooltip: '새로고침',
+                  icon: const Icon(Icons.refresh, size: 20),
+                  onPressed: _loading ? null : _refreshCurrentFolder,
+                ),
+              ],
+              const Spacer(),
+              // 검색창
+              SizedBox(
+                width: 180,
+                height: 36,
+                child: TextField(
+                  key: const ValueKey('photoAlbumSearchField'),
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: '파일명·태그 검색',
+                    hintStyle: const TextStyle(fontSize: 12),
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            key: const ValueKey('photoAlbumSearchClearButton'),
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () {
+                              _searchController.clear();
+                              _performSearch();
+                            },
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: theme.dividerColor),
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 13),
+                  onSubmitted: (_) => _performSearch(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                key: const ValueKey('photoAlbumSearchSubmitButton'),
+                tooltip: '검색',
+                icon: const Icon(Icons.search, size: 20),
+                onPressed: _loading ? null : _performSearch,
+              ),
+              // 즐겨찾기 필터
+              IconButton(
+                key: const ValueKey('photoAlbumFavoriteFilterButton'),
+                tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
+                icon: Icon(
+                  _favoriteFilter ? Icons.star : Icons.star_border,
+                  color: _favoriteFilter ? Colors.amber : null,
+                  size: 22,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _favoriteFilter = !_favoriteFilter;
+                  });
+                  _performSearch();
                 },
               ),
-              const SizedBox(width: 8),
-            ] else ...[
-              Flexible(
+              const SizedBox(width: 6),
+              // 썸네일 크기 조절
+              Tooltip(
+                message: '썸네일 크기 조절',
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.photo_library_outlined, size: 18, color: Colors.grey),
-                    const SizedBox(width: 6),
-                    Flexible(
-                      child: Text(
-                        _currentFolder!,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w500),
+                    const Icon(Icons.photo_size_select_actual_outlined, size: 16, color: Colors.grey),
+                    SizedBox(
+                      width: 80,
+                      child: Slider(
+                        key: const ValueKey('photoAlbumThumbSizeSlider'),
+                        value: _thumbSize,
+                        min: 100,
+                        max: 240,
+                        divisions: 7,
+                        onChanged: (val) {
+                          setState(() {
+                            _thumbSize = val;
+                          });
+                        },
                       ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 8),
-            ],
-            IconButton(
-              key: const ValueKey('photoAlbumRefreshButton'),
-              tooltip: '새로고침',
-              icon: const Icon(Icons.refresh, size: 20),
-              onPressed: _loading ? null : _refreshCurrentFolder,
-            ),
-          ],
-          const Spacer(),
-          // 검색창
-          SizedBox(
-            width: 200,
-            height: 36,
-            child: TextField(
-              key: const ValueKey('photoAlbumSearchField'),
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: '파일명·태그 검색',
-                hintStyle: const TextStyle(fontSize: 12),
-                prefixIcon: const Icon(Icons.search, size: 18),
-                suffixIcon: _searchController.text.isNotEmpty
-                    ? IconButton(
-                        key: const ValueKey('photoAlbumSearchClearButton'),
-                        icon: const Icon(Icons.clear, size: 16),
-                        onPressed: () {
-                          _searchController.clear();
-                          _performSearch();
-                        },
-                      )
-                    : null,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide(color: theme.dividerColor),
+              const SizedBox(width: 6),
+              // 선택 모드 토글
+              IconButton(
+                key: const ValueKey('photoAlbumToggleSelectionButton'),
+                tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
+                icon: Icon(
+                  _selectionMode ? Icons.check_circle : Icons.check_circle_outline,
+                  color: _selectionMode ? theme.colorScheme.primary : null,
+                  size: 20,
                 ),
+                onPressed: () {
+                  setState(() {
+                    _selectionMode = !_selectionMode;
+                    if (!_selectionMode) {
+                      _selectedPaths.clear();
+                    }
+                  });
+                },
               ),
-              style: const TextStyle(fontSize: 13),
-              onSubmitted: (_) => _performSearch(),
-            ),
+            ],
           ),
-          const SizedBox(width: 8),
-          IconButton(
-            key: const ValueKey('photoAlbumSearchSubmitButton'),
-            tooltip: '검색',
-            icon: const Icon(Icons.search, size: 20),
-            onPressed: _loading ? null : _performSearch,
-          ),
-          // 즐겨찾기 필터
-          IconButton(
-            key: const ValueKey('photoAlbumFavoriteFilterButton'),
-            tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
-            icon: Icon(
-              _favoriteFilter ? Icons.star : Icons.star_border,
-              color: _favoriteFilter ? Colors.amber : null,
-              size: 22,
-            ),
-            onPressed: () {
-              setState(() {
-                _favoriteFilter = !_favoriteFilter;
-              });
-              _performSearch();
-            },
-          ),
-          const SizedBox(width: 8),
-          // 썸네일 크기 조절
-          Tooltip(
-            message: '썸네일 크기 조절',
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+          // 2행: 폴더가 선택되어 있을 때 보기 전환 (날짜별 / 폴더별 / 카메라별 / 위치별) + 중복 사진 찾기
+          if (_currentFolder != null) ...[
+            const SizedBox(height: 6),
+            Row(
               children: [
-                const Icon(Icons.photo_size_select_actual_outlined, size: 16, color: Colors.grey),
-                SizedBox(
-                  width: 90,
-                  child: Slider(
-                    key: const ValueKey('photoAlbumThumbSizeSlider'),
-                    value: _thumbSize,
-                    min: 100,
-                    max: 240,
-                    divisions: 7,
-                    onChanged: (val) {
-                      setState(() {
-                        _thumbSize = val;
-                      });
-                    },
+                SegmentedButton<String>(
+                  key: const ValueKey('photoAlbumViewModeSegmented'),
+                  segments: const [
+                    ButtonSegment<String>(
+                      value: 'date',
+                      label: Text('날짜별', style: TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'folder',
+                      label: Text('폴더별', style: TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'camera',
+                      label: Text('카메라별', style: TextStyle(fontSize: 12)),
+                    ),
+                    ButtonSegment<String>(
+                      value: 'location',
+                      label: Text('위치별', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                  selected: {_currentViewMode},
+                  onSelectionChanged: _loading
+                      ? null
+                      : (newSelection) {
+                          _switchViewMode(newSelection.first);
+                        },
+                  style: const ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  key: const ValueKey('photoAlbumFindDuplicatesButton'),
+                  icon: const Icon(Icons.copy_all_outlined, size: 16),
+                  label: const Text('중복 사진 찾기', style: TextStyle(fontSize: 12)),
+                  onPressed: _loading ? null : _findDuplicates,
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                 ),
               ],
             ),
-          ),
-          const SizedBox(width: 8),
-          // 선택 모드 토글
-          IconButton(
-            key: const ValueKey('photoAlbumToggleSelectionButton'),
-            tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
-            icon: Icon(
-              _selectionMode ? Icons.check_circle : Icons.check_circle_outline,
-              color: _selectionMode ? theme.colorScheme.primary : null,
-              size: 20,
-            ),
-            onPressed: () {
-              setState(() {
-                _selectionMode = !_selectionMode;
-                if (!_selectionMode) {
-                  _selectedPaths.clear();
-                }
-              });
-            },
-          ),
+          ],
         ],
       ),
     );
@@ -891,7 +1085,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             ),
             const SizedBox(height: 8),
             const Text(
-              '사진을 연·월 묶음 격자로 감상하고, 크게 보기·태그·사진대지를 만듭니다.',
+              '사진을 날짜별·폴더별·카메라별·위치별 묶음 격자로 감상하고, 크게 보기·태그·사진대지를 만듭니다.',
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 20),
@@ -903,6 +1097,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           ],
         ),
       );
+    }
+
+    if (_showDuplicates) {
+      return _buildDuplicatesView();
     }
 
     final allPhotos = _getAllCurrentPhotos();
@@ -1050,10 +1248,20 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                 padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
                 child: Row(
                   children: [
-                    const Icon(Icons.calendar_month_outlined, size: 18, color: Colors.blueAccent),
+                    Icon(
+                      _currentViewMode == 'folder'
+                          ? Icons.folder_outlined
+                          : _currentViewMode == 'camera'
+                              ? Icons.camera_alt_outlined
+                              : _currentViewMode == 'location'
+                                  ? Icons.place_outlined
+                                  : Icons.calendar_month_outlined,
+                      size: 18,
+                      color: Colors.blueAccent,
+                    ),
                     const SizedBox(width: 8),
                     Text(
-                      '${group['label'] ?? '기타'} (${(group['photos'] as List?)?.length ?? 0}장)',
+                      '${group['label'] ?? '기타'} (${group['count'] ?? (group['photos'] as List?)?.length ?? 0}장)',
                       key: ValueKey('photoGroupHeader-${group['label']}'),
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
@@ -1113,6 +1321,222 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDuplicatesView() {
+    if (_duplicateGroups.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.check_circle_outline, size: 56, color: Colors.green),
+              const SizedBox(height: 16),
+              const Text(
+                '유사·중복 사진이 없습니다.',
+                key: ValueKey('photoAlbumNoDuplicatesText'),
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '현재 폴더에서 시각적으로 유사하거나 중복된 사진을 발견하지 못했습니다.',
+                style: TextStyle(color: Colors.grey, fontSize: 13),
+              ),
+              const SizedBox(height: 20),
+              OutlinedButton.icon(
+                key: const ValueKey('photoAlbumBackFromDuplicatesButton'),
+                onPressed: () {
+                  setState(() {
+                    _showDuplicates = false;
+                  });
+                },
+                icon: const Icon(Icons.arrow_back),
+                label: const Text('목록으로 돌아가기'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Scrollbar(
+      child: CustomScrollView(
+        key: const ValueKey('photoAlbumDuplicatesView'),
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.copy_all, size: 20, color: Colors.orangeAccent),
+                  const SizedBox(width: 8),
+                  Text(
+                    '유사·중복 사진 결과: ${_duplicateGroups.length}개 그룹',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    key: const ValueKey('photoAlbumCloseDuplicatesButton'),
+                    icon: const Icon(Icons.close, size: 16),
+                    label: const Text('결과 닫기', style: TextStyle(fontSize: 12)),
+                    onPressed: () {
+                      setState(() {
+                        _showDuplicates = false;
+                      });
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          for (var gIdx = 0; gIdx < _duplicateGroups.length; gIdx++) ...[
+            _buildDuplicateGroupSection(_duplicateGroups[gIdx], gIdx),
+          ],
+          const SliverToBoxAdapter(
+            child: SizedBox(height: 32),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDuplicateGroupSection(Map<String, Object?> group, int gIndex) {
+    final groupId = group['group_id'] ?? (gIndex + 1);
+    final repPath = '${group['representative'] ?? ''}';
+    final items = (group['items'] as List<Map<String, Object?>>?) ?? [];
+
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.orangeAccent.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    '그룹 $groupId',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Colors.orangeAccent,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${items.length}장',
+                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          sliver: SliverGrid(
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: _thumbSize,
+              childAspectRatio: 0.8,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+            ),
+            delegate: SliverChildBuilderDelegate(
+              (context, index) {
+                final item = items[index];
+                final path = '${item['path'] ?? ''}';
+                final isRep = path == repPath || item['distance'] == 0;
+                final dist = item['distance'] ?? 0;
+
+                return Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: isRep
+                          ? Colors.blueAccent
+                          : Theme.of(context).dividerColor.withValues(alpha: 0.3),
+                      width: isRep ? 2.0 : 1.0,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      _PhotoCard(
+                        key: ValueKey('duplicatePhotoCard-$path'),
+                        photo: item,
+                        api: widget.api,
+                        cachedThumb: _thumbCache[path],
+                        onThumbLoaded: (bytes) {
+                          _thumbCache[path] = bytes;
+                        },
+                        onTap: () {
+                          _openViewerModal(index, customPhotos: items);
+                        },
+                        onToggleFavorite: () => _toggleFavorite(item),
+                      ),
+                      // 대표 배지 및 거리 배지
+                      Positioned(
+                        top: 6,
+                        left: 6,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (isRep) ...[
+                              Container(
+                                key: ValueKey('repBadge-$path'),
+                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.blueAccent,
+                                  borderRadius: BorderRadius.circular(4),
+                                  boxShadow: const [
+                                    BoxShadow(color: Colors.black38, blurRadius: 2),
+                                  ],
+                                ),
+                                child: const Text(
+                                  '대표',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            Container(
+                              key: ValueKey('distanceBadge-$path'),
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.black54,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '거리 $dist',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              childCount: items.length,
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1348,7 +1772,7 @@ class _PhotoCardState extends State<_PhotoCard> {
   }
 }
 
-/// 사진 크게 보기 모달 대화상자 (키보드 좌/우 화살표 넘기기, Esc 닫기).
+/// 사진 크게 보기 모달 대화상자 (키보드 좌/우 화살표 넘기기, Esc 닫기, 슬라이드쇼, 사본 편집).
 class _PhotoViewerModal extends StatefulWidget {
   const _PhotoViewerModal({
     required this.initialIndex,
@@ -1358,6 +1782,7 @@ class _PhotoViewerModal extends StatefulWidget {
     required this.onToggleFavorite,
     required this.onAddTag,
     required this.onRemoveTag,
+    this.onPhotoEdited,
   });
 
   final int initialIndex;
@@ -1367,6 +1792,7 @@ class _PhotoViewerModal extends StatefulWidget {
   final Future<void> Function(Map<String, Object?> photo) onToggleFavorite;
   final Future<void> Function(Map<String, Object?> photo, String tag) onAddTag;
   final Future<void> Function(Map<String, Object?> photo, String tag) onRemoveTag;
+  final VoidCallback? onPhotoEdited;
 
   @override
   State<_PhotoViewerModal> createState() => _PhotoViewerModalState();
@@ -1376,6 +1802,10 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
   late int _currentIndex;
   final FocusNode _focusNode = FocusNode();
   final TextEditingController _tagInputController = TextEditingController();
+
+  // 슬라이드쇼 상태
+  Timer? _slideshowTimer;
+  bool _slideshowPlaying = false;
 
   @override
   void initState() {
@@ -1388,6 +1818,8 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
 
   @override
   void dispose() {
+    _slideshowTimer?.cancel();
+    _slideshowTimer = null;
     _focusNode.dispose();
     _tagInputController.dispose();
     super.dispose();
@@ -1406,7 +1838,49 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
       setState(() {
         _currentIndex++;
       });
+    } else if (_slideshowPlaying) {
+      // 슬라이드쇼 중 마지막 사진이면 첫 사진으로 순환
+      setState(() {
+        _currentIndex = 0;
+      });
     }
+  }
+
+  void _toggleSlideshow() {
+    setState(() {
+      _slideshowPlaying = !_slideshowPlaying;
+      if (_slideshowPlaying) {
+        _slideshowTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+          if (!mounted) return;
+          _nextPhoto();
+        });
+      } else {
+        _slideshowTimer?.cancel();
+        _slideshowTimer = null;
+      }
+    });
+  }
+
+  Future<void> _openEditCopyDialog(Map<String, Object?> photo) async {
+    // 슬라이드쇼가 돌고 있다면 일시 정지
+    if (_slideshowPlaying) {
+      _toggleSlideshow();
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => _PhotoEditCopyDialog(
+        photo: photo,
+        api: widget.api,
+        onSuccess: (outPath) {
+          widget.onPhotoEdited?.call();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('사본이 저장되었습니다: $outPath')),
+          );
+        },
+      ),
+    );
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
@@ -1480,6 +1954,36 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                       style: const TextStyle(color: Colors.white60, fontSize: 13),
                     ),
                     const Spacer(),
+                    // 슬라이드쇼 토글 버튼
+                    TextButton.icon(
+                      key: const ValueKey('photoViewerSlideshowButton'),
+                      icon: Icon(
+                        _slideshowPlaying ? Icons.pause : Icons.play_arrow,
+                        color: _slideshowPlaying ? Colors.amber : Colors.white70,
+                        size: 18,
+                      ),
+                      label: Text(
+                        _slideshowPlaying ? '일시정지' : '슬라이드쇼',
+                        style: TextStyle(
+                          color: _slideshowPlaying ? Colors.amber : Colors.white70,
+                          fontSize: 12,
+                        ),
+                      ),
+                      onPressed: _toggleSlideshow,
+                    ),
+                    const SizedBox(width: 8),
+                    // 사본 편집 버튼
+                    OutlinedButton.icon(
+                      key: const ValueKey('photoViewerEditCopyButton'),
+                      icon: const Icon(Icons.tune, size: 16, color: Colors.white70),
+                      label: const Text('사본 편집', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      onPressed: () => _openEditCopyDialog(photo),
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: Colors.white24),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     IconButton(
                       key: const ValueKey('photoViewerFavoriteButton'),
                       tooltip: '즐겨찾기 토글',
@@ -1667,6 +2171,315 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// 사본 편집 대화상자 (회전·밝기·대비·자르기, 원본 불변 비파괴 사본 저장).
+class _PhotoEditCopyDialog extends StatefulWidget {
+  const _PhotoEditCopyDialog({
+    required this.photo,
+    required this.api,
+    required this.onSuccess,
+  });
+
+  final Map<String, Object?> photo;
+  final ApiCall api;
+  final ValueChanged<String> onSuccess;
+
+  @override
+  State<_PhotoEditCopyDialog> createState() => _PhotoEditCopyDialogState();
+}
+
+class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
+  int _rotateDeg = 0;
+  double _brightness = 1.0;
+  double _contrast = 1.0;
+
+  // 자르기 옵션
+  bool _enableCrop = false;
+  final TextEditingController _cropLeftController = TextEditingController(text: '0');
+  final TextEditingController _cropTopController = TextEditingController(text: '0');
+  final TextEditingController _cropRightController = TextEditingController(text: '0');
+  final TextEditingController _cropBottomController = TextEditingController(text: '0');
+
+  bool _saving = false;
+  String? _errorMessage;
+
+  @override
+  void dispose() {
+    _cropLeftController.dispose();
+    _cropTopController.dispose();
+    _cropRightController.dispose();
+    _cropBottomController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitEditCopy() async {
+    final path = '${widget.photo['path'] ?? ''}';
+    if (path.isEmpty) return;
+
+    setState(() {
+      _saving = true;
+      _errorMessage = null;
+    });
+
+    try {
+      final payload = <String, Object?>{
+        'path': path,
+        'rotate_deg': _rotateDeg,
+        'brightness': _brightness,
+        'contrast': _contrast,
+      };
+
+      if (_enableCrop) {
+        final left = int.tryParse(_cropLeftController.text.trim()) ?? 0;
+        final top = int.tryParse(_cropTopController.text.trim()) ?? 0;
+        final right = int.tryParse(_cropRightController.text.trim()) ?? 0;
+        final bottom = int.tryParse(_cropBottomController.text.trim()) ?? 0;
+        if (right > left && bottom > top) {
+          payload['crop'] = [left, top, right, bottom];
+        }
+      }
+
+      final res = await widget.api('photo_album', [
+        'edit_copy',
+        payload,
+      ]);
+
+      if (!mounted) return;
+
+      if (res is Map && res['ok'] == true) {
+        final outPath = '${res['output_path'] ?? ''}';
+        Navigator.of(context).pop();
+        widget.onSuccess(outPath);
+      } else {
+        final msg = (res is Map ? res['message'] : null) ?? '사본 저장에 실패했습니다.';
+        setState(() {
+          _errorMessage = '$msg';
+          _saving = false;
+        });
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = '사본 저장 중 오류가 발생했습니다: $e';
+        _saving = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filename = '${widget.photo['filename'] ?? ''}';
+
+    return AlertDialog(
+      title: const Text('사본 편집'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '대상: $filename',
+                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              // 원본 보존 안내 문구 (필수 요구사항)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.blueAccent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.3)),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.shield_outlined, size: 16, color: Colors.blueAccent),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '원본 사진은 그대로 보존되고 새 사본으로 저장됩니다',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.blueAccent,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              // 회전 버튼
+              const Text('회전', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  OutlinedButton(
+                    key: const ValueKey('photoEditRotate0'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _rotateDeg == 0 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                    ),
+                    onPressed: () => setState(() => _rotateDeg = 0),
+                    child: const Text('0°'),
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton(
+                    key: const ValueKey('photoEditRotate90'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _rotateDeg == 90 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                    ),
+                    onPressed: () => setState(() => _rotateDeg = 90),
+                    child: const Text('90°'),
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton(
+                    key: const ValueKey('photoEditRotate180'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _rotateDeg == 180 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                    ),
+                    onPressed: () => setState(() => _rotateDeg = 180),
+                    child: const Text('180°'),
+                  ),
+                  const SizedBox(width: 6),
+                  OutlinedButton(
+                    key: const ValueKey('photoEditRotate270'),
+                    style: OutlinedButton.styleFrom(
+                      backgroundColor: _rotateDeg == 270 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                    ),
+                    onPressed: () => setState(() => _rotateDeg = 270),
+                    child: const Text('270°'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              // 밝기 슬라이더 (0.5 ~ 1.5)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('밝기', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(
+                    _brightness.toStringAsFixed(1),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              Slider(
+                key: const ValueKey('photoEditBrightnessSlider'),
+                min: 0.5,
+                max: 1.5,
+                divisions: 10,
+                value: _brightness,
+                label: _brightness.toStringAsFixed(1),
+                onChanged: (val) => setState(() => _brightness = val),
+              ),
+              const SizedBox(height: 10),
+              // 대비 슬라이더 (0.5 ~ 1.5)
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('대비', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  Text(
+                    _contrast.toStringAsFixed(1),
+                    style: const TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
+                ],
+              ),
+              Slider(
+                key: const ValueKey('photoEditContrastSlider'),
+                min: 0.5,
+                max: 1.5,
+                divisions: 10,
+                value: _contrast,
+                label: _contrast.toStringAsFixed(1),
+                onChanged: (val) => setState(() => _contrast = val),
+              ),
+              const SizedBox(height: 10),
+              // 선택적 자르기 비율/좌표 입력
+              Row(
+                children: [
+                  Checkbox(
+                    key: const ValueKey('photoEditEnableCropCheckbox'),
+                    value: _enableCrop,
+                    onChanged: (val) => setState(() => _enableCrop = val ?? false),
+                  ),
+                  const Text('자르기(Crop) 적용', style: TextStyle(fontSize: 13)),
+                ],
+              ),
+              if (_enableCrop) ...[
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('photoEditCropLeftField'),
+                        controller: _cropLeftController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Left (px)', isDense: true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('photoEditCropTopField'),
+                        controller: _cropTopController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Top (px)', isDense: true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('photoEditCropRightField'),
+                        controller: _cropRightController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Right (px)', isDense: true),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('photoEditCropBottomField'),
+                        controller: _cropBottomController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(labelText: 'Bottom (px)', isDense: true),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              if (_errorMessage != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorMessage!,
+                  style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('취소'),
+        ),
+        FilledButton.icon(
+          key: const ValueKey('photoEditSaveCopyButton'),
+          onPressed: _saving ? null : _submitEditCopy,
+          icon: const Icon(Icons.save_as, size: 16),
+          label: _saving
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('사본으로 저장'),
+        ),
+      ],
     );
   }
 }

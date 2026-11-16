@@ -529,5 +529,475 @@ void main() {
       final sheetCall = apiCalls.firstWhere((c) => c['action'] == 'build_photo_sheet');
       expect((sheetCall['payload'] as Map)['layout'], '2x3');
     });
+
+    testWidgets('날짜별 → 폴더별/카메라별/위치별 전환 시 place_groups 명령과 group_by 인자 전달 및 그룹 렌더링 검증', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final apiCalls = <Map<String, Object?>>[];
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        final payload = params.length > 1 && params[1] is Map
+            ? (params[1] as Map).cast<String, Object?>()
+            : <String, Object?>{};
+        apiCalls.add({'action': action, 'payload': payload});
+
+        if (action == 'list_folders') {
+          return {
+            'ok': true,
+            'folders': [
+              {'path': '/test/photos'}
+            ]
+          };
+        }
+        if (action == 'list_by_date') {
+          return {
+            'ok': true,
+            'folder': '/test/photos',
+            'groups': [
+              {
+                'year': 2026,
+                'month': 11,
+                'label': '2026년 11월',
+                'photos': [
+                  {
+                    'path': '/test/photos/p1.jpg',
+                    'filename': 'p1.jpg',
+                    'date_taken': '2026-11-10',
+                    'size': 1024,
+                  },
+                ],
+              }
+            ],
+          };
+        }
+        if (action == 'place_groups') {
+          final groupBy = payload['group_by'] as String?;
+          if (groupBy == 'folder') {
+            return {
+              'ok': true,
+              'group_by': 'folder',
+              'groups': [
+                {
+                  'key': '/test/photos',
+                  'label': '현장A폴더',
+                  'count': 1,
+                  'items': [
+                    {
+                      'path': '/test/photos/p1.jpg',
+                      'name': 'p1.jpg',
+                      'date': '2026-11-10',
+                    }
+                  ],
+                }
+              ],
+            };
+          } else if (groupBy == 'camera') {
+            return {
+              'ok': true,
+              'group_by': 'camera',
+              'groups': [
+                {
+                  'key': 'Canon EOS R5',
+                  'label': 'Canon EOS R5',
+                  'count': 1,
+                  'items': [
+                    {
+                      'path': '/test/photos/p1.jpg',
+                      'name': 'p1.jpg',
+                      'date': '2026-11-10',
+                    }
+                  ],
+                }
+              ],
+            };
+          } else if (groupBy == 'location') {
+            return {
+              'ok': true,
+              'group_by': 'location',
+              'groups': [
+                {
+                  'key': '37.55,126.95',
+                  'label': '위도 37.55°, 경도 126.95°',
+                  'count': 1,
+                  'items': [
+                    {
+                      'path': '/test/photos/p1.jpg',
+                      'name': 'p1.jpg',
+                      'date': '2026-11-10',
+                    }
+                  ],
+                }
+              ],
+            };
+          }
+        }
+        if (action == 'thumbnail') {
+          return {'ok': true, 'data': testBase64Png};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PhotoAlbumScreen(api: mockApi),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 초기: 날짜별
+      expect(find.text('2026년 11월 (1장)'), findsOneWidget);
+
+      // 1. 폴더별 전환
+      await tester.tap(find.text('폴더별'));
+      await tester.pumpAndSettle();
+
+      final folderCall = apiCalls.lastWhere((c) => c['action'] == 'place_groups');
+      expect((folderCall['payload'] as Map)['group_by'], 'folder');
+      expect(find.text('현장A폴더 (1장)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('photoCard-/test/photos/p1.jpg')), findsOneWidget);
+
+      // 2. 카메라별 전환
+      await tester.tap(find.text('카메라별'));
+      await tester.pumpAndSettle();
+
+      final cameraCall = apiCalls.lastWhere((c) => c['action'] == 'place_groups');
+      expect((cameraCall['payload'] as Map)['group_by'], 'camera');
+      expect(find.text('Canon EOS R5 (1장)'), findsOneWidget);
+
+      // 3. 위치별 전환
+      await tester.tap(find.text('위치별'));
+      await tester.pumpAndSettle();
+
+      final locationCall = apiCalls.lastWhere((c) => c['action'] == 'place_groups');
+      expect((locationCall['payload'] as Map)['group_by'], 'location');
+      expect(find.text('위도 37.55°, 경도 126.95° (1장)'), findsOneWidget);
+
+      // 사진 클릭 시 크게 보기 모달 연동 확인
+      await tester.tap(find.byKey(const ValueKey('photoCard-/test/photos/p1.jpg')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('photoViewerModal')), findsOneWidget);
+    });
+
+    testWidgets('중복 사진 찾기 클릭 시 find_duplicates 호출 및 대표 배지/거리·빈 결과 표시 검증', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final apiCalls = <Map<String, Object?>>[];
+      var returnEmptyDuplicates = false;
+
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        final payload = params.length > 1 && params[1] is Map
+            ? (params[1] as Map).cast<String, Object?>()
+            : <String, Object?>{};
+        apiCalls.add({'action': action, 'payload': payload});
+
+        if (action == 'list_folders') {
+          return {
+            'ok': true,
+            'folders': [
+              {'path': '/test/photos'}
+            ]
+          };
+        }
+        if (action == 'list_by_date') {
+          return {
+            'ok': true,
+            'folder': '/test/photos',
+            'groups': [
+              {
+                'year': 2026,
+                'month': 11,
+                'label': '2026년 11월',
+                'photos': [
+                  {
+                    'path': '/test/photos/dup1.jpg',
+                    'filename': 'dup1.jpg',
+                    'date_taken': '2026-11-10',
+                    'size': 2048,
+                  },
+                  {
+                    'path': '/test/photos/dup2.jpg',
+                    'filename': 'dup2.jpg',
+                    'date_taken': '2026-11-10',
+                    'size': 1024,
+                  },
+                ],
+              }
+            ],
+          };
+        }
+        if (action == 'find_duplicates') {
+          if (returnEmptyDuplicates) {
+            return {
+              'ok': true,
+              'threshold': 6,
+              'groups': <Map<String, Object?>>[],
+            };
+          }
+          return {
+            'ok': true,
+            'threshold': 6,
+            'groups': [
+              {
+                'group_id': 1,
+                'count': 2,
+                'representative': '/test/photos/dup1.jpg',
+                'items': [
+                  {
+                    'path': '/test/photos/dup1.jpg',
+                    'name': 'dup1.jpg',
+                    'size': 2048,
+                    'date': '2026-11-10',
+                    'distance': 0,
+                  },
+                  {
+                    'path': '/test/photos/dup2.jpg',
+                    'name': 'dup2.jpg',
+                    'size': 1024,
+                    'date': '2026-11-10',
+                    'distance': 3,
+                  },
+                ],
+              }
+            ],
+          };
+        }
+        if (action == 'thumbnail') {
+          return {'ok': true, 'data': testBase64Png};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PhotoAlbumScreen(api: mockApi),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 중복 사진 찾기 클릭
+      await tester.tap(find.byKey(const ValueKey('photoAlbumFindDuplicatesButton')));
+      await tester.pumpAndSettle();
+
+      final dupCall = apiCalls.firstWhere((c) => c['action'] == 'find_duplicates');
+      expect((dupCall['payload'] as Map)['folder'], '/test/photos');
+      expect((dupCall['payload'] as Map)['threshold'], 6);
+
+      // 대표 배지 및 거리 표시 확인
+      expect(find.byKey(const ValueKey('photoAlbumDuplicatesView')), findsOneWidget);
+      expect(find.text('대표'), findsOneWidget);
+      expect(find.text('거리 0'), findsOneWidget);
+      expect(find.text('거리 3'), findsOneWidget);
+
+      // 클릭 시 크게 보기 모달 연동 확인
+      await tester.tap(find.byKey(const ValueKey('duplicatePhotoCard-/test/photos/dup2.jpg')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('photoViewerModal')), findsOneWidget);
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      // 모달 닫기
+      await tester.tap(find.byKey(const ValueKey('photoViewerCloseButton')));
+      await tester.pumpAndSettle();
+
+      // 빈 결과 안내 검증
+      returnEmptyDuplicates = true;
+      await tester.tap(find.byKey(const ValueKey('photoAlbumFindDuplicatesButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('유사·중복 사진이 없습니다.'), findsOneWidget);
+    });
+
+    testWidgets('상세 보기에서 사본 편집 열기 → 회전/밝기 조정 → edit_copy 호출(원본 보존 안내 표시) 검증', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      final apiCalls = <Map<String, Object?>>[];
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        final payload = params.length > 1 && params[1] is Map
+            ? (params[1] as Map).cast<String, Object?>()
+            : <String, Object?>{};
+        apiCalls.add({'action': action, 'payload': payload});
+
+        if (action == 'list_folders') {
+          return {
+            'ok': true,
+            'folders': [
+              {'path': '/test/photos'}
+            ]
+          };
+        }
+        if (action == 'list_by_date') {
+          return {
+            'ok': true,
+            'folder': '/test/photos',
+            'groups': [
+              {
+                'year': 2026,
+                'month': 11,
+                'label': '2026년 11월',
+                'photos': [
+                  {
+                    'path': '/test/photos/orig.jpg',
+                    'filename': 'orig.jpg',
+                    'date_taken': '2026-11-10',
+                    'size': 2048,
+                  },
+                ],
+              }
+            ],
+          };
+        }
+        if (action == 'edit_copy') {
+          return {
+            'ok': true,
+            'source': payload['path'],
+            'output_path': '/test/photos/orig_edited.jpg',
+            'width': 800,
+            'height': 600,
+          };
+        }
+        if (action == 'thumbnail') {
+          return {'ok': true, 'data': testBase64Png};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PhotoAlbumScreen(api: mockApi),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 사진 클릭하여 크게 보기 열기
+      await tester.tap(find.byKey(const ValueKey('photoCard-/test/photos/orig.jpg')));
+      await tester.pumpAndSettle();
+
+      // 사본 편집 버튼 클릭
+      await tester.tap(find.byKey(const ValueKey('photoViewerEditCopyButton')));
+      await tester.pumpAndSettle();
+
+      // 원본 보존 안내 문구 확인
+      expect(find.text('원본 사진은 그대로 보존되고 새 사본으로 저장됩니다'), findsOneWidget);
+
+      // 90° 회전 선택
+      await tester.tap(find.byKey(const ValueKey('photoEditRotate90')));
+      await tester.pumpAndSettle();
+
+      // 밝기 슬라이더 조정 (오른쪽으로 드래그하여 1.0 초과로 변경)
+      final brightnessSlider = find.byKey(const ValueKey('photoEditBrightnessSlider'));
+      await tester.drag(brightnessSlider, const Offset(100, 0));
+      await tester.pumpAndSettle();
+
+      // 사본으로 저장 클릭
+      await tester.tap(find.byKey(const ValueKey('photoEditSaveCopyButton')));
+      await tester.pumpAndSettle();
+
+      // edit_copy 호출 및 인자 확인
+      final editCall = apiCalls.firstWhere((c) => c['action'] == 'edit_copy');
+      final editPayload = editCall['payload'] as Map<String, Object?>;
+      expect(editPayload['path'], '/test/photos/orig.jpg');
+      expect(editPayload['rotate_deg'], 90);
+      expect((editPayload['brightness'] as double) > 1.0, isTrue);
+
+      // 저장 완료 스낵바 확인
+      expect(find.textContaining('/test/photos/orig_edited.jpg'), findsOneWidget);
+    });
+
+    testWidgets('슬라이드쇼 켜기 → 3초 경과 시 다음 사진 이동 검증', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        if (action == 'list_folders') {
+          return {
+            'ok': true,
+            'folders': [
+              {'path': '/test/photos'}
+            ]
+          };
+        }
+        if (action == 'list_by_date') {
+          return {
+            'ok': true,
+            'folder': '/test/photos',
+            'groups': [
+              {
+                'year': 2026,
+                'month': 11,
+                'label': '2026년 11월',
+                'photos': [
+                  {
+                    'path': '/test/photos/slide1.jpg',
+                    'filename': 'slide1.jpg',
+                    'date_taken': '2026-11-10',
+                    'size': 1024,
+                  },
+                  {
+                    'path': '/test/photos/slide2.jpg',
+                    'filename': 'slide2.jpg',
+                    'date_taken': '2026-11-11',
+                    'size': 2048,
+                  },
+                ],
+              }
+            ],
+          };
+        }
+        if (action == 'thumbnail') {
+          return {'ok': true, 'data': testBase64Png};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: PhotoAlbumScreen(api: mockApi),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 첫 번째 사진 클릭하여 크게 보기 열기
+      await tester.tap(find.byKey(const ValueKey('photoCard-/test/photos/slide1.jpg')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('1 / 2'), findsOneWidget);
+      expect(find.text('슬라이드쇼'), findsOneWidget);
+
+      // 슬라이드쇼 재생 시작
+      await tester.tap(find.byKey(const ValueKey('photoViewerSlideshowButton')));
+      await tester.pump();
+      expect(find.text('일시정지'), findsOneWidget);
+
+      // 3초 경과 시 다음 사진(2 / 2)으로 자동 이동 확인
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(find.text('2 / 2'), findsOneWidget);
+
+      // 추가 3초 경과 시 첫 사진(1 / 2)으로 순환 확인
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
+      expect(find.text('1 / 2'), findsOneWidget);
+
+      // 모달 닫기 (dispose 시 타이머 정상 해제 확인)
+      await tester.tap(find.byKey(const ValueKey('photoViewerCloseButton')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('photoViewerModal')), findsNothing);
+    });
   });
 }
