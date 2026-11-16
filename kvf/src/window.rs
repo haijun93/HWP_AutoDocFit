@@ -18,6 +18,7 @@ use windows_sys::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         Input::{Ime::*, KeyboardAndMouse::*},
+        Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, DragQueryPoint, HDROP},
         WindowsAndMessaging::*,
     },
 };
@@ -223,7 +224,37 @@ pub fn event(e: Event) {
                     if redo {
                         store.redo(&operation_id)
                     } else {
-                        store.undo(&operation_id)
+                        let entries = store.journal()?;
+                        if entries.iter().any(|entry| {
+                            entry.real_copy
+                                && (entry.operation_id == operation_id
+                                    || entry.operation_id.starts_with(&format!("{operation_id}:")))
+                        }) {
+                            match store.undo_real_copy(&operation_id, false) {
+                                Ok(()) => Ok(()),
+                                Err(error) if error.contains("변경된 파일") => {
+                                    let title = wide("실제 복사 되돌리기 확인");
+                                    let body =
+                                        wide(&format!("{error}\n\n이 파일을 삭제하시겠습니까?"));
+                                    if unsafe {
+                                        MessageBoxW(
+                                            with(|s| s.hwnd),
+                                            body.as_ptr(),
+                                            title.as_ptr(),
+                                            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+                                        )
+                                    } == IDYES
+                                    {
+                                        store.undo_real_copy(&operation_id, true)
+                                    } else {
+                                        Err("되돌리기를 취소했습니다".into())
+                                    }
+                                }
+                                Err(error) => Err(error),
+                            }
+                        } else {
+                            store.undo(&operation_id)
+                        }
                     }
                 })();
                 if result.is_ok() {
@@ -236,6 +267,71 @@ pub fn event(e: Event) {
                     });
                 }
                 event(Event::VirtualOperationCompleted { seq, result });
+            }
+            Effect::ImportExternal {
+                target_panel,
+                paths,
+            } => {
+                let result = (|| {
+                    let store = vf_store::Store::open(&store_path())?;
+                    store.import_paths(
+                        &target_panel,
+                        &paths,
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs() as i64,
+                    )
+                })();
+                match result {
+                    Ok(report) => {
+                        if !report.added.is_empty() {
+                            edit(|s| {
+                                s.last_operation =
+                                    format!("{}개 외부 항목 추가", report.added.len())
+                            });
+                        }
+                        let mut messages = vec![];
+                        if !report.duplicates.is_empty() {
+                            messages.push(format!("중복 경로 {}개", report.duplicates.len()))
+                        }
+                        messages.extend(report.errors);
+                        if !messages.is_empty() {
+                            notify(&messages.join("\n"));
+                        }
+                        event(Event::Refresh);
+                    }
+                    Err(e) => notify(&format!("외부 항목 등록 실패: {e}")),
+                }
+            }
+            Effect::CopyRealFiles {
+                seq,
+                operation_id,
+                location,
+                sources,
+                target_folder,
+            } => {
+                let result = vf_store::Store::open(&store_path()).and_then(|store| {
+                    store
+                        .real_copy(
+                            &operation_id,
+                            &sources,
+                            std::path::Path::new(&target_folder),
+                            &location,
+                            SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs() as i64,
+                        )
+                        .map(|_| ())
+                });
+                if let Err(e) = &result {
+                    notify(&format!("실제 파일 복사 실패: {e}"))
+                } else {
+                    edit(|s| s.last_operation = "실제 파일 복사 완료".into())
+                }
+                event(Event::VirtualOperationCompleted { seq, result });
+                event(Event::Refresh);
             }
         }
     }
@@ -645,6 +741,65 @@ fn operation_menu_labels() -> [&'static str; 3] {
         "복사본 만들기",
     ]
 }
+fn request_selected_real_copy(h: HWND) {
+    let (location, ids) = selected_virtual_items();
+    let store = match vf_store::Store::open(&store_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            notify(&e);
+            return;
+        }
+    };
+    let selected = match store.list(&location) {
+        Ok(v) => v
+            .into_iter()
+            .filter(|i| ids.contains(&i.id))
+            .collect::<Vec<_>>(),
+        Err(e) => {
+            notify(&e);
+            return;
+        }
+    };
+    if selected.is_empty() {
+        notify("실제 복사할 항목을 선택하세요.");
+        return;
+    }
+    let target = std::path::PathBuf::from(selected[0].source_ref.as_str())
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let title = wide("실제 파일 복사 확인");
+    let body = wide(&format!(
+        "대상 폴더: {}\n항목 수: {}\n\n실제 파일을 복사하시겠습니까?",
+        target.display(),
+        selected.len()
+    ));
+    unsafe {
+        if MessageBoxW(
+            h,
+            body.as_ptr(),
+            title.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+        ) == IDYES
+        {
+            let sources = selected.iter().map(|i| i.source_ref.clone()).collect();
+            let operation_id = format!(
+                "real-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos()
+            );
+            event(Event::RequestRealCopy {
+                operation_id,
+                location,
+                sources,
+                target_folder: target.to_string_lossy().into_owned(),
+                confirmed: true,
+            });
+        }
+    }
+}
 fn selected_virtual_items() -> (String, Vec<String>) {
     let (source, selection) = with(|s| {
         let source = s.model.explorer.active_panel.clone();
@@ -929,6 +1084,7 @@ fn virtual_item_menu(h: HWND, l: isize) {
             4,
             wide(operation_menu_labels()[2]).as_ptr(),
         );
+        AppendMenuW(menu, MF_STRING, 5, wide("실제 파일 복사…").as_ptr());
         AppendMenuW(menu, MF_SEPARATOR, 0, null());
         AppendMenuW(menu, MF_STRING, 1, wide("열기").as_ptr());
         AppendMenuW(
@@ -956,6 +1112,8 @@ fn virtual_item_menu(h: HWND, l: isize) {
             request_virtual(format!("p{}", command - 299), true);
         } else if command == 4 {
             request_virtual(source, true);
+        } else if command == 5 {
+            request_selected_real_copy(h);
         } else if command == 1 {
             event(Event::Open);
         } else if command == 2 {
@@ -1454,6 +1612,43 @@ unsafe fn paint(h: HWND) {
 unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
     unsafe {
         match msg {
+            WM_CREATE => {
+                DragAcceptFiles(h, 1);
+                0
+            }
+            WM_DROPFILES => {
+                let drop = w as HDROP;
+                let count = DragQueryFileW(drop, u32::MAX, null_mut(), 0);
+                let mut paths = Vec::new();
+                for i in 0..count {
+                    let n = DragQueryFileW(drop, i, null_mut(), 0) as usize;
+                    let mut buf = vec![0u16; n + 1];
+                    DragQueryFileW(drop, i, buf.as_mut_ptr(), buf.len() as u32);
+                    paths.push(String::from_utf16_lossy(&buf[..n]));
+                }
+                let pt = POINT { x: 0, y: 0 };
+                let mut pt = pt;
+                DragQueryPoint(drop, &mut pt);
+                DragFinish(drop);
+                let rc = size(h);
+                let top = list_y(h);
+                let layout = with(|s| s.model.explorer.clone());
+                if let Some(panel) = panel_at(
+                    &layout,
+                    rc.right,
+                    rc.bottom - frame::scale(h, STATUS) - top,
+                    frame::scale(h, GUTTER),
+                    pt.x,
+                    pt.y - top,
+                ) {
+                    event(Event::ActivatePanel(panel.clone()));
+                    event(Event::DropExternal {
+                        target_panel: panel,
+                        paths,
+                    });
+                }
+                0
+            }
             WM_PAINT => {
                 paint(h);
                 0
@@ -1518,6 +1713,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isiz
                 0
             }
             WM_DESTROY => {
+                DragAcceptFiles(h, 0);
                 edit(|s| s.hwnd = null_mut());
                 0
             }
