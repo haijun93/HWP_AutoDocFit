@@ -18,6 +18,119 @@ pub const SUMMARY_H: i32 = 32;
 pub const SIDEBAR_W: i32 = 220;
 pub const SIDEBAR_ROW_H: i32 = 26;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalKind {
+    Statistics,
+    Settings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModalHit {
+    Outside,
+    Close,
+    Tab(usize),
+    Content,
+}
+
+#[derive(Clone, Copy)]
+pub struct ModalRects {
+    pub panel: RECT,
+    pub close: RECT,
+    pub tabs: [RECT; 4],
+    pub content: RECT,
+}
+
+pub fn modal_rects(width: i32, height: i32, tabs: usize) -> ModalRects {
+    let margin_x = (width / 12).clamp(18, 64);
+    let margin_y = (height / 14).clamp(16, 48);
+    let panel = RECT {
+        left: margin_x,
+        top: margin_y,
+        right: (width - margin_x).max(margin_x + 1),
+        bottom: (height - margin_y).max(margin_y + 1),
+    };
+    let header_h = 48;
+    let tab_h = 38;
+    let close = RECT {
+        left: panel.right - 44,
+        top: panel.top + 5,
+        right: panel.right - 8,
+        bottom: panel.top + 41,
+    };
+    let usable = (panel.right - panel.left - 24).max(0);
+    let count = tabs.clamp(1, 4);
+    let tab_w = usable / count as i32;
+    let mut rects = [RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    }; 4];
+    for (i, rect) in rects.iter_mut().enumerate() {
+        let left = panel.left + 12 + tab_w * i as i32;
+        *rect = RECT {
+            left,
+            top: panel.top + header_h,
+            right: if i + 1 == count {
+                panel.right - 12
+            } else {
+                left + tab_w
+            },
+            bottom: panel.top + header_h + tab_h,
+        };
+    }
+    let content_top = panel.top + header_h + tab_h;
+    ModalRects {
+        panel,
+        close,
+        tabs: rects,
+        content: RECT {
+            left: panel.left + 16,
+            top: content_top + 12,
+            right: panel.right - 16,
+            bottom: panel.bottom - 16,
+        },
+    }
+}
+
+pub fn hit_modal(x: i32, y: i32, width: i32, height: i32, tabs: usize) -> ModalHit {
+    let r = modal_rects(width, height, tabs);
+    if x < r.panel.left || x >= r.panel.right || y < r.panel.top || y >= r.panel.bottom {
+        return ModalHit::Outside;
+    }
+    if x >= r.close.left && x < r.close.right && y >= r.close.top && y < r.close.bottom {
+        return ModalHit::Close;
+    }
+    for (i, tab) in r.tabs.iter().take(tabs.clamp(1, 4)).enumerate() {
+        if x >= tab.left && x < tab.right && y >= tab.top && y < tab.bottom {
+            return ModalHit::Tab(i);
+        }
+    }
+    ModalHit::Content
+}
+
+pub fn header_chip_rects(width: i32, button_width: i32, scale: i32) -> [(i32, i32); 2] {
+    let left = (width - 2 * button_width - 166 * scale).max(150 * scale);
+    let right = (width - 2 * button_width - 86 * scale).max(230 * scale);
+    [(left, right), (right + 4 * scale, right + 82 * scale)]
+}
+
+pub fn hit_header_chip(
+    x: i32,
+    y: i32,
+    width: i32,
+    button_width: i32,
+    head: i32,
+    scale: i32,
+) -> Option<usize> {
+    if y < 0 || y >= head {
+        return None;
+    }
+    header_chip_rects(width, button_width, scale)
+        .iter()
+        .position(|(l, r)| x >= *l && x < *r)
+}
+
 /// 사이드바 행의 의미. 인덱스는 화면에 그린 동적 목록의 인덱스다.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SidebarHit {
@@ -74,7 +187,9 @@ pub fn hit_sidebar_add(x: i32, y: i32, width: i32, open: bool) -> bool {
 }
 
 pub fn hit_match_chip(x: i32, left: i32, chip_width: i32, count: usize) -> Option<usize> {
-    if x < left || chip_width <= 0 { return None; }
+    if x < left || chip_width <= 0 {
+        return None;
+    }
     let idx = ((x - left) / chip_width) as usize;
     (idx < count).then_some(idx)
 }
@@ -103,17 +218,40 @@ pub fn option_spans(left: i32, right: i32) -> [(i32, i32); 7] {
     })
 }
 
-pub fn hit_option(x: i32, y: i32, top: i32, height: i32, left: i32, right: i32) -> Option<OptionControl> {
-    if y < top || y >= top + height { return None; }
+pub fn hit_option(
+    x: i32,
+    y: i32,
+    top: i32,
+    height: i32,
+    left: i32,
+    right: i32,
+) -> Option<OptionControl> {
+    if y < top || y >= top + height {
+        return None;
+    }
     if y >= top + height / 2 {
         let chip_start = left + 2;
-        return if x >= chip_start && x < chip_start + 3 * 86 { Some(OptionControl::MatchMode) }
-        else if x >= chip_start + 3 * 86 && x < right { Some(OptionControl::CustomDays) }
-        else { None };
+        return if x >= chip_start && x < chip_start + 3 * 86 {
+            Some(OptionControl::MatchMode)
+        } else if x >= chip_start + 3 * 86 && x < right {
+            Some(OptionControl::CustomDays)
+        } else {
+            None
+        };
     }
     let spans = option_spans(left, right);
-    let idx = spans.iter().position(|(a,b)| x >= *a && x < *b)?;
-    Some([OptionControl::SearchMode,OptionControl::Sort,OptionControl::FileTypes,OptionControl::Period,OptionControl::ExcludeFilename,OptionControl::WithinQuery,OptionControl::Preset][idx])
+    let idx = spans.iter().position(|(a, b)| x >= *a && x < *b)?;
+    Some(
+        [
+            OptionControl::SearchMode,
+            OptionControl::Sort,
+            OptionControl::FileTypes,
+            OptionControl::Period,
+            OptionControl::ExcludeFilename,
+            OptionControl::WithinQuery,
+            OptionControl::Preset,
+        ][idx],
+    )
 }
 
 pub fn hit_summary_group(
@@ -383,7 +521,7 @@ mod interaction_hit_tests {
     #[test]
     fn sidebar_recommended_path_hit() {
         assert_eq!(
-        hit_sidebar(12, 40 + 6 * 26 + 1, 200, true, 3, 0, 0, 3),
+            hit_sidebar(12, 40 + 6 * 26 + 1, 200, true, 3, 0, 0, 3),
             Some(SidebarHit::Recommended(0))
         );
     }
@@ -515,6 +653,94 @@ pub fn hit_folder_button(x: i32, y: i32, btn_rect: RECT) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modal_panel_stays_inside_normal_window() {
+        let r = modal_rects(800, 600, 2);
+        assert!(
+            r.panel.left >= 0 && r.panel.right <= 800 && r.panel.top >= 0 && r.panel.bottom <= 600
+        );
+    }
+    #[test]
+    fn modal_panel_clamps_small_window_margins() {
+        let r = modal_rects(180, 120, 2);
+        assert!(r.panel.left < r.panel.right && r.panel.top < r.panel.bottom);
+    }
+    #[test]
+    fn modal_tabs_fill_two_tab_width() {
+        let r = modal_rects(800, 600, 2);
+        assert!(r.tabs[0].left < r.tabs[1].left);
+        assert_eq!(r.tabs[0].right, r.tabs[1].left);
+    }
+    #[test]
+    fn modal_tabs_fill_four_tab_width() {
+        let r = modal_rects(900, 700, 4);
+        assert!(r.tabs[0].right <= r.tabs[1].left + 1);
+        assert!(r.tabs[3].right == r.panel.right - 12);
+    }
+    #[test]
+    fn modal_close_hit_detected() {
+        let r = modal_rects(800, 600, 2);
+        assert_eq!(
+            hit_modal(r.close.left, r.close.top, 800, 600, 2),
+            ModalHit::Close
+        );
+    }
+    #[test]
+    fn modal_outside_hit_detected() {
+        assert_eq!(hit_modal(0, 0, 800, 600, 2), ModalHit::Outside);
+    }
+    #[test]
+    fn modal_content_hit_detected() {
+        let r = modal_rects(800, 600, 2);
+        assert_eq!(
+            hit_modal(r.content.left, r.content.top, 800, 600, 2),
+            ModalHit::Content
+        );
+    }
+    #[test]
+    fn modal_first_tab_hit_detected() {
+        let r = modal_rects(800, 600, 2);
+        assert_eq!(
+            hit_modal(r.tabs[0].left, r.tabs[0].top, 800, 600, 2),
+            ModalHit::Tab(0)
+        );
+    }
+    #[test]
+    fn modal_second_tab_hit_detected() {
+        let r = modal_rects(800, 600, 2);
+        assert_eq!(
+            hit_modal(r.tabs[1].left, r.tabs[1].top, 800, 600, 2),
+            ModalHit::Tab(1)
+        );
+    }
+    #[test]
+    fn modal_fourth_tab_hit_detected() {
+        let r = modal_rects(900, 700, 4);
+        assert_eq!(
+            hit_modal(r.tabs[3].left, r.tabs[3].top, 900, 700, 4),
+            ModalHit::Tab(3)
+        );
+    }
+    #[test]
+    fn header_stats_chip_hit_detected() {
+        let (l, r) = header_chip_rects(700, 46, 1)[0];
+        assert_eq!(hit_header_chip(l, 10, 700, 46, 32, 1), Some(0));
+        assert!(r > l);
+    }
+    #[test]
+    fn header_settings_chip_hit_detected() {
+        let (l, _) = header_chip_rects(700, 46, 1)[1];
+        assert_eq!(hit_header_chip(l, 10, 700, 46, 32, 1), Some(1));
+    }
+    #[test]
+    fn header_chip_misses_caption_buttons() {
+        assert_eq!(hit_header_chip(690, 10, 700, 46, 32, 1), None);
+    }
+    #[test]
+    fn header_chip_misses_below_header() {
+        assert_eq!(hit_header_chip(600, 33, 700, 46, 32, 1), None);
+    }
 
     #[test]
     fn options_default_to_keyword_relevance() {

@@ -49,6 +49,126 @@ pub struct Row {
     pub rank: usize,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct DocumentStats {
+    pub total: usize,
+    pub indexed: usize,
+    pub total_bytes: Option<u64>,
+    pub by_type: Vec<(String, usize)>,
+    pub by_year: Vec<(i64, usize)>,
+    pub by_folder: Vec<(String, usize)>,
+    pub recent: Vec<Row>,
+    pub largest: Vec<Row>,
+}
+
+/// Computes statistics from available row metadata. Byte totals remain unknown because
+/// the search index deliberately does not store file sizes.
+pub fn document_stats(rows: &[Row]) -> DocumentStats {
+    use std::collections::BTreeMap;
+    let mut types = BTreeMap::<String, usize>::new();
+    let mut years = BTreeMap::<i64, usize>::new();
+    let mut folders = BTreeMap::<String, usize>::new();
+    for row in rows {
+        *types
+            .entry(extension_label(&row.name).to_ascii_lowercase())
+            .or_default() += 1;
+        if row.date > 0 {
+            *years.entry(row.date / 10000).or_default() += 1;
+        }
+        if !row.parent.is_empty() {
+            *folders.entry(row.parent.clone()).or_default() += 1;
+        }
+    }
+    let mut recent: Vec<Row> = rows.iter().filter(|r| r.date > 0).cloned().collect();
+    recent.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.name.cmp(&b.name)));
+    recent.truncate(5);
+    DocumentStats {
+        total: rows.len(),
+        indexed: rows.iter().filter(|r| r.doc_id != 0).count(),
+        total_bytes: None,
+        by_type: types.into_iter().collect(),
+        by_year: years.into_iter().rev().collect(),
+        by_folder: {
+            let mut v: Vec<_> = folders.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            v.truncate(10);
+            v
+        },
+        recent,
+        largest: Vec::new(),
+    }
+}
+
+/// Keep one representative for versioned names; prefer an explicit final/latest name,
+/// otherwise retain the highest vN token and use stable lexical ties.
+pub fn group_document_versions(rows: &[Row]) -> Vec<Row> {
+    use std::collections::BTreeMap;
+    let mut groups = BTreeMap::<String, Vec<Row>>::new();
+    for row in rows {
+        let stem = Path::new(&row.name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or(&row.name);
+        let key = version_group_key(stem);
+        groups.entry(key).or_default().push(row.clone());
+    }
+    groups
+        .into_values()
+        .map(|mut group| {
+            group.sort_by(|a, b| {
+                version_rank(&a.name)
+                    .cmp(&version_rank(&b.name))
+                    .reverse()
+                    .then_with(|| b.date.cmp(&a.date))
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+            group.remove(0)
+        })
+        .collect()
+}
+
+fn version_group_key(stem: &str) -> String {
+    let lower = stem
+        .to_lowercase()
+        .replace("final", "")
+        .replace("latest", "")
+        .replace("최종", "");
+    let mut key = String::new();
+    let chars: Vec<char> = lower.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == 'v' && chars.get(i + 1).is_some_and(|c| c.is_ascii_digit()) {
+            i += 1;
+            while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '.') {
+                i += 1;
+            }
+            continue;
+        }
+        key.push(chars[i]);
+        i += 1;
+    }
+    key.trim_matches([' ', '-', '_', '(', ')', '[', ']'])
+        .to_string()
+}
+
+fn version_rank(name: &str) -> (u8, u64) {
+    let lower = name.to_lowercase();
+    if lower.contains("final") || lower.contains("최종") || lower.contains("latest") {
+        return (2, 0);
+    }
+    let chars: Vec<char> = lower.chars().collect();
+    for i in 0..chars.len().saturating_sub(1) {
+        if chars[i] == 'v' && chars[i + 1].is_ascii_digit() {
+            let digits: String = chars[i + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            return (1, digits.parse().unwrap_or(0));
+        }
+    }
+    (0, 0)
+}
+
 /// QMS-RESULTS: 위치 메타로부터 표시할 배지 텍스트를 계산한다.
 /// 쪽·시트·행 등 kfind 위치 메타가 있는 것만 반환하고, 일반 문단이나 위계는 생략(None).
 pub fn compute_location_badge(location: &str) -> Option<String> {
@@ -133,7 +253,13 @@ pub fn format_korean_datetime(ymd: i64) -> Option<String> {
     let m = (ymd / 100) % 100;
     let d = ymd % 100;
     let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
-    let month_days = match m { 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31, 4 | 6 | 9 | 11 => 30, 2 if leap => 29, 2 => 28, _ => 0 };
+    let month_days = match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => 0,
+    };
     if y < 1 || d < 1 || d > month_days {
         return None;
     }
@@ -141,9 +267,21 @@ pub fn format_korean_datetime(ymd: i64) -> Option<String> {
 }
 
 pub fn extension_label(name: &str) -> &'static str {
-    match Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
-        "hwp" => "HWP", "hwpx" => "HWPX", "docx" => "DOCX", "pdf" => "PDF",
-        "xls" | "xlsx" => "XLS", "ppt" | "pptx" => "PPT", "md" => "MD", "txt" => "TXT",
+    match Path::new(name)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "hwp" => "HWP",
+        "hwpx" => "HWPX",
+        "docx" => "DOCX",
+        "pdf" => "PDF",
+        "xls" | "xlsx" => "XLS",
+        "ppt" | "pptx" => "PPT",
+        "md" => "MD",
+        "txt" => "TXT",
         _ => "FILE",
     }
 }
@@ -155,34 +293,64 @@ pub fn shift_ymd_months(ymd: i64, delta_months: i64) -> i64 {
     let absolute = y * 12 + (m - 1) + delta_months;
     let target_y = absolute.div_euclid(12);
     let target_m = absolute.rem_euclid(12) + 1;
-    let last = match target_m { 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31, 4 | 6 | 9 | 11 => 30, 2 if target_y % 4 == 0 && (target_y % 100 != 0 || target_y % 400 == 0) => 29, _ => 28 };
+    let last = match target_m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if target_y % 4 == 0 && (target_y % 100 != 0 || target_y % 400 == 0) => 29,
+        _ => 28,
+    };
     target_y * 10000 + target_m * 100 + d.min(last)
 }
 
 /// Appends a Korean date/time using the index's day precision.
 pub fn format_korean_datetime_at_hour(ymd: i64, hour: u8, minute: u8) -> Option<String> {
     let base = format_korean_datetime(ymd)?;
-    if hour > 23 || minute > 59 { return None; }
+    if hour > 23 || minute > 59 {
+        return None;
+    }
     let suffix = if hour < 12 { "오전" } else { "오후" };
-    let hour12 = match hour % 12 { 0 => 12, h => h };
-    Some(format!("{} {suffix} {hour12:02}:{minute:02}", base.split(" ").take(3).collect::<Vec<_>>().join(" ")))
+    let hour12 = match hour % 12 {
+        0 => 12,
+        h => h,
+    };
+    Some(format!(
+        "{} {suffix} {hour12:02}:{minute:02}",
+        base.split(" ").take(3).collect::<Vec<_>>().join(" ")
+    ))
 }
 
 /// Transforms the plain terms of a query while retaining its path/date/ext/exclusion syntax.
 pub fn query_for_match_mode(query: &str, mode: crate::tm_state::MatchMode) -> String {
-    if mode == crate::tm_state::MatchMode::AllTerms { return query.to_owned(); }
+    if mode == crate::tm_state::MatchMode::AllTerms {
+        return query.to_owned();
+    }
     let syntax = kfind_core::parse_query_syntax(query);
-    if syntax.clean_text.is_empty() { return query.to_owned(); }
+    if syntax.clean_text.is_empty() {
+        return query.to_owned();
+    }
     let mut parts = Vec::new();
     let quoted = format!("\"{}\"", syntax.clean_text);
-    if mode == crate::tm_state::MatchMode::Exact { parts.push(quoted); }
-    else { parts.push(syntax.clean_text.clone()); }
-    if let Some(folder) = syntax.folder { parts.push(format!("path:\"{folder}\"")); }
-    if let Some(types) = syntax.file_types { parts.push(format!("ext:{}", types.join(","))); }
-    if let Some(start) = syntax.start_date { parts.push(format!("after:{}", crate::tm_state::format_ymd(start))); }
-    if let Some(end) = syntax.end_date { parts.push(format!("before:{}", crate::tm_state::format_ymd(end))); }
+    if mode == crate::tm_state::MatchMode::Exact {
+        parts.push(quoted);
+    } else {
+        parts.push(syntax.clean_text.clone());
+    }
+    if let Some(folder) = syntax.folder {
+        parts.push(format!("path:\"{folder}\""));
+    }
+    if let Some(types) = syntax.file_types {
+        parts.push(format!("ext:{}", types.join(",")));
+    }
+    if let Some(start) = syntax.start_date {
+        parts.push(format!("after:{}", crate::tm_state::format_ymd(start)));
+    }
+    if let Some(end) = syntax.end_date {
+        parts.push(format!("before:{}", crate::tm_state::format_ymd(end)));
+    }
     parts.extend(syntax.excludes.into_iter().map(|w| format!("-{w}")));
-    for phrase in syntax.phrases { parts.push(format!("\"{phrase}\"")); }
+    for phrase in syntax.phrases {
+        parts.push(format!("\"{phrase}\""));
+    }
     parts.join(" ")
 }
 
@@ -206,7 +374,10 @@ impl Backend {
         let index = Index::open(root).map_err(|e| match e {
             kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. } => {
                 // 업데이트 직후 옛 형식 색인: 서비스에 질의 한 번을 보내 즉시 새로 만들게 한다(응답은 쓰지 않음).
-                let _ = pipe_call(PIPE_NAME, &json!({"command":"query","id":1,"text":"색인","top":1}));
+                let _ = pipe_call(
+                    PIPE_NAME,
+                    &json!({"command":"query","id":1,"text":"색인","top":1}),
+                );
                 "색인을 새 형식으로 다시 만드는 중입니다. 잠시 뒤 다시 검색해 주세요.".to_string()
             }
             other => other.to_string(),
@@ -242,7 +413,10 @@ impl Backend {
     fn open_paragraphs(&mut self) {
         if !self.para_tried {
             self.para_tried = true;
-            self.paragraphs = self.para_path.as_deref().and_then(|p| Paragraphs::open(p).ok());
+            self.paragraphs = self
+                .para_path
+                .as_deref()
+                .and_then(|p| Paragraphs::open(p).ok());
         }
     }
 
@@ -254,7 +428,9 @@ impl Backend {
     /// 아직 찾아보지 않은 줄의 원문 발췌를 채운다(문단 표가 없으면 아무것도 안 함).
     pub fn fill_snippets(&mut self, rows: &mut [Row], terms: &[String]) {
         self.open_paragraphs();
-        let Some(p) = self.paragraphs.as_mut() else { return };
+        let Some(p) = self.paragraphs.as_mut() else {
+            return;
+        };
         for row in rows.iter_mut().filter(|r| !r.snippet_tried) {
             row.snippet_tried = true;
             let Some(para) = row.para else { continue };
@@ -303,9 +479,7 @@ impl Backend {
         } else {
             &syntax.clean_text
         };
-        self.index
-            .count_by_folder(q, &opts)
-            .unwrap_or_default()
+        self.index.count_by_folder(q, &opts).unwrap_or_default()
     }
 
     pub fn search_cancel(
@@ -326,7 +500,15 @@ impl Backend {
         folder: Option<&str>,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
-        self.search_with_scope_ext(query, hierarchy, date_range, folder, None, crate::tm_state::MatchMode::AllTerms, cancel)
+        self.search_with_scope_ext(
+            query,
+            hierarchy,
+            date_range,
+            folder,
+            None,
+            crate::tm_state::MatchMode::AllTerms,
+            cancel,
+        )
     }
 
     /// QMS-SCOPE: 기간·폴더·확장자 범위와 문법을 함께 반영한 검색.
@@ -340,7 +522,9 @@ impl Backend {
         match_mode: crate::tm_state::MatchMode,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
-        self.search_with_scope_ext_limit(query, hierarchy, date_range, folder, ext, match_mode, LIMIT, cancel)
+        self.search_with_scope_ext_limit(
+            query, hierarchy, date_range, folder, ext, match_mode, LIMIT, cancel,
+        )
     }
 
     /// QMS-EXPORT: 지정 상한(최대 1,000건 등)을 반영한 범위 검색.
@@ -375,7 +559,9 @@ impl Backend {
             folder: folder.map(str::to_owned),
             ..SearchOptions::default()
         };
-        self.index.apply_syntax(&syntax, &mut opts).map_err(|e| e.to_string())?;
+        self.index
+            .apply_syntax(&syntax, &mut opts)
+            .map_err(|e| e.to_string())?;
         if let Some(ext_val) = ext {
             if let Some(parsed_exts) = kfind_core::parse_ext_term(ext_val) {
                 let mut list = opts.file_types.take().unwrap_or_default();
@@ -397,27 +583,53 @@ impl Backend {
         };
 
         // 1글자 훑기는 이미 위계 먼저 정렬한다(모든 일치가 붙어 있는 일치).
-        let order = if hierarchy { Order::Hierarchy } else { Order::Relevance };
+        let order = if hierarchy {
+            Order::Hierarchy
+        } else {
+            Order::Relevance
+        };
         let result = if match_mode == crate::tm_state::MatchMode::AnyTerm {
             let mut merged = kfind_core::SearchResult::default();
             for term in syntax.clean_text.split_whitespace() {
-                let one = if kfind_core::fold(term).chars().count() == 1 { self.index.search_character(term, &opts) } else { self.index.search_groups_by(term, &opts, order) }.map_err(|e| e.to_string())?;
+                let one = if kfind_core::fold(term).chars().count() == 1 {
+                    self.index.search_character(term, &opts)
+                } else {
+                    self.index.search_groups_by(term, &opts, order)
+                }
+                .map_err(|e| e.to_string())?;
                 merged.words.extend(one.words);
                 merged.hits.extend(one.hits);
             }
             let mut by_doc = HashMap::<u64, kfind_core::DocHit>::new();
             for hit in merged.hits {
-                by_doc.entry(hit.doc_id).and_modify(|old| { old.count = old.count.saturating_add(hit.count); old.level = old.level.min(hit.level); old.adjacent |= hit.adjacent; }).or_insert(hit);
+                by_doc
+                    .entry(hit.doc_id)
+                    .and_modify(|old| {
+                        old.count = old.count.saturating_add(hit.count);
+                        old.level = old.level.min(hit.level);
+                        old.adjacent |= hit.adjacent;
+                    })
+                    .or_insert(hit);
             }
             merged.hits = by_doc.into_values().collect();
-            merged.hits.sort_by(|a,b| b.adjacent.cmp(&a.adjacent).then_with(|| a.level.cmp(&b.level)).then_with(|| b.count.cmp(&a.count)).then_with(|| b.date.cmp(&a.date)));
+            merged.hits.sort_by(|a, b| {
+                b.adjacent
+                    .cmp(&a.adjacent)
+                    .then_with(|| a.level.cmp(&b.level))
+                    .then_with(|| b.count.cmp(&a.count))
+                    .then_with(|| b.date.cmp(&a.date))
+            });
             merged.hits.truncate(top);
             merged.total_docs = merged.hits.len();
             merged
         } else if kfind_core::fold(search_text).chars().count() == 1 {
-            self.index.search_character(search_text, &opts).map_err(|e| e.to_string())?
+            self.index
+                .search_character(search_text, &opts)
+                .map_err(|e| e.to_string())?
         } else {
-            self.index.search_groups_by(search_text, &opts, order).map_err(|e| e.to_string())?
+            self.index
+                .search_groups_by(search_text, &opts, order)
+                .map_err(|e| e.to_string())?
         };
         let mut terms: Vec<String> = search_text.split_whitespace().map(str::to_owned).collect();
         for p in &syntax.phrases {
@@ -469,11 +681,12 @@ impl Backend {
         let mut folder_map: HashMap<String, u32> = HashMap::new();
         for r in &rows {
             if !r.parent.is_empty() {
-                let folder_display = if let Some(pos) = r.parent.rfind('\\').or_else(|| r.parent.rfind('/')) {
-                    r.parent[pos + 1..].to_owned()
-                } else {
-                    r.parent.clone()
-                };
+                let folder_display =
+                    if let Some(pos) = r.parent.rfind('\\').or_else(|| r.parent.rfind('/')) {
+                        r.parent[pos + 1..].to_owned()
+                    } else {
+                        r.parent.clone()
+                    };
                 if !folder_display.is_empty() {
                     *folder_map.entry(folder_display).or_insert(0) += 1;
                 }
@@ -620,7 +833,10 @@ pub fn pipe_search_limit(name: &str, query: &str, hierarchy: bool, top: usize) -
     if hierarchy {
         return Err("서비스 파이프는 전체 위계 순위 질의를 아직 지원하지 않습니다.".into());
     }
-    let bytes = pipe_call(name, &json!({"command":"query", "id":1, "text":query,"top":top,"refs":1}))?;
+    let bytes = pipe_call(
+        name,
+        &json!({"command":"query", "id":1, "text":query,"top":top,"refs":1}),
+    )?;
     decode_rows(&bytes)
 }
 
@@ -647,7 +863,12 @@ pub fn pipe_call(name: &str, request: &Value) -> Result<Vec<u8>> {
 }
 
 /// 파일명 정렬(Q-F2): 파이프 `names_query`의 `sort` 값과 화면 이름.
-pub const NAME_SORTS: [(&str, &str); 4] = [("relevance", "관련도"), ("name", "이름순"), ("size", "크기순"), ("date", "날짜순")];
+pub const NAME_SORTS: [(&str, &str); 4] = [
+    ("relevance", "관련도"),
+    ("name", "이름순"),
+    ("size", "크기순"),
+    ("date", "날짜순"),
+];
 
 /// 파일명 탭: 서비스가 메모리에 쥔 드라이브 전체 이름 색인에 `names_query`(서비스 SID 범위, 다른 사용자 프로필 제외).
 pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
@@ -656,7 +877,10 @@ pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
 
 /// QMS-EXPORT: 지정 상한을 반영한 파일명 색인 질의.
 pub fn pipe_names_limit(name: &str, query: &str, sort: &str, limit: usize) -> Result<Vec<Row>> {
-    let bytes = pipe_call(name, &json!({"command":"names_query","id":1,"text":query,"limit":limit,"sort":sort}))?;
+    let bytes = pipe_call(
+        name,
+        &json!({"command":"names_query","id":1,"text":query,"limit":limit,"sort":sort}),
+    )?;
     decode_names(&bytes)
 }
 
@@ -670,7 +894,9 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
             e.to_owned()
         });
     }
-    let items = value["result"]["items"].as_array().ok_or("파일명 응답에 결과가 없습니다.")?;
+    let items = value["result"]["items"]
+        .as_array()
+        .ok_or("파일명 응답에 결과가 없습니다.")?;
     Ok(items
         .iter()
         .map(|i| {
@@ -694,7 +920,16 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
                 info.push(t);
             }
             let mtime_i64 = i["mtime"].as_i64().unwrap_or(0);
-            Row { path, name, parent: dir, location: info.join(" · "), level: 255, snippet_tried: true, date: mtime_i64, ..Row::default() }
+            Row {
+                path,
+                name,
+                parent: dir,
+                location: info.join(" · "),
+                level: 255,
+                snippet_tried: true,
+                date: mtime_i64,
+                ..Row::default()
+            }
         })
         .collect())
 }
@@ -708,7 +943,11 @@ pub fn format_size(n: u64) -> String {
         v /= 1024.0;
         k += 1;
     }
-    if k == 0 { format!("{n} B") } else { format!("{v:.1} {}", U[k]) }
+    if k == 0 {
+        format!("{n} B")
+    } else {
+        format!("{v:.1} {}", U[k])
+    }
 }
 
 /// FILETIME(100ns, 1601-01-01 UTC) → 지역 시각 "2026-11-14 09:05". 범위 밖이면 None.
@@ -720,13 +959,21 @@ pub fn format_filetime(t: i64) -> Option<String> {
         return None;
     }
     unsafe {
-        let ft = FILETIME { dwLowDateTime: t as u32, dwHighDateTime: (t >> 32) as u32 };
+        let ft = FILETIME {
+            dwLowDateTime: t as u32,
+            dwHighDateTime: (t >> 32) as u32,
+        };
         let mut utc: SYSTEMTIME = std::mem::zeroed();
         let mut local: SYSTEMTIME = std::mem::zeroed();
-        if FileTimeToSystemTime(&ft, &mut utc) == 0 || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0 {
+        if FileTimeToSystemTime(&ft, &mut utc) == 0
+            || SystemTimeToTzSpecificLocalTime(std::ptr::null(), &utc, &mut local) == 0
+        {
             return None;
         }
-        Some(format!("{:04}-{:02}-{:02} {:02}:{:02}", local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute))
+        Some(format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            local.wYear, local.wMonth, local.wDay, local.wHour, local.wMinute
+        ))
     }
 }
 
@@ -778,14 +1025,14 @@ fn civil_from_days(days: i64) -> (i64, i64, i64) {
     let z = days + 719468;
     let era = z.div_euclid(146097);
     let doe = z - era * 146097;
-    let yoe = (doe - doe/1460 + doe/36524 - doe/146096) / 365;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
     let mut y = yoe + era * 400;
-    let doy = doe - (365*yoe + yoe/4 - yoe/100);
-    let mp = (5*doy + 2) / 153;
-    let d = doy - (153*mp+2)/5 + 1;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
     let m = mp + if mp < 10 { 3 } else { -9 };
     y += i64::from(m <= 2);
-    (y,m,d)
+    (y, m, d)
 }
 
 /// 현재 한국 표준시(KST) 기준 이번 주 월요일~일요일 날짜 (YYYYMMDD, YYYYMMDD) 반환.
@@ -880,6 +1127,126 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stats_count_type_year_folder_and_unknown_size() {
+        let rows = vec![
+            Row {
+                name: "a.hwp".into(),
+                path: "C:\\x\\a.hwp".into(),
+                parent: "C:\\x".into(),
+                date: 20250101,
+                doc_id: 1,
+                ..Row::default()
+            },
+            Row {
+                name: "b.pdf".into(),
+                path: "C:\\y\\b.pdf".into(),
+                parent: "C:\\y".into(),
+                date: 20240101,
+                doc_id: 2,
+                ..Row::default()
+            },
+        ];
+        let s = document_stats(&rows);
+        assert_eq!(s.total, 2);
+        assert_eq!(s.indexed, 2);
+        assert_eq!(s.total_bytes, None);
+        assert_eq!(s.by_type.len(), 2);
+        assert_eq!(s.by_year.len(), 2);
+        assert_eq!(s.by_folder.len(), 2);
+    }
+    #[test]
+    fn stats_recent_top_five_is_descending() {
+        let rows: Vec<Row> = (1..=7)
+            .map(|d| Row {
+                name: format!("{d}.hwp"),
+                date: 20250100 + d,
+                doc_id: d as u64,
+                ..Row::default()
+            })
+            .collect();
+        let s = document_stats(&rows);
+        assert_eq!(s.recent.len(), 5);
+        assert!(s.recent.windows(2).all(|w| w[0].date >= w[1].date));
+    }
+    #[test]
+    fn stats_ignores_missing_dates_for_recent_and_year() {
+        let s = document_stats(&[Row {
+            name: "x.hwp".into(),
+            ..Row::default()
+        }]);
+        assert!(s.recent.is_empty());
+        assert!(s.by_year.is_empty());
+    }
+    #[test]
+    fn stats_folder_counts_sorted_and_bounded() {
+        let rows: Vec<Row> = (0..15)
+            .map(|i| Row {
+                name: format!("{i}.hwp"),
+                parent: format!("C:\\{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let s = document_stats(&rows);
+        assert_eq!(s.by_folder.len(), 10);
+    }
+    #[test]
+    fn version_group_keeps_highest_v_number() {
+        let rows = vec![
+            Row {
+                name: "Plan_v1.docx".into(),
+                ..Row::default()
+            },
+            Row {
+                name: "Plan_v2.docx".into(),
+                ..Row::default()
+            },
+        ];
+        let g = group_document_versions(&rows);
+        assert_eq!(g.len(), 1);
+        assert_eq!(g[0].name, "Plan_v2.docx");
+    }
+    #[test]
+    fn version_group_prefers_final() {
+        let rows = vec![
+            Row {
+                name: "Plan_v9.docx".into(),
+                ..Row::default()
+            },
+            Row {
+                name: "Plan_Final.docx".into(),
+                ..Row::default()
+            },
+        ];
+        assert_eq!(group_document_versions(&rows)[0].name, "Plan_Final.docx");
+    }
+    #[test]
+    fn version_group_keeps_unversioned_name() {
+        let rows = vec![Row {
+            name: "Memo.docx".into(),
+            ..Row::default()
+        }];
+        assert_eq!(group_document_versions(&rows).len(), 1);
+    }
+    #[test]
+    fn version_group_is_case_insensitive() {
+        let rows = vec![
+            Row {
+                name: "Report_V1.pdf".into(),
+                ..Row::default()
+            },
+            Row {
+                name: "report_v2.pdf".into(),
+                ..Row::default()
+            },
+        ];
+        assert_eq!(group_document_versions(&rows).len(), 1);
+    }
+    #[test]
+    fn version_group_handles_empty_input() {
+        assert!(group_document_versions(&[]).is_empty());
+    }
     use kfind_core::{Sentence, Writer, WriterOptions};
     struct Temp(PathBuf);
     impl Temp {
@@ -970,7 +1337,15 @@ mod tests {
         let mut table = String::new();
         for id in 1..=12u64 {
             writer
-                .add_document(id, id as i64, &[Sentence { para: 2, level: (id % 3) as u8, text: "예산 집행 계획" }])
+                .add_document(
+                    id,
+                    id as i64,
+                    &[Sentence {
+                        para: 2,
+                        level: (id % 3) as u8,
+                        text: "예산 집행 계획",
+                    }],
+                )
                 .unwrap();
             table.push_str(&format!(
                 "{{\"op\":\"put\",\"key\":\"k{id}\",\"id\":{id},\"meta\":{{\"path\":\"D:\\\\d\\\\{id}.hwp\"}}}}\n"
@@ -982,27 +1357,44 @@ mod tests {
         let bodies: Vec<(String, String)> = (1..=12)
             .map(|id| (format!("D:\\d\\{id}.hwp"), format!("머리말 {id} 이 문서는 아주 긴 머리글을 가진 시험 문단이다\n올해 예산 집행 계획을 세운다 {id}")))
             .collect();
-        let rows: Vec<(&str, u32, &str)> = bodies.iter().map(|(p, b)| (p.as_str(), 2, b.as_str())).collect();
+        let rows: Vec<(&str, u32, &str)> = bodies
+            .iter()
+            .map(|(p, b)| (p.as_str(), 2, b.as_str()))
+            .collect();
         crate::paragraphs::create_fixture(&db, &rows).unwrap();
-        let mut backend = Backend::open(&t.0).unwrap().with_paragraphs(Some(db.clone()));
+        let mut backend = Backend::open(&t.0)
+            .unwrap()
+            .with_paragraphs(Some(db.clone()));
         backend.warm().unwrap();
         let mut answer = backend.search_cancel("예산집행", true, None).unwrap();
         assert_eq!(answer.rows.len(), 12);
-        assert!(answer.terms.iter().any(|w| w == "예산") && answer.terms.iter().any(|w| w == "집행"));
+        assert!(
+            answer.terms.iter().any(|w| w == "예산") && answer.terms.iter().any(|w| w == "집행")
+        );
         // 위계 순(0 → 1 → 2).
         assert!(answer.rows.windows(2).all(|w| w[0].level <= w[1].level));
         for r in &answer.rows[..SNIPPET_PREFETCH] {
             assert!(r.snippet.contains("예산 집행 계획"), "{:?}", r.snippet);
             assert!(r.snippet.starts_with('…'));
         }
-        assert!(answer.rows[SNIPPET_PREFETCH..].iter().all(|r| r.snippet.is_empty() && !r.snippet_tried));
+        assert!(
+            answer.rows[SNIPPET_PREFETCH..]
+                .iter()
+                .all(|r| r.snippet.is_empty() && !r.snippet_tried)
+        );
         let terms = answer.terms.clone();
         backend.fill_snippets(&mut answer.rows[SNIPPET_PREFETCH..], &terms);
         assert!(answer.rows.iter().all(|r| !r.snippet.is_empty()));
         // 문단 표가 없으면 원문 없이 위치만.
-        let mut plain = Backend::open(&t.0).unwrap().with_paragraphs(Some(t.0.join("none.sqlite")));
+        let mut plain = Backend::open(&t.0)
+            .unwrap()
+            .with_paragraphs(Some(t.0.join("none.sqlite")));
         let a = plain.search_cancel("예산", false, None).unwrap();
-        assert!(a.rows.iter().all(|r| r.snippet.is_empty() && r.location.starts_with("문단 3")));
+        assert!(
+            a.rows
+                .iter()
+                .all(|r| r.snippet.is_empty() && r.location.starts_with("문단 3"))
+        );
         assert!(!t.0.join("none.sqlite").exists());
     }
     #[test]
@@ -1012,12 +1404,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(rows[0].path, "C:\\x\\a.hwp");
-        assert!(rows[0].location.starts_with("1.5 KB · 2024-"), "{}", rows[0].location);
+        assert!(
+            rows[0].location.starts_with("1.5 KB · 2024-"),
+            "{}",
+            rows[0].location
+        );
         assert_eq!(rows[1].path, "C:\\x");
         assert_eq!(rows[1].location, "폴더");
         assert_eq!(rows[2].path, "C:");
         assert!(rows.iter().all(|r| r.snippet.is_empty() && r.snippet_tried));
-        let e = decode_names(br#"{"ok":false,"error":"names index unavailable (building)"}"#).unwrap_err();
+        let e = decode_names(br#"{"ok":false,"error":"names index unavailable (building)"}"#)
+            .unwrap_err();
         assert!(e.contains("준비하는 중"));
         assert_eq!(format_size(0), "0 B");
         assert_eq!(format_size(1023), "1023 B");
@@ -1272,14 +1669,22 @@ mod tests {
         assert!(after_ids.contains(&2) && after_ids.contains(&4));
 
         // 6-5. 문법 오류 복구: 검색이 막히지 않고 정상 반환
-        let ans_err = backend
-            .search_with_scope("청년 ext: - after:invalid", false, None, None, None);
+        let ans_err =
+            backend.search_with_scope("청년 ext: - after:invalid", false, None, None, None);
         assert!(ans_err.is_ok());
 
         // 7. QMS-SCOPE 확장자 범위 및 연동 검증
         // 7-1. 인자로 ext: Some("pdf") 전달
         let ans_pdf = backend
-            .search_with_scope_ext("청년", false, None, None, Some("pdf"), crate::tm_state::MatchMode::AllTerms, None)
+            .search_with_scope_ext(
+                "청년",
+                false,
+                None,
+                None,
+                Some("pdf"),
+                crate::tm_state::MatchMode::AllTerms,
+                None,
+            )
             .unwrap();
         assert_eq!(ans_pdf.rows.len(), 1);
         assert_eq!(ans_pdf.rows[0].doc_id, 4);
@@ -1302,11 +1707,20 @@ mod tests {
         assert_eq!(compute_location_badge("[12쪽]"), Some("12쪽".into()));
 
         // 시트 및 행 메타
-        assert_eq!(compute_location_badge("시트1 12행"), Some("시트1 12행".into()));
-        assert_eq!(compute_location_badge("매출 12행"), Some("매출 12행".into()));
+        assert_eq!(
+            compute_location_badge("시트1 12행"),
+            Some("시트1 12행".into())
+        );
+        assert_eq!(
+            compute_location_badge("매출 12행"),
+            Some("매출 12행".into())
+        );
         assert_eq!(compute_location_badge("1행"), Some("1행".into()));
         assert_eq!(compute_location_badge("시트 4행"), Some("시트 4행".into()));
-        assert_eq!(compute_location_badge("절대경로시트 1행"), Some("절대경로시트 1행".into()));
+        assert_eq!(
+            compute_location_badge("절대경로시트 1행"),
+            Some("절대경로시트 1행".into())
+        );
 
         // 일반 문단 번호·위계 등은 배지 생략(None)
         assert_eq!(compute_location_badge("문단 1 · 위계 8"), None);
@@ -1371,23 +1785,59 @@ mod tests {
     #[test]
     fn body_sort_confidence_and_oldest_are_deterministic() {
         let mut rows = vec![
-            Row { name: "a".into(), date: 20260103, count: 2, rank: 0, ..Row::default() },
-            Row { name: "b".into(), date: 20260101, count: 8, rank: 1, ..Row::default() },
-            Row { name: "c".into(), date: 20260102, count: 8, rank: 2, ..Row::default() },
+            Row {
+                name: "a".into(),
+                date: 20260103,
+                count: 2,
+                rank: 0,
+                ..Row::default()
+            },
+            Row {
+                name: "b".into(),
+                date: 20260101,
+                count: 8,
+                rank: 1,
+                ..Row::default()
+            },
+            Row {
+                name: "c".into(),
+                date: 20260102,
+                count: 8,
+                rank: 2,
+                ..Row::default()
+            },
         ];
         sort_rows(&mut rows, BodySort::Confidence);
-        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b", "c", "a"]);
+        assert_eq!(
+            rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["b", "c", "a"]
+        );
         sort_rows(&mut rows, BodySort::Oldest);
-        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b", "c", "a"]);
+        assert_eq!(
+            rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["b", "c", "a"]
+        );
     }
 
     #[test]
     fn korean_datetime_format_checks_dates_and_meridiem() {
-        assert_eq!(format_korean_datetime(20260203).as_deref(), Some("2026. 02. 03. 오전 12:00"));
-        assert_eq!(format_korean_datetime_at_hour(20260203, 0, 5).as_deref(), Some("2026. 02. 03. 오전 12:05"));
-        assert_eq!(format_korean_datetime_at_hour(20260203, 13, 7).as_deref(), Some("2026. 02. 03. 오후 01:07"));
+        assert_eq!(
+            format_korean_datetime(20260203).as_deref(),
+            Some("2026. 02. 03. 오전 12:00")
+        );
+        assert_eq!(
+            format_korean_datetime_at_hour(20260203, 0, 5).as_deref(),
+            Some("2026. 02. 03. 오전 12:05")
+        );
+        assert_eq!(
+            format_korean_datetime_at_hour(20260203, 13, 7).as_deref(),
+            Some("2026. 02. 03. 오후 01:07")
+        );
         assert_eq!(format_korean_datetime(20260229), None);
-        assert_eq!(format_korean_datetime(20240229).as_deref(), Some("2024. 02. 29. 오전 12:00"));
+        assert_eq!(
+            format_korean_datetime(20240229).as_deref(),
+            Some("2024. 02. 29. 오전 12:00")
+        );
         assert_eq!(format_korean_datetime(20260431), None);
         assert_eq!(format_korean_datetime_at_hour(20260203, 24, 0), None);
     }
@@ -1402,19 +1852,37 @@ mod tests {
     #[test]
     fn match_mode_query_preserves_scope_tokens() {
         let q = "budget launch path:\"docs\\2026\" ext:hwp after:2026-01-01 -draft";
-        assert_eq!(query_for_match_mode(q, crate::tm_state::MatchMode::AllTerms), q);
+        assert_eq!(
+            query_for_match_mode(q, crate::tm_state::MatchMode::AllTerms),
+            q
+        );
         let any = query_for_match_mode(q, crate::tm_state::MatchMode::AnyTerm);
-        assert!(any.contains("budget launch") && any.contains("path:") && any.contains("ext:hwp") && any.contains("after:") && any.contains("-draft"));
+        assert!(
+            any.contains("budget launch")
+                && any.contains("path:")
+                && any.contains("ext:hwp")
+                && any.contains("after:")
+                && any.contains("-draft")
+        );
         let exact = query_for_match_mode(q, crate::tm_state::MatchMode::Exact);
         assert!(exact.starts_with("\"budget launch\""));
     }
 
-
     #[test]
     fn extension_badges_cover_requested_types() {
-        for (path, label) in [("a.hwp", "HWP"), ("a.hwpx", "HWPX"), ("a.docx", "DOCX"), ("a.pdf", "PDF"), ("a.xls", "XLS"), ("a.ppt", "PPT"), ("a.md", "MD"), ("a.txt", "TXT")] { assert_eq!(extension_label(path), label); }
+        for (path, label) in [
+            ("a.hwp", "HWP"),
+            ("a.hwpx", "HWPX"),
+            ("a.docx", "DOCX"),
+            ("a.pdf", "PDF"),
+            ("a.xls", "XLS"),
+            ("a.ppt", "PPT"),
+            ("a.md", "MD"),
+            ("a.txt", "TXT"),
+        ] {
+            assert_eq!(extension_label(path), label);
+        }
     }
-
 
     #[test]
     fn direct_n_day_window_covers_today_and_previous_days() {
@@ -1425,5 +1893,4 @@ mod tests {
             assert!(shift_ymd(start, days - 1) == end);
         }
     }
-
 }
