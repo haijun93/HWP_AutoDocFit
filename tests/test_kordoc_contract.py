@@ -15,7 +15,8 @@ class KordocContractTest(unittest.TestCase):
         self.assertEqual(kb.KORDOC_PACKAGE, "kordoc@4.21.30")
 
     def test_old_node_is_refused(self):
-        with patch.object(kb, "_node_major", return_value=18):
+        with patch.object(kb, "_node_major", return_value=18), \
+                patch.object(kb, "_bundled_runtime", return_value=None):
             with self.assertRaises(kb.KordocUnavailableError) as cm:
                 kb._kordoc_command()
         self.assertIn("20 이상", str(cm.exception))
@@ -31,6 +32,7 @@ class KordocContractTest(unittest.TestCase):
             cli.write_text("// cli")
             with patch.object(kb, "_node_major", return_value=20), \
                     patch.object(kb, "_node_executable", return_value="node.exe"), \
+                    patch.object(kb, "_bundled_runtime", return_value=None), \
                     patch.dict(os.environ, {"DOCFIT_KORDOC_BIN": str(exe)}):
                 self.assertEqual(kb._kordoc_command(), ["node.exe", str(cli)])
 
@@ -48,6 +50,7 @@ class KordocContractTest(unittest.TestCase):
 
     def test_npx_download_is_blocked_by_default(self):
         with patch.object(kb, "_node_major", return_value=20), patch.object(kb, "_local_kordoc", return_value=None), \
+                patch.object(kb, "_bundled_runtime", return_value=None), \
                 patch.dict(os.environ, {"DOCFIT_ALLOW_NPX_DOWNLOAD": "0"}, clear=False):
             with self.assertRaises(kb.KordocUnavailableError):
                 kb._kordoc_command()
@@ -77,6 +80,7 @@ class KordocContractTest(unittest.TestCase):
         with patch.object(kb, "_node_major", side_effect=AssertionError("version subprocess")), \
                 patch.object(kb, "_node_executable", return_value="node.exe"), \
                 patch.object(kb, "_local_kordoc", return_value=None), \
+                patch.object(kb, "_bundled_runtime", return_value=None), \
                 patch.dict(os.environ, {"DOCFIT_ALLOW_NPX_DOWNLOAD": "0"}):
             self.assertFalse(kb.engine_status()["available"])
 
