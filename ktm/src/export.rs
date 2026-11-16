@@ -198,7 +198,11 @@ pub fn header_columns(kind: ExportKind) -> [&'static str; 6] {
 }
 
 /// 레코드 목록을 문자열로 직렬화한다 (CSV 또는 TSV, CRLF 줄바꿈, UTF-8 BOM 포함).
-pub fn serialize_to_string(format: ExportFormat, kind: ExportKind, records: &[ExportRecord]) -> String {
+pub fn serialize_to_string(
+    format: ExportFormat,
+    kind: ExportKind,
+    records: &[ExportRecord],
+) -> String {
     let mut out = String::from("\u{FEFF}");
     let cols = header_columns(kind);
 
@@ -260,7 +264,11 @@ pub fn serialize_to_string(format: ExportFormat, kind: ExportKind, records: &[Ex
 }
 
 /// 레코드 목록을 바이트(UTF-8 BOM 포함)로 직렬화한다.
-pub fn serialize_to_bytes(format: ExportFormat, kind: ExportKind, records: &[ExportRecord]) -> Vec<u8> {
+pub fn serialize_to_bytes(
+    format: ExportFormat,
+    kind: ExportKind,
+    records: &[ExportRecord],
+) -> Vec<u8> {
     serialize_to_string(format, kind, records).into_bytes()
 }
 
@@ -333,6 +341,15 @@ pub fn export_to_file(
     Ok(path)
 }
 
+/// 현재 화면에서 추린 결과를 지정 형식으로 저장한다.
+pub fn export_results(
+    format: ExportFormat,
+    kind: ExportKind,
+    rows: &[Row],
+) -> std::io::Result<PathBuf> {
+    export_to_file(format, kind, rows, None, None)
+}
+
 /// 저장된 파일이 있는 폴더를 열고(가능한 경우 파일 선택), 성공 여부를 반환한다.
 pub fn open_export_folder(saved_file: &Path) -> Result<(), String> {
     #[cfg(windows)]
@@ -351,9 +368,7 @@ pub fn open_export_folder(saved_file: &Path) -> Result<(), String> {
     #[cfg(all(not(windows), not(target_os = "macos")))]
     {
         if let Some(parent) = saved_file.parent() {
-            let _ = std::process::Command::new("xdg-open")
-                .arg(parent)
-                .spawn();
+            let _ = std::process::Command::new("xdg-open").arg(parent).spawn();
         }
         Ok(())
     }
@@ -371,13 +386,21 @@ mod tests {
 
         let csv = serialize_to_string(ExportFormat::Csv, ExportKind::Body, &records);
         assert!(csv.starts_with('\u{FEFF}'));
-        let lines: Vec<&str> = csv.trim_start_matches('\u{FEFF}').trim_end().split("\r\n").collect();
+        let lines: Vec<&str> = csv
+            .trim_start_matches('\u{FEFF}')
+            .trim_end()
+            .split("\r\n")
+            .collect();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0], "번호,파일명,경로,형식,수정일,일치 문장");
 
         let tsv = serialize_to_string(ExportFormat::Tsv, ExportKind::Names, &records);
         assert!(tsv.starts_with('\u{FEFF}'));
-        let tsv_lines: Vec<&str> = tsv.trim_start_matches('\u{FEFF}').trim_end().split("\r\n").collect();
+        let tsv_lines: Vec<&str> = tsv
+            .trim_start_matches('\u{FEFF}')
+            .trim_end()
+            .split("\r\n")
+            .collect();
         assert_eq!(tsv_lines.len(), 1);
         assert_eq!(tsv_lines[0], "번호\t파일명\t경로\t형식\t수정일\t크기");
     }
@@ -386,25 +409,89 @@ mod tests {
     fn test_escape_table_15_cases() {
         // 이스케이프 15건 이상 표 시험: 특수문자, 쉼표, 쌍따옴표, 줄바꿈, 탭, 수식 등
         let test_cases = [
-            ("순수 영문", "Simple English Text", "Simple English Text", "Simple English Text"),
-            ("순수 한글", "정상적인 한글 문장입니다.", "정상적인 한글 문장입니다.", "정상적인 한글 문장입니다."),
+            (
+                "순수 영문",
+                "Simple English Text",
+                "Simple English Text",
+                "Simple English Text",
+            ),
+            (
+                "순수 한글",
+                "정상적인 한글 문장입니다.",
+                "정상적인 한글 문장입니다.",
+                "정상적인 한글 문장입니다.",
+            ),
             ("쉼표 포함", "가, 나, 다", "\"가, 나, 다\"", "가, 나, 다"),
-            ("쌍따옴표 포함", "그는 \"안녕\"이라 말했다.", "\"그는 \"\"안녕\"\"이라 말했다.\"", "\"그는 \"\"안녕\"\"이라 말했다.\""),
-            ("LF 줄바꿈", "첫 줄\n둘째 줄", "\"첫 줄\n둘째 줄\"", "\"첫 줄\n둘째 줄\""),
-            ("CRLF 줄바꿈", "첫 줄\r\n둘째 줄", "\"첫 줄\r\n둘째 줄\"", "\"첫 줄\r\n둘째 줄\""),
+            (
+                "쌍따옴표 포함",
+                "그는 \"안녕\"이라 말했다.",
+                "\"그는 \"\"안녕\"\"이라 말했다.\"",
+                "\"그는 \"\"안녕\"\"이라 말했다.\"",
+            ),
+            (
+                "LF 줄바꿈",
+                "첫 줄\n둘째 줄",
+                "\"첫 줄\n둘째 줄\"",
+                "\"첫 줄\n둘째 줄\"",
+            ),
+            (
+                "CRLF 줄바꿈",
+                "첫 줄\r\n둘째 줄",
+                "\"첫 줄\r\n둘째 줄\"",
+                "\"첫 줄\r\n둘째 줄\"",
+            ),
             ("탭 포함", "열1\t열2", "열1\t열2", "\"열1\t열2\""),
-            ("쉼표+따옴표", "\"강조\", 쉼표", "\"\"\"강조\"\", 쉼표\"", "\"\"\"강조\"\", 쉼표\""),
-            ("쉼표+줄바꿈", "줄1, 항목\n줄2", "\"줄1, 항목\n줄2\"", "\"줄1, 항목\n줄2\""),
-            ("따옴표+줄바꿈", "\"인용문\"\n다음 줄", "\"\"\"인용문\"\"\n다음 줄\"", "\"\"\"인용문\"\"\n다음 줄\""),
-            ("쉼표+따옴표+줄바꿈", "\"A, B\"\r\n\"C, D\"", "\"\"\"A, B\"\"\r\n\"\"C, D\"\"\"", "\"\"\"A, B\"\"\r\n\"\"C, D\"\"\""),
+            (
+                "쉼표+따옴표",
+                "\"강조\", 쉼표",
+                "\"\"\"강조\"\", 쉼표\"",
+                "\"\"\"강조\"\", 쉼표\"",
+            ),
+            (
+                "쉼표+줄바꿈",
+                "줄1, 항목\n줄2",
+                "\"줄1, 항목\n줄2\"",
+                "\"줄1, 항목\n줄2\"",
+            ),
+            (
+                "따옴표+줄바꿈",
+                "\"인용문\"\n다음 줄",
+                "\"\"\"인용문\"\"\n다음 줄\"",
+                "\"\"\"인용문\"\"\n다음 줄\"",
+            ),
+            (
+                "쉼표+따옴표+줄바꿈",
+                "\"A, B\"\r\n\"C, D\"",
+                "\"\"\"A, B\"\"\r\n\"\"C, D\"\"\"",
+                "\"\"\"A, B\"\"\r\n\"\"C, D\"\"\"",
+            ),
             ("단일 따옴표만", "\"", "\"\"\"\"", "\"\"\"\""),
             ("연속 따옴표", "\"\"", "\"\"\"\"\"\"", "\"\"\"\"\"\""),
-            ("앞뒤 공백+따옴표", "  \"앞뒤공백\"  ", "\"  \"\"앞뒤공백\"\"  \"", "\"  \"\"앞뒤공백\"\"  \""),
-            ("수식 기호 및 쉼표", "=SUM(A1:A10), \"합계\"", "\"=SUM(A1:A10), \"\"합계\"\"\"", "\"=SUM(A1:A10), \"\"합계\"\"\""),
-            ("복합 한글 특수문자", "[특보] \"서울, 경기\n주의보\"", "\"[특보] \"\"서울, 경기\n주의보\"\"\"", "\"[특보] \"\"서울, 경기\n주의보\"\"\""),
+            (
+                "앞뒤 공백+따옴표",
+                "  \"앞뒤공백\"  ",
+                "\"  \"\"앞뒤공백\"\"  \"",
+                "\"  \"\"앞뒤공백\"\"  \"",
+            ),
+            (
+                "수식 기호 및 쉼표",
+                "=SUM(A1:A10), \"합계\"",
+                "\"=SUM(A1:A10), \"\"합계\"\"\"",
+                "\"=SUM(A1:A10), \"\"합계\"\"\"",
+            ),
+            (
+                "복합 한글 특수문자",
+                "[특보] \"서울, 경기\n주의보\"",
+                "\"[특보] \"\"서울, 경기\n주의보\"\"\"",
+                "\"[특보] \"\"서울, 경기\n주의보\"\"\"",
+            ),
         ];
 
-        assert!(test_cases.len() >= 15, "15건 이상이어야 함 (실제: {})", test_cases.len());
+        assert!(
+            test_cases.len() >= 15,
+            "15건 이상이어야 함 (실제: {})",
+            test_cases.len()
+        );
 
         for (desc, input, expected_csv, expected_tsv) in &test_cases {
             let escaped_csv = escape_csv_field(input);
@@ -474,11 +561,21 @@ mod tests {
         assert_eq!(records[999].filename, "doc_1000.hwp");
 
         let csv = serialize_to_string(ExportFormat::Csv, ExportKind::Body, &records);
-        let lines: Vec<&str> = csv.trim_start_matches('\u{FEFF}').trim_end().split("\r\n").collect();
+        let lines: Vec<&str> = csv
+            .trim_start_matches('\u{FEFF}')
+            .trim_end()
+            .split("\r\n")
+            .collect();
         // 헤더 1줄 + 데이터 1000줄 = 1001줄
         assert_eq!(lines.len(), 1001);
-        assert_eq!(lines[1], "1,doc_0001.hwp,C:\\문서\\doc_0001.hwp,HWP,,일치 문장 1");
-        assert_eq!(lines[1000], "1000,doc_1000.hwp,C:\\문서\\doc_1000.hwp,HWP,,일치 문장 1000");
+        assert_eq!(
+            lines[1],
+            "1,doc_0001.hwp,C:\\문서\\doc_0001.hwp,HWP,,일치 문장 1"
+        );
+        assert_eq!(
+            lines[1000],
+            "1000,doc_1000.hwp,C:\\문서\\doc_1000.hwp,HWP,,일치 문장 1000"
+        );
     }
 
     #[test]
@@ -503,7 +600,8 @@ mod tests {
             &rows,
             Some(&temp_dir),
             Some(test_time),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(saved_path.is_file());
         let filename = saved_path.file_name().unwrap().to_string_lossy();
@@ -512,7 +610,33 @@ mod tests {
 
         let bytes = std::fs::read(&saved_path).unwrap();
         assert!(bytes.starts_with(UTF8_BOM));
+        assert!(String::from_utf8_lossy(&bytes).contains("문서.hwpx,C:\\테스트\\문서.hwpx"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn export_to_file_writes_requested_display_rows() {
+        let dir = std::env::temp_dir().join(format!("ktm-export-visible-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let rows = vec![Row {
+            name: "보이는 결과.pdf".into(),
+            path: "C:\\현재 결과\\보이는 결과.pdf".into(),
+            snippet: "일치 문장".into(),
+            ..Row::default()
+        }];
+        let path = export_to_file(
+            ExportFormat::Csv,
+            ExportKind::Body,
+            &rows,
+            Some(&dir),
+            Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_725_126)),
+        )
+        .unwrap();
+        let csv = std::fs::read_to_string(&path).unwrap();
+        assert!(csv.starts_with('\u{FEFF}'));
+        assert!(csv.contains("보이는 결과.pdf,C:\\현재 결과\\보이는 결과.pdf"));
+        assert!(csv.contains("일치 문장"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

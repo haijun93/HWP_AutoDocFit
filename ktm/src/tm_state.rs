@@ -18,6 +18,31 @@ pub enum Tab {
     Names,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SearchMode { #[default] Keyword, Filename }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortMode { #[default] Relevance, Newest, Oldest, Name }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiOptions {
+    pub sidebar_open: bool,
+    pub search_mode: SearchMode,
+    pub sort: SortMode,
+    pub file_types: Vec<String>,
+    pub days: Option<u32>,
+    pub exclude_filename: bool,
+    pub within_query: String,
+    pub preset_name: String,
+    pub collapsed_filename: bool,
+    pub collapsed_body: bool,
+    pub grid_view: bool,
+}
+
+impl Default for UiOptions {
+    fn default() -> Self { Self { sidebar_open: false, search_mode: SearchMode::Keyword, sort: SortMode::Relevance, file_types: Vec::new(), days: None, exclude_filename: false, within_query: String::new(), preset_name: String::new(), collapsed_filename: false, collapsed_body: false, grid_view: false } }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum DateFilter {
     #[default]
@@ -65,6 +90,7 @@ pub struct State {
     pub recent_queries: Vec<String>,
     pub favorite_queries: Vec<crate::settings::FavoriteQuery>,
     pub selected_history: Option<usize>,
+    pub options: UiOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -122,6 +148,7 @@ impl Default for State {
             recent_queries: Vec::new(),
             favorite_queries: Vec::new(),
             selected_history: None,
+            options: UiOptions::default(),
         }
     }
 }
@@ -161,6 +188,17 @@ pub enum Event {
     ToggleFavorite,
     SelectHistory(Option<usize>),
     ApplyHistory(usize),
+    ToggleSidebar,
+    SetSearchMode(SearchMode),
+    SetSort(SortMode),
+    ToggleFileType(String),
+    SetDays(Option<u32>),
+    SetExcludeFilename(bool),
+    SetWithinQuery(String),
+    SetPresetName(String),
+    ToggleGroup(bool),
+    ToggleView,
+    ClearHistory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -624,6 +662,20 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 search(&mut state, &mut effects, false);
             }
         }
+        Event::ToggleSidebar => state.options.sidebar_open = !state.options.sidebar_open,
+        Event::SetSearchMode(mode) => state.options.search_mode = mode,
+        Event::SetSort(sort) => state.options.sort = sort,
+        Event::ToggleFileType(ext) => {
+            if let Some(i) = state.options.file_types.iter().position(|x| x == &ext) { state.options.file_types.remove(i); }
+            else { state.options.file_types.push(ext); }
+        }
+        Event::SetDays(days) => state.options.days = days,
+        Event::SetExcludeFilename(value) => state.options.exclude_filename = value,
+        Event::SetWithinQuery(query) => state.options.within_query = query,
+        Event::SetPresetName(name) => state.options.preset_name = name,
+        Event::ToggleGroup(filename) => { if filename { state.options.collapsed_filename = !state.options.collapsed_filename; } else { state.options.collapsed_body = !state.options.collapsed_body; } }
+        Event::ToggleView => state.options.grid_view = !state.options.grid_view,
+        Event::ClearHistory => { state.recent_queries.clear(); state.selected_history = None; }
         Event::Hide => {
             if state.phase != Phase::Hidden {
                 state.generation = state.generation.wrapping_add(1);
@@ -902,6 +954,17 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test] fn ui_options_toggle_sidebar() { let (s,_)=step(&visible(),Event::ToggleSidebar); assert!(s.options.sidebar_open); }
+    #[test] fn ui_options_switch_search_mode() { let (s,_)=step(&visible(),Event::SetSearchMode(SearchMode::Filename)); assert_eq!(s.options.search_mode,SearchMode::Filename); }
+    #[test] fn ui_options_set_sort() { let (s,_)=step(&visible(),Event::SetSort(SortMode::Oldest)); assert_eq!(s.options.sort,SortMode::Oldest); }
+    #[test] fn ui_options_file_type_toggle_is_reversible() { let (s,_)=step(&visible(),Event::ToggleFileType("pdf".into())); let (s,_)=step(&s,Event::ToggleFileType("pdf".into())); assert!(s.options.file_types.is_empty()); }
+    #[test] fn ui_options_set_days() { let (s,_)=step(&visible(),Event::SetDays(Some(7))); assert_eq!(s.options.days,Some(7)); }
+    #[test] fn ui_options_clear_recent_history() { let mut s=visible(); s.recent_queries=vec!["a".into()]; let (s,_)=step(&s,Event::ClearHistory); assert!(s.recent_queries.is_empty()); }
+    #[test] fn ui_options_within_query() { let (s,_)=step(&visible(),Event::SetWithinQuery("term".into())); assert_eq!(s.options.within_query,"term"); }
+    #[test] fn ui_options_exclude_filename() { let (s,_)=step(&visible(),Event::SetExcludeFilename(true)); assert!(s.options.exclude_filename); }
+    #[test] fn ui_options_toggle_groups_independently() { let (s,_)=step(&visible(),Event::ToggleGroup(true)); assert!(s.options.collapsed_filename); assert!(!s.options.collapsed_body); }
+    #[test] fn ui_options_toggle_view() { let (s,_)=step(&visible(),Event::ToggleView); assert!(s.options.grid_view); }
 
     fn visible() -> State {
         step(&State::default(), Event::Show).0

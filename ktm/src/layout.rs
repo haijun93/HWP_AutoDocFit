@@ -13,6 +13,252 @@ pub const ROW_H: i32 = 70;
 pub const ROW_FOLDER_W: i32 = 28;
 pub const STATUS_H: i32 = 24;
 pub const PREVIEW_H: i32 = 64;
+pub const OPTION_H: i32 = 30;
+pub const SUMMARY_H: i32 = 32;
+pub const SIDEBAR_W: i32 = 220;
+pub const SIDEBAR_ROW_H: i32 = 26;
+
+/// 사이드바 행의 의미. 인덱스는 화면에 그린 동적 목록의 인덱스다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SidebarHit {
+    Toggle,
+    IndexedFolder(usize),
+    Recommended(usize),
+    Preset(usize),
+    History(usize),
+    ClearHistory,
+}
+
+/// 사이드바 클릭을 순수 판정한다. y는 클라이언트 좌표, 목록 길이는 그려진 항목 수다.
+pub fn hit_sidebar(
+    x: i32,
+    y: i32,
+    width: i32,
+    open: bool,
+    indexed: usize,
+    presets: usize,
+    history: usize,
+) -> Option<SidebarHit> {
+    if !open || x < 0 || x >= width || y < 40 {
+        return None;
+    }
+    let row = ((y - 40) / SIDEBAR_ROW_H) as usize;
+    let folders = 2..2 + indexed;
+    let recommendations = 2 + indexed + 1..2 + indexed + 4;
+    let preset_header = 2 + indexed + 4;
+    let preset_rows = preset_header + 1..preset_header + 1 + presets;
+    let history_header = preset_header + 1 + presets;
+    let history_rows = history_header + 1..history_header + 1 + history;
+    let clear = history_header + 1 + history;
+    if row == 0 {
+        Some(SidebarHit::Toggle)
+    } else if folders.contains(&row) {
+        Some(SidebarHit::IndexedFolder(row - 2))
+    } else if recommendations.contains(&row) {
+        Some(SidebarHit::Recommended(row - (2 + indexed + 1)))
+    } else if preset_rows.contains(&row) {
+        Some(SidebarHit::Preset(row - (preset_header + 1)))
+    } else if history_rows.contains(&row) {
+        Some(SidebarHit::History(row - (history_header + 1)))
+    } else if row == clear {
+        Some(SidebarHit::ClearHistory)
+    } else {
+        None
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptionControl {
+    SearchMode,
+    Sort,
+    FileTypes,
+    Period,
+    ExcludeFilename,
+    WithinQuery,
+    Preset,
+}
+
+/// 옵션 바 각 영역을 가용 폭에 맞춰 동일 폭으로 배치한다.
+pub fn option_spans(left: i32, right: i32) -> [(i32, i32); 7] {
+    let avail = (right - left).max(0);
+    std::array::from_fn(|i| {
+        (
+            left + avail * i as i32 / 7,
+            left + avail * (i + 1) as i32 / 7,
+        )
+    })
+}
+
+pub fn hit_option(
+    x: i32,
+    y: i32,
+    top: i32,
+    height: i32,
+    left: i32,
+    right: i32,
+) -> Option<OptionControl> {
+    if y < top || y >= top + height {
+        return None;
+    }
+    let spans = option_spans(left, right);
+    let idx = spans.iter().position(|(a, b)| x >= *a && x < *b)?;
+    Some(
+        [
+            OptionControl::SearchMode,
+            OptionControl::Sort,
+            OptionControl::FileTypes,
+            OptionControl::Period,
+            OptionControl::ExcludeFilename,
+            OptionControl::WithinQuery,
+            OptionControl::Preset,
+        ][idx],
+    )
+}
+
+pub fn hit_summary_group(
+    x: i32,
+    y: i32,
+    top: i32,
+    height: i32,
+    left: i32,
+    right: i32,
+) -> Option<bool> {
+    if y < top || y >= top + height || x < left || x >= right {
+        return None;
+    }
+    let mid = left + (right - left) / 2;
+    if x < mid { Some(true) } else { Some(false) }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewMode {
+    #[default]
+    List,
+    Grid,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SortMode {
+    #[default]
+    Relevance,
+    Newest,
+    Oldest,
+    Name,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SearchMode {
+    #[default]
+    Keyword,
+    Filename,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct OptionBar {
+    pub search_mode: SearchMode,
+    pub sort: SortMode,
+    pub file_types: Vec<String>,
+    pub days: Option<u32>,
+    pub exclude_filename: bool,
+    pub within_query: String,
+    pub preset_name: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MatchGroups {
+    pub filename: usize,
+    pub body: usize,
+}
+
+pub fn filter_result_indices(
+    names: &[String],
+    snippets: &[String],
+    query: &str,
+    exclude_filename: bool,
+) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    (0..names.len().min(snippets.len()))
+        .filter(|&i| {
+            let name_match = !exclude_filename && names[i].to_lowercase().contains(&q);
+            let body_match = snippets[i].to_lowercase().contains(&q);
+            q.is_empty() || name_match || body_match
+        })
+        .collect()
+}
+
+/// 결과 내 검색과 확장자 선택을 현재 표시 결과에 적용한다.
+pub fn filter_rows_within_query(
+    rows: &[crate::backend::Row],
+    query: &str,
+    exclude_filename: bool,
+    types: &[String],
+) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    rows.iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let ext = std::path::Path::new(&row.name)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            let type_ok = types.is_empty() || types.iter().any(|t| t.eq_ignore_ascii_case(&ext));
+            let text_ok = q.is_empty()
+                || (!exclude_filename && row.name.to_lowercase().contains(&q))
+                || row.snippet.to_lowercase().contains(&q);
+            let body_only_ok = !exclude_filename || !row.snippet.is_empty();
+            (type_ok && text_ok && body_only_ok).then_some(i)
+        })
+        .collect()
+}
+
+pub fn display_result_indices(
+    rows: &[crate::backend::Row],
+    query: &str,
+    exclude_filename: bool,
+    types: &[String],
+    collapse_filename: bool,
+    collapse_body: bool,
+) -> Vec<usize> {
+    filter_rows_within_query(rows, query, exclude_filename, types)
+        .into_iter()
+        .filter(|i| {
+            rows.get(*i).is_some_and(|row| {
+                !((row.snippet.is_empty() && collapse_filename)
+                    || (!row.snippet.is_empty() && collapse_body))
+            })
+        })
+        .collect()
+}
+
+pub fn copy_result_text(names: &[String], paths: &[String]) -> String {
+    names
+        .iter()
+        .zip(paths)
+        .map(|(n, p)| format!("{n}\t{p}"))
+        .collect::<Vec<_>>()
+        .join("\r\n")
+}
+
+pub fn match_groups(names: &[String], snippets: &[String]) -> MatchGroups {
+    let n = names.len().min(snippets.len());
+    MatchGroups {
+        filename: (0..n).filter(|&i| !names[i].is_empty()).count(),
+        body: (0..n).filter(|&i| !snippets[i].is_empty()).count(),
+    }
+}
+
+pub fn sidebar_width(open: bool, width: i32) -> i32 {
+    if open {
+        SIDEBAR_W.min(width.max(0) / 2)
+    } else {
+        0
+    }
+}
+
+pub fn calc_results_top(head: i32, search: i32, tabs: i32, options: i32, summary: i32) -> i32 {
+    head + search + tabs + options + summary
+}
 
 /// 상단 캡션 단추.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -74,10 +320,105 @@ pub fn calc_list_top(
     ac_h: i32,
 ) -> i32 {
     let base = head_h + search_h + tab_h + filter_h;
-    if has_autocomplete {
-        base + ac_h
-    } else {
-        base
+    if has_autocomplete { base + ac_h } else { base }
+}
+
+/// Y position after the fixed header, option/filter/summary bands and optional autocomplete.
+pub fn calc_content_top(
+    head: i32,
+    search: i32,
+    tabs: i32,
+    options: i32,
+    filters: i32,
+    summary: i32,
+    has_ac: bool,
+    ac: i32,
+) -> i32 {
+    head + search + tabs + options + filters + summary + if has_ac { ac } else { 0 }
+}
+
+#[cfg(test)]
+mod content_top_tests {
+    use super::*;
+    #[test]
+    fn content_bands_are_sequential() {
+        assert_eq!(calc_content_top(32, 44, 28, 30, 24, 32, false, 22), 190);
+        assert_eq!(calc_content_top(32, 44, 28, 30, 24, 32, true, 22), 212);
+    }
+}
+
+#[cfg(test)]
+mod interaction_hit_tests {
+    use super::*;
+    #[test]
+    fn sidebar_toggle_hit() {
+        assert_eq!(
+            hit_sidebar(12, 45, 200, true, 2, 1, 3),
+            Some(SidebarHit::Toggle)
+        );
+    }
+    #[test]
+    fn sidebar_indexed_folder_hit() {
+        assert_eq!(
+            hit_sidebar(12, 40 + 2 * 26 + 2, 200, true, 3, 0, 0),
+            Some(SidebarHit::IndexedFolder(0))
+        );
+    }
+    #[test]
+    fn sidebar_recommended_path_hit() {
+        assert_eq!(
+            hit_sidebar(12, 40 + 6 * 26 + 1, 200, true, 3, 0, 0),
+            Some(SidebarHit::Recommended(0))
+        );
+    }
+    #[test]
+    fn sidebar_preset_hit() {
+        assert_eq!(
+            hit_sidebar(12, 40 + 8 * 26 + 1, 200, true, 1, 2, 0),
+            Some(SidebarHit::Preset(0))
+        );
+    }
+    #[test]
+    fn sidebar_history_hit() {
+        assert_eq!(
+            hit_sidebar(12, 40 + 9 * 26 + 1, 200, true, 0, 1, 2),
+            Some(SidebarHit::History(0))
+        );
+    }
+    #[test]
+    fn sidebar_clear_hit() {
+        assert_eq!(
+            hit_sidebar(12, 40 + 8 * 26 + 1, 200, true, 0, 0, 0),
+            Some(SidebarHit::ClearHistory)
+        );
+    }
+    #[test]
+    fn sidebar_closed_or_outside_is_miss() {
+        assert_eq!(hit_sidebar(12, 45, 200, false, 0, 0, 0), None);
+        assert_eq!(hit_sidebar(201, 45, 200, true, 0, 0, 0), None);
+    }
+    #[test]
+    fn option_regions_cover_all_controls() {
+        let spans = option_spans(10, 710);
+        assert_eq!(spans[0], (10, 110));
+        assert_eq!(spans[6], (610, 710));
+    }
+    #[test]
+    fn option_hit_selects_period_region() {
+        assert_eq!(
+            hit_option(360, 35, 30, 30, 10, 710),
+            Some(OptionControl::Period)
+        );
+    }
+    #[test]
+    fn option_hit_rejects_outside() {
+        assert_eq!(hit_option(710, 35, 30, 30, 10, 710), None);
+        assert_eq!(hit_option(50, 60, 30, 30, 10, 710), None);
+    }
+    #[test]
+    fn summary_group_hit_splits_filename_and_body() {
+        assert_eq!(hit_summary_group(20, 45, 40, 24, 10, 110), Some(true));
+        assert_eq!(hit_summary_group(90, 45, 40, 24, 10, 110), Some(false));
     }
 }
 
@@ -92,9 +433,24 @@ pub fn calc_tab_rects(pad: i32, tab_y: i32, tab_h: i32, width: i32) -> [RECT; 3]
     let l2 = r1;
     let r2 = width - pad;
     [
-        RECT { left: l0, top: tab_y, right: r0, bottom: tab_y + tab_h },
-        RECT { left: l1, top: tab_y, right: r1, bottom: tab_y + tab_h },
-        RECT { left: l2, top: tab_y, right: r2, bottom: tab_y + tab_h },
+        RECT {
+            left: l0,
+            top: tab_y,
+            right: r0,
+            bottom: tab_y + tab_h,
+        },
+        RECT {
+            left: l1,
+            top: tab_y,
+            right: r1,
+            bottom: tab_y + tab_h,
+        },
+        RECT {
+            left: l2,
+            top: tab_y,
+            right: r2,
+            bottom: tab_y + tab_h,
+        },
     ]
 }
 
@@ -119,7 +475,14 @@ pub fn calc_row_rect(top_y: i32, index: usize, scroll_top: usize, row_h: i32, wi
 }
 
 /// 행 오른쪽 [폴더 열기] 단추 영역 계산.
-pub fn calc_folder_button_rect(row_top: i32, row_right: i32, margin_x: i32, margin_y: i32, btn_w: i32, btn_h: i32) -> RECT {
+pub fn calc_folder_button_rect(
+    row_top: i32,
+    row_right: i32,
+    margin_x: i32,
+    margin_y: i32,
+    btn_w: i32,
+    btn_h: i32,
+) -> RECT {
     RECT {
         left: row_right - btn_w - margin_x,
         top: row_top + margin_y,
@@ -138,16 +501,205 @@ mod tests {
     use super::*;
 
     #[test]
+    fn options_default_to_keyword_relevance() {
+        let o = OptionBar::default();
+        assert_eq!(o.search_mode, SearchMode::Keyword);
+        assert_eq!(o.sort, SortMode::Relevance);
+    }
+    #[test]
+    fn sort_modes_are_distinct() {
+        assert_ne!(SortMode::Newest, SortMode::Oldest);
+        assert_ne!(SortMode::Name, SortMode::Relevance);
+    }
+    #[test]
+    fn sidebar_width_clamps_to_half_window() {
+        assert_eq!(sidebar_width(true, 300), 150);
+    }
+    #[test]
+    fn sidebar_width_is_zero_when_closed() {
+        assert_eq!(sidebar_width(false, 800), 0);
+    }
+    #[test]
+    fn sidebar_width_handles_negative_window() {
+        assert_eq!(sidebar_width(true, -1), 0);
+    }
+    #[test]
+    fn result_top_sums_header_regions() {
+        assert_eq!(calc_results_top(32, 48, 28, 30, 32), 170);
+    }
+    #[test]
+    fn empty_within_query_keeps_every_result() {
+        let a = vec!["a".into(), "b".into()];
+        assert_eq!(filter_result_indices(&a, &a, "", false), vec![0, 1]);
+    }
+    #[test]
+    fn within_filter_matches_filename_case_insensitive() {
+        let n = vec!["Report.PDF".into()];
+        let s = vec![String::new()];
+        assert_eq!(filter_result_indices(&n, &s, "report", false), vec![0]);
+    }
+    #[test]
+    fn within_filter_matches_body() {
+        let n = vec!["x".into()];
+        let s = vec!["Needle here".into()];
+        assert_eq!(filter_result_indices(&n, &s, "needle", false), vec![0]);
+    }
+    #[test]
+    fn exclude_filename_removes_filename_only_match() {
+        let n = vec!["needle".into()];
+        let s = vec![String::new()];
+        assert!(filter_result_indices(&n, &s, "needle", true).is_empty());
+    }
+    #[test]
+    fn exclude_filename_keeps_body_match() {
+        let n = vec!["needle".into()];
+        let s = vec!["needle in body".into()];
+        assert_eq!(filter_result_indices(&n, &s, "needle", true), vec![0]);
+    }
+    #[test]
+    fn within_filter_trims_query() {
+        let n = vec!["abc".into()];
+        let s = vec![String::new()];
+        assert_eq!(filter_result_indices(&n, &s, " abc ", false), vec![0]);
+    }
+    #[test]
+    fn within_filter_shorter_arrays_are_safe() {
+        let n = vec!["a".into(), "a".into()];
+        let s = vec!["a".into()];
+        assert_eq!(filter_result_indices(&n, &s, "a", false), vec![0]);
+    }
+    #[test]
+    fn match_groups_count_nonempty_separately() {
+        let n = vec!["a".into(), "b".into()];
+        let s = vec!["body".into(), String::new()];
+        assert_eq!(
+            match_groups(&n, &s),
+            MatchGroups {
+                filename: 2,
+                body: 1
+            }
+        );
+    }
+    #[test]
+    fn match_groups_empty_input() {
+        assert_eq!(match_groups(&[], &[]), MatchGroups::default());
+    }
+    #[test]
+    fn match_groups_bounds_to_shorter_input() {
+        let n = vec!["a".into(), "b".into()];
+        let s = vec!["x".into()];
+        assert_eq!(match_groups(&n, &s).filename, 1);
+    }
+    #[test]
+    fn clipboard_payload_contains_name_and_full_path() {
+        let n = vec!["문서.hwp".into()];
+        let p = vec!["C:\\자료\\문서.hwp".into()];
+        assert_eq!(copy_result_text(&n, &p), "문서.hwp\tC:\\자료\\문서.hwp");
+    }
+    #[test]
+    fn clipboard_payload_uses_crlf_for_multiple_rows() {
+        let n = vec!["a".into(), "b".into()];
+        let p = vec!["A".into(), "B".into()];
+        assert_eq!(copy_result_text(&n, &p), "a\tA\r\nb\tB");
+    }
+    #[test]
+    fn clipboard_payload_ignores_unpaired_values() {
+        assert_eq!(copy_result_text(&["a".into()], &[]), "");
+    }
+    #[test]
+    fn option_hit_selects_every_option_lane() {
+        for i in 0..7 {
+            assert_eq!(hit_option(5 + i * 100, 10, 0, 20, 0, 700).is_some(), true);
+        }
+    }
+    #[test]
+    fn sidebar_hit_rejects_header_rows() {
+        assert_eq!(hit_sidebar(10, 40 + 26, 220, true, 2, 1, 1), None);
+    }
+    fn row(name: &str, snippet: &str) -> crate::backend::Row {
+        crate::backend::Row {
+            doc_id: 0,
+            path: format!("C:\\{name}"),
+            name: name.into(),
+            parent: "C:\\".into(),
+            snippet: snippet.into(),
+            location: String::new(),
+            level: 0,
+            count: 0,
+            para: None,
+            snippet_tried: false,
+            preview: String::new(),
+            date: 0,
+            rank: 0,
+        }
+    }
+    #[test]
+    fn result_filter_matches_body_case_insensitively() {
+        let rows = vec![row("a.txt", "Needle")];
+        assert_eq!(
+            filter_rows_within_query(&rows, "needle", false, &[]),
+            vec![0]
+        );
+    }
+    #[test]
+    fn result_filter_can_exclude_filename() {
+        let rows = vec![row("needle.txt", "")];
+        assert!(filter_rows_within_query(&rows, "needle", true, &[]).is_empty());
+    }
+    #[test]
+    fn exclude_filename_hides_filename_only_results_without_within_query() {
+        let rows = vec![row("match.txt", ""), row("other.txt", "body")];
+        assert_eq!(filter_rows_within_query(&rows, "", true, &[]), vec![1]);
+    }
+    #[test]
+    fn result_filter_matches_selected_file_types() {
+        let rows = vec![row("a.hwp", "x"), row("b.pdf", "x")];
+        assert_eq!(
+            filter_rows_within_query(&rows, "", false, &["pdf".into()]),
+            vec![1]
+        );
+    }
+    #[test]
+    fn result_filter_empty_query_keeps_all_types() {
+        let rows = vec![row("a.hwp", ""), row("b.pdf", "")];
+        assert_eq!(filter_rows_within_query(&rows, "", false, &[]), vec![0, 1]);
+    }
+    #[test]
+    fn displayed_result_indices_respect_collapsed_groups() {
+        let rows = vec![row("name-only.txt", ""), row("body.pdf", "match")];
+        assert_eq!(
+            display_result_indices(&rows, "", false, &[], true, false),
+            vec![1]
+        );
+        assert_eq!(
+            display_result_indices(&rows, "", false, &[], false, true),
+            vec![0]
+        );
+    }
+
+    #[test]
     fn test_head_button_hit_layout() {
         let width = 700;
         let button_w = 46;
         let head = 32;
 
         // Minimize: [608, 654), Close: [654, 700)
-        assert_eq!(head_button_hit(654, 10, width, button_w, head), Some(HeadButton::Close));
-        assert_eq!(head_button_hit(699, 10, width, button_w, head), Some(HeadButton::Close));
-        assert_eq!(head_button_hit(608, 10, width, button_w, head), Some(HeadButton::Minimize));
-        assert_eq!(head_button_hit(653, 10, width, button_w, head), Some(HeadButton::Minimize));
+        assert_eq!(
+            head_button_hit(654, 10, width, button_w, head),
+            Some(HeadButton::Close)
+        );
+        assert_eq!(
+            head_button_hit(699, 10, width, button_w, head),
+            Some(HeadButton::Close)
+        );
+        assert_eq!(
+            head_button_hit(608, 10, width, button_w, head),
+            Some(HeadButton::Minimize)
+        );
+        assert_eq!(
+            head_button_hit(653, 10, width, button_w, head),
+            Some(HeadButton::Minimize)
+        );
 
         // 단추 밖
         assert_eq!(head_button_hit(607, 10, width, button_w, head), None);
@@ -275,7 +827,8 @@ mod tests {
 
         // 선택 있을 때: preview_h = PREVIEW_H (64)
         let preview_h = PREVIEW_H;
-        let visible_with_sel = ((bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
+        let visible_with_sel =
+            ((bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
         assert_eq!(visible_with_sel, (600 - 140 - 24 - 64) / 70); // 372 / 70 = 5
 
         // 미리보기 영역 상단 및 하단 좌표
