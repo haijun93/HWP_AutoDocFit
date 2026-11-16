@@ -107,4 +107,89 @@ mod tests {
         assert!(aggregate(&hits, 0).is_empty());
         assert!(aggregate(&[], 10).is_empty());
     }
+
+    #[test]
+    fn same_file_three_paragraphs_aggregate_to_single_doc_with_three_mentions() {
+        let hits = [
+            Candidate { document: 10, score: 1.5, hierarchy_rank: 3, recency: 100 },
+            Candidate { document: 10, score: 4.0, hierarchy_rank: 1, recency: 300 },
+            Candidate { document: 10, score: 2.0, hierarchy_rank: 2, recency: 200 },
+        ];
+        let rows = aggregate(&hits, 10);
+        assert_eq!(rows.len(), 1, "3개 문단 일치 시 단일 문서 1건으로 묶여야 함");
+        assert_eq!(rows[0].document, 10);
+        assert_eq!(rows[0].mentions, 3, "언급 수가 3으로 합산되어야 함");
+        assert_eq!(rows[0].best_rank, 1, "가장 높은 위계 수준(1)이 반영되어야 함");
+        assert_eq!(rows[0].best_score, 4.0, "최고 점수가 반영되어야 함");
+        assert_eq!(rows[0].newest, 300, "최신 시각이 반영되어야 함");
+    }
+
+    /// O(N) 선형 탐색 참조 구현과 HashMap O(1) 조회 구현의 순위·집계 결과 동등성 검증.
+    fn reference_linear_aggregate(candidates: &[Candidate], limit: usize) -> Vec<DocumentAggregate> {
+        let mut out: Vec<DocumentAggregate> = Vec::new();
+        for candidate in candidates {
+            if let Some(row) = out.iter_mut().find(|row| row.document == candidate.document) {
+                row.mentions += 1;
+                row.best_rank = best_rank(row.best_rank, candidate.hierarchy_rank);
+                row.newest = row.newest.max(candidate.recency);
+                row.best_score = row.best_score.max(candidate.score);
+            } else {
+                out.push(DocumentAggregate {
+                    document: candidate.document,
+                    best_rank: candidate.hierarchy_rank,
+                    mentions: 1,
+                    newest: candidate.recency,
+                    best_score: candidate.score,
+                });
+            }
+        }
+        out.sort_by(|a, b| {
+            rank_key(a.best_rank).cmp(&rank_key(b.best_rank))
+                .then_with(|| b.mentions.cmp(&a.mentions))
+                .then_with(|| b.newest.cmp(&a.newest))
+                .then_with(|| b.best_score.total_cmp(&a.best_score))
+                .then_with(|| a.document.cmp(&b.document))
+        });
+        out.truncate(limit);
+        out
+    }
+
+    #[test]
+    fn aggregate_hashmap_matches_linear_scan_equivalence() {
+        // 복합 패턴: 중복 문서, 순서 뒤섞임, 희소 문서 ID, 다양한 rank·score·recency
+        let hits = [
+            Candidate { document: 4, score: 1.0, hierarchy_rank: 0, recency: 10 },
+            Candidate { document: 2, score: 5.5, hierarchy_rank: 2, recency: 20 },
+            Candidate { document: 4, score: 3.0, hierarchy_rank: 1, recency: 50 },
+            Candidate { document: 99, score: 8.0, hierarchy_rank: 0, recency: 5 },
+            Candidate { document: 2, score: 2.0, hierarchy_rank: 0, recency: 80 },
+            Candidate { document: 7, score: 4.0, hierarchy_rank: 3, recency: 100 },
+            Candidate { document: 4, score: 0.5, hierarchy_rank: 4, recency: 15 },
+            Candidate { document: 2, score: 6.0, hierarchy_rank: 1, recency: 30 },
+            Candidate { document: 99, score: 1.0, hierarchy_rank: 2, recency: 90 },
+            Candidate { document: 500, score: 10.0, hierarchy_rank: 0, recency: 1000 },
+        ];
+
+        for limit in [0, 1, 2, 3, 5, 10, 20] {
+            let actual = aggregate(&hits, limit);
+            let expected = reference_linear_aggregate(&hits, limit);
+            assert_eq!(actual, expected, "limit={}에서 HashMap 최적화 결과와 선형 탐색 결과가 일치해야 함", limit);
+        }
+
+        // 대량 합성 후보(100건, 15개 고유 문서) 동등성 검증
+        let mut large_hits = Vec::new();
+        for i in 0..100 {
+            large_hits.push(Candidate {
+                document: (i * 7) % 15,
+                score: (i as f32 * 0.3) % 10.0,
+                hierarchy_rank: (i % 5) as u8,
+                recency: ((i * 13) % 200) as i64,
+            });
+        }
+        for limit in [1, 5, 15, 50] {
+            let actual = aggregate(&large_hits, limit);
+            let expected = reference_linear_aggregate(&large_hits, limit);
+            assert_eq!(actual, expected, "대량 후보 limit={}에서 결과가 완전히 같아야 함", limit);
+        }
+    }
 }
