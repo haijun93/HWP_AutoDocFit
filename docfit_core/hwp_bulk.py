@@ -74,7 +74,7 @@ def read_hwp5_header(path: str | Path) -> HwpHeaderInfo | None:
     """HWP 5.0 OLE 파일에서 FileHeader 스트림 플래그를 읽는다."""
     try:
         with open(path, "rb") as f:
-            data = f.read(65536)
+            data = f.read(1048576)
     except OSError:
         return None
 
@@ -381,7 +381,7 @@ class BulkResult:
 
 
 def convert_one(app, source: Path, responder: DialogResponder | None = None) -> BulkResult:
-    from docfit_core.hwpx import validate_hwpx
+    from docfit_core.hwpx import HwpxLimits, validate_hwpx
     source_str = str(source)
 
     # 1) 경로 길이 한도 검사 (255자 초과)
@@ -470,8 +470,21 @@ def convert_one(app, source: Path, responder: DialogResponder | None = None) -> 
         if saved is False or not temporary.exists():
             return BulkResult(source_str, "protected", message=MSG_DISTRIBUTED, kind=KIND_DISTRIBUTED)
 
-        # 한/글이 방금 만든 결과 HWPX 검증: 압축 폭탄 한도 대신 구조 검증(필수 파일·XML 열림·섹션 존재)만 수행
-        validate_hwpx(temporary, structure_only=True)
+        # 한/글이 방금 만든 결과 HWPX 검증:
+        # 방금 한/글이 생성한 결과물은 HwpxLimits 압축 해제 합계 한도를
+        # max(512MB, min(4GB, 원본 HWP 크기 * 20))으로 넓혀 허용하되
+        # 압축률·항목 수·경로 안전 검사는 유지한다.
+        try:
+            source_size = source.stat().st_size
+        except OSError:
+            source_size = 0
+        total_size_limit = max(512 * 1024 * 1024, min(4 * 1024 * 1024 * 1024, source_size * 20))
+        max_file_limit = max(128 * 1024 * 1024, min(2 * 1024 * 1024 * 1024, total_size_limit))
+        bulk_limits = HwpxLimits(
+            max_total_size=total_size_limit,
+            max_file_size=max_file_limit,
+        )
+        validate_hwpx(temporary, limits=bulk_limits, parse_xml=True)
         try:
             os.link(temporary, target)
         except OSError:
