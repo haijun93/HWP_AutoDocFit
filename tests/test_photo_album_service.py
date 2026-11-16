@@ -31,11 +31,20 @@ def make_test_photo(
     orientation: int | None = None,
     date_taken: str | None = None,
     color: tuple[int, int, int] = (255, 0, 0),
+    fmt: str = "JPEG",
+    make: str | None = None,
+    model: str | None = None,
+    gps: tuple[float, float] | None = None,
 ) -> Path:
     """단위 시험용 사진 파일을 생성한다."""
     path_obj = Path(path)
     path_obj.parent.mkdir(parents=True, exist_ok=True)
     img = Image.new("RGB", (width, height), color=color)
+
+    if fmt.upper() == "PNG":
+        img.save(path_obj, format="PNG")
+        return path_obj
+
     exif = img.getexif()
 
     if orientation is not None:
@@ -45,6 +54,32 @@ def make_test_photo(
         # EXIF DateTimeOriginal (0x9003 in IFD 0x8769)
         ifd = exif.get_ifd(0x8769)
         ifd[0x9003] = date_taken
+
+    if make is not None:
+        exif[271] = make
+
+    if model is not None:
+        exif[272] = model
+
+    if gps is not None:
+        lat, lon = gps
+        lat_ref = "N" if lat >= 0 else "S"
+        lon_ref = "E" if lon >= 0 else "W"
+        lat_abs = abs(lat)
+        lon_abs = abs(lon)
+        lat_d = int(lat_abs)
+        lat_m = int((lat_abs - lat_d) * 60)
+        lat_s = round(((lat_abs - lat_d) * 60 - lat_m) * 60, 4)
+
+        lon_d = int(lon_abs)
+        lon_m = int((lon_abs - lon_d) * 60)
+        lon_s = round(((lon_abs - lon_d) * 60 - lon_m) * 60, 4)
+
+        gps_ifd = exif.get_ifd(0x8825)
+        gps_ifd[1] = lat_ref
+        gps_ifd[2] = (lat_d, lat_m, lat_s)
+        gps_ifd[3] = lon_ref
+        gps_ifd[4] = (lon_d, lon_m, lon_s)
 
     img.save(path_obj, format="JPEG", exif=exif)
     return path_obj
@@ -282,6 +317,24 @@ class TestPhotoAlbumService(unittest.TestCase):
             layout="2x2",
         )
 
+        # 6. 유사·중복 사진 검사
+        self.service.command("find_duplicates", {"folder": str(self.photos_dir), "threshold": 6})
+
+        # 7. 비파괴 사본 편집
+        self.service.command(
+            "edit_copy",
+            {
+                "path": str(p1),
+                "rotate_deg": 90,
+                "crop": [10, 10, 100, 100],
+                "brightness": 1.1,
+                "contrast": 1.1,
+            },
+        )
+
+        # 8. 오프라인 그룹화
+        self.service.command("place_groups", {"folder": str(self.photos_dir), "group_by": "folder"})
+
         # 해시 재계산 및 불변 검증
         hash1_after = compute_sha256(p1)
         hash2_after = compute_sha256(p2)
@@ -358,6 +411,232 @@ class TestPhotoAlbumService(unittest.TestCase):
         res_2x3 = self.service.build_photo_sheet_hwpx(photos_6, out_hwpx_2x3, layout="2x3", title="현장 사진대지 2x3")
         self.assertTrue(res_2x3["ok"])
         self.assertTrue(out_hwpx_2x3.is_file())
+
+    def test_find_duplicates_dhash_groups_similar_images(self):
+        """동일 사진 2장 + 유사 사본 1장 + 다른 패턴 1장 + cloud-only 1장을 스캔 후 find_duplicates 검증."""
+        dup_dir = self.photos_dir / "dups"
+        dup_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. 원본 패턴 이미지
+        p1 = dup_dir / "pattern_base.jpg"
+        im1 = Image.new("RGB", (100, 80))
+        for y in range(80):
+            for x in range(100):
+                im1.putpixel((x, y), (((x * 3) ^ (y * 5)) % 256, (x * 2) % 256, (y * 4) % 256))
+        im1.save(p1, format="JPEG")
+
+        # 2. 동일한 이미지 (바이트 복사본)
+        p2 = dup_dir / "pattern_exact_copy.jpg"
+        p2.write_bytes(p1.read_bytes())
+
+        # 3. 밝기만 살짝 다른 유사 사본
+        p3 = dup_dir / "pattern_slightly_brighter.jpg"
+        im3 = Image.new("RGB", (100, 80))
+        for y in range(80):
+            for x in range(100):
+                im3.putpixel(
+                    (x, y),
+                    (
+                        min(255, ((x * 3) ^ (y * 5)) % 256 + 10),
+                        min(255, (x * 2) % 256 + 10),
+                        min(255, (y * 4) % 256 + 10),
+                    ),
+                )
+        im3.save(p3, format="JPEG")
+
+        # 4. 완전히 다른 패턴 이미지 (체커보드)
+        p4 = dup_dir / "pattern_checkerboard_different.jpg"
+        im4 = Image.new("RGB", (100, 80))
+        for y in range(80):
+            for x in range(100):
+                val = 255 if ((x // 10) + (y // 10)) % 2 == 0 else 0
+                im4.putpixel((x, y), (val, val, val))
+        im4.save(p4, format="JPEG")
+
+        # 5. 클라우드 전용 파일
+        p_cloud = dup_dir / "pattern_cloud.jpg"
+        p_cloud.write_bytes(p1.read_bytes())
+
+        # 스캔 수행
+        scan_res = self.service.scan_folder(dup_dir)
+        self.assertTrue(scan_res["ok"])
+        self.assertEqual(scan_res["scanned"], 5)
+
+        # p_cloud를 DB에서 cloud=1로 설정
+        self.service.db.upsert_photo(
+            path=str(p_cloud.resolve()),
+            folder=str(dup_dir.resolve()),
+            filename=p_cloud.name,
+            size=p_cloud.stat().st_size,
+            mtime=p_cloud.stat().st_mtime,
+            date_taken="2026-11-17 00:00:00",
+            orientation=1,
+            cloud=1,
+        )
+
+        # find_duplicates 실행
+        res = self.service.command("find_duplicates", {"folder": str(dup_dir), "threshold": 6})
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["threshold"], 6)
+        self.assertEqual(res["skipped_cloud"], 1)
+
+        # 그룹 검증: 유사 3장 (p1, p2, p3)이 1개 그룹으로 묶이고 체커보드는 제외되어야 함
+        groups = res["groups"]
+        self.assertEqual(len(groups), 1, f"그룹 개수 불일치: {groups}")
+        group = groups[0]
+        self.assertEqual(group["count"], 3)
+
+        group_paths = {item["path"] for item in group["items"]}
+        self.assertIn(str(p1.resolve()), group_paths)
+        self.assertIn(str(p2.resolve()), group_paths)
+        self.assertIn(str(p3.resolve()), group_paths)
+        self.assertNotIn(str(p4.resolve()), group_paths)
+        self.assertNotIn(str(p_cloud.resolve()), group_paths)
+
+        # 대표와의 거리가 0 이상 6 이하인지 검증
+        for item in group["items"]:
+            self.assertLessEqual(item["distance"], 6)
+            self.assertEqual(len(item["dhash"]), 16)
+
+    def test_edit_copy_non_destructive_and_preserves_original_sha256(self):
+        """원본 SHA-256 불변, 회전/자르기/밝기/대비 편집 사본 생성 및 덮어쓰기·클라우드 차단 검증."""
+        edit_dir = self.photos_dir / "edit_test"
+        edit_dir.mkdir(parents=True, exist_ok=True)
+
+        orig_path = edit_dir / "original_sample.jpg"
+        make_test_photo(orig_path, width=400, height=300, color=(120, 80, 200))
+        orig_sha = compute_sha256(orig_path)
+
+        out_path = edit_dir / "edited_sample.jpg"
+
+        # 1. 복합 편집 실행 (crop, rotate_deg=90, brightness=1.2, contrast=1.1)
+        res = self.service.command(
+            "edit_copy",
+            {
+                "path": str(orig_path),
+                "output_path": str(out_path),
+                "crop": [50, 40, 350, 260],
+                "rotate_deg": 90,
+                "brightness": 1.2,
+                "contrast": 1.1,
+            },
+        )
+        self.assertTrue(res["ok"], f"edit_copy 실패: {res}")
+        self.assertEqual(res["source"], str(orig_path.resolve()))
+        self.assertEqual(res["output_path"], str(out_path.resolve()))
+        self.assertTrue(out_path.is_file())
+
+        # 원본 파일 무결성(SHA-256) 검증: 100% 동일해야 함
+        self.assertEqual(compute_sha256(orig_path), orig_sha, "원본 파일이 수정되었습니다!")
+
+        # 사본 크기 및 변형 검증
+        # 원본 (400, 300) -> 90도 회전 시 (300, 400) -> crop [50, 40, 350(clamp 300), 260] -> 너비 250, 높이 220
+        with Image.open(out_path) as out_img:
+            self.assertEqual(out_img.size, (res["width"], res["height"]))
+            self.assertEqual(out_img.width, 250)
+            self.assertEqual(out_img.height, 220)
+
+        # 2. output_path == source_path 시 OVERWRITE_FORBIDDEN 거부 검증
+        res_overwrite = self.service.command(
+            "edit_copy",
+            {
+                "path": str(orig_path),
+                "output_path": str(orig_path),
+                "rotate_deg": 180,
+            },
+        )
+        self.assertFalse(res_overwrite["ok"])
+        self.assertEqual(res_overwrite["code"], "OVERWRITE_FORBIDDEN")
+        self.assertEqual(compute_sha256(orig_path), orig_sha)
+
+        # 3. cloud 파일 편집 시도 시 CLOUD_ONLY 거부 검증
+        cloud_path = edit_dir / "cloud_sample.jpg"
+        cloud_path.write_bytes(orig_path.read_bytes())
+        self.service.db.upsert_photo(
+            path=str(cloud_path.resolve()),
+            folder=str(edit_dir.resolve()),
+            filename=cloud_path.name,
+            size=cloud_path.stat().st_size,
+            mtime=cloud_path.stat().st_mtime,
+            date_taken="2026-11-17 00:00:00",
+            orientation=1,
+            cloud=1,
+        )
+        res_cloud = self.service.command(
+            "edit_copy",
+            {
+                "path": str(cloud_path),
+                "rotate_deg": 90,
+            },
+        )
+        self.assertFalse(res_cloud["ok"])
+        self.assertEqual(res_cloud["code"], "CLOUD_ONLY")
+
+    def test_place_groups_offline_by_folder_camera_and_location(self):
+        """2개 하위 폴더 + 카메라 Make/Model + GPS 좌표 및 PNG 혼합 시 오프라인 그룹화 검증."""
+        sub_a = self.photos_dir / "sub_folder_a"
+        sub_b = self.photos_dir / "sub_folder_b"
+        sub_a.mkdir(parents=True, exist_ok=True)
+        sub_b.mkdir(parents=True, exist_ok=True)
+
+        # 사진 1: sub_a, Sony A7M4, 서울 시청 GPS (37.5665, 126.9780)
+        p_a1 = sub_a / "photo_a1.jpg"
+        make_test_photo(
+            p_a1,
+            make="Sony",
+            model="A7M4",
+            gps=(37.5665, 126.9780),
+            date_taken="2026:11:15 10:00:00",
+        )
+
+        # 사진 2: sub_a, PNG 형식 (EXIF/GPS 없음)
+        p_a2 = sub_a / "photo_a2.png"
+        make_test_photo(p_a2, fmt="PNG")
+
+        # 사진 3: sub_b, Apple iPhone 15, 부산 시청 GPS (35.1796, 129.0756)
+        p_b1 = sub_b / "photo_b1.jpg"
+        make_test_photo(
+            p_b1,
+            make="Apple",
+            model="iPhone 15",
+            gps=(35.1796, 129.0756),
+            date_taken="2026:11:16 11:00:00",
+        )
+
+        # 재귀 스캔 수행
+        scan_res = self.service.scan_folder(self.photos_dir, recursive=True)
+        self.assertTrue(scan_res["ok"])
+        self.assertEqual(scan_res["scanned"], 3)
+
+        # 1. group_by="folder"
+        res_folder = self.service.command("place_groups", {"folder": str(self.photos_dir), "group_by": "folder"})
+        self.assertTrue(res_folder["ok"])
+        self.assertEqual(res_folder["total_photos"], 3)
+        folder_labels = [g["label"] for g in res_folder["groups"]]
+        self.assertIn("sub_folder_a", folder_labels)
+        self.assertIn("sub_folder_b", folder_labels)
+
+        # 2. group_by="camera"
+        res_camera = self.service.command("place_groups", {"folder": str(self.photos_dir), "group_by": "camera"})
+        self.assertTrue(res_camera["ok"])
+        camera_labels = [g["label"] for g in res_camera["groups"]]
+        self.assertIn("Sony A7M4", camera_labels)
+        self.assertIn("Apple iPhone 15", camera_labels)
+        self.assertIn("카메라 정보 없음", camera_labels)
+
+        # 3. group_by="location"
+        res_loc = self.service.command("place_groups", {"folder": str(self.photos_dir), "group_by": "location"})
+        self.assertTrue(res_loc["ok"])
+        loc_labels = [g["label"] for g in res_loc["groups"]]
+        self.assertIn("GPS (37.57, 126.98)", loc_labels)
+        self.assertIn("GPS (35.18, 129.08)", loc_labels)
+        self.assertIn("sub_folder_a", loc_labels)  # GPS 없는 파일은 상위 폴더명 fallback
+
+        # 브랜드 명칭 일관성 검증: 금지어가 일절 없는지 확인
+        raw_json_str = str(res_loc)
+        forbidden_words = ["사" + "진첩", "몽" + "땅" + "사" + "진첩"]
+        for forbidden in forbidden_words:
+            self.assertNotIn(forbidden, raw_json_str)
 
 
 class TestPhotoAlbumBridge(unittest.TestCase):
