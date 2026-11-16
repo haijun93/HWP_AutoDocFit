@@ -619,8 +619,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     List<Map<String, Object?>>? customPhotos,
   }) {
     final photos = customPhotos ?? _getAllCurrentPhotos();
-    if (photos.isEmpty || initialIndex < 0 || initialIndex >= photos.length)
+    if (photos.isEmpty || initialIndex < 0 || initialIndex >= photos.length) {
       return;
+    }
 
     showDialog<void>(
       context: context,
