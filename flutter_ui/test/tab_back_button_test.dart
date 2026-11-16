@@ -1,4 +1,4 @@
-﻿import 'package:docfit_ui/features/tools/document_tools_workspace.dart';
+import 'package:docfit_ui/features/tools/document_tools_workspace.dart';
 import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,25 +26,34 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(MaterialApp(home: TabNavigationShell(
-      documentEditor: _page('문서'),
-      tableTemplates: _page('표템플릿 화면'),
-      tableSketch: _page('표그림판 화면'),
-      diagram: _page('다이어그램 화면'),
-      mindMap: _page('마인드맵 화면'),
-      fileConversion: _page('파일변환 화면'),
-      paint: _page('그림판 화면'),
-      fileRename: _page('파일이름 화면'),
-      timemachine: _page('몽땅검색 화면'),
-      docGrid: _page('문서뷰 화면'),
-      initialIndex: 9,
-    )));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TabNavigationShell(
+          documentEditor: _page('문서'),
+          tableTemplates: _page('표템플릿 화면'),
+          tableSketch: _page('표그림판 화면'),
+          diagram: _page('다이어그램 화면'),
+          mindMap: _page('마인드맵 화면'),
+          fileConversion: _page('파일변환 화면'),
+          paint: _page('그림판 화면'),
+          fileRename: _page('파일이름 화면'),
+          timemachine: _page('몽땅검색 화면'),
+          docGrid: _page('문서뷰 화면'),
+          initialIndex: 10,
+        ),
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const Key('back-파일변환 화면')));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
     expect(find.text('문서'), findsOneWidget);
-    expect(tester.widget<WorkspaceTabBar>(find.byType(WorkspaceTabBar)).selectedIndex, 0);
+    expect(
+      tester
+          .widget<WorkspaceTabBar>(find.byType(WorkspaceTabBar))
+          .selectedIndex,
+      0,
+    );
   });
 
   testWidgets('탭 안 화면의 뒤로는 앱을 닫지 않고 첫 탭으로 간다', (tester) async {
@@ -180,14 +189,14 @@ void main() {
         ),
       ),
     );
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-9')));
-    await tester.tap(find.byKey(const Key('workspaceTab-9')));
+    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     expect(
       tester
           .widget<WorkspaceTabBar>(find.byType(WorkspaceTabBar))
           .selectedIndex,
-      9, // 파일변환은 항상 맨 끝
+      10, // 파일변환은 항상 맨 끝
     );
     expect(find.text('파일변환 화면'), findsOneWidget);
   });

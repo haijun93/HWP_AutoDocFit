@@ -250,7 +250,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   if (p is Map) {
                     final pMap = Map<String, Object?>.from(p);
                     pMap['filename'] = pMap['filename'] ?? pMap['name'] ?? '';
-                    pMap['date_taken'] = pMap['date_taken'] ?? pMap['date'] ?? '';
+                    pMap['date_taken'] =
+                        pMap['date_taken'] ?? pMap['date'] ?? '';
                     photos.add(pMap);
                   }
                 }
@@ -258,7 +259,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               groupMap['photos'] = photos;
               if (groupMap['label'] == null) {
                 if (groupMap['year'] != null && groupMap['month'] != null) {
-                  groupMap['label'] = '${groupMap['year']}년 ${groupMap['month']}월';
+                  groupMap['label'] =
+                      '${groupMap['year']}년 ${groupMap['month']}월';
                 } else {
                   groupMap['label'] = '기타';
                 }
@@ -272,7 +274,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _loading = false;
         });
       } else {
-        final msg = (res is Map ? res['message'] : null) ?? '사진 목록을 불러오지 못했습니다.';
+        final msg =
+            (res is Map ? res['message'] : null) ?? '사진 목록을 불러오지 못했습니다.';
         setState(() {
           _errorMessage = '$msg';
           _loading = false;
@@ -341,8 +344,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                 for (final it in rawItems) {
                   if (it is Map) {
                     final itMap = Map<String, Object?>.from(it);
-                    itMap['filename'] = itMap['filename'] ?? itMap['name'] ?? '';
-                    itMap['date_taken'] = itMap['date_taken'] ?? itMap['date'] ?? '';
+                    itMap['filename'] =
+                        itMap['filename'] ?? itMap['name'] ?? '';
+                    itMap['date_taken'] =
+                        itMap['date_taken'] ?? itMap['date'] ?? '';
                     items.add(itMap);
                   }
                 }
@@ -415,7 +420,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _loading = false;
         });
       } else {
-        final msg = (res is Map ? res['message'] : null) ?? '검색 결과를 불러오지 못했습니다.';
+        final msg =
+            (res is Map ? res['message'] : null) ?? '검색 결과를 불러오지 못했습니다.';
         setState(() {
           _errorMessage = '$msg';
           _loading = false;
@@ -477,9 +483,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('즐겨찾기 변경 실패: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('즐겨찾기 변경 실패: $e')));
       }
     }
   }
@@ -532,9 +538,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('태그 추가 실패: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('태그 추가 실패: $e')));
       }
     }
   }
@@ -587,9 +593,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('태그 삭제 실패: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('태그 삭제 실패: $e')));
       }
     }
   }
@@ -608,9 +614,13 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     return all;
   }
 
-  void _openViewerModal(int initialIndex, {List<Map<String, Object?>>? customPhotos}) {
+  void _openViewerModal(
+    int initialIndex, {
+    List<Map<String, Object?>>? customPhotos,
+  }) {
     final photos = customPhotos ?? _getAllCurrentPhotos();
-    if (photos.isEmpty || initialIndex < 0 || initialIndex >= photos.length) return;
+    if (photos.isEmpty || initialIndex < 0 || initialIndex >= photos.length)
+      return;
 
     showDialog<void>(
       context: context,
@@ -650,9 +660,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
   Future<void> _startBatchExport() async {
     if (_selectedPaths.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('사본으로 저장할 사진을 선택해 주세요.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('사본으로 저장할 사진을 선택해 주세요.')));
       return;
     }
 
@@ -676,31 +686,32 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       if (!mounted) return;
 
       if (res is Map && res['ok'] == true) {
-        final count = (res['results'] as List?)?.length ?? _selectedPaths.length;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('공문 첨부용 사본 $count장이 저장되었습니다.')),
-        );
+        final count =
+            (res['results'] as List?)?.length ?? _selectedPaths.length;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('공문 첨부용 사본 $count장이 저장되었습니다.')));
         _clearSelection();
       } else {
         final msg = res is Map ? res['message'] : '사본 저장에 실패했습니다.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$msg')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$msg')));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('사본 저장 중 오류 발생: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('사본 저장 중 오류 발생: $e')));
       }
     }
   }
 
   Future<void> _startBuildPhotoSheet() async {
     if (_selectedPaths.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('사진대지에 넣을 사진을 선택해 주세요.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('사진대지에 넣을 사진을 선택해 주세요.')));
       return;
     }
 
@@ -738,10 +749,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         );
 
         if (!constraints.hasBoundedHeight) {
-          return SizedBox(
-            height: 600,
-            child: content,
-          );
+          return SizedBox(height: 600, child: content);
         }
         return content;
       },
@@ -755,9 +763,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
-          bottom: BorderSide(
-            color: theme.dividerColor.withValues(alpha: 0.2),
-          ),
+          bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.2)),
         ),
       ),
       child: Column(
@@ -765,165 +771,194 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // 1행: 폴더 선택 / 드롭다운 / 새로고침 + 검색창 / 즐겨찾기 / 슬라이더 / 선택 모드
-          Row(
-            children: [
-              FilledButton.icon(
-                key: const ValueKey('photoAlbumPickFolderButton'),
-                onPressed: _loading ? null : _pickFolder,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('사진 폴더 선택'),
-              ),
-              const SizedBox(width: 12),
-              if (_currentFolder != null) ...[
-                if (_registeredFolders.length > 1) ...[
-                  DropdownButton<String>(
-                    value: _registeredFolders.any((f) => f['path'] == _currentFolder)
-                        ? _currentFolder
-                        : null,
-                    icon: const Icon(Icons.arrow_drop_down),
-                    underline: const SizedBox(),
-                    items: [
-                      for (final f in _registeredFolders)
-                        DropdownMenuItem(
-                          value: '${f['path']}',
-                          child: Text(
-                            '${f['path']}'.split(Platform.pathSeparator).last,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                    ],
-                    onChanged: _loading ? null : (val) {
-                      if (val != null) _loadPhotos(val);
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                ] else ...[
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.photo_library_outlined, size: 18, color: Colors.grey),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _currentFolder!,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                IconButton(
-                  key: const ValueKey('photoAlbumRefreshButton'),
-                  tooltip: '새로고침',
-                  icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: _loading ? null : _refreshCurrentFolder,
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton.icon(
+                  key: const ValueKey('photoAlbumPickFolderButton'),
+                  onPressed: _loading ? null : _pickFolder,
+                  icon: const Icon(Icons.folder_open, size: 18),
+                  label: const Text('사진 폴더 선택'),
                 ),
-              ],
-              const Spacer(),
-              // 검색창
-              SizedBox(
-                width: 180,
-                height: 36,
-                child: TextField(
-                  key: const ValueKey('photoAlbumSearchField'),
-                  controller: _searchController,
-                  decoration: InputDecoration(
-                    hintText: '파일명·태그 검색',
-                    hintStyle: const TextStyle(fontSize: 12),
-                    prefixIcon: const Icon(Icons.search, size: 18),
-                    suffixIcon: _searchController.text.isNotEmpty
-                        ? IconButton(
-                            key: const ValueKey('photoAlbumSearchClearButton'),
-                            icon: const Icon(Icons.clear, size: 16),
-                            onPressed: () {
-                              _searchController.clear();
-                              _performSearch();
-                            },
+                const SizedBox(width: 12),
+                if (_currentFolder != null) ...[
+                  if (_registeredFolders.length > 1) ...[
+                    DropdownButton<String>(
+                      value:
+                          _registeredFolders.any(
+                            (f) => f['path'] == _currentFolder,
                           )
-                        : null,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: BorderSide(color: theme.dividerColor),
+                          ? _currentFolder
+                          : null,
+                      icon: const Icon(Icons.arrow_drop_down),
+                      underline: const SizedBox(),
+                      items: [
+                        for (final f in _registeredFolders)
+                          DropdownMenuItem(
+                            value: '${f['path']}',
+                            child: Text(
+                              '${f['path']}'.split(Platform.pathSeparator).last,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                      ],
+                      onChanged: _loading
+                          ? null
+                          : (val) {
+                              if (val != null) _loadPhotos(val);
+                            },
                     ),
-                  ),
-                  style: const TextStyle(fontSize: 13),
-                  onSubmitted: (_) => _performSearch(),
-                ),
-              ),
-              const SizedBox(width: 6),
-              IconButton(
-                key: const ValueKey('photoAlbumSearchSubmitButton'),
-                tooltip: '검색',
-                icon: const Icon(Icons.search, size: 20),
-                onPressed: _loading ? null : _performSearch,
-              ),
-              // 즐겨찾기 필터
-              IconButton(
-                key: const ValueKey('photoAlbumFavoriteFilterButton'),
-                tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
-                icon: Icon(
-                  _favoriteFilter ? Icons.star : Icons.star_border,
-                  color: _favoriteFilter ? Colors.amber : null,
-                  size: 22,
-                ),
-                onPressed: () {
-                  setState(() {
-                    _favoriteFilter = !_favoriteFilter;
-                  });
-                  _performSearch();
-                },
-              ),
-              const SizedBox(width: 6),
-              // 썸네일 크기 조절
-              Tooltip(
-                message: '썸네일 크기 조절',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.photo_size_select_actual_outlined, size: 16, color: Colors.grey),
-                    SizedBox(
-                      width: 80,
-                      child: Slider(
-                        key: const ValueKey('photoAlbumThumbSizeSlider'),
-                        value: _thumbSize,
-                        min: 100,
-                        max: 240,
-                        divisions: 7,
-                        onChanged: (val) {
-                          setState(() {
-                            _thumbSize = val;
-                          });
-                        },
+                    const SizedBox(width: 8),
+                  ] else ...[
+                    Flexible(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.photo_library_outlined,
+                            size: 18,
+                            color: Colors.grey,
+                          ),
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              _currentFolder!,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+                    const SizedBox(width: 8),
                   ],
+                  IconButton(
+                    key: const ValueKey('photoAlbumRefreshButton'),
+                    tooltip: '새로고침',
+                    icon: const Icon(Icons.refresh, size: 20),
+                    onPressed: _loading ? null : _refreshCurrentFolder,
+                  ),
+                ],
+                const Spacer(),
+                // 검색창
+                SizedBox(
+                  width: 180,
+                  height: 36,
+                  child: TextField(
+                    key: const ValueKey('photoAlbumSearchField'),
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      hintText: '파일명·태그 검색',
+                      hintStyle: const TextStyle(fontSize: 12),
+                      prefixIcon: const Icon(Icons.search, size: 18),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              key: const ValueKey(
+                                'photoAlbumSearchClearButton',
+                              ),
+                              icon: const Icon(Icons.clear, size: 16),
+                              onPressed: () {
+                                _searchController.clear();
+                                _performSearch();
+                              },
+                            )
+                          : null,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 4,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide(color: theme.dividerColor),
+                      ),
+                    ),
+                    style: const TextStyle(fontSize: 13),
+                    onSubmitted: (_) => _performSearch(),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              // 선택 모드 토글
-              IconButton(
-                key: const ValueKey('photoAlbumToggleSelectionButton'),
-                tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
-                icon: Icon(
-                  _selectionMode ? Icons.check_circle : Icons.check_circle_outline,
-                  color: _selectionMode ? theme.colorScheme.primary : null,
-                  size: 20,
+                const SizedBox(width: 6),
+                IconButton(
+                  key: const ValueKey('photoAlbumSearchSubmitButton'),
+                  tooltip: '검색',
+                  icon: const Icon(Icons.search, size: 20),
+                  onPressed: _loading ? null : _performSearch,
                 ),
-                onPressed: () {
-                  setState(() {
-                    _selectionMode = !_selectionMode;
-                    if (!_selectionMode) {
-                      _selectedPaths.clear();
-                    }
-                  });
-                },
-              ),
-            ],
+                // 즐겨찾기 필터
+                IconButton(
+                  key: const ValueKey('photoAlbumFavoriteFilterButton'),
+                  tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
+                  icon: Icon(
+                    _favoriteFilter ? Icons.star : Icons.star_border,
+                    color: _favoriteFilter ? Colors.amber : null,
+                    size: 22,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _favoriteFilter = !_favoriteFilter;
+                    });
+                    _performSearch();
+                  },
+                ),
+                const SizedBox(width: 6),
+                // 썸네일 크기 조절
+                Tooltip(
+                  message: '썸네일 크기 조절',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.photo_size_select_actual_outlined,
+                        size: 16,
+                        color: Colors.grey,
+                      ),
+                      SizedBox(
+                        width: 80,
+                        child: Slider(
+                          key: const ValueKey('photoAlbumThumbSizeSlider'),
+                          value: _thumbSize,
+                          min: 100,
+                          max: 240,
+                          divisions: 7,
+                          onChanged: (val) {
+                            setState(() {
+                              _thumbSize = val;
+                            });
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // 선택 모드 토글
+                IconButton(
+                  key: const ValueKey('photoAlbumToggleSelectionButton'),
+                  tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
+                  icon: Icon(
+                    _selectionMode
+                        ? Icons.check_circle
+                        : Icons.check_circle_outline,
+                    color: _selectionMode ? theme.colorScheme.primary : null,
+                    size: 20,
+                  ),
+                  onPressed: () {
+                    setState(() {
+                      _selectionMode = !_selectionMode;
+                      if (!_selectionMode) {
+                        _selectedPaths.clear();
+                      }
+                    });
+                  },
+                ),
+              ],
+            ),
           ),
           // 2행: 폴더가 선택되어 있을 때 보기 전환 (날짜별 / 폴더별 / 카메라별 / 위치별) + 중복 사진 찾기
           if (_currentFolder != null) ...[
@@ -969,7 +1004,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   onPressed: _loading ? null : _findDuplicates,
                   style: OutlinedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                   ),
                 ),
               ],
@@ -987,7 +1025,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       color: theme.colorScheme.primaryContainer.withValues(alpha: 0.6),
       child: Row(
         children: [
-          Icon(Icons.checklist, size: 18, color: theme.colorScheme.onPrimaryContainer),
+          Icon(
+            Icons.checklist,
+            size: 18,
+            color: theme.colorScheme.onPrimaryContainer,
+          ),
           const SizedBox(width: 8),
           Text(
             '${_selectedPaths.length}장 선택됨',
@@ -1020,7 +1062,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             key: const ValueKey('photoAlbumBuildSheetButton'),
             onPressed: _selectedPaths.isEmpty ? null : _startBuildPhotoSheet,
             icon: const Icon(Icons.table_chart_outlined, size: 16),
-            label: const Text('사진대지 만들기(2×2·2×3)', style: TextStyle(fontSize: 12)),
+            label: const Text(
+              '사진대지 만들기(2×2·2×3)',
+              style: TextStyle(fontSize: 12),
+            ),
           ),
         ],
       ),
@@ -1048,7 +1093,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+              const Icon(
+                Icons.error_outline,
+                size: 48,
+                color: Colors.redAccent,
+              ),
               const SizedBox(height: 12),
               Text(
                 _errorMessage!,
@@ -1076,7 +1125,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               Icons.photo_library_outlined,
               key: const ValueKey('photoAlbumEmptyFolderPrompt'),
               size: 64,
-              color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+              color: Theme.of(
+                context,
+              ).colorScheme.outline.withValues(alpha: 0.5),
             ),
             const SizedBox(height: 16),
             const Text(
@@ -1116,7 +1167,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   Icon(
                     Icons.no_photography_outlined,
                     size: 56,
-                    color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.5),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outline.withValues(alpha: 0.5),
                   ),
                   const SizedBox(height: 16),
                   const Text(
@@ -1170,7 +1223,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   const SizedBox(width: 8),
                   Text(
                     '검색 결과: ${results.length}장',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                   const Spacer(),
                   TextButton.icon(
@@ -1196,39 +1252,36 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
               ),
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final photo = results[index];
-                  final path = '${photo['path'] ?? ''}';
-                  final selected = _selectedPaths.contains(path);
-                  return _PhotoCard(
-                    key: ValueKey('photoCard-$path'),
-                    photo: photo,
-                    api: widget.api,
-                    cachedThumb: _thumbCache[path],
-                    selectionMode: _selectionMode,
-                    isSelected: selected,
-                    onThumbLoaded: (bytes) {
-                      _thumbCache[path] = bytes;
-                    },
-                    onTap: () {
-                      if (_selectionMode) {
-                        setState(() {
-                          if (selected) {
-                            _selectedPaths.remove(path);
-                          } else {
-                            _selectedPaths.add(path);
-                          }
-                        });
-                      } else {
-                        _openViewerModal(index);
-                      }
-                    },
-                    onToggleFavorite: () => _toggleFavorite(photo),
-                  );
-                },
-                childCount: results.length,
-              ),
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final photo = results[index];
+                final path = '${photo['path'] ?? ''}';
+                final selected = _selectedPaths.contains(path);
+                return _PhotoCard(
+                  key: ValueKey('photoCard-$path'),
+                  photo: photo,
+                  api: widget.api,
+                  cachedThumb: _thumbCache[path],
+                  selectionMode: _selectionMode,
+                  isSelected: selected,
+                  onThumbLoaded: (bytes) {
+                    _thumbCache[path] = bytes;
+                  },
+                  onTap: () {
+                    if (_selectionMode) {
+                      setState(() {
+                        if (selected) {
+                          _selectedPaths.remove(path);
+                        } else {
+                          _selectedPaths.add(path);
+                        }
+                      });
+                    } else {
+                      _openViewerModal(index);
+                    }
+                  },
+                  onToggleFavorite: () => _toggleFavorite(photo),
+                );
+              }, childCount: results.length),
             ),
           ),
         ],
@@ -1252,10 +1305,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       _currentViewMode == 'folder'
                           ? Icons.folder_outlined
                           : _currentViewMode == 'camera'
-                              ? Icons.camera_alt_outlined
-                              : _currentViewMode == 'location'
-                                  ? Icons.place_outlined
-                                  : Icons.calendar_month_outlined,
+                          ? Icons.camera_alt_outlined
+                          : _currentViewMode == 'location'
+                          ? Icons.place_outlined
+                          : Icons.calendar_month_outlined,
                       size: 18,
                       color: Colors.blueAccent,
                     ),
@@ -1263,7 +1316,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                     Text(
                       '${group['label'] ?? '기타'} (${group['count'] ?? (group['photos'] as List?)?.length ?? 0}장)',
                       key: ValueKey('photoGroupHeader-${group['label']}'),
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
                     ),
                   ],
                 ),
@@ -1278,47 +1334,43 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
                 ),
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final photos = (group['photos'] as List<Map<String, Object?>>?) ?? [];
-                    final photo = photos[index];
-                    final path = '${photo['path'] ?? ''}';
-                    final selected = _selectedPaths.contains(path);
-                    final thisGlobalIndex = globalIndexCounter++;
-                    return _PhotoCard(
-                      key: ValueKey('photoCard-$path'),
-                      photo: photo,
-                      api: widget.api,
-                      cachedThumb: _thumbCache[path],
-                      selectionMode: _selectionMode,
-                      isSelected: selected,
-                      onThumbLoaded: (bytes) {
-                        _thumbCache[path] = bytes;
-                      },
-                      onTap: () {
-                        if (_selectionMode) {
-                          setState(() {
-                            if (selected) {
-                              _selectedPaths.remove(path);
-                            } else {
-                              _selectedPaths.add(path);
-                            }
-                          });
-                        } else {
-                          _openViewerModal(thisGlobalIndex);
-                        }
-                      },
-                      onToggleFavorite: () => _toggleFavorite(photo),
-                    );
-                  },
-                  childCount: ((group['photos'] as List?)?.length ?? 0),
-                ),
+                delegate: SliverChildBuilderDelegate((context, index) {
+                  final photos =
+                      (group['photos'] as List<Map<String, Object?>>?) ?? [];
+                  final photo = photos[index];
+                  final path = '${photo['path'] ?? ''}';
+                  final selected = _selectedPaths.contains(path);
+                  final thisGlobalIndex = globalIndexCounter++;
+                  return _PhotoCard(
+                    key: ValueKey('photoCard-$path'),
+                    photo: photo,
+                    api: widget.api,
+                    cachedThumb: _thumbCache[path],
+                    selectionMode: _selectionMode,
+                    isSelected: selected,
+                    onThumbLoaded: (bytes) {
+                      _thumbCache[path] = bytes;
+                    },
+                    onTap: () {
+                      if (_selectionMode) {
+                        setState(() {
+                          if (selected) {
+                            _selectedPaths.remove(path);
+                          } else {
+                            _selectedPaths.add(path);
+                          }
+                        });
+                      } else {
+                        _openViewerModal(thisGlobalIndex);
+                      }
+                    },
+                    onToggleFavorite: () => _toggleFavorite(photo),
+                  );
+                }, childCount: ((group['photos'] as List?)?.length ?? 0)),
               ),
             ),
           ],
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 32),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
       ),
     );
@@ -1332,7 +1384,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.check_circle_outline, size: 56, color: Colors.green),
+              const Icon(
+                Icons.check_circle_outline,
+                size: 56,
+                color: Colors.green,
+              ),
               const SizedBox(height: 16),
               const Text(
                 '유사·중복 사진이 없습니다.',
@@ -1370,11 +1426,18 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Row(
                 children: [
-                  const Icon(Icons.copy_all, size: 20, color: Colors.orangeAccent),
+                  const Icon(
+                    Icons.copy_all,
+                    size: 20,
+                    color: Colors.orangeAccent,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     '유사·중복 사진 결과: ${_duplicateGroups.length}개 그룹',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
                   ),
                   const Spacer(),
                   TextButton.icon(
@@ -1394,9 +1457,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           for (var gIdx = 0; gIdx < _duplicateGroups.length; gIdx++) ...[
             _buildDuplicateGroupSection(_duplicateGroups[gIdx], gIdx),
           ],
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 32),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
       ),
     );
@@ -1415,7 +1476,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 2,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.orangeAccent.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(4),
@@ -1432,7 +1496,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                 const SizedBox(width: 8),
                 Text(
                   '${items.length}장',
-                  style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
                 ),
               ],
             ),
@@ -1447,93 +1514,99 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
             ),
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final item = items[index];
-                final path = '${item['path'] ?? ''}';
-                final isRep = path == repPath || item['distance'] == 0;
-                final dist = item['distance'] ?? 0;
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final item = items[index];
+              final path = '${item['path'] ?? ''}';
+              final isRep = path == repPath || item['distance'] == 0;
+              final dist = item['distance'] ?? 0;
 
-                return Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: isRep
-                          ? Colors.blueAccent
-                          : Theme.of(context).dividerColor.withValues(alpha: 0.3),
-                      width: isRep ? 2.0 : 1.0,
-                    ),
+              return Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isRep
+                        ? Colors.blueAccent
+                        : Theme.of(context).dividerColor.withValues(alpha: 0.3),
+                    width: isRep ? 2.0 : 1.0,
                   ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _PhotoCard(
-                        key: ValueKey('duplicatePhotoCard-$path'),
-                        photo: item,
-                        api: widget.api,
-                        cachedThumb: _thumbCache[path],
-                        onThumbLoaded: (bytes) {
-                          _thumbCache[path] = bytes;
-                        },
-                        onTap: () {
-                          _openViewerModal(index, customPhotos: items);
-                        },
-                        onToggleFavorite: () => _toggleFavorite(item),
-                      ),
-                      // 대표 배지 및 거리 배지
-                      Positioned(
-                        top: 6,
-                        left: 6,
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            if (isRep) ...[
-                              Container(
-                                key: ValueKey('repBadge-$path'),
-                                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                decoration: BoxDecoration(
-                                  color: Colors.blueAccent,
-                                  borderRadius: BorderRadius.circular(4),
-                                  boxShadow: const [
-                                    BoxShadow(color: Colors.black38, blurRadius: 2),
-                                  ],
-                                ),
-                                child: const Text(
-                                  '대표',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 4),
-                            ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _PhotoCard(
+                      key: ValueKey('duplicatePhotoCard-$path'),
+                      photo: item,
+                      api: widget.api,
+                      cachedThumb: _thumbCache[path],
+                      onThumbLoaded: (bytes) {
+                        _thumbCache[path] = bytes;
+                      },
+                      onTap: () {
+                        _openViewerModal(index, customPhotos: items);
+                      },
+                      onToggleFavorite: () => _toggleFavorite(item),
+                    ),
+                    // 대표 배지 및 거리 배지
+                    Positioned(
+                      top: 6,
+                      left: 6,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (isRep) ...[
                             Container(
-                              key: ValueKey('distanceBadge-$path'),
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.black54,
-                                borderRadius: BorderRadius.circular(4),
+                              key: ValueKey('repBadge-$path'),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
                               ),
-                              child: Text(
-                                '거리 $dist',
-                                style: const TextStyle(
+                              decoration: BoxDecoration(
+                                color: Colors.blueAccent,
+                                borderRadius: BorderRadius.circular(4),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Colors.black38,
+                                    blurRadius: 2,
+                                  ),
+                                ],
+                              ),
+                              child: const Text(
+                                '대표',
+                                style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 10,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
+                            const SizedBox(width: 4),
                           ],
-                        ),
+                          Container(
+                            key: ValueKey('distanceBadge-$path'),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '거리 $dist',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
-              childCount: items.length,
-            ),
+                    ),
+                  ],
+                ),
+              );
+            }, childCount: items.length),
           ),
         ),
       ],
@@ -1670,7 +1743,9 @@ class _PhotoCardState extends State<_PhotoCard> {
               children: [
                 Expanded(
                   child: Container(
-                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                    color: theme.colorScheme.surfaceContainerHighest.withValues(
+                      alpha: 0.3,
+                    ),
                     child: _buildThumbnail(),
                   ),
                 ),
@@ -1684,14 +1759,19 @@ class _PhotoCardState extends State<_PhotoCard> {
                         filename,
                         overflow: TextOverflow.ellipsis,
                         maxLines: 1,
-                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                       if (dateTaken != null && dateTaken.isNotEmpty)
                         Text(
                           dateTaken.split(' ').first,
                           style: TextStyle(
                             fontSize: 10,
-                            color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                            color: theme.colorScheme.onSurface.withValues(
+                              alpha: 0.6,
+                            ),
                           ),
                         ),
                     ],
@@ -1706,7 +1786,9 @@ class _PhotoCardState extends State<_PhotoCard> {
                 left: 4,
                 child: Container(
                   decoration: BoxDecoration(
-                    color: widget.isSelected ? theme.colorScheme.primary : Colors.black45,
+                    color: widget.isSelected
+                        ? theme.colorScheme.primary
+                        : Colors.black45,
                     shape: BoxShape.circle,
                   ),
                   padding: const EdgeInsets.all(2),
@@ -1727,10 +1809,15 @@ class _PhotoCardState extends State<_PhotoCard> {
                   key: ValueKey('photoCardFavorite-$path'),
                   iconSize: 18,
                   padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                  constraints: const BoxConstraints(
+                    minWidth: 26,
+                    minHeight: 26,
+                  ),
                   icon: Icon(
                     isFav ? Icons.star : Icons.star_border,
-                    color: isFav ? Colors.amber : Colors.white.withValues(alpha: 0.8),
+                    color: isFav
+                        ? Colors.amber
+                        : Colors.white.withValues(alpha: 0.8),
                     shadows: const [
                       Shadow(color: Colors.black45, blurRadius: 4),
                     ],
@@ -1751,7 +1838,11 @@ class _PhotoCardState extends State<_PhotoCard> {
         _thumbBytes!,
         fit: BoxFit.cover,
         errorBuilder: (_, _, _) => const Center(
-          child: Icon(Icons.broken_image_outlined, size: 32, color: Colors.grey),
+          child: Icon(
+            Icons.broken_image_outlined,
+            size: 32,
+            color: Colors.grey,
+          ),
         ),
       );
     }
@@ -1791,7 +1882,8 @@ class _PhotoViewerModal extends StatefulWidget {
   final ApiCall api;
   final Future<void> Function(Map<String, Object?> photo) onToggleFavorite;
   final Future<void> Function(Map<String, Object?> photo, String tag) onAddTag;
-  final Future<void> Function(Map<String, Object?> photo, String tag) onRemoveTag;
+  final Future<void> Function(Map<String, Object?> photo, String tag)
+  onRemoveTag;
   final VoidCallback? onPhotoEdited;
 
   @override
@@ -1875,9 +1967,9 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
         api: widget.api,
         onSuccess: (outPath) {
           widget.onPhotoEdited?.call();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('사본이 저장되었습니다: $outPath')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('사본이 저장되었습니다: $outPath')));
         },
       ),
     );
@@ -1905,9 +1997,12 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
     final path = '${photo['path'] ?? ''}';
     final filename = '${photo['filename'] ?? ''}';
     final dateTaken = photo['date_taken'] as String? ?? '-';
-    final size = photo['size'] is int ? _formatBytes(photo['size'] as int) : '-';
+    final size = photo['size'] is int
+        ? _formatBytes(photo['size'] as int)
+        : '-';
     final isFav = photo['favorite'] == true;
-    final tags = (photo['tags'] as List?)?.map((e) => '$e').toList() ?? <String>[];
+    final tags =
+        (photo['tags'] as List?)?.map((e) => '$e').toList() ?? <String>[];
 
     final thumbBytes = widget.thumbCache[path];
 
@@ -1930,7 +2025,10 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
             children: [
               // 상단 바
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
                 decoration: const BoxDecoration(
                   border: Border(bottom: BorderSide(color: Colors.white12)),
                 ),
@@ -1951,7 +2049,10 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                     Text(
                       '${_currentIndex + 1} / ${widget.photos.length}',
                       key: const ValueKey('photoViewerIndexText'),
-                      style: const TextStyle(color: Colors.white60, fontSize: 13),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 13,
+                      ),
                     ),
                     const Spacer(),
                     // 슬라이드쇼 토글 버튼
@@ -1959,13 +2060,17 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                       key: const ValueKey('photoViewerSlideshowButton'),
                       icon: Icon(
                         _slideshowPlaying ? Icons.pause : Icons.play_arrow,
-                        color: _slideshowPlaying ? Colors.amber : Colors.white70,
+                        color: _slideshowPlaying
+                            ? Colors.amber
+                            : Colors.white70,
                         size: 18,
                       ),
                       label: Text(
                         _slideshowPlaying ? '일시정지' : '슬라이드쇼',
                         style: TextStyle(
-                          color: _slideshowPlaying ? Colors.amber : Colors.white70,
+                          color: _slideshowPlaying
+                              ? Colors.amber
+                              : Colors.white70,
                           fontSize: 12,
                         ),
                       ),
@@ -1975,8 +2080,15 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                     // 사본 편집 버튼
                     OutlinedButton.icon(
                       key: const ValueKey('photoViewerEditCopyButton'),
-                      icon: const Icon(Icons.tune, size: 16, color: Colors.white70),
-                      label: const Text('사본 편집', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                      icon: const Icon(
+                        Icons.tune,
+                        size: 16,
+                        color: Colors.white70,
+                      ),
+                      label: const Text(
+                        '사본 편집',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
                       onPressed: () => _openEditCopyDialog(photo),
                       style: OutlinedButton.styleFrom(
                         side: const BorderSide(color: Colors.white24),
@@ -2015,11 +2127,18 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                               thumbBytes,
                               fit: BoxFit.contain,
                               errorBuilder: (_, _, _) => const Center(
-                                child: Text('사진을 표시할 수 없습니다.', style: TextStyle(color: Colors.white54)),
+                                child: Text(
+                                  '사진을 표시할 수 없습니다.',
+                                  style: TextStyle(color: Colors.white54),
+                                ),
                               ),
                             )
                           : const Center(
-                              child: Icon(Icons.photo, size: 64, color: Colors.white30),
+                              child: Icon(
+                                Icons.photo,
+                                size: 64,
+                                color: Colors.white30,
+                              ),
                             ),
                     ),
                     // 이전 버튼
@@ -2033,7 +2152,11 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                             backgroundColor: Colors.black45,
                             child: IconButton(
                               key: const ValueKey('photoViewerPrevButton'),
-                              icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 20),
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                               onPressed: _prevPhoto,
                             ),
                           ),
@@ -2050,7 +2173,11 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                             backgroundColor: Colors.black45,
                             child: IconButton(
                               key: const ValueKey('photoViewerNextButton'),
-                              icon: const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 20),
+                              icon: const Icon(
+                                Icons.arrow_forward_ios,
+                                color: Colors.white,
+                                size: 20,
+                              ),
                               onPressed: _nextPhoto,
                             ),
                           ),
@@ -2061,11 +2188,16 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
               ),
               // 하단 메타데이터 및 태그 영역
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 12,
+                ),
                 decoration: const BoxDecoration(
                   color: Color(0xFF15181E),
                   border: Border(top: BorderSide(color: Colors.white12)),
-                  borderRadius: BorderRadius.vertical(bottom: Radius.circular(12)),
+                  borderRadius: BorderRadius.vertical(
+                    bottom: Radius.circular(12),
+                  ),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -2073,23 +2205,40 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                   children: [
                     Row(
                       children: [
-                        const Icon(Icons.calendar_today, size: 14, color: Colors.white54),
+                        const Icon(
+                          Icons.calendar_today,
+                          size: 14,
+                          color: Colors.white54,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           '촬영일: $dateTaken',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
                         const SizedBox(width: 16),
-                        const Icon(Icons.data_usage, size: 14, color: Colors.white54),
+                        const Icon(
+                          Icons.data_usage,
+                          size: 14,
+                          color: Colors.white54,
+                        ),
                         const SizedBox(width: 6),
                         Text(
                           '크기: $size',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 12,
+                          ),
                         ),
                         const Spacer(),
                         Text(
                           '좌우 화살표: 넘기기 | Esc: 닫기',
-                          style: TextStyle(color: Colors.white.withValues(alpha: 0.4), fontSize: 11),
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            fontSize: 11,
+                          ),
                         ),
                       ],
                     ),
@@ -2097,7 +2246,11 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                     // 태그 목록 및 추가 입력
                     Row(
                       children: [
-                        const Icon(Icons.label_outline, size: 16, color: Colors.white70),
+                        const Icon(
+                          Icons.label_outline,
+                          size: 16,
+                          color: Colors.white70,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Wrap(
@@ -2108,9 +2261,14 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                               for (final tag in tags)
                                 Chip(
                                   key: ValueKey('photoViewerTagChip-$tag'),
-                                  label: Text(tag, style: const TextStyle(fontSize: 11)),
+                                  label: Text(
+                                    tag,
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
                                   visualDensity: VisualDensity.compact,
-                                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
                                   deleteIcon: const Icon(Icons.close, size: 12),
                                   onDeleted: () async {
                                     await widget.onRemoveTag(photo, tag);
@@ -2123,17 +2281,27 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                                 child: TextField(
                                   key: const ValueKey('photoViewerTagField'),
                                   controller: _tagInputController,
-                                  style: const TextStyle(color: Colors.white, fontSize: 11),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                  ),
                                   decoration: InputDecoration(
                                     hintText: '태그 추가',
                                     hintStyle: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.4),
+                                      color: Colors.white.withValues(
+                                        alpha: 0.4,
+                                      ),
                                       fontSize: 11,
                                     ),
-                                    contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(6),
-                                      borderSide: const BorderSide(color: Colors.white24),
+                                      borderSide: const BorderSide(
+                                        color: Colors.white24,
+                                      ),
                                     ),
                                   ),
                                   onSubmitted: (val) async {
@@ -2147,8 +2315,15 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
                               ),
                               IconButton(
                                 key: const ValueKey('photoViewerAddTagButton'),
-                                icon: const Icon(Icons.add, size: 18, color: Colors.white70),
-                                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                                icon: const Icon(
+                                  Icons.add,
+                                  size: 18,
+                                  color: Colors.white70,
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 28,
+                                  minHeight: 28,
+                                ),
                                 padding: EdgeInsets.zero,
                                 onPressed: () async {
                                   final val = _tagInputController.text.trim();
@@ -2198,10 +2373,18 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
 
   // 자르기 옵션
   bool _enableCrop = false;
-  final TextEditingController _cropLeftController = TextEditingController(text: '0');
-  final TextEditingController _cropTopController = TextEditingController(text: '0');
-  final TextEditingController _cropRightController = TextEditingController(text: '0');
-  final TextEditingController _cropBottomController = TextEditingController(text: '0');
+  final TextEditingController _cropLeftController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _cropTopController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _cropRightController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _cropBottomController = TextEditingController(
+    text: '0',
+  );
 
   bool _saving = false;
   String? _errorMessage;
@@ -2242,10 +2425,7 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
         }
       }
 
-      final res = await widget.api('photo_album', [
-        'edit_copy',
-        payload,
-      ]);
+      final res = await widget.api('photo_album', ['edit_copy', payload]);
 
       if (!mounted) return;
 
@@ -2284,20 +2464,32 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
             children: [
               Text(
                 '대상: $filename',
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w600,
+                  fontSize: 13,
+                ),
               ),
               const SizedBox(height: 8),
               // 원본 보존 안내 문구 (필수 요구사항)
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: Colors.blueAccent.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: Colors.blueAccent.withValues(alpha: 0.3),
+                  ),
                 ),
                 child: const Row(
                   children: [
-                    Icon(Icons.shield_outlined, size: 16, color: Colors.blueAccent),
+                    Icon(
+                      Icons.shield_outlined,
+                      size: 16,
+                      color: Colors.blueAccent,
+                    ),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -2314,14 +2506,19 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
               ),
               const SizedBox(height: 16),
               // 회전 버튼
-              const Text('회전', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              const Text(
+                '회전',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
               const SizedBox(height: 6),
               Row(
                 children: [
                   OutlinedButton(
                     key: const ValueKey('photoEditRotate0'),
                     style: OutlinedButton.styleFrom(
-                      backgroundColor: _rotateDeg == 0 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                      backgroundColor: _rotateDeg == 0
+                          ? Colors.blueAccent.withValues(alpha: 0.2)
+                          : null,
                     ),
                     onPressed: () => setState(() => _rotateDeg = 0),
                     child: const Text('0°'),
@@ -2330,7 +2527,9 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                   OutlinedButton(
                     key: const ValueKey('photoEditRotate90'),
                     style: OutlinedButton.styleFrom(
-                      backgroundColor: _rotateDeg == 90 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                      backgroundColor: _rotateDeg == 90
+                          ? Colors.blueAccent.withValues(alpha: 0.2)
+                          : null,
                     ),
                     onPressed: () => setState(() => _rotateDeg = 90),
                     child: const Text('90°'),
@@ -2339,7 +2538,9 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                   OutlinedButton(
                     key: const ValueKey('photoEditRotate180'),
                     style: OutlinedButton.styleFrom(
-                      backgroundColor: _rotateDeg == 180 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                      backgroundColor: _rotateDeg == 180
+                          ? Colors.blueAccent.withValues(alpha: 0.2)
+                          : null,
                     ),
                     onPressed: () => setState(() => _rotateDeg = 180),
                     child: const Text('180°'),
@@ -2348,7 +2549,9 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                   OutlinedButton(
                     key: const ValueKey('photoEditRotate270'),
                     style: OutlinedButton.styleFrom(
-                      backgroundColor: _rotateDeg == 270 ? Colors.blueAccent.withValues(alpha: 0.2) : null,
+                      backgroundColor: _rotateDeg == 270
+                          ? Colors.blueAccent.withValues(alpha: 0.2)
+                          : null,
                     ),
                     onPressed: () => setState(() => _rotateDeg = 270),
                     child: const Text('270°'),
@@ -2360,7 +2563,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('밝기', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const Text(
+                    '밝기',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
                   Text(
                     _brightness.toStringAsFixed(1),
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
@@ -2381,7 +2587,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('대비', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  const Text(
+                    '대비',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
                   Text(
                     _contrast.toStringAsFixed(1),
                     style: const TextStyle(fontSize: 12, color: Colors.grey),
@@ -2404,7 +2613,8 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                   Checkbox(
                     key: const ValueKey('photoEditEnableCropCheckbox'),
                     value: _enableCrop,
-                    onChanged: (val) => setState(() => _enableCrop = val ?? false),
+                    onChanged: (val) =>
+                        setState(() => _enableCrop = val ?? false),
                   ),
                   const Text('자르기(Crop) 적용', style: TextStyle(fontSize: 13)),
                 ],
@@ -2418,7 +2628,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                         key: const ValueKey('photoEditCropLeftField'),
                         controller: _cropLeftController,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Left (px)', isDense: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Left (px)',
+                          isDense: true,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2427,7 +2640,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                         key: const ValueKey('photoEditCropTopField'),
                         controller: _cropTopController,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Top (px)', isDense: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Top (px)',
+                          isDense: true,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2436,7 +2652,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                         key: const ValueKey('photoEditCropRightField'),
                         controller: _cropRightController,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Right (px)', isDense: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Right (px)',
+                          isDense: true,
+                        ),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -2445,7 +2664,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
                         key: const ValueKey('photoEditCropBottomField'),
                         controller: _cropBottomController,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Bottom (px)', isDense: true),
+                        decoration: const InputDecoration(
+                          labelText: 'Bottom (px)',
+                          isDense: true,
+                        ),
                       ),
                     ),
                   ],
@@ -2475,7 +2697,10 @@ class _PhotoEditCopyDialogState extends State<_PhotoEditCopyDialog> {
               ? const SizedBox(
                   width: 14,
                   height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : const Text('사본으로 저장'),
         ),
@@ -2504,7 +2729,9 @@ class _PhotoSheetDialog extends StatefulWidget {
 
 class _PhotoSheetDialogState extends State<_PhotoSheetDialog> {
   String _layout = '2x2';
-  final TextEditingController _titleController = TextEditingController(text: '사 진 대 지');
+  final TextEditingController _titleController = TextEditingController(
+    text: '사 진 대 지',
+  );
   final TextEditingController _outputPathController = TextEditingController();
   bool _creating = false;
   String? _errorMessage;
@@ -2614,14 +2841,20 @@ class _PhotoSheetDialogState extends State<_PhotoSheetDialog> {
               style: const TextStyle(fontSize: 13, color: Colors.grey),
             ),
             const SizedBox(height: 16),
-            const Text('레이아웃 선택', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            const Text(
+              '레이아웃 선택',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
             const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
                   child: RadioListTile<String>(
                     key: const ValueKey('photoSheetLayout2x2'),
-                    title: const Text('2×2 (4장/쪽)', style: TextStyle(fontSize: 13)),
+                    title: const Text(
+                      '2×2 (4장/쪽)',
+                      style: TextStyle(fontSize: 13),
+                    ),
                     value: '2x2',
                     groupValue: _layout,
                     onChanged: (val) {
@@ -2632,7 +2865,10 @@ class _PhotoSheetDialogState extends State<_PhotoSheetDialog> {
                 Expanded(
                   child: RadioListTile<String>(
                     key: const ValueKey('photoSheetLayout2x3'),
-                    title: const Text('2×3 (6장/쪽)', style: TextStyle(fontSize: 13)),
+                    title: const Text(
+                      '2×3 (6장/쪽)',
+                      style: TextStyle(fontSize: 13),
+                    ),
                     value: '2x3',
                     groupValue: _layout,
                     onChanged: (val) {
@@ -2697,7 +2933,10 @@ class _PhotoSheetDialogState extends State<_PhotoSheetDialog> {
               ? const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : const Text('생성'),
         ),
