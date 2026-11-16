@@ -189,7 +189,8 @@ void main() {
         ),
       ),
     );
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+        scrollable: find.byType(Scrollable).last);
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     expect(

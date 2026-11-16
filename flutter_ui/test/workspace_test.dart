@@ -1004,7 +1004,8 @@ void main() {
     await tester.pumpAndSettle();
     // 파일 변환은 '파일변환' 탭에서 고른다(작업 방식 카드에서 뺐다, 2026-10-30).
     // 좁은 창에서는 탭 줄을 밀어야 보인다.
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+        scrollable: find.byType(Scrollable).last);
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     // 2.0.7: 파일변환 탭 한 화면에서 포맷 칸을 바로 누른다(팝업 없음).
@@ -1055,7 +1056,8 @@ void main() {
     await tester.pumpAndSettle();
     // 파일 변환은 '파일변환' 탭에서 고른다(작업 방식 카드에서 뺐다, 2026-10-30).
     // 좁은 창에서는 탭 줄을 밀어야 보인다.
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+        scrollable: find.byType(Scrollable).last);
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     // 2.0.7: 파일변환 탭 한 화면에서 포맷 칸을 바로 누른다(팝업 없음).
@@ -1106,7 +1108,8 @@ void main() {
     await tester.pumpAndSettle();
     // 파일 변환은 '파일변환' 탭에서 고른다(작업 방식 카드에서 뺐다, 2026-10-30).
     // 좁은 창에서는 탭 줄을 밀어야 보인다.
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+        scrollable: find.byType(Scrollable).last);
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     // 2.0.7: 파일변환 탭 한 화면에서 포맷 칸을 바로 누른다(팝업 없음).
@@ -1175,7 +1178,8 @@ void main() {
     await tester.pumpAndSettle();
     // 파일 변환은 '파일변환' 탭에서 고른다(작업 방식 카드에서 뺐다, 2026-10-30).
     // 좁은 창에서는 탭 줄을 밀어야 보인다.
-    await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+    await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+        scrollable: find.byType(Scrollable).last);
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     // 2.0.7: 쓸 수 없는 포맷 칸은 눌러지지 않고, 말풍선으로 이유(설치 필요)를 보인다.
@@ -1213,7 +1217,8 @@ void main() {
         await tester.pumpWidget(DocFitApp(api: api));
         await tester.pumpAndSettle();
         // 좁은 창에서는 탭 줄을 밀어야 보인다.
-        await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
+        await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
+            scrollable: find.byType(Scrollable).last);
         await tester.tap(find.byKey(const Key('workspaceTab-10')));
         await tester.pumpAndSettle();
         expect(find.byKey(const Key('conversionWorkspace')), findsOneWidget);
