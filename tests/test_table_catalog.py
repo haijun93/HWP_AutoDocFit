@@ -27,9 +27,50 @@ class TableCatalogTests(unittest.TestCase):
         self.assertGreaterEqual(catalog["template_count"], 34)
         categories = {item["name"]: item for item in catalog["categories"]}
         self.assertEqual(len(categories["부연설명"]["templates"]), 6)
-        self.assertEqual(len(categories["추진절차(가로)"]["templates"]), 5)
+        self.assertEqual(len(categories["추진절차(가로)"]["templates"]), 8)
         ids = [template["id"] for item in catalog["categories"] for template in item["templates"]]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_horizontal_procedure_shapes_6_7_8_exist_and_preserve_ids(self):
+        catalog = list_catalog()
+        categories = {item["name"]: item for item in catalog["categories"]}
+        proc_h = categories["추진절차(가로)"]["templates"]
+        self.assertEqual(len(proc_h), 8)
+        expected_shapes = [
+            ("6:1", "추진절차(가로) · 모양 1", 1, 9),
+            ("6:2", "추진절차(가로) · 모양 2", 3, 9),
+            ("6:3", "추진절차(가로) · 모양 3", 3, 7),
+            ("6:4", "추진절차(가로) · 모양 4", 3, 7),
+            ("6:5", "추진절차(가로) · 모양 5", 2, 11),
+            ("6:6", "추진절차(가로) · 모양 6", 5, 3),
+            ("6:7", "추진절차(가로) · 모양 7", 4, 13),
+            ("6:8", "추진절차(가로) · 모양 8", 11, 5),
+        ]
+        for idx, (exp_id, exp_name, exp_r, exp_c) in enumerate(expected_shapes):
+            tmpl = proc_h[idx]
+            self.assertEqual(tmpl["id"], exp_id)
+            self.assertEqual(tmpl["name"], exp_name)
+            self.assertEqual(tmpl["rows"], exp_r)
+            self.assertEqual(tmpl["cols"], exp_c)
+
+        # 모양 6, 7, 8 미리보기에 화살표 및 기호 포함 확인
+        t6_text = " ".join(" ".join(row) for row in proc_h[5]["cells"])
+        self.assertIn("① 1단계", t6_text)
+        self.assertIn("▶", t6_text)
+        self.assertIn("② 2단계", t6_text)
+
+        t7_text = " ".join(" ".join(row) for row in proc_h[6]["cells"])
+        self.assertIn("공모", t7_text)
+        self.assertIn("심사", t7_text)
+        self.assertIn("시상식", t7_text)
+        self.assertIn("▶", t7_text)
+
+        t8_text = " ".join(" ".join(row) for row in proc_h[7]["cells"])
+        self.assertIn("① 1단계", t8_text)
+        self.assertIn("▶", t8_text)
+        self.assertIn("▼", t8_text)
+        self.assertIn("◀", t8_text)
+        self.assertIn("⑥ 6단계", t8_text)
 
     def test_tpl8_templates_are_not_in_bundled_catalog(self):
         catalog = list_catalog()

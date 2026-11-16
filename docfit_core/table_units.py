@@ -36,6 +36,9 @@ AXIS_CAPS = {
     ("추진절차(가로) · 모양 3", "col"): 15,
     ("추진절차(가로) · 모양 4", "col"): 15,
     ("추진절차(가로) · 모양 5", "col"): 15,
+    ("추진절차(가로) · 모양 6", "col"): 15,
+    ("추진절차(가로) · 모양 7", "col"): 15,
+    ("추진절차(가로) · 모양 8", "col"): 15,
     ("추진절차(가로세로) · 모양 1", "col"): 8,
     ("추진절차(가로세로) · 모양 1", "row"): 8,
     ("표(가로) · 모양 3", "col"): 8,
@@ -100,6 +103,10 @@ SHAPE_SIGNATURES: dict[str, str | None] = {
     '추진절차(가로) · 모양 3': 'fb587afb20a87119',
     '추진절차(가로) · 모양 4': 'fb587afb20a87119',
     '추진절차(가로) · 모양 5': '153a12978b7c3ab3',
+    # 신구대조표 · 사용자형(5행×3열)과 동일 서명(920eb8de103721f0)이라 폴백 충돌 방지를 위해 None으로 둔다.
+    '추진절차(가로) · 모양 6': None,
+    '추진절차(가로) · 모양 7': 'a2d490440b94b42f',
+    '추진절차(가로) · 모양 8': '2c756c9a2e54ab77',
     '추진절차(가로세로) · 모양 1': 'dcc581be5e609dcd',
     '추진절차(세로) · 모양 1': '77d7182dd4a2859a',
     '표(가로) · 모양 1': 'eb8966dfb9811ca3',
@@ -142,6 +149,10 @@ def _plans():
         add(f"추진절차(가로) · 모양 {number}",
             (0, 1, 1) if number == 1 else (1, 1, 1 if number == 5 else 2),
             (0, 1, count, 1))
+    add("추진절차(가로) · 모양 6", col=(0, 1, 2, 1))
+    add("추진절차(가로) · 모양 7", col=(2, 1, 5, 1))
+    add("추진절차(가로) · 모양 8", col=(0, 1, 3, 1))
+    result["추진절차(가로) · 모양 8"]["col"]["kind"] = "zigzag"
     # v3.0 replacement source: 3 box rows × 2 box columns, with arrows in separator cells.
     add("추진절차(가로세로) · 모양 1", (0, 1, 3, 1), (0, 1, 2, 1))
     result["추진절차(가로세로) · 모양 1"]["row"]["kind"] = "grid_flow"
@@ -1309,10 +1320,64 @@ WEEKLY_DEFAULT_FIRST = (4, 26)
 def _set_cell_text(cell, value):
     nodes = list(cell.iter(HP + "t"))
     if not nodes:
-        return
+        if not value:
+            return
+        run = next((x for x in cell.iter(HP + "run")), None)
+        if run is None:
+            p = next((x for x in cell.iter(HP + "p")), None)
+            if p is None:
+                return
+            run = p.makeelement(HP + "run", {"charPrIDRef": "0"})
+            p.append(run)
+        t_node = run.makeelement(HP + "t", {})
+        run.append(t_node)
+        nodes = [t_node]
     nodes[0].text = value
     for node in nodes[1:]:
         node.text = ""
+
+
+def _normalize_zigzag(table, p):
+    """지그재그 추진절차(모양 8)의 상단 진행(▶), 중간 연결(▼), 하단 역진행(◀) 번호·화살표를 맞춘다."""
+    count = p["count"]
+    total_cols = count * 2 - 1
+    indexed = {}
+    for tr in table.findall(HP + "tr"):
+        for tc in tr.findall(HP + "tc"):
+            addr = tc.find(HP + "cellAddr")
+            if addr is not None:
+                indexed[(int(addr.get("rowAddr")), int(addr.get("colAddr")))] = tc
+
+    def circled(num):
+        if 1 <= num <= 20:
+            return chr(ord("①") + num - 1)
+        return f"({num})"
+
+    for i in range(count):
+        col = i * 2
+        cell = indexed.get((0, col))
+        if cell is not None:
+            _set_cell_text(cell, f"{circled(i + 1)} {i + 1}단계")
+        if i < count - 1:
+            arrow_cell = indexed.get((0, col + 1))
+            if arrow_cell is not None:
+                _set_cell_text(arrow_cell, "▶")
+
+    for c in range(total_cols):
+        cell = indexed.get((5, c))
+        if cell is not None:
+            _set_cell_text(cell, "▼" if c == total_cols - 1 else "")
+
+    for i in range(count):
+        col = i * 2
+        num = 2 * count - i
+        cell = indexed.get((6, col))
+        if cell is not None:
+            _set_cell_text(cell, f"{circled(num)} {num}단계")
+        if i < count - 1:
+            arrow_cell = indexed.get((6, col + 1))
+            if arrow_cell is not None:
+                _set_cell_text(arrow_cell, "◀")
 
 
 def _normalize_grid_flow_arrows(table, object_ids, right_source, down_source):
@@ -1630,6 +1695,8 @@ def resize_table(tbl_element, plan, row_count=None, col_count=None, *, id_roots=
     col_plan = updated.get("col")
     if col_plan and col_plan.get("kind") == "weekly" and fill == "increment":
         _fill_weekly(working, col_plan)
+    if col_plan and col_plan.get("kind") == "zigzag" and fill == "increment":
+        _normalize_zigzag(working, col_plan)
     tbl_element.attrib.clear()
     tbl_element.attrib.update(working.attrib)
     tbl_element[:] = list(working)
