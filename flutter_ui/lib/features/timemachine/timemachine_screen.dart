@@ -86,6 +86,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   bool _showOperatorHelp = false;
   final TextEditingController _previewFind = TextEditingController();
   final TextEditingController _customDays = TextEditingController();
+  final MenuController _periodMenu = MenuController();
+  int? _selectedCustomDays;
   int _previewFindIndex = 0;
 
   // 파일명 모드 열 보기(테이블) 상태
@@ -831,6 +833,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   Future<void> _chooseDay(DateTime day) async {
     final chosen = DateTime(day.year, day.month, day.day);
     setState(() {
+      _selectedCustomDays = null;
       if (_firstDay != null) {
         if (_sameDay(_firstDay!, chosen)) {
           _start = chosen; _end = chosen.add(const Duration(days: 1)); _firstDay = null;
@@ -859,6 +862,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final today = DateTime(now.year, now.month, now.day);
     setState(() {
       _month = DateTime(now.year,now.month);
+      _selectedCustomDays = customDays;
       if (mode == 'all') { _start = null; _end = null; }
       if (mode == 'today') { _start = today; _end = today.add(const Duration(days:1)); }
       if (mode == 'week') { _start = _sundayStart(now); _end = _start!.add(const Duration(days:7)); }
@@ -1695,35 +1699,86 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     ),
   );
 
-  Widget _periodSelector() => Wrap(
-    key: const ValueKey('tm-period-selector'), spacing: 3, runSpacing: 2,
-    crossAxisAlignment: WrapCrossAlignment.center,
-    children: [
-      const Text('기간'),
-      DropdownButton<String>(
-        key: const ValueKey('tm-period-dropdown'), value: _periodSelection, isDense: true,
-        underline: const SizedBox.shrink(),
-        onChanged: (value) { if (value != null) _quickRange(value); },
-        items: const [
-          DropdownMenuItem(value:'all',child:Text('기간 없음 (전체)')),
-          DropdownMenuItem(value:'today',child:Text('오늘')),
-          DropdownMenuItem(value:'week',child:Text('이번 주')),
-          DropdownMenuItem(value:'month',child:Text('이번 달')),
-          DropdownMenuItem(value:'7',child:Text('7일')),
-          DropdownMenuItem(value:'30',child:Text('30일')),
-          DropdownMenuItem(value:'90',child:Text('90일')),
-          DropdownMenuItem(value:'6m',child:Text('6개월')),
-          DropdownMenuItem(value:'1y',child:Text('1년')),
+  static const List<(String, String)> _periodPresets = [
+    ('all', '기간 없음 (전체)'),
+    ('today', '오늘'),
+    ('week', '이번 주'),
+    ('month', '이번 달'),
+    ('7', '7일'),
+    ('30', '30일'),
+    ('90', '90일'),
+    ('6m', '6개월'),
+    ('1y', '1년'),
+  ];
+
+  Widget _periodSelector() => MenuAnchor(
+    key: const ValueKey('tm-period-selector'),
+    controller: _periodMenu,
+    menuChildren: [
+      for (final item in _periodPresets)
+        MenuItemButton(
+          onPressed: () {
+            _periodMenu.close();
+            _quickRange(item.$1);
+          },
+          trailingIcon: _periodSelection == item.$1
+              ? Icon(Icons.check, size: 16, color: Theme.of(context).colorScheme.primary)
+              : null,
+          child: Text(
+            item.$2,
+            style: _periodSelection == item.$1
+                ? TextStyle(fontWeight: FontWeight.w600, color: Theme.of(context).colorScheme.primary)
+                : null,
+          ),
+        ),
+      const Divider(height: 1),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 72,
+              child: TextField(
+                key: const ValueKey('tm-custom-days'),
+                controller: _customDays,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(isDense: true, hintText: '일수', suffixText: '일'),
+                onSubmitted: (_) {
+                  _applyCustomDays();
+                  if (_error == null) _periodMenu.close();
+                },
+              ),
+            ),
+            const SizedBox(width: 6),
+            FilledButton(
+              key: const ValueKey('tm-custom-days-apply'),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(48, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+              ),
+              onPressed: () {
+                _applyCustomDays();
+                if (_error == null) _periodMenu.close();
+              },
+              child: const Text('적용'),
+            ),
+          ],
+        ),
+      ),
+    ],
+    builder: (context, controller, child) => OutlinedButton.icon(
+      key: const ValueKey('tm-period-dropdown'),
+      onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+      icon: const Icon(Icons.date_range_outlined, size: 16),
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(_periodLabel),
+          const Icon(Icons.arrow_drop_down, size: 18),
         ],
       ),
-      SizedBox(width:60,child:TextField(
-        key: const ValueKey('tm-custom-days'), controller: _customDays,
-        keyboardType: TextInputType.number,
-        decoration: const InputDecoration(isDense:true,hintText:'일수',suffixText:'일'),
-        onSubmitted: (_) => _applyCustomDays(),
-      )),
-      OutlinedButton(key:const ValueKey('tm-custom-days-apply'),onPressed:_applyCustomDays,child:const Text('적용')),
-    ],
+    ),
   );
 
   String get _periodSelection {
@@ -1732,6 +1787,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     if (_sameDay(_start!,today) && _end == today.add(const Duration(days:1))) return 'today';
     if (_start == _sundayStart(now) && _end == _start!.add(const Duration(days:7))) return 'week';
     if (_start == DateTime(now.year,now.month) && _end == DateTime(now.year,now.month+1)) return 'month';
+    if (_selectedCustomDays != null) return 'custom';
     for (final days in [7,30,90]) {
       if (_start == today.subtract(Duration(days:days-1)) && _end == today.add(const Duration(days:1))) return '$days';
     }
@@ -1739,7 +1795,22 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       if (_start == DateTime(today.year,today.month-6,today.day)) return '6m';
       if (_start == DateTime(today.year-1,today.month,today.day)) return '1y';
     }
-    return 'all';
+    return 'custom';
+  }
+
+  String get _periodLabel {
+    final sel = _periodSelection;
+    for (final item in _periodPresets) {
+      if (item.$1 == sel) return item.$2;
+    }
+    if (_selectedCustomDays != null) return '$_selectedCustomDays일';
+    if (_start != null && _end != null) {
+      final last = _end!.subtract(const Duration(days: 1));
+      return _sameDay(_start!, last)
+          ? '${_start!.month}.${_start!.day}'
+          : '${_start!.month}.${_start!.day}~${last.month}.${last.day}';
+    }
+    return '기간 없음 (전체)';
   }
 
   Widget _filtersBar() =>Padding(padding:const EdgeInsets.fromLTRB(12,8,12,4),child:LayoutBuilder(builder:(context, constraints){

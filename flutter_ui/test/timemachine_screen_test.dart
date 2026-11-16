@@ -339,8 +339,10 @@ void main() {
       expect(range['start'],closeTo(expectedStart.millisecondsSinceEpoch/1000,1),reason:entry.$1);
       expect(range['end'],closeTo(today.add(const Duration(days:1)).millisecondsSinceEpoch/1000,1),reason:entry.$1);
     }
+    await tester.tap(dropdown); await tester.pumpAndSettle();
     await tester.enterText(find.byKey(const ValueKey('tm-custom-days')), '12');
     await tester.tap(find.byKey(const ValueKey('tm-custom-days-apply'))); await tester.pumpAndSettle();
+    expect(find.descendant(of: dropdown, matching: find.text('12일')), findsOneWidget);
     final today = DateTime.now(); final midnight = DateTime(today.year,today.month,today.day);
     final customRange = api.calls.where((c) => c.$1 == 'range').last.$2;
     expect(customRange['start'],closeTo(midnight.subtract(const Duration(days:11)).millisecondsSinceEpoch/1000,1));
