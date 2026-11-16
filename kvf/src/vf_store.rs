@@ -62,6 +62,9 @@ impl Store {
         let mut has_source_ref = false;
         conn.query("PRAGMA table_info(operation_journal)", &[], |r| { if r.text(1)=="source_ref" {has_source_ref=true;} })?;
         if !has_source_ref { conn.exec("ALTER TABLE operation_journal ADD COLUMN source_ref TEXT NOT NULL DEFAULT ''")?; conn.exec("UPDATE operation_journal SET source_ref=COALESCE((SELECT source_ref FROM virtual_item WHERE virtual_item.id=operation_journal.item_id),'')")?; }
+        let mut has_from_name = false;
+        conn.query("PRAGMA table_info(operation_journal)", &[], |r| { if r.text(1)=="from_display_name" {has_from_name=true;} })?;
+        if !has_from_name { conn.exec("ALTER TABLE operation_journal ADD COLUMN from_display_name TEXT NOT NULL DEFAULT ''")?; conn.exec("UPDATE operation_journal SET from_display_name=display_name")?; }
         Ok(Self { conn })
     }
 
@@ -101,19 +104,17 @@ impl Store {
         let result = (|| {
             let mut before = None;
             self.conn.query(
-                "SELECT location,display_name FROM virtual_item WHERE id=?",
+                "SELECT location,display_name,source_ref FROM virtual_item WHERE id=?",
                 &[Arg::Text(item_id)],
-                |r| before = Some((r.text(0), r.text(1))),
+                |r| before = Some((r.text(0), r.text(1), r.text(2))),
             )?;
-            let (from, name) = before.ok_or("가상 항목을 찾을 수 없습니다")?;
+            let (from, name, reference) = before.ok_or("가상 항목을 찾을 수 없습니다")?;
             if from == to {
                 return Err("같은 가상 위치로 이동할 수 없습니다".into());
             }
-            self.conn.run(
-                "UPDATE virtual_item SET location=? WHERE id=?",
-                &[Arg::Text(to), Arg::Text(item_id)],
-            )?;
-            self.conn.run("INSERT INTO operation_journal(operation_id,kind,item_id,from_location,to_location,display_name,undone,created_at) VALUES(?,'move',?,?,?,?,0,strftime('%s','now'))", &[Arg::Text(operation_id),Arg::Text(item_id),Arg::Text(&from),Arg::Text(to),Arg::Text(&name)])?;
+            let display = unique_name(&self.conn,to,&name,None)?;
+            self.conn.run("UPDATE virtual_item SET location=?,display_name=? WHERE id=?", &[Arg::Text(to),Arg::Text(&display),Arg::Text(item_id)])?;
+            self.conn.run("INSERT INTO operation_journal(operation_id,kind,item_id,from_location,to_location,display_name,undone,created_at,source_ref,from_display_name) VALUES(?,'move',?,?,?,?,0,strftime('%s','now'),?,?)", &[Arg::Text(operation_id),Arg::Text(item_id),Arg::Text(&from),Arg::Text(to),Arg::Text(&display),Arg::Text(&reference),Arg::Text(&name)])?;
             Ok(())
         })();
         match result {
@@ -127,7 +128,7 @@ impl Store {
 
     pub fn move_many(&self, operation_id:&str, item_ids:&[String], to:&str)->Result<(),String>{
         self.conn.exec("BEGIN IMMEDIATE")?;
-        let result=(||{if item_ids.is_empty(){return Err("이동할 가상 항목이 없습니다".into())} for item_id in item_ids{let mut before=None;self.conn.query("SELECT location,display_name,source_ref FROM virtual_item WHERE id=?",&[Arg::Text(item_id)],|r|before=Some((r.text(0),r.text(1),r.text(2))))?;let(from,name,reference)=before.ok_or("가상 항목을 찾을 수 없습니다")?;if from==to{return Err("같은 가상 위치로 이동할 수 없습니다".into())}let display=unique_name(&self.conn,to,&name,None)?;self.conn.run("UPDATE virtual_item SET location=?,display_name=? WHERE id=?",&[Arg::Text(to),Arg::Text(&display),Arg::Text(item_id)])?;let op=format!("{operation_id}:{item_id}");self.conn.run("INSERT INTO operation_journal(operation_id,kind,item_id,from_location,to_location,display_name,undone,created_at,source_ref) VALUES(?,'move',?,?,?,?,0,strftime('%s','now'),?)",&[Arg::Text(&op),Arg::Text(item_id),Arg::Text(&from),Arg::Text(to),Arg::Text(&display),Arg::Text(&reference)])?;}Ok(())})();match result{Ok(())=>self.conn.exec("COMMIT"),Err(e)=>{let _=self.conn.exec("ROLLBACK");Err(e)}}
+        let result=(||{if item_ids.is_empty(){return Err("이동할 가상 항목이 없습니다".into())} for item_id in item_ids{let mut before=None;self.conn.query("SELECT location,display_name,source_ref FROM virtual_item WHERE id=?",&[Arg::Text(item_id)],|r|before=Some((r.text(0),r.text(1),r.text(2))))?;let(from,name,reference)=before.ok_or("가상 항목을 찾을 수 없습니다")?;if from==to{return Err("같은 가상 위치로 이동할 수 없습니다".into())}let display=unique_name(&self.conn,to,&name,None)?;self.conn.run("UPDATE virtual_item SET location=?,display_name=? WHERE id=?",&[Arg::Text(to),Arg::Text(&display),Arg::Text(item_id)])?;let op=format!("{operation_id}:{item_id}");self.conn.run("INSERT INTO operation_journal(operation_id,kind,item_id,from_location,to_location,display_name,undone,created_at,source_ref,from_display_name) VALUES(?,'move',?,?,?,?,0,strftime('%s','now'),?,?)",&[Arg::Text(&op),Arg::Text(item_id),Arg::Text(&from),Arg::Text(to),Arg::Text(&display),Arg::Text(&reference),Arg::Text(&name)])?;}Ok(())})();match result{Ok(())=>self.conn.exec("COMMIT"),Err(e)=>{let _=self.conn.exec("ROLLBACK");Err(e)}}
     }
 
     pub fn copy_many(&self, operation_id:&str, item_ids:&[String], to:&str, created_at:i64)->Result<(),String>{
@@ -178,11 +179,11 @@ impl Store {
         self.conn.exec("BEGIN IMMEDIATE")?;
         let result = (|| {
             let mut entries=Vec::new();
-            self.conn.query("SELECT kind,item_id,from_location,to_location,undone,redone FROM operation_journal WHERE operation_id=? OR operation_id LIKE ? ORDER BY rowid", &[Arg::Text(operation_id),Arg::Text(&format!("{operation_id}:%"))], |r| entries.push((r.text(0),r.text(1),r.text(2),r.text(3),r.int(4)!=0,r.int(5)!=0)))?;
+            self.conn.query("SELECT kind,item_id,from_location,to_location,undone,redone,from_display_name FROM operation_journal WHERE operation_id=? OR operation_id LIKE ? ORDER BY rowid", &[Arg::Text(operation_id),Arg::Text(&format!("{operation_id}:%"))], |r| entries.push((r.text(0),r.text(1),r.text(2),r.text(3),r.int(4)!=0,r.int(5)!=0,r.text(6))))?;
             if entries.is_empty(){return Err("작업 기록을 찾을 수 없습니다".into())}
             if entries.iter().any(|e|e.4||e.5){return Err("이미 되돌린 작업입니다".into())}
-            for (kind,id,from,to,_,_) in entries {
-                if kind=="move" {self.conn.run("UPDATE virtual_item SET location=? WHERE id=? AND location=?", &[Arg::Text(&from),Arg::Text(&id),Arg::Text(&to)])?;}
+            for (kind,id,from,to,_,_,from_name) in entries {
+                if kind=="move" {self.conn.run("UPDATE virtual_item SET location=?,display_name=? WHERE id=? AND location=?", &[Arg::Text(&from),Arg::Text(&from_name),Arg::Text(&id),Arg::Text(&to)])?;}
                 else if kind=="copy" {self.conn.run("DELETE FROM virtual_item WHERE id=?", &[Arg::Text(&id)])?;}
                 else {return Err("지원하지 않는 작업 종류입니다".into());}
             }
@@ -282,12 +283,13 @@ mod tests {
         assert!(s.journal().unwrap().is_empty());
     }
 
-    #[test] fn move_collision_adds_number_and_preserves_reference(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/원본/자료.txt","자료.txt",1).unwrap();s.add_reference("b","two","C:/다른/자료.txt","자료.txt",1).unwrap();s.move_virtual("m","a","two").unwrap();let moved=&s.list("two").unwrap()[1];assert_eq!(moved.display_name,"자료 (2).txt");assert_eq!(moved.source_ref,"C:/원본/자료.txt");}
+    #[test] fn move_collision_adds_number_and_preserves_reference(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/원본/자료.txt","자료.txt",1).unwrap();s.add_reference("b","two","C:/다른/자료.txt","자료.txt",1).unwrap();s.move_virtual("m","a","two").unwrap();let moved=s.list("two").unwrap().into_iter().find(|item|item.id=="a").unwrap();assert_eq!(moved.display_name,"자료 (2).txt");assert_eq!(moved.source_ref,"C:/원본/자료.txt");}
     #[test] fn copy_collision_adds_number(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/자료.txt","자료.txt",1).unwrap();s.add_reference("b","two","C:/기존.txt","자료.txt",1).unwrap();s.virtual_copy("c","a","copy","two","",2).unwrap();assert_eq!(s.list("two").unwrap().iter().find(|i|i.id=="copy").unwrap().display_name,"자료 (2).txt");}
     #[test] fn repeated_collision_uses_next_free_number(){let s=Store::open_at(":memory:").unwrap();for(id,name)in[("a","자료.txt"),("b","자료.txt"),("c","자료 (2).txt")] {s.add_reference(id,"one","C:/자료.txt",name,1).unwrap();}s.move_virtual("m","a","two").unwrap();s.move_virtual("n","b","two").unwrap();assert_eq!(s.list("two").unwrap().iter().map(|i|i.display_name.as_str()).collect::<Vec<_>>(),vec!["자료.txt","자료 (2).txt"]);}
     #[test] fn multi_move_is_undone_as_one_operation(){let s=Store::open_at(":memory:").unwrap();for id in ["a","b"]{s.add_reference(id,"one","C:/자료.txt",id,1).unwrap();}s.move_many("batch",&["a".into(),"b".into()],"two").unwrap();s.undo("batch").unwrap();assert_eq!(s.list("one").unwrap().len(),2);assert!(s.list("two").unwrap().is_empty());}
     #[test] fn multi_copy_is_undone_as_one_operation(){let s=Store::open_at(":memory:").unwrap();for id in ["a","b"]{s.add_reference(id,"one","C:/자료.txt",id,1).unwrap();}s.copy_many("batch",&["a".into(),"b".into()],"two",2).unwrap();assert_eq!(s.list("two").unwrap().len(),2);s.undo("batch").unwrap();assert!(s.list("two").unwrap().is_empty());}
     #[test] fn move_redo_restores_location(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/a","a",1).unwrap();s.move_many("m",&["a".into()],"two").unwrap();s.undo("m").unwrap();s.redo("m").unwrap();assert_eq!(s.list("two").unwrap().len(),1);}
+    #[test] fn undo_collision_move_restores_original_display_name(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/a","a",1).unwrap();s.add_reference("b","two","C:/b","a",1).unwrap();s.move_virtual("m","a","two").unwrap();assert_eq!(s.list("two").unwrap().iter().find(|item|item.id=="a").unwrap().display_name,"a (2)");s.undo("m").unwrap();assert_eq!(s.list("one").unwrap()[0].display_name,"a");}
     #[test] fn copy_redo_restores_virtual_record(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/a","a",1).unwrap();s.copy_many("c",&["a".into()],"two",2).unwrap();s.undo("c").unwrap();s.redo("c").unwrap();assert_eq!(s.list("two").unwrap()[0].source_ref,"C:/a");}
     #[test] fn journal_survives_reopen_and_restores_undo_state(){let t=Temp::new();{let s=Store::open(&t.db()).unwrap();s.add_reference("a","one","C:/a","a",1).unwrap();s.move_virtual("m","a","two").unwrap();}let s=Store::open(&t.db()).unwrap();assert_eq!(s.journal().unwrap()[0].operation_id,"m");s.undo("m").unwrap();}
     #[test] fn failed_multi_operation_rolls_back_every_item(){let s=Store::open_at(":memory:").unwrap();s.add_reference("a","one","C:/a","a",1).unwrap();assert!(s.move_many("m",&["a".into(),"missing".into()],"two").is_err());assert_eq!(s.list("one").unwrap().len(),1);assert!(s.list("two").unwrap().is_empty());assert!(s.journal().unwrap().is_empty());}
