@@ -7,7 +7,7 @@ const HEAD:i32=32;const TAB:i32=30;const ROW:i32=30;
 const ADDRESS:i32=36;const TOOLBAR:i32=34;const STATUS:i32=26;const GUTTER:i32=6;
 const SPACES:[Option<&str>;5]=[None,Some("core"),Some("basis"),Some("reference"),Some("temp")];
 const LABELS:[&str;5]=["전체","핵심자료","기초자료","참고자료","임시저장소"];
-#[derive(Default)]struct Ui{model:Model,hwnd:HWND,owner:HWND,boxes:Vec<BoxRow>,items:Vec<Item>,filtered:Vec<i64>,top:usize,committed:String,comp:String,pressed:Option<usize>,truncated:bool,icons:bool,drag_split:Option<crate::vf_layout::SplitHit>,active_panel:usize,address_edit:bool}
+#[derive(Default)]struct Ui{model:Model,hwnd:HWND,owner:HWND,boxes:Vec<BoxRow>,items:Vec<Item>,filtered:Vec<i64>,top:usize,committed:String,comp:String,pressed:Option<usize>,truncated:bool,drag_split:Option<crate::vf_layout::SplitHit>,active_panel:usize,address_edit:bool}
 thread_local!{static UI:RefCell<Ui>=RefCell::new(Ui::default());}
 fn with<R>(f:impl FnOnce(&Ui)->R)->R{UI.with(|s|f(&s.borrow()))}
 fn edit<R>(f:impl FnOnce(&mut Ui)->R)->R{UI.with(|s|f(&mut s.borrow_mut()))}
@@ -84,34 +84,251 @@ fn topmost(h:HWND){unsafe{SetWindowPos(h,if with(|s|s.model.sticky){HWND_TOPMOST
 fn xy(l:isize)->(i32,i32){((l as u16)as i16 as i32,((l>>16)as u16)as i16 as i32)}
 fn size(h:HWND)->RECT{unsafe{let mut r=std::mem::zeroed();GetClientRect(h,&mut r);r}}
 fn list_y(h:HWND)->i32{frame::scale(h,HEAD+ADDRESS+TOOLBAR+TAB+if with(|s|s.model.view.context().is_some_and(|c|!c.query.is_empty())){ROW}else{0})}
-fn row_at(h:HWND,l:isize)->Option<usize>{let (x,y)=xy(l);let rc=size(h);let c=with(|s|s.model.explorer.clone());let rects=c.panel_rects(rc.right,rc.bottom-frame::scale(h,STATUS)-list_y(h),frame::scale(h,GUTTER));let off=list_y(h);let panel=rects.iter().position(|r|x>=r.left&&x<r.right&&y>=off+r.top&&y<off+r.bottom)?;edit(|s|{s.active_panel=panel;s.model.explorer.active_panel=format!("p{}",panel+1);});with(|s|if s.icons{let cw=frame::scale(h,120);let cols=(rects[panel].right-rects[panel].left).div_euclid(cw).max(1)as usize;let row=((y-off-rects[panel].top)/frame::scale(h,100)).max(0)as usize;Some(s.top+row*cols+((x-rects[panel].left)/cw).max(0)as usize)}else{frame::row_index(y,off+rects[panel].top,frame::scale(h,ROW),s.top,s.filtered.len())})}
+fn row_at(h:HWND,l:isize)->Option<usize>{let (x,y)=xy(l);let rc=size(h);let c=with(|s|s.model.explorer.clone());let rects=c.panel_rects(rc.right,rc.bottom-frame::scale(h,STATUS)-list_y(h),frame::scale(h,GUTTER));let off=list_y(h);let panel=rects.iter().position(|r|x>=r.left&&x<r.right&&y>=off+r.top&&y<off+r.bottom)?;let panel_id=format!("p{}",panel+1);let changed=with(|s|s.model.explorer.active_panel!=panel_id);edit(|s|s.active_panel=panel);if changed{event(Event::ActivatePanel(panel_id));}with(|s|if c.panels.get(panel).is_some_and(|p|p.view=="icons"){let cw=frame::scale(h,120);let cols=(rects[panel].right-rects[panel].left).div_euclid(cw).max(1)as usize;let row=((y-off-rects[panel].top-frame::scale(h,ROW))/frame::scale(h,100)).max(0)as usize;Some(s.top+row*cols+((x-rects[panel].left)/cw).max(0)as usize)}else{frame::row_index(y,off+rects[panel].top+frame::scale(h,ROW),frame::scale(h,ROW),s.top,s.filtered.len())})}
 fn button(h:HWND,x:i32,y:i32)->Option<usize>{let w=size(h).right;let bw=frame::scale(h,40);(y>=0&&y<frame::scale(h,HEAD)&&x>=w-4*bw&&x<w).then(||((w-1-x)/bw)as usize)}
 fn choose(index:usize){let id=with(|s|s.filtered.get(index).copied());event(Event::Select(id));}
+fn set_view_mode(icons:bool){let layout=edit(|s|{let id=s.model.explorer.active_panel.clone();if let Some(p)=s.model.explorer.panels.iter_mut().find(|p|p.id==id){p.view=if icons{"icons"}else{"details"}.into();}s.model.explorer.clone()});let _=persist_layout(&layout);draw_later();}
 fn configure_panels(h:HWND,menu:bool){if !menu{return;}unsafe{let m=CreatePopupMenu();for(n,label)in [(1u8,"영역 1개"),(2,"좌우 2개"),(3,"좌1 + 우2"),(4,"2 × 2")]{AppendMenuW(m,MF_STRING|if with(|s|s.model.explorer.panel_count==n){MF_CHECKED}else{0},n as usize,wide(label).as_ptr());}let mut p=POINT{x:frame::scale(h,12),y:frame::scale(h,HEAD+ADDRESS+TOOLBAR)};ClientToScreen(h,&mut p);let cmd=TrackPopupMenu(m,TPM_RETURNCMD,p.x,p.y,0,h,null());DestroyMenu(m);if (1..=4).contains(&cmd){event(Event::SetPanelCount(cmd as u8));}}}
 fn drag_split(h:HWND,x:i32,y:i32){let rc=size(h);let top=list_y(h);let gutter=frame::scale(h,GUTTER);let hit=with(|s|s.model.explorer.split_hit(rc.right,rc.bottom-frame::scale(h,STATUS)-top,gutter,x,y-top,frame::scale(h,8)));let Some(hit)=hit else{return};edit(|s|s.drag_split=Some(hit));unsafe{SetCapture(h);}}
-fn update_split(h:HWND,x:i32,y:i32){let rc=size(h);let top=list_y(h);let gutter=frame::scale(h,GUTTER);let hh=(rc.bottom-frame::scale(h,STATUS)-top).max(1);let layout=edit(|s|{let hit=s.drag_split?;let l=&mut s.model.explorer;let ratio=match hit{crate::vf_layout::SplitHit::Column(_)=>((x-gutter/2).clamp(100,rc.right-100)as i64*10000/rc.right.max(1)as i64)as u16,crate::vf_layout::SplitHit::Row(_)=>((y-top-gutter/2).clamp(80,hh-80)as i64*10000/hh as i64)as u16};match hit{crate::vf_layout::SplitHit::Column(_)=>l.column_splits=vec![ratio,10000-ratio],crate::vf_layout::SplitHit::Row(_)=>l.row_splits=vec![ratio,10000-ratio]};Some(l.clone())});if let Some(l)=layout{let _=persist_layout(&l);draw_later();}}
+fn update_split(h:HWND,x:i32,y:i32){let rc=size(h);let top=list_y(h);let gutter=frame::scale(h,GUTTER);let hh=(rc.bottom-frame::scale(h,STATUS)-top).max(1);let changed=edit(|s|{let Some(hit)=s.drag_split else{return false};let l=&mut s.model.explorer;let ratio=match hit{crate::vf_layout::SplitHit::Column(_)=>((x-gutter/2).clamp(1,(rc.right-1).max(1))as i64*10000/rc.right.max(1)as i64)as u16,crate::vf_layout::SplitHit::Row(_)=>((y-top-gutter/2).clamp(1,(hh-1).max(1))as i64*10000/hh as i64)as u16}.clamp(1,9999);match hit{crate::vf_layout::SplitHit::Column(_)=>l.column_splits=vec![ratio,10000-ratio],crate::vf_layout::SplitHit::Row(_)=>l.row_splits=vec![ratio,10000-ratio]};true});if changed{draw_later();}}
 fn move_selection(h:HWND,delta:isize){let(rows,current,len)=with(|s|{let rows=((size(h).bottom-list_y(h))/frame::scale(h,ROW)).max(1)as usize;(rows,s.model.view.context().and_then(|c|c.selection).and_then(|id|s.filtered.iter().position(|v|*v==id)).unwrap_or(0),s.filtered.len())});if len==0{return;}let i=(current as isize+delta).clamp(0,len as isize-1)as usize;edit(|s|{if i<s.top{s.top=i;}if i>=s.top+rows{s.top=i+1-rows;}});choose(i);}
 fn change_tab(delta:isize){let i=with(|s|SPACES.iter().position(|v|*v==s.model.view.context().and_then(|c|c.space.as_deref())).unwrap_or(0));edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[(i as isize+delta).rem_euclid(5)as usize].map(String::from)));}
 fn boxes_menu(h:HWND){unsafe{let m=CreatePopupMenu();with(|s|{for(i,b)in s.boxes.iter().enumerate(){AppendMenuW(m,MF_STRING,100+i,wide(&b.name).as_ptr());}});let mut pt=POINT{x:0,y:frame::scale(h,HEAD)};ClientToScreen(h,&mut pt);let n=TrackPopupMenu(m,TPM_RETURNCMD,pt.x,pt.y,0,h,null());DestroyMenu(m);if n>=100{let id=with(|s|s.boxes.get(n as usize-100).map(|b|b.id));if let Some(id)=id{event(Event::ChangeBox(id));}}}}
-unsafe fn paint(h:HWND){unsafe{
- let mut ps:PAINTSTRUCT=std::mem::zeroed();let dc=BeginPaint(h,&mut ps);let rc=size(h);if rc.right<=0||rc.bottom<=0{EndPaint(h,&ps);return;}
- let mem=CreateCompatibleDC(dc);let bmp=CreateCompatibleBitmap(dc,rc.right,rc.bottom);let old=SelectObject(mem,bmp);let font=CreateFontW(-frame::scale(h,14),0,0,0,400,0,0,0,DEFAULT_CHARSET as u32,0,0,0,0,wide("맑은 고딕").as_ptr());let oldfont=SelectObject(mem,font);SetBkMode(mem,TRANSPARENT as i32);
- let fill=|r:RECT,color|{let b=CreateSolidBrush(color);FillRect(mem,&r,b);DeleteObject(b);};
- let text=|s:&str,mut r:RECT,flags|{let v=wide(s);DrawTextW(mem,v.as_ptr(),(v.len()-1)as i32,&mut r,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|flags);};
- // 색은 현재 테마 하나에서(밝게 = 예전 하드코딩 값 그대로, RUSTALL1 DARK1).
- let p=ui_theme::palette();
- fill(rc,p.bg);let head=frame::scale(h,HEAD);let tab=frame::scale(h,TAB);let row=frame::scale(h,ROW);let pad=frame::scale(h,8);fill(RECT{bottom:head,..rc},p.plain_head_bg);
- with(|s|{
- let c=s.model.view.context();let name=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");SetTextColor(mem,p.text);text(&window_title(name),RECT{left:pad,top:0,right:rc.right-frame::scale(h,160),bottom:head},DT_END_ELLIPSIS);
- for(i,label)in ["✕","□","―",if s.model.sticky{"◆"}else{"◇"}].iter().enumerate(){let right=rc.right-i as i32*frame::scale(h,40);text(label,RECT{left:right-frame::scale(h,40),top:0,right,bottom:head},DT_CENTER);}
- for(i,label)in LABELS.iter().enumerate(){let l=i as i32*rc.right/5;let r=(i+1)as i32*rc.right/5;let selected=SPACES[i]==c.and_then(|c|c.space.as_deref());if selected{fill(RECT{left:l,top:head+tab-frame::scale(h,3),right:r,bottom:head+tab},p.accent_line);}text(label,RECT{left:l,top:head,right:r,bottom:head+tab},DT_CENTER|DT_END_ELLIPSIS);}
- let address_top=head;let address_bottom=address_top+frame::scale(h,ADDRESS);fill(RECT{left:0,top:address_top,right:rc.right,bottom:address_bottom},p.bg);text("주소",RECT{left:pad,top:address_top,right:frame::scale(h,64),bottom:address_bottom},DT_LEFT);let boxname=c.and_then(|c|c.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");let space=c.as_ref().and_then(|c|c.space.as_deref()).and_then(|v|SPACES.iter().position(|x|*x==Some(v)).map(|i|LABELS[i])).unwrap_or("전체");text(&format!("퀵가상폴더  ›  {boxname}  ›  {space}"),RECT{left:frame::scale(h,64),top:address_top,right:rc.right-frame::scale(h,80),bottom:address_bottom},DT_END_ELLIPSIS);let toolbar_top=address_bottom;let toolbar_bottom=toolbar_top+frame::scale(h,TOOLBAR);fill(RECT{left:0,top:toolbar_top,right:rc.right,bottom:toolbar_bottom},p.plain_head_bg);for(i,label)in ["영역 설정 ▾","목록","큰 아이콘","새로고침"].iter().enumerate(){let left=pad+i as i32*frame::scale(h,106);text(label,RECT{left,top:toolbar_top,right:left+frame::scale(h,104),bottom:toolbar_bottom},DT_CENTER|DT_END_ELLIPSIS);}let y=list_y(h);if let Some(c)=c.filter(|c|!c.query.is_empty()){text(&format!("찾기: {} · {}개 · Esc 지우기",c.query,s.filtered.len()),RECT{left:pad,top:head+frame::scale(h,ADDRESS+TOOLBAR)+tab,right:rc.right-pad,bottom:y},DT_END_ELLIPSIS);}
- let message=match &s.model.view{View::Loading(_)=>"불러오는 중",View::Failed{error,..}=>error,View::Empty{reason,..}=>reason,_ if s.filtered.is_empty()=>"항목이 없습니다. 다른 상자·영역을 고르거나 F5로 다시 불러오세요",_=>""};
- if !message.is_empty(){text(message,RECT{left:pad,top:y,right:rc.right-pad,bottom:y+row},DT_END_ELLIPSIS);}
- let body_h=rc.bottom-frame::scale(h,STATUS)-y;let rects=s.model.explorer.panel_rects(rc.right,body_h,frame::scale(h,GUTTER));for (pi,pr) in rects.iter().enumerate(){let r=RECT{left:pr.left,top:y+pr.top,right:pr.right,bottom:y+pr.bottom};fill(RECT{left:r.right,top:r.top,right:(r.right+frame::scale(h,GUTTER)).min(rc.right),bottom:r.bottom},p.border);if s.model.explorer.active_panel==format!("p{}",pi+1){frame::own_border(mem,r);}let panel=s.model.explorer.panels.get(pi);let boxname=panel.and_then(|x|x.box_id).and_then(|id|s.boxes.iter().find(|b|b.id==id)).map(|b|b.name.as_str()).unwrap_or("상자 선택");let panel_space=panel.and_then(|x|x.space.as_deref()).unwrap_or("전체");text(&format!("{boxname}  ·  {panel_space}"),RECT{left:pr.left+pad,top:r.top+pad,right:pr.right-pad,bottom:r.top+row},DT_END_ELLIPSIS);let content_top=r.top+row;if s.icons{let cw=frame::scale(h,120);let ch=frame::scale(h,100);let cols=((pr.right-pr.left)/cw).max(1);for(n,id)in s.filtered.iter().enumerate().skip(s.top).take(((pr.bottom-row)/ch).max(0)as usize*cols as usize){if let Some(i)=s.items.iter().find(|i|i.id==*id){let k=n-s.top;let cell=RECT{left:pr.left+(k as i32%cols)*cw,top:y+content_top+(k as i32/cols)*ch,right:(pr.left+(k as i32%cols+1)*cw).min(pr.right),bottom:(y+content_top+(k as i32/ch+1)*ch).min(r.bottom)};let sel=c.and_then(|c|c.selection)==Some(*id);if sel{fill(cell,p.selected);}SetTextColor(mem,p.row_text(sel,p.text));text("▣",RECT{left:cell.left,top:cell.top,right:cell.right,bottom:cell.top+frame::scale(h,48)},DT_CENTER);text(&i.display_name,RECT{left:cell.left+pad,top:cell.top+frame::scale(h,48),right:cell.right-pad,bottom:cell.bottom},DT_CENTER|DT_END_ELLIPSIS);}}}else{for(n,id)in s.filtered.iter().enumerate().skip(s.top).take(((pr.bottom-row).max(0)/row)as usize){if let Some(i)=s.items.iter().find(|i|i.id==*id){let top=y+content_top+(n-s.top)as i32*row;let rr=RECT{left:pr.left,top,right:pr.right,bottom:top+row};let sel=c.and_then(|c|c.selection)==Some(*id);if sel{fill(rr,p.selected);}SetTextColor(mem,p.row_text(sel,p.text));text(&format!("[{}] {} · {}",i.kind,i.display_name,LABELS[SPACES.iter().position(|v|*v==Some(i.space.as_str())).unwrap_or(0)]),RECT{left:rr.left+pad,right:rr.right-pad,..rr},DT_END_ELLIPSIS);}}}}
- SetTextColor(mem,p.text);let status_y=rc.bottom-frame::scale(h,STATUS);fill(RECT{left:0,top:status_y,right:rc.right,bottom:rc.bottom},p.plain_head_bg);let selected=c.and_then(|c|c.selection).is_some() as usize;text(&format!("{}개 항목 · {}개 선택 · {}",s.filtered.len(),selected,if s.model.explorer.panel_count>1{format!("{}개 영역",s.model.explorer.panel_count)}else{"영역 1".into()}),RECT{left:pad,top:status_y,right:rc.right-pad,bottom:rc.bottom},DT_END_ELLIPSIS);if s.truncated{text("5,000개까지만 보입니다",RECT{left:rc.right-frame::scale(h,220),top:status_y,right:rc.right-pad,bottom:rc.bottom},DT_END_ELLIPSIS);}
- });frame::own_border(mem,rc);BitBlt(dc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);SelectObject(mem,oldfont);DeleteObject(font);SelectObject(mem,old);DeleteObject(bmp);DeleteDC(mem);EndPaint(h,&ps);
-}}
+unsafe fn paint(h: HWND) {
+    unsafe {
+        let mut ps: PAINTSTRUCT = std::mem::zeroed();
+        let dc = BeginPaint(h, &mut ps);
+        let rc = size(h);
+        if rc.right <= 0 || rc.bottom <= 0 {
+            EndPaint(h, &ps);
+            return;
+        }
+
+        let mem = CreateCompatibleDC(dc);
+        let bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        let old = SelectObject(mem, bmp);
+        let font = CreateFontW(
+            -frame::scale(h, 14), 0, 0, 0, 400, 0, 0, 0,
+            DEFAULT_CHARSET as u32, 0, 0, 0, 0, wide("?? ??").as_ptr(),
+        );
+        let oldfont = SelectObject(mem, font);
+        SetBkMode(mem, TRANSPARENT as i32);
+
+        let fill = |r: RECT, color| {
+            let brush = CreateSolidBrush(color);
+            FillRect(mem, &r, brush);
+            DeleteObject(brush);
+        };
+        let text = |value: &str, mut r: RECT, flags| {
+            let value = wide(value);
+            DrawTextW(
+                mem, value.as_ptr(), (value.len() - 1) as i32, &mut r,
+                DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | flags,
+            );
+        };
+        let palette = ui_theme::palette();
+        fill(rc, palette.bg);
+        SetTextColor(mem, palette.text);
+
+        let head = frame::scale(h, HEAD);
+        let address_h = frame::scale(h, ADDRESS);
+        let toolbar_h = frame::scale(h, TOOLBAR);
+        let tab_h = frame::scale(h, TAB);
+        let row_h = frame::scale(h, ROW);
+        let pad = frame::scale(h, 8);
+        let button_w = frame::scale(h, 40);
+        fill(RECT { bottom: head, ..rc }, palette.plain_head_bg);
+
+        // Native title strip and window controls.
+        let title_name = with(|s| {
+            s.model.view.context().and_then(|c| c.box_id)
+                .and_then(|id| s.boxes.iter().find(|b| b.id == id))
+                .map(|b| b.name.clone()).unwrap_or_else(|| "?? ??".into())
+        });
+        text(
+            &window_title(&title_name),
+            RECT { left: pad, top: 0, right: rc.right - frame::scale(h, 160), bottom: head },
+            DT_END_ELLIPSIS,
+        );
+        let sticky = with(|s| s.model.sticky);
+        for (index, label) in ["?", "?", "?", if sticky { "?" } else { "?" }].iter().enumerate() {
+            let right = rc.right - index as i32 * button_w;
+            text(*label, RECT { left: right - button_w, top: 0, right, bottom: head }, DT_CENTER);
+        }
+
+        let (address, active_space, icons) = with(|s| {
+            let context = s.model.view.context();
+            let panel = s.model.explorer.panels.iter()
+                .find(|p| p.id == s.model.explorer.active_panel);
+            let box_id = panel.and_then(|p| p.box_id).or_else(|| context.and_then(|c| c.box_id));
+            let space = panel.and_then(|p| p.space.as_deref())
+                .or_else(|| context.and_then(|c| c.space.as_deref()));
+            let box_name = box_id.and_then(|id| s.boxes.iter().find(|b| b.id == id))
+                .map(|b| b.name.as_str()).unwrap_or("?? ??");
+            let space_name = space.and_then(|v| SPACES.iter().position(|x| *x == Some(v)))
+                .map(|i| LABELS[i]).unwrap_or("??");
+            let address = format!("?????  ?  {box_name}  ?  {space_name}");
+            (address, space.map(str::to_owned), panel.is_some_and(|p| p.view == "icons"))
+        });
+
+        // Address row: the displayed path follows the active virtual panel.
+        let address_top = head;
+        let address_bottom = address_top + address_h;
+        fill(RECT { left: 0, top: address_top, right: rc.right, bottom: address_bottom }, palette.bg);
+        text("??", RECT { left: pad, top: address_top, right: frame::scale(h, 64), bottom: address_bottom }, DT_LEFT);
+        text(
+            &address,
+            RECT { left: frame::scale(h, 64), top: address_top + frame::scale(h, 4), right: rc.right - frame::scale(h, 16), bottom: address_bottom - frame::scale(h, 4) },
+            DT_END_ELLIPSIS,
+        );
+
+        // Toolbar buttons include the layout menu and both saved view modes.
+        let toolbar_top = address_bottom;
+        let toolbar_bottom = toolbar_top + toolbar_h;
+        fill(RECT { left: 0, top: toolbar_top, right: rc.right, bottom: toolbar_bottom }, palette.plain_head_bg);
+        for (index, label) in ["?? ?? ?", "??", "? ???", "????"].iter().enumerate() {
+            let left = pad + index as i32 * frame::scale(h, 106);
+            let button = RECT {
+                left, top: toolbar_top + frame::scale(h, 3),
+                right: left + frame::scale(h, 104), bottom: toolbar_bottom - frame::scale(h, 3),
+            };
+            if (index == 1 && !icons) || (index == 2 && icons) {
+                fill(button, palette.selected);
+            }
+            text(*label, button, DT_CENTER | DT_END_ELLIPSIS);
+        }
+
+        // Existing category tabs remain available below the explorer controls.
+        let tab_top = toolbar_bottom;
+        for (index, label) in LABELS.iter().enumerate() {
+            let left = index as i32 * rc.right / LABELS.len() as i32;
+            let right = (index as i32 + 1) * rc.right / LABELS.len() as i32;
+            if SPACES[index] == active_space.as_deref() {
+                fill(RECT { left, top: tab_top + tab_h - frame::scale(h, 3), right, bottom: tab_top + tab_h }, palette.accent_line);
+            }
+            text(*label, RECT { left, top: tab_top, right, bottom: tab_top + tab_h }, DT_CENTER | DT_END_ELLIPSIS);
+        }
+
+        let list_top = list_y(h);
+        let (query, item_count, selected_id, message, truncated) = with(|s| {
+            let context = s.model.view.context();
+            let message = match &s.model.view {
+                View::Loading(_) => "???? ?".to_string(),
+                View::Failed { error, .. } => error.clone(),
+                View::Empty { reason, .. } => reason.clone(),
+                _ if s.filtered.is_empty() => "??? ????. ?? ?????? ???? F5? ?? ?????".into(),
+                _ => String::new(),
+            };
+            (context.map(|c| c.query.clone()).unwrap_or_default(), s.filtered.len(),
+             context.and_then(|c| c.selection), message, s.truncated)
+        });
+        if !query.is_empty() {
+            text(
+                &format!("??: {query} ? {item_count}? ? Esc ???"),
+                RECT { left: pad, top: tab_top + tab_h, right: rc.right - pad, bottom: list_top },
+                DT_END_ELLIPSIS,
+            );
+        }
+        if !message.is_empty() {
+            text(&message, RECT { left: pad, top: list_top, right: rc.right - pad, bottom: list_top + row_h }, DT_END_ELLIPSIS);
+        }
+
+        // The same layout rectangles drive both panel rendering and split hit tests.
+        with(|s| {
+            let body_h = rc.bottom - frame::scale(h, STATUS) - list_top;
+            let gutter = frame::scale(h, GUTTER);
+            let layout = &s.model.explorer;
+            let panel_rects = layout.panel_rects(rc.right, body_h, gutter);
+            for split in layout.split_rects(rc.right, body_h, gutter) {
+                fill(RECT { left: split.left, top: list_top + split.top, right: split.right, bottom: list_top + split.bottom }, palette.border);
+            }
+            for (panel_index, panel_rect) in panel_rects.iter().enumerate() {
+                let panel = layout.panels.get(panel_index);
+                let panel_id = format!("p{}", panel_index + 1);
+                let panel_is_active = layout.active_panel == panel_id;
+                let rect = RECT {
+                    left: panel_rect.left, top: list_top + panel_rect.top,
+                    right: panel_rect.right, bottom: list_top + panel_rect.bottom,
+                };
+                if panel_is_active { frame::own_border(mem, rect); }
+
+                let box_id = panel.and_then(|p| p.box_id).or_else(|| if panel_is_active { s.model.view.context().and_then(|c| c.box_id) } else { None });
+                let box_name = box_id.and_then(|id| s.boxes.iter().find(|b| b.id == id))
+                    .map(|b| b.name.as_str()).unwrap_or("?? ??");
+                let panel_space = panel.and_then(|p| p.space.as_deref())
+                    .or_else(|| if panel_is_active { s.model.view.context().and_then(|c| c.space.as_deref()) } else { None });
+                let space_name = panel_space.and_then(|v| SPACES.iter().position(|x| *x == Some(v)))
+                    .map(|i| LABELS[i]).unwrap_or("??");
+                text(
+                    &format!("{box_name}  ?  {space_name}"),
+                    RECT { left: panel_rect.left + pad, top: rect.top + pad, right: panel_rect.right - pad, bottom: rect.top + row_h },
+                    DT_END_ELLIPSIS,
+                );
+
+                let icons = panel.is_some_and(|p| p.view == "icons");
+                if icons {
+                    let cell_w = frame::scale(h, 120);
+                    let cell_h = frame::scale(h, 100);
+                    let columns = ((panel_rect.right - panel_rect.left) / cell_w).max(1);
+                    let capacity = ((panel_rect.bottom - row_h).max(0) / cell_h) as usize * columns as usize;
+                    for (index, id) in s.filtered.iter().enumerate().skip(s.top).take(capacity) {
+                        if let Some(item) = s.items.iter().find(|item| item.id == *id) {
+                            let offset = index - s.top;
+                            let left = panel_rect.left + (offset as i32 % columns) * cell_w;
+                            let top = list_top + panel_rect.top + row_h + (offset as i32 / columns) * cell_h;
+                            let cell = RECT { left, top, right: (left + cell_w).min(panel_rect.right), bottom: (top + cell_h).min(rect.bottom) };
+                            let selected = selected_id == Some(*id);
+                            if selected { fill(cell, palette.selected); }
+                            SetTextColor(mem, palette.row_text(selected, palette.text));
+                            text("?", RECT { left: cell.left, top: cell.top, right: cell.right, bottom: cell.top + frame::scale(h, 48) }, DT_CENTER);
+                            text(&item.display_name, RECT { left: cell.left + pad, top: cell.top + frame::scale(h, 48), right: cell.right - pad, bottom: cell.bottom }, DT_CENTER | DT_END_ELLIPSIS);
+                        }
+                    }
+                } else {
+                    let capacity = ((panel_rect.bottom - row_h).max(0) / row_h) as usize;
+                    for (index, id) in s.filtered.iter().enumerate().skip(s.top).take(capacity) {
+                        if let Some(item) = s.items.iter().find(|item| item.id == *id) {
+                            let top = list_top + panel_rect.top + row_h + (index - s.top) as i32 * row_h;
+                            let row = RECT { left: panel_rect.left, top, right: panel_rect.right, bottom: top + row_h };
+                            let selected = selected_id == Some(*id);
+                            if selected { fill(row, palette.selected); }
+                            SetTextColor(mem, palette.row_text(selected, palette.text));
+                            let category = SPACES.iter().position(|space| *space == Some(item.space.as_str())).unwrap_or(0);
+                            text(
+                                &format!("[{}] {} ? {}", item.kind, item.display_name, LABELS[category]),
+                                RECT { left: row.left + pad, top: row.top, right: row.right - pad, bottom: row.bottom },
+                                DT_END_ELLIPSIS,
+                            );
+                        }
+                    }
+                }
+            }
+        });
+
+        SetTextColor(mem, palette.text);
+        let status_top = rc.bottom - frame::scale(h, STATUS);
+        fill(RECT { left: 0, top: status_top, right: rc.right, bottom: rc.bottom }, palette.plain_head_bg);
+        let selected_count = usize::from(selected_id.is_some());
+        let status_right = if truncated { rc.right - frame::scale(h, 220) } else { rc.right - pad };
+        text(
+            &format!("{item_count}? ?? ? {selected_count}? ?? ? {}", with(|s| if s.model.explorer.panel_count > 1 { format!("{}? ??", s.model.explorer.panel_count) } else { "?? 1".into() })),
+            RECT { left: pad, top: status_top, right: status_right, bottom: rc.bottom },
+            DT_END_ELLIPSIS,
+        );
+        if truncated {
+            text("5,000???? ????", RECT { left: rc.right - frame::scale(h, 220), top: status_top, right: rc.right - pad, bottom: rc.bottom }, DT_END_ELLIPSIS);
+        }
+
+        frame::own_border(mem, rc);
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, oldfont);
+        DeleteObject(font);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        EndPaint(h, &ps);
+    }
+}
 unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{match msg{
  WM_PAINT=>{paint(h);0},WM_ERASEBKGND=>1,WM_NCCALCSIZE if w!=0=>0,
  WM_NCHITTEST=>{let(x,y)=xy(l);let mut p=POINT{x,y};ScreenToClient(h,&mut p);let r=size(h);frame::frame_hit(p.x,p.y,r.right,r.bottom,frame::scale(h,6),frame::scale(h,HEAD),p.x<frame::scale(h,260)||button(h,p.x,p.y).is_some(),IsZoomed(h)!=0,false).code()as isize},
@@ -120,8 +337,8 @@ unsafe extern "system" fn wndproc(h:HWND,msg:u32,w:usize,l:isize)->isize{unsafe{
  WM_GETMINMAXINFO=>{let p=&mut*(l as *mut MINMAXINFO);p.ptMinTrackSize=POINT{x:frame::scale(h,360),y:frame::scale(h,160)};0},
  WM_SIZE=>{draw_later();0},WM_EXITSIZEMOVE=>{save();0},WM_DESTROY=>{edit(|s|s.hwnd=null_mut());0},
  WM_LBUTTONDOWN=>{let(x,y)=xy(l);if y>=list_y(h){drag_split(h,x,y);}else{edit(|s|s.pressed=button(h,x,y));}0},
- WM_MOUSEMOVE=>{let(x,y)=xy(l);if with(|s|s.drag_split.is_some()){update_split(h,x,y);}else{let rc=size(h);let top=list_y(h);let hit=with(|s|s.model.explorer.split_hit(rc.right,rc.bottom-frame::scale(h,STATUS)-top,frame::scale(h,GUTTER),x,y-top,frame::scale(h,8)));if let Some(hit)=hit{let cursor=if matches!(hit,crate::vf_layout::SplitHit::Column(_)){32644usize}else{32645usize};SetCursor(LoadCursorW(null_mut(),cursor as *const u16));}}0},
- WM_LBUTTONUP=>{let(x,y)=xy(l);if with(|s|s.drag_split.is_some()){edit(|s|s.drag_split=None);ReleaseCapture();save();draw_later();return 0;}let pressed=edit(|s|s.pressed.take());let b=button(h,x,y);if b.is_some()||pressed.is_some(){if b==pressed{match b{Some(0)=>event(Event::Close),Some(1)=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});},Some(2)=>event(Event::Minimize),Some(3)=>{let on=with(|s|!s.model.sticky);event(Event::SetSticky(on));topmost(h);save();draw_later();},_=>{}}}}else if y<frame::scale(h,HEAD)&&x<frame::scale(h,260){boxes_menu(h);}else if y>=frame::scale(h,HEAD+ADDRESS)&&y<frame::scale(h,HEAD+ADDRESS+TOOLBAR){let idx=((x-frame::scale(h,8))/frame::scale(h,106)).clamp(0,3);match idx{0=>configure_panels(h,true),1=>edit(|s|s.icons=false),2=>edit(|s|s.icons=true),3=>event(Event::Refresh),_=>{}}draw_later();}else if y>=frame::scale(h,HEAD+ADDRESS+TOOLBAR)&&y<frame::scale(h,HEAD+ADDRESS+TOOLBAR+TAB){let i=(x*5/size(h).right.max(1)).clamp(0,4)as usize;edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[i].map(String::from)));}else if let Some(i)=row_at(h,l){choose(i);}0},
+  WM_MOUSEMOVE=>{let(x,y)=xy(l);if with(|s|s.drag_split.is_some()){update_split(h,x,y);}else{let rc=size(h);let top=list_y(h);let hit=with(|s|s.model.explorer.split_hit(rc.right,rc.bottom-frame::scale(h,STATUS)-top,frame::scale(h,GUTTER),x,y-top,frame::scale(h,8)));if let Some(hit)=hit{let cursor=if matches!(hit,crate::vf_layout::SplitHit::Column(_)){32644usize}else{32645usize};SetCursor(LoadCursorW(null_mut(),cursor as *const u16));}else{SetCursor(LoadCursorW(null_mut(),IDC_ARROW));}}0},
+  WM_LBUTTONUP=>{let(x,y)=xy(l);if with(|s|s.drag_split.is_some()){let layout=edit(|s|{s.drag_split.take().map(|_|s.model.explorer.clone())});ReleaseCapture();if let Some(layout)=layout{let _=persist_layout(&layout);}save();draw_later();return 0;}let pressed=edit(|s|s.pressed.take());let b=button(h,x,y);if b.is_some()||pressed.is_some(){if b==pressed{match b{Some(0)=>event(Event::Close),Some(1)=>{ShowWindow(h,if IsZoomed(h)!=0{SW_RESTORE}else{SW_MAXIMIZE});},Some(2)=>event(Event::Minimize),Some(3)=>{let on=with(|s|!s.model.sticky);event(Event::SetSticky(on));topmost(h);save();draw_later();},_=>{}}}}else if y<frame::scale(h,HEAD)&&x<frame::scale(h,260){boxes_menu(h);}else if y>=frame::scale(h,HEAD+ADDRESS)&&y<frame::scale(h,HEAD+ADDRESS+TOOLBAR){let idx=((x-frame::scale(h,8))/frame::scale(h,106)).clamp(0,3);match idx{0=>configure_panels(h,true),1=>set_view_mode(false),2=>set_view_mode(true),3=>event(Event::Refresh),_=>{}}draw_later();}else if y>=frame::scale(h,HEAD+ADDRESS+TOOLBAR)&&y<frame::scale(h,HEAD+ADDRESS+TOOLBAR+TAB){let i=(x*5/size(h).right.max(1)).clamp(0,4)as usize;edit(|s|{s.committed.clear();s.comp.clear();s.top=0;});event(Event::ChangeSpace(SPACES[i].map(String::from)));}else if let Some(i)=row_at(h,l){choose(i);}0},
  WM_LBUTTONDBLCLK=>{if let Some(i)=row_at(h,l){choose(i);event(Event::Open);}0},
  WM_RBUTTONUP=>{if let Some(i)=row_at(h,l){choose(i);item_menu(h,l);}0},
  WM_MOUSEWHEEL=>{move_selection(h,if ((w>>16)as u16)as i16>0{-3}else{3});0},

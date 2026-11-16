@@ -79,22 +79,34 @@ impl Layout {
     /// 클라이언트 좌표에서 각 패널 사각형을 계산한다. split 값은 축별 가중치다.
     pub fn panel_rects(&self, width:i32, height:i32, gutter:i32) -> Vec<Rect> {
         let w=width.max(0); let h=height.max(0); let g=gutter.max(0);
-        let cw=if self.panel_count==1 { vec![w] } else { weighted(w-g,&self.column_splits) };
-        let rh=if self.panel_count<=2 { vec![h] } else { weighted(h-g,&self.row_splits) };
+        let gx=g.min(w); let gy=g.min(h);
+        let cw=if self.panel_count==1 { vec![w] } else { weighted(w-gx,&self.column_splits) };
+        let rh=if self.panel_count<=2 { vec![h] } else { weighted(h-gy,&self.row_splits) };
         match self.template {
             Template::Single=>vec![Rect{left:0,top:0,right:w,bottom:h}],
-            Template::Columns=>{let x=cw.first().copied().unwrap_or(w);vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+g,top:0,right:w,bottom:h}]},
-            Template::LeftOneRightTwo=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+g;vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+g,top:0,right:w,bottom:y},Rect{left:x+g,top:y2,right:w,bottom:h}]},
-            Template::Grid=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+g;vec![Rect{left:0,top:0,right:x,bottom:y},Rect{left:x+g,top:0,right:w,bottom:y},Rect{left:0,top:y2,right:x,bottom:h},Rect{left:x+g,top:y2,right:w,bottom:h}]},
+            Template::Columns=>{let x=cw.first().copied().unwrap_or(w);vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+gx,top:0,right:w,bottom:h}]},
+            Template::LeftOneRightTwo=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+gy;vec![Rect{left:0,top:0,right:x,bottom:h},Rect{left:x+gx,top:0,right:w,bottom:y},Rect{left:x+gx,top:y2,right:w,bottom:h}]},
+            Template::Grid=>{let x=cw.first().copied().unwrap_or(w/2);let y=rh.first().copied().unwrap_or(h/2);let y2=y+gy;vec![Rect{left:0,top:0,right:x,bottom:y},Rect{left:x+gx,top:0,right:w,bottom:y},Rect{left:0,top:y2,right:x,bottom:h},Rect{left:x+gx,top:y2,right:w,bottom:h}]},
         }
+    }
+    /// 패널 사이에 실제로 그릴 분할선 사각형을 반환한다.
+    pub fn split_rects(&self,width:i32,height:i32,gutter:i32)->Vec<Rect>{
+        let w=width.max(0);let h=height.max(0);let r=self.panel_rects(w,h,gutter);let mut out=Vec::new();
+        match self.template {
+            Template::Single=>{},
+            Template::Columns=>out.push(Rect{left:r[0].right,top:0,right:r[1].left,bottom:h}),
+            Template::LeftOneRightTwo=>{out.push(Rect{left:r[0].right,top:0,right:r[1].left,bottom:h});out.push(Rect{left:r[1].left,top:r[1].bottom,right:w,bottom:r[2].top});},
+            Template::Grid=>{out.push(Rect{left:r[0].right,top:0,right:r[1].left,bottom:h});out.push(Rect{left:0,top:r[0].bottom,right:r[0].right,bottom:r[2].top});out.push(Rect{left:r[1].left,top:r[1].bottom,right:w,bottom:r[3].top});},
+        }
+        out.retain(|x|x.left<x.right&&x.top<x.bottom);out
     }
     /// 분할선에 대한 포인터 히트 테스트. 끝점은 각 분할선의 실제 범위로 제한한다.
     pub fn split_hit(&self,width:i32,height:i32,gutter:i32,x:i32,y:i32,tolerance:i32)->Option<SplitHit>{
-        let rects=self.panel_rects(width,height,gutter);let g=gutter.max(0);let t=tolerance.max(1);
-        let col=match self.template {Template::Single=>None,Template::Columns=>Some(rects[0].right),Template::LeftOneRightTwo|Template::Grid=>Some(rects[0].right)};
-        if let Some(cx)=col {let (a,b)=if self.template==Template::LeftOneRightTwo{(0,height)}else if self.template==Template::Grid{(0,height)}else{(0,height)};if (x-cx).abs()<=t.max(g/2)&&y>=a&&y<=b{return Some(SplitHit::Column(0));}}
-        let row=match self.template {Template::LeftOneRightTwo=>Some(rects[1].bottom),Template::Grid=>Some(rects[0].bottom),_=>None};
-        if let Some(ry)=row {let (a,b)=if self.template==Template::LeftOneRightTwo{(rects[1].left,width)}else{(0,width)};if (y-ry).abs()<=t.max(g/2)&&x>=a&&x<=b{return Some(SplitHit::Row(0));}}
+        let rects=self.panel_rects(width,height,gutter);let splits=self.split_rects(width,height,gutter);let t=tolerance.max(0);
+        let near=|p:i32,start:i32,end:i32|p>=start.saturating_sub(t)&&p<=end.saturating_add(t);
+        if rects.len()>1&&splits.first().is_some_and(|r|near(x,r.left,r.right)&&y>=r.top&&y<r.bottom){return Some(SplitHit::Column(0));}
+        let edge_clearance=gutter.max(0);
+        if splits.iter().skip(1).any(|r|near(y,r.top,r.bottom)&&x>=r.left.saturating_add(edge_clearance)&&x<r.right.saturating_sub(edge_clearance)){return Some(SplitHit::Row(0));}
         None
     }
     pub fn for_count(count: u8) -> Self {
@@ -418,4 +430,13 @@ mod tests {
     #[test] fn three_panel_row_hit_only_applies_to_right_side(){let l=Layout::for_count(3);assert_eq!(l.split_hit(800,400,8,600,200,2),Some(SplitHit::Row(0)));assert_eq!(l.split_hit(800,400,8,200,200,2),None);}
     #[test] fn split_hit_tolerance_includes_nearby_cursor(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,405,200,2),Some(SplitHit::Column(0)));}
     #[test] fn split_hit_rejects_distant_cursor(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,430,200,2),None);}
+    #[test] fn grid_row_split_is_hit_on_both_visible_segments(){let l=Layout::for_count(4);assert_eq!(l.split_hit(800,400,8,200,200,2),Some(SplitHit::Row(0)));assert_eq!(l.split_hit(800,400,8,600,200,2),Some(SplitHit::Row(0)));}
+    #[test] fn grid_row_split_rejects_points_outside_horizontal_band(){let l=Layout::for_count(4);assert_eq!(l.split_hit(800,400,8,200,180,2),None);assert_eq!(l.split_hit(800,400,8,600,220,2),None);}
+    #[test] fn row_split_tolerance_extends_beyond_gutter_edge(){let l=Layout::for_count(3);assert_eq!(l.split_hit(800,400,8,600,205,2),Some(SplitHit::Row(0)));}
+    #[test] fn row_split_rejects_column_gutter_intersection(){let l=Layout::for_count(3);assert_eq!(l.split_hit(800,400,8,400,200,2),Some(SplitHit::Column(0)));}
+    #[test] fn column_hit_is_restricted_to_window_height(){let l=Layout::for_count(2);assert_eq!(l.split_hit(800,400,8,400,401,2),None);}
+    #[test] fn narrow_client_rectangles_stay_inside_bounds(){for n in 1..=4{for(w,h)in[(0,0),(1,1),(4,3),(12,5)]{for r in Layout::for_count(n).panel_rects(w,h,8){assert!(r.left>=0&&r.top>=0&&r.right<=w&&r.bottom<=h&&r.left<=r.right&&r.top<=r.bottom);}}}}
+    #[test] fn split_rectangles_match_each_template_gutter(){assert!(Layout::for_count(1).split_rects(800,400,8).is_empty());assert_eq!(Layout::for_count(2).split_rects(800,400,8),vec![Rect{left:396,top:0,right:404,bottom:400}]);assert_eq!(Layout::for_count(3).split_rects(800,400,8),vec![Rect{left:396,top:0,right:404,bottom:400},Rect{left:404,top:196,right:800,bottom:204}]);assert_eq!(Layout::for_count(4).split_rects(800,400,8),vec![Rect{left:396,top:0,right:404,bottom:400},Rect{left:0,top:196,right:396,bottom:204},Rect{left:404,top:196,right:800,bottom:204}]);}
+    #[test] fn split_hit_follows_adjusted_column_ratio(){let mut l=Layout::for_count(2);l.column_splits=vec![2500,7500];assert_eq!(l.panel_rects(1000,500,8)[0].right,248);assert_eq!(l.split_hit(1000,500,8,252,250,2),Some(SplitHit::Column(0)));assert_eq!(l.split_hit(1000,500,8,500,250,2),None);}
+    #[test] fn three_panel_row_hit_starts_at_right_panel(){let l=Layout::for_count(3);assert_eq!(l.split_hit(800,400,8,500,200,2),Some(SplitHit::Row(0)));assert_eq!(l.split_hit(800,400,8,200,200,2),None);}
 }
