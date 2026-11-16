@@ -344,6 +344,33 @@ class TableUnitsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             units.export_resized(self.records["행사시간표 · 모양 1"]["id"], SOURCE, SOURCE, row_count=3)
 
+    def test_catalog_preview_pua_zero_and_label_shape_3_escaped(self):
+        """표 서식모음 카탈로그 미리보기 텍스트에 한컴 PUA 문자가 남지 않고 라벨 서식·모양 3이 안전하게 표시되는지 검증."""
+        import re
+        from docfit_core.hwp_pua import has_pua_chars
+
+        cat = catalog.list_catalog(SOURCE)
+        plane15_pua_re = re.compile(r"[\U000F0000-\U000FFFFD]")
+        leaked = []
+
+        label_3 = None
+        for category in cat.get("categories", []):
+            if "라벨" in category.get("name", ""):
+                for tmpl in category.get("templates", []):
+                    if "모양 3" in tmpl.get("name", ""):
+                        label_3 = tmpl
+            for tmpl in category.get("templates", []):
+                for row in tmpl.get("cells", []):
+                    for cell_text in row:
+                        if plane15_pua_re.search(cell_text):
+                            leaked.append(cell_text)
+
+        self.assertEqual(leaked, [], "카탈로그 미리보기에 PUA 문자가 남아있습니다.")
+        self.assertIsNotNone(label_3)
+        self.assertEqual(label_3["cells"][0][0], "[1] 푸른하늘 은하수")
+        self.assertFalse(has_pua_chars(label_3["cells"][0][0]))
+        self.assertEqual(SOURCE.read_bytes(), self.original)
+
     def test_detect_plan_without_constants(self):
         expected = {
             "행사시간표 · 모양 1": {"row": units._axis(1, 1, 6), "col": None},
