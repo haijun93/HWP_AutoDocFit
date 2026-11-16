@@ -1,4 +1,4 @@
-"""문서뷰폴더(DocGridService): 폴더 내 문서 목록과 썸네일/글자 카드 제공 서비스 (DVF2).
+"""문서뷰(DocGridService): 폴더 내 문서 목록과 썸네일/글자 카드 제공 서비스 (DVF2).
 
 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF)를 스캔하여 목록을 반환하고,
 기존 타임머신 썸네일 엔진(docfit_core/timemachine/thumbs.py) 및 디스크 캐시를 재사용한다.
@@ -548,11 +548,11 @@ class DocGridService:
             return {
                 "ok": False,
                 "code": "NOT_AVAILABLE",
-                "message": f"지원하지 않는 문서뷰폴더 명령입니다: {action}",
+                "message": f"지원하지 않는 문서뷰 명령입니다: {action}",
             }
         except FileNotFoundError as exc:
             return {"ok": False, "code": "NOT_FOUND", "message": str(exc)}
         except Exception as exc:
-            logger.exception("문서뷰폴더 명령 실패 (%s): %s", action, exc)
+            logger.exception("문서뷰 명령 실패 (%s): %s", action, exc)
             return {"ok": False, "code": "DOC_GRID_ERROR", "message": f"작업을 완료하지 못했습니다: {exc}"}
 

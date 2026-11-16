@@ -6,7 +6,7 @@ import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
 
-/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7), 문서뷰폴더(8)를 두고 파일변환(9)을 맨 끝에 둔다.
+/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7), 문서뷰(8)를 두고 파일변환(9)을 맨 끝에 둔다.
 const kTabPaint = 5;
 const kTabPhotoEdit = 5;
 const kTabFileRename = 6;
@@ -40,7 +40,7 @@ class WorkspaceTabScope extends InheritedWidget {
 
   final VoidCallback goHome;
 
-  /// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 문서뷰폴더·9 파일변환)로 이동한다.
+  /// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 문서뷰·9 파일변환)로 이동한다.
   final ValueChanged<int> selectTab;
 
   static WorkspaceTabScope? maybeOf(BuildContext context) =>
@@ -170,7 +170,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '붙임사진 편집',
     '파일명 일괄변경',
     '몽땅검색',
-    '문서뷰폴더',
+    '문서뷰',
     // 파일변환은 항상 맨 끝(2026-10-30 사용자 지시).
     '파일변환',
   ];

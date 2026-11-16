@@ -123,7 +123,7 @@ class TimemachineAdapter extends StatelessWidget {
   );
 }
 
-/// Workspace adapter for Tab 9: 문서뷰폴더 (Document thumbnail grid view).
+/// Workspace adapter for Tab 9: 문서뷰 (Document thumbnail grid view).
 class DocGridAdapter extends StatelessWidget {
   const DocGridAdapter({super.key, required this.api, this.directoryPicker});
 

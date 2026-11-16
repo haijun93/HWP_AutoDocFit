@@ -32,7 +32,7 @@ String _formatBytes(int bytes) {
   return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 }
 
-/// 문서뷰폴더 화면 (DVF3).
+/// 문서뷰 화면 (DVF3).
 /// 폴더를 선택하여 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF)를 썸네일 격자로 탐색하고,
 /// 화면에 보일 때만 썸네일을 요청하며, 더블클릭 시 시스템 연결 프로그램으로 연다.
 class DocGridScreen extends StatefulWidget {

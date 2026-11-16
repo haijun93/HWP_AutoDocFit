@@ -1,4 +1,4 @@
-"""문서뷰폴더(DocGridService) 시험: 목록·캐시·글자 카드·클라우드 제외·동시성 (DVF2)."""
+"""문서뷰(DocGridService) 시험: 목록·캐시·글자 카드·클라우드 제외·동시성 (DVF2)."""
 import io
 import os
 import stat

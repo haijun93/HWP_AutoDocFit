@@ -36,7 +36,7 @@ void main() {
       paint: _page('그림판 화면'),
       fileRename: _page('파일이름 화면'),
       timemachine: _page('몽땅검색 화면'),
-      docGrid: _page('문서뷰폴더 화면'),
+      docGrid: _page('문서뷰 화면'),
       initialIndex: 9,
     )));
     await tester.pumpAndSettle();
@@ -176,7 +176,7 @@ void main() {
           paint: _page('그림판 화면'),
           fileRename: _page('파일이름 화면'),
           timemachine: _page('몽땅검색 화면'),
-          docGrid: _page('문서뷰폴더 화면'),
+          docGrid: _page('문서뷰 화면'),
         ),
       ),
     );

@@ -1,4 +1,4 @@
-"""문서뷰폴더(DocGridService) 브리지 및 서비스 통합 시험 (DVF3)."""
+"""문서뷰(DocGridService) 브리지 및 서비스 통합 시험 (DVF3)."""
 import json
 import os
 import tempfile

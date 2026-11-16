@@ -17,7 +17,7 @@ void main() {
   TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
       .setMockMethodCallHandler(windowChannel, (call) async => {'ok': true, 'active': true});
   testWidgets('workspace sidebar shows new document first and gates developer toggles', (tester) async {
-    // 탭이 하나 늘어(문서뷰폴더) 기본 시험 화면(800x600)에서는 자료함 단추가 목록 아래로 밀려 그려지지 않는다.
+    // 탭이 하나 늘어(문서뷰) 기본 시험 화면(800x600)에서는 자료함 단추가 목록 아래로 밀려 그려지지 않는다.
     tester.view.physicalSize = const Size(1000, 1400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);

@@ -7,7 +7,7 @@ const _kTestPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 void main() {
-  testWidgets('문서뷰폴더: 폴더를 선택하면 빈 폴더 안내 문구가 표시된다', (tester) async {
+  testWidgets('문서뷰: 폴더를 선택하면 빈 폴더 안내 문구가 표시된다', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -54,7 +54,7 @@ void main() {
     expect(find.text('0개 문서'), findsOneWidget);
   });
 
-  testWidgets('문서뷰폴더: 문서가 있는 폴더 선택 시 격자로 표시되고 썸네일을 요청한다', (tester) async {
+  testWidgets('문서뷰: 문서가 있는 폴더 선택 시 격자로 표시되고 썸네일을 요청한다', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -152,7 +152,7 @@ void main() {
     expect(find.byType(Image), findsWidgets);
   });
 
-  testWidgets('문서뷰폴더: 문서 카드를 더블클릭하면 연결 프로그램으로 열기를 호출한다', (tester) async {
+  testWidgets('문서뷰: 문서 카드를 더블클릭하면 연결 프로그램으로 열기를 호출한다', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
