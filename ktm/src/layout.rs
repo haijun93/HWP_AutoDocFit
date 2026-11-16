@@ -370,6 +370,106 @@ pub fn display_result_indices(
         .collect()
 }
 
+/// Apply settings that affect which backend results are visible.
+pub fn filter_row_indices(
+    rows: &[crate::backend::Row],
+    settings: &crate::settings::Settings,
+    selected_folder: Option<&str>,
+) -> Vec<usize> {
+    let root = selected_folder.map(normalize_path);
+    let excluded: Vec<String> = settings
+        .excluded_directories
+        .iter()
+        .map(|p| normalize_path(p))
+        .collect();
+    let indices: Vec<usize> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(i, row)| {
+            let path = normalize_path(&row.path);
+            let parent = normalize_path(&row.parent);
+            if !settings.include_subfolders && root.as_deref().is_some_and(|root| parent != root) {
+                return None;
+            }
+            (!excluded
+                .iter()
+                .any(|dir| path == *dir || path.starts_with(&format!("{dir}\\"))))
+            .then_some(i)
+        })
+        .collect();
+    let grouped = if settings.version_grouping {
+        let versions = crate::backend::group_document_versions(
+            &indices.iter().map(|i| rows[*i].clone()).collect::<Vec<_>>(),
+        );
+        versions
+            .iter()
+            .filter_map(|row| indices.iter().find(|i| rows[**i].path == row.path).copied())
+            .collect()
+    } else {
+        indices
+    };
+    grouped
+        .into_iter()
+        .take(settings.bounded_max_results())
+        .collect()
+}
+
+pub fn settings_visible_indices(
+    rows: &[crate::backend::Row],
+    settings: &crate::settings::Settings,
+    selected_folder: Option<&str>,
+    query: &str,
+    exclude_filename: bool,
+    types: &[String],
+    collapsed_filename: bool,
+    collapsed_body: bool,
+) -> Vec<usize> {
+    let allowed = filter_row_indices(rows, settings, selected_folder);
+    display_result_indices(
+        rows,
+        query,
+        exclude_filename,
+        types,
+        collapsed_filename,
+        collapsed_body,
+    )
+    .into_iter()
+    .filter(|i| allowed.contains(i))
+    .collect()
+}
+
+fn normalize_path(path: &str) -> String {
+    path.trim()
+        .trim_end_matches(['\\', '/'])
+        .replace('/', "\\")
+        .to_lowercase()
+}
+
+pub fn density_row_height(compact: bool) -> i32 {
+    if compact { 56 } else { ROW_H }
+}
+
+pub fn click_opens(mode: u8, double_click: bool, folder_button: bool) -> bool {
+    folder_button
+        || if mode == 1 {
+            !double_click
+        } else {
+            double_click
+        }
+}
+
+pub fn row_meta(show_location: bool, show_date: bool, parent: &str, date: &str) -> String {
+    match (
+        show_location && !parent.is_empty(),
+        show_date && !date.is_empty(),
+    ) {
+        (true, true) => format!("{parent}  |  {date}"),
+        (true, false) => parent.to_string(),
+        (false, true) => date.to_string(),
+        (false, false) => String::new(),
+    }
+}
+
 pub fn copy_result_text(names: &[String], paths: &[String]) -> String {
     names
         .iter()
@@ -653,6 +753,158 @@ pub fn hit_folder_button(x: i32, y: i32, btn_rect: RECT) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn settings_row(path: &str, name: &str, parent: &str) -> crate::backend::Row {
+        crate::backend::Row {
+            path: path.into(),
+            name: name.into(),
+            parent: parent.into(),
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn density_heights_differ() {
+        assert_eq!(density_row_height(true), 56);
+        assert_eq!(density_row_height(false), 70);
+    }
+    #[test]
+    fn click_open_single_and_double_modes() {
+        assert!(click_opens(1, false, false));
+        assert!(!click_opens(1, true, false));
+        assert!(!click_opens(2, false, false));
+        assert!(click_opens(2, true, false));
+    }
+    #[test]
+    fn folder_button_opens_independent_of_policy() {
+        assert!(click_opens(2, false, true));
+    }
+    #[test]
+    fn meta_location_and_date_enabled() {
+        assert_eq!(
+            row_meta(true, true, "C:\\docs", "2026. 01. 01."),
+            "C:\\docs  |  2026. 01. 01."
+        );
+    }
+    #[test]
+    fn meta_location_toggle_hides_parent() {
+        assert_eq!(row_meta(false, true, "C:\\docs", "date"), "date");
+    }
+    #[test]
+    fn meta_date_toggle_hides_date() {
+        assert_eq!(row_meta(true, false, "C:\\docs", "date"), "C:\\docs");
+    }
+    #[test]
+    fn meta_both_toggles_hide_all() {
+        assert_eq!(row_meta(false, false, "C:\\docs", "date"), "");
+    }
+    #[test]
+    fn include_subfolders_off_keeps_only_selected_direct_children() {
+        let rows = vec![
+            settings_row("C:\\root\\a.txt", "a.txt", "C:\\root"),
+            settings_row("C:\\root\\sub\\b.txt", "b.txt", "C:\\root\\sub"),
+        ];
+        let s = crate::settings::Settings {
+            include_subfolders: false,
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, Some("c:/root")), vec![0]);
+    }
+    #[test]
+    fn excluded_directories_filter_descendants_case_insensitively() {
+        let rows = vec![
+            settings_row("C:\\root\\a.txt", "a.txt", "C:\\root"),
+            settings_row("C:\\root\\secret\\b.txt", "b.txt", "C:\\root\\secret"),
+        ];
+        let s = crate::settings::Settings {
+            excluded_directories: vec!["c:/ROOT/secret".into()],
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, None), vec![0]);
+    }
+    #[test]
+    fn result_limit_is_applied() {
+        let rows = (0..6)
+            .map(|i| settings_row(&format!("C:\\{i}.txt"), "x.txt", "C:\\"))
+            .collect::<Vec<_>>();
+        let s = crate::settings::Settings {
+            max_results: 50,
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, None).len(), 6);
+    }
+    #[test]
+    fn version_grouping_keeps_one_row_per_version_family() {
+        let rows = vec![
+            settings_row("C:\\A_v1.txt", "A_v1.txt", "C:\\"),
+            settings_row("C:\\A_v2.txt", "A_v2.txt", "C:\\"),
+        ];
+        let s = crate::settings::Settings {
+            version_grouping: true,
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, None).len(), 1);
+    }
+    #[test]
+    fn result_limit_clamps_large_config_to_200() {
+        let s = crate::settings::Settings {
+            max_results: 999,
+            ..Default::default()
+        };
+        let rows = (0..240)
+            .map(|i| settings_row(&format!("C:\\{i}.txt"), "x.txt", "C:\\"))
+            .collect::<Vec<_>>();
+        assert_eq!(filter_row_indices(&rows, &s, None).len(), 200);
+    }
+    #[test]
+    fn settings_visible_indices_apply_types_and_settings_limit() {
+        let rows = vec![
+            settings_row("C:\\a.pdf", "a.pdf", "C:\\"),
+            settings_row("C:\\b.txt", "b.txt", "C:\\"),
+        ];
+        let s = crate::settings::Settings {
+            max_results: 50,
+            ..Default::default()
+        };
+        assert_eq!(
+            settings_visible_indices(&rows, &s, None, "", false, &["pdf".into()], false, false),
+            vec![0]
+        );
+    }
+    #[test]
+    fn excluded_directory_does_not_match_neighbor_prefix() {
+        let rows = vec![settings_row(
+            "C:\\secretary\\a.txt",
+            "a.txt",
+            "C:\\secretary",
+        )];
+        let s = crate::settings::Settings {
+            excluded_directories: vec!["C:\\secret".into()],
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, None), vec![0]);
+    }
+    #[test]
+    fn direct_child_filter_without_root_keeps_existing_behavior() {
+        let rows = vec![settings_row(
+            "C:\\root\\sub\\b.txt",
+            "b.txt",
+            "C:\\root\\sub",
+        )];
+        let s = crate::settings::Settings {
+            include_subfolders: false,
+            ..Default::default()
+        };
+        assert_eq!(filter_row_indices(&rows, &s, None), vec![0]);
+    }
+    #[test]
+    fn row_height_baseline_is_70_points() {
+        assert_eq!(density_row_height(false), ROW_H);
+    }
+    #[test]
+    fn click_policy_rejects_non_single_click_values_as_double_click() {
+        assert!(!click_opens(9, false, false));
+        assert!(click_opens(9, true, false));
+    }
 
     #[test]
     fn modal_panel_stays_inside_normal_window() {

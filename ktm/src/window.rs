@@ -52,6 +52,7 @@ type Job = (
     Option<String>,
     Option<String>,
     tm_state::MatchMode,
+    usize,
 );
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
 type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
@@ -179,7 +180,12 @@ fn edit<R>(f: impl FnOnce(&mut Ui) -> R) -> R {
 }
 
 fn scale(h: HWND, n: i32) -> i32 {
-    frame::scale(h, n)
+    frame::scale(h, n) * with(|u| u.settings.bounded_ui_scale() as i32) / 100
+}
+
+fn row_height(h: HWND) -> i32 {
+    let compact = with(|u| u.settings.result_density == "compact");
+    scale(h, ktm::layout::density_row_height(compact)).max(1)
 }
 
 fn palette() -> ui_theme::Palette {
@@ -227,6 +233,14 @@ fn sync_edit_text(ed: HWND, text: &str) {
             SetWindowTextW(ed, q.as_ptr());
             SendMessageW(ed, 0x00b1, caret, caret as isize);
         }
+    }
+}
+
+fn default_mode(mode: &str) -> tm_state::SearchMode {
+    if mode == "filename" {
+        tm_state::SearchMode::Filename
+    } else {
+        tm_state::SearchMode::Keyword
     }
 }
 
@@ -287,7 +301,7 @@ fn event(h: HWND, e: Event) {
                 u.state.favorite_queries.clone(),
             )
         });
-        let mut s = Settings::load(&path).unwrap_or_default();
+        let mut s = with(|u| u.settings.clone());
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -370,6 +384,7 @@ fn event(h: HWND, e: Event) {
                     let cancel = Arc::new(AtomicBool::new(false));
                     edit(|u| u.cancel = cancel.clone());
                     let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
+                    let max_results = with(|u| u.settings.bounded_max_results());
                     {
                         let mut p = tx.0.lock().unwrap();
                         p.search = Some((
@@ -384,6 +399,7 @@ fn event(h: HWND, e: Event) {
                             folder,
                             ext,
                             match_mode,
+                            max_results,
                         ));
                         p.snippets = None;
                     }
@@ -408,7 +424,7 @@ fn event(h: HWND, e: Event) {
                 GetClientRect(h, &mut rc);
             }
             let top_y = list_top_coord(h, u);
-            let rh = scale(h, ROW_H);
+            let rh = row_height(h);
             let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
                 scale(h, PREVIEW_H)
             } else {
@@ -681,6 +697,7 @@ fn key(h: HWND, key: usize) -> bool {
                             u.state.selected_folder.clone(),
                             u.state.selected_ext.clone(),
                             u.state.options.match_mode,
+                            u.settings.bounded_max_results(),
                         );
                         (u.tx.clone(), job)
                     });
@@ -1028,7 +1045,14 @@ unsafe fn prerender(h: HWND) {
 unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
     unsafe {
         let mem = CreateCompatibleDC(dc);
+        if mem.is_null() {
+            return;
+        }
         let bitmap = CreateCompatibleBitmap(dc, r.right, r.bottom);
+        if bitmap.is_null() {
+            DeleteDC(mem);
+            return;
+        }
         let old = SelectObject(mem, bitmap);
         let oldfont = SelectObject(mem, with(|u| u.font));
         SetBkMode(mem, TRANSPARENT as i32);
@@ -1483,8 +1507,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 p.tab_bg,
             );
             let elapsed = u.timing.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
-            let display_ids = ktm::layout::display_result_indices(
+            let display_ids = ktm::layout::settings_visible_indices(
                 &u.rows,
+                &u.settings,
+                u.state.selected_folder.as_deref(),
                 &u.state.options.within_query,
                 u.state.options.exclude_filename,
                 &u.state.options.file_types,
@@ -1905,7 +1931,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
             // ⑦ 결과 목록 (클립보드 popup.rs 행 스타일)
             let top_y = list_top_coord(h, u);
-            let rh = scale(h, ROW_H);
+            let rh = row_height(h);
             let status_h = scale(h, STATUS_H);
             let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
                 scale(h, PREVIEW_H)
@@ -2056,10 +2082,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 // 둘째 줄: 경로 (흐리게)
                 SelectObject(mem, u.small);
                 let date = ktm::backend::format_korean_datetime(row.date).unwrap_or_default();
-                let meta = if date.is_empty() {
-                    row.parent.clone()
+                let (show_location, show_date) =
+                    (u.settings.show_location, u.settings.show_modified);
+                let location = if show_location {
+                    row.parent.as_str()
                 } else {
-                    format!("{}  |  {date}", row.parent)
+                    ""
+                };
+                let meta = match (location.is_empty(), date.is_empty() || !show_date) {
+                    (true, true) => String::new(),
+                    (false, true) => location.to_string(),
+                    (true, false) => date,
+                    (false, false) => format!("{location}  |  {date}"),
                 };
                 text(
                     &meta,
@@ -2098,36 +2132,38 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let line_bottom = line_top + line_h3;
 
                 // ① 일치 문장 옆 위치 배지 (쪽·시트·행 등 kfind 위치 메타가 있는 것만, 없으면 생략)
-                if let Some(badge) = ktm::backend::compute_location_badge(&row.location) {
-                    let bw_wide = wide(&badge);
-                    let mut bsize: SIZE = std::mem::zeroed();
-                    GetTextExtentPoint32W(
-                        mem,
-                        bw_wide.as_ptr(),
-                        (bw_wide.len() - 1) as i32,
-                        &mut bsize,
-                    );
-                    let badge_pad_x = scale(h, 4);
-                    let badge_w = bsize.cx + badge_pad_x * 2;
-                    let badge_h = bsize.cy + scale(h, 2);
-                    let badge_top = line_top + (line_h3 - badge_h) / 2;
-                    let badge_rc = RECT {
-                        left: snip_left,
-                        top: badge_top,
-                        right: snip_left + badge_w,
-                        bottom: badge_top + badge_h,
-                    };
-                    fill(badge_rc, p.tab_hover);
-                    let b_brush = CreateSolidBrush(p.divider);
-                    FrameRect(mem, &badge_rc, b_brush);
-                    DeleteObject(b_brush);
-                    text(
-                        &badge,
-                        badge_rc,
-                        p.text_sub,
-                        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-                    );
-                    snip_left += badge_w + scale(h, 6);
+                if u.settings.show_location {
+                    if let Some(badge) = ktm::backend::compute_location_badge(&row.location) {
+                        let bw_wide = wide(&badge);
+                        let mut bsize: SIZE = std::mem::zeroed();
+                        GetTextExtentPoint32W(
+                            mem,
+                            bw_wide.as_ptr(),
+                            (bw_wide.len() - 1) as i32,
+                            &mut bsize,
+                        );
+                        let badge_pad_x = scale(h, 4);
+                        let badge_w = bsize.cx + badge_pad_x * 2;
+                        let badge_h = bsize.cy + scale(h, 2);
+                        let badge_top = line_top + (line_h3 - badge_h) / 2;
+                        let badge_rc = RECT {
+                            left: snip_left,
+                            top: badge_top,
+                            right: snip_left + badge_w,
+                            bottom: badge_top + badge_h,
+                        };
+                        fill(badge_rc, p.tab_hover);
+                        let b_brush = CreateSolidBrush(p.divider);
+                        FrameRect(mem, &badge_rc, b_brush);
+                        DeleteObject(b_brush);
+                        text(
+                            &badge,
+                            badge_rc,
+                            p.text_sub,
+                            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                        );
+                        snip_left += badge_w + scale(h, 6);
+                    }
                 }
 
                 highlighted(
@@ -2528,15 +2564,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     ],
                     1 => &[
                         "저장 위치 표시",
-                        "수정 날짜 표시",
+                        "날짜 표시",
                         "하위 폴더 포함",
-                        "제외 디렉터리",
+                        "제외 디렉터리 추가",
                         "문서 버전 그룹핑",
                     ],
                     2 => &[
                         "Windows 로그인 자동 실행",
                         "트레이 최소화",
-                        "启动 시 숨김",
+                        "시작 시 숨김",
                         "최대 파일 크기 MB",
                         "클라우드/네트워크 본문 스킵",
                         "시스템 폴더 허용",
@@ -2545,27 +2581,83 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 };
                 let vals: Vec<String> = match active {
                     0 => vec![
-                        s.ui_theme,
-                        s.default_search_mode,
-                        s.max_results.to_string(),
-                        format!("{}%", s.ui_scale),
-                        s.result_density,
-                        format!("{}회 클릭", s.open_clicks),
+                        match s.ui_theme.as_str() {
+                            "light" => "밝게".to_string(),
+                            "dark" => "어둡게".to_string(),
+                            _ => "시스템".to_string(),
+                        },
+                        if s.default_search_mode == "filename" {
+                            "파일명".to_string()
+                        } else {
+                            "키워드".to_string()
+                        },
+                        format!("{}건", s.bounded_max_results()),
+                        format!("{}%", s.bounded_ui_scale()),
+                        if s.result_density == "compact" {
+                            "컴팩트".to_string()
+                        } else {
+                            "넓게".to_string()
+                        },
+                        if s.open_clicks == 1 {
+                            "한 번 클릭".to_string()
+                        } else {
+                            "두 번 클릭".to_string()
+                        },
                     ],
                     1 => vec![
-                        s.show_location.to_string(),
-                        s.show_modified.to_string(),
-                        s.include_subfolders.to_string(),
-                        s.excluded_directories.join("; "),
-                        s.version_grouping.to_string(),
+                        if s.show_location {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.show_modified {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.include_subfolders {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.excluded_directories.is_empty() {
+                            "클릭하여 폴더 추가".into()
+                        } else {
+                            format!("{}개 폴더 · 클릭하여 추가", s.excluded_directories.len())
+                        },
+                        if s.version_grouping {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
                     ],
                     2 => vec![
-                        s.autostart.to_string(),
-                        s.minimize_to_tray.to_string(),
-                        s.start_hidden.to_string(),
+                        if s.autostart {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.minimize_to_tray {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.start_hidden {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
                         s.max_file_size_mb.to_string(),
-                        s.skip_cloud_network.to_string(),
-                        s.allow_system_folders.to_string(),
+                        if s.skip_cloud_network {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
+                        if s.allow_system_folders {
+                            "켬".to_string()
+                        } else {
+                            "끔".to_string()
+                        },
                     ],
                     _ => vec![
                         format!(
@@ -2790,7 +2882,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let new_tab = hit_tab(x - side_w, y, pad, tab_y, tab_h, r.right - side_w);
 
                 let top_y = with(|u| list_top_coord(h, u));
-                let rh = scale(h, ROW_H);
+                let rh = row_height(h);
                 let preview_h = with(|u| {
                     if u.state.selected.is_some() && !u.rows.is_empty() {
                         scale(h, PREVIEW_H)
@@ -2898,7 +2990,26 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     .join("HwpAutoDocFit")
                                     .join("logs");
                                 let _ = std::fs::create_dir_all(&log_dir);
-                                let _ = ktm::open::open(log_dir.to_string_lossy().as_ref(), true);
+                                let _ = ktm::open::open(log_dir.to_string_lossy().as_ref(), false);
+                            }
+                            if current_tab == 1 && idx == 3 {
+                                if let Some(path) = pick_folder(h) {
+                                    edit(|u| {
+                                        if !u
+                                            .settings
+                                            .excluded_directories
+                                            .iter()
+                                            .any(|p| p.eq_ignore_ascii_case(&path))
+                                        {
+                                            u.settings.excluded_directories.push(path);
+                                        }
+                                    });
+                                    let (s, path) =
+                                        with(|u| (u.settings.clone(), u.settings_path.clone()));
+                                    let _ = s.save(&path);
+                                }
+                                InvalidateRect(h, null(), 0);
+                                return 0;
                             }
                             let settings_tab = with(|u| u.modal_tab);
                             edit(|u| {
@@ -2922,17 +3033,18 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                             .into()
                                     }
                                     (0, 2) => {
-                                        s.max_results = match s.max_results {
+                                        s.max_results = match s.bounded_max_results() {
                                             50 => 100,
                                             100 => 200,
                                             _ => 50,
                                         }
                                     }
                                     (0, 3) => {
-                                        s.ui_scale = match s.ui_scale {
-                                            80 => 100,
-                                            100 => 120,
-                                            _ => 80,
+                                        s.ui_scale = match s.bounded_ui_scale() {
+                                            90 => 100,
+                                            100 => 110,
+                                            110 => 125,
+                                            _ => 90,
                                         }
                                     }
                                     (0, 4) => {
@@ -2964,18 +3076,15 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             let (s, path) = with(|u| (u.settings.clone(), u.settings_path.clone()));
                             let _ = s.save(&path);
-                            if settings_tab == 2 && matches!(idx, 0 | 1) {
+                            if settings_tab == 2 && idx == 0 {
                                 let exe = std::env::current_exe().unwrap_or_default();
                                 let enabled = with(|u| u.settings.autostart);
-                                let _ = ktm::install::execute(
-                                    if enabled {
-                                        "autostart-on"
-                                    } else {
-                                        "autostart-off"
-                                    },
-                                    &exe,
-                                    &exe,
-                                );
+                                if let Err(error) = ktm::install::set_autostart(&exe, enabled) {
+                                    edit(|u| u.status_text = error);
+                                }
+                            }
+                            if settings_tab == 0 && matches!(idx, 3 | 4) {
+                                create_fonts(h);
                             }
                         }
                         _ => {}
@@ -3580,7 +3689,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 } else {
                     // ⑥ 결과 행 클릭 또는 [폴더 열기] 단추 클릭
                     let top_y = with(|u| list_top_coord(h, u));
-                    let rh = scale(h, ROW_H);
+                    let rh = row_height(h);
                     let folder_w = scale(h, ROW_FOLDER_W);
                     let preview_h = with(|u| {
                         if u.state.selected.is_some() && !u.rows.is_empty() {
@@ -3598,8 +3707,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             0
                         };
                         let n = with(|u| {
-                            let ids = ktm::layout::display_result_indices(
+                            let ids = ktm::layout::settings_visible_indices(
                                 &u.rows,
+                                &u.settings,
+                                u.state.selected_folder.as_deref(),
                                 &u.state.options.within_query,
                                 u.state.options.exclude_filename,
                                 &u.state.options.file_types,
@@ -3639,7 +3750,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 event(h, Event::Open { folder: true });
                             } else {
                                 event(h, Event::Select(n));
-                                if msg == WM_LBUTTONDBLCLK {
+                                let (open_clicks, double_click) =
+                                    with(|u| (u.settings.open_clicks, msg == WM_LBUTTONDBLCLK));
+                                if ktm::layout::click_opens(open_clicks, double_click, false) {
                                     event(h, Event::Open { folder: false });
                                 }
                             }
@@ -3700,6 +3813,18 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     folder_counts,
                                     autocompletes,
                                 }) => {
+                                    let (settings, folder) = with(|u| {
+                                        (u.settings.clone(), u.state.selected_folder.clone())
+                                    });
+                                    let allowed = ktm::layout::filter_row_indices(
+                                        &rows,
+                                        &settings,
+                                        folder.as_deref(),
+                                    );
+                                    let rows = allowed
+                                        .into_iter()
+                                        .filter_map(|i| rows.get(i).cloned())
+                                        .collect::<Vec<_>>();
                                     let count = rows.len();
                                     event(
                                         h,
@@ -3757,13 +3882,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             DestroyWindow(h);
                         }
                         tray::AUTOSTART => {
-                            let action = if autostart {
-                                "autostart-off"
-                            } else {
-                                "autostart-on"
-                            };
-                            if let Err(e) = ktm::install::execute(action, &exe, &exe) {
+                            let enabled = !autostart;
+                            if let Err(e) = ktm::install::set_autostart(&exe, enabled) {
                                 event(h, Event::OpenFailed(e));
+                            } else {
+                                edit(|u| u.settings.autostart = enabled);
+                                let (s, path) =
+                                    with(|u| (u.settings.clone(), u.settings_path.clone()));
+                                let _ = s.save(&path);
                             }
                         }
                         _ => {}
@@ -3921,6 +4047,10 @@ pub fn run() -> Result<(), String> {
                 state: State {
                     recent_queries: settings.recent_queries.clone(),
                     favorite_queries: settings.favorite_queries.clone(),
+                    options: tm_state::UiOptions {
+                        search_mode: default_mode(&settings.default_search_mode),
+                        ..Default::default()
+                    },
                     ..State::default()
                 },
                 rows: Vec::new(),
@@ -4026,12 +4156,18 @@ pub fn run() -> Result<(), String> {
                         folder,
                         ext,
                         match_mode,
+                        max_results,
                     )) => {
                         let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
-                                let rows = ktm::backend::pipe_names(&pipe_name, &q, sort)?;
+                                let rows = ktm::backend::pipe_names_limit(
+                                    &pipe_name,
+                                    &q,
+                                    sort,
+                                    max_results,
+                                )?;
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
                                 return Ok(Answer {
                                     rows,
@@ -4041,7 +4177,12 @@ pub fn run() -> Result<(), String> {
                                 });
                             }
                             if pipe_mode {
-                                let rows = ktm::backend::pipe_search(&pipe_name, &q, hierarchy)?;
+                                let rows = ktm::backend::pipe_search_limit(
+                                    &pipe_name,
+                                    &q,
+                                    hierarchy,
+                                    max_results,
+                                )?;
                                 let terms = q.split_whitespace().map(str::to_owned).collect();
                                 return Ok(Answer {
                                     rows,
@@ -4056,13 +4197,14 @@ pub fn run() -> Result<(), String> {
                             let b = backend.as_mut().unwrap();
                             let date_range =
                                 ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            b.search_with_scope_ext(
+                            b.search_with_scope_ext_limit(
                                 &q,
                                 hierarchy,
                                 date_range,
                                 folder.as_deref(),
                                 ext.as_deref(),
                                 match_mode,
+                                max_results,
                                 Some(cancel),
                             )
                         })();
@@ -4089,6 +4231,7 @@ pub fn run() -> Result<(), String> {
                             folder,
                             ext,
                             match_mode,
+                            max_results,
                         ),
                         format,
                     ) => {
@@ -4103,7 +4246,7 @@ pub fn run() -> Result<(), String> {
                                     &pipe_name,
                                     &q,
                                     sort,
-                                    ktm::export::EXPORT_LIMIT,
+                                    max_results.min(ktm::export::EXPORT_LIMIT),
                                 );
                             }
                             if pipe_mode {
@@ -4111,7 +4254,7 @@ pub fn run() -> Result<(), String> {
                                     &pipe_name,
                                     &q,
                                     hierarchy,
-                                    ktm::export::EXPORT_LIMIT,
+                                    max_results.min(ktm::export::EXPORT_LIMIT),
                                 );
                             }
                             if backend.is_none() {
@@ -4127,7 +4270,7 @@ pub fn run() -> Result<(), String> {
                                 folder.as_deref(),
                                 ext.as_deref(),
                                 match_mode,
-                                ktm::export::EXPORT_LIMIT,
+                                max_results.min(ktm::export::EXPORT_LIMIT),
                                 Some(cancel),
                             )?;
                             let mut rows = ans.rows;
@@ -4180,7 +4323,9 @@ pub fn run() -> Result<(), String> {
 
         event(
             h,
-            if args.iter().any(|a| a == "--show") || with(|u| !u.hotkey_error.is_empty()) {
+            if args.iter().any(|a| a == "--show")
+                || with(|u| !u.settings.start_hidden && u.hotkey_error.is_empty())
+            {
                 Event::Show
             } else {
                 Event::Hide
@@ -4215,7 +4360,7 @@ pub fn run() -> Result<(), String> {
 
         if let Some(query) = arg("--show-query") {
             event(h, Event::Show);
-            SetWindowTextW(ed, wide(&query).as_ptr());
+            sync_edit_text(ed, &query);
         }
 
         if let Some(output) = arg("--self-test").or_else(|| arg("--measure")) {

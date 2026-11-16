@@ -18,7 +18,13 @@ pub fn plan(args: &[String], disabled: bool) -> Option<Vec<&'static str>> {
         } else if has("--no-autostart") {
             Some(vec!["enable-mark", "quit", "install", "start"])
         } else {
-            Some(vec!["enable-mark", "quit", "install", "autostart-on", "start"])
+            Some(vec![
+                "enable-mark",
+                "quit",
+                "install",
+                "autostart-on",
+                "start",
+            ])
         }
     } else if has("--disable") {
         Some(vec!["disable-mark", "quit", "autostart-off"])
@@ -159,6 +165,13 @@ fn autostart(destination: &Path, enabled: bool) -> Result<(), String> {
     }
 }
 
+pub fn set_autostart(destination: &Path, enabled: bool) -> Result<(), String> {
+    if enabled && !destination.is_file() {
+        return Err("자동 실행할 설치 파일이 없습니다".into());
+    }
+    autostart(destination, enabled)
+}
+
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 pub const RUN_NAME: &str = "HwpAutoDocFit.MongttangSearch";
 
@@ -204,6 +217,11 @@ pub fn autostart_points_to(command: Option<&str>, destination: &Path) -> bool {
 #[cfg(not(windows))]
 fn autostart(_: &Path, _: bool) -> Result<(), String> {
     Err("Windows에서만 자동 실행을 설정할 수 있습니다".into())
+}
+
+#[cfg(not(windows))]
+pub fn set_autostart(destination: &Path, enabled: bool) -> Result<(), String> {
+    autostart(destination, enabled)
 }
 
 /// 앱 설정 화면이 읽는 상태 한 줄(`--status`, 설치 명령 결과 공통).
@@ -378,20 +396,31 @@ mod tests {
             plan(&args(&["ktm", "--uninstall"]), false).unwrap(),
             ["quit", "autostart-off", "uninstall", "enable-mark"]
         );
-        assert_eq!(plan(&args(&["ktm", "--autostart-off"]), false).unwrap(), ["autostart-off"]);
+        assert_eq!(
+            plan(&args(&["ktm", "--autostart-off"]), false).unwrap(),
+            ["autostart-off"]
+        );
         assert!(plan(&args(&["ktm", "--show"]), false).is_none());
         assert!(plan(&args(&["ktm", "--hidden"]), false).is_none());
     }
     #[test]
     fn disable_and_quit_keep_the_installed_copy() {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(plan(&args(&["ktm", "--disable"]), false).unwrap(), ["disable-mark", "quit", "autostart-off"]);
+        assert_eq!(
+            plan(&args(&["ktm", "--disable"]), false).unwrap(),
+            ["disable-mark", "quit", "autostart-off"]
+        );
         assert_eq!(plan(&args(&["ktm", "--quit"]), false).unwrap(), ["quit"]);
         // 교체·제거 계획은 파일을 건드리기 전에 언제나 먼저 끈다(실행 중인 exe는 지울 수 없음).
         for flag in ["--install", "--uninstall", "--disable"] {
             let steps = plan(&args(&["ktm", flag]), false).unwrap();
             let quit = steps.iter().position(|s| *s == "quit").unwrap();
-            assert!(steps.iter().position(|s| *s == "install" || *s == "uninstall").is_none_or(|i| i > quit));
+            assert!(
+                steps
+                    .iter()
+                    .position(|s| *s == "install" || *s == "uninstall")
+                    .is_none_or(|i| i > quit)
+            );
         }
     }
     #[test]
@@ -399,9 +428,15 @@ mod tests {
         let args = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         let refresh = args(&["ktm", "--install", "--respect-disabled"]);
         assert_eq!(plan(&refresh, true).unwrap(), ["quit", "install"]);
-        assert_eq!(plan(&refresh, false).unwrap(), ["enable-mark", "quit", "install", "autostart-on", "start"]);
+        assert_eq!(
+            plan(&refresh, false).unwrap(),
+            ["enable-mark", "quit", "install", "autostart-on", "start"]
+        );
         // 사람이 설정에서 다시 켜면(--respect-disabled 없음) 끔 표시를 지우고 켠다.
-        assert_eq!(plan(&args(&["ktm", "--install"]), true).unwrap()[0], "enable-mark");
+        assert_eq!(
+            plan(&args(&["ktm", "--install"]), true).unwrap()[0],
+            "enable-mark"
+        );
     }
     #[test]
     fn disable_marker_round_trip() {
@@ -409,7 +444,10 @@ mod tests {
         let exe = t.destination();
         execute("disable-mark", &t.source(), &exe).unwrap();
         assert!(disabled_marker(&exe).is_file());
-        assert_eq!(report(None, &exe, None, serde_json::Value::Null)["disabled"], true);
+        assert_eq!(
+            report(None, &exe, None, serde_json::Value::Null)["disabled"],
+            true
+        );
         execute("enable-mark", &t.source(), &exe).unwrap();
         execute("enable-mark", &t.source(), &exe).unwrap();
         assert!(!disabled_marker(&exe).exists());
@@ -420,7 +458,10 @@ mod tests {
         let command = startup_command(exe).unwrap();
         assert!(autostart_points_to(Some(&command), exe));
         assert!(autostart_points_to(Some(&command.to_uppercase()), exe));
-        assert!(!autostart_points_to(Some("\"C:/other/ktm.exe\" --hidden"), exe));
+        assert!(!autostart_points_to(
+            Some("\"C:/other/ktm.exe\" --hidden"),
+            exe
+        ));
         assert!(!autostart_points_to(None, exe));
     }
     #[test]
@@ -428,13 +469,27 @@ mod tests {
         let t = Temp::new();
         let exe = t.destination();
         let r = report(None, &exe, None, serde_json::Value::Null);
-        assert_eq!((r["running"].as_bool(), r["installed"].as_bool(), r["autostart"].as_bool()), (Some(false), Some(false), Some(false)));
+        assert_eq!(
+            (
+                r["running"].as_bool(),
+                r["installed"].as_bool(),
+                r["autostart"].as_bool()
+            ),
+            (Some(false), Some(false), Some(false))
+        );
         assert!(r["hotkey_error"].is_null());
         std::fs::write(&exe, b"x").unwrap();
         let command = startup_command(&exe).unwrap();
         let status = serde_json::json!({"pid": 7, "hotkey_error": "퀵몽땅검색 단축키를 등록하지 못했습니다"});
         let r = report(Some(7), &exe, Some(&command), status);
-        assert_eq!((r["running"].as_bool(), r["installed"].as_bool(), r["autostart"].as_bool()), (Some(true), Some(true), Some(true)));
+        assert_eq!(
+            (
+                r["running"].as_bool(),
+                r["installed"].as_bool(),
+                r["autostart"].as_bool()
+            ),
+            (Some(true), Some(true), Some(true))
+        );
         assert_eq!(r["pid"], 7);
         assert_eq!(r["hotkey_error"], "퀵몽땅검색 단축키를 등록하지 못했습니다");
         assert_eq!(r["name"], "몽땅검색");

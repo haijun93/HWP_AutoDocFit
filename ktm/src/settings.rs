@@ -115,6 +115,33 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// Keep user-configurable limits within the values supported by the UI and backend.
+    pub fn bounded_max_results(&self) -> usize {
+        match self.max_results {
+            0..=50 => 50,
+            51..=100 => 100,
+            101..=200 => 200,
+            _ => 200,
+        }
+    }
+
+    pub fn bounded_ui_scale(&self) -> u32 {
+        match self.ui_scale {
+            0..=90 => 90,
+            91..=100 => 100,
+            101..=110 => 110,
+            _ => 125,
+        }
+    }
+
+    pub fn row_height(&self) -> i32 {
+        if self.result_density == "compact" {
+            56
+        } else {
+            70
+        }
+    }
+
     /// 이름이 있으면 삭제하고, 없으면 추가한다. 반환값은 저장 후 존재 여부다.
     pub fn toggle_smart_preset(&mut self, preset: SmartPreset) -> bool {
         if let Some(i) = self
@@ -315,5 +342,53 @@ mod tests {
         assert_eq!(relative_time_label(40000, 100), "11시간 전");
         assert_eq!(relative_time_label(400000, 100), "이번 주");
         assert_eq!(relative_time_label(900000, 100), "이전");
+    }
+    #[test]
+    fn max_results_is_bounded_to_supported_steps() {
+        for (n, want) in [
+            (0, 50),
+            (50, 50),
+            (51, 100),
+            (100, 100),
+            (101, 200),
+            (999, 200),
+        ] {
+            let s = Settings {
+                max_results: n,
+                ..Default::default()
+            };
+            assert_eq!(s.bounded_max_results(), want);
+        }
+    }
+    #[test]
+    fn ui_scale_clamps_and_snaps_to_supported_steps() {
+        for (n, want) in [
+            (0, 90),
+            (90, 90),
+            (91, 100),
+            (100, 100),
+            (101, 110),
+            (110, 110),
+            (111, 125),
+            (900, 125),
+        ] {
+            let s = Settings {
+                ui_scale: n,
+                ..Default::default()
+            };
+            assert_eq!(s.bounded_ui_scale(), want);
+        }
+    }
+    #[test]
+    fn density_maps_to_compact_or_comfortable_row_height() {
+        assert_eq!(
+            Settings {
+                result_density: "compact".into(),
+                ..Default::default()
+            }
+            .row_height(),
+            56
+        );
+        assert_eq!(Settings::default().row_height(), 70);
     }
 }
