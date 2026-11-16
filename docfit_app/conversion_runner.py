@@ -72,7 +72,7 @@ def _runtime():
     return runtime
 
 
-def run_conversion(files, target, output_dir=None, progress=None, stop_event=None, *, runtime_factory=None, log=None):
+def run_conversion(files, target, output_dir=None, progress=None, stop_event=None, *, runtime_factory=None, log=None, pdf_target_bytes=None, **kwargs):
     """변환 결과 dict 목록을 반환한다. 원본과 기존 결과는 덮어쓰지 않는다."""
     from docfit_core.file_conversion import (
         IMAGE_FORMATS, CONVERSION_OUTPUTS, convert_input_to_hwpx, convert_hwpx_to_text,
