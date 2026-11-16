@@ -86,6 +86,7 @@ class TimemachineService:
                             "errors": [], "started_at": None, "finished_at": None}
         self._rescan = False
         self._content_idle_ctx = None
+        self.content_work_busy = None
         self._settings = self._load_settings()
         # 쉬는 시간 색인(IDLE1): 스케줄러가 주어졌을 때만(앱). 시험·다른 진입점은 예전처럼 곧바로 자동 재색인.
         self.idle_scheduler = idle_scheduler
@@ -94,6 +95,10 @@ class TimemachineService:
             idle_scheduler.register(_ContentIdleJob(self), every=CONTENT_IDLE_EVERY_SECONDS)
         if self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0:
             self._schedule_content_refresh()
+        elif self._auto_refresh_enabled() and self._content_index_needs_work():
+            refresh_timer = threading.Timer(0.25, self._kick_auto_content_refresh)
+            refresh_timer.daemon = True
+            refresh_timer.start()
         if idle_scheduler is not None:
             # 업데이트로 검색 서비스 색인이 비었으면(형식 변경 재구축) 앱 검색을 기다리지 않고 복구 seeding.
             # 단축키 창만 쓰는 사용자도 본문 검색이 곧 돌아오게 한다. 앱 시작을 막지 않게 별도 스레드·짧은 지연.
@@ -307,16 +312,42 @@ class TimemachineService:
     def _idle_indexing_on(self):
         return self.idle_scheduler is not None and self._settings.get("idle_indexing", True)
 
-    def _schedule_content_refresh(self):
+    def _content_auto_enabled(self):
+        return bool(self._settings.get("enabled") and any(os.path.isdir(root) for root in self._settings.get("roots", [])))
+
+    def _content_index_needs_work(self):
+        if not self._content_auto_enabled():
+            return False
+        return (not self.content_index.indexed_paths(roots=self._settings["roots"]) or
+                self.content_index.needs_reindex_count(roots=self._settings["roots"]) > 0)
+
+    def _content_reindex_paths(self):
+        return self.content_index.stale_hierarchy_paths(
+            self.content_index.indexed_paths(roots=self._settings["roots"]))
+
+    def _auto_refresh_enabled(self):
+        return self._content_auto_enabled() and self.idle_scheduler is not None
+
+    def _schedule_content_refresh(self, *, allow_empty=False):
         """자동 재색인 요청 한 곳: 쉬는 시간 색인이 켜져 있으면 스케줄러에 맡기고, 아니면 예전처럼 곧바로."""
-        if self._idle_indexing_on():
+        if self._idle_indexing_on() and (allow_empty or self.content_index.indexed_paths(roots=self._settings["roots"])):
             self.idle_scheduler.request(CONTENT_IDLE_JOB)
         else:
-            self._refresh_content_index_async()
+            self._refresh_content_index_async(allow_empty=allow_empty)
+
+    def _kick_auto_content_refresh(self):
+        if self._auto_refresh_enabled() and self._content_index_needs_work():
+            self._schedule_content_refresh(allow_empty=True)
+
+    def _content_worker_busy(self):
+        try:
+            return bool(self.content_work_busy and self.content_work_busy())
+        except Exception:
+            return False
 
     def run_idle_content_refresh(self, ctx):
         """스케줄러 스레드에서: 변경분 자동 재색인을 쉬는 시간 모드로 돌리고 끝날 때까지 기다린다."""
-        if not self._refresh_content_index_async(idle_ctx=ctx):
+        if not self._refresh_content_index_async(idle_ctx=ctx, allow_empty=True):
             return
         with self._content_lock:
             worker = self._content_thread
@@ -383,7 +414,9 @@ class TimemachineService:
                         seen += 1
                         indexed += status == "indexed"
                         with self._content_lock:
-                            self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                            self._content_state.update(seen=seen, indexed=indexed,
+                                                       errors=errors, processed=seen,
+                                                       total=len(paths))
                 except (ValueError, TypeError):
                     continue
             returncode = process.wait()
@@ -425,6 +458,8 @@ class TimemachineService:
             ctx = self._content_idle_ctx
         if ctx is not None and state.get("running"):
             state["yielded"] = bool(ctx.yielded)
+        elif state.get("running") and self._content_worker_busy():
+            state["yielded"] = True
         idle = self.idle_scheduler.status() if self.idle_scheduler is not None else None
         return {"ok": True, **state, "idle": idle, **self._engine_status(),
                 **self.content_index.status_summary(roots=self._settings["roots"])}
@@ -455,6 +490,12 @@ class TimemachineService:
             """문서(또는 폴더) 하나를 시작하기 직전. 쉬는 시간 모드면 사용자가 쓰는 동안 여기서 기다린다."""
             if cancel_event.is_set():
                 return False
+            while self._content_worker_busy() and not cancel_event.is_set():
+                with self._content_lock:
+                    self._content_state.update(yielded=True)
+                cancel_event.wait(0.5)
+            with self._content_lock:
+                self._content_state.update(yielded=False)
             if idle_ctx is None:
                 return True
             if not idle_ctx.checkpoint(cancel_event):
@@ -466,7 +507,7 @@ class TimemachineService:
             nonlocal processed
             processed += 1
             with self._content_lock:
-                self._content_state.update(processed=processed)
+                self._content_state.update(processed=processed, total=total)
             if idle_ctx is not None:
                 idle_ctx.progress(processed, total)
 
@@ -878,21 +919,21 @@ class TimemachineService:
                 return self._error("TM_SCAN_FAILED", "색인 작업을 시작하지 못했습니다.")
         return {"ok": True, "by": "app", "running": True}
 
-    def _refresh_content_index_async(self, idle_ctx=None):
+    def _refresh_content_index_async(self, idle_ctx=None, *, allow_empty=False):
         """변경분 자동 재색인을 시작한다. 시작했으면 True. idle_ctx가 있으면 쉬는 시간 모드(양보·낮은 우선순위)."""
         with self._content_lock:
             if self._closing:
                 return False
             if self._content_state["running"] or (self._content_thread and self._content_thread.is_alive()):
                 return False
-            # 본문 색인을 쓴 적이 없으면(색인이 비어 있으면) 자동으로 시작하지 않는다.
+            # 본문 색인을 쓴 적이 없으면(색인이 비어 있으면) allow_empty가 아닐 때는 자동으로 시작하지 않는다.
             pending = set(self.content_index.indexed_paths(roots=self._settings["roots"]))
-            if not pending:
+            if not pending and not allow_empty:
                 return False
             self._content_pending_roots = pending
             cancel_event = threading.Event()
             self._content_cancel = cancel_event
-            self._content_state = self._new_content_state(running=True, phase="reindexing",
+            self._content_state = self._new_content_state(running=True, phase="reindexing" if pending else "indexing",
                                                           trigger="idle" if idle_ctx is not None else "auto")
             self._content_idle_ctx = idle_ctx
             self._content_thread = threading.Thread(target=self._content_index_worker,
