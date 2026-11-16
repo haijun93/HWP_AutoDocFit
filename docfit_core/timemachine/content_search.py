@@ -768,6 +768,7 @@ class ContentSearchIndex:
         self._batch_state = None
         self._closed = False
         self._keyword_rank_cache = None
+        self._file_search_cache = None
         self.db.row_factory = sqlite3.Row
         self.db.executescript("""
             CREATE TABLE IF NOT EXISTS content_table_cells(
@@ -1068,6 +1069,19 @@ class ContentSearchIndex:
                 self.db.close()
                 self._closed = True
 
+    def _invalidate_rank_cache(self):
+        self._keyword_rank_cache = None
+        self._file_search_cache = None
+
+    def clear(self):
+        """모든 색인 테이블을 비우고 검색 캐시를 무효화한다."""
+        with self._lock:
+            for table in ("content_table_cells", "content_paragraph_map", "content_paragraph_fts",
+                          "content_fts", "content_short_grams", "content_meta", "content_errors"):
+                self.db.execute(f"DELETE FROM {table}")
+            self.db.commit()
+            self._invalidate_rank_cache()
+
     def needs_reindex_count(self, roots=None) -> int:
         """위계 정보가 없거나 오래된 스키마 버전의 색인 문서 수."""
         with self._lock:
@@ -1258,6 +1272,7 @@ class ContentSearchIndex:
                     (path, size, mtime, ctime, ref_date, name, ext, CURRENT_HIERARCHY_SCHEMA_VERSION)
                 )
                 self.db.execute("DELETE FROM content_errors WHERE path=?", (path,))
+                self._invalidate_rank_cache()
             return {"indexed": True, "error": None}
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
@@ -1269,6 +1284,7 @@ class ContentSearchIndex:
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
                 self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
+                self._invalidate_rank_cache()
             return {"indexed": False, "error": reason}
 
     def stale_hierarchy_paths(self, paths):
@@ -1361,6 +1377,7 @@ class ContentSearchIndex:
             self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_errors WHERE path=?", (path,))
+            self._invalidate_rank_cache()
 
     def indexed_paths(self, *, roots=None):
         """색인된 경로 목록. 전달된 루트 안의 문서만 돌려준다."""
@@ -2107,16 +2124,18 @@ class ContentSearchIndex:
                     continue
                 if parsed["path"] and not all(value.casefold() in path.casefold() for value in parsed["path"]):
                     continue
-                ref_date = meta["reference_date"] or ""
+                raw_ref_date = meta["reference_date"] or ""
+                ref_date = raw_ref_date
                 if ref_date and len(ref_date) == 4:
                     ref_date += "-01-01"
                 elif ref_date and len(ref_date) == 7:
                     ref_date += "-01"
                 if not ref_date and meta["mtime"]:
                     ref_date = date.fromtimestamp(meta["mtime"]).isoformat()
-                text_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", candidate_texts.get(path, ""))
-                if text_date:
-                    ref_date = text_date.group(1)
+                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw_ref_date):
+                    text_date = re.search(r"\b(\d{4}-\d{2}-\d{2})\b", candidate_texts.get(path, ""))
+                    if text_date:
+                        ref_date = text_date.group(1)
                 after = parsed["after"]
                 before = parsed["before"]
                 if after and len(after) == 4: after += "-01-01"
@@ -2250,24 +2269,48 @@ class ContentSearchIndex:
         words = [w.casefold() for w in query.split() if w]
         if not words: return []
         allowed = [os.path.normcase(os.path.abspath(r)) for r in roots] if roots else None
-        with self._lock: rows = self.db.execute("SELECT path,name,size,mtime,extension FROM content_meta ORDER BY name COLLATE NOCASE").fetchall()
-        out = []
-        for r in rows:
-            if start is not None and (r["mtime"] is None or r["mtime"] < start):
-                continue
-            if end is not None and (r["mtime"] is None or r["mtime"] >= end):
-                continue
-            # 이름이 맞지 않는 행은 경로 정규화·제외 판정을 하지 않고 넘어간다(결과는 같다).
-            name_nfc = _nfc(r["name"] or Path(r["path"]).name)
-            name_folded = name_nfc.casefold()
-            if not all(w in name_folded for w in words):
-                continue
-            p = os.path.abspath(r["path"])
-            if excluded_name(name_nfc) or excluded_name(_nfc(os.path.basename(p))):
-                continue
-            if (allowed is None or any(os.path.commonpath((os.path.normcase(p), root)) == root for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold())):
-                out.append({"path": p, "name": name_nfc, "size": r["size"], "mtime": r["mtime"], "extension": r["extension"] or Path(p).suffix.lower().lstrip(".")})
-                if len(out) >= limit: break
+        with self._lock:
+            stamp = self._keyword_rank_stamp()
+            cached = self._file_search_cache
+            if cached is not None and cached[0] == stamp:
+                entries = cached[1]
+            else:
+                rows = self.db.execute(
+                    "SELECT path,name,size,mtime,extension FROM content_meta ORDER BY name COLLATE NOCASE"
+                ).fetchall()
+                entries = []
+                for row in rows:
+                    path = os.path.abspath(row["path"])
+                    name = _nfc(row["name"] or Path(path).name)
+                    if excluded_name(name) or excluded_name(_nfc(os.path.basename(path))):
+                        continue
+                    entries.append({
+                        "path": path,
+                        "norm_path": os.path.normcase(path),
+                        "drive": os.path.splitdrive(path)[0].casefold(),
+                        "name": name,
+                        "name_folded": name.casefold(),
+                        "size": row["size"],
+                        "mtime": row["mtime"],
+                        "extension": row["extension"] or Path(path).suffix.lower().lstrip("."),
+                    })
+                self._file_search_cache = (stamp, entries)
+            out = []
+            for entry in entries:
+                if start is not None and (entry["mtime"] is None or entry["mtime"] < start):
+                    continue
+                if end is not None and (entry["mtime"] is None or entry["mtime"] >= end):
+                    continue
+                if not all(word in entry["name_folded"] for word in words):
+                    continue
+                if allowed is None or any(
+                    entry["drive"] == os.path.splitdrive(root)[0].casefold()
+                    and os.path.commonpath((entry["norm_path"], root)) == root
+                    for root in allowed
+                ):
+                    out.append({key: entry[key] for key in ("path", "name", "size", "mtime", "extension")})
+                    if len(out) >= limit:
+                        break
         return out
 
     def errors(self, roots=None):

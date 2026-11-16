@@ -206,6 +206,45 @@ class ContentSearchTests(unittest.TestCase):
         self.assertEqual([r["name"] for r in self.index.search_files("newer", start=new_time)], [newer.name])
         self.assertEqual(self.index.search("periodneedle", start=new_time + 86400), [])
 
+    def test_search_files_reuses_cache_and_invalidates_after_index_lifecycle(self):
+        first = self.root / "cache alpha.txt"
+        first.write_text("first cache body", encoding="utf-8")
+        self.index.index_file(first)
+        statements = []
+        self.index.db.set_trace_callback(statements.append)
+        self.assertEqual([row["name"] for row in self.index.search_files("cache")], [first.name])
+        self.assertTrue(any("SELECT path,name,size,mtime,extension FROM content_meta" in sql for sql in statements))
+        statements.clear()
+        self.assertEqual([row["name"] for row in self.index.search_files("cache", limit=1)], [first.name])
+        self.assertFalse(any("SELECT path,name,size,mtime,extension FROM content_meta" in sql for sql in statements))
+
+        second = self.root / "cache beta.txt"
+        second.write_text("second cache body", encoding="utf-8")
+        self.index.index_file(second)
+        self.assertEqual([row["name"] for row in self.index.search_files("cache", roots=[str(self.root)], limit=1)],
+                         [first.name])
+        self.assertEqual([row["name"] for row in self.index.search_files("beta", start=second.stat().st_mtime)],
+                         [second.name])
+        self.index.remove_file(first)
+        self.assertEqual([row["name"] for row in self.index.search_files("cache")], [second.name])
+        self.index.db.set_trace_callback(None)
+
+    def test_keyword_search_reuses_complete_stored_reference_date(self):
+        path = self.root / "stored-date.txt"
+        path.write_text("datecacheword 2020-01-01", encoding="utf-8")
+        self.index.index_file(path)
+        with self.index._lock:
+            self.index.db.execute("UPDATE content_meta SET reference_date=? WHERE path=?",
+                                  ("2024-06-15", str(path.resolve())))
+        original_search = __import__("re").search
+        def guarded_search(pattern, *args, **kwargs):
+            if pattern == r"\b(\d{4}-\d{2}-\d{2})\b":
+                raise AssertionError("저장된 완전한 reference_date가 있는데 본문 날짜 스캔을 실행함")
+            return original_search(pattern, *args, **kwargs)
+        with patch("docfit_core.timemachine.content_search.re.search", side_effect=guarded_search):
+            rows = self.index.keyword_search("datecacheword after:2023-01-01")
+        self.assertEqual([row["path"] for row in rows], [str(path.resolve())])
+
     def test_excluded_filename_is_not_indexed_or_searchable(self):
         path = self.root / " '#IEeEE legacy'.txt"
         path.write_text("needleword hidden", encoding="utf-8")
