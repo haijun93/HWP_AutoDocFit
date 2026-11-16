@@ -25,6 +25,46 @@ Color? parseHexColor(String? hex) {
   return null;
 }
 
+/// 한컴 PUA 문자(U+F0000~U+FFFFF 등)를 미리보기에서 깨지지 않도록 표준 유니코드/마커로 변환한다.
+String replacePuaPreviewText(String text) {
+  if (text.isEmpty) return text;
+  final buffer = StringBuffer();
+  for (final rune in text.runes) {
+    if (rune >= 0xF02B1 && rune <= 0xF02C4) {
+      // 사각형 번호 [1] ~ [20]
+      buffer.write('[${rune - 0xF02B1 + 1}]');
+    } else if (rune >= 0xF0241 && rune <= 0xF0254) {
+      // 원 숫자 ① ~ ⑳ (0x2460~)
+      buffer.writeCharCode(0x2460 + (rune - 0xF0241));
+    } else if (rune >= 0xF0221 && rune <= 0xF0234) {
+      // 괄호 숫자 ⑴ ~ ⒇ (0x2474~)
+      buffer.writeCharCode(0x2474 + (rune - 0xF0221));
+    } else if (rune == 0xF02FA) {
+      buffer.write('·');
+    } else if (rune == 0xF02F8) {
+      buffer.write('●');
+    } else if (rune == 0xF02F9) {
+      buffer.write('○');
+    } else if (rune == 0xF02FB) {
+      buffer.write('▪');
+    } else if (rune == 0xF02FC) {
+      buffer.write('▫');
+    } else if (rune == 0xF02FD) {
+      buffer.write('▸');
+    } else if (rune == 0xF02FE) {
+      buffer.write('▹');
+    } else if ((rune >= 0xE000 && rune <= 0xF8FF) ||
+        (rune >= 0xF0000 && rune <= 0xFFFFD) ||
+        (rune >= 0x100000 && rune <= 0x10FFFD)) {
+      // 기타 미등록 PUA는 가운뎃점 등으로 대체해 ☒ 방지
+      buffer.write('·');
+    } else {
+      buffer.writeCharCode(rune);
+    }
+  }
+  return buffer.toString();
+}
+
 /// 칸 안/밖에 그려지는 그리기 개체(도형/화살표/그림 등).
 class CellShape {
   const CellShape({
@@ -572,14 +612,15 @@ class _TableGridPainter extends CustomPainter {
       // 사각형 번호 기호 감지:
       // 1) 한컴 PUA U+F02B1 ~ U+F02C4 (1~20)
       // 2) 카탈로그 표시 마커 [1] ~ [20]
+      final cleanText = replacePuaPreviewText(text);
       String? boxNumberStr;
-      String tailText = text;
-      final runesList = text.runes.toList();
+      String tailText = cleanText;
+      final runesList = cleanText.runes.toList();
       if (runesList.isNotEmpty && runesList[0] >= 0xF02B1 && runesList[0] <= 0xF02C4) {
         boxNumberStr = '${runesList[0] - 0xF02B1 + 1}';
         tailText = String.fromCharCodes(runesList.skip(1)).trimLeft();
       } else {
-        final m = RegExp(r'^\[(\d{1,2})\](?:\s*)(.*)$').firstMatch(text);
+        final m = RegExp(r'^\[(\d{1,2})\](?:\s*)(.*)$').firstMatch(cleanText);
         if (m != null) {
           final n = int.tryParse(m.group(1)!);
           if (n != null && n >= 1 && n <= 20) {
@@ -670,7 +711,7 @@ class _TableGridPainter extends CustomPainter {
       }
 
       final textSpan = TextSpan(
-        text: text,
+        text: cleanText,
         style: TextStyle(
           // 미리보기 캔버스(CustomPainter)는 앱 테마 글꼴을 물려받지 않는다. 내장 한글 글꼴을 직접
           // 지정하지 않으면 오프라인에서 한글이 □로 보인다(표그림판 2.0.5와 같은 원인, 2.2.42).
@@ -1225,6 +1266,7 @@ class TableShapesPainter extends CustomPainter {
 
   void _drawShapeText(Canvas canvas, Rect rect, String text, Color? fillColor) {
     if (rect.width < 10 || rect.height < 8) return;
+    final cleanText = replacePuaPreviewText(text);
 
     Color textColor = const Color(0xff1e293b); // 문서 색(테마 무관)
     if (fillColor != null &&
@@ -1235,7 +1277,7 @@ class TableShapesPainter extends CustomPainter {
 
     final fontSize = (rect.height * 0.35).clamp(8.0, 12.0);
     final textSpan = TextSpan(
-      text: text,
+      text: cleanText,
       style: TextStyle(
         fontFamily: 'NotoSansKR',
         fontFamilyFallback: fontFamilyFallback,
