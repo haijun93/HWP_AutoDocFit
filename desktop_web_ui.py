@@ -2328,6 +2328,18 @@ class DesktopWebBridge:
             logging.getLogger(__name__).exception("몽땅검색 처리 실패")
             return {"ok": False, "code": "TM_FAILED", "message": "몽땅검색 작업을 완료하지 못했습니다."}
 
+    def photo_album(self, action, payload=None):
+        """사진뷰(PhotoAlbumService) 화면 명령을 처리한다."""
+        try:
+            service = getattr(self, "_photo_album_service", None)
+            if service is None:
+                from docfit_app.photo_album_service import PhotoAlbumService
+                self._photo_album_service = PhotoAlbumService()
+            return self._photo_album_service.command(action, payload)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("사진뷰 처리 실패", exc_info=True)
+            return {"ok": False, "code": "PHOTO_ALBUM_FAILED", "message": str(exc) or "사진뷰 작업을 완료하지 못했습니다."}
+
     def kvf(self, action, payload=None):
         from docfit_app.kvf_client import KvfClient
         return KvfClient().command(action, payload)
@@ -3797,7 +3809,7 @@ class _BrowserApi:
             "clear_files", "set_mode", "set_range", "start", "stop", "start_job", "cancel_job", "get_events",
             "open_settings", "get_settings", "save_settings", "freeze_logs_open", "text_input", "open_stages", "open_log", "get_log", "clear_log",
             "get_pending_dialog", "resolve_dialog", "enable_close_guard", "acknowledge_close", "format_profile", "flow_editor", "document_tool", "stage_config", "table_template", "idioms", "hangul_fonts", "get_abbreviations", "save_abbreviation", "delete_abbreviation", "set_abbreviation_defaults", "abbreviation_document", "table_units", "table_sketch", "timemachine", "library", "notebook",
-            "file_rename", "external_app", "kvf", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
+            "file_rename", "external_app", "photo_album", "kvf", "kclip", "kclip_window", "new_document", "hwp_bulk", "open_results", "next_job", "run_tool", "open_result",
             "sidebar_mode", "sidebar_mode_switch_side", "sidebar_mode_drag", "always_on_top", "window_control",
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
