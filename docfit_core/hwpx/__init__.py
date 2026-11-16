@@ -134,6 +134,7 @@ def validate_hwpx(
     limits: HwpxLimits | None = None,
     *,
     structure_only: bool = False,
+    parse_xml: bool = False,
     mode: str = "strict",
 ) -> dict:
     """Validate archive structure without extracting anything to disk.
@@ -142,6 +143,7 @@ def validate_hwpx(
           'structure' (checks essential files, valid XML parsing, section existence, testzip)
     """
     is_structure = structure_only or mode == "structure"
+    should_parse_xml = parse_xml or is_structure
     limits = limits or HwpxLimits()
     source = Path(path)
     if not source.is_file():
@@ -162,7 +164,7 @@ def validate_hwpx(
             if bad:
                 raise HwpxSecurityError(f"CRC 검사가 실패했습니다: {bad}")
 
-            if is_structure:
+            if should_parse_xml:
                 # 방금 생성된 결과물 검증: 필수 XML 파일이 정상적으로 열리고 파싱되는지 검증
                 try:
                     with archive.open("Contents/header.xml") as f:
