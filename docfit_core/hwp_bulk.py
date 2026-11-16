@@ -14,6 +14,7 @@ import stat
 import subprocess
 import threading
 import time
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -33,6 +34,8 @@ SKIP_FILES = frozenset({
 OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 HWP3_SIGNATURE = b"HWP Document File"
 MAX_FILES = 200_000
+HWP_BULK_ACTIONS = frozenset({"drives", "status", "scan_all", "start_all", "start", "stop",
+                              "retry_failed", "open_report", "show_report"})
 
 # 결과 종류 분류 (TODO 2026-11-15 ④)
 KIND_DRM = "DRM"
@@ -248,6 +251,49 @@ def local_drives():
             if ctypes.windll.kernel32.GetDriveTypeW(root) == 3:  # DRIVE_FIXED
                 drives.append(root)
     return drives
+
+
+def scan_all(roots, *, runner=None):
+    """Use klib scan-hwp to classify every eligible HWP without opening HWP files in COM."""
+    from docfit_app.library_bridge import LibraryBridge
+    executable = LibraryBridge().executable if runner is None else None
+    if runner is None:
+        completed = subprocess.run([str(executable), "scan-hwp", *map(str, roots)],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=None,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if completed.returncode:
+            raise RuntimeError(completed.stderr.strip() or "klib scan-hwp 스캔에 실패했습니다.")
+        lines = completed.stdout.splitlines()
+    else:
+        lines = runner(roots)
+    counts = {"normal": 0, "password": 0, "distributed": 0, "drm": 0,
+              "hwp3": 0, "corrupt": 0, "existing": 0}
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line) if isinstance(line, str) else line
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        raw_kind = str(row.get("kind") or "corrupt").casefold()
+        kind = "existing" if raw_kind == "existing" else raw_kind
+        if kind not in counts:
+            kind = "corrupt"
+        counts[kind] += 1
+        rows.append(row)
+    total = sum(counts.values())
+    from docfit_core.hwp_bulk_parallel import worker_limit
+    workers = worker_limit()
+    return {"total": total, "counts": counts, "rows": rows,
+            "roots": [str(x) for x in roots],
+            "skipped_folders": sorted(SKIP_DIRS),
+            "excluded_storage": ["네트워크 드라이브", "클라우드 전용 파일"],
+            "workers": workers,
+            # COM 저장·검증 개당 2초, 현재 메모리·CPU worker 상한을 반영한 추정치.
+            "estimated_seconds": (counts["normal"] * 2 + workers - 1) // workers,
+            "estimate_assumption": "정상 문서당 약 2초, 병렬 작업자 수 반영"}
 
 
 def hwp_pids():
@@ -527,12 +573,18 @@ class BulkState:
     report: str = ""
     error: str = ""
     failures: list = field(default_factory=list)
+    rate_per_minute: float = 0.0
+    remaining_seconds: float | None = None
+    protected_total: int = 0
+    scan_summary: dict = field(default_factory=dict)
 
     def as_dict(self):
         return dict(phase=self.phase, found=self.found, skipped_existing=self.skipped_existing,
                     protected=self.protected, done=self.done, succeeded=self.succeeded,
                     failed=self.failed, current=self.current, report=self.report,
-                    error=self.error, failures=self.failures[-200:])
+                    error=self.error, failures=self.failures[-200:],
+                    rate_per_minute=self.rate_per_minute, remaining_seconds=self.remaining_seconds,
+                    protected_total=self.protected_total, scan_summary=self.scan_summary)
 
 
 def write_report(results, folder: Path) -> Path:

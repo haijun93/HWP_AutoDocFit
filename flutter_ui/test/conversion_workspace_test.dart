@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:docfit_ui/features/conversion/conversion_workspace.dart';
 
 class FakeHost implements ConversionHost {
+  @override
+  bool developerMode = false;
   final calls = <List<Object?>>[];
   final converted = <String>[];
   @override
@@ -53,6 +55,7 @@ class FakeHost implements ConversionHost {
     pdfCompressTargetMb = mb;
     calls.add(['set_pdf_compress_target_mb', mb]);
   }
+
   @override
   Map? hwpBulk;
   @override
@@ -65,6 +68,25 @@ class FakeHost implements ConversionHost {
       };
     }
     if (args.first == 'pick_folder') return {'ok': true, 'folder': r'C:\문서'};
+    if (args.first == 'scan_all') {
+      return {
+        'ok': true,
+        'summary': {
+          'total': 8,
+          'counts': {
+            'normal': 2,
+            'password': 1,
+            'distributed': 1,
+            'drm': 1,
+            'hwp3': 1,
+            'corrupt': 1,
+            'existing': 1,
+          },
+          'estimated_seconds': 240,
+          'skipped_folders': ['Windows', 'AppData'],
+        },
+      };
+    }
     return {'ok': true};
   }
 }
@@ -80,12 +102,16 @@ Future<void> _rightClick(WidgetTester tester, Finder target) async {
 }
 
 void main() {
-  Future<FakeHost> pump(WidgetTester tester) async {
+  Future<FakeHost> pump(
+    WidgetTester tester, {
+    bool developerMode = false,
+  }) async {
     tester.view.physicalSize = const Size(1280, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     final host = FakeHost();
+    host.developerMode = developerMode;
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(body: ConversionWorkspace(host: host)),
@@ -94,6 +120,38 @@ void main() {
     await tester.pumpAndSettle();
     return host;
   }
+
+  testWidgets(
+    'developer mode exposes whole-computer conversion and scan summary only',
+    (tester) async {
+      final normal = await pump(tester);
+      expect(find.byKey(const Key('conversionAllHwpDeveloper')), findsNothing);
+      expect(find.byKey(const Key('conversionFindHwp')), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      final dev = FakeHost()..developerMode = true;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: ConversionWorkspace(host: dev)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const Key('conversionAllHwpDeveloper')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('conversionAllHwpDeveloper')));
+      await tester.pumpAndSettle();
+      expect(find.text('이 컴퓨터 전체 HWP → HWPX 변환'), findsNWidgets(2));
+      await tester.tap(find.byKey(const Key('hwpBulkStart')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('hwpBulkScanSummary')), findsOneWidget);
+      expect(find.text('사전 스캔 결과: 8개'), findsOneWidget);
+      expect(find.textContaining('정상 HWP5 2'), findsOneWidget);
+      expect(find.textContaining('건너뛸 폴더: Windows, AppData'), findsOneWidget);
+      expect(dev.calls.last[1], 'scan_all');
+      expect(normal.developerMode, isFalse);
+    },
+  );
 
   testWidgets('three panels: files with size, formats, results with failures', (
     tester,
@@ -129,7 +187,9 @@ void main() {
     expect(find.byKey(const Key('conversionDropZone')), findsOneWidget);
     expect(find.textContaining('여기에 파일을 놓으세요'), findsOneWidget);
     await tester.tap(find.byKey(const Key('conversionPickFiles')));
-    expect(host.calls, [ ['add_files'] ]);
+    expect(host.calls, [
+      ['add_files'],
+    ]);
   });
 
   testWidgets('right-click menus on files and results', (tester) async {
@@ -247,9 +307,7 @@ void main() {
     final host = FakeHost();
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(
-          body: ConversionWorkspace(host: host),
-        ),
+        home: Scaffold(body: ConversionWorkspace(host: host)),
       ),
     );
     await tester.pumpAndSettle();
@@ -265,7 +323,10 @@ void main() {
     await tester.enterText(inputFinder, '25');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
-    expect(host.calls, anyElement(orderedEquals(['set_pdf_compress_target_mb', 25])));
+    expect(
+      host.calls,
+      anyElement(orderedEquals(['set_pdf_compress_target_mb', 25])),
+    );
     expect(host.pdfCompressTargetMb, 25);
 
     // 결과에 최종 크기 및 단계 표시 확인

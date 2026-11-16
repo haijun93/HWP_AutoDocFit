@@ -23,6 +23,7 @@ abstract class ConversionHost {
 
   /// HWP → HWPX 일괄 변환 상태(get_state의 hwp_bulk, 없으면 null).
   Map? get hwpBulk;
+  bool get developerMode;
 
   /// 상태를 바꾸지 않는 백엔드 호출(일괄 변환 창이 결과를 직접 읽는다).
   Future<Object?> apiCall(String method, List<Object?> args);
@@ -402,6 +403,19 @@ class ConversionWorkspace extends StatelessWidget {
                   label: const Text('HWP 찾아 HWPX로 바꾸기'),
                 ),
               ),
+              if (host.developerMode)
+                TextButton.icon(
+                  key: const Key('conversionAllHwpDeveloper'),
+                  onPressed: host.locked
+                      ? null
+                      : () => showHwpBulkDialog(
+                            context,
+                            host.apiCall,
+                            allComputer: true,
+                          ),
+                  icon: const Icon(Icons.storage_rounded),
+                  label: const Text('이 컴퓨터 전체 HWP → HWPX 변환'),
+                ),
             ],
           ),
         ],

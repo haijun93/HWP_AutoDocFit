@@ -141,6 +141,12 @@ def _convert_worker(index: int, files: list[Path], app_factory: Callable, restar
                 app.Quit()
             except Exception:
                 pass
+        # COM apartments belong to their worker thread; release each one there.
+        try:
+            import pythoncom
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
     return index, results
 
 

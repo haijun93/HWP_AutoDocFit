@@ -624,6 +624,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   @override
   Map? get hwpBulk => state['hwp_bulk'] as Map?;
   @override
+  bool get developerMode => widget.developerMode;
+  @override
   Future<Object?> apiCall(String method, List<Object?> args) async {
     final value = await widget.api(method, args);
     if (mounted) unawaited(refresh());
@@ -815,7 +817,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             if (progress != null) {
               final live = Map<String, dynamic>.from(state['live'] as Map? ?? const {});
               final percent = (progress['percent'] as num?)?.toDouble();
-              if (percent != null) live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+              if (percent != null) {
+                live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+              }
               final name = progress['name'];
               if (name is String && name.isNotEmpty) {
                 live['now'] = name;
@@ -886,7 +890,9 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
         }
         if (event['type'] == 'progress') {
           final percent = (data['percent'] as num?)?.toDouble();
-          if (percent != null) live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+          if (percent != null) {
+            live['ratio'] = (percent / 100).clamp(0.0, 1.0);
+          }
           final name = data['name'] ?? data['file'];
           if (name is String && name.isNotEmpty) {
             live['now'] = name;
