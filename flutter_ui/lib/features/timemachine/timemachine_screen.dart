@@ -588,9 +588,18 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     if (running) _pollContentIndex();
   }
 
+  Future<void> _refreshIndexedItems() async {
+    if (!mounted || _settings?['enabled'] != true) return;
+    await _refreshDays();
+    await _refreshHourDensity();
+    await _loadPage();
+  }
+
   Future<void> _readContentStatus() async {
     try {
+      final wasRunning = _contentIndexRunning;
       _applyContentStatus(await _api.command('content_index_status'));
+      if (mounted && wasRunning && !_contentIndexRunning) await _refreshIndexedItems();
     } catch (_) {
       // 통신 실패는 작업 완료가 아니므로 마지막 상태를 유지하고 다시 확인한다.
       if (mounted && _contentIndexRunning) _pollContentIndex();
@@ -599,6 +608,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Future<void> _startContentIndex() async {
     _applyContentStatus(await _api.command('content_index_start'));
+    await _readContentStatus();
   }
   void _pollContentIndex() {
     _contentPoll?.cancel();
@@ -975,7 +985,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         children: [
           _filtersBar(),
           if (_contentMode && _showOperatorHelp) _operatorHelp(),
-          if (_contentMode && _contentNeedsReindex && !_contentReindexDismissed && _contentReindexGuide != null)
+          if (_contentMode && !_contentIndexRunning && _contentNeedsReindex && !_contentReindexDismissed && _contentReindexGuide != null)
             MaterialBanner(
               content: Text('$_contentReindexGuide (재색인 필요: $_contentNeedsReindexCount건)'),
               leading: Icon(Icons.info_outline, color: TimemachineColors.of(context).infoIcon),
@@ -1570,7 +1580,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         Text(_relatedMode ? '위계검색' : '본문검색', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
         if (_contentIndexRunning) ...[
           SizedBox(width: 80, child: LinearProgressIndicator(value: idleIndexingProgress(_contentProgress))),
-          Text(idleIndexingStatusText(_contentProgress) ?? '${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건', key: const ValueKey('tm-content-index-status'), style: const TextStyle(fontSize: 12)),
+          Text(idleIndexingStatusText(_contentProgress) ?? ((_contentProgress['trigger'] == 'auto' || _contentProgress['trigger'] == 'manual') ? '색인 중 ${_contentProgress['processed'] ?? 0}/${_contentProgress['total'] ?? '?'}' : '${_contentProgress['seen'] ?? 0}건 확인 · ${_contentProgress['indexed'] ?? 0}건 색인 · 실패 ${_contentProgress['errors'] ?? 0}건'), key: const ValueKey('tm-content-index-status'), style: const TextStyle(fontSize: 12)),
           TextButton(onPressed: _cancelContentIndex, child: const Text('\uCDE8\uC18C')),
         ] else
           TextButton.icon(

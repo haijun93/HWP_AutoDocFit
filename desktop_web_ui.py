@@ -2267,6 +2267,7 @@ class DesktopWebBridge:
                 idle_scheduler=self._idle_scheduler(),
                 search_engine_provider=lambda: self._settings_store().read().get("search_engine", "kfind"),
             )
+            service.content_work_busy = lambda: bool(getattr(self.gui, "running", False))
         return service
 
     def _idle_scheduler(self):

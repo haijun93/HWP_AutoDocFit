@@ -70,12 +70,26 @@ class TimemachineContentIndexLifecycleTests(unittest.TestCase):
             scanner=stub_scanner,
             thumb_dir=self.temp_path / "thumbs", developer_mode=lambda: True,
         )
+        self.service.idle_scheduler = None
+        self.service._start_scan = lambda **kwargs: {"ok": True}
+        self.service._auto_refresh_enabled = lambda: False
         self.service.command("settings_set", {
             "roots": [str(self.root)],
             "time_mode": "max",
             "enabled": True,
         })
+        self.service._content_thread = None
+        self.service._content_state = self.service._new_content_state(running=False, phase="idle", trigger=None)
 
+    def enable_auto_refresh(self):
+        if self.service._content_thread and self.service._content_thread.is_alive():
+            self.service._content_cancel.set()
+            self.service._content_thread.join(timeout=3)
+        self.service._auto_refresh_enabled = lambda: True
+        self.service._content_state = self.service._new_content_state(running=False, phase="idle", trigger=None)
+        self.service._content_thread = None
+        self.service._closing = False
+        self.service._start_scan = lambda **kwargs: {"ok": True}
     def tearDown(self):
         self.service.close()
         self.temp.cleanup()
@@ -127,6 +141,42 @@ class TimemachineContentIndexLifecycleTests(unittest.TestCase):
         self.assertEqual(status["errors"], 0)
         self.assertIsNotNone(status["finished_at"])
         self.assertEqual(len(fake.calls), 0)
+
+    def test_empty_index_auto_starts_and_duplicate_request_is_ignored(self):
+        self.enable_auto_refresh()
+        (self.root / "auto.txt").write_text("auto", encoding="utf-8")
+        entered, release = threading.Event(), threading.Event()
+        fake = DelayableFakeIndexer()
+        fake.enter_events[0], fake.release_events[0] = entered, release
+        self.service.content_index.index_file = fake.index_file
+
+        started = self.service._refresh_content_index_async(allow_empty=True)
+        self.assertTrue(started or self.service.content_status()["running"])
+        self.assertTrue(entered.wait(timeout=2.0))
+        self.assertFalse(self.service._refresh_content_index_async(allow_empty=True))
+        release.set()
+        self.service._content_thread.join(timeout=2.0)
+        self.assertFalse(self.service._content_thread.is_alive())
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_worker_yields_while_document_work_is_active(self):
+        self.enable_auto_refresh()
+        (self.root / "busy.txt").write_text("busy", encoding="utf-8")
+        busy = threading.Event()
+        busy.set()
+        self.service.content_work_busy = busy.is_set
+        fake = DelayableFakeIndexer()
+        self.service.content_index.index_file = fake.index_file
+
+        started = self.service._refresh_content_index_async(allow_empty=True)
+        self.assertTrue(started or self.service.content_status()["running"])
+        time.sleep(0.1)
+        self.assertEqual(fake.calls, [])
+        self.assertTrue(self.service.content_status()["yielded"])
+        busy.clear()
+        self.service._content_thread.join(timeout=2.0)
+        self.assertFalse(self.service._content_thread.is_alive())
+        self.assertEqual(len(fake.calls), 1)
 
     def test_progress_increments_per_completed_file(self):
         f1 = self.root / "file_1.txt"

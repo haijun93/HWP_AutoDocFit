@@ -90,12 +90,33 @@ void main() {
     });
   }
 
+  testWidgets('자동 색인 진행률 배너가 n/N을 표시하고 완료 시 사라진다', (tester) async {
+    final api = _FakeApi(enabled: true, developerMode: false);
+    api.contentStatus = {
+      'ok': true, 'phase': 'indexing', 'trigger': 'auto', 'processed': 2,
+      'total': 5, 'seen': 2, 'indexed': 2, 'errors': 0,
+    };
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('본문검색'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('색인 중 2/5'), findsOneWidget);
+    api.contentStatus = {'ok': true, 'phase': 'finished', 'trigger': 'auto', 'running': false,
+      'processed': 5, 'total': 5, 'needs_reindex': false, 'needs_reindex_count': 0};
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('색인 중 2/5'), findsNothing);
+    expect(find.byType(LinearProgressIndicator), findsNothing);
+  });
+
   testWidgets('검색에서 자동 재색인을 발견하고 취소 요청도 진행 상태로 유지한다', (tester) async {
     final api = _FakeApi(enabled: true);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     api.contentStatus = {'ok': true, 'phase': 'reindexing', 'seen': 7, 'indexed': 4, 'errors': 1};
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
@@ -119,7 +140,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -184,7 +206,8 @@ void main() {
     expect(find.text('본문검색'), findsAtLeastNWidgets(1));
     expect(find.text('위계검색'), findsOneWidget);
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -202,7 +225,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     expect(find.byKey(const ValueKey('tm-content-sort-dropdown')), findsOneWidget);
 
     api.developerMode = false;
@@ -416,7 +440,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -809,7 +834,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '본문경로');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -846,7 +872,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     // ISUI1: 1글자는 실시간 검색 기준(2글자) 미만이라 Enter로 찾는다.
     await tester.enterText(find.byType(TextField), '절');
     await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -890,7 +917,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '범위');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -912,7 +940,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '예산 집행');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -937,7 +966,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '테스트');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -964,7 +994,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.text('관련도순'), findsWidgets);
 
@@ -985,7 +1016,8 @@ void main() {
     await tester.tap(find.text('파일명'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     expect(find.text('관련도순'), findsWidgets);
   });
 
@@ -1034,7 +1066,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '단어');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -1073,7 +1106,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '단어');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -1096,7 +1130,8 @@ void main() {
     expect(find.byTooltip('검색 연산자 도움말'), findsNothing);
 
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     final helpBtn = find.byTooltip('검색 연산자 도움말');
     expect(helpBtn, findsOneWidget);
 
@@ -1137,7 +1172,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '키워드');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -1196,7 +1232,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '단어');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -1392,7 +1429,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byType(TextField), '정상');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
@@ -1418,7 +1456,8 @@ void _labelsTest() {
     expect(api.calls.where((c) => c.$1 == 'range').last.$2['query'], '보고');
 
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     expect(tester.widget<TextField>(find.byKey(const ValueKey('tm-file-search'))).controller!.text, '보고');
     expect(api.calls.where((c) => c.$1 == 'content_search').single.$2['query'], '보고');
     expect(find.text('본문포함.docx'), findsOneWidget);
@@ -1438,7 +1477,8 @@ void _labelsTest() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
     await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
