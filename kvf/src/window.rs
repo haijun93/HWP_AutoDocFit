@@ -109,7 +109,7 @@ unsafe fn paint(h: HWND) {
         let old = SelectObject(mem, bmp);
         let font = CreateFontW(
             -frame::scale(h, 14), 0, 0, 0, 400, 0, 0, 0,
-            DEFAULT_CHARSET as u32, 0, 0, 0, 0, wide("?? ??").as_ptr(),
+            DEFAULT_CHARSET as u32, 0, 0, 0, 0, wide("맑은 고딕").as_ptr(),
         );
         let oldfont = SelectObject(mem, font);
         SetBkMode(mem, TRANSPARENT as i32);
@@ -143,7 +143,7 @@ unsafe fn paint(h: HWND) {
         let title_name = with(|s| {
             s.model.view.context().and_then(|c| c.box_id)
                 .and_then(|id| s.boxes.iter().find(|b| b.id == id))
-                .map(|b| b.name.clone()).unwrap_or_else(|| "?? ??".into())
+                .map(|b| b.name.clone()).unwrap_or_else(|| "오늘의 업무".into())
         });
         text(
             &window_title(&title_name),
@@ -151,7 +151,7 @@ unsafe fn paint(h: HWND) {
             DT_END_ELLIPSIS,
         );
         let sticky = with(|s| s.model.sticky);
-        for (index, label) in ["?", "?", "?", if sticky { "?" } else { "?" }].iter().enumerate() {
+        for (index, label) in ["×", "□", "—", if sticky { "◆" } else { "◇" }].iter().enumerate() {
             let right = rc.right - index as i32 * button_w;
             text(*label, RECT { left: right - button_w, top: 0, right, bottom: head }, DT_CENTER);
         }
@@ -164,10 +164,10 @@ unsafe fn paint(h: HWND) {
             let space = panel.and_then(|p| p.space.as_deref())
                 .or_else(|| context.and_then(|c| c.space.as_deref()));
             let box_name = box_id.and_then(|id| s.boxes.iter().find(|b| b.id == id))
-                .map(|b| b.name.as_str()).unwrap_or("?? ??");
+                .map(|b| b.name.as_str()).unwrap_or("오늘의 업무");
             let space_name = space.and_then(|v| SPACES.iter().position(|x| *x == Some(v)))
-                .map(|i| LABELS[i]).unwrap_or("??");
-            let address = format!("?????  ?  {box_name}  ?  {space_name}");
+                .map(|i| LABELS[i]).unwrap_or("전체");
+            let address = format!("상자 › {box_name} › 영역 › {space_name}");
             (address, space.map(str::to_owned), panel.is_some_and(|p| p.view == "icons"))
         });
 
@@ -175,7 +175,7 @@ unsafe fn paint(h: HWND) {
         let address_top = head;
         let address_bottom = address_top + address_h;
         fill(RECT { left: 0, top: address_top, right: rc.right, bottom: address_bottom }, palette.bg);
-        text("??", RECT { left: pad, top: address_top, right: frame::scale(h, 64), bottom: address_bottom }, DT_LEFT);
+        text("위치:", RECT { left: pad, top: address_top, right: frame::scale(h, 64), bottom: address_bottom }, DT_LEFT);
         text(
             &address,
             RECT { left: frame::scale(h, 64), top: address_top + frame::scale(h, 4), right: rc.right - frame::scale(h, 16), bottom: address_bottom - frame::scale(h, 4) },
@@ -186,7 +186,7 @@ unsafe fn paint(h: HWND) {
         let toolbar_top = address_bottom;
         let toolbar_bottom = toolbar_top + toolbar_h;
         fill(RECT { left: 0, top: toolbar_top, right: rc.right, bottom: toolbar_bottom }, palette.plain_head_bg);
-        for (index, label) in ["?? ?? ?", "??", "? ???", "????"].iter().enumerate() {
+        for (index, label) in ["영역 ▾", "목록", "큰 아이콘", "새로고침"].iter().enumerate() {
             let left = pad + index as i32 * frame::scale(h, 106);
             let button = RECT {
                 left, top: toolbar_top + frame::scale(h, 3),
@@ -213,10 +213,10 @@ unsafe fn paint(h: HWND) {
         let (query, item_count, selected_id, message, truncated) = with(|s| {
             let context = s.model.view.context();
             let message = match &s.model.view {
-                View::Loading(_) => "???? ?".to_string(),
+                View::Loading(_) => "불러오는 중…".to_string(),
                 View::Failed { error, .. } => error.clone(),
                 View::Empty { reason, .. } => reason.clone(),
-                _ if s.filtered.is_empty() => "??? ????. ?? ?????? ???? F5? ?? ?????".into(),
+                _ if s.filtered.is_empty() => "표시할 항목이 없습니다. 검색어를 지우거나 F5로 새로고침하세요".into(),
                 _ => String::new(),
             };
             (context.map(|c| c.query.clone()).unwrap_or_default(), s.filtered.len(),
@@ -224,7 +224,7 @@ unsafe fn paint(h: HWND) {
         });
         if !query.is_empty() {
             text(
-                &format!("??: {query} ? {item_count}? ? Esc ???"),
+                &format!("검색: {query} · {item_count}개 · Esc로 지우기"),
                 RECT { left: pad, top: tab_top + tab_h, right: rc.right - pad, bottom: list_top },
                 DT_END_ELLIPSIS,
             );
@@ -254,13 +254,13 @@ unsafe fn paint(h: HWND) {
 
                 let box_id = panel.and_then(|p| p.box_id).or_else(|| if panel_is_active { s.model.view.context().and_then(|c| c.box_id) } else { None });
                 let box_name = box_id.and_then(|id| s.boxes.iter().find(|b| b.id == id))
-                    .map(|b| b.name.as_str()).unwrap_or("?? ??");
+                    .map(|b| b.name.as_str()).unwrap_or("오늘의 업무");
                 let panel_space = panel.and_then(|p| p.space.as_deref())
                     .or_else(|| if panel_is_active { s.model.view.context().and_then(|c| c.space.as_deref()) } else { None });
                 let space_name = panel_space.and_then(|v| SPACES.iter().position(|x| *x == Some(v)))
-                    .map(|i| LABELS[i]).unwrap_or("??");
+                    .map(|i| LABELS[i]).unwrap_or("전체");
                 text(
-                    &format!("{box_name}  ?  {space_name}"),
+                    &format!("{box_name} › {space_name}"),
                     RECT { left: panel_rect.left + pad, top: rect.top + pad, right: panel_rect.right - pad, bottom: rect.top + row_h },
                     DT_END_ELLIPSIS,
                 );
@@ -280,7 +280,7 @@ unsafe fn paint(h: HWND) {
                             let selected = selected_id == Some(*id);
                             if selected { fill(cell, palette.selected); }
                             SetTextColor(mem, palette.row_text(selected, palette.text));
-                            text("?", RECT { left: cell.left, top: cell.top, right: cell.right, bottom: cell.top + frame::scale(h, 48) }, DT_CENTER);
+                            text("▣", RECT { left: cell.left, top: cell.top, right: cell.right, bottom: cell.top + frame::scale(h, 48) }, DT_CENTER);
                             text(&item.display_name, RECT { left: cell.left + pad, top: cell.top + frame::scale(h, 48), right: cell.right - pad, bottom: cell.bottom }, DT_CENTER | DT_END_ELLIPSIS);
                         }
                     }
@@ -295,7 +295,7 @@ unsafe fn paint(h: HWND) {
                             SetTextColor(mem, palette.row_text(selected, palette.text));
                             let category = SPACES.iter().position(|space| *space == Some(item.space.as_str())).unwrap_or(0);
                             text(
-                                &format!("[{}] {} ? {}", item.kind, item.display_name, LABELS[category]),
+                                &format!("[{}] {} · {}", item.kind, item.display_name, LABELS[category]),
                                 RECT { left: row.left + pad, top: row.top, right: row.right - pad, bottom: row.bottom },
                                 DT_END_ELLIPSIS,
                             );
@@ -311,12 +311,12 @@ unsafe fn paint(h: HWND) {
         let selected_count = usize::from(selected_id.is_some());
         let status_right = if truncated { rc.right - frame::scale(h, 220) } else { rc.right - pad };
         text(
-            &format!("{item_count}? ?? ? {selected_count}? ?? ? {}", with(|s| if s.model.explorer.panel_count > 1 { format!("{}? ??", s.model.explorer.panel_count) } else { "?? 1".into() })),
+            &format!("{item_count}개 항목 · {selected_count}개 선택 · {}", with(|s| format!("{}개 영역", s.model.explorer.panel_count))),
             RECT { left: pad, top: status_top, right: status_right, bottom: rc.bottom },
             DT_END_ELLIPSIS,
         );
         if truncated {
-            text("5,000???? ????", RECT { left: rc.right - frame::scale(h, 220), top: status_top, right: rc.right - pad, bottom: rc.bottom }, DT_END_ELLIPSIS);
+            text("5,000개 초과 항목은 표시하지 않습니다", RECT { left: rc.right - frame::scale(h, 220), top: status_top, right: rc.right - pad, bottom: rc.bottom }, DT_END_ELLIPSIS);
         }
 
         frame::own_border(mem, rc);

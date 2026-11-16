@@ -7,7 +7,7 @@ pub const LIMIT: usize = 5000;
 #[derive(Clone,Debug,PartialEq)] pub enum EmptyReason { NoDatabase, NoBoxes, NoItems }
 #[derive(Clone,Debug,PartialEq)] pub enum Snapshot { Empty(EmptyReason), Loaded { boxes:Vec<BoxRow>,box_id:i64,items:Vec<Item>,truncated:bool } }
 pub fn read(root:&Path,selected:Option<i64>)->Result<Snapshot,String> {
-    read_inner(root,selected).map_err(|e| if e.contains("locked") || e.contains("busy") { "?? ??? ??? ?? ????. F5? ??".into() } else { e })
+    read_inner(root,selected).map_err(|e| if e.contains("locked") || e.contains("busy") { "자료함이 사용 중이거나 잠겨 있습니다. 잠시 후 F5를 누르세요".into() } else { e })
 }
 fn read_inner(root:&Path,selected:Option<i64>)->Result<Snapshot,String> {
     let path=root.join("library.db");
