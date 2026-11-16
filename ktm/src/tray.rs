@@ -18,6 +18,15 @@ pub const SHOW: u32 = 1;
 pub const QUIT: u32 = 2;
 pub const AUTOSTART: u32 = 3;
 
+/// 트레이 아이콘 툴팁: 퀵가상폴더와 같이 이름 옆에 단축키를 함께 표시한다.
+pub fn status_tooltip(hotkey: &str) -> String {
+    if hotkey.is_empty() {
+        "퀵몽땅검색".into()
+    } else {
+        format!("퀵몽땅검색 — {hotkey}")
+    }
+}
+
 /// 트레이 메뉴 첫 줄(누를 수 없는 상태 표시): 단축키가 살아 있으면 단축키, 아니면 오류.
 pub fn status_line(hotkey: &str, hotkey_error: &str) -> String {
     if hotkey_error.is_empty() {
@@ -71,8 +80,9 @@ impl Tray {
             data.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
             data.uCallbackMessage = MESSAGE;
             data.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
-            let tip = wide("퀵몽땅검색");
-            data.szTip[..tip.len()].copy_from_slice(&tip);
+            let tip = wide(&status_tooltip(hotkey));
+            let copy_len = tip.len().min(data.szTip.len() - 1);
+            data.szTip[..copy_len].copy_from_slice(&tip[..copy_len]);
             if Shell_NotifyIconW(NIM_ADD, &data) == 0 {
                 if registered {
                     UnregisterHotKey(hwnd, HOTKEY_ID);
@@ -157,6 +167,11 @@ mod tests {
     fn status_line_shows_hotkey_or_error() {
         assert_eq!(status_line("Ctrl+Alt+Space", ""), "퀵몽땅검색 켜짐 · Ctrl+Alt+Space");
         assert!(status_line("Ctrl+Alt+Space", "중복").starts_with("단축키 없음"));
+    }
+    #[test]
+    fn status_tooltip_shows_hotkey() {
+        assert_eq!(status_tooltip("Ctrl+Alt+Space"), "퀵몽땅검색 — Ctrl+Alt+Space");
+        assert_eq!(status_tooltip(""), "퀵몽땅검색");
     }
     #[test]
     #[cfg(windows)]
