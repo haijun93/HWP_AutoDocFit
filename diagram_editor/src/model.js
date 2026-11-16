@@ -65,6 +65,7 @@ export function validate(snapshot) {
   const extra={};
   // 레이어(layers.js): 개체가 속한 레이어 id. 없거나 잘못되면 맨 아래 레이어로 본다.
   if(typeof n.data.layer==='string'&&/^[A-Za-z0-9_-]{1,64}$/.test(n.data.layer))extra.layer=n.data.layer;
+  if(n.data.customSize===true)extra.customSize=true;
   if(n.data.shape==='freehand'){if(!validPoints(n.data.points))throw new Error('펜 선 데이터가 올바르지 않습니다.');extra.points=n.data.points.map(p=>[p[0],p[1]]);}
   if(n.data.shape==='image'){
    if(!isImageSrc(n.data.src))throw new Error('그림 데이터가 올바르지 않습니다.');extra.src=n.data.src;
@@ -203,6 +204,19 @@ export function computeNodeAutoFitBox(n) {
   return {width:n.width??220,height:n.height??40,lines,lineHeight:f.lineHeight,factor:1,textWidth:0,textHeight:lines.length*f.lineHeight,font:f};
  }
  const factor=textFactor(n.data.shape);
+ if(n.data?.customSize===true){
+  if(n.data.shape==='circle'){
+   const padX=6,padY=4;let d=Math.max(20,n.width??84,n.height??84);
+   const lines=n.data.label?wrapKoreanAwareText(n.data.label,Math.max(20,Math.floor(d*factor-2*padX)),f.css,f.px):[''];
+   const longest=Math.max(0,...lines.map(line=>textWidth(line,f.css,f.px)));
+   return {width:d,height:d,lines,lineHeight:f.lineHeight,factor,textWidth:longest,textHeight:lines.length*f.lineHeight,font:f};
+  }
+  const w=Math.max(20,n.width??220),h=Math.max(10,n.height??90);
+  const innerW=Math.max(24,Math.floor(w*factor-2*PADDING_X));
+  const lines=n.data.label?wrapKoreanAwareText(n.data.label,innerW,f.css,f.px):[''];
+  const longest=Math.max(0,...lines.map(line=>textWidth(line,f.css,f.px)));
+  return {width:w,height:h,lines,lineHeight:f.lineHeight,factor,textWidth:longest,textHeight:lines.length*f.lineHeight,font:f};
+ }
  if(n.data.shape==='circle'){
   // 원형은 정사각형을 유지하고 글을 원 안에서 줄바꿈한다. 넘치면 지름을 키운다(최대 360).
   const padX=6,padY=4;let d=Math.max(40,n.width??84,n.height??84),lines=[];

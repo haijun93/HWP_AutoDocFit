@@ -143,3 +143,113 @@ test('rotation is validated, normalized and drawn around the shape center', asyn
  assert.equal(rotationFromPointer(0, 0, 10, 0), 90); // 오른쪽
  assert.equal(rotationFromPointer(0, 0, 10, 9, true), 135); // Shift: 15°씩
 });
+
+test('크기 바꾼 도형 복사→붙여넣기→크기 동일, 복제도 동일, 저장 후 다시 열어도 크기 유지', async () => {
+ const {validate, decode, node, layoutGraph, computeNodeAutoFitBox, FORMAT, id} = await import('./model.js');
+
+ // 1. 크기를 바꾼 사각형 도형 (기본 220x90 -> 350x180으로 변경)
+ const original = {
+  ...node('테스트 라벨', 100, 100, 'rectangle', 'blue', 'node-1', {
+   fill: '#FEF9C3', stroke: '#DC2626', strokeWidth: 3, dash: 'dash', rotation: 45, customSize: true
+  }),
+  width: 350,
+  height: 180,
+  measured: {width: 350, height: 180}
+ };
+
+ // layoutGraph를 통과해도 크기가 유지되는지 확인
+ const graphAfterLayout = layoutGraph({nodes: [original], edges: []});
+ assert.equal(graphAfterLayout.nodes[0].width, 350);
+ assert.equal(graphAfterLayout.nodes[0].height, 180);
+
+ // 2. 복사 (Ctrl+C) -> 붙여넣기 (Ctrl+V) 모델 동작 검증
+ const clipboard = [{
+  ...structuredClone(original),
+  width: original.width ?? original.measured?.width ?? 220,
+  height: original.height ?? original.measured?.height ?? 90
+ }];
+ assert.equal(clipboard[0].width, 350);
+ assert.equal(clipboard[0].height, 180);
+
+ const pastedId = id();
+ const pasted = {
+  ...structuredClone(clipboard[0]),
+  id: pastedId,
+  position: {x: clipboard[0].position.x + 40, y: clipboard[0].position.y + 40},
+  width: clipboard[0].width,
+  height: clipboard[0].height,
+  selected: true
+ };
+
+ // 붙여넣기 후 commit 시 layoutGraph가 실행됨
+ const committedGraph = layoutGraph({nodes: [original, pasted], edges: []});
+ const pastedNode = committedGraph.nodes.find(n => n.id === pastedId);
+
+ // 붙여넣은 도형의 크기·회전·색·선·글 검증
+ assert.equal(pastedNode.width, 350);
+ assert.equal(pastedNode.height, 180);
+ assert.equal(pastedNode.data.rotation, 45);
+ assert.equal(pastedNode.data.fill, '#FEF9C3');
+ assert.equal(pastedNode.data.stroke, '#DC2626');
+ assert.equal(pastedNode.data.strokeWidth, 3);
+ assert.equal(pastedNode.data.dash, 'dash');
+ assert.equal(pastedNode.data.label, '테스트 라벨');
+ assert.equal(pastedNode.data.customSize, true);
+
+ // 3. 복제 (Ctrl+D / duplicate) 모델 동작 검증
+ const dupId = id();
+ const duplicated = {
+  ...structuredClone(original),
+  id: dupId,
+  position: {x: original.position.x + 30, y: original.position.y + 30},
+  width: original.width ?? original.measured?.width ?? 220,
+  height: original.height ?? original.measured?.height ?? 90,
+  selected: true
+ };
+ const dupGraph = layoutGraph({nodes: [original, duplicated], edges: []});
+ const dupNode = dupGraph.nodes.find(n => n.id === dupId);
+ assert.equal(dupNode.width, 350);
+ assert.equal(dupNode.height, 180);
+ assert.equal(dupNode.data.rotation, 45);
+ assert.equal(dupNode.data.fill, '#FEF9C3');
+ assert.equal(dupNode.data.label, '테스트 라벨');
+ assert.equal(dupNode.data.customSize, true);
+
+ // 4. 저장 (validate) -> 불러오기 (decode) -> 다시 열기 (layoutGraph) 후 크기 유지
+ const doc = {format: FORMAT, version: 1, nodes: [original, pastedNode], edges: []};
+ const saved = validate(doc);
+ assert.equal(saved.nodes[0].width, 350);
+ assert.equal(saved.nodes[0].height, 180);
+ assert.equal(saved.nodes[0].data.customSize, true);
+ assert.equal(saved.nodes[1].width, 350);
+ assert.equal(saved.nodes[1].height, 180);
+ assert.equal(saved.nodes[1].data.customSize, true);
+
+ const reloaded = decode(JSON.parse(JSON.stringify(saved)));
+ const reloadedLaidOut = layoutGraph(reloaded);
+ assert.equal(reloadedLaidOut.nodes[0].width, 350);
+ assert.equal(reloadedLaidOut.nodes[0].height, 180);
+ assert.equal(reloadedLaidOut.nodes[1].width, 350);
+ assert.equal(reloadedLaidOut.nodes[1].height, 180);
+
+ // 5. 원(circle) 도형 크기 변경 후 복사-붙여넣기 검증
+ const circleOriginal = {
+  ...node('원형 글', 0, 0, 'circle', 'blue', 'circle-1', {fill: 'none', stroke: '#16A34A', customSize: true}),
+  width: 140,
+  height: 140,
+  measured: {width: 140, height: 140}
+ };
+ const circlePasted = {
+  ...structuredClone(circleOriginal),
+  id: 'circle-2',
+  position: {x: 40, y: 40},
+  width: circleOriginal.width,
+  height: circleOriginal.height,
+  selected: true
+ };
+ const circleGraph = layoutGraph({nodes: [circleOriginal, circlePasted], edges: []});
+ assert.equal(circleGraph.nodes[0].width, 140);
+ assert.equal(circleGraph.nodes[0].height, 140);
+ assert.equal(circleGraph.nodes[1].width, 140);
+ assert.equal(circleGraph.nodes[1].height, 140);
+});

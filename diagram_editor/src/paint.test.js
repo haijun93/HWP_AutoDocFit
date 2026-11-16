@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {freehandNode,freehandPath,withBackground,withoutBackground,fitSize,paintStyle,BACKGROUND_ID,validPoints,isImageSrc} from './paint.js';
-import {validate,svg,decode,FORMAT,node,computeNodeAutoFitBox} from './model.js';
+import {validate,svg,decode,FORMAT,node,computeNodeAutoFitBox,layoutGraph} from './model.js';
 
 const PNG='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==';
 const snap=nodes=>({format:FORMAT,version:1,nodes,edges:[]});
@@ -54,4 +54,58 @@ test('bad paint data is refused',()=>{
  assert.throws(()=>validate(snap([img])));
  const fake=withBackground([],PNG,10,10)[0];fake.id='other';
  assert.throws(()=>validate(snap([fake])));
+});
+
+test('paint mode resized shapes retain size across copy-paste and duplicate',()=>{
+ // 그림판 모드 도형: 테두리 빨간색, 속 빈 사각형, 크기 180x60으로 조정
+ const paintRect = {
+  ...node('', 50, 50, 'rectangle', 'blue', 'p-rect', {...paintStyle('rectangle', '#DC2626', 3), customSize: true}),
+  width: 180,
+  height: 60,
+  measured: {width: 180, height: 60}
+ };
+ // 그림판 글상자: 240x80으로 조정
+ const paintText = {
+  ...node('사진 설명', 60, 60, 'text', 'blue', 'p-text', {...paintStyle('text'), customSize: true}),
+  width: 240,
+  height: 80,
+  measured: {width: 240, height: 80}
+ };
+
+ // 복사 -> 붙여넣기 시뮬레이션
+ const clipboard = [paintRect, paintText].map(n => ({
+  ...structuredClone(n),
+  width: n.width ?? n.measured?.width ?? 220,
+  height: n.height ?? n.measured?.height ?? 90
+ }));
+
+ const pastedRect = {
+  ...structuredClone(clipboard[0]),
+  id: 'p-rect-copy',
+  position: {x: clipboard[0].position.x + 40, y: clipboard[0].position.y + 40},
+  width: clipboard[0].width,
+  height: clipboard[0].height,
+  selected: true
+ };
+ const pastedText = {
+  ...structuredClone(clipboard[1]),
+  id: 'p-text-copy',
+  position: {x: clipboard[1].position.x + 40, y: clipboard[1].position.y + 40},
+  width: clipboard[1].width,
+  height: clipboard[1].height,
+  selected: true
+ };
+
+ const graph = layoutGraph({nodes: [paintRect, paintText, pastedRect, pastedText], edges: []});
+ const pr = graph.nodes.find(n => n.id === 'p-rect-copy');
+ const pt = graph.nodes.find(n => n.id === 'p-text-copy');
+
+ assert.equal(pr.width, 180);
+ assert.equal(pr.height, 60);
+ assert.equal(pr.data.stroke, '#DC2626');
+ assert.equal(pr.data.fill, 'none');
+
+ assert.equal(pt.width, 240);
+ assert.equal(pt.height, 80);
+ assert.equal(pt.data.label, '사진 설명');
 });
