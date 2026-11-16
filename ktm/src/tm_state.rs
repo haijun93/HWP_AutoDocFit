@@ -22,13 +22,18 @@ pub enum Tab {
 pub enum SearchMode { #[default] Keyword, Filename }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum SortMode { #[default] Relevance, Newest, Oldest, Name }
+pub enum SortMode { #[default] Relevance, Confidence, Newest, Oldest, Name }
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MatchMode { #[default] AllTerms, AnyTerm, Exact }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UiOptions {
     pub sidebar_open: bool,
     pub search_mode: SearchMode,
     pub sort: SortMode,
+    pub match_mode: MatchMode,
+    pub options_open: bool,
     pub file_types: Vec<String>,
     pub days: Option<u32>,
     pub exclude_filename: bool,
@@ -40,7 +45,7 @@ pub struct UiOptions {
 }
 
 impl Default for UiOptions {
-    fn default() -> Self { Self { sidebar_open: false, search_mode: SearchMode::Keyword, sort: SortMode::Relevance, file_types: Vec::new(), days: None, exclude_filename: false, within_query: String::new(), preset_name: String::new(), collapsed_filename: false, collapsed_body: false, grid_view: false } }
+    fn default() -> Self { Self { sidebar_open: false, search_mode: SearchMode::Keyword, sort: SortMode::Relevance, match_mode: MatchMode::AllTerms, options_open: false, file_types: Vec::new(), days: None, exclude_filename: false, within_query: String::new(), preset_name: String::new(), collapsed_filename: false, collapsed_body: false, grid_view: false } }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -191,6 +196,8 @@ pub enum Event {
     ToggleSidebar,
     SetSearchMode(SearchMode),
     SetSort(SortMode),
+    SetMatchMode(MatchMode),
+    ToggleOptions,
     ToggleFileType(String),
     SetDays(Option<u32>),
     SetExcludeFilename(bool),
@@ -213,6 +220,7 @@ pub enum Effect {
         custom_date_range: Option<(i64, i64)>,
         folder: Option<String>,
         ext: Option<String>,
+        match_mode: MatchMode,
     },
     Open {
         index: usize,
@@ -244,6 +252,7 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
             custom_date_range: state.custom_date_range,
             folder: state.selected_folder.clone(),
             ext: state.selected_ext.clone(),
+            match_mode: state.options.match_mode,
         });
     } else {
         if query.is_empty() {
@@ -665,6 +674,8 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         Event::ToggleSidebar => state.options.sidebar_open = !state.options.sidebar_open,
         Event::SetSearchMode(mode) => state.options.search_mode = mode,
         Event::SetSort(sort) => state.options.sort = sort,
+        Event::SetMatchMode(mode) => { state.options.match_mode = mode; search(&mut state, &mut effects, false); }
+        Event::ToggleOptions => state.options.options_open = !state.options.options_open,
         Event::ToggleFileType(ext) => {
             if let Some(i) = state.options.file_types.iter().position(|x| x == &ext) { state.options.file_types.remove(i); }
             else { state.options.file_types.push(ext); }

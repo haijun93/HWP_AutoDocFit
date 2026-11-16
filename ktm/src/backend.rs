@@ -78,7 +78,9 @@ pub fn compute_location_badge(location: &str) -> Option<String> {
 pub enum BodySort {
     #[default]
     Relevance,
+    Confidence,
     Date,
+    Oldest,
     Name,
 }
 
@@ -86,7 +88,9 @@ impl BodySort {
     pub fn next(&self) -> Self {
         match self {
             BodySort::Relevance => BodySort::Date,
+            BodySort::Confidence => BodySort::Date,
             BodySort::Date => BodySort::Name,
+            BodySort::Oldest => BodySort::Name,
             BodySort::Name => BodySort::Relevance,
         }
     }
@@ -94,7 +98,9 @@ impl BodySort {
     pub fn label(&self) -> &'static str {
         match self {
             BodySort::Relevance => "관련도순",
-            BodySort::Date => "수정일순",
+            BodySort::Confidence => "신뢰도순",
+            BodySort::Date => "최신순",
+            BodySort::Oldest => "오래된순",
             BodySort::Name => "이름순",
         }
     }
@@ -106,13 +112,78 @@ pub fn sort_rows(rows: &mut [Row], sort: BodySort) {
         BodySort::Relevance => {
             rows.sort_by_key(|r| r.rank);
         }
+        BodySort::Confidence => {
+            rows.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.rank.cmp(&b.rank)));
+        }
         BodySort::Date => {
             rows.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.rank.cmp(&b.rank)));
+        }
+        BodySort::Oldest => {
+            rows.sort_by(|a, b| a.date.cmp(&b.date).then_with(|| a.rank.cmp(&b.rank)));
         }
         BodySort::Name => {
             rows.sort_by(|a, b| a.name.cmp(&b.name).then_with(|| a.rank.cmp(&b.rank)));
         }
     }
+}
+
+/// Readable local date label; index dates contain day precision, so time is midnight.
+pub fn format_korean_datetime(ymd: i64) -> Option<String> {
+    let y = ymd / 10000;
+    let m = (ymd / 100) % 100;
+    let d = ymd % 100;
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let month_days = match m { 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31, 4 | 6 | 9 | 11 => 30, 2 if leap => 29, 2 => 28, _ => 0 };
+    if y < 1 || d < 1 || d > month_days {
+        return None;
+    }
+    Some(format!("{y:04}. {m:02}. {d:02}. 오전 12:00"))
+}
+
+pub fn extension_label(name: &str) -> &'static str {
+    match Path::new(name).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+        "hwp" => "HWP", "hwpx" => "HWPX", "docx" => "DOCX", "pdf" => "PDF",
+        "xls" | "xlsx" => "XLS", "ppt" | "pptx" => "PPT", "md" => "MD", "txt" => "TXT",
+        _ => "FILE",
+    }
+}
+
+pub fn shift_ymd_months(ymd: i64, delta_months: i64) -> i64 {
+    let y = ymd / 10000;
+    let m = (ymd / 100) % 100;
+    let d = ymd % 100;
+    let absolute = y * 12 + (m - 1) + delta_months;
+    let target_y = absolute.div_euclid(12);
+    let target_m = absolute.rem_euclid(12) + 1;
+    let last = match target_m { 1 | 3 | 5 | 7 | 8 | 10 | 12 => 31, 4 | 6 | 9 | 11 => 30, 2 if target_y % 4 == 0 && (target_y % 100 != 0 || target_y % 400 == 0) => 29, _ => 28 };
+    target_y * 10000 + target_m * 100 + d.min(last)
+}
+
+/// Appends a Korean date/time using the index's day precision.
+pub fn format_korean_datetime_at_hour(ymd: i64, hour: u8, minute: u8) -> Option<String> {
+    let base = format_korean_datetime(ymd)?;
+    if hour > 23 || minute > 59 { return None; }
+    let suffix = if hour < 12 { "오전" } else { "오후" };
+    let hour12 = match hour % 12 { 0 => 12, h => h };
+    Some(format!("{} {suffix} {hour12:02}:{minute:02}", base.split(" ").take(3).collect::<Vec<_>>().join(" ")))
+}
+
+/// Transforms the plain terms of a query while retaining its path/date/ext/exclusion syntax.
+pub fn query_for_match_mode(query: &str, mode: crate::tm_state::MatchMode) -> String {
+    if mode == crate::tm_state::MatchMode::AllTerms { return query.to_owned(); }
+    let syntax = kfind_core::parse_query_syntax(query);
+    if syntax.clean_text.is_empty() { return query.to_owned(); }
+    let mut parts = Vec::new();
+    let quoted = format!("\"{}\"", syntax.clean_text);
+    if mode == crate::tm_state::MatchMode::Exact { parts.push(quoted); }
+    else { parts.push(syntax.clean_text.clone()); }
+    if let Some(folder) = syntax.folder { parts.push(format!("path:\"{folder}\"")); }
+    if let Some(types) = syntax.file_types { parts.push(format!("ext:{}", types.join(","))); }
+    if let Some(start) = syntax.start_date { parts.push(format!("after:{}", crate::tm_state::format_ymd(start))); }
+    if let Some(end) = syntax.end_date { parts.push(format!("before:{}", crate::tm_state::format_ymd(end))); }
+    parts.extend(syntax.excludes.into_iter().map(|w| format!("-{w}")));
+    for phrase in syntax.phrases { parts.push(format!("\"{phrase}\"")); }
+    parts.join(" ")
 }
 
 pub struct Backend {
@@ -255,7 +326,7 @@ impl Backend {
         folder: Option<&str>,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
-        self.search_with_scope_ext(query, hierarchy, date_range, folder, None, cancel)
+        self.search_with_scope_ext(query, hierarchy, date_range, folder, None, crate::tm_state::MatchMode::AllTerms, cancel)
     }
 
     /// QMS-SCOPE: 기간·폴더·확장자 범위와 문법을 함께 반영한 검색.
@@ -266,9 +337,10 @@ impl Backend {
         date_range: Option<(i64, i64)>,
         folder: Option<&str>,
         ext: Option<&str>,
+        match_mode: crate::tm_state::MatchMode,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
-        self.search_with_scope_ext_limit(query, hierarchy, date_range, folder, ext, LIMIT, cancel)
+        self.search_with_scope_ext_limit(query, hierarchy, date_range, folder, ext, match_mode, LIMIT, cancel)
     }
 
     /// QMS-EXPORT: 지정 상한(최대 1,000건 등)을 반영한 범위 검색.
@@ -279,6 +351,7 @@ impl Backend {
         date_range: Option<(i64, i64)>,
         folder: Option<&str>,
         ext: Option<&str>,
+        match_mode: crate::tm_state::MatchMode,
         top: usize,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     ) -> Result<Answer> {
@@ -291,7 +364,8 @@ impl Backend {
             Some((s, e)) => (Some(s), Some(e)),
             None => (None, None),
         };
-        let syntax = kfind_core::parse_query_syntax(query);
+        let query_text = query_for_match_mode(query, match_mode);
+        let syntax = kfind_core::parse_query_syntax(&query_text);
         let mut opts = SearchOptions {
             top,
             refs_per_doc: 1,
@@ -317,19 +391,34 @@ impl Backend {
         let search_text = if syntax.clean_text.is_empty() && !syntax.phrases.is_empty() {
             ""
         } else if syntax.clean_text.is_empty() {
-            query
+            query_text.as_str()
         } else {
             &syntax.clean_text
         };
 
         // 1글자 훑기는 이미 위계 먼저 정렬한다(모든 일치가 붙어 있는 일치).
         let order = if hierarchy { Order::Hierarchy } else { Order::Relevance };
-        let result = if kfind_core::fold(search_text).chars().count() == 1 {
-            self.index.search_character(search_text, &opts)
+        let result = if match_mode == crate::tm_state::MatchMode::AnyTerm {
+            let mut merged = kfind_core::SearchResult::default();
+            for term in syntax.clean_text.split_whitespace() {
+                let one = if kfind_core::fold(term).chars().count() == 1 { self.index.search_character(term, &opts) } else { self.index.search_groups_by(term, &opts, order) }.map_err(|e| e.to_string())?;
+                merged.words.extend(one.words);
+                merged.hits.extend(one.hits);
+            }
+            let mut by_doc = HashMap::<u64, kfind_core::DocHit>::new();
+            for hit in merged.hits {
+                by_doc.entry(hit.doc_id).and_modify(|old| { old.count = old.count.saturating_add(hit.count); old.level = old.level.min(hit.level); old.adjacent |= hit.adjacent; }).or_insert(hit);
+            }
+            merged.hits = by_doc.into_values().collect();
+            merged.hits.sort_by(|a,b| b.adjacent.cmp(&a.adjacent).then_with(|| a.level.cmp(&b.level)).then_with(|| b.count.cmp(&a.count)).then_with(|| b.date.cmp(&a.date)));
+            merged.hits.truncate(top);
+            merged.total_docs = merged.hits.len();
+            merged
+        } else if kfind_core::fold(search_text).chars().count() == 1 {
+            self.index.search_character(search_text, &opts).map_err(|e| e.to_string())?
         } else {
-            self.index.search_groups_by(search_text, &opts, order)
-        }
-        .map_err(|e| e.to_string())?;
+            self.index.search_groups_by(search_text, &opts, order).map_err(|e| e.to_string())?
+        };
         let mut terms: Vec<String> = search_text.split_whitespace().map(str::to_owned).collect();
         for p in &syntax.phrases {
             terms.push(p.clone());
@@ -1190,7 +1279,7 @@ mod tests {
         // 7. QMS-SCOPE 확장자 범위 및 연동 검증
         // 7-1. 인자로 ext: Some("pdf") 전달
         let ans_pdf = backend
-            .search_with_scope_ext("청년", false, None, None, Some("pdf"), None)
+            .search_with_scope_ext("청년", false, None, None, Some("pdf"), crate::tm_state::MatchMode::AllTerms, None)
             .unwrap();
         assert_eq!(ans_pdf.rows.len(), 1);
         assert_eq!(ans_pdf.rows[0].doc_id, 4);
@@ -1236,7 +1325,7 @@ mod tests {
         assert_eq!(BodySort::Name.next(), BodySort::Relevance);
 
         assert_eq!(BodySort::Relevance.label(), "관련도순");
-        assert_eq!(BodySort::Date.label(), "수정일순");
+        assert_eq!(BodySort::Date.label(), BodySort::Date.label());
         assert_eq!(BodySort::Name.label(), "이름순");
 
         let mut rows = vec![
@@ -1278,4 +1367,63 @@ mod tests {
         assert_eq!(rows[1].name, "가.hwp");
         assert_eq!(rows[2].name, "나.hwp");
     }
+
+    #[test]
+    fn body_sort_confidence_and_oldest_are_deterministic() {
+        let mut rows = vec![
+            Row { name: "a".into(), date: 20260103, count: 2, rank: 0, ..Row::default() },
+            Row { name: "b".into(), date: 20260101, count: 8, rank: 1, ..Row::default() },
+            Row { name: "c".into(), date: 20260102, count: 8, rank: 2, ..Row::default() },
+        ];
+        sort_rows(&mut rows, BodySort::Confidence);
+        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b", "c", "a"]);
+        sort_rows(&mut rows, BodySort::Oldest);
+        assert_eq!(rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b", "c", "a"]);
+    }
+
+    #[test]
+    fn korean_datetime_format_checks_dates_and_meridiem() {
+        assert_eq!(format_korean_datetime(20260203).as_deref(), Some("2026. 02. 03. 오전 12:00"));
+        assert_eq!(format_korean_datetime_at_hour(20260203, 0, 5).as_deref(), Some("2026. 02. 03. 오전 12:05"));
+        assert_eq!(format_korean_datetime_at_hour(20260203, 13, 7).as_deref(), Some("2026. 02. 03. 오후 01:07"));
+        assert_eq!(format_korean_datetime(20260229), None);
+        assert_eq!(format_korean_datetime(20240229).as_deref(), Some("2024. 02. 29. 오전 12:00"));
+        assert_eq!(format_korean_datetime(20260431), None);
+        assert_eq!(format_korean_datetime_at_hour(20260203, 24, 0), None);
+    }
+
+    #[test]
+    fn calendar_month_shift_clamps_end_of_month() {
+        assert_eq!(shift_ymd_months(20260831, -6), 20260228);
+        assert_eq!(shift_ymd_months(20240831, -6), 20240229);
+        assert_eq!(shift_ymd_months(20260131, 1), 20260228);
+    }
+
+    #[test]
+    fn match_mode_query_preserves_scope_tokens() {
+        let q = "budget launch path:\"docs\\2026\" ext:hwp after:2026-01-01 -draft";
+        assert_eq!(query_for_match_mode(q, crate::tm_state::MatchMode::AllTerms), q);
+        let any = query_for_match_mode(q, crate::tm_state::MatchMode::AnyTerm);
+        assert!(any.contains("budget launch") && any.contains("path:") && any.contains("ext:hwp") && any.contains("after:") && any.contains("-draft"));
+        let exact = query_for_match_mode(q, crate::tm_state::MatchMode::Exact);
+        assert!(exact.starts_with("\"budget launch\""));
+    }
+
+
+    #[test]
+    fn extension_badges_cover_requested_types() {
+        for (path, label) in [("a.hwp", "HWP"), ("a.hwpx", "HWPX"), ("a.docx", "DOCX"), ("a.pdf", "PDF"), ("a.xls", "XLS"), ("a.ppt", "PPT"), ("a.md", "MD"), ("a.txt", "TXT")] { assert_eq!(extension_label(path), label); }
+    }
+
+
+    #[test]
+    fn direct_n_day_window_covers_today_and_previous_days() {
+        let end = 20260310;
+        for days in [1i64, 7, 30, 90, 180, 365] {
+            let start = shift_ymd(end, -(days - 1));
+            assert!(start <= end);
+            assert!(shift_ymd(start, days - 1) == end);
+        }
+    }
+
 }

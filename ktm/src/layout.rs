@@ -13,7 +13,7 @@ pub const ROW_H: i32 = 70;
 pub const ROW_FOLDER_W: i32 = 28;
 pub const STATUS_H: i32 = 24;
 pub const PREVIEW_H: i32 = 64;
-pub const OPTION_H: i32 = 30;
+pub const OPTION_H: i32 = 58;
 pub const SUMMARY_H: i32 = 32;
 pub const SIDEBAR_W: i32 = 220;
 pub const SIDEBAR_ROW_H: i32 = 26;
@@ -38,14 +38,16 @@ pub fn hit_sidebar(
     indexed: usize,
     presets: usize,
     history: usize,
+    drives: usize,
 ) -> Option<SidebarHit> {
     if !open || x < 0 || x >= width || y < 40 {
         return None;
     }
     let row = ((y - 40) / SIDEBAR_ROW_H) as usize;
     let folders = 2..2 + indexed;
-    let recommendations = 2 + indexed + 1..2 + indexed + 4;
-    let preset_header = 2 + indexed + 4;
+    let recommendations_header = 2 + indexed;
+    let recommendations = recommendations_header + 1..recommendations_header + 1 + drives;
+    let preset_header = recommendations_header + 1 + drives;
     let preset_rows = preset_header + 1..preset_header + 1 + presets;
     let history_header = preset_header + 1 + presets;
     let history_rows = history_header + 1..history_header + 1 + history;
@@ -55,7 +57,7 @@ pub fn hit_sidebar(
     } else if folders.contains(&row) {
         Some(SidebarHit::IndexedFolder(row - 2))
     } else if recommendations.contains(&row) {
-        Some(SidebarHit::Recommended(row - (2 + indexed + 1)))
+        Some(SidebarHit::Recommended(row - (recommendations_header + 1)))
     } else if preset_rows.contains(&row) {
         Some(SidebarHit::Preset(row - (preset_header + 1)))
     } else if history_rows.contains(&row) {
@@ -67,6 +69,16 @@ pub fn hit_sidebar(
     }
 }
 
+pub fn hit_sidebar_add(x: i32, y: i32, width: i32, open: bool) -> bool {
+    open && y >= 40 + SIDEBAR_ROW_H && y < 40 + 2 * SIDEBAR_ROW_H && x >= width - 34 && x < width
+}
+
+pub fn hit_match_chip(x: i32, left: i32, chip_width: i32, count: usize) -> Option<usize> {
+    if x < left || chip_width <= 0 { return None; }
+    let idx = ((x - left) / chip_width) as usize;
+    (idx < count).then_some(idx)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OptionControl {
     SearchMode,
@@ -76,6 +88,8 @@ pub enum OptionControl {
     ExcludeFilename,
     WithinQuery,
     Preset,
+    MatchMode,
+    CustomDays,
 }
 
 /// 옵션 바 각 영역을 가용 폭에 맞춰 동일 폭으로 배치한다.
@@ -89,30 +103,17 @@ pub fn option_spans(left: i32, right: i32) -> [(i32, i32); 7] {
     })
 }
 
-pub fn hit_option(
-    x: i32,
-    y: i32,
-    top: i32,
-    height: i32,
-    left: i32,
-    right: i32,
-) -> Option<OptionControl> {
-    if y < top || y >= top + height {
-        return None;
+pub fn hit_option(x: i32, y: i32, top: i32, height: i32, left: i32, right: i32) -> Option<OptionControl> {
+    if y < top || y >= top + height { return None; }
+    if y >= top + height / 2 {
+        let chip_start = left + 2;
+        return if x >= chip_start && x < chip_start + 3 * 86 { Some(OptionControl::MatchMode) }
+        else if x >= chip_start + 3 * 86 && x < right { Some(OptionControl::CustomDays) }
+        else { None };
     }
     let spans = option_spans(left, right);
-    let idx = spans.iter().position(|(a, b)| x >= *a && x < *b)?;
-    Some(
-        [
-            OptionControl::SearchMode,
-            OptionControl::Sort,
-            OptionControl::FileTypes,
-            OptionControl::Period,
-            OptionControl::ExcludeFilename,
-            OptionControl::WithinQuery,
-            OptionControl::Preset,
-        ][idx],
-    )
+    let idx = spans.iter().position(|(a,b)| x >= *a && x < *b)?;
+    Some([OptionControl::SearchMode,OptionControl::Sort,OptionControl::FileTypes,OptionControl::Period,OptionControl::ExcludeFilename,OptionControl::WithinQuery,OptionControl::Preset][idx])
 }
 
 pub fn hit_summary_group(
@@ -353,49 +354,64 @@ mod interaction_hit_tests {
     #[test]
     fn sidebar_toggle_hit() {
         assert_eq!(
-            hit_sidebar(12, 45, 200, true, 2, 1, 3),
+            hit_sidebar(12, 45, 200, true, 2, 1, 3, 0),
             Some(SidebarHit::Toggle)
         );
     }
     #[test]
+    fn sidebar_add_folder_hit_is_header_plus_only() {
+        assert!(hit_sidebar_add(190, 40 + 26 + 4, 200, true));
+        assert!(!hit_sidebar_add(20, 40 + 26 + 4, 200, true));
+        assert!(!hit_sidebar_add(190, 40 + 26 + 4, 200, false));
+    }
+    #[test]
+    fn match_chip_hit_returns_index_and_rejects_gaps() {
+        assert_eq!(hit_match_chip(100, 100, 86, 3), Some(0));
+        assert_eq!(hit_match_chip(185, 100, 86, 3), Some(0));
+        assert_eq!(hit_match_chip(186, 100, 86, 3), Some(1));
+        assert_eq!(hit_match_chip(272, 100, 86, 3), Some(2));
+        assert_eq!(hit_match_chip(358, 100, 86, 3), None);
+        assert_eq!(hit_match_chip(99, 100, 86, 3), None);
+    }
+    #[test]
     fn sidebar_indexed_folder_hit() {
         assert_eq!(
-            hit_sidebar(12, 40 + 2 * 26 + 2, 200, true, 3, 0, 0),
+            hit_sidebar(12, 40 + 2 * 26 + 2, 200, true, 3, 0, 0, 0),
             Some(SidebarHit::IndexedFolder(0))
         );
     }
     #[test]
     fn sidebar_recommended_path_hit() {
         assert_eq!(
-            hit_sidebar(12, 40 + 6 * 26 + 1, 200, true, 3, 0, 0),
+        hit_sidebar(12, 40 + 6 * 26 + 1, 200, true, 3, 0, 0, 3),
             Some(SidebarHit::Recommended(0))
         );
     }
     #[test]
     fn sidebar_preset_hit() {
         assert_eq!(
-            hit_sidebar(12, 40 + 8 * 26 + 1, 200, true, 1, 2, 0),
+            hit_sidebar(12, 40 + 8 * 26 + 1, 200, true, 1, 2, 0, 3),
             Some(SidebarHit::Preset(0))
         );
     }
     #[test]
     fn sidebar_history_hit() {
         assert_eq!(
-            hit_sidebar(12, 40 + 9 * 26 + 1, 200, true, 0, 1, 2),
+            hit_sidebar(12, 40 + 9 * 26 + 1, 200, true, 0, 1, 2, 3),
             Some(SidebarHit::History(0))
         );
     }
     #[test]
     fn sidebar_clear_hit() {
         assert_eq!(
-            hit_sidebar(12, 40 + 8 * 26 + 1, 200, true, 0, 0, 0),
+            hit_sidebar(12, 40 + 5 * 26 + 1, 200, true, 0, 0, 0, 0),
             Some(SidebarHit::ClearHistory)
         );
     }
     #[test]
     fn sidebar_closed_or_outside_is_miss() {
-        assert_eq!(hit_sidebar(12, 45, 200, false, 0, 0, 0), None);
-        assert_eq!(hit_sidebar(201, 45, 200, true, 0, 0, 0), None);
+        assert_eq!(hit_sidebar(12, 45, 200, false, 0, 0, 0, 0), None);
+        assert_eq!(hit_sidebar(201, 45, 200, true, 0, 0, 0, 0), None);
     }
     #[test]
     fn option_regions_cover_all_controls() {
@@ -614,7 +630,7 @@ mod tests {
     }
     #[test]
     fn sidebar_hit_rejects_header_rows() {
-        assert_eq!(hit_sidebar(10, 40 + 26, 220, true, 2, 1, 1), None);
+        assert_eq!(hit_sidebar(10, 40 + 26, 220, true, 2, 1, 1, 2), None);
     }
     fn row(name: &str, snippet: &str) -> crate::backend::Row {
         crate::backend::Row {
