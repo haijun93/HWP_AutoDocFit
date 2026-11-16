@@ -1217,9 +1217,9 @@ void main() {
         await tester.pumpWidget(DocFitApp(api: api));
         await tester.pumpAndSettle();
         // 좁은 창에서는 탭 줄을 밀어야 보인다.
-        await tester.scrollUntilVisible(find.byKey(const Key('workspaceTab-10')), 120,
-            scrollable: find.byType(Scrollable).last);
-        await tester.tap(find.byKey(const Key('workspaceTab-10')));
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.control);
+        await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.control);
         await tester.pumpAndSettle();
         expect(find.byKey(const Key('conversionWorkspace')), findsOneWidget);
         expect(find.byKey(const Key('floatingConversionPicker')), findsNothing);
