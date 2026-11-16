@@ -193,12 +193,16 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                     target = convert_to_images(app, source, target)
                 elif target_format == "pdfz":
                     from docfit_core.pdf_compress import compress_pdf
-                    압축결과 = compress_pdf(source, target)
+                    target_bytes = kwargs.get("pdf_target_bytes", 10 * 1024 * 1024)
+                    압축결과 = compress_pdf(source, target, target_bytes=target_bytes)
                     로그(f"PDF 압축: {source.name} {압축결과.summary()}")
                 else:
                     convert_to_pdf(app, source, target)
                 successes += 1
-                gui_queue.put(("saved", str(source), str(target), None))
+                info = 압축결과.summary() if target_format == "pdfz" else None
+                final_size = 압축결과.after if target_format == "pdfz" else None
+                steps = 압축결과.step if target_format == "pdfz" else None
+                gui_queue.put(("saved", str(source), str(target), None, info, final_size, steps))
                 로그(f"파일 변환 완료: {source.name} → {target.name}")
             except Exception as exc:
                 failures += 1

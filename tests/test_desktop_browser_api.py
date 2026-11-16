@@ -547,6 +547,18 @@ class BrowserApiTests(unittest.TestCase):
         }
         self.assertFalse(bridge.get_state()["can_start"])
 
+    def test_pdf_compress_target_mb_setting(self):
+        gui = _FakeGui()
+        bridge = _bridge(gui)
+        self.assertEqual(bridge.get_state()["pdf_compress_target_mb"], 10)
+        state = bridge.set_pdf_compress_target_mb(25)
+        self.assertEqual(state["pdf_compress_target_mb"], 25)
+        self.assertEqual(bridge.pdf_compress_target_mb, 25)
+        with self.assertRaises(ValueError):
+            bridge.set_pdf_compress_target_mb(0)
+        with self.assertRaises(ValueError):
+            bridge.set_pdf_compress_target_mb("abc")
+
     def test_conversion_preflight_runs_outside_tk_callback(self):
         gui = _FakeGui()
         gui.files = ["report.hwpx"]

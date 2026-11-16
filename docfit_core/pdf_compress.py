@@ -19,11 +19,21 @@ from . import pdfium_guard
 # 강도: (목표 dpi, JPEG 품질). 기본은 '보통'.
 LEVELS = {"lossless": None, "normal": (150, 75), "strong": (100, 60)}
 DEFAULT_LEVEL = "normal"
+DEFAULT_TARGET_BYTES = 10 * 1024 * 1024  # 기본 10MB
 MAX_BYTES = 1024 ** 3
 MAX_PAGES = 3000
 MIN_IMAGE_SIDE = 200
 MIN_SAVING = 0.05          # 5% 미만으로 줄면 결과를 만들지 않는다.
 _SKIP_MODES = {"1", "P", "PA", "LA", "RGBA", "CMYK", "I", "I;16", "F"}
+
+COMPRESS_STEPS: list[tuple[int, int, str]] = [
+    (150, 75, "1단계 (150dpi · 품질 75)"),
+    (120, 65, "2단계 (120dpi · 품질 65)"),
+    (100, 55, "3단계 (100dpi · 품질 55)"),
+    (85, 45, "4단계 (85dpi · 품질 45)"),
+    (72, 35, "최대 압축 (72dpi · 품질 35)"),
+]
+MAX_STEPS = len(COMPRESS_STEPS)
 
 
 class PdfCompressError(ValueError):
@@ -41,6 +51,9 @@ class CompressResult:
     after: int
     secured: bool
     images: int
+    step: str = ""
+    reached_target: bool = True
+    reason: str = ""
 
     @property
     def saving(self) -> float:
@@ -48,7 +61,13 @@ class CompressResult:
 
     def summary(self) -> str:
         text = f"{_size(self.before)} → {_size(self.after)} (−{self.saving * 100:.0f}%)"
-        return text + (" · 보안 유지" if self.secured else "")
+        if self.step:
+            text += f" · {self.step}"
+        if self.secured:
+            text += " · 보안 유지"
+        if not self.reached_target and self.reason:
+            text += f" ({self.reason})"
+        return text
 
 
 def _size(value: int) -> str:
@@ -120,13 +139,21 @@ def _recompress_images(page, dpi: int, quality: int) -> int:
     return changed
 
 
-def compress_pdf(source: str | Path, target: str | Path, *, level: str = DEFAULT_LEVEL) -> CompressResult:
+def compress_pdf(
+    source: str | Path,
+    target: str | Path,
+    *,
+    level: str | None = None,
+    target_bytes: int | None = DEFAULT_TARGET_BYTES,
+) -> CompressResult:
     """PDF를 줄여 target에 새로 저장한다. 원본은 읽기만 하고 target은 덮어쓰지 않는다."""
     from pypdf import PdfReader, PdfWriter
 
     source, target = Path(source), Path(target)
-    if level not in LEVELS:
+    if level is not None and level not in LEVELS:
         raise PdfCompressError("지원하지 않는 압축 강도입니다.")
+    if target_bytes is not None and target_bytes <= 0:
+        raise PdfCompressError("목표 파일 크기는 0보다 커야 합니다.")
     if source.is_symlink() or not source.is_file() or source.suffix.lower() != ".pdf":
         raise PdfCompressError("PDF 압축은 일반 PDF 파일에만 쓸 수 있습니다.")
     if target.suffix.lower() != ".pdf" or target.exists():
@@ -149,26 +176,75 @@ def compress_pdf(source: str | Path, target: str | Path, *, level: str = DEFAULT
             raise PdfCompressError("전자서명이 있는 PDF는 다시 저장하면 서명이 무효가 되어 줄이지 않습니다.")
         permissions = int(reader.trailer["/Encrypt"]["/P"]) if secured else None
         pages_before = _page_signature(reader)
-        writer = PdfWriter(clone_from=reader)
-        images = 0
-        setting = LEVELS[level]
-        for page in writer.pages:
-            page.compress_content_streams(level=9)
-            if setting:
-                images += _recompress_images(page, *setting)
-        writer.compress_identical_objects(remove_duplicates=True, remove_unreferenced=True)
-        if secured:
-            # 원본과 같은 권한값으로 다시 잠근다. 원래 소유자 암호는 알 수 없으므로 새 무작위 값을 쓴다.
-            writer.encrypt(user_password="", owner_password=secrets.token_urlsafe(24),
-                           permissions_flag=permissions, algorithm="AES-256")
-        buffer = io.BytesIO()
-        writer.write(buffer)
+        owner_password = secrets.token_urlsafe(24) if secured else None
+
+        if level is not None and target_bytes is None:
+            setting = LEVELS[level]
+            steps = [(setting[0], setting[1], level)] if setting else [(None, None, "무손실")]
+        else:
+            steps = COMPRESS_STEPS
+
+        best_buffer: io.BytesIO | None = None
+        best_size: int = before + 1
+        best_step: str = ""
+        best_images: int = 0
+        reached_target: bool = False
+
+        for dpi, quality, step_label in steps:
+            writer = PdfWriter(clone_from=reader)
+            images = 0
+            setting = (dpi, quality) if dpi is not None else None
+            for page in writer.pages:
+                page.compress_content_streams(level=9)
+                if setting:
+                    images += _recompress_images(page, *setting)
+            writer.compress_identical_objects(remove_duplicates=True, remove_unreferenced=True)
+            if secured:
+                # 원본과 같은 권한값으로 다시 잠근다. 원래 소유자 암호는 알 수 없으므로 새 무작위 값을 쓴다.
+                writer.encrypt(user_password="", owner_password=owner_password,
+                               permissions_flag=permissions, algorithm="AES-256")
+            buf = io.BytesIO()
+            writer.write(buf)
+            current_size = buf.tell()
+
+            if current_size < best_size:
+                best_size = current_size
+                best_buffer = buf
+                best_step = step_label
+                best_images = images
+
+            if target_bytes is not None and current_size <= target_bytes:
+                reached_target = True
+                best_size = current_size
+                best_buffer = buf
+                best_step = step_label
+                best_images = images
+                break
+
+            if images == 0:
+                # 변경 가능한 그림이 없으면 추가 단계를 거쳐도 크기가 줄지 않는다.
+                break
+
+        if best_buffer is None:
+            raise PdfCompressError("압축 결과를 생성하지 못했습니다.")
+
+        if target_bytes is not None:
+            if not reached_target and best_size > target_bytes:
+                reason = f"목표 {_size(target_bytes)}에 못 미침: {_size(best_size)}까지 줄였어요(원본 {_size(before)})"
+            else:
+                reached_target = True
+                reason = ""
+        else:
+            reached_target = True
+            reason = ""
+
+        after = best_size
+        buffer = best_buffer
     except PdfCompressError:
         raise
     except Exception as exc:
         raise PdfCompressError(f"PDF를 읽거나 다시 저장하지 못했습니다: {exc}") from exc
 
-    after = buffer.tell()
     if after > before * (1 - MIN_SAVING):
         raise NothingToCompress(f"이미 충분히 작아 줄이지 않았습니다({_size(before)}).")
 
@@ -191,4 +267,4 @@ def compress_pdf(source: str | Path, target: str | Path, *, level: str = DEFAULT
         os.link(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
-    return CompressResult(target, before, after, secured, images)
+    return CompressResult(target, before, after, secured, best_images, step=best_step, reached_target=reached_target, reason=reason)

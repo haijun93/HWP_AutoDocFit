@@ -98,6 +98,57 @@ class PdfCompressTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             output_path_for(text, "pdfz")
 
+    def test_target_size_reached(self):
+        from docfit_core.pdf_compress import compress_pdf
+
+        target_path = self.root / "reached.pdf"
+        # 1.5MB 목표 크기 설정
+        target_bytes = int(1.5 * 1024 * 1024)
+        result = compress_pdf(self.scan, target_path, target_bytes=target_bytes)
+        self.assertTrue(target_path.exists())
+        self.assertTrue(result.reached_target)
+        self.assertLessEqual(result.after, target_bytes)
+        self.assertEqual(result.reason, "")
+        self.assertTrue(result.step.startswith("1단계") or "단계" in result.step)
+
+    def test_target_size_unreached_reports_reason_and_saves_smallest(self):
+        from docfit_core.pdf_compress import compress_pdf
+
+        target_path = self.root / "unreached.pdf"
+        # 달성 불가능한 작은 목표 크기(50KB) 설정
+        target_bytes = 50 * 1024
+        result = compress_pdf(self.scan, target_path, target_bytes=target_bytes)
+        self.assertTrue(target_path.exists())
+        self.assertFalse(result.reached_target)
+        self.assertGreater(result.after, target_bytes)
+        self.assertIn("목표 50KB에 못 미침", result.reason)
+        self.assertIn("못 미침", result.summary())
+        self.assertIn("최대 압축", result.step)
+
+    def test_secured_pdf_with_target_size(self):
+        from pypdf import PdfReader
+        from docfit_core.pdf_compress import compress_pdf
+
+        secured = self.root / "secured_target.pdf"
+        _encrypt(self.scan, secured)
+        target_path = self.root / "secured_out.pdf"
+        result = compress_pdf(secured, target_path, target_bytes=10 * 1024 * 1024)
+        self.assertTrue(result.secured)
+        self.assertTrue(result.reached_target)
+        self.assertTrue(target_path.exists())
+        reader = PdfReader(str(target_path))
+        self.assertTrue(reader.is_encrypted)
+        reader.decrypt("")
+        self.assertIsNotNone(reader.trailer["/Encrypt"]["/P"])
+
+    def test_invalid_target_bytes(self):
+        from docfit_core.pdf_compress import PdfCompressError, compress_pdf
+
+        with self.assertRaisesRegex(PdfCompressError, "목표 파일 크기는 0보다 커야 합니다"):
+            compress_pdf(self.scan, self.root / "invalid.pdf", target_bytes=0)
+        with self.assertRaisesRegex(PdfCompressError, "목표 파일 크기는 0보다 커야 합니다"):
+            compress_pdf(self.scan, self.root / "invalid.pdf", target_bytes=-1024)
+
 
 if __name__ == "__main__":
     unittest.main()

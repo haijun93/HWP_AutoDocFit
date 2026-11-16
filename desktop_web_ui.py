@@ -132,6 +132,7 @@ class DesktopWebBridge:
         self._requests = set()
         self._closed = False
         self.conversion_target = "hwpx"
+        self.pdf_compress_target_mb = 10
         self._conversion_prerequisites_checked = 0.0
         self._conversion_prerequisites_cache = None
         self._conversion_prerequisites_lock = threading.Lock()
@@ -636,6 +637,9 @@ class DesktopWebBridge:
                         "path": item.get("결과", ""),
                         "source": Path(item.get("원본", "")).name,
                         "pages": item.get("쪽수"),
+                        "info": item.get("정보") or "",
+                        "final_size": item.get("final_size"),
+                        "steps": item.get("steps"),
                     }
                     for item in getattr(gui, "_결과목록", [])
                 ],
@@ -688,6 +692,7 @@ class DesktopWebBridge:
             state["can_start"] = self._can_start(state["mode"], files, state["running"], targets)
         bulk_state = getattr(self, "_bulk_state", None)
         state["hwp_bulk"] = bulk_state.as_dict() if bulk_state else None
+        state["pdf_compress_target_mb"] = getattr(self, "pdf_compress_target_mb", 10)
         return state
 
     def _can_start(self, mode, files, running, conversion_targets=None):
@@ -977,6 +982,16 @@ class DesktopWebBridge:
         self._tk(update)
         return self.get_state()
 
+    def set_pdf_compress_target_mb(self, mb):
+        try:
+            val = int(mb)
+            if val <= 0:
+                raise ValueError("목표 크기는 1MB 이상이어야 합니다.")
+            self.pdf_compress_target_mb = val
+        except (TypeError, ValueError) as exc:
+            raise ValueError("올바른 목표 크기(MB)를 입력해 주세요.") from exc
+        return self.get_state()
+
     def start_single_file_conversion(self, file_index, target):
         """현재 공통 변환 가능성 판단을 적용해 선택한 입력 하나를 고정하여 변환한다."""
         from docfit_app.api_contract import ServiceError
@@ -1046,6 +1061,7 @@ class DesktopWebBridge:
             manager, [source_snapshot], target, job_id=identifier,
             progress=gui_queue.put, stop_event=stop_event,
             runtime_factory=lambda: runtime, log=gui.로그표시,
+            pdf_target_bytes=getattr(self, "pdf_compress_target_mb", 10) * 1024 * 1024,
         )
         gui.worker = manager.thread(identifier)
         return identifier
@@ -1342,6 +1358,7 @@ class DesktopWebBridge:
                         progress=gui_queue.put, stop_event=중단_event,
                         runtime_factory=lambda: runtime,
                         log=gui.로그표시,
+                        pdf_target_bytes=getattr(self, "pdf_compress_target_mb", 10) * 1024 * 1024,
                     )
                     gui.worker = manager.thread(identifier)
                 elif file_order:
@@ -1352,6 +1369,7 @@ class DesktopWebBridge:
                     finally:
                         self.gui.files = original_files
                 else:
+                    self.gui.pdf_compress_target_mb = getattr(self, "pdf_compress_target_mb", 10)
                     self.gui.파일포맷_변경_시작(self.conversion_target)
                 return started(previous)
             identifier = self._tk(begin_conversion)
@@ -3669,7 +3687,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
-            "set_conversion_target", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
+            "set_conversion_target", "set_pdf_compress_target_mb", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))
 
