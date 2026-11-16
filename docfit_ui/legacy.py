@@ -5541,7 +5541,16 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             pass  # 긴 진행 바는 없앴다. 단계 표시(LiveStageBoard)가 진행 상황을 보여 준다.
                         elif event == "saved":
                             info = item[4] if len(item) > 4 else None
-                            self._결과목록.append({"원본": item[1], "결과": item[2], "쪽수": item[3], "정보": info})
+                            final_size = item[5] if len(item) > 5 else None
+                            steps = item[6] if len(item) > 6 else None
+                            self._결과목록.append({
+                                "원본": item[1],
+                                "결과": item[2],
+                                "쪽수": item[3],
+                                "정보": info,
+                                "final_size": final_size,
+                                "steps": steps,
+                            })
                         elif event == "document_error":
                             self._실패목록[str(item[1])] = str(item[2])
                             self.stage_board.finish("오류")

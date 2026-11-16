@@ -200,7 +200,9 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                     convert_to_pdf(app, source, target)
                 successes += 1
                 info = 압축결과.summary() if target_format == "pdfz" else None
-                gui_queue.put(("saved", str(source), str(target), None, info))
+                final_size = 압축결과.after if target_format == "pdfz" else None
+                steps = 압축결과.step if target_format == "pdfz" else None
+                gui_queue.put(("saved", str(source), str(target), None, info, final_size, steps))
                 로그(f"파일 변환 완료: {source.name} → {target.name}")
             except Exception as exc:
                 failures += 1

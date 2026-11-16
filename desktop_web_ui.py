@@ -638,6 +638,8 @@ class DesktopWebBridge:
                         "source": Path(item.get("원본", "")).name,
                         "pages": item.get("쪽수"),
                         "info": item.get("정보") or "",
+                        "final_size": item.get("final_size"),
+                        "steps": item.get("steps"),
                     }
                     for item in getattr(gui, "_결과목록", [])
                 ],
