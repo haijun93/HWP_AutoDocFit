@@ -265,7 +265,7 @@ void main() {
     await tester.enterText(inputFinder, '25');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
-    expect(host.calls, contains(['set_pdf_compress_target_mb', 25]));
+    expect(host.calls, anyElement(orderedEquals(['set_pdf_compress_target_mb', 25])));
     expect(host.pdfCompressTargetMb, 25);
 
     // 결과에 최종 크기 및 단계 표시 확인

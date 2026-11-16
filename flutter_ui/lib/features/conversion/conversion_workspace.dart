@@ -441,9 +441,9 @@ class ConversionWorkspace extends StatelessWidget {
         color: ConversionColors.of(context).frameBorder,
       ),
     ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      mainAxisAlignment: MainAxisAlignment.center,
+    child: Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         Icon(Icons.compress, size: 16, color: context.colors.muted),
         const SizedBox(width: 6),
@@ -839,5 +839,4 @@ class _PdfCompressTargetInputState extends State<_PdfCompressTargetInput> {
     ),
     onSubmitted: _submit,
   );
-}
 }
