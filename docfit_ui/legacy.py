@@ -4645,9 +4645,11 @@ def _install(*, _docfit_namespace, _docfit_symbol):
 
                 from docfit_app.conversion_runner import start_conversion_job
                 self._job_managed_conversion = self._job_id
+                pdf_mb = getattr(self, "pdf_compress_target_mb", 10)
                 start_conversion_job(manager_for(self), files, target_format, job_id=self._job_id,
                                      progress=gui_queue.put, stop_event=중단_event,
-                                     runtime_factory=lambda: globals(), log=로그)
+                                     runtime_factory=lambda: globals(), log=로그,
+                                     pdf_target_bytes=pdf_mb * 1024 * 1024)
                 self.worker = manager_for(self).thread(self._job_id)
 
             def 작업시작(self, mode='all'):
@@ -5538,7 +5540,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         elif event == "progress":
                             pass  # 긴 진행 바는 없앴다. 단계 표시(LiveStageBoard)가 진행 상황을 보여 준다.
                         elif event == "saved":
-                            self._결과목록.append({"원본": item[1], "결과": item[2], "쪽수": item[3]})
+                            info = item[4] if len(item) > 4 else None
+                            self._결과목록.append({"원본": item[1], "결과": item[2], "쪽수": item[3], "정보": info})
                         elif event == "document_error":
                             self._실패목록[str(item[1])] = str(item[2])
                             self.stage_board.finish("오류")

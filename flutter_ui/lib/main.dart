@@ -1040,6 +1040,16 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     await command('start_single_file_conversion', [index, format]);
   }
 
+  @override
+  int get pdfCompressTargetMb =>
+      (state['pdf_compress_target_mb'] as num?)?.toInt() ?? 10;
+
+  @override
+  Future<void> setPdfCompressTargetMb(int mb) async {
+    if (locked) return;
+    await command('set_pdf_compress_target_mb', [mb]);
+  }
+
   Future<void> enterConversionMode() async {
     conversionTabActive = true;
     if (locked) return;
