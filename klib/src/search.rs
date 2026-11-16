@@ -851,6 +851,18 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     assert_eq!(limited[0].paragraph_count,hits.iter().find(|h|h.path==limited[0].path).unwrap().paragraph_count);
     drop(ix); let _=std::fs::remove_dir_all(dir);
  }
+ #[test] fn same_file_three_paragraphs_fold_to_single_result_with_three_mentions(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    ix.add_or_update(&paragraph("report.txt", "예산 분석 보고서\n예산 심의 일정\n예산 집행 내역")).unwrap();
+    ix.add_or_update(&paragraph("summary.txt", "예산 요약")).unwrap();
+    let hits = ix.search("예산", SearchOptions { limit: 10 }).unwrap();
+    assert_eq!(hits.len(), 2, "총 2개 파일이어야 함");
+    let report_hit = hits.iter().find(|h| h.path == "report.txt").expect("report.txt hit 존재");
+    assert_eq!(report_hit.paragraph_count, 3, "같은 파일 내 3개 문단 일치 시 mentions(paragraph_count) == 3이어야 함");
+    assert_eq!(report_hit.hit_pages.len(), 3, "3개 문단의 쪽 번호가 모여야 함");
+    assert_eq!(hits.iter().filter(|h| h.path == "report.txt").count(), 1, "동일 파일은 단 1건으로 묶여야 함");
+    drop(ix); let _ = std::fs::remove_dir_all(dir);
+ }
  #[test] fn hierarchy_aggregation_keeps_top_twenty_order_and_snippets(){
     let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
     for n in 0..25 { let mut p=paragraph(&format!("doc-{n:02}.txt"),&format!("서울 예산 정책 자료 {n}")); p.level=if n<20 {1}else{0}; p.mtime=n as i64; ix.add_or_update(&p).unwrap(); }
