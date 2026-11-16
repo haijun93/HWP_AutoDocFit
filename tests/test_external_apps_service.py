@@ -331,12 +331,13 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(bridge.external_app("status", {"app": "outliner"}), {"ok": True})
         self.assertEqual(calls, [("status", {"app": "outliner"})])
 
-    def test_browser_api_exposes_external_app_only(self):
+    def test_browser_api_exposes_external_and_photo_commands(self):
         import inspect
         import desktop_web_ui
         source = inspect.getsource(desktop_web_ui._BrowserApi)
         self.assertIn('"external_app"', source)
-        self.assertNotIn('"photo_album"', source)
+        # 사진뷰 기능은 외부 앱 실행과 별도의 안전한 브리지 명령으로 공개된다.
+        self.assertIn('"photo_album"', source)
 
 
 class ApplicationServiceTests(unittest.TestCase):
