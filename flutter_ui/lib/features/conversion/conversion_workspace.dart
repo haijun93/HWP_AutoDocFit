@@ -41,7 +41,7 @@ class ConversionWorkspace extends StatelessWidget {
 
   static const layout = <String?>[
     'hwpx', 'docx', 'epub', //
-    'html', null, 'md',
+    'html', 'pdfi', 'md',
     'pdf', 'pdfz', 'pdfm',
     'jpg', 'png', 'txt',
   ];
@@ -50,6 +50,7 @@ class ConversionWorkspace extends StatelessWidget {
     'pdf' => Icons.picture_as_pdf_outlined,
     'pdfz' => Icons.compress,
     'pdfm' => Icons.merge_type,
+    'pdfi' => Icons.image_not_supported_outlined,
     'docx' => Icons.article_outlined,
     'epub' => Icons.menu_book_outlined,
     'jpg' || 'png' => Icons.image_outlined,

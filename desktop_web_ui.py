@@ -827,6 +827,10 @@ class DesktopWebBridge:
              "reason": (invalid_reason if not valid else
                         "PDF 파일에만 쓸 수 있습니다" if any(s != ".pdf" for s in suffixes) else
                         "글자·쪽은 그대로, 그림만 다시 저장 · 보안 PDF는 같은 권한 유지")},
+            {"format": "pdfi", "label": "이미지 PDF", "enabled": valid and pdf_ready,
+             "reason": (invalid_reason if not valid else
+                        pdf_reason if not pdf_ready else
+                        "글자 선택·검색 불가 PDF · 쪽마다 이미지로 렌더링")},
             *({"format": kind, "label": kind.upper(), "enabled": valid and text_targets_ready,
                "reason": invalid_reason if not valid else engine_reason if not text_targets_ready and not kordoc_ready else "텍스트 추출 준비됨"} for kind in ("txt", "md")),
             *({"format": kind, "label": kind.upper(), "enabled": valid and pandoc_targets_ready,

@@ -76,7 +76,7 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
     """변환 결과 dict 목록을 반환한다. 원본과 기존 결과는 덮어쓰지 않는다."""
     from docfit_core.file_conversion import (
         IMAGE_FORMATS, CONVERSION_OUTPUTS, convert_input_to_hwpx, convert_hwpx_to_text,
-        convert_hwp_to_hwpx, convert_to_images, convert_to_pandoc_format, convert_to_pdf, output_path_for,
+        convert_hwp_to_hwpx, convert_to_images, convert_to_pandoc_format, convert_to_pdf, convert_to_raster_pdf, output_path_for,
         is_same_format, IMAGE_INPUT_EXTENSIONS,
     )
 
@@ -130,7 +130,7 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
     try:
         변환할_파일 = [f for f in files if not is_same_format(f, target_format)]
         그림_한글필요 = target_format in IMAGE_FORMATS and any(Path(f).suffix.lower() != ".pdf" for f in 변환할_파일)
-        if (target_format == "pdf" and any(Path(f).suffix.lower() not in IMAGE_INPUT_EXTENSIONS for f in 변환할_파일)) or 합치기_한글필요 or 그림_한글필요 or (target_format == "hwpx" and any(Path(f).suffix.lower() == ".hwp" for f in files)):
+        if (target_format in {"pdf", "pdfi"} and any(Path(f).suffix.lower() not in IMAGE_INPUT_EXTENSIONS for f in 변환할_파일)) or 합치기_한글필요 or 그림_한글필요 or (target_format == "hwpx" and any(Path(f).suffix.lower() == ".hwp" for f in files)):
             runtime = runtime_factory()
             pythoncom = runtime["pythoncom"]
             한글_COM_인스턴스_생성 = runtime["한글_COM_인스턴스_생성"]
@@ -196,6 +196,9 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                     target_bytes = kwargs.get("pdf_target_bytes", 10 * 1024 * 1024)
                     압축결과 = compress_pdf(source, target, target_bytes=target_bytes)
                     로그(f"PDF 압축: {source.name} {압축결과.summary()}")
+                elif target_format == "pdfi":
+                    convert_to_raster_pdf(app, source, target)
+                    로그(f"이미지 PDF: {source.name} → {target.name}")
                 else:
                     convert_to_pdf(app, source, target)
                 successes += 1

@@ -420,6 +420,33 @@ class TxtPlainConversionTests(unittest.TestCase):
                     file_conversion._publish_without_overwrite(temporary, target)
             self.assertEqual(target.read_bytes(), b"%PDF-1.7 data")
 
+    def test_output_path_for_pdfi(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "보고서.pdf"
+            source.write_bytes(b"%PDF-1.7")
+            out = output_path_for(source, "pdfi")
+            self.assertEqual(out.name, "보고서(이미지).pdf")
+
+    def test_convert_to_raster_pdf_has_no_text_layer(self):
+        from PIL import Image
+        import pypdfium2
+        from docfit_core.file_conversion import convert_to_raster_pdf
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "input.pdf"
+            target = Path(folder) / "output.pdf"
+            img = Image.new("RGB", (400, 600), color=(240, 240, 240))
+            img.save(source, format="PDF", resolution=72.0)
+
+            convert_to_raster_pdf(None, source, target, dpi=150)
+            self.assertTrue(target.exists())
+            doc = pypdfium2.PdfDocument(target)
+            try:
+                self.assertEqual(len(doc), 1)
+                text = doc[0].get_textpage().get_text_range()
+                self.assertEqual(text.strip(), "")
+            finally:
+                doc.close()
+
 
 if __name__ == "__main__":
     unittest.main()

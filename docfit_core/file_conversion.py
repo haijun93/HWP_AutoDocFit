@@ -82,6 +82,8 @@ def output_path_for(source: str | Path, target_format: str) -> Path:
         if source.suffix.lower() != ".pdf":
             raise ValueError("PDF 압축은 PDF 파일에만 쓸 수 있습니다.")
         suffix, marker = "pdf", "(PDF압축)"
+    elif suffix == "pdfi":
+        suffix, marker = "pdf", "(이미지)"
     candidate = source.with_name(f"{stem}{marker}.{suffix}")
     index = 2
     # 여러 쪽 그림은 확장자를 뺀 같은 이름의 폴더에 저장하므로 폴더 이름도 비어 있어야 한다.
@@ -256,6 +258,56 @@ def convert_to_pdf(app, source: str | Path, target: str | Path) -> Path:
 
 
 @pdfium_guard.exclusive()
+def convert_to_raster_pdf(app, source: str | Path, target: str | Path, *, dpi: int = IMAGE_DPI) -> Path:
+    """모든 입력 형식을 쪽마다 고해상도 그림으로 렌더링한 뒤 하나의 PDF로 묶어 글자 선택·검색이 안 되는 이미지 PDF로 변환한다."""
+    import tempfile
+    from PIL import Image
+    import pypdfium2
+
+    source, target = Path(source), Path(target)
+    if source.suffix.lower() not in CONVERSION_INPUTS:
+        raise ValueError("변환할 수 없는 입력 형식입니다.")
+    if target.suffix.lower() != ".pdf" or target.exists():
+        raise ValueError("새 PDF 결과 경로를 지정해 주세요.")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.suffix.lower() in IMAGE_INPUT_EXTENSIONS:
+        return convert_image_to_pdf(source, target)
+
+    with tempfile.TemporaryDirectory(prefix="docfit_pdfi_") as folder:
+        if source.suffix.lower() == ".pdf":
+            input_pdf = source
+        else:
+            input_pdf = Path(folder) / "intermediate.pdf"
+            convert_to_pdf(app, source, input_pdf)
+
+        doc = pypdfium2.PdfDocument(input_pdf)
+        try:
+            if len(doc) == 0:
+                raise ValueError("변환할 쪽이 없는 빈 문서입니다.")
+
+            pages = []
+            scale = max(1.0, min(float(dpi) / 72.0, 300.0 / 72.0))
+            for page_idx in range(len(doc)):
+                page = doc[page_idx]
+                pil_img = page.render(scale=scale).to_pil()
+                if pil_img.mode != "RGB":
+                    pil_img = pil_img.convert("RGB")
+                pages.append(pil_img)
+
+            pages[0].save(target, format="PDF", save_all=True, append_images=pages[1:], resolution=float(dpi))
+            for p in pages:
+                try:
+                    p.close()
+                except Exception:
+                    pass
+        finally:
+            doc.close()
+
+    return target
+
+
+@pdfium_guard.exclusive()
 def convert_to_images(app, source: str | Path, target: str | Path, *, dpi: int = IMAGE_DPI) -> Path:
     """한/글로 PDF를 만든 뒤 쪽마다 JPG·PNG 그림으로 저장한다.
 
@@ -359,7 +411,7 @@ def convert_hwp_to_hwpx(app, source: str | Path, target: str | Path) -> Path:
 TEXT_INPUTS = frozenset({".txt", ".md"})
 HTML_INPUTS = frozenset({".html", ".htm"})
 CONVERSION_INPUTS = SUPPORTED_INPUT_EXTENSIONS | TEXT_INPUTS | IMAGE_INPUT_EXTENSIONS | HTML_INPUTS
-CONVERSION_OUTPUTS = frozenset({"hwpx", "pdf", "pdfz", "pdfm", "docx", "epub", "html", "jpg", "png", "txt", "md"})
+CONVERSION_OUTPUTS = frozenset({"hwpx", "pdf", "pdfz", "pdfm", "pdfi", "docx", "epub", "html", "jpg", "png", "txt", "md"})
 
 
 def convert_input_to_hwpx(source: str | Path, target: str | Path) -> Path:
