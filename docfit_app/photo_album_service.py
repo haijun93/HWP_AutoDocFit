@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from defusedxml import ElementTree as ET
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageOps
 
 from docfit_core.abbreviation_doc import default_base_hwpx
 from docfit_core.batch_format import _serialize
@@ -50,6 +50,9 @@ EXIF_ORIENTATION_TAG: int = 0x0112  # 274
 EXIF_DATETIME_ORIGINAL: int = 0x9003
 EXIF_DATETIME: int = 0x0132
 EXIF_IFD: int = 0x8769
+EXIF_GPS_IFD: int = 0x8825
+EXIF_MAKE: int = 271
+EXIF_MODEL: int = 272
 
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 HC = "http://www.hancom.co.kr/hwpml/2011/core"
@@ -98,6 +101,108 @@ def read_exif_metadata(path: Path | str) -> tuple[datetime | None, int]:
 def _norm_path(p: str | Path) -> str:
     """경로를 표준 절대/실제 경로 문자열로 정규화한다."""
     return str(Path(p).resolve())
+
+
+def compute_dhash(path: Path | str) -> int | None:
+    """사진 파일에서 64비트 dHash(Difference Hash)를 계산한다.
+
+    EXIF 방향(Orientation)을 정방향으로 보정한 후, 9x8 그레이스케일로 축소하여
+    인접 픽셀(p[x, y] > p[x+1, y]) 64비트를 생성한다.
+    오류 발생 시 None을 반환하며, 원본 파일은 절대 수정하지 않는다.
+    """
+    try:
+        with Image.open(path) as img:
+            img = ImageOps.exif_transpose(img)
+            gray = img.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+            pixels = list(gray.tobytes())
+            h = 0
+            for y in range(8):
+                row_offset = y * 9
+                for x in range(8):
+                    p1 = pixels[row_offset + x]
+                    p2 = pixels[row_offset + x + 1]
+                    h = (h << 1) | (1 if p1 > p2 else 0)
+            return h
+    except Exception:
+        return None
+
+
+_compute_dhash = compute_dhash
+
+
+def _read_photo_group_meta(path: Path | str) -> dict[str, Any]:
+    """사진 파일의 EXIF에서 카메라 모델 및 오프라인 GPS 위치 정보를 안전하게 읽는다.
+
+    외부 네트워크 호출 없이 100% 오프라인으로 동작하며, 클라우드 전용 파일은
+    호출 전 배제되어야 한다. 오류 시에도 안전한 기본값을 반환한다.
+    원본 파일은 절대 수정하지 않는다.
+    """
+    p = Path(path)
+    res: dict[str, Any] = {
+        "camera": "카메라 정보 없음",
+        "gps_bucket": "",
+        "location": p.parent.name or "사진뷰",
+    }
+    try:
+        with Image.open(p) as img:
+            exif = img.getexif()
+            if not exif:
+                return res
+
+            make_raw = str(exif.get(EXIF_MAKE) or "").replace("\x00", "").strip()
+            model_raw = str(exif.get(EXIF_MODEL) or "").replace("\x00", "").strip()
+            camera_str = ""
+            if make_raw and model_raw:
+                if model_raw.lower().startswith(make_raw.lower()):
+                    camera_str = model_raw
+                else:
+                    camera_str = f"{make_raw} {model_raw}"
+            elif make_raw or model_raw:
+                camera_str = make_raw or model_raw
+
+            if camera_str:
+                res["camera"] = camera_str
+
+            try:
+                gps_ifd = exif.get_ifd(EXIF_GPS_IFD)
+                if gps_ifd:
+                    lat_ref = gps_ifd.get(1)
+                    lat_val = gps_ifd.get(2)
+                    lon_ref = gps_ifd.get(3)
+                    lon_val = gps_ifd.get(4)
+
+                    def _to_float(v: Any) -> float:
+                        if isinstance(v, (int, float)):
+                            return float(v)
+                        if hasattr(v, "numerator") and hasattr(v, "denominator"):
+                            return float(v.numerator) / float(v.denominator) if v.denominator != 0 else 0.0
+                        if isinstance(v, (tuple, list)) and len(v) == 2:
+                            return float(v[0]) / float(v[1]) if v[1] != 0 else 0.0
+                        return float(v)
+
+                    def _calc_deg(coords: Any) -> float | None:
+                        if not coords or not isinstance(coords, (tuple, list)) or len(coords) < 3:
+                            return None
+                        d = _to_float(coords[0])
+                        m = _to_float(coords[1])
+                        s = _to_float(coords[2])
+                        return d + (m / 60.0) + (s / 3600.0)
+
+                    lat = _calc_deg(lat_val)
+                    lon = _calc_deg(lon_val)
+                    if lat is not None and lon is not None:
+                        if str(lat_ref).strip().upper() == "S":
+                            lat = -lat
+                        if str(lon_ref).strip().upper() == "W":
+                            lon = -lon
+                        bucket = f"{lat:.2f},{lon:.2f}"
+                        res["gps_bucket"] = bucket
+                        res["location"] = f"GPS ({lat:.2f}, {lon:.2f})"
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return res
 
 
 class PhotoAlbumDb:
@@ -322,14 +427,26 @@ class PhotoAlbumDb:
                     conn.execute("INSERT INTO tags (photo_path, tag) VALUES (?, ?)", (norm, t))
         return cleaned
 
-    def list_photos(self, folder: str | None = None) -> list[dict[str, Any]]:
+    def list_photos(self, folder: str | None = None, *, recursive: bool = True) -> list[dict[str, Any]]:
         with self._lock, closing(self._connect()) as conn:
             if folder:
                 folder_norm = _norm_path(folder)
-                rows = conn.execute(
-                    "SELECT * FROM photos WHERE folder = ? ORDER BY date_taken DESC, filename ASC",
-                    (folder_norm,),
-                ).fetchall()
+                if recursive:
+                    prefix_slash = folder_norm.rstrip("/\\") + "/"
+                    prefix_backslash = folder_norm.rstrip("/\\") + "\\"
+                    rows = conn.execute(
+                        """
+                        SELECT * FROM photos
+                        WHERE folder = ? OR folder LIKE ? OR folder LIKE ?
+                        ORDER BY date_taken DESC, filename ASC
+                        """,
+                        (folder_norm, prefix_slash + "%", prefix_backslash + "%"),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT * FROM photos WHERE folder = ? ORDER BY date_taken DESC, filename ASC",
+                        (folder_norm,),
+                    ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM photos ORDER BY date_taken DESC, filename ASC"
@@ -1094,7 +1211,427 @@ class PhotoAlbumService:
             logger.exception("사진대지 HWPX 생성 실패: %s", exc)
             return {"ok": False, "message": f"사진대지 생성 실패: {exc}"}
 
-    # ---- 7. 디스패처 ----
+    # ---- 7. 유사·중복 사진 탐지 및 편집·오프라인 묶음 ----
+
+    def find_duplicates(
+        self,
+        folder: str | Path | None = None,
+        *,
+        threshold: int = 6,
+    ) -> dict[str, Any]:
+        """64비트 dHash 기반 유사·중복 사진을 탐지하여 그룹별로 반환한다.
+
+        클라우드 전용 파일은 내용을 읽지 않고 건너뛰며, 원본 파일은 절대 수정하지 않는다.
+        """
+        try:
+            threshold_val = int(threshold)
+        except (ValueError, TypeError):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "threshold는 정수여야 합니다."}
+
+        if threshold_val < 0:
+            return {"ok": False, "code": "INVALID_INPUT", "message": "threshold는 0 이상이어야 합니다."}
+
+        threshold_val = min(64, threshold_val)
+
+        folder_str = str(Path(folder).resolve()) if folder else None
+        photos = self.db.list_photos(folder_str)
+
+        scanned = 0
+        skipped_cloud = 0
+        skipped_missing = 0
+        valid_items: list[tuple[dict[str, Any], int]] = []
+
+        for p in photos:
+            if p.get("cloud"):
+                skipped_cloud += 1
+                continue
+            path_obj = Path(p["path"])
+            if not path_obj.is_file():
+                skipped_missing += 1
+                continue
+
+            try:
+                st = path_obj.stat()
+                if cloud_only(getattr(st, "st_file_attributes", 0)):
+                    skipped_cloud += 1
+                    continue
+            except OSError:
+                skipped_missing += 1
+                continue
+
+            h = compute_dhash(path_obj)
+            if h is None:
+                skipped_missing += 1
+                continue
+
+            scanned += 1
+            valid_items.append((p, h))
+
+        n = len(valid_items)
+        if n < 2:
+            return {
+                "ok": True,
+                "threshold": threshold_val,
+                "scanned": scanned,
+                "skipped_cloud": skipped_cloud,
+                "skipped_missing": skipped_missing,
+                "groups": [],
+            }
+
+        # Union-Find 클러스터링
+        parent = list(range(n))
+
+        def find(i: int) -> int:
+            path_nodes = []
+            while parent[i] != i:
+                path_nodes.append(i)
+                i = parent[i]
+            for node in path_nodes:
+                parent[node] = i
+            return i
+
+        def union(i: int, j: int) -> None:
+            root_i = find(i)
+            root_j = find(j)
+            if root_i != root_j:
+                parent[root_i] = root_j
+
+        for i in range(n):
+            hi = valid_items[i][1]
+            for j in range(i + 1, n):
+                hj = valid_items[j][1]
+                if (hi ^ hj).bit_count() <= threshold_val:
+                    union(i, j)
+
+        clusters: dict[int, list[int]] = {}
+        for idx in range(n):
+            clusters.setdefault(find(idx), []).append(idx)
+
+        group_id_counter = 1
+        raw_groups = []
+        for cluster_indices in clusters.values():
+            if len(cluster_indices) < 2:
+                continue
+
+            # 대표 항목: 파일 크기(size)가 가장 큰 항목 (동률이면 첫 항목)
+            rep_idx = max(cluster_indices, key=lambda idx: (valid_items[idx][0].get("size", 0), -idx))
+            rep_photo, rep_hash = valid_items[rep_idx]
+            rep_path = rep_photo["path"]
+
+            items = []
+            for idx in cluster_indices:
+                photo, h = valid_items[idx]
+                dist = (h ^ rep_hash).bit_count()
+                items.append({
+                    "path": photo["path"],
+                    "name": photo["filename"],
+                    "size": photo["size"],
+                    "date": photo["date_taken"],
+                    "dhash": f"{h:016x}",
+                    "distance": dist,
+                })
+
+            items.sort(key=lambda it: (it["distance"], it["name"]))
+
+            raw_groups.append({
+                "count": len(items),
+                "representative": rep_path,
+                "items": items,
+            })
+
+        raw_groups.sort(key=lambda g: (-g["count"], g["representative"]))
+        for g in raw_groups:
+            g["group_id"] = group_id_counter
+            group_id_counter += 1
+
+        return {
+            "ok": True,
+            "threshold": threshold_val,
+            "scanned": scanned,
+            "skipped_cloud": skipped_cloud,
+            "skipped_missing": skipped_missing,
+            "groups": raw_groups,
+        }
+
+    def edit_copy(
+        self,
+        path: str | Path,
+        *,
+        output_path: str | Path | None = None,
+        output_dir: str | Path | None = None,
+        crop: tuple[int, int, int, int] | list[int] | None = None,
+        rotate_deg: float | int = 0,
+        brightness: float = 1.0,
+        contrast: float = 1.0,
+    ) -> dict[str, Any]:
+        """원본을 보존하며 비파괴 사본을 생성하여 편집한다.
+
+        클라우드 전용 파일은 내용을 읽지 않고 CLOUD_ONLY로 거부한다.
+        원본 덮어쓰기는 절대 차단(OVERWRITE_FORBIDDEN)한다.
+        """
+        src_path = Path(path).resolve()
+        src_norm = _norm_path(src_path)
+
+        # 1. 클라우드 전용 파일 확인 (DB 플래그 & OS 속성)
+        db_photo = self.db.get_photo(src_norm)
+        if db_photo and db_photo.get("cloud"):
+            return {
+                "ok": False,
+                "code": "CLOUD_ONLY",
+                "message": "클라우드 전용 파일은 오프라인에서 편집할 수 없습니다.",
+            }
+
+        if not src_path.is_file():
+            return {
+                "ok": False,
+                "code": "FILE_NOT_FOUND",
+                "message": f"원본 파일이 존재하지 않습니다: {path}",
+            }
+
+        try:
+            st = src_path.stat()
+            if cloud_only(getattr(st, "st_file_attributes", 0)):
+                return {
+                    "ok": False,
+                    "code": "CLOUD_ONLY",
+                    "message": "클라우드 전용 파일은 오프라인에서 편집할 수 없습니다.",
+                }
+        except OSError:
+            return {
+                "ok": False,
+                "code": "FILE_NOT_FOUND",
+                "message": f"파일 상태를 확인할 수 없습니다: {path}",
+            }
+
+        # 2. 파라미터 유효성 검증
+        try:
+            rotate_val = float(rotate_deg)
+        except (ValueError, TypeError):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "rotate_deg는 숫자여야 합니다."}
+
+        try:
+            brightness_val = float(brightness)
+        except (ValueError, TypeError):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "brightness는 숫자여야 합니다."}
+        if not (0.0 < brightness_val <= 5.0):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "brightness는 0.0 초과 5.0 이하여야 합니다."}
+
+        try:
+            contrast_val = float(contrast)
+        except (ValueError, TypeError):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "contrast는 숫자여야 합니다."}
+        if not (0.0 < contrast_val <= 5.0):
+            return {"ok": False, "code": "INVALID_INPUT", "message": "contrast는 0.0 초과 5.0 이하여야 합니다."}
+
+        if crop is not None:
+            if not isinstance(crop, (list, tuple)) or len(crop) != 4:
+                return {"ok": False, "code": "INVALID_CROP", "message": "crop은 4개의 정수 (left, top, right, bottom)여야 합니다."}
+            try:
+                _ = [int(v) for v in crop]
+            except (ValueError, TypeError):
+                return {"ok": False, "code": "INVALID_CROP", "message": "crop 좌표는 정수여야 합니다."}
+
+        # 3. 출력 경로 결정 및 덮어쓰기 절대 차단
+        if output_path:
+            out_p = Path(output_path).resolve()
+            if _norm_path(out_p) == src_norm:
+                return {
+                    "ok": False,
+                    "code": "OVERWRITE_FORBIDDEN",
+                    "message": "원본 파일은 덮어쓸 수 없습니다.",
+                }
+        else:
+            base_dir = Path(output_dir).resolve() if output_dir else src_path.parent
+            base_dir.mkdir(parents=True, exist_ok=True)
+            stem = src_path.stem
+            ext = src_path.suffix
+            cand = base_dir / f"{stem}_edited{ext}"
+            idx = 1
+            while _norm_path(cand) == src_norm or cand.exists():
+                cand = base_dir / f"{stem}_edited_{idx}{ext}"
+                idx += 1
+            out_p = cand
+
+        if _norm_path(out_p) == src_norm:
+            return {
+                "ok": False,
+                "code": "OVERWRITE_FORBIDDEN",
+                "message": "원본 파일은 덮어쓸 수 없습니다.",
+            }
+
+        out_p.parent.mkdir(parents=True, exist_ok=True)
+
+        # 4. 이미지 편집 파이프라인
+        try:
+            with Image.open(src_path) as orig_img:
+                img = ImageOps.exif_transpose(orig_img)
+
+                # 시계 방향 회전 (PIL rotate는 반시계 방향 기준이므로 -rotate_val)
+                if rotate_val % 360 != 0:
+                    img = img.rotate(-rotate_val, expand=True)
+
+                # 자르기 (crop)
+                if crop is not None:
+                    w, h = img.size
+                    c_left = max(0, min(w, int(crop[0])))
+                    c_top = max(0, min(h, int(crop[1])))
+                    c_right = max(0, min(w, int(crop[2])))
+                    c_bottom = max(0, min(h, int(crop[3])))
+                    if c_right <= c_left or c_bottom <= c_top:
+                        return {"ok": False, "code": "INVALID_CROP", "message": "유효하지 않은 자르기 영역입니다."}
+                    img = img.crop((c_left, c_top, c_right, c_bottom))
+
+                # 밝기 조정
+                if abs(brightness_val - 1.0) > 1e-4:
+                    enhancer = ImageEnhance.Brightness(img)
+                    img = enhancer.enhance(brightness_val)
+
+                # 대비 조정
+                if abs(contrast_val - 1.0) > 1e-4:
+                    enhancer = ImageEnhance.Contrast(img)
+                    img = enhancer.enhance(contrast_val)
+
+                # 저장 포맷 결정 및 색상 공간 변환
+                ext_upper = out_p.suffix.lstrip(".").upper()
+                fmt = ext_upper if ext_upper in ("PNG", "WEBP", "BMP", "TIFF") else "JPEG"
+                if fmt == "JPEG" and img.mode in ("RGBA", "LA", "P"):
+                    img = img.convert("RGB")
+
+                # 임시 파일 저장 후 rename (원자적 파일 저장)
+                tmp_out = out_p.with_name(f".tmp_{out_p.name}_{os.getpid()}")
+                try:
+                    if fmt == "JPEG":
+                        img.save(tmp_out, format="JPEG", quality=95)
+                    else:
+                        img.save(tmp_out, format=fmt)
+                    tmp_out.replace(out_p)
+                finally:
+                    if tmp_out.exists():
+                        try:
+                            tmp_out.unlink()
+                        except OSError:
+                            pass
+
+                return {
+                    "ok": True,
+                    "source": str(src_path),
+                    "output_path": str(out_p),
+                    "width": img.width,
+                    "height": img.height,
+                }
+        except Exception as exc:
+            logger.exception("사진 사본 편집 실패: %s", exc)
+            return {"ok": False, "code": "EDIT_FAILED", "message": f"편집 실패: {exc}"}
+
+    def place_groups(
+        self,
+        folder: str | Path | None = None,
+        *,
+        group_by: str = "folder",
+    ) -> dict[str, Any]:
+        """외부 네트워크 없이 EXIF 및 폴더명 기반으로 사진을 오프라인 그룹화한다.
+
+        group_by: 'folder'(기본: 폴더별), 'camera'(카메라 기종별), 'location'(GPS 버킷 또는 폴더명 fallback)
+        """
+        group_by_norm = (group_by or "").strip().lower()
+        if group_by_norm not in ("folder", "camera", "location"):
+            return {
+                "ok": False,
+                "code": "INVALID_INPUT",
+                "message": f"지원하지 않는 group_by 모드입니다: {group_by}",
+            }
+
+        folder_str = str(Path(folder).resolve()) if folder else None
+        photos = self.db.list_photos(folder_str)
+
+        groups_map: dict[str, dict[str, Any]] = {}
+
+        for p in photos:
+            is_cloud = bool(p.get("cloud", False))
+            path_obj = Path(p["path"])
+
+            if is_cloud or not path_obj.is_file():
+                meta = {
+                    "camera": "카메라 정보 없음",
+                    "gps_bucket": "",
+                    "location": path_obj.parent.name or "사진뷰",
+                }
+            else:
+                try:
+                    st = path_obj.stat()
+                    if cloud_only(getattr(st, "st_file_attributes", 0)):
+                        is_cloud = True
+                        meta = {
+                            "camera": "카메라 정보 없음",
+                            "gps_bucket": "",
+                            "location": path_obj.parent.name or "사진뷰",
+                        }
+                    else:
+                        meta = _read_photo_group_meta(path_obj)
+                except OSError:
+                    meta = {
+                        "camera": "카메라 정보 없음",
+                        "gps_bucket": "",
+                        "location": path_obj.parent.name or "사진뷰",
+                    }
+
+            # 그룹 키와 라벨 결정
+            if group_by_norm == "folder":
+                folder_norm = _norm_path(p.get("folder") or path_obj.parent)
+                key = folder_norm
+                label = Path(folder_norm).name or "사진뷰"
+            elif group_by_norm == "camera":
+                key = meta["camera"]
+                label = key
+            elif group_by_norm == "location":
+                if meta["gps_bucket"]:
+                    key = meta["gps_bucket"]
+                    label = meta["location"]
+                else:
+                    folder_norm = _norm_path(p.get("folder") or path_obj.parent)
+                    key = f"folder:{folder_norm}"
+                    label = Path(folder_norm).name or "사진뷰"
+
+            if key not in groups_map:
+                groups_map[key] = {
+                    "key": key,
+                    "label": label,
+                    "items": [],
+                    "cameras_set": set(),
+                }
+
+            group_entry = groups_map[key]
+            cam = meta["camera"]
+            if cam and cam != "카메라 정보 없음":
+                group_entry["cameras_set"].add(cam)
+
+            group_entry["items"].append({
+                "path": p["path"],
+                "name": p["filename"],
+                "date": p["date_taken"],
+                "camera": meta["camera"],
+                "location": meta["location"],
+                "cloud": is_cloud,
+            })
+
+        groups = []
+        for g in groups_map.values():
+            cams = sorted(g.pop("cameras_set"))
+            g["count"] = len(g["items"])
+            g["cameras"] = cams
+            groups.append(g)
+
+        # count 내림차순 -> label 오름차순 정렬
+        groups.sort(key=lambda g: (-g["count"], g["label"]))
+
+        return {
+            "ok": True,
+            "group_by": group_by_norm,
+            "total_photos": len(photos),
+            "groups": groups,
+        }
+
+    # ---- 8. 디스패처 ----
 
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """브리지 명령 디스패처."""
@@ -1204,6 +1741,32 @@ class PhotoAlbumService:
                     layout=str(payload.get("layout", "2x2")),
                     title=str(payload.get("title", "사 진 대 지")),
                     base_hwpx=payload.get("base_hwpx"),
+                )
+
+            if action == "find_duplicates":
+                return self.find_duplicates(
+                    folder=payload.get("folder"),
+                    threshold=payload.get("threshold", 6),
+                )
+
+            if action == "edit_copy":
+                path = payload.get("path")
+                if not path:
+                    return {"ok": False, "message": "path가 필요합니다."}
+                return self.edit_copy(
+                    path,
+                    output_path=payload.get("output_path"),
+                    output_dir=payload.get("output_dir"),
+                    crop=payload.get("crop"),
+                    rotate_deg=payload.get("rotate_deg", 0),
+                    brightness=float(payload.get("brightness", 1.0)),
+                    contrast=float(payload.get("contrast", 1.0)),
+                )
+
+            if action == "place_groups":
+                return self.place_groups(
+                    folder=payload.get("folder"),
+                    group_by=str(payload.get("group_by", "folder")),
                 )
 
             if action == "clear_cache":
