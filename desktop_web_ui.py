@@ -2058,9 +2058,12 @@ class DesktopWebBridge:
         return app
 
     def hwp_bulk(self, action, payload=None):
-        """HWP → HWPX 일괄 변환(2.0.7): drives · start · stop · status · open_report · show_report · retry_failed."""
+        """HWP → HWPX bulk commands. Developer all-drive flow reuses klib scan-hwp and bounded COM workers."""
         from docfit_core import hwp_bulk as bulk
+        from docfit_core import hwp_bulk_parallel as parallel
         payload = payload if isinstance(payload, dict) else {}
+        if action not in bulk.HWP_BULK_ACTIONS:
+            return {"ok": False, "message": "지원하지 않는 명령입니다.", "bulk": None}
         state = getattr(self, "_bulk_state", None)
         running = bool(state and state.phase in {"scan", "convert"})
 
@@ -2068,6 +2071,27 @@ class DesktopWebBridge:
             return {"ok": ok, "message": message, "bulk": state.as_dict() if state else None}
         if action == "drives":
             return {"ok": True, "drives": bulk.local_drives()}
+        if action == "scan_all":
+            if running:
+                return status(False, "변환이 진행 중이라 스캔할 수 없습니다.")
+            roots = payload.get("roots") or bulk.local_drives()
+            if not isinstance(roots, list) or not roots or len(roots) > 26:
+                return status(False, "로컬 드라이브를 찾지 못했습니다.")
+            clean = []
+            for value in roots:
+                path = Path(str(value or ""))
+                if not path.is_absolute() or path.is_symlink() or not path.is_dir():
+                    return status(False, f"드라이브 위치를 열 수 없습니다: {value}")
+                clean.append(path.resolve())
+            try:
+                summary = bulk.scan_all(clean)
+            except Exception as exc:
+                return status(False, f"사전 스캔 실패: {exc}")
+            self._bulk_scan_roots = list(summary["roots"])
+            self._bulk_scan_summary = summary
+            self._bulk_scan_rows = summary["rows"]
+            summary = {k: v for k, v in summary.items() if k not in {"rows", "roots"}}
+            return dict(status(), summary=summary)
         if action == "status":
             return status()
         if action == "stop":
@@ -2080,15 +2104,19 @@ class DesktopWebBridge:
             opener = self._open_path if action == "open_report" else self._reveal
             self._tk(lambda: opener(path, "변환 결과표가 아직 없습니다."))
             return status()
+        all_computer = action == "start_all"
         if action == "retry_failed":
             if running:
                 return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
             if not state or not state.failures:
                 return status(False, "다시 시도할 실패 문서가 없습니다.")
             fail_roots = [f["source"] for f in state.failures if isinstance(f, dict) and "source" in f]
-            payload = dict(payload, roots=fail_roots, recursive=False)
-            action = "start"
-        if action != "start":
+            all_computer = bool(state.scan_summary)
+            payload = dict(payload, roots=fail_roots, recursive=False, retry=all_computer)
+            action = "start_all"
+            if not all_computer:
+                action = "start"
+        if action not in {"start", "start_all"}:
             return status(False, "지원하지 않는 명령입니다.")
         if running:
             return status(False, "HWPX 일괄 변환이 이미 진행 중입니다.")
@@ -2097,7 +2125,14 @@ class DesktopWebBridge:
         if self.gui.running:
             return status(False, "다른 문서 작업이 끝난 뒤 시작해 주세요.")
         roots, passwords = payload.get("roots"), payload.get("passwords") or []
-        if (not isinstance(roots, list) or not 1 <= len(roots) <= 20 or not isinstance(passwords, list)
+        if all_computer and action == "start_all" and payload.get("retry") is not True:
+            summary = getattr(self, "_bulk_scan_summary", None)
+            rows = getattr(self, "_bulk_scan_rows", None)
+            if not summary or not rows:
+                return status(False, "먼저 전체 드라이브 사전 스캔을 해 주세요.")
+            roots = getattr(self, "_bulk_scan_roots", [])
+        max_roots = 26 if all_computer else 20
+        if (not isinstance(roots, list) or not 1 <= len(roots) <= max_roots or not isinstance(passwords, list)
                 or len(passwords) > 20 or not all(isinstance(x, str) and 0 < len(x) <= 128 for x in passwords)):
             return status(False, "찾을 위치와 암호 목록을 확인해 주세요.")
         clean = []
@@ -2111,16 +2146,94 @@ class DesktopWebBridge:
         report_dir = (documents if documents.is_dir() else Path(tempfile.gettempdir())) / "HWP_AutoDocFit" / "HWPX변환_결과표"
         state = self._bulk_state = bulk.BulkState(phase="scan")
         stop = self._bulk_stop = threading.Event()
+        if all_computer:
+            summary = getattr(self, "_bulk_scan_summary", {})
+            rows = getattr(self, "_bulk_scan_rows", [])
+            state.scan_summary = {k: v for k, v in summary.items() if k not in {"rows", "roots"}}
+            state.protected_total = sum(int(summary.get("counts", {}).get(k, 0))
+                                        for k in ("password", "distributed", "drm", "hwp3", "corrupt"))
+            state.protected = state.protected_total
 
         def factory():
             import pythoncom
             pythoncom.CoInitialize()
-            return self._table_units_hwp()
+            try:
+                app = self._table_units_hwp()
+                return app
+            except Exception:
+                pythoncom.CoUninitialize()
+                raise
 
         def work():
             try:
-                bulk.run_bulk(clean, app_factory=factory, state=state, stop=stop, passwords=list(passwords),
-                              report_dir=report_dir, recursive=payload.get("recursive", True) is not False)
+                # 같은 앱 안에서 COM 변환 작업을 겹치지 않게 하는 프로세스 잠금.
+                com_lock = getattr(self, "_hwp_bulk_com_lock", None)
+                if com_lock is None:
+                    self._hwp_bulk_com_lock = com_lock = threading.Lock()
+                with com_lock:
+                    if all_computer:
+                        state.phase = "convert"
+                        pstate = parallel.ParallelState()
+                        normal_rows = [row for row in rows if row.get("kind") == "normal"]
+                        retry_unreadable = []
+                        # retry_failed은 최신 실패 목록만 다시 스캔해 정상 HWP5만 통과시킨다.
+                        if payload.get("retry") is True:
+                            normal_rows = []
+                            for source in clean:
+                                header = bulk.read_hwp5_header(source)
+                                if header and not (header.is_encrypted or header.is_distributed or header.is_drm):
+                                    normal_rows.append({"path": str(source), "kind": "normal",
+                                                        "flags": header.flags,
+                                                        "version": f"{header.version >> 24}.0"})
+                                else:
+                                    retry_unreadable.append(bulk.BulkResult(str(source), "failed",
+                                        message="다시 검사했을 때 정상 HWP5 문서가 아니거나 읽을 수 없습니다.",
+                                        kind=bulk.KIND_CORRUPT))
+                        lines = [__import__("json").dumps(row, ensure_ascii=False) for row in normal_rows]
+                        def progress(info):
+                            state.done = info["done"]
+                            state.found = info["total"]
+                            state.succeeded = info["succeeded"]
+                            state.failed = info["failed"]
+                            state.skipped_existing = int(summary.get("counts", {}).get("existing", 0)) + info["skipped"]
+                            state.current = info["current"]
+                            state.rate_per_minute = info["rate_per_minute"]
+                            state.remaining_seconds = info["remaining_seconds"]
+                        results = parallel.run_parallel(lines, app_factory=factory, stop=stop,
+                                                        on_progress=progress, state=pstate)
+                        results.extend(retry_unreadable)
+                        if stop.is_set():
+                            completed_sources = {r.source for r in results}
+                            for row in normal_rows:
+                                source = str(row.get("path", ""))
+                                if source and source not in completed_sources:
+                                    state.failures.append({"source": source, "message": "중단되어 처리하지 못했습니다.",
+                                                           "kind": "중단됨"})
+                                    results.append(bulk.BulkResult(source, "skipped",
+                                                                   message="중단되어 처리하지 못했습니다.",
+                                                                   kind="중단됨"))
+                        if payload.get("retry") is not True:
+                            for row in rows:
+                                kind = row.get("kind")
+                                if kind != "normal":
+                                    label = {"password": bulk.KIND_PASSWORD, "distributed": bulk.KIND_DISTRIBUTED,
+                                             "drm": bulk.KIND_DRM, "hwp3": bulk.KIND_HWP3,
+                                             "corrupt": bulk.KIND_CORRUPT, "existing": bulk.KIND_EXISTING}.get(kind, bulk.KIND_CORRUPT)
+                                    results.append(bulk.BulkResult(str(row.get("path", "")),
+                                        "skipped" if kind == "existing" else "protected", message=label, kind=label))
+                            results.sort(key=lambda item: item.source.casefold())
+                        state.found = len(lines)
+                        state.skipped_existing = int(summary.get("counts", {}).get("existing", 0)) + pstate.skipped
+                        state.protected = state.protected_total
+                        state.failed = sum(1 for result in results if result.status == "failed")
+                        state.failures.extend(dict(source=r.source, message=r.message, kind=r.kind)
+                                              for r in results if r.status == "failed")
+                        state.report = str(bulk.write_report(results, report_dir))
+                        state.phase = "stopped" if stop.is_set() else "done"
+                        state.current = ""
+                    else:
+                        bulk.run_bulk(clean, app_factory=factory, state=state, stop=stop, passwords=list(passwords),
+                                      report_dir=report_dir, recursive=payload.get("recursive", True) is not False)
             except Exception as exc:  # 한/글 없음 등: 화면에 이유를 보인다.
                 logging.getLogger(__name__).warning("HWPX 일괄 변환 실패", exc_info=True)
                 state.error, state.phase = str(exc), "error"
