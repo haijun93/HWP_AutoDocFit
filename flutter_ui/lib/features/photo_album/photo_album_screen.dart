@@ -772,194 +772,186 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // 1행: 폴더 선택 / 드롭다운 / 새로고침 + 검색창 / 즐겨찾기 / 슬라이더 / 선택 모드
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                FilledButton.icon(
-                  key: const ValueKey('photoAlbumPickFolderButton'),
-                  onPressed: _loading ? null : _pickFolder,
-                  icon: const Icon(Icons.folder_open, size: 18),
-                  label: const Text('사진 폴더 선택'),
-                ),
-                const SizedBox(width: 12),
-                if (_currentFolder != null) ...[
-                  if (_registeredFolders.length > 1) ...[
-                    DropdownButton<String>(
-                      value:
-                          _registeredFolders.any(
-                            (f) => f['path'] == _currentFolder,
-                          )
-                          ? _currentFolder
-                          : null,
-                      icon: const Icon(Icons.arrow_drop_down),
-                      underline: const SizedBox(),
-                      items: [
-                        for (final f in _registeredFolders)
-                          DropdownMenuItem(
-                            value: '${f['path']}',
-                            child: Text(
-                              '${f['path']}'.split(Platform.pathSeparator).last,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                              ),
+          Row(
+            children: [
+              FilledButton.icon(
+                key: const ValueKey('photoAlbumPickFolderButton'),
+                onPressed: _loading ? null : _pickFolder,
+                icon: const Icon(Icons.folder_open, size: 18),
+                label: const Text('사진 폴더 선택'),
+              ),
+              const SizedBox(width: 12),
+              if (_currentFolder != null) ...[
+                if (_registeredFolders.length > 1) ...[
+                  DropdownButton<String>(
+                    value:
+                        _registeredFolders.any(
+                          (f) => f['path'] == _currentFolder,
+                        )
+                        ? _currentFolder
+                        : null,
+                    icon: const Icon(Icons.arrow_drop_down),
+                    underline: const SizedBox(),
+                    items: [
+                      for (final f in _registeredFolders)
+                        DropdownMenuItem(
+                          value: '${f['path']}',
+                          child: Text(
+                            '${f['path']}'.split(Platform.pathSeparator).last,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
                             ),
                           ),
-                      ],
-                      onChanged: _loading
-                          ? null
-                          : (val) {
-                              if (val != null) _loadPhotos(val);
-                            },
-                    ),
-                    const SizedBox(width: 8),
-                  ] else ...[
-                    Flexible(
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.photo_library_outlined,
-                            size: 18,
-                            color: Colors.grey,
-                          ),
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              _currentFolder!,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                  ],
-                  IconButton(
-                    key: const ValueKey('photoAlbumRefreshButton'),
-                    tooltip: '새로고침',
-                    icon: const Icon(Icons.refresh, size: 20),
-                    onPressed: _loading ? null : _refreshCurrentFolder,
-                  ),
-                ],
-                const Spacer(),
-                // 검색창
-                SizedBox(
-                  width: 180,
-                  height: 36,
-                  child: TextField(
-                    key: const ValueKey('photoAlbumSearchField'),
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: '파일명·태그 검색',
-                      hintStyle: const TextStyle(fontSize: 12),
-                      prefixIcon: const Icon(Icons.search, size: 18),
-                      suffixIcon: _searchController.text.isNotEmpty
-                          ? IconButton(
-                              key: const ValueKey(
-                                'photoAlbumSearchClearButton',
-                              ),
-                              icon: const Icon(Icons.clear, size: 16),
-                              onPressed: () {
-                                _searchController.clear();
-                                _performSearch();
-                              },
-                            )
-                          : null,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: BorderSide(color: theme.dividerColor),
-                      ),
-                    ),
-                    style: const TextStyle(fontSize: 13),
-                    onSubmitted: (_) => _performSearch(),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                IconButton(
-                  key: const ValueKey('photoAlbumSearchSubmitButton'),
-                  tooltip: '검색',
-                  icon: const Icon(Icons.search, size: 20),
-                  onPressed: _loading ? null : _performSearch,
-                ),
-                // 즐겨찾기 필터
-                IconButton(
-                  key: const ValueKey('photoAlbumFavoriteFilterButton'),
-                  tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
-                  icon: Icon(
-                    _favoriteFilter ? Icons.star : Icons.star_border,
-                    color: _favoriteFilter ? Colors.amber : null,
-                    size: 22,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _favoriteFilter = !_favoriteFilter;
-                    });
-                    _performSearch();
-                  },
-                ),
-                const SizedBox(width: 6),
-                // 썸네일 크기 조절
-                Tooltip(
-                  message: '썸네일 크기 조절',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.photo_size_select_actual_outlined,
-                        size: 16,
-                        color: Colors.grey,
-                      ),
-                      SizedBox(
-                        width: 80,
-                        child: Slider(
-                          key: const ValueKey('photoAlbumThumbSizeSlider'),
-                          value: _thumbSize,
-                          min: 100,
-                          max: 240,
-                          divisions: 7,
-                          onChanged: (val) {
-                            setState(() {
-                              _thumbSize = val;
-                            });
-                          },
                         ),
-                      ),
                     ],
+                    onChanged: _loading
+                        ? null
+                        : (val) {
+                            if (val != null) _loadPhotos(val);
+                          },
                   ),
-                ),
-                const SizedBox(width: 6),
-                // 선택 모드 토글
+                  const SizedBox(width: 8),
+                ] else ...[
+                  Flexible(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.photo_library_outlined,
+                          size: 18,
+                          color: Colors.grey,
+                        ),
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            _currentFolder!,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 IconButton(
-                  key: const ValueKey('photoAlbumToggleSelectionButton'),
-                  tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
-                  icon: Icon(
-                    _selectionMode
-                        ? Icons.check_circle
-                        : Icons.check_circle_outline,
-                    color: _selectionMode ? theme.colorScheme.primary : null,
-                    size: 20,
-                  ),
-                  onPressed: () {
-                    setState(() {
-                      _selectionMode = !_selectionMode;
-                      if (!_selectionMode) {
-                        _selectedPaths.clear();
-                      }
-                    });
-                  },
+                  key: const ValueKey('photoAlbumRefreshButton'),
+                  tooltip: '새로고침',
+                  icon: const Icon(Icons.refresh, size: 20),
+                  onPressed: _loading ? null : _refreshCurrentFolder,
                 ),
               ],
-            ),
+              const Spacer(),
+              // 검색창
+              SizedBox(
+                width: 180,
+                height: 36,
+                child: TextField(
+                  key: const ValueKey('photoAlbumSearchField'),
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: '파일명·태그 검색',
+                    hintStyle: const TextStyle(fontSize: 12),
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            key: const ValueKey('photoAlbumSearchClearButton'),
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () {
+                              _searchController.clear();
+                              _performSearch();
+                            },
+                          )
+                        : null,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: BorderSide(color: theme.dividerColor),
+                    ),
+                  ),
+                  style: const TextStyle(fontSize: 13),
+                  onSubmitted: (_) => _performSearch(),
+                ),
+              ),
+              const SizedBox(width: 6),
+              IconButton(
+                key: const ValueKey('photoAlbumSearchSubmitButton'),
+                tooltip: '검색',
+                icon: const Icon(Icons.search, size: 20),
+                onPressed: _loading ? null : _performSearch,
+              ),
+              // 즐겨찾기 필터
+              IconButton(
+                key: const ValueKey('photoAlbumFavoriteFilterButton'),
+                tooltip: _favoriteFilter ? '즐겨찾기만 보는 중' : '즐겨찾기만 보기',
+                icon: Icon(
+                  _favoriteFilter ? Icons.star : Icons.star_border,
+                  color: _favoriteFilter ? Colors.amber : null,
+                  size: 22,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _favoriteFilter = !_favoriteFilter;
+                  });
+                  _performSearch();
+                },
+              ),
+              const SizedBox(width: 6),
+              // 썸네일 크기 조절
+              Tooltip(
+                message: '썸네일 크기 조절',
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.photo_size_select_actual_outlined,
+                      size: 16,
+                      color: Colors.grey,
+                    ),
+                    SizedBox(
+                      width: 80,
+                      child: Slider(
+                        key: const ValueKey('photoAlbumThumbSizeSlider'),
+                        value: _thumbSize,
+                        min: 100,
+                        max: 240,
+                        divisions: 7,
+                        onChanged: (val) {
+                          setState(() {
+                            _thumbSize = val;
+                          });
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 6),
+              // 선택 모드 토글
+              IconButton(
+                key: const ValueKey('photoAlbumToggleSelectionButton'),
+                tooltip: _selectionMode ? '선택 모드 해제' : '다중 선택',
+                icon: Icon(
+                  _selectionMode
+                      ? Icons.check_circle
+                      : Icons.check_circle_outline,
+                  color: _selectionMode ? theme.colorScheme.primary : null,
+                  size: 20,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _selectionMode = !_selectionMode;
+                    if (!_selectionMode) {
+                      _selectedPaths.clear();
+                    }
+                  });
+                },
+              ),
+            ],
           ),
           // 2행: 폴더가 선택되어 있을 때 보기 전환 (날짜별 / 폴더별 / 카메라별 / 위치별) + 중복 사진 찾기
           if (_currentFolder != null) ...[
