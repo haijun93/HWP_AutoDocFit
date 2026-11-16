@@ -53,9 +53,25 @@ type Job = (
     Option<String>,
     tm_state::MatchMode,
     usize,
+    bool,
 );
 /// 스크롤로 새로 보이게 된 줄의 원문 찾기: (세대, [(줄 번호, 줄)], 강조 낱말).
-type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>);
+type SnipJob = (u64, Vec<(usize, Row)>, Vec<String>, bool);
+
+fn should_hide_on_close(minimize_to_tray: bool) -> bool {
+    minimize_to_tray
+}
+
+#[cfg(test)]
+mod close_policy_tests {
+    use super::should_hide_on_close;
+
+    #[test]
+    fn close_policy_follows_tray_setting() {
+        assert!(should_hide_on_close(true));
+        assert!(!should_hide_on_close(false));
+    }
+}
 
 /// 일꾼 대기열: 검색은 늘 최신 하나, 원문 찾기도 최신 하나(검색 먼저).
 #[derive(Default)]
@@ -117,6 +133,7 @@ struct Ui {
     recent_query_times: Vec<u64>,
     modal: Option<ktm::layout::ModalKind>,
     modal_tab: usize,
+    pending_ui_scale: u32,
     settings: Settings,
 }
 
@@ -385,6 +402,7 @@ fn event(h: HWND, e: Event) {
                     edit(|u| u.cancel = cancel.clone());
                     let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
                     let max_results = with(|u| u.settings.bounded_max_results());
+                    let skip_cloud_network = with(|u| u.settings.skip_cloud_network);
                     {
                         let mut p = tx.0.lock().unwrap();
                         p.search = Some((
@@ -400,6 +418,7 @@ fn event(h: HWND, e: Event) {
                             ext,
                             match_mode,
                             max_results,
+                            skip_cloud_network,
                         ));
                         p.snippets = None;
                     }
@@ -491,7 +510,12 @@ fn request_snippets(u: &mut Ui, count: usize) {
         }
     }
     if !want.is_empty() {
-        u.tx.0.lock().unwrap().snippets = Some((u.state.generation, want, u.terms.clone()));
+        u.tx.0.lock().unwrap().snippets = Some((
+            u.state.generation,
+            want,
+            u.terms.clone(),
+            u.settings.skip_cloud_network,
+        ));
         u.tx.1.notify_one();
     }
 }
@@ -698,6 +722,7 @@ fn key(h: HWND, key: usize) -> bool {
                             u.state.selected_ext.clone(),
                             u.state.options.match_mode,
                             u.settings.bounded_max_results(),
+                            u.settings.skip_cloud_network,
                         );
                         (u.tx.clone(), job)
                     });
@@ -2552,7 +2577,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     }
                 }
             } else {
-                let s = with(|u| u.settings.clone());
+                let (s, excluded_directories) =
+                    with(|u| (u.settings.clone(), u.settings.excluded_directories.clone()));
                 let labels: &[&str] = match active {
                     0 => &[
                         "테마",
@@ -2693,6 +2719,38 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         p.accent,
                         DT_END_ELLIPSIS,
                     );
+                }
+                if active == 1 {
+                    let list_top = mr.content.top + line * 4;
+                    let list_line = scale(h, 26).max(1);
+                    for (i, path) in excluded_directories.iter().enumerate() {
+                        let y = list_top + i as i32 * list_line;
+                        if y + list_line > mr.content.bottom {
+                            break;
+                        }
+                        text(
+                            path,
+                            RECT {
+                                left: mr.content.left,
+                                top: y,
+                                right: mr.content.right * 2 / 3,
+                                bottom: y + list_line,
+                            },
+                            p.text_sub,
+                            DT_END_ELLIPSIS,
+                        );
+                        text(
+                            "[Delete]",
+                            RECT {
+                                left: mr.content.right * 2 / 3,
+                                top: y,
+                                right: mr.content.right,
+                                bottom: y + list_line,
+                            },
+                            p.accent,
+                            DT_RIGHT,
+                        );
+                    }
                 }
             }
         }
@@ -2983,6 +3041,58 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             let top = modal_rects(rc_w.right, rc_w.bottom, count).content.top;
                             let idx = ((y - top) / scale(h, 38)).max(0) as usize;
                             let current_tab = with(|u| u.modal_tab);
+                            let previous_ui_scale = with(|u| u.pending_ui_scale);
+                            if current_tab == 1 {
+                                let excluded = with(|u| u.settings.excluded_directories.clone());
+                                let list_top = top + scale(h, 38) * 4;
+                                let list_line = scale(h, 26).max(1);
+                                let row = (y - list_top) / list_line;
+                                if row >= 0
+                                    && (row as usize) < excluded.len()
+                                    && x >= rc_w.right * 2 / 3
+                                {
+                                    let removed = excluded[row as usize].clone();
+                                    edit(|u| {
+                                        ktm::layout::remove_excluded_directory(
+                                            &mut u.settings.excluded_directories,
+                                            &removed,
+                                        );
+                                    });
+                                    let (settings, path) =
+                                        with(|u| (u.settings.clone(), u.settings_path.clone()));
+                                    let _ = settings.save(&path);
+                                    let roots = with(|u| {
+                                        u.rows
+                                            .iter()
+                                            .map(|r| r.parent.clone())
+                                            .filter(|p| !p.is_empty())
+                                            .collect::<Vec<_>>()
+                                    });
+                                    let selected = with(|u| u.state.selected_folder.clone());
+                                    let settings = with(|u| u.settings.clone());
+                                    edit(|u| {
+                                        let keep = ktm::layout::filter_row_indices_with_roots(
+                                            &u.rows,
+                                            &settings,
+                                            selected.as_deref(),
+                                            &roots,
+                                        );
+                                        let allowed: std::collections::HashSet<usize> =
+                                            keep.into_iter().collect();
+                                        u.rows = std::mem::take(&mut u.rows)
+                                            .into_iter()
+                                            .enumerate()
+                                            .filter_map(|(i, row)| {
+                                                allowed.contains(&i).then_some(row)
+                                            })
+                                            .collect();
+                                        u.state.result_count = u.rows.len();
+                                        u.state.selected = None;
+                                    });
+                                    InvalidateRect(h, null(), 0);
+                                    return 0;
+                                }
+                            }
                             if current_tab == 3 && idx == 1 {
                                 let log_dir = std::env::var_os("LOCALAPPDATA")
                                     .map(PathBuf::from)
@@ -2993,6 +3103,59 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 let _ = ktm::open::open(log_dir.to_string_lossy().as_ref(), false);
                             }
                             if current_tab == 1 && idx == 3 {
+                                let excluded = with(|u| u.settings.excluded_directories.clone());
+                                let list_top = top + scale(h, 38) * 4;
+                                let list_line = scale(h, 26).max(1);
+                                let remove_index = if excluded.is_empty() {
+                                    None
+                                } else {
+                                    let n = ((y - list_top) / list_line) as usize;
+                                    let left = rc_w.right * 2 / 3;
+                                    (n < excluded.len() && x >= left).then_some(n)
+                                };
+                                if let Some(index) = remove_index {
+                                    let removed = excluded[index].clone();
+                                    edit(|u| {
+                                        ktm::layout::remove_excluded_directory(
+                                            &mut u.settings.excluded_directories,
+                                            &removed,
+                                        );
+                                    });
+                                    let (s, path) =
+                                        with(|u| (u.settings.clone(), u.settings_path.clone()));
+                                    let _ = s.save(&path);
+                                    let roots = with(|u| {
+                                        u.rows
+                                            .iter()
+                                            .map(|r| r.parent.clone())
+                                            .filter(|p| !p.is_empty())
+                                            .collect::<Vec<_>>()
+                                    });
+                                    let (rows, selected) =
+                                        with(|u| (u.rows.clone(), u.state.selected_folder.clone()));
+                                    let settings = with(|u| u.settings.clone());
+                                    let visible = ktm::layout::filter_row_indices_with_roots(
+                                        &rows,
+                                        &settings,
+                                        selected.as_deref(),
+                                        &roots,
+                                    );
+                                    edit(|u| {
+                                        let visible_set: std::collections::HashSet<usize> =
+                                            visible.iter().copied().collect();
+                                        u.rows = rows
+                                            .into_iter()
+                                            .enumerate()
+                                            .filter_map(|(i, row)| {
+                                                visible_set.contains(&i).then_some(row)
+                                            })
+                                            .collect();
+                                        u.state.result_count = u.rows.len();
+                                        u.state.selected = None;
+                                    });
+                                    InvalidateRect(h, null(), 0);
+                                    return 0;
+                                }
                                 if let Some(path) = pick_folder(h) {
                                     edit(|u| {
                                         if !u
@@ -3085,6 +3248,29 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             }
                             if settings_tab == 0 && matches!(idx, 3 | 4) {
                                 create_fonts(h);
+                                if idx == 3 {
+                                    let mut client: RECT = std::mem::zeroed();
+                                    GetClientRect(h, &mut client);
+                                    let new_scale = with(|u| u.settings.bounded_ui_scale());
+                                    let (new_width, new_height) = ktm::layout::scaled_window_size(
+                                        client.right,
+                                        client.bottom,
+                                        previous_ui_scale,
+                                        new_scale,
+                                    );
+                                    SetWindowPos(
+                                        h,
+                                        null_mut(),
+                                        0,
+                                        0,
+                                        new_width,
+                                        new_height,
+                                        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+                                    );
+                                    edit(|u| u.pending_ui_scale = new_scale);
+                                    layout(h);
+                                    InvalidateRect(h, null(), 0);
+                                }
                             }
                         }
                         _ => {}
@@ -3770,7 +3956,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 0
             }
             WM_CLOSE => {
-                event(h, Event::Hide);
+                if should_hide_on_close(with(|u| u.settings.minimize_to_tray)) {
+                    event(h, Event::Hide);
+                } else {
+                    DestroyWindow(h);
+                }
                 0
             }
             READY => {
@@ -4090,6 +4280,7 @@ pub fn run() -> Result<(), String> {
                 recent_query_times: settings.recent_query_times.clone(),
                 modal: None,
                 modal_tab: 0,
+                pending_ui_scale: settings.bounded_ui_scale(),
                 settings: settings.clone(),
             })
         });
@@ -4157,6 +4348,7 @@ pub fn run() -> Result<(), String> {
                         ext,
                         match_mode,
                         max_results,
+                        skip_cloud_network,
                     )) => {
                         let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
@@ -4197,7 +4389,7 @@ pub fn run() -> Result<(), String> {
                             let b = backend.as_mut().unwrap();
                             let date_range =
                                 ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            b.search_with_scope_ext_limit(
+                            b.search_with_scope_ext_limit_cloud(
                                 &q,
                                 hierarchy,
                                 date_range,
@@ -4206,6 +4398,7 @@ pub fn run() -> Result<(), String> {
                                 match_mode,
                                 max_results,
                                 Some(cancel),
+                                skip_cloud_network,
                             )
                         })();
                         Reply::Search(
@@ -4232,6 +4425,7 @@ pub fn run() -> Result<(), String> {
                             ext,
                             match_mode,
                             max_results,
+                            skip_cloud_network,
                         ),
                         format,
                     ) => {
@@ -4274,7 +4468,11 @@ pub fn run() -> Result<(), String> {
                                 Some(cancel),
                             )?;
                             let mut rows = ans.rows;
-                            b.fill_snippets(&mut rows, &ans.terms);
+                            b.fill_snippets_with_cloud_policy(
+                                &mut rows,
+                                &ans.terms,
+                                skip_cloud_network,
+                            );
                             Ok(rows)
                         })();
 
@@ -4287,10 +4485,14 @@ pub fn run() -> Result<(), String> {
                         }
                         continue;
                     }
-                    Work::Snippets((g, mut rows, terms)) => {
+                    Work::Snippets((g, mut rows, terms, skip_cloud_network)) => {
                         if let Some(b) = backend.as_mut() {
                             let mut only: Vec<Row> = rows.iter().map(|r| r.1.clone()).collect();
-                            b.fill_snippets(&mut only, &terms);
+                            b.fill_snippets_with_cloud_policy(
+                                &mut only,
+                                &terms,
+                                skip_cloud_network,
+                            );
                             for (slot, r) in rows.iter_mut().zip(only) {
                                 slot.1 = r;
                             }

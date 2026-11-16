@@ -22,6 +22,25 @@ pub const SNIPPET_PREFETCH: usize = 8;
 const EXCERPT_BEFORE: usize = 16;
 const EXCERPT_MAX: usize = 120;
 
+pub const fn is_cloud_only_attributes(attrs: u32) -> bool {
+    attrs & (0x1000 | 0x400000 | 0x40000) != 0
+}
+
+fn path_is_cloud_only(path: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        return std::fs::metadata(path)
+            .map(|metadata| is_cloud_only_attributes(metadata.file_attributes()))
+            .unwrap_or(false);
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// 검색 한 번의 결과: 줄과 강조 낱말(검색어 낱말 + 엔진이 나눈 조각), 폴더별 개수 및 자동완성.
 #[derive(Clone, Debug, Default)]
 pub struct Answer {
@@ -431,6 +450,15 @@ impl Backend {
 
     /// 아직 찾아보지 않은 줄의 원문 발췌를 채운다(문단 표가 없으면 아무것도 안 함).
     pub fn fill_snippets(&mut self, rows: &mut [Row], terms: &[String]) {
+        self.fill_snippets_with_cloud_policy(rows, terms, false);
+    }
+
+    pub fn fill_snippets_with_cloud_policy(
+        &mut self,
+        rows: &mut [Row],
+        terms: &[String],
+        skip_cloud_network: bool,
+    ) {
         self.open_paragraphs();
         let Some(p) = self.paragraphs.as_mut() else {
             return;
@@ -439,6 +467,9 @@ impl Backend {
             row.snippet_tried = true;
             let Some(para) = row.para else { continue };
             if row.path.is_empty() {
+                continue;
+            }
+            if skip_cloud_network && path_is_cloud_only(&row.path) {
                 continue;
             }
             if let Ok(Some((body, loc_label))) = p.body_and_location(&row.path, para) {
@@ -542,6 +573,23 @@ impl Backend {
         match_mode: crate::tm_state::MatchMode,
         top: usize,
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Answer> {
+        self.search_with_scope_ext_limit_cloud(
+            query, hierarchy, date_range, folder, ext, match_mode, top, cancel, false,
+        )
+    }
+
+    pub fn search_with_scope_ext_limit_cloud(
+        &mut self,
+        query: &str,
+        hierarchy: bool,
+        date_range: Option<(i64, i64)>,
+        folder: Option<&str>,
+        ext: Option<&str>,
+        match_mode: crate::tm_state::MatchMode,
+        top: usize,
+        cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+        skip_cloud_network: bool,
     ) -> Result<Answer> {
         self.index.reload().map_err(|e| e.to_string())?;
         let query = query.trim();
@@ -668,7 +716,7 @@ impl Backend {
             r.rank = i;
         }
         let n = rows.len().min(SNIPPET_PREFETCH);
-        self.fill_snippets(&mut rows[..n], &terms);
+        self.fill_snippets_with_cloud_policy(&mut rows[..n], &terms, skip_cloud_network);
 
         // SEMI3: 2글자부터 자동완성 후보
         let autocompletes = if query.chars().count() >= 2 {
@@ -1250,6 +1298,14 @@ mod tests {
     #[test]
     fn version_group_handles_empty_input() {
         assert!(group_document_versions(&[]).is_empty());
+    }
+    #[test]
+    fn cloud_only_attribute_bits_are_detected_individually() {
+        for bit in [0x1000, 0x400000, 0x40000] {
+            assert!(is_cloud_only_attributes(bit));
+        }
+        assert!(!is_cloud_only_attributes(0));
+        assert!(!is_cloud_only_attributes(0x20));
     }
     use kfind_core::{Sentence, Writer, WriterOptions};
     struct Temp(PathBuf);

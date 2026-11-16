@@ -376,7 +376,17 @@ pub fn filter_row_indices(
     settings: &crate::settings::Settings,
     selected_folder: Option<&str>,
 ) -> Vec<usize> {
+    filter_row_indices_with_roots(rows, settings, selected_folder, &[])
+}
+
+pub fn filter_row_indices_with_roots(
+    rows: &[crate::backend::Row],
+    settings: &crate::settings::Settings,
+    selected_folder: Option<&str>,
+    indexed_roots: &[String],
+) -> Vec<usize> {
     let root = selected_folder.map(normalize_path);
+    let roots: Vec<String> = indexed_roots.iter().map(|p| normalize_path(p)).collect();
     let excluded: Vec<String> = settings
         .excluded_directories
         .iter()
@@ -388,13 +398,43 @@ pub fn filter_row_indices(
         .filter_map(|(i, row)| {
             let path = normalize_path(&row.path);
             let parent = normalize_path(&row.parent);
-            if !settings.include_subfolders && root.as_deref().is_some_and(|root| parent != root) {
+            if !settings.include_subfolders {
+                if let Some(root) = root.as_deref() {
+                    if parent != root {
+                        return None;
+                    }
+                } else {
+                    let known_roots = if roots.is_empty() {
+                        let mut found: Vec<String> = rows
+                            .iter()
+                            .map(|row| normalize_path(&row.parent))
+                            .filter(|p| !p.is_empty())
+                            .collect();
+                        found.sort();
+                        found.dedup();
+                        let all = found.clone();
+                        found.retain(|candidate| {
+                            !all.iter().any(|other| {
+                                candidate != other && candidate.starts_with(&format!("{other}\\"))
+                            })
+                        });
+                        found
+                    } else {
+                        roots.clone()
+                    };
+                    if !known_roots.is_empty() && !known_roots.iter().any(|known| parent == *known)
+                    {
+                        return None;
+                    }
+                }
+            }
+            if excluded
+                .iter()
+                .any(|dir| path == *dir || path.starts_with(&format!("{dir}\\")))
+            {
                 return None;
             }
-            (!excluded
-                .iter()
-                .any(|dir| path == *dir || path.starts_with(&format!("{dir}\\"))))
-            .then_some(i)
+            Some(i)
         })
         .collect();
     let grouped = if settings.version_grouping {
@@ -412,6 +452,21 @@ pub fn filter_row_indices(
         .into_iter()
         .take(settings.bounded_max_results())
         .collect()
+}
+
+pub fn remove_excluded_directory(excluded: &mut Vec<String>, path: &str) -> bool {
+    let before = excluded.len();
+    excluded.retain(|entry| !entry.eq_ignore_ascii_case(path));
+    excluded.len() != before
+}
+
+pub fn scaled_window_size(width: i32, height: i32, old_scale: u32, new_scale: u32) -> (i32, i32) {
+    let old_scale = old_scale.max(1) as i64;
+    let new_scale = new_scale.max(1) as i64;
+    (
+        ((width as i64 * new_scale + old_scale / 2) / old_scale).clamp(1, i32::MAX as i64) as i32,
+        ((height as i64 * new_scale + old_scale / 2) / old_scale).clamp(1, i32::MAX as i64) as i32,
+    )
 }
 
 pub fn settings_visible_indices(
@@ -808,6 +863,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(filter_row_indices(&rows, &s, Some("c:/root")), vec![0]);
+    }
+    #[test]
+    fn include_subfolders_off_without_selection_keeps_indexed_roots_only() {
+        let rows = vec![
+            settings_row("C:\\root\\a.txt", "a.txt", "C:\\root"),
+            settings_row("C:\\root\\sub\\b.txt", "b.txt", "C:\\root\\sub"),
+            settings_row("D:\\other\\c.txt", "c.txt", "D:\\other"),
+        ];
+        let s = crate::settings::Settings {
+            include_subfolders: false,
+            ..Default::default()
+        };
+        let roots = vec!["C:\\root".into(), "D:\\other".into()];
+        assert_eq!(
+            filter_row_indices_with_roots(&rows, &s, None, &roots),
+            vec![0, 2]
+        );
+    }
+
+    #[test]
+    fn removing_excluded_directory_is_case_insensitive_and_reports_change() {
+        let mut excluded = vec!["C:\\Temp".to_string(), "D:\\Cache".to_string()];
+        assert!(remove_excluded_directory(&mut excluded, "c:\\temp"));
+        assert_eq!(excluded, vec!["D:\\Cache"]);
+        assert!(!remove_excluded_directory(&mut excluded, "C:\\missing"));
+    }
+
+    #[test]
+    fn ui_scale_recalculates_window_size_proportionally() {
+        assert_eq!(scaled_window_size(800, 600, 100, 125), (1000, 750));
+        assert_eq!(scaled_window_size(1000, 750, 125, 90), (720, 540));
     }
     #[test]
     fn excluded_directories_filter_descendants_case_insensitively() {
