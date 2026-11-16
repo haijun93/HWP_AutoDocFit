@@ -280,12 +280,16 @@ class TimemachineApi {
     int limit = 200,
     List<String>? kinds,
     List<String>? roots,
+    double? start,
+    double? end,
   }) async {
     final payload = <String, Object?>{
       'query': query,
       'limit': limit,
       'kinds': ?kinds,
       'roots': ?roots,
+      if (start != null && end != null) 'start': start,
+      if (start != null && end != null) 'end': end,
     };
     final response = await command('file_search', payload);
     if (response['ok'] != true) {

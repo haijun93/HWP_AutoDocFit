@@ -190,6 +190,22 @@ class ContentSearchTests(unittest.TestCase):
         self.assertTrue(self.index.index_file(path)["indexed"])
         self.assertEqual(self.index.search("업무 실적"), [])
 
+    def test_search_date_range_filters_hierarchy_keyword_and_filename_results(self):
+        older = self.root / "older.txt"
+        newer = self.root / "newer.txt"
+        older.write_text("periodneedle old", encoding="utf-8")
+        newer.write_text("periodneedle new", encoding="utf-8")
+        old_time = 1_700_000_000
+        new_time = old_time + 86400
+        os.utime(older, (old_time, old_time))
+        os.utime(newer, (new_time, new_time))
+        self.index.index_file(older)
+        self.index.index_file(newer)
+        self.assertEqual([r["name"] for r in self.index.search("periodneedle", start=new_time)], [newer.name])
+        self.assertEqual([r["name"] for r in self.index.keyword_search("periodneedle", start=new_time)], [newer.name])
+        self.assertEqual([r["name"] for r in self.index.search_files("newer", start=new_time)], [newer.name])
+        self.assertEqual(self.index.search("periodneedle", start=new_time + 86400), [])
+
     def test_excluded_filename_is_not_indexed_or_searchable(self):
         path = self.root / " '#IEeEE legacy'.txt"
         path.write_text("needleword hidden", encoding="utf-8")

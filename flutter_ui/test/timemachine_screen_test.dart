@@ -320,6 +320,56 @@ void main() {
     expect(range['end'], closeTo(sunday.add(const Duration(days: 7)).millisecondsSinceEpoch / 1000, 1));
   });
 
+  testWidgets('기간 프리셋과 직접 일수는 달력 범위 및 세 검색 API에 동기화된다', (tester) async {
+    final api = _FakeApi(enabled: true);
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: TimemachineScreen(api: api.call))));
+    await tester.pumpAndSettle();
+    final dropdown = find.byKey(const ValueKey('tm-period-dropdown'));
+    for (final entry in <(String, int)>[('7일',7),('30일',30),('90일',90),('6개월',183),('1년',365)]) {
+      await tester.tap(dropdown); await tester.pumpAndSettle();
+      await tester.tap(find.text(entry.$1).last); await tester.pumpAndSettle();
+      final range = api.calls.where((c) => c.$1 == 'range').last.$2;
+      final now = DateTime.now(); final today = DateTime(now.year,now.month,now.day);
+      final expectedStart = entry.$1 == '6개월'
+          ? DateTime(today.year,today.month-6,today.day)
+          : entry.$1 == '1년' ? DateTime(today.year-1,today.month,today.day)
+          : today.subtract(Duration(days:entry.$2-1));
+      expect(range['start'],closeTo(expectedStart.millisecondsSinceEpoch/1000,1),reason:entry.$1);
+      expect(range['end'],closeTo(today.add(const Duration(days:1)).millisecondsSinceEpoch/1000,1),reason:entry.$1);
+    }
+    await tester.enterText(find.byKey(const ValueKey('tm-custom-days')), '12');
+    await tester.tap(find.byKey(const ValueKey('tm-custom-days-apply'))); await tester.pumpAndSettle();
+    final today = DateTime.now(); final midnight = DateTime(today.year,today.month,today.day);
+    final customRange = api.calls.where((c) => c.$1 == 'range').last.$2;
+    expect(customRange['start'],closeTo(midnight.subtract(const Duration(days:11)).millisecondsSinceEpoch/1000,1));
+    expect(customRange['end'],closeTo(midnight.add(const Duration(days:1)).millisecondsSinceEpoch/1000,1));
+
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '보고서');
+    await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('열 보기')); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='file_search').last.$2['start'],customRange['start']);
+    await tester.tap(find.text('본문검색')); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
+    await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='content_search').last.$2['start'],customRange['start']);
+    await tester.tap(find.text('위계검색')); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='related_search').last.$2['end'],customRange['end']);
+
+    await tester.tap(dropdown); await tester.pumpAndSettle();
+    await tester.tap(find.text('기간 없음 (전체)').last); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '전체');
+    await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='file_search').last.$2.containsKey('start'),isFalse);
+    await tester.tap(find.text('본문검색')); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '전체');
+    await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='content_search').last.$2.containsKey('end'),isFalse);
+    await tester.tap(find.text('위계검색')); await tester.pumpAndSettle();
+    expect(api.calls.where((c)=>c.$1=='related_search').last.$2.containsKey('start'),isFalse);
+  });
+
   testWidgets('카드 누르기와 폴더 열기가 각 명령을 호출한다', (tester) async {
     final api=_FakeApi(enabled:true);
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call)))); await tester.pumpAndSettle();
@@ -334,16 +384,18 @@ void main() {
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call)))); await tester.pumpAndSettle();
     await tester.tap(find.text('PDF')); await tester.pumpAndSettle();
     expect(api.calls.where((call)=>call.$1=='range').last.$2['offset'],0);
-    await tester.enterText(find.byType(TextField),'보고서'); await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')),'보고서'); await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
     final payload=api.calls.where((call)=>call.$1=='range').last.$2;
     expect(payload['offset'],0); expect(payload['query'],'보고서'); expect(payload['kinds'],['pdf']);
   });
 
   testWidgets('본문 모드에서 색인하고 본문 검색 결과를 표시한다', (tester) async {
     final api=_FakeApi(enabled:true, developerMode:true);
+    await tester.binding.setSurfaceSize(const Size(1400, 1000));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:TimemachineScreen(api:api.call)))); await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색')); await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField),'회의'); await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')),'회의'); await tester.pump(const Duration(milliseconds:400)); await tester.pumpAndSettle();
     expect(api.calls.any((c)=>c.$1=='content_search'&&c.$2['query']=='회의'),true);
     expect(find.text('본문포함.docx'),findsOneWidget);
     final snippet=tester.widget<RichText>(find.textContaining('회의 결과',findRichText:true));
@@ -363,7 +415,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('본문검색'));
     await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField).first, '회의');
+    await tester.enterText(find.byKey(const ValueKey('tm-file-search')), '회의');
     await tester.pump(const Duration(milliseconds: 400));
     await tester.pumpAndSettle();
 

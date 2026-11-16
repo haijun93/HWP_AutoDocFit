@@ -85,6 +85,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   int _contentSearchRevision = 0;
   bool _showOperatorHelp = false;
   final TextEditingController _previewFind = TextEditingController();
+  final TextEditingController _customDays = TextEditingController();
   int _previewFindIndex = 0;
 
   // 파일명 모드 열 보기(테이블) 상태
@@ -116,7 +117,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
   @override
   void initState() { super.initState(); _load(firstOpen: true); _scroll.addListener(_onScroll); _pollDeveloperMode(); }
   @override
-  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _previewFind.dispose(); super.dispose(); }
+  void dispose() { _scanPoll?.cancel(); _developerModePoll?.cancel(); _contentPoll?.cancel(); _thumbnails.dispose(); _scroll.dispose(); _searchBox.dispose(); _previewFind.dispose(); _customDays.dispose(); super.dispose(); }
 
   void _pollDeveloperMode() {
     _developerModePoll?.cancel();
@@ -354,6 +355,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     final response = await _api.command(relatedMode ? 'related_search' : 'content_search', {
       'query': query, 'limit': 100,
       if (relatedMode) 'sort': 'hierarchy_relevance' else 'sort': activeSort,
+      ..._searchRangePayload,
     });
     final rawItems = response['items'];
     final items = rawItems is List ? rawItems.map((raw) => TimemachineContentResult.fromJson(Map<String, Object?>.from(raw as Map), query: query)).toList() : <TimemachineContentResult>[];
@@ -544,6 +546,8 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
         query,
         kinds: _selectedKinds.isEmpty ? null : _selectedKinds.toList(),
         roots: roots is List ? roots.map((e) => '$e').toList() : null,
+        start: _start == null ? null : _start!.millisecondsSinceEpoch / 1000,
+        end: _end == null ? null : _end!.millisecondsSinceEpoch / 1000,
       );
       if (!mounted || rev != _fileSearchRevision) return;
       setState(() {
@@ -696,6 +700,10 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
 
   Map<String, Object?> get _filters => {'roots': _settings?['roots'] ?? [],
     'kinds': _selectedKinds.isEmpty ? null : _selectedKinds.toList(), 'query': _query};
+  Map<String, Object?> get _searchRangePayload => {
+    if (_start != null && _end != null) 'start': _start!.millisecondsSinceEpoch / 1000,
+    if (_start != null && _end != null) 'end': _end!.millisecondsSinceEpoch / 1000,
+  };
   Future<void> _refreshDays() async {
     final revision = ++_calendarRevision;
     final requestedMonth = _month;
@@ -722,7 +730,11 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       _month = DateTime(_month.year, _month.month + amount);
       _days = {};
     });
-    await _refreshDays();
+    if (_start == null || _end == null) {
+      setState(() { _days = {}; _hourDensity = {for (var i = 0; i < 24; i++) i: 0}; });
+    } else {
+      await _refreshDays();
+    }
     await _resetRange();
   }
   Future<void> _resetRange() async {
@@ -835,20 +847,42 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       }
       _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
     });
+    setState(() => _month = DateTime(chosen.year, chosen.month));
     _refreshHourDensity();
+    if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
+    if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
     await _loadPage();
   }
   bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
-  Future<void> _quickRange(String mode) async {
+  Future<void> _quickRange(String mode, {int? customDays}) async {
     final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
     setState(() {
       _month = DateTime(now.year,now.month);
-      if (mode == 'today') { _start = DateTime(now.year,now.month,now.day); _end = _start!.add(const Duration(days:1)); }
+      if (mode == 'all') { _start = null; _end = null; }
+      if (mode == 'today') { _start = today; _end = today.add(const Duration(days:1)); }
       if (mode == 'week') { _start = _sundayStart(now); _end = _start!.add(const Duration(days:7)); }
       if (mode == 'month') { _month = DateTime(now.year,now.month); _start = _month; _end = DateTime(now.year,now.month+1); }
+      final days = customDays ?? int.tryParse(mode);
+      if (days != null && days > 0) { _start = today.subtract(Duration(days:days - 1)); _end = today.add(const Duration(days:1)); }
+      if (mode == '6m') { final first = DateTime(today.year,today.month-6,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
+      if (mode == '1y') { final first = DateTime(today.year-1,today.month,today.day); _start = DateTime(first.year,first.month,first.day); _end = today.add(const Duration(days:1)); }
       _firstDay = null; _filterRevision++; _requestSerial++; _loading = false; _items.clear(); _offset = 0; _more = true;
     });
-    await _refreshDays(); _refreshHourDensity(); await _loadPage();
+    await _refreshDays();
+    if (_start == null || _end == null) setState(() => _days = {});
+    if (_fileTableView && _activeQuery.trim().isNotEmpty) await _runFileSearch(_activeQuery);
+    if (_contentMode && _activeQuery.trim().isNotEmpty) _searchBox.refresh();
+    _refreshHourDensity(); await _loadPage();
+  }
+  Future<void> _applyCustomDays() async {
+    final days = int.tryParse(_customDays.text.trim());
+    if (days == null || days < 1 || days > 36500) {
+      setState(() => _error = '일수는 1~36500 사이의 정수로 입력해 주세요.');
+      return;
+    }
+    setState(() => _error = null);
+    await _quickRange('custom', customDays: days);
   }
   Future<void> _scan() async {
     try {
@@ -1661,6 +1695,53 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
     ),
   );
 
+  Widget _periodSelector() => Wrap(
+    key: const ValueKey('tm-period-selector'), spacing: 3, runSpacing: 2,
+    crossAxisAlignment: WrapCrossAlignment.center,
+    children: [
+      const Text('기간'),
+      DropdownButton<String>(
+        key: const ValueKey('tm-period-dropdown'), value: _periodSelection, isDense: true,
+        underline: const SizedBox.shrink(),
+        onChanged: (value) { if (value != null) _quickRange(value); },
+        items: const [
+          DropdownMenuItem(value:'all',child:Text('기간 없음 (전체)')),
+          DropdownMenuItem(value:'today',child:Text('오늘')),
+          DropdownMenuItem(value:'week',child:Text('이번 주')),
+          DropdownMenuItem(value:'month',child:Text('이번 달')),
+          DropdownMenuItem(value:'7',child:Text('7일')),
+          DropdownMenuItem(value:'30',child:Text('30일')),
+          DropdownMenuItem(value:'90',child:Text('90일')),
+          DropdownMenuItem(value:'6m',child:Text('6개월')),
+          DropdownMenuItem(value:'1y',child:Text('1년')),
+        ],
+      ),
+      SizedBox(width:60,child:TextField(
+        key: const ValueKey('tm-custom-days'), controller: _customDays,
+        keyboardType: TextInputType.number,
+        decoration: const InputDecoration(isDense:true,hintText:'일수',suffixText:'일'),
+        onSubmitted: (_) => _applyCustomDays(),
+      )),
+      OutlinedButton(key:const ValueKey('tm-custom-days-apply'),onPressed:_applyCustomDays,child:const Text('적용')),
+    ],
+  );
+
+  String get _periodSelection {
+    if (_start == null || _end == null) return 'all';
+    final now=DateTime.now(); final today=DateTime(now.year,now.month,now.day);
+    if (_sameDay(_start!,today) && _end == today.add(const Duration(days:1))) return 'today';
+    if (_start == _sundayStart(now) && _end == _start!.add(const Duration(days:7))) return 'week';
+    if (_start == DateTime(now.year,now.month) && _end == DateTime(now.year,now.month+1)) return 'month';
+    for (final days in [7,30,90]) {
+      if (_start == today.subtract(Duration(days:days-1)) && _end == today.add(const Duration(days:1))) return '$days';
+    }
+    if (_end == today.add(const Duration(days:1))) {
+      if (_start == DateTime(today.year,today.month-6,today.day)) return '6m';
+      if (_start == DateTime(today.year-1,today.month,today.day)) return '1y';
+    }
+    return 'all';
+  }
+
   Widget _filtersBar() =>Padding(padding:const EdgeInsets.fromLTRB(12,8,12,4),child:LayoutBuilder(builder:(context, constraints){
     final width = constraints.maxWidth;
     final compact = width < tmToolsCollapseWidth;
@@ -1672,6 +1753,7 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       Row(mainAxisSize:MainAxisSize.min,children:[Icon(_watchByAgent?Icons.sync:Icons.hourglass_empty,size:18),const SizedBox(width:4),Text(_watchByAgent?'실시간 감시: K에이전트':'실시간 감시: 앱을 열 때만',key:const ValueKey('tm-watch-status'),style:Theme.of(context).textTheme.bodySmall)]),
     ];
     final children=<Widget>[
+    _periodSelector(),
     OutlinedButton.icon(key:const ValueKey('tm-extensions'),onPressed:_pickExtensions,icon:const Icon(Icons.tune,size:16),label:const Text('확장자')),
     if (narrow) _kindMenu()
     else for(final entry in _kinds.entries) FilterChip(label:Text(entry.key),selected:_selectedKinds.contains(entry.value),onSelected:(value)=>_toggleKind(entry.value, value)),
@@ -1714,13 +1796,21 @@ class _TimemachineScreenState extends State<TimemachineScreen> {
       Row(children:[IconButton(onPressed:()=>_moveMonth(-1),icon:const Icon(Icons.chevron_left)),Expanded(child:Center(child:Text('${_month.year}년 ${_month.month}월',style:Theme.of(context).textTheme.titleMedium))),IconButton(onPressed:()=>_moveMonth(1),icon:const Icon(Icons.chevron_right))]),
       Row(key:const ValueKey('tm-calendar-weekdays'),mainAxisAlignment:MainAxisAlignment.spaceAround,children:const ['일','월','화','수','목','금','토'].map((e)=>SizedBox(width:36,child:Center(child:Text(e)))).toList()),
       for(var row=0;row<cells~/7;row++) Row(mainAxisAlignment:MainAxisAlignment.spaceAround,children:[for(var col=0;col<7;col++) _dateCell(row*7+col-offset,DateTime(_month.year,_month.month,1+row*7+col-offset), maximum)]),
-      Wrap(spacing:4,children:[TextButton(onPressed:()=>_quickRange('today'),child:const Text('오늘')),TextButton(onPressed:()=>_quickRange('week'),child:const Text('이번 주')),TextButton(onPressed:()=>_quickRange('month'),child:const Text('이번 달'))]),
+      Wrap(spacing:2,children:[
+        TextButton(onPressed:()=>_quickRange('today'),child:const Text('오늘')),
+        TextButton(onPressed:()=>_quickRange('week'),child:const Text('이번 주')),
+        TextButton(onPressed:()=>_quickRange('month'),child:const Text('이번 달')),
+        TextButton(onPressed:()=>_quickRange('all'),child:const Text('전체')),
+      ]),
     ])));
   }
   Widget _dateCell(int index,DateTime date,int maximum) {
     if(index<0 || date.month!=_month.month) return const SizedBox(width:36,height:36);
     final count=_days['${date.day}']??0; final alpha=maximum==0?0.04:0.08+0.42*count/maximum;
-    return SizedBox(width:36,height:36,child:TextButton(key:ValueKey('tm-day-${date.day}'),style:TextButton.styleFrom(backgroundColor:TimemachineColors.of(context).blue.withValues(alpha:alpha),padding:EdgeInsets.zero),onPressed:()=>_chooseDay(date),child:Text('${date.day}')));
+    final day = DateTime(date.year, date.month, date.day);
+    final selected = (_start != null && _end != null && !day.isBefore(_start!) && day.isBefore(_end!)) || (_firstDay != null && _sameDay(_firstDay!, day));
+    final rangeColor = TimemachineColors.of(context).blue;
+    return SizedBox(width:36,height:36,child:TextButton(key:ValueKey('tm-day-${date.day}'),style:TextButton.styleFrom(backgroundColor:selected ? rangeColor.withValues(alpha:.36) : rangeColor.withValues(alpha:alpha),foregroundColor:selected ? rangeColor : null,padding:EdgeInsets.zero),onPressed:()=>_chooseDay(date),child:Text('${date.day}')));
   }
   Widget _timeline() {
     if (_items.isEmpty && !_loading) return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('이 기간에 기록된 파일이 없습니다.')));

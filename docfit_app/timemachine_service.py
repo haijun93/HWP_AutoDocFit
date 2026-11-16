@@ -913,7 +913,7 @@ class TimemachineService:
 
     RELATED_QUERY_SORTS = frozenset({"hierarchy_relevance", "mentions", "relevance"})
 
-    def _search_rows(self, query, *, hierarchy=False, limit=100, offset=0, sort="hierarchy_relevance"):
+    def _search_rows(self, query, *, hierarchy=False, limit=100, offset=0, sort="hierarchy_relevance", start=None, end=None):
         parsed = self.content_index.parse_query(query)
         if not parsed["terms"] and not parsed["phrases"]:
             raise ValueError("본문 검색어를 입력해 주세요.")
@@ -923,8 +923,15 @@ class TimemachineService:
             if not self._settings["roots"]:
                 return []
             if hierarchy:
-                return self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort)
-            return self.content_index.keyword_search(query, roots=self._settings["roots"], limit=limit, offset=offset)
+                return self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort, start=start, end=end)
+            return self.content_index.keyword_search(query, roots=self._settings["roots"], limit=limit, offset=offset, start=start, end=end)
+        def kfind_day(timestamp, *, end_boundary=False):
+            if timestamp is None: return None
+            from datetime import datetime, timedelta
+            value = datetime.fromtimestamp(timestamp)
+            if end_boundary and value.hour == value.minute == value.second == value.microsecond == 0:
+                value -= timedelta(days=1)
+            return int(value.strftime("%Y%m%d"))
         requested = self._search_engine()
         if requested == "legacy":
             with self._content_lock:
@@ -945,6 +952,8 @@ class TimemachineService:
                 raise KfindError("kfind_seeding")
             # tm은 공유 서비스 범위. 조사 폴더는 앱 설정마다 달라 전체 순위 뒤 현재 폴더로 거른다.
             filters = {key: parsed[key] for key in ("ext", "path", "after", "before", "exclude", "phrases")}
+            if start is not None: filters["start_date"] = kfind_day(start)
+            if end is not None: filters["end_date"] = kfind_day(end, end_boundary=True)
             if not hierarchy:
                 extensions = set(filters["ext"])
                 for group in ({"hwp", "hwpx"}, {"doc", "docx"}, {"xls", "xlsx"}, {"ppt", "pptx"}):
@@ -1005,7 +1014,7 @@ class TimemachineService:
         if not self._settings["roots"]:
             # search()는 roots가 비면 전체 색인을 찾으므로, 조사 폴더가 없으면 아무것도 돌려주지 않는다.
             return {"ok": True, "mode": "query", "items": []}
-        rows = self._search_rows(query, hierarchy=True, limit=limit, sort=sort)
+        rows = self._search_rows(query, hierarchy=True, limit=limit, sort=sort, start=payload.get("start"), end=payload.get("end"))
         for row in rows:
             row["file_name"] = row["name"]
         return {"ok": True, "mode": "query", "items": rows, **self._engine_status()}
@@ -1075,7 +1084,8 @@ class TimemachineService:
         if action == "content_search":
             query = payload.get("query")
             rows = self._search_rows(query,
-                limit=payload.get("limit", 100), offset=payload.get("offset", 0))
+                limit=payload.get("limit", 100), offset=payload.get("offset", 0),
+                start=payload.get("start"), end=payload.get("end"))
             for row in rows:
                 row["file_name"] = row["name"]
             return {"ok": True, "items": rows, **self._engine_status()}
@@ -1100,7 +1110,7 @@ class TimemachineService:
             return {"ok": True, "path": os.path.abspath(target), "count": len(rows)}
         if action == "file_search":
             query = payload.get("query")
-            return {"ok": True, "items": self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500))}
+            return {"ok": True, "items": self.content_index.search_files(query, roots=self._settings["roots"], limit=payload.get("limit", 500), start=payload.get("start"), end=payload.get("end"))}
         if action == "related_search":
             path = payload.get("path")
             query = payload.get("query")

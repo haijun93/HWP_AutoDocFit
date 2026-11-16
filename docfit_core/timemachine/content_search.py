@@ -1376,7 +1376,7 @@ class ContentSearchIndex:
             os.path.commonpath((os.path.normcase(os.path.abspath(row["path"])), root)) == root
             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row["path"]))[0].casefold()))]
 
-    def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance"):
+    def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance", start=None, end=None):
         self._ensure_paragraph_map()
         query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
@@ -1440,6 +1440,10 @@ class ContentSearchIndex:
         for r in meta_rows:
             raw_p = r["path"]
             p = os.path.abspath(raw_p)
+            if start is not None and (r["mtime"] is None or r["mtime"] < start):
+                continue
+            if end is not None and (r["mtime"] is None or r["mtime"] >= end):
+                continue
             if excluded_name(r["name"] or os.path.basename(p)):
                 continue
             if any(part.casefold() == "$recycle.bin" for part in Path(p).parts):
@@ -1913,7 +1917,7 @@ class ContentSearchIndex:
         return [dict(row, table_cell_id=cells.get((row["path"], int(row["paragraph_index"]))))
                 for row in rows]
 
-    def keyword_search(self, query, *, roots=None, limit=100, offset=0):
+    def keyword_search(self, query, *, roots=None, limit=100, offset=0, start=None, end=None):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
         self._ensure_paragraph_map()
         query = _nfc(query) if isinstance(query, str) else query
@@ -2089,6 +2093,10 @@ class ContentSearchIndex:
                 if excluded_name(meta["name"] or "") or excluded_name(os.path.basename(path)):
                     continue
                 normalized = os.path.normcase(os.path.abspath(path))
+                if start is not None and (meta["mtime"] is None or meta["mtime"] < start):
+                    continue
+                if end is not None and (meta["mtime"] is None or meta["mtime"] >= end):
+                    continue
                 if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
                     continue
                 if allowed is not None and not any(os.path.commonpath((normalized, root)) == root for root in allowed
@@ -2236,7 +2244,7 @@ class ContentSearchIndex:
                             "score": score, "relevance_rank": offset + len(results) + 1})
         return results
 
-    def search_files(self, query, *, roots=None, limit=500):
+    def search_files(self, query, *, roots=None, limit=500, start=None, end=None):
         """Immediate in-memory filename cache populated from indexed metadata."""
         query = _nfc(query) if isinstance(query, str) else str(query or "")
         words = [w.casefold() for w in query.split() if w]
@@ -2245,6 +2253,10 @@ class ContentSearchIndex:
         with self._lock: rows = self.db.execute("SELECT path,name,size,mtime,extension FROM content_meta ORDER BY name COLLATE NOCASE").fetchall()
         out = []
         for r in rows:
+            if start is not None and (r["mtime"] is None or r["mtime"] < start):
+                continue
+            if end is not None and (r["mtime"] is None or r["mtime"] >= end):
+                continue
             # 이름이 맞지 않는 행은 경로 정규화·제외 판정을 하지 않고 넘어간다(결과는 같다).
             name_nfc = _nfc(r["name"] or Path(r["path"]).name)
             name_folded = name_nfc.casefold()
