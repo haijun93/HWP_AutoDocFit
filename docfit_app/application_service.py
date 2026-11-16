@@ -104,6 +104,12 @@ class ApplicationService:
             self._doc_grid_service = DocGridService()
         return self._doc_grid_service
 
+    def _photo_album(self):
+        if getattr(self, '_photo_album_service', None) is None:
+            from .photo_album_service import PhotoAlbumService
+            self._photo_album_service = PhotoAlbumService()
+        return self._photo_album_service
+
     def set_theme_mode(self, mode):
         """화면 테마를 저장하고, 켜져 있는 몽땅클립보드 상주 프로그램에도 알린다(꺼져 있으면 건너뜀)."""
         from .kclip_service import push_theme
@@ -147,10 +153,10 @@ class ApplicationService:
         counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
-        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid') and len(args) in (1, 2)) and len(args)!=counts[method]:
+        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album') and len(args) in (1, 2)) and len(args)!=counts[method]:
             raise ServiceError('INVALID_INPUT','입력 항목 수를 확인해 주세요.')
         if self.data.closing and method != 'shutdown':
             raise ServiceError('BACKEND_CLOSING','백엔드가 종료 중입니다.')
@@ -320,6 +326,8 @@ class ApplicationService:
             return self._library().command(*args)
         if method=='doc_grid':
             return self._doc_grid().command(*args)
+        if method=='photo_album':
+            return self._photo_album().command(*args)
         if method=='table_units':
             from .table_units_service import TableUnitsService
             if args[0] == 'copy':
