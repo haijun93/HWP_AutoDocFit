@@ -12,8 +12,17 @@ from defusedxml import ElementTree as ET
 
 from .batch_format import _serialize
 from .hwpx import open_hwpx_safely
-from .hwp_pua import replace_pua_chars
+from .hwp_pua import HANCOM_PUA_MAP, has_pua_chars, replace_pua_chars
 from .table_builder import BORDER_TYPES, BORDER_WIDTHS, FONTS, _Header, _installed_fonts
+
+# 한컴 PUA(U+F0000~U+FFFFF 등) 미리보기 전용 표시 변환 매핑표
+# 표 서식모음.hwpx 등 카탈로그 파일 내 원본 XML 글자는 변경하지 않으며,
+# 미리보기 추출 시 앱 글꼴(NotoSansKR / NotoSansSymbols2)로 안전하게 렌더링되도록 변환한다.
+# - 사각형 안 숫자(U+F02B1 ~ U+F02C4) -> [1] ~ [20]
+# - 원 숫자(U+F0241 ~ U+F0254) -> ① ~ ⑳
+# - 괄호 숫자(U+F0221 ~ U+F0234) -> ⑴ ~ ⒇
+# - 불릿 및 특수기호(U+F02FA: · 등) -> 표준 유니코드 기호
+TABLE_PREVIEW_PUA_MAP: dict[str, str] = HANCOM_PUA_MAP
 
 _HP = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
 _HH = "{http://www.hancom.co.kr/hwpml/2011/head}"
@@ -466,7 +475,7 @@ def _scan(path: str | Path) -> list[dict]:
             for paragraph_index, paragraph in enumerate(root.findall(_HP + "p")):
                 label = _text(paragraph)
                 if label.startswith("#"):
-                    current_category = label[1:].strip()
+                    current_category = replace_pua_chars(label[1:].strip())
                     if not current_category:
                         current_category = "이름 없는 서식"
                     category_index += 1

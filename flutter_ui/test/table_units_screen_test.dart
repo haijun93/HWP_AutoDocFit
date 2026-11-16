@@ -987,4 +987,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('열 단위 7개'), findsOneWidget);
   });
+
+  test('replacePuaPreviewText converts PUA squared numbers and bullets to display characters', () {
+    // 1) U+F02B1 -> [1]
+    expect(replacePuaPreviewText('\u{F02B1} 푸른하늘'), '[1] 푸른하늘');
+    // 2) U+F02B2 -> [2]
+    expect(replacePuaPreviewText('\u{F02B2} 은하수'), '[2] 은하수');
+    // 3) U+F02FA -> ·
+    expect(replacePuaPreviewText('\u{F02FA} 항목'), '· 항목');
+    // 4) 일반 텍스트 보존
+    expect(replacePuaPreviewText('[1] 이미 변환된 텍스트'), '[1] 이미 변환된 텍스트');
+    expect(replacePuaPreviewText('일반 텍스트 123 !@#'), '일반 텍스트 123 !@#');
+  });
 }
