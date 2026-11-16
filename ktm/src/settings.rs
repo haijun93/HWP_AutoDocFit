@@ -8,6 +8,15 @@ pub struct FavoriteQuery {
     pub name: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SmartPreset {
+    pub name: String,
+    pub file_types: Vec<String>,
+    pub days: Option<u32>,
+    pub exclude_filename: bool,
+    pub within_query: String,
+}
+
 impl FavoriteQuery {
     pub fn new(query: impl Into<String>, name: impl Into<String>) -> Self {
         Self {
@@ -31,13 +40,31 @@ pub fn push_recent_query(recent: &mut Vec<String>, query: &str) {
     }
 }
 
+pub fn relative_time_label(now_unix: u64, then_unix: u64) -> String {
+    let age = now_unix.saturating_sub(then_unix);
+    if age < 60 {
+        "방금".into()
+    } else if age < 3600 {
+        format!("{}분 전", age / 60)
+    } else if age < 86400 {
+        format!("{}시간 전", age / 3600)
+    } else if age < 7 * 86400 {
+        "이번 주".into()
+    } else {
+        "이전".into()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
     pub theme: String,
     pub hotkey: String,
     pub recent_queries: Vec<String>,
+    #[serde(default)]
+    pub recent_query_times: Vec<u64>,
     pub favorite_queries: Vec<FavoriteQuery>,
+    pub smart_presets: Vec<SmartPreset>,
 }
 
 impl Default for Settings {
@@ -46,12 +73,28 @@ impl Default for Settings {
             theme: "dark".into(),
             hotkey: "Ctrl+Alt+Space".into(),
             recent_queries: Vec::new(),
+            recent_query_times: Vec::new(),
             favorite_queries: Vec::new(),
+            smart_presets: Vec::new(),
         }
     }
 }
 
 impl Settings {
+    /// 이름이 있으면 삭제하고, 없으면 추가한다. 반환값은 저장 후 존재 여부다.
+    pub fn toggle_smart_preset(&mut self, preset: SmartPreset) -> bool {
+        if let Some(i) = self
+            .smart_presets
+            .iter()
+            .position(|p| p.name == preset.name)
+        {
+            self.smart_presets.remove(i);
+            false
+        } else {
+            self.smart_presets.push(preset);
+            true
+        }
+    }
     pub fn push_recent_query(&mut self, query: &str) {
         push_recent_query(&mut self.recent_queries, query);
     }
@@ -189,5 +232,29 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let loaded: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, s);
+    }
+    #[test]
+    fn smart_preset_add_remove_and_roundtrip() {
+        let preset = SmartPreset {
+            name: "문서 검토".into(),
+            file_types: vec!["hwp".into(), "hwpx".into()],
+            days: Some(30),
+            exclude_filename: true,
+            within_query: "결재".into(),
+        };
+        let mut s = Settings::default();
+        assert!(s.toggle_smart_preset(preset.clone()));
+        let loaded: Settings = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(loaded.smart_presets, vec![preset.clone()]);
+        assert!(!s.toggle_smart_preset(preset));
+        assert!(s.smart_presets.is_empty());
+    }
+    #[test]
+    fn relative_search_time_uses_age_buckets() {
+        assert_eq!(relative_time_label(100, 60), "방금");
+        assert_eq!(relative_time_label(3000, 100), "48분 전");
+        assert_eq!(relative_time_label(40000, 100), "11시간 전");
+        assert_eq!(relative_time_label(400000, 100), "이번 주");
+        assert_eq!(relative_time_label(900000, 100), "이전");
     }
 }

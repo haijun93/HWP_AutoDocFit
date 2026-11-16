@@ -80,6 +80,8 @@ struct Ui {
     rows: Vec<Row>,
     terms: Vec<String>,
     edit: HWND,
+    within_edit: HWND,
+    within_open: bool,
     font: HFONT,
     font_bold: HFONT,
     small: HFONT,
@@ -107,6 +109,9 @@ struct Ui {
     hover_row: Option<usize>,
     hover_folder_btn: Option<usize>,
     hover_tab: Option<usize>,
+    status_text: String,
+    smart_presets: Vec<ktm::settings::SmartPreset>,
+    recent_query_times: Vec<u64>,
 }
 
 thread_local! {
@@ -151,10 +156,39 @@ fn sync_theme(theme_str: &str) {
     }
 }
 
+/// 프로그램이 검색/결과-내-검색 입력칸 텍스트를 반영할 때 한글 IME 조합을 끊지 않고 내용이 다를 때만 갱신한다.
+fn sync_edit_text(ed: HWND, text: &str) {
+    if ed.is_null() {
+        return;
+    }
+    let q = wide(text);
+    let caret = q.len().saturating_sub(1);
+    unsafe {
+        let imc = ImmGetContext(ed);
+        let composing =
+            !imc.is_null() && ImmGetCompositionStringW(imc, GCS_COMPSTR, null_mut(), 0) > 0;
+        if !imc.is_null() {
+            ImmReleaseContext(ed, imc);
+        }
+        if composing {
+            return;
+        }
+        let mut cur = vec![0u16; caret + 2];
+        let n = GetWindowTextW(ed, cur.as_mut_ptr(), cur.len() as i32) as usize;
+        if !(n == caret && cur[..n] == q[..caret]) {
+            SetWindowTextW(ed, q.as_ptr());
+            SendMessageW(ed, 0x00b1, caret, caret as isize);
+        }
+    }
+}
+
 fn event(h: HWND, e: Event) {
     let user_input = matches!(e, Event::Input(_));
-    let (effects, query_changed, history_changed) = edit(|u| {
+    let need_body_snippets = matches!(&e, Event::SetExcludeFilename(true));
+    let record_recent_search = matches!(&e, Event::Submit | Event::ApplyHistory(_));
+    let (effects, query_changed, within_changed, history_changed) = edit(|u| {
         let prev_query = u.state.query.clone();
+        let prev_within = u.state.options.within_query.clone();
         let prev_recent = u.state.recent_queries.clone();
         let prev_fav = u.state.favorite_queries.clone();
         if matches!(
@@ -173,34 +207,64 @@ fn event(h: HWND, e: Event) {
         }
         let (s, fx) = tm_state::step(&u.state, e);
         let changed = !user_input && s.query != prev_query;
-        let hist_changed = s.recent_queries != prev_recent || s.favorite_queries != prev_fav;
+        let within_changed = s.options.within_query != prev_within;
+        let hist_changed = s.recent_queries != prev_recent
+            || s.favorite_queries != prev_fav
+            || (record_recent_search && !s.query.trim().is_empty());
         u.state = s;
+        if need_body_snippets {
+            let count = u.rows.len();
+            request_snippets(u, count);
+        }
         if u.state.result_count == 0 {
             u.rows.clear();
             u.terms.clear();
             u.top = 0;
         }
-        (fx, changed, hist_changed)
+        (fx, changed, within_changed, hist_changed)
     });
     if history_changed {
         let path = with(|u| u.settings_path.clone());
-        let (recent, favorites) = with(|u| (u.state.recent_queries.clone(), u.state.favorite_queries.clone()));
+        let (recent, favorites) = with(|u| {
+            (
+                u.state.recent_queries.clone(),
+                u.state.favorite_queries.clone(),
+            )
+        });
         let mut s = Settings::load(&path).unwrap_or_default();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let old_recent = s.recent_queries.clone();
+        let old_times = s.recent_query_times.clone();
         s.recent_queries = recent;
+        s.recent_query_times = s
+            .recent_queries
+            .iter()
+            .enumerate()
+            .map(|(index, q)| {
+                if record_recent_search && index == 0 {
+                    return now;
+                }
+                old_recent
+                    .iter()
+                    .position(|old| old == q)
+                    .and_then(|i| old_times.get(i).copied())
+                    .unwrap_or(now)
+            })
+            .collect();
         s.favorite_queries = favorites;
+        edit(|u| u.recent_query_times = s.recent_query_times.clone());
         let _ = s.save(&path);
     }
     if query_changed {
-        let (ed, q) = with(|u| (u.edit, wide(&u.state.query)));
-        let caret = q.len().saturating_sub(1);
-        unsafe {
-            let mut cur = vec![0u16; caret + 2];
-            let n = GetWindowTextW(ed, cur.as_mut_ptr(), cur.len() as i32) as usize;
-            if !(n == caret && cur[..n] == q[..caret]) {
-                SetWindowTextW(ed, q.as_ptr());
-                SendMessageW(ed, 0x00b1, caret, caret as isize);
-            }
-        }
+        let (ed, text) = with(|u| (u.edit, u.state.query.clone()));
+        sync_edit_text(ed, &text);
+    }
+    if within_changed {
+        let (ed, text) = with(|u| (u.within_edit, u.state.options.within_query.clone()));
+        sync_edit_text(ed, &text);
     }
     for fx in effects {
         unsafe {
@@ -287,8 +351,13 @@ fn event(h: HWND, e: Event) {
             }
             let top_y = list_top_coord(h, u);
             let rh = scale(h, ROW_H);
-            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 };
-            let count = ((rc.bottom - top_y - scale(h, STATUS_H) - preview_h).max(0) / rh).max(1) as usize;
+            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
+                scale(h, PREVIEW_H)
+            } else {
+                0
+            };
+            let count =
+                ((rc.bottom - top_y - scale(h, STATUS_H) - preview_h).max(0) / rh).max(1) as usize;
             if index < u.top {
                 u.top = index;
             } else if index >= u.top + count {
@@ -319,10 +388,21 @@ fn event(h: HWND, e: Event) {
 fn list_top_coord(h: HWND, u: &Ui) -> i32 {
     let head = scale(h, HEAD_H);
     let search = scale(h, SEARCH_BOX_H + 12);
-    let tab = scale(h, TAB_H);
-    let filter = scale(h, FILTER_H + 8);
-    let ac_h = scale(h, 28);
-    calc_list_top(head, search, tab, filter, !u.state.autocompletes.is_empty(), ac_h)
+    let tabs = scale(h, TAB_H);
+    let options = scale(h, OPTION_H);
+    let filters = scale(h, FILTER_H);
+    let summary = scale(h, SUMMARY_H);
+    let has_ac = !u.state.autocompletes.is_empty();
+    calc_content_top(
+        head,
+        search,
+        tabs,
+        options,
+        filters,
+        summary,
+        has_ac,
+        scale(h, 28),
+    )
 }
 
 fn request_snippets(u: &mut Ui, count: usize) {
@@ -351,6 +431,44 @@ fn trim_memory() {
         windows_sys::Win32::System::ProcessStatus::K32EmptyWorkingSet(
             windows_sys::Win32::System::Threading::GetCurrentProcess(),
         );
+    }
+}
+
+fn copy_text_to_clipboard(value: &str) -> Result<(), String> {
+    #[cfg(windows)]
+    unsafe {
+        use windows_sys::Win32::System::{
+            DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData},
+            Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock},
+        };
+        let mut text: Vec<u16> = value.encode_utf16().chain(std::iter::once(0)).collect();
+        if OpenClipboard(null_mut()) == 0 {
+            return Err("클립보드를 열지 못했습니다".into());
+        }
+        let handle = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2);
+        if handle.is_null() {
+            CloseClipboard();
+            return Err("클립보드 메모리를 만들지 못했습니다".into());
+        }
+        let ptr = GlobalLock(handle) as *mut u16;
+        if ptr.is_null() {
+            CloseClipboard();
+            return Err("클립보드 메모리를 잠그지 못했습니다".into());
+        }
+        std::ptr::copy_nonoverlapping(text.as_mut_ptr(), ptr, text.len());
+        GlobalUnlock(handle);
+        EmptyClipboard();
+        if SetClipboardData(13, handle as _).is_null() {
+            CloseClipboard();
+            return Err("클립보드에 복사하지 못했습니다".into());
+        }
+        CloseClipboard();
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = value;
+        Err("클립보드 복사는 Windows에서만 지원합니다".into())
     }
 }
 
@@ -426,8 +544,11 @@ fn key(h: HWND, key: usize) -> bool {
                 InvalidateRect(h, null(), 0);
             }
             _ if ctrl && key == b'F' as usize => {
-                SetFocus(with(|u| u.edit));
-                SendMessageW(with(|u| u.edit), 0x00b1, 0, -1);
+                edit(|u| u.within_open = true);
+                layout(h);
+                let within = with(|u| u.within_edit);
+                SetFocus(within);
+                SendMessageW(within, 0x00b1, 0, -1);
             }
             _ if ctrl && key == b'E' as usize => {
                 let chosen = {
@@ -441,7 +562,15 @@ fn key(h: HWND, key: usize) -> bool {
                         AppendMenuW(menu, MF_STRING, 2, tsv_label.as_ptr());
                         let mut pt = POINT { x: 0, y: 0 };
                         GetCursorPos(&mut pt);
-                        let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, h, null());
+                        let cmd = TrackPopupMenu(
+                            menu,
+                            TPM_RETURNCMD | TPM_NONOTIFY,
+                            pt.x,
+                            pt.y,
+                            0,
+                            h,
+                            null(),
+                        );
                         DestroyMenu(menu);
                         SetFocus(with(|u| u.edit));
                         match cmd {
@@ -564,14 +693,34 @@ unsafe fn layout(h: HWND) {
         let box_h = scale(h, SEARCH_BOX_H);
         let ed_margin_x = scale(h, 8);
         let ed_margin_y = scale(h, 4);
+        let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
 
         MoveWindow(
             with(|u| u.edit),
-            pad + ed_margin_x,
+            side_w + pad + ed_margin_x,
             box_y + ed_margin_y,
-            r.right - 2 * pad - 2 * ed_margin_x,
+            r.right - side_w - 2 * pad - 2 * ed_margin_x,
             box_h - 2 * ed_margin_y,
             1,
+        );
+        let spans = option_spans(pad + side_w, r.right - pad);
+        let within = spans[5];
+        let within_hwnd = with(|u| u.within_edit);
+        MoveWindow(
+            within_hwnd,
+            within.0 + scale(h, 2),
+            head + scale(h, SEARCH_BOX_H + 12 + TAB_H),
+            (within.1 - within.0 - scale(h, 4)).max(1),
+            scale(h, OPTION_H),
+            1,
+        );
+        ShowWindow(
+            within_hwnd,
+            if with(|u| u.within_open) {
+                SW_SHOW
+            } else {
+                SW_HIDE
+            },
         );
     }
 }
@@ -595,7 +744,14 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
                 GetTextExtentPoint32W(dc, w.as_ptr(), (w.len() - 1) as i32, &mut size);
                 SetTextColor(dc, fg);
                 SetBkColor(dc, bg);
-                SetBkMode(dc, if marked { OPAQUE as i32 } else { TRANSPARENT as i32 });
+                SetBkMode(
+                    dc,
+                    if marked {
+                        OPAQUE as i32
+                    } else {
+                        TRANSPARENT as i32
+                    },
+                );
                 TextOutW(
                     dc,
                     x,
@@ -797,28 +953,142 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         fill(r, p.bg);
 
+        let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
+        if side_w > 0 {
+            fill(
+                RECT {
+                    left: 0,
+                    top: 0,
+                    right: side_w,
+                    bottom: r.bottom,
+                },
+                p.tab_bg,
+            );
+            let side = with(|u| {
+                let mut lines = vec!["〈  검색 범위".to_string(), "인덱싱된 폴더".to_string()];
+                lines.extend(
+                    u.state
+                        .folder_counts
+                        .iter()
+                        .map(|(n, c)| format!("{n}  {c} 문서")),
+                );
+                lines.push("추천 경로".into());
+                lines.extend([
+                    "바탕 화면".into(),
+                    "문서".into(),
+                    "다운로드".into(),
+                    "스마트 폴더".into(),
+                ]);
+                lines.extend(u.smart_presets.iter().map(|p| format!("◆ {}", p.name)));
+                lines.push("최근 검색".into());
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let times = u.recent_query_times.clone();
+                lines.extend(u.state.history_entries().iter().map(|e| {
+                    let relative = u
+                        .state
+                        .recent_queries
+                        .iter()
+                        .position(|q| q == &e.query)
+                        .map(|i| {
+                            times
+                                .get(i)
+                                .map(|t| ktm::settings::relative_time_label(now, *t))
+                                .unwrap_or_else(|| "이전".into())
+                        })
+                        .unwrap_or_else(|| "즐겨찾기".into());
+                    format!(
+                        "{} {}  ·  {relative}",
+                        if e.is_favorite { "★" } else { "🕒" },
+                        if e.name.is_empty() { &e.query } else { &e.name }
+                    )
+                }));
+                lines.push("전체 지우기".into());
+                lines
+            });
+            for (i, line) in side.iter().enumerate() {
+                SelectObject(
+                    mem,
+                    if i == 0 {
+                        with(|u| u.small_bold)
+                    } else {
+                        with(|u| u.small)
+                    },
+                );
+                text(
+                    line,
+                    RECT {
+                        left: scale(h, 12),
+                        top: scale(h, 40 + i as i32 * SIDEBAR_ROW_H),
+                        right: side_w - scale(h, 8),
+                        bottom: scale(h, 40 + (i as i32 + 1) * SIDEBAR_ROW_H),
+                    },
+                    p.text,
+                    DT_END_ELLIPSIS,
+                );
+            }
+        }
+
         let head = scale(h, HEAD_H);
         let pad = scale(h, 12);
         let bw = scale(h, CAPTION_W);
 
         // ① 상단 메뉴바
-        fill(RECT { left: 0, top: 0, right: r.right, bottom: head }, p.head_bg);
+        fill(
+            RECT {
+                left: 0,
+                top: 0,
+                right: r.right,
+                bottom: head,
+            },
+            p.head_bg,
+        );
         let (hover_btn, theme_str) = with(|u| (u.hover_head_btn, u.theme.clone()));
         for b in HEAD_BUTTONS {
             let (l, right) = head_button_span(b, r.right, bw);
-            let br = RECT { left: l, top: 0, right, bottom: head };
+            let br = RECT {
+                left: l,
+                top: 0,
+                right,
+                bottom: head,
+            };
             let hovered = hover_btn == Some(b);
             if hovered {
-                fill(br, if b == HeadButton::Close { p.close_hover } else { p.head_button_hover });
+                fill(
+                    br,
+                    if b == HeadButton::Close {
+                        p.close_hover
+                    } else {
+                        p.head_button_hover
+                    },
+                );
             }
-            SetTextColor(mem, if hovered && b == HeadButton::Close { p.on_close_hover } else { p.head_glyph });
+            SetTextColor(
+                mem,
+                if hovered && b == HeadButton::Close {
+                    p.on_close_hover
+                } else {
+                    p.head_glyph
+                },
+            );
             SelectObject(mem, with(|u| u.glyph));
-            text(&head_button_glyph(b).to_string(), br, if hovered && b == HeadButton::Close { p.on_close_hover } else { p.head_glyph }, DT_CENTER);
+            text(
+                &head_button_glyph(b).to_string(),
+                br,
+                if hovered && b == HeadButton::Close {
+                    p.on_close_hover
+                } else {
+                    p.head_glyph
+                },
+                DT_CENTER,
+            );
         }
 
         let buttons_left = head_button_span(HEAD_BUTTONS[0], r.right, bw).0;
         SelectObject(mem, with(|u| u.title_font));
-        let title_left = scale(h, 12);
+        let title_left = side_w + scale(h, 12);
         let title_text = "퀵몽땅검색";
         text(
             title_text,
@@ -852,7 +1122,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         let box_y = head + scale(h, 6);
         let box_h = scale(h, SEARCH_BOX_H);
         let box_r = RECT {
-            left: pad,
+            left: side_w + pad,
             top: box_y,
             right: r.right - pad,
             bottom: box_y + box_h,
@@ -866,8 +1136,24 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         // ③ 탭 메뉴바
         let tab_y = box_y + box_h + scale(h, 6);
         let tab_h = scale(h, TAB_H);
-        fill(RECT { left: 0, top: tab_y, right: r.right, bottom: tab_y + tab_h }, p.tab_bg);
-        fill(RECT { left: 0, top: tab_y + tab_h - 1, right: r.right, bottom: tab_y + tab_h }, p.divider);
+        fill(
+            RECT {
+                left: 0,
+                top: tab_y,
+                right: r.right,
+                bottom: tab_y + tab_h,
+            },
+            p.tab_bg,
+        );
+        fill(
+            RECT {
+                left: 0,
+                top: tab_y + tab_h - 1,
+                right: r.right,
+                bottom: tab_y + tab_h,
+            },
+            p.divider,
+        );
 
         with(|u| {
             let body_label = format!("본문 · {}", u.body_sort.label());
@@ -905,13 +1191,211 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
             }
 
+            // ③a 옵션 바: 모드, 필터, 제외, 저장 프리셋
+            let oy = tab_y + tab_h;
+            let oh = scale(h, OPTION_H);
+            fill(
+                RECT {
+                    left: 0,
+                    top: oy,
+                    right: r.right,
+                    bottom: oy + oh,
+                },
+                p.bg,
+            );
+            SelectObject(mem, u.small);
+            let search_mode = if u.state.options.search_mode == tm_state::SearchMode::Keyword {
+                "키워드"
+            } else {
+                "파일명"
+            };
+            let option_labels = [
+                search_mode.to_string(),
+                format!(
+                    "정렬:{}",
+                    match u.state.options.sort {
+                        tm_state::SortMode::Relevance => "관련",
+                        tm_state::SortMode::Newest => "최신",
+                        tm_state::SortMode::Oldest => "오래된",
+                        tm_state::SortMode::Name => "이름",
+                    }
+                ),
+                format!(
+                    "형식:{}",
+                    if u.state.options.file_types.is_empty() {
+                        "전체".into()
+                    } else {
+                        u.state.options.file_types.join(",")
+                    }
+                ),
+                format!(
+                    "기간:{}",
+                    u.state
+                        .options
+                        .days
+                        .map(|d| format!("{d}일"))
+                        .unwrap_or_else(|| "전체".into())
+                ),
+                format!(
+                    "제외:{}",
+                    if u.state.options.exclude_filename {
+                        "✓"
+                    } else {
+                        "□"
+                    }
+                ),
+                format!(
+                    "결과 내:{}",
+                    if u.state.options.within_query.is_empty() {
+                        "Ctrl+F"
+                    } else {
+                        &u.state.options.within_query
+                    }
+                ),
+                "[프리셋]".into(),
+            ];
+            let spans = option_spans(pad + side_w, r.right - pad);
+            for (label, (left, right)) in option_labels.iter().zip(spans) {
+                text(
+                    label,
+                    RECT {
+                        left: left + scale(h, 2),
+                        top: oy,
+                        right,
+                        bottom: oy + oh,
+                    },
+                    p.text_sub,
+                    DT_END_ELLIPSIS,
+                );
+            }
+
+            let sy = oy + oh;
+            let sh = scale(h, SUMMARY_H);
+            fill(
+                RECT {
+                    left: 0,
+                    top: sy,
+                    right: r.right,
+                    bottom: sy + sh,
+                },
+                p.tab_bg,
+            );
+            let elapsed = u.timing.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+            let display_ids = ktm::layout::display_result_indices(
+                &u.rows,
+                &u.state.options.within_query,
+                u.state.options.exclude_filename,
+                &u.state.options.file_types,
+                u.state.options.collapsed_filename,
+                u.state.options.collapsed_body,
+            );
+            let group_ids = ktm::layout::filter_rows_within_query(
+                &u.rows,
+                &u.state.options.within_query,
+                u.state.options.exclude_filename,
+                &u.state.options.file_types,
+            );
+            let displayed: Vec<&Row> = group_ids.iter().filter_map(|i| u.rows.get(*i)).collect();
+            let groups = ktm::layout::match_groups(
+                &displayed.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+                &displayed
+                    .iter()
+                    .map(|r| r.snippet.clone())
+                    .collect::<Vec<_>>(),
+            );
+            let view = if u.state.options.grid_view {
+                "▦"
+            } else {
+                "☷"
+            };
+            let summary = format!(
+                "{view}  {}개 · {:.2}초     파일명 매치 {}  ·  본문 매치 {}",
+                display_ids.len(),
+                elapsed,
+                groups.filename,
+                groups.body
+            );
+            text(
+                &summary,
+                RECT {
+                    left: pad,
+                    top: sy,
+                    right: pad + scale(h, 230),
+                    bottom: sy + sh,
+                },
+                p.text_sub,
+                DT_END_ELLIPSIS,
+            );
+            let group_left = pad + scale(h, 235);
+            let group_right = r.right - scale(h, 132);
+            let group_mid = group_left + (group_right - group_left) / 2;
+            text(
+                &format!(
+                    "파일명 매치 {}{}",
+                    groups.filename,
+                    if u.state.options.collapsed_filename {
+                        " ▸"
+                    } else {
+                        " ▾"
+                    }
+                ),
+                RECT {
+                    left: group_left,
+                    top: sy,
+                    right: group_mid,
+                    bottom: sy + sh,
+                },
+                p.text_sub,
+                DT_END_ELLIPSIS,
+            );
+            text(
+                &format!(
+                    "본문 매치 {}{}",
+                    groups.body,
+                    if u.state.options.collapsed_body {
+                        " ▸"
+                    } else {
+                        " ▾"
+                    }
+                ),
+                RECT {
+                    left: group_mid,
+                    top: sy,
+                    right: group_right,
+                    bottom: sy + sh,
+                },
+                p.text_sub,
+                DT_END_ELLIPSIS,
+            );
+            let copy_rc = RECT {
+                left: r.right - scale(h, 124),
+                top: sy,
+                right: r.right - scale(h, 66),
+                bottom: sy + sh,
+            };
+            let csv_rc = RECT {
+                left: r.right - scale(h, 62),
+                top: sy,
+                right: r.right - scale(h, 4),
+                bottom: sy + sh,
+            };
+            fill(copy_rc, p.tab_hover);
+            fill(csv_rc, p.tab_hover);
+            text("[복사]", copy_rc, p.text, DT_CENTER);
+            text("[CSV]", csv_rc, p.text, DT_CENTER);
+
             // ④ 통합 검색 범위 줄 (기간 / 형식 / 폴더)
-            let fy = tab_y + tab_h + scale(h, 6);
+            let fy = oy + oh;
             let fh = scale(h, FILTER_H);
             SelectObject(mem, u.small);
             text(
                 "기간:",
-                RECT { left: pad, top: fy, right: pad + scale(h, 32), bottom: fy + fh },
+                RECT {
+                    left: pad,
+                    top: fy,
+                    right: pad + scale(h, 32),
+                    bottom: fy + fh,
+                },
                 p.text_sub,
                 0,
             );
@@ -926,7 +1410,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             ];
             for (df, lbl, w) in &date_chips {
                 let cw = scale(h, *w);
-                let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
+                let rc = RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + cw,
+                    bottom: fy + fh,
+                };
                 let active = u.state.date_filter == *df;
                 if active {
                     fill(rc, p.accent);
@@ -942,7 +1431,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             fx += scale(h, 6);
             text(
                 "형식:",
-                RECT { left: fx, top: fy, right: fx + scale(h, 32), bottom: fy + fh },
+                RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + scale(h, 32),
+                    bottom: fy + fh,
+                },
                 p.text_sub,
                 0,
             );
@@ -956,10 +1450,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             ];
             for (opt, lbl, w) in &ext_chips {
                 let cw = scale(h, *w);
-                let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
+                let rc = RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + cw,
+                    bottom: fy + fh,
+                };
                 let active = match opt {
                     None => u.state.selected_ext.is_none(),
-                    Some(e) => u.state.selected_ext.as_deref().map(|s| s.contains(e)).unwrap_or(false),
+                    Some(e) => u
+                        .state
+                        .selected_ext
+                        .as_deref()
+                        .map(|s| s.contains(e))
+                        .unwrap_or(false),
                 };
                 if active {
                     fill(rc, p.accent);
@@ -972,18 +1476,29 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             }
 
             // 폴더 칩
-            let has_folder_info = !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some();
+            let has_folder_info =
+                !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some();
             if has_folder_info && fx + scale(h, 80) < r.right - pad {
                 fx += scale(h, 6);
                 text(
                     "폴더:",
-                    RECT { left: fx, top: fy, right: fx + scale(h, 32), bottom: fy + fh },
+                    RECT {
+                        left: fx,
+                        top: fy,
+                        right: fx + scale(h, 32),
+                        bottom: fy + fh,
+                    },
                     p.text_sub,
                     0,
                 );
                 fx += scale(h, 34);
                 let all_active = u.state.selected_folder.is_none();
-                let all_rc = RECT { left: fx, top: fy, right: fx + scale(h, 38), bottom: fy + fh };
+                let all_rc = RECT {
+                    left: fx,
+                    top: fy,
+                    right: fx + scale(h, 38),
+                    bottom: fy + fh,
+                };
                 if all_active {
                     fill(all_rc, p.accent);
                     text("전체", all_rc, p.bg, DT_CENTER);
@@ -1013,7 +1528,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     if cw < scale(h, 28) {
                         break;
                     }
-                    let rc = RECT { left: fx, top: fy, right: fx + cw, bottom: fy + fh };
+                    let rc = RECT {
+                        left: fx,
+                        top: fy,
+                        right: fx + cw,
+                        bottom: fy + fh,
+                    };
                     let active = u.state.selected_folder.as_deref() == Some(&folder);
                     if active {
                         fill(rc, p.accent);
@@ -1033,7 +1553,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let mut ax = pad;
                 text(
                     "자동완성:",
-                    RECT { left: ax, top: ay, right: ax + scale(h, 60), bottom: ay + ah },
+                    RECT {
+                        left: ax,
+                        top: ay,
+                        right: ax + scale(h, 60),
+                        bottom: ay + ah,
+                    },
                     p.text_sub,
                     0,
                 );
@@ -1043,11 +1568,21 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     if cw < scale(h, 35) {
                         break;
                     }
-                    let rc = RECT { left: ax, top: ay, right: ax + cw, bottom: ay + ah };
+                    let rc = RECT {
+                        left: ax,
+                        top: ay,
+                        right: ax + cw,
+                        bottom: ay + ah,
+                    };
                     let active = u.state.selected_autocomplete == Some(i);
                     if active {
                         fill(rc, p.selected);
-                        text(term, rc, p.row_text(true, p.accent), DT_CENTER | DT_END_ELLIPSIS);
+                        text(
+                            term,
+                            rc,
+                            p.row_text(true, p.accent),
+                            DT_CENTER | DT_END_ELLIPSIS,
+                        );
                     } else {
                         fill(rc, p.tab_hover);
                         text(term, rc, p.text, DT_CENTER | DT_END_ELLIPSIS);
@@ -1064,7 +1599,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     SelectObject(mem, u.small_bold);
                     text(
                         "최근 및 즐겨찾기 검색  (↑↓ 선택 · Enter 불러오기 · Ctrl+D 즐겨찾기 토글)",
-                        RECT { left: pad, top: ty, right: r.right - pad, bottom: ty + scale(h, 20) },
+                        RECT {
+                            left: pad,
+                            top: ty,
+                            right: r.right - pad,
+                            bottom: ty + scale(h, 20),
+                        },
                         p.text_sub,
                         0,
                     );
@@ -1075,7 +1615,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     SelectObject(mem, u.font);
                     for (i, entry) in entries.iter().take(max_visible).enumerate() {
                         let top = btn_y + i as i32 * rh;
-                        let rc = RECT { left: pad, top, right: r.right - pad, bottom: top + rh };
+                        let rc = RECT {
+                            left: pad,
+                            top,
+                            right: r.right - pad,
+                            bottom: top + rh,
+                        };
                         let active = u.state.selected_history == Some(i);
                         if active {
                             fill(rc, p.selected);
@@ -1086,20 +1631,38 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             fill(rc, p.tab_hover);
                         }
                         let prefix = if entry.is_favorite { "★ " } else { "🕒 " };
-                        let label = if entry.is_favorite && !entry.name.is_empty() && entry.name != entry.query {
+                        let label = if entry.is_favorite
+                            && !entry.name.is_empty()
+                            && entry.name != entry.query
+                        {
                             format!("{prefix}{}: {}", entry.name, entry.query)
                         } else {
                             format!("{prefix}{}", entry.query)
                         };
                         let pad_x = scale(h, 8);
-                        let text_rc = RECT { left: pad + pad_x, top, right: r.right - pad - pad_x, bottom: top + rh };
-                        text(&label, text_rc, if active { p.accent } else { p.text }, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                        let text_rc = RECT {
+                            left: pad + pad_x,
+                            top,
+                            right: r.right - pad - pad_x,
+                            bottom: top + rh,
+                        };
+                        text(
+                            &label,
+                            text_rc,
+                            if active { p.accent } else { p.text },
+                            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                        );
                     }
                 } else {
                     SelectObject(mem, u.small_bold);
                     text(
                         "주요 주제 1~10위",
-                        RECT { left: pad, top: ty, right: r.right - pad, bottom: ty + scale(h, 20) },
+                        RECT {
+                            left: pad,
+                            top: ty,
+                            right: r.right - pad,
+                            bottom: ty + scale(h, 20),
+                        },
                         p.text_sub,
                         0,
                     );
@@ -1112,7 +1675,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         let row = (i / 2) as i32;
                         let left = pad + col * (col_w + scale(h, 16));
                         let top = btn_y + row * (btn_h + scale(h, 6));
-                        let rc = RECT { left, top, right: left + col_w, bottom: top + btn_h };
+                        let rc = RECT {
+                            left,
+                            top,
+                            right: left + col_w,
+                            bottom: top + btn_h,
+                        };
                         let active = u.state.selected_top_topic == Some(i);
                         if active {
                             fill(rc, p.selected);
@@ -1123,7 +1691,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             fill(rc, p.tab_hover);
                         }
                         let label = format!("{}. {}", i + 1, topic);
-                        text(&label, rc, if active { p.accent } else { p.text }, DT_CENTER | DT_END_ELLIPSIS);
+                        text(
+                            &label,
+                            rc,
+                            if active { p.accent } else { p.text },
+                            DT_CENTER | DT_END_ELLIPSIS,
+                        );
                     }
                 }
             }
@@ -1132,17 +1705,56 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let top_y = list_top_coord(h, u);
             let rh = scale(h, ROW_H);
             let status_h = scale(h, STATUS_H);
-            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 };
+            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
+                scale(h, PREVIEW_H)
+            } else {
+                0
+            };
             let visible = ((r.bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
+            let visible_indices = display_ids;
 
             let line_h1 = scale(h, 22);
             let line_h2 = scale(h, 20);
             let line_h3 = scale(h, 24);
             let folder_w = scale(h, ROW_FOLDER_W);
 
-            for (n, row) in u.rows.iter().enumerate().skip(u.top).take(visible) {
-                let y = top_y + (n - u.top) as i32 * rh;
-                let row_rc = RECT { left: 0, top: y, right: r.right, bottom: y + rh };
+            for (slot, &n) in visible_indices
+                .iter()
+                .enumerate()
+                .skip(u.top)
+                .take(visible * if u.state.options.grid_view { 2 } else { 1 })
+            {
+                let row = &u.rows[n];
+                if (row.snippet.is_empty() && u.state.options.collapsed_filename)
+                    || (!row.snippet.is_empty() && u.state.options.collapsed_body)
+                {
+                    continue;
+                }
+                let y = top_y + (slot - u.top) as i32 * rh;
+                let grid = u.state.options.grid_view;
+                let card_w = (r.right - side_w - scale(h, 24)) / 2;
+                let gx =
+                    side_w + scale(h, 8) + ((slot - u.top) % 2) as i32 * (card_w + scale(h, 8));
+                let gy = if grid {
+                    top_y + ((slot - u.top) / 2) as i32 * rh
+                } else {
+                    y
+                };
+                let row_rc = if grid {
+                    RECT {
+                        left: gx,
+                        top: gy,
+                        right: gx + card_w,
+                        bottom: gy + rh - scale(h, 6),
+                    }
+                } else {
+                    RECT {
+                        left: side_w,
+                        top: y,
+                        right: r.right,
+                        bottom: y + rh,
+                    }
+                };
                 let sel = u.state.selected == Some(n);
                 let hovered = u.hover_row == Some(n);
 
@@ -1161,7 +1773,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 SelectObject(mem, u.small);
                 text(
                     &num_str,
-                    RECT { left: scale(h, 8), top: y + scale(h, 2), right: scale(h, 24), bottom: y + line_h1 },
+                    RECT {
+                        left: scale(h, 8),
+                        top: y + scale(h, 2),
+                        right: scale(h, 24),
+                        bottom: y + line_h1,
+                    },
                     p.row_text(sel, p.number),
                     DT_CENTER,
                 );
@@ -1171,23 +1788,49 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 SelectObject(mem, u.small_bold);
                 text(
                     tag,
-                    RECT { left: scale(h, 28), top: y + scale(h, 2), right: scale(h, 66), bottom: y + line_h1 },
+                    RECT {
+                        left: scale(h, 28),
+                        top: y + scale(h, 2),
+                        right: scale(h, 66),
+                        bottom: y + line_h1,
+                    },
                     p.row_text(sel, p.text_faint),
                     0,
                 );
 
                 // 첫 줄: 파일명 (굵게)
                 SelectObject(mem, u.font_bold);
-                let text_right = r.right - folder_w - scale(h, 8);
+                let text_right =
+                    (if grid { row_rc.right } else { r.right }) - folder_w - scale(h, 8);
                 text(
                     &row.name,
-                    RECT { left: scale(h, 68), top: y + scale(h, 2), right: text_right, bottom: y + line_h1 },
+                    RECT {
+                        left: if grid {
+                            row_rc.left + scale(h, 8)
+                        } else {
+                            scale(h, 68)
+                        },
+                        top: gy + scale(h, 2),
+                        right: if grid {
+                            row_rc.right - scale(h, 8)
+                        } else {
+                            text_right
+                        },
+                        bottom: gy + line_h1,
+                    },
                     p.row_text(sel, p.text),
                     DT_END_ELLIPSIS,
                 );
 
                 // 오른쪽: 작은 단추 [폴더 열기]
-                let folder_rc = calc_folder_button_rect(y, r.right, scale(h, 6), scale(h, 4), folder_w, scale(h, 22));
+                let folder_rc = calc_folder_button_rect(
+                    gy,
+                    if grid { row_rc.right } else { r.right },
+                    scale(h, 6),
+                    scale(h, 4),
+                    folder_w,
+                    scale(h, 22),
+                );
                 let folder_hovered = u.hover_folder_btn == Some(n);
                 if folder_hovered {
                     fill(folder_rc, p.head_button_hover);
@@ -1199,10 +1842,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 text(
                     &row.parent,
                     RECT {
-                        left: scale(h, 68),
-                        top: y + line_h1,
-                        right: text_right,
-                        bottom: y + line_h1 + line_h2,
+                        left: if grid {
+                            row_rc.left + scale(h, 8)
+                        } else {
+                            scale(h, 68)
+                        },
+                        top: gy + line_h1,
+                        right: if grid {
+                            row_rc.right - scale(h, 8)
+                        } else {
+                            text_right
+                        },
+                        bottom: gy + line_h1 + line_h2,
                     },
                     p.row_text(sel, p.text_faint),
                     DT_PATH_ELLIPSIS,
@@ -1214,18 +1865,30 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 } else {
                     (&row.snippet, &u.terms)
                 };
-                let highlight_bg = if theme_str == "light" { 0x70eaff } else { 0x805020 };
+                let highlight_bg = if theme_str == "light" {
+                    0x70eaff
+                } else {
+                    0x805020
+                };
                 SelectObject(mem, u.small);
 
                 let mut snip_left = scale(h, 68);
-                let line_top = y + line_h1 + line_h2;
+                if grid {
+                    snip_left = row_rc.left + scale(h, 8);
+                }
+                let line_top = gy + line_h1 + line_h2;
                 let line_bottom = line_top + line_h3;
 
                 // ① 일치 문장 옆 위치 배지 (쪽·시트·행 등 kfind 위치 메타가 있는 것만, 없으면 생략)
                 if let Some(badge) = ktm::backend::compute_location_badge(&row.location) {
                     let bw_wide = wide(&badge);
                     let mut bsize: SIZE = std::mem::zeroed();
-                    GetTextExtentPoint32W(mem, bw_wide.as_ptr(), (bw_wide.len() - 1) as i32, &mut bsize);
+                    GetTextExtentPoint32W(
+                        mem,
+                        bw_wide.as_ptr(),
+                        (bw_wide.len() - 1) as i32,
+                        &mut bsize,
+                    );
                     let badge_pad_x = scale(h, 4);
                     let badge_w = bsize.cx + badge_pad_x * 2;
                     let badge_h = bsize.cy + scale(h, 2);
@@ -1240,7 +1903,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let b_brush = CreateSolidBrush(p.divider);
                     FrameRect(mem, &badge_rc, b_brush);
                     DeleteObject(b_brush);
-                    text(&badge, badge_rc, p.text_sub, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                    text(
+                        &badge,
+                        badge_rc,
+                        p.text_sub,
+                        DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                    );
                     snip_left += badge_w + scale(h, 6);
                 }
 
@@ -1251,7 +1919,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     RECT {
                         left: snip_left,
                         top: line_top,
-                        right: r.right - pad,
+                        right: if grid {
+                            row_rc.right - scale(h, 8)
+                        } else {
+                            r.right - pad
+                        },
                         bottom: line_bottom,
                     },
                     p.row_text(sel, p.text),
@@ -1263,9 +1935,22 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             if let Some(sel_idx) = u.state.selected {
                 if let Some(sel_r) = u.rows.get(sel_idx) {
                     let prev_y = r.bottom - status_h - preview_h;
-                    let prev_rc = RECT { left: 0, top: prev_y, right: r.right, bottom: r.bottom - status_h };
+                    let prev_rc = RECT {
+                        left: 0,
+                        top: prev_y,
+                        right: r.right,
+                        bottom: r.bottom - status_h,
+                    };
                     fill(prev_rc, p.tab_bg);
-                    fill(RECT { left: 0, top: prev_y, right: r.right, bottom: prev_y + 1 }, p.divider);
+                    fill(
+                        RECT {
+                            left: 0,
+                            top: prev_y,
+                            right: r.right,
+                            bottom: prev_y + 1,
+                        },
+                        p.divider,
+                    );
 
                     // 문단 전체 본문
                     let preview_text = if !sel_r.preview.is_empty() {
@@ -1280,7 +1965,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let pad_r = r.right - scale(h, 12);
                     let line_step = scale(h, 18);
                     let content_top = prev_y + scale(h, 6);
-                    let highlight_bg = if theme_str == "light" { 0x70eaff } else { 0x805020 };
+                    let highlight_bg = if theme_str == "light" {
+                        0x70eaff
+                    } else {
+                        0x805020
+                    };
 
                     SelectObject(mem, u.small);
                     draw_preview_lines(
@@ -1302,10 +1991,28 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
             // ⑧ 하단 상태 표시줄
             let status_y = r.bottom - status_h;
-            fill(RECT { left: 0, top: status_y, right: r.right, bottom: r.bottom }, p.tab_bg);
-            fill(RECT { left: 0, top: status_y, right: r.right, bottom: status_y + 1 }, p.divider);
+            fill(
+                RECT {
+                    left: 0,
+                    top: status_y,
+                    right: r.right,
+                    bottom: r.bottom,
+                },
+                p.tab_bg,
+            );
+            fill(
+                RECT {
+                    left: 0,
+                    top: status_y,
+                    right: r.right,
+                    bottom: status_y + 1,
+                },
+                p.divider,
+            );
 
-            let status = if !u.hotkey_error.is_empty() {
+            let status = if !u.status_text.is_empty() {
+                u.status_text.clone()
+            } else if !u.hotkey_error.is_empty() {
                 u.hotkey_error.clone()
             } else if let Some(e) = &u.state.error {
                 e.clone()
@@ -1313,8 +2020,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 match u.state.phase {
                     Phase::Searching => "검색 중…".into(),
                     Phase::Results => format!(
-                        "{}건 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
-                        u.rows.len()
+                        "총 {} 문서 · {} 폴더 · Enter 열기 · Ctrl+Enter 폴더 · Ctrl+S 정렬",
+                        u.rows.len(),
+                        u.state.folder_counts.len()
                     ),
                     _ if u.state.query.trim().is_empty() => {
                         if !u.state.history_entries().is_empty() {
@@ -1329,7 +2037,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             SelectObject(mem, u.small);
             text(
                 &status,
-                RECT { left: pad, top: status_y, right: r.right - pad, bottom: r.bottom },
+                RECT {
+                    left: pad,
+                    top: status_y,
+                    right: r.right - pad,
+                    bottom: r.bottom,
+                },
                 p.text_sub,
                 DT_END_ELLIPSIS,
             );
@@ -1382,7 +2095,11 @@ fn flush_metrics() {
     let lines = METRICS.with(|m| std::mem::take(&mut *m.borrow_mut()));
     if let (Some(path), false) = (std::env::var_os("KTM_METRICS"), lines.is_empty()) {
         use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
             let _ = f.write_all((lines.join("\n") + "\n").as_bytes());
         }
     }
@@ -1410,7 +2127,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let bw = scale(h, CAPTION_W);
                 let on_btn = head_button_hit(p.x, p.y, r.right, bw, head).is_some();
                 let grip = scale(h, frame::GRIP);
-                frame::frame_hit(p.x, p.y, r.right, r.bottom, grip, head, on_btn, false, false).code() as isize
+                frame::frame_hit(
+                    p.x, p.y, r.right, r.bottom, grip, head, on_btn, false, false,
+                )
+                .code() as isize
             }
             WM_GETMINMAXINFO => {
                 let info = &mut *(l as *mut MINMAXINFO);
@@ -1455,6 +2175,19 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             }
             WM_COMMAND if (w >> 16) as u16 == EN_CHANGE as u16 => {
                 let ed = with(|u| u.edit);
+                let within_ed = with(|u| u.within_edit);
+                let source = l as HWND;
+                if source == within_ed {
+                    let len = GetWindowTextLengthW(within_ed).min(1024);
+                    let mut s = vec![0u16; len as usize + 1];
+                    GetWindowTextW(within_ed, s.as_mut_ptr(), s.len() as i32);
+                    event(
+                        h,
+                        Event::SetWithinQuery(String::from_utf16_lossy(&s[..len as usize])),
+                    );
+                    InvalidateRect(h, null(), 0);
+                    return 0;
+                }
                 let len = GetWindowTextLengthW(ed).min(4096);
                 let mut s = vec![0u16; len as usize + 1];
                 GetWindowTextW(ed, s.as_mut_ptr(), s.len() as i32);
@@ -1491,29 +2224,45 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
                 let pad = scale(h, 12);
+                let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
                 let folder_w = scale(h, ROW_FOLDER_W);
 
                 let new_head_btn = head_button_hit(x, y, r.right, bw, head);
                 let tab_y = head + scale(h, SEARCH_BOX_H + 12);
                 let tab_h = scale(h, TAB_H);
-                let new_tab = hit_tab(x, y, pad, tab_y, tab_h, r.right);
+                let new_tab = hit_tab(x - side_w, y, pad, tab_y, tab_h, r.right - side_w);
 
                 let top_y = with(|u| list_top_coord(h, u));
                 let rh = scale(h, ROW_H);
-                let preview_h = with(|u| if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 });
-                let (new_row, new_folder_btn) = if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
-                    let row_idx = frame::row_index(y, top_y, rh, with(|u| u.top), with(|u| u.rows.len()));
-                    let is_folder = if let Some(idx) = row_idx {
-                        let row_top = top_y + (idx.saturating_sub(with(|u| u.top))) as i32 * rh;
-                        let btn_rc = calc_folder_button_rect(row_top, r.right, scale(h, 6), scale(h, 4), folder_w, scale(h, 22));
-                        hit_folder_button(x, y, btn_rc)
+                let preview_h = with(|u| {
+                    if u.state.selected.is_some() && !u.rows.is_empty() {
+                        scale(h, PREVIEW_H)
                     } else {
-                        false
+                        0
+                    }
+                });
+                let (new_row, new_folder_btn) =
+                    if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
+                        let row_idx =
+                            frame::row_index(y, top_y, rh, with(|u| u.top), with(|u| u.rows.len()));
+                        let is_folder = if let Some(idx) = row_idx {
+                            let row_top = top_y + (idx.saturating_sub(with(|u| u.top))) as i32 * rh;
+                            let btn_rc = calc_folder_button_rect(
+                                row_top,
+                                r.right,
+                                scale(h, 6),
+                                scale(h, 4),
+                                folder_w,
+                                scale(h, 22),
+                            );
+                            hit_folder_button(x, y, btn_rc)
+                        } else {
+                            false
+                        };
+                        (row_idx, if is_folder { row_idx } else { None })
+                    } else {
+                        (None, None)
                     };
-                    (row_idx, if is_folder { row_idx } else { None })
-                } else {
-                    (None, None)
-                };
 
                 let changed = edit(|u| {
                     let c = u.hover_head_btn != new_head_btn
@@ -1556,6 +2305,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
                 let pad = scale(h, 12);
+                let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, rc_w.right));
 
                 // ① 상단 캡션 단추 클릭
                 if let Some(btn) = head_button_hit(x, y, rc_w.right, bw, head) {
@@ -1567,12 +2317,271 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     }
                 }
 
+                if y < head && x >= side_w && x < side_w + scale(h, 30) {
+                    event(h, Event::ToggleSidebar);
+                    layout(h);
+                    InvalidateRect(h, null(), 0);
+                    return 0;
+                }
+
+                if side_w > 0 && x < side_w {
+                    let folders = with(|u| u.state.folder_counts.clone());
+                    let preset_count = with(|u| u.smart_presets.len());
+                    let history_count = with(|u| u.state.history_entries().len());
+                    let sidebar_top = scale(h, 40);
+                    let logical_y =
+                        40 + (y - sidebar_top) * SIDEBAR_ROW_H / scale(h, SIDEBAR_ROW_H).max(1);
+                    let logical_x = x * SIDEBAR_W / side_w.max(1);
+                    match hit_sidebar(
+                        logical_x,
+                        logical_y,
+                        SIDEBAR_W,
+                        true,
+                        folders.len(),
+                        preset_count,
+                        history_count,
+                    ) {
+                        Some(SidebarHit::Toggle) => event(h, Event::ToggleSidebar),
+                        Some(SidebarHit::IndexedFolder(i)) => {
+                            if let Some((name, _)) = folders.get(i) {
+                                event(h, Event::SetFolderFilter(Some(name.clone())));
+                            }
+                        }
+                        Some(SidebarHit::Recommended(i)) => {
+                            let part = ["Desktop", "Documents", "Downloads"][i.min(2)];
+                            if let Some(profile) = std::env::var_os("USERPROFILE") {
+                                let mut path = PathBuf::from(profile).join(part);
+                                if !path.is_dir() {
+                                    let korean = ["바탕 화면", "문서", "다운로드"][i.min(2)];
+                                    path = PathBuf::from(
+                                        std::env::var_os("USERPROFILE").unwrap_or_default(),
+                                    )
+                                    .join(korean);
+                                }
+                                event(
+                                    h,
+                                    Event::SetFolderFilter(Some(
+                                        path.to_string_lossy().into_owned(),
+                                    )),
+                                );
+                            }
+                        }
+                        Some(SidebarHit::Preset(i)) => {
+                            if let Some(preset) = with(|u| u.smart_presets.get(i).cloned()) {
+                                let old = with(|u| u.state.options.file_types.clone());
+                                for t in old {
+                                    event(h, Event::ToggleFileType(t));
+                                }
+                                for t in preset.file_types.clone() {
+                                    event(h, Event::ToggleFileType(t));
+                                }
+                                event(h, Event::SetDays(preset.days));
+                                event(h, Event::SetExcludeFilename(preset.exclude_filename));
+                                event(h, Event::SetWithinQuery(preset.within_query));
+                                if let Some(days) = preset.days {
+                                    let today = ktm::backend::current_kst_ymd();
+                                    let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
+                                    if days == 0 {
+                                        event(h, Event::SetDateFilter(DateFilter::Today));
+                                    } else {
+                                        event(
+                                            h,
+                                            Event::SetCustomDate(
+                                                ktm::backend::shift_ymd(end, -(days as i64)),
+                                                end,
+                                            ),
+                                        );
+                                    }
+                                } else {
+                                    event(h, Event::SetDateFilter(DateFilter::All));
+                                }
+                                event(h, Event::Refresh);
+                            }
+                        }
+                        Some(SidebarHit::History(i)) => event(h, Event::ApplyHistory(i)),
+                        Some(SidebarHit::ClearHistory) => event(h, Event::ClearHistory),
+                        None => {}
+                    }
+                    InvalidateRect(h, null(), 0);
+                    return 0;
+                }
+
                 let tab_y = head + scale(h, SEARCH_BOX_H + 12);
                 let tab_h = scale(h, TAB_H);
-                let fy = tab_y + tab_h + scale(h, 6);
+                let oy = tab_y + tab_h;
+                let oh = scale(h, OPTION_H);
+                let fy = oy + oh;
                 let fh = scale(h, FILTER_H);
 
-                if y >= tab_y && y < tab_y + tab_h {
+                let oy = tab_y + tab_h;
+                if y >= oy && y < oy + scale(h, OPTION_H) {
+                    match hit_option(x, y, oy, scale(h, OPTION_H), pad + side_w, rc_w.right - pad) {
+                        Some(OptionControl::SearchMode) => {
+                            let mode = with(|u| u.state.options.search_mode);
+                            let next = if mode == tm_state::SearchMode::Keyword {
+                                tm_state::SearchMode::Filename
+                            } else {
+                                tm_state::SearchMode::Keyword
+                            };
+                            event(h, Event::SetSearchMode(next));
+                            event(
+                                h,
+                                Event::SwitchTab(if next == tm_state::SearchMode::Filename {
+                                    Tab::Names
+                                } else {
+                                    Tab::Body
+                                }),
+                            );
+                        }
+                        Some(OptionControl::Sort) => {
+                            let order = [
+                                tm_state::SortMode::Relevance,
+                                tm_state::SortMode::Newest,
+                                tm_state::SortMode::Oldest,
+                                tm_state::SortMode::Name,
+                            ];
+                            let cur = with(|u| u.state.options.sort);
+                            let next = order[(order.iter().position(|x| *x == cur).unwrap_or(0)
+                                + 1)
+                                % order.len()];
+                            event(h, Event::SetSort(next));
+                            edit(|u| {
+                                u.body_sort = match next {
+                                    tm_state::SortMode::Relevance => {
+                                        ktm::backend::BodySort::Relevance
+                                    }
+                                    tm_state::SortMode::Newest | tm_state::SortMode::Oldest => {
+                                        ktm::backend::BodySort::Date
+                                    }
+                                    tm_state::SortMode::Name => ktm::backend::BodySort::Name,
+                                };
+                                if next == tm_state::SortMode::Oldest {
+                                    u.rows.reverse();
+                                } else {
+                                    ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+                                }
+                            });
+                        }
+                        Some(OptionControl::FileTypes) => {
+                            let labels = ["hwp", "hwpx", "docx", "pptx", "xlsx", "pdf", "txt"];
+                            let menu = CreatePopupMenu();
+                            let selected = with(|u| u.state.options.file_types.clone());
+                            for (i, t) in labels.iter().enumerate() {
+                                AppendMenuW(
+                                    menu,
+                                    MF_STRING
+                                        | if selected.iter().any(|s| s == t) {
+                                            MF_CHECKED
+                                        } else {
+                                            0
+                                        },
+                                    100 + i,
+                                    wide(t).as_ptr(),
+                                );
+                            }
+                            AppendMenuW(menu, MF_SEPARATOR, 0, null());
+                            AppendMenuW(menu, MF_STRING, 199, wide("전체 해제").as_ptr());
+                            let mut pt = POINT { x: 0, y: 0 };
+                            GetCursorPos(&mut pt);
+                            let cmd = TrackPopupMenu(
+                                menu,
+                                TPM_RETURNCMD | TPM_NONOTIFY,
+                                pt.x,
+                                pt.y,
+                                0,
+                                h,
+                                null(),
+                            );
+                            DestroyMenu(menu);
+                            if (100..107).contains(&cmd) {
+                                event(
+                                    h,
+                                    Event::ToggleFileType(labels[(cmd - 100) as usize].into()),
+                                );
+                            } else if cmd == 199 {
+                                for t in selected {
+                                    event(h, Event::ToggleFileType(t));
+                                }
+                            }
+                        }
+                        Some(OptionControl::Period) => {
+                            let choices = [
+                                None,
+                                Some(0),
+                                Some(7),
+                                Some(30),
+                                Some(90),
+                                Some(180),
+                                Some(365),
+                            ];
+                            let days = with(|u| u.state.options.days);
+                            let i = choices.iter().position(|d| *d == days).unwrap_or(0);
+                            let next = choices[(i + 1) % choices.len()];
+                            event(h, Event::SetDays(next));
+                            if let Some(n) = next {
+                                let today = ktm::backend::current_kst_ymd();
+                                let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
+                                if n == 0 {
+                                    event(h, Event::SetDateFilter(DateFilter::Today));
+                                } else {
+                                    event(
+                                        h,
+                                        Event::SetCustomDate(
+                                            ktm::backend::shift_ymd(end, -(n as i64)),
+                                            end,
+                                        ),
+                                    );
+                                }
+                            } else {
+                                event(h, Event::SetDateFilter(DateFilter::All));
+                            }
+                        }
+                        Some(OptionControl::ExcludeFilename) => {
+                            let v = with(|u| !u.state.options.exclude_filename);
+                            event(h, Event::SetExcludeFilename(v));
+                        }
+                        Some(OptionControl::WithinQuery) => {
+                            edit(|u| u.within_open = true);
+                            layout(h);
+                            SetFocus(with(|u| u.within_edit));
+                        }
+                        Some(OptionControl::Preset) => {
+                            let (path, query, options) = with(|u| {
+                                (
+                                    u.settings_path.clone(),
+                                    u.state.query.trim().to_string(),
+                                    u.state.options.clone(),
+                                )
+                            });
+                            let name = if query.is_empty() {
+                                "새 스마트 폴더".to_string()
+                            } else {
+                                query
+                            };
+                            let mut settings = Settings::load(&path).unwrap_or_default();
+                            let preset = ktm::settings::SmartPreset {
+                                name,
+                                file_types: options.file_types,
+                                days: options.days,
+                                exclude_filename: options.exclude_filename,
+                                within_query: options.within_query,
+                            };
+                            let saved = settings.toggle_smart_preset(preset);
+                            if settings.save(&path).is_ok() {
+                                edit(|u| {
+                                    u.smart_presets = settings.smart_presets.clone();
+                                    u.status_text = if saved {
+                                        "스마트 폴더를 저장했습니다"
+                                    } else {
+                                        "스마트 폴더를 삭제했습니다"
+                                    }
+                                    .into();
+                                });
+                            }
+                        }
+                        None => {}
+                    }
+                } else if y >= tab_y && y < tab_y + tab_h {
                     // ② 탭 클릭
                     if let Some(tab_idx) = hit_tab(x, y, pad, tab_y, tab_h, rc_w.right) {
                         let tab = match tab_idx {
@@ -1581,6 +2590,70 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             _ => Tab::Names,
                         };
                         event(h, Event::SwitchTab(tab));
+                    }
+                } else if y >= oy + oh && y < oy + oh + scale(h, SUMMARY_H) {
+                    let sy = oy + oh;
+                    let group_left = pad + scale(h, 235);
+                    let group_right = rc_w.right - scale(h, 132);
+                    if x >= rc_w.right - scale(h, 124) && x < rc_w.right - scale(h, 66) {
+                        let rows = with(|u| {
+                            let idx = ktm::layout::display_result_indices(
+                                &u.rows,
+                                &u.state.options.within_query,
+                                u.state.options.exclude_filename,
+                                &u.state.options.file_types,
+                                u.state.options.collapsed_filename,
+                                u.state.options.collapsed_body,
+                            );
+                            let shown = idx
+                                .into_iter()
+                                .filter_map(|i| u.rows.get(i))
+                                .collect::<Vec<_>>();
+                            ktm::layout::copy_result_text(
+                                &shown.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+                                &shown.iter().map(|r| r.path.clone()).collect::<Vec<_>>(),
+                            )
+                        });
+                        let message = if rows.is_empty() {
+                            "복사할 결과가 없습니다".to_string()
+                        } else {
+                            copy_text_to_clipboard(&rows)
+                                .map(|_| "표시 결과를 클립보드에 복사했습니다".to_string())
+                                .unwrap_or_else(|e| e)
+                        };
+                        edit(|u| u.status_text = message);
+                    } else if x >= rc_w.right - scale(h, 62) && x < rc_w.right - scale(h, 4) {
+                        let rows = with(|u| {
+                            let idx = ktm::layout::display_result_indices(
+                                &u.rows,
+                                &u.state.options.within_query,
+                                u.state.options.exclude_filename,
+                                &u.state.options.file_types,
+                                u.state.options.collapsed_filename,
+                                u.state.options.collapsed_body,
+                            );
+                            idx.into_iter()
+                                .filter_map(|i| u.rows.get(i))
+                                .cloned()
+                                .collect::<Vec<_>>()
+                        });
+                        let tab = with(|u| u.state.tab);
+                        match ktm::export::export_results(
+                            ktm::export::ExportFormat::Csv,
+                            ktm::export::ExportKind::from(tab),
+                            &rows,
+                        ) {
+                            Ok(path) => {
+                                edit(|u| u.status_text = format!("CSV 저장: {}", path.display()))
+                            }
+                            Err(e) => edit(|u| u.status_text = format!("CSV 저장 실패: {e}")),
+                        }
+                    } else if let Some(filename) =
+                        hit_summary_group(x, y, sy, scale(h, SUMMARY_H), group_left, group_right)
+                    {
+                        event(h, Event::ToggleGroup(filename));
+                    } else if x < pad + scale(h, 34) {
+                        event(h, Event::ToggleView);
                     }
                 } else if y >= fy && y < fy + fh {
                     // ③ 통합 검색 범위 단추 (기간 / 형식 / 폴더)
@@ -1637,7 +2710,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
 
                     // 폴더 칩 클릭
                     if !handled {
-                        let has_folder_info = with(|u| !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some());
+                        let has_folder_info = with(|u| {
+                            !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some()
+                        });
                         if has_folder_info && fx + scale(h, 80) < rc_w.right - pad {
                             fx += scale(h, 6) + scale(h, 34);
                             let all_w = scale(h, 38);
@@ -1682,7 +2757,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         let btn_y = fy + fh + scale(h, 14) + scale(h, 24);
                         let rh = scale(h, 28);
                         let status_h = scale(h, STATUS_H);
-                        let max_visible = ((rc_w.bottom - status_h - btn_y).max(0) / rh).max(0) as usize;
+                        let max_visible =
+                            ((rc_w.bottom - status_h - btn_y).max(0) / rh).max(0) as usize;
                         let n_hist = entries.len().min(max_visible);
                         for i in 0..n_hist {
                             let top = btn_y + i as i32 * rh;
@@ -1731,12 +2807,57 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     let top_y = with(|u| list_top_coord(h, u));
                     let rh = scale(h, ROW_H);
                     let folder_w = scale(h, ROW_FOLDER_W);
-                    let preview_h = with(|u| if u.state.selected.is_some() && !u.rows.is_empty() { scale(h, PREVIEW_H) } else { 0 });
+                    let preview_h = with(|u| {
+                        if u.state.selected.is_some() && !u.rows.is_empty() {
+                            scale(h, PREVIEW_H)
+                        } else {
+                            0
+                        }
+                    });
                     if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
-                        let n = with(|u| u.top) + ((y - top_y) / rh) as usize;
-                        if n < with(|u| u.rows.len()) {
-                            let row_top = top_y + ((y - top_y) / rh) * rh;
-                            let btn_rc = calc_folder_button_rect(row_top, rc_w.right, scale(h, 6), scale(h, 4), folder_w, scale(h, 22));
+                        let slot = with(|u| u.top) + ((y - top_y) / rh) as usize;
+                        let grid = with(|u| u.state.options.grid_view);
+                        let col = if x >= side_w + (rc_w.right - side_w) / 2 {
+                            1
+                        } else {
+                            0
+                        };
+                        let n = with(|u| {
+                            let ids = ktm::layout::display_result_indices(
+                                &u.rows,
+                                &u.state.options.within_query,
+                                u.state.options.exclude_filename,
+                                &u.state.options.file_types,
+                                u.state.options.collapsed_filename,
+                                u.state.options.collapsed_body,
+                            );
+                            if grid {
+                                ids.get((slot / 2) * 2 + col).copied()
+                            } else {
+                                ids.get(slot).copied()
+                            }
+                        });
+                        if let Some(n) = n.filter(|i| *i < with(|u| u.rows.len())) {
+                            let screen_slot = slot.saturating_sub(with(|u| u.top));
+                            let row_top = if grid {
+                                top_y + (screen_slot / 2) as i32 * rh
+                            } else {
+                                top_y + ((y - top_y) / rh) * rh
+                            };
+                            let row_right = if grid {
+                                let card_w = (rc_w.right - side_w - scale(h, 24)) / 2;
+                                side_w + scale(h, 8) + col as i32 * (card_w + scale(h, 8)) + card_w
+                            } else {
+                                rc_w.right
+                            };
+                            let btn_rc = calc_folder_button_rect(
+                                row_top,
+                                row_right,
+                                scale(h, 6),
+                                scale(h, 4),
+                                folder_w,
+                                scale(h, 22),
+                            );
                             let is_folder_click = hit_folder_button(x, y, btn_rc);
                             if is_folder_click {
                                 event(h, Event::Select(n));
@@ -1750,7 +2871,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         }
                     }
                 }
-                SetFocus(with(|u| u.edit));
+                SetFocus(with(|u| if u.within_open { u.within_edit } else { u.edit }));
                 0
             }
             WM_MOUSEWHEEL => {
@@ -1814,7 +2935,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     );
                                     edit(|u| {
                                         u.rows = rows;
-                                        if u.state.tab == Tab::Body || u.state.tab == Tab::Hierarchy {
+                                        if u.state.tab == Tab::Body || u.state.tab == Tab::Hierarchy
+                                        {
                                             ktm::backend::sort_rows(&mut u.rows, u.body_sort);
                                         }
                                         u.terms = terms;
@@ -1860,7 +2982,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             DestroyWindow(h);
                         }
                         tray::AUTOSTART => {
-                            let action = if autostart { "autostart-off" } else { "autostart-on" };
+                            let action = if autostart {
+                                "autostart-off"
+                            } else {
+                                "autostart-on"
+                            };
                             if let Err(e) = ktm::install::execute(action, &exe, &exe) {
                                 event(h, Event::OpenFailed(e));
                             }
@@ -1981,6 +3107,21 @@ pub fn run() -> Result<(), String> {
             null(),
         );
         SendMessageW(ed, 0x00c5, 4096, 0);
+        let within_ed = CreateWindowExW(
+            0,
+            wide("EDIT").as_ptr(),
+            wide("").as_ptr(),
+            WS_CHILD | ES_AUTOHSCROLL as u32,
+            0,
+            0,
+            1,
+            1,
+            h,
+            2 as _,
+            inst,
+            null(),
+        );
+        SendMessageW(within_ed, 0x00c5, 1024, 0);
 
         let initial_theme = arg("--theme").unwrap_or(settings.theme.clone());
         sync_theme(&initial_theme);
@@ -1995,6 +3136,8 @@ pub fn run() -> Result<(), String> {
                 rows: Vec::new(),
                 terms: Vec::new(),
                 edit: ed,
+                within_edit: within_ed,
+                within_open: false,
                 font: null_mut(),
                 font_bold: null_mut(),
                 small: null_mut(),
@@ -2021,6 +3164,9 @@ pub fn run() -> Result<(), String> {
                 hover_row: None,
                 hover_folder_btn: None,
                 hover_tab: None,
+                status_text: String::new(),
+                smart_presets: settings.smart_presets.clone(),
+                recent_query_times: settings.recent_query_times.clone(),
             })
         });
 
@@ -2038,7 +3184,8 @@ pub fn run() -> Result<(), String> {
             .or_else(ktm::paragraphs::default_path);
 
         std::thread::spawn(move || {
-            let open = |root: &PathBuf| Backend::open(root).map(|b| b.with_paragraphs(para_path.clone()));
+            let open =
+                |root: &PathBuf| Backend::open(root).map(|b| b.with_paragraphs(para_path.clone()));
             let mut backend: Option<Backend> = None;
             if !pipe_mode {
                 let t = Instant::now();
@@ -2073,7 +3220,18 @@ pub fn run() -> Result<(), String> {
                     }
                 };
                 let reply = match work {
-                    Work::Search((g, q, tab, start, cancel, sort, date_filter, custom_date_range, folder, ext)) => {
+                    Work::Search((
+                        g,
+                        q,
+                        tab,
+                        start,
+                        cancel,
+                        sort,
+                        date_filter,
+                        custom_date_range,
+                        folder,
+                        ext,
+                    )) => {
                         let picked = Instant::now();
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
@@ -2101,12 +3259,42 @@ pub fn run() -> Result<(), String> {
                                 backend = Some(open(&root)?);
                             }
                             let b = backend.as_mut().unwrap();
-                            let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
-                            b.search_with_scope_ext(&q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), Some(cancel))
+                            let date_range =
+                                ktm::backend::date_range_for_filter(date_filter, custom_date_range);
+                            b.search_with_scope_ext(
+                                &q,
+                                hierarchy,
+                                date_range,
+                                folder.as_deref(),
+                                ext.as_deref(),
+                                Some(cancel),
+                            )
                         })();
-                        Reply::Search(g, answer, start, WorkTimes { picked, done: Instant::now() })
+                        Reply::Search(
+                            g,
+                            answer,
+                            start,
+                            WorkTimes {
+                                picked,
+                                done: Instant::now(),
+                            },
+                        )
                     }
-                    Work::Export((_g, q, tab, _start, cancel, sort, date_filter, custom_date_range, folder, ext), format) => {
+                    Work::Export(
+                        (
+                            _g,
+                            q,
+                            tab,
+                            _start,
+                            cancel,
+                            sort,
+                            date_filter,
+                            custom_date_range,
+                            folder,
+                            ext,
+                        ),
+                        format,
+                    ) => {
                         let hierarchy = tab == Tab::Hierarchy;
                         let kind = ktm::export::ExportKind::from(tab);
                         let rows_result: Result<Vec<Row>, String> = (|| {
@@ -2114,16 +3302,27 @@ pub fn run() -> Result<(), String> {
                                 return Ok(Vec::new());
                             }
                             if tab == Tab::Names {
-                                return ktm::backend::pipe_names_limit(&pipe_name, &q, sort, ktm::export::EXPORT_LIMIT);
+                                return ktm::backend::pipe_names_limit(
+                                    &pipe_name,
+                                    &q,
+                                    sort,
+                                    ktm::export::EXPORT_LIMIT,
+                                );
                             }
                             if pipe_mode {
-                                return ktm::backend::pipe_search_limit(&pipe_name, &q, hierarchy, ktm::export::EXPORT_LIMIT);
+                                return ktm::backend::pipe_search_limit(
+                                    &pipe_name,
+                                    &q,
+                                    hierarchy,
+                                    ktm::export::EXPORT_LIMIT,
+                                );
                             }
                             if backend.is_none() {
                                 backend = Some(open(&root)?);
                             }
                             let b = backend.as_mut().unwrap();
-                            let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
+                            let date_range =
+                                ktm::backend::date_range_for_filter(date_filter, custom_date_range);
                             let ans = b.search_with_scope_ext_limit(
                                 &q,
                                 hierarchy,
@@ -2139,7 +3338,9 @@ pub fn run() -> Result<(), String> {
                         })();
 
                         if let Ok(rows) = rows_result {
-                            if let Ok(saved_path) = ktm::export::export_to_file(format, kind, &rows, None, None) {
+                            if let Ok(saved_path) =
+                                ktm::export::export_to_file(format, kind, &rows, None, None)
+                            {
                                 let _ = ktm::export::open_export_folder(&saved_path);
                             }
                         }
@@ -2208,7 +3409,10 @@ pub fn run() -> Result<(), String> {
             if GetForegroundWindow() != fg {
                 log("startup_foreground_changed", 1.0);
             }
-            log("startup_prerender_ms", started.elapsed().as_secs_f64() * 1000.0);
+            log(
+                "startup_prerender_ms",
+                started.elapsed().as_secs_f64() * 1000.0,
+            );
         }
 
         if let Some(query) = arg("--show-query") {
@@ -2234,7 +3438,15 @@ pub fn run() -> Result<(), String> {
         }
 
         edit(|u| {
-            for f in [u.font, u.font_bold, u.small, u.small_bold, u.title_font, u.glyph, u.glyph_big] {
+            for f in [
+                u.font,
+                u.font_bold,
+                u.small,
+                u.small_bold,
+                u.title_font,
+                u.glyph,
+                u.glyph_big,
+            ] {
                 if !f.is_null() {
                     DeleteObject(f);
                 }
