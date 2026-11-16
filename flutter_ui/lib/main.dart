@@ -309,7 +309,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       unawaited(
         widget.api('set_drop_target', ['conversion']).catchError((_) => null),
       );
-    } else if (lastTab == 2 || lastTab == 5 || lastTab == kTabFileRename || lastTab == kTabTimemachine || lastTab == kTabDocGrid || lastTab == kTabFileConversion) {
+    } else if (lastTab == 2 || lastTab == 5 || lastTab == kTabFileRename || lastTab == kTabTimemachine || lastTab == kTabDocGrid || lastTab == kTabPhotoAlbum || lastTab == kTabFileConversion) {
       unawaited(
         widget.api('set_drop_target', ['documents']).catchError((_) => null),
       );
