@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
+import '../../core/open_external_url.dart';
 import 'kiosk_theme.dart';
 
 /// 설정의 '글자 상용구'·'본문 상용구' 관리(알파, 2026-10-15).
@@ -246,7 +247,7 @@ class _IdiomPanelState extends State<IdiomPanel> {
             children: [
               Text(widget.body ? '본문 상용구' : '글자 상용구', style: Kiosk.cardTitle),
               const SizedBox(height: 6),
-            Text(
+              Text(
                 directConfig
                     ? '준말 표식(# + 준말) 다음 줄부터 본말을 입력합니다. 다음 항목도 같은 방식으로 이어 쓰세요. 문서 구조와 서식은 한/글에서 자유롭게 편집할 수 있어요.'
                     : widget.body
@@ -271,64 +272,72 @@ class _IdiomPanelState extends State<IdiomPanel> {
                   children: [
                     KioskPrimaryButton(
                       label: '한/글에서 설정 문서 열기',
-                      onPressed: locked ? null : () => request('open_config', {
-                        'kind': widget.body ? 'body' : 'text',
-                      }),
+                      onPressed: locked
+                          ? null
+                          : () => request('open_config', {
+                              'kind': widget.body ? 'body' : 'text',
+                            }),
                     ),
                     KioskSecondaryButton(
                       label: '한/글 상용구에 반영',
-                      onPressed: locked ? null : () => request(
-                        'apply_hwpx',
-                        const {},
-                        'HWPX 상용구를 한/글에 반영했어요. 한/글을 다시 시작해 적용하세요.',
-                      ),
+                      onPressed: locked
+                          ? null
+                          : () => request(
+                              'apply_hwpx',
+                              const {},
+                              'HWPX 상용구를 한/글에 반영했어요. 한/글을 다시 시작해 적용하세요.',
+                            ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 6),
-                Text('반영 전에 한/글을 종료하세요. 기존 상용구 파일은 자동 백업됩니다.', style: Kiosk.caption),
+                Text(
+                  '반영 전에 한/글을 종료하세요. 기존 상용구 파일은 자동 백업됩니다.',
+                  style: Kiosk.caption,
+                ),
               ],
               const SizedBox(height: 16),
-              if (!directConfig) Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  SizedBox(
-                    width: 120,
-                    child: TextField(
-                      key: Key('idiom-key-${widget.body}'),
-                      controller: keyInput,
-                      enabled: !locked && available,
-                      maxLength: 20,
-                      decoration: const InputDecoration(
-                        labelText: '준말',
-                        hintText: '예: ㅁㅂ',
+              if (!directConfig)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 120,
+                      child: TextField(
+                        key: Key('idiom-key-${widget.body}'),
+                        controller: keyInput,
+                        enabled: !locked && available,
+                        maxLength: 20,
+                        decoration: const InputDecoration(
+                          labelText: '준말',
+                          hintText: '예: ㅁㅂ',
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextField(
-                      key: Key('idiom-value-${widget.body}'),
-                      controller: valueInput,
-                      enabled: !locked && available,
-                      maxLength: widget.body ? 100 : 500,
-                      decoration: InputDecoration(
-                        labelText: widget.body ? '이름' : '본말(펼쳐질 글자)',
-                        hintText: widget.body ? '예: 보고서 서식' : '예: 마포구청',
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextField(
+                        key: Key('idiom-value-${widget.body}'),
+                        controller: valueInput,
+                        enabled: !locked && available,
+                        maxLength: widget.body ? 100 : 500,
+                        decoration: InputDecoration(
+                          labelText: widget.body ? '이름' : '본말(펼쳐질 글자)',
+                          hintText: widget.body ? '예: 보고서 서식' : '예: 마포구청',
+                        ),
+                        onSubmitted: (_) => locked ? null : add(),
                       ),
-                      onSubmitted: (_) => locked ? null : add(),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: KioskPrimaryButton(
-                      label: widget.body ? '문서 골라 추가' : '추가',
-                      onPressed: locked || !available ? null : add,
+                    const SizedBox(width: 10),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: KioskPrimaryButton(
+                        label: widget.body ? '문서 골라 추가' : '추가',
+                        onPressed: locked || !available ? null : add,
+                      ),
                     ),
-                  ),
-                ],
-              ),
+                  ],
+                ),
               if (busy) const LinearProgressIndicator(),
               if (error != null)
                 Padding(
@@ -398,7 +407,8 @@ class _IdiomPanelState extends State<IdiomPanel> {
 
   Widget _row(int index, Map item, bool locked) {
     final directConfig = data['source'] == 'hwpx';
-    final value = '${widget.body && !directConfig ? item['title'] : item['value']}';
+    final value =
+        '${widget.body && !directConfig ? item['title'] : item['value']}';
     return Container(
       key: ValueKey('idiom-row-${widget.body}-$index'),
       margin: const EdgeInsets.only(bottom: 6),
@@ -476,27 +486,129 @@ class _IdiomPanelState extends State<IdiomPanel> {
   }
 }
 
-/// 함께 쓰는 프로그램·코드(이름, 쓰는 곳, 라이선스). 자세한 고지는 THIRD_PARTY_NOTICES.md(2026-10-17 사용자 요청).
-const thirdPartyComponents = [
-  ('kordoc 4.21.30 (chrisryugj)', '문서 변환 엔진(PDF·DOCX·이미지 → HWPX 등)', 'MIT'),
-  ('Node.js 22.23.3', 'kordoc 실행 런타임(EXE 내장)', 'MIT'),
-  ('pdf.js (pdfjs-dist 4.10.38)', 'PDF 글자 읽기', 'Apache-2.0'),
-  ('PP-OCRv5 한국어 모델 (PaddlePaddle)', '이미지·스캔 PDF 한국어 글자 인식', 'Apache-2.0'),
-  ('ONNX Runtime 1.30.0', 'OCR 모델 실행', 'MIT'),
-  ('sharp 0.35.5 · libvips', 'OCR 이미지 처리', 'Apache-2.0 · LGPL-3.0'),
-  ('PDFium (@hyzyla/pdfium 2.1.13)', '스캔 PDF 쪽 그림 만들기', 'MIT · BSD-3-Clause'),
-  ('rhwp (@rhwp/core 0.8.7, Edward Kim)', '설정 화면 한/글 조판 미리보기', 'MIT'),
-  ('React Flow (@xyflow/react 12.12.0) · React', '업무 흐름도·마인드맵 편집', 'MIT'),
-  ('Flutter', '앱 화면', 'BSD-3-Clause'),
-  ('Noto Sans KR', '앱 화면 글꼴', 'SIL OFL 1.1'),
-  ('Python · Tcl/Tk', '앱 실행 런타임(EXE 내장)', 'PSF · Tcl/Tk'),
-  ('pywin32', '한/글 COM 자동화 연결', 'PSF'),
-  ('pywebview · pythonnet', '앱 창(WebView2) 연결', 'BSD-3-Clause · MIT'),
-  ('tkinterdnd2', '파일 끌어다 놓기', 'MIT'),
-  ('Pillow', '그림 처리', 'MIT-CMU'),
-  ('defusedxml', '안전한 XML 읽기', 'PSF'),
-  ('PyInstaller', 'EXE 만들기', 'GPL-2.0 (부트로더 예외)'),
-  ('한/글 자동화 보안 모듈 예시(한컴)', '한/글 COM 자동화 승인', '한컴 예제 배포 조건'),
+/// 앱 정보에서 보여 줄 주요 외부 구성요소. 전체 고지·전이 의존성은 THIRD_PARTY_NOTICES.md에 둔다.
+typedef ThirdPartyComponent = ({
+  String name,
+  String use,
+  String license,
+  String repository,
+});
+
+const thirdPartyComponents = <ThirdPartyComponent>[
+  (
+    name: 'kordoc 4.21.30 (chrisryugj)',
+    use: '문서 변환 엔진(PDF·DOCX·이미지 → HWPX 등)',
+    license: 'MIT',
+    repository: 'https://github.com/chrisryugj/kordoc',
+  ),
+  (
+    name: 'Node.js 22.23.3',
+    use: 'kordoc 실행 런타임(EXE 내장)',
+    license: 'MIT',
+    repository: 'https://github.com/nodejs/node',
+  ),
+  (
+    name: 'pdf.js (pdfjs-dist 4.10.38)',
+    use: 'PDF 글자 읽기',
+    license: 'Apache-2.0',
+    repository: 'https://github.com/mozilla/pdf.js',
+  ),
+  (
+    name: 'PP-OCRv5 한국어 모델 (PaddlePaddle)',
+    use: '이미지·스캔 PDF 한국어 글자 인식',
+    license: 'Apache-2.0',
+    repository: 'https://github.com/PaddlePaddle/PaddleOCR',
+  ),
+  (
+    name: 'ONNX Runtime 1.30.0',
+    use: 'OCR 모델 실행',
+    license: 'MIT',
+    repository: 'https://github.com/microsoft/onnxruntime',
+  ),
+  (
+    name: 'sharp 0.35.5 · libvips',
+    use: 'OCR 이미지 처리',
+    license: 'Apache-2.0 · LGPL-3.0',
+    repository: 'https://github.com/lovell/sharp',
+  ),
+  (
+    name: 'PDFium (@hyzyla/pdfium 2.1.13)',
+    use: '스캔 PDF 쪽 그림 만들기',
+    license: 'MIT · BSD-3-Clause',
+    repository: 'https://github.com/hyzyla/pdfium',
+  ),
+  (
+    name: 'rhwp (@rhwp/core 0.8.7)',
+    use: '설정 화면 한/글 조판 미리보기',
+    license: 'MIT',
+    repository: 'https://github.com/edwardkim/rhwp',
+  ),
+  (
+    name: 'React · React Flow (@xyflow/react 12.12.0)',
+    use: '표·다이어그램 편집기',
+    license: 'MIT',
+    repository: 'https://github.com/xyflow/xyflow',
+  ),
+  (
+    name: 'Flutter',
+    use: '앱 화면',
+    license: 'BSD-3-Clause',
+    repository: 'https://github.com/flutter/flutter',
+  ),
+  (
+    name: 'Noto Sans KR',
+    use: '앱 화면 글꼴',
+    license: 'SIL OFL 1.1',
+    repository: 'https://github.com/notofonts/noto-cjk',
+  ),
+  (
+    name: 'Python',
+    use: '앱 실행 런타임(EXE 내장)',
+    license: 'PSF',
+    repository: 'https://github.com/python/cpython',
+  ),
+  (
+    name: 'Tcl/Tk',
+    use: '앱 실행·대화상자 런타임',
+    license: 'Tcl/Tk',
+    repository: 'https://github.com/tcltk/tk',
+  ),
+  (
+    name: 'pywin32',
+    use: '한/글 COM 자동화 연결',
+    license: 'PSF',
+    repository: 'https://github.com/mhammond/pywin32',
+  ),
+  (
+    name: 'pywebview · pythonnet',
+    use: '앱 창(WebView2) 연결',
+    license: 'BSD-3-Clause · MIT',
+    repository: 'https://github.com/r0x0r/pywebview',
+  ),
+  (
+    name: 'tkinterdnd2',
+    use: '파일 끌어다 놓기',
+    license: 'MIT',
+    repository: 'https://github.com/Eliav2/tkinterdnd2',
+  ),
+  (
+    name: 'Pillow',
+    use: '그림 처리',
+    license: 'MIT-CMU',
+    repository: 'https://github.com/python-pillow/Pillow',
+  ),
+  (
+    name: 'defusedxml',
+    use: '안전한 XML 읽기',
+    license: 'PSF',
+    repository: 'https://github.com/tiran/defusedxml',
+  ),
+  (
+    name: 'PyInstaller',
+    use: '실행 파일 만들기',
+    license: 'GPL-2.0 (부트로더 예외)',
+    repository: 'https://github.com/pyinstaller/pyinstaller',
+  ),
 ];
 
 /// 설정의 '앱 정보': 개발자와 버전, 함께 쓰는 프로그램·코드.
@@ -517,6 +629,19 @@ class AppInfoPanel extends StatelessWidget {
             const SizedBox(height: 16),
             _line('개발자', '도토리만두'),
             if (version != null && version!.isNotEmpty) _line('버전', version!),
+            Wrap(
+              spacing: 8,
+              children: [
+                _repositoryLink(
+                  '앱 GitHub 저장소',
+                  'https://github.com/haijun93/hwp-auto-docfit',
+                ),
+                _repositoryLink(
+                  '앱 GitLab 저장소',
+                  'https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit',
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -527,7 +652,7 @@ class AppInfoPanel extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('함께 쓰는 프로그램·코드', style: Kiosk.cardTitle),
+            const Text('연계 오픈소스 및 저장소', style: Kiosk.cardTitle),
             const SizedBox(height: 6),
             const Text(
               '이 앱은 아래 공개 프로그램과 코드를 함께 씁니다. 한/글 프로그램은 포함하지 않고 PC에 설치된 한/글을 씁니다. '
@@ -535,16 +660,55 @@ class AppInfoPanel extends StatelessWidget {
               style: Kiosk.caption,
             ),
             const SizedBox(height: 14),
-            for (final (name, use, license) in thirdPartyComponents)
-              _component(name, use, license),
+            const SizedBox(height: 10),
+            _componentHeader(),
+            for (final component in thirdPartyComponents) _component(component),
+            const SizedBox(height: 4),
+            const Text(
+              '한/글 자동화 보안 모듈은 오픈소스가 아닌 한컴 예제 배포 조건의 구성요소입니다. '
+              '한/글 프로그램 자체는 포함하지 않으며 사용자 PC에 설치된 제품을 사용합니다.',
+              style: Kiosk.caption,
+            ),
           ],
         ),
       ),
     ],
   );
 
-  Widget _component(String name, String use, String license) => Padding(
-    padding: const EdgeInsets.only(bottom: 12),
+  Widget _componentHeader() => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+    child: Row(
+      children: [
+        Expanded(
+          flex: 5,
+          child: Text(
+            '구성요소',
+            style: TextStyle(fontWeight: FontWeight.w700, color: Kiosk.ink),
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text(
+            '라이선스',
+            style: TextStyle(fontWeight: FontWeight.w700, color: Kiosk.ink),
+          ),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text(
+            '프로젝트',
+            style: TextStyle(fontWeight: FontWeight.w700, color: Kiosk.ink),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _component(ThirdPartyComponent component) => Container(
+    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+    decoration: const BoxDecoration(
+      border: Border(top: BorderSide(color: Kiosk.line)),
+    ),
     child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -554,20 +718,39 @@ class AppInfoPanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                name,
+                component.name,
                 style: const TextStyle(
-                  fontSize: 15,
+                  fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: Kiosk.ink,
                 ),
               ),
-              Text(use, style: Kiosk.caption),
+              Text(component.use, style: Kiosk.caption),
             ],
           ),
         ),
-        const SizedBox(width: 12),
-        Expanded(flex: 2, child: Text(license, style: Kiosk.body)),
+        const SizedBox(width: 8),
+        Expanded(flex: 2, child: Text(component.license, style: Kiosk.body)),
+        const SizedBox(width: 8),
+        Expanded(
+          flex: 2,
+          child: _repositoryLink('GitHub ↗', component.repository),
+        ),
       ],
+    ),
+  );
+
+  Widget _repositoryLink(String label, String url) => InkWell(
+    onTap: () => openExternalUrl(url),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Kiosk.blue,
+          decoration: TextDecoration.underline,
+        ),
+      ),
     ),
   );
 

@@ -979,3 +979,4 @@ def export_template(template_id: str, output_path: str | Path,
                     data = archive.read(info.filename)
                 output.writestr(info, data)
     return target
+
