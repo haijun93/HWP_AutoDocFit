@@ -26,6 +26,10 @@ abstract class ConversionHost {
 
   /// 상태를 바꾸지 않는 백엔드 호출(일괄 변환 창이 결과를 직접 읽는다).
   Future<Object?> apiCall(String method, List<Object?> args);
+
+  /// PDF 압축 목표 크기(MB, 기본 10).
+  int get pdfCompressTargetMb;
+  Future<void> setPdfCompressTargetMb(int mb);
 }
 
 /// 파일변환 탭 화면(참고 디자인 3단): 올린 파일 · 변환할 포맷 · 변환 결과.
@@ -37,7 +41,7 @@ class ConversionWorkspace extends StatelessWidget {
 
   static const layout = <String?>[
     'hwpx', 'docx', 'epub', //
-    'html', null, 'md',
+    'html', 'pdfi', 'md',
     'pdf', 'pdfz', 'pdfm',
     'jpg', 'png', 'txt',
   ];
@@ -46,6 +50,7 @@ class ConversionWorkspace extends StatelessWidget {
     'pdf' => Icons.picture_as_pdf_outlined,
     'pdfz' => Icons.compress,
     'pdfm' => Icons.merge_type,
+    'pdfi' => Icons.image_not_supported_outlined,
     'docx' => Icons.article_outlined,
     'epub' => Icons.menu_book_outlined,
     'jpg' || 'png' => Icons.image_outlined,
@@ -59,6 +64,23 @@ class ConversionWorkspace extends StatelessWidget {
       return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
     }
     return '${(bytes / 1024).ceil()} KB';
+  }
+
+  static String? _resultInfoText(Map result) {
+    if (result['info'] case final String info when info.trim().isNotEmpty) {
+      return info.trim();
+    }
+    final parts = <String>[];
+    if (result['final_size'] case final Object finalSize) {
+      final s = sizeText(finalSize);
+      final text = s.isNotEmpty ? s : '$finalSize'.trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    if (result['steps'] case final Object steps) {
+      final text = '$steps'.trim();
+      if (text.isNotEmpty) parts.add(text);
+    }
+    return parts.isNotEmpty ? parts.join(' · ') : null;
   }
 
   @override
@@ -98,14 +120,17 @@ class ConversionWorkspace extends StatelessWidget {
                         Expanded(flex: 4, child: panels[2]),
                       ],
                     )
-                  : ListView(
-                      children: [
-                        SizedBox(height: 260, child: panels[0]),
-                        const SizedBox(height: 16),
-                        SizedBox(height: 420, child: panels[1]),
-                        const SizedBox(height: 16),
-                        SizedBox(height: 320, child: panels[2]),
-                      ],
+                  : SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(height: 260, child: panels[0]),
+                          const SizedBox(height: 16),
+                          SizedBox(height: 420, child: panels[1]),
+                          const SizedBox(height: 16),
+                          SizedBox(height: 320, child: panels[2]),
+                        ],
+                      ),
                     ),
             ),
           );
@@ -416,6 +441,8 @@ class ConversionWorkspace extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 8),
+        _pdfCompressSettings(context),
+        const SizedBox(height: 8),
         Text(
           '포맷을 누르면 바로 변환해요. 결과는 원본 옆에 저장돼요.',
           textAlign: TextAlign.center,
@@ -424,6 +451,48 @@ class ConversionWorkspace extends StatelessWidget {
       ],
     );
   }
+
+  Widget _pdfCompressSettings(BuildContext context) => Container(
+    key: const Key('pdfCompressSettingsCard'),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    decoration: BoxDecoration(
+      color: context.colors.surfaceSubtle,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(
+        color: ConversionColors.of(context).frameBorder,
+      ),
+    ),
+    child: Wrap(
+      alignment: WrapAlignment.center,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Icon(Icons.compress, size: 16, color: context.colors.muted),
+        const SizedBox(width: 6),
+        Text(
+          'PDF 압축 목표 크기:',
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: context.colors.text,
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 54,
+          height: 28,
+          child: _PdfCompressTargetInput(
+            initialValue: host.pdfCompressTargetMb,
+            onChanged: host.locked ? null : host.setPdfCompressTargetMb,
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          'MB (기본 10)',
+          style: TextStyle(fontSize: 12, color: context.colors.muted),
+        ),
+      ],
+    ),
+  );
 
   Widget _centerCell(BuildContext context) => Container(
     decoration: BoxDecoration(
@@ -591,7 +660,7 @@ class ConversionWorkspace extends StatelessWidget {
                                           size: 14,
                                           color: ConversionColors.of(context).done,
                                         ),
-                                        SizedBox(width: 4),
+                                        const SizedBox(width: 4),
                                         Text(
                                           '변환 완료',
                                           style: TextStyle(
@@ -601,6 +670,22 @@ class ConversionWorkspace extends StatelessWidget {
                                         ),
                                       ],
                                     ),
+                                    if (_resultInfoText(results[i])
+                                        case final String infoText
+                                        when infoText.isNotEmpty) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        infoText,
+                                        key: ValueKey('conversionResultInfo-$i'),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: context.colors.muted,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
@@ -709,5 +794,71 @@ class _FilesScrollbarState extends State<_FilesScrollbar> {
     controller: _controller,
     thumbVisibility: true,
     child: widget.builder(_controller),
+  );
+}
+
+class _PdfCompressTargetInput extends StatefulWidget {
+  const _PdfCompressTargetInput({
+    required this.initialValue,
+    required this.onChanged,
+  });
+
+  final int initialValue;
+  final ValueChanged<int>? onChanged;
+
+  @override
+  State<_PdfCompressTargetInput> createState() => _PdfCompressTargetInputState();
+}
+
+class _PdfCompressTargetInputState extends State<_PdfCompressTargetInput> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: '${widget.initialValue}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _PdfCompressTargetInput oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.initialValue != widget.initialValue &&
+        _controller.text != '${widget.initialValue}') {
+      _controller.text = '${widget.initialValue}';
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit(String text) {
+    final value = int.tryParse(text.trim());
+    if (value != null && value > 0 && widget.onChanged != null) {
+      widget.onChanged!(value);
+    } else {
+      _controller.text = '${widget.initialValue}';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    key: const Key('pdfCompressTargetInput'),
+    controller: _controller,
+    keyboardType: TextInputType.number,
+    textAlign: TextAlign.center,
+    enabled: widget.onChanged != null,
+    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+    decoration: InputDecoration(
+      contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+      isDense: true,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(6),
+      ),
+    ),
+    onSubmitted: _submit,
   );
 }

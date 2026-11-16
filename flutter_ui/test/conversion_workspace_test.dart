@@ -47,6 +47,13 @@ class FakeHost implements ConversionHost {
   @override
   Future<void> addConversionFiles() async => calls.add(['add_files']);
   @override
+  int pdfCompressTargetMb = 10;
+  @override
+  Future<void> setPdfCompressTargetMb(int mb) async {
+    pdfCompressTargetMb = mb;
+    calls.add(['set_pdf_compress_target_mb', mb]);
+  }
+  @override
   Map? hwpBulk;
   @override
   Future<Object?> apiCall(String method, List<Object?> args) async {
@@ -234,5 +241,48 @@ void main() {
     expect(find.text('HWPX로 바꾸는 중 4 / 10'), findsOneWidget);
     await tester.tap(find.byKey(const Key('hwpBulkStop')));
     expect(host.calls.last, ['hwp_bulk', 'stop']);
+  });
+
+  testWidgets('PDF 압축 목표 크기 설정 및 결과 최종 크기·단계 표시', (tester) async {
+    final host = FakeHost();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversionWorkspace(host: host),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 목표 크기 설정 UI 확인
+    expect(find.byKey(const Key('pdfCompressSettingsCard')), findsOneWidget);
+    expect(find.textContaining('PDF 압축 목표 크기'), findsOneWidget);
+    final inputFinder = find.byKey(const Key('pdfCompressTargetInput'));
+    expect(inputFinder, findsOneWidget);
+    expect(find.text('10'), findsOneWidget);
+
+    // 목표 크기 변경 입력 (10 -> 25)
+    await tester.enterText(inputFinder, '25');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+    expect(host.calls, anyElement(orderedEquals(['set_pdf_compress_target_mb', 25])));
+    expect(host.pdfCompressTargetMb, 25);
+
+    // 결과에 최종 크기 및 단계 표시 확인
+    host.results = [
+      {
+        'name': '보고서(PDF압축).pdf',
+        'path': r'C:\a\보고서(PDF압축).pdf',
+        'info': '15.0MB → 8.4MB (−44%) · 2단계 (120dpi · 품질 65)',
+      },
+    ];
+    host.stateVersion.value++;
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('conversionResultInfo-0')), findsOneWidget);
+    expect(
+      find.text('15.0MB → 8.4MB (−44%) · 2단계 (120dpi · 품질 65)'),
+      findsOneWidget,
+    );
   });
 }

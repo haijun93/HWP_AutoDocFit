@@ -72,11 +72,11 @@ def _runtime():
     return runtime
 
 
-def run_conversion(files, target, output_dir=None, progress=None, stop_event=None, *, runtime_factory=None, log=None):
+def run_conversion(files, target, output_dir=None, progress=None, stop_event=None, *, runtime_factory=None, log=None, pdf_target_bytes=None, **kwargs):
     """변환 결과 dict 목록을 반환한다. 원본과 기존 결과는 덮어쓰지 않는다."""
     from docfit_core.file_conversion import (
         IMAGE_FORMATS, CONVERSION_OUTPUTS, convert_input_to_hwpx, convert_hwpx_to_text,
-        convert_hwp_to_hwpx, convert_to_images, convert_to_pandoc_format, convert_to_pdf, output_path_for,
+        convert_hwp_to_hwpx, convert_to_images, convert_to_pandoc_format, convert_to_pdf, convert_to_raster_pdf, output_path_for,
         is_same_format, IMAGE_INPUT_EXTENSIONS,
     )
 
@@ -130,7 +130,7 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
     try:
         변환할_파일 = [f for f in files if not is_same_format(f, target_format)]
         그림_한글필요 = target_format in IMAGE_FORMATS and any(Path(f).suffix.lower() != ".pdf" for f in 변환할_파일)
-        if (target_format == "pdf" and any(Path(f).suffix.lower() not in IMAGE_INPUT_EXTENSIONS for f in 변환할_파일)) or 합치기_한글필요 or 그림_한글필요 or (target_format == "hwpx" and any(Path(f).suffix.lower() == ".hwp" for f in files)):
+        if (target_format in {"pdf", "pdfi"} and any(Path(f).suffix.lower() not in IMAGE_INPUT_EXTENSIONS for f in 변환할_파일)) or 합치기_한글필요 or 그림_한글필요 or (target_format == "hwpx" and any(Path(f).suffix.lower() == ".hwp" for f in files)):
             runtime = runtime_factory()
             pythoncom = runtime["pythoncom"]
             한글_COM_인스턴스_생성 = runtime["한글_COM_인스턴스_생성"]
@@ -193,12 +193,19 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                     target = convert_to_images(app, source, target)
                 elif target_format == "pdfz":
                     from docfit_core.pdf_compress import compress_pdf
-                    압축결과 = compress_pdf(source, target)
+                    target_bytes = kwargs.get("pdf_target_bytes", 10 * 1024 * 1024)
+                    압축결과 = compress_pdf(source, target, target_bytes=target_bytes)
                     로그(f"PDF 압축: {source.name} {압축결과.summary()}")
+                elif target_format == "pdfi":
+                    convert_to_raster_pdf(app, source, target)
+                    로그(f"이미지 PDF: {source.name} → {target.name}")
                 else:
                     convert_to_pdf(app, source, target)
                 successes += 1
-                gui_queue.put(("saved", str(source), str(target), None))
+                info = 압축결과.summary() if target_format == "pdfz" else None
+                final_size = 압축결과.after if target_format == "pdfz" else None
+                steps = 압축결과.step if target_format == "pdfz" else None
+                gui_queue.put(("saved", str(source), str(target), None, info, final_size, steps))
                 로그(f"파일 변환 완료: {source.name} → {target.name}")
             except Exception as exc:
                 failures += 1

@@ -686,8 +686,15 @@ function App(){
    commit(removeLayer({...current.current,layers},currentLayer));setActiveLayer(null);}}
   onAssign={()=>commit({...current.current,layers,nodes:assignLayer(current.current.nodes,selectedNodes.map(n=>n.id),currentLayer)})}/>;
  const duplicate=()=>{
-  const items=current.current.nodes.filter(n=>n.selected);if(!items.length)return;
-  const copies=items.map(n=>({...structuredClone(n),id:id(),position:{x:n.position.x+30,y:n.position.y+30},selected:true}));
+  const items=current.current.nodes.filter(n=>n.selected&&!n.data?.background);if(!items.length)return;
+  const copies=items.map(n=>({
+   ...structuredClone(n),
+   id:id(),
+   position:{x:n.position.x+30,y:n.position.y+30},
+   width:n.width??n.measured?.width??220,
+   height:n.height??n.measured?.height??90,
+   selected:true
+  }));
   commit({...current.current,nodes:[...current.current.nodes.map(n=>({...n,selected:false})),...copies]});
  };
  const selectedCatalogCategory=catalog?.categories?.find(item=>item.id===catalogCategory);
@@ -733,9 +740,22 @@ function App(){
    if(ctrl&&k==='z'){e.preventDefault();mode==='catalog'?undoCatalog(e.shiftKey):undo(e.shiftKey);}
    if(ctrl&&k==='y'){e.preventDefault();mode==='catalog'?undoCatalog(true):undo(true);}
    if(drawable&&ctrl&&k==='d'){e.preventDefault();duplicate();}
-   if(drawable&&ctrl&&k==='c'){clipboard.current=structuredClone(current.current.nodes.filter(n=>n.selected&&!n.data?.background));}
+   if(drawable&&ctrl&&k==='c'){
+    clipboard.current=current.current.nodes.filter(n=>n.selected&&!n.data?.background).map(n=>({
+     ...structuredClone(n),
+     width:n.width??n.measured?.width??220,
+     height:n.height??n.measured?.height??90
+    }));
+   }
    if(drawable&&ctrl&&k==='v'&&clipboard.current?.length){e.preventDefault();
-    const copies=clipboard.current.map(n=>({...n,id:id(),position:{x:n.position.x+40,y:n.position.y+40},selected:true}));
+    const copies=clipboard.current.map(n=>({
+     ...structuredClone(n),
+     id:id(),
+     position:{x:n.position.x+40,y:n.position.y+40},
+     width:n.width??n.measured?.width??220,
+     height:n.height??n.measured?.height??90,
+     selected:true
+    }));
     commit({...current.current,nodes:[...current.current.nodes.map(n=>({...n,selected:false})),...copies]});}
    if(mode==='mindmap'&&mindmap&&mmSelected){
     if(['Tab','Enter'].includes(e.key)&&mmGraphCount(current.current.mindmap)>=300){e.preventDefault();setStatus('가지는 문서당 300개까지입니다.');return;}
@@ -1007,9 +1027,23 @@ function App(){
        setGuides(moves[0].dragging?g.lines:[]);
       }
      }else if(moves.some(c=>!c.dragging)||!moves.length&&guides.length)setGuides([]);
-     const edits=changes.filter(c=>c.type!=='select'&&!(c.type==='dimensions'&&!c.resizing));
+     const edits=changes.filter(c=>c.type!=='select');
+     // NodeResizer 등 크기 변경 시 width/height를 확실히 노드에 박고 customSize 표시를 남긴다.
+     const dimChanges=changes.filter(c=>c.type==='dimensions'&&c.dimensions&&(c.resizing!==undefined||c.setAttributes));
+     if(dimChanges.length){
+      changes=changes.map(c=>c.type==='dimensions'&&c.dimensions&&!c.setAttributes?{...c,setAttributes:true}:c);
+     }
      let next={...current.current,nodes:applyNodeChanges(changes,current.current.nodes)};
-     if(changes.some(c=>c.type==='dimensions'&&(c.resizing!==undefined||c.setAttributes)))next=layoutGraph(next);
+     if(dimChanges.length){
+      const dimMap=new Map(dimChanges.map(c=>[c.id,c.dimensions]));
+      next={...next,nodes:next.nodes.map(n=>{
+       const d=dimMap.get(n.id);
+       if(!d)return n;
+       const w=Math.round(d.width),h=Math.round(d.height);
+       return {...n,width:w,height:h,measured:{width:w,height:h},data:{...n.data,customSize:true}};
+      })};
+      next=layoutGraph(next);
+     }
      // 자석 연결선: 도형을 옮기면 마주 보는 면으로 다시 붙는다.
      const routed=autoRoute(next.nodes,next.edges);if(routed!==next.edges)next={...next,edges:routed};
      current.current=next;setGraph(next);if(edits.length)mark();
