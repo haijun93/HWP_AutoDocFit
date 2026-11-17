@@ -26,7 +26,16 @@ def data_dir():
     override = os.environ.get("KAGENT_DATA")
     if override:
         return Path(override)
-    return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "HwpAutoDocFit" / "kagent"
+    local = Path(os.environ.get("LOCALAPPDATA") or Path.home())
+    if os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1":
+        real_local = os.environ.get("DOCFIT_REAL_LOCALAPPDATA")
+        if real_local and _same_path(local, Path(real_local)):
+            raise RuntimeError(f"Refusing real user data path: {local}")
+    return local / "HwpAutoDocFit" / "kagent"
+
+
+def _same_path(left: Path, right: Path) -> bool:
+    return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
 
 
 class KAgentClient:

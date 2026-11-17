@@ -39,6 +39,9 @@ def data_dir() -> Path:
         return Path(override)
     local = os.environ.get("LOCALAPPDATA")
     if local:
+        real_local = os.environ.get("DOCFIT_REAL_LOCALAPPDATA")
+        if os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1" and real_local and os.path.normcase(os.path.abspath(local)) == os.path.normcase(os.path.abspath(real_local)):
+            raise RuntimeError(f"Refusing real user data path: {local}")
         return Path(local) / "HwpAutoDocFit" / "kfind"
     return Path.home() / "AppData" / "Local" / "HwpAutoDocFit" / "kfind"
 
