@@ -732,15 +732,17 @@ mod interaction_hit_tests {
 }
 
 /// 탭 3개([본문], [위계], [파일명])의 RECT 계산.
-pub fn calc_tab_rects(pad: i32, tab_y: i32, tab_h: i32, width: i32) -> [RECT; 3] {
+pub fn calc_tab_rects(pad: i32, tab_y: i32, tab_h: i32, width: i32) -> [RECT; 4] {
     let avail = (width - 2 * pad).max(0);
-    let tab_w = avail / 3;
+    let tab_w = avail / 4;
     let l0 = pad;
     let r0 = l0 + tab_w;
     let l1 = r0;
     let r1 = l1 + tab_w;
     let l2 = r1;
-    let r2 = width - pad;
+    let r2 = l2 + tab_w;
+    let l3 = r2;
+    let r3 = width - pad;
     [
         RECT {
             left: l0,
@@ -760,10 +762,11 @@ pub fn calc_tab_rects(pad: i32, tab_y: i32, tab_h: i32, width: i32) -> [RECT; 3]
             right: r2,
             bottom: tab_y + tab_h,
         },
+        RECT { left: l3, top: tab_y, right: r3, bottom: tab_y + tab_h },
     ]
 }
 
-/// 탭 히트 판정 (0: 본문, 1: 위계, 2: 파일명).
+/// 탭 히트 판정 (0: 전체, 1: 본문, 2: 위계, 3: 파일명).
 pub fn hit_tab(x: i32, y: i32, pad: i32, tab_y: i32, tab_h: i32, width: i32) -> Option<usize> {
     if y < tab_y || y >= tab_y + tab_h || x < pad || x >= width - pad {
         return None;
@@ -1198,6 +1201,7 @@ mod tests {
     }
     fn row(name: &str, snippet: &str) -> crate::backend::Row {
         crate::backend::Row {
+            match_kinds: Vec::new(),
             doc_id: 0,
             path: format!("C:\\{name}"),
             name: name.into(),
@@ -1326,7 +1330,7 @@ mod tests {
 
         let rects = calc_tab_rects(pad, tab_y, tab_h, width);
         assert_eq!(rects[0].left, 12);
-        assert_eq!(rects[2].right, 688);
+        assert_eq!(rects[3].right, 688);
         assert!(rects[0].right == rects[1].left);
         assert!(rects[1].right == rects[2].left);
 
@@ -1334,8 +1338,9 @@ mod tests {
         assert_eq!(hit_tab(15, 80, pad, tab_y, tab_h, width), Some(0));
         // 두 번째 탭 클릭
         assert_eq!(hit_tab(300, 80, pad, tab_y, tab_h, width), Some(1));
-        // 세 번째 탭 클릭
-        assert_eq!(hit_tab(600, 80, pad, tab_y, tab_h, width), Some(2));
+        // 세 번째와 네 번째 탭 클릭
+        assert_eq!(hit_tab(500, 80, pad, tab_y, tab_h, width), Some(2));
+        assert_eq!(hit_tab(680, 80, pad, tab_y, tab_h, width), Some(3));
         // 탭 밖 클릭
         assert_eq!(hit_tab(5, 80, pad, tab_y, tab_h, width), None);
         assert_eq!(hit_tab(695, 80, pad, tab_y, tab_h, width), None);

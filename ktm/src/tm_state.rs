@@ -13,6 +13,7 @@ pub enum Phase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tab {
+    All,
     Body,
     Hierarchy,
     Names,
@@ -79,6 +80,8 @@ pub struct State {
     pub tab: Tab,
     pub generation: u64,
     pub result_count: usize,
+    pub pending_parts: u8,
+    pub arrived_parts: u8,
     pub selected: Option<usize>,
     pub error: Option<String>,
     // SEMI3 & SEMI2 additions:
@@ -136,9 +139,11 @@ impl Default for State {
         Self {
             phase: Phase::Hidden,
             query: String::new(),
-            tab: Tab::Body,
+            tab: Tab::All,
             generation: 0,
             result_count: 0,
+            pending_parts: 0,
+            arrived_parts: 0,
             selected: None,
             error: None,
             autocompletes: Vec::new(),
@@ -169,6 +174,8 @@ pub enum Event {
     Refresh,
     SearchFinished { generation: u64, count: usize },
     SearchFailed { generation: u64, message: String },
+    /// One leg of an "All" search has arrived. The current generation remains active.
+    SearchPartFinished { generation: u64, kind: ResultKind, count: usize, final_part: bool },
     MoveSelection(isize),
     Select(usize),
     Open { folder: bool },
@@ -208,6 +215,47 @@ pub enum Event {
     ClearHistory,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ResultKind { Names, Hierarchy, Body }
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CombinedRow<T> {
+    pub row: T,
+    pub kinds: Vec<ResultKind>,
+    pub priority: u8,
+}
+
+/// Merge bounded per-kind result batches by document identity, keeping the strongest reason.
+pub fn combine_results<T: Clone>(batches: &[(ResultKind, Vec<T>)], key: impl Fn(&T) -> String) -> Vec<CombinedRow<T>> {
+    use std::collections::HashMap;
+    let mut rows: Vec<CombinedRow<T>> = Vec::new();
+    let mut by_key: HashMap<String, usize> = HashMap::new();
+    for (kind, batch) in batches {
+        let limit = match kind { ResultKind::Names | ResultKind::Hierarchy => 20, ResultKind::Body => 40 };
+        for row in batch.iter().take(limit) {
+            let k = key(row);
+            let priority = match kind { ResultKind::Names => 0, ResultKind::Hierarchy => 1, ResultKind::Body => 2 };
+            if let Some(&idx) = by_key.get(&k) {
+                let existing = &mut rows[idx];
+                if !existing.kinds.contains(kind) { existing.kinds.push(*kind); }
+                if priority < existing.priority { existing.row = row.clone(); existing.priority = priority; }
+            } else {
+                by_key.insert(k, rows.len());
+                rows.push(CombinedRow { row: row.clone(), kinds: vec![*kind], priority });
+            }
+        }
+    }
+    for row in &mut rows {
+        row.kinds.sort_by_key(|kind| match kind {
+            ResultKind::Names => 0,
+            ResultKind::Hierarchy => 1,
+            ResultKind::Body => 2,
+        });
+    }
+    rows.sort_by_key(|r| r.priority);
+    rows
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     Show,
@@ -230,6 +278,8 @@ pub enum Effect {
 
 fn clear_results(state: &mut State) {
     state.result_count = 0;
+    state.pending_parts = 0;
+    state.arrived_parts = 0;
     state.selected = None;
     state.error = None;
 }
@@ -241,6 +291,8 @@ fn search(state: &mut State, effects: &mut Vec<Effect>, explicit: bool) {
     state.selected_history = None;
     // Increment even for an empty/short query: an older completion is now invalid.
     state.generation = state.generation.wrapping_add(1);
+    state.pending_parts = if state.tab == Tab::All { 3 } else { 0 };
+    state.arrived_parts = 0;
     let query = state.query.trim();
     if query.chars().count() >= if explicit { 1 } else { 2 } {
         state.phase = Phase::Searching;
@@ -773,6 +825,17 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 }
             }
         }
+        Event::SearchPartFinished { generation, kind, count, final_part } => {
+            if state.tab == Tab::All && matches!(state.phase, Phase::Searching | Phase::Results) && generation == state.generation {
+                state.arrived_parts |= match kind { ResultKind::Names => 1, ResultKind::Hierarchy => 2, ResultKind::Body => 4 };
+                state.result_count = count;
+                state.phase = Phase::Results;
+                state.selected = (count > 0).then_some(0);
+                if final_part || state.arrived_parts.count_ones() >= state.pending_parts as u32 {
+                    if !state.query.trim().is_empty() { crate::settings::push_recent_query(&mut state.recent_queries, &state.query); }
+                }
+            }
+        }
         Event::SearchFailed {
             generation,
             message,
@@ -980,6 +1043,40 @@ mod tests {
     fn visible() -> State {
         step(&State::default(), Event::Show).0
     }
+
+    fn merged(batches: &[(ResultKind, Vec<(u32, &'static str)>)]) -> Vec<CombinedRow<(u32, &'static str)>> {
+        combine_results(batches, |row| row.0.to_string())
+    }
+
+    #[test] fn combined_names_are_first() { assert_eq!(merged(&[(ResultKind::Body,vec![(1,"b")]),(ResultKind::Names,vec![(2,"n")])])[0].row.1,"n"); }
+    #[test] fn combined_hierarchy_precedes_body() { assert_eq!(merged(&[(ResultKind::Body,vec![(1,"b")]),(ResultKind::Hierarchy,vec![(2,"h")])])[0].row.1,"h"); }
+    #[test] fn combined_body_follows_hierarchy() { let m=merged(&[(ResultKind::Body,vec![(1,"b")]),(ResultKind::Hierarchy,vec![(2,"h")])]); assert_eq!(m[1].row.1,"b"); }
+    #[test] fn combined_deduplicates_same_document() { assert_eq!(merged(&[(ResultKind::Names,vec![(1,"n")]),(ResultKind::Body,vec![(1,"b")])]).len(),1); }
+    #[test] fn combined_dedup_keeps_all_evidence() { assert_eq!(merged(&[(ResultKind::Names,vec![(1,"n")]),(ResultKind::Hierarchy,vec![(1,"h")]),(ResultKind::Body,vec![(1,"b")])])[0].kinds.len(),3); }
+    #[test] fn combined_dedup_prefers_name_row() { assert_eq!(merged(&[(ResultKind::Body,vec![(1,"b")]),(ResultKind::Names,vec![(1,"n")])])[0].row.1,"n"); }
+    #[test] fn all_tab_synthesizes_three_kinds_and_deduplicates_documents() {
+        let merged = merged(&[
+            (ResultKind::Body, vec![(1, "body"), (2, "body-only")]),
+            (ResultKind::Hierarchy, vec![(1, "hierarchy"), (3, "hierarchy-only")]),
+            (ResultKind::Names, vec![(1, "name"), (4, "name-only")]),
+        ]);
+        assert_eq!(merged.len(), 4);
+        assert_eq!(merged[0].row, (1, "name"));
+        assert_eq!(merged[0].kinds, [ResultKind::Names, ResultKind::Hierarchy, ResultKind::Body]);
+        assert_eq!(merged.iter().map(|r| r.priority).collect::<Vec<_>>(), [0, 0, 1, 2]);
+    }
+    #[test] fn combined_name_limit_is_twenty() { let rows=(0..30).map(|i|(i,"n")).collect(); assert_eq!(merged(&[(ResultKind::Names,rows)]).len(),20); }
+    #[test] fn combined_hierarchy_limit_is_twenty() { let rows=(0..30).map(|i|(i,"h")).collect(); assert_eq!(merged(&[(ResultKind::Hierarchy,rows)]).len(),20); }
+    #[test] fn combined_body_limit_is_forty() { let rows=(0..50).map(|i|(i,"b")).collect(); assert_eq!(merged(&[(ResultKind::Body,rows)]).len(),40); }
+    #[test] fn combined_empty_batches_are_empty() { assert!(merged(&[]).is_empty()); }
+    #[test] fn combined_empty_result_kind_is_empty() { assert!(merged(&[(ResultKind::Body,vec![])]).is_empty()); }
+    #[test] fn combined_same_kind_is_unique_in_evidence() { assert_eq!(merged(&[(ResultKind::Names,vec![(1,"a")]),(ResultKind::Names,vec![(1,"b")])])[0].kinds.len(),1); }
+    #[test] fn combined_document_identity_uses_path_across_indexes() { let names=crate::backend::Row{path:"C:\\Docs\\a.hwp".into(),..Default::default()}; let body=crate::backend::Row{doc_id:42,path:"c:\\docs\\a.hwp".into(),..Default::default()}; let m=combine_results(&[(ResultKind::Names,vec![names]),(ResultKind::Body,vec![body])],|r|r.path.to_lowercase()); assert_eq!(m.len(),1); assert_eq!(m[0].kinds.len(),2); }
+    #[test] fn all_tab_is_default_and_dispatches_one_combined_search() { let (s,fx)=step(&visible(),Event::Input("예산".into())); assert_eq!(s.tab,Tab::All); assert!(matches!(&fx[..],[Effect::Search{tab:Tab::All,..}])); assert_eq!(s.pending_parts,3); }
+    #[test] fn partial_arrival_immediately_exposes_results() { let (s,_)=step(&visible(),Event::Input("예산".into())); let (s,_)=step(&s,Event::SearchPartFinished{generation:s.generation,kind:ResultKind::Names,count:1,final_part:false}); assert_eq!(s.phase,Phase::Results); assert_eq!(s.arrived_parts,1); }
+    #[test] fn partial_arrivals_accumulate_by_kind() { let (s,_)=step(&visible(),Event::Input("예산".into())); let (s,_)=step(&s,Event::SearchPartFinished{generation:s.generation,kind:ResultKind::Names,count:1,final_part:false}); let (s,_)=step(&s,Event::SearchPartFinished{generation:s.generation,kind:ResultKind::Body,count:2,final_part:false}); assert_eq!(s.arrived_parts,5); assert_eq!(s.result_count,2); }
+    #[test] fn stale_partial_arrival_is_ignored() { let (s,_)=step(&visible(),Event::Input("예산".into())); let old=s.generation; let s=step(&s,Event::Input("예산안".into())).0; let (n,_)=step(&s,Event::SearchPartFinished{generation:old,kind:ResultKind::Names,count:1,final_part:false}); assert_eq!(n,s); }
+    #[test] fn completion_after_partial_remains_accepted() { let (s,_)=step(&visible(),Event::Input("예산".into())); let g=s.generation; let (s,_)=step(&s,Event::SearchPartFinished{generation:g,kind:ResultKind::Names,count:1,final_part:false}); let (s,_)=step(&s,Event::SearchPartFinished{generation:g,kind:ResultKind::Hierarchy,count:2,final_part:false}); assert_eq!(s.result_count,2); }
     fn results(count: usize) -> State {
         let state = step(&visible(), Event::Input("예산".into())).0;
         step(

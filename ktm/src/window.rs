@@ -76,7 +76,7 @@ mod close_policy_tests {
 /// 일꾼 대기열: 검색은 늘 최신 하나, 원문 찾기도 최신 하나(검색 먼저).
 #[derive(Default)]
 struct Pending {
-    search: Option<Job>,
+    search: Vec<Job>,
     snippets: Option<SnipJob>,
     export: Option<(Job, ktm::export::ExportFormat)>,
 }
@@ -88,7 +88,7 @@ struct WorkTimes {
 }
 
 enum Reply {
-    Search(u64, Result<Answer, String>, Instant, WorkTimes),
+    Search(u64, Tab, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
     TopTopics(Vec<String>),
 }
@@ -96,6 +96,7 @@ enum Reply {
 struct Ui {
     state: State,
     rows: Vec<Row>,
+    combined_batches: Vec<(tm_state::ResultKind, Vec<Row>)>,
     terms: Vec<String>,
     edit: HWND,
     within_edit: HWND,
@@ -247,7 +248,8 @@ fn sync_edit_text(ed: HWND, text: &str) {
         let mut cur = vec![0u16; caret + 2];
         let n = GetWindowTextW(ed, cur.as_mut_ptr(), cur.len() as i32) as usize;
         if !(n == caret && cur[..n] == q[..caret]) {
-            SetWindowTextW(ed, q.as_ptr());
+            SendMessageW(ed, 0x00b1, 0, -1);
+            SendMessageW(ed, 0x00c2, 1, q.as_ptr() as isize);
             SendMessageW(ed, 0x00b1, caret, caret as isize);
         }
     }
@@ -353,6 +355,7 @@ fn event(h: HWND, e: Event) {
         let (ed, text) = with(|u| (u.within_edit, u.state.options.within_query.clone()));
         sync_edit_text(ed, &text);
     }
+    let mut search_cancel: Option<Arc<AtomicBool>> = None;
     for fx in effects {
         unsafe {
             match fx {
@@ -398,28 +401,26 @@ fn event(h: HWND, e: Event) {
                     match_mode,
                 } => {
                     let tx = with(|u| u.tx.clone());
-                    let cancel = Arc::new(AtomicBool::new(false));
+                    let cancel = search_cancel.get_or_insert_with(|| Arc::new(AtomicBool::new(false))).clone();
                     edit(|u| u.cancel = cancel.clone());
                     let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
                     let max_results = with(|u| u.settings.bounded_max_results());
                     let skip_cloud_network = with(|u| u.settings.skip_cloud_network);
                     {
                         let mut p = tx.0.lock().unwrap();
-                        p.search = Some((
-                            generation,
-                            query,
-                            tab,
-                            Instant::now(),
-                            cancel,
-                            sort,
-                            date_filter,
-                            custom_date_range,
-                            folder,
-                            ext,
-                            match_mode,
-                            max_results,
-                            skip_cloud_network,
-                        ));
+                        if tab == Tab::All {
+                            edit(|u| u.combined_batches.clear());
+                            p.search.clear();
+                            for (part, limit) in [(Tab::Names, 20), (Tab::Hierarchy, 20), (Tab::Body, 40)] {
+                                p.search.push((generation, query.clone(), part, Instant::now(), cancel.clone(), sort,
+                                    date_filter, custom_date_range, folder.clone(), ext.clone(), match_mode,
+                                    max_results.min(limit), skip_cloud_network));
+                            }
+                        } else {
+                            p.search.clear();
+                            p.search.push((generation, query, tab, Instant::now(), cancel, sort,
+                                date_filter, custom_date_range, folder, ext, match_mode, max_results, skip_cloud_network));
+                        }
                         p.snippets = None;
                     }
                     tx.1.notify_one();
@@ -624,9 +625,14 @@ fn key(h: HWND, key: usize) -> bool {
             VK_PRIOR => event(h, Event::MoveSelection(-5)),
             VK_TAB => {
                 let tab = with(|u| match (u.state.tab, shift) {
-                    (Tab::Body, false) | (Tab::Names, true) => Tab::Hierarchy,
-                    (Tab::Hierarchy, false) | (Tab::Body, true) => Tab::Names,
-                    _ => Tab::Body,
+                    (Tab::All, false) => Tab::Body,
+                    (Tab::Body, false) => Tab::Hierarchy,
+                    (Tab::Hierarchy, false) => Tab::Names,
+                    (Tab::Names, false) => Tab::All,
+                    (Tab::All, true) => Tab::Names,
+                    (Tab::Names, true) => Tab::Hierarchy,
+                    (Tab::Hierarchy, true) => Tab::Body,
+                    (Tab::Body, true) => Tab::All,
                 });
                 event(h, Event::SwitchTab(tab));
             }
@@ -1337,6 +1343,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let body_label = format!("본문 · {}", u.body_sort.label());
             let names_label = format!("파일명 · {}", ktm::backend::NAME_SORTS[u.name_sort % 4].1);
             let tabs = [
+                ("전체", Tab::All),
                 (body_label.as_str(), Tab::Body),
                 ("위계", Tab::Hierarchy),
                 (names_label.as_str(), Tab::Names),
@@ -2061,6 +2068,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     scale(h, 68)
                 };
                 let badge_w = scale(h, 48);
+                let reason_label = if u.state.tab == Tab::All {
+                    let labels = row.match_kinds.iter().map(|kind| match kind {
+                        tm_state::ResultKind::Names => "이름",
+                        tm_state::ResultKind::Hierarchy => "위계",
+                        tm_state::ResultKind::Body => "본문",
+                    }).collect::<Vec<_>>().join("·");
+                    labels
+                } else { String::new() };
+                let reason_w = if reason_label.is_empty() { 0 } else { scale(h, 66) };
                 let badge_right = if grid {
                     row_rc.right - scale(h, 8)
                 } else {
@@ -2075,6 +2091,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 };
                 fill(ext_rc, p.tab_hover);
                 text(ext, ext_rc, p.text_sub, DT_CENTER);
+                if !reason_label.is_empty() {
+                    let reason_rc = RECT { left: badge_right - badge_w - reason_w - scale(h, 4), top: gy + scale(h, 3), right: badge_right - badge_w - scale(h, 4), bottom: gy + line_h1 - scale(h, 2) };
+                    fill(reason_rc, p.selected);
+                    text(&reason_label, reason_rc, p.accent, DT_CENTER);
+                }
                 highlighted(
                     mem,
                     &row.name,
@@ -2082,7 +2103,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     RECT {
                         left: name_left,
                         top: gy + scale(h, 2),
-                        right: badge_right - badge_w - scale(h, 4),
+                        right: badge_right - badge_w - reason_w - scale(h, 4),
                         bottom: gy + line_h1,
                     },
                     p.row_text(sel, p.text),
@@ -3655,8 +3676,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     // ② 탭 클릭
                     if let Some(tab_idx) = hit_tab(x, y, pad, tab_y, tab_h, rc_w.right) {
                         let tab = match tab_idx {
-                            0 => Tab::Body,
-                            1 => Tab::Hierarchy,
+                            0 => Tab::All,
+                            1 => Tab::Body,
+                            2 => Tab::Hierarchy,
                             _ => Tab::Names,
                         };
                         event(h, Event::SwitchTab(tab));
@@ -3989,7 +4011,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
-                        Reply::Search(g, result, start, times) => {
+                        Reply::Search(g, tab, result, start, times) => {
                             phase("search_queue_ms", times.picked - start);
                             phase("search_work_ms", times.done - times.picked);
                             phase("search_deliver_ms", times.done.elapsed());
@@ -4016,14 +4038,18 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                         .filter_map(|i| rows.get(i).cloned())
                                         .collect::<Vec<_>>();
                                     let count = rows.len();
-                                    event(
-                                        h,
-                                        Event::SearchFinished {
-                                            generation: g,
-                                            count,
-                                        },
-                                    );
-                                    edit(|u| {
+                                    let current_tab = with(|u| u.state.tab);
+                                    if current_tab == Tab::All {
+                                        let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
+                                        let batches = edit(|u| { u.combined_batches.retain(|(k, _)| *k != kind); u.combined_batches.push((kind, rows.clone())); u.combined_batches.clone() });
+                                        let merged = tm_state::combine_results(&batches, |r| if r.path.is_empty() { format!("id:{}", r.doc_id) } else { r.path.replace('/', "\\").to_lowercase() });
+                                        let mut combined_rows = merged.into_iter().map(|r| { let mut row = r.row; row.match_kinds = r.kinds; row }).collect::<Vec<_>>();
+                                        combined_rows.truncate(80);
+                                        event(h, Event::SearchPartFinished { generation: g, kind, count: combined_rows.len(), final_part: false });
+                                        edit(|u| { u.rows = combined_rows; u.terms = terms.clone(); u.state.folder_counts = folder_counts; u.state.autocompletes = autocompletes; u.timing.get_or_insert(start); u.ready_at.get_or_insert_with(Instant::now); });
+                                    } else {
+                                        event(h, Event::SearchFinished { generation: g, count });
+                                        edit(|u| {
                                         u.rows = rows;
                                         if u.state.tab == Tab::Body || u.state.tab == Tab::Hierarchy
                                         {
@@ -4034,15 +4060,19 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                         u.state.autocompletes = autocompletes;
                                         u.timing = Some(start);
                                         u.ready_at = Some(Instant::now());
-                                    });
+                                        });
+                                    }
                                 }
-                                Err(message) => event(
-                                    h,
-                                    Event::SearchFailed {
-                                        generation: g,
-                                        message,
-                                    },
-                                ),
+                                Err(message) => {
+                                    if with(|u| u.state.tab) == Tab::All {
+                                        let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
+                                        let count = with(|u| u.rows.len());
+                                        event(h, Event::SearchPartFinished { generation: g, kind, count, final_part: false });
+                                        eprintln!("combined search leg failed: {message}");
+                                    } else {
+                                        event(h, Event::SearchFailed { generation: g, message });
+                                    }
+                                }
                             }
                         }
                     }
@@ -4244,6 +4274,7 @@ pub fn run() -> Result<(), String> {
                     ..State::default()
                 },
                 rows: Vec::new(),
+                combined_batches: Vec::new(),
                 terms: Vec::new(),
                 edit: ed,
                 within_edit: within_ed,
@@ -4322,7 +4353,8 @@ pub fn run() -> Result<(), String> {
                 let work = {
                     let mut slot = worker_pending.0.lock().unwrap();
                     loop {
-                        if let Some(j) = slot.search.take() {
+                        if !slot.search.is_empty() {
+                            let j = slot.search.remove(0);
                             break Work::Search(j);
                         }
                         if let Some(j) = slot.snippets.take() {
@@ -4403,6 +4435,7 @@ pub fn run() -> Result<(), String> {
                         })();
                         Reply::Search(
                             g,
+                            tab,
                             answer,
                             start,
                             WorkTimes {
