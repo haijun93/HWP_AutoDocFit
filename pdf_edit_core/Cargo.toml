@@ -10,3 +10,7 @@ lopdf = "0.34"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[bin]]
+name = "pdf-edit"
+path = "src/main.rs"
