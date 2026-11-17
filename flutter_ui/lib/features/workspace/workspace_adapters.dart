@@ -15,6 +15,7 @@ import '../doc_grid/doc_grid_screen.dart';
 import '../photo_album/photo_album_screen.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
+import '../pdf_edit/pdf_edit_workspace.dart';
 import 'tab_navigation_shell.dart';
 
 /// Workspace adapter for Tab 1: Document Editor / Processing
@@ -225,6 +226,7 @@ class IntegratedWorkspace extends StatelessWidget {
       diagram: DiagramAdapter(api: api),
       mindMap: MindMapAdapter(api: api),
       fileConversion: FileConversionAdapter(child: fileConversionWidget),
+      pdfEdit: PdfEditWorkspace(api: api),
       paint: PaintAdapter(api: api, photoPasteTrigger: photoPasteTrigger),
       fileRename: FileRenameAdapter(api: api),
       timemachine: _LazyTimemachineAdapter(api: api),

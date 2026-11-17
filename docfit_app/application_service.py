@@ -153,7 +153,7 @@ class ApplicationService:
         counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
         if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album') and len(args) in (1, 2)) and len(args)!=counts[method]:
@@ -279,6 +279,16 @@ class ApplicationService:
             if args[0] == 'copy' and getattr(self.data, 'running', False):
                 return {'ok':False,'message':'문서 작업이 끝난 뒤 다시 눌러 주세요.'}
             return TableSketchService(self.store._path.parent).command(*args)
+        if method == 'pdf_edit':
+            from .pdf_edit_service import PdfEditService
+            if getattr(self, '_pdf_edit_service', None) is None:
+                self._pdf_edit_service = PdfEditService()
+            payload = args[0]
+            if not isinstance(payload, dict):
+                raise ServiceError('INVALID_INPUT', 'PDF 편집 입력을 확인해 주세요.')
+            return response(lambda: self._pdf_edit_service.execute(
+                payload.get('action'), payload.get('source'), payload.get('output'),
+                pages=payload.get('pages'), degrees=payload.get('degrees'), sources=payload.get('sources')))
         if method=='excel_table':
             from .excel_table_service import ExcelTableService
             if getattr(self.data, 'running', False):
