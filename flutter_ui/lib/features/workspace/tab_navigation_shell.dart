@@ -178,8 +178,8 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '몽땅검색',
     '문서뷰',
     '사진뷰',
-    'PDF 편집',
     '파일변환',
+    'PDF 편집',
   ];
   static const _icons = [
     Icons.description_outlined,
@@ -192,8 +192,8 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     Icons.history_toggle_off,
     Icons.grid_view_outlined,
     Icons.photo_library_outlined,
-    Icons.picture_as_pdf_outlined,
     Icons.transform,
+    Icons.picture_as_pdf_outlined,
   ];
 
   void _select(int index) {

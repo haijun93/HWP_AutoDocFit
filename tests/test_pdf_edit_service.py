@@ -99,6 +99,15 @@ class PdfEditServiceTests(unittest.TestCase):
         with self.assertRaises(ServiceError) as caught:
             self.service.execute('delete', self.source, self.root / 'result.pdf', pages=[1])
         self.assertEqual(caught.exception.code, 'PDF_RESTRICTED')
+        writer = PdfWriter()
+        writer.add_blank_page(width=100, height=100)
+        writer.encrypt(user_password='secret', owner_password='owner')
+        with self.source.open('wb') as stream:
+            writer.write(stream)
+        with self.assertRaises(ServiceError) as caught:
+            self.service.execute('delete', self.source, self.root / 'result.pdf', pages=[1])
+        self.assertEqual(caught.exception.code, 'PDF_ENCRYPTED')
+        self.runner.assert_not_called()
 
     def test_missing_engine_has_clear_error(self):
         self.service.executable = self.root / 'missing.exe'

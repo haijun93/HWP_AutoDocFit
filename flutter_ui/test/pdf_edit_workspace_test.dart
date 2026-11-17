@@ -20,6 +20,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('분할할 페이지'), findsOneWidget);
     expect(find.textContaining('원본 파일은 유지'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('pdfEditAction')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('PDF 합치기').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<OutlinedButton>(find.byKey(const Key('pdfEditPickOutput'))).onPressed, isNotNull);
     expect(calls, isEmpty);
   });
 }

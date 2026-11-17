@@ -78,7 +78,7 @@ fn main() -> ExitCode {
                 .collect::<Result<Vec<_>, pdf_edit_core::PdfEditError>>();
             ranges.and_then(|r| split(&a[1], PathBuf::from(&a[2]), &r).map(|_| ()))
         }
-        "merge" if a.len() >= 4 => {
+        "merge" if a.len() >= 4 => (|| -> pdf_edit_core::Result<()> {
             let mut merged = lopdf::Document::with_version("1.5");
             let mut order = Vec::new();
             for input in &a[2..] {
@@ -129,8 +129,9 @@ fn main() -> ExitCode {
                     "Output must be new".into(),
                 ));
             }
-            merged.save(&out).map_err(pdf_edit_core::PdfEditError::Pdf)
-        }
+            merged.save(&out)?;
+            Ok(())
+        })(),
         _ => {
             usage();
             return ExitCode::from(2);

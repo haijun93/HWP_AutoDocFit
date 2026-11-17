@@ -51,7 +51,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   }
 
   Future<void> _pickOutput() async {
-    if (_source == null) return;
+    if (_action != 'merge' && _source == null) return;
     final location = await getSaveLocation(suggestedName: _output?.split(RegExp(r'[/\\]')).last ?? '편집본.pdf', acceptedTypeGroups: [_pdfType]);
     if (location != null && mounted) setState(() => _output = location.path);
   }
@@ -124,7 +124,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       ],
       const SizedBox(height: 16),
       Wrap(spacing: 12, runSpacing: 12, crossAxisAlignment: WrapCrossAlignment.center, children: [
-        OutlinedButton(key: const Key('pdfEditPickOutput'), onPressed: _busy || _source == null ? null : _pickOutput, child: const Text('결과 경로 선택')),
+        OutlinedButton(key: const Key('pdfEditPickOutput'), onPressed: _busy || (_action != 'merge' && _source == null) ? null : _pickOutput, child: const Text('결과 경로 선택')),
         if (_output != null) SizedBox(width: 420, child: Text(_output!, key: const Key('pdfEditOutputPath'), overflow: TextOverflow.ellipsis)),
       ]),
       const SizedBox(height: 20),

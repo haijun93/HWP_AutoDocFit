@@ -40,15 +40,17 @@ class PdfEditService:
         try:
             from pypdf import PdfReader
             reader = PdfReader(str(path), strict=True)
-            if not reader.pages:
-                raise ServiceError('PDF_DAMAGED', '페이지가 없는 손상 PDF입니다.')
             encrypt = reader.trailer.get('/Encrypt')
             if reader.is_encrypted or encrypt is not None:
+                if reader.is_encrypted and not reader.decrypt(''):
+                    raise ServiceError('PDF_ENCRYPTED', '열기 암호가 설정된 PDF는 현재 편집할 수 없습니다.')
                 if encrypt is not None:
                     permissions = encrypt.get_object().get('/P')
                     if permissions is not None and int(permissions) != -1:
                         raise ServiceError('PDF_RESTRICTED', '권한 제한이 설정된 PDF는 현재 편집할 수 없습니다.')
                 raise ServiceError('PDF_ENCRYPTED', '암호가 설정된 PDF는 현재 편집할 수 없습니다.')
+            if not reader.pages:
+                raise ServiceError('PDF_DAMAGED', '페이지가 없는 손상 PDF입니다.')
             if any(page.get('/Annots') and any(str(a.get_object().get('/FT', '')) == '/Sig'
                                                 for a in page['/Annots']) for page in reader.pages):
                 raise ServiceError('PDF_SIGNED', '전자서명된 PDF는 편집할 수 없습니다. 서명이 무효화됩니다.')
