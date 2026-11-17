@@ -30,6 +30,13 @@ fn date(d: Date) -> String {
     d.to_string_ymd()
 }
 
+fn markdown_cell(value: &str) -> String {
+    value
+        .replace('|', "\\|")
+        .replace("\r\n", "<br>")
+        .replace(['\r', '\n'], "<br>")
+}
+
 /// 보고서 마크다운 문자열을 만든다.
 pub fn render_markdown(input: &AnnualInput) -> String {
     let mut out = String::from("# 업무 인수인계 연보\n\n");
@@ -45,7 +52,7 @@ pub fn render_markdown(input: &AnnualInput) -> String {
         for t in &r.stats.top_topics {
             out.push_str(&format!(
                 "| {} | {} | {:.1}% |\n",
-                t.topic_name.replace('|', "\\|"),
+                markdown_cell(&t.topic_name),
                 t.doc_count,
                 t.percentage
             ));
@@ -63,7 +70,7 @@ pub fn render_markdown(input: &AnnualInput) -> String {
                     .unwrap_or(0);
                 out.push_str(&format!(
                     "| {month}월 | {} | {count} |\n",
-                    t.topic_name.replace('|', "\\|")
+                    markdown_cell(&t.topic_name)
                 ));
             }
         }
@@ -78,7 +85,7 @@ pub fn render_markdown(input: &AnnualInput) -> String {
         for p in &input.periodic_topics {
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} |\n",
-                p.topic.replace('|', "\\|"),
+                markdown_cell(&p.topic),
                 p.cadence,
                 p.occurrence_count,
                 date(p.last_date),
@@ -94,11 +101,11 @@ pub fn render_markdown(input: &AnnualInput) -> String {
         for f in &input.folder_histories {
             out.push_str(&format!(
                 "| {} | {} | {} | {} | {} |\n",
-                f.folder.replace('|', "\\|"),
+                markdown_cell(&f.folder),
                 f.document_count,
                 date(f.first_date),
                 date(f.last_date),
-                f.representative_topics.join(", ").replace('|', "\\|")
+                markdown_cell(&f.representative_topics.join(", "))
             ));
         }
     }
@@ -110,7 +117,7 @@ pub fn render_markdown(input: &AnnualInput) -> String {
         for c in &input.topic_changes {
             out.push_str(&format!(
                 "| {} | {} | {} | {:+} |\n",
-                c.topic.replace('|', "\\|"),
+                markdown_cell(&c.topic),
                 c.before_count,
                 c.after_count,
                 c.delta
@@ -280,7 +287,7 @@ mod tests {
     }
     #[test]
     fn markdown_reports_monthly_counts() {
-        assert!(render_markdown(&sample()).contains("| 1월 | 예산, \"정산\"\\n업무 | 2 |"));
+        assert!(render_markdown(&sample()).contains("| 1월 | 예산, \"정산\"<br>업무 | 2 |"));
     }
     #[test]
     fn monthly_csv_header_and_row() {
