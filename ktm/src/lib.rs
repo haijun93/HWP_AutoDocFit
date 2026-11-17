@@ -10,3 +10,4 @@ pub mod paths;
 pub mod settings;
 pub mod tm_state;
 pub mod tray;
+pub mod view_dump;
