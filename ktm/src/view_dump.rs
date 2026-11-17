@@ -89,9 +89,9 @@ mod tests {
             format!("{}\t{}\t{}\t{}\t{:?}\t{:?}", view.kind, view.name, view.path, view.excerpt, view.highlights, view.badges)
         }).collect::<Vec<_>>().join("\n");
         assert_eq!(dump, concat!(
-            "HWP\t2026_예산안.hwp\tC:\\문서\\기획\t2026년 예산 편성 계획\t[(12, 18)]\t[\"HWP\", \"3쪽\"]\n",
+            "HWP\t2026_예산안.hwp\tC:\\문서\\기획\t2026년 예산 편성 계획\t[(8, 14)]\t[\"HWP\", \"3쪽\"]\n",
             "HWPX\t예산집행.hwpx\tC:\\문서\\재정\t예산 집행 세부 기준\t[(0, 6)]\t[\"HWPX\", \"시트1 12행\"]\n",
-            "PDF\t예산보고서.pdf\tC:\\문서\\보고\t상반기 예산 보고\t[(9, 15)]\t[\"PDF\"]"
+            "PDF\t예산보고서.pdf\tC:\\문서\\보고\t상반기 예산 보고\t[(10, 16)]\t[\"PDF\"]"
         ));
         assert_no_replacement_question_marks(&dump);
     }
