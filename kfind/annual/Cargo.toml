@@ -8,6 +8,10 @@ publish = false
 
 [workspace]
 
+[[bin]]
+name = "annual"
+path = "src/main.rs"
+
 [lib]
 name = "kfind_annual"
 
