@@ -16,7 +16,10 @@ class DataPathGuardTests(unittest.TestCase):
         self.assertEqual(os.environ.get("DOCFIT_FORBID_REAL_DATA"), "1")
         for name in ("LOCALAPPDATA", "APPDATA", "USERPROFILE", "HOME"):
             self.assertIn(tempfile.gettempdir(), os.environ[name])
-        self.assertNotIn("C:\\Users\\", str(data_dir()))
+        # 임시 폴더 자체가 사용자 폴더 아래에 있을 수 있으므로 문자열이 아니라 '시험 샌드박스 안인지'로 확인한다.
+        sandbox = os.path.normcase(os.path.abspath(os.environ['LOCALAPPDATA']))
+        self.assertTrue(os.path.normcase(os.path.abspath(str(data_dir()))).startswith(sandbox))
+        self.assertNotEqual(sandbox, os.path.normcase(os.path.abspath(os.environ['DOCFIT_REAL_LOCALAPPDATA'])))
 
     def test_guard_rejects_real_localappdata(self):
         real = Path(tempfile.gettempdir()) / "docfit-real-user-data"
