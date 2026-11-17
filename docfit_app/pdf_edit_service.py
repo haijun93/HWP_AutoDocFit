@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 import shutil
 import subprocess
@@ -17,8 +18,17 @@ class PdfEditService:
     @staticmethod
     def _find_executable():
         name = 'pdf-edit.exe' if os.name == 'nt' else 'pdf-edit'
-        candidates = [Path(__file__).resolve().parents[1] / 'pdf_edit_core' / 'target' / 'release' / name,
-                      Path(__file__).resolve().parents[1] / name]
+        app_root = Path(__file__).resolve().parents[1]
+        candidates = []
+        # PyInstaller onedir installs resources beside the app under _internal;
+        # onefile builds expose bundled resources through _MEIPASS.
+        for base in (Path(sys.executable).resolve().parent,
+                     Path(getattr(sys, '_MEIPASS', app_root))):
+            candidates.append(base / '_internal' / 'resources' / name)
+            candidates.append(base / 'resources' / name)
+        candidates.extend((app_root / 'resources' / name,
+                           app_root / 'pdf_edit_core' / 'target' / 'release' / name,
+                           app_root / name))
         for candidate in candidates:
             if candidate.is_file():
                 return candidate

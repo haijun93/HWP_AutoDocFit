@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+import os
+import sys
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -114,6 +116,28 @@ class PdfEditServiceTests(unittest.TestCase):
         with self.assertRaises(ServiceError) as caught:
             self.service.execute('delete', self.source, self.root / 'result.pdf', pages=[1])
         self.assertEqual(caught.exception.code, 'PDF_ENGINE_MISSING')
+
+    def test_finds_installed_resources_before_development_engine(self):
+        from unittest.mock import patch
+        from docfit_app import pdf_edit_service
+
+        app_dir = self.root / 'installed'
+        bundled = app_dir / '_internal' / 'resources' / 'pdf-edit.exe'
+        bundled.parent.mkdir(parents=True)
+        bundled.write_bytes(b'bundled')
+        with patch.object(pdf_edit_service.sys, 'executable', str(app_dir / 'HWP_AutoDocFit.exe')):
+            self.assertEqual(PdfEditService._find_executable(), bundled)
+
+    def test_finds_meipass_resources(self):
+        from unittest.mock import patch
+        from docfit_app import pdf_edit_service
+
+        meipass = self.root / 'meipass'
+        bundled = meipass / 'resources' / 'pdf-edit.exe'
+        bundled.parent.mkdir(parents=True)
+        bundled.write_bytes(b'bundled')
+        with patch.object(pdf_edit_service.sys, '_MEIPASS', str(meipass), create=True):
+            self.assertEqual(PdfEditService._find_executable(), bundled)
 
 
 if __name__ == '__main__':

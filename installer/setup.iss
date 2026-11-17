@@ -34,7 +34,7 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "바탕 화면 바로 가기 만들기"; GroupDescription: "추가 바로 가기:"; Flags: unchecked
 
 [Files]
-; kvf.exe와 SHA256은 resources 꾸러미에 포함.
+; kvf.exe, pdf-edit.exe와 SHA256은 resources 꾸러미에 포함.
 Source: "..\dist\HWP_AutoDocFit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

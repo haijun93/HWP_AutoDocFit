@@ -188,6 +188,18 @@ jobs:
           (Get-FileHash resources/kvf.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kvf.exe.sha256
           if (!(Test-Path resources/kvf.exe) -or !(Test-Path resources/kvf.exe.sha256)) { throw 'kvf bundle missing' }
 
+      - name: Build PDF edit engine (pdf-edit.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path pdf_edit_core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path pdf_edit_core/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item pdf_edit_core/target/release/pdf-edit.exe resources/pdf-edit.exe -Force
+          (Get-FileHash resources/pdf-edit.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/pdf-edit.exe.sha256
+          if (!(Test-Path resources/pdf-edit.exe) -or !(Test-Path resources/pdf-edit.exe.sha256)) { throw 'pdf-edit bundle missing' }
+
       - name: Build kfind service (kfind.exe, Rust)
         shell: pwsh
         run: |
@@ -242,7 +254,7 @@ jobs:
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {
@@ -272,6 +284,14 @@ jobs:
           if (!(Test-Path "$folder/kvf.exe") -or !(Test-Path "$folder/kvf.exe.sha256")) { throw 'kvf missing from frozen bundle' }
           $expected = (Get-Content "$folder/kvf.exe.sha256" -Raw).Trim()
           if ((Get-FileHash "$folder/kvf.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'kvf bundle hash mismatch' }
+
+      - name: Verify PDF edit engine in frozen bundle
+        shell: pwsh
+        run: |
+          $folder = 'dist/HWP_AutoDocFit/_internal/resources'
+          if (!(Test-Path "$folder/pdf-edit.exe") -or !(Test-Path "$folder/pdf-edit.exe.sha256")) { throw 'pdf-edit missing from frozen bundle' }
+          $expected = (Get-Content "$folder/pdf-edit.exe.sha256" -Raw).Trim()
+          if ((Get-FileHash "$folder/pdf-edit.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'pdf-edit bundle hash mismatch' }
 
       - name: Verify kfind in frozen bundle
         shell: pwsh

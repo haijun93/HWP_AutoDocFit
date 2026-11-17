@@ -9,6 +9,11 @@ pack = root / 'resources' / 'HWP_AutoDocFit_kordoc_runtime.zip'
 if not pack.is_file() or not pack.with_name(pack.name + '.sha256').is_file():
     raise RuntimeError('Build the embedded offline runtime before PyInstaller packaging')
 binaries, hiddenimports = [], []
+pdf_edit_exe = root / 'resources' / 'pdf-edit.exe'
+pdf_edit_sha256 = root / 'resources' / 'pdf-edit.exe.sha256'
+if not pdf_edit_exe.is_file() or not pdf_edit_sha256.is_file():
+    raise RuntimeError('Build the pdf-edit Rust engine before PyInstaller packaging')
+binaries.append((str(pdf_edit_exe), 'resources'))
 klib_exe = root / 'resources' / 'klib.exe'
 if klib_exe.is_file():
     binaries.append((str(klib_exe), 'resources'))
