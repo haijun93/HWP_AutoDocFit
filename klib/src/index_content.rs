@@ -51,8 +51,22 @@ fn initialize(db: &mut Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS content_errors(path TEXT PRIMARY KEY,reason TEXT,size INTEGER,mtime REAL);
         CREATE VIRTUAL TABLE IF NOT EXISTS content_paragraph_fts USING fts5(path UNINDEXED,name UNINDEXED,paragraph_index UNINDEXED,level UNINDEXED,level_rank UNINDEXED,body,location_label UNINDEXED,section UNINDEXED,tokenize='trigram');
         CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(path UNINDEXED,name UNINDEXED,body,tokenize='trigram');
-        CREATE TABLE IF NOT EXISTS content_short_grams(gram TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(gram,path));
-        CREATE INDEX IF NOT EXISTS content_short_grams_path ON content_short_grams(path);") .map_err(|e| e.to_string())
+        CREATE TABLE IF NOT EXISTS content_short_grams(gram TEXT NOT NULL,doc_id INTEGER NOT NULL,PRIMARY KEY(gram,doc_id));")
+        .map_err(|e| e.to_string())?;
+    let columns: Vec<String> = {
+        let mut stmt = db.prepare("PRAGMA table_info(content_short_grams)").map_err(|e| e.to_string())?;
+        let columns = stmt.query_map([], |row| row.get(1)).map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+        columns
+    };
+    // Keep legacy databases writable by preserving their (gram,path) layout.
+    // New databases are created above with compact content_meta rowid references.
+    if columns.iter().any(|column| column == "path") {
+        db.execute_batch("CREATE INDEX IF NOT EXISTS content_short_grams_path ON content_short_grams(path);").map_err(|e| e.to_string())?;
+    } else {
+        db.execute_batch("CREATE INDEX IF NOT EXISTS content_short_grams_doc ON content_short_grams(doc_id);").map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> {
@@ -78,8 +92,20 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
     };
     let body = paragraphs.iter().map(|p|p.text.as_str()).collect::<Vec<_>>().join("\n");
     let date = extract_date(&body);
+    let gram_columns: Vec<String> = {
+        let mut stmt = db.prepare("PRAGMA table_info(content_short_grams)").map_err(|e| e.to_string())?;
+        let columns = stmt.query_map([], |row| row.get(1)).map_err(|e| e.to_string())?
+            .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
+        columns
+    };
+    let legacy_grams = gram_columns.iter().any(|column| column == "path");
     let tx = db.transaction().map_err(|e|e.to_string())?;
-    for table in ["content_paragraph_fts","content_fts","content_short_grams","content_meta","content_errors"] {
+    if legacy_grams {
+        tx.execute("DELETE FROM content_short_grams WHERE path=?", [&path]).map_err(|e|e.to_string())?;
+    } else {
+        tx.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", [&path]).map_err(|e|e.to_string())?;
+    }
+    for table in ["content_paragraph_fts","content_fts","content_meta","content_errors"] {
         tx.execute(&format!("DELETE FROM {table} WHERE path=?"), [&path]).map_err(|e|e.to_string())?;
     }
     for (i,p) in paragraphs.iter().enumerate() {
@@ -92,8 +118,15 @@ fn index_one(db: &mut Connection, path: &Path) -> Result<(bool, usize), String> 
     let chars: Vec<char> = body.to_lowercase().chars().collect();
     let grams: std::collections::HashSet<String> = chars.windows(2)
         .map(|pair| pair.iter().collect::<String>()).collect();
-    for gram in grams { tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",params![gram,path]).map_err(|e|e.to_string())?; }
     tx.execute("INSERT OR REPLACE INTO content_meta(path,size,mtime,ctime,reference_date,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",params![path,size,mtime,meta.created().ok().and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|d.as_secs_f64()).unwrap_or(0.0),date,name,ext,HIERARCHY_VERSION]).map_err(|e|e.to_string())?;
+    let doc_id: i64 = tx.query_row("SELECT rowid FROM content_meta WHERE path=?", [&path], |row| row.get(0)).map_err(|e|e.to_string())?;
+    for gram in grams {
+        if legacy_grams {
+            tx.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",params![gram,path]).map_err(|e|e.to_string())?;
+        } else {
+            tx.execute("INSERT INTO content_short_grams(gram,doc_id) VALUES(?,?)",params![gram,doc_id]).map_err(|e|e.to_string())?;
+        }
+    }
     tx.commit().map_err(|e|e.to_string())?;
     Ok((true,paragraphs.len()))
 }

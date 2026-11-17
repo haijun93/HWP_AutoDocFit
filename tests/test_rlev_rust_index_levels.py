@@ -5,6 +5,7 @@ level·level_rank·table_cell_id를 문단마다 견준다. 없으면 그 시험
 """
 import os
 import shutil
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -155,6 +156,33 @@ class RealKlibLevelsTest(RustLevelsBase):
         self.assertEqual(service.content_index.needs_reindex_count(roots=[str(self.root)]), 0)
         status = service.content_status()
         self.assertEqual((status["seen"], status["indexed"], status["errors"]), (1, 1, 0))  # 재판정은 두 번 세지 않는다
+
+    def test_rust_writes_compact_grams_and_opens_legacy_gram_schema(self):
+        source = self.root / "sample.txt"
+        source.write_text("legacy schema searchable body", encoding="utf-8")
+        legacy_db = self.base / "legacy.db"
+        db = sqlite3.connect(legacy_db)
+        db.executescript("""
+            CREATE TABLE content_meta(path TEXT PRIMARY KEY,size INTEGER,mtime REAL,reference_date TEXT,
+                name TEXT,extension TEXT,ctime REAL,hierarchy_schema_version INTEGER NOT NULL DEFAULT 0);
+            CREATE TABLE content_errors(path TEXT PRIMARY KEY,reason TEXT,size INTEGER,mtime REAL);
+            CREATE VIRTUAL TABLE content_paragraph_fts USING fts5(path UNINDEXED,name UNINDEXED,
+                paragraph_index UNINDEXED,level UNINDEXED,level_rank UNINDEXED,body,
+                location_label UNINDEXED,section UNINDEXED,tokenize='trigram');
+            CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED,name UNINDEXED,body,tokenize='trigram');
+            CREATE TABLE content_short_grams(gram TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(gram,path));
+            CREATE INDEX content_short_grams_path ON content_short_grams(path);
+        """)
+        db.close()
+        import subprocess
+        subprocess.run([find_klib(), "index-content", str(legacy_db), str(source)],
+                       check=True, capture_output=True)
+        db = sqlite3.connect(legacy_db)
+        columns = {row[1] for row in db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "path"})
+        self.assertIsNotNone(db.execute("SELECT 1 FROM content_short_grams WHERE gram='le' AND path=?",
+                                        (str(source),)).fetchone())
+        db.close()
 
     def test_rust_and_python_paths_store_same_levels(self):
         for path in FIXTURES.rglob("*"):

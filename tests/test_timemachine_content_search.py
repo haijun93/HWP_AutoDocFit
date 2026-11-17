@@ -76,6 +76,36 @@ class ContentSearchTests(unittest.TestCase):
         self.index.close()
         self.tmp.cleanup()
 
+    def test_short_gram_schema_uses_content_meta_rowid(self):
+        columns = {row[1] for row in self.index.db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "doc_id"})
+        self.assertEqual(self.index.db.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_legacy_short_gram_table_migrates_and_keeps_searchable_content(self):
+        self.index.close()
+        legacy_path = self.root / "legacy.sqlite"
+        legacy = sqlite3.connect(legacy_path)
+        legacy.executescript("""
+            CREATE TABLE content_meta(path TEXT PRIMARY KEY, name TEXT);
+            CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED,name UNINDEXED,body,tokenize='trigram');
+            CREATE TABLE content_short_grams(gram TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(gram,path));
+        """)
+        path = str(self.root / "legacy.txt")
+        legacy.execute("INSERT INTO content_meta(path,name) VALUES(?,?)", (path, "legacy.txt"))
+        legacy.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)",
+                       (path, "legacy.txt", "legacy searchable body"))
+        legacy.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)", ("le", path))
+        legacy.commit()
+        legacy.close()
+
+        self.index = ContentSearchIndex(legacy_path)
+        columns = {row[1] for row in self.index.db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "doc_id"})
+        self.assertEqual(self.index.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        doc_id = self.index.db.execute("SELECT rowid FROM content_meta WHERE path=?", (path,)).fetchone()[0]
+        self.assertIsNotNone(self.index.db.execute(
+            "SELECT 1 FROM content_short_grams WHERE gram='le' AND doc_id=?", (doc_id,)).fetchone())
+
     def test_context_search_results_match_across_all_synthetic_queries(self):
         """10개 기준 질의의 전체 결과 필드(정렬·문단·경로·문맥)가 유지된다."""
         with self.index._lock, self.index.db:
