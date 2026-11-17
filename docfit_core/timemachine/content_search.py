@@ -829,13 +829,31 @@ class ContentSearchIndex:
 
             # SQLite trigram tokenizer cannot answer LIKE queries shorter than 3 chars.
             # Store distinct 2-character substrings as an ordinary indexed candidate table.
-            self.db.executescript("""
-                CREATE TABLE IF NOT EXISTS content_short_grams(
-                    gram TEXT NOT NULL, path TEXT NOT NULL,
-                    PRIMARY KEY(gram,path)
-                );
-                CREATE INDEX IF NOT EXISTS content_short_grams_path ON content_short_grams(path);
-            """)
+            grams_version = self.db.execute("PRAGMA user_version").fetchone()[0]
+            grams_exists = self.db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='content_short_grams'").fetchone()
+            gram_columns = ({row[1] for row in self.db.execute("PRAGMA table_info(content_short_grams)")}
+                            if grams_exists else set())
+            legacy_grams = grams_exists and "path" in gram_columns
+            with self.db:
+                self.db.execute("BEGIN IMMEDIATE")
+                if legacy_grams:
+                    self.db.execute("DROP TABLE content_short_grams")
+                self.db.execute("CREATE TABLE IF NOT EXISTS content_short_grams("
+                                "gram TEXT NOT NULL, doc_id INTEGER NOT NULL, PRIMARY KEY(gram,doc_id))")
+                self.db.execute("CREATE INDEX IF NOT EXISTS content_short_grams_doc ON content_short_grams(doc_id)")
+                if grams_version < 1:
+                    self.db.execute("PRAGMA user_version=1")
+                if legacy_grams:
+                    # Rebuild compact references from existing full-text rows;
+                    # document bodies remain intact throughout this migration.
+                    rows = self.db.execute(
+                        "SELECT m.rowid, f.body FROM content_meta m JOIN content_fts f ON f.path=m.path").fetchall()
+                    for doc_id, body in rows:
+                        body = body or ""
+                        grams = {body[i:i + 2].casefold() for i in range(max(0, len(body) - 1))}
+                        self.db.executemany("INSERT OR IGNORE INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                                            ((gram, doc_id) for gram in grams))
 
             cols = {r[1] for r in self.db.execute("PRAGMA table_info(content_meta)")}
             if "reference_date" not in cols:
@@ -1015,7 +1033,7 @@ class ContentSearchIndex:
         with self._lock:
             for sql in ("SELECT path, name FROM content_meta", "SELECT path, NULL AS name FROM content_errors",
                         "SELECT DISTINCT path, name FROM content_paragraph_fts", "SELECT path, name FROM content_fts",
-                        "SELECT DISTINCT path, NULL AS name FROM content_short_grams"):
+                        "SELECT m.path, NULL AS name FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id"):
                 try:
                     rows = self.db.execute(sql).fetchall()
                 except sqlite3.OperationalError:
@@ -1027,8 +1045,8 @@ class ContentSearchIndex:
                 with self._map_kept(), self.db:
                     for path in paths:
                         self._delete_paragraphs(path)
-                        for table in ("content_fts", "content_short_grams",
-                                      "content_meta", "content_errors"):
+                        self.db.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", (path,))
+                        for table in ("content_fts", "content_meta", "content_errors"):
                             try:
                                 self.db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
                             except sqlite3.OperationalError:
@@ -1193,7 +1211,8 @@ class ContentSearchIndex:
                 self._map_stamp = None
                 self._ensure_paragraph_map()
                 self._delete_paragraphs(path)
-                for table in ("content_fts", "content_short_grams", "content_meta"):
+                self.db.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", (path,))
+                for table in ("content_fts", "content_meta"):
                     self.db.execute(f"DELETE FROM {table} WHERE path=?", (path,))
             except BaseException:
                 # 정리마저 실패하면 미커밋 조각을 통째로 되돌린다.
@@ -1247,7 +1266,7 @@ class ContentSearchIndex:
             with self._lock, self._map_kept(), self._index_transaction(path):
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
-                self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
+                self.db.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", (path,))
                 map_rows = []
                 for p in paragraphs:
                     location = _EXTRACTED_LOCATIONS.get(path, {}).get(p.paragraph_index,
@@ -1264,13 +1283,14 @@ class ContentSearchIndex:
                     "INSERT INTO content_paragraph_map(path, paragraph_index, para_rowid) VALUES(?,?,?)", map_rows)
                 self._map_rows_changed(len(map_rows))
                 self.db.execute("INSERT INTO content_fts(path, name, body) VALUES(?,?,?)", (path, name, body))
-                grams = {body[i:i + 2].casefold() for i in range(max(0, len(body) - 1))}
-                self.db.executemany("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",
-                                    ((gram, path) for gram in grams))
                 self.db.execute(
                     "INSERT OR REPLACE INTO content_meta(path, size, mtime, ctime, reference_date, name, extension, hierarchy_schema_version) VALUES(?,?,?,?,?,?,?,?)",
                     (path, size, mtime, ctime, ref_date, name, ext, CURRENT_HIERARCHY_SCHEMA_VERSION)
                 )
+                doc_id = self.db.execute("SELECT rowid FROM content_meta WHERE path=?", (path,)).fetchone()[0]
+                grams = {body[i:i + 2].casefold() for i in range(max(0, len(body) - 1))}
+                self.db.executemany("INSERT INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                                    ((gram, doc_id) for gram in grams))
                 self.db.execute("DELETE FROM content_errors WHERE path=?", (path,))
                 self._invalidate_rank_cache()
             return {"indexed": True, "error": None}
@@ -1281,8 +1301,8 @@ class ContentSearchIndex:
             with self._lock, self._map_kept(), self._index_transaction(path):
                 self._delete_paragraphs(path)
                 self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
+                self.db.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", (path,))
                 self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
-                self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
                 self.db.execute("INSERT OR REPLACE INTO content_errors VALUES(?,?,?,?)", (path, reason, size, mtime))
                 self._invalidate_rank_cache()
             return {"indexed": False, "error": reason}
@@ -1374,7 +1394,7 @@ class ContentSearchIndex:
         with self._lock, self._map_kept(), self._index_transaction(path):
             self._delete_paragraphs(path)
             self.db.execute("DELETE FROM content_fts WHERE path=?", (path,))
-            self.db.execute("DELETE FROM content_short_grams WHERE path=?", (path,))
+            self.db.execute("DELETE FROM content_short_grams WHERE doc_id=(SELECT rowid FROM content_meta WHERE path=?)", (path,))
             self.db.execute("DELETE FROM content_meta WHERE path=?", (path,))
             self.db.execute("DELETE FROM content_errors WHERE path=?", (path,))
             self._invalidate_rank_cache()
@@ -1423,12 +1443,12 @@ class ContentSearchIndex:
             with self._lock:
                 grams_complete = self.db.execute(
                     "SELECT 1 FROM content_meta m WHERE NOT EXISTS"
-                    " (SELECT 1 FROM content_short_grams g WHERE g.path=m.path) LIMIT 1").fetchone() is None
+                    " (SELECT 1 FROM content_short_grams g WHERE g.doc_id=m.rowid) LIMIT 1").fetchone() is None
             for term in terms:
                 with self._lock:
                     if grams_complete and len(term) == 2:
                         found = {r[0] for r in self.db.execute(
-                            "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
+                            "SELECT m.path FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id WHERE g.gram=?", (term.casefold(),))}
                     else:
                         found = {r[0] for r in self.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}
                 candidates = found if candidates is None else candidates & found
@@ -1982,12 +2002,12 @@ class ContentSearchIndex:
                 if short_positive:
                     grams_complete = self.db.execute(
                         "SELECT 1 FROM content_meta m WHERE NOT EXISTS"
-                        " (SELECT 1 FROM content_short_grams g WHERE g.path=m.path) LIMIT 1").fetchone() is None
+                        " (SELECT 1 FROM content_short_grams g WHERE g.doc_id=m.rowid) LIMIT 1").fetchone() is None
                     short_candidates = None
                     for term in short_positive:
                         if len(term) == 2 and grams_complete:
                             found = {r[0] for r in self.db.execute(
-                                "SELECT path FROM content_short_grams WHERE gram=?", (term.casefold(),))}
+                                "SELECT m.path FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id WHERE g.gram=?", (term.casefold(),))}
                         else:
                             found = {r[0] for r in self.db.execute(
                                 "SELECT path FROM content_paragraph_fts WHERE body LIKE ?", ("%" + term + "%",))}

@@ -76,6 +76,36 @@ class ContentSearchTests(unittest.TestCase):
         self.index.close()
         self.tmp.cleanup()
 
+    def test_short_gram_schema_uses_content_meta_rowid(self):
+        columns = {row[1] for row in self.index.db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "doc_id"})
+        self.assertEqual(self.index.db.execute("PRAGMA user_version").fetchone()[0], 1)
+
+    def test_legacy_short_gram_table_migrates_and_keeps_searchable_content(self):
+        self.index.close()
+        legacy_path = self.root / "legacy.sqlite"
+        legacy = sqlite3.connect(legacy_path)
+        legacy.executescript("""
+            CREATE TABLE content_meta(path TEXT PRIMARY KEY, name TEXT);
+            CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED,name UNINDEXED,body,tokenize='trigram');
+            CREATE TABLE content_short_grams(gram TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(gram,path));
+        """)
+        path = str(self.root / "legacy.txt")
+        legacy.execute("INSERT INTO content_meta(path,name) VALUES(?,?)", (path, "legacy.txt"))
+        legacy.execute("INSERT INTO content_fts(path,name,body) VALUES(?,?,?)",
+                       (path, "legacy.txt", "legacy searchable body"))
+        legacy.execute("INSERT INTO content_short_grams(gram,path) VALUES(?,?)", ("le", path))
+        legacy.commit()
+        legacy.close()
+
+        self.index = ContentSearchIndex(legacy_path)
+        columns = {row[1] for row in self.index.db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "doc_id"})
+        self.assertEqual(self.index.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        doc_id = self.index.db.execute("SELECT rowid FROM content_meta WHERE path=?", (path,)).fetchone()[0]
+        self.assertIsNotNone(self.index.db.execute(
+            "SELECT 1 FROM content_short_grams WHERE gram='le' AND doc_id=?", (doc_id,)).fetchone())
+
     def test_context_search_results_match_across_all_synthetic_queries(self):
         """10개 기준 질의의 전체 결과 필드(정렬·문단·경로·문맥)가 유지된다."""
         with self.index._lock, self.index.db:
@@ -508,14 +538,15 @@ class ContentSearchTests(unittest.TestCase):
             self.index.db.executemany(
                 "INSERT INTO content_meta(path,size,mtime,ctime,hierarchy_schema_version) VALUES(?,?,?,?,?)",
                 [(row[0], 1, 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION) for row in rows])
-            self.index.db.executemany("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",
-                                      [(gram, row[0]) for row in rows
+            doc_ids = dict(self.index.db.execute("SELECT path,rowid FROM content_meta"))
+            self.index.db.executemany("INSERT INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                                      [(gram, doc_ids[row[0]]) for row in rows
                                        for gram in {row[5][i:i + 2].casefold() for i in range(len(row[5]) - 1)}])
         start = time.perf_counter()
         self.index.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%검색%",)).fetchall()
         before_seconds = time.perf_counter() - start
         start = time.perf_counter()
-        self.index.db.execute("SELECT path FROM content_short_grams WHERE gram=?", ("검색",)).fetchall()
+        self.index.db.execute("SELECT m.path FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id WHERE g.gram=?", ("검색",)).fetchall()
         gram_seconds = time.perf_counter() - start
         start = time.perf_counter()
         result = self.index.keyword_search("검색", limit=100)
@@ -540,9 +571,10 @@ class ContentSearchTests(unittest.TestCase):
                 self.index.db.execute(
                     "INSERT INTO content_meta(path,size,mtime,ctime,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?)",
                     (path, 1, 1.0, 1.0, name, "txt", CURRENT_HIERARCHY_SCHEMA_VERSION))
+                doc_id = self.index.db.execute("SELECT rowid FROM content_meta WHERE path=?", (path,)).fetchone()[0]
                 self.index.db.executemany(
-                    "INSERT OR IGNORE INTO content_short_grams(gram,path) VALUES(?,?)",
-                    [(gram, path) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
+                    "INSERT OR IGNORE INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                    [(gram, doc_id) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
         return paths
 
     def test_keyword_two_character_term_found_when_only_in_first_paragraph(self):
@@ -1345,8 +1377,11 @@ class BatchIndexTests(unittest.TestCase):
         state = tuple(db.execute("SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone())
         self.assertEqual(state, (len(para), max(para, default=0)))
         meta = {row[0] for row in db.execute("SELECT path FROM content_meta")}
-        for table in ("content_fts", "content_short_grams", "content_paragraph_fts"):
+        for table in ("content_fts", "content_paragraph_fts"):
             self.assertEqual({row[0] for row in db.execute(f"SELECT DISTINCT path FROM {table}")}, meta, table)
+        gram_paths = {row[0] for row in db.execute(
+            "SELECT DISTINCT m.path FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id")}
+        self.assertEqual(gram_paths, meta, "content_short_grams")
         self.assertFalse(index._ensure_paragraph_map())
 
     def test_batch_and_rollback(self):
