@@ -1,0 +1,12 @@
+[package]
+name = "pdf_edit_core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "경량 오프라인 PDF 페이지 편집 코어"
+
+[dependencies]
+lopdf = "0.34"
+
+[dev-dependencies]
+tempfile = "3"

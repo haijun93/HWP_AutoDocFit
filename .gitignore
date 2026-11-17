@@ -57,3 +57,5 @@ resources/kfind.exe.sha256
 ktm/target/
 resources/ktm.exe
 resources/ktm.exe.sha256
+
+pdf_edit_core/target/
