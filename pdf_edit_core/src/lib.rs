@@ -47,3 +47,40 @@ pub fn split(input: impl AsRef<Path>, output_dir: impl AsRef<Path>, ranges: &[st
     for (i, range) in ranges.iter().enumerate() { let pages: Vec<usize> = range.clone().collect(); if pages.iter().any(|p| *p == 0 || *p > total) { return Err(PdfEditError::Invalid("분할 범위가 올바르지 않습니다".into())); } let path = dir.join(format!("part-{}.pdf", i + 1)); reorder(&input, &path, &pages)?; out.push(path); }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lopdf::{dictionary, Document, Object};
+
+    fn fixture(path: &Path, pages: usize) {
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let catalog_id = doc.new_object_id();
+        let mut kids = Vec::new();
+        for _ in 0..pages {
+            let page_id = doc.new_object_id();
+            doc.objects.insert(page_id, Object::Dictionary(dictionary! {
+                "Type" => "Page", "Parent" => pages_id, "MediaBox" => vec![0.into(), 0.into(), 100.into(), 100.into()]
+            }));
+            kids.push(page_id.into());
+        }
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => pages as i64 }));
+        doc.objects.insert(catalog_id, Object::Dictionary(dictionary! { "Type" => "Catalog", "Pages" => pages_id }));
+        doc.trailer.set("Root", catalog_id); doc.max_id = doc.objects.len() as u32; doc.save(path).unwrap();
+    }
+
+    #[test]
+    fn page_operations_preserve_requested_order_and_count() {
+        let dir = tempfile::tempdir().unwrap(); let input = dir.path().join("in.pdf"); let output = dir.path().join("out.pdf");
+        fixture(&input, 4); reorder(&input, &output, &[4, 2, 1]).unwrap(); assert_eq!(page_count(&output).unwrap(), 3);
+        let rotated = dir.path().join("rotated.pdf"); rotate_pages(&output, &rotated, &[1, 3], 90).unwrap(); assert_eq!(page_count(&rotated).unwrap(), 3);
+    }
+
+    #[test]
+    fn delete_and_split_reject_empty_or_invalid_ranges() {
+        let dir = tempfile::tempdir().unwrap(); let input = dir.path().join("in.pdf"); fixture(&input, 3);
+        assert!(delete_pages(&input, dir.path().join("bad.pdf"), &[1, 2, 3]).is_err());
+        assert!(split(&input, dir.path().join("parts"), &[2..=4]).is_err());
+    }
+}
