@@ -1,6 +1,6 @@
 # 퀵몽땅검색 — Docufinder AI 제외 기능 대조표
 
-작성일: 2026-11-15 · 카드: QMS-PARITY · 범위: 조사와 계획만(코드 수정 없음)
+작성일: 2026-11-17 · 카드: QMS-PARITY · 범위: 코드·회귀시험 대조 및 잔여 구현 계획
 
 ## 근거와 판정 기준
 
@@ -16,9 +16,9 @@
 | 검색 대상·탭 | 파일명과 본문 결과를 함께 표시(DFB2에서 관찰); 파일명·본문 검색, 위계기반 본문검색(TM_SEARCH_DESIGN) | **부분** — `tm_state::Tab`에 파일명·본문·위계 탭 존재. 파일명은 이름 전용 질의 경로이며 한 화면의 통합 결과는 아님 | **부분** — 본문 문장/문서 색인 및 위계 순위 지원. 파일명 검색 색인은 없음 | `ktm/src/backend.rs`, `ktm/src/window.rs`에 통합 결과 모델·표시, `kfind/core/src/index.rs` 결과 합성 API. **중**. 파일명 경로 추가 계산은 작지만 통합 정렬/표시는 화면 작업이며 16ms 민감 |
 | 실시간 검색 | 입력 중 자동 갱신(DFB2에서 관찰) | **지원** — 두 글자부터 자동 질의, Enter는 한 글자 명시 질의, 세대 번호로 늦은 응답 무효화(`tm_state.rs`) | **지원** — 취소·시간한도와 질의 캐시가 있는 Rust 엔진 | 유지. `ktm/src/tm_state.rs`, `window.rs`; **낮음**, 새 검색 시작 비용만 부하. DFB2 입력 측정은 Docufinder와 동일 비교가 아님 |
 | 검색어 AND | 여러 낱말 모두 포함(TM_SEARCH_DESIGN) | **지원** — 본문 질의 토큰화 후 동일 문장 내 교집합 | **지원** — 문장 단위 낱말 일치, 붙여 쓴 한국어 분할. 세미콜론 그룹 검색도 제공 | 유지. `kfind/core/src/query.rs`, `index.rs`; **낮음**, 기존 역색인 경로 사용 |
-| 정확 구문 | `"구문"` 연산자, 구문 내 단어 분할 없이 연속 일치(TM_SEARCH_DESIGN) | **미지원** — 검색창에서 따옴표 문법 해석 확인 안 됨 | **부분** — `SearchOptions::phrases` API가 있지만 앱 질의 문자열에서 인용부호를 파싱해 연결하는 경로는 확인 안 됨 | 검색 구문 파서와 앱 연결: `kfind/core/src/query.rs`, `ktm/src/backend.rs`. **중**. 구문은 추가 교집합으로 비용 낮음~중간; 원문 위치 검증 필요 |
-| 제외어 | `-낱말`(TM_SEARCH_DESIGN) | **미지원** — 연산자 UI/파싱 확인 안 됨 | **부분** — 문서 ID `deny` 집합 API는 있으나 질의어의 제외어 문법은 없음 | 구문 파서에서 제외 토큰 분리, 후보 bitmap에서 빼기: `query.rs`, `index.rs`, `ktm/src/backend.rs`. **중**. 후보 집합 연산은 보통 낮은 영향, 넓은 제외어는 증가 가능 |
-| 확장자 제한 | `ext:hwp,pdf` 및 형식 검색(TM_SEARCH_DESIGN) | **부분** — 선택 확장자 UI는 확인 안 됨 | **부분** — `SearchOptions::file_types` 필드는 있으나 실제 파일 형식 메타와 앱 연결 확인 필요 | `kfind/core/src/index.rs` 문서 메타/허용집합, `ktm/src/backend.rs` 질의 파서 연결. **중**. 후보 문서 집합 제한으로 대체로 속도 개선 |
+| 정확 구문 | `"구문"` 연산자, 구문 내 단어 분할 없이 연속 일치(TM_SEARCH_DESIGN) | **지원** — `backend::parse_query_syntax`가 인용 구문을 추출해 검색 요청에 전달 | **지원** — `QuerySyntax.phrases`가 `SearchOptions::phrases`로 연결되고 회귀시험 통과 | 유지. `kfind/core/src/query.rs`, `ktm/src/backend.rs` |
+| 제외어 | `-낱말`(TM_SEARCH_DESIGN) | **지원** — 검색어 파싱 후 제외어를 엔진 옵션에 전달 | **지원** — 제외어를 후보 문서 집합에서 제거하고 2글자 이하도 본문 검증 | 유지. `query.rs`, `index.rs`, `ktm/src/backend.rs` |
+| 확장자 제한 | `ext:hwp,pdf` 및 형식 검색(TM_SEARCH_DESIGN) | **지원** — `ext:` 파싱 결과를 파일 형식 선택과 결합 | **지원** — `SearchOptions::file_types` 후보 집합 필터 적용 | 유지. 후보 문서 집합을 먼저 좁혀 검색 비용을 보호 |
 | 폴더 지정·범위 | `path:` 및 등록 폴더 범위 검색(TM_SEARCH_DESIGN) | **부분** — 결과 폴더 집계·추천 폴더 클릭 필터, 날짜와 folder 인자를 전달 | **부분** — `SearchOptions::folder`, scope/allow API 지원. 현재 UI 폴더 집계 상위 6개 기반이라 임의 경로 입력과 등록 루트 선택은 별도 | 임의 경로 `path:` 및 루트 선택을 `ktm/src/window.rs`에 추가, `backend.rs`→`SearchOptions.folder/allow`. **중**. 색인 후보를 줄여 보통 개선; 경로 정규화 주의 |
 | 수정 날짜 | `after:`·`before:`(TM_SEARCH_DESIGN); 퀵 UI 기간 제한 | **지원** — 전체/오늘/주/월/년/직접 기간 필터 | **지원** — `start_date`·`end_date`, 날짜 범위 및 문서 메타 | 자연어 연산자만 추가 시 `query.rs`/`backend.rs`. **낮음**. 이미 있는 날짜 필터 집합을 활용해 검색 비용 감소 가능 |
 | 파일 형식 추출 | HWPX/HWP5/DOCX/PPTX/XLSX·XLS/PDF/TXT·MD/EML, 암호 문서 건너뛰기 표시(TM_SEARCH_DESIGN) | **미확인** — 검색 UI는 색인 파일 결과를 소비하며 추출기 지원 범위는 이 카드의 ktm UI만으로 확인 불가 | **미확인** — core는 추출된 문장·메타를 색인하며 원본 포맷 파서는 아님 | 현 색인 파이프라인의 형식별 추출기/오류 메타 조사 후 `kfind` 연동 위치를 확정. **높음**. 추출·색인 증가는 검색 hot path에는 영향 작으나 색인 자원 증가. 암호 건너뜀 상태 표시 필요 |
@@ -41,4 +41,4 @@
 5. **QMS-EXPORT** — 현재 탭 검색 결과 CSV/TSV 내보내기(기존 카드 5번 중 내보내기 선행 분리). 화면 상한과 무관하게 최대 1,000건, Ctrl+E로 형식(CSV/TSV) 선택, 사용자 문서 폴더의 '퀵몽땅검색_결과_날짜시각.csv' 저장 후 폴더 열기. 열: 번호·파일명·경로·형식·수정일·일치 문장(본문 탭) 또는 크기(파일명 탭). 쉼표·따옴표·줄바꿈 이스케이프 정확히, UTF-8 BOM(Excel 호환), 외부 전송 없음. 결과 DTO·직렬화는 `ktm/src/export.rs`로 분리하고 `window.rs` 변경 최소화. 검색칸 글 다시쓰기 금지(한글 조합 보호).
 5-1. **QMS-FORMATS-METADATA** — 포맷별 위치 완전성(PDF 쪽·스프레드시트 시트/행 배지·암호 문서 건너뜀 상태) 연계. 선행: QMS-RESULTS의 안정된 결과 DTO 및 위치 메타. 위치: 색인 추출 파이프라인, `ktm/src/backend.rs`. 난이도 중~높음.
 
-> 이 문서는 대조표만 제시한다. 구현, 측정, 시험 실행, 브랜치·버전 변경은 수행하지 않았다.
+> 2026-11-17 확인: QMS-QUERY의 인용 구문·제외어·확장자·경로·기간 문법은 현재 `ktm`→`kfind` 연결과 회귀시험에서 확인했다. 본문검색 2글자 누락 및 대량 후보 SQL 변수 한도 오류도 수정되어 관련 시험을 통과했다. 아직 남은 범위는 정규식/와일드카드, 포맷별 위치 메타 완전성, 16ms/2MB 실기 측정이다.
