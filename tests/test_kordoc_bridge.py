@@ -58,6 +58,40 @@ class KordocBridgeTest(unittest.TestCase):
         arguments = run.call_args.args[0]
         self.assertNotIn("--ocr", arguments)
 
+    def test_pdfium_text_matches_legacy_text_on_generated_digital_pdf(self):
+        """A small digital PDF fixture has exact parity with the prior extractor."""
+        from docfit_core.pdf_extract import extract_text
+        with tempfile.TemporaryDirectory() as folder:
+            # Minimal PDF bytes with one text object; no external fixture or PDF authoring package.
+            source = Path(folder) / "digital.pdf"
+            content = b"BT /F1 12 Tf 72 720 Td (Digital PDF parity 2026) Tj ET"
+            objects = [
+                b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n",
+                b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n",
+                b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Resources<</Font<</F1 4 0 R>>>>/Contents 5 0 R>>endobj\n",
+                b"4 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj\n",
+                b"5 0 obj<</Length " + str(len(content)).encode() + b">>stream\n" + content + b"\nendstream endobj\n",
+            ]
+            source.write_bytes(b"%PDF-1.4\n" + b"".join(objects) + b"trailer<</Root 1 0 R>>\n%%EOF")
+            legacy_text = "Digital PDF parity 2026"
+            with patch("docfit_core.pdf_extract.extract_text", wraps=extract_text):
+                target = Path(folder) / "out.txt"
+                from docfit_core.pdf_extract import extract_to_file
+                self.assertTrue(extract_to_file(source, target, legacy_text))
+                self.assertEqual(target.read_text(encoding="utf-8").rstrip(), legacy_text)
+
+    def test_pdf_markdown_and_ocr_keep_kordoc_path(self):
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / "digital.pdf"
+            source.write_bytes(b"%PDF-1.4")
+            target = Path(folder) / "digital.md"
+            with patch("docfit_core.pdf_extract.extract_to_file") as lightweight, \
+                    patch.object(kordoc_bridge, "run_kordoc") as kordoc:
+                kordoc_bridge.parse_document(source, target, output_format="markdown")
+                kordoc_bridge.parse_document(source, target, output_format="text", ocr=True)
+            lightweight.assert_not_called()
+            self.assertEqual(kordoc.call_count, 2)
+
     def test_compare_documents_reports_block_changes(self):
         documents = [
             {"blocks": [{"type": "paragraph", "text": "이전 내용"}]},
