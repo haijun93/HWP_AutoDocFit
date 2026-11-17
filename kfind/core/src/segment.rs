@@ -383,7 +383,7 @@ fn gram_key_bytes(packed: u64, out: &mut Vec<u8>) {
 pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = &'a PendingDoc> + Clone) -> Result<(SegMeta, Option<Vec<u8>>)> {
     let mut grams: FxMap<u64, RoaringBitmap> = FxMap::default();
     let mut doc_grams: FxMap<u64, RoaringBitmap> = FxMap::default();
-    let mut words: HashMap<Box<[u8]>, RoaringBitmap> = HashMap::new();
+    let mut words: HashMap<Vec<u8>, RoaringBitmap> = HashMap::new();
     let mut file_types: HashMap<String, RoaringBitmap> = HashMap::new();
     let mut roles: [RoaringBitmap; 5] = Default::default();
     let mut days: std::collections::BTreeMap<u32, RoaringBitmap> = std::collections::BTreeMap::new();
@@ -466,7 +466,7 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
                         None => {
                             let mut bm = RoaringBitmap::new();
                             let _ = bm.try_push(local);
-                            words.insert(w.into(), bm);
+                            words.insert(w.to_vec(), bm);
                         }
                     }
                 }
