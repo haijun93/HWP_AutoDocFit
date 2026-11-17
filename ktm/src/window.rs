@@ -248,7 +248,8 @@ fn sync_edit_text(ed: HWND, text: &str) {
         let mut cur = vec![0u16; caret + 2];
         let n = GetWindowTextW(ed, cur.as_mut_ptr(), cur.len() as i32) as usize;
         if !(n == caret && cur[..n] == q[..caret]) {
-            SetWindowTextW(ed, q.as_ptr());
+            SendMessageW(ed, 0x00b1, 0, -1);
+            SendMessageW(ed, 0x00c2, 1, q.as_ptr() as isize);
             SendMessageW(ed, 0x00b1, caret, caret as isize);
         }
     }
@@ -354,7 +355,6 @@ fn event(h: HWND, e: Event) {
         let (ed, text) = with(|u| (u.within_edit, u.state.options.within_query.clone()));
         sync_edit_text(ed, &text);
     }
-    let combined_search = with(|u| u.state.tab == Tab::All);
     let mut search_cancel: Option<Arc<AtomicBool>> = None;
     for fx in effects {
         unsafe {
@@ -404,32 +404,23 @@ fn event(h: HWND, e: Event) {
                     let cancel = search_cancel.get_or_insert_with(|| Arc::new(AtomicBool::new(false))).clone();
                     edit(|u| u.cancel = cancel.clone());
                     let sort = with(|u| ktm::backend::NAME_SORTS[u.name_sort % 4].0);
-                    let mut max_results = with(|u| u.settings.bounded_max_results());
-                    if combined_search { max_results = max_results.min(match tab { Tab::Names | Tab::Hierarchy => 20, _ => 40 }); }
+                    let max_results = with(|u| u.settings.bounded_max_results());
                     let skip_cloud_network = with(|u| u.settings.skip_cloud_network);
                     {
                         let mut p = tx.0.lock().unwrap();
-                        if tab == Tab::All { edit(|u| u.combined_batches.clear()); }
-                        let job = (
-                            generation,
-                            query,
-                            tab,
-                            Instant::now(),
-                            cancel,
-                            sort,
-                            date_filter,
-                            custom_date_range,
-                            folder,
-                            ext,
-                            match_mode,
-                            max_results,
-                            skip_cloud_network,
-                        );
                         if tab == Tab::All {
-                            // Keep the three current-generation legs together; new generations replace them.
-                            p.search.retain(|j| j.0 == generation);
-                            p.search.push(job);
-                        } else { p.search.clear(); p.search.push(job); }
+                            edit(|u| u.combined_batches.clear());
+                            p.search.clear();
+                            for (part, limit) in [(Tab::Names, 20), (Tab::Hierarchy, 20), (Tab::Body, 40)] {
+                                p.search.push((generation, query.clone(), part, Instant::now(), cancel.clone(), sort,
+                                    date_filter, custom_date_range, folder.clone(), ext.clone(), match_mode,
+                                    max_results.min(limit), skip_cloud_network));
+                            }
+                        } else {
+                            p.search.clear();
+                            p.search.push((generation, query, tab, Instant::now(), cancel, sort,
+                                date_filter, custom_date_range, folder, ext, match_mode, max_results, skip_cloud_network));
+                        }
                         p.snippets = None;
                     }
                     tx.1.notify_one();

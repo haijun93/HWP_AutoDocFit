@@ -1330,7 +1330,7 @@ mod tests {
 
         let rects = calc_tab_rects(pad, tab_y, tab_h, width);
         assert_eq!(rects[0].left, 12);
-        assert_eq!(rects[2].right, 688);
+        assert_eq!(rects[3].right, 688);
         assert!(rects[0].right == rects[1].left);
         assert!(rects[1].right == rects[2].left);
 
@@ -1338,8 +1338,9 @@ mod tests {
         assert_eq!(hit_tab(15, 80, pad, tab_y, tab_h, width), Some(0));
         // 두 번째 탭 클릭
         assert_eq!(hit_tab(300, 80, pad, tab_y, tab_h, width), Some(1));
-        // 세 번째 탭 클릭
-        assert_eq!(hit_tab(600, 80, pad, tab_y, tab_h, width), Some(2));
+        // 세 번째와 네 번째 탭 클릭
+        assert_eq!(hit_tab(500, 80, pad, tab_y, tab_h, width), Some(2));
+        assert_eq!(hit_tab(680, 80, pad, tab_y, tab_h, width), Some(3));
         // 탭 밖 클릭
         assert_eq!(hit_tab(5, 80, pad, tab_y, tab_h, width), None);
         assert_eq!(hit_tab(695, 80, pad, tab_y, tab_h, width), None);
