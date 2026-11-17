@@ -679,6 +679,8 @@ impl Backend {
             self.index
                 .search_character(search_text, &opts)
                 .map_err(|e| e.to_string())?
+        } else if !syntax.wildcards.is_empty() {
+            self.index.search_syntax(&query_text, &opts).map_err(|e| e.to_string())?
         } else {
             self.index
                 .search_groups_by(search_text, &opts, order)

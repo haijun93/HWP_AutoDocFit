@@ -88,6 +88,18 @@ fn setup_test_index(name: &str) -> Index {
 }
 
 #[test]
+fn wildcard_search_filters_candidates_exactly() {
+    let index = setup_test_index("wildcard-search");
+    let result = index.search_syntax("공사*", &SearchOptions::default()).expect("wildcard search");
+    assert_eq!(result.total_docs, 3);
+    assert_eq!(result.total_sentences, 4);
+
+    let result = index.search_syntax("공?사", &SearchOptions::default()).expect("single-char wildcard");
+    assert_eq!(result.total_docs, 3);
+    assert_eq!(result.total_sentences, 4);
+}
+
+#[test]
 fn test_query_syntax_exact_phrase_search() {
     let index = setup_test_index("syntax_phrase");
 

@@ -103,6 +103,10 @@ pub struct QuerySyntax {
     pub start_date: Option<i64>,
     /// 종료 날짜 (before:...) -> YYYYMMDD i64
     pub end_date: Option<i64>,
+    /// 와일드카드 질의(토큰 하나, * = 0개 이상, ? = 한 글자).
+    pub wildcards: Vec<String>,
+    /// 정규식은 안전한 엔진 의존성이 없어 현재 미지원. 보존용.
+    pub regex_patterns: Vec<String>,
     /// 세미콜론(;)으로 분리된 각 그룹의 clean_text
     pub groups: Vec<String>,
 }
@@ -111,6 +115,7 @@ impl QuerySyntax {
     /// 파싱된 문법 옵션을 기존 SearchOptions에 적용한다.
     /// phrases, file_types, folder, start_date, end_date를 반영한다.
     pub fn apply_to_options(&self, opts: &mut crate::index::SearchOptions) {
+        opts.wildcards.extend(self.wildcards.iter().cloned());
         if !self.phrases.is_empty() {
             for p in &self.phrases {
                 if !opts.phrases.contains(p) {
@@ -446,10 +451,23 @@ fn parse_group_tokens(g: &str, syntax: &mut QuerySyntax) -> String {
         }
 
         // 3-6. 연산자에 해당하지 않거나 파싱 실패 시 일반 검색어 낱말로 취급
+        if token.chars().any(|c| c == '*' || c == '?') {
+            if !token.contains('\\') && !token.chars().any(|c| matches!(c, '[' | ']' | '{' | '}' | '(' | ')' | '|')) {
+                syntax.wildcards.push(token.to_string());
+                clean_words.push("qmswildcardtoken".to_string());
+                continue;
+            }
+        }
+        if let Some(pattern) = token.strip_prefix("re:") {
+            // regex 크레이트가 의존성에 없으므로 실행하지 않고, 구문 전체를 일반 낱말로 보존한다.
+            syntax.regex_patterns.push(pattern.to_string());
+            clean_words.push(token.to_string());
+            continue;
+        }
         clean_words.push(token.to_string());
     }
 
-    clean_words.join(" ")
+        clean_words.join(" ")
 }
 
 /// 질의 문자열 전체를 고급 문법으로 파싱한다.
@@ -475,6 +493,28 @@ pub fn parse_query_syntax(raw: &str) -> QuerySyntax {
     syntax.clean_text = clean_groups.join("; ");
     syntax.groups = clean_groups;
     syntax
+}
+
+#[cfg(test)]
+mod wildcard_syntax_tests {
+    use super::*;
+
+    #[test]
+    fn wildcard_tokens_and_fallback_table() {
+        let cases = [
+            ("ab*", Some("ab*")), ("*ab", Some("*ab")), ("a?b", Some("a?b")),
+            ("한?", Some("한?")), ("??", Some("??")), ("a*b?c", Some("a*b?c")),
+            ("*", Some("*")), ("?", Some("?")), ("re:ab+", None),
+            (r"a\*b", None), ("a[b]", None), ("a{2}", None), ("a(b)", None),
+            ("a|b", None), ("ext:", None), ("after:invalid", None), ("-", None),
+            ("\"ab*", None), ("ab*;cd?", Some("ab*")), ("re:", None),
+        ];
+        for (q, expected) in cases {
+            let got = parse_query_syntax(q);
+            if let Some(w) = expected { assert!(got.wildcards.iter().any(|x| x == w), "{q}"); }
+            else { assert!(got.wildcards.is_empty(), "{q}"); }
+        }
+    }
 }
 
 /// 구문(KFC2)을 검색 낱말로 더한다. 구문은 비교형(공백·기호를 뺀 글)이 붙어 있는 그대로 든 문장만 찾는 낱말 하나이고

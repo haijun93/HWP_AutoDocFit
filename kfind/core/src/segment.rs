@@ -775,7 +775,7 @@ impl Segment {
     }
 
     /// 문장의 비교형 글을 UTF-8로 되돌린다(합치기용).
-    fn decode_text(&self, sid: u32, out: &mut String) -> Result<()> {
+    pub(crate) fn decode_text(&self, sid: u32, out: &mut String) -> Result<()> {
         out.clear();
         let alpha = self.section(ALPHA);
         let n = alpha.len() / ALPHA_REC;

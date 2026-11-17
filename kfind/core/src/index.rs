@@ -97,6 +97,10 @@ pub struct SearchOptions {
     pub title_only: bool,
     /// 주제 랭킹 가중치(SEMI3): 드문 말 일치 가산, 흔한 말 가산 낮춤.
     pub topic_rank_weight: f32,
+    /// 와일드카드 토큰. search_syntax가 채우며 기본 역색인 검색 뒤 후보 문장에서 검증한다.
+    pub wildcards: Vec<String>,
+    /// 와일드카드 검사 한도 초과 여부(결과가 부분적일 수 있음).
+    pub partial: bool,
 }
 
 impl Default for SearchOptions {
@@ -117,6 +121,8 @@ impl Default for SearchOptions {
             file_types: None,
             title_only: false,
             topic_rank_weight: 0.0,
+            wildcards: Vec::new(),
+            partial: false,
         }
     }
 }
@@ -179,6 +185,8 @@ pub struct SearchResult {
     pub hits: Vec<DocHit>,
     /// 답한 색인 세대.
     pub generation: u64,
+    /// 후보 검사 상한 또는 시간 한도로 일부 결과만 계산된 경우 true.
+    pub partial: bool,
 }
 
 /// 개수만 낸 결과(`Index::count`). 값은 같은 검색어·방법의 `search` 합계와 같다.
@@ -491,6 +499,42 @@ fn strict(seg: &Segment, w: &str, restrict: Option<&RoaringBitmap>, budget: &mut
         }
     }
     Ok(out)
+}
+
+/// 고정 글자(2자 이상) 구간들의 posting 교집합. 고정 구간이 없으면 전체 순회 없이 적용하지 않는다.
+fn wildcard_candidates(seg: &Segment, patterns: &[String]) -> Result<Option<RoaringBitmap>> {
+    let mut acc: Option<RoaringBitmap> = None;
+    for pattern in patterns {
+        let runs = pattern.split(['*', '?']).filter(|s| s.chars().count() >= 2);
+        for run in runs {
+            let b = char_bounds(run);
+            let mut local: Option<RoaringBitmap> = None;
+            for i in 0..b.len() - 2 {
+                let Some(post) = seg.posting(&run.as_bytes()[b[i]..b[i + 2]])? else {
+                    return Ok(Some(RoaringBitmap::new()));
+                };
+                local = Some(match local { None => post, Some(mut x) => { x &= post; x } });
+            }
+            if let Some(local) = local {
+                acc = Some(match acc { None => local, Some(mut x) => { x &= local; x } });
+            }
+        }
+    }
+    Ok(acc)
+}
+
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    let (mut i, mut j, mut star, mut retry) = (0usize, 0usize, None, 0usize);
+    while j < t.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == t[j]) { i += 1; j += 1; }
+        else if i < p.len() && p[i] == '*' { star = Some(i); i += 1; retry = j; }
+        else if let Some(s) = star { retry += 1; j = retry; i = s + 1; }
+        else { return false; }
+    }
+    while i < p.len() && p[i] == '*' { i += 1; }
+    i == p.len()
 }
 
 /// 조각 하나에서 (일치 문장, 붙어 있는 일치 문장)을 지운 문장을 빼기 전 상태로. 두 번째가 None이면 첫 번째와 같다.
@@ -1100,7 +1144,69 @@ impl Index {
         let syntax = parse_query_syntax(query);
         let mut new_opts = opts.clone();
         self.apply_syntax(&syntax, &mut new_opts)?;
-        self.search_groups(&syntax.clean_text, &new_opts)
+        let wildcard_opts = if syntax.wildcards.is_empty() { None } else {
+            let mut w = new_opts.clone();
+            w.wildcards.clear();
+            w.top = 0;
+            w.time_limit = None;
+            Some(w)
+        };
+        let base_query = syntax.clean_text.as_str();
+        let mut result = self.search_groups(base_query, &new_opts)?;
+        if !syntax.wildcards.is_empty() {
+            result.hits.clear();
+            result.total_docs = 0;
+            result.total_sentences = 0;
+        }
+        if let Some(wopts) = wildcard_opts { return self.search_wildcard_syntax(&syntax, &wopts, result); }
+        Ok(result)
+    }
+
+    fn search_wildcard_syntax(&self, syntax: &QuerySyntax, opts: &SearchOptions, _result: SearchResult) -> Result<SearchResult> {
+        let mut matched_docs = HashMap::<u64, Vec<SentenceRef>>::new();
+        let mut any_candidate = false;
+        let mut eligible_docs = std::collections::HashSet::new();
+        for view in &self.views {
+            for sid in 0..view.seg.n_sent {
+                let rec = view.seg.doc(view.seg.doc_of(sid)?)?;
+                if opts.admits(rec.doc_id) && !view.deleted.contains(sid) { eligible_docs.insert(rec.doc_id); }
+            }
+        }
+        let mut result = SearchResult { generation: self.generation, ..SearchResult::default() };
+        let mut budget = Budget::new(opts);
+        let mut candidates_seen = 0usize;
+        'segments: for view in &self.views {
+            let Some(candidates) = wildcard_candidates(&view.seg, &syntax.wildcards)? else { continue };
+            any_candidate = true;
+            let mut text = String::new();
+            for sid in candidates {
+                if candidates_seen >= 50_000 { result.partial = true; break 'segments; }
+                if let Err(Error::Timeout) = budget.tick() { result.partial = true; break 'segments; }
+                candidates_seen += 1;
+                view.seg.decode_text(sid, &mut text)?;
+                let rec = view.seg.doc(view.seg.doc_of(sid)?)?;
+                if !eligible_docs.contains(&rec.doc_id) { continue; }
+                if syntax.wildcards.iter().all(|p| wildcard_match(p, &text)) {
+                    if !eligible_docs.contains(&rec.doc_id) { continue; }
+                    let sentence = SentenceRef { ord: sid - rec.first_sid, para: view.seg.para(sid)?, level: view.seg.level(sid)?, adjacent: false };
+                    matched_docs.entry(rec.doc_id).or_default().push(sentence);
+                }
+            }
+        }
+        if !any_candidate { return Ok(result); }
+        for (doc_id, sentences) in matched_docs {
+            let Some(sentence) = sentences.first() else { continue };
+            let date = self.views.iter().find_map(|v| (0..v.seg.n_docs).find_map(|local| {
+                let rec = v.seg.tables().doc(local)?;
+                (rec.doc_id == doc_id).then_some(rec.date)
+            })).unwrap_or(0);
+            result.hits.push(DocHit { doc_id, adjacent: false, level: sentence.level, count: sentences.len() as u32, date, sentences: sentences.into_iter().take(opts.refs_per_doc).collect() });
+        }
+        if opts.top > 0 { result.hits.truncate(opts.top); }
+        result.hits.sort_by(|a,b| b.count.cmp(&a.count).then_with(|| b.date.cmp(&a.date)).then_with(|| a.doc_id.cmp(&b.doc_id)));
+        result.total_docs = result.hits.len();
+        result.total_sentences = result.hits.iter().map(|h| h.count as u64).sum();
+        Ok(result)
     }
 
     /// 조각마다 (일치 문장, 붙어 있는 일치 문장): 지운 문장과 범위 밖 문서(`opts.allow`·`deny`)를 뺀 것.
@@ -1353,7 +1459,7 @@ impl Index {
             hits = indexed.iter().map(|(h, _)| h.clone()).collect();
             slots = indexed.iter().map(|(_, s)| *s).collect();
         }
-        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
+        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation, partial: false };
         Ok(Ranking { result, slots, sets, group_sets: None })
     }
 
@@ -1505,7 +1611,7 @@ impl Index {
             hits = indexed.iter().map(|(h, _)| h.clone()).collect();
             slots = indexed.iter().map(|(_, s)| *s).collect();
         }
-        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation };
+        let result = SearchResult { words: parsed.words, dropped: parsed.dropped, total_docs, total_sentences, adjacent_docs, hits, generation: self.generation, partial: false };
         Ok(Ranking { result, slots, sets: all_sets, group_sets: None })
     }
 
@@ -1684,6 +1790,7 @@ impl Index {
                     adjacent_docs: 0,
                     hits: Vec::new(),
                     generation: self.generation,
+                    partial: false,
                 };
                 return Ok(Ranking {
                     result,
@@ -1723,6 +1830,7 @@ impl Index {
                     adjacent_docs: 0,
                     hits: Vec::new(),
                     generation: self.generation,
+                    partial: false,
                 };
                 return Ok(Ranking {
                     result,
@@ -1918,6 +2026,7 @@ impl Index {
             adjacent_docs,
             hits,
             generation: self.generation,
+            partial: false,
         };
 
         Ok(Ranking {
