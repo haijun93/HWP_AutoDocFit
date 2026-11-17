@@ -508,14 +508,15 @@ class ContentSearchTests(unittest.TestCase):
             self.index.db.executemany(
                 "INSERT INTO content_meta(path,size,mtime,ctime,hierarchy_schema_version) VALUES(?,?,?,?,?)",
                 [(row[0], 1, 1.0, 1.0, CURRENT_HIERARCHY_SCHEMA_VERSION) for row in rows])
-            self.index.db.executemany("INSERT INTO content_short_grams(gram,path) VALUES(?,?)",
-                                      [(gram, row[0]) for row in rows
+            doc_ids = {path: rowid for rowid, path in self.index.db.execute("SELECT rowid,path FROM content_meta")}
+            self.index.db.executemany("INSERT INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                                      [(gram, doc_ids[row[0]]) for row in rows
                                        for gram in {row[5][i:i + 2].casefold() for i in range(len(row[5]) - 1)}])
         start = time.perf_counter()
         self.index.db.execute("SELECT DISTINCT path FROM content_paragraph_fts WHERE body LIKE ?", ("%검색%",)).fetchall()
         before_seconds = time.perf_counter() - start
         start = time.perf_counter()
-        self.index.db.execute("SELECT path FROM content_short_grams WHERE gram=?", ("검색",)).fetchall()
+        self.index.db.execute("SELECT doc_id FROM content_short_grams WHERE gram=?", ("검색",)).fetchall()
         gram_seconds = time.perf_counter() - start
         start = time.perf_counter()
         result = self.index.keyword_search("검색", limit=100)
@@ -540,9 +541,10 @@ class ContentSearchTests(unittest.TestCase):
                 self.index.db.execute(
                     "INSERT INTO content_meta(path,size,mtime,ctime,name,extension,hierarchy_schema_version) VALUES(?,?,?,?,?,?,?)",
                     (path, 1, 1.0, 1.0, name, "txt", CURRENT_HIERARCHY_SCHEMA_VERSION))
+                doc_id = self.index.db.execute("SELECT rowid FROM content_meta WHERE path=?", (path,)).fetchone()[0]
                 self.index.db.executemany(
-                    "INSERT OR IGNORE INTO content_short_grams(gram,path) VALUES(?,?)",
-                    [(gram, path) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
+                    "INSERT OR IGNORE INTO content_short_grams(gram,doc_id) VALUES(?,?)",
+                    [(gram, doc_id) for gram in {body[i:i + 2].casefold() for i in range(len(body) - 1)}])
         return paths
 
     def test_keyword_two_character_term_found_when_only_in_first_paragraph(self):
@@ -704,6 +706,28 @@ class ContentSearchTests(unittest.TestCase):
         self.assertTrue(migrated.index_file(old_file)["indexed"])
         self.assertEqual(migrated.needs_reindex_count(), 0)
         self.assertEqual(migrated.search("검색")[0]["name"], "old.txt")
+        migrated.close()
+
+    def test_short_gram_path_schema_migrates_to_meta_rowid_without_changing_results(self):
+        path = self.root / "legacy-grams.sqlite"
+        db = sqlite3.connect(path)
+        db.executescript("""
+            CREATE TABLE content_meta(path TEXT PRIMARY KEY,size INTEGER,mtime REAL,ctime REAL,
+                reference_date TEXT,name TEXT,extension TEXT,hierarchy_schema_version INTEGER DEFAULT 0);
+            CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED,name UNINDEXED,body,tokenize='trigram');
+            CREATE TABLE content_short_grams(gram TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(gram,path));
+            INSERT INTO content_meta(path,size,mtime,ctime,name,extension,hierarchy_schema_version)
+                VALUES('old-a.txt',1,1,1,'old-a.txt','txt',0),('old-b.txt',1,1,1,'old-b.txt','txt',0);
+            INSERT INTO content_fts VALUES('old-a.txt','old-a.txt','합성 예산 검색'),('old-b.txt','old-b.txt','다른 문서');
+            INSERT INTO content_short_grams VALUES('예산','old-a.txt'),('산 ','old-a.txt'),('다른','old-b.txt');
+            PRAGMA user_version=0;
+        """)
+        db.close()
+        migrated = ContentSearchIndex(path)
+        columns = {row[1] for row in migrated.db.execute("PRAGMA table_info(content_short_grams)")}
+        self.assertEqual(columns, {"gram", "doc_id"})
+        self.assertEqual(migrated.db.execute("PRAGMA user_version").fetchone()[0], 1)
+        self.assertEqual(migrated.search("예산")[0]["name"], "old-a.txt")
         migrated.close()
 
     def test_hierarchy_order_title_once_beats_square_five_and_body_ten(self):
@@ -1318,6 +1342,7 @@ class BatchIndexTests(unittest.TestCase):
         "content_paragraph_fts": "path, paragraph_index, level, body",
         "content_fts": "path, name, body",
         "content_meta": "path, name, extension, size",
+        "content_short_grams": "gram, doc_id",
     }
 
     def _write_files(self, folder, count, prefix="doc"):
@@ -1345,8 +1370,10 @@ class BatchIndexTests(unittest.TestCase):
         state = tuple(db.execute("SELECT row_count, max_rowid FROM content_paragraph_map_state WHERE id=1").fetchone())
         self.assertEqual(state, (len(para), max(para, default=0)))
         meta = {row[0] for row in db.execute("SELECT path FROM content_meta")}
-        for table in ("content_fts", "content_short_grams", "content_paragraph_fts"):
+        for table in ("content_fts", "content_paragraph_fts"):
             self.assertEqual({row[0] for row in db.execute(f"SELECT DISTINCT path FROM {table}")}, meta, table)
+        self.assertEqual({row[0] for row in db.execute(
+            "SELECT DISTINCT m.path FROM content_short_grams g JOIN content_meta m ON m.rowid=g.doc_id")}, meta)
         self.assertFalse(index._ensure_paragraph_map())
 
     def test_batch_and_rollback(self):
