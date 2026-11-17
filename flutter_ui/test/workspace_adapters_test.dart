@@ -5,7 +5,7 @@ import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart';
 import 'package:docfit_ui/features/workspace/workspace_adapters.dart';
 
 void main() {
-  testWidgets('IntegratedWorkspace mounts TabNavigationShell with 11 tabs', (tester) async {
+  testWidgets('IntegratedWorkspace mounts TabNavigationShell with 12 tabs', (tester) async {
     tester.view.physicalSize = const Size(1400, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -38,12 +38,19 @@ void main() {
     expect(find.text('문서뷰'), findsOneWidget);
     expect(find.text('사진뷰'), findsOneWidget);
     expect(find.text('파일변환'), findsOneWidget);
+    expect(find.text('PDF 편집'), findsOneWidget);
 
     await tester.ensureVisible(find.byKey(const Key('workspaceTab-10')));
     await tester.tap(find.byKey(const Key('workspaceTab-10')));
     await tester.pumpAndSettle();
     expect(currentTab, 10);
     expect(find.text('FileConversionContent'), findsOneWidget);
+
+    await tester.ensureVisible(find.byKey(const Key('workspaceTab-11')));
+    await tester.tap(find.byKey(const Key('workspaceTab-11')));
+    await tester.pumpAndSettle();
+    expect(currentTab, 11);
+    expect(find.text('PDF 편집'), findsWidgets);
 
     // Switch back to Tab 0 (문서편집) — 탭 이름이 길어져 좁은 창에서는 탭 줄을 다시 밀어야 보인다.
     await tester.ensureVisible(find.text('문서편집'));
@@ -80,12 +87,13 @@ void main() {
     expect(find.byKey(photoAlbumKey), findsOneWidget);
   });
 
-  test('tab constants keep conversion last', () {
+  test('tab constants keep conversion before PDF editing', () {
     expect(kTabFileRename, 6);
     expect(kTabTimemachine, 7);
     expect(kTabDocGrid, 8);
     expect(kTabPhotoAlbum, 9);
     expect(kTabFileConversion, 10);
-    expect(kTabCount, 11);
+    expect(kTabPdfEdit, 11);
+    expect(kTabCount, 12);
   });
 }

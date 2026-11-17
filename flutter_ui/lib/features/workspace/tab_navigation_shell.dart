@@ -6,7 +6,7 @@ import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
 
-/// 탭 번호: 5번 '붙임사진 편집'. 파일이름(6) 뒤에 몽땅검색(7), 문서뷰(8), 사진뷰(9)를 두고 파일변환(10)을 맨 끝에 둔다.
+/// 탭 번호: PDF 편집은 파일변환 뒤에 둔다.
 const kTabPaint = 5;
 const kTabPhotoEdit = 5;
 const kTabFileRename = 6;
@@ -14,7 +14,8 @@ const kTabTimemachine = 7;
 const kTabDocGrid = 8;
 const kTabPhotoAlbum = 9;
 const kTabFileConversion = 10;
-const kTabCount = 11;
+const kTabPdfEdit = 11;
+const kTabCount = 12;
 
 /// 왼쪽 메뉴 폭. 저장값이 없으면 창 폭이 기준 이상일 때 펼친다.
 const kSidebarCollapsedWidth = 56.0;
@@ -41,7 +42,7 @@ class WorkspaceTabScope extends InheritedWidget {
 
   final VoidCallback goHome;
 
-  /// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 문서뷰·9 사진뷰·10 파일변환)로 이동한다.
+/// 탭 번호(0 문서편집·1 표템플릿·2 표그림판·3 다이어그램·4 마인드맵·5 그림판·6 파일이름·7 몽땅검색·8 문서뷰·9 사진뷰·10 파일변환·11 PDF 편집)로 이동한다.
   final ValueChanged<int> selectTab;
 
   static WorkspaceTabScope? maybeOf(BuildContext context) =>
@@ -76,6 +77,7 @@ class TabNavigationShell extends StatefulWidget {
     required this.diagram,
     required this.mindMap,
     required this.fileConversion,
+    this.pdfEdit = const SizedBox(),
     required this.paint,
     required this.fileRename,
     required this.timemachine,
@@ -100,6 +102,7 @@ class TabNavigationShell extends StatefulWidget {
   final Widget diagram;
   final Widget mindMap;
   final Widget fileConversion;
+  final Widget pdfEdit;
 
   /// 탭 5: 그림판(사진 배경 위에 펜·도형·글상자를 독립 개체로).
   final Widget paint;
@@ -175,7 +178,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '몽땅검색',
     '문서뷰',
     '사진뷰',
-    // 파일변환은 항상 맨 끝(2026-10-30 사용자 지시).
+    'PDF 편집',
     '파일변환',
   ];
   static const _icons = [
@@ -189,6 +192,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     Icons.history_toggle_off,
     Icons.grid_view_outlined,
     Icons.photo_library_outlined,
+    Icons.picture_as_pdf_outlined,
     Icons.transform,
   ];
 
@@ -263,6 +267,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       widget.docGrid,
       widget.photoAlbum,
       widget.fileConversion,
+      widget.pdfEdit,
     ];
     _built = true;
     final expanded = _expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth;
@@ -295,7 +300,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                 LogicalKeySet(
                   LogicalKeyboardKey.control,
                   LogicalKeyboardKey.digit0,
-                ): _SelectWorkspaceTabIntent(i),
+                ): _SelectWorkspaceTabIntent(i)
+              else if (i == kTabPdfEdit)
+                LogicalKeySet(LogicalKeyboardKey.control, LogicalKeyboardKey.shift, LogicalKeyboardKey.digit0): _SelectWorkspaceTabIntent(i),
           },
           child: Actions(
             actions: {
