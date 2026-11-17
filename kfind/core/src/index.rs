@@ -501,7 +501,7 @@ fn strict(seg: &Segment, w: &str, restrict: Option<&RoaringBitmap>, budget: &mut
     Ok(out)
 }
 
-/// 고정 글자(2자 이상) 구간들의 posting 교집합. 고정 구간이 없으면 전체 순회 없이 적용하지 않는다.
+/// 고정 글자(2자 이상) 구간들의 posting 교집합. 그런 구간이 없으면 제한된 후보 순회를 한다.
 fn wildcard_candidates(seg: &Segment, patterns: &[String]) -> Result<Option<RoaringBitmap>> {
     let mut acc: Option<RoaringBitmap> = None;
     for pattern in patterns {
@@ -520,12 +520,30 @@ fn wildcard_candidates(seg: &Segment, patterns: &[String]) -> Result<Option<Roar
             }
         }
     }
-    Ok(acc)
+    Ok(Some(acc.unwrap_or_else(|| (0..seg.n_sent).collect())))
 }
 
 fn wildcard_match(pattern: &str, text: &str) -> bool {
-    let p: Vec<char> = pattern.chars().collect();
+    // 질의는 비교형으로 맞추되 와일드카드 연산자는 보존한다.
+    let mut folded_pattern = String::with_capacity(pattern.len());
+    let mut literal = String::new();
+    for c in pattern.chars() {
+        if matches!(c, '*' | '?') {
+            folded_pattern.push_str(&crate::fold(&literal));
+            literal.clear();
+            folded_pattern.push(c);
+        } else {
+            literal.push(c);
+        }
+    }
+    folded_pattern.push_str(&crate::fold(&literal));
+    let p: Vec<char> = folded_pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
+    // 패턴은 문장 전체에 앵커되지 않는다. 공백 제거 비교형 문장 안의 부분 문자열에
+    // 맞추기 위해 앞뒤에 암묵적인 *를 둔다.
+    let mut p = p;
+    p.insert(0, '*');
+    p.push('*');
     let (mut i, mut j, mut star, mut retry) = (0usize, 0usize, None, 0usize);
     while j < t.len() {
         if i < p.len() && (p[i] == '?' || p[i] == t[j]) { i += 1; j += 1; }

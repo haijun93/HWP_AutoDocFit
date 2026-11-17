@@ -91,11 +91,24 @@ fn setup_test_index(name: &str) -> Index {
 fn wildcard_search_filters_candidates_exactly() {
     let index = setup_test_index("wildcard-search");
     let result = index.search_syntax("공사*", &SearchOptions::default()).expect("wildcard search");
-    assert_eq!(result.total_docs, 3);
+    // 문장 원문을 직접 확인하면 문서 1~4의 각 한 문장에 모두 '공사'가 있다.
+    // 공백 제거 비교형에서 '공사*'는 그 위치부터 문장 끝까지를 허용하므로 4문서·4문장이다.
+    assert_eq!(result.total_docs, 4);
     assert_eq!(result.total_sentences, 4);
 
     let result = index.search_syntax("공?사", &SearchOptions::default()).expect("single-char wildcard");
-    assert_eq!(result.total_docs, 3);
+    // 네 문장 모두 '공사'가 붙어 있고 '공'과 '사' 사이에 글자가 없으므로 정확히 한 글자 조건은 불일치한다.
+    assert_eq!(result.total_docs, 0);
+    assert_eq!(result.total_sentences, 0);
+
+    let result = index.search_syntax("공*사", &SearchOptions::default()).expect("zero-or-more wildcard");
+    // 같은 네 문장 모두 '공사'를 포함하므로 두 글자 사이 0개 글자도 '*' 조건에 해당한다.
+    assert_eq!(result.total_docs, 4);
+    assert_eq!(result.total_sentences, 4);
+
+    let result = index.search_syntax("공?계약", &SearchOptions::default()).expect("one-character wildcard");
+    // 네 문장의 '공사 계약'에서 공과 계약 사이에 '사' 한 글자가 있으므로 모두 일치한다.
+    assert_eq!(result.total_docs, 4);
     assert_eq!(result.total_sentences, 4);
 }
 
