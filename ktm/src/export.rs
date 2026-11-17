@@ -55,7 +55,7 @@ impl From<Tab> for ExportKind {
     fn from(tab: Tab) -> Self {
         match tab {
             Tab::Names => ExportKind::Names,
-            Tab::Body | Tab::Hierarchy => ExportKind::Body,
+            Tab::All | Tab::Body | Tab::Hierarchy => ExportKind::Body,
         }
     }
 }

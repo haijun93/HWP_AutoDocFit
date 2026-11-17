@@ -52,6 +52,7 @@ pub struct Answer {
 
 #[derive(Clone, Debug, Default)]
 pub struct Row {
+    pub match_kinds: Vec<crate::tm_state::ResultKind>,
     pub doc_id: u64,
     pub path: String,
     pub name: String,
@@ -780,6 +781,7 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         .map(|s| format!("문단 {} · 위계 {}", s.para + 1, s.level))
         .unwrap_or_else(|| format!("위계 {}", hit.level));
     Row {
+        match_kinds: Vec::new(),
         doc_id: hit.doc_id,
         path,
         name,
