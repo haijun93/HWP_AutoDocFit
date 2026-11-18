@@ -19,6 +19,12 @@ outliner_sha256 = root / 'resources' / 'outliner.exe.sha256'
 if not outliner_exe.is_file() or not outliner_sha256.is_file():
     raise RuntimeError('Build the outliner Rust engine before PyInstaller packaging')
 binaries.append((str(outliner_exe), 'resources'))
+dock_exe = root / 'resources' / 'dock.exe'
+dock_sha256 = root / 'resources' / 'dock.exe.sha256'
+if not dock_exe.is_file() or not dock_sha256.is_file():
+    raise RuntimeError('Build the dock Rust app before PyInstaller packaging')
+binaries.append((str(dock_exe), 'resources'))
+binaries.append((str(dock_sha256), 'resources'))
 klib_exe = root / 'resources' / 'klib.exe'
 if klib_exe.is_file():
     binaries.append((str(klib_exe), 'resources'))
