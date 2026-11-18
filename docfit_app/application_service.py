@@ -16,6 +16,13 @@ from docfit_app.app_state import STAGE_ORDER, AppState
 from docfit_core.stage_selection import default_choice, stages_for_mode
 
 
+
+def clean_hidden_tabs(raw):
+    """숨길 왼쪽 메뉴 번호 목록을 정리한다: 정수만, 1~11(0 문서편집은 끌 수 없음), 중복 없이 오름차순."""
+    if not isinstance(raw,(list,tuple,set)):
+        return []
+    return sorted({v for v in raw if type(v) is int and 1<=v<=11})
+
 class ApplicationService:
     def __init__(self, settings_path):
         self.store = SettingsService(settings_path)
@@ -143,14 +150,14 @@ class ApplicationService:
                 'progress':{'steps':list(STAGE_ORDER),'active':None,'visited':[],'outcome':None,'detail':''},
                 'stages':[{'key':k,'label':label,'enabled':self.data.stages.get((self.data.mode,k),selected.get(k,default_choice(k,self.data.mode))),
                            'default':default_choice(k,self.data.mode)} for k,label in stages_for_mode(self.data.mode)],
-                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'theme_mode':normalize_theme_mode(settings.get('theme_mode')),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
+                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'hidden_tabs':clean_hidden_tabs(settings.get('hidden_tabs')),'theme_mode':normalize_theme_mode(settings.get('theme_mode')),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
 
     def dispatch(self, method, args):
         counts = {'handshake':0,'get_state':0,'get_settings':0,'save_settings':2,
                   'get_abbreviations':0,'save_abbreviation':4,'delete_abbreviation':1,
                   'set_abbreviation_defaults':1,'abbreviation_document':1,'add_paths':1,'remove_file':1,
                   'clear_files':0,'set_mode':1,'inspect_document':1,'get_log':0,'clear_log':0,'shutdown':0}
-        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_theme_mode':1})
+        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_hidden_tabs':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
         counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1})
@@ -263,6 +270,10 @@ class ApplicationService:
         if method=='set_sidebar_collapsed':
             self.store.update(lambda current:current.update({'sidebar_collapsed':bool(args[0])}))
             return True
+        if method=='set_hidden_tabs':
+            value=clean_hidden_tabs(args[0] if args else None)
+            self.store.update(lambda current:current.update({'hidden_tabs':value}))
+            return value
         if method=='set_theme_mode':
             return self.set_theme_mode(args[0])
         if method=='get_pending_dialog': return None

@@ -32,6 +32,7 @@ import 'features/settings/update_panel.dart';
 import 'features/stages/stage_board.dart';
 import 'features/workspace/workspace_adapters.dart';
 import 'features/workspace/tab_navigation_shell.dart';
+import 'features/workspace/sidebar_menu_settings.dart';
 import 'features/kclip/kclip_dialog.dart';
 
 export 'core/api/abbreviation_api.dart' show ApiCall;
@@ -240,6 +241,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
         developerMode = value['developer_mode'] == true;
       });
       appThemeChoice.value = AppThemeChoice.parse(value['theme_mode']);
+      hiddenTabsNotifier.value = parseHiddenTabs(value['hidden_tabs']);
     }).catchError((_) {}));
     HardwareKeyboard.instance.addHandler(_onKClipHotkey);
     _stopPhotoEditEvent = watchWindowEvent(
@@ -318,8 +320,14 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   }
 
   @override
-  Widget build(BuildContext context) => IntegratedWorkspace(
+  Widget build(BuildContext context) => ValueListenableBuilder<Set<int>>(
+    valueListenable: hiddenTabsNotifier,
+    builder: (context, hiddenTabs, _) => _workspace(hiddenTabs),
+  );
+
+  Widget _workspace(Set<int> hiddenTabs) => IntegratedWorkspace(
     api: widget.api,
+    hiddenTabs: {...kDefaultHiddenTabs, ...hiddenTabs},
     tabRequest: tabRequest,
     photoPasteTrigger: photoPasteTrigger,
     developerMode: developerMode,
@@ -3963,6 +3971,14 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     );
                     if (saved == true) await refresh();
                   },
+          ),
+          ListTile(
+            key: const Key('sidebarMenuSettings'),
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.view_sidebar_outlined),
+            title: const Text('쓸 메뉴 고르기'),
+            subtitle: const Text('왼쪽 메뉴에서 쓰지 않는 메뉴를 끄거나 다시 켜요.'),
+            onTap: () => showSidebarMenuDialog(context, widget.api),
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,

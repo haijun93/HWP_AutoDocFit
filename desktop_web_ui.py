@@ -653,6 +653,7 @@ class DesktopWebBridge:
                 "rename_open": rename_open,
                 "photo_edit_open": photo_edit_open,
                 "sidebar_collapsed": self._sidebar_collapsed_value(),
+                "hidden_tabs": self._hidden_tabs_value(),
                 "theme_mode": self._theme_mode_value(),
                 "developer_mode": self._setting_flag('developer_mode'),
                 "always_on_top": self._setting_flag('always_on_top'),
@@ -3186,6 +3187,28 @@ class DesktopWebBridge:
         self.gui._준말_서비스().settings.update(lambda current: current.update({"sidebar_collapsed": value}))
         return value
 
+    @staticmethod
+    def _clean_hidden_tabs(raw):
+        from docfit_app.application_service import clean_hidden_tabs
+        return clean_hidden_tabs(raw)
+
+    def _hidden_tabs_value(self):
+        """사용자가 끈 왼쪽 메뉴 번호 목록(없으면 빈 목록 = 모두 켬). 한 번만 읽는다."""
+        if not hasattr(self, "_hidden_tabs"):
+            try:
+                raw = self.gui._준말_서비스().settings.read().get("hidden_tabs")
+            except Exception:
+                raw = None
+            self._hidden_tabs = self._clean_hidden_tabs(raw)
+        return self._hidden_tabs
+
+    def set_hidden_tabs(self, tabs):
+        """'쓸 메뉴 고르기'에서 저장을 눌렀을 때 끈 메뉴 목록을 설정 파일에 저장한다."""
+        value = self._clean_hidden_tabs(tabs)
+        self._hidden_tabs = value
+        self.gui._준말_서비스().settings.update(lambda current: current.update({"hidden_tabs": value}))
+        return value
+
     def _theme_mode_value(self):
         """화면 테마 저장값(system·light·dark; 없거나 잘못되면 system). 한 번만 읽는다."""
         from docfit_app.settings_schema import normalize_theme_mode
@@ -3815,7 +3838,7 @@ class _BrowserApi:
             "show_result", "open_source_file", "show_source_file", "open_result_source", "open_diff", "compare_result", "launch_external_hwp_diff", "set_stage", "reset_stages", "set_stage_default",
             "set_profile", "set_option", "set_include_spacing", "set_reset_spacing", "set_table_spacing",
             "set_exclude_tables", "set_card_option",
-            "set_sidebar_collapsed", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
+            "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
             "set_conversion_target", "set_pdf_compress_target_mb", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):

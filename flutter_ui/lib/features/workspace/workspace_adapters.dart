@@ -185,6 +185,7 @@ class IntegratedWorkspace extends StatelessWidget {
     this.notebookScreen,
     this.docGridScreen,
     this.photoAlbumScreen,
+    this.hiddenTabs = kDefaultHiddenTabs,
   });
 
   final Widget? trailing;
@@ -195,6 +196,8 @@ class IntegratedWorkspace extends StatelessWidget {
   final Widget? notebookScreen;
   final Widget? docGridScreen;
   final Widget? photoAlbumScreen;
+  /// 사용자가 끈 왼쪽 메뉴 번호(설정 > 쓸 메뉴 고르기).
+  final Set<int> hiddenTabs;
   final ApiCall api;
   final Widget documentEditorWidget;
   final Widget fileConversionWidget;
@@ -206,6 +209,7 @@ class IntegratedWorkspace extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return TabNavigationShell(
+      hiddenTabs: hiddenTabs,
       initialIndex: initialIndex,
       tabRequest: tabRequest,
       onTabChanged: onTabChanged,

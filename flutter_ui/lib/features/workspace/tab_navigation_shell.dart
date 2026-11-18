@@ -157,6 +157,12 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   @override
   void didUpdateWidget(covariant TabNavigationShell oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 지금 보던 메뉴를 끄면 문서편집으로 옮긴다(끈 메뉴 화면은 만들지 않는다).
+    if (widget.hiddenTabs.contains(_index) && _extra == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.hiddenTabs.contains(_index)) _select(0);
+      });
+    }
   }
 
   @override
