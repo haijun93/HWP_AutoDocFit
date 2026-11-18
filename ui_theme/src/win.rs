@@ -8,6 +8,48 @@ use windows_sys::Win32::Graphics::Gdi::{
     COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT,
     GetSysColor,
 };
+
+/// 상단 왼쪽에 테마 색으로 집 아이콘을 그린다. 사각형은 창 클라이언트 좌표다.
+pub unsafe fn draw_home_button(hdc: windows_sys::Win32::Graphics::Gdi::HDC, rect: windows_sys::Win32::Foundation::RECT,
+                               palette: Palette, hovered: bool, pressed: bool) {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    let bg = if pressed { palette.head_button_pressed } else if hovered { palette.head_button_hover } else { palette.head_bg };
+    let brush = unsafe { CreateSolidBrush(bg) };
+    if !brush.is_null() { unsafe { FillRect(hdc, &rect, brush); DeleteObject(brush); } }
+    let pen = unsafe { CreatePen(PS_SOLID, (rect.right - rect.left).max(1) / 12, palette.head_glyph) };
+    if pen.is_null() { return; }
+    let old_pen = unsafe { SelectObject(hdc, pen) };
+    let old_brush = unsafe { SelectObject(hdc, GetStockObject(NULL_BRUSH as i32)) };
+    let w = rect.right - rect.left; let h = rect.bottom - rect.top;
+    let cx = rect.left + w / 2; let roof_y = rect.top + h / 3;
+    unsafe {
+        MoveToEx(hdc, rect.left + w / 5, roof_y, std::ptr::null_mut()); LineTo(hdc, cx, rect.top + h / 8);
+        LineTo(hdc, rect.right - w / 5, roof_y);
+        MoveToEx(hdc, rect.left + w / 4, roof_y - h / 12, std::ptr::null_mut()); LineTo(hdc, rect.left + w / 4, rect.bottom - h / 6);
+        LineTo(hdc, rect.right - w / 4, rect.bottom - h / 6); LineTo(hdc, rect.right - w / 4, roof_y - h / 12);
+        MoveToEx(hdc, cx - w / 12, rect.bottom - h / 6, std::ptr::null_mut()); LineTo(hdc, cx - w / 12, rect.top + h * 2 / 3);
+        LineTo(hdc, cx + w / 12, rect.top + h * 2 / 3); LineTo(hdc, cx + w / 12, rect.bottom - h / 6);
+        SelectObject(hdc, old_brush); SelectObject(hdc, old_pen); DeleteObject(pen);
+    }
+}
+
+/// 기본 앱 진입점을 연다. 단일 인스턴스는 앱 자체 런처가 앞으로 가져온다.
+pub fn open_home_app() -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::UI::Shell::ShellExecuteW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let mut candidates = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(std::path::Path::to_path_buf);
+        for _ in 0..3 { if let Some(d) = dir { candidates.push(d.join("hwp-auto-docfit.exe")); dir = d.parent().map(std::path::Path::to_path_buf); } }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") { candidates.push(std::path::PathBuf::from(local).join("HWP_AutoDocFit").join("hwp-auto-docfit.exe")); }
+    let path = candidates.into_iter().find(|p| p.is_file()).ok_or_else(|| "앱 실행 파일을 찾지 못했습니다".to_string())?;
+    let verb: Vec<u16> = "open\0".encode_utf16().collect();
+    let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let code = unsafe { ShellExecuteW(std::ptr::null_mut(), verb.as_ptr(), target.as_ptr(), std::ptr::null(), std::ptr::null(), SW_SHOWNORMAL) } as isize;
+    if code <= 32 { Err(format!("앱을 열지 못했습니다 (Windows {code})")) } else { Ok(()) }
+}
 use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
 use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
 use windows_sys::Win32::UI::Accessibility::{HCF_HIGHCONTRASTON, HIGHCONTRASTW};
