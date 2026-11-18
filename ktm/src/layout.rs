@@ -345,8 +345,14 @@ pub fn filter_rows_within_query(
             let type_ok = types.is_empty() || types.iter().any(|t| t.eq_ignore_ascii_case(&ext));
             let text_ok = q.is_empty()
                 || (!exclude_filename && row.name.to_lowercase().contains(&q))
-                || row.snippet.to_lowercase().contains(&q);
-            let body_only_ok = !exclude_filename || !row.snippet.is_empty();
+                || row.snippet.to_lowercase().contains(&q)
+                || (exclude_filename && !row.snippet_tried);
+            // Excluding filename matches should suppress filename-only rows, not
+            // rows whose body snippet has not been loaded yet. The latter are
+            // fetched asynchronously when rows become visible.
+            let body_only_ok = !exclude_filename
+                || !row.snippet.is_empty()
+                || ( !q.is_empty() && !row.snippet_tried );
             (type_ok && text_ok && body_only_ok).then_some(i)
         })
         .collect()
@@ -1230,7 +1236,7 @@ mod tests {
             level: 0,
             count: 0,
             para: None,
-            snippet_tried: false,
+            snippet_tried: true,
             preview: String::new(),
             date: 0,
             rank: 0,
@@ -1253,6 +1259,22 @@ mod tests {
     fn exclude_filename_hides_filename_only_results_without_within_query() {
         let rows = vec![row("match.txt", ""), row("other.txt", "body")];
         assert_eq!(filter_rows_within_query(&rows, "", true, &[]), vec![1]);
+    }
+    #[test]
+    fn exclude_filename_keeps_rows_pending_body_snippet_load() {
+        let mut pending = row("filename-match.txt", "");
+        pending.snippet_tried = false;
+        let loaded_without_match = row("other.txt", "unrelated body");
+        let loaded_with_match = row("third.txt", "needle in body");
+        assert_eq!(
+            filter_rows_within_query(
+                &[pending, loaded_without_match, loaded_with_match],
+                "needle",
+                true,
+                &[],
+            ),
+            vec![0, 2]
+        );
     }
     #[test]
     fn result_filter_matches_selected_file_types() {

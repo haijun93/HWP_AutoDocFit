@@ -4022,6 +4022,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 Ok(Answer {
                                     rows,
                                     terms,
+                                    groups: _,
                                     folder_counts,
                                     autocompletes,
                                 }) => {
@@ -4396,6 +4397,7 @@ pub fn run() -> Result<(), String> {
                                 return Ok(Answer {
                                     rows,
                                     terms,
+                                    groups: kfind_core::parse_groups(&q).into_iter().map(str::to_owned).collect(),
                                     folder_counts: Vec::new(),
                                     autocompletes: Vec::new(),
                                 });
@@ -4411,6 +4413,7 @@ pub fn run() -> Result<(), String> {
                                 return Ok(Answer {
                                     rows,
                                     terms,
+                                    groups: kfind_core::parse_groups(&q).into_iter().map(str::to_owned).collect(),
                                     folder_counts: Vec::new(),
                                     autocompletes: Vec::new(),
                                 });
