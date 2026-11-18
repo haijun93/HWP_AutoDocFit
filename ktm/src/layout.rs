@@ -9,6 +9,7 @@ pub const CAPTION_W: i32 = 46;
 pub const SEARCH_BOX_H: i32 = 32;
 pub const TAB_H: i32 = 28;
 pub const FILTER_H: i32 = 24;
+/// Two-line result card: filename/meta on line one, matching excerpt on line two.
 pub const ROW_H: i32 = 70;
 pub const ROW_FOLDER_W: i32 = 28;
 pub const STATUS_H: i32 = 24;
@@ -642,6 +643,18 @@ mod content_top_tests {
 }
 
 #[cfg(test)]
+mod quick_search_card_tests {
+    use super::*;
+
+    #[test]
+    fn two_line_result_card_fits_painter_lines_at_common_scales() {
+        assert_eq!(two_line_row_height(100), 46);
+        assert_eq!(two_line_row_height(125), 57);
+        assert_eq!(two_line_row_height(0), 1);
+    }
+}
+
+#[cfg(test)]
 mod interaction_hit_tests {
     use super::*;
     #[test]
@@ -784,6 +797,12 @@ pub fn calc_row_rect(top_y: i32, index: usize, scroll_top: usize, row_h: i32, wi
         right: width,
         bottom: y + row_h,
     }
+}
+
+/// Height needed by the two-line result card painter, including a small vertical inset.
+pub fn two_line_row_height(scale: i32) -> i32 {
+    let s = scale.max(1);
+    (46 * s).div_euclid(100).max(1)
 }
 
 /// 행 오른쪽 [폴더 열기] 단추 영역 계산.
