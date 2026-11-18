@@ -231,6 +231,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   int lastTab = 0;
   bool developerMode = false;
   void Function()? _stopPhotoEditEvent;
+  void Function()? _stopFocusHomeEvent;
 
   @override
   void initState() {
@@ -252,11 +253,16 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
         photoPasteTrigger.value++;
       },
     );
+    _stopFocusHomeEvent = watchWindowEvent('docfit-focus-home', () {
+      tabRequest.value = null;
+      tabRequest.value = 0;
+    });
   }
 
   @override
   void dispose() {
     _stopPhotoEditEvent?.call();
+    _stopFocusHomeEvent?.call();
     HardwareKeyboard.instance.removeHandler(_onKClipHotkey);
     super.dispose();
   }
