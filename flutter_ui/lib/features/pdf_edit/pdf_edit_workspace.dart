@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
@@ -30,6 +33,9 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   int _degrees = 90;
   String _message = '';
   bool _busy = false;
+  int? _pageCount;
+  final Map<int, Uint8List> _thumbnails = {};
+  final Set<int> _thumbnailRequests = {};
   bool _dragActive = false;
   void Function()? _stopDropWatch;
 
@@ -65,8 +71,35 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       if (_action == 'merge' && !_mergeSources.contains(path)) _mergeSources.add(path);
       _output = _outputFor(path, _action == 'merge' ? '_합본' : '_편집본');
       _message = '';
+      _pageCount = null;
+      _thumbnails.clear();
+      _thumbnailRequests.clear();
       _dragActive = false;
     });
+    _loadPages(path);
+  }
+
+  Future<void> _loadPages(String path) async {
+    try {
+      final response = await widget.api('pdf_edit', [{'action': 'info', 'source': path}]);
+      final envelope = response is Map ? response : const {};
+      final data = envelope['data'];
+      final pages = data is Map && data['pages'] is List ? data['pages'] as List : const [];
+      if (!mounted || _source != path) return;
+      setState(() => _pageCount = pages.length);
+    } catch (_) { /* Keep numbered cards when metadata is unavailable. */ }
+  }
+
+  Future<void> _loadThumbnail(String path, int page) async {
+    if (!_thumbnailRequests.add(page)) return;
+    try {
+      final response = await widget.api('pdf_edit', [{'action': 'thumbnail', 'source': path, 'pages': [page]}]);
+      final envelope = response is Map ? response : const {};
+      final data = envelope['data'];
+      if (data is! Map || data['data'] is! String || !mounted || _source != path) return;
+      setState(() => _thumbnails[page] = base64Decode(data['data'] as String));
+    } catch (_) { /* Keep the numbered card when rendering is unavailable. */ }
+    finally { _thumbnailRequests.remove(page); }
   }
 
   Future<void> _pickMergeSources() async {
@@ -209,7 +242,13 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     ])),
     Expanded(child: GridView.builder(key: const Key('pdfEditThumbnailGrid'), padding: const EdgeInsets.all(16),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 150, mainAxisExtent: 178, crossAxisSpacing: 12, mainAxisSpacing: 12),
-      itemCount: 12, itemBuilder: (context, i) => _PageCard(number: i + 1, c: c))),
+      itemCount: _pageCount ?? 12, itemBuilder: (context, i) {
+        final number = i + 1;
+        if (_pageCount != null && _source != null && !_thumbnails.containsKey(number)) {
+          _loadThumbnail(_source!, number);
+        }
+        return _PageCard(number: number, c: c, thumbnail: _thumbnails[number]);
+      })),
     Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 14), child: Row(children: [
       Expanded(child: TextField(key: const Key('pdfEditPages'), controller: _pages, decoration: InputDecoration(isDense: true,
         labelText: _action == 'split' ? '분할할 페이지' : '페이지 번호', helperText: _action == 'split' ? '쉼표로 입력한 쪽을 별도 PDF로 저장' : '쉼표로 구분 · 순서 변경은 원하는 순서'))),
@@ -261,9 +300,10 @@ class _ToolChip extends StatelessWidget {
 }
 
 class _PageCard extends StatelessWidget {
-  const _PageCard({required this.number, required this.c});
+  const _PageCard({required this.number, required this.c, this.thumbnail});
   final int number;
   final AppColors c;
+  final Uint8List? thumbnail;
   @override
   Widget build(BuildContext context) => Container(decoration: BoxDecoration(color: c.surfaceMuted, border: Border.all(color: c.line), borderRadius: BorderRadius.circular(8)),
     child: Stack(children: [Center(child: Column(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.description_outlined, size: 54, color: c.lineStrong), const SizedBox(height: 8), Text('쪽 $number', style: TextStyle(color: c.muted, fontSize: 12))])),

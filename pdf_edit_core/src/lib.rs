@@ -131,6 +131,30 @@ fn select(doc: &mut Document, order: &[usize]) -> Result<()> {
 pub fn page_count(path: impl AsRef<Path>) -> Result<usize> {
     Ok(load(path.as_ref())?.get_pages().len())
 }
+#[derive(Debug, Clone, PartialEq)]
+pub struct PageInfo { pub number: usize, pub width: f64, pub height: f64, pub rotation: i64 }
+/// Read page dimensions (in PDF points) and effective rotation without modifying the source.
+pub fn page_info(path: impl AsRef<Path>) -> Result<Vec<PageInfo>> {
+    let doc = load(path.as_ref())?;
+    let mut result = Vec::new();
+    for (number, id) in doc.get_pages() {
+        let box_value = inherited(&doc, id, b"MediaBox")?
+            .or(inherited(&doc, id, b"CropBox")?)
+            .ok_or_else(|| invalid("Page has no MediaBox"))?;
+        let values = box_value.as_array().map_err(|_| invalid("Invalid page box"))?;
+        if values.len() != 4 { return Err(invalid("Invalid page box")); }
+        let x0 = values[0].as_float().or_else(|_| values[0].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
+        let y0 = values[1].as_float().or_else(|_| values[1].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
+        let x1 = values[2].as_float().or_else(|_| values[2].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
+        let y1 = values[3].as_float().or_else(|_| values[3].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
+        let rotation = inherited(&doc, id, b"Rotate")?.map(|v| v.as_i64().map_err(|_| invalid("Invalid page rotation"))).transpose()?.unwrap_or(0).rem_euclid(360);
+        let (width, height) = ((x1-x0).abs(), (y1-y0).abs());
+        let (width, height) = if rotation % 180 == 90 {(height,width)} else {(width,height)};
+        if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 { return Err(invalid("Invalid page dimensions")); }
+        result.push(PageInfo { number: number as usize, width, height, rotation });
+    }
+    Ok(result)
+}
 pub fn reorder(input: impl AsRef<Path>, output: impl AsRef<Path>, order: &[usize]) -> Result<()> {
     validate_output(output.as_ref())?;
     let mut doc = load(input.as_ref())?;
@@ -265,5 +289,26 @@ mod tests {
         fixture(&input, 3);
         assert!(delete_pages(&input, dir.path().join("bad.pdf"), &[1, 2, 3]).is_err());
         assert!(split(&input, dir.path().join("parts"), &[2..=4]).is_err());
+    }
+
+    #[test]
+    fn page_info_reports_dimensions_and_effective_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("info.pdf");
+        let mut doc = Document::with_version("1.5");
+        let pages_id = doc.new_object_id();
+        let catalog_id = doc.new_object_id();
+        let page_id = doc.new_object_id();
+        doc.objects.insert(page_id, Object::Dictionary(dictionary! {
+            "Type" => "Page", "Parent" => pages_id, "MediaBox" => vec![0.into(), 0.into(), 120.into(), 240.into()], "Rotate" => 90
+        }));
+        doc.objects.insert(pages_id, Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1 }));
+        doc.objects.insert(catalog_id, Object::Dictionary(dictionary! { "Type" => "Catalog", "Pages" => pages_id }));
+        doc.trailer.set("Root", catalog_id);
+        doc.max_id = doc.objects.len() as u32;
+        doc.save(&input).unwrap();
+        let info = page_info(&input).unwrap();
+        assert_eq!(info, vec![PageInfo { number: 1, width: 240.0, height: 120.0, rotation: 90 }]);
+        assert_eq!(page_count(&input).unwrap(), 1);
     }
 }

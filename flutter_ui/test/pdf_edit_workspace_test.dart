@@ -33,4 +33,32 @@ void main() {
     expect(chip.onTap, isNotNull);
     expect(find.text('회전'), findsOneWidget);
   });
+
+  testWidgets('PDF page metadata determines card count and failed renders keep numbered cards', (tester) async {
+    tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
+    tester.binding.window.devicePixelRatioTestValue = 1;
+    addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+    addTearDown(tester.binding.window.clearDevicePixelRatioTestValue);
+    final actions = <String>[];
+    Future<Object?> api(String name, List<Object?> args) async {
+      final payload = args.single as Map;
+      final action = payload['action'] as String;
+      actions.add(action);
+      if (action == 'info') {
+        return {'ok': true, 'data': {'page_count': 2, 'pages': [{'number': 1}, {'number': 2}]}};
+      }
+      return {'ok': false, 'error': {'message': 'render unavailable'}};
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
+    final target = tester.widget<DragTarget<String>>(find.byType(DragTarget<String>));
+    target.onAcceptWithDetails!(DragTargetDetails(data: 'sample.pdf', offset: Offset.zero));
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(find.text('3'), findsNothing);
+    expect(actions, contains('info'));
+    expect(actions, contains('thumbnail'));
+  });
+
 }
