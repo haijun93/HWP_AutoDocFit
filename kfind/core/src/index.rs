@@ -2106,6 +2106,8 @@ impl Index {
             for local in &common_docs {
                 budget.tick()?;
                 let Some(rec) = tables.doc(local) else { return corrupt("document out of range") };
+                // 범위(allow/deny, 제외어 문서)는 search_groups와 같게 문서 단위로 적용한다.
+                if !opts.admits(rec.doc_id) { continue; }
                 let mut matched = 0u64;
                 for set in &group_sets {
                     for _sid in set.range(rec.first_sid..rec.first_sid + rec.n_sent) {

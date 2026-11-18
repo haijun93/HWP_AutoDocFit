@@ -1,4 +1,4 @@
-# QMSSEMI3 연관 검색어 오라클 시험 결과
+# [해결됨 2026-11-19: count_groups가 문서 범위(allow/deny·제외어)를 적용하지 않던 결함 수정, groups_oracle 시험 통과] QMSSEMI3 연관 검색어 오라클 시험 결과
 
 ## 판정
 
