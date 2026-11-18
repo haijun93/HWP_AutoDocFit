@@ -3,7 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('PDF 편집 작업과 결과 경로를 표시한다', (tester) async {
+  testWidgets('PDF 편집 드롭 영역과 비활성 실행 상태를 표시한다', (tester) async {
+    tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
+    tester.binding.window.devicePixelRatioTestValue = 1;
+    addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+    addTearDown(tester.binding.window.clearDevicePixelRatioTestValue);
     final calls = <List<Object?>>[];
     Future<Object?> api(String name, List<Object?> args) async {
       calls.add([name, ...args]);
@@ -12,19 +16,21 @@ void main() {
 
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
     expect(find.text('PDF 편집'), findsOneWidget);
-    expect(find.text('PDF 파일 고르기'), findsOneWidget);
-    expect(find.text('결과 경로 선택'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('pdfEditAction')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('페이지 분할').last);
-    await tester.pumpAndSettle();
-    expect(find.text('분할할 페이지'), findsOneWidget);
-    expect(find.textContaining('원본 파일은 유지'), findsOneWidget);
-    await tester.tap(find.byKey(const Key('pdfEditAction')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('PDF 합치기').last);
-    await tester.pumpAndSettle();
-    expect(tester.widget<OutlinedButton>(find.byKey(const Key('pdfEditPickOutput'))).onPressed, isNotNull);
+    expect(find.text('파일 선택'), findsOneWidget);
+    expect(find.byKey(const Key('pdfEditDropZone')), findsOneWidget);
+    expect(find.text('PDF를 여기로 끌어다 놓거나 클릭해서 선택'), findsOneWidget);
+    expect(tester.widget<FilledButton>(find.byKey(const Key('pdfEditRun'))).onPressed, isNull);
+    expect(find.byKey(const Key('pdfEditTool_페이지삭제')), findsOneWidget);
     expect(calls, isEmpty);
+  });
+
+  testWidgets('작업 도구 선택 상태를 강조한다', (tester) async {
+    Future<Object?> api(String name, List<Object?> args) async => {'ok': true};
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
+    await tester.tap(find.byKey(const Key('pdfEditTool_회전')));
+    await tester.pumpAndSettle();
+    final chip = tester.widget<InkWell>(find.byKey(const Key('pdfEditTool_회전')));
+    expect(chip.onTap, isNotNull);
+    expect(find.text('회전'), findsOneWidget);
   });
 }

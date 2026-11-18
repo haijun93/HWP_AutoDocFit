@@ -2062,14 +2062,65 @@ impl Index {
             return self.count_inner(single, opts);
         }
 
-        let ranking = self.rank_groups_inner(query, opts, Order::Relevance)?;
-        Ok(SearchCounts {
-            words: ranking.result.words,
-            dropped: ranking.result.dropped,
-            total_sentences: ranking.result.total_sentences,
-            total_docs: ranking.result.total_docs,
-            generation: ranking.result.generation,
-        })
+        // Count the union of matching sentences only inside documents that match
+        // every group. Do not collect/sort per-document hits or build previews.
+        let mut budget = Budget::new(opts);
+        budget.check()?;
+        let parsed_groups: Vec<ParsedQuery> = groups.iter().map(|g| self.resolve_opts(g, opts)).collect::<Result<_>>()?;
+        let mut words: Vec<QueryWord> = Vec::new();
+        let mut dropped: Vec<String> = Vec::new();
+        for parsed in &parsed_groups {
+            for word in &parsed.words {
+                if !words.iter().any(|existing| existing.text == word.text) { words.push(word.clone()); }
+            }
+            for item in &parsed.dropped {
+                if !dropped.contains(item) { dropped.push(item.clone()); }
+            }
+        }
+        if parsed_groups.iter().any(|g| g.words.is_empty()) {
+            return Ok(SearchCounts { words, dropped, generation: self.generation, ..Default::default() });
+        }
+
+        let mut total_sentences = 0u64;
+        let mut total_docs = 0usize;
+        for view in &self.views {
+            budget.check()?;
+            let mut group_sets = Vec::with_capacity(parsed_groups.len());
+            for parsed in &parsed_groups {
+                let mut set = eval_seg(&view.seg, &parsed.words, None, &mut budget)?.0;
+                set -= &view.deleted;
+                group_sets.push(set);
+            }
+            let mut common_docs: Option<RoaringBitmap> = None;
+            for set in &group_sets {
+                let mut docs = RoaringBitmap::new();
+                for sid in set {
+                    budget.tick()?;
+                    let Some(local) = view.seg.tables().doc_of(sid) else { return corrupt("document out of range") };
+                    docs.insert(local);
+                }
+                if let Some(common) = &mut common_docs { *common &= docs; } else { common_docs = Some(docs); }
+            }
+            let common_docs = common_docs.unwrap_or_default();
+            let tables = view.seg.tables();
+            for local in &common_docs {
+                budget.tick()?;
+                let Some(rec) = tables.doc(local) else { return corrupt("document out of range") };
+                let mut matched = 0u64;
+                for set in &group_sets {
+                    for _sid in set.range(rec.first_sid..rec.first_sid + rec.n_sent) {
+                        matched += 1;
+                        budget.tick()?;
+                    }
+                }
+                if matched > 0 {
+                    total_docs += 1;
+                    total_sentences += matched;
+                }
+            }
+        }
+        budget.check()?;
+        Ok(SearchCounts { words, dropped, total_sentences, total_docs, generation: self.generation })
     }
 
     /// 폴더별 결과 수 집계 API (요구사항 5).

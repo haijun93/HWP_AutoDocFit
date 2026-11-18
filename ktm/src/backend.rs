@@ -46,6 +46,8 @@ fn path_is_cloud_only(path: &str) -> bool {
 pub struct Answer {
     pub rows: Vec<Row>,
     pub terms: Vec<String>,
+    /// 세미콜론으로 나눈 연관 검색어 묶음(순서 보존).
+    pub groups: Vec<String>,
     pub folder_counts: Vec<(String, u32)>,
     pub autocompletes: Vec<String>,
 }
@@ -754,6 +756,7 @@ impl Backend {
         Ok(Answer {
             rows,
             terms,
+            groups: kfind_core::parse_groups(query).into_iter().map(str::to_owned).collect(),
             folder_counts,
             autocompletes,
         })
