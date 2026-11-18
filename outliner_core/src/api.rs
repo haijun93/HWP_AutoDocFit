@@ -1,0 +1,64 @@
+use crate::{backlinks, daily_page, edit, parse, save_atomic, search, serialize, OutlinerError};
+use serde_json::{json, Value};
+use std::{fs, path::Path};
+
+fn invalid_request(id: Value, message: String) -> Value {
+    json!({"id": id, "ok": false, "error": {"code": "INVALID_REQUEST", "message": message}})
+}
+
+/// Handles one JSON value and returns the standard success or coded error envelope.
+pub fn handle_request(value: Value) -> Value {
+    let request_id = value.get("id").cloned().unwrap_or(Value::Null);
+    let Some(object) = value.as_object() else {
+        return invalid_request(request_id, "요청은 JSON 객체여야 합니다".into());
+    };
+    let Some(operation) = object.get("op").and_then(Value::as_str) else {
+        return invalid_request(request_id, "op 문자열이 필요합니다".into());
+    };
+    let args = object.get("args").cloned().unwrap_or(Value::Null);
+    let path_arg = args.get("path").and_then(Value::as_str);
+    let document_text = object.get("document").and_then(Value::as_str).unwrap_or("");
+    let result: Result<Value, OutlinerError> = (|| match operation {
+        "daily_page" => Ok(json!({"filename": daily_page(args["date"].as_str().unwrap_or(""))?})),
+        "load" => {
+            let path =
+                path_arg.ok_or_else(|| OutlinerError::Invalid("args.path가 필요합니다".into()))?;
+            let content =
+                fs::read_to_string(path).map_err(|error| OutlinerError::Io(error.to_string()))?;
+            let document = parse(&content)?;
+            Ok(json!({"document": document, "markdown": content}))
+        }
+        "save" => {
+            let path =
+                path_arg.ok_or_else(|| OutlinerError::Invalid("args.path가 필요합니다".into()))?;
+            let content = args["markdown"].as_str().unwrap_or(document_text);
+            save_atomic(Path::new(path), content)?;
+            Ok(json!({"path": path, "saved": true}))
+        }
+        "parse" => Ok(serde_json::to_value(parse(document_text)?)
+            .map_err(|error| OutlinerError::Invalid(error.to_string()))?),
+        "serialize" => Ok(json!({"markdown": serialize(&parse(document_text)?)})),
+        "edit" => {
+            let mut document = parse(document_text)?;
+            let action = args["action"].as_str().unwrap_or("");
+            let block_id = args["block_id"].as_u64().unwrap_or(0);
+            edit(&mut document, action, block_id, args["text"].as_str())?;
+            Ok(json!({"markdown": serialize(&document), "document": document}))
+        }
+        "search" => Ok(
+            json!({"block_ids": search(&parse(document_text)?, args["query"].as_str().unwrap_or(""))?}),
+        ),
+        "backlinks" => Ok(
+            json!({"block_ids": backlinks(&parse(document_text)?, args["target"].as_str().unwrap_or(""))}),
+        ),
+        _ => Err(OutlinerError::Invalid(format!(
+            "지원하지 않는 명령: {operation}"
+        ))),
+    })();
+    match result {
+        Ok(result) => json!({"id": request_id, "ok": true, "result": result}),
+        Err(error) => {
+            json!({"id": request_id, "ok": false, "error": {"code": error.code(), "message": error.to_string()}})
+        }
+    }
+}
