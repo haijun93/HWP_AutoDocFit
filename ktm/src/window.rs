@@ -203,7 +203,7 @@ fn scale(h: HWND, n: i32) -> i32 {
 
 fn row_height(h: HWND) -> i32 {
     let compact = with(|u| u.settings.result_density == "compact");
-    scale(h, ktm::layout::density_row_height(compact)).max(1)
+    scale(h, ktm::layout::result_card_height(100, compact)).max(1)
 }
 
 fn palette() -> ui_theme::Palette {
@@ -487,9 +487,10 @@ fn list_top_coord(h: HWND, u: &Ui) -> i32 {
     let filters = scale(h, FILTER_H);
     let summary = scale(h, SUMMARY_H);
     let has_ac = !u.state.autocompletes.is_empty();
+    let group_band = scale(h, related_chip_band_height(kfind_core::parse_groups(&u.state.query).len(), 100));
     calc_content_top(
         head,
-        search,
+        search + group_band,
         tabs,
         options,
         filters,
@@ -835,12 +836,14 @@ unsafe fn layout(h: HWND) {
         );
         ShowWindow(with(|u| u.edit), if modal_open { SW_HIDE } else { SW_SHOW });
         let spans = option_spans(pad + side_w, r.right - pad);
+        let related_query = with(|u| u.state.query.clone());
+        let chip_h = scale(h, related_chip_band_height(kfind_core::parse_groups(&related_query).len(), 100));
         let within = spans[5];
         let within_hwnd = with(|u| u.within_edit);
         MoveWindow(
             within_hwnd,
             within.0 + scale(h, 2),
-            head + scale(h, SEARCH_BOX_H + 12 + TAB_H),
+            head + scale(h, SEARCH_BOX_H + 12) + chip_h + scale(h, TAB_H),
             (within.1 - within.0 - scale(h, 4)).max(1),
             scale(h, OPTION_H),
             1,
@@ -857,7 +860,7 @@ unsafe fn layout(h: HWND) {
         MoveWindow(
             days,
             pad + side_w + scale(h, 258),
-            head + scale(h, SEARCH_BOX_H + 12 + TAB_H + OPTION_H / 2),
+            head + scale(h, SEARCH_BOX_H + 12) + chip_h + scale(h, TAB_H + OPTION_H / 2),
             scale(h, 48),
             scale(h, 22),
             1,
@@ -1973,9 +1976,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let visible = ((r.bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
             let visible_indices = display_ids;
 
-            let line_h1 = scale(h, 22);
-            let line_h2 = scale(h, 20);
-            let line_h3 = scale(h, 24);
+            let line_h1 = scale(h, 20);
+            let line_h2 = scale(h, 24);
             let folder_w = scale(h, ROW_FOLDER_W);
 
             for (slot, &n) in visible_indices
@@ -2155,13 +2157,13 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         } else {
                             text_right
                         },
-                        bottom: gy + line_h1 + line_h2,
+                        bottom: gy + rh,
                     },
                     p.row_text(sel, p.text_faint),
                     DT_PATH_ELLIPSIS,
                 );
 
-                // 셋째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
+                // 둘째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
                 let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
                     (&row.location, &[])
                 } else {
@@ -2174,8 +2176,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 if grid {
                     snip_left = row_rc.left + scale(h, 8);
                 }
-                let line_top = gy + line_h1 + line_h2;
-                let line_bottom = line_top + line_h3;
+                let line_top = gy + line_h1;
+                let line_bottom = line_top + line_h2;
 
                 // ① 일치 문장 옆 위치 배지 (쪽·시트·행 등 kfind 위치 메타가 있는 것만, 없으면 생략)
                 if u.settings.show_location {
@@ -2191,7 +2193,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         let badge_pad_x = scale(h, 4);
                         let badge_w = bsize.cx + badge_pad_x * 2;
                         let badge_h = bsize.cy + scale(h, 2);
-                        let badge_top = line_top + (line_h3 - badge_h) / 2;
+                        let badge_top = line_top + (line_h2 - badge_h) / 2;
                         let badge_rc = RECT {
                             left: snip_left,
                             top: badge_top,
@@ -2231,7 +2233,18 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 );
             }
 
-            // ② 결과 선택 시 미리보기 줄 (선택 행의 일치 문단 전체 3줄)
+            // ② 검색창 아래 연관 검색어 묶음 칩
+            let related_groups: Vec<String> = kfind_core::parse_groups(&u.state.query)
+                .into_iter().map(str::to_owned).collect();
+            let chip_top = head + scale(h, SEARCH_BOX_H + 12);
+            let chip_rects = related_chip_rects(&related_groups, pad + side_w, chip_top, r.right - pad, scale(h, 100));
+            SelectObject(mem, u.small);
+            for (group, chip) in related_groups.iter().zip(chip_rects.iter()) {
+                fill(*chip, p.tab_hover);
+                text(group, *chip, p.tab_text, DT_CENTER | DT_END_ELLIPSIS | DT_SINGLELINE);
+            }
+
+            // ③ 결과 선택 시 미리보기 줄 (선택 행의 일치 문단 전체 3줄)
             if let Some(sel_idx) = u.state.selected {
                 if let Some(sel_r) = u.rows.get(sel_idx) {
                     let prev_y = r.bottom - status_h - preview_h;
@@ -2956,7 +2969,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let folder_w = scale(h, ROW_FOLDER_W);
 
                 let new_head_btn = head_button_hit(x, y, r.right, bw, head);
-                let tab_y = head + scale(h, SEARCH_BOX_H + 12);
+                let chip_band = with(|u| scale(h, related_chip_band_height(kfind_core::parse_groups(&u.state.query).len(), 100)));
+                let tab_y = head + scale(h, SEARCH_BOX_H + 12) + chip_band;
                 let tab_h = scale(h, TAB_H);
                 let new_tab = hit_tab(x - side_w, y, pad, tab_y, tab_h, r.right - side_w);
 
@@ -3430,7 +3444,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     return 0;
                 }
 
-                let tab_y = head + scale(h, SEARCH_BOX_H + 12);
+                let chip_band = with(|u| scale(h, related_chip_band_height(kfind_core::parse_groups(&u.state.query).len(), 100)));
+                let tab_y = head + scale(h, SEARCH_BOX_H + 12) + chip_band;
                 let tab_h = scale(h, TAB_H);
                 let oy = tab_y + tab_h;
                 let oh = scale(h, OPTION_H);
@@ -3893,6 +3908,15 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             break;
                         }
                         ax += cw + scale(h, 6);
+                    }
+                } else if y >= head + scale(h, SEARCH_BOX_H + 12)
+                    && y < head + scale(h, SEARCH_BOX_H + 12)
+                        + with(|u| scale(h, related_chip_band_height(kfind_core::parse_groups(&u.state.query).len(), 100)))
+                {
+                    let groups = with(|u| kfind_core::parse_groups(&u.state.query).into_iter().map(str::to_owned).collect::<Vec<_>>());
+                    let rects = related_chip_rects(&groups, pad + side_w, head + scale(h, SEARCH_BOX_H + 12), rc_w.right - pad, scale(h, 100));
+                    if let Some(index) = rects.iter().position(|rc| x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
+                        if let Some(group) = groups.get(index) { event(h, Event::Input(group.clone())); }
                     }
                 } else {
                     // ⑥ 결과 행 클릭 또는 [폴더 열기] 단추 클릭

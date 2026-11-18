@@ -32,10 +32,13 @@ pub struct Stats {
     pub total_docs: usize,
     /// 주제 ID별 월별(1~12월) 문서 수: [1월, 2월, ..., 12월]
     pub topic_by_month: HashMap<usize, [u32; 12]>,
-    /// 주제 ID별 ISO 주차(1~53) 문서 수
-    pub topic_by_iso_week: HashMap<usize, BTreeMap<u32, u32>>,
-    /// 주차(ISO Week) × 요일(0:월요일 ~ 6:일요일) 히트맵
-    pub week_day_heatmap: BTreeMap<u32, [u32; 7]>,
+    /// 주제 ID별 (역년, 월) 문서 수
+    #[serde(default)]
+    pub topic_timeline_by_month: HashMap<usize, BTreeMap<(i32, u32), u32>>,
+    /// 주제 ID별 (ISO 연도, ISO 주차) 문서 수
+    pub topic_by_iso_week: HashMap<usize, BTreeMap<(i32, u32), u32>>,
+    /// (ISO 연도, ISO 주차) × 요일(0:월요일 ~ 6:일요일) 히트맵
+    pub week_day_heatmap: BTreeMap<(i32, u32), [u32; 7]>,
     /// 상위 주제 순위
     pub top_topics: Vec<TopTopicSummary>,
     /// 집중 시기 (주별 작업량이 평균+2표준편차를 넘는 주차)
@@ -66,8 +69,9 @@ pub fn calculate_stats(
 
     let mut filtered_docs_count = 0;
     let mut topic_by_month: HashMap<usize, [u32; 12]> = HashMap::new();
-    let mut topic_by_iso_week: HashMap<usize, BTreeMap<u32, u32>> = HashMap::new();
-    let mut week_day_heatmap: BTreeMap<u32, [u32; 7]> = BTreeMap::new();
+    let mut topic_timeline_by_month: HashMap<usize, BTreeMap<(i32, u32), u32>> = HashMap::new();
+    let mut topic_by_iso_week: HashMap<usize, BTreeMap<(i32, u32), u32>> = HashMap::new();
+    let mut week_day_heatmap: BTreeMap<(i32, u32), [u32; 7]> = BTreeMap::new();
     let mut week_total_counts: BTreeMap<IsoWeek, u32> = BTreeMap::new();
     let mut topic_total_counts: HashMap<usize, usize> = HashMap::new();
 
@@ -90,16 +94,21 @@ pub fn calculate_stats(
         if let Some(topic_id) = doc_to_topic[i] {
             let m_arr = topic_by_month.entry(topic_id).or_insert([0; 12]);
             m_arr[m_idx] += 1;
+            *topic_timeline_by_month
+                .entry(topic_id)
+                .or_default()
+                .entry((date.year, date.month))
+                .or_insert(0) += 1;
 
             let w_map = topic_by_iso_week.entry(topic_id).or_default();
-            *w_map.entry(iso.week).or_insert(0) += 1;
+            *w_map.entry((iso.year, iso.week)).or_insert(0) += 1;
 
             *topic_total_counts.entry(topic_id).or_insert(0) += 1;
         }
 
         // 요일 히트맵 (weekday 1=월 -> 0, 7=일 -> 6)
         let d_idx = (weekday.saturating_sub(1).min(6)) as usize;
-        let heat_arr = week_day_heatmap.entry(iso.week).or_insert([0; 7]);
+        let heat_arr = week_day_heatmap.entry((iso.year, iso.week)).or_insert([0; 7]);
         heat_arr[d_idx] += 1;
 
         // 주별 총합 집계
@@ -160,6 +169,7 @@ pub fn calculate_stats(
     Stats {
         total_docs: filtered_docs_count,
         topic_by_month,
+        topic_timeline_by_month,
         topic_by_iso_week,
         week_day_heatmap,
         top_topics,
@@ -228,5 +238,30 @@ mod tests {
 
         let stats = calculate_stats(&[topic], &[ts1, ts2], Some(period), KST_OFFSET_SECS);
         assert_eq!(stats.total_docs, 1);
+    }
+
+    #[test]
+    fn same_iso_week_number_in_different_years_is_kept_separate() {
+        let topic = Topic {
+            id: 0,
+            name: "예산".into(),
+            rep_title: "예산".into(),
+            rep_doc_index: 0,
+            keywords: vec![],
+            doc_indices: vec![0, 1],
+        };
+        // 2025-01-06, 2026-01-05 모두 ISO 2주차 월요일.
+        let timestamps = [
+            Date::new(2025, 1, 6).to_timestamp(KST_OFFSET_SECS),
+            Date::new(2026, 1, 5).to_timestamp(KST_OFFSET_SECS),
+        ];
+        let stats = calculate_stats(&[topic], &timestamps, None, KST_OFFSET_SECS);
+        let weeks = &stats.topic_by_iso_week[&0];
+        assert_eq!(weeks.get(&(2025, 2)), Some(&1));
+        assert_eq!(weeks.get(&(2026, 2)), Some(&1));
+        assert_eq!(stats.week_day_heatmap[&(2025, 2)][0], 1);
+        assert_eq!(stats.week_day_heatmap[&(2026, 2)][0], 1);
+        assert_eq!(stats.topic_timeline_by_month[&0][&(2025, 1)], 1);
+        assert_eq!(stats.topic_timeline_by_month[&0][&(2026, 1)], 1);
     }
 }
