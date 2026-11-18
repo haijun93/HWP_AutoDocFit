@@ -158,6 +158,16 @@ fn done_marker_is_extracted() {
     );
 }
 #[test]
+fn todo_status_toggles_through_done_and_back_to_todo() {
+    let mut doc = parse("- task\n").unwrap();
+    edit(&mut doc, "toggle_status", 1, None).unwrap();
+    assert_eq!(doc.blocks[0].status.as_deref(), Some("TODO"));
+    edit(&mut doc, "toggle_status", 1, None).unwrap();
+    assert_eq!(doc.blocks[0].status.as_deref(), Some("DONE"));
+    edit(&mut doc, "toggle_status", 1, None).unwrap();
+    assert_eq!(doc.blocks[0].status.as_deref(), Some("TODO"));
+}
+#[test]
 fn backlink_index_includes_page_and_block_references() {
     let doc = parse("- [[page]] ((42))\n").unwrap();
     assert_eq!(backlinks(&doc, "page"), [1]);

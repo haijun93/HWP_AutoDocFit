@@ -161,6 +161,16 @@ pub fn edit(
                 Some(status.into())
             };
         }
+        "toggle_status" => {
+            document.blocks[block_index].status = match document.blocks[block_index]
+                .status
+                .as_deref()
+            {
+                Some("TODO") => Some("DONE".into()),
+                Some("DONE") | None => Some("TODO".into()),
+                Some(_) => Some("TODO".into()),
+            };
+        }
         "set_text" => {
             document.blocks[block_index].text = text
                 .ok_or_else(|| OutlinerError::Invalid("text가 필요합니다".into()))?

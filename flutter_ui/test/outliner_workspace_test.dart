@@ -57,4 +57,83 @@ void main() {
     expect(find.text('역링크'), findsOneWidget);
     expect(find.text('Hello'), findsOneWidget);
   });
+
+  testWidgets('shows page management, recent pages and task toggles', (
+    tester,
+  ) async {
+    Future<Object?> api(String method, [List<Object?> args = const []]) async {
+      final payload = args.first as Map;
+      switch (payload['action']) {
+        case 'list':
+          return {
+            'ok': true,
+            'data': {
+              'pages': [
+                {'name': 'Home'},
+              ],
+              'recent': ['Home'],
+            },
+          };
+        case 'daily':
+        case 'load':
+          return {
+            'ok': true,
+            'data': {
+              'page': payload['action'] == 'daily'
+                  ? '2026-11-18'
+                  : payload['page'],
+              'markdown': '- TODO task\n',
+              'version': 'v1',
+              'document': {
+                'blocks': [
+                  {
+                    'id': 1,
+                    'text': 'TODO task',
+                    'indent': 0,
+                    'status': 'TODO',
+                    'folded': false,
+                  },
+                ],
+              },
+            },
+          };
+        case 'backlinks':
+          return {
+            'ok': true,
+            'data': {'block_ids': []},
+          };
+        default:
+          return {
+            'ok': true,
+            'data': {
+              'markdown': '- TODO task\n',
+              'document': {
+                'blocks': [
+                  {
+                    'id': 1,
+                    'text': 'TODO task',
+                    'indent': 0,
+                    'status': 'TODO',
+                    'folded': false,
+                  },
+                ],
+              },
+            },
+          };
+      }
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: OutlinerWorkspace(api: api)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('최근 페이지'), findsOneWidget);
+    expect(find.text('Home'), findsNWidgets(2));
+    expect(find.byTooltip('새 페이지'), findsOneWidget);
+    expect(find.byTooltip('이름 바꾸기'), findsOneWidget);
+    expect(find.byTooltip('페이지 삭제'), findsOneWidget);
+    expect(find.byTooltip('완료 표시'), findsOneWidget);
+  });
 }

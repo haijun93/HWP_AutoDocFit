@@ -14,6 +14,7 @@ class OutlinerWorkspace extends StatefulWidget {
 
 class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   List<Map> _pages = [];
+  List<String> _recentPages = [];
   List<Map> _blocks = [];
   String? _page;
   String _markdown = '';
@@ -22,6 +23,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   bool _busy = false;
   String _pageQuery = '';
   final _search = TextEditingController();
+  final Map<Object, TextEditingController> _editors = {};
+  final Map<Object, FocusNode> _focusNodes = {};
+  String _linkQuery = '';
 
   List<Map> get _visibleBlocks {
     final visible = <Map>[];
@@ -45,6 +49,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   @override
   void dispose() {
     _search.dispose();
+    for (final controller in _editors.values) {
+      controller.dispose();
+    }
+    for (final node in _focusNodes.values) {
+      node.dispose();
+    }
     super.dispose();
   }
 
@@ -64,11 +74,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     try {
       final result = await _call({'action': 'list'});
       if (mounted) {
-        setState(
-          () => _pages = (result['pages'] as List? ?? [])
-              .whereType<Map>()
-              .toList(),
-        );
+        setState(() {
+          _pages = (result['pages'] as List? ?? []).whereType<Map>().toList();
+          _recentPages = (result['recent'] as List? ?? [])
+              .whereType<String>()
+              .toList();
+        });
       }
       if (_page == null) await _openToday();
     } catch (e) {
@@ -95,7 +106,93 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   Future<void> _open(String page) async => _run(() async {
     _applyDocument(await _call({'action': 'load', 'page': page}));
+    await _refreshPages();
   });
+
+  Future<void> _newPage() async {
+    final name = await _pageNameDialog('새 페이지');
+    if (name == null || name.isEmpty) return;
+    await _run(() async {
+      _applyDocument(await _call({'action': 'create', 'page': name}));
+      await _refreshPages();
+    });
+  }
+
+  Future<String?> _pageNameDialog(String title, [String initial = '']) async {
+    final controller = TextEditingController(text: initial);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '페이지 이름'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('확인'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return value;
+  }
+
+  Future<void> _renamePage() async {
+    if (_page == null) return;
+    final name = await _pageNameDialog('페이지 이름 바꾸기', _page!);
+    if (name == null || name.isEmpty || name == _page) return;
+    await _run(() async {
+      _applyDocument(
+        await _call({'action': 'rename', 'page': _page, 'new_name': name}),
+      );
+      await _refreshPages();
+    });
+  }
+
+  Future<void> _deletePage() async {
+    if (_page == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('페이지 삭제'),
+        content: Text('“$_page” 페이지를 삭제할까요?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('삭제'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await _call({'action': 'delete', 'page': _page});
+      _page = null;
+      _markdown = '';
+      _blocks = [];
+      _version = null;
+      await _refreshPages();
+      if (_pages.isNotEmpty) {
+        _applyDocument(
+          await _call({'action': 'load', 'page': _pages.first['name']}),
+        );
+      } else {
+        await _openToday();
+      }
+    });
+  }
 
   Future<void> _run(Future<void> Function() action) async {
     setState(() {
@@ -169,6 +266,38 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     _version = result['version'] as String?;
   }
 
+  Future<void> _setTextAndEdit(
+    Map block,
+    String operation,
+    String value,
+  ) async {
+    if (_page == null || _busy) return;
+    await _run(() async {
+      var result = await _call({
+        'action': 'edit',
+        'operation': 'set_text',
+        'page': _page,
+        'markdown': _markdown,
+        'block_id': block['id'],
+        'text': value,
+      });
+      if (operation.isNotEmpty) {
+        result = await _call({
+          'action': 'edit',
+          'operation': operation,
+          'page': _page,
+          'markdown': result['markdown'],
+          'block_id': block['id'],
+        });
+      }
+      _markdown = result['markdown'] as String? ?? _markdown;
+      _blocks = (result['document']?['blocks'] as List? ?? [])
+          .whereType<Map>()
+          .toList();
+      await _save();
+    });
+  }
+
   Future<void> _searchBlocks(String query) async {
     if (query.trim().runes.length < 2 || _page == null) return;
     await _run(() async {
@@ -215,6 +344,34 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                   title: const Text('오늘의 일지'),
                   onTap: _busy ? null : _openToday,
                 ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '최근 페이지',
+                          style: Theme.of(
+                            context,
+                          ).textTheme.labelLarge?.copyWith(color: c.muted),
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '새 페이지',
+                        onPressed: _busy ? null : _newPage,
+                        icon: const Icon(Icons.add),
+                      ),
+                    ],
+                  ),
+                ),
+                for (final name in _recentPages)
+                  ListTile(
+                    dense: true,
+                    leading: const Icon(Icons.history, size: 18),
+                    title: Text(name),
+                    selected: name == _page,
+                    onTap: _busy ? null : () => _open(name),
+                  ),
                 const Divider(height: 1),
                 Expanded(
                   child: ListView(
@@ -254,6 +411,16 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               fontWeight: FontWeight.w700,
                             ),
                       ),
+                    ),
+                    IconButton(
+                      tooltip: '이름 바꾸기',
+                      onPressed: _page == null || _busy ? null : _renamePage,
+                      icon: const Icon(Icons.drive_file_rename_outline),
+                    ),
+                    IconButton(
+                      tooltip: '페이지 삭제',
+                      onPressed: _page == null || _busy ? null : _deletePage,
+                      icon: const Icon(Icons.delete_outline),
                     ),
                     IconButton(
                       tooltip: '새 블록',
@@ -305,42 +472,161 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               ),
                             ),
                             Expanded(
-                              child: Focus(
-                                onKeyEvent: (node, event) {
-                                  if (event is! KeyDownEvent ||
-                                      event.logicalKey !=
-                                          LogicalKeyboardKey.tab) {
-                                    return KeyEventResult.ignored;
-                                  }
-                                  _edit(
-                                    block,
-                                    HardwareKeyboard.instance.isShiftPressed
-                                        ? 'outdent'
-                                        : 'indent',
+                              child: Builder(
+                                builder: (context) {
+                                  final id = block['id'];
+                                  final controller = _editors.putIfAbsent(
+                                    id,
+                                    () => TextEditingController(
+                                      text: '${block['text'] ?? ''}',
+                                    ),
                                   );
-                                  return KeyEventResult.handled;
+                                  final focus = _focusNodes.putIfAbsent(
+                                    id,
+                                    FocusNode.new,
+                                  );
+                                  if (!focus.hasFocus &&
+                                      controller.text !=
+                                          '${block['text'] ?? ''}') {
+                                    controller.text = '${block['text'] ?? ''}';
+                                  }
+                                  return Focus(
+                                    onKeyEvent: (node, event) {
+                                      if (event is! KeyDownEvent) {
+                                        return KeyEventResult.ignored;
+                                      }
+                                      final key = event.logicalKey;
+                                      final value = controller.text;
+                                      final selection = controller.selection;
+                                      final mods = HardwareKeyboard.instance;
+                                      if (key == LogicalKeyboardKey.tab) {
+                                        _edit(
+                                          block,
+                                          mods.isShiftPressed
+                                              ? 'outdent'
+                                              : 'indent',
+                                        );
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (mods.isControlPressed &&
+                                          key == LogicalKeyboardKey.enter) {
+                                        _edit(
+                                          block,
+                                          block['folded'] == true
+                                              ? 'unfold'
+                                              : 'fold',
+                                        );
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (mods.isAltPressed &&
+                                          (key == LogicalKeyboardKey.arrowUp ||
+                                              key ==
+                                                  LogicalKeyboardKey
+                                                      .arrowDown)) {
+                                        _setTextAndEdit(
+                                          block,
+                                          key == LogicalKeyboardKey.arrowUp
+                                              ? 'up'
+                                              : 'down',
+                                          value,
+                                        );
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (key == LogicalKeyboardKey.backspace &&
+                                          selection.isCollapsed) {
+                                        if (value.isEmpty) {
+                                          _setTextAndEdit(
+                                            block,
+                                            'delete',
+                                            value,
+                                          );
+                                          return KeyEventResult.handled;
+                                        }
+                                        if (selection.baseOffset == 0) {
+                                          final index = _blocks.indexOf(block);
+                                          if (index > 0) {
+                                            final previous = _blocks[index - 1];
+                                            final before =
+                                                _editors[previous['id']]
+                                                    ?.text ??
+                                                '${previous['text'] ?? ''}';
+                                            _run(() async {
+                                              final result = await _call({
+                                                'action': 'edit',
+                                                'operation': 'set_text',
+                                                'page': _page,
+                                                'markdown': _markdown,
+                                                'block_id': previous['id'],
+                                                'text': '$before$value',
+                                              });
+                                              final merged = await _call({
+                                                'action': 'edit',
+                                                'operation': 'delete',
+                                                'page': _page,
+                                                'markdown': result['markdown'],
+                                                'block_id': id,
+                                              });
+                                              _markdown = merged['markdown'];
+                                              _blocks =
+                                                  (merged['document']['blocks']
+                                                          as List)
+                                                      .whereType<Map>()
+                                                      .toList();
+                                              await _save();
+                                            });
+                                          }
+                                          return KeyEventResult.handled;
+                                        }
+                                      }
+                                      return KeyEventResult.ignored;
+                                    },
+                                    child: TextField(
+                                      key: ValueKey('outliner-block-$id'),
+                                      controller: controller,
+                                      focusNode: focus,
+                                      onChanged: (value) {
+                                        final match = RegExp(
+                                          r'\[\[([^\]]*)$',
+                                        ).firstMatch(value);
+                                        setState(
+                                          () => _linkQuery =
+                                              match?.group(1) ?? '',
+                                        );
+                                      },
+                                      decoration: const InputDecoration(
+                                        border: InputBorder.none,
+                                        isDense: true,
+                                      ),
+                                      onSubmitted: _busy
+                                          ? null
+                                          : (value) =>
+                                                _commitAndInsert(block, value),
+                                    ),
+                                  );
                                 },
-                                child: TextFormField(
-                                  key: ValueKey(
-                                    'outliner-block-${block['id']}',
-                                  ),
-                                  initialValue: '${block['text'] ?? ''}',
-                                  decoration: const InputDecoration(
-                                    border: InputBorder.none,
-                                    isDense: true,
-                                  ),
-                                  onFieldSubmitted: _busy
-                                      ? null
-                                      : (value) =>
-                                            _commitAndInsert(block, value),
-                                ),
                               ),
                             ),
-                            if ((block['status']) == 'TODO')
-                              const Icon(
-                                Icons.check_box_outline_blank,
-                                size: 16,
+                            IconButton(
+                              tooltip: block['status'] == 'DONE'
+                                  ? '완료 해제'
+                                  : '완료 표시',
+                              onPressed: _busy
+                                  ? null
+                                  : () => _setTextAndEdit(
+                                      block,
+                                      'toggle_status',
+                                      _editors[block['id']]?.text ??
+                                          '${block['text'] ?? ''}',
+                                    ),
+                              icon: Icon(
+                                block['status'] == 'DONE'
+                                    ? Icons.check_box
+                                    : block['status'] == 'TODO'
+                                    ? Icons.check_box_outline_blank
+                                    : Icons.task_alt,
+                                size: 18,
                               ),
+                            ),
                             IconButton(
                               tooltip: '들여쓰기',
                               onPressed: _busy
@@ -361,6 +647,38 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                           ],
                         ),
                       ),
+                    if (_linkQuery.isNotEmpty) ...[
+                      for (final p
+                          in _pages
+                              .where(
+                                (p) => '${p['name']}'.toLowerCase().contains(
+                                  _linkQuery.toLowerCase(),
+                                ),
+                              )
+                              .take(6))
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.link),
+                          title: Text('${p['name']}'),
+                          onTap: () {
+                            final focused = _focusNodes.entries
+                                .where((e) => e.value.hasFocus)
+                                .firstOrNull;
+                            if (focused != null) {
+                              final controller = _editors[focused.key]!;
+                              final start = controller.text.lastIndexOf('[[');
+                              if (start >= 0) {
+                                controller.text =
+                                    '${controller.text.substring(0, start)}[[${p['name']}]]';
+                                controller.selection = TextSelection.collapsed(
+                                  offset: controller.text.length,
+                                );
+                              }
+                            }
+                            setState(() => _linkQuery = '');
+                          },
+                        ),
+                    ],
                     for (final block in _blocks)
                       if ((block['page_links'] as List? ?? []).isNotEmpty)
                         Padding(

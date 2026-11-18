@@ -21,6 +21,7 @@ class OutlinerService:
         self.runner = runner
         self._lock = threading.RLock()
         self._versions: dict[str, str] = {}
+        self._recent: list[str] = []
 
     @staticmethod
     def _find_executable():
@@ -72,7 +73,32 @@ class OutlinerService:
         action = payload.get('action')
         with self._lock:
             if action == 'list':
-                return {'pages': [{'name': p.stem, 'path': p.name} for p in sorted(self.root.glob('*.md')) if p.is_file()]}
+                pages = [{'name': p.stem, 'path': p.name} for p in sorted(self.root.glob('*.md')) if p.is_file()]
+                return {'pages': pages, 'recent': [name for name in self._recent if any(p['name'] == name for p in pages)]}
+            if action == 'create':
+                path = self._path(payload.get('page'))
+                if path.exists():
+                    raise ServiceError('OUTLINER_PAGE_EXISTS', '같은 이름의 페이지가 이미 있습니다.')
+                path.write_text('- \n', encoding='utf-8')
+                return self._load(path.stem)
+            if action == 'rename':
+                source = self._path(payload.get('page'))
+                target = self._path(payload.get('new_name'))
+                if not source.exists():
+                    raise ServiceError('OUTLINER_PAGE_MISSING', '페이지를 찾을 수 없습니다.')
+                if target.exists():
+                    raise ServiceError('OUTLINER_PAGE_EXISTS', '같은 이름의 페이지가 이미 있습니다.')
+                source.rename(target)
+                self._versions.pop(source.name, None)
+                return self._load(target.stem)
+            if action == 'delete':
+                path = self._path(payload.get('page'))
+                if not path.exists():
+                    raise ServiceError('OUTLINER_PAGE_MISSING', '페이지를 찾을 수 없습니다.')
+                path.unlink()
+                self._versions.pop(path.name, None)
+                self._recent = [name for name in self._recent if name != path.stem]
+                return {'deleted': True, 'page': path.stem}
             if action == 'daily':
                 from datetime import date
                 filename = self._engine({'id': 'daily', 'op': 'daily_page', 'args': {'date': date.today().isoformat()}})['filename']
@@ -113,4 +139,7 @@ class OutlinerService:
         result = self._engine({'id': 'load', 'op': 'load', 'args': {'path': str(path)}})
         version = self._digest(path)
         self._versions[path.name] = version
+        self._recent = [name for name in self._recent if name != path.stem]
+        self._recent.insert(0, path.stem)
+        del self._recent[10:]
         return {'page': path.stem, 'path': path.name, 'markdown': result['markdown'], 'document': result['document'], 'version': version}
