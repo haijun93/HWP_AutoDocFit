@@ -23,6 +23,7 @@ mod classify_levels;
 mod legacy_records;
 mod rename;
 mod tm_scan;
+mod photo;
 pub(crate) mod scan_hwp;
 
 use std::sync::atomic::AtomicBool;

@@ -884,6 +884,26 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
     let resp = match cmd {
 
+        "photo_tag_add" | "photo_tag_remove" | "photo_tag_get" | "photo_tag_list" => {
+            let Some(path) = val.str("path") else { return json::to_string(&err_val("path가 필요합니다.")); };
+            let guard = db.lock().unwrap();
+            let result = match cmd {
+                "photo_tag_add" => { let Some(tag)=val.str("tag") else{return json::to_string(&err_val("tag가 필요합니다."))}; crate::photo::add_tag(guard.connection(), path, tag) }
+                "photo_tag_remove" => { let Some(tag)=val.str("tag") else{return json::to_string(&err_val("tag가 필요합니다."))}; crate::photo::remove_tag(guard.connection(), path, tag) }
+                "photo_tag_list" => { let Some(tag)=val.str("tag") else{return json::to_string(&err_val("tag가 필요합니다."))}; crate::photo::list_by_tag(guard.connection(), tag) }
+                _ => crate::photo::get_tags(guard.connection(), path),
+            };
+            match result { Ok(tags)=>ok_val(vec![(if cmd=="photo_tag_list"{"paths"}else{"tags"}, Value::Arr(tags.into_iter().map(Into::into).collect()))]), Err(e)=>err_val(&e.to_string()) }
+        }
+
+        "photo_search" => {
+            let guard=db.lock().unwrap();
+            match crate::photo::search(guard.connection(), val.str("query").unwrap_or(""), val.str("tag")) {
+                Ok(rows)=>ok_val(vec![("results", Value::Arr(rows.into_iter().map(|(path,tags)|Value::obj(vec![("path",path.into()),("tags",Value::Arr(tags.into_iter().map(Into::into).collect()))])).collect()))]),
+                Err(e)=>err_val(&e.to_string())
+            }
+        }
+
         "ping" => ok_val(vec![("message", "pong".into()), ("version", env!("CARGO_PKG_VERSION").into())]),
 
         "nb_create" => {
