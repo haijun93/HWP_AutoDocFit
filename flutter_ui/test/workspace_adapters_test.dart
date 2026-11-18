@@ -94,6 +94,7 @@ void main() {
     expect(kTabPhotoAlbum, 9);
     expect(kTabFileConversion, 10);
     expect(kTabPdfEdit, 11);
-    expect(kTabCount, 12);
+    expect(kTabOutliner, 14);
+    expect(kTabCount, 15);
   });
 }
