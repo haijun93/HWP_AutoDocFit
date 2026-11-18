@@ -54,11 +54,17 @@ def extract_pdf(path: Path | str, *, pdfium_module=None) -> list[ExtractionRecor
                     else:
                         text = page.extract_text() if hasattr(page, "extract_text") else ""
 
-                    stripped = (text or "").strip()
-                    if stripped:
+                    # PDFium returns line breaks for separate visual text runs. Keep
+                    # each nonempty line as a record so the shared hierarchy
+                    # classifier can recognize a consistent numbering sequence.
+                    # The page label remains the source location for every line.
+                    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+                    if not lines and (text or "").strip():
+                        lines = [(text or "").strip()]
+                    for line in lines:
                         records.append(
                             ExtractionRecord(
-                                text=stripped,
+                                text=line,
                                 location_kind="page",
                                 location_label=f"{i + 1}쪽",
                                 sequence=seq,
