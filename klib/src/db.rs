@@ -86,6 +86,7 @@ impl Database {
         let conn = Connection::open(db_path)?;
         let mut db = Database { conn, path: PathBuf::from(db_path), nb: Err("아직 열지 않음".into()), nb_migration: Default::default() };
         db.init_schema()?;
+        crate::photo::init_schema(&db.conn)?;
         crate::scan::init_schema(&db.conn)?;
         // 업무자료함은 별도 DB·색인에 둔다(처음 실행 때 자료함 DB의 옛 자료를 한 번 옮김). 실패해도 자료함은 연다.
         let (nb, m) = crate::nb_store::open(&db.conn, &db.path);
