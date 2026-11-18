@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -5,16 +8,45 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/theme/app_theme.dart';
 
 class OutlinerWorkspace extends StatefulWidget {
-  const OutlinerWorkspace({super.key, required this.api});
+  const OutlinerWorkspace({super.key, required this.api, this.recentPagesStore});
   final ApiCall api;
+  final RecentPagesStore? recentPagesStore;
 
   @override
   State<OutlinerWorkspace> createState() => _OutlinerWorkspaceState();
 }
 
+abstract interface class RecentPagesStore {
+  Future<List<String>> load();
+  Future<void> save(List<String> pages);
+}
+
+class FileRecentPagesStore implements RecentPagesStore {
+  FileRecentPagesStore(this.directoryProvider);
+  final Future<Directory> Function() directoryProvider;
+
+  Future<File> _file() async => File(
+    '${(await directoryProvider()).path}${Platform.pathSeparator}outliner_recent.json',
+  );
+
+  @override
+  Future<List<String>> load() async {
+    final decoded = jsonDecode(await (await _file()).readAsString());
+    return decoded is List ? decoded.whereType<String>().toList() : [];
+  }
+
+  @override
+  Future<void> save(List<String> pages) async {
+    final file = await _file();
+    await file.parent.create(recursive: true);
+    await file.writeAsString(jsonEncode(pages));
+  }
+}
+
 class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   List<Map> _pages = [];
   List<String> _recentPages = [];
+  bool _recentLoaded = false;
   List<Map> _blocks = [];
   String? _page;
   String _markdown = '';
@@ -74,11 +106,21 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     try {
       final result = await _call({'action': 'list'});
       if (mounted) {
+        final pages = (result['pages'] as List? ?? [])
+            .whereType<Map>()
+            .toList();
+        final available = pages
+            .map((p) => p['name'])
+            .whereType<String>()
+            .toSet();
+        if (!_recentLoaded) {
+          _recentPages = await _loadRecentPages(available, result['recent']);
+          _recentLoaded = true;
+        } else {
+          _recentPages = _recentPages.where(available.contains).take(20).toList();
+        }
         setState(() {
-          _pages = (result['pages'] as List? ?? []).whereType<Map>().toList();
-          _recentPages = (result['recent'] as List? ?? [])
-              .whereType<String>()
-              .toList();
+          _pages = pages;
         });
       }
       if (_page == null) await _openToday();
@@ -87,10 +129,50 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     }
   }
 
+  Future<Directory> _defaultDataDirectory() async {
+    final base = Platform.environment['LOCALAPPDATA'] ??
+        Platform.environment['APPDATA'];
+    if (base == null || base.isEmpty) {
+      throw const FileSystemException('사용자 데이터 폴더를 찾을 수 없습니다.');
+    }
+    return Directory('$base${Platform.pathSeparator}HwpAutoDocFit');
+  }
+
+  Future<List<String>> _loadRecentPages(Set<String> available, Object? fallback) async {
+    try {
+      final store = widget.recentPagesStore ?? FileRecentPagesStore(_defaultDataDirectory);
+      final stored = await store.load();
+      final recent = stored.where(available.contains).toSet().take(20).toList();
+      if (recent.isNotEmpty) return recent;
+      return (fallback as List? ?? []).whereType<String>().where(available.contains).toSet().take(20).toList();
+    } catch (_) {
+      return (fallback as List? ?? []).whereType<String>().where(available.contains).toSet().take(20).toList();
+    }
+  }
+
+  Future<void> _saveRecentPages() async {
+    try {
+      final store = widget.recentPagesStore ?? FileRecentPagesStore(_defaultDataDirectory);
+      await store.save(_recentPages.take(20).toList());
+    } catch (_) {}
+  }
+
+  Future<void> _rememberPage(String page) async {
+    _recentPages = [page, ..._recentPages.where((name) => name != page)].take(20).toList();
+    await _saveRecentPages();
+  }
+
   Future<void> _openToday() async {
     await _run(() async {
       final result = await _call({'action': 'daily'});
       _applyDocument(result);
+      if (_page != null) {
+        _recentPages = [
+          _page!,
+          ..._recentPages.where((name) => name != _page),
+        ].take(20).toList();
+        await _saveRecentPages();
+      }
       await _refreshPages();
     });
   }
@@ -106,6 +188,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   Future<void> _open(String page) async => _run(() async {
     _applyDocument(await _call({'action': 'load', 'page': page}));
+    await _rememberPage(page);
     await _refreshPages();
   });
 
@@ -225,6 +308,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .whereType<Map>()
           .toList();
       await _save();
+      if (_page != null) await _rememberPage(_page!);
     });
   }
 
@@ -252,6 +336,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .whereType<Map>()
           .toList();
       await _save();
+      if (_page != null) await _rememberPage(_page!);
     });
   }
 
@@ -295,6 +380,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .whereType<Map>()
           .toList();
       await _save();
+      if (_page != null) await _rememberPage(_page!);
     });
   }
 
@@ -495,6 +581,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       if (event is! KeyDownEvent) {
                                         return KeyEventResult.ignored;
                                       }
+                                      if (_busy) return KeyEventResult.handled;
                                       final key = event.logicalKey;
                                       final value = controller.text;
                                       final selection = controller.selection;
@@ -506,6 +593,13 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                               ? 'outdent'
                                               : 'indent',
                                         );
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (key == LogicalKeyboardKey.enter &&
+                                          !mods.isControlPressed &&
+                                          !mods.isAltPressed &&
+                                          !mods.isShiftPressed) {
+                                        _commitAndInsert(block, value);
                                         return KeyEventResult.handled;
                                       }
                                       if (mods.isControlPressed &&
@@ -573,6 +667,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                                       .whereType<Map>()
                                                       .toList();
                                               await _save();
+                                              if (_page != null) await _rememberPage(_page!);
                                             });
                                           }
                                           return KeyEventResult.handled;
@@ -584,6 +679,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       key: ValueKey('outliner-block-$id'),
                                       controller: controller,
                                       focusNode: focus,
+                                      onEditingComplete: () {},
                                       onChanged: (value) {
                                         final match = RegExp(
                                           r'\[\[([^\]]*)$',
@@ -597,10 +693,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                         border: InputBorder.none,
                                         isDense: true,
                                       ),
-                                      onSubmitted: _busy
-                                          ? null
-                                          : (value) =>
-                                                _commitAndInsert(block, value),
+                                      onSubmitted: null,
                                     ),
                                   );
                                 },
