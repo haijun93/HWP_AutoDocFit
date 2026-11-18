@@ -9,6 +9,7 @@ pub const CAPTION_W: i32 = 46;
 pub const SEARCH_BOX_H: i32 = 32;
 pub const TAB_H: i32 = 28;
 pub const FILTER_H: i32 = 24;
+/// Two-line result card: filename/meta on line one, matching excerpt on line two.
 pub const ROW_H: i32 = 70;
 pub const ROW_FOLDER_W: i32 = 28;
 pub const STATUS_H: i32 = 24;
@@ -344,8 +345,14 @@ pub fn filter_rows_within_query(
             let type_ok = types.is_empty() || types.iter().any(|t| t.eq_ignore_ascii_case(&ext));
             let text_ok = q.is_empty()
                 || (!exclude_filename && row.name.to_lowercase().contains(&q))
-                || row.snippet.to_lowercase().contains(&q);
-            let body_only_ok = !exclude_filename || !row.snippet.is_empty();
+                || row.snippet.to_lowercase().contains(&q)
+                || (exclude_filename && !row.snippet_tried);
+            // Excluding filename matches should suppress filename-only rows, not
+            // rows whose body snippet has not been loaded yet. The latter are
+            // fetched asynchronously when rows become visible.
+            let body_only_ok = !exclude_filename
+                || !row.snippet.is_empty()
+                || ( !q.is_empty() && !row.snippet_tried );
             (type_ok && text_ok && body_only_ok).then_some(i)
         })
         .collect()
@@ -642,6 +649,18 @@ mod content_top_tests {
 }
 
 #[cfg(test)]
+mod quick_search_card_tests {
+    use super::*;
+
+    #[test]
+    fn two_line_result_card_fits_painter_lines_at_common_scales() {
+        assert_eq!(two_line_row_height(100), 46);
+        assert_eq!(two_line_row_height(125), 57);
+        assert_eq!(two_line_row_height(0), 1);
+    }
+}
+
+#[cfg(test)]
 mod interaction_hit_tests {
     use super::*;
     #[test]
@@ -784,6 +803,12 @@ pub fn calc_row_rect(top_y: i32, index: usize, scroll_top: usize, row_h: i32, wi
         right: width,
         bottom: y + row_h,
     }
+}
+
+/// Height needed by the two-line result card painter, including a small vertical inset.
+pub fn two_line_row_height(scale: i32) -> i32 {
+    let s = scale.max(1);
+    (46 * s).div_euclid(100).max(1)
 }
 
 /// 행 오른쪽 [폴더 열기] 단추 영역 계산.
@@ -1211,7 +1236,7 @@ mod tests {
             level: 0,
             count: 0,
             para: None,
-            snippet_tried: false,
+            snippet_tried: true,
             preview: String::new(),
             date: 0,
             rank: 0,
@@ -1234,6 +1259,22 @@ mod tests {
     fn exclude_filename_hides_filename_only_results_without_within_query() {
         let rows = vec![row("match.txt", ""), row("other.txt", "body")];
         assert_eq!(filter_rows_within_query(&rows, "", true, &[]), vec![1]);
+    }
+    #[test]
+    fn exclude_filename_keeps_rows_pending_body_snippet_load() {
+        let mut pending = row("filename-match.txt", "");
+        pending.snippet_tried = false;
+        let loaded_without_match = row("other.txt", "unrelated body");
+        let loaded_with_match = row("third.txt", "needle in body");
+        assert_eq!(
+            filter_rows_within_query(
+                &[pending, loaded_without_match, loaded_with_match],
+                "needle",
+                true,
+                &[],
+            ),
+            vec![0, 2]
+        );
     }
     #[test]
     fn result_filter_matches_selected_file_types() {
