@@ -1065,6 +1065,67 @@ mod tests {
         assert_eq!(merged[0].kinds, [ResultKind::Names, ResultKind::Hierarchy, ResultKind::Body]);
         assert_eq!(merged.iter().map(|r| r.priority).collect::<Vec<_>>(), [0, 0, 1, 2]);
     }
+    #[test] fn all_tab_orders_name_then_hierarchy_then_body_and_keeps_best_match_once() {
+        let merged = merged(&[
+            (ResultKind::Body, vec![(1, "body-hit"), (2, "body-only")]),
+            (ResultKind::Hierarchy, vec![(1, "hierarchy-hit"), (3, "hierarchy-only")]),
+            (ResultKind::Names, vec![(1, "name-hit"), (4, "name-only")]),
+        ]);
+        assert_eq!(merged.iter().map(|r| r.row.0).collect::<Vec<_>>(), [1, 4, 3, 2]);
+        assert_eq!(merged.iter().filter(|r| r.row.0 == 1).count(), 1);
+        assert_eq!(merged[0].row.1, "name-hit");
+        assert_eq!(merged[0].kinds, [ResultKind::Names, ResultKind::Hierarchy, ResultKind::Body]);
+    }
+    #[test] fn hierarchy_only_hit_is_kept_between_names_and_body() {
+        let merged = merged(&[
+            (ResultKind::Names, vec![(1, "name")]),
+            (ResultKind::Hierarchy, vec![(2, "hierarchy-only")]),
+            (ResultKind::Body, vec![(3, "body")]),
+        ]);
+        assert_eq!(merged.iter().map(|r| r.row.0).collect::<Vec<_>>(), [1, 2, 3]);
+        assert_eq!(merged[1].kinds, [ResultKind::Hierarchy]);
+    }
+    #[test] fn empty_tiers_do_not_change_order_or_deduplication() {
+        let merged = merged(&[
+            (ResultKind::Body, vec![(8, "body"), (9, "shared-body")]),
+            (ResultKind::Hierarchy, Vec::new()),
+            (ResultKind::Names, vec![(9, "shared-name")]),
+        ]);
+        assert_eq!(merged.iter().map(|r| r.row.0).collect::<Vec<_>>(), [9, 8]);
+        assert_eq!(merged[0].row.1, "shared-name");
+        assert_eq!(merged[0].kinds, [ResultKind::Names, ResultKind::Body]);
+    }
+    #[test] fn combined_result_cap_is_eighty_with_tier_priority() {
+        let names = (0..25).map(|i| (i, "name")).collect();
+        let hierarchy = (100..125).map(|i| (i, "hierarchy")).collect();
+        let body = (200..250).map(|i| (i, "body")).collect();
+        let merged = merged(&[(ResultKind::Body, body), (ResultKind::Hierarchy, hierarchy), (ResultKind::Names, names)]);
+        let shown = &merged;
+        assert_eq!(merged.len(), 80);
+        assert_eq!(shown.len(), 80);
+        assert!(shown.iter().all(|r| r.priority <= 2));
+        assert_eq!(shown.iter().filter(|r| r.priority == 0).count(), 20);
+        assert_eq!(shown.iter().filter(|r| r.priority == 1).count(), 20);
+        assert_eq!(shown.iter().filter(|r| r.priority == 2).count(), 40);
+    }
+    #[test]
+    #[ignore = "manual reproducible 10k synthetic-index latency measurement"]
+    fn benchmark_combined_search_10k_synthetic_index() {
+        use std::time::Instant;
+        let names = (0..10_000).map(|i| (i, "name"));
+        let hierarchy = (5_000..15_000).map(|i| (i, "hierarchy"));
+        let body = (0..10_000).map(|i| (i + 10_000, "body"));
+        let batches = [
+            (ResultKind::Names, names.collect::<Vec<_>>()),
+            (ResultKind::Hierarchy, hierarchy.collect::<Vec<_>>()),
+            (ResultKind::Body, body.collect::<Vec<_>>()),
+        ];
+        let start = Instant::now();
+        let merged = combine_results(&batches, |row| row.0.to_string());
+        let elapsed = start.elapsed();
+        assert_eq!(merged.len(), 80);
+        eprintln!("combined_search_synthetic_10k_docs elapsed_us={} output_rows={}", elapsed.as_micros(), merged.len());
+    }
     #[test] fn combined_name_limit_is_twenty() { let rows=(0..30).map(|i|(i,"n")).collect(); assert_eq!(merged(&[(ResultKind::Names,rows)]).len(),20); }
     #[test] fn combined_hierarchy_limit_is_twenty() { let rows=(0..30).map(|i|(i,"h")).collect(); assert_eq!(merged(&[(ResultKind::Hierarchy,rows)]).len(),20); }
     #[test] fn combined_body_limit_is_forty() { let rows=(0..50).map(|i|(i,"b")).collect(); assert_eq!(merged(&[(ResultKind::Body,rows)]).len(),40); }
