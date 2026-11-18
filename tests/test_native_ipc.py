@@ -101,7 +101,46 @@ class NativeIpcTests(unittest.TestCase):
     def test_oversized_frame_is_closed_without_dispatch(self):
         self.stream.write(b'x'*(1024*1024+1)+b'\n');self.stream.flush()
         try:
-            self.assertEqual(self.stream.readline(),b'')
+            reply=json.loads(self.stream.readline())
+            self.assertEqual(reply['error']['code'],'MESSAGE_LIMIT')
         except ConnectionResetError:
+            # Windows may reset immediately after the buffered error response.
             pass
+        try:self.assertEqual(self.stream.readline(),b'')
+        except ConnectionResetError:pass
         self.assertIsNone(self.process.poll())
+
+    def test_connection_limit_returns_error_and_normal_connection_recovers(self):
+        from docfit_app.ipc_server import MAX_CONNECTIONS
+        held=[]
+        try:
+            for _ in range(MAX_CONNECTIONS-1):
+                sock=socket.create_connection(('127.0.0.1',self.ready['port']),timeout=3)
+                sock.settimeout(3);held.append(sock)
+            rejected=socket.create_connection(('127.0.0.1',self.ready['port']),timeout=3)
+            rejected.settimeout(3)
+            reply=json.loads(rejected.makefile('rb').readline())
+            self.assertEqual(reply['error']['code'],'CONNECTION_LIMIT')
+            rejected.close()
+        finally:
+            for sock in held:sock.close()
+        self.assertTrue(self.request('get_state')['success'])
+
+    def test_async_job_limit_and_normal_job_path(self):
+        from docfit_app.jobs import JobManager
+        from docfit_app.api_contract import ServiceError
+        import threading
+        manager=JobManager(max_active=1)
+        gate=threading.Event()
+        first=manager.start('inspect',{},lambda report,cancelled:gate.wait(2))
+        try:
+            with self.assertRaises(ServiceError) as raised:
+                manager.begin('inspect',{})
+            self.assertEqual(raised.exception.code,'JOB_LIMIT')
+        finally:
+            gate.set()
+        manager.thread(first).join(3)
+        second=manager.start('inspect',{},lambda report,cancelled:{'ok':True})
+        manager.thread(second).join(3)
+        self.assertEqual(manager.job_status(second)['state'],'done')
+        self.assertEqual(manager.job_status(second)['result'],{'ok':True})

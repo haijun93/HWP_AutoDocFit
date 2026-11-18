@@ -21,13 +21,16 @@ def _alive(thread):
 
 
 class JobManager:
-    def __init__(self, *, capacity=2000, cancel_timeout=10, cleanup=None, state_path=None):
+    def __init__(self, *, capacity=2000, cancel_timeout=10, cleanup=None, state_path=None, max_active=8):
         self._lock = threading.RLock()
         self._events = deque(maxlen=capacity)
         self._jobs = {}
         self._seq = 0
         self._closed = False
         self.cancel_timeout = cancel_timeout
+        if type(max_active) is not int or max_active < 1:
+            raise ValueError('max_active must be a positive integer')
+        self.max_active = max_active
         self._cleanup = cleanup
         self._state_path = state_path
         self._recover()
@@ -71,6 +74,9 @@ class JobManager:
         with self._lock:
             if self._closed:
                 raise ServiceError('BACKEND_CLOSING', '앱이 종료 중입니다.')
+            active = sum(j['state'] not in TERMINAL or _alive(j.get('thread')) for j in self._jobs.values())
+            if active >= self.max_active:
+                raise ServiceError('JOB_LIMIT', '동시에 실행할 수 있는 작업 수를 초과했습니다. 진행 중인 작업이 끝난 뒤 다시 시도해 주세요.')
             if kind in SINGLETON_KINDS and any(
                     j['kind'] == kind and (j['state'] not in TERMINAL or _alive(j.get('thread')))
                     for j in self._jobs.values()):

@@ -8,6 +8,23 @@ from .api_contract import ServiceError
 
 PROTOCOL_VERSION = 1
 MAX_MESSAGE = 1024 * 1024
+MAX_CONNECTIONS = 8
+READ_TIMEOUT_SECONDS = 30
+
+
+def _send_error(request, code, message):
+    request_id = None
+    if isinstance(request, dict):
+        candidate = request.get('request_id')
+        if isinstance(candidate, str) and 1 <= len(candidate) <= 128:
+            request_id = candidate
+    encoded = json.dumps({'protocol_version': PROTOCOL_VERSION, 'request_id': request_id,
+        'success':False, 'error':{'code':code, 'message':message, 'recoverable':True}},
+        ensure_ascii=False).encode() + b'\n'
+    try:
+        request.sendall(encoded)
+    except OSError:
+        pass
 
 class IpcServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = False
@@ -16,11 +33,12 @@ class IpcServer(socketserver.ThreadingTCPServer):
 
     def __init__(self, app, token):
         self.app, self.token = app, token
-        self.connections = threading.BoundedSemaphore(8)
+        self.connections = threading.BoundedSemaphore(MAX_CONNECTIONS)
         super().__init__(('127.0.0.1',0), IpcHandler)
 
     def process_request(self, request, client_address):
         if not self.connections.acquire(blocking=False):
+            _send_error(request, 'CONNECTION_LIMIT', '동시에 연결할 수 있는 수를 초과했습니다. 잠시 후 다시 시도해 주세요.')
             self.shutdown_request(request)
             return
         try:
@@ -38,13 +56,16 @@ class IpcServer(socketserver.ThreadingTCPServer):
 
 class IpcHandler(socketserver.StreamRequestHandler):
     def handle(self):
-        self.connection.settimeout(30)
+        self.connection.settimeout(READ_TIMEOUT_SECONDS)
         seen=OrderedDict()
         try:
             while True:
                 line=self.rfile.readline(MAX_MESSAGE+1)
                 if not line: return
-                if len(line)>MAX_MESSAGE or not line.endswith(b'\n'): return
+                if len(line)>MAX_MESSAGE:
+                    _send_error(self.request, 'MESSAGE_LIMIT', '요청이 너무 큽니다. 더 작은 요청으로 다시 시도해 주세요.')
+                    return
+                if not line.endswith(b'\n'): return
                 request_id=None
                 try:
                     request=json.loads(line)
