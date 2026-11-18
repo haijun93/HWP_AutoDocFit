@@ -28,6 +28,9 @@ pub use history::{
     detect_periodic_topics, folder_histories,
 };
 pub use norm::{extract_extension, normalize_name, strip_extension};
+pub use output::{
+    AnnualInput, json_escape_str, render_report_json, write_outputs, write_report_json,
+};
 pub use series::{
     PeriodicTask, Periodicity, VersionLine, detect_periodic_task_for_group, detect_version_lines,
     doc_created_at,

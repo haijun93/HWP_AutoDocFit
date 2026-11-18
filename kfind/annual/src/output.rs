@@ -1,5 +1,5 @@
 //! 사용자용 연보 마크다운과 엑셀 호환 CSV 출력.
-use crate::{Date, FolderHistory, PeriodicPrediction, Report, TopicChange};
+use crate::{Date, Doc, FolderHistory, PeriodicPrediction, Report, TopicChange};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fs, io, path::Path};
 
@@ -28,6 +28,9 @@ pub struct AnnualInput {
     /// 이전 JSON 입력과의 호환을 위한 선택 필드. 최신 통계는 ISO 연도를 직접 보유한다.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub iso_week_years: BTreeMap<u32, i32>,
+    /// 원본 문서 목록 (대표 문서 경로 및 기간 메타데이터 추출용, 선택)
+    #[serde(default, alias = "documents")]
+    pub docs: Vec<Doc>,
 }
 
 fn csv_cell(value: &str) -> String {
@@ -378,11 +381,273 @@ pub fn write_svg(path: impl AsRef<Path>, svg: &str) -> io::Result<()> {
     Ok(())
 }
 
-/// 보고서와 BOM CSV 6종을 출력 폴더에 쓴다.
+/// RFC 8259 호환 JSON 문자열 이스케이프 (한글 UTF-8 보존).
+pub fn json_escape_str(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    out.push('"');
+    for ch in s.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                use std::fmt::Write;
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// 인수인계·실적 보고서 HWPX 생성을 위한 보고서 데이터 JSON 문자열을 생성한다.
+pub fn render_report_json(input: &AnnualInput) -> String {
+    let mut out = String::with_capacity(4096);
+    out.push_str("{\n");
+
+    // 1. period
+    let (start_str, end_str) = if let Some(r) = &input.report {
+        if let Some(p) = r.period {
+            (
+                Date::from_timestamp(p.start, crate::KST_OFFSET_SECS).to_string_ymd(),
+                Date::from_timestamp(p.end, crate::KST_OFFSET_SECS).to_string_ymd(),
+            )
+        } else if !input.docs.is_empty() {
+            let min_ts = input.docs.iter().map(|d| d.created_at().min(d.modified_at())).min().unwrap_or(0);
+            let max_ts = input.docs.iter().map(|d| d.created_at().max(d.modified_at())).max().unwrap_or(0);
+            (
+                Date::from_timestamp(min_ts, crate::KST_OFFSET_SECS).to_string_ymd(),
+                Date::from_timestamp(max_ts, crate::KST_OFFSET_SECS).to_string_ymd(),
+            )
+        } else {
+            (String::new(), String::new())
+        }
+    } else {
+        (String::new(), String::new())
+    };
+
+    out.push_str("  \"period\": {\n");
+    out.push_str(&format!("    \"start\": {},\n", json_escape_str(&start_str)));
+    out.push_str(&format!("    \"end\": {}\n", json_escape_str(&end_str)));
+    out.push_str("  },\n");
+
+    // 2. total_docs
+    let total_docs = input.report.as_ref().map_or(0, |r| r.analyzed_doc_count);
+    out.push_str(&format!("  \"total_docs\": {},\n", total_docs));
+
+    // 3. monthly_docs (1~12)
+    let mut monthly = [0u32; 12];
+    if let Some(r) = &input.report {
+        for counts in r.stats.topic_by_month.values() {
+            for (i, &count) in counts.iter().enumerate() {
+                monthly[i] += count;
+            }
+        }
+    }
+    out.push_str("  \"monthly_docs\": [\n");
+    for month in 1..=12 {
+        let count = monthly[month - 1];
+        let comma = if month == 12 { "" } else { "," };
+        out.push_str(&format!("    {{\"month\": {}, \"doc_count\": {}}}{}\n", month, count, comma));
+    }
+    out.push_str("  ],\n");
+
+    // 4. top_topics
+    out.push_str("  \"top_topics\": [");
+    if let Some(r) = &input.report {
+        if !r.stats.top_topics.is_empty() {
+            out.push('\n');
+            let top_count = r.stats.top_topics.len();
+            for (idx, topic_summary) in r.stats.top_topics.iter().enumerate() {
+                // 대표 문서 3건 경로
+                let mut rep_docs: Vec<String> = Vec::new();
+                let mut topic_start_date = String::new();
+                let mut topic_end_date = String::new();
+
+                if let Some(topic) = r.topics.iter().find(|t| t.id == topic_summary.topic_id) {
+                    for &doc_idx in &topic.doc_indices {
+                        if let Some(doc) = input.docs.get(doc_idx) {
+                            if rep_docs.len() < 3 {
+                                rep_docs.push(doc.path.clone());
+                            }
+                        }
+                    }
+                    if !input.docs.is_empty() {
+                        let topic_ts: Vec<i64> = topic
+                            .doc_indices
+                            .iter()
+                            .filter_map(|&i| input.docs.get(i).map(|d| d.modified_at()))
+                            .collect();
+                        if let (Some(&min_t), Some(&max_t)) = (topic_ts.iter().min(), topic_ts.iter().max()) {
+                            topic_start_date = Date::from_timestamp(min_t, crate::KST_OFFSET_SECS).to_string_ymd();
+                            topic_end_date = Date::from_timestamp(max_t, crate::KST_OFFSET_SECS).to_string_ymd();
+                        }
+                    }
+                }
+
+                if topic_start_date.is_empty() {
+                    if let Some(months) = r.stats.topic_timeline_by_month.get(&topic_summary.topic_id) {
+                        if let (Some(&(y1, m1)), Some(&(y2, m2))) = (months.keys().next(), months.keys().next_back()) {
+                            topic_start_date = format!("{y1}-{m1:02}");
+                            topic_end_date = format!("{y2}-{m2:02}");
+                        }
+                    }
+                }
+
+                let comma = if idx + 1 == top_count { "" } else { "," };
+                out.push_str("    {\n");
+                out.push_str(&format!("      \"topic_id\": {},\n", topic_summary.topic_id));
+                out.push_str(&format!("      \"topic_name\": {},\n", json_escape_str(&topic_summary.topic_name)));
+                out.push_str(&format!("      \"doc_count\": {},\n", topic_summary.doc_count));
+                out.push_str(&format!("      \"percentage\": {:.1},\n", topic_summary.percentage));
+
+                // representative_docs 배열
+                out.push_str("      \"representative_docs\": [");
+                if !rep_docs.is_empty() {
+                    out.push('\n');
+                    for (d_i, d_path) in rep_docs.iter().enumerate() {
+                        let d_comma = if d_i + 1 == rep_docs.len() { "" } else { "," };
+                        out.push_str(&format!("        {}{}\n", json_escape_str(d_path), d_comma));
+                    }
+                    out.push_str("      ],\n");
+                } else {
+                    out.push_str("],\n");
+                }
+
+                // period 객체
+                out.push_str("      \"period\": {\n");
+                out.push_str(&format!("        \"start\": {},\n", json_escape_str(&topic_start_date)));
+                out.push_str(&format!("        \"end\": {}\n", json_escape_str(&topic_end_date)));
+                out.push_str("      }\n");
+
+                out.push_str(&format!("    }}{}\n", comma));
+            }
+            out.push_str("  ],\n");
+        } else {
+            out.push_str("],\n");
+        }
+    } else {
+        out.push_str("],\n");
+    }
+
+    // 5. week_day_heatmap
+    out.push_str("  \"week_day_heatmap\": [");
+    if let Some(r) = &input.report {
+        if !r.stats.week_day_heatmap.is_empty() {
+            out.push('\n');
+            let total_rows = r.stats.week_day_heatmap.len();
+            for (idx, (&(year, week), days)) in r.stats.week_day_heatmap.iter().enumerate() {
+                let comma = if idx + 1 == total_rows { "" } else { "," };
+                let sum: u32 = days.iter().sum();
+                out.push_str("    {\n");
+                out.push_str(&format!("      \"iso_year\": {},\n", year));
+                out.push_str(&format!("      \"iso_week\": {},\n", week));
+                out.push_str(&format!(
+                    "      \"days\": [{}, {}, {}, {}, {}, {}, {}],\n",
+                    days[0], days[1], days[2], days[3], days[4], days[5], days[6]
+                ));
+                out.push_str(&format!("      \"total\": {}\n", sum));
+                out.push_str(&format!("    }}{}\n", comma));
+            }
+            out.push_str("  ],\n");
+        } else {
+            out.push_str("],\n");
+        }
+    } else {
+        out.push_str("],\n");
+    }
+
+    // 6. timeline
+    out.push_str("  \"timeline\": [");
+    if let Some(r) = &input.report {
+        let mut topics = r.stats.top_topics.clone();
+        topics.sort_by_key(|t| t.topic_id);
+        if !topics.is_empty() {
+            out.push('\n');
+            let top_len = topics.len();
+            for (idx, topic) in topics.iter().enumerate() {
+                let comma = if idx + 1 == top_len { "" } else { "," };
+                let mut start_month = String::new();
+                let mut end_month = String::new();
+                let mut active_months = Vec::new();
+
+                if let Some(months) = r.stats.topic_timeline_by_month.get(&topic.topic_id) {
+                    if let (Some(&(y1, m1)), Some(&(y2, m2))) = (months.keys().next(), months.keys().next_back()) {
+                        start_month = format!("{y1}-{m1:02}");
+                        end_month = format!("{y2}-{m2:02}");
+                    }
+                    for (&(y, m), &c) in months {
+                        active_months.push((y, m, c));
+                    }
+                } else if let Some(m_arr) = r.stats.topic_by_month.get(&topic.topic_id) {
+                    let non_zeros: Vec<usize> = m_arr
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(i, &c)| if c > 0 { Some(i + 1) } else { None })
+                        .collect();
+                    if let (Some(&first), Some(&last)) = (non_zeros.first(), non_zeros.last()) {
+                        start_month = format!("{first:02}월");
+                        end_month = format!("{last:02}월");
+                    }
+                }
+
+                out.push_str("    {\n");
+                out.push_str(&format!("      \"topic_id\": {},\n", topic.topic_id));
+                out.push_str(&format!("      \"topic_name\": {},\n", json_escape_str(&topic.topic_name)));
+                out.push_str(&format!("      \"start_month\": {},\n", json_escape_str(&start_month)));
+                out.push_str(&format!("      \"end_month\": {},\n", json_escape_str(&end_month)));
+                out.push_str("      \"active_months\": [");
+                if !active_months.is_empty() {
+                    out.push('\n');
+                    for (m_i, &(y, m, c)) in active_months.iter().enumerate() {
+                        let m_comma = if m_i + 1 == active_months.len() { "" } else { "," };
+                        out.push_str(&format!(
+                            "        {{\"year\": {}, \"month\": {}, \"year_month\": \"{}-{:02}\", \"doc_count\": {}}}{}\n",
+                            y, m, y, m, c, m_comma
+                        ));
+                    }
+                    out.push_str("      ]\n");
+                } else {
+                    out.push_str("]\n");
+                }
+                out.push_str(&format!("    }}{}\n", comma));
+            }
+            out.push_str("  ]\n");
+        } else {
+            out.push_str("]\n");
+        }
+    } else {
+        out.push_str("]\n");
+    }
+
+    out.push_str("}\n");
+    out
+}
+
+/// Write report JSON via a sibling temporary file, then atomically replace the destination.
+pub fn write_report_json(path: impl AsRef<Path>, input: &AnnualInput) -> io::Result<()> {
+    let path = path.as_ref();
+    let json = render_report_json(input);
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
+    let temp = std::path::PathBuf::from(temp);
+    fs::write(&temp, json.as_bytes())?;
+    if let Err(error) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// 보고서와 BOM CSV 6종 및 보고서 데이터 JSON을 출력 폴더에 쓴다.
 pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Result<()> {
     let folder = folder.as_ref();
     fs::create_dir_all(folder)?;
     fs::write(folder.join("인수인계_연보.md"), render_markdown(input))?;
+    write_report_json(folder.join("보고서_데이터.json"), input)?;
     write_svg(folder.join("월별_문서수.svg"), &monthly_documents_svg(input))?;
     write_svg(folder.join("주차_요일_열지도.svg"), &weekday_heatmap_svg(input))?;
     write_svg(folder.join("주제별_월_타임라인.svg"), &topic_timeline_svg(input))?;
@@ -457,6 +722,7 @@ mod tests {
                 delta: 1,
             }],
             iso_week_years: BTreeMap::new(),
+            docs: vec![],
         }
     }
     #[test]
@@ -642,5 +908,133 @@ mod tests {
         fs::write(&path, "old").unwrap();
         write_svg(&path, "<svg>새 차트</svg>").unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "<svg>새 차트</svg>");
+    }
+
+    #[test]
+    fn test_report_json_empty_input() {
+        let input = AnnualInput::default();
+        let json_str = render_report_json(&input);
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("유효한 JSON이어야 함");
+
+        assert_eq!(parsed["total_docs"], 0);
+        assert_eq!(parsed["period"]["start"], "");
+        assert_eq!(parsed["period"]["end"], "");
+
+        let monthly = parsed["monthly_docs"].as_array().expect("monthly_docs 배열");
+        assert_eq!(monthly.len(), 12);
+        for (i, item) in monthly.iter().enumerate() {
+            assert_eq!(item["month"], (i + 1) as u64);
+            assert_eq!(item["doc_count"], 0);
+        }
+
+        assert_eq!(parsed["top_topics"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["week_day_heatmap"].as_array().unwrap().len(), 0);
+        assert_eq!(parsed["timeline"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_report_json_korean_and_escaping() {
+        let mut input = sample();
+        let complex_topic_name = "2026년 \"상반기\" 결산\n\t및\\보고";
+        let complex_doc_path = "C:\\문서\\2026_\"결산\"\\최종.hwpx";
+
+        input.docs = vec![Doc::new(
+            complex_doc_path,
+            1767225600, // 2026-01-01 00:00:00 UTC
+            1767312000, // 2026-01-02 00:00:00 UTC
+            "결산 보고서",
+            vec!["1. 개요".into()],
+        )];
+
+        let report = input.report.as_mut().unwrap();
+        report.stats.top_topics[0].topic_name = complex_topic_name.into();
+        report.topics = vec![crate::Topic {
+            id: 0,
+            name: complex_topic_name.into(),
+            rep_title: complex_topic_name.into(),
+            rep_doc_index: 0,
+            keywords: vec!["결산".into(), "보고".into()],
+            doc_indices: vec![0],
+        }];
+
+        let json_str = render_report_json(&input);
+
+        // UTF-8 한글 문자열이 그대로 보존되는지 확인
+        assert!(json_str.contains("상반기"));
+        assert!(json_str.contains("결산"));
+        assert!(json_str.contains("문서"));
+
+        // 제어문자 및 특수문자 이스케이프 검증
+        assert!(json_str.contains("\\\"상반기\\\""));
+        assert!(json_str.contains("\\n"));
+        assert!(json_str.contains("\\t"));
+        assert!(json_str.contains("\\\\"));
+
+        // JSON 파서를 통한 역직렬화 무결성 검증
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("파싱 성공");
+        assert_eq!(parsed["top_topics"][0]["topic_name"], complex_topic_name);
+        assert_eq!(parsed["top_topics"][0]["representative_docs"][0], complex_doc_path);
+        assert_eq!(parsed["timeline"][0]["topic_name"], complex_topic_name);
+    }
+
+    #[test]
+    fn test_report_json_iso_year_boundary() {
+        let mut input = sample();
+        let report = input.report.as_mut().unwrap();
+
+        // 2025년 52주차와 2026년 1주차 주차×요일 데이터 설정
+        report
+            .stats
+            .week_day_heatmap
+            .insert((2025, 52), [1, 2, 0, 0, 0, 0, 0]);
+        report
+            .stats
+            .week_day_heatmap
+            .insert((2026, 1), [3, 4, 1, 2, 0, 0, 0]);
+
+        let json_str = render_report_json(&input);
+        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("파싱 성공");
+
+        let heatmap = parsed["week_day_heatmap"].as_array().expect("heatmap 배열");
+        assert_eq!(heatmap.len(), 2);
+
+        // 2025-W52 항목 검증
+        assert_eq!(heatmap[0]["iso_year"], 2025);
+        assert_eq!(heatmap[0]["iso_week"], 52);
+        assert_eq!(heatmap[0]["days"], serde_json::json!([1, 2, 0, 0, 0, 0, 0]));
+        assert_eq!(heatmap[0]["total"], 3);
+
+        // 2026-W01 항목 검증
+        assert_eq!(heatmap[1]["iso_year"], 2026);
+        assert_eq!(heatmap[1]["iso_week"], 1);
+        assert_eq!(heatmap[1]["days"], serde_json::json!([3, 4, 1, 2, 0, 0, 0]));
+        assert_eq!(heatmap[1]["total"], 10);
+    }
+
+    #[test]
+    fn test_write_report_json_atomic_replacement() {
+        let d = tempfile::tempdir().unwrap();
+        let target_path = d.path().join("보고서_데이터.json");
+
+        // 기존 파일 생성 후 원자적 교체 확인
+        fs::write(&target_path, "기존 데이터").unwrap();
+        let input = sample();
+
+        write_report_json(&target_path, &input).unwrap();
+
+        // 임시 파일이 남아있지 않은지 확인
+        let temp_path = d.path().join("보고서_데이터.json.tmp");
+        assert!(!temp_path.exists());
+
+        // 대상 파일 내용 확인 및 유효한 JSON인지 파싱
+        let content = fs::read_to_string(&target_path).unwrap();
+        assert!(content.contains("\"total_docs\": 3"));
+        let parsed: serde_json::Value = serde_json::from_str(&content).expect("유효한 JSON");
+        assert_eq!(parsed["total_docs"], 3);
+
+        // write_outputs 전체 호출 시에도 보고서_데이터.json이 정상 생성되는지 확인
+        let out_dir = d.path().join("outputs");
+        write_outputs(&input, &out_dir).unwrap();
+        assert!(out_dir.join("보고서_데이터.json").is_file());
     }
 }
