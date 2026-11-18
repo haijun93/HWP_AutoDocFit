@@ -15,7 +15,8 @@ const kTabDocGrid = 8;
 const kTabPhotoAlbum = 9;
 const kTabFileConversion = 10;
 const kTabPdfEdit = 11;
-const kTabCount = 12;
+const kTabOutliner = 14;
+const kTabCount = 15;
 
 /// 왼쪽 메뉴 폭. 저장값이 없으면 창 폭이 기준 이상일 때 펼친다.
 const kSidebarCollapsedWidth = 56.0;
@@ -83,6 +84,7 @@ class TabNavigationShell extends StatefulWidget {
     required this.timemachine,
     this.docGrid = const SizedBox(),
     this.photoAlbum = const SizedBox(),
+    this.outliner = const SizedBox(),
     this.initialIndex = 0,
     this.onTabChanged,
     this.trailing,
@@ -112,6 +114,7 @@ class TabNavigationShell extends StatefulWidget {
   final Widget timemachine;
   final Widget docGrid;
   final Widget photoAlbum;
+  final Widget outliner;
   final int initialIndex;
 
   /// 메뉴에 보이지 않고 화면도 만들지 않는 탭.
@@ -181,6 +184,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '사진뷰',
     '파일변환',
     'PDF 편집',
+    '설정',
+    '사용 방법',
+    '아웃라이너',
   ];
   static const _icons = [
     Icons.description_outlined,
@@ -195,6 +201,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     Icons.photo_library_outlined,
     Icons.transform,
     Icons.picture_as_pdf_outlined,
+    Icons.settings_outlined,
+    Icons.help_outline,
+    Icons.account_tree_outlined,
   ];
 
   void _select(int index) {
@@ -269,6 +278,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       widget.photoAlbum,
       widget.fileConversion,
       widget.pdfEdit,
+      const SizedBox(),
+      const SizedBox(),
+      widget.outliner,
     ];
     _built = true;
     final expanded = _expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth;
@@ -481,7 +493,7 @@ class WorkspaceTabBar extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 children: [
                   for (var i = 0; i < labels.length; i++)
-                    if (!hiddenTabs.contains(i))
+                    if (i != 12 && i != 13 && !hiddenTabs.contains(i))
                       _TabPill(
                         key: Key('workspaceTab-$i'),
                         label: labels[i],

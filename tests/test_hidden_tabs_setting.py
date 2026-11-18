@@ -7,7 +7,7 @@ from docfit_app.application_service import ApplicationService, clean_hidden_tabs
 
 class HiddenTabsSettingTest(unittest.TestCase):
     def test_clean_keeps_only_valid_unique_sorted_ints_and_never_hides_document_edit(self):
-        self.assertEqual(clean_hidden_tabs([7, 3, 3, 0, 12, -1, "5", True, 2.0, 11]), [3, 7, 11])
+        self.assertEqual(clean_hidden_tabs([7, 3, 3, 0, 12, 13, 14, -1, "5", True, 2.0, 11]), [3, 7, 11, 14])
         self.assertEqual(clean_hidden_tabs(None), [])
         self.assertEqual(clean_hidden_tabs("3"), [])
 
@@ -39,6 +39,13 @@ class HiddenTabsSettingTest(unittest.TestCase):
             self.assertEqual(ApplicationService(path).dispatch("get_state", [])['hidden_tabs'], [])
             self.assertEqual(service.dispatch("set_hidden_tabs", [[4, 2, 4, 2]]), [2, 4])
             self.assertEqual(ApplicationService(path).dispatch("get_state", [])['hidden_tabs'], [2, 4])
+
+    def test_outliner_is_an_optional_new_last_tab_without_shifting_existing_numbers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ApplicationService(Path(folder) / 'settings.json')
+            self.assertEqual(clean_hidden_tabs([11, 12, 13, 14, 0]), [11, 14])
+            self.assertEqual(service.dispatch('set_hidden_tabs', [[14, 11]]), [11, 14])
+            self.assertEqual(ApplicationService(Path(folder) / 'settings.json').dispatch('get_state', [])['hidden_tabs'], [11, 14])
 
 
 if __name__ == "__main__":

@@ -14,6 +14,11 @@ pdf_edit_sha256 = root / 'resources' / 'pdf-edit.exe.sha256'
 if not pdf_edit_exe.is_file() or not pdf_edit_sha256.is_file():
     raise RuntimeError('Build the pdf-edit Rust engine before PyInstaller packaging')
 binaries.append((str(pdf_edit_exe), 'resources'))
+outliner_exe = root / 'resources' / 'outliner.exe'
+outliner_sha256 = root / 'resources' / 'outliner.exe.sha256'
+if not outliner_exe.is_file() or not outliner_sha256.is_file():
+    raise RuntimeError('Build the outliner Rust engine before PyInstaller packaging')
+binaries.append((str(outliner_exe), 'resources'))
 klib_exe = root / 'resources' / 'klib.exe'
 if klib_exe.is_file():
     binaries.append((str(klib_exe), 'resources'))

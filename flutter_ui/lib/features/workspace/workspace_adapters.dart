@@ -16,6 +16,7 @@ import '../photo_album/photo_album_screen.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import '../pdf_edit/pdf_edit_workspace.dart';
+import '../outliner/outliner_workspace.dart';
 import 'tab_navigation_shell.dart';
 
 /// Workspace adapter for Tab 1: Document Editor / Processing
@@ -236,6 +237,7 @@ class IntegratedWorkspace extends StatelessWidget {
       timemachine: _LazyTimemachineAdapter(api: api),
       docGrid: docGridScreen ?? _LazyDocGridAdapter(api: api),
       photoAlbum: photoAlbumScreen ?? _LazyPhotoAlbumAdapter(api: api),
+      outliner: _LazyOutlinerAdapter(api: api),
     );
   }
 }
@@ -288,6 +290,27 @@ class _LazyPhotoAlbumAdapter extends StatefulWidget {
 
   @override
   State<_LazyPhotoAlbumAdapter> createState() => _LazyPhotoAlbumAdapterState();
+}
+
+class _LazyOutlinerAdapter extends StatefulWidget {
+  const _LazyOutlinerAdapter({required this.api});
+  final ApiCall api;
+
+  @override
+  State<_LazyOutlinerAdapter> createState() => _LazyOutlinerAdapterState();
+}
+
+class _LazyOutlinerAdapterState extends State<_LazyOutlinerAdapter> {
+  bool _visited = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = TickerMode.valuesOf(context).enabled;
+    if (active && !_visited) _visited = true;
+    return _visited
+        ? OutlinerWorkspace(api: widget.api)
+        : const SizedBox.expand();
+  }
 }
 
 class _LazyPhotoAlbumAdapterState extends State<_LazyPhotoAlbumAdapter> {

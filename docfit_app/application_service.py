@@ -18,10 +18,10 @@ from docfit_core.stage_selection import default_choice, stages_for_mode
 
 
 def clean_hidden_tabs(raw):
-    """숨길 왼쪽 메뉴 번호 목록을 정리한다: 정수만, 1~11(0 문서편집은 끌 수 없음), 중복 없이 오름차순."""
+    """숨길 메뉴 번호 목록을 정리한다. 0·12·13은 필수 메뉴로 항상 켠다."""
     if not isinstance(raw,(list,tuple,set)):
         return []
-    return sorted({v for v in raw if type(v) is int and 1<=v<=11})
+    return sorted({v for v in raw if type(v) is int and 1<=v<=14 and v not in (12, 13)})
 
 class ApplicationService:
     def __init__(self, settings_path):
@@ -160,7 +160,7 @@ class ApplicationService:
         counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_hidden_tabs':1, 'set_theme_mode':1})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
         if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album') and len(args) in (1, 2)) and len(args)!=counts[method]:
@@ -300,6 +300,14 @@ class ApplicationService:
             return response(lambda: self._pdf_edit_service.execute(
                 payload.get('action'), payload.get('source'), payload.get('output'),
                 pages=payload.get('pages'), degrees=payload.get('degrees'), sources=payload.get('sources')))
+        if method == 'outliner':
+            from .outliner_service import OutlinerService
+            if getattr(self, '_outliner_service', None) is None:
+                self._outliner_service = OutlinerService(self.store._path.parent)
+            payload = args[0]
+            if not isinstance(payload, dict):
+                raise ServiceError('INVALID_INPUT', '아웃라이너 입력을 확인해 주세요.')
+            return response(lambda: self._outliner_service.execute(payload))
         if method=='excel_table':
             from .excel_table_service import ExcelTableService
             if getattr(self.data, 'running', False):

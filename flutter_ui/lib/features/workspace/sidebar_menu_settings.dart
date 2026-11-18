@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
@@ -13,7 +12,7 @@ Set<int> parseHiddenTabs(Object? raw) {
   if (raw is! List) return const <int>{};
   return {
     for (final v in raw)
-      if (v is int && v >= 1 && v < kTabCount) v,
+      if (v is int && v >= 1 && v < kTabCount && v != 12 && v != 13) v,
   };
 }
 
@@ -30,6 +29,7 @@ const List<({int tab, String label, String hint})> kSidebarMenuChoices = [
   (tab: kTabPhotoAlbum, label: '사진뷰', hint: '사진 모아 보기'),
   (tab: kTabFileConversion, label: '파일변환', hint: 'HWPX · PDF · DOCX · MD 등'),
   (tab: kTabPdfEdit, label: 'PDF 편집', hint: '합치기·나누기·용량 줄이기'),
+  (tab: kTabOutliner, label: '아웃라이너', hint: 'Logseq식 블록 메모와 일지'),
 ];
 
 /// '쓸 메뉴를 고르세요' 창. [저장]을 누르면 설정에 저장하고 왼쪽 메뉴에 바로 반영한다.
