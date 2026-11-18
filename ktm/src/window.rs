@@ -1401,13 +1401,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 search_mode.to_string(),
                 format!(
                     "정렬:{}",
-                    match u.state.options.sort {
-                        tm_state::SortMode::Relevance => "관련",
-                        tm_state::SortMode::Confidence => "신뢰도",
-                        tm_state::SortMode::Newest => "최신",
-                        tm_state::SortMode::Oldest => "오래된",
-                        tm_state::SortMode::Name => "이름",
-                    }
+                    u.state.options.sort.label()
                 ),
                 format!(
                     "형식:{}",
@@ -3520,17 +3514,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             );
                         }
                         Some(OptionControl::Sort) => {
-                            let order = [
-                                tm_state::SortMode::Relevance,
-                                tm_state::SortMode::Confidence,
-                                tm_state::SortMode::Newest,
-                                tm_state::SortMode::Oldest,
-                                tm_state::SortMode::Name,
-                            ];
                             let cur = with(|u| u.state.options.sort);
-                            let next = order[(order.iter().position(|x| *x == cur).unwrap_or(0)
-                                + 1)
-                                % order.len()];
+                            let next = cur.next();
                             event(h, Event::SetSort(next));
                             edit(|u| {
                                 u.body_sort = match next {
