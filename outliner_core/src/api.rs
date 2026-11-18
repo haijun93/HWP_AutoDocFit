@@ -1,5 +1,5 @@
 use crate::{
-    backlinks, collect_markdown_files, daily_page, edit, parse, rename_page_in_files,
+    backlinks, collect_markdown_files, daily_page, journal_name, journal_date, journal_relative, journal_list, query, edit, parse, rename_page_in_files,
     resolve_block_ref, save_atomic, search, serialize, update_page_links_text, OutlinerError,
 };
 use serde_json::{json, Value};
@@ -26,6 +26,27 @@ pub fn handle_request(value: Value) -> Value {
     let document_text = object.get("document").and_then(Value::as_str).unwrap_or("");
     let result: Result<Value, OutlinerError> = (|| match operation {
         "daily_page" => Ok(json!({"filename": daily_page(args["date"].as_str().unwrap_or(""))?})),
+        "journal_name" => {
+            let date=args["date"].as_str().or_else(|| args["name"].as_str()).unwrap_or("");
+            if date.contains('_') { Ok(json!({"date":journal_date(date)?,"name":date})) }
+            else { let name=journal_name(date)?; Ok(json!({"name":name,"yesterday":journal_name(&journal_relative(date,-1)?)?,"today":name,"tomorrow":journal_name(&journal_relative(date,1)?)?})) }
+        },
+        "journal_list" => {
+            let names: Vec<&str> = args["names"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            Ok(json!({"names":journal_list(names)}))
+        }
+        "query" => {
+            let expression=args["query"].as_str().unwrap_or("");
+            let pages: Vec<(String, crate::Document)> = if let Some(items)=args["pages"].as_array() {
+                items.iter().map(|item| {
+                    let name=item["page"].as_str().ok_or_else(|| OutlinerError::Invalid("각 pages 항목에 page가 필요합니다".into()))?;
+                    let content=item["document"].as_str().ok_or_else(|| OutlinerError::Invalid("각 pages 항목에 document가 필요합니다".into()))?;
+                    Ok((name.to_owned(),parse(content)?))
+                }).collect::<Result<_,OutlinerError>>()?
+            } else { vec![(args["page"].as_str().unwrap_or("<document>").to_owned(),parse(document_text)?)] };
+            let refs: Vec<(&str,&crate::Document)> = pages.iter().map(|(n,d)|(n.as_str(),d)).collect();
+            Ok(json!({"results":query(refs,expression)?}))
+        }
         "load" => {
             let path =
                 path_arg.ok_or_else(|| OutlinerError::Invalid("args.path가 필요합니다".into()))?;

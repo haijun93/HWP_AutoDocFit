@@ -191,6 +191,49 @@ fn daily_page_rejects_invalid_month() {
 fn daily_page_rejects_invalid_shape() {
     assert!(daily_page("yesterday").is_err());
 }
+
+#[test]
+fn journal_names_round_trip_and_relative_dates_cover_boundaries() {
+    assert_eq!(journal_name("2024-02-29").unwrap(), "2024_02_29");
+    assert_eq!(journal_date("2024_02_29").unwrap(), "2024-02-29");
+    assert_eq!(journal_relative("2024-03-01", -1).unwrap(), "2024-02-29");
+    assert_eq!(journal_relative("2026-12-31", 1).unwrap(), "2027-01-01");
+    assert!(journal_name("2026-02-30").is_err());
+}
+
+#[test]
+fn journal_list_sorts_recent_first_and_ignores_invalid_names() {
+    assert_eq!(journal_list(["2025_01_01", "2026_02_03", "notes", "2025_12_31"]), ["2026_02_03", "2025_12_31", "2025_01_01"]);
+}
+
+#[test]
+fn query_combines_korean_predicates_across_pages_and_preserves_order() {
+    let a=parse("- TODO 회의 #업무 kind:: 문서 [[계획]]\n  - 하위 작업\n").unwrap();
+    let b=parse("- DONE 회의 #업무 kind:: 문서 [[계획]]\n").unwrap();
+    let results=query([("가나다",&a),("다른",&b)], "status:TODO|DONE tag:업무 text:회의 prop:kind=문서 link:계획").unwrap();
+    assert_eq!(results.len(),2);
+    assert_eq!(results[0].page,"가나다");
+    assert_eq!(results[0].path,["회의 #업무 kind:: 문서 [[계획]]"]);
+    assert_eq!(results[0].status.as_deref(),Some("TODO"));
+}
+
+#[test]
+fn query_rejects_empty_bad_syntax_and_oversized_input() {
+    let d=parse("- 항목\n").unwrap();
+    assert_eq!(query([("p",&d)], ""),Err(OutlinerError::InvalidQuery("쿼리가 비어 있습니다".into())));
+    assert!(matches!(query([("p",&d)], "tag:"),Err(OutlinerError::InvalidQuery(_))));
+    assert!(matches!(query([("p",&d)], &"x".repeat(MAX_QUERY_BYTES+1)),Err(OutlinerError::InvalidQuery(_))));
+}
+
+#[test]
+fn json_api_exposes_query_and_journal_commands() {
+    let q=handle_request(serde_json::json!({"op":"query","args":{"query":"text:한글","pages":[{"page":"일지","document":"- TODO 한글\n"}]}}));
+    assert_eq!(q["ok"],true); assert_eq!(q["result"]["results"][0]["page"],"일지");
+    let j=handle_request(serde_json::json!({"op":"journal_name","args":{"date":"2026-11-19"}}));
+    assert_eq!(j["result"]["name"],"2026_11_19");
+    let l=handle_request(serde_json::json!({"op":"journal_list","args":{"names":["2026_01_01","2025_01_01"]}}));
+    assert_eq!(l["result"]["names"][0],"2026_01_01");
+}
 #[test]
 fn search_supports_two_scalar_partial_match() {
     let doc = parse("- 가나다라마바사\n").unwrap();
