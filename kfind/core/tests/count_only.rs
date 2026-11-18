@@ -64,3 +64,24 @@ fn count_obeys_cancel() {
     let o = SearchOptions { split: SplitMode::Off, cancel: Some(flag), ..SearchOptions::default() };
     assert!(matches!(index.count("예산", &o), Err(Error::Cancelled)));
 }
+
+#[test]
+fn count_groups_matches_search_without_materializing_hits() {
+    let dir = tmp_dir("count-groups-only");
+    let mut w = Writer::open(&dir, WriterOptions::default()).unwrap();
+    for d in &corpus(1) { add(&mut w, d); }
+    w.commit().unwrap();
+    let index = Index::open(&dir).unwrap();
+
+    for query in ["예산; 집행", "예산; 가나다라", "없는말; 예산", "짧; 예산"] {
+        let opts = SearchOptions { top: 1, refs_per_doc: 3, ..SearchOptions::default() };
+        let counts = index.count_groups(query, &opts).unwrap();
+        let search = index.search_groups(query, &opts).unwrap();
+        assert_eq!((counts.total_sentences, counts.total_docs, counts.generation),
+                   (search.total_sentences, search.total_docs, search.generation), "query={query:?}");
+        assert_eq!((&counts.words, &counts.dropped), (&search.words, &search.dropped), "query={query:?}");
+        if query == "예산; 집행" {
+            assert!(search.hits.iter().any(|hit| !hit.sentences.is_empty()), "fixture should expose materialized previews");
+        }
+    }
+}
