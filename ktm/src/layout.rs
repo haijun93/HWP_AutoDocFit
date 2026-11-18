@@ -658,6 +658,46 @@ mod quick_search_card_tests {
         assert_eq!(two_line_row_height(125), 57);
         assert_eq!(two_line_row_height(0), 1);
     }
+
+    #[test]
+    fn two_line_card_density_heights_scale_without_changing_legacy_row_contract() {
+        for (scale, comfortable, compact) in [
+            (90, 41, 34),
+            (100, 46, 38),
+            (110, 50, 41),
+            (125, 57, 47),
+        ] {
+            assert_eq!(result_card_height(scale, false), comfortable);
+            assert_eq!(result_card_height(scale, true), compact);
+        }
+        assert_eq!(density_row_height(false), 70);
+        assert_eq!(density_row_height(true), 56);
+    }
+
+    #[test]
+    fn related_chip_layout_wraps_and_is_absent_for_single_term() {
+        assert!(related_chip_rects(&["2026".into()], 10, 20, 300, 100).is_empty());
+        let labels = vec!["2026".into(), "공사 계약".into(), "안전관리계획".into()];
+        let rects = related_chip_rects(&labels, 10, 20, 130, 100);
+        assert_eq!(rects.len(), 3);
+        assert_eq!(rects[0].top, 20);
+        assert_eq!(rects[1].top, 48);
+        assert_eq!(rects[2].top, 76);
+        assert_eq!(related_chip_band_height(1, 100), 0);
+        assert_eq!(related_chip_band_height(2, 125), 35);
+    }
+
+    #[test]
+    fn two_line_card_rects_share_height_for_placement_scroll_and_hit_test() {
+        let row_h = result_card_height(125, false);
+        let first = calc_row_rect(200, 0, 0, row_h, 640);
+        let second = calc_row_rect(200, 1, 0, row_h, 640);
+        assert_eq!(first.bottom - first.top, 57);
+        assert_eq!(second.top, first.bottom);
+        assert_eq!(calc_row_rect(200, 1, 1, row_h, 640).top, 200);
+        assert_eq!(crate::frame::row_index(256, 200, row_h, 0, 5), Some(0));
+        assert_eq!(crate::frame::row_index(257, 200, row_h, 0, 5), Some(1));
+    }
 }
 
 #[cfg(test)]
@@ -809,6 +849,53 @@ pub fn calc_row_rect(top_y: i32, index: usize, scroll_top: usize, row_h: i32, wi
 pub fn two_line_row_height(scale: i32) -> i32 {
     let s = scale.max(1);
     (46 * s).div_euclid(100).max(1)
+}
+
+/// Two-line card height for the selected density, in scaled pixels.
+pub fn result_card_height(scale: i32, compact: bool) -> i32 {
+    let logical = if compact { 38 } else { 46 };
+    (logical * scale.max(1)).div_euclid(100).max(1)
+}
+
+/// Search-input group-chip band height. No band is reserved for a single query.
+pub fn related_chip_band_height(group_count: usize, scale: i32) -> i32 {
+    if group_count > 1 {
+        (28 * scale.max(1)).div_euclid(100).max(1)
+    } else {
+        0
+    }
+}
+
+/// Pure placement for related-query chips below the search edit.
+pub fn related_chip_rects(
+    groups: &[String],
+    left: i32,
+    top: i32,
+    right: i32,
+    scale: i32,
+) -> Vec<RECT> {
+    if groups.len() < 2 { return Vec::new(); }
+    let s = scale.max(1);
+    let height = related_chip_band_height(groups.len(), s);
+    let mut x = left;
+    let mut y = top;
+    let mut rects = Vec::with_capacity(groups.len());
+    for group in groups {
+        let width = ((group.chars().count() as i32 * 8 + 24) * s / 100)
+            .clamp(54 * s / 100, 220 * s / 100);
+        if x > left && x + width > right {
+            x = left;
+            y += height;
+        }
+        rects.push(RECT {
+            left: x,
+            top: y,
+            right: (x + width).min(right),
+            bottom: y + height - 2 * s / 100,
+        });
+        x += width + 4 * s / 100;
+    }
+    rects
 }
 
 /// 행 오른쪽 [폴더 열기] 단추 영역 계산.

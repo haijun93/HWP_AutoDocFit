@@ -15,6 +15,28 @@ pub struct ViewRow {
     pub badges: Vec<String>,
 }
 
+/// Textual view of the related-query chips under the search edit.
+pub fn related_query_chips(query: &str, width: i32, scale: i32) -> Vec<String> {
+    let groups: Vec<String> = kfind_core::parse_groups(query)
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+    let rects = crate::layout::related_chip_rects(&groups, 0, 0, width, scale);
+    groups
+        .into_iter()
+        .zip(rects)
+        .map(|(label, rect)| {
+            format!(
+                "{}:{}:{}:{}",
+                label,
+                rect.left,
+                rect.top,
+                rect.right - rect.left
+            )
+        })
+        .collect()
+}
+
 /// Format one result as the strings and highlight spans the native row painter consumes.
 pub fn result_row(row: &Row, terms: &[String], kinds: &[ResultKind], all_tab: bool) -> ViewRow {
     let kind = extension_label(&row.name).to_string();
@@ -119,9 +141,16 @@ mod tests {
 
     #[test]
     fn related_query_groups_are_ready_for_chips_in_input_order() {
-        let groups = kfind_core::parse_groups("2026; 공사 계약");
-        let labels: Vec<String> = groups.into_iter().map(str::to_owned).collect();
-        assert_eq!(labels, ["2026", "공사 계약"]);
+        let dump = related_query_chips("2026; 공사 계약", 320, 100).join("\n");
+        assert_eq!(dump, "2026:0:0:56\n공사 계약:60:0:64");
+    }
+
+    #[test]
+    fn related_query_chip_view_dump_wraps_with_layout_and_suppresses_single_query() {
+        let dump = related_query_chips("2026; 공사 계약; 안전관리계획", 130, 100).join("\n");
+        assert_eq!(dump, "2026:0:0:56\n공사 계약:60:0:64\n안전관리계획:0:28:72");
+        assert!(related_query_chips("단일 검색어", 320, 100).is_empty());
+        assert_no_replacement_question_marks(&dump);
     }
 
     #[test]
