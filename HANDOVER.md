@@ -554,3 +554,5 @@ git fetch github; git log --oneline -3 github/main; git log --oneline -3 github/
 ## 후속 알파 작업(2026-10-18): 캐시형 포터블 런처
 
 구현·빌드·검증 내용은 [docs/SMART_CACHING_LAUNCHER.md](docs/SMART_CACHING_LAUNCHER.md)를 확인한다. 최종 릴리즈 서식 검수 기준은 [docs/RELEASE_TEST_PROCEDURE.md](docs/RELEASE_TEST_PROCEDURE.md)이며, 원본 서식과 재연 결과물의 일치 여부만 최종 합격 판정에 쓴다. 로컬 Windows 실측에서 캐시 재사용은 확인했으나 0.1초 스플래시와 1.5초 앱 창 표시 목표는 미달이다. 성능 목표 달성으로 표현하거나 정식 릴리즈로 간주하지 않는다.
+
+변경 전후 성능 비교는 [docs/BEFORE_AFTER_MEASURE.md](docs/BEFORE_AFTER_MEASURE.md)의 절차를 따른다.
