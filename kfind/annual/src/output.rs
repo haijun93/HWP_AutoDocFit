@@ -14,8 +14,8 @@ pub struct AnnualInput {
     pub folder_histories: Vec<FolderHistory>,
     #[serde(default, alias = "comparison", alias = "period_comparison")]
     pub topic_changes: Vec<TopicChange>,
-    /// ISO 주 번호와 연도의 대응 (주 번호는 ISO 연도마다 반복된다).
-    #[serde(default)]
+    /// 이전 JSON 입력과의 호환을 위한 선택 필드. 최신 통계는 ISO 연도를 직접 보유한다.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub iso_week_years: BTreeMap<u32, i32>,
 }
 
@@ -153,6 +153,28 @@ pub fn monthly_topics_csv(input: &AnnualInput) -> String {
     }
     rows.join("\r\n") + "\r\n"
 }
+
+/// 주제별 연도·월 문서 수를 시간순으로 Excel 호환 CSV로 만든다.
+pub fn topic_timeline_csv(input: &AnnualInput) -> String {
+    let mut rows = vec![csv_row(&["연도".into(), "월".into(), "주제".into(), "문서 수".into()])];
+    if let Some(r) = &input.report {
+        let mut topics = r.stats.top_topics.clone();
+        topics.sort_by_key(|t| t.topic_id);
+        for topic in topics {
+            if let Some(months) = r.stats.topic_timeline_by_month.get(&topic.topic_id) {
+                for (&(year, month), &count) in months {
+                    rows.push(csv_row(&[
+                        year.to_string(),
+                        format!("{month}월"),
+                        topic.topic_name.clone(),
+                        count.to_string(),
+                    ]));
+                }
+            }
+        }
+    }
+    rows.join("\r\n") + "\r\n"
+}
 pub fn periodic_tasks_csv(input: &AnnualInput) -> String {
     let mut rows = vec![csv_row(&[
         "업무".into(),
@@ -207,22 +229,13 @@ pub fn weekly_topics_csv(input: &AnnualInput) -> String {
         topics.sort_by_key(|t| t.topic_id);
         for topic in topics {
             if let Some(weeks) = r.stats.topic_by_iso_week.get(&topic.topic_id) {
-                for (&week, &count) in weeks {
-                    if let Some(year) = input.iso_week_years.get(&week) {
-                        rows.push(csv_row(&[
-                            year.to_string(),
-                            week.to_string(),
-                            topic.topic_name.clone(),
-                            count.to_string(),
-                        ]));
-                    } else {
-                        rows.push(csv_row(&[
-                            String::new(),
-                            week.to_string(),
-                            topic.topic_name.clone(),
-                            count.to_string(),
-                        ]));
-                    }
+                for (&(year, week), &count) in weeks {
+                    rows.push(csv_row(&[
+                        year.to_string(),
+                        week.to_string(),
+                        topic.topic_name.clone(),
+                        count.to_string(),
+                    ]));
                 }
             }
         }
@@ -244,13 +257,8 @@ pub fn weekday_heatmap_csv(input: &AnnualInput) -> String {
         "일요일".into(),
     ])];
     if let Some(r) = &input.report {
-        for (&week, counts) in &r.stats.week_day_heatmap {
-            let year = input
-                .iso_week_years
-                .get(&week)
-                .map(i32::to_string)
-                .unwrap_or_default();
-            let mut cells = vec![year, week.to_string()];
+        for (&(year, week), counts) in &r.stats.week_day_heatmap {
+            let mut cells = vec![year.to_string(), week.to_string()];
             cells.extend(counts.iter().map(u32::to_string));
             rows.push(csv_row(&cells));
         }
@@ -258,13 +266,14 @@ pub fn weekday_heatmap_csv(input: &AnnualInput) -> String {
     rows.join("\r\n") + "\r\n"
 }
 
-/// 보고서와 BOM CSV 5종을 출력 폴더에 쓴다.
+/// 보고서와 BOM CSV 6종을 출력 폴더에 쓴다.
 pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Result<()> {
     let folder = folder.as_ref();
     fs::create_dir_all(folder)?;
     fs::write(folder.join("인수인계_연보.md"), render_markdown(input))?;
     for (name, csv) in [
         ("월별_주제.csv", monthly_topics_csv(input)),
+        ("주제별_타임라인.csv", topic_timeline_csv(input)),
         ("주차별_주제.csv", weekly_topics_csv(input)),
         ("요일_열지도.csv", weekday_heatmap_csv(input)),
         ("주기_업무.csv", periodic_tasks_csv(input)),
@@ -360,6 +369,19 @@ mod tests {
         assert!(render_markdown(&sample()).contains("| 1월 | 예산, \"정산\"<br>업무 | 2 |"));
     }
     #[test]
+    fn timeline_csv_contains_topic_month_rows_by_year() {
+        let mut input = sample();
+        input.report.as_mut().unwrap().stats.topic_timeline_by_month.insert(
+            0,
+            [((2025, 1), 2), ((2026, 1), 3), ((2026, 2), 1)].into(),
+        );
+        let csv = topic_timeline_csv(&input);
+        assert!(csv.starts_with("\"연도\",\"월\",\"주제\",\"문서 수\"\r\n"));
+        assert!(csv.contains("\"2025\",\"1월\",\"예산, \"\"정산\"\"\n업무\",\"2\""));
+        assert!(csv.contains("\"2026\",\"1월\",\"예산, \"\"정산\"\"\n업무\",\"3\""));
+        assert!(csv.contains("\"2026\",\"2월\",\"예산, \"\"정산\"\"\n업무\",\"1\""));
+    }
+    #[test]
     fn monthly_csv_header_and_row() {
         let s = monthly_topics_csv(&sample());
         assert!(s.starts_with("\"월\",\"주제\",\"문서 수\""));
@@ -394,7 +416,7 @@ mod tests {
     fn files_have_utf8_bom() {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
-        for n in ["월별_주제.csv", "주기_업무.csv", "폴더_이력.csv"] {
+        for n in ["월별_주제.csv", "주제별_타임라인.csv", "주기_업무.csv", "폴더_이력.csv"] {
             let b = fs::read(d.path().join(n)).unwrap();
             assert_eq!(&b[..3], &[0xef, 0xbb, 0xbf]);
         }
@@ -406,6 +428,7 @@ mod tests {
         for n in [
             "인수인계_연보.md",
             "월별_주제.csv",
+            "주제별_타임라인.csv",
             "주차별_주제.csv",
             "요일_열지도.csv",
             "주기_업무.csv",
@@ -419,27 +442,29 @@ mod tests {
     fn weekly_and_weekday_csv_include_headers_and_statistics() {
         let mut input = sample();
         let report = input.report.as_mut().unwrap();
-        report.stats.topic_by_iso_week.insert(0, [(3, 2)].into());
+        report.stats.topic_by_iso_week.insert(0, [((2025, 3), 1), ((2026, 3), 2)].into());
         report
             .stats
             .week_day_heatmap
-            .insert(3, [1, 0, 2, 0, 0, 0, 0]);
-        input.iso_week_years.insert(3, 2026);
+            .insert((2025, 3), [1, 0, 0, 0, 0, 0, 0]);
+        report.stats.week_day_heatmap.insert((2026, 3), [0, 0, 2, 0, 0, 0, 0]);
 
         let weekly = weekly_topics_csv(&input);
         assert!(weekly.starts_with("\"ISO 연도\",\"ISO 주차\",\"주제\",\"문서 수\"\r\n"));
+        assert!(weekly.contains("\"2025\",\"3\",\"예산, \"\"정산\"\"\n업무\",\"1\""));
         assert!(weekly.contains("\"2026\",\"3\",\"예산, \"\"정산\"\"\n업무\",\"2\""));
 
         let heatmap = weekday_heatmap_csv(&input);
         assert!(heatmap.starts_with("\"ISO 연도\",\"ISO 주차\",\"월요일\",\"화요일\""));
-        assert!(heatmap.contains("\"2026\",\"3\",\"1\",\"0\",\"2\",\"0\",\"0\",\"0\",\"0\""));
+        assert!(heatmap.contains("\"2025\",\"3\",\"1\",\"0\",\"0\",\"0\",\"0\",\"0\",\"0\""));
+        assert!(heatmap.contains("\"2026\",\"3\",\"0\",\"0\",\"2\",\"0\",\"0\",\"0\",\"0\""));
     }
 
     #[test]
     fn weekly_and_weekday_csv_are_written_with_utf8_bom() {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
-        for name in ["주차별_주제.csv", "요일_열지도.csv"] {
+        for name in ["주제별_타임라인.csv", "주차별_주제.csv", "요일_열지도.csv"] {
             let bytes = fs::read(d.path().join(name)).unwrap();
             assert_eq!(&bytes[..3], &[0xef, 0xbb, 0xbf]);
         }
