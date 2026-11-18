@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
+import 'home_button.dart';
 
 /// 탭 번호: PDF 편집은 파일변환 뒤에 둔다.
 const kTabPaint = 5;
@@ -219,7 +220,17 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     widget.onTabChanged?.call(index);
   }
 
-  void _goHome() => _select(0);
+  void _goHome() {
+    if (_index == 0 && _extra == null) {
+      widget.onTabChanged?.call(0);
+      return;
+    }
+    setState(() {
+      _index = 0;
+      _extra = null;
+    });
+    widget.onTabChanged?.call(0);
+  }
 
   @override
   void initState() {
@@ -284,6 +295,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     ];
     _built = true;
     final expanded = _expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth;
+    final isHome = _index == 0 && _extra == null;
     final extraChild = switch (_extra) {
       WorkspaceExtraPage.library => widget.libraryScreen,
       WorkspaceExtraPage.notebook => widget.notebookScreen,
@@ -377,6 +389,19 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                           ),
                         ),
                         ?extraPage,
+                        // 모든 메뉴 상단 왼쪽 모서리에 홈 버튼을 셸 수준 공통 슬롯으로 배치한다.
+                        // 첫 화면(문서편집 탭 0, extra 없음)에서는 이미 홈에 있으므로 비활성/숨김 처리한다.
+                        // 첫 화면 고유 도구(서식 관리 등)와의 시각적·터치 간섭을 방지하되 maintainSize로
+                        // 모든 탭에서 동일한 모서리 슬롯 위치를 유지한다.
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: HomeButton(
+                            enabled: !isHome,
+                            visible: !isHome,
+                            onPressed: _goHome,
+                          ),
+                        ),
                       ],
                     ),
                   ),

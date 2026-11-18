@@ -126,6 +126,8 @@ struct Ui {
     body_sort: ktm::backend::BodySort,
     // 호버 상태
     hover_head_btn: Option<HeadButton>,
+    hover_home: bool,
+    pressed_home: bool,
     hover_row: Option<usize>,
     hover_folder_btn: Option<usize>,
     hover_tab: Option<usize>,
@@ -1275,7 +1277,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         let buttons_left = head_button_span(HEAD_BUTTONS[0], r.right, bw).0;
         SelectObject(mem, with(|u| u.title_font));
-        let title_left = side_w + scale(h, 12);
+        let home = ui_theme::home_button_rect(GetDpiForWindow(h) as i32);
+        ui_theme::draw_home_button(mem, RECT { left: home.left, top: home.top, right: home.right, bottom: home.bottom }, p,
+                                   with(|u| u.hover_home), with(|u| u.pressed_home));
+        let title_left = (side_w + scale(h, 12)).max(home.right + scale(h, 8));
         let title_text = "퀵몽땅검색";
         text(
             title_text,
@@ -1401,13 +1406,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 search_mode.to_string(),
                 format!(
                     "정렬:{}",
-                    match u.state.options.sort {
-                        tm_state::SortMode::Relevance => "관련",
-                        tm_state::SortMode::Confidence => "신뢰도",
-                        tm_state::SortMode::Newest => "최신",
-                        tm_state::SortMode::Oldest => "오래된",
-                        tm_state::SortMode::Name => "이름",
-                    }
+                    u.state.options.sort.label()
                 ),
                 format!(
                     "형식:{}",
@@ -2863,7 +2862,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 GetClientRect(h, &mut r);
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
-                let on_btn = head_button_hit(p.x, p.y, r.right, bw, head).is_some();
+                let home = ui_theme::home_button_rect(GetDpiForWindow(h) as i32);
+                let on_btn = head_button_hit(p.x, p.y, r.right, bw, head).is_some()
+                    || ui_theme::home_button_hit(p.x, p.y, home);
                 let grip = scale(h, frame::GRIP);
                 frame::frame_hit(
                     p.x, p.y, r.right, r.bottom, grip, head, on_btn, false, false,
@@ -2969,6 +2970,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let folder_w = scale(h, ROW_FOLDER_W);
 
                 let new_head_btn = head_button_hit(x, y, r.right, bw, head);
+                let home = ui_theme::home_button_rect(GetDpiForWindow(h) as i32);
+                let new_home = ui_theme::home_button_hit(x, y, home);
                 let chip_band = with(|u| scale(h, related_chip_band_height(kfind_core::parse_groups(&u.state.query).len(), 100)));
                 let tab_y = head + scale(h, SEARCH_BOX_H + 12) + chip_band;
                 let tab_h = scale(h, TAB_H);
@@ -3007,11 +3010,12 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     };
 
                 let changed = edit(|u| {
-                    let c = u.hover_head_btn != new_head_btn
+                    let c = u.hover_head_btn != new_head_btn || u.hover_home != new_home
                         || u.hover_tab != new_tab
                         || u.hover_row != new_row
                         || u.hover_folder_btn != new_folder_btn;
                     u.hover_head_btn = new_head_btn;
+                    u.hover_home = new_home;
                     u.hover_tab = new_tab;
                     u.hover_row = new_row;
                     u.hover_folder_btn = new_folder_btn;
@@ -3032,6 +3036,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             WM_MOUSELEAVE => {
                 edit(|u| {
                     u.hover_head_btn = None;
+                    u.hover_home = false;
                     u.hover_tab = None;
                     u.hover_row = None;
                     u.hover_folder_btn = None;
@@ -3042,6 +3047,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
             WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let x = l as i16 as i32;
                 let y = (l >> 16) as i16 as i32;
+                let home = ui_theme::home_button_rect(GetDpiForWindow(h) as i32);
+                if ui_theme::home_button_hit(x, y, home) { edit(|u| u.pressed_home = true); InvalidateRect(h, null(), 0); let _ = ui_theme::open_home_app(); return 0; }
                 let mut rc_w: RECT = std::mem::zeroed();
                 GetClientRect(h, &mut rc_w);
                 if let Some(kind) = with(|u| u.modal) {
@@ -3520,17 +3527,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             );
                         }
                         Some(OptionControl::Sort) => {
-                            let order = [
-                                tm_state::SortMode::Relevance,
-                                tm_state::SortMode::Confidence,
-                                tm_state::SortMode::Newest,
-                                tm_state::SortMode::Oldest,
-                                tm_state::SortMode::Name,
-                            ];
                             let cur = with(|u| u.state.options.sort);
-                            let next = order[(order.iter().position(|x| *x == cur).unwrap_or(0)
-                                + 1)
-                                % order.len()];
+                            let next = cur.next();
                             event(h, Event::SetSort(next));
                             edit(|u| {
                                 u.body_sort = match next {
@@ -4328,6 +4326,8 @@ pub fn run() -> Result<(), String> {
                 name_sort: 0,
                 body_sort: ktm::backend::BodySort::default(),
                 hover_head_btn: None,
+                hover_home: false,
+                pressed_home: false,
                 hover_row: None,
                 hover_folder_btn: None,
                 hover_tab: None,

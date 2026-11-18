@@ -176,6 +176,18 @@ jobs:
           Copy-Item kagent/target/ffi/release/kclip_ffi.dll resources/kclip_ffi.dll -Force
           (Get-FileHash resources/kclip_ffi.dll -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kclip_ffi.dll.sha256
 
+      - name: Build Dock (dock.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --locked --manifest-path dock/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --locked --release --manifest-path dock/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item dock/target/release/dock.exe resources/dock.exe -Force
+          (Get-FileHash resources/dock.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/dock.exe.sha256
+          if (!(Test-Path resources/dock.exe) -or !(Test-Path resources/dock.exe.sha256)) { throw 'dock bundle missing' }
+
       - name: Build virtual folder (kvf.exe, Rust)
         shell: pwsh
         run: |

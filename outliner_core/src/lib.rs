@@ -84,13 +84,18 @@ mod api;
 mod index;
 mod ops;
 mod parse_serialize;
+mod rename;
 mod search;
 mod store;
 
 pub use api::handle_request;
-pub use index::{backlinks, build_index, Index};
+pub use index::{backlinks, build_index, resolve_block_ref, BlockRefResolution, Index};
 pub use ops::edit;
 pub use parse_serialize::{parse, serialize};
+pub use rename::{
+    collect_markdown_files, rename_page_in_files, update_line_links, update_page_links_text,
+    RenameResult,
+};
 pub use search::search;
 pub use store::{load, save_atomic, save_document};
 

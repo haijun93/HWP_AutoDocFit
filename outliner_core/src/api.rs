@@ -1,6 +1,12 @@
-use crate::{backlinks, daily_page, edit, parse, save_atomic, search, serialize, OutlinerError};
+use crate::{
+    backlinks, collect_markdown_files, daily_page, edit, parse, rename_page_in_files,
+    resolve_block_ref, save_atomic, search, serialize, update_page_links_text, OutlinerError,
+};
 use serde_json::{json, Value};
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 fn invalid_request(id: Value, message: String) -> Value {
     json!({"id": id, "ok": false, "error": {"code": "INVALID_REQUEST", "message": message}})
@@ -51,6 +57,75 @@ pub fn handle_request(value: Value) -> Value {
         "backlinks" => Ok(
             json!({"block_ids": backlinks(&parse(document_text)?, args["target"].as_str().unwrap_or(""))}),
         ),
+        "resolve_block_ref" | "block_ref" => {
+            let uuid = args
+                .get("uuid")
+                .or_else(|| args.get("id"))
+                .or_else(|| args.get("block_id"))
+                .or_else(|| args.get("target"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let document = if let Some(path) = path_arg {
+                let content =
+                    fs::read_to_string(path).map_err(|error| OutlinerError::Io(error.to_string()))?;
+                parse(&content)?
+            } else {
+                parse(document_text)?
+            };
+            let resolution = resolve_block_ref(&document, uuid);
+            Ok(serde_json::to_value(&resolution)
+                .map_err(|error| OutlinerError::Invalid(error.to_string()))?)
+        }
+        "rename_page" | "update_links" => {
+            let old_name = args
+                .get("old_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OutlinerError::Invalid("args.old_name이 필요합니다".into()))?;
+            let new_name = args
+                .get("new_name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| OutlinerError::Invalid("args.new_name이 필요합니다".into()))?;
+            let preview = args
+                .get("preview")
+                .or_else(|| args.get("dry_run"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+
+            if let Some(files_array) = args.get("files").and_then(Value::as_array) {
+                let paths: Vec<PathBuf> = files_array
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .map(PathBuf::from)
+                    .collect();
+                let res = rename_page_in_files(&paths, old_name, new_name, preview)?;
+                return Ok(serde_json::to_value(&res)
+                    .map_err(|error| OutlinerError::Invalid(error.to_string()))?);
+            }
+
+            let target_path = path_arg
+                .or_else(|| args.get("directory").and_then(Value::as_str))
+                .or_else(|| args.get("dir").and_then(Value::as_str));
+
+            if let Some(target_path) = target_path {
+                let path = Path::new(target_path);
+                let files = collect_markdown_files(path)?;
+                let res = rename_page_in_files(&files, old_name, new_name, preview)?;
+                return Ok(serde_json::to_value(&res)
+                    .map_err(|error| OutlinerError::Invalid(error.to_string()))?);
+            }
+
+            let (updated_doc, changed) = update_page_links_text(document_text, old_name, new_name);
+            Ok(json!({
+                "old_name": old_name,
+                "new_name": new_name,
+                "markdown": updated_doc,
+                "changed": changed,
+                "affected_files": if changed { vec!["<document>"] } else { vec![] },
+                "files": if changed { vec!["<document>"] } else { vec![] },
+                "count": if changed { 1 } else { 0 },
+                "preview": preview,
+            }))
+        }
         _ => Err(OutlinerError::Invalid(format!(
             "지원하지 않는 명령: {operation}"
         ))),

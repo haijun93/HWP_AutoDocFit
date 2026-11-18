@@ -16,6 +16,26 @@
 
 use std::sync::Mutex;
 
+pub const FOCUS_HOME_EVENT_NAME: &str = "Local\\HwpAutoDocFit.FocusHome";
+
+pub fn home_action(event_is_open: bool) -> HomeAction {
+    if event_is_open { HomeAction::SignalExisting } else { HomeAction::Launch }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HomeAction { SignalExisting, Launch }
+
+#[cfg(test)]
+mod home_action_tests {
+    use super::*;
+    #[test]
+    fn home_event_name_and_decision_are_stable() {
+        assert_eq!(FOCUS_HOME_EVENT_NAME, "Local\\HwpAutoDocFit.FocusHome");
+        assert_eq!(home_action(true), HomeAction::SignalExisting);
+        assert_eq!(home_action(false), HomeAction::Launch);
+    }
+}
+
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
@@ -333,6 +353,19 @@ pub const SPI_SETHIGHCONTRAST_CODE: usize = 0x0043;
 /// RegisterWindowMessageW 이름(kagent가 테마 설정을 바꾸면 방송, kvf 등이 받아 다시 읽는다).
 pub const CHANGED_MESSAGE_NAME: &str = "DocFitThemeChanged";
 
+/// Shared top-left home control (logical 96-DPI coordinates).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HomeButton { pub left: i32, pub top: i32, pub right: i32, pub bottom: i32 }
+pub const HOME_BUTTON_SIZE: i32 = 32;
+pub const HOME_BUTTON_INSET: i32 = 0;
+pub fn home_button_rect(scale: i32) -> HomeButton {
+    let size = (HOME_BUTTON_SIZE * scale.max(1) + 48) / 96;
+    HomeButton { left: HOME_BUTTON_INSET, top: HOME_BUTTON_INSET, right: HOME_BUTTON_INSET + size, bottom: HOME_BUTTON_INSET + size }
+}
+pub fn home_button_hit(x: i32, y: i32, rect: HomeButton) -> bool {
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
 /// 테마를 다시 읽어야 하는 메시지인지. `area`는 WM_SETTINGCHANGE lParam 문자열, `registered`는
 /// `CHANGED_MESSAGE_NAME` 등록 번호(0이면 없음).
 pub fn is_theme_event(msg: u32, wparam: usize, area: Option<&str>, registered: u32) -> bool {
@@ -398,6 +431,17 @@ pub fn store(next: Theme) -> Change {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_button_geometry_scales_and_hit_test_is_half_open() {
+        assert_eq!(home_button_rect(96), HomeButton { left: 0, top: 0, right: 32, bottom: 32 });
+        assert_eq!(home_button_rect(144).right, 48);
+        let r = home_button_rect(96);
+        assert!(home_button_hit(0, 0, r));
+        assert!(home_button_hit(31, 31, r));
+        assert!(!home_button_hit(32, 31, r));
+        assert!(!home_button_hit(31, 32, r));
+    }
 
     #[test]
     fn light_matches_previous_hardcoded_colors() {

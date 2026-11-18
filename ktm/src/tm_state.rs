@@ -25,6 +25,35 @@ pub enum SearchMode { #[default] Keyword, Filename }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SortMode { #[default] Relevance, Confidence, Newest, Oldest, Name }
 
+impl SortMode {
+    /// 순환 드롭다운의 표시 순서.
+    pub const fn choices() -> [Self; 5] {
+        [Self::Relevance, Self::Confidence, Self::Newest, Self::Oldest, Self::Name]
+    }
+
+    pub const fn next(self) -> Self {
+        let choices = Self::choices();
+        let mut i = 0;
+        while i < choices.len() {
+            if choices[i] as u8 == self as u8 {
+                return choices[(i + 1) % choices.len()];
+            }
+            i += 1;
+        }
+        Self::Relevance
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Relevance => "관련",
+            Self::Confidence => "신뢰도",
+            Self::Newest => "최신",
+            Self::Oldest => "오래된",
+            Self::Name => "이름",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MatchMode { #[default] AllTerms, AnyTerm, Exact }
 
@@ -1031,7 +1060,12 @@ mod tests {
 
     #[test] fn ui_options_toggle_sidebar() { let (s,_)=step(&visible(),Event::ToggleSidebar); assert!(s.options.sidebar_open); }
     #[test] fn ui_options_switch_search_mode() { let (s,_)=step(&visible(),Event::SetSearchMode(SearchMode::Filename)); assert_eq!(s.options.search_mode,SearchMode::Filename); }
-    #[test] fn ui_options_set_sort() { let (s,_)=step(&visible(),Event::SetSort(SortMode::Oldest)); assert_eq!(s.options.sort,SortMode::Oldest); }
+    #[test] fn ui_options_set_sort() { let (s,_)=step(&visible(),Event::SetSort(SortMode::Oldest)); assert_eq!(s.options.sort,SortMode::Oldest); }    #[test]
+    fn sort_dropdown_choices_keep_display_order_and_wrap() {
+        assert_eq!(SortMode::choices(), [SortMode::Relevance, SortMode::Confidence, SortMode::Newest, SortMode::Oldest, SortMode::Name]);
+        assert_eq!(SortMode::choices().map(SortMode::label), ["관련", "신뢰도", "최신", "오래된", "이름"]);
+        assert_eq!(SortMode::choices().map(SortMode::next), [SortMode::Confidence, SortMode::Newest, SortMode::Oldest, SortMode::Name, SortMode::Relevance]);
+    }
     #[test] fn ui_options_file_type_toggle_is_reversible() { let (s,_)=step(&visible(),Event::ToggleFileType("pdf".into())); let (s,_)=step(&s,Event::ToggleFileType("pdf".into())); assert!(s.options.file_types.is_empty()); }
     #[test] fn ui_options_set_days() { let (s,_)=step(&visible(),Event::SetDays(Some(7))); assert_eq!(s.options.days,Some(7)); }
     #[test] fn ui_options_clear_recent_history() { let mut s=visible(); s.recent_queries=vec!["a".into()]; let (s,_)=step(&s,Event::ClearHistory); assert!(s.recent_queries.is_empty()); }
