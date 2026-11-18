@@ -418,6 +418,8 @@ struct State {
     tab_spans: Vec<(i32, i32)>,
     hover_btn: Option<HeadButton>,
     pressed_btn: Option<HeadButton>,
+    hover_home: bool,
+    pressed_home: bool,
     hover_tab: Option<usize>,
     hover_action: Option<Action>,
     /// 최대화 중이면 이전 창 위치.
@@ -428,7 +430,7 @@ struct State {
 
 static STATE: Mutex<State> = Mutex::new(State {
     items: Vec::new(), sel: 0, top: 0, target: 0, hover: None, query: String::new(), comp: String::new(), seq: 0,
-    tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_tab: None, hover_action: None, restore_rect: None,
+    tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_home: false, pressed_home: false, hover_tab: None, hover_action: None, restore_rect: None,
     minimized: false,
 });
 static TRACKING: AtomicBool = AtomicBool::new(false);
@@ -937,6 +939,8 @@ unsafe fn paint(hwnd: HWND) {
 
         // ① 상단 메뉴바
         fill(RECT { left: 0, top: 0, right: w, bottom: head }, p.head_bg);
+        let home = ui_theme::home_button_rect(GetDpiForWindow(hwnd) as i32);
+        ui_theme::draw_home_button(mem, RECT { left: home.left, top: home.top, right: home.right, bottom: home.bottom }, p, st.hover_home, st.pressed_home);
         for b in HEAD_BUTTONS {
             let (l, r) = head_button_span(b, w, bw);
             let br = RECT { left: l, top: 0, right: r, bottom: head };
@@ -955,7 +959,7 @@ unsafe fn paint(hwnd: HWND) {
         let buttons_left = head_button_span(HEAD_BUTTONS[0], w, bw).0;
         SelectObject(mem, title_font);
         SetTextColor(mem, p.text);
-        let title_left = scale(hwnd, 10);
+        let title_left = scale(hwnd, 40);
         draw("퀵몽땅클립보드", RECT { left: title_left, top: 0, right: buttons_left - scale(hwnd, 4), bottom: head }, DT_END_ELLIPSIS);
         let title_right = title_left + text_width(mem, "퀵몽땅클립보드") + scale(hwnd, 8);
         if title_right < buttons_left - scale(hwnd, 24) {
@@ -1327,7 +1331,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let (head, row) = (scale(hwnd, HEAD_H), scale(hwnd, ROW_H));
                 let maximized = STATE.lock().unwrap().restore_rect.is_some();
                 let collapsed = rc.bottom < head + scale(hwnd, CAT_H) + row;
-                let on_button = head_button_at(hwnd, pt.x, pt.y).is_some();
+                let home = ui_theme::home_button_rect(GetDpiForWindow(hwnd) as i32);
+                let on_button = head_button_at(hwnd, pt.x, pt.y).is_some()
+                    || ui_theme::home_button_hit(pt.x, pt.y, home);
                 frame_hit(pt.x, pt.y, rc.right, rc.bottom, scale(hwnd, GRIP), head, on_button, maximized, collapsed)
                     .code() as LRESULT
             }
@@ -1462,6 +1468,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     TrackMouseEvent(&mut tme);
                 }
                 let (x, y) = xy(lp);
+                let home = ui_theme::home_button_rect(GetDpiForWindow(hwnd) as i32);
+                let hover_home = ui_theme::home_button_hit(x, y, home);
                 let btn = head_button_at(hwnd, x, y);
                 let tab = tab_hit(hwnd, x, y);
                 let i = row_at(hwnd, lp);
@@ -1478,9 +1486,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     None
                 };
                 let mut st = STATE.lock().unwrap();
-                if st.hover != i || st.hover_btn != btn || st.hover_tab != tab || st.hover_action != action {
+                if st.hover != i || st.hover_btn != btn || st.hover_home != hover_home || st.hover_tab != tab || st.hover_action != action {
                     st.hover = i;
                     st.hover_btn = btn;
+                    st.hover_home = hover_home;
                     st.hover_tab = tab;
                     st.hover_action = action;
                     drop(st);
@@ -1498,6 +1507,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let mut st = STATE.lock().unwrap();
                 st.hover = None;
                 st.hover_btn = None;
+                st.hover_home = false;
                 st.hover_tab = None;
                 st.pressed_btn = None;
                 st.hover_action = None;
@@ -1507,6 +1517,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_LBUTTONDOWN => {
                 let (x, y) = xy(lp);
+                let home = ui_theme::home_button_rect(GetDpiForWindow(hwnd) as i32);
+                if ui_theme::home_button_hit(x, y, home) { STATE.lock().unwrap().pressed_home = true; InvalidateRect(hwnd, std::ptr::null(), 0); return 0; }
                 let btn = head_button_at(hwnd, x, y);
                 STATE.lock().unwrap().pressed_btn = btn;
                 if btn.is_some() {
@@ -1516,6 +1528,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
             WM_LBUTTONUP => {
                 let (x, y) = xy(lp);
+                let home = ui_theme::home_button_rect(GetDpiForWindow(hwnd) as i32);
+                let clicked_home = { let mut st = STATE.lock().unwrap(); let was = st.pressed_home; st.pressed_home = false; was && ui_theme::home_button_hit(x, y, home) };
+                if clicked_home { hide(); let _ = ui_theme::open_home_app(); InvalidateRect(hwnd, std::ptr::null(), 0); return 0; }
                 let pressed = STATE.lock().unwrap().pressed_btn.take();
                 let btn = head_button_at(hwnd, x, y);
                 if btn.is_some() || pressed.is_some() {

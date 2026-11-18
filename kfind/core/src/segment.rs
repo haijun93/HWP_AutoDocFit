@@ -519,10 +519,10 @@ pub(crate) fn write_segment<'a>(dir: &Path, id: u64, docs: impl Iterator<Item = 
     let alpha = Alphabet::from_counts(char_counts.into_iter().filter_map(|(c, n)| Some((char::from_u32(c as u32)?, n))));
     let name = seg_file_name(id);
     let mut w = SegWriter::create(&dir.join(format!("{name}.tmp")), alpha)?;
-    for (k, bm) in &entries {
-        w.posting(k, bm)?;
+    for (k, mut bm) in entries {
+        bm.optimize();
+        w.posting(&k, &bm)?;
     }
-    drop(entries);
     w.end_postings()?;
     let mut recs: Vec<DocRec> = Vec::new();
     let mut sid: u32 = 0;

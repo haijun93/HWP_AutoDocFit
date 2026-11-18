@@ -29,6 +29,7 @@ const ADDRESS: i32 = 36;
 const TOOLBAR: i32 = 34;
 const STATUS: i32 = 26;
 const GUTTER: i32 = 6;
+const WM_MOUSELEAVE: u32 = 0x02A3;
 const SPACES: [Option<&str>; 5] = [
     None,
     Some("core"),
@@ -57,6 +58,7 @@ struct Ui {
     committed: String,
     comp: String,
     pressed: Option<usize>,
+    home_hover: bool,
     truncated: bool,
     drag_split: Option<crate::vf_layout::SplitHit>,
     item_drag: Option<ItemDrag>,
@@ -687,6 +689,8 @@ fn row_at(h: HWND, l: isize) -> Option<usize> {
     })
 }
 fn button(h: HWND, x: i32, y: i32) -> Option<usize> {
+    let home = ui_theme::home_button_rect(frame::scale(h, 96));
+    if ui_theme::home_button_hit(x, y, home) { return Some(4); }
     let w = size(h).right;
     let bw = frame::scale(h, 40);
     (y >= 0 && y < frame::scale(h, HEAD) && x >= w - 4 * bw && x < w)
@@ -1191,10 +1195,13 @@ unsafe fn paint(h: HWND) {
                 .map(|b| b.name.clone())
                 .unwrap_or_else(|| "오늘의 업무".into())
         });
+        let home = ui_theme::home_button_rect(frame::scale(h, 96));
+        ui_theme::draw_home_button(mem, RECT { left: home.left, top: home.top, right: home.right, bottom: home.bottom }, palette,
+                                   with(|s| s.home_hover), with(|s| s.pressed == Some(4)));
         text(
             &window_title(&title_name),
             RECT {
-                left: pad,
+                left: home.right + frame::scale(h, 8),
                 top: 0,
                 right: rc.right - frame::scale(h, 160),
                 bottom: head,
@@ -1757,6 +1764,11 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isiz
             }
             WM_MOUSEMOVE => {
                 let (x, y) = xy(l);
+                let mut tracking: TRACKMOUSEEVENT = std::mem::zeroed();
+                tracking.cbSize = std::mem::size_of_val(&tracking) as u32;
+                tracking.dwFlags = TME_LEAVE;
+                tracking.hwndTrack = h;
+                TrackMouseEvent(&mut tracking);
                 if with(|s| s.drag_split.is_some()) {
                     update_split(h, x, y);
                 } else if with(|s| s.item_drag.is_some()) {
@@ -1787,6 +1799,10 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isiz
                     ));
                     draw_later();
                 } else {
+                    let home = ui_theme::home_button_rect(frame::scale(h, 96));
+                    let hovering = ui_theme::home_button_hit(x, y, home);
+                    let changed = edit(|s| { let changed = s.home_hover != hovering; s.home_hover = hovering; changed });
+                    if changed { draw_later(); }
                     let rc = size(h);
                     let top = list_y(h);
                     let hit = with(|s| {
@@ -1810,6 +1826,10 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isiz
                         SetCursor(LoadCursorW(null_mut(), IDC_ARROW));
                     }
                 }
+                0
+            }
+            WM_MOUSELEAVE => {
+                if edit(|s| { let changed = s.home_hover; s.home_hover = false; changed }) { draw_later(); }
                 0
             }
             WM_LBUTTONUP => {
@@ -1872,6 +1892,7 @@ unsafe extern "system" fn wndproc(h: HWND, msg: u32, w: usize, l: isize) -> isiz
                                 save();
                                 draw_later();
                             }
+                            Some(4) => { let _ = ui_theme::open_home_app(); }
                             _ => {}
                         }
                     }

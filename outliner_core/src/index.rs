@@ -1,4 +1,5 @@
 use crate::Document;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 /// In-memory reverse lookup from page or block target to referring block IDs.
@@ -7,6 +8,17 @@ pub struct Index {
     pub backlinks: BTreeMap<String, Vec<u64>>,
     pub tags: BTreeMap<String, Vec<u64>>,
     pub properties: BTreeMap<String, Vec<(u64, String)>>,
+}
+
+/// Result of resolving a block reference `((UUID))`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BlockRefResolution {
+    pub found: bool,
+    pub text: String,
+    pub content: String,
+    pub block_id: Option<u64>,
+    pub uuid: String,
+    pub backlinks: Vec<u64>,
 }
 
 /// Builds page/block backlink, tag, and property indexes for a document.
@@ -41,3 +53,35 @@ pub fn backlinks(document: &Document, target: &str) -> Vec<u64> {
         .remove(target)
         .unwrap_or_default()
 }
+
+/// Resolves a block reference by looking up the block with property `id:: UUID`
+/// and gathering referring block IDs. Missing ID returns an empty result instead of an error.
+pub fn resolve_block_ref(document: &Document, uuid: &str) -> BlockRefResolution {
+    let target_block = document
+        .blocks
+        .iter()
+        .find(|block| block.properties.get("id").map(String::as_str) == Some(uuid));
+
+    let backlinks = backlinks(document, uuid);
+
+    if let Some(block) = target_block {
+        BlockRefResolution {
+            found: true,
+            text: block.text.clone(),
+            content: block.text.clone(),
+            block_id: Some(block.id),
+            uuid: uuid.to_string(),
+            backlinks,
+        }
+    } else {
+        BlockRefResolution {
+            found: false,
+            text: String::new(),
+            content: String::new(),
+            block_id: None,
+            uuid: uuid.to_string(),
+            backlinks,
+        }
+    }
+}
+
