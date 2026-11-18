@@ -9,6 +9,11 @@ void main() {
     expect(parseHiddenTabs('3'), isEmpty);
   });
 
+  test('필수 메뉴와 잘못된 값은 저장값 복원 시 무시한다', () {
+    expect(parseHiddenTabs([0, 12, 13, -1, '2', true, 2.0, 2, 2]), {2});
+    expect(parseHiddenTabs([0, 12, 13, -1, '2', true, 2.0]), isEmpty);
+  });
+
   test('선택 창 목록은 문서편집을 빼고 나머지 메뉴를 한 번씩 담는다', () {
     final tabs = kSidebarMenuChoices.map((e) => e.tab).toList()..sort();
     expect(tabs, [for (var i = 1; i < kTabCount; i++) i]);
