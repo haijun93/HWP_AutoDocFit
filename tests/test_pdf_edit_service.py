@@ -117,6 +117,29 @@ class PdfEditServiceTests(unittest.TestCase):
             self.service.execute('delete', self.source, self.root / 'result.pdf', pages=[1])
         self.assertEqual(caught.exception.code, 'PDF_ENGINE_MISSING')
 
+    def test_page_info_is_read_only_and_returns_engine_metadata(self):
+        self.runner.return_value = Mock(returncode=0, stderr='', stdout='{"pages":[{"number":1,"width":100,"height":200,"rotation":90}]}')
+        before = self.source.read_bytes()
+        result = self.service.execute('info', self.source, None)
+        self.assertEqual(result['page_count'], 1)
+        self.assertEqual(result['pages'][0]['rotation'], 90)
+        self.assertEqual(self.source.read_bytes(), before)
+        self.assertEqual(self.runner.call_args.args[0][1], 'info')
+
+    def test_thumbnail_returns_cached_small_jpeg_without_modifying_source(self):
+        import base64
+        from unittest.mock import patch
+        before = self.source.read_bytes()
+        with patch.dict(os.environ, {'KAGENT_DATA': str(self.root / 'app-data')}):
+            result = self.service.execute('thumbnail', self.source, None, pages=[1])
+            cached = self.service.execute('thumbnail', self.source, None, pages=[1])
+        image = base64.b64decode(result['data'])
+        self.assertEqual(result['mime_type'], 'image/jpeg')
+        self.assertEqual(image[:3], b'\xff\xd8\xff')
+        self.assertEqual(result['data'], cached['data'])
+        self.assertLess(len(image), 100_000)
+        self.assertEqual(self.source.read_bytes(), before)
+
     def test_finds_installed_resources_before_development_engine(self):
         from unittest.mock import patch
         from docfit_app import pdf_edit_service

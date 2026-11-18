@@ -6,6 +6,10 @@ import sys
 from pathlib import Path
 import shutil
 import subprocess
+import base64
+import hashlib
+import io
+import math
 
 from .api_contract import ServiceError
 
@@ -70,6 +74,15 @@ class PdfEditService:
             raise ServiceError('PDF_DAMAGED', 'PDF 구조를 읽을 수 없습니다. 손상된 PDF일 수 있습니다.') from None
 
     def execute(self, action, source, output, *, pages=None, degrees=None, sources=None):
+        if action in {'info', 'thumbnail'}:
+            source_path = Path(source) if source else None
+            if source_path is None or not source_path.is_file() or source_path.suffix.lower() != '.pdf':
+                raise ServiceError('INVALID_INPUT', '원본 PDF 파일을 선택해 주세요.')
+            self._classify(source_path)
+            if action == 'info':
+                return self._page_info(source_path)
+            page = pages[0] if isinstance(pages, (list, tuple)) and len(pages) == 1 else None
+            return self._thumbnail(source_path, page)
         if action not in {'delete', 'reorder', 'rotate', 'split', 'merge'}:
             raise ServiceError('INVALID_ACTION', '지원하지 않는 PDF 편집 작업입니다.')
         source_path = Path(source) if source else None
@@ -138,3 +151,67 @@ class PdfEditService:
         elif not output_path.is_file():
             raise ServiceError('PDF_EDIT_FAILED', 'PDF 편집 엔진이 결과 파일을 만들지 않았습니다.')
         return {'output': str(output_path), 'action': action}
+
+    def _page_info(self, source):
+        if not self.executable.is_file():
+            raise ServiceError('PDF_ENGINE_MISSING', 'PDF 편집 엔진(pdf-edit)을 찾을 수 없습니다.')
+        try:
+            result = self.runner([str(self.executable), 'info', str(source)], capture_output=True, text=True, timeout=30, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ServiceError('PDF_ENGINE_FAILED', 'PDF 페이지 정보를 읽지 못했습니다.') from None
+        if result.returncode:
+            raise ServiceError('PDF_DAMAGED', 'PDF 구조를 읽을 수 없습니다.')
+        import json
+        try:
+            data = json.loads(result.stdout)
+            pages = data['pages']
+            if not isinstance(pages, list) or not pages or len(pages) > 3000:
+                raise ValueError()
+            return {'pages': pages, 'page_count': len(pages)}
+        except (ValueError, KeyError, TypeError):
+            raise ServiceError('PDF_DAMAGED', 'PDF 페이지 정보를 읽을 수 없습니다.') from None
+
+    def _thumbnail(self, source, page_number):
+        if type(page_number) is not int or page_number < 1 or page_number > 3000:
+            raise ServiceError('INVALID_INPUT', '쪽 번호를 확인해 주세요.')
+        try:
+            import pypdfium2 as pdfium
+            from docfit_core import pdfium_guard
+            from docfit_core.timemachine import thumbs
+            from .kagent_client import data_dir
+            size, quality = 160, 70
+            stat = source.stat()
+            key = hashlib.sha256(f'{source.resolve()}|{stat.st_mtime_ns}|{stat.st_size}|{page_number}|{size}'.encode()).hexdigest()
+            cache = thumbs.ThumbnailCache(data_dir() / 'thumbs', max_bytes=thumbs.MAX_CACHE_BYTES)
+            cached = cache.get(key)
+            if cached is None:
+                with pdfium_guard.try_exclusive(thumbs.PDF_LOCK_WAIT) as acquired:
+                    if not acquired:
+                        raise ServiceError('PDF_BUSY', 'PDF 미리보기 엔진을 사용 중입니다. 잠시 후 다시 시도해 주세요.')
+                    document = pdfium.PdfDocument(str(source))
+                    try:
+                        if page_number > len(document):
+                            raise ServiceError('INVALID_INPUT', '쪽 번호가 PDF 범위를 벗어났습니다.')
+                        page = document[page_number - 1]
+                        try:
+                            width, height = page.get_size()
+                            if not all(map(math.isfinite, (width, height))) or min(width, height) <= 0:
+                                raise ValueError('invalid page size')
+                            bitmap = page.render(scale=size / max(width, height), may_draw_forms=False)
+                            try:
+                                image = bitmap.to_pil().copy().convert('RGB')
+                            finally:
+                                bitmap.close()
+                        finally:
+                            page.close()
+                    finally:
+                        document.close()
+                output = io.BytesIO()
+                image.save(output, format='JPEG', quality=quality)
+                cached = output.getvalue()
+                cache.put(key, cached)
+            return {'page': page_number, 'mime_type': 'image/jpeg', 'data': base64.b64encode(cached).decode('ascii')}
+        except ServiceError:
+            raise
+        except Exception:
+            raise ServiceError('PDF_DAMAGED', 'PDF 쪽 썸네일을 렌더링할 수 없습니다.') from None

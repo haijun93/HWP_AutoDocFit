@@ -1,8 +1,8 @@
-use pdf_edit_core::{delete_pages, page_count, reorder, rotate_pages, split};
+use pdf_edit_core::{delete_pages, page_count, page_info, reorder, rotate_pages, split};
 use std::{env, path::PathBuf, process::ExitCode};
 
 fn usage() {
-    eprintln!("pdf-edit count IN|delete IN OUT PAGES|reorder IN OUT 3,1,2|rotate IN OUT DEGREES PAGES|split IN DIR 1-2,4-5|merge OUT IN1 IN2...");
+    eprintln!("pdf-edit count IN|info IN|delete IN OUT PAGES|reorder IN OUT 3,1,2|rotate IN OUT DEGREES PAGES|split IN DIR 1-2,4-5|merge OUT IN1 IN2...");
 }
 fn pages(text: &str) -> Result<Vec<usize>, String> {
     text.split(',')
@@ -48,6 +48,14 @@ fn main() -> ExitCode {
     }
     let result = match a[0].as_str() {
         "count" if a.len() == 2 => page_count(&a[1]).map(|n| println!("{n}")),
+        "info" if a.len() == 2 => page_info(&a[1]).map(|pages| {
+            print!("{{\"pages\":[");
+            for (i, p) in pages.iter().enumerate() {
+                if i > 0 { print!(","); }
+                print!("{{\"number\":{},\"width\":{},\"height\":{},\"rotation\":{}}}", p.number, p.width, p.height, p.rotation);
+            }
+            println!("]}}");
+        }),
         "delete" if a.len() == 4 => pages(&a[3])
             .map_err(pdf_edit_core::PdfEditError::Invalid)
             .and_then(|p| delete_pages(&a[1], &a[2], &p)),
