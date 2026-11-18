@@ -157,12 +157,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   @override
   void didUpdateWidget(covariant TabNavigationShell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 지금 보던 메뉴를 끄면 문서편집으로 옮긴다(끈 메뉴 화면은 만들지 않는다).
-    if (widget.hiddenTabs.contains(_index) && _extra == null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && widget.hiddenTabs.contains(_index)) _select(0);
-      });
-    }
+    // 메뉴를 꺼도 이미 열려 있는 작업 화면과 그 편집 상태는 유지한다.
   }
 
   @override
@@ -361,7 +356,9 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                                   TickerMode(
                                     key: ValueKey('workspace-tab-$i'),
                                     enabled: i == _index,
-                                    child: widget.hiddenTabs.contains(i) ? const SizedBox.shrink() : pages[i],
+                                  // 숨김은 사이드메뉴 노출만 제어한다. 열린 탭 위젯을
+                                  // 제거하면 사용자의 진행 중인 작업이 닫히므로 계속 보존한다.
+                                  child: pages[i],
                                   ),
                               ],
                             ),
