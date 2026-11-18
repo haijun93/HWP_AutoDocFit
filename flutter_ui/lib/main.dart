@@ -17,6 +17,8 @@ import 'core/api/abbreviation_api.dart';
 import 'core/close_guards.dart';
 import 'core/theme/app_theme.dart';
 import 'core/drop_events.dart';
+import 'core/window_focus_stub.dart'
+    if (dart.library.js_interop) 'core/window_focus_web.dart';
 import 'features/preview/option_images.dart';
 import 'features/abbreviations/abbreviation_manager.dart';
 import 'features/formats/table_template_panel.dart';
@@ -33,6 +35,7 @@ import 'features/stages/stage_board.dart';
 import 'features/workspace/workspace_adapters.dart';
 import 'features/workspace/tab_navigation_shell.dart';
 import 'features/workspace/sidebar_menu_settings.dart';
+import 'features/workspace/tab_open_events.dart';
 import 'features/kclip/kclip_dialog.dart';
 
 export 'core/api/abbreviation_api.dart' show ApiCall;
@@ -232,6 +235,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   bool developerMode = false;
   void Function()? _stopPhotoEditEvent;
   void Function()? _stopFocusHomeEvent;
+  List<void Function()> _stopTabOpenEvents = const [];
 
   @override
   void initState() {
@@ -257,12 +261,20 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       tabRequest.value = null;
       tabRequest.value = 0;
     });
+    _stopTabOpenEvents = watchTabOpenEvents(
+      tabRequest: tabRequest,
+      hiddenTabs: () => {...kDefaultHiddenTabs, ...hiddenTabsNotifier.value},
+      bringToFront: bringWindowToFront,
+    );
   }
 
   @override
   void dispose() {
     _stopPhotoEditEvent?.call();
     _stopFocusHomeEvent?.call();
+    for (final stop in _stopTabOpenEvents) {
+      stop();
+    }
     HardwareKeyboard.instance.removeHandler(_onKClipHotkey);
     super.dispose();
   }

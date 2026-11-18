@@ -150,6 +150,17 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             paint(hwnd);
             0
         }
+        WM_LBUTTONUP => {
+            let mut r: RECT = std::mem::zeroed();
+            GetClientRect(hwnd, &mut r);
+            let x = (l as u32 as u16) as i32;
+            let hidden = hidden_tabs();
+            let menus = dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false);
+            let first = r.right / 2 - ((menus.len() as i32 - 1) * 14) / 2;
+            let index = ((x - first + 7) / 14).clamp(0, menus.len() as i32 - 1) as usize;
+            if let Some(item) = menus.get(index) { let _ = open_tab(item.tab); }
+            0
+        }
         WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -205,8 +216,11 @@ unsafe fn paint(hwnd: HWND) {
     RoundRect(mem, 2, 2, r.right - 2, r.bottom - 2, 24, 24);
     let dot = CreateSolidBrush(0xF4F1ED);
     SelectObject(mem, dot);
-    for i in 0..15 {
-        let x = r.right / 2 - 7 * 14 + 14 * i;
+    let hidden = hidden_tabs();
+    let menus = dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false);
+    let first = r.right / 2 - ((menus.len() as i32 - 1) * 14) / 2;
+    for i in 0..menus.len() {
+        let x = first + 14 * i as i32;
         Ellipse(mem, x - 4, r.bottom / 2 - 4, x + 4, r.bottom / 2 + 4);
     }
     GdiFlush();
@@ -272,8 +286,9 @@ fn pipe_server() {
                             serde_json::json!({"ok":true})
                         }
                         "open_tab" => {
-                            eprintln!("dock open_tab received: {:?}", req.get("tab"));
-                            serde_json::json!({"ok":true,"received":true})
+                            let tab = req.get("tab").and_then(|v| v.as_u64()).unwrap_or(255) as u8;
+                            let ok = open_tab(tab);
+                            serde_json::json!({"ok":ok,"tab":tab})
                         }
                         _ => serde_json::json!({"ok":false,"error":"unknown command"}),
                     };
@@ -296,4 +311,57 @@ fn pipe_server() {
             CloseHandle(h);
         }
     }
+}
+
+/// Keep OS calls at this boundary; routing decisions are covered by the pure library tests.
+fn open_tab(tab: u8) -> bool {
+    use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+    match dock::route(tab) {
+        dock::Route::Invalid => false,
+        dock::Route::Search => {
+            // ktm's existing --show path forwards WM_HOTKEY to its singleton window.
+            let Some(exe) = sibling_exe("ktm.exe") else { return false };
+            std::process::Command::new(exe).arg("--show").spawn().is_ok()
+        }
+        dock::Route::VirtualFolder => run_sibling("kvf.exe", Some("--show")),
+        dock::Route::Clipboard => launch_sibling("kagent.exe"),
+        dock::Route::MainTab(tab) => {
+            let Some(name) = dock::tab_event_name(tab) else { return false };
+            let name = wide(&name);
+            unsafe {
+                let event = OpenEventW(EVENT_MODIFY_STATE, 0, name.as_ptr());
+                if !event.is_null() {
+                    let result = SetEvent(event) != 0;
+                    CloseHandle(event);
+                    return result;
+                }
+            }
+            let Some(exe) = sibling_exe("HwpAutoDocFit.exe") else { return false };
+            std::process::Command::new(exe).spawn().is_ok()
+        }
+    }
+}
+fn hidden_tabs() -> std::collections::BTreeSet<u8> {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return dock::parse_hidden_tabs("");
+    };
+    let path = std::path::PathBuf::from(appdata)
+        .join("HwpAutoDocFit")
+        .join("settings.json");
+    match std::fs::read_to_string(path) {
+        Ok(contents) => dock::parse_hidden_tabs(&contents),
+        Err(_) => dock::parse_hidden_tabs(""),
+    }
+}
+fn sibling_exe(name: &str) -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok()?.parent().map(|p| p.join(name)).filter(|p| p.is_file())
+}
+fn launch_sibling(name: &str) -> bool {
+    sibling_exe(name).and_then(|p| std::process::Command::new(p).spawn().ok()).is_some()
+}
+fn run_sibling(name: &str, arg: Option<&str>) -> bool {
+    let Some(exe) = sibling_exe(name) else { return false };
+    let mut command = std::process::Command::new(exe);
+    if let Some(arg) = arg { command.arg(arg); }
+    command.spawn().is_ok()
 }

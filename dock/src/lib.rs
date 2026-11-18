@@ -198,6 +198,42 @@ pub fn menu_items(hidden_tabs: &[u8], developer_mode: bool) -> Vec<MenuItem> {
         .collect()
 }
 
+/// Read `hidden_tabs` from the app's UTF-8 settings JSON. Invalid or missing
+/// values fall back to the built-in sidebar default (no optional entries hidden).
+pub fn parse_hidden_tabs(settings_json: &str) -> std::collections::BTreeSet<u8> {
+    let default = std::collections::BTreeSet::new();
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(settings_json) else {
+        return default;
+    };
+    let Some(values) = value.get("hidden_tabs").and_then(|v| v.as_array()) else {
+        return default;
+    };
+    values.iter().filter_map(|v| v.as_u64())
+        .filter(|n| (1..=14).contains(n) && *n != 12 && *n != 13)
+        .map(|n| n as u8).collect()
+}
+
+/// Stable Win32 auto-reset event name used to request a Flutter tab.
+pub fn tab_event_name(tab: u8) -> Option<String> {
+    (tab < 15).then(|| format!("docfit-open-tab-{tab}"))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Route { Search, VirtualFolder, Clipboard, MainTab(u8), Invalid }
+pub fn route(tab: u8) -> Route {
+    match tab { 7 => Route::Search, 12 => Route::VirtualFolder, 13 => Route::Clipboard,
+        0..=14 => Route::MainTab(tab), _ => Route::Invalid }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowState { Closed, OpenUnfocused, OpenFocused }
+pub fn click_state(state: WindowState) -> WindowState {
+    match state { WindowState::Closed => WindowState::OpenFocused,
+        WindowState::OpenUnfocused => WindowState::OpenFocused,
+        WindowState::OpenFocused => WindowState::OpenUnfocused }
+}
+pub fn running_dot(state: WindowState) -> bool { state != WindowState::Closed }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -287,5 +323,30 @@ mod tests {
                 .iter()
                 .all(|i| i.tab != 12 && i.tab != 13)
         )
+    }
+    #[test]
+    fn routing_table_and_tab_event_contract() {
+        assert_eq!(route(7), Route::Search);
+        assert_eq!(route(12), Route::VirtualFolder);
+        assert_eq!(route(13), Route::Clipboard);
+        for tab in [0,1,2,3,4,5,6,8,9,10,11,14] { assert_eq!(route(tab), Route::MainTab(tab)); }
+        assert_eq!(route(15), Route::Invalid);
+        assert_eq!(tab_event_name(4).as_deref(), Some("docfit-open-tab-4"));
+        assert_eq!(tab_event_name(15), None);
+    }
+    #[test]
+    fn hidden_tabs_json_parsing_and_fallback() {
+        assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":[1,6,12,13,14,0,-1,"2",1]}"#), std::collections::BTreeSet::from([1,6,14]));
+        assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":"bad"}"#), std::collections::BTreeSet::new());
+        assert_eq!(parse_hidden_tabs("{"), std::collections::BTreeSet::new());
+        assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":[]}"#), std::collections::BTreeSet::new());
+    }
+    #[test]
+    fn window_click_state_machine_and_running_indicator() {
+        assert_eq!(click_state(WindowState::Closed), WindowState::OpenFocused);
+        assert_eq!(click_state(WindowState::OpenUnfocused), WindowState::OpenFocused);
+        assert_eq!(click_state(WindowState::OpenFocused), WindowState::OpenUnfocused);
+        assert!(!running_dot(WindowState::Closed));
+        assert!(running_dot(WindowState::OpenUnfocused));
     }
 }
