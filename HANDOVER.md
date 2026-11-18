@@ -465,7 +465,7 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 ---
 
 ## 7. 알려진 함정 (이번 세션에서 실제로 겪은 것)
-- **표템플릿 미리보기 그림은 회전·뒤집기를 그림에 미리 적용**: 신구대조표·모양 1 화살표는 칸 바탕이 아니라 그림 개체(`hp:pic`)이고, 원본 그림(`표 서식모음.hwpx`의 `BinData/image2.png`)은 위쪽 화살표입니다. 한/글은 `hp:flip`(가로·세로)+`hp:rotationInfo angle=270`으로 오른쪽 화살표를 그립니다. `docfit_core/table_catalog.py`의 `_oriented_picture`가 이를 PNG에 적용합니다. 이 함수나 서식 파일, Flutter 그림 그리기를 바꾸면 위쪽 화살표로 되돌아갑니다(여러 번 재발). `tests/test_table_catalog_picture_orientation.py`가 방향을 숫자로 검사하며 배포 빌드의 전체 시험에 들어 있습니다(2026-11-15).
+- **표템플릿 미리보기 그림은 회전·뒤집기를 그림에 미리 적용**: 신구대조표·모양 1 화살표는 칸 바탕이 아니라 그림 개체(`hp:pic`)이고, 원본 그림(`표 서식모음.hwpx`의 `BinData/image2.png`)은 위쪽 화살표입니다. 한/글은 `hp:flip`(가로·세로)+`hp:rotationInfo angle=270`으로 오른쪽 화살표를 그립니다. `docfit_core/table_catalog.py`의 `_oriented_picture`가 이를 PNG에 적용합니다. 이 함수나 서식 파일, Flutter 그림 그리기를 바꾸면 위쪽 화살표로 되돌아갑니다(여러 번 재발). `tests/test_table_catalog_picture_orientation.py`가 방향을 숫자로 검사하며 배포 빌드의 전체 시험에 들어 있습니다(2026-11-15). 화살표 flip·회전 변경 시 위 시험 통과 필수.
 
 - **양쪽 정렬 첫 줄에서 Shift+Tab 전에 이동 명령 한 번**: `MoveLineEnd` 직후 `SetPos`로 기준 글자에 가서 `ParagraphShapeIndentAtCaret`을 하면 한/글이 늘기 전 빈칸 폭으로 계산합니다('ㅇ 난세기…' 5992 대 실제 6480, 둘째 줄이 약 1mm 왼쪽). `hwp_run("MoveParaBegin")`을 한 번 거치면 늘어난 배치를 씁니다(2026-10-17 실측·픽셀 확인, `tests/test_indent_justify_layout.py`).
 - **한/글 COM `MovePos`는 인자 3개**(`MovePos(3, 0, 0)` = 문서 끝). 1개만 넘기면 예외가 납니다.

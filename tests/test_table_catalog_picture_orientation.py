@@ -6,11 +6,16 @@
 """
 import base64
 import io
+import tempfile
 import unittest
+import zipfile
+from pathlib import Path
+
+from defusedxml import ElementTree
 
 from PIL import Image
 
-from docfit_core.table_catalog import list_catalog
+from docfit_core.table_catalog import default_catalog_path, export_template, list_catalog, _oriented_picture
 
 
 def _pictures(node):
