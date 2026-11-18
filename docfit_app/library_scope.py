@@ -47,12 +47,27 @@ def default_roots(
     return tuple(roots)
 
 
-def is_excluded_path(path: str | Path, excluded_folders: Iterable[str | Path] = ()) -> bool:
-    """예약된 시스템/개발 폴더와 사용자 제외 경로를 판정한다."""
+def is_excluded_path(path: str | Path, excluded_folders: Iterable[str | Path] = (), base: str | Path | None = None) -> bool:
+    """예약된 시스템/개발 폴더와 사용자 제외 경로를 판정한다.
+
+    base(스캔 시작 폴더)가 주어지면 예약 폴더 이름은 base 아래 상대 경로에서만 본다. 그래야 사용자가
+    AppData 아래 폴더를 직접 지정하거나 임시 폴더가 AppData 아래인 환경에서도 그 폴더가 통째로 제외되지 않는다.
+    """
     try:
         raw_target = str(path)
         target = Path(ntpath.normpath(raw_target) if len(raw_target) >= 2 and raw_target[1] == ":" else os.path.abspath(raw_target))
-        parts = {part.casefold() for part in target.parts}
+        name_parts = target.parts
+        if base is not None:
+            raw_base = str(base)
+            base_path = Path(ntpath.normpath(raw_base) if len(raw_base) >= 2 and raw_base[1] == ":" else os.path.abspath(raw_base))
+            base_key = _canonical(base_path)
+            target_key0 = _canonical(target)
+            sep0 = "\\" if len(base_key) >= 2 and base_key[1] == ":" else os.sep
+            if target_key0 == base_key:
+                name_parts = ()
+            elif target_key0.startswith(base_key + sep0):
+                name_parts = target.parts[len(base_path.parts):]
+        parts = {part.casefold() for part in name_parts}
         if parts & _EXCLUDED_NAMES:
             return True
         target_key = _canonical(target)

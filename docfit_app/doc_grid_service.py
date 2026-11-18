@@ -237,13 +237,13 @@ class DocGridService:
                                 continue
 
                             if entry.is_dir(follow_symlinks=False):
-                                if recursive and not is_excluded_path(entry.path, excluded_folders):
+                                if recursive and not is_excluded_path(entry.path, excluded_folders, base=folder_path):
                                     scan_dir(Path(entry.path))
                                 continue
 
                             if not entry.is_file(follow_symlinks=False):
                                 continue
-                            if is_excluded_path(entry.path, excluded_folders):
+                            if is_excluded_path(entry.path, excluded_folders, base=folder_path):
                                 continue
 
                             ext = os.path.splitext(name)[1].lower()
@@ -294,7 +294,7 @@ class DocGridService:
         for root in self._default_roots():
             if cancel_event is not None and cancel_event.is_set():
                 break
-            if not root.is_dir() or is_excluded_path(root, excluded_folders):
+            if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root):
                 continue
             try:
                 for item in self.list_documents(root, recursive=True, cancel_event=cancel_event,

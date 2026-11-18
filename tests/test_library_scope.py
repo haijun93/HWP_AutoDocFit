@@ -29,3 +29,17 @@ class LibraryScopeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReservedNamesRelativeToBaseTests(unittest.TestCase):
+    """예약 폴더 이름은 스캔 시작 폴더 아래 상대 경로에서만 본다(시작 폴더가 AppData 아래여도 제외되지 않음)."""
+
+    def test_base_under_appdata_is_not_excluded_but_child_appdata_is(self):
+        from docfit_app.library_scope import is_excluded_path
+
+        base = r"C:\Users\someone\AppData\Local\Temp\case1"
+        self.assertTrue(is_excluded_path(base + r"\visible.pdf"))  # base 없이는 기존 동작(경로 전체)
+        self.assertFalse(is_excluded_path(base + r"\visible.pdf", base=base))
+        self.assertFalse(is_excluded_path(base, base=base))
+        self.assertTrue(is_excluded_path(base + r"\AppData\x.pdf", base=base))
+        self.assertTrue(is_excluded_path(base + r"\node_modules", base=base))
