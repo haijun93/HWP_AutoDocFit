@@ -33,6 +33,7 @@ from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
 from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots
 from . import library_scan_cache
+from docfit_core.log_mask import mask_log_text
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +160,7 @@ def extract_first_text(path: Path | str, ext: str) -> str:
                 if t:
                     return t
     except Exception as exc:
-        logger.debug("첫 문단 텍스트 추출 실패 (%s): %s", path_obj.name, exc)
+        logger.debug("첫 문단 텍스트 추출 실패 (%s): %s", path_obj.name, mask_log_text(exc))
 
     return ""
 
@@ -364,7 +365,7 @@ class DocGridService:
                 check=False,
             )
             if done.returncode != 0:
-                logger.debug("klib preview 실패 (code %d): %s", done.returncode, done.stderr.decode("utf-8", "ignore"))
+                logger.debug("klib preview 실패 (code %d): %s", done.returncode, mask_log_text(done.stderr.decode("utf-8", "ignore")))
                 return {"has_image": False, "format": None, "text": ""}
             info = json.loads(done.stdout.decode("utf-8", "ignore"))
             return {
@@ -373,7 +374,7 @@ class DocGridService:
                 "text": str(info.get("text") or ""),
             }
         except Exception as exc:
-            logger.debug("klib preview 실행 중 예외: %s", exc)
+            logger.debug("klib preview 실행 중 예외: %s", mask_log_text(exc))
             return {"has_image": False, "format": None, "text": ""}
 
     def clear_cache(self) -> int:
@@ -659,6 +660,6 @@ class DocGridService:
         except FileNotFoundError as exc:
             return {"ok": False, "code": "NOT_FOUND", "message": str(exc)}
         except Exception as exc:
-            logger.exception("문서뷰 명령 실패 (%s): %s", action, exc)
+            logger.exception("문서뷰 명령 실패 (%s): %s", action, mask_log_text(exc))
             return {"ok": False, "code": "DOC_GRID_ERROR", "message": f"작업을 완료하지 못했습니다: {exc}"}
 
