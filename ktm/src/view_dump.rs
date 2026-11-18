@@ -118,6 +118,13 @@ mod tests {
     }
 
     #[test]
+    fn related_query_groups_are_ready_for_chips_in_input_order() {
+        let groups = kfind_core::parse_groups("2026; 공사 계약");
+        let labels: Vec<String> = groups.into_iter().map(str::to_owned).collect();
+        assert_eq!(labels, ["2026", "공사 계약"]);
+    }
+
+    #[test]
     fn recent_search_list_dump_is_frozen() {
         let mut state = State::default();
         state.favorite_queries = vec![FavoriteQuery::new("예산", "예산 업무")];
