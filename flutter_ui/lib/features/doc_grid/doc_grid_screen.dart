@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:file_selector/file_selector.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 
@@ -56,6 +56,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
   List<Map<String, Object?>> _documents = [];
   bool _loading = false;
   String? _errorMessage;
+  bool _scanRunning = false;
+  int _scanProgress = 0;
 
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
@@ -63,72 +65,92 @@ class _DocGridScreenState extends State<DocGridScreen> {
   @override
   void initState() {
     super.initState();
-    if (widget.initialFolder != null && widget.initialFolder!.isNotEmpty) {
-      _loadFolder(widget.initialFolder!);
-    }
+    _loadDefault();
   }
 
-  Future<void> _pickFolder() async {
+  Future<void> _loadDefault() async {
     try {
-      final picker = widget.directoryPicker ?? getDirectoryPath;
-      final selected = await picker();
-      if (selected != null && selected.isNotEmpty) {
-        await _loadFolder(selected);
+      setState(() { _loading = true; _scanRunning = true; _scanProgress = 0; _errorMessage = null; });
+      final res = await widget.api('doc_grid', ['list_default', {}]);
+      if (!mounted) return;
+      if (res is Map && res['ok'] == true) {
+        Object? result = res;
+        if (res['task_id'] != null) {
+          var state = 'running';
+          while (state == 'running' || state == 'cancelling') {
+            await Future<void>.delayed(const Duration(milliseconds: 120));
+            if (!mounted) return;
+            final progress = await widget.api('doc_grid', ['scan_progress', {}]);
+            if (progress is! Map || progress['ok'] != true) break;
+            state = '${progress['state'] ?? 'running'}';
+            setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
+            if (state == 'complete' || state == 'cancelled') result = progress['result'];
+            if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+          }
+        }
+        final scanResult = result is Map ? result : res;
+        final docs = <Map<String, Object?>>[];
+        if (scanResult['documents'] is List) {
+          for (final item in scanResult['documents'] as List) {
+            if (item is Map) docs.add(Map<String, Object?>.from(item));
+          }
+        }
+        setState(() { _documents = docs; _loading = false; _scanRunning = false; _currentFolder = '모든 고정 드라이브'; });
+      } else {
+        setState(() { _errorMessage = '${res is Map ? res['message'] : '문서 목록을 불러오지 못했습니다.'}'; _loading = false; _scanRunning = false; });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _errorMessage = '폴더 선택 중 오류가 발생했습니다: $e';
+          _errorMessage = '문서 목록을 불러오는 중 오류가 발생했습니다: $e';
+          _scanRunning = false;
+          _loading = false;
         });
       }
     }
   }
 
-  Future<void> _loadFolder(String folder) async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-      _currentFolder = folder;
-      _documents = [];
-      _thumbCache.clear();
-    });
+  Future<void> _cancelScan() async {
+    await widget.api('doc_grid', ['scan_cancel', {}]);
+  }
 
-    try {
-      final res = await widget.api('doc_grid', [
-        'list',
-        {'folder': folder},
-      ]);
-
-      if (!mounted) return;
-
-      if (res is Map && res['ok'] == true) {
-        final rawDocs = res['documents'];
-        final docs = <Map<String, Object?>>[];
-        if (rawDocs is List) {
-          for (final item in rawDocs) {
-            if (item is Map) {
-              docs.add(Map<String, Object?>.from(item));
-            }
-          }
-        }
-        setState(() {
-          _documents = docs;
-          _loading = false;
-        });
-      } else {
-        final msg = (res is Map ? res['message'] : null) ?? '문서 목록을 불러오지 못했습니다.';
-        setState(() {
-          _errorMessage = '$msg';
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage = '폴더를 불러오는 중 오류가 발생했습니다: $e';
-        _loading = false;
-      });
-    }
+  Future<void> _editExcludedFolders() async {
+    final response = await widget.api('doc_grid', ['excluded_folders_get', {}]);
+    var folders = response is Map && response['folders'] is List
+        ? (response['folders'] as List).whereType<String>().toList()
+        : <String>[];
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          key: const ValueKey('docGridExcludedFoldersDialog'),
+          title: const Text('제외할 폴더'),
+          content: SizedBox(width: 440, child: folders.isEmpty
+              ? const Text('제외한 폴더가 없습니다.')
+              : ListView(shrinkWrap: true, children: [for (final folder in folders)
+                  ListTile(title: Text(folder), trailing: IconButton(
+                    key: ValueKey('docGridRemoveExcluded-${folders.indexOf(folder)}'),
+                    tooltip: '제외 폴더 삭제', icon: const Icon(Icons.delete_outline),
+                    onPressed: () async {
+                      final result = await widget.api('doc_grid', ['excluded_folder_remove', {'folder': folder}]);
+                      if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
+                    },
+                  )),])),
+          actions: [
+            TextButton(onPressed: () async {
+              final selected = widget.directoryPicker != null
+                  ? await widget.directoryPicker!()
+                  : await getDirectoryPath();
+              if (selected == null || selected.isEmpty) return;
+              final result = await widget.api('doc_grid', ['excluded_folder_add', {'folder': selected}]);
+              if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
+            }, child: const Text('폴더 추가')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('닫기')),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _openDocument(String path) async {
@@ -171,13 +193,6 @@ class _DocGridScreenState extends State<DocGridScreen> {
               ),
               child: Row(
                 children: [
-                  FilledButton.icon(
-                    key: const ValueKey('docGridPickFolderButton'),
-                    onPressed: _loading ? null : _pickFolder,
-                    icon: const Icon(Icons.folder_open, size: 18),
-                    label: const Text('폴더 선택'),
-                  ),
-                  const SizedBox(width: 12),
                   if (_currentFolder != null) ...[
                     Expanded(
                       child: Row(
@@ -211,9 +226,15 @@ class _DocGridScreenState extends State<DocGridScreen> {
                       ),
                     ),
                     IconButton(
+                      key: const ValueKey('docGridExcludedFoldersButton'),
+                      tooltip: '제외할 폴더',
+                      icon: const Icon(Icons.folder_off_outlined, size: 20),
+                      onPressed: _editExcludedFolders,
+                    ),
+                    IconButton(
                       tooltip: '새로고침',
                       icon: const Icon(Icons.refresh, size: 20),
-                      onPressed: _loading ? null : () => _loadFolder(_currentFolder!),
+                      onPressed: _loading ? null : _loadDefault,
                     ),
                   ] else
                     const Expanded(
@@ -243,6 +264,16 @@ class _DocGridScreenState extends State<DocGridScreen> {
 
   Widget _buildBody() {
     if (_loading) {
+      if (_scanRunning) {
+        return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(width: 320, child: LinearProgressIndicator(value: _scanProgress == 0 ? null : _scanProgress / 100)),
+          const SizedBox(height: 12), Text('문서 검색 중... $_scanProgress%'),
+          const SizedBox(height: 8), OutlinedButton.icon(
+            key: const ValueKey('docGridCancelScanButton'), onPressed: _cancelScan,
+            icon: const Icon(Icons.cancel_outlined), label: const Text('스캔 취소'),
+          ),
+        ]));
+      }
       return const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -270,11 +301,6 @@ class _DocGridScreenState extends State<DocGridScreen> {
                 style: const TextStyle(color: Colors.redAccent, fontSize: 14),
               ),
               const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: _pickFolder,
-                icon: const Icon(Icons.folder_open),
-                label: const Text('다른 폴더 선택'),
-              ),
             ],
           ),
         ),
@@ -293,7 +319,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
             ),
             const SizedBox(height: 16),
             const Text(
-              '폴더를 선택하여 문서를 확인하세요.',
+              '모든 고정 드라이브의 문서를 확인합니다.',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
@@ -302,11 +328,6 @@ class _DocGridScreenState extends State<DocGridScreen> {
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: _pickFolder,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('폴더 선택'),
-            ),
           ],
         ),
       );
@@ -334,11 +355,6 @@ class _DocGridScreenState extends State<DocGridScreen> {
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
             const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: _pickFolder,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('다른 폴더 선택'),
-            ),
           ],
         ),
       );

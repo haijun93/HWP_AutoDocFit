@@ -108,13 +108,13 @@ class ApplicationService:
     def _doc_grid(self):
         if getattr(self, '_doc_grid_service', None) is None:
             from .doc_grid_service import DocGridService
-            self._doc_grid_service = DocGridService()
+            self._doc_grid_service = DocGridService(settings_store=self.store)
         return self._doc_grid_service
 
     def _photo_album(self):
         if getattr(self, '_photo_album_service', None) is None:
             from .photo_album_service import PhotoAlbumService
-            self._photo_album_service = PhotoAlbumService()
+            self._photo_album_service = PhotoAlbumService(settings_store=self.store)
         return self._photo_album_service
 
     def set_theme_mode(self, mode):

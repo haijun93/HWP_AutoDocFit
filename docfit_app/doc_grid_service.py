@@ -26,6 +26,9 @@ from PIL import Image, ImageDraw, ImageFont
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.rules import cloud_only, excluded_name
 from docfit_core.timemachine.store import path_key
+from .library_scope import current_default_roots, is_excluded_path
+from .background_scan import BackgroundScan
+from .library_exclusions import read_exclusions, update_exclusion
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +180,8 @@ class DocGridService:
         klib_path: Path | str | None = None,
         max_slots: int = MAX_SLOTS,
         opener: Any | None = None,
+        drive_roots: Any | None = None,
+        settings_store: Any | None = None,
     ):
         if thumb_dir is None:
             try:
@@ -189,6 +194,12 @@ class DocGridService:
         self._slots = threading.BoundedSemaphore(max_slots)
         self.max_slots = max_slots
         self.opener = opener
+        self._drive_roots = tuple(drive_roots) if drive_roots is not None else None
+        self._background_scan = BackgroundScan()
+        self.settings_store = settings_store
+
+    def _default_roots(self) -> tuple[Path, ...]:
+        return tuple(Path(p) for p in (self._drive_roots if self._drive_roots is not None else current_default_roots()))
 
     def _get_klib_exe(self) -> Path | None:
         if self._klib_executable_path and self._klib_executable_path.is_file():
@@ -200,6 +211,9 @@ class DocGridService:
         folder: str | Path,
         *,
         recursive: bool = False,
+        cancel_event: threading.Event | None = None,
+        on_progress: Any | None = None,
+        excluded_folders: Any = (),
     ) -> list[dict[str, Any]]:
         """지정 폴더의 지원 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF) 목록을 반환한다."""
         folder_path = Path(folder)
@@ -212,6 +226,10 @@ class DocGridService:
             try:
                 with os.scandir(target_dir) as iterator:
                     for entry in iterator:
+                        if cancel_event is not None and cancel_event.is_set():
+                            return
+                        if on_progress is not None:
+                            on_progress()
                         try:
                             # 숨김 파일 및 임시 파일 제외
                             name = entry.name
@@ -219,11 +237,13 @@ class DocGridService:
                                 continue
 
                             if entry.is_dir(follow_symlinks=False):
-                                if recursive:
+                                if recursive and not is_excluded_path(entry.path, excluded_folders):
                                     scan_dir(Path(entry.path))
                                 continue
 
                             if not entry.is_file(follow_symlinks=False):
+                                continue
+                            if is_excluded_path(entry.path, excluded_folders):
                                 continue
 
                             ext = os.path.splitext(name)[1].lower()
@@ -264,6 +284,39 @@ class DocGridService:
         scan_dir(folder_path)
         results.sort(key=lambda item: item["name"].casefold())
         return results
+
+    def list_default_documents(
+        self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
+        excluded_folders: Any = (),
+    ) -> list[dict[str, Any]]:
+        """Desktop과 고정 드라이브의 지원 문서를 기본 제외 규칙으로 나열한다."""
+        results: dict[str, dict[str, Any]] = {}
+        for root in self._default_roots():
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            if not root.is_dir() or is_excluded_path(root, excluded_folders):
+                continue
+            try:
+                for item in self.list_documents(root, recursive=True, cancel_event=cancel_event,
+                                                on_progress=on_progress, excluded_folders=excluded_folders):
+                    if item.get("cloud"):
+                        continue
+                    results[os.path.normcase(item["path"])] = item
+            except OSError:
+                continue
+        return sorted(results.values(), key=lambda item: item["name"].casefold())
+
+    def start_default_scan(self) -> dict[str, Any]:
+        def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
+            visited = 0
+            def tick() -> None:
+                nonlocal visited
+                visited += 1
+                report(visited)
+            docs = self.list_default_documents(cancel_event=cancel, on_progress=tick,
+                                               excluded_folders=read_exclusions(self.settings_store))
+            return {"documents": docs, "roots": [str(p) for p in self._default_roots()]}
+        return self._background_scan.start(worker)
 
     def _run_klib_preview(self, hwp_path: Path, out_png: Path, timeout: float = 10.0) -> dict[str, Any]:
         """klib preview <hwp> <out.png> 실행 및 JSON 파싱."""
@@ -520,6 +573,26 @@ class DocGridService:
             return {"ok": False, "code": "INVALID_INPUT", "message": "명령 매개변수를 확인해 주세요."}
 
         try:
+            if action == "list_default":
+                return self.start_default_scan()
+
+            if action == "scan_progress":
+                return self._background_scan.progress()
+
+            if action == "scan_cancel":
+                return self._background_scan.cancel()
+
+            if action == "excluded_folders_get":
+                return {"ok": True, "folders": read_exclusions(self.settings_store)}
+
+            if action in ("excluded_folder_add", "excluded_folder_remove"):
+                folder = payload.get("folder")
+                if not isinstance(folder, str) or not folder.strip():
+                    return {"ok": False, "code": "INVALID_FOLDER", "message": "폴더 경로를 입력해 주세요."}
+                folders = update_exclusion(self.settings_store, folder,
+                                           add=action == "excluded_folder_add")
+                return {"ok": True, "folders": folders}
+
             if action == "list":
                 folder = payload.get("folder")
                 if not folder or not isinstance(folder, str):

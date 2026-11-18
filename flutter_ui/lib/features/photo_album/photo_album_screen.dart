@@ -44,6 +44,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   List<Map<String, Object?>> _groups = [];
   List<Map<String, Object?>>? _searchResults;
   bool _loading = false;
+  bool _scanRunning = false;
+  int _scanProgress = 0;
   String? _errorMessage;
 
   // 보기 모드: 'date'(날짜별), 'folder'(폴더별), 'camera'(카메라별), 'location'(위치별)
@@ -82,15 +84,26 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   Future<void> _initFolders() async {
     setState(() {
       _loading = true;
+      _scanRunning = true;
+      _scanProgress = 0;
       _errorMessage = null;
     });
 
     try {
-      if (widget.initialFolder != null && widget.initialFolder!.isNotEmpty) {
-        await _registerAndSelectFolder(widget.initialFolder!);
-        return;
+      final started = await widget.api('photo_album', ['scan_default', {}]);
+      if (started is Map && started['task_id'] != null) {
+        var state = 'running';
+        while (state == 'running' || state == 'cancelling') {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          if (!mounted) return;
+          final progress = await widget.api('photo_album', ['scan_progress', {}]);
+          if (progress is! Map || progress['ok'] != true) break;
+          state = '${progress['state'] ?? 'running'}';
+          setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
+          if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+        }
       }
-
+      if (mounted) setState(() { _scanRunning = false; });
       final res = await widget.api('photo_album', ['list_folders', {}]);
       if (!mounted) return;
 
@@ -108,93 +121,59 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _registeredFolders = folders;
         });
 
-        if (folders.isNotEmpty) {
-          final first = folders.first['path'] as String?;
-          if (first != null && first.isNotEmpty) {
-            await _loadPhotos(first);
-            return;
-          }
-        }
       }
-      setState(() {
-        _loading = false;
-      });
+      await _loadPhotos('');
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _errorMessage = '사진 폴더 목록을 불러오지 못했습니다: $e';
         _loading = false;
+        _scanRunning = false;
       });
     }
   }
 
-  Future<void> _pickFolder() async {
-    try {
-      final picker = widget.directoryPicker ?? getDirectoryPath;
-      final selected = await picker();
-      if (selected != null && selected.isNotEmpty) {
-        await _registerAndSelectFolder(selected);
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = '폴더 선택 중 오류가 발생했습니다: $e';
-        });
-      }
-    }
+  Future<void> _cancelScan() async {
+    await widget.api('photo_album', ['scan_cancel', {}]);
   }
 
-  Future<void> _registerAndSelectFolder(String folder) async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      // 1. 폴더 등록
-      final regRes = await widget.api('photo_album', [
-        'register_folder',
-        {'folder': folder},
-      ]);
-
-      if (regRes is Map && regRes['ok'] != true) {
-        final msg = regRes['message'] ?? '폴더 등록에 실패했습니다.';
-        if (mounted) {
-          setState(() {
-            _errorMessage = '$msg';
-            _loading = false;
-          });
-        }
-        return;
-      }
-
-      // 2. 폴더 스캔
-      await widget.api('photo_album', [
-        'scan',
-        {'folder': folder, 'recursive': false},
-      ]);
-
-      // 3. 사진 목록 로드
-      await _loadPhotos(folder);
-
-      // 등록된 폴더 목록 새로고침
-      final foldersRes = await widget.api('photo_album', ['list_folders', {}]);
-      if (foldersRes is Map && foldersRes['ok'] == true && mounted) {
-        final rawFolders = foldersRes['folders'];
-        if (rawFolders is List) {
-          _registeredFolders = [
-            for (final item in rawFolders)
-              if (item is Map) Map<String, Object?>.from(item),
-          ];
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _errorMessage = '폴더 등록 중 오류가 발생했습니다: $e';
-        _loading = false;
-      });
-    }
+  Future<void> _editExcludedFolders() async {
+    final response = await widget.api('photo_album', ['excluded_folders_get', {}]);
+    var folders = response is Map && response['folders'] is List
+        ? (response['folders'] as List).whereType<String>().toList()
+        : <String>[];
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          key: const ValueKey('photoAlbumExcludedFoldersDialog'),
+          title: const Text('제외할 폴더'),
+          content: SizedBox(width: 440, child: folders.isEmpty
+              ? const Text('제외한 폴더가 없습니다.')
+              : ListView(shrinkWrap: true, children: [for (final folder in folders)
+                  ListTile(title: Text(folder), trailing: IconButton(
+                    key: ValueKey('photoAlbumRemoveExcluded-${folders.indexOf(folder)}'),
+                    tooltip: '제외 폴더 삭제', icon: const Icon(Icons.delete_outline),
+                    onPressed: () async {
+                      final result = await widget.api('photo_album', ['excluded_folder_remove', {'folder': folder}]);
+                      if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
+                    },
+                  )),])),
+          actions: [
+            TextButton(onPressed: () async {
+              final selected = widget.directoryPicker != null
+                  ? await widget.directoryPicker!()
+                  : await getDirectoryPath();
+              if (selected == null || selected.isEmpty) return;
+              final result = await widget.api('photo_album', ['excluded_folder_add', {'folder': selected}]);
+              if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
+            }, child: const Text('폴더 추가')),
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('닫기')),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _switchViewMode(String mode) async {
@@ -225,7 +204,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       if (_currentViewMode == 'date') {
         res = await widget.api('photo_album', [
           'list_by_date',
-          {'folder': folder},
+          if (folder.isNotEmpty) {'folder': folder} else <String, Object?>{},
         ]);
       } else {
         res = await widget.api('photo_album', [
@@ -294,20 +273,33 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     if (_currentFolder == null) return;
     setState(() {
       _loading = true;
+      _scanRunning = true;
+      _scanProgress = 0;
       _errorMessage = null;
     });
 
     try {
-      await widget.api('photo_album', [
-        'scan',
-        {'folder': _currentFolder, 'recursive': false},
-      ]);
+      final started = await widget.api('photo_album', ['scan_default', {}]);
+      if (started is Map && started['task_id'] != null) {
+        var state = 'running';
+        while (state == 'running' || state == 'cancelling') {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+          if (!mounted) return;
+          final progress = await widget.api('photo_album', ['scan_progress', {}]);
+          if (progress is! Map || progress['ok'] != true) break;
+          state = '${progress['state'] ?? 'running'}';
+          setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
+          if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+        }
+      }
+      if (mounted) setState(() { _scanRunning = false; });
       await _loadPhotos(_currentFolder!);
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _errorMessage = '새로고침 중 오류가 발생했습니다: $e';
         _loading = false;
+        _scanRunning = false;
       });
     }
   }
@@ -771,48 +763,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // 1행: 폴더 선택 / 드롭다운 / 새로고침 + 검색창 / 즐겨찾기 / 슬라이더 / 선택 모드
+          // 1행: 기본 범위 새로고침 + 검색창 / 즐겨찾기 / 슬라이더 / 선택 모드
           Row(
             children: [
-              FilledButton.icon(
-                key: const ValueKey('photoAlbumPickFolderButton'),
-                onPressed: _loading ? null : _pickFolder,
-                icon: const Icon(Icons.folder_open, size: 18),
-                label: const Text('사진 폴더 선택'),
-              ),
-              const SizedBox(width: 12),
               if (_currentFolder != null) ...[
-                if (_registeredFolders.length > 1) ...[
-                  DropdownButton<String>(
-                    value:
-                        _registeredFolders.any(
-                          (f) => f['path'] == _currentFolder,
-                        )
-                        ? _currentFolder
-                        : null,
-                    icon: const Icon(Icons.arrow_drop_down),
-                    underline: const SizedBox(),
-                    items: [
-                      for (final f in _registeredFolders)
-                        DropdownMenuItem(
-                          value: '${f['path']}',
-                          child: Text(
-                            '${f['path']}'.split(Platform.pathSeparator).last,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ),
-                    ],
-                    onChanged: _loading
-                        ? null
-                        : (val) {
-                            if (val != null) _loadPhotos(val);
-                          },
-                  ),
-                  const SizedBox(width: 8),
-                ] else ...[
                   Flexible(
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -825,7 +779,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                         const SizedBox(width: 6),
                         Flexible(
                           child: Text(
-                            _currentFolder!,
+                            _currentFolder!.isEmpty ? '모든 고정 드라이브' : _currentFolder!,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontWeight: FontWeight.w500),
                           ),
@@ -834,7 +788,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                ],
                 IconButton(
                   key: const ValueKey('photoAlbumRefreshButton'),
                   tooltip: '새로고침',
@@ -842,6 +795,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   onPressed: _loading ? null : _refreshCurrentFolder,
                 ),
               ],
+              IconButton(
+                key: const ValueKey('photoAlbumExcludedFoldersButton'),
+                tooltip: '제외할 폴더',
+                icon: const Icon(Icons.folder_off_outlined, size: 20),
+                onPressed: _editExcludedFolders,
+              ),
               const Spacer(),
               // 검색창
               SizedBox(
@@ -1067,6 +1026,16 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
   Widget _buildBody() {
     if (_loading) {
+      if (_scanRunning) {
+        return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(width: 320, child: LinearProgressIndicator(value: _scanProgress == 0 ? null : _scanProgress / 100)),
+          const SizedBox(height: 12), Text('사진 검색 중... $_scanProgress%'),
+          const SizedBox(height: 8), OutlinedButton.icon(
+            key: const ValueKey('photoAlbumCancelScanButton'), onPressed: _cancelScan,
+            icon: const Icon(Icons.cancel_outlined), label: const Text('스캔 취소'),
+          ),
+        ]));
+      }
       return const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1098,11 +1067,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                 style: const TextStyle(color: Colors.redAccent, fontSize: 14),
               ),
               const SizedBox(height: 16),
-              OutlinedButton.icon(
-                onPressed: _pickFolder,
-                icon: const Icon(Icons.folder_open),
-                label: const Text('사진 폴더 선택'),
-              ),
             ],
           ),
         ),
@@ -1124,7 +1088,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             ),
             const SizedBox(height: 16),
             const Text(
-              '사진 폴더를 선택하거나 등록하세요.',
+              '모든 고정 드라이브의 사진을 확인합니다.',
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 8),
@@ -1133,11 +1097,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               style: TextStyle(color: Colors.grey, fontSize: 13),
             ),
             const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: _pickFolder,
-              icon: const Icon(Icons.folder_open),
-              label: const Text('사진 폴더 선택'),
-            ),
           ],
         ),
       );
@@ -1176,11 +1135,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                     style: TextStyle(color: Colors.grey, fontSize: 12),
                   ),
                   const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: _pickFolder,
-                    icon: const Icon(Icons.folder_open),
-                    label: const Text('다른 폴더 선택'),
-                  ),
                 ],
               ),
             ),

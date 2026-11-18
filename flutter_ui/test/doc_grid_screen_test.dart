@@ -7,7 +7,7 @@ const _kTestPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 void main() {
-  testWidgets('문서뷰: 폴더를 선택하면 빈 폴더 안내 문구가 표시된다', (tester) async {
+  testWidgets('문서뷰: 기본 범위를 불러와 빈 결과를 표시하고 폴더 선택 UI를 노출하지 않는다', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -15,11 +15,10 @@ void main() {
     final calls = <List<Object?>>[];
     Future<Object?> mockApi(String method, List<Object?> args) async {
       calls.add([method, ...args]);
-      if (method == 'doc_grid' && args.isNotEmpty && args[0] == 'list') {
+      if (method == 'doc_grid' && args.isNotEmpty && args[0] == 'list_default') {
         return {
           'ok': true,
           'documents': <Map<String, Object?>>[],
-          'folder': '/test/empty_folder',
         };
       }
       return {'ok': true};
@@ -29,28 +28,19 @@ void main() {
       MaterialApp(
         home: DocGridScreen(
           api: mockApi,
-          directoryPicker: () async => '/test/empty_folder',
         ),
       ),
     );
-
-    // 초기 상태: 폴더 선택 안내
-    expect(find.text('폴더를 선택하여 문서를 확인하세요.'), findsOneWidget);
-    expect(find.byKey(const ValueKey('docGridPickFolderButton')), findsOneWidget);
-
-    // 폴더 선택 버튼 누름
-    await tester.tap(find.byKey(const ValueKey('docGridPickFolderButton')));
     await tester.pumpAndSettle();
 
-    // 백엔드 list 호출 검증
-    expect(calls, hasLength(1));
-    expect(calls.first[0], 'doc_grid');
-    expect(calls.first[1], 'list');
+    // 기본 범위 API를 자동 호출하고 폴더 선택 UI는 제공하지 않는다.
+    expect(calls.where((c) => c[0] == 'doc_grid' && c[1] == 'list_default'), hasLength(1));
+    expect(find.byKey(const ValueKey('docGridPickFolderButton')), findsNothing);
 
     // 빈 폴더 결과 확인
     expect(find.byKey(const ValueKey('docGridEmptyText')), findsOneWidget);
     expect(find.text('지원하는 문서가 없습니다.'), findsOneWidget);
-    expect(find.text('/test/empty_folder'), findsOneWidget);
+    expect(find.text('모든 고정 드라이브'), findsOneWidget);
     expect(find.text('0개 문서'), findsOneWidget);
   });
 
@@ -97,7 +87,7 @@ void main() {
       calls.add([method, ...args]);
       if (method == 'doc_grid' && args.isNotEmpty) {
         final action = args[0];
-        if (action == 'list') {
+        if (action == 'list_default') {
           return {
             'ok': true,
             'documents': documents,
@@ -175,7 +165,7 @@ void main() {
       calls.add([method, ...args]);
       if (method == 'doc_grid' && args.isNotEmpty) {
         final action = args[0];
-        if (action == 'list') {
+        if (action == 'list_default') {
           return {
             'ok': true,
             'documents': documents,
@@ -220,5 +210,58 @@ void main() {
     expect(openCalls, hasLength(1));
     final openPayload = openCalls.first[2] as Map;
     expect(openPayload['path'], '/test/docs/문서.hwpx');
+  });
+
+  testWidgets('문서뷰: 백그라운드 진행·취소와 제외 폴더 편집을 제공한다', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    var cancelled = false;
+    final calls = <String>[];
+    Future<Object?> mockApi(String method, List<Object?> args) async {
+      final action = args.first as String;
+      calls.add(action);
+      if (action == 'list_default') return {'ok': true, 'task_id': 'doc-task'};
+      if (action == 'scan_progress') {
+        return {
+          'ok': true,
+          'state': cancelled ? 'cancelled' : 'running',
+          'progress': 17,
+          if (cancelled) 'result': {'documents': <Map<String, Object?>>[]},
+        };
+      }
+      if (action == 'excluded_folders_get') return {'ok': true, 'folders': <String>[]};
+      if (action == 'excluded_folder_add') return {'ok': true, 'folders': [args[1] is Map ? (args[1] as Map)['folder'] : '']};
+      if (action == 'excluded_folder_remove') return {'ok': true, 'folders': <String>[]};
+      if (action == 'scan_cancel') {
+        cancelled = true;
+        return {'ok': true};
+      }
+      return {'ok': true};
+    }
+
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(
+      api: mockApi,
+      directoryPicker: () async => '/test/excluded',
+    )));
+    await tester.pump(const Duration(milliseconds: 140));
+    expect(find.text('문서 검색 중... 17%'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('docGridCancelScanButton')));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pumpAndSettle();
+    expect(calls, contains('scan_cancel'));
+    expect(find.byKey(const ValueKey('docGridExcludedFoldersButton')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('docGridExcludedFoldersButton')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('폴더 추가'));
+    await tester.pumpAndSettle();
+    expect(calls, contains('excluded_folder_add'));
+    expect(find.text('/test/excluded'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('docGridRemoveExcluded-0')));
+    await tester.pumpAndSettle();
+    expect(calls, contains('excluded_folder_remove'));
+    expect(find.text('/test/excluded'), findsNothing);
   });
 }

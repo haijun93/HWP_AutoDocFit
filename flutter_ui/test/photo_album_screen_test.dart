@@ -52,11 +52,12 @@ void main() {
 
       // 사진뷰 탭 텍스트 확인
       expect(find.text('사진뷰'), findsOneWidget);
-      // 사진뷰 화면의 폴더 선택 단추 확인
-      expect(find.byKey(const ValueKey('photoAlbumPickFolderButton')), findsOneWidget);
+      // 기본 범위를 자동 스캔하고 폴더 선택 UI는 노출하지 않는다.
+      expect(calls, contains('photo_album:scan_default'));
+      expect(find.byKey(const ValueKey('photoAlbumPickFolderButton')), findsNothing);
     });
 
-    testWidgets('등록된 폴더가 없을 때 안내 문구 노출', (tester) async {
+    testWidgets('빈 기본 범위 안내 문구 노출', (tester) async {
       tester.view.physicalSize = const Size(1000, 700);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.reset);
@@ -77,8 +78,9 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('사진 폴더를 선택하거나 등록하세요.'), findsOneWidget);
-      expect(find.byKey(const ValueKey('photoAlbumEmptyFolderPrompt')), findsOneWidget);
+      expect(find.text('등록된 사진이 없습니다.'), findsOneWidget);
+      expect(find.byKey(const ValueKey('photoAlbumEmptyPhotosText')), findsOneWidget);
+      expect(find.byKey(const ValueKey('photoAlbumPickFolderButton')), findsNothing);
     });
 
     testWidgets('연·월 묶음 격자 표시 및 썸네일 API 비동기 요청', (tester) async {
@@ -788,7 +790,7 @@ void main() {
       await tester.pumpAndSettle();
 
       final dupCall = apiCalls.firstWhere((c) => c['action'] == 'find_duplicates');
-      expect((dupCall['payload'] as Map)['folder'], '/test/photos');
+      expect((dupCall['payload'] as Map)['folder'], '');
       expect((dupCall['payload'] as Map)['threshold'], 6);
 
       // 대표 배지 및 거리 표시 확인
@@ -998,6 +1000,64 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('photoViewerCloseButton')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('photoViewerModal')), findsNothing);
+    });
+
+    testWidgets('사진뷰: 백그라운드 진행·취소와 제외 폴더 편집을 제공한다', (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      var cancelled = false;
+      final calls = <String>[];
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        calls.add(action);
+        if (action == 'scan_default') return {'ok': true, 'task_id': 'photo-task'};
+        if (action == 'scan_progress') {
+          return {
+            'ok': true,
+            'state': cancelled ? 'cancelled' : 'running',
+            'progress': 23,
+            if (cancelled) 'result': {'scanned': 0, 'added': 0, 'updated': 0},
+          };
+        }
+        if (action == 'scan_cancel') {
+          cancelled = true;
+          return {'ok': true};
+        }
+        if (action == 'list_folders') return {'ok': true, 'folders': <Map<String, Object?>>[]};
+        if (action == 'list_by_date') return {'ok': true, 'groups': <Map<String, Object?>>[]};
+        if (action == 'excluded_folders_get') return {'ok': true, 'folders': <String>[]};
+        if (action == 'excluded_folder_add') {
+          final payload = params.length > 1 && params[1] is Map ? params[1] as Map : {};
+          return {'ok': true, 'folders': [payload['folder']]};
+        }
+        if (action == 'excluded_folder_remove') return {'ok': true, 'folders': <String>[]};
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: PhotoAlbumScreen(
+        api: mockApi,
+        directoryPicker: () async => '/test/photos-excluded',
+      ))));
+      await tester.pump(const Duration(milliseconds: 140));
+      expect(find.text('사진 검색 중... 23%'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('photoAlbumCancelScanButton')));
+      await tester.pump(const Duration(milliseconds: 140));
+      await tester.pumpAndSettle();
+      expect(calls, contains('scan_cancel'));
+      expect(find.byKey(const ValueKey('photoAlbumExcludedFoldersButton')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('photoAlbumExcludedFoldersButton')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('폴더 추가'));
+      await tester.pumpAndSettle();
+      expect(calls, contains('excluded_folder_add'));
+      expect(find.text('/test/photos-excluded'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('photoAlbumRemoveExcluded-0')));
+      await tester.pumpAndSettle();
+      expect(calls, contains('excluded_folder_remove'));
+      expect(find.text('/test/photos-excluded'), findsNothing);
     });
   });
 }

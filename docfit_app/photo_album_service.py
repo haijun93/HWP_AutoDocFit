@@ -35,6 +35,9 @@ from docfit_core.hwpx import open_hwpx_safely
 from docfit_core.table_builder import _Header, _cell, _child, _element, _table, _tag
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.rules import cloud_only, excluded_name
+from .library_scope import current_default_roots, is_excluded_path
+from .background_scan import BackgroundScan
+from .library_exclusions import read_exclusions, update_exclusion
 
 logger = logging.getLogger(__name__)
 
@@ -539,6 +542,8 @@ class PhotoAlbumService:
         thumb_dir: Path | str | None = None,
         max_slots: int = MAX_SLOTS,
         opener: Any | None = None,
+        drive_roots: Any | None = None,
+        settings_store: Any | None = None,
     ) -> None:
         if db_path is None:
             try:
@@ -559,6 +564,12 @@ class PhotoAlbumService:
         self._slots = threading.BoundedSemaphore(max_slots)
         self.max_slots = max_slots
         self.opener = opener
+        self._drive_roots = tuple(drive_roots) if drive_roots is not None else None
+        self._background_scan = BackgroundScan()
+        self.settings_store = settings_store
+
+    def _default_roots(self) -> tuple[Path, ...]:
+        return tuple(Path(p) for p in (self._drive_roots if self._drive_roots is not None else current_default_roots()))
 
     # ---- 1. 폴더 등록 및 증분 스캔 ----
 
@@ -583,6 +594,9 @@ class PhotoAlbumService:
         folder: str | Path,
         *,
         recursive: bool = False,
+        cancel_event: threading.Event | None = None,
+        on_progress: Any | None = None,
+        excluded_folders: Any = (),
     ) -> dict[str, Any]:
         """지정 폴더의 사진을 증분 스캔하여 DB에 등록/갱신한다.
 
@@ -605,17 +619,23 @@ class PhotoAlbumService:
             try:
                 with os.scandir(target_dir) as iterator:
                     for entry in iterator:
+                        if cancel_event is not None and cancel_event.is_set():
+                            return
+                        if on_progress is not None:
+                            on_progress()
                         try:
                             name = entry.name
                             if name.startswith(".") or excluded_name(name):
                                 continue
 
                             if entry.is_dir(follow_symlinks=False):
-                                if recursive:
+                                if recursive and not is_excluded_path(entry.path, excluded_folders):
                                     scan_dir(Path(entry.path))
                                 continue
 
                             if not entry.is_file(follow_symlinks=False):
+                                continue
+                            if is_excluded_path(entry.path, excluded_folders):
                                 continue
 
                             ext = os.path.splitext(name)[1].lower()
@@ -681,6 +701,37 @@ class PhotoAlbumService:
             "added": added_count,
             "updated": updated_count,
         }
+
+    def scan_default_scope(self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
+                           excluded_folders: Any = ()) -> dict[str, Any]:
+        """Desktop 및 고정 드라이브 사진을 스캔한다. 이동식·네트워크는 제외한다."""
+        scanned = added = updated = 0
+        roots = []
+        for root in self._default_roots():
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            if not root.is_dir() or is_excluded_path(root, excluded_folders):
+                continue
+            roots.append(str(root))
+            self.db.register_folder(str(root))
+            result = self.scan_folder(root, recursive=True, cancel_event=cancel_event,
+                                      on_progress=on_progress, excluded_folders=excluded_folders)
+            if result.get("ok"):
+                scanned += result.get("scanned", 0)
+                added += result.get("added", 0)
+                updated += result.get("updated", 0)
+        return {"ok": True, "roots": roots, "scanned": scanned, "added": added, "updated": updated}
+
+    def start_default_scan(self) -> dict[str, Any]:
+        def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
+            visited = 0
+            def tick() -> None:
+                nonlocal visited
+                visited += 1
+                report(visited)
+            return self.scan_default_scope(cancel_event=cancel, on_progress=tick,
+                                           excluded_folders=read_exclusions(self.settings_store))
+        return self._background_scan.start(worker)
 
     # ---- 2. 연·월 묶음 목록 및 검색 ----
 
@@ -1640,6 +1691,26 @@ class PhotoAlbumService:
             return {"ok": False, "code": "INVALID_INPUT", "message": "입력을 확인해 주세요."}
 
         try:
+            if action == "scan_default":
+                return self.start_default_scan()
+
+            if action == "scan_progress":
+                return self._background_scan.progress()
+
+            if action == "scan_cancel":
+                return self._background_scan.cancel()
+
+            if action == "excluded_folders_get":
+                return {"ok": True, "folders": read_exclusions(self.settings_store)}
+
+            if action in ("excluded_folder_add", "excluded_folder_remove"):
+                folder = payload.get("folder")
+                if not isinstance(folder, str) or not folder.strip():
+                    return {"ok": False, "code": "INVALID_FOLDER", "message": "폴더 경로를 입력해 주세요."}
+                folders = update_exclusion(self.settings_store, folder,
+                                           add=action == "excluded_folder_add")
+                return {"ok": True, "folders": folders}
+
             if action == "register_folder":
                 folder = payload.get("folder")
                 if not folder:
