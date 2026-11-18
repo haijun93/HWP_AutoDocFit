@@ -306,3 +306,182 @@ fn rejects_limits_and_malformed_operations() {
     let mut doc = parse("- x\n").unwrap();
     assert!(edit(&mut doc, "delete", 999, None).is_err());
 }
+
+#[test]
+fn resolve_block_ref_finds_block_by_id_property_and_returns_backlinks() {
+    let source = "- 타깃 블록 id:: 6a8274be-9759-4d37-8894-399a0937a008\n- 참조자 블록 1 ((6a8274be-9759-4d37-8894-399a0937a008))\n- 무관한 블록\n- 참조자 블록 2 ((6a8274be-9759-4d37-8894-399a0937a008))\n";
+    let doc = parse(source).unwrap();
+    let res = resolve_block_ref(&doc, "6a8274be-9759-4d37-8894-399a0937a008");
+    assert!(res.found);
+    assert_eq!(res.block_id, Some(1));
+    assert!(res.text.contains("타깃 블록"));
+    assert_eq!(res.backlinks, vec![2, 4]);
+}
+
+#[test]
+fn resolve_block_ref_with_missing_id_returns_empty_result_instead_of_error() {
+    let source = "- 일반 블록 1\n- 일반 블록 2\n";
+    let doc = parse(source).unwrap();
+    let res = resolve_block_ref(&doc, "non-existent-uuid-1234");
+    assert!(!res.found);
+    assert_eq!(res.text, "");
+    assert_eq!(res.content, "");
+    assert_eq!(res.block_id, None);
+    assert!(res.backlinks.is_empty());
+}
+
+#[test]
+fn rename_page_updates_korean_page_names() {
+    let source = "- [[프로젝트 안내]] 시작\n- [[다른문서]]\n- [[프로젝트 안내]] 재참조\n";
+    let (updated, changed) = update_page_links_text(source, "프로젝트 안내", "프로젝트 가이드");
+    assert!(changed);
+    assert_eq!(
+        updated,
+        "- [[프로젝트 가이드]] 시작\n- [[다른문서]]\n- [[프로젝트 가이드]] 재참조\n"
+    );
+}
+
+#[test]
+fn rename_page_preserves_aliases() {
+    let source = "- [[옛이름]] 변경대상\n- [[옛이름|별칭]] 유지대상\n- [[별칭|옛이름]] 유지대상\n- [별칭]([[옛이름]]) 유지대상\n";
+    let (updated, changed) = update_page_links_text(source, "옛이름", "새이름");
+    assert!(changed);
+    assert_eq!(
+        updated,
+        "- [[새이름]] 변경대상\n- [[옛이름|별칭]] 유지대상\n- [[별칭|옛이름]] 유지대상\n- [별칭]([[옛이름]]) 유지대상\n"
+    );
+}
+
+#[test]
+fn rename_page_preserves_nested_links() {
+    let source = "- [[옛이름]] 변경대상\n- [[[[옛이름]]]] 중첩유지\n- [[[옛이름]]] 중첩유지\n- [[외부 [[옛이름]]]] 중첩유지\n";
+    let (updated, changed) = update_page_links_text(source, "옛이름", "새이름");
+    assert!(changed);
+    assert_eq!(
+        updated,
+        "- [[새이름]] 변경대상\n- [[[[옛이름]]]] 중첩유지\n- [[[옛이름]]] 중첩유지\n- [[외부 [[옛이름]]]] 중첩유지\n"
+    );
+}
+
+#[test]
+fn rename_page_preserves_links_inside_code_blocks_and_inline_code() {
+    let source = "\
+- 정상링크 [[프로젝트]]
+- 인라인코드 `[[프로젝트]]` 유지
+```rust
+// 코드블록 안의 [[프로젝트]] 유지
+let link = \"[[프로젝트]]\";
+```
+- 다시 정상링크 [[프로젝트]]
+";
+    let (updated, changed) = update_page_links_text(source, "프로젝트", "새프로젝트");
+    assert!(changed);
+    let expected = "\
+- 정상링크 [[새프로젝트]]
+- 인라인코드 `[[프로젝트]]` 유지
+```rust
+// 코드블록 안의 [[프로젝트]] 유지
+let link = \"[[프로젝트]]\";
+```
+- 다시 정상링크 [[새프로젝트]]
+";
+    assert_eq!(updated, expected);
+}
+
+#[test]
+fn rename_page_in_files_atomic_replacement_and_preview() {
+    let dir = temp_path("rename-test-dir");
+    fs::create_dir_all(&dir).unwrap();
+    let file1 = dir.join("page1.md");
+    let file2 = dir.join("page2.md");
+    let file3 = dir.join("page3.md");
+
+    fs::write(&file1, "- [[옛페이지]] 링크\n").unwrap();
+    fs::write(&file2, "- 다른 페이지 링크 [[다른곳]]\n").unwrap();
+    fs::write(&file3, "- 또 다른 [[옛페이지]] 링크\n").unwrap();
+
+    let paths = vec![file1.clone(), file2.clone(), file3.clone()];
+
+    // 1. Preview mode: files are NOT modified
+    let preview_res = rename_page_in_files(&paths, "옛페이지", "새페이지", true).unwrap();
+    assert!(preview_res.preview);
+    assert_eq!(preview_res.count, 2);
+    assert_eq!(
+        preview_res.affected_files,
+        vec![file1.display().to_string(), file3.display().to_string()]
+    );
+    assert_eq!(
+        fs::read_to_string(&file1).unwrap(),
+        "- [[옛페이지]] 링크\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&file3).unwrap(),
+        "- 또 다른 [[옛페이지]] 링크\n"
+    );
+
+    // 2. Execution mode: atomically replaces target files
+    let exec_res = rename_page_in_files(&paths, "옛페이지", "새페이지", false).unwrap();
+    assert!(!exec_res.preview);
+    assert_eq!(exec_res.count, 2);
+    assert_eq!(
+        fs::read_to_string(&file1).unwrap(),
+        "- [[새페이지]] 링크\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&file2).unwrap(),
+        "- 다른 페이지 링크 [[다른곳]]\n"
+    );
+    assert_eq!(
+        fs::read_to_string(&file3).unwrap(),
+        "- 또 다른 [[새페이지]] 링크\n"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn api_handles_resolve_block_ref_and_rename_page() {
+    use serde_json::json;
+
+    // 1. resolve_block_ref via JSON API
+    let req = json!({
+        "id": "ref-1",
+        "op": "resolve_block_ref",
+        "document": "- 대상 id:: my-uuid-123\n- 참조 ((my-uuid-123))\n",
+        "args": {"uuid": "my-uuid-123"}
+    });
+    let res = handle_request(req);
+    assert_eq!(res["ok"], true);
+    assert_eq!(res["result"]["found"], true);
+    assert_eq!(res["result"]["block_id"], 1);
+    assert_eq!(res["result"]["backlinks"], json!([2]));
+
+    // Missing UUID returns empty result
+    let req_missing = json!({
+        "id": "ref-2",
+        "op": "resolve_block_ref",
+        "document": "- 아무내용\n",
+        "args": {"uuid": "no-such-uuid"}
+    });
+    let res_missing = handle_request(req_missing);
+    assert_eq!(res_missing["ok"], true);
+    assert_eq!(res_missing["result"]["found"], false);
+    assert_eq!(res_missing["result"]["text"], "");
+    assert_eq!(res_missing["result"]["backlinks"], json!([]));
+
+    // 2. rename_page via JSON API (document string mode)
+    let req_rename = json!({
+        "id": "ren-1",
+        "op": "rename_page",
+        "document": "- [[오래된페이지]] 내용\n",
+        "args": {"old_name": "오래된페이지", "new_name": "새로운페이지"}
+    });
+    let res_rename = handle_request(req_rename);
+    assert_eq!(res_rename["ok"], true);
+    assert_eq!(
+        res_rename["result"]["markdown"],
+        "- [[새로운페이지]] 내용\n"
+    );
+    assert_eq!(res_rename["result"]["changed"], true);
+}
+
