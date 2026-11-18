@@ -982,6 +982,16 @@ class ContentSearchTests(unittest.TestCase):
         isolated.write_text("가. 일반 문장처럼 보이는 번호", encoding="utf-8")
         self.assertEqual(extract_paragraphs(isolated)[0].level, "body")
 
+    def test_pdf_numbered_lines_receive_hierarchy_from_sequence(self):
+        paragraphs = [
+            ParagraphRecord(i, text, "body", LEVEL_ORDER.index("body"), False)
+            for i, text in enumerate(("Ⅰ. 총칙", "Ⅱ. 운영", "1. 적용 범위", "2. 실행 방법",
+                                      "가. 대상", "나. 담당 부서"))
+        ]
+        classified = classify_paragraph_levels(self.root / "synthetic.pdf", paragraphs, backend="python")
+        self.assertEqual([item.level for item in classified],
+                         ["chapter", "chapter", "section", "section", "topic", "topic"])
+
     def test_table_cell_records_keep_table_level_and_order(self):
         path = self.root / "table.hwpx"
         write_hwpx_paragraphs(path, [

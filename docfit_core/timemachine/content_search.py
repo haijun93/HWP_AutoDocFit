@@ -223,7 +223,7 @@ def _plain_numbered_levels(paragraphs):
 
 def _plain_chapter_levels(path, paragraphs):
     """표시 없는 TXT/MD 장 제목은 짧은 연속 번호 두 개 이상을 근거로 삼는다."""
-    if Path(path).suffix.lower() not in {".txt", ".md"}:
+    if Path(path).suffix.lower() not in {".txt", ".md", ".pdf"}:
         return {}
     candidates = {}
     for position, paragraph in enumerate(paragraphs):
@@ -312,7 +312,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     # 표의 구분 기호가 본문 기호 체계의 증거로 섞이지 않게 한다.
     texts = [p.text if i not in markdown_table_rows else "" for i, p in enumerate(paragraphs)]
     plain_levels = (_plain_numbered_levels(paragraphs)
-                    if Path(path).suffix.lower() in {".txt", ".md"} else None)
+                    if Path(path).suffix.lower() in {".txt", ".md", ".pdf"} else None)
     scheme = detect_scheme(texts)
     numbered_levels = {family: _NUMBERED_FAMILY_LEVELS[family]
                        for family in scheme.family_levels if family in _NUMBERED_FAMILY_LEVELS}

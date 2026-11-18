@@ -116,6 +116,42 @@ class TimeMachineExtractorsTests(unittest.TestCase):
         self.assertIn("⟦1행⟧ 첫 번째 줄 텍스트입니다.", combined)
         self.assertIn("⟦3행⟧ 세 번째 줄 텍스트입니다.", combined)
 
+    def test_pdf_extracts_numbered_lines_individually_with_page_locations(self):
+        """PDF 텍스트 줄을 나눠 번호 위계를 후속 분류기가 볼 수 있게 한다."""
+        path = self.root / "numbered.pdf"
+        path.write_bytes(b"synthetic")
+
+        class FakeTextPage:
+            def get_text_range(self):
+                return "Ⅰ. 총칙\n1. 적용 범위\n가. 대상\n일반 본문"
+            def close(self):
+                pass
+
+        class FakePage:
+            def get_textpage(self):
+                return FakeTextPage()
+            def close(self):
+                pass
+
+        class FakeDocument:
+            def __len__(self):
+                return 1
+            def get_page(self, index):
+                return FakePage()
+            def close(self):
+                pass
+
+        class FakePdfium:
+            @staticmethod
+            def PdfDocument(_path):
+                return FakeDocument()
+
+        records = extract_pdf(path, pdfium_module=FakePdfium)
+        self.assertEqual([record.text for record in records],
+                         ["Ⅰ. 총칙", "1. 적용 범위", "가. 대상", "일반 본문"])
+        self.assertEqual([record.location_label for record in records], ["1쪽"] * 4)
+        self.assertEqual([record.sequence for record in records], [1, 2, 3, 4])
+
     def test_hwpx_extracts_section_paragraph_locations(self):
         """다중 섹션 순서, sectionN 문단 M, 비ASCII 본문 확인."""
         path = FIXTURES_DIR / "sample.hwpx"
