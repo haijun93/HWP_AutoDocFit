@@ -95,8 +95,8 @@ pub enum DateFilter {
     #[default]
     All,
     Today,
-    ThisWeek,
-    ThisMonth,
+    Last7Days,
+    Last30Days,
     ThisYear,
     Custom,
 }
@@ -106,8 +106,8 @@ impl DateFilter {
         match self {
             DateFilter::All => "기간 전체",
             DateFilter::Today => "오늘",
-            DateFilter::ThisWeek => "이번 주",
-            DateFilter::ThisMonth => "이번 달",
+            DateFilter::Last7Days => "7일간",
+            DateFilter::Last30Days => "30일간",
             DateFilter::ThisYear => "올해",
             DateFilter::Custom => "직접 입력",
         }
@@ -132,6 +132,8 @@ pub struct State {
     pub selected_top_topic: Option<usize>,
     pub date_filter: DateFilter,
     pub custom_date_range: Option<(i64, i64)>,
+    /// 검색창에 사용자가 직접 입력한 after:/before: 토큰이 있는지(칩 선택과 구분).
+    pub typed_date_tokens: bool,
     pub selected_folder: Option<String>,
     pub folder_counts: Vec<(String, u32)>,
     pub selected_ext: Option<String>,
@@ -193,6 +195,7 @@ impl Default for State {
             selected_top_topic: None,
             date_filter: DateFilter::All,
             custom_date_range: None,
+            typed_date_tokens: false,
             selected_folder: None,
             folder_counts: Vec::new(),
             selected_ext: None,
@@ -691,15 +694,12 @@ pub fn date_filter_to_tokens(
             let s = format!("{y:04}-{m:02}-{d:02}");
             (Some(s.clone()), Some(s))
         }
-        DateFilter::ThisWeek => {
-            let (s_ymd, e_ymd) = crate::backend::current_kst_week_range();
-            (Some(format_ymd(s_ymd as i64)), Some(format_ymd(e_ymd as i64)))
-        }
-        DateFilter::ThisMonth => {
-            let (y, m, _) = crate::backend::current_kst_ymd();
-            let s = format!("{y:04}-{m:02}-01");
-            let e = format!("{y:04}-{m:02}-31");
-            (Some(s), Some(e))
+        DateFilter::Last7Days | DateFilter::Last30Days => {
+            let days = if filter == DateFilter::Last7Days { 7 } else { 30 };
+            let (y, m, d) = crate::backend::current_kst_ymd();
+            let end = (y * 10000 + m * 100 + d) as i64;
+            let start = crate::backend::shift_ymd(end, -days);
+            (Some(format_ymd(start)), Some(format_ymd(end)))
         }
         DateFilter::ThisYear => {
             let (y, _, _) = crate::backend::current_kst_ymd();
@@ -733,15 +733,11 @@ pub fn detect_date_filter_from_range(
         return (DateFilter::Today, None);
     }
 
-    let (ws, we) = crate::backend::current_kst_week_range();
-    if s == ws as i64 && e == we as i64 {
-        return (DateFilter::ThisWeek, None);
+    if e == today_val && s == crate::backend::shift_ymd(today_val, -7) {
+        return (DateFilter::Last7Days, None);
     }
-
-    let m_start = (ty * 10000 + tm * 100 + 1) as i64;
-    let m_end = (ty * 10000 + tm * 100 + 31) as i64;
-    if s == m_start && e == m_end {
-        return (DateFilter::ThisMonth, None);
+    if e == today_val && s == crate::backend::shift_ymd(today_val, -30) {
+        return (DateFilter::Last30Days, None);
     }
 
     let y_start = (ty * 10000 + 101) as i64;
@@ -797,9 +793,17 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 let syntax = kfind_core::parse_query_syntax(&state.query);
                 state.selected_folder = syntax.folder.clone();
                 state.selected_ext = syntax.file_types.as_ref().map(|v| v.join(","));
-                let (df, custom) = detect_date_filter_from_range(syntax.start_date, syntax.end_date);
-                state.date_filter = df;
-                state.custom_date_range = custom;
+                // 직접 입력한 after:/before: 토큰이 있을 때만 기간 상태를 맞춘다. 토큰이 없으면
+                // 기간 칩으로 고른 내부 상태를 그대로 둔다(글자를 입력해도 칩이 풀리지 않게).
+                if syntax.start_date.is_some() || syntax.end_date.is_some() {
+                    let (df, custom) = detect_date_filter_from_range(syntax.start_date, syntax.end_date);
+                    state.date_filter = df;
+                    state.custom_date_range = custom;
+                } else if state.date_filter == DateFilter::Custom && state.typed_date_tokens {
+                    state.date_filter = DateFilter::All;
+                    state.custom_date_range = None;
+                }
+                state.typed_date_tokens = syntax.start_date.is_some() || syntax.end_date.is_some();
                 search(&mut state, &mut effects, false);
             }
         }
@@ -964,10 +968,9 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         }
         Event::SetDateFilter(df) => {
             if state.date_filter != df || state.custom_date_range.is_some() {
+                // 기간은 내부 상태로만 둔다(검색창 글자에 after:/before: 를 쓰지 않는다).
                 state.date_filter = df;
                 state.custom_date_range = None;
-                let (after, before) = date_filter_to_tokens(df, None);
-                state.query = set_date_tokens(&state.query, after.as_deref(), before.as_deref());
                 let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
                 search(&mut state, &mut effects, explicit);
             }
@@ -975,9 +978,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
         Event::SetCustomDate(start, end) => {
             state.date_filter = DateFilter::Custom;
             state.custom_date_range = Some((start, end));
-            let s = format_ymd(start);
-            let e = format_ymd(end);
-            state.query = set_date_tokens(&state.query, Some(&s), Some(&e));
+            // 기간은 내부 상태로만 둔다(검색창 글자에 쓰지 않는다).
             let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
             search(&mut state, &mut effects, explicit);
         }
@@ -1501,7 +1502,8 @@ mod tests {
         // 7. 폴더 해제 (None)
         let (state, _) = step(&state, Event::SetFolderFilter(None));
         assert_eq!(state.selected_folder, None);
-        assert_eq!(state.query, "예산 after:2026-01-01 before:2026-12-31");
+        assert_eq!(state.query, "예산");
+        assert_eq!(state.custom_date_range, Some((20260101, 20261231)));
 
         // 8. 기간 해제 (DateFilter::All)
         let (state, _) = step(&state, Event::SetDateFilter(DateFilter::All));
@@ -1567,7 +1569,11 @@ mod tests {
         let (state, _) = step(&state, Event::SetCustomDate(20260301, 20260315));
 
         let generated_query = state.query.clone();
-        let scope_before = state.scope();
+        assert!(!generated_query.contains("after:") && !generated_query.contains("before:"));
+        let mut scope_before = state.scope();
+        // 기간은 글자로 되살리지 않는다(내부 상태): 폴더·확장자만 글자 왕복을 확인한다.
+        scope_before.date_filter = DateFilter::All;
+        scope_before.custom_date_range = None;
 
         // 생성된 문자열로 새로운 창에서 Event::Input을 발생시킴
         let (reconstructed, _) = step(&visible(), Event::Input(generated_query));
@@ -1576,8 +1582,8 @@ mod tests {
         assert_eq!(scope_before, scope_after);
         assert_eq!(scope_after.ext.as_deref(), Some("pdf"));
         assert_eq!(scope_after.folder.as_deref(), Some("감사과"));
-        assert_eq!(scope_after.date_filter, DateFilter::Custom);
-        assert_eq!(scope_after.custom_date_range, Some((20260301, 20260315)));
+        assert_eq!(scope_after.date_filter, DateFilter::All);
+        assert_eq!(scope_after.custom_date_range, None);
     }
 
     #[test]

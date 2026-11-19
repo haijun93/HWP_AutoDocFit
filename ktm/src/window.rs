@@ -1655,10 +1655,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let date_chips = [
                 (DateFilter::All, "전체", 36),
                 (DateFilter::Today, "오늘", 36),
-                (DateFilter::ThisWeek, "이번 주", 46),
-                (DateFilter::ThisMonth, "이번 달", 46),
+                (DateFilter::Last7Days, "7일간", 46),
+                (DateFilter::Last30Days, "30일간", 52),
                 (DateFilter::ThisYear, "올해", 36),
-                (DateFilter::Custom, "직접", 36),
             ];
             for (df, lbl, w) in &date_chips {
                 let cw = scale(h, *w);
@@ -3744,10 +3743,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     let date_chips = [
                         (DateFilter::All, 36),
                         (DateFilter::Today, 36),
-                        (DateFilter::ThisWeek, 46),
-                        (DateFilter::ThisMonth, 46),
+                        (DateFilter::Last7Days, 46),
+                        (DateFilter::Last30Days, 52),
                         (DateFilter::ThisYear, 36),
-                        (DateFilter::Custom, 36),
                     ];
                     let mut handled = false;
                     for (df, w) in &date_chips {

@@ -94,7 +94,7 @@ pub fn quick_search_bands(
     let mut dump = Vec::new();
     push_band_line(&mut dump, "related", bands.related, &related.join(" · "));
     push_band_line(&mut dump, "options", bands.options, "키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]");
-    push_band_line(&mut dump, "filters", bands.filters, "기간: 전체 · 오늘 · 이번 주 · 이번 달 · 올해 · 직접 | 형식: 전체 · HWP · PDF · DOC · XLS");
+    push_band_line(&mut dump, "filters", bands.filters, "기간: 전체 · 오늘 · 7일간 · 30일간 · 올해 | 형식: 전체 · HWP · PDF · DOC · XLS");
     push_band_line(&mut dump, "summary", bands.summary, summary);
     push_band_line(&mut dump, "autocomplete", bands.autocomplete, "자동완성: 예산 · 공사 · 계약");
     dump.push(format!("list {}..{height} \"결과 목록\"", bands.list_top));
@@ -192,7 +192,7 @@ mod tests {
             "☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0", "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기");
         assert_eq!(empty, [
             "options 104..162 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"",
-            "filters 162..186 \"기간: 전체 · 오늘 · 이번 주 · 이번 달 · 올해 · 직접 | 형식: 전체 · HWP · PDF · DOC · XLS\"",
+            "filters 162..186 \"기간: 전체 · 오늘 · 7일간 · 30일간 · 올해 | 형식: 전체 · HWP · PDF · DOC · XLS\"",
             "summary 186..218 \"☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0\"",
             "list 218..900 \"결과 목록\"",
             "status 876..900 \"↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기\"",

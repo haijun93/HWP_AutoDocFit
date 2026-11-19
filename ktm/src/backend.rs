@@ -1184,15 +1184,11 @@ pub fn date_range_for_filter(
             let ymd = (y * 10000 + m * 100 + d) as i64;
             Some((ymd, ymd))
         }
-        crate::tm_state::DateFilter::ThisWeek => {
-            let (start, end) = current_kst_week_range();
-            Some((start as i64, end as i64))
-        }
-        crate::tm_state::DateFilter::ThisMonth => {
-            let (y, m, _) = current_kst_ymd();
-            let start = (y * 10000 + m * 100 + 1) as i64;
-            let end = (y * 10000 + m * 100 + 31) as i64;
-            Some((start, end))
+        crate::tm_state::DateFilter::Last7Days | crate::tm_state::DateFilter::Last30Days => {
+            let days = if filter == crate::tm_state::DateFilter::Last7Days { 7 } else { 30 };
+            let (y, m, d) = current_kst_ymd();
+            let end = (y * 10000 + m * 100 + d) as i64;
+            Some((shift_ymd(end, -days), end))
         }
         crate::tm_state::DateFilter::ThisYear => {
             let (y, _, _) = current_kst_ymd();
@@ -1840,13 +1836,13 @@ mod tests {
         assert_eq!(today.0, today.1);
         assert!(today.0 >= 20260101);
 
-        let week = date_range_for_filter(DateFilter::ThisWeek, None).unwrap();
-        assert!(week.0 <= week.1);
-        assert!(week.1 >= today.0);
+        let week = date_range_for_filter(DateFilter::Last7Days, None).unwrap();
+        assert_eq!(week.1, today.1);
+        assert_eq!(week.0, shift_ymd(today.1, -7));
 
-        let month = date_range_for_filter(DateFilter::ThisMonth, None).unwrap();
-        assert!(month.0 <= month.1);
-        assert_eq!(month.0 % 100, 1);
+        let month = date_range_for_filter(DateFilter::Last30Days, None).unwrap();
+        assert_eq!(month.1, today.1);
+        assert_eq!(month.0, shift_ymd(today.1, -30));
 
         let year = date_range_for_filter(DateFilter::ThisYear, None).unwrap();
         assert_eq!(year.0 % 10000, 101);
