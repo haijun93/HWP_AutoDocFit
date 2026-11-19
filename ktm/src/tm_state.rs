@@ -54,6 +54,18 @@ impl SortMode {
     }
 }
 
+/// Supported day ranges for the date filter, including no date limit.
+pub const DATE_RANGE_CHOICES: [Option<u32>; 7] = [None, Some(0), Some(7), Some(30), Some(90), Some(180), Some(365)];
+
+/// Normalize a custom or preset range to the supported date-filter bounds.
+/// `None` means no date limit; zero means today.
+pub const fn normalize_days(days: Option<u32>) -> Option<u32> {
+    match days {
+        Some(days) if days > 36500 => Some(36500),
+        other => other,
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum MatchMode { #[default] AllTerms, AnyTerm, Exact }
 
@@ -761,7 +773,7 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             if let Some(i) = state.options.file_types.iter().position(|x| x == &ext) { state.options.file_types.remove(i); }
             else { state.options.file_types.push(ext); }
         }
-        Event::SetDays(days) => state.options.days = days,
+        Event::SetDays(days) => state.options.days = normalize_days(days),
         Event::SetExcludeFilename(value) => state.options.exclude_filename = value,
         Event::SetWithinQuery(query) => state.options.within_query = query,
         Event::SetPresetName(name) => state.options.preset_name = name,
@@ -1068,6 +1080,17 @@ mod tests {
     }
     #[test] fn ui_options_file_type_toggle_is_reversible() { let (s,_)=step(&visible(),Event::ToggleFileType("pdf".into())); let (s,_)=step(&s,Event::ToggleFileType("pdf".into())); assert!(s.options.file_types.is_empty()); }
     #[test] fn ui_options_set_days() { let (s,_)=step(&visible(),Event::SetDays(Some(7))); assert_eq!(s.options.days,Some(7)); }
+    #[test] fn date_range_choices_and_custom_bounds_are_explicit() {
+        assert_eq!(DATE_RANGE_CHOICES, [None, Some(0), Some(7), Some(30), Some(90), Some(180), Some(365)]);
+        assert_eq!(normalize_days(Some(36500)), Some(36500));
+        assert_eq!(normalize_days(Some(36501)), Some(36500));
+        assert_eq!(normalize_days(Some(0)), Some(0));
+        assert_eq!(normalize_days(None), None);
+    }
+    #[test] fn setting_days_clamps_unbounded_preset_values() {
+        let (s, _) = step(&visible(), Event::SetDays(Some(u32::MAX)));
+        assert_eq!(s.options.days, Some(36500));
+    }
     #[test] fn ui_options_clear_recent_history() { let mut s=visible(); s.recent_queries=vec!["a".into()]; let (s,_)=step(&s,Event::ClearHistory); assert!(s.recent_queries.is_empty()); }
     #[test] fn ui_options_within_query() { let (s,_)=step(&visible(),Event::SetWithinQuery("term".into())); assert_eq!(s.options.within_query,"term"); }
     #[test] fn ui_options_exclude_filename() { let (s,_)=step(&visible(),Event::SetExcludeFilename(true)); assert!(s.options.exclude_filename); }
