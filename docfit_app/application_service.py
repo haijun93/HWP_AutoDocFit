@@ -21,7 +21,7 @@ def clean_hidden_tabs(raw):
     """숨길 메뉴 번호 목록을 정리한다. 0·12·13은 필수 메뉴로 항상 켠다."""
     if not isinstance(raw,(list,tuple,set)):
         return []
-    return sorted({v for v in raw if type(v) is int and 1<=v<=14 and v not in (12, 13)})
+    return sorted({v for v in raw if type(v) is int and 1<=v<=15 and v not in (12, 13)})
 
 class ApplicationService:
     def __init__(self, settings_path):
@@ -163,10 +163,10 @@ class ApplicationService:
                        'dock_start':0, 'dock_ready':1, 'dock_stop':0})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1,'qms_bench':1})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
-        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album') and len(args) in (1, 2)) and len(args)!=counts[method]:
+        if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album', 'qms_bench') and len(args) in (1, 2)) and len(args)!=counts[method]:
             raise ServiceError('INVALID_INPUT','입력 항목 수를 확인해 주세요.')
         if self.data.closing and method != 'shutdown':
             raise ServiceError('BACKEND_CLOSING','백엔드가 종료 중입니다.')
@@ -322,6 +322,25 @@ class ApplicationService:
             if not isinstance(payload, dict):
                 raise ServiceError('INVALID_INPUT', '아웃라이너 입력을 확인해 주세요.')
             return response(lambda: self._outliner_service.execute(payload))
+        if method == 'qms_bench':
+            from .qms_bench_service import QmsBenchService
+            if getattr(self, '_qms_bench_service', None) is None:
+                self._qms_bench_service = QmsBenchService(
+                    self.store._path.parent,
+                    developer_mode_checker=lambda: bool(self.store.read().get('developer_mode', False))
+                )
+            if len(args) == 2:
+                action, payload = args[0], args[1]
+            elif len(args) == 1:
+                if isinstance(args[0], dict):
+                    payload = args[0]
+                    action = payload.get('action')
+                else:
+                    action = args[0]
+                    payload = None
+            else:
+                action, payload = None, None
+            return response(lambda: self._qms_bench_service.execute(action, payload))
         if method=='excel_table':
             from .excel_table_service import ExcelTableService
             if getattr(self.data, 'running', False):

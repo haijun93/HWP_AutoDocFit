@@ -810,5 +810,80 @@ void main() {
       expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
       expect(find.textContaining('기록 중 · 10개'), findsOneWidget);
     });
+    testWidgets('켜기는 느리게 시작해도 설정 화면으로 전환되고 이중 클릭은 한 번만 보낸다', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      var statusCalls = 0;
+      var enableCalls = 0;
+      var started = false;
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        switch (args[0] as String) {
+          case 'status':
+            if (started) statusCalls++;
+            // 켜기 응답 뒤 3초가 지나서야 상주 프로그램이 응답한다.
+            final up = started && statusCalls > 60;
+            return {
+              'ok': true,
+              'running': up,
+              'available': true,
+              'consent': '복사 기록 안내문',
+              'status': up ? {'items': 1, 'paused': false} : {},
+            };
+          case 'enable':
+            enableCalls++;
+            started = true;
+            return {'ok': true, 'running': false};
+          case 'list':
+            return {'ok': true, 'items': []};
+          case 'settings_get':
+            return {'ok': true, 'settings': {}};
+        }
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('kclip-consent')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pump(const Duration(milliseconds: 100));
+      // 켜는 중에는 진행 표시가 보이고 단추는 눌리지 않는다.
+      expect(find.byKey(const ValueKey('kclip-enable-progress')), findsOneWidget);
+      expect(tester.widget<FilledButton>(find.byKey(const ValueKey('kclip-enable'))).onPressed, isNull);
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')), warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 100));
+      await tester.pumpAndSettle();
+      expect(enableCalls, 1);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsNothing);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-autostart-running')), findsOneWidget);
+    });
+
+    testWidgets('동의 체크 없이는 켜기 단추가 눌리지 않아 enable을 보내지 않는다', (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final calls = <String>[];
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        calls.add(args[0] as String);
+        return {'ok': true, 'running': false, 'available': true, 'consent': '안내', 'status': {}};
+      }
+
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(calls, isNot(contains('enable')));
+      expect(find.byKey(const ValueKey('kclip-enable')), findsOneWidget);
+    });
   });
 }

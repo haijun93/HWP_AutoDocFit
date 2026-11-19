@@ -17,6 +17,7 @@ import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import '../pdf_edit/pdf_edit_workspace.dart';
 import '../outliner/outliner_workspace.dart';
+import '../qms_bench/qms_bench_screen.dart';
 import 'tab_navigation_shell.dart';
 
 /// Workspace adapter for Tab 1: Document Editor / Processing
@@ -186,6 +187,7 @@ class IntegratedWorkspace extends StatelessWidget {
     this.notebookScreen,
     this.docGridScreen,
     this.photoAlbumScreen,
+    this.qmsBenchScreen,
     this.hiddenTabs = kDefaultHiddenTabs,
   });
 
@@ -197,6 +199,7 @@ class IntegratedWorkspace extends StatelessWidget {
   final Widget? notebookScreen;
   final Widget? docGridScreen;
   final Widget? photoAlbumScreen;
+  final Widget? qmsBenchScreen;
   /// 사용자가 끈 왼쪽 메뉴 번호(설정 > 쓸 메뉴 고르기).
   final Set<int> hiddenTabs;
   final ApiCall api;
@@ -238,6 +241,7 @@ class IntegratedWorkspace extends StatelessWidget {
       docGrid: docGridScreen ?? _LazyDocGridAdapter(api: api),
       photoAlbum: photoAlbumScreen ?? _LazyPhotoAlbumAdapter(api: api),
       outliner: _LazyOutlinerAdapter(api: api),
+      qmsBench: qmsBenchScreen ?? _LazyQmsBenchAdapter(api: api),
     );
   }
 }
@@ -322,6 +326,40 @@ class _LazyPhotoAlbumAdapterState extends State<_LazyPhotoAlbumAdapter> {
     if (active && !_visited) _visited = true;
     return _visited
         ? PhotoAlbumAdapter(api: widget.api)
+        : const SizedBox.expand();
+  }
+}
+
+/// Workspace adapter for Tab 15: 검색 벤치마크 (Everything vs kfind).
+class QmsBenchAdapter extends StatelessWidget {
+  const QmsBenchAdapter({super.key, required this.api});
+
+  final ApiCall api;
+
+  @override
+  Widget build(BuildContext context) => KeyedSubtree(
+    key: const ValueKey('tab-qms-bench-adapter'),
+    child: QmsBenchScreen(api: api),
+  );
+}
+
+class _LazyQmsBenchAdapter extends StatefulWidget {
+  const _LazyQmsBenchAdapter({required this.api});
+  final ApiCall api;
+
+  @override
+  State<_LazyQmsBenchAdapter> createState() => _LazyQmsBenchAdapterState();
+}
+
+class _LazyQmsBenchAdapterState extends State<_LazyQmsBenchAdapter> {
+  bool _visited = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final active = TickerMode.valuesOf(context).enabled;
+    if (active && !_visited) _visited = true;
+    return _visited
+        ? QmsBenchAdapter(api: widget.api)
         : const SizedBox.expand();
   }
 }

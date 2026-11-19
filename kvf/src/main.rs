@@ -66,6 +66,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND,msg:u32,w:usize,l:isize)->isize {
     }
 }
 fn run() -> Result<(),String> {
+    // 화면 저장 시험 모드: 단축키·트레이·뮤텍스·창 없이 가짜 자료를 그려 PNG로 저장하고 끝낸다.
+    { let raw=std::env::args().skip(1).collect::<Vec<_>>(); if raw.iter().any(|a|a=="--capture-dir") { return vf_capture::run(&raw); } }
     let args = proc_state::parse(&std::env::args().skip(1).collect::<Vec<_>>())?;
     if args.command == Command::Version { println!("{{\"version\":\"{}\"}}",env!("CARGO_PKG_VERSION")); return Ok(()); }
     if !matches!(args.command,Command::Show|Command::Hidden|Command::Quit|Command::Reload) {
@@ -132,6 +134,9 @@ mod vf_data;
 mod vf_state;
 mod vf_store;
 mod vf_layout;
+mod vf_ui;
+mod vf_paint;
+mod vf_capture;
 
 fn notice(hwnd: HWND, body: &str){
     let visible=TRAY.lock().unwrap().as_ref().map(|t|t.settings.tray||!t.error.is_empty());

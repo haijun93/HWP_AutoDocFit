@@ -19,6 +19,12 @@ outliner_sha256 = root / 'resources' / 'outliner.exe.sha256'
 if not outliner_exe.is_file() or not outliner_sha256.is_file():
     raise RuntimeError('Build the outliner Rust engine before PyInstaller packaging')
 binaries.append((str(outliner_exe), 'resources'))
+qms_bench_exe = root / 'resources' / 'qms_bench.exe'
+qms_bench_sha256 = root / 'resources' / 'qms_bench.exe.sha256'
+if not qms_bench_exe.is_file() or not qms_bench_sha256.is_file():
+    raise RuntimeError('Build the qms_bench Rust engine before PyInstaller packaging')
+binaries.append((str(qms_bench_exe), 'resources'))
+binaries.append((str(qms_bench_sha256), 'resources'))
 dock_exe = root / 'resources' / 'dock.exe'
 dock_sha256 = root / 'resources' / 'dock.exe.sha256'
 if not dock_exe.is_file() or not dock_sha256.is_file():
