@@ -74,6 +74,15 @@ class PdfEditService:
             raise ServiceError('PDF_DAMAGED', 'PDF 구조를 읽을 수 없습니다. 손상된 PDF일 수 있습니다.') from None
 
     def execute(self, action, source, output, *, pages=None, degrees=None, sources=None):
+        if action == 'cleanup':
+            paths = [Path(p) for p in sources] if isinstance(sources, (list, tuple)) else []
+            for path in paths:
+                if path.name.startswith('.__pdfui_') and path.suffix.lower() == '.pdf':
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            return {'cleaned': len(paths), 'action': action}
         if action in {'info', 'thumbnail'}:
             source_path = Path(source) if source else None
             if source_path is None or not source_path.is_file() or source_path.suffix.lower() != '.pdf':
