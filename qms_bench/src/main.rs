@@ -58,6 +58,7 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
     let mut cold_repeats = 0usize;
     let mut top_n = 1000usize;
     let mut timeout_ms = 10_000u64;
+    let mut http_port: Option<u16> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -66,6 +67,12 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
                 i += 1;
                 if i < args.len() {
                     adapter_type = args[i].clone();
+                }
+            }
+            "--http-port" => {
+                i += 1;
+                if i < args.len() {
+                    http_port = args[i].parse().ok();
                 }
             }
             "--query-set" | "-q" => {
@@ -123,9 +130,75 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
     let query_set = load_query_set(&query_set_path)?;
 
     // 어댑터 생성
+    let mut everything_meta: Option<EverythingMeta> = None;
+
     let mut adapter_boxed: Box<dyn QueryAdapter> = match adapter_type.to_lowercase().as_str() {
-        "kfind" => Box::new(KfindPipeAdapter::default()),
-        "everything" => Box::new(EverythingIpcAdapter::new()?),
+        "kfind" => {
+            // kfind 파일명 색인 준비 확인
+            match check_kfind_names_index(DEFAULT_KFIND_PIPE_NAME, Duration::from_secs(3)) {
+                KfindIndexCheck::NotReady { reason, guidance } => {
+                    println!(
+                        "{}",
+                        json!({
+                            "ok": false,
+                            "kfind": {
+                                "names_index": "not_ready",
+                                "reason": reason,
+                                "guidance": guidance
+                            }
+                        })
+                    );
+                    return Ok(());
+                }
+                _ => {}
+            }
+            Box::new(KfindPipeAdapter::default())
+        }
+        "everything" => {
+            let EverythingSelection {
+                adapter,
+                meta,
+                is_fallback_kfind,
+            } = select_everything_adapter(http_port);
+
+            if is_fallback_kfind {
+                // Everything 연결이 모두 불가능하여 몽땅검색(kfind)으로 폴백된 경우 색인 준비 확인
+                match check_kfind_names_index(DEFAULT_KFIND_PIPE_NAME, Duration::from_secs(3)) {
+                    KfindIndexCheck::NotReady { reason, guidance } => {
+                        println!(
+                            "{}",
+                            json!({
+                                "ok": false,
+                                "kfind": {
+                                    "names_index": "not_ready",
+                                    "reason": reason,
+                                    "guidance": guidance
+                                },
+                                "everything": {
+                                    "status": meta.status,
+                                    "guidance": meta.guidance,
+                                    "method": meta.method,
+                                    "unavailable_reasons": meta.unavailable_reasons
+                                }
+                            })
+                        );
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+            }
+            everything_meta = Some(meta);
+            adapter
+        }
+        "http" => {
+            let port = http_port.unwrap_or(80);
+            Box::new(EverythingHttpAdapter::new(port))
+        }
+        "es" | "es_exe" => {
+            let es_path = find_es_exe_path().ok_or_else(|| "es.exe not found".to_string())?;
+            let baseline = measure_es_baseline(&es_path, Duration::from_secs(5))?;
+            Box::new(EverythingEsAdapter::new(es_path, baseline))
+        }
         "fake" => Box::new(FakeAdapter {
             name: "fake".into(),
             results: vec!["file1.pdf".into(), "file2.pdf".into()],
@@ -135,7 +208,7 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
         }),
         other => {
             return Err(format!(
-                "unknown adapter type: {other} (choose: kfind, everything, fake)"
+                "unknown adapter type: {other} (choose: kfind, everything, fake, http, es)"
             ))
         }
     };
@@ -164,9 +237,11 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
     );
 
     // 프로세스 자원 카운터 준비
-    let mut res_counter = match adapter_type.to_lowercase().as_str() {
+    let mut res_counter = match adapter_boxed.name() {
         "kfind" => WindowsProcessCounter::for_process_names(&["kfind.exe"]).ok(),
-        "everything" => WindowsProcessCounter::for_process_names(&["Everything.exe"]).ok(),
+        "everything" | "everything_http" | "everything_es" => {
+            WindowsProcessCounter::for_process_names(&["Everything.exe"]).ok()
+        }
         _ => None,
     };
 
@@ -273,11 +348,31 @@ fn run_benchmark(args: &[String]) -> Result<(), String> {
     let resource_summary = summarize_samples(&post_samples, false);
     let csv_content = csv_summary(&run_id, &stat_rows);
 
+    let everything_meta_json = if let Some(ref meta) = everything_meta {
+        json!({
+            "status": meta.status,
+            "method": meta.method,
+            "guidance": meta.guidance,
+            "unavailable_reasons": meta.unavailable_reasons,
+            "includes_process_spawn": meta.includes_process_spawn,
+            "baseline_ms": meta.baseline_ms,
+        })
+    } else {
+        let ev = detect_everything();
+        json!({
+            "status": ev.status,
+            "guidance": ev.guidance,
+            "method": null,
+            "unavailable_reasons": []
+        })
+    };
+
     let result_json = json!({
         "schema_version": 1,
         "run": {
             "run_id": run_id,
             "adapter": adapter_boxed.name(),
+            "everything": everything_meta_json,
             "query_set_version": query_set.set_version,
             "warmups": warmups,
             "repeats": repeats,

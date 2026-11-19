@@ -296,6 +296,56 @@ fn detect_smoke_test() {
     assert_eq!(report.command, "detect");
     // Everything 실행 여부 및 kfind 파이프 여부가 bool로 반환되는지 확인
     println!("Detect report: {:?}", report);
+    assert!(
+        ["gui_client_running", "service_only", "not_running", "not_installed"]
+            .contains(&report.everything.status.as_str()),
+        "unexpected everything status: {}",
+        report.everything.status
+    );
+    assert!(
+        !report.everything.guidance.is_empty(),
+        "guidance should not be empty"
+    );
+}
+
+#[test]
+fn es_exe_mock_script_test() {
+    use std::fs;
+    let temp_dir = std::env::temp_dir().join(format!("qms_bench_test_{}", std::process::id()));
+    fs::create_dir_all(&temp_dir).unwrap();
+    let script_path = temp_dir.join("mock_es.cmd");
+
+    let script_content = "@echo off\r\n\
+                          if \"%1\"==\"-n\" if \"%2\"==\"0\" exit /b 0\r\n\
+                          echo C:\\data\\sample1.pdf\r\n\
+                          echo C:\\data\\sample2.docx\r\n\
+                          exit /b 0\r\n";
+    fs::write(&script_path, script_content).unwrap();
+
+    let baseline = crate::measure_es_baseline(&script_path, Duration::from_secs(5))
+        .expect("baseline measurement");
+    assert!(baseline >= 0.0);
+
+    let mut adapter = crate::EverythingEsAdapter::new(script_path.clone(), baseline);
+    assert!(adapter.includes_process_spawn);
+
+    let q = Query {
+        id: "es1".into(),
+        kind: "sample".into(),
+        text: "sample".into(),
+        filter: None,
+        comparability: "comparable".into(),
+        expected_scope: "filename".into(),
+    };
+
+    let res = adapter.query(&q, 10, Duration::from_secs(5));
+    assert!(res.error.is_none(), "error: {:?}", res.error);
+    assert_eq!(res.result_count, 2);
+    assert_eq!(res.top_ids.len(), 2);
+    assert_eq!(res.top_ids[0], crate::sha256(b"C:\\data\\sample1.pdf"));
+    assert_eq!(res.top_ids[1], crate::sha256(b"C:\\data\\sample2.docx"));
+
+    let _ = fs::remove_dir_all(&temp_dir);
 }
 
 // ============================================================================

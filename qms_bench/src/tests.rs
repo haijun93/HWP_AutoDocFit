@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Read;
 use std::time::Duration;
 fn query(text: &str) -> Query {
     Query {
@@ -345,3 +346,388 @@ fn csv_redacts_query() {
     assert!(!csv.contains("secret text"));
     assert!(csv.contains("query_hash"));
 }
+
+// ============================================================================
+// BENCH2C 추가 시험: HTTP 어댑터, 상태 분류, 선택 순서, 색인 준비 확인
+// ============================================================================
+
+#[test]
+fn http_url_encoding_test() {
+    assert_eq!(url_encode("hello world"), "hello%20world");
+    assert_eq!(url_encode("보고서_2026.pdf"), "%EB%B3%B4%EA%B3%A0%EC%84%9C_2026.pdf");
+    assert_eq!(url_encode("a-b_c.d~e"), "a-b_c.d~e");
+}
+
+#[test]
+fn http_adapter_fake_server_json_ok() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+
+        let body = serde_json::json!({
+            "totalResults": 2,
+            "results": [
+                {"name": "test1.hwp", "path": "C:\\docs"},
+                {"name": "test2.pdf", "path": "D:\\data"}
+            ]
+        })
+        .to_string();
+
+        let resp = format!(
+            "HTTP/1.1 200 OK\r\n\
+             Server: Everything\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\
+             \r\n\
+             {}",
+            body.len(),
+            body
+        );
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    let mut adapter = EverythingHttpAdapter::new(port);
+    let q = query("test");
+    let res = adapter.query(&q, 10, Duration::from_secs(2));
+
+    server_handle.join().unwrap();
+
+    assert!(res.error.is_none(), "unexpected error: {:?}", res.error);
+    assert!(!res.timed_out);
+    assert_eq!(res.result_count, 2);
+    assert_eq!(res.top_ids.len(), 2);
+    assert_eq!(res.top_ids[0], sha256(b"C:\\docs\\test1.hwp"));
+    assert_eq!(res.top_ids[1], sha256(b"D:\\data\\test2.pdf"));
+}
+
+#[test]
+fn http_adapter_fake_server_chunked_ok() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+
+        let part1 = "{\"totalResults\": 1, \"results\": [";
+        let part2 = "{\"name\": \"chunked.txt\", \"path\": \"C:\\\\tmp\"}]}";
+
+        let header = "HTTP/1.1 200 OK\r\n\
+                      Server: Everything\r\n\
+                      Transfer-Encoding: chunked\r\n\
+                      Connection: close\r\n\
+                      \r\n";
+        stream.write_all(header.as_bytes()).unwrap();
+
+        // chunk 1
+        let c1 = format!("{:X}\r\n{}\r\n", part1.len(), part1);
+        stream.write_all(c1.as_bytes()).unwrap();
+
+        // chunk 2
+        let c2 = format!("{:X}\r\n{}\r\n", part2.len(), part2);
+        stream.write_all(c2.as_bytes()).unwrap();
+
+        // end chunk
+        stream.write_all(b"0\r\n\r\n").unwrap();
+    });
+
+    let mut adapter = EverythingHttpAdapter::new(port);
+    let q = query("chunked");
+    let res = adapter.query(&q, 10, Duration::from_secs(2));
+
+    server_handle.join().unwrap();
+
+    assert!(res.error.is_none());
+    assert_eq!(res.result_count, 1);
+    assert_eq!(res.top_ids.len(), 1);
+    assert_eq!(res.top_ids[0], sha256(b"C:\\tmp\\chunked.txt"));
+}
+
+#[test]
+fn http_adapter_fake_server_error() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+
+        let resp = "HTTP/1.1 500 Internal Server Error\r\n\
+                    Content-Length: 0\r\n\
+                    Connection: close\r\n\
+                    \r\n";
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    let mut adapter = EverythingHttpAdapter::new(port);
+    let q = query("err");
+    let res = adapter.query(&q, 10, Duration::from_secs(2));
+
+    server_handle.join().unwrap();
+
+    assert!(res.error.is_some());
+    assert!(res.error.unwrap().contains("500 Internal Server Error"));
+}
+
+#[test]
+fn http_adapter_fake_server_auth_required() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+
+        let resp = "HTTP/1.1 401 Unauthorized\r\n\
+                    WWW-Authenticate: Basic realm=\"Everything\"\r\n\
+                    Content-Length: 0\r\n\
+                    Connection: close\r\n\
+                    \r\n";
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    let mut adapter = EverythingHttpAdapter::new(port);
+    let q = query("auth");
+    let res = adapter.query(&q, 10, Duration::from_secs(2));
+
+    server_handle.join().unwrap();
+
+    assert!(res.error.is_some());
+    let err = res.error.unwrap();
+    assert!(err.contains("인증 필요"), "expected auth required, got: {err}");
+}
+
+#[test]
+fn http_adapter_fake_server_timeout() {
+    use std::net::TcpListener;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        // 읽기만 하고 응답 없이 클라이언트 타임아웃보다 오래 수면
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        std::thread::sleep(Duration::from_millis(500));
+    });
+
+    let mut adapter = EverythingHttpAdapter::new(port);
+    let q = query("timeout");
+    let res = adapter.query(&q, 10, Duration::from_millis(100));
+
+    server_handle.join().unwrap();
+
+    assert!(res.timed_out || res.error.is_some());
+}
+
+#[test]
+fn http_port_detection_tests() {
+    use std::io::Write;
+    use std::net::TcpListener;
+
+    // 1. Available 감지
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let server_handle = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let resp = "HTTP/1.1 200 OK\r\n\
+                    Server: Everything 1.4\r\n\
+                    Content-Length: 18\r\n\
+                    Connection: close\r\n\
+                    \r\n\
+                    {\"totalResults\":0}";
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    let det = detect_everything_http_port("127.0.0.1", &[port], Duration::from_millis(300));
+    server_handle.join().unwrap();
+    assert_eq!(det, PortDetectResult::Available(port));
+
+    // 2. AuthRequired 감지
+    let listener2 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port2 = listener2.local_addr().unwrap().port();
+
+    let server_handle2 = std::thread::spawn(move || {
+        let (mut stream, _) = listener2.accept().unwrap();
+        let mut buf = [0u8; 1024];
+        let _ = stream.read(&mut buf);
+        let resp = "HTTP/1.1 401 Unauthorized\r\n\
+                    WWW-Authenticate: Basic realm=\"Everything\"\r\n\
+                    Content-Length: 0\r\n\
+                    Connection: close\r\n\
+                    \r\n";
+        stream.write_all(resp.as_bytes()).unwrap();
+    });
+
+    let det2 = detect_everything_http_port("127.0.0.1", &[port2], Duration::from_millis(300));
+    server_handle2.join().unwrap();
+    assert_eq!(det2, PortDetectResult::AuthRequired(port2));
+}
+
+#[test]
+fn everything_status_classification_and_guidance_test() {
+    // 1. gui_client_running: 창 있음
+    let (st1, g1) = classify_everything_status(true, true, true);
+    assert_eq!(st1, "gui_client_running");
+    assert!(g1.contains("GUI 클라이언트가 실행 중입니다"));
+
+    // 2. service_only: 창 없으나 프로세스 실행 중
+    let (st2, g2) = classify_everything_status(false, true, true);
+    assert_eq!(st2, "service_only");
+    assert!(g2.contains("Everything 앱(트레이)을 실행하면 측정할 수 있습니다"));
+    assert!(g2.contains("HTTP 서버를 켜세요"));
+
+    // 3. not_running: 설치되어 있으나 프로세스 없음
+    let (st3, g3) = classify_everything_status(false, false, true);
+    assert_eq!(st3, "not_running");
+    assert!(g3.contains("Everything이 설치되어 있으나 실행되지 않았습니다"));
+
+    // 4. not_installed: 설치 안 됨
+    let (st4, g4) = classify_everything_status(false, false, false);
+    assert_eq!(st4, "not_installed");
+    assert!(g4.contains("Everything이 설치되어 있지 않습니다"));
+}
+
+#[test]
+fn everything_selection_order_decision_test() {
+    let dummy_detect = EverythingDetect {
+        installed: true,
+        running: true,
+        status: "service_only".into(),
+        guidance: "service only guidance".into(),
+        pids: vec![123],
+        path: None,
+        version: None,
+        db_loaded: None,
+    };
+
+    // 케이스 1: IPC 가용 -> ipc 선택
+    let (m1, u1, fb1) = select_order_decision(
+        true,
+        PortDetectResult::NotFound,
+        true,
+        &dummy_detect,
+    );
+    assert_eq!(m1, "ipc");
+    assert!(u1.is_empty());
+    assert!(!fb1);
+
+    // 케이스 2: IPC 불가, HTTP 가용 -> http 선택
+    let (m2, u2, fb2) = select_order_decision(
+        false,
+        PortDetectResult::Available(80),
+        true,
+        &dummy_detect,
+    );
+    assert_eq!(m2, "http");
+    assert_eq!(u2.len(), 1);
+    assert!(u2[0].contains("ipc:"));
+    assert!(!fb2);
+
+    // 케이스 3: IPC 불가, HTTP 인증필요, es.exe 가용 -> es_exe 선택
+    let (m3, u3, fb3) = select_order_decision(
+        false,
+        PortDetectResult::AuthRequired(8080),
+        true,
+        &dummy_detect,
+    );
+    assert_eq!(m3, "es_exe");
+    assert_eq!(u3.len(), 2);
+    assert!(u3[0].contains("ipc:"));
+    assert!(u3[1].contains("http:"));
+    assert!(!fb3);
+
+    // 케이스 4: IPC 불가, HTTP 불가, es.exe 불가 -> fallback kfind (method: none)
+    let (m4, u4, fb4) = select_order_decision(
+        false,
+        PortDetectResult::NotFound,
+        false,
+        &dummy_detect,
+    );
+    assert_eq!(m4, "none");
+    assert_eq!(u4.len(), 3);
+    assert!(fb4);
+}
+
+#[test]
+fn kfind_names_index_readiness_validation_test() {
+    // 1. Ready & entries > 0 -> Ok
+    let val_ok = serde_json::json!({
+        "ok": true,
+        "result": {
+            "state": "ready",
+            "entries": 54321
+        }
+    });
+    assert!(validate_kfind_names_status_json(&val_ok).is_ok());
+
+    // 2. empty 상태 -> not_ready
+    let val_empty = serde_json::json!({
+        "ok": true,
+        "result": {
+            "state": "empty",
+            "entries": 0
+        }
+    });
+    let err_empty = validate_kfind_names_status_json(&val_empty).unwrap_err();
+    assert_eq!(err_empty.0, "names index unavailable (empty)");
+    assert!(err_empty.1.contains("색인 구축이 완료된 후 다시 실행"));
+
+    // 3. entries == 0 인 경우 -> not_ready (empty)
+    let val_zero_entries = serde_json::json!({
+        "ok": true,
+        "result": {
+            "state": "ready",
+            "entries": 0
+        }
+    });
+    let err_zero = validate_kfind_names_status_json(&val_zero_entries).unwrap_err();
+    assert_eq!(err_zero.0, "names index unavailable (empty)");
+
+    // 4. building 상태 -> not_ready
+    let val_building = serde_json::json!({
+        "ok": true,
+        "result": {
+            "state": "building",
+            "entries": 100
+        }
+    });
+    let err_building = validate_kfind_names_status_json(&val_building).unwrap_err();
+    assert_eq!(err_building.0, "names index building");
+
+    // 5. failed 상태 -> not_ready
+    let val_failed = serde_json::json!({
+        "ok": true,
+        "result": {
+            "state": "failed",
+            "entries": 0
+        }
+    });
+    let err_failed = validate_kfind_names_status_json(&val_failed).unwrap_err();
+    assert!(err_failed.0.contains("names index failed"));
+}
+

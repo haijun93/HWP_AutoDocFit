@@ -182,3 +182,90 @@ pub fn parse_kfind_response(bytes: &[u8], top_n: usize) -> Result<(u64, Vec<Stri
 
     Ok((total, top_ids))
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KfindIndexCheck {
+    Ready,
+    NotReady { reason: String, guidance: String },
+    Unavailable(String),
+}
+
+/// 몽땅검색 `names_status` 응답 JSON 검증
+pub fn validate_kfind_names_status_json(val: &Value) -> Result<(), (String, String)> {
+    let guidance = "몽땅검색 파일명 색인이 아직 준비되지 않았습니다. 색인 구축이 완료된 후 다시 실행해 주세요.".to_string();
+
+    if val.get("ok").and_then(Value::as_bool) != Some(true) {
+        let err_str = val.get("error").and_then(Value::as_str).unwrap_or("unknown error");
+        return Err((format!("kfind status error: {err_str}"), guidance));
+    }
+
+    let result = match val.get("result") {
+        Some(r) => r,
+        None => return Err(("missing result in names_status response".into(), guidance)),
+    };
+
+    let state = result.get("state").and_then(Value::as_str).unwrap_or("empty");
+    let entries = result.get("entries").and_then(Value::as_u64).unwrap_or(0);
+
+    if state == "building" {
+        return Err(("names index building".into(), guidance));
+    }
+
+    if state == "failed" {
+        let failed_detail = result.get("failed").and_then(Value::as_str).unwrap_or("");
+        let reason = if failed_detail.is_empty() {
+            "names index failed".into()
+        } else {
+            format!("names index failed: {failed_detail}")
+        };
+        return Err((reason, guidance));
+    }
+
+    if state == "empty" || entries == 0 {
+        return Err(("names index unavailable (empty)".into(), guidance));
+    }
+
+    if state != "ready" {
+        return Err((format!("names index {state}"), guidance));
+    }
+
+    Ok(())
+}
+
+/// kfind 명명 파이프에 읽기 전용 `names_status` 명령을 전송하여 색인 준비 상태 확인
+pub fn check_kfind_names_index(pipe_name: &str, timeout: Duration) -> KfindIndexCheck {
+    let request = json!({
+        "command": "names_status",
+    });
+
+    let (tx, rx) = mpsc::channel();
+    let p_name = pipe_name.to_string();
+    let handle = std::thread::Builder::new()
+        .name("kfind-status-check".into())
+        .spawn(move || {
+            let res = call_pipe_blocking(&p_name, &request);
+            let _ = tx.send(res);
+        });
+
+    if let Err(e) = handle {
+        return KfindIndexCheck::Unavailable(format!("thread spawn failed: {e}"));
+    }
+
+    match rx.recv_timeout(timeout) {
+        Ok(Ok(bytes)) => match serde_json::from_slice::<Value>(&bytes) {
+            Ok(val) => match validate_kfind_names_status_json(&val) {
+                Ok(()) => KfindIndexCheck::Ready,
+                Err((reason, guidance)) => KfindIndexCheck::NotReady { reason, guidance },
+            },
+            Err(e) => KfindIndexCheck::Unavailable(format!("invalid JSON in status response: {e}")),
+        },
+        Ok(Err(e)) => KfindIndexCheck::Unavailable(e),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            KfindIndexCheck::Unavailable("kfind status check timed out".into())
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            KfindIndexCheck::Unavailable("kfind status worker disconnected".into())
+        }
+    }
+}
+

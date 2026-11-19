@@ -17,10 +17,12 @@ use windows_sys::Win32::{
     },
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EverythingDetect {
     pub installed: bool,
     pub running: bool,
+    pub status: String,
+    pub guidance: String,
     pub pids: Vec<u32>,
     pub path: Option<String>,
     pub version: Option<String>,
@@ -77,14 +79,50 @@ pub fn detect_everything() -> EverythingDetect {
     };
 
     let installed = exe_path.is_some();
+    let (status, guidance) = classify_everything_status(
+        window_info.is_some(),
+        !pids.is_empty(),
+        installed,
+    );
 
     EverythingDetect {
         installed,
         running,
+        status: status.into(),
+        guidance: guidance.into(),
         pids,
         path: exe_path,
         version,
         db_loaded,
+    }
+}
+
+/// Everything 상태 분류 및 한국어 안내 문구 반환
+pub fn classify_everything_status(
+    has_window: bool,
+    has_process: bool,
+    is_installed: bool,
+) -> (&'static str, &'static str) {
+    if has_window {
+        (
+            "gui_client_running",
+            "Everything GUI 클라이언트가 실행 중입니다. IPC 측정이 가능합니다.",
+        )
+    } else if has_process {
+        (
+            "service_only",
+            "Everything 앱(트레이)을 실행하면 측정할 수 있습니다. 또는 Everything 옵션에서 HTTP 서버를 켜세요.",
+        )
+    } else if is_installed {
+        (
+            "not_running",
+            "Everything이 설치되어 있으나 실행되지 않았습니다. Everything 앱을 실행해 주세요.",
+        )
+    } else {
+        (
+            "not_installed",
+            "Everything이 설치되어 있지 않습니다. 몽땅검색 단독 측정만 가능합니다.",
+        )
     }
 }
 

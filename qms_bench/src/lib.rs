@@ -2,6 +2,15 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path, time::Duration};
 
+pub mod http;
+pub use http::*;
+
+pub mod es;
+pub use es::*;
+
+pub mod select;
+pub use select::*;
+
 #[cfg(windows)]
 pub mod win;
 #[cfg(windows)]
@@ -76,6 +85,40 @@ pub mod non_win {
     impl CounterReader for WindowsProcessCounter {
         fn read(&mut self) -> Result<ResourceSample, String> {
             Err("WindowsProcessCounter is only supported on Windows".into())
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum KfindIndexCheck {
+        Ready,
+        NotReady { reason: String, guidance: String },
+        Unavailable(String),
+    }
+    pub fn check_kfind_names_index(_: &str, _: Duration) -> KfindIndexCheck {
+        KfindIndexCheck::Unavailable("kfind is only supported on Windows".into())
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    pub struct EverythingDetect {
+        pub installed: bool,
+        pub running: bool,
+        pub status: String,
+        pub guidance: String,
+        pub pids: Vec<u32>,
+        pub path: Option<String>,
+        pub version: Option<String>,
+        pub db_loaded: Option<bool>,
+    }
+    pub fn detect_everything() -> EverythingDetect {
+        EverythingDetect {
+            installed: false,
+            running: false,
+            status: "not_installed".into(),
+            guidance: "Everything이 설치되어 있지 않습니다. 몽땅검색 단독 측정만 가능합니다.".into(),
+            pids: vec![],
+            path: None,
+            version: None,
+            db_loaded: None,
         }
     }
 
