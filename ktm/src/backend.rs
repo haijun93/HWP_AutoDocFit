@@ -959,23 +959,40 @@ pub fn pipe_call_with_timeout(name: &str, request: &Value, timeout: Duration) ->
     })?
 }
 
+/// 파이프 입출력 오류를 사용자 문구로 바꾼다. 서비스가 꺼져 파이프가 없으면 Windows가
+/// "지정된 파일을 찾을 수 없습니다. (os error 2)"를 돌려주는데, 어떤 파일인지 알 수 없어 혼란스럽다.
+pub fn friendly_pipe_error(e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::NotFound => {
+            "검색 서비스(색인 서비스)에 연결할 수 없습니다. 서비스가 실행 중인지 확인해 주세요.".into()
+        }
+        std::io::ErrorKind::PermissionDenied => {
+            "검색 서비스에 접근할 권한이 없습니다. 같은 사용자 계정으로 실행 중인지 확인해 주세요.".into()
+        }
+        std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof => {
+            "검색 서비스와의 연결이 끊어졌습니다. 잠시 뒤 다시 검색해 주세요.".into()
+        }
+        _ => e.to_string(),
+    }
+}
+
 fn pipe_call_blocking(name: &str, request: &[u8]) -> Result<Vec<u8>> {
     let mut pipe = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(name)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| friendly_pipe_error(&e))?;
     pipe.write_all(&(request.len() as u32).to_le_bytes())
         .and_then(|_| pipe.write_all(request))
         .map_err(|e| e.to_string())?;
     let mut prefix = [0; 4];
-    pipe.read_exact(&mut prefix).map_err(|e| e.to_string())?;
+    pipe.read_exact(&mut prefix).map_err(|e| friendly_pipe_error(&e))?;
     let n = u32::from_le_bytes(prefix) as usize;
     if n > 8 * 1024 * 1024 {
         return Err("검색 응답 크기가 상한을 넘었습니다.".into());
     }
     let mut bytes = vec![0; n];
-    pipe.read_exact(&mut bytes).map_err(|e| e.to_string())?;
+    pipe.read_exact(&mut bytes).map_err(|e| friendly_pipe_error(&e))?;
     Ok(bytes)
 }
 
@@ -1236,6 +1253,22 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
         r.rank = i;
     }
     Ok(rows)
+}
+
+#[cfg(test)]
+mod pipe_error_tests {
+    use super::*;
+
+    #[test]
+    fn missing_pipe_is_reported_as_unreachable_service_not_os_error_2() {
+        let error = std::io::Error::from_raw_os_error(2);
+        let message = friendly_pipe_error(&error);
+        assert!(message.contains("검색 서비스"), "{message}");
+        assert!(!message.contains("os error"), "{message}");
+        // 존재하지 않는 파이프를 실제로 열어도 같은 문구가 나온다.
+        let message = pipe_call_blocking(r"\.\pipe\ktm-test-no-such-pipe-xyz", b"{}").unwrap_err();
+        assert!(!message.contains("os error 2"), "{message}");
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,8 @@
 pub(crate) mod frame;
 #[path = "window_probe.rs"]
 mod probe;
+#[path = "window_capture.rs"]
+mod capture;
 
 use ktm::{
     backend::{Answer, Backend, Row},
@@ -131,6 +133,8 @@ struct Ui {
     hover_folder_btn: Option<usize>,
     hover_tab: Option<usize>,
     status_text: String,
+    /// 통합 검색 갈래(파일명·위계·본문) 중 실패한 것의 오류 문구(한 검색 동안).
+    leg_errors: Vec<String>,
     smart_presets: Vec<ktm::settings::SmartPreset>,
     recent_query_times: Vec<u64>,
     modal: Option<ktm::layout::ModalKind>,
@@ -202,12 +206,18 @@ fn scale(h: HWND, n: i32) -> i32 {
     frame::scale(h, n) * with(|u| u.settings.bounded_ui_scale() as i32) / 100
 }
 
+/// `edit(|u| ...)` 안에서는 `scale()`이 쓰는 `with()`가 이미 빌려진 RefCell을 다시 빌려 죽으므로
+/// (RefCell already mutably borrowed), 같은 계산을 Ui를 직접 받아 한다.
+fn scale_u(h: HWND, n: i32, u: &Ui) -> i32 {
+    frame::scale(h, n) * u.settings.bounded_ui_scale() as i32 / 100
+}
+
 fn quick_layout(h: HWND, u: &Ui) -> QuickSearchLayout {
     let mut r: RECT = unsafe { std::mem::zeroed() };
     unsafe { GetClientRect(h, &mut r); }
     let groups = kfind_core::parse_groups(&u.state.query);
     ktm::layout::quick_search_layout(
-        scale(h, 100), r.right, r.bottom, groups.len() > 1, true,
+        scale_u(h, 100, u), r.right, r.bottom, groups.len() > 1, u.state.options.options_open,
         !u.state.autocompletes.is_empty(),
     )
 }
@@ -274,6 +284,7 @@ fn default_mode(mode: &str) -> tm_state::SearchMode {
     }
 }
 
+#[allow(dead_code)]
 fn edit_text(ed: HWND, capacity: usize) -> String {
     unsafe {
         let mut buf = vec![0u16; capacity.max(2)];
@@ -420,7 +431,7 @@ fn event(h: HWND, e: Event) {
                     {
                         let mut p = tx.0.lock().unwrap();
                         if tab == Tab::All {
-                            edit(|u| u.combined_batches.clear());
+                            edit(|u| { u.combined_batches.clear(); u.leg_errors.clear(); });
                             p.search.clear();
                             for (part, limit) in [(Tab::Names, 20), (Tab::Hierarchy, 20), (Tab::Body, 40)] {
                                 p.search.push((generation, query.clone(), part, Instant::now(), cancel.clone(), sort,
@@ -455,14 +466,15 @@ fn event(h: HWND, e: Event) {
                 GetClientRect(h, &mut rc);
             }
             let top_y = list_top_coord(h, u);
-            let rh = row_height(h);
+            let compact = u.settings.result_density == "compact";
+            let rh = scale_u(h, ktm::layout::result_card_height(100, compact), u).max(1);
             let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
-                scale(h, PREVIEW_H)
+                scale_u(h, PREVIEW_H, u)
             } else {
                 0
             };
-            let count =
-                ((rc.bottom - top_y - scale(h, STATUS_H) - preview_h).max(0) / rh).max(1) as usize;
+            let count = ((rc.bottom - top_y - scale_u(h, STATUS_H, u) - preview_h).max(0) / rh)
+                .max(1) as usize;
             if index < u.top {
                 u.top = index;
             } else if index >= u.top + count {
@@ -566,6 +578,28 @@ fn copy_text_to_clipboard(value: &str) -> Result<(), String> {
     }
 }
 
+/// 정렬을 다음 방식으로 돌린다(옵션 줄의 '정렬' 단추와 Ctrl+S가 같은 동작).
+fn cycle_sort(h: HWND) {
+    let next = with(|u| u.state.options.sort.next());
+    event(h, Event::SetSort(next));
+    edit(|u| {
+        u.body_sort = match next {
+            tm_state::SortMode::Relevance => ktm::backend::BodySort::Relevance,
+            tm_state::SortMode::Confidence => ktm::backend::BodySort::Confidence,
+            tm_state::SortMode::Newest => ktm::backend::BodySort::Date,
+            tm_state::SortMode::Oldest => ktm::backend::BodySort::Oldest,
+            tm_state::SortMode::Name => ktm::backend::BodySort::Name,
+        };
+        u.name_sort = match next {
+            tm_state::SortMode::Name => 1,
+            tm_state::SortMode::Newest | tm_state::SortMode::Oldest => 3,
+            _ => 0,
+        };
+        ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+    });
+    unsafe { InvalidateRect(h, null(), 0) };
+}
+
 fn key(h: HWND, key: usize) -> bool {
     unsafe {
         if with(|u| u.modal.is_some()) {
@@ -604,7 +638,6 @@ fn key(h: HWND, key: usize) -> bool {
         }
         let ctrl = GetKeyState(VK_CONTROL as i32) < 0;
         let alt = GetKeyState(VK_MENU as i32) < 0;
-        let shift = GetKeyState(VK_SHIFT as i32) < 0;
         match key as u16 {
             VK_ESCAPE => event(h, Event::Hide),
             VK_RETURN => {
@@ -618,34 +651,9 @@ fn key(h: HWND, key: usize) -> bool {
             VK_UP => event(h, Event::MoveSelection(-1)),
             VK_NEXT => event(h, Event::MoveSelection(5)),
             VK_PRIOR => event(h, Event::MoveSelection(-5)),
-            VK_TAB => {
-                let tab = with(|u| match (u.state.tab, shift) {
-                    (Tab::All, false) => Tab::Body,
-                    (Tab::Body, false) => Tab::Hierarchy,
-                    (Tab::Hierarchy, false) => Tab::Names,
-                    (Tab::Names, false) => Tab::All,
-                    (Tab::All, true) => Tab::Names,
-                    (Tab::Names, true) => Tab::Hierarchy,
-                    (Tab::Hierarchy, true) => Tab::Body,
-                    (Tab::Body, true) => Tab::All,
-                });
-                event(h, Event::SwitchTab(tab));
-            }
-            _ if ctrl && key == b'S' as usize => {
-                let tab = with(|u| u.state.tab);
-                if tab == Tab::Names {
-                    edit(|u| {
-                        u.name_sort = (u.name_sort + 1) % 4;
-                    });
-                    event(h, Event::Refresh);
-                } else if tab == Tab::Body || tab == Tab::Hierarchy {
-                    edit(|u| {
-                        u.body_sort = u.body_sort.next();
-                        ktm::backend::sort_rows(&mut u.rows, u.body_sort);
-                    });
-                    InvalidateRect(h, null(), 0);
-                }
-            }
+            // 탭 줄이 없어졌으므로 Tab 키는 검색창 포커스를 그대로 둔다.
+            VK_TAB => {}
+            _ if ctrl && key == b'S' as usize => cycle_sort(h),
             _ if ctrl && key == b'L' as usize => {
                 let t = edit(|u| {
                     u.theme = if u.theme == "dark" { "light" } else { "dark" }.into();
@@ -838,7 +846,7 @@ unsafe fn layout(h: HWND) {
             within.0 + scale(h, 2),
             option_top,
             (within.1 - within.0 - scale(h, 4)).max(1),
-            scale(h, OPTION_H),
+            scale(h, OPTION_H / 2),
             1,
         );
         ShowWindow(
@@ -860,11 +868,8 @@ unsafe fn layout(h: HWND) {
         );
         ShowWindow(
             days,
-            if !modal_open && with(|u| u.state.options.options_open) {
-                SW_SHOW
-            } else {
-                SW_HIDE
-            },
+            // 직접 일수 입력칸은 없앴다(기간은 전체·오늘·7일간·30일간·올해 칩과 기간 메뉴로 고른다).
+            SW_HIDE,
         );
     }
 }
@@ -886,7 +891,8 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
                 let w = wide(part);
                 let mut size: SIZE = std::mem::zeroed();
                 GetTextExtentPoint32W(dc, w.as_ptr(), (w.len() - 1) as i32, &mut size);
-                SetTextColor(dc, fg);
+                // 강조 칸(노란 바탕)에서는 어두운 글자색을 써야 읽힌다(어두운 테마의 흰 글자는 안 보였다).
+                SetTextColor(dc, if marked { 0x202020 } else { fg });
                 SetBkColor(dc, bg);
                 SetBkMode(
                     dc,
@@ -1247,7 +1253,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         let chip_y = scale(h, 3);
         let chip_h = (head - scale(h, 6)).max(1);
-        let chips = header_chip_rects(r.right, bw, scale(h, 1));
+        let chips = header_chip_rects(r.right, bw);
         let stats_rc = RECT {
             left: chips[0].0,
             top: chip_y,
@@ -1284,13 +1290,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         SelectObject(mem, with(|u| u.small));
         let hint_left = title_left + scale(h, 85);
-        if hint_left < buttons_left - scale(h, 10) {
+        // 힌트는 [통계]·[설정] 칩 왼쪽까지만(사이드바가 열려 제목이 밀리면 칩 위로 번졌다).
+        let hint_right = (chips[0].0 - scale(h, 8)).min(buttons_left - scale(h, 8));
+        if hint_left + scale(h, 60) < hint_right {
             text(
                 "Ctrl+Alt+Space · Esc 숨김 · Ctrl+L 테마",
                 RECT {
                     left: hint_left,
                     top: 0,
-                    right: buttons_left - scale(h, 8),
+                    right: hint_right,
                     bottom: head,
                 },
                 p.text_sub,
@@ -1313,73 +1321,17 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             DeleteObject(border_brush);
         }
 
-        // ③ 탭 메뉴바
-        let bands = with(|u| quick_layout(h, u));
-        let tab_y = bands.tabs.top;
-        let tab_h = scale(h, TAB_H);
-        fill(
-            RECT {
-                left: 0,
-                top: tab_y,
-                right: r.right,
-                bottom: tab_y + tab_h,
-            },
-            p.tab_bg,
-        );
-        fill(
-            RECT {
-                left: 0,
-                top: tab_y + tab_h - 1,
-                right: r.right,
-                bottom: tab_y + tab_h,
-            },
-            p.divider,
-        );
-
+        // ③ 통합 검색: 탭 줄은 없다(본문·위계·파일명을 한 번에 찾는다).
         with(|u| {
             let bands = quick_layout(h, u);
-            let body_label = format!("본문 · {}", u.body_sort.label());
-            let names_label = format!("파일명 · {}", ktm::backend::NAME_SORTS[u.name_sort % 4].1);
-            let tabs = [
-                ("전체", Tab::All),
-                (body_label.as_str(), Tab::Body),
-                ("위계", Tab::Hierarchy),
-                (names_label.as_str(), Tab::Names),
-            ];
-            let tab_rects = calc_tab_rects(pad, tab_y, tab_h, r.right);
-            for (i, (label, tab)) in tabs.iter().enumerate() {
-                let tr = tab_rects[i];
-                let selected = u.state.tab == *tab;
-                let hovered = u.hover_tab == Some(i);
-
-                if selected {
-                    fill(tr, p.bg);
-                    fill(
-                        RECT {
-                            left: tr.left + scale(h, 4),
-                            top: tab_y + tab_h - scale(h, 3),
-                            right: tr.right - scale(h, 4),
-                            bottom: tab_y + tab_h - 1,
-                        },
-                        p.accent,
-                    );
-                    SelectObject(mem, u.small_bold);
-                    text(label, tr, p.accent, DT_CENTER);
-                } else {
-                    if hovered {
-                        fill(tr, p.tab_hover);
-                    }
-                    SelectObject(mem, u.small);
-                    text(label, tr, p.tab_text, DT_CENTER);
-                }
-            }
+            let lpad = pad + side_w;
 
             // ③a 옵션 바: 모드, 필터, 제외, 저장 프리셋
             let oy = bands.options.top;
             let oh = bands.options.bottom - bands.options.top;
             fill(
                 RECT {
-                    left: 0,
+                    left: side_w,
                     top: oy,
                     right: r.right,
                     bottom: oy + oh,
@@ -1387,13 +1339,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 p.bg,
             );
             SelectObject(mem, u.small);
-            let search_mode = if u.state.options.search_mode == tm_state::SearchMode::Keyword {
-                "키워드"
-            } else {
-                "파일명"
-            };
+            // 본문·위계·파일명을 한 번에 찾으므로 첫 칸은 모드 전환이 아닌 안내 글자다.
             let option_labels = [
-                search_mode.to_string(),
+                "통합 검색".to_string(),
                 format!(
                     "정렬:{}",
                     u.state.options.sort.label()
@@ -1408,11 +1356,19 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 ),
                 format!(
                     "기간:{}",
-                    u.state
-                        .options
-                        .days
-                        .map(|d| format!("{d}일"))
-                        .unwrap_or_else(|| "전체".into())
+                    match u.state.date_filter {
+                        DateFilter::All => "전체".to_string(),
+                        DateFilter::Today => "오늘".to_string(),
+                        DateFilter::Last7Days => "7일간".to_string(),
+                        DateFilter::Last30Days => "30일간".to_string(),
+                        DateFilter::ThisYear => "올해".to_string(),
+                        DateFilter::Custom => u
+                            .state
+                            .options
+                            .days
+                            .map(|d| format!("{d}일"))
+                            .unwrap_or_else(|| "지정".into()),
+                    }
                 ),
                 format!(
                     "제외:{}",
@@ -1440,11 +1396,13 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             for (label, (left, right)) in option_labels.iter().zip(spans) {
                 text(
                     label,
+                    // 첫 줄은 옵션 띠의 위쪽 절반에만 그린다. 아래 절반은 옵션 팝업 줄이라
+                    // 세로 가운데 맞춤으로 전체 높이에 그리면 팝업 글자와 겹쳤다.
                     RECT {
                         left: left + scale(h, 2),
                         top: oy,
-                        right,
-                        bottom: oy + oh,
+                        right: (right - scale(h, 4)).max(left + scale(h, 2)),
+                        bottom: oy + scale(h, OPTION_H / 2),
                     },
                     p.text_sub,
                     DT_END_ELLIPSIS,
@@ -1486,44 +1444,13 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     );
                     mx += scale(h, 86);
                 }
-                SelectObject(mem, u.small);
-                text(
-                    "직접 일수",
-                    RECT {
-                        left: mx,
-                        top: second_y,
-                        right: mx + scale(h, 326),
-                        bottom: second_y + scale(h, 22),
-                    },
-                    p.text_sub,
-                    DT_CENTER,
-                );
-                text(
-                    "일",
-                    RECT {
-                        left: mx + scale(h, 326),
-                        top: second_y,
-                        right: mx + scale(h, 340),
-                        bottom: second_y + scale(h, 22),
-                    },
-                    p.text_sub,
-                    DT_CENTER,
-                );
-                let apply_rc = RECT {
-                    left: mx + scale(h, 100),
-                    top: second_y,
-                    right: mx + scale(h, 140),
-                    bottom: second_y + scale(h, 22),
-                };
-                fill(apply_rc, p.tab_hover);
-                text("적용", apply_rc, p.text, DT_CENTER);
             }
 
             let sy = bands.summary.top;
             let sh = bands.summary.bottom - bands.summary.top;
             fill(
                 RECT {
-                    left: 0,
+                    left: side_w,
                     top: sy,
                     right: r.right,
                     bottom: sy + sh,
@@ -1560,25 +1487,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             } else {
                 "☷"
             };
-            let summary = format!(
-                "{view}  {}개 · {:.2}초     파일명 매치 {}  ·  본문 매치 {}",
-                display_ids.len(),
-                elapsed,
-                groups.filename,
-                groups.body
-            );
+            // 파일명·본문 매치 수는 오른쪽 접기 단추(group_left~)에 따로 그리므로 여기에 또 쓰면 겹친다.
+            let summary = format!("{view}  {}개 · {:.2}초", display_ids.len(), elapsed);
             text(
                 &summary,
                 RECT {
-                    left: pad,
+                    left: lpad,
                     top: sy,
-                    right: pad + scale(h, 230),
+                    right: lpad + scale(h, 230),
                     bottom: sy + sh,
                 },
                 p.text_sub,
                 DT_END_ELLIPSIS,
             );
-            let group_left = pad + scale(h, 235);
+            let group_left = lpad + scale(h, 235);
             let group_right = r.right - scale(h, 132);
             let group_mid = group_left + (group_right - group_left) / 2;
             text(
@@ -1643,15 +1565,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             text(
                 "기간:",
                 RECT {
-                    left: pad,
+                    left: lpad,
                     top: fy,
-                    right: pad + scale(h, 32),
+                    right: lpad + scale(h, 32),
                     bottom: fy + fh,
                 },
                 p.text_sub,
                 0,
             );
-            let mut fx = pad + scale(h, 34);
+            let mut fx = lpad + scale(h, 34);
             let date_chips = [
                 (DateFilter::All, "전체", 36),
                 (DateFilter::Today, "오늘", 36),
@@ -1801,7 +1723,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             if !u.state.autocompletes.is_empty() {
                 let ay = bands.autocomplete.top;
                 let ah = bands.autocomplete.bottom - bands.autocomplete.top;
-                let mut ax = pad;
+                let mut ax = lpad;
                 text(
                     "자동완성:",
                     RECT {
@@ -1844,14 +1766,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
             // ⑥ 빈 검색어 첫 화면 최근/즐겨찾기 목록 또는 주요 주제 1~10위
             if u.state.query.trim().is_empty() && u.rows.is_empty() {
-                let ty = fy + fh + scale(h, 14);
+                // 요약 줄(filters 아래)과 겹치지 않도록 결과 목록 시작선 아래에서 그린다.
+                let ty = bands.list_top + scale(h, 8);
                 let entries = u.state.history_entries();
                 if !entries.is_empty() {
                     SelectObject(mem, u.small_bold);
                     text(
                         "최근 및 즐겨찾기 검색  (↑↓ 선택 · Enter 불러오기 · Ctrl+D 즐겨찾기 토글)",
                         RECT {
-                            left: pad,
+                            left: lpad,
                             top: ty,
                             right: r.right - pad,
                             bottom: ty + scale(h, 20),
@@ -1867,7 +1790,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     for (i, entry) in entries.iter().take(max_visible).enumerate() {
                         let top = btn_y + i as i32 * rh;
                         let rc = RECT {
-                            left: pad,
+                            left: lpad,
                             top,
                             right: r.right - pad,
                             bottom: top + rh,
@@ -1892,7 +1815,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         };
                         let pad_x = scale(h, 8);
                         let text_rc = RECT {
-                            left: pad + pad_x,
+                            left: lpad + pad_x,
                             top,
                             right: r.right - pad - pad_x,
                             bottom: top + rh,
@@ -1909,7 +1832,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     text(
                         "주요 주제 1~10위",
                         RECT {
-                            left: pad,
+                            left: lpad,
                             top: ty,
                             right: r.right - pad,
                             bottom: ty + scale(h, 20),
@@ -1919,12 +1842,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     );
                     let btn_y = ty + scale(h, 24);
                     let btn_h = scale(h, 32);
-                    let col_w = (r.right - 2 * pad - scale(h, 16)) / 2;
+                    let col_w = (r.right - side_w - 2 * pad - scale(h, 16)) / 2;
                     SelectObject(mem, u.font);
                     for (i, topic) in u.state.top_topics.iter().take(10).enumerate() {
                         let col = (i % 2) as i32;
                         let row = (i / 2) as i32;
-                        let left = pad + col * (col_w + scale(h, 16));
+                        let left = lpad + col * (col_w + scale(h, 16));
                         let top = btn_y + row * (btn_h + scale(h, 6));
                         let rc = RECT {
                             left,
@@ -1949,6 +1872,44 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             DT_CENTER | DT_END_ELLIPSIS,
                         );
                     }
+                }
+            }
+
+            // ⑥a 오류: 상태줄 한 줄로만 보이면 놓치므로 목록 자리에 안내를 크게 보인다.
+            if u.state.phase == Phase::Error {
+                if let Some(message) = &u.state.error {
+                    let ey = bands.list_top + scale(h, 12);
+                    SelectObject(mem, u.title_font);
+                    text(
+                        "검색하지 못했습니다",
+                        RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) },
+                        p.text,
+                        0,
+                    );
+                    SelectObject(mem, u.font);
+                    SetTextColor(mem, p.text_sub);
+                    let ws = wide(message);
+                    let mut rc = RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 110) };
+                    DrawTextW(mem, ws.as_ptr(), (ws.len() - 1) as i32, &mut rc, DT_WORDBREAK | DT_NOPREFIX);
+                }
+            }
+
+            // ⑥b 결과가 없거나 검색 중일 때 빈 화면 대신 안내를 보인다.
+            if u.rows.is_empty() && !u.state.query.trim().is_empty() {
+                let note = match u.state.phase {
+                    Phase::Results => Some((
+                        "검색 결과가 없습니다",
+                        "철자·띄어쓰기를 바꾸거나, 기간·형식 조건을 '전체'로 바꿔 보세요.",
+                    )),
+                    Phase::Searching => Some(("검색 중…", "")),
+                    _ => None,
+                };
+                if let Some((title, detail)) = note {
+                    let ey = bands.list_top + scale(h, 12);
+                    SelectObject(mem, u.title_font);
+                    text(title, RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) }, p.text, 0);
+                    SelectObject(mem, u.font);
+                    text(detail, RECT { left: lpad, top: ey + scale(h, 30), right: r.right - pad, bottom: ey + scale(h, 54) }, p.text_sub, DT_END_ELLIPSIS);
                 }
             }
 
@@ -2015,7 +1976,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
 
                 // 왼쪽 번호 (1~9)
-                let num_str = if n - u.top < 9 {
+                // 바둑판(grid) 카드에는 왼쪽 번호·종류 칸이 없다(예전엔 카드 위에 겹쳐 엉뚱한 높이에 그려졌다).
+                let num_str = if grid {
+                    String::new()
+                } else if n - u.top < 9 {
                     format!("{}", n - u.top + 1)
                 } else {
                     String::new()
@@ -2024,9 +1988,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 text(
                     &num_str,
                     RECT {
-                        left: scale(h, 8),
+                        left: side_w + scale(h, 8),
                         top: y + scale(h, 2),
-                        right: scale(h, 24),
+                        right: side_w + scale(h, 24),
                         bottom: y + line_h1,
                     },
                     p.row_text(sel, p.number),
@@ -2034,14 +1998,14 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 );
 
                 // 종류 태그/아이콘
-                let tag = extension_tag(&row.name);
+                let tag = if grid { "" } else { extension_tag(&row.name) };
                 SelectObject(mem, u.small_bold);
                 text(
                     tag,
                     RECT {
-                        left: scale(h, 28),
+                        left: side_w + scale(h, 28),
                         top: y + scale(h, 2),
-                        right: scale(h, 66),
+                        right: side_w + scale(h, 66),
                         bottom: y + line_h1,
                     },
                     p.row_text(sel, p.text_faint),
@@ -2055,7 +2019,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let name_left = if grid {
                     row_rc.left + scale(h, 8)
                 } else {
-                    scale(h, 68)
+                    side_w + scale(h, 68)
                 };
                 let badge_w = scale(h, 48);
                 let reason_label = if u.state.tab == Tab::All {
@@ -2067,11 +2031,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     labels
                 } else { String::new() };
                 let reason_w = if reason_label.is_empty() { 0 } else { scale(h, 66) };
-                let badge_right = if grid {
-                    row_rc.right - scale(h, 8)
-                } else {
-                    text_right
-                };
+                // 바둑판 카드에서도 [폴더 열기] 단추 왼쪽에서 끝내 확장자 꼬리표와 겹치지 않게 한다.
+                let badge_right = text_right;
                 let ext = ktm::backend::extension_label(&row.name);
                 let ext_rc = RECT {
                     left: badge_right - badge_w,
@@ -2086,6 +2047,21 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     fill(reason_rc, p.selected);
                     text(&reason_label, reason_rc, p.accent, DT_CENTER);
                 }
+                // 첫 줄: 파일명 오른쪽에 흐린 폴더 경로를 이어 붙인다(둘째 줄은 발췌 문장 전용이라
+                // 예전처럼 경로와 발췌가 같은 줄에 겹쳐 그려지지 않는다).
+                let name_limit = badge_right - badge_w - reason_w - scale(h, 4);
+                let name_wide = wide(&row.name);
+                let mut name_size: SIZE = std::mem::zeroed();
+                GetTextExtentPoint32W(mem, name_wide.as_ptr(), (name_wide.len() - 1) as i32, &mut name_size);
+                let has_second_line_text = !row.snippet.is_empty() || !row.location.is_empty();
+                let path_text = if u.settings.show_location { row.parent.as_str() } else { "" };
+                let (name_right, path_left) = result_first_line_split(
+                    name_left,
+                    name_limit,
+                    name_size.cx + scale(h, 4),
+                    scale(h, 70),
+                    has_second_line_text && !path_text.is_empty(),
+                );
                 highlighted(
                     mem,
                     &row.name,
@@ -2093,12 +2069,26 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     RECT {
                         left: name_left,
                         top: gy + scale(h, 2),
-                        right: badge_right - badge_w - reason_w - scale(h, 4),
+                        right: name_right,
                         bottom: gy + line_h1,
                     },
                     p.row_text(sel, p.text),
                     0x8AF0FE,
                 );
+                if let Some(path_left) = path_left {
+                    SelectObject(mem, u.small);
+                    text(
+                        path_text,
+                        RECT {
+                            left: path_left,
+                            top: gy + scale(h, 2),
+                            right: name_limit,
+                            bottom: gy + line_h1,
+                        },
+                        p.row_text(sel, p.text_faint),
+                        DT_PATH_ELLIPSIS,
+                    );
+                }
 
                 // 오른쪽: 작은 단추 [폴더 열기]
                 let folder_rc = calc_folder_button_rect(
@@ -2131,13 +2121,16 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     (true, false) => date,
                     (false, false) => format!("{location}  |  {date}"),
                 };
+                // 발췌·위치 문장이 있으면 둘째 줄은 그쪽이 쓴다(경로는 첫 줄 오른쪽에 있음).
+                let second_line_taken = !row.snippet.is_empty() || !row.location.is_empty();
+                if !second_line_taken {
                 text(
                     &meta,
                     RECT {
                         left: if grid {
                             row_rc.left + scale(h, 8)
                         } else {
-                            scale(h, 68)
+                            side_w + scale(h, 68)
                         },
                         top: gy + line_h1,
                         right: if grid {
@@ -2150,6 +2143,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     p.row_text(sel, p.text_faint),
                     DT_PATH_ELLIPSIS,
                 );
+                }
 
                 // 둘째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
                 let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
@@ -2160,7 +2154,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let highlight_bg = 0x8AF0FE;
                 SelectObject(mem, u.small);
 
-                let mut snip_left = scale(h, 68);
+                let mut snip_left = side_w + scale(h, 68);
                 if grid {
                     snip_left = row_rc.left + scale(h, 8);
                 }
@@ -2237,7 +2231,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 if let Some(sel_r) = u.rows.get(sel_idx) {
                     let prev_y = r.bottom - status_h - preview_h;
                     let prev_rc = RECT {
-                        left: 0,
+                        left: side_w,
                         top: prev_y,
                         right: r.right,
                         bottom: r.bottom - status_h,
@@ -2245,7 +2239,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     fill(prev_rc, p.tab_bg);
                     fill(
                         RECT {
-                            left: 0,
+                            left: side_w,
                             top: prev_y,
                             right: r.right,
                             bottom: prev_y + 1,
@@ -2343,7 +2337,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 RECT {
                     left: pad,
                     top: status_y,
-                    right: r.right / 2,
+                    // 오른쪽 글자가 없으면 전체 폭을 쓴다(오류 문구가 반쯤에서 잘렸다).
+                    right: if status_right.is_empty() { r.right - pad } else { r.right / 2 },
                     bottom: r.bottom,
                 },
                 p.text_sub,
@@ -2442,6 +2437,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         DT_END_ELLIPSIS,
                     );
                     let mut y = mr.content.top + line + scale(h, 8);
+                    // 아래 안내 문구 줄(content.bottom 쪽 28px)과 패널 밖으로 넘치지 않도록 그릴 한계선을 둔다.
+                    let limit = mr.content.bottom - scale(h, 30);
                     text(
                         "파일 유형",
                         RECT {
@@ -2455,17 +2452,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     );
                     y += line;
                     for (label, count) in s.by_type.iter().take(6) {
+                        if y + line > limit {
+                            break;
+                        }
                         let ratio = if s.total == 0 {
                             0.0
                         } else {
                             *count as f64 * 100.0 / s.total as f64
                         };
-                        let bar_w = ((right - left - 150) as f64 * ratio / 100.0) as i32;
+                        let bar_w = ((right - left - scale(h, 150)) as f64 * ratio / 100.0) as i32;
                         fill(
                             RECT {
-                                left: left + 142,
+                                left: left + scale(h, 142),
                                 top: y + scale(h, 8),
-                                right: left + 142 + bar_w,
+                                right: left + scale(h, 142) + bar_w,
                                 bottom: y + scale(h, 18),
                             },
                             p.accent,
@@ -2475,7 +2475,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             RECT {
                                 left,
                                 top: y,
-                                right: left + 138,
+                                right: left + scale(h, 138),
                                 bottom: y + line,
                             },
                             p.text_sub,
@@ -2484,6 +2484,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         y += line;
                     }
                     y += scale(h, 4);
+                    if y + 2 * line <= limit {
                     text(
                         "연도별 문서",
                         RECT {
@@ -2495,8 +2496,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         p.text,
                         0,
                     );
+                    }
                     y += line;
                     for (year, count) in s.by_year.iter().take(5) {
+                        if y + line > limit {
+                            break;
+                        }
                         text(
                             &format!("{year}  {count}건"),
                             RECT {
@@ -2511,6 +2516,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         y += line;
                     }
                     y += scale(h, 4);
+                    if y + 2 * line <= limit {
                     text(
                         "최근 수정 상위 문서",
                         RECT {
@@ -2522,8 +2528,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         p.text,
                         0,
                     );
+                    }
                     y += line;
                     for row in s.recent.iter().take(5) {
+                        if y + line > limit {
+                            break;
+                        }
                         text(
                             &format!("{}  {}", row.name, row.date),
                             RECT {
@@ -2848,7 +2858,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 GetClientRect(h, &mut r);
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
-                let on_btn = head_button_hit(p.x, p.y, r.right, bw, head).is_some();
+                // 캡션 단추뿐 아니라 [통계]·[설정] 칩도 클릭이 클라이언트로 와야 한다
+                // (예전엔 칩이 HTCAPTION이라 눌러도 창 끌기로만 처리되어 작동하지 않았다).
+                let on_btn = ktm::layout::header_is_client_button(p.x, p.y, r.right, bw, head);
                 let grip = scale(h, frame::GRIP);
                 frame::frame_hit(
                     p.x, p.y, r.right, r.bottom, grip, head, on_btn, false, false,
@@ -2949,15 +2961,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 GetClientRect(h, &mut r);
                 let head = scale(h, HEAD_H);
                 let bw = scale(h, CAPTION_W);
-                let pad = scale(h, 12);
-                let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
                 let folder_w = scale(h, ROW_FOLDER_W);
-
                 let new_head_btn = head_button_hit(x, y, r.right, bw, head);
-                let bands = with(|u| quick_layout(h, u));
-                let tab_y = bands.tabs.top;
-                let tab_h = bands.tabs.bottom - bands.tabs.top;
-                let new_tab = hit_tab(x - side_w, y, pad, tab_y, tab_h, r.right - side_w);
 
                 let top_y = with(|u| list_top_coord(h, u));
                 let rh = row_height(h);
@@ -2993,11 +2998,10 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
 
                 let changed = edit(|u| {
                     let c = u.hover_head_btn != new_head_btn
-                        || u.hover_tab != new_tab
                         || u.hover_row != new_row
                         || u.hover_folder_btn != new_folder_btn;
                     u.hover_head_btn = new_head_btn;
-                    u.hover_tab = new_tab;
+                    u.hover_tab = None;
                     u.hover_row = new_row;
                     u.hover_folder_btn = new_folder_btn;
                     c
@@ -3303,7 +3307,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let bw = scale(h, CAPTION_W);
                 let pad = scale(h, 12);
                 if y < head {
-                    if let Some(chip) = hit_header_chip(x, y, rc_w.right, bw, head, scale(h, 1)) {
+                    if let Some(chip) = hit_header_chip(x, y, rc_w.right, bw, head) {
                         edit(|u| {
                             u.modal = Some(if chip == 0 {
                                 ktm::layout::ModalKind::Statistics
@@ -3430,15 +3434,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 }
 
                 let bands = with(|u| quick_layout(h, u));
-                let tab_y = bands.tabs.top;
-                let tab_h = bands.tabs.bottom - bands.tabs.top;
-                let oy = bands.options.top;
-                let oh = bands.options.bottom - bands.options.top;
-                let fy = bands.filters.top;
-                let fh = bands.filters.bottom - bands.filters.top;
 
                 if hit_quick_band(x, y, bands.options) {
-                    match hit_option(x, y, bands.options.top, oh, pad + side_w, rc_w.right - pad) {
+                    match hit_option(x, y, bands.options.top, scale(h, OPTION_H), pad + side_w, rc_w.right - pad) {
                         Some(OptionControl::MatchMode) => {
                             let modes = [
                                 (tm_state::MatchMode::AllTerms, "모두 포함"),
@@ -3451,77 +3449,11 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 .min(2);
                             event(h, Event::SetMatchMode(modes[idx].0));
                         }
-                        Some(OptionControl::CustomDays) => {
-                            let left = pad + side_w + scale(h, 2);
-                            let edit_left = left + scale(h, 3 * 86);
-                            let edit_right = edit_left + scale(h, 48);
-                            let apply_left = edit_right + scale(h, 52);
-                            if x >= apply_left && x < apply_left + scale(h, 40) {
-                                let input = edit_text(with(|u| u.days_edit), 16);
-                                if let Ok(days) = input.trim().parse::<u32>() {
-                                    if (1..=36500).contains(&days) {
-                                        event(h, Event::SetDays(Some(days)));
-                                        let today = ktm::backend::current_kst_ymd();
-                                        let end =
-                                            (today.0 * 10000 + today.1 * 100 + today.2) as i64;
-                                        event(
-                                            h,
-                                            Event::SetCustomDate(
-                                                ktm::backend::shift_ymd(end, -(days as i64)),
-                                                end,
-                                            ),
-                                        );
-                                    }
-                                }
-                                SetFocus(with(|u| u.edit));
-                            } else {
-                                event(h, Event::ToggleOptions);
-                                if with(|u| u.state.options.options_open) {
-                                    SetFocus(with(|u| u.days_edit));
-                                } else {
-                                    SetFocus(with(|u| u.edit));
-                                }
-                            }
-                        }
-                        Some(OptionControl::SearchMode) if y >= oy + scale(h, OPTION_H / 2) => {
-                            event(h, Event::ToggleOptions)
-                        }
-                        Some(OptionControl::SearchMode) => {
-                            let mode = with(|u| u.state.options.search_mode);
-                            let next = if mode == tm_state::SearchMode::Keyword {
-                                tm_state::SearchMode::Filename
-                            } else {
-                                tm_state::SearchMode::Keyword
-                            };
-                            event(h, Event::SetSearchMode(next));
-                            event(
-                                h,
-                                Event::SwitchTab(if next == tm_state::SearchMode::Filename {
-                                    Tab::Names
-                                } else {
-                                    Tab::Body
-                                }),
-                            );
-                        }
-                        Some(OptionControl::Sort) => {
-                            let cur = with(|u| u.state.options.sort);
-                            let next = cur.next();
-                            event(h, Event::SetSort(next));
-                            edit(|u| {
-                                u.body_sort = match next {
-                                    tm_state::SortMode::Relevance => {
-                                        ktm::backend::BodySort::Relevance
-                                    }
-                                    tm_state::SortMode::Confidence => {
-                                        ktm::backend::BodySort::Confidence
-                                    }
-                                    tm_state::SortMode::Newest => ktm::backend::BodySort::Date,
-                                    tm_state::SortMode::Oldest => ktm::backend::BodySort::Oldest,
-                                    tm_state::SortMode::Name => ktm::backend::BodySort::Name,
-                                };
-                                ktm::backend::sort_rows(&mut u.rows, u.body_sort);
-                            });
-                        }
+                        // 직접 일수 입력은 없앴다. 옵션 팝업에는 검색어 결합 방식만 남는다.
+                        Some(OptionControl::CustomDays) => {}
+                        // 첫 칸('통합 검색')은 안내 글자라 누를 일이 없다.
+                        Some(OptionControl::SearchMode) => {}
+                        Some(OptionControl::Sort) => cycle_sort(h),
                         Some(OptionControl::FileTypes) => {
                             let labels = ["hwp", "hwpx", "docx", "pptx", "xlsx", "pdf", "txt"];
                             let menu = CreatePopupMenu();
@@ -3567,14 +3499,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         Some(OptionControl::Period) => {
                             let menu = CreatePopupMenu();
                             let labels = [
-                                "기간 없음",
-                                "오늘",
-                                "7일",
-                                "30일",
-                                "90일",
-                                "6개월",
-                                "1년",
-                                "직접 일수 입력…",
+                                "전체", "오늘", "7일간", "30일간", "올해", "90일", "6개월", "1년",
                             ];
                             for (i, label) in labels.iter().enumerate() {
                                 AppendMenuW(menu, MF_STRING, 300 + i, wide(label).as_ptr());
@@ -3591,55 +3516,43 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 null(),
                             );
                             DestroyMenu(menu);
-                            let choices = [
-                                None,
-                                Some(0),
-                                Some(7),
-                                Some(30),
-                                Some(90),
-                                Some(180),
-                                Some(365),
-                            ];
-                            if (300..307).contains(&cmd) {
-                                let days = choices[(cmd - 300) as usize];
-                                event(h, Event::SetDays(days));
-                                if let Some(n) = days {
-                                    let today = ktm::backend::current_kst_ymd();
-                                    let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
-                                    if n == 0 {
-                                        event(h, Event::SetDateFilter(DateFilter::Today));
-                                    } else if cmd == 305 {
-                                        event(
-                                            h,
-                                            Event::SetCustomDate(
-                                                ktm::backend::shift_ymd_months(end, -6),
-                                                end,
-                                            ),
-                                        );
-                                    } else if cmd == 306 {
-                                        event(
-                                            h,
-                                            Event::SetCustomDate(
-                                                ktm::backend::shift_ymd_months(end, -12),
-                                                end,
-                                            ),
-                                        );
-                                    } else {
-                                        event(
-                                            h,
-                                            Event::SetCustomDate(
-                                                ktm::backend::shift_ymd(end, -(n as i64)),
-                                                end,
-                                            ),
-                                        );
-                                    }
-                                } else {
+                            // 기간은 검색창 글자가 아닌 내부 상태로만 고른다(칩과 같은 상태).
+                            let today = ktm::backend::current_kst_ymd();
+                            let end = (today.0 * 10000 + today.1 * 100 + today.2) as i64;
+                            match cmd {
+                                300 => {
+                                    event(h, Event::SetDays(None));
                                     event(h, Event::SetDateFilter(DateFilter::All));
                                 }
-                            } else if cmd == 307 {
-                                event(h, Event::ToggleOptions);
-                                layout(h);
-                                SetFocus(with(|u| u.days_edit));
+                                301 => {
+                                    event(h, Event::SetDays(Some(0)));
+                                    event(h, Event::SetDateFilter(DateFilter::Today));
+                                }
+                                302 => {
+                                    event(h, Event::SetDays(Some(7)));
+                                    event(h, Event::SetDateFilter(DateFilter::Last7Days));
+                                }
+                                303 => {
+                                    event(h, Event::SetDays(Some(30)));
+                                    event(h, Event::SetDateFilter(DateFilter::Last30Days));
+                                }
+                                304 => {
+                                    event(h, Event::SetDays(None));
+                                    event(h, Event::SetDateFilter(DateFilter::ThisYear));
+                                }
+                                305 => {
+                                    event(h, Event::SetDays(Some(90)));
+                                    event(h, Event::SetCustomDate(ktm::backend::shift_ymd(end, -90), end));
+                                }
+                                306 => {
+                                    event(h, Event::SetDays(Some(180)));
+                                    event(h, Event::SetCustomDate(ktm::backend::shift_ymd_months(end, -6), end));
+                                }
+                                307 => {
+                                    event(h, Event::SetDays(Some(365)));
+                                    event(h, Event::SetCustomDate(ktm::backend::shift_ymd_months(end, -12), end));
+                                }
+                                _ => {}
                             }
                         }
                         Some(OptionControl::ExcludeFilename) => {
@@ -3655,27 +3568,16 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             event(h, Event::ToggleOptions);
                             layout(h);
                             if with(|u| u.state.options.options_open) {
-                                SetFocus(with(|u| u.days_edit));
+                                SetFocus(with(|u| u.edit));
                             } else {
                                 SetFocus(with(|u| u.edit));
                             }
                         }
                         None => {}
                     }
-                } else if y >= tab_y && y < tab_y + tab_h {
-                    // ② 탭 클릭
-                    if let Some(tab_idx) = hit_tab(x, y, pad, tab_y, tab_h, rc_w.right) {
-                        let tab = match tab_idx {
-                            0 => Tab::All,
-                            1 => Tab::Body,
-                            2 => Tab::Hierarchy,
-                            _ => Tab::Names,
-                        };
-                        event(h, Event::SwitchTab(tab));
-                    }
                 } else if hit_quick_band(x, y, bands.summary) {
                     let sy = bands.summary.top;
-                    let group_left = pad + scale(h, 235);
+                    let group_left = pad + side_w + scale(h, 235);
                     let group_right = rc_w.right - scale(h, 132);
                     if x >= rc_w.right - scale(h, 124) && x < rc_w.right - scale(h, 66) {
                         let rows = with(|u| {
@@ -3734,12 +3636,12 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         hit_summary_group(x, y, sy, scale(h, SUMMARY_H), group_left, group_right)
                     {
                         event(h, Event::ToggleGroup(filename));
-                    } else if x < pad + scale(h, 34) {
+                    } else if x >= side_w && x < pad + side_w + scale(h, 34) {
                         event(h, Event::ToggleView);
                     }
                 } else if hit_quick_band(x, y, bands.filters) {
                     // ③ 통합 검색 범위 단추 (기간 / 형식 / 폴더)
-                    let mut fx = pad + scale(h, 34);
+                    let mut fx = pad + side_w + scale(h, 34);
                     let date_chips = [
                         (DateFilter::All, 36),
                         (DateFilter::Today, 36),
@@ -3835,7 +3737,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 } else if with(|u| u.state.query.trim().is_empty() && u.rows.is_empty()) {
                     let entries = with(|u| u.state.history_entries());
                     if !entries.is_empty() {
-                        let btn_y = fy + fh + scale(h, 14) + scale(h, 24);
+                        let btn_y = bands.list_top + scale(h, 8) + scale(h, 24);
                         let rh = scale(h, 28);
                         let status_h = scale(h, STATUS_H);
                         let max_visible =
@@ -3853,14 +3755,14 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         }
                     } else {
                         // ④ 빈 검색어 첫 화면 주제 1~10위 단추
-                        let ty = fy + fh + scale(h, 14) + scale(h, 24);
+                        let ty = bands.list_top + scale(h, 8) + scale(h, 24);
                         let btn_h = scale(h, 32);
-                        let col_w = (rc_w.right - 2 * pad - scale(h, 16)) / 2;
+                        let col_w = (rc_w.right - side_w - 2 * pad - scale(h, 16)) / 2;
                         let n_topics = with(|u| u.state.top_topics.len().min(10));
                         for i in 0..n_topics {
                             let col = (i % 2) as i32;
                             let row = (i / 2) as i32;
-                            let left = pad + col * (col_w + scale(h, 16));
+                            let left = pad + side_w + col * (col_w + scale(h, 16));
                             let top = ty + row * (btn_h + scale(h, 6));
                             if x >= left && x < left + col_w && y >= top && y < top + btn_h {
                                 event(h, Event::ApplyTopTopic(i));
@@ -3872,7 +3774,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     && hit_quick_band(x, y, bands.autocomplete)
                 {
                     // ⑤ 자동 완성 칩 클릭
-                    let mut ax = pad + scale(h, 62);
+                    let mut ax = pad + side_w + scale(h, 62);
                     let n_ac = with(|u| u.state.autocompletes.len().min(5));
                     for i in 0..n_ac {
                         let cw = scale(h, 85);
@@ -4063,8 +3965,17 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                     if with(|u| u.state.tab) == Tab::All {
                                         let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
                                         let count = with(|u| u.rows.len());
-                                        event(h, Event::SearchPartFinished { generation: g, kind, count, final_part: false });
                                         eprintln!("combined search leg failed: {message}");
+                                        // 세 갈래가 모두 실패하면(서비스·색인 없음 등) 빈 결과가 아니라 오류로 알린다.
+                                        let all_failed = edit(|u| {
+                                            u.leg_errors.push(message.clone());
+                                            u.leg_errors.len() >= 3
+                                        });
+                                        if all_failed {
+                                            event(h, Event::SearchFailed { generation: g, message });
+                                        } else {
+                                            event(h, Event::SearchPartFinished { generation: g, kind, count, final_part: false });
+                                        }
                                     } else {
                                         event(h, Event::SearchFailed { generation: g, message });
                                     }
@@ -4134,8 +4045,12 @@ pub fn run() -> Result<(), String> {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let args: Vec<String> = std::env::args().collect();
         let arg = |name: &str| args.windows(2).find(|a| a[0] == name).map(|a| a[1].clone());
+        // 화면 캡처 모드: 단축키·트레이·단일 인스턴스 뮤텍스·검색 스레드를 만들지 않고, 설정도
+        // 캡처 폴더 안의 임시 자료 폴더를 써서 설치본(사용자 PC)에 영향을 주지 않는다.
+        let capture_dir = arg("--capture-dir").map(PathBuf::from);
         let data = std::env::var_os("KTM_TEST_ROOT")
             .map(PathBuf::from)
+            .or_else(|| capture_dir.as_ref().map(|d| d.join(".ktm-capture-data")))
             .unwrap_or_else(|| {
                 PathBuf::from(std::env::var_os("LOCALAPPDATA").unwrap_or_default())
                     .join("HwpAutoDocFit/ktm")
@@ -4146,12 +4061,12 @@ pub fn run() -> Result<(), String> {
         let destination = arg("--install-path")
             .map(PathBuf::from)
             .unwrap_or_else(|| data.join("bin/ktm.exe"));
-        if crate::lifecycle::run(&args, &data, &source, &destination) {
+        if capture_dir.is_none() && crate::lifecycle::run(&args, &data, &source, &destination) {
             return Ok(());
         }
         let pipe_mode_early = arg("--backend").as_deref() == Some("pipe");
         let previous = FindWindowW(wide(CLASS).as_ptr(), null());
-        if !previous.is_null() && std::env::var_os("KTM_TEST_ROOT").is_none() {
+        if capture_dir.is_none() && !previous.is_null() && std::env::var_os("KTM_TEST_ROOT").is_none() {
             if !args.iter().any(|a| a == "--hidden") {
                 PostMessageW(previous, WM_HOTKEY, 0, 0);
             }
@@ -4303,6 +4218,7 @@ pub fn run() -> Result<(), String> {
                 hover_folder_btn: None,
                 hover_tab: None,
                 status_text: String::new(),
+                leg_errors: Vec::new(),
                 smart_presets: settings.smart_presets.clone(),
                 recent_query_times: settings.recent_query_times.clone(),
                 modal: None,
@@ -4316,6 +4232,14 @@ pub fn run() -> Result<(), String> {
         frame::style_frame(h);
         create_fonts(h);
         layout(h);
+
+        if let Some(dir) = capture_dir {
+            let dpi = arg("--dpi").and_then(|v| v.parse::<i32>().ok()).unwrap_or(96);
+            let scenario = arg("--scenario").unwrap_or_else(|| "all".into());
+            let result = capture::run(h, &dir, dpi, &scenario);
+            DestroyWindow(h);
+            return result;
+        }
 
         let worker_pending = pending;
         let handle = h as usize;

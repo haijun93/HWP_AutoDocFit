@@ -807,11 +807,10 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
                 search(&mut state, &mut effects, false);
             }
         }
-        Event::SwitchTab(tab) => {
-            if state.tab != tab {
-                state.tab = tab;
-                search(&mut state, &mut effects, false);
-            }
+        Event::SwitchTab(_) => {
+            // 본문·위계·파일명 검색은 하나의 통합 검색으로 합쳤다. 탭 전환은 더 이상 없고
+            // (옛 호출은 무시), 탭 상태는 항상 Tab::All이다.
+            state.tab = Tab::All;
         }
         Event::Refresh => {
             let explicit = state.query.trim().chars().count() == 1 && state.phase != Phase::Typing;
@@ -885,7 +884,9 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             generation,
             message,
         } => {
-            if state.phase == Phase::Searching && generation == state.generation {
+            // 통합 검색은 갈래 일부가 먼저 와서 Results가 되었어도 결과가 0건이면 오류로 바꿀 수 있다.
+            let all_failed_empty = state.phase == Phase::Results && state.result_count == 0;
+            if (state.phase == Phase::Searching || all_failed_empty) && generation == state.generation {
                 state.phase = Phase::Error;
                 state.error = Some(message);
             }
@@ -1232,12 +1233,13 @@ mod tests {
     #[test]
     fn tab_preserves_query_and_invalidates_old_search() {
         let old = step(&visible(), Event::Input("예산".into())).0;
-        let (state, effects) = step(&old, Event::SwitchTab(Tab::Hierarchy));
+        // 탭 전환은 폐지됐으므로 다시 찾기(Refresh)가 옛 검색을 무효화하는지 본다.
+        let (state, effects) = step(&old, Event::Refresh);
         assert_eq!(state.query, "예산");
         assert!(matches!(
             &effects[..],
             [Effect::Search {
-                tab: Tab::Hierarchy,
+                tab: Tab::All,
                 ..
             }]
         ));
@@ -1274,12 +1276,14 @@ mod tests {
     #[test]
     fn names_tab_searches_with_shared_query_and_refresh_reruns() {
         let state = step(&visible(), Event::Input("예산".into())).0;
+        // 통합 검색: 탭 전환 이벤트는 무시되고 상태·작업이 바뀌지 않는다.
         let (state, effects) = step(&state, Event::SwitchTab(Tab::Names));
-        assert!(matches!(&effects[..], [Effect::Search { tab: Tab::Names, query, .. }] if query == "예산"));
+        assert_eq!(state.tab, Tab::All);
+        assert!(effects.is_empty());
         let g = state.generation;
         let (state, effects) = step(&state, Event::Refresh);
         assert!(state.generation > g);
-        assert!(matches!(&effects[..], [Effect::Search { tab: Tab::Names, .. }]));
+        assert!(matches!(&effects[..], [Effect::Search { tab: Tab::All, .. }]));
         // 앞 세대의 결과는 버린다.
         assert_eq!(step(&state, Event::SearchFinished { generation: g, count: 3 }).0, state);
         // 1글자는 Enter로만 찾고, 그 뒤 다시 찾기는 1글자 그대로.
@@ -1492,12 +1496,13 @@ mod tests {
         let (state, _) = step(&state, Event::SetCustomDate(20260101, 20261231));
         assert_eq!(state.date_filter, DateFilter::Custom);
         assert_eq!(state.custom_date_range, Some((20260101, 20261231)));
-        assert_eq!(state.query, "예산 ext:pdf path:\"C:\\공문서 2026\" after:2026-01-01 before:2026-12-31");
+        // 기간은 내부 상태로만 두므로 검색창 글자에는 after:/before:가 나타나지 않는다.
+        assert_eq!(state.query, "예산 ext:pdf path:\"C:\\공문서 2026\"");
 
         // 6. 확장자 해제 (None)
         let (state, _) = step(&state, Event::SetExtFilter(None));
         assert_eq!(state.selected_ext, None);
-        assert_eq!(state.query, "예산 path:\"C:\\공문서 2026\" after:2026-01-01 before:2026-12-31");
+        assert_eq!(state.query, "예산 path:\"C:\\공문서 2026\"");
 
         // 7. 폴더 해제 (None)
         let (state, _) = step(&state, Event::SetFolderFilter(None));
@@ -1510,6 +1515,53 @@ mod tests {
         assert_eq!(state.date_filter, DateFilter::All);
         assert_eq!(state.custom_date_range, None);
         assert_eq!(state.query, "예산");
+    }
+
+    #[test]
+    fn period_chips_never_write_into_query_or_recent_searches() {
+        let state = step(&visible(), Event::Input("예산".into())).0;
+        for df in [DateFilter::Today, DateFilter::Last7Days, DateFilter::Last30Days, DateFilter::ThisYear, DateFilter::All] {
+            let (next, effects) = step(&state, Event::SetDateFilter(df));
+            assert_eq!(next.query, "예산", "{df:?}");
+            assert_eq!(next.date_filter, df);
+            assert!(!next.query.contains("after:") && !next.query.contains("before:"));
+            if df != DateFilter::All {
+                assert!(matches!(&effects[..], [Effect::Search { date_filter, query, .. }] if *date_filter == df && query == "예산"));
+            }
+            assert!(next.recent_queries.iter().all(|q| !q.contains("after:") && !q.contains("before:")));
+        }
+        // 일수 범위(옵션 메뉴의 90일·6개월·1년)도 글자 없이 상태로만 유지된다.
+        let (next, effects) = step(&state, Event::SetCustomDate(20260101, 20260301));
+        assert_eq!(next.query, "예산");
+        assert_eq!(next.custom_date_range, Some((20260101, 20260301)));
+        assert!(matches!(&effects[..], [Effect::Search { query, .. }] if query == "예산"));
+    }
+
+    #[test]
+    fn search_failure_after_empty_partial_results_becomes_error_not_blank_list() {
+        let (s, _) = step(&visible(), Event::Input("예산".into()));
+        let g = s.generation;
+        let (s, _) = step(&s, Event::SearchPartFinished { generation: g, kind: ResultKind::Names, count: 0, final_part: false });
+        assert_eq!(s.phase, Phase::Results);
+        let (s, _) = step(&s, Event::SearchFailed { generation: g, message: "검색 서비스에 연결할 수 없습니다".into() });
+        assert_eq!(s.phase, Phase::Error);
+        assert!(s.error.as_deref().is_some_and(|e| e.contains("검색 서비스")));
+        // 결과가 이미 있으면 오류로 덮어쓰지 않는다.
+        let (s, _) = step(&visible(), Event::Input("예산".into()));
+        let g = s.generation;
+        let (s, _) = step(&s, Event::SearchPartFinished { generation: g, kind: ResultKind::Body, count: 2, final_part: false });
+        let (s2, _) = step(&s, Event::SearchFailed { generation: g, message: "x".into() });
+        assert_eq!(s2.phase, Phase::Results);
+    }
+
+    #[test]
+    fn single_unified_tab_ignores_tab_switching() {
+        let state = results(2);
+        for tab in [Tab::Body, Tab::Hierarchy, Tab::Names, Tab::All] {
+            let (next, effects) = step(&state, Event::SwitchTab(tab));
+            assert_eq!(next.tab, Tab::All);
+            assert!(effects.is_empty());
+        }
     }
 
     #[test]

@@ -110,10 +110,21 @@ pub fn hit_modal(x: i32, y: i32, width: i32, height: i32, tabs: usize) -> ModalH
     ModalHit::Content
 }
 
-pub fn header_chip_rects(width: i32, button_width: i32, scale: i32) -> [(i32, i32); 2] {
-    let left = (width - 2 * button_width - 166 * scale).max(150 * scale);
-    let right = (width - 2 * button_width - 86 * scale).max(230 * scale);
-    [(left, right), (right + 4 * scale, right + 82 * scale)]
+/// 오른쪽 위 [통계]·[설정] 칩의 가로 범위. 캡션 단추 폭(button_width)에 비례해 배율을 따른다
+/// (예전엔 정수 배율 1을 곱해 125%·150%에서 그려진 칩과 눌리는 칸이 어긋났다).
+pub fn header_chip_rects(width: i32, button_width: i32) -> [(i32, i32); 2] {
+    let s = |v: i32| v * button_width.max(1) / CAPTION_W;
+    let left = (width - 2 * button_width - s(166)).max(s(150));
+    let right = (width - 2 * button_width - s(86)).max(s(230));
+    [(left, right), (right + s(4), right + s(82))]
+}
+
+/// 창 위쪽 띠에서 클라이언트(클릭 가능) 영역이어야 하는 단추인지: 캡션 단추 또는 [통계]·[설정] 칩.
+/// WM_NCHITTEST가 이 영역을 HTCAPTION(창 끌기)으로 돌려주면 클릭이 클라이언트에 오지 않아
+/// 칩이 작동하지 않으므로, 판정을 순수 함수 하나로 모은다.
+pub fn header_is_client_button(x: i32, y: i32, width: i32, button_width: i32, head: i32) -> bool {
+    head_button_hit(x, y, width, button_width, head).is_some()
+        || hit_header_chip(x, y, width, button_width, head).is_some()
 }
 
 pub fn hit_header_chip(
@@ -122,12 +133,11 @@ pub fn hit_header_chip(
     width: i32,
     button_width: i32,
     head: i32,
-    scale: i32,
 ) -> Option<usize> {
     if y < 0 || y >= head {
         return None;
     }
-    header_chip_rects(width, button_width, scale)
+    header_chip_rects(width, button_width)
         .iter()
         .position(|(l, r)| x >= *l && x < *r)
 }
@@ -654,8 +664,10 @@ fn quick_layout_at(option_top: i32, width: i32, height: i32, scale: i32, has_rel
     let related_h = if has_related { s(28) } else { 0 };
     let search_bottom = s(HEAD_H + SEARCH_BOX_H + 12);
     let related_top = search_bottom;
+    // 탭 줄은 없어졌다(통합 검색 하나). 높이 0의 빈 띠로만 남겨 옛 필드 참조를 깨지 않는다.
     let tab_top = related_top + related_h;
-    let option_h = if show_options { option_height } else { 0 };
+    // show_options는 '옵션 팝업(두 번째 줄)이 열렸는가'다. 닫히면 첫 줄 높이만 차지한다.
+    let option_h = if show_options { option_height } else { option_height / 2 };
     let filter_top = option_top + option_h;
     let summary_top = filter_top + filter_height;
     let autocomplete_top = summary_top + summary_height + if has_autocomplete { s(4) } else { 0 };
@@ -663,7 +675,7 @@ fn quick_layout_at(option_top: i32, width: i32, height: i32, scale: i32, has_rel
     let list_top = autocomplete_top + autocomplete_h;
     QuickSearchLayout {
         related: clip(related_top, related_top + related_h),
-        tabs: clip(tab_top, tab_top + s(TAB_H)),
+        tabs: clip(tab_top, tab_top),
         options: clip(option_top, option_top + option_h),
         filters: clip(filter_top, filter_top + filter_height),
         summary: clip(summary_top, summary_top + summary_height),
@@ -676,7 +688,7 @@ fn quick_layout_at(option_top: i32, width: i32, height: i32, scale: i32, has_rel
 pub fn quick_search_layout(scale: i32, width: i32, height: i32, has_related: bool, show_options: bool, has_autocomplete: bool) -> QuickSearchLayout {
     let s = |v: i32| v * scale.max(1) / 100;
     let related_h = if has_related { s(28) } else { 0 };
-    let option_top = s(HEAD_H + SEARCH_BOX_H + 12) + related_h + s(TAB_H);
+    let option_top = s(HEAD_H + SEARCH_BOX_H + 12) + related_h;
     quick_layout_at(option_top, width, height, scale, has_related, show_options, has_autocomplete, s(OPTION_H), s(FILTER_H), s(SUMMARY_H), s(22))
 }
 
@@ -783,6 +795,17 @@ mod quick_search_card_tests {
         }
         assert_eq!(density_row_height(false), 70);
         assert_eq!(density_row_height(true), 56);
+    }
+
+    #[test]
+    fn first_line_split_keeps_name_and_path_apart() {
+        // 공간이 넉넉하면 파일명 바로 뒤(8px 띄움)에서 경로가 시작한다.
+        assert_eq!(result_first_line_split(68, 400, 120, 70, true), (188, Some(196)));
+        // 파일명이 길면 경로 최소 폭을 남기고 파일명을 줄인다.
+        assert_eq!(result_first_line_split(68, 400, 900, 70, true), (322, Some(330)));
+        // 경로가 필요 없거나 칸이 좁으면 파일명이 끝까지 쓴다.
+        assert_eq!(result_first_line_split(68, 400, 120, 70, false), (400, None));
+        assert_eq!(result_first_line_split(68, 190, 120, 70, true), (190, None));
     }
 
     #[test]
@@ -980,6 +1003,24 @@ pub fn two_line_row_height(scale: i32) -> i32 {
 pub fn result_card_height(scale: i32, compact: bool) -> i32 {
     let logical = if compact { 38 } else { 46 };
     (logical * scale.max(1)).div_euclid(100).max(1)
+}
+
+/// 결과 카드 첫 줄의 가로 배분: 파일명 오른쪽 끝과(공간이 되면) 흐린 폴더 경로의 시작 x.
+/// 파일명이 한 줄을 다 쓰더라도 경로가 `min_path` 폭은 갖도록 파일명을 줄인다.
+/// 경로를 그릴 이유가 없거나 공간이 모자라면 경로는 None(파일명이 끝까지 쓴다).
+pub fn result_first_line_split(
+    name_left: i32,
+    limit: i32,
+    name_width: i32,
+    min_path: i32,
+    want_path: bool,
+) -> (i32, Option<i32>) {
+    let avail = (limit - name_left).max(0);
+    if !want_path || avail < min_path * 2 {
+        return (limit, None);
+    }
+    let name_right = (name_left + name_width).min(limit - min_path - 8).max(name_left);
+    (name_right, Some(name_right + 8))
 }
 
 /// Search-input group-chip band height. No band is reserved for a single query.
@@ -1302,22 +1343,63 @@ mod tests {
     }
     #[test]
     fn header_stats_chip_hit_detected() {
-        let (l, r) = header_chip_rects(700, 46, 1)[0];
-        assert_eq!(hit_header_chip(l, 10, 700, 46, 32, 1), Some(0));
+        let (l, r) = header_chip_rects(700, 46)[0];
+        assert_eq!(hit_header_chip(l, 10, 700, 46, 32), Some(0));
         assert!(r > l);
     }
     #[test]
     fn header_settings_chip_hit_detected() {
-        let (l, _) = header_chip_rects(700, 46, 1)[1];
-        assert_eq!(hit_header_chip(l, 10, 700, 46, 32, 1), Some(1));
+        let (l, _) = header_chip_rects(700, 46)[1];
+        assert_eq!(hit_header_chip(l, 10, 700, 46, 32), Some(1));
     }
     #[test]
     fn header_chip_misses_caption_buttons() {
-        assert_eq!(hit_header_chip(690, 10, 700, 46, 32, 1), None);
+        assert_eq!(hit_header_chip(690, 10, 700, 46, 32), None);
     }
     #[test]
+    fn header_chips_are_client_area_so_clicks_reach_the_window_at_every_scale() {
+        // 통계·설정 칩이 HTCAPTION(창 끌기)이 되면 클릭이 클라이언트에 오지 않아 작동하지 않았다.
+        for scale in [100, 125, 150, 200] {
+            let bw = CAPTION_W * scale / 100;
+            let head = HEAD_H * scale / 100;
+            let width = 700 * scale / 100;
+            for (i, (l, r)) in header_chip_rects(width, bw).into_iter().enumerate() {
+                let mid = (l + r) / 2;
+                assert!(header_is_client_button(mid, head / 2, width, bw, head), "chip {i} scale {scale}");
+                assert_eq!(hit_header_chip(mid, head / 2, width, bw, head), Some(i));
+                // 칩은 캡션 단추(최소화·닫기)와 겹치지 않는다.
+                assert!(r <= width - 2 * bw, "chip {i} overlaps caption buttons at {scale}");
+            }
+            // 칩 두 개도 서로 겹치지 않는다.
+            let chips = header_chip_rects(width, bw);
+            assert!(chips[0].1 <= chips[1].0);
+            // 제목 줄 빈 곳은 여전히 끌기(캡션) 영역이다.
+            assert!(!header_is_client_button(10, head / 2, width, bw, head));
+        }
+    }
+
+    #[test]
+    fn option_band_first_row_and_popup_row_do_not_share_height() {
+        // 옵션 줄 글자는 위쪽 절반, 팝업(모두 포함 등)은 아래쪽 절반에만 그려 겹치지 않는다.
+        for scale in [100, 125, 150, 200] {
+            let closed = quick_search_layout(scale, 700, 900, false, false, false);
+            let open = quick_search_layout(scale, 700, 900, false, true, false);
+            let half = OPTION_H * scale / 100 / 2;
+            assert_eq!(closed.options.bottom - closed.options.top, half);
+            assert_eq!(open.options.bottom - open.options.top, OPTION_H * scale / 100);
+            assert_eq!(open.filters.top, open.options.bottom);
+            // 탭 줄은 없다.
+            assert_eq!(open.tabs.bottom - open.tabs.top, 0);
+            // 첫 줄(top..top+half)에서는 옵션 단추를, 둘째 줄에서는 팝업 칩을 판정한다.
+            let top = open.options.top;
+            assert_eq!(hit_option(10, top + half / 2, top, open.options.bottom - top, 0, 700), Some(OptionControl::SearchMode));
+            assert_eq!(hit_option(12, top + half + 1, top, open.options.bottom - top, 0, 700), Some(OptionControl::MatchMode));
+        }
+    }
+
+    #[test]
     fn header_chip_misses_below_header() {
-        assert_eq!(hit_header_chip(600, 33, 700, 46, 32, 1), None);
+        assert_eq!(hit_header_chip(600, 33, 700, 46, 32), None);
     }
 
     #[test]

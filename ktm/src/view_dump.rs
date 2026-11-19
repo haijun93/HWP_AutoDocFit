@@ -93,7 +93,7 @@ pub fn quick_search_bands(
     let bands = crate::layout::quick_search_layout(scale, width, height, has_related, show_options, has_autocomplete);
     let mut dump = Vec::new();
     push_band_line(&mut dump, "related", bands.related, &related.join(" · "));
-    push_band_line(&mut dump, "options", bands.options, "키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]");
+    push_band_line(&mut dump, "options", bands.options, "통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]");
     push_band_line(&mut dump, "filters", bands.filters, "기간: 전체 · 오늘 · 7일간 · 30일간 · 올해 | 형식: 전체 · HWP · PDF · DOC · XLS");
     push_band_line(&mut dump, "summary", bands.summary, summary);
     push_band_line(&mut dump, "autocomplete", bands.autocomplete, "자동완성: 예산 · 공사 · 계약");
@@ -185,36 +185,36 @@ mod tests {
 
     #[test]
     fn quick_search_empty_results_related_and_error_band_dumps_are_frozen() {
-        // Hand calculation from quick_search_layout: at 100%, search ends at 76, tabs at 76..104,
-        // then option/filter/summary rows end at 162/186/218; with chips at 125%, 35px is added
-        // before tabs, and each later row height is rounded by integer scale(value * 125 / 100).
+        // Hand calculation from quick_search_layout: at 100%, search ends at 76 and (탭 줄이 없어져)
+        // the option/filter/summary rows end at 134/158/190; with chips at 125%, 35px is added
+        // before them, and each later row height is rounded by integer scale(value * 125 / 100).
         let empty = quick_search_bands(640, 900, 100, false, true, false, &[],
-            "☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0", "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기");
+            "☷ 0개 · 0.00초", "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기");
         assert_eq!(empty, [
-            "options 104..162 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"",
-            "filters 162..186 \"기간: 전체 · 오늘 · 7일간 · 30일간 · 올해 | 형식: 전체 · HWP · PDF · DOC · XLS\"",
-            "summary 186..218 \"☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0\"",
-            "list 218..900 \"결과 목록\"",
+            "options 76..134 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"",
+            "filters 134..158 \"기간: 전체 · 오늘 · 7일간 · 30일간 · 올해 | 형식: 전체 · HWP · PDF · DOC · XLS\"",
+            "summary 158..190 \"☷ 0개 · 0.00초\"",
+            "list 190..900 \"결과 목록\"",
             "status 876..900 \"↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기\"",
         ]);
 
         let results = quick_search_bands(640, 900, 125, false, true, false, &[],
-            "☷ 2개 · 0.12초     파일명 매치 2 · 본문 매치 1", "2 documents");
-        assert_eq!(results[0], "options 130..202 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
-        assert_eq!(results[1].split_whitespace().take(2).collect::<Vec<_>>(), ["filters", "202..232"]);
-        assert_eq!(results[2].split_whitespace().take(2).collect::<Vec<_>>(), ["summary", "232..272"]);
-        assert_eq!(results[3], "list 272..900 \"결과 목록\"");
+            "☷ 2개 · 0.12초", "2 documents");
+        assert_eq!(results[0], "options 95..167 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(results[1].split_whitespace().take(2).collect::<Vec<_>>(), ["filters", "167..197"]);
+        assert_eq!(results[2].split_whitespace().take(2).collect::<Vec<_>>(), ["summary", "197..237"]);
+        assert_eq!(results[3], "list 237..900 \"결과 목록\"");
 
         let related = quick_search_bands(640, 900, 125, true, true, false,
             &["예산".into(), "공사".into()], "☷ 2개 · 0.12초", "2 documents");
         assert_eq!(related[0], "related 95..130 \"예산 · 공사\"");
-        assert_eq!(related[1], "options 165..237 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
-        assert_eq!(related[4], "list 307..900 \"결과 목록\"");
+        assert_eq!(related[1], "options 130..202 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(related[4], "list 272..900 \"결과 목록\"");
 
         let error = quick_search_bands(640, 900, 150, false, true, false, &[],
-            "☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0", "검색 서비스 오류");
-        assert_eq!(error[0], "options 156..243 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
-        assert_eq!(error[3], "list 327..900 \"결과 목록\"");
+            "☷ 0개 · 0.00초", "검색 서비스 오류");
+        assert_eq!(error[0], "options 114..201 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(error[3], "list 285..900 \"결과 목록\"");
         assert_eq!(error[4], "status 864..900 \"검색 서비스 오류\"");
     }
 

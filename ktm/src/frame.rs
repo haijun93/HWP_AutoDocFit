@@ -3,7 +3,7 @@
 #![allow(dead_code)]
 
 #[cfg(windows)]
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 
 use windows_sys::Win32::Foundation::{HWND, RECT};
 #[cfg(windows)]
@@ -171,10 +171,20 @@ pub(crate) unsafe fn own_border(mem: HDC, rc: RECT) {
 #[cfg(not(windows))]
 pub(crate) unsafe fn own_border(_mem: *mut core::ffi::c_void, _rc: RECT) {}
 
+/// 화면 캡처 모드에서만 쓰는 DPI 강제값(0이면 창의 실제 DPI).
+#[cfg(windows)]
+static DPI_OVERRIDE: AtomicI32 = AtomicI32::new(0);
+
+#[cfg(windows)]
+pub(crate) fn set_dpi_override(dpi: i32) {
+    DPI_OVERRIDE.store(dpi, Ordering::Relaxed);
+}
+
 pub(crate) fn scale(hwnd: HWND, v: i32) -> i32 {
     #[cfg(windows)]
     {
-        let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
+        let forced = DPI_OVERRIDE.load(Ordering::Relaxed);
+        let dpi = if forced > 0 { forced } else { unsafe { GetDpiForWindow(hwnd) }.max(96) as i32 };
         v * dpi / 96
     }
     #[cfg(not(windows))]
