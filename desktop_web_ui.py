@@ -3943,6 +3943,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
+            "doc_grid", "pdf_edit", "outliner", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
             "set_conversion_target", "set_pdf_compress_target_mb", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))

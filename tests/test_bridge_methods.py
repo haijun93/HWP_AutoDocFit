@@ -31,6 +31,21 @@ class BridgeMethodsTests(unittest.TestCase):
         self.assertEqual(missing, [], f"DesktopWebBridge에 없는 API 이름: {missing}")
 
 
+def browser_api_names():
+    """실제 WebView가 JS로 부를 수 있는 이름(_BrowserApi 허용 목록)."""
+    text = (ROOT / "desktop_web_ui.py").read_text(encoding="utf-8")
+    start = text.index("class _BrowserApi:")
+    end = text.index("setattr(self, name, getattr(bridge, name))", start)
+    return set(re.findall(r'"([a-z_0-9]+)"', text[start:end]))
+
+
+class BrowserApiAllowlistTests(unittest.TestCase):
+    def test_every_flutter_api_name_is_exposed_to_the_webview(self):
+        """브리지에 메서드가 있어도 _BrowserApi 허용 목록에 없으면 화면이 '앱 연결을 기다리고 있습니다'를 낸다(v2.2.81 문서뷰 사고)."""
+        missing = sorted(n for n in flutter_api_names() - NOT_A_WEB_CALL if n not in browser_api_names())
+        self.assertEqual(missing, [], f"_BrowserApi 허용 목록에 없는 API 이름: {missing}")
+
+
 class BridgeWrapperBehaviorTests(unittest.TestCase):
     """새 브리지 메서드가 실제로 서비스를 부르는지(임시 설정 폴더, 앱·Tk 없이)."""
 
