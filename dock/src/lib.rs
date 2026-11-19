@@ -234,6 +234,75 @@ pub fn click_state(state: WindowState) -> WindowState {
 }
 pub fn running_dot(state: WindowState) -> bool { state != WindowState::Closed }
 
+/// Small GDI-friendly vector vocabulary. Coordinates are normalized to a 24×24 view box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum IconShape {
+    Line { x1: f32, y1: f32, x2: f32, y2: f32 },
+    Rect { left: f32, top: f32, right: f32, bottom: f32, filled: bool },
+    Circle { cx: f32, cy: f32, radius: f32, filled: bool },
+    Polygon { points: &'static [(f32, f32)], filled: bool },
+}
+
+const DOC: &[IconShape] = &[IconShape::Rect { left: 5., top: 3., right: 19., bottom: 21., filled: false }, IconShape::Line { x1: 8., y1: 8., x2: 16., y2: 8. }, IconShape::Line { x1: 8., y1: 12., x2: 16., y2: 12. }, IconShape::Line { x1: 8., y1: 16., x2: 14., y2: 16. }];
+const TABLE: &[IconShape] = &[IconShape::Rect { left: 3., top: 5., right: 21., bottom: 19., filled: false }, IconShape::Line { x1: 3., y1: 10., x2: 21., y2: 10. }, IconShape::Line { x1: 3., y1: 14., x2: 21., y2: 14. }, IconShape::Line { x1: 9., y1: 5., x2: 9., y2: 19. }, IconShape::Line { x1: 15., y1: 5., x2: 15., y2: 19. }];
+const GRID: &[IconShape] = &[IconShape::Rect { left: 4., top: 4., right: 20., bottom: 20., filled: false }, IconShape::Line { x1: 4., y1: 12., x2: 20., y2: 12. }, IconShape::Line { x1: 12., y1: 4., x2: 12., y2: 20. }, IconShape::Circle { cx: 12., cy: 12., radius: 2., filled: true }];
+const NODES: &[(f32, f32)] = &[(4., 12.), (12., 4.), (20., 12.), (12., 20.)];
+const POLYGON4: &[IconShape] = &[IconShape::Polygon { points: NODES, filled: false }, IconShape::Line { x1: 4., y1: 12., x2: 20., y2: 12. }, IconShape::Line { x1: 12., y1: 4., x2: 12., y2: 20. }];
+const MIND: &[IconShape] = &[IconShape::Circle { cx: 12., cy: 12., radius: 4., filled: true }, IconShape::Circle { cx: 4., cy: 6., radius: 2., filled: false }, IconShape::Circle { cx: 20., cy: 6., radius: 2., filled: false }, IconShape::Circle { cx: 4., cy: 18., radius: 2., filled: false }, IconShape::Circle { cx: 20., cy: 18., radius: 2., filled: false }, IconShape::Line { x1: 8., y1: 10., x2: 5., y2: 7. }, IconShape::Line { x1: 16., y1: 10., x2: 19., y2: 7. }, IconShape::Line { x1: 8., y1: 14., x2: 5., y2: 17. }, IconShape::Line { x1: 16., y1: 14., x2: 19., y2: 17. }];
+const PICTURE: &[IconShape] = &[IconShape::Rect { left: 3., top: 4., right: 21., bottom: 20., filled: false }, IconShape::Circle { cx: 8., cy: 9., radius: 2., filled: true }, IconShape::Polygon { points: &[(5., 18.), (11., 12.), (14., 15.), (17., 11.), (20., 18.)], filled: true }];
+const RENAME: &[IconShape] = &[IconShape::Line { x1: 5., y1: 19., x2: 19., y2: 5. }, IconShape::Polygon { points: &[(4., 20.), (5., 15.), (9., 19.)], filled: true }, IconShape::Line { x1: 13., y1: 7., x2: 17., y2: 11. }, IconShape::Line { x1: 7., y1: 7., x2: 11., y2: 7. }];
+const SEARCH: &[IconShape] = &[IconShape::Circle { cx: 10., cy: 10., radius: 6., filled: false }, IconShape::Line { x1: 14., y1: 14., x2: 21., y2: 21. }];
+const VIEW: &[IconShape] = &[IconShape::Polygon { points: &[(2., 12.), (7., 6.), (17., 6.), (22., 12.), (17., 18.), (7., 18.)], filled: false }, IconShape::Circle { cx: 12., cy: 12., radius: 3., filled: true }];
+const PHOTO: &[IconShape] = &[IconShape::Rect { left: 3., top: 3., right: 21., bottom: 21., filled: false }, IconShape::Circle { cx: 15., cy: 8., radius: 2., filled: true }, IconShape::Polygon { points: &[(5., 18.), (10., 11.), (13., 15.), (16., 12.), (20., 18.)], filled: true }];
+const CONVERT: &[IconShape] = &[IconShape::Rect { left: 4., top: 5., right: 15., bottom: 19., filled: false }, IconShape::Line { x1: 10., y1: 12., x2: 21., y2: 12. }, IconShape::Polygon { points: &[(17., 8.), (21., 12.), (17., 16.)], filled: true }];
+const PDF: &[IconShape] = &[IconShape::Rect { left: 5., top: 3., right: 19., bottom: 21., filled: false }, IconShape::Line { x1: 7., y1: 16., x2: 10., y2: 8. }, IconShape::Line { x1: 10., y1: 8., x2: 13., y2: 16. }, IconShape::Line { x1: 8., y1: 13., x2: 12., y2: 13. }, IconShape::Line { x1: 15., y1: 9., x2: 18., y2: 9. }, IconShape::Line { x1: 15., y1: 9., x2: 15., y2: 16. }];
+const FOLDER: &[IconShape] = &[IconShape::Polygon { points: &[(3., 6.), (10., 6.), (12., 9.), (21., 9.), (19., 19.), (4., 19.)], filled: false }, IconShape::Line { x1: 5., y1: 12., x2: 19., y2: 12. }];
+const NOTE: &[IconShape] = &[IconShape::Rect { left: 4., top: 3., right: 20., bottom: 21., filled: false }, IconShape::Line { x1: 8., y1: 8., x2: 16., y2: 8. }, IconShape::Line { x1: 8., y1: 12., x2: 16., y2: 12. }, IconShape::Line { x1: 8., y1: 16., x2: 14., y2: 16. }, IconShape::Circle { cx: 18., cy: 18., radius: 2., filled: true }];
+const OUTLINE: &[IconShape] = &[IconShape::Line { x1: 5., y1: 5., x2: 5., y2: 19. }, IconShape::Line { x1: 5., y1: 7., x2: 10., y2: 7. }, IconShape::Line { x1: 5., y1: 12., x2: 10., y2: 12. }, IconShape::Line { x1: 5., y1: 17., x2: 10., y2: 17. }, IconShape::Rect { left: 11., top: 5., right: 20., bottom: 9., filled: false }, IconShape::Rect { left: 11., top: 10., right: 20., bottom: 14., filled: false }, IconShape::Rect { left: 11., top: 15., right: 20., bottom: 19., filled: false }];
+pub fn icon_shapes(tab: u8) -> &'static [IconShape] {
+    match tab { 0 => DOC, 1 => TABLE, 2 => GRID, 3 => POLYGON4, 4 => MIND, 5 => PICTURE, 6 => RENAME, 7 => SEARCH, 8 => VIEW, 9 => PHOTO, 10 => CONVERT, 11 => PDF, 12 => FOLDER, 13 => NOTE, 14 => OUTLINE, _ => &[] }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct IconCacheKey { pub tab: u8, pub dpi: u32, pub size_px: i32 }
+pub fn icon_size_px(dpi: u32, logical_size: i32) -> i32 { ((dpi.max(1) as i64 * logical_size as i64 + 48) / 96) as i32 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Palette { pub foreground: u32, pub accent: u32, pub background: u32, pub border: u32 }
+pub const NORMAL_PALETTE: Palette = Palette { foreground: 0xF4F1ED, accent: 0x67B7D1, background: 0x302820, border: 0x706050 };
+pub fn palette_for_mode(normal: Palette, high_contrast: bool, window: u32, window_text: u32, highlight: u32, highlight_text: u32) -> Palette {
+    if high_contrast { Palette { foreground: window_text, accent: highlight, background: window, border: highlight_text } } else { normal }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TooltipPlacement { pub left: i32, pub top: i32 }
+pub fn tooltip_visible(elapsed_ms: u32, delay_ms: u32, hovered: bool) -> bool { hovered && elapsed_ms >= delay_ms }
+pub fn tooltip_position(anchor: (i32, i32), size: (i32, i32), screen: Rect, gap: i32) -> TooltipPlacement {
+    let mut left = anchor.0 - size.0 / 2;
+    let mut top = anchor.1 - size.1 - gap;
+    left = left.clamp(screen.left, (screen.right - size.0).max(screen.left));
+    if top < screen.top { top = anchor.1 + gap; }
+    top = top.clamp(screen.top, (screen.bottom - size.1).max(screen.top));
+    TooltipPlacement { left, top }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key { Left, Right, Enter, Other }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FocusState { pub selected: usize, pub count: usize }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyAction { None, Focus(usize), Activate(usize) }
+pub fn keyboard_step(state: FocusState, key: Key) -> (FocusState, KeyAction) {
+    if state.count == 0 { return (state, KeyAction::None); }
+    let selected = state.selected.min(state.count - 1);
+    match key {
+        Key::Left => { let next = (selected + state.count - 1) % state.count; (FocusState { selected: next, count: state.count }, KeyAction::Focus(next)) }
+        Key::Right => { let next = (selected + 1) % state.count; (FocusState { selected: next, count: state.count }, KeyAction::Focus(next)) }
+        Key::Enter => (FocusState { selected, count: state.count }, KeyAction::Activate(selected)),
+        Key::Other => (FocusState { selected, count: state.count }, KeyAction::None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +417,35 @@ mod tests {
         assert_eq!(click_state(WindowState::OpenFocused), WindowState::OpenUnfocused);
         assert!(!running_dot(WindowState::Closed));
         assert!(running_dot(WindowState::OpenUnfocused));
+    }
+    #[test]
+    fn all_menu_icons_have_distinct_vector_geometry_and_dpi_sizes() {
+        for tab in 0..15 { assert!(!icon_shapes(tab).is_empty(), "missing icon {tab}"); }
+        assert!(icon_shapes(15).is_empty());
+        assert_eq!(icon_size_px(96, 24), 24);
+        assert_eq!(icon_size_px(144, 24), 36);
+        assert_ne!(icon_shapes(0), icon_shapes(1));
+    }
+    #[test]
+    fn tooltip_delay_and_position_dump() {
+        assert!(!tooltip_visible(399, 400, true));
+        assert!(tooltip_visible(400, 400, true));
+        assert!(!tooltip_visible(900, 400, false));
+        assert_eq!(tooltip_position((5, 5), (80, 24), r(0, 0, 100, 100), 6), TooltipPlacement { left: 0, top: 11 });
+        assert_eq!(tooltip_position((98, 80), (80, 24), r(0, 0, 100, 100), 6), TooltipPlacement { left: 20, top: 50 });
+    }
+    #[test]
+    fn keyboard_focus_wraps_and_enter_activates() {
+        let s = FocusState { selected: 0, count: 3 };
+        assert_eq!(keyboard_step(s, Key::Left), (FocusState { selected: 2, count: 3 }, KeyAction::Focus(2)));
+        assert_eq!(keyboard_step(s, Key::Right), (FocusState { selected: 1, count: 3 }, KeyAction::Focus(1)));
+        assert_eq!(keyboard_step(FocusState { selected: 8, count: 3 }, Key::Enter), (FocusState { selected: 2, count: 3 }, KeyAction::Activate(2)));
+        assert_eq!(keyboard_step(FocusState { selected: 0, count: 0 }, Key::Enter).1, KeyAction::None);
+    }
+    #[test]
+    fn high_contrast_uses_system_palette_and_normal_keeps_theme() {
+        let hc = palette_for_mode(NORMAL_PALETTE, true, 0x111, 0x222, 0x333, 0x444);
+        assert_eq!(hc, Palette { foreground: 0x222, accent: 0x333, background: 0x111, border: 0x444 });
+        assert_eq!(palette_for_mode(NORMAL_PALETTE, false, 0, 0, 0, 0), NORMAL_PALETTE);
     }
 }

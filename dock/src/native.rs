@@ -8,7 +8,7 @@ use std::{
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
-    System::{LibraryLoader::GetModuleHandleW, Threading::*},
+    System::{LibraryLoader::GetModuleHandleW, SystemInformation::GetTickCount64, Threading::*},
     UI::{
         Accessibility::{HWINEVENTHOOK, SetWinEventHook},
         HiDpi::*,
@@ -19,7 +19,14 @@ use windows_sys::Win32::{
 static STATE: OnceLock<Mutex<bool>> = OnceLock::new();
 static HWND_VALUE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static LAST_MOUSE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
+static HOVER_TAB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+static HOVER_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static KEY_FOCUS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static ICON_CACHE: OnceLock<Mutex<std::collections::HashMap<dock::IconCacheKey, Vec<dock::IconShape>>>> = OnceLock::new();
+static WINDOW_STATES: OnceLock<Mutex<std::collections::HashMap<u8, dock::WindowState>>> = OnceLock::new();
 const CLASS: &str = "HwpAutoDocFit.Dock";
+#[repr(C)]
+struct HighContrast { cb_size: u32, flags: u32, scheme: *mut u16 }
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
@@ -129,14 +136,28 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
         WM_MOUSEMOVE => {
             let key = ((l as u32 as u16 as u64) << 16) | (l as u32 as u16 as u64);
             if LAST_MOUSE.swap(key, std::sync::atomic::Ordering::Relaxed) != key {
+                let mut r: RECT = std::mem::zeroed(); GetClientRect(hwnd, &mut r);
+                let menus = visible_menus();
+                if !menus.is_empty() {
+                    let x = (l as u32 as u16) as i32;
+                    let spacing = (r.right - 32).max(1) / menus.len() as i32;
+                    let idx = ((x - 16) / spacing.max(1)).clamp(0, menus.len() as i32 - 1) as usize;
+                    let tab = menus[idx].tab as i32;
+                    if HOVER_TAB.swap(tab, std::sync::atomic::Ordering::Relaxed) != tab {
+                        HOVER_TICK.store(GetTickCount64(), std::sync::atomic::Ordering::Relaxed);
+                        SetTimer(hwnd, 2, 420, None);
+                        InvalidateRect(hwnd, ptr::null(), 0);
+                    }
                 if GetCapture() != hwnd {
                     SetCapture(hwnd);
                 }
                 SetTimer(hwnd, 1, 16, None);
+                }
             }
             DefWindowProcW(hwnd, msg, w, l)
         }
         WM_TIMER => {
+            if w == 2 { KillTimer(hwnd, 2); InvalidateRect(hwnd, ptr::null(), 0); return 0; }
             let mut p: POINT = std::mem::zeroed();
             GetCursorPos(&mut p);
             let key = ((p.y as u16 as u64) << 16) | (p.x as u16 as u64);
@@ -154,12 +175,24 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             let mut r: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut r);
             let x = (l as u32 as u16) as i32;
-            let hidden = hidden_tabs();
-            let menus = dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false);
-            let first = r.right / 2 - ((menus.len() as i32 - 1) * 14) / 2;
-            let index = ((x - first + 7) / 14).clamp(0, menus.len() as i32 - 1) as usize;
-            if let Some(item) = menus.get(index) { let _ = open_tab(item.tab); }
+            let menus = visible_menus();
+            let spacing = (r.right - 32).max(1) / menus.len().max(1) as i32;
+            let index = ((x - 16) / spacing.max(1)).clamp(0, menus.len().saturating_sub(1) as i32) as usize;
+            if let Some(item) = menus.get(index) { activate_tab(item.tab); }
             0
+        }
+        WM_KEYDOWN => {
+            let menus = visible_menus();
+            if !menus.is_empty() {
+                let focus = KEY_FOCUS.load(std::sync::atomic::Ordering::Relaxed).min(menus.len() - 1);
+                let key = match w as u32 { 0x25 => dock::Key::Left, 0x27 => dock::Key::Right, 0x0D => dock::Key::Enter, _ => dock::Key::Other };
+                let (next, action) = dock::keyboard_step(dock::FocusState { selected: focus, count: menus.len() }, key);
+                KEY_FOCUS.store(next.selected, std::sync::atomic::Ordering::Relaxed);
+                if let dock::KeyAction::Activate(i) = action { activate_tab(menus[i].tab); }
+                InvalidateRect(hwnd, ptr::null(), 0);
+                if key != dock::Key::Other { return 0; }
+            }
+            DefWindowProcW(hwnd, msg, w, l)
         }
         WM_DESTROY => {
             PostQuitMessage(0);
@@ -209,19 +242,33 @@ unsafe fn paint(hwnd: HWND) {
     let mem = CreateCompatibleDC(dc);
     let bmp = CreateCompatibleBitmap(dc, r.right, r.bottom);
     let old = SelectObject(mem, bmp);
-    let bg = CreateSolidBrush(0x302820);
-    let edge = CreatePen(PS_SOLID, 1, 0x706050);
+    let mut hc = HighContrast { cb_size: std::mem::size_of::<HighContrast>() as u32, flags: 0, scheme: ptr::null_mut() };
+    let high_contrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc.cb_size, &mut hc as *mut _ as *mut _, 0) != 0 && (hc.flags & 1) != 0;
+    let palette = dock::palette_for_mode(dock::NORMAL_PALETTE, high_contrast, GetSysColor(COLOR_WINDOW) as u32, GetSysColor(COLOR_WINDOWTEXT) as u32, GetSysColor(COLOR_HIGHLIGHT) as u32, GetSysColor(COLOR_HIGHLIGHTTEXT) as u32);
+    let bg = CreateSolidBrush(palette.background);
+    let edge = CreatePen(PS_SOLID, 1, palette.border);
     let old_brush = SelectObject(mem, bg);
     let old_pen = SelectObject(mem, edge);
     RoundRect(mem, 2, 2, r.right - 2, r.bottom - 2, 24, 24);
-    let dot = CreateSolidBrush(0xF4F1ED);
-    SelectObject(mem, dot);
-    let hidden = hidden_tabs();
-    let menus = dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false);
-    let first = r.right / 2 - ((menus.len() as i32 - 1) * 14) / 2;
-    for i in 0..menus.len() {
-        let x = first + 14 * i as i32;
-        Ellipse(mem, x - 4, r.bottom / 2 - 4, x + 4, r.bottom / 2 + 4);
+    let menus = visible_menus();
+    let dpi = GetDpiForWindow(hwnd).max(96);
+    let size = dock::icon_size_px(dpi, 24);
+    let spacing = (r.right - 32).max(1) / menus.len().max(1) as i32;
+    let focus = KEY_FOCUS.load(std::sync::atomic::Ordering::Relaxed);
+    for (i, item) in menus.iter().enumerate() {
+        let x = 16 + spacing * i as i32 + spacing / 2;
+        let y = r.bottom / 2;
+        let key = dock::IconCacheKey { tab: item.tab, dpi, size_px: size };
+        let shapes = ICON_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().entry(key).or_insert_with(|| dock::icon_shapes(item.tab).to_vec()).clone();
+        draw_icon(mem, &shapes, x - size / 2, y - size / 2, size, palette.foreground, palette.accent);
+        let state = WINDOW_STATES.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().get(&item.tab).copied().unwrap_or(dock::WindowState::Closed);
+        if dock::running_dot(state) { let dot = CreateSolidBrush(palette.accent); let old = SelectObject(mem, dot); Ellipse(mem, x-3, y+size/2+3, x+3, y+size/2+9); SelectObject(mem, old); DeleteObject(dot); }
+        if focus == i { let pen = CreatePen(PS_SOLID, 1, palette.accent); let old = SelectObject(mem, pen); let brush = GetStockObject(NULL_BRUSH as i32); let oldb = SelectObject(mem, brush); Ellipse(mem, x-size/2-3, y-size/2-3, x+size/2+3, y+size/2+3); SelectObject(mem, oldb); SelectObject(mem, old); DeleteObject(pen); }
+        if HOVER_TAB.load(std::sync::atomic::Ordering::Relaxed) == item.tab as i32 && GetTickCount64().saturating_sub(HOVER_TICK.load(std::sync::atomic::Ordering::Relaxed)) >= 400 {
+            let name = wide(item.name); SetBkMode(mem, TRANSPARENT as i32); SetTextColor(mem, palette.foreground);
+            let mut tr = RECT { left: (x-70).max(2), top: r.bottom-22, right: (x+70).min(r.right-2), bottom: r.bottom-4 };
+            DrawTextW(mem, name.as_ptr(), -1, &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
     }
     GdiFlush();
     BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
@@ -230,10 +277,39 @@ unsafe fn paint(hwnd: HWND) {
     SelectObject(mem, old);
     DeleteObject(bg);
     DeleteObject(edge);
-    DeleteObject(dot);
     DeleteObject(bmp);
     DeleteDC(mem);
     EndPaint(hwnd, &ps);
+}
+
+fn visible_menus() -> Vec<dock::MenuItem> { let hidden = hidden_tabs(); dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false) }
+fn activate_tab(tab: u8) {
+    let states = WINDOW_STATES.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let mut states = states.lock().unwrap();
+    let previous = states.get(&tab).copied().unwrap_or(dock::WindowState::Closed);
+    states.insert(tab, dock::click_state(previous));
+    drop(states);
+    let _ = open_tab(tab);
+    let hwnd = HWND_VALUE.load(std::sync::atomic::Ordering::Relaxed) as HWND;
+    unsafe { InvalidateRect(hwnd, ptr::null(), 0); }
+}
+unsafe fn draw_icon(dc: HDC, shapes: &[dock::IconShape], ox: i32, oy: i32, size: i32, fg: u32, accent: u32) {
+    let s = size as f32 / 24.;
+    for shape in shapes {
+        let color = match shape { dock::IconShape::Circle { filled: true, .. } | dock::IconShape::Polygon { filled: true, .. } => accent, _ => fg };
+        let pen = CreatePen(PS_SOLID, (size/12).max(1), color); let oldp = SelectObject(dc, pen);
+        let owns_brush = matches!(shape, dock::IconShape::Circle { filled: true, .. } | dock::IconShape::Rect { filled: true, .. } | dock::IconShape::Polygon { filled: true, .. });
+        let brush = if owns_brush { CreateSolidBrush(color) } else { GetStockObject(NULL_BRUSH as i32) };
+        let oldb = SelectObject(dc, brush);
+        match shape {
+            dock::IconShape::Line{x1,y1,x2,y2} => { MoveToEx(dc, ox+(x1*s) as i32, oy+(y1*s) as i32, ptr::null_mut()); LineTo(dc, ox+(x2*s) as i32, oy+(y2*s) as i32); }
+            dock::IconShape::Rect{left,top,right,bottom,..} => { Rectangle(dc, ox+(left*s) as i32, oy+(top*s) as i32, ox+(right*s) as i32, oy+(bottom*s) as i32); }
+            dock::IconShape::Circle{cx,cy,radius,..} => { Ellipse(dc, ox+((cx-radius)*s) as i32, oy+((cy-radius)*s) as i32, ox+((cx+radius)*s) as i32, oy+((cy+radius)*s) as i32); }
+            dock::IconShape::Polygon{points,..} => { let pts: Vec<POINT> = points.iter().map(|(x,y)| POINT{x:ox+(*x*s) as i32,y:oy+(*y*s) as i32}).collect(); Polygon(dc, pts.as_ptr(), pts.len() as i32); }
+        }
+        SelectObject(dc, oldb); SelectObject(dc, oldp); DeleteObject(pen);
+        if owns_brush { DeleteObject(brush); }
+    }
 }
 fn pipe_server() {
     use windows_sys::Win32::{
