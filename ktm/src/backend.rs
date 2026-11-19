@@ -1547,6 +1547,86 @@ mod tests {
         );
     }
     #[test]
+    fn kfind_response_rows_flow_into_all_tab_combination() {
+        // kfind pipe.rs query emits result.hits; names_query emits result.items.
+        // These are the service's JSON envelopes and field names, decoded by the
+        // same functions used by the named-pipe client.
+        let names = decode_names(r#"{"ok":true,"result":{"items":[{"name":"예산안.hwp","dir":"C:\\문서","is_dir":false,"size":2048,"mtime":0}]}}"#.as_bytes()).unwrap();
+        let hierarchy = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"C:\\문서\\예산안.hwp","level":1,"count":1,"date":0,"sentences":[]}]}}"#.as_bytes()).unwrap();
+        let body = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"c:/문서/예산안.hwp","level":8,"count":2,"date":0,"sentences":[{"ord":1,"para":3,"level":8,"adjacent":false}]}]}}"#.as_bytes()).unwrap();
+        let batches = [
+            (crate::tm_state::ResultKind::Names, names),
+            (crate::tm_state::ResultKind::Hierarchy, hierarchy),
+            (crate::tm_state::ResultKind::Body, body),
+        ];
+        let combined = crate::tm_state::combine_results(&batches, |r| {
+            r.path.replace('/', "\\").to_lowercase()
+        });
+        assert_eq!(combined.len(), 1);
+        assert_eq!(combined[0].row.name, "예산안.hwp");
+        assert_eq!(
+            combined[0].kinds,
+            [
+                crate::tm_state::ResultKind::Names,
+                crate::tm_state::ResultKind::Hierarchy,
+                crate::tm_state::ResultKind::Body,
+            ]
+        );
+    }
+
+    #[test]
+    fn kfind_response_empty_errors_groups_and_tier_caps_flow() {
+        use crate::tm_state::{ResultKind, combine_results};
+        assert!(
+            decode_rows(br#"{"ok":true,"result":{"hits":[]}}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            decode_names(br#"{"ok":true,"result":{"items":[]}}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            decode_rows(br#"{"ok":false,"error":"service offline"}"#)
+                .unwrap_err()
+                .contains("offline")
+        );
+        assert_eq!(kfind_core::parse_groups("예산; 결산"), ["예산", "결산"]);
+
+        let names: Vec<Row> = (0..25)
+            .map(|i| Row {
+                path: format!("n{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let hierarchy: Vec<Row> = (0..25)
+            .map(|i| Row {
+                path: format!("h{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let body: Vec<Row> = (0..50)
+            .map(|i| Row {
+                path: format!("b{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let combined = combine_results(
+            &[
+                (ResultKind::Names, names),
+                (ResultKind::Hierarchy, hierarchy),
+                (ResultKind::Body, body),
+            ],
+            |r| r.path.clone(),
+        );
+        assert_eq!(combined.len(), 80);
+        assert_eq!(combined.iter().filter(|r| r.priority == 0).count(), 20);
+        assert_eq!(combined.iter().filter(|r| r.priority == 1).count(), 20);
+        assert_eq!(combined.iter().filter(|r| r.priority == 2).count(), 40);
+    }
+
+    #[test]
     fn service_error_and_original_text_absence() {
         assert!(
             decode_rows(br#"{"ok":false,"error":"offline"}"#)
