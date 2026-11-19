@@ -163,7 +163,7 @@ pub fn hit_test(p: (i32, i32), icons: &[IconPlacement]) -> Option<usize> {
         p.0 >= i.hit.left && p.0 < i.hit.right && p.1 >= i.hit.top && p.1 < i.hit.bottom
     })
 }
-pub const TAB_NAMES: [&str; 15] = [
+pub const TAB_NAMES: [&str; 16] = [
     "문서편집",
     "표템플릿",
     "표그림판",
@@ -179,6 +179,7 @@ pub const TAB_NAMES: [&str; 15] = [
     "자료함",
     "업무자료함/노트북",
     "아웃라이너",
+    "검색 벤치마크",
 ];
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuItem {
@@ -186,11 +187,13 @@ pub struct MenuItem {
     pub name: &'static str,
 }
 pub fn menu_items(hidden_tabs: &[u8], developer_mode: bool) -> Vec<MenuItem> {
-    (0..15u8)
+    (0..16u8)
         .filter(|n| {
-            *n == 0 || ((*n == 12 || *n == 13) && developer_mode) || !hidden_tabs.contains(n)
+            *n == 0
+                || ((*n == 12 || *n == 13 || *n == 15) && developer_mode)
+                || (!hidden_tabs.contains(n) && *n != 15)
         })
-        .filter(|n| (*n != 12 && *n != 13) || developer_mode)
+        .filter(|n| (*n != 12 && *n != 13 && *n != 15) || developer_mode)
         .map(|tab| MenuItem {
             tab,
             name: TAB_NAMES[tab as usize],
@@ -209,20 +212,20 @@ pub fn parse_hidden_tabs(settings_json: &str) -> std::collections::BTreeSet<u8> 
         return default;
     };
     values.iter().filter_map(|v| v.as_u64())
-        .filter(|n| (1..=14).contains(n) && *n != 12 && *n != 13)
+        .filter(|n| (1..=15).contains(n) && *n != 12 && *n != 13)
         .map(|n| n as u8).collect()
 }
 
 /// Stable Win32 auto-reset event name used to request a Flutter tab.
 pub fn tab_event_name(tab: u8) -> Option<String> {
-    (tab < 15).then(|| format!("docfit-open-tab-{tab}"))
+    (tab < 16).then(|| format!("docfit-open-tab-{tab}"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route { Search, VirtualFolder, Clipboard, MainTab(u8), Invalid }
 pub fn route(tab: u8) -> Route {
     match tab { 7 => Route::Search, 12 => Route::VirtualFolder, 13 => Route::Clipboard,
-        0..=14 => Route::MainTab(tab), _ => Route::Invalid }
+        0..=15 => Route::MainTab(tab), _ => Route::Invalid }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -259,8 +262,9 @@ const PDF: &[IconShape] = &[IconShape::Rect { left: 5., top: 3., right: 19., bot
 const FOLDER: &[IconShape] = &[IconShape::Polygon { points: &[(3., 6.), (10., 6.), (12., 9.), (21., 9.), (19., 19.), (4., 19.)], filled: false }, IconShape::Line { x1: 5., y1: 12., x2: 19., y2: 12. }];
 const NOTE: &[IconShape] = &[IconShape::Rect { left: 4., top: 3., right: 20., bottom: 21., filled: false }, IconShape::Line { x1: 8., y1: 8., x2: 16., y2: 8. }, IconShape::Line { x1: 8., y1: 12., x2: 16., y2: 12. }, IconShape::Line { x1: 8., y1: 16., x2: 14., y2: 16. }, IconShape::Circle { cx: 18., cy: 18., radius: 2., filled: true }];
 const OUTLINE: &[IconShape] = &[IconShape::Line { x1: 5., y1: 5., x2: 5., y2: 19. }, IconShape::Line { x1: 5., y1: 7., x2: 10., y2: 7. }, IconShape::Line { x1: 5., y1: 12., x2: 10., y2: 12. }, IconShape::Line { x1: 5., y1: 17., x2: 10., y2: 17. }, IconShape::Rect { left: 11., top: 5., right: 20., bottom: 9., filled: false }, IconShape::Rect { left: 11., top: 10., right: 20., bottom: 14., filled: false }, IconShape::Rect { left: 11., top: 15., right: 20., bottom: 19., filled: false }];
+const BENCH: &[IconShape] = &[IconShape::Circle { cx: 12., cy: 12., radius: 8., filled: false }, IconShape::Line { x1: 12., y1: 12., x2: 17., y2: 8. }, IconShape::Circle { cx: 12., cy: 12., radius: 2., filled: true }];
 pub fn icon_shapes(tab: u8) -> &'static [IconShape] {
-    match tab { 0 => DOC, 1 => TABLE, 2 => GRID, 3 => POLYGON4, 4 => MIND, 5 => PICTURE, 6 => RENAME, 7 => SEARCH, 8 => VIEW, 9 => PHOTO, 10 => CONVERT, 11 => PDF, 12 => FOLDER, 13 => NOTE, 14 => OUTLINE, _ => &[] }
+    match tab { 0 => DOC, 1 => TABLE, 2 => GRID, 3 => POLYGON4, 4 => MIND, 5 => PICTURE, 6 => RENAME, 7 => SEARCH, 8 => VIEW, 9 => PHOTO, 10 => CONVERT, 11 => PDF, 12 => FOLDER, 13 => NOTE, 14 => OUTLINE, 15 => BENCH, _ => &[] }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -387,10 +391,11 @@ mod tests {
         );
         assert_eq!(menu_items(&[1], true).first().unwrap().tab, 0);
         assert!(menu_items(&[12, 13], true).iter().any(|i| i.tab == 12));
+        assert!(menu_items(&[], true).iter().any(|i| i.tab == 15));
         assert!(
             menu_items(&[], false)
                 .iter()
-                .all(|i| i.tab != 12 && i.tab != 13)
+                .all(|i| i.tab != 12 && i.tab != 13 && i.tab != 15)
         )
     }
     #[test]
@@ -398,14 +403,15 @@ mod tests {
         assert_eq!(route(7), Route::Search);
         assert_eq!(route(12), Route::VirtualFolder);
         assert_eq!(route(13), Route::Clipboard);
-        for tab in [0,1,2,3,4,5,6,8,9,10,11,14] { assert_eq!(route(tab), Route::MainTab(tab)); }
-        assert_eq!(route(15), Route::Invalid);
+        for tab in [0,1,2,3,4,5,6,8,9,10,11,14,15] { assert_eq!(route(tab), Route::MainTab(tab)); }
+        assert_eq!(route(16), Route::Invalid);
         assert_eq!(tab_event_name(4).as_deref(), Some("docfit-open-tab-4"));
-        assert_eq!(tab_event_name(15), None);
+        assert_eq!(tab_event_name(15).as_deref(), Some("docfit-open-tab-15"));
+        assert_eq!(tab_event_name(16), None);
     }
     #[test]
     fn hidden_tabs_json_parsing_and_fallback() {
-        assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":[1,6,12,13,14,0,-1,"2",1]}"#), std::collections::BTreeSet::from([1,6,14]));
+        assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":[1,6,12,13,14,15,0,-1,"2",1]}"#), std::collections::BTreeSet::from([1,6,14,15]));
         assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":"bad"}"#), std::collections::BTreeSet::new());
         assert_eq!(parse_hidden_tabs("{"), std::collections::BTreeSet::new());
         assert_eq!(parse_hidden_tabs(r#"{"hidden_tabs":[]}"#), std::collections::BTreeSet::new());
@@ -420,8 +426,8 @@ mod tests {
     }
     #[test]
     fn all_menu_icons_have_distinct_vector_geometry_and_dpi_sizes() {
-        for tab in 0..15 { assert!(!icon_shapes(tab).is_empty(), "missing icon {tab}"); }
-        assert!(icon_shapes(15).is_empty());
+        for tab in 0..16 { assert!(!icon_shapes(tab).is_empty(), "missing icon {tab}"); }
+        assert!(icon_shapes(16).is_empty());
         assert_eq!(icon_size_px(96, 24), 24);
         assert_eq!(icon_size_px(144, 24), 36);
         assert_ne!(icon_shapes(0), icon_shapes(1));

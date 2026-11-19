@@ -648,7 +648,8 @@ class _KClipPanelState extends State<KClipPanel> {
             autostart = result['autostart'] == true;
           });
         }
-        for (var attempt = 0; attempt < 30; attempt++) {
+        // 상주 프로그램이 처음 뜰 때는 1.5초보다 오래 걸릴 수 있어 최대 10초까지 기다린다.
+        for (var attempt = 0; attempt < 200; attempt++) {
           await _reload();
           if (running || !mounted) break;
           await Future<void>.delayed(const Duration(milliseconds: 50));
@@ -787,8 +788,15 @@ class _KClipPanelState extends State<KClipPanel> {
                   'autostart': autostart,
                 }, '몽땅클립보드를 켰습니다.')
               : null,
-          icon: const Icon(Icons.power_settings_new),
-          label: const Text('몽땅클립보드 켜기'),
+          icon: busy
+              ? const SizedBox(
+                  key: ValueKey('kclip-enable-progress'),
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.power_settings_new),
+          label: Text(busy ? '켜는 중…' : '몽땅클립보드 켜기'),
         ),
       ],
     );

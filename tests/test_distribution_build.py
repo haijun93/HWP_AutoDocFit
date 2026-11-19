@@ -38,6 +38,18 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn("Build the outliner Rust engine", spec)
         self.assertIn("outliner.exe", spec)
 
+    def test_qms_bench_engine_is_built_hashed_and_packaged_like_pdf_editor(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-windows-exe.yml").read_text(encoding="utf-8")
+        spec = (ROOT / "HWP_AutoDocFit.spec").read_text(encoding="utf-8")
+        iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
+        self.assertIn("cargo test --release --locked --manifest-path qms_bench/Cargo.toml", workflow)
+        self.assertIn("cargo build --release --locked --manifest-path qms_bench/Cargo.toml", workflow)
+        self.assertIn("resources/qms_bench.exe.sha256", workflow)
+        self.assertIn("qms_bench.exe.sha256", workflow)
+        self.assertIn("Build the qms_bench Rust engine", spec)
+        self.assertIn("qms_bench.exe", spec)
+        self.assertIn("qms_bench.exe", iss)
+
     def test_installer_is_per_user_and_closes_running_app_for_update(self):
         iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
         self.assertIn("PrivilegesRequired=lowest", iss)

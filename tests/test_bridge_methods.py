@@ -61,6 +61,15 @@ class BridgeWrapperBehaviorTests(unittest.TestCase):
             with self.assertRaises(ServiceError):
                 bridge.pdf_edit(None)
 
+    def test_qms_bench_requires_developer_mode(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            bridge, _ = self._bridge(folder)
+            result = bridge.qms_bench({"action": "start"})
+            self.assertIsInstance(result, dict)
+            self.assertFalse(result.get("ok"))
+            self.assertEqual((result.get("error") or {}).get("code"), "DEVELOPER_MODE_REQUIRED")
+
     def test_doc_grid_returns_a_dict_for_an_unknown_action(self):
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
