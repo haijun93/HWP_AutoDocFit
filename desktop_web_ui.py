@@ -2342,6 +2342,87 @@ class DesktopWebBridge:
             logging.getLogger(__name__).warning("사진뷰 처리 실패", exc_info=True)
             return {"ok": False, "code": "PHOTO_ALBUM_FAILED", "message": str(exc) or "사진뷰 작업을 완료하지 못했습니다."}
 
+    # ---- 아래 메서드들은 Flutter(WebView)가 직접 부르는 이름이다. ApplicationService.dispatch에만 있고 이 브리지에
+    # ---- 없으면 화면이 "앱 연결을 기다리고 있습니다" 오류를 낸다(문서뷰·아웃라이너·PDF 편집·Dock 사고, 2026-11-19).
+    # ---- tests/test_bridge_methods.py가 Flutter가 부르는 모든 이름이 여기 있는지 검사한다.
+    def _service_response(self, action):
+        from docfit_app.api_contract import response
+        return response(action)
+
+    def doc_grid(self, *args):
+        """문서뷰(DocGridService) 화면 명령."""
+        try:
+            service = getattr(self, "_doc_grid_service", None)
+            if service is None:
+                from docfit_app.doc_grid_service import DocGridService
+                service = self._doc_grid_service = DocGridService(settings_store=self._settings_store())
+            return service.command(*args)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("문서뷰 처리 실패", exc_info=True)
+            return {"ok": False, "code": "DOC_GRID_FAILED", "message": str(exc) or "문서뷰 작업을 완료하지 못했습니다."}
+
+    def pdf_edit(self, payload):
+        """PDF 편집(쪽 삭제·순서·회전·분할·합치기·쪽 정보)."""
+        from docfit_app.api_contract import ServiceError
+        service = getattr(self, "_pdf_edit_service", None)
+        if service is None:
+            from docfit_app.pdf_edit_service import PdfEditService
+            service = self._pdf_edit_service = PdfEditService()
+        if not isinstance(payload, dict):
+            raise ServiceError("INVALID_INPUT", "PDF 편집 입력을 확인해 주세요.")
+        return self._service_response(lambda: service.execute(
+            payload.get("action"), payload.get("source"), payload.get("output"),
+            pages=payload.get("pages"), degrees=payload.get("degrees"), sources=payload.get("sources")))
+
+    def outliner(self, payload):
+        """아웃라이너 명령."""
+        from docfit_app.api_contract import ServiceError
+        service = getattr(self, "_outliner_service", None)
+        if service is None:
+            from docfit_app.outliner_service import OutlinerService
+            service = self._outliner_service = OutlinerService(self._settings_store()._path.parent)
+        if not isinstance(payload, dict):
+            raise ServiceError("INVALID_INPUT", "아웃라이너 입력을 확인해 주세요.")
+        return self._service_response(lambda: service.execute(payload))
+
+    def _dock_runtime(self):
+        runtime = getattr(self, "_dock_runtime_instance", None)
+        if runtime is None:
+            from docfit_app.dock_runtime import DockRuntime
+            runtime = self._dock_runtime_instance = DockRuntime()
+        return runtime
+
+    def dock_start(self):
+        return self._dock_runtime().start()
+
+    def dock_ready(self, timeout_ms):
+        from docfit_app.api_contract import ServiceError
+        if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or timeout_ms < 0:
+            raise ServiceError("INVALID_INPUT", "Dock 대기 시간을 확인해 주세요.")
+        return self._dock_runtime().ready(timeout_ms / 1000)
+
+    def dock_stop(self):
+        return self._dock_runtime().stop()
+
+    def set_menu_display_mode(self, mode):
+        """'메뉴 표시 방식'(사이드바/하단 Dock)을 설정 파일에 저장한다."""
+        from docfit_app.settings_schema import validate_menu_display_mode
+        value = validate_menu_display_mode(mode)
+        self._settings_store().update(lambda current: current.update({"menu_display_mode": value}))
+        return {"menu_display_mode": value}
+
+    def excel_table(self, *args):
+        """엑셀 표 변환 화면 명령."""
+        try:
+            service = getattr(self, "_excel_table_service", None)
+            if service is None:
+                from docfit_app.excel_table_service import ExcelTableService
+                service = self._excel_table_service = ExcelTableService()
+            return service.command(*args)
+        except Exception as exc:
+            logging.getLogger(__name__).warning("엑셀 표 처리 실패", exc_info=True)
+            return {"ok": False, "message": str(exc) or "엑셀 표 작업을 완료하지 못했습니다."}
+
     def kvf(self, action, payload=None):
         from docfit_app.kvf_client import KvfClient
         return KvfClient().command(action, payload)
