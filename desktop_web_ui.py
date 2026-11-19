@@ -2411,6 +2411,28 @@ class DesktopWebBridge:
         self._settings_store().update(lambda current: current.update({"menu_display_mode": value}))
         return {"menu_display_mode": value}
 
+    def qms_bench(self, *args):
+        """검색 벤치마크(개발자 모드): Everything 대 몽땅검색 속도·리소스 측정."""
+        service = getattr(self, "_qms_bench_service", None)
+        if service is None:
+            from docfit_app.qms_bench_service import QmsBenchService
+            store = self._settings_store()
+            service = self._qms_bench_service = QmsBenchService(
+                store._path.parent,
+                developer_mode_checker=lambda: bool(store.read().get("developer_mode", False)),
+            )
+        if len(args) == 2:
+            action, payload = args[0], args[1]
+        elif len(args) == 1:
+            if isinstance(args[0], dict):
+                payload = args[0]
+                action = payload.get("action")
+            else:
+                action, payload = args[0], None
+        else:
+            action, payload = None, None
+        return self._service_response(lambda: service.execute(action, payload))
+
     def excel_table(self, *args):
         """엑셀 표 변환 화면 명령."""
         try:
