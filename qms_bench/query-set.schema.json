@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "qms_bench query set",
+  "type": "object",
+  "required": ["schema_version", "set_version", "queries"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "set_version": { "type": "string", "minLength": 1 },
+    "seed": { "type": ["integer", "null"], "minimum": 0 },
+    "queries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "text", "comparability"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 },
+          "filter": { "type": ["string", "null"] },
+          "comparability": { "enum": ["comparable", "standalone"] },
+          "expected_scope": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
