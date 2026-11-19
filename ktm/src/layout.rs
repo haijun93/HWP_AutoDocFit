@@ -638,9 +638,28 @@ pub fn calc_content_top(
     head + search + tabs + options + filters + summary + if has_ac { ac } else { 0 }
 }
 
+/// 옵션 줄(oy..oy+option_h) 바로 아래에 범위 칩 줄(filter_h), 그 아래에 요약 줄이 온다.
+/// 그리기와 마우스 판정이 같은 값을 쓰도록 한 곳에서 계산한다(QMSUI1: 두 줄이 같은 높이에 겹쳐 그려지던 문제).
+pub fn filter_band_top(option_top: i32, option_h: i32) -> i32 {
+    option_top + option_h
+}
+
+pub fn summary_band_top(option_top: i32, option_h: i32, filter_h: i32) -> i32 {
+    filter_band_top(option_top, option_h) + filter_h
+}
+
 #[cfg(test)]
 mod content_top_tests {
     use super::*;
+
+    #[test]
+    fn option_filter_summary_bands_do_not_overlap_and_end_at_content_top() {
+        let (oy, oh, fh, sh) = (100, OPTION_H, FILTER_H, SUMMARY_H);
+        assert_eq!(filter_band_top(oy, oh), oy + oh);
+        assert_eq!(summary_band_top(oy, oh, fh), oy + oh + fh);
+        assert!(summary_band_top(oy, oh, fh) >= filter_band_top(oy, oh) + fh);
+        assert_eq!(summary_band_top(oy, oh, fh) + sh, oy + calc_content_top(0, 0, 0, oh, fh, sh, false, 0));
+    }
     #[test]
     fn content_bands_are_sequential() {
         assert_eq!(calc_content_top(32, 44, 28, 30, 24, 32, false, 22), 190);

@@ -1529,7 +1529,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 text("적용", apply_rc, p.text, DT_CENTER);
             }
 
-            let sy = oy + oh;
+            let sy = summary_band_top(oy, oh, scale(h, FILTER_H));
             let sh = scale(h, SUMMARY_H);
             fill(
                 RECT {
@@ -1647,7 +1647,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             text("[CSV]", csv_rc, p.text, DT_CENTER);
 
             // ④ 통합 검색 범위 줄 (기간 / 형식 / 폴더)
-            let fy = oy + oh;
+            let fy = filter_band_top(oy, oh);
             let fh = scale(h, FILTER_H);
             SelectObject(mem, u.small);
             text(
@@ -3456,7 +3456,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 let tab_h = scale(h, TAB_H);
                 let oy = tab_y + tab_h;
                 let oh = scale(h, OPTION_H);
-                let fy = oy + oh;
+                let fy = filter_band_top(oy, oh);
                 let fh = scale(h, FILTER_H);
 
                 let oy = tab_y + tab_h;
@@ -3696,8 +3696,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         };
                         event(h, Event::SwitchTab(tab));
                     }
-                } else if y >= oy + oh && y < oy + oh + scale(h, SUMMARY_H) {
-                    let sy = oy + oh;
+                } else if y >= summary_band_top(oy, oh, fh) && y < summary_band_top(oy, oh, fh) + scale(h, SUMMARY_H) {
+                    let sy = summary_band_top(oy, oh, fh);
                     let group_left = pad + scale(h, 235);
                     let group_right = rc_w.right - scale(h, 132);
                     if x >= rc_w.right - scale(h, 124) && x < rc_w.right - scale(h, 66) {
