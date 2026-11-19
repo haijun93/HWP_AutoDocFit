@@ -95,6 +95,7 @@ void main() {
     expect(kTabFileConversion, 10);
     expect(kTabPdfEdit, 11);
     expect(kTabOutliner, 14);
-    expect(kTabCount, 15);
+    expect(kTabQmsBench, 15);
+    expect(kTabCount, 16);
   });
 }

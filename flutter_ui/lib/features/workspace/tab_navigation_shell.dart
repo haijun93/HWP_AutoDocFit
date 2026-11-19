@@ -16,7 +16,8 @@ const kTabPhotoAlbum = 9;
 const kTabFileConversion = 10;
 const kTabPdfEdit = 11;
 const kTabOutliner = 14;
-const kTabCount = 15;
+const kTabQmsBench = 15;
+const kTabCount = 16;
 
 /// 왼쪽 메뉴 폭. 저장값이 없으면 창 폭이 기준 이상일 때 펼친다.
 const kSidebarCollapsedWidth = 56.0;
@@ -85,6 +86,7 @@ class TabNavigationShell extends StatefulWidget {
     this.docGrid = const SizedBox(),
     this.photoAlbum = const SizedBox(),
     this.outliner = const SizedBox(),
+    this.qmsBench = const SizedBox(),
     this.initialIndex = 0,
     this.onTabChanged,
     this.trailing,
@@ -115,6 +117,7 @@ class TabNavigationShell extends StatefulWidget {
   final Widget docGrid;
   final Widget photoAlbum;
   final Widget outliner;
+  final Widget qmsBench;
   final int initialIndex;
 
   /// 메뉴에 보이지 않고 화면도 만들지 않는 탭.
@@ -187,6 +190,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     '설정',
     '사용 방법',
     '아웃라이너',
+    '검색 벤치마크',
   ];
   static const _icons = [
     Icons.description_outlined,
@@ -204,6 +208,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     Icons.settings_outlined,
     Icons.help_outline,
     Icons.account_tree_outlined,
+    Icons.speed_outlined,
   ];
 
   void _select(int index) {
@@ -281,6 +286,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       const SizedBox(),
       const SizedBox(),
       widget.outliner,
+      widget.qmsBench,
     ];
     _built = true;
     final expanded = _expanded ?? MediaQuery.sizeOf(context).width >= kSidebarAutoExpandWidth;
@@ -494,7 +500,8 @@ class WorkspaceTabBar extends StatelessWidget {
                 children: [
                   for (var i = 0; i < labels.length; i++)
                     if (i != 12 && i != 13 && !hiddenTabs.contains(i))
-                      _TabPill(
+                      if (i != kTabQmsBench || developerMode)
+                        _TabPill(
                         key: Key('workspaceTab-$i'),
                         label: labels[i],
                         icon: icons[i],
