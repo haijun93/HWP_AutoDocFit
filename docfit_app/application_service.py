@@ -8,7 +8,7 @@ from docfit_app.abbreviation_service import AbbreviationService
 from docfit_app.api_contract import ServiceError, response
 from docfit_app.configuration_service import ConfigurationService
 from docfit_app.settings_service import SettingsService
-from docfit_app.settings_schema import DEFAULTS, normalize_theme_mode, validate_theme_mode, normalize_search_engine
+from docfit_app.settings_schema import DEFAULTS, normalize_theme_mode, validate_theme_mode, normalize_search_engine, normalize_menu_display_mode, validate_menu_display_mode
 from docfit_app.flow_service import FlowService
 from docfit_app.settings_migrations import migrate
 from docfit_core.hwpx import validate_and_inspect_hwpx
@@ -31,6 +31,8 @@ class ApplicationService:
         self.flows = FlowService(Path(settings_path).parent, self.store)
         self.data = AppState()
         self.lock = threading.RLock()
+        from .dock_runtime import DockRuntime
+        self.dock_runtime = DockRuntime()
         from .jobs import JobManager
         self.jobs = JobManager(state_path=Path(settings_path).parent / 'native-jobs.json')
 
@@ -150,14 +152,15 @@ class ApplicationService:
                 'progress':{'steps':list(STAGE_ORDER),'active':None,'visited':[],'outcome':None,'detail':''},
                 'stages':[{'key':k,'label':label,'enabled':self.data.stages.get((self.data.mode,k),selected.get(k,default_choice(k,self.data.mode))),
                            'default':default_choice(k,self.data.mode)} for k,label in stages_for_mode(self.data.mode)],
-                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'hidden_tabs':clean_hidden_tabs(settings.get('hidden_tabs')),'theme_mode':normalize_theme_mode(settings.get('theme_mode')),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
+                'can_start':False,'sidebar_collapsed':settings.get('sidebar_collapsed'),'hidden_tabs':clean_hidden_tabs(settings.get('hidden_tabs')),'theme_mode':normalize_theme_mode(settings.get('theme_mode')),'menu_display_mode':normalize_menu_display_mode(settings.get('menu_display_mode')),'capabilities':['documents.inspect','settings','abbreviations','flows','library.metadata']}
 
     def dispatch(self, method, args):
         counts = {'handshake':0,'get_state':0,'get_settings':0,'save_settings':2,
                   'get_abbreviations':0,'save_abbreviation':4,'delete_abbreviation':1,
                   'set_abbreviation_defaults':1,'abbreviation_document':1,'add_paths':1,'remove_file':1,
                   'clear_files':0,'set_mode':1,'inspect_document':1,'get_log':0,'clear_log':0,'shutdown':0}
-        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_hidden_tabs':1, 'set_theme_mode':1})
+        counts.update({'start_job':2, 'cancel_job':1, 'job_status':1, 'get_events':1, 'set_sidebar_collapsed':1, 'set_hidden_tabs':1, 'set_theme_mode':1, 'set_menu_display_mode':1,
+                       'dock_start':0, 'dock_ready':1, 'dock_stop':0})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
         counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1})
@@ -276,6 +279,17 @@ class ApplicationService:
             return value
         if method=='set_theme_mode':
             return self.set_theme_mode(args[0])
+        if method=='set_menu_display_mode':
+            value=validate_menu_display_mode(args[0])
+            self.store.update(lambda current:current.update({'menu_display_mode':value}))
+            return {'menu_display_mode':value}
+        if method=='dock_start': return self.dock_runtime.start()
+        if method=='dock_ready':
+            timeout_ms=args[0]
+            if isinstance(timeout_ms,bool) or not isinstance(timeout_ms,int) or timeout_ms<0:
+                raise ServiceError('INVALID_INPUT','Dock 대기 시간을 확인해 주세요.')
+            return self.dock_runtime.ready(timeout_ms/1000)
+        if method=='dock_stop': return self.dock_runtime.stop()
         if method=='get_pending_dialog': return None
         if method=='get_state': return self.state()
         if method=='get_settings': return response(self.configuration.snapshot)
@@ -424,6 +438,7 @@ class ApplicationService:
             raise ServiceError('INVALID_ACTION','흐름도 작업을 확인해 주세요.')
         if method=='shutdown':
             self.data.closing=True
+            self.dock_runtime.stop()
             service = getattr(self, '_timemachine_service', None)
             if service is not None:
                 service.close()

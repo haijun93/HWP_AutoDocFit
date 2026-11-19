@@ -1,6 +1,7 @@
 """Shared settings defaults; storage keys and legacy adapter bindings are preserved."""
 DEFAULTS = {
     'shell_menu': False,
+    'menu_display_mode': 'sidebar',
     # 퀵몽땅검색 단축키 앱(ktm.exe, Ctrl+Alt+Space): 기본 켬(MG3 사용자 지시). 끄면 상주 프로그램을 끄고 자동 실행을 푼다.
     'mongttang_search': True,
     'file_rename_sendto': False,
@@ -139,6 +140,18 @@ DEFAULTS = {
 }
 
 SEARCH_ENGINES = ("kfind", "legacy")
+
+MENU_DISPLAY_MODES = ("sidebar", "dock")
+
+
+def normalize_menu_display_mode(value):
+    return value if isinstance(value, str) and value in MENU_DISPLAY_MODES else "sidebar"
+
+
+def validate_menu_display_mode(value):
+    if not isinstance(value, str) or value not in MENU_DISPLAY_MODES:
+        raise ValueError("메뉴 표시 방식은 sidebar 또는 dock이어야 합니다.")
+    return value
 
 
 def normalize_search_engine(value):

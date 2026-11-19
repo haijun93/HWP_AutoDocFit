@@ -1,11 +1,110 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart';
 import 'tab_navigation_shell.dart';
+import 'dock_mode_controller.dart';
 
 /// 사용자가 끈 왼쪽 메뉴 번호. 비어 있으면 모두 켠 상태다.
 /// 저장값은 시작 때 get_state의 hidden_tabs로 채우고, 선택 창에서 저장하면 바로 바꾼다.
-final ValueNotifier<Set<int>> hiddenTabsNotifier = ValueNotifier<Set<int>>(const <int>{});
+final ValueNotifier<Set<int>> hiddenTabsNotifier = ValueNotifier<Set<int>>(
+  const <int>{},
+);
+
+/// 사이드바/Dock 선택과 실제 프로세스 전환을 연결하는 설정 컨트롤.
+class MenuDisplayModeSetting extends StatefulWidget {
+  const MenuDisplayModeSetting({
+    super.key,
+    required this.api,
+    required this.controller,
+  });
+  final ApiCall api;
+  final DockModeController controller;
+  @override
+  State<MenuDisplayModeSetting> createState() => _MenuDisplayModeSettingState();
+}
+
+class _MenuDisplayModeSettingState extends State<MenuDisplayModeSetting> {
+  String _mode = 'sidebar';
+  String? _error;
+  bool _busy = true;
+  @override
+  void initState() {
+    super.initState();
+    unawaited(
+      widget
+          .api('get_state', [])
+          .then((value) async {
+            final mode = value is Map
+                ? value['menu_display_mode'] as String?
+                : null;
+            if (mounted) {
+              setState(() {
+                _mode = mode == 'dock' ? 'dock' : 'sidebar';
+                _busy = false;
+              });
+            }
+          })
+          .catchError((Object error) {
+            if (mounted) {
+              setState(() {
+                _busy = false;
+                _error = '설정 상태를 읽지 못했어요: $error';
+              });
+            }
+          }),
+    );
+  }
+
+  Future<void> _change(String? value) async {
+    if (value == null || value == _mode) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final message = await widget.controller.select(value);
+    if (mounted) {
+      setState(() {
+        _mode = message == null ? value : 'sidebar';
+        _error = message;
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      ListTile(
+        key: const Key('menuDisplayModeSetting'),
+        contentPadding: EdgeInsets.zero,
+        leading: const Icon(Icons.dock_outlined),
+        title: const Text('메뉴 표시 방식'),
+        subtitle: const Text('사이드바 또는 하단 Dock을 선택해요. Dock은 준비된 뒤 사이드바를 전환해요.'),
+        trailing: DropdownButton<String>(
+          key: const Key('menuDisplayModePicker'),
+          value: _mode,
+          items: const [
+            DropdownMenuItem(value: 'sidebar', child: Text('사이드바')),
+            DropdownMenuItem(value: 'dock', child: Text('하단 Dock')),
+          ],
+          onChanged: _busy ? null : _change,
+        ),
+      ),
+      if (_error != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            _error!,
+            key: const Key('menuDisplayModeError'),
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+        ),
+    ],
+  );
+}
 
 /// 저장값(JSON 목록)을 끌 수 있는 메뉴 번호 집합으로 정리한다. 0(문서편집)은 항상 켠다.
 Set<int> parseHiddenTabs(Object? raw) {
@@ -105,17 +204,20 @@ class _SidebarMenuDialogState extends State<_SidebarMenuDialog> {
                         dense: true,
                         contentPadding: EdgeInsets.zero,
                         title: Text(item.label),
-                        subtitle: Text(item.hint, style: const TextStyle(fontSize: 12)),
+                        subtitle: Text(
+                          item.hint,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         value: !_hidden.contains(item.tab),
                         onChanged: _saving
                             ? null
                             : (on) => setState(() {
-                                  if (on) {
-                                    _hidden.remove(item.tab);
-                                  } else {
-                                    _hidden.add(item.tab);
-                                  }
-                                }),
+                                if (on) {
+                                  _hidden.remove(item.tab);
+                                } else {
+                                  _hidden.add(item.tab);
+                                }
+                              }),
                       ),
                     ),
                 ],
@@ -123,7 +225,12 @@ class _SidebarMenuDialogState extends State<_SidebarMenuDialog> {
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
                 ),
             ],
           ),

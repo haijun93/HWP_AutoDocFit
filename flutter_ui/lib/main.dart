@@ -35,6 +35,7 @@ import 'features/stages/stage_board.dart';
 import 'features/workspace/workspace_adapters.dart';
 import 'features/workspace/tab_navigation_shell.dart';
 import 'features/workspace/sidebar_menu_settings.dart';
+import 'features/workspace/dock_mode_controller.dart';
 import 'features/workspace/tab_open_events.dart';
 import 'features/kclip/kclip_dialog.dart';
 
@@ -242,6 +243,12 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     super.initState();
     unawaited(widget.api('get_state', []).then((value) {
       if (!mounted || value is! Map) return;
+      unawaited(DockModeController(
+        api: widget.api,
+        runtime: ProcessDockRuntime(widget.api),
+        showSidebar: () async { sidebarModeVisible.value = true; },
+        hideSidebar: () async { sidebarModeVisible.value = false; },
+      ).restore(value['menu_display_mode'] as String?));
       setState(() {
         developerMode = value['developer_mode'] == true;
       });
@@ -340,10 +347,13 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   @override
   Widget build(BuildContext context) => ValueListenableBuilder<Set<int>>(
     valueListenable: hiddenTabsNotifier,
-    builder: (context, hiddenTabs, _) => _workspace(hiddenTabs),
+    builder: (context, hiddenTabs, _) => ValueListenableBuilder<bool>(
+      valueListenable: sidebarModeVisible,
+      builder: (context, showSidebar, _) => _workspace(hiddenTabs, showSidebar),
+    ),
   );
 
-  Widget _workspace(Set<int> hiddenTabs) => IntegratedWorkspace(
+  Widget _workspace(Set<int> hiddenTabs, bool showSidebar) => IntegratedWorkspace(
     api: widget.api,
     hiddenTabs: {...kDefaultHiddenTabs, ...hiddenTabs},
     tabRequest: tabRequest,
@@ -353,6 +363,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       key: workspace,
       api: widget.api,
       developerMode: developerMode,
+      showSidebar: showSidebar,
       onSidebarCollapsed: (collapsed) =>
           savedSidebarExpanded.value = collapsed == null ? null : !collapsed,
       onRenameOpen: () {
@@ -523,6 +534,7 @@ class Workspace extends StatefulWidget {
     this.onRenameOpen,
     this.onPhotoEditOpen,
     this.developerMode = false,
+    this.showSidebar = true,
   });
   final ApiCall api;
 
@@ -535,6 +547,7 @@ class Workspace extends StatefulWidget {
   /// K에이전트로부터 붙임사진 편집 열기 요청이 들어왔을 때.
   final VoidCallback? onPhotoEditOpen;
   final bool developerMode;
+  final bool showSidebar;
   @override
   State<Workspace> createState() => _WorkspaceState();
 }
@@ -1380,7 +1393,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
               child: LayoutBuilder(
                 builder: (context, layout) => Row(
                   children: [
-                    if (layout.maxWidth >= 1000) sidebar(),
+                    if (layout.maxWidth >= 1000 && widget.showSidebar) sidebar(),
                     Expanded(
                       child: Column(
                         children: [
@@ -3997,6 +4010,15 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             title: const Text('쓸 메뉴 고르기'),
             subtitle: const Text('왼쪽 메뉴에서 쓰지 않는 메뉴를 끄거나 다시 켜요.'),
             onTap: () => showSidebarMenuDialog(context, widget.api),
+          ),
+          MenuDisplayModeSetting(
+            api: widget.api,
+            controller: DockModeController(
+              api: widget.api,
+              runtime: ProcessDockRuntime(widget.api),
+              showSidebar: () async { sidebarModeVisible.value = true; },
+              hideSidebar: () async { sidebarModeVisible.value = false; },
+            ),
           ),
           ListTile(
             contentPadding: EdgeInsets.zero,
