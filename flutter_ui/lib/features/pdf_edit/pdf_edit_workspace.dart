@@ -81,7 +81,11 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       pages.addAll(List<int>.generate(end - start + 1, (i) => start + i));
     }
     final unique = pages.toSet().toList()..sort();
-    return unique.isEmpty ? null : unique;
+    if (unique.isEmpty ||
+        (_pageCount != null && unique.any((page) => page > _pageCount!))) {
+      return null;
+    }
+    return unique;
   }
 
   Future<void> _pickSource() async {
@@ -199,6 +203,14 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
 
   Future<void> _run() async {
     if (!_canRun) return;
+    final outputPath = _output!.replaceAll('\\', '/').toLowerCase();
+    final inputPaths = _action == 'merge' ? _mergeSources : [_source!];
+    if (inputPaths.any(
+      (path) => path.replaceAll('\\', '/').toLowerCase() == outputPath,
+    )) {
+      setState(() => _message = '결과 파일은 원본 파일과 다른 경로로 지정해 주세요.');
+      return;
+    }
     final entered = _parsePages();
     final pages = _selectedPages.isNotEmpty && _action != 'split'
         ? (_selectedPages.toList()..sort())
@@ -757,9 +769,15 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
               child: TextField(
                 key: const Key('pdfEditPages'),
                 controller: _pages,
+                onChanged: (_) => setState(() {}),
                 decoration: InputDecoration(
                   isDense: true,
                   labelText: _action == 'split' ? '분할할 페이지' : '페이지 번호',
+                  errorText: _action == 'split' &&
+                          _pages.text.isNotEmpty &&
+                          _parsePages() == null
+                      ? '문서 쪽 수 안에서 올바른 범위를 입력해 주세요.'
+                      : null,
                   helperText: _action == 'split'
                       ? '예: 1-3, 5 — 선택한 쪽을 별도 PDF로 저장'
                       : '쉼표로 구분 · 순서 변경은 카드를 끌어 놓으세요',
