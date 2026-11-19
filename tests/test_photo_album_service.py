@@ -237,6 +237,11 @@ class TestPhotoAlbumService(unittest.TestCase):
         tags_cat_after = self.service.get_tags(p_cat)["tags"]
         self.assertEqual(tags_cat_after, ["동물"])
 
+        listed = self.service.command("list_tags", {})["tags"]
+        self.assertEqual(listed, [{"tag": "동물", "count": 2}])
+        scoped = self.service.command("list_tags", {"folder": str(self.photos_dir)})["tags"]
+        self.assertEqual(scoped, [{"tag": "동물", "count": 2}])
+
         # 3. 검색
         # (a) 파일명 검색
         res_cat = self.service.search(query="cat")
@@ -246,6 +251,8 @@ class TestPhotoAlbumService(unittest.TestCase):
         # (b) 태그 검색
         res_animals = self.service.search(tag="동물")
         self.assertEqual(len(res_animals), 2)
+        tag_command = self.service.command("search", {"tag": "동물", "query": ""})
+        self.assertEqual(len(tag_command["results"]), 2)
 
         # (c) 즐겨찾기 필터
         res_fav = self.service.search(favorite_only=True)

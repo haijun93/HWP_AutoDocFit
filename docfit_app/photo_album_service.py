@@ -864,6 +864,19 @@ class PhotoAlbumService:
         tags = self.db.get_tags(p)
         return {"ok": True, "path": p, "tags": tags}
 
+    def list_tags(self, *, folder: str | Path | None = None) -> dict[str, Any]:
+        """사진뷰 DB에서 사용 중인 태그와 사진 수를 반환한다."""
+        photos = self.db.list_photos(
+            str(Path(folder).resolve()) if folder and str(folder).strip() else None
+        )
+        counts: dict[str, int] = {}
+        for photo in photos:
+            for tag in photo.get("tags", []):
+                counts[tag] = counts.get(tag, 0) + 1
+        return {"ok": True, "tags": [
+            {"tag": tag, "count": counts[tag]} for tag in sorted(counts, key=str.casefold)
+        ]}
+
     # ---- 4. EXIF 회전 보정 썸네일 생성 ----
 
     def get_thumbnail(
@@ -1747,6 +1760,9 @@ class PhotoAlbumService:
                     favorite_only=bool(payload.get("favorite_only", False)),
                 )
                 return {"ok": True, "results": res}
+
+            if action == "list_tags":
+                return self.list_tags(folder=payload.get("folder"))
 
             if action == "thumbnail":
                 path = payload.get("path")

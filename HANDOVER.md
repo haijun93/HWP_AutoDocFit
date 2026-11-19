@@ -500,6 +500,15 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 
 ---
 
+- **Flutter UI는 웹 빌드다(2026-11-19)**: `flutter build web`(WebView 호스팅)이라 `dart:io`·`dart:html`·`dart:ffi`를 import하면 `flutter test`(VM)와 `flutter analyze`는 통과해도 CI 웹 빌드가 깨진다. 프로세스·파일·파이프 같은 OS 기능은 Python 백엔드 API로 호출한다(DOCK4 사례).
+- **CI는 `flutter analyze`의 info도 실패로 본다**: 불필요한 import 한 줄로 v2.2.75 첫 빌드가 실패했다. 워커 보고에 `flutter analyze` 종료코드 1이 있으면 병합하지 않는다.
+- **전체 Python 시험은 한 번에 하나, 별도 폴더에서**: 15~25분 걸리고, 다른 컴파일·시험과 겹치면 속도 시험이 거짓 실패하며 60분 넘게 걸린다. 시험이 도는 폴더에서 브랜치를 바꾸거나 파일을 건드리면 결과가 무효가 된다.
+- **릴리스 후보 순서**: 별도 worktree → 버전 올림(CRLF 한 줄) → 전체 시험(후보 커밋으로 빌드한 klib를 `KLIB_EXE`로 지정) → `release/vX-int`만 푸시 → CI exe 커밋 확인 → 산출물 해시 대조 → 설치(UAC 승인이 필요해 수 시간 지연될 수 있음) → 태그 → main 병합. main과 release를 같은 SHA로 동시에 푸시하지 않는다.
+- **푸시는 시험 성공에 묶는다**: 시험 결과를 확인하는 명령과 푸시를 따로 두면 실패한 채 올라간다(QMSTIME 사고). 같은 명령에서 성공일 때만 푸시한다.
+- **워커 보고는 이 PC에서 다시 돌려 판정한다**: 임시 폴더가 AppData 아래냐 E:냐에 따라 제외 규칙이 달라지던 결함(DEFAULTALL), 링크 환경 차 등이 이렇게 드러났다. 보고서를 믿고 병합하지 않는다.
+- **맥 워커**: Codex는 SSH로 되지만 Gemini·Claude는 키체인 때문에 화면 터미널에 켜 둔 대기 프로그램(`agy_worker.sh`, `claude_worker.sh`)으로만 실행된다. `tools/run_mac.sh`(번들로 코드 전송, 결과를 `mac/<이름>` 브랜치로 받음)와 `tools/run_gemini.sh`(이 PC Gemini 직접 실행)를 쓴다. 맥 스튜디오는 외장 2TB의 `~/docfit-ext` 링크 아래에서 작업한다. 맥 결과도 이 PC에서 재시험 후 병합한다.
+- **Codex 정책 오탐**: 도중에 끊기고 최종 보고 파일이 없으며 로그 끝에 `Invalid prompt`가 있으면 오탐이다. 카드 문구를 중립적으로 다시 쓰고, 작업 트리의 부분 변경을 이어서 완성하는 카드로 재시도한다.
+
 ## 8. 최근 작업 이력 (2026-09-26 세션)
 
 | 커밋 | 내용 |
