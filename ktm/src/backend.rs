@@ -1347,12 +1347,18 @@ mod tests {
                     pipe_call_with_timeout(
                         &name,
                         &json!({"command":"query"}),
-                        Duration::from_millis(60),
+                        Duration::from_millis(1500),
                     )
                 })
             })
             .collect();
-        std::thread::sleep(Duration::from_millis(20));
+        // 막힌 호출이 모두 진행 중(카운터가 상한)이 될 때까지 기다린 뒤 초과 호출을 보낸다(시간 의존 제거).
+        let wait_start = std::time::Instant::now();
+        while ACTIVE_PIPE_CALLS.load(Ordering::Acquire) < MAX_TIMED_OUT_PIPE_CALLS
+            && wait_start.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let overflow =
             pipe_call_with_timeout("unused", &json!({}), Duration::from_millis(1)).unwrap_err();
         assert!(overflow.contains("요청이 너무 많습니다"));
