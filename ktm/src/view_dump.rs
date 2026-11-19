@@ -78,6 +78,36 @@ pub fn recent_searches(state: &State) -> Vec<String> {
     }).collect()
 }
 
+/// Dump the native quick-search bands with the same row captions and geometry as the painter.
+pub fn quick_search_bands(
+    width: i32,
+    height: i32,
+    scale: i32,
+    has_related: bool,
+    show_options: bool,
+    has_autocomplete: bool,
+    related: &[String],
+    summary: &str,
+    status: &str,
+) -> Vec<String> {
+    let bands = crate::layout::quick_search_layout(scale, width, height, has_related, show_options, has_autocomplete);
+    let mut dump = Vec::new();
+    push_band_line(&mut dump, "related", bands.related, &related.join(" · "));
+    push_band_line(&mut dump, "options", bands.options, "키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]");
+    push_band_line(&mut dump, "filters", bands.filters, "기간: 전체 · 오늘 · 이번 주 · 이번 달 · 올해 · 직접 | 형식: 전체 · HWP · PDF · DOC · XLS");
+    push_band_line(&mut dump, "summary", bands.summary, summary);
+    push_band_line(&mut dump, "autocomplete", bands.autocomplete, "자동완성: 예산 · 공사 · 계약");
+    dump.push(format!("list {}..{height} \"결과 목록\"", bands.list_top));
+    push_band_line(&mut dump, "status", windows_sys::Win32::Foundation::RECT { left: 0, top: height - 24 * scale / 100, right: width, bottom: height }, status);
+    dump
+}
+
+fn push_band_line(dump: &mut Vec<String>, name: &str, rect: windows_sys::Win32::Foundation::RECT, text: &str) {
+    if rect.bottom > rect.top {
+        dump.push(format!("{name} {}..{} \"{text}\"", rect.top, rect.bottom));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +181,41 @@ mod tests {
         assert_eq!(dump, "2026:0:0:56\n공사 계약:60:0:64\n안전관리계획:0:28:72");
         assert!(related_query_chips("단일 검색어", 320, 100).is_empty());
         assert_no_replacement_question_marks(&dump);
+    }
+
+    #[test]
+    fn quick_search_empty_results_related_and_error_band_dumps_are_frozen() {
+        // Hand calculation from quick_search_layout: at 100%, search ends at 76, tabs at 76..104,
+        // then option/filter/summary rows end at 162/186/218; with chips at 125%, 35px is added
+        // before tabs, and each later row height is rounded by integer scale(value * 125 / 100).
+        let empty = quick_search_bands(640, 900, 100, false, true, false, &[],
+            "☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0", "↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기");
+        assert_eq!(empty, [
+            "options 104..162 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"",
+            "filters 162..186 \"기간: 전체 · 오늘 · 이번 주 · 이번 달 · 올해 · 직접 | 형식: 전체 · HWP · PDF · DOC · XLS\"",
+            "summary 186..218 \"☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0\"",
+            "list 218..900 \"결과 목록\"",
+            "status 876..900 \"↑↓ 선택 · Enter 열기 · Ctrl+D 즐겨찾기\"",
+        ]);
+
+        let results = quick_search_bands(640, 900, 125, false, true, false, &[],
+            "☷ 2개 · 0.12초     파일명 매치 2 · 본문 매치 1", "2 documents");
+        assert_eq!(results[0], "options 130..202 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(results[1].split_whitespace().take(2).collect::<Vec<_>>(), ["filters", "202..232"]);
+        assert_eq!(results[2].split_whitespace().take(2).collect::<Vec<_>>(), ["summary", "232..272"]);
+        assert_eq!(results[3], "list 272..900 \"결과 목록\"");
+
+        let related = quick_search_bands(640, 900, 125, true, true, false,
+            &["예산".into(), "공사".into()], "☷ 2개 · 0.12초", "2 documents");
+        assert_eq!(related[0], "related 95..130 \"예산 · 공사\"");
+        assert_eq!(related[1], "options 165..237 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(related[4], "list 307..900 \"결과 목록\"");
+
+        let error = quick_search_bands(640, 900, 150, false, true, false, &[],
+            "☷ 0개 · 0.00초     파일명 매치 0 · 본문 매치 0", "검색 서비스 오류");
+        assert_eq!(error[0], "options 156..243 \"키워드 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
+        assert_eq!(error[3], "list 327..900 \"결과 목록\"");
+        assert_eq!(error[4], "status 864..900 \"검색 서비스 오류\"");
     }
 
     #[test]

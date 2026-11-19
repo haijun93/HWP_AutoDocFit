@@ -208,14 +208,17 @@ pub enum OptionControl {
     CustomDays,
 }
 
-/// 옵션 바 각 영역을 가용 폭에 맞춰 동일 폭으로 배치한다.
+/// 옵션 바에서 편집 가능한 결과 내 영역에 나머지 항목의 두 배 폭을 배정한다.
 pub fn option_spans(left: i32, right: i32) -> [(i32, i32); 7] {
     let avail = (right - left).max(0);
+    // 균등 분할은 좁은 창에서 값이 긴 '결과 내' 영역을 말줄임표 하나로 잘랐다.
+    const WEIGHTS: [i32; 7] = [1, 1, 1, 1, 1, 2, 1];
+    let total: i32 = WEIGHTS.iter().sum();
+    let mut used = 0;
     std::array::from_fn(|i| {
-        (
-            left + avail * i as i32 / 7,
-            left + avail * (i + 1) as i32 / 7,
-        )
+        let start = left + avail * used / total;
+        used += WEIGHTS[i];
+        (start, left + avail * used / total)
     })
 }
 
@@ -625,27 +628,71 @@ pub fn calc_list_top(
 }
 
 /// Y position after the fixed header, option/filter/summary bands and optional autocomplete.
-pub fn calc_content_top(
-    head: i32,
-    search: i32,
-    tabs: i32,
-    options: i32,
-    filters: i32,
-    summary: i32,
-    has_ac: bool,
-    ac: i32,
-) -> i32 {
-    head + search + tabs + options + filters + summary + if has_ac { ac } else { 0 }
+#[derive(Clone, Copy)]
+pub struct QuickSearchLayout {
+    pub related: RECT,
+    pub tabs: RECT,
+    pub options: RECT,
+    pub filters: RECT,
+    pub summary: RECT,
+    pub autocomplete: RECT,
+    pub list_top: i32,
 }
 
-/// 옵션 줄(oy..oy+option_h) 바로 아래에 범위 칩 줄(filter_h), 그 아래에 요약 줄이 온다.
-/// 그리기와 마우스 판정이 같은 값을 쓰도록 한 곳에서 계산한다(QMSUI1: 두 줄이 같은 높이에 겹쳐 그려지던 문제).
+pub fn hit_quick_band(x: i32, y: i32, band: RECT) -> bool {
+    x >= band.left && x < band.right && y >= band.top && y < band.bottom
+}
+
+fn quick_layout_at(option_top: i32, width: i32, height: i32, scale: i32, has_related: bool, show_options: bool, has_autocomplete: bool, option_height: i32, filter_height: i32, summary_height: i32, autocomplete_height: i32) -> QuickSearchLayout {
+    let s = |v: i32| v * scale.max(1) / 100;
+    let clip = |top: i32, bottom: i32| RECT {
+        left: 0,
+        top: top.clamp(0, height.max(0)),
+        right: width.max(0),
+        bottom: bottom.clamp(top.clamp(0, height.max(0)), height.max(0)),
+    };
+    let related_h = if has_related { s(28) } else { 0 };
+    let search_bottom = s(HEAD_H + SEARCH_BOX_H + 12);
+    let related_top = search_bottom;
+    let tab_top = related_top + related_h;
+    let option_h = if show_options { option_height } else { 0 };
+    let filter_top = option_top + option_h;
+    let summary_top = filter_top + filter_height;
+    let autocomplete_top = summary_top + summary_height + if has_autocomplete { s(4) } else { 0 };
+    let autocomplete_h = if has_autocomplete { autocomplete_height } else { 0 };
+    let list_top = autocomplete_top + autocomplete_h;
+    QuickSearchLayout {
+        related: clip(related_top, related_top + related_h),
+        tabs: clip(tab_top, tab_top + s(TAB_H)),
+        options: clip(option_top, option_top + option_h),
+        filters: clip(filter_top, filter_top + filter_height),
+        summary: clip(summary_top, summary_top + summary_height),
+        autocomplete: clip(autocomplete_top, autocomplete_top + autocomplete_h),
+        list_top: list_top.clamp(0, height.max(0)),
+    }
+}
+
+/// Shared quick-search geometry for painting, hit testing and result-list placement.
+pub fn quick_search_layout(scale: i32, width: i32, height: i32, has_related: bool, show_options: bool, has_autocomplete: bool) -> QuickSearchLayout {
+    let s = |v: i32| v * scale.max(1) / 100;
+    let related_h = if has_related { s(28) } else { 0 };
+    let option_top = s(HEAD_H + SEARCH_BOX_H + 12) + related_h + s(TAB_H);
+    quick_layout_at(option_top, width, height, scale, has_related, show_options, has_autocomplete, s(OPTION_H), s(FILTER_H), s(SUMMARY_H), s(22))
+}
+
+/// Compatibility wrappers delegate their band positions to the shared layout calculation.
 pub fn filter_band_top(option_top: i32, option_h: i32) -> i32 {
-    option_top + option_h
+    quick_layout_at(option_top, i32::MAX, i32::MAX, 100, false, true, false, option_h, 0, 0, 0).filters.top
 }
 
 pub fn summary_band_top(option_top: i32, option_h: i32, filter_h: i32) -> i32 {
-    filter_band_top(option_top, option_h) + filter_h
+    quick_layout_at(option_top, i32::MAX, i32::MAX, 100, false, true, false, option_h, filter_h, 0, 0).summary.top
+}
+
+pub fn calc_content_top(head: i32, search: i32, tabs: i32, options: i32, filters: i32, summary: i32, has_ac: bool, ac: i32) -> i32 {
+    let top = head + search + tabs;
+    let b = quick_layout_at(top, i32::MAX, i32::MAX, 100, false, options > 0, false, options, filters, summary, 0);
+    b.summary.bottom + if has_ac { ac } else { 0 }
 }
 
 #[cfg(test)]
@@ -659,6 +706,51 @@ mod content_top_tests {
         assert_eq!(summary_band_top(oy, oh, fh), oy + oh + fh);
         assert!(summary_band_top(oy, oh, fh) >= filter_band_top(oy, oh) + fh);
         assert_eq!(summary_band_top(oy, oh, fh) + sh, oy + calc_content_top(0, 0, 0, oh, fh, sh, false, 0));
+    }
+    #[test]
+    fn quick_search_bands_are_sequential_at_supported_scales_and_clip_short_windows() {
+        for scale in [100, 125, 150, 200] {
+            for height in [150, 190, 260, 900] {
+                for has_related in [false, true] {
+                    for show_options in [false, true] {
+                        for has_autocomplete in [false, true] {
+                            let b = quick_search_layout(scale, 640, height, has_related, show_options, has_autocomplete);
+                            let rects = [b.related, b.tabs, b.options, b.filters, b.summary, b.autocomplete];
+                            for rect in rects {
+                                assert!(0 <= rect.top && rect.top <= rect.bottom && rect.bottom <= height,
+                                    "scale={scale} height={height}: {}..{}", rect.top, rect.bottom);
+                            }
+                            for pair in rects.windows(2) {
+                                assert!(pair[0].bottom <= pair[1].top,
+                                    "scale={scale} height={height}: {} > {}", pair[0].bottom, pair[1].top);
+                            }
+                            assert!(b.list_top <= height);
+                            let visible = rects.iter().filter(|r| r.bottom > r.top).collect::<Vec<_>>();
+                            for (i, row) in visible.iter().enumerate() {
+                                let y = row.top + (row.bottom - row.top - 1) / 2;
+                                assert!(hit_quick_band(10, y, **row));
+                                for (j, other) in visible.iter().enumerate() {
+                                    if i != j { assert!(!hit_quick_band(10, y, **other)); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn filter_and_summary_hit_bands_are_disjoint_and_scale_correctly() {
+        for scale in [100, 125, 150, 200] {
+            let s = |v: i32| v * scale / 100;
+            let b = quick_search_layout(scale, s(900), s(900), false, true, false);
+            let filter_click_y = b.filters.top + (b.filters.bottom - b.filters.top) / 2;
+            let summary_click_y = b.summary.top + (b.summary.bottom - b.summary.top) / 2;
+            assert!(hit_quick_band(10, filter_click_y, b.filters));
+            assert!(!hit_quick_band(10, filter_click_y, b.summary));
+            assert!(hit_quick_band(10, summary_click_y, b.summary));
+        }
     }
     #[test]
     fn content_bands_are_sequential() {
@@ -787,13 +879,27 @@ mod interaction_hit_tests {
     #[test]
     fn option_regions_cover_all_controls() {
         let spans = option_spans(10, 710);
-        assert_eq!(spans[0], (10, 110));
-        assert_eq!(spans[6], (610, 710));
+        assert_eq!(spans[0].0, 10);
+        assert_eq!(spans[6].1, 710);
+        assert!(spans.windows(2).all(|pair| pair[0].1 == pair[1].0));
+    }
+
+    #[test]
+    fn within_query_option_gets_double_width_without_gaps() {
+        for (left, right) in [(12, 220), (272, 496), (12, 900)] {
+            let spans = option_spans(left, right);
+            assert_eq!(spans[0].0, left);
+            assert_eq!(spans[6].1, right);
+            assert!(spans.windows(2).all(|pair| pair[0].1 == pair[1].0));
+            assert!(spans[5].1 - spans[5].0 >= (right - left) / 4);
+        }
     }
     #[test]
     fn option_hit_selects_period_region() {
+        let spans = option_spans(10, 710);
+        let period_x = spans[3].0 + (spans[3].1 - spans[3].0) / 2;
         assert_eq!(
-            hit_option(360, 35, 30, 30, 10, 710),
+            hit_option(period_x, 35, 30, 30, 10, 710),
             Some(OptionControl::Period)
         );
     }
