@@ -13,6 +13,93 @@ void main() {
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
   group('PhotoAlbumScreen 위젯 시험', () {
+    testWidgets('태그 필터와 선택 사진 태그 편집 패널 연결', (tester) async {
+      tester.view.physicalSize = const Size(1100, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final actions = <String>[];
+      Future<Object?> mockApi(String endpoint, List<Object?> params) async {
+        final action = params.first as String;
+        actions.add(action);
+        if (action == 'list_folders') {
+          return {
+            'ok': true,
+            'folders': [
+              {'path': '/photos'},
+            ],
+          };
+        }
+        if (action == 'list_by_date') {
+          return {
+            'ok': true,
+            'groups': [
+              {
+                'year': 2026,
+                'month': 11,
+                'label': '2026년 11월',
+                'photos': [
+                  {
+                    'path': '/photos/a.jpg',
+                    'filename': 'a.jpg',
+                    'date_taken': '',
+                    'tags': ['기존'],
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        if (action == 'list_tags') {
+          return {
+            'ok': true,
+            'tags': [
+              {'tag': '기존', 'count': 1},
+            ],
+          };
+        }
+        if (action == 'add_tag') {
+          return {
+            'ok': true,
+            'tags': ['기존', '새 태그'],
+          };
+        }
+        if (action == 'thumbnail') return {'ok': true, 'data': testBase64Png};
+        return {'ok': true};
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: PhotoAlbumScreen(api: mockApi)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('photoTagFilter-기존')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('photoTagFilter-기존')));
+      await tester.pumpAndSettle();
+      expect(actions, contains('search'));
+      await tester.tap(find.byKey(const ValueKey('photoTagFilter-기존')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('photoAlbumToggleSelectionButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('photoCard-/photos/a.jpg')));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('photoAlbumTagEditorPanel')),
+        findsOneWidget,
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('photoAlbumTagInput')),
+        '새 태그',
+      );
+      await tester.tap(find.byKey(const ValueKey('photoAlbumAddTagButton')));
+      await tester.pumpAndSettle();
+      expect(actions, contains('add_tag'));
+      expect(find.text('새 태그'), findsOneWidget);
+    });
+
+
     testWidgets('앱 왼쪽 탭 목록에 사진뷰 탭 노출 및 전환 확인', (tester) async {
       tester.view.physicalSize = const Size(1200, 800);
       tester.view.devicePixelRatio = 1;
@@ -1012,7 +1099,9 @@ void main() {
       Future<Object?> mockApi(String endpoint, List<Object?> params) async {
         final action = params.first as String;
         calls.add(action);
-        if (action == 'scan_default') return {'ok': true, 'task_id': 'photo-task'};
+        if (action == 'scan_default') {
+          return {'ok': true, 'task_id': 'photo-task'};
+        }
         if (action == 'scan_progress') {
           return {
             'ok': true,
@@ -1025,14 +1114,22 @@ void main() {
           cancelled = true;
           return {'ok': true};
         }
-        if (action == 'list_folders') return {'ok': true, 'folders': <Map<String, Object?>>[]};
-        if (action == 'list_by_date') return {'ok': true, 'groups': <Map<String, Object?>>[]};
-        if (action == 'excluded_folders_get') return {'ok': true, 'folders': <String>[]};
+        if (action == 'list_folders') {
+          return {'ok': true, 'folders': <Map<String, Object?>>[]};
+        }
+        if (action == 'list_by_date') {
+          return {'ok': true, 'groups': <Map<String, Object?>>[]};
+        }
+        if (action == 'excluded_folders_get') {
+          return {'ok': true, 'folders': <String>[]};
+        }
         if (action == 'excluded_folder_add') {
           final payload = params.length > 1 && params[1] is Map ? params[1] as Map : {};
           return {'ok': true, 'folders': [payload['folder']]};
         }
-        if (action == 'excluded_folder_remove') return {'ok': true, 'folders': <String>[]};
+        if (action == 'excluded_folder_remove') {
+          return {'ok': true, 'folders': <String>[]};
+        }
         return {'ok': true};
       }
 

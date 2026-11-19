@@ -68,6 +68,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   // 검색 및 필터 상태
   final TextEditingController _searchController = TextEditingController();
   bool _favoriteFilter = false;
+  String? _activeTag;
+  List<Map<String, Object?>> _tagOptions = [];
+  final TextEditingController _tagDraftController = TextEditingController();
 
   @override
   void initState() {
@@ -78,6 +81,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _tagDraftController.dispose();
     super.dispose();
   }
 
@@ -96,14 +100,25 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         while (state == 'running' || state == 'cancelling') {
           await Future<void>.delayed(const Duration(milliseconds: 120));
           if (!mounted) return;
-          final progress = await widget.api('photo_album', ['scan_progress', {}]);
+          final progress = await widget.api('photo_album', [
+            'scan_progress',
+            {},
+          ]);
           if (progress is! Map || progress['ok'] != true) break;
           state = '${progress['state'] ?? 'running'}';
-          setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
-          if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+          setState(() {
+            _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0;
+          });
+          if (state == 'failed') {
+            throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+          }
         }
       }
-      if (mounted) setState(() { _scanRunning = false; });
+      if (mounted) {
+        setState(() {
+          _scanRunning = false;
+        });
+      }
       final res = await widget.api('photo_album', ['list_folders', {}]);
       if (!mounted) return;
 
@@ -120,9 +135,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         setState(() {
           _registeredFolders = folders;
         });
-
       }
       await _loadPhotos('');
+      await _loadTagOptions();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -133,12 +148,62 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     }
   }
 
+  Future<void> _loadTagOptions() async {
+    final res = await widget.api('photo_album', [
+      'list_tags',
+      {'folder': _currentFolder},
+    ]);
+    if (!mounted || res is! Map || res['ok'] != true) return;
+    final raw = res['tags'];
+    setState(
+      () => _tagOptions = raw is List
+          ? raw
+                .whereType<Map>()
+                .map((e) => Map<String, Object?>.from(e))
+                .toList()
+          : <Map<String, Object?>>[],
+    );
+  }
+
+  Future<void> _editSelectedPhotoTag(String? removeTag) async {
+    if (_selectedPaths.length != 1) return;
+    final path = _selectedPaths.first;
+    final photo = _getAllCurrentPhotos()
+        .where((p) => p['path'] == path)
+        .firstOrNull;
+    if (photo == null) return;
+    final tag = removeTag ?? _tagDraftController.text.trim();
+    if (tag.isEmpty) return;
+    final res = await widget.api('photo_album', [
+      removeTag == null ? 'add_tag' : 'remove_tag',
+      {'path': path, 'tag': tag},
+    ]);
+    if (!mounted || res is! Map || res['ok'] != true) return;
+    final tags = (res['tags'] as List? ?? const [])
+        .whereType<String>()
+        .toList();
+    setState(() {
+      photo['tags'] = tags;
+      for (final p in _getAllCurrentPhotos()) {
+        if (p['path'] == path) p['tags'] = tags;
+      }
+      _tagDraftController.clear();
+    });
+    await _loadTagOptions();
+    if (_activeTag != null && !tags.contains(_activeTag)) {
+      await _performSearch();
+    }
+  }
+
   Future<void> _cancelScan() async {
     await widget.api('photo_album', ['scan_cancel', {}]);
   }
 
   Future<void> _editExcludedFolders() async {
-    final response = await widget.api('photo_album', ['excluded_folders_get', {}]);
+    final response = await widget.api('photo_album', [
+      'excluded_folders_get',
+      {},
+    ]);
     var folders = response is Map && response['folders'] is List
         ? (response['folders'] as List).whereType<String>().toList()
         : <String>[];
@@ -149,27 +214,65 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         builder: (context, setDialogState) => AlertDialog(
           key: const ValueKey('photoAlbumExcludedFoldersDialog'),
           title: const Text('제외할 폴더'),
-          content: SizedBox(width: 440, child: folders.isEmpty
-              ? const Text('제외한 폴더가 없습니다.')
-              : ListView(shrinkWrap: true, children: [for (final folder in folders)
-                  ListTile(title: Text(folder), trailing: IconButton(
-                    key: ValueKey('photoAlbumRemoveExcluded-${folders.indexOf(folder)}'),
-                    tooltip: '제외 폴더 삭제', icon: const Icon(Icons.delete_outline),
-                    onPressed: () async {
-                      final result = await widget.api('photo_album', ['excluded_folder_remove', {'folder': folder}]);
-                      if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
-                    },
-                  )),])),
+          content: SizedBox(
+            width: 440,
+            child: folders.isEmpty
+                ? const Text('제외한 폴더가 없습니다.')
+                : ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final folder in folders)
+                        ListTile(
+                          title: Text(folder),
+                          trailing: IconButton(
+                            key: ValueKey(
+                              'photoAlbumRemoveExcluded-${folders.indexOf(folder)}',
+                            ),
+                            tooltip: '제외 폴더 삭제',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              final result = await widget.api('photo_album', [
+                                'excluded_folder_remove',
+                                {'folder': folder},
+                              ]);
+                              if (result is Map && result['folders'] is List) {
+                                setDialogState(() {
+                                  folders = (result['folders'] as List)
+                                      .whereType<String>()
+                                      .toList();
+                                });
+                              }
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+          ),
           actions: [
-            TextButton(onPressed: () async {
-              final selected = widget.directoryPicker != null
-                  ? await widget.directoryPicker!()
-                  : await getDirectoryPath();
-              if (selected == null || selected.isEmpty) return;
-              final result = await widget.api('photo_album', ['excluded_folder_add', {'folder': selected}]);
-              if (result is Map && result['folders'] is List) setDialogState(() { folders = (result['folders'] as List).whereType<String>().toList(); });
-            }, child: const Text('폴더 추가')),
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('닫기')),
+            TextButton(
+              onPressed: () async {
+                final selected = widget.directoryPicker != null
+                    ? await widget.directoryPicker!()
+                    : await getDirectoryPath();
+                if (selected == null || selected.isEmpty) return;
+                final result = await widget.api('photo_album', [
+                  'excluded_folder_add',
+                  {'folder': selected},
+                ]);
+                if (result is Map && result['folders'] is List) {
+                  setDialogState(() {
+                    folders = (result['folders'] as List)
+                        .whereType<String>()
+                        .toList();
+                  });
+                }
+              },
+              child: const Text('폴더 추가'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('닫기'),
+            ),
           ],
         ),
       ),
@@ -267,6 +370,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         _loading = false;
       });
     }
+    await _loadTagOptions();
   }
 
   Future<void> _refreshCurrentFolder() async {
@@ -285,14 +389,25 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         while (state == 'running' || state == 'cancelling') {
           await Future<void>.delayed(const Duration(milliseconds: 120));
           if (!mounted) return;
-          final progress = await widget.api('photo_album', ['scan_progress', {}]);
+          final progress = await widget.api('photo_album', [
+            'scan_progress',
+            {},
+          ]);
           if (progress is! Map || progress['ok'] != true) break;
           state = '${progress['state'] ?? 'running'}';
-          setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
-          if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+          setState(() {
+            _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0;
+          });
+          if (state == 'failed') {
+            throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
+          }
         }
       }
-      if (mounted) setState(() { _scanRunning = false; });
+      if (mounted) {
+        setState(() {
+          _scanRunning = false;
+        });
+      }
       await _loadPhotos(_currentFolder!);
     } catch (e) {
       if (!mounted) return;
@@ -371,8 +486,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   }
 
   Future<void> _performSearch() async {
-    final query = _searchController.text.trim();
-    if (query.isEmpty && !_favoriteFilter) {
+    final input = _searchController.text.trim();
+    final query = input.startsWith('#tag:') ? '' : input;
+    final tag = input.startsWith('#tag:')
+        ? input.substring(5).trim()
+        : _activeTag;
+    if (query.isEmpty && tag == null && !_favoriteFilter) {
       setState(() {
         _searchResults = null;
       });
@@ -390,6 +509,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         'search',
         {
           'query': query,
+          'tag': tag,
           'folder': _currentFolder,
           'favorite_only': _favoriteFilter,
         },
@@ -735,7 +855,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       builder: (context, constraints) {
         final content = Scaffold(
           appBar: PreferredSize(
-            preferredSize: Size.fromHeight(_currentFolder != null ? 110 : 64),
+            preferredSize: Size.fromHeight(_currentFolder != null ? 146 : 100),
             child: _buildTopBar(context),
           ),
           body: _buildBody(),
@@ -767,27 +887,29 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           Row(
             children: [
               if (_currentFolder != null) ...[
-                  Flexible(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(
-                          Icons.photo_library_outlined,
-                          size: 18,
-                          color: Colors.grey,
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
+                        Icons.photo_library_outlined,
+                        size: 18,
+                        color: Colors.grey,
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          _currentFolder!.isEmpty
+                              ? '모든 고정 드라이브'
+                              : _currentFolder!,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w500),
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            _currentFolder!.isEmpty ? '모든 고정 드라이브' : _currentFolder!,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(width: 8),
+                ),
+                const SizedBox(width: 8),
                 IconButton(
                   key: const ValueKey('photoAlbumRefreshButton'),
                   tooltip: '새로고침',
@@ -912,6 +1034,34 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               ),
             ],
           ),
+          if (_tagOptions.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            SizedBox(
+              height: 30,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final item in _tagOptions)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: FilterChip(
+                        key: ValueKey('photoTagFilter-${item['tag']}'),
+                        label: Text('${item['tag']} (${item['count'] ?? 0})'),
+                        selected: _activeTag == item['tag'],
+                        onSelected: (selected) {
+                          setState(
+                            () =>
+                                _activeTag = selected ? '${item['tag']}' : null,
+                          );
+                          _performSearch();
+                        },
+                        visualDensity: VisualDensity.compact,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
           // 2행: 폴더가 선택되어 있을 때 보기 전환 (날짜별 / 폴더별 / 카메라별 / 위치별) + 중복 사진 찾기
           if (_currentFolder != null) ...[
             const SizedBox(height: 6),
@@ -1027,14 +1177,28 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   Widget _buildBody() {
     if (_loading) {
       if (_scanRunning) {
-        return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          SizedBox(width: 320, child: LinearProgressIndicator(value: _scanProgress == 0 ? null : _scanProgress / 100)),
-          const SizedBox(height: 12), Text('사진 검색 중... $_scanProgress%'),
-          const SizedBox(height: 8), OutlinedButton.icon(
-            key: const ValueKey('photoAlbumCancelScanButton'), onPressed: _cancelScan,
-            icon: const Icon(Icons.cancel_outlined), label: const Text('스캔 취소'),
+        return Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 320,
+                child: LinearProgressIndicator(
+                  value: _scanProgress == 0 ? null : _scanProgress / 100,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text('사진 검색 중... $_scanProgress%'),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const ValueKey('photoAlbumCancelScanButton'),
+                onPressed: _cancelScan,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('스캔 취소'),
+              ),
+            ],
           ),
-        ]));
+        );
       }
       return const Center(
         child: Column(
@@ -1147,11 +1311,73 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       children: [
         if (_selectionMode) _buildSelectionBar(context),
         Expanded(
-          child: _searchResults != null
-              ? _buildSearchResultsGrid()
-              : _buildGroupedDateGrid(),
+          child: Row(
+            children: [
+              Expanded(
+                child: _searchResults != null
+                    ? _buildSearchResultsGrid()
+                    : _buildGroupedDateGrid(),
+              ),
+              if (_selectionMode && _selectedPaths.length == 1)
+                SizedBox(width: 260, child: _buildTagEditor()),
+            ],
+          ),
         ),
       ],
+    );
+  }
+
+  Widget _buildTagEditor() {
+    final path = _selectedPaths.first;
+    final photo = _getAllCurrentPhotos()
+        .where((p) => p['path'] == path)
+        .firstOrNull;
+    final tags = (photo?['tags'] as List? ?? const [])
+        .whereType<String>()
+        .toList();
+    return Card(
+      key: const ValueKey('photoAlbumTagEditorPanel'),
+      margin: const EdgeInsets.all(12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('사진 태그', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 4,
+              children: [
+                for (final tag in tags)
+                  InputChip(
+                    label: Text(tag),
+                    onDeleted: () => _editSelectedPhotoTag(tag),
+                  ),
+              ],
+            ),
+            TextField(
+              key: const ValueKey('photoAlbumTagInput'),
+              controller: _tagDraftController,
+              decoration: InputDecoration(
+                hintText: '태그 입력',
+                suffixIcon: IconButton(
+                  key: const ValueKey('photoAlbumAddTagButton'),
+                  icon: const Icon(Icons.add),
+                  onPressed: () => _editSelectedPhotoTag(null),
+                ),
+              ),
+              onSubmitted: (_) => _editSelectedPhotoTag(null),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              path,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
