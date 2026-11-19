@@ -4177,11 +4177,6 @@ def run_webview(gui):
     def initialize_webview(web_window):
         _dismiss_splash()
         try:
-            from docfit_app.focus_home_event import start_focus_home_watcher
-            bridge._focus_home_watcher = start_focus_home_watcher(web_window, APP_NAME)
-        except Exception:
-            logging.getLogger(__name__).exception("Could not start home focus event watcher")
-        try:
             from docfit_app.configuration_service import ConfigurationService
             from docfit_app.freeze_tracer import FreezeTracer, _is_hung
             # 스레드 안전: 설정 저장소 읽기(경로별 RLock)라 Tk를 기다리지 않는다.

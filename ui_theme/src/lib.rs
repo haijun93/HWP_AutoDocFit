@@ -16,26 +16,6 @@
 
 use std::sync::Mutex;
 
-pub const FOCUS_HOME_EVENT_NAME: &str = "Local\\HwpAutoDocFit.FocusHome";
-
-pub fn home_action(event_is_open: bool) -> HomeAction {
-    if event_is_open { HomeAction::SignalExisting } else { HomeAction::Launch }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HomeAction { SignalExisting, Launch }
-
-#[cfg(test)]
-mod home_action_tests {
-    use super::*;
-    #[test]
-    fn home_event_name_and_decision_are_stable() {
-        assert_eq!(FOCUS_HOME_EVENT_NAME, "Local\\HwpAutoDocFit.FocusHome");
-        assert_eq!(home_action(true), HomeAction::SignalExisting);
-        assert_eq!(home_action(false), HomeAction::Launch);
-    }
-}
-
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]

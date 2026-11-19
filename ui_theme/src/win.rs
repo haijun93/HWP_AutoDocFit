@@ -35,15 +35,6 @@ pub unsafe fn draw_home_button(hdc: windows_sys::Win32::Graphics::Gdi::HDC, rect
 
 /// 기본 앱 진입점을 연다. 단일 인스턴스는 앱 자체 런처가 앞으로 가져온다.
 pub fn open_home_app() -> Result<(), String> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
-    let event_name: Vec<u16> = crate::FOCUS_HOME_EVENT_NAME.encode_utf16().chain(Some(0)).collect();
-    let event = unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, event_name.as_ptr()) };
-    if crate::home_action(!event.is_null()) == crate::HomeAction::SignalExisting {
-        let signaled = unsafe { SetEvent(event) } != 0;
-        unsafe { CloseHandle(event); }
-        if signaled { return Ok(()); }
-    }
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;

@@ -235,7 +235,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   int lastTab = 0;
   bool developerMode = false;
   void Function()? _stopPhotoEditEvent;
-  void Function()? _stopFocusHomeEvent;
   List<void Function()> _stopTabOpenEvents = const [];
 
   @override
@@ -264,10 +263,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
         photoPasteTrigger.value++;
       },
     );
-    _stopFocusHomeEvent = watchWindowEvent('docfit-focus-home', () {
-      tabRequest.value = null;
-      tabRequest.value = 0;
-    });
     _stopTabOpenEvents = watchTabOpenEvents(
       tabRequest: tabRequest,
       hiddenTabs: () => {...kDefaultHiddenTabs, ...hiddenTabsNotifier.value},
@@ -278,7 +273,6 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   @override
   void dispose() {
     _stopPhotoEditEvent?.call();
-    _stopFocusHomeEvent?.call();
     for (final stop in _stopTabOpenEvents) {
       stop();
     }
