@@ -129,6 +129,7 @@ const List<({int tab, String label, String hint})> kSidebarMenuChoices = [
   (tab: kTabFileConversion, label: '파일변환', hint: 'HWPX · PDF · DOCX · MD 등'),
   (tab: kTabPdfEdit, label: 'PDF 편집', hint: '합치기·나누기·용량 줄이기'),
   (tab: kTabOutliner, label: '아웃라이너', hint: 'Logseq식 블록 메모와 일지'),
+  (tab: kTabQmsBench, label: '검색 벤치마크', hint: 'Everything 대 몽땅검색 성능 측정'),
 ];
 
 /// '쓸 메뉴를 고르세요' 창. [저장]을 누르면 설정에 저장하고 왼쪽 메뉴에 바로 반영한다.

@@ -47,6 +47,13 @@ class HiddenTabsSettingTest(unittest.TestCase):
             self.assertEqual(service.dispatch('set_hidden_tabs', [[14, 11]]), [11, 14])
             self.assertEqual(ApplicationService(Path(folder) / 'settings.json').dispatch('get_state', [])['hidden_tabs'], [11, 14])
 
+    def test_qms_bench_is_tab_15_optional_without_shifting_existing_numbers(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = ApplicationService(Path(folder) / 'settings.json')
+            self.assertEqual(clean_hidden_tabs([11, 12, 13, 14, 15, 0]), [11, 14, 15])
+            self.assertEqual(service.dispatch('set_hidden_tabs', [[15, 14, 11]]), [11, 14, 15])
+            self.assertEqual(ApplicationService(Path(folder) / 'settings.json').dispatch('get_state', [])['hidden_tabs'], [11, 14, 15])
+
 
 if __name__ == "__main__":
     unittest.main()

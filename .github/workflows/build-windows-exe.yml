@@ -224,6 +224,18 @@ jobs:
           (Get-FileHash resources/outliner.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/outliner.exe.sha256
           if (!(Test-Path resources/outliner.exe) -or !(Test-Path resources/outliner.exe.sha256)) { throw 'outliner bundle missing' }
 
+      - name: Build qms_bench engine (qms_bench.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path qms_bench/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path qms_bench/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item qms_bench/target/release/qms_bench.exe resources/qms_bench.exe -Force
+          (Get-FileHash resources/qms_bench.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/qms_bench.exe.sha256
+          if (!(Test-Path resources/qms_bench.exe) -or !(Test-Path resources/qms_bench.exe.sha256)) { throw 'qms_bench bundle missing' }
+
       - name: Build kfind service (kfind.exe, Rust)
         shell: pwsh
         run: |
@@ -278,7 +290,7 @@ jobs:
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {
@@ -324,6 +336,14 @@ jobs:
           if (!(Test-Path "$folder/outliner.exe") -or !(Test-Path "$folder/outliner.exe.sha256")) { throw 'outliner missing from frozen bundle' }
           $expected = (Get-Content "$folder/outliner.exe.sha256" -Raw).Trim()
           if ((Get-FileHash "$folder/outliner.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'outliner bundle hash mismatch' }
+
+      - name: Verify qms_bench engine in frozen bundle
+        shell: pwsh
+        run: |
+          $folder = 'dist/HWP_AutoDocFit/_internal/resources'
+          if (!(Test-Path "$folder/qms_bench.exe") -or !(Test-Path "$folder/qms_bench.exe.sha256")) { throw 'qms_bench missing from frozen bundle' }
+          $expected = (Get-Content "$folder/qms_bench.exe.sha256" -Raw).Trim()
+          if ((Get-FileHash "$folder/qms_bench.exe" -Algorithm SHA256).Hash -ne $expected) { throw 'qms_bench bundle hash mismatch' }
 
       - name: Verify kfind in frozen bundle
         shell: pwsh
