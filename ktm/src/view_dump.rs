@@ -199,14 +199,14 @@ mod tests {
         ]);
 
         let results = quick_search_bands(640, 900, 125, false, true, false, &[],
-            "☷ 2개 · 0.12초", "2 documents");
+            "☷ 2개 · 0.12초", "문서 2건");
         assert_eq!(results[0], "options 95..167 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
         assert_eq!(results[1].split_whitespace().take(2).collect::<Vec<_>>(), ["filters", "167..197"]);
         assert_eq!(results[2].split_whitespace().take(2).collect::<Vec<_>>(), ["summary", "197..237"]);
         assert_eq!(results[3], "list 237..900 \"결과 목록\"");
 
         let related = quick_search_bands(640, 900, 125, true, true, false,
-            &["예산".into(), "공사".into()], "☷ 2개 · 0.12초", "2 documents");
+            &["예산".into(), "공사".into()], "☷ 2개 · 0.12초", "문서 2건");
         assert_eq!(related[0], "related 95..130 \"예산 · 공사\"");
         assert_eq!(related[1], "options 130..202 \"통합 검색 | 정렬:관련도 | 형식:전체 | 기간:전체 | 제외:□ | 결과 내:Ctrl+F | [옵션]\"");
         assert_eq!(related[4], "list 272..900 \"결과 목록\"");

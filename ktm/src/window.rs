@@ -2309,10 +2309,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 (e.clone(), String::new())
             } else {
                 match u.state.phase {
-                    Phase::Searching => ("Searching".into(), String::new()),
+                    Phase::Searching => ("검색 중…".into(), String::new()),
                     Phase::Results => (
-                        format!("{} documents", u.rows.len()),
-                        format!("{} folders | v2.2.71", u.state.folder_counts.len()),
+                        format!("문서 {}건", u.rows.len()),
+                        format!("폴더 {}개", u.state.folder_counts.len()),
                     ),
                     _ if u.state.query.trim().is_empty()
                         && !u.state.history_entries().is_empty() =>
@@ -2323,10 +2323,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         )
                     }
                     _ if u.state.query.trim().is_empty() => {
-                        ("Type a topic or search term".into(), String::new())
+                        ("주제나 검색어를 입력하세요".into(), String::new())
                     }
                     _ => (
-                        "Live search from 2 chars | Enter for 1".into(),
+                        "2글자부터 바로 검색 · 1글자는 Enter".into(),
                         String::new(),
                     ),
                 }
