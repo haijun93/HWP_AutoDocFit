@@ -2,6 +2,100 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, io, path::Path, time::Duration};
 
+#[cfg(windows)]
+pub mod win;
+#[cfg(windows)]
+pub use win::*;
+
+#[cfg(not(windows))]
+pub mod non_win {
+    use crate::{AdapterResult, CounterReader, Query, QueryAdapter, ResourceSample};
+    use serde::{Deserialize, Serialize};
+    use std::time::Duration;
+
+    #[derive(Debug, Clone)]
+    pub struct KfindPipeAdapter {
+        pub name: String,
+    }
+    impl KfindPipeAdapter {
+        pub fn new(_: impl Into<String>) -> Self {
+            Self {
+                name: "kfind".into(),
+            }
+        }
+    }
+    impl QueryAdapter for KfindPipeAdapter {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn query(&mut self, _: &Query, _: usize, _: Duration) -> AdapterResult {
+            AdapterResult {
+                latency_ms: 0.0,
+                result_count: 0,
+                top_ids: vec![],
+                error: Some("kfind pipe adapter is only supported on Windows".into()),
+                timed_out: false,
+            }
+        }
+    }
+
+    pub struct EverythingIpcAdapter {
+        pub name: String,
+    }
+    impl EverythingIpcAdapter {
+        pub fn new() -> Result<Self, String> {
+            Ok(Self {
+                name: "everything".into(),
+            })
+        }
+    }
+    impl QueryAdapter for EverythingIpcAdapter {
+        fn name(&self) -> &str {
+            &self.name
+        }
+        fn query(&mut self, _: &Query, _: usize, _: Duration) -> AdapterResult {
+            AdapterResult {
+                latency_ms: 0.0,
+                result_count: 0,
+                top_ids: vec![],
+                error: Some("Everything IPC adapter is only supported on Windows".into()),
+                timed_out: false,
+            }
+        }
+    }
+
+    pub struct WindowsProcessCounter;
+    impl WindowsProcessCounter {
+        pub fn for_pid(_: u32) -> Self {
+            Self
+        }
+        pub fn for_process_names(_: &[&str]) -> Result<Self, String> {
+            Err("WindowsProcessCounter is only supported on Windows".into())
+        }
+    }
+    impl CounterReader for WindowsProcessCounter {
+        fn read(&mut self) -> Result<ResourceSample, String> {
+            Err("WindowsProcessCounter is only supported on Windows".into())
+        }
+    }
+
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    pub struct DetectReport {
+        pub ok: bool,
+        pub command: String,
+        pub error: Option<String>,
+    }
+    pub fn detect_all() -> DetectReport {
+        DetectReport {
+            ok: false,
+            command: "detect".into(),
+            error: Some("detect is only supported on Windows".into()),
+        }
+    }
+}
+#[cfg(not(windows))]
+pub use non_win::*;
+
 pub const SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -59,7 +153,8 @@ pub fn validate_query_set(qs: &QuerySet) -> Result<(), String> {
 }
 pub fn load_query_set(path: impl AsRef<Path>) -> Result<QuerySet, String> {
     let b = fs::read(path).map_err(|e| e.to_string())?;
-    let q: QuerySet = serde_json::from_slice(&b).map_err(|e| e.to_string())?;
+    let slice = b.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&b);
+    let q: QuerySet = serde_json::from_slice(slice).map_err(|e| e.to_string())?;
     validate_query_set(&q)?;
     Ok(q)
 }
