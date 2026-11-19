@@ -8,9 +8,19 @@ use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::time::Duration;
 
 pub type Result<T> = std::result::Result<T, String>;
 pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";
+/// 검색·이름 질의 기본 제한 시간.
+pub const PIPE_SEARCH_TIMEOUT: Duration = Duration::from_secs(5);
+/// 상태 확인 등 가벼운 호출 제한 시간.
+pub const PIPE_LIGHT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const PIPE_TIMEOUT_ERROR: &str = "서비스 응답 시간이 초과되었습니다";
+const MAX_TIMED_OUT_PIPE_CALLS: usize = 4;
+static ACTIVE_PIPE_CALLS: AtomicUsize = AtomicUsize::new(0);
 const LIMIT: usize = 50;
 pub const MAX_SEARCH_RESULTS: usize = 200;
 pub fn clamp_search_limit(limit: usize) -> usize {
@@ -400,9 +410,10 @@ impl Backend {
         let index = Index::open(root).map_err(|e| match e {
             kfind_core::Error::FormatVersion { .. } | kfind_core::Error::RuleVersion { .. } => {
                 // 업데이트 직후 옛 형식 색인: 서비스에 질의 한 번을 보내 즉시 새로 만들게 한다(응답은 쓰지 않음).
-                let _ = pipe_call(
+                let _ = pipe_call_with_timeout(
                     PIPE_NAME,
                     &json!({"command":"query","id":1,"text":"색인","top":1}),
+                    PIPE_LIGHT_TIMEOUT,
                 );
                 "색인을 새 형식으로 다시 만드는 중입니다. 잠시 뒤 다시 검색해 주세요.".to_string()
             }
@@ -892,23 +903,70 @@ pub fn pipe_search_limit(name: &str, query: &str, hierarchy: bool, top: usize) -
     if hierarchy {
         return Err("서비스 파이프는 전체 위계 순위 질의를 아직 지원하지 않습니다.".into());
     }
-    let bytes = pipe_call(
+    let bytes = pipe_call_with_timeout(
         name,
         &json!({"command":"query", "id":1, "text":query,"top":top,"refs":1}),
+        PIPE_SEARCH_TIMEOUT,
     )?;
     decode_rows(&bytes)
 }
 
 /// 길이 접두 JSON 요청 하나 → 응답 바이트(상한 8MB).
 pub fn pipe_call(name: &str, request: &Value) -> Result<Vec<u8>> {
+    pipe_call_with_timeout(name, request, PIPE_SEARCH_TIMEOUT)
+}
+
+/// 제한 시간 동안 작업 스레드의 블로킹 파이프 입출력을 기다린다.
+pub fn pipe_call_with_timeout(name: &str, request: &Value, timeout: Duration) -> Result<Vec<u8>> {
     let request = serde_json::to_vec(request).map_err(|e| e.to_string())?;
+    let mut active = ACTIVE_PIPE_CALLS.load(Ordering::Acquire);
+    loop {
+        if active >= MAX_TIMED_OUT_PIPE_CALLS {
+            return Err("서비스 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.".into());
+        }
+        match ACTIVE_PIPE_CALLS.compare_exchange_weak(
+            active,
+            active + 1,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => break,
+            Err(current) => active = current,
+        }
+    }
+    let name = name.to_owned();
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("ktm-pipe-call".into())
+        .spawn(move || {
+            struct ActiveCall;
+            impl Drop for ActiveCall {
+                fn drop(&mut self) {
+                    ACTIVE_PIPE_CALLS.fetch_sub(1, Ordering::AcqRel);
+                }
+            }
+            let _active = ActiveCall;
+            let result = pipe_call_blocking(&name, &request);
+            let _ = tx.send(result);
+        })
+        .map_err(|e| {
+            ACTIVE_PIPE_CALLS.fetch_sub(1, Ordering::AcqRel);
+            e.to_string()
+        })?;
+    rx.recv_timeout(timeout).map_err(|e| match e {
+        mpsc::RecvTimeoutError::Timeout => PIPE_TIMEOUT_ERROR.to_owned(),
+        mpsc::RecvTimeoutError::Disconnected => "서비스 작업 스레드가 종료되었습니다.".into(),
+    })?
+}
+
+fn pipe_call_blocking(name: &str, request: &[u8]) -> Result<Vec<u8>> {
     let mut pipe = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(name)
         .map_err(|e| e.to_string())?;
     pipe.write_all(&(request.len() as u32).to_le_bytes())
-        .and_then(|_| pipe.write_all(&request))
+        .and_then(|_| pipe.write_all(request))
         .map_err(|e| e.to_string())?;
     let mut prefix = [0; 4];
     pipe.read_exact(&mut prefix).map_err(|e| e.to_string())?;
@@ -936,9 +994,10 @@ pub fn pipe_names(name: &str, query: &str, sort: &str) -> Result<Vec<Row>> {
 
 /// QMS-EXPORT: 지정 상한을 반영한 파일명 색인 질의.
 pub fn pipe_names_limit(name: &str, query: &str, sort: &str, limit: usize) -> Result<Vec<Row>> {
-    let bytes = pipe_call(
+    let bytes = pipe_call_with_timeout(
         name,
         &json!({"command":"names_query","id":1,"text":query,"limit":limit,"sort":sort}),
+        PIPE_SEARCH_TIMEOUT,
     )?;
     decode_names(&bytes)
 }
@@ -1186,6 +1245,131 @@ fn decode_rows(bytes: &[u8]) -> Result<Vec<Row>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    fn fake_pipe(
+        reply: Option<Vec<u8>>,
+    ) -> (String, mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+        use windows_sys::Win32::Foundation::{
+            CloseHandle, ERROR_PIPE_CONNECTED, GetLastError, INVALID_HANDLE_VALUE,
+        };
+        use windows_sys::Win32::Storage::FileSystem::PIPE_ACCESS_DUPLEX;
+        use windows_sys::Win32::System::Pipes::{
+            ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+        };
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let name = format!(
+            r"\\.\pipe\ktm-timeout-test-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        );
+        let wide: Vec<u16> = std::ffi::OsStr::new(&name)
+            .encode_wide()
+            .chain(Some(0))
+            .collect();
+        let handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                1,
+                65536,
+                65536,
+                0,
+                std::ptr::null(),
+            )
+        };
+        assert_ne!(handle, INVALID_HANDLE_VALUE);
+        let (close_tx, close_rx) = mpsc::channel();
+        let handle = handle as usize;
+        let thread = std::thread::spawn(move || unsafe {
+            let handle = handle as windows_sys::Win32::Foundation::HANDLE;
+            if ConnectNamedPipe(handle, std::ptr::null_mut()) == 0
+                && GetLastError() != ERROR_PIPE_CONNECTED
+            {
+                CloseHandle(handle);
+                return;
+            }
+            let mut pipe = std::fs::File::from_raw_handle(handle as _);
+            let mut prefix = [0; 4];
+            if pipe.read_exact(&mut prefix).is_ok() {
+                let mut request = vec![0; u32::from_le_bytes(prefix) as usize];
+                if pipe.read_exact(&mut request).is_ok() {
+                    if let Some(response) = reply {
+                        let _ = pipe.write_all(&(response.len() as u32).to_le_bytes());
+                        let _ = pipe.write_all(&response);
+                    } else {
+                        let _ = close_rx.recv_timeout(Duration::from_secs(2));
+                    }
+                }
+            }
+        });
+        (name, close_tx, thread)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn pipe_timeout_normal_response_error_and_overflow_guard() {
+        let (name, close, server) = fake_pipe(None);
+        let started = std::time::Instant::now();
+        let error = pipe_call_with_timeout(
+            &name,
+            &json!({"command":"query"}),
+            Duration::from_millis(40),
+        )
+        .unwrap_err();
+        assert_eq!(error, PIPE_TIMEOUT_ERROR);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let _ = close.send(());
+        server.join().unwrap();
+
+        let response = br#"{"ok":true}"#.to_vec();
+        let (name, _, server) = fake_pipe(Some(response.clone()));
+        assert_eq!(
+            pipe_call_with_timeout(&name, &json!({"command":"status"}), Duration::from_secs(1))
+                .unwrap(),
+            response
+        );
+        server.join().unwrap();
+
+        let mut stalled = Vec::new();
+        for _ in 0..MAX_TIMED_OUT_PIPE_CALLS {
+            let (name, close, server) = fake_pipe(None);
+            stalled.push((name, close, server));
+        }
+        let workers: Vec<_> = stalled
+            .iter()
+            .map(|(name, _, _)| {
+                let name = name.clone();
+                std::thread::spawn(move || {
+                    pipe_call_with_timeout(
+                        &name,
+                        &json!({"command":"query"}),
+                        Duration::from_millis(1500),
+                    )
+                })
+            })
+            .collect();
+        // 막힌 호출이 모두 진행 중(카운터가 상한)이 될 때까지 기다린 뒤 초과 호출을 보낸다(시간 의존 제거).
+        let wait_start = std::time::Instant::now();
+        while ACTIVE_PIPE_CALLS.load(Ordering::Acquire) < MAX_TIMED_OUT_PIPE_CALLS
+            && wait_start.elapsed() < Duration::from_secs(5)
+        {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let overflow =
+            pipe_call_with_timeout("unused", &json!({}), Duration::from_millis(1)).unwrap_err();
+        assert!(overflow.contains("요청이 너무 많습니다"));
+        for worker in workers {
+            assert_eq!(worker.join().unwrap().unwrap_err(), PIPE_TIMEOUT_ERROR);
+        }
+        for (_, close, server) in stalled {
+            let _ = close.send(());
+            server.join().unwrap();
+        }
+    }
 
     #[test]
     fn stats_count_type_year_folder_and_unknown_size() {
@@ -1546,6 +1730,86 @@ mod tests {
                 .is_err()
         );
     }
+    #[test]
+    fn kfind_response_rows_flow_into_all_tab_combination() {
+        // kfind pipe.rs query emits result.hits; names_query emits result.items.
+        // These are the service's JSON envelopes and field names, decoded by the
+        // same functions used by the named-pipe client.
+        let names = decode_names(r#"{"ok":true,"result":{"items":[{"name":"예산안.hwp","dir":"C:\\문서","is_dir":false,"size":2048,"mtime":0}]}}"#.as_bytes()).unwrap();
+        let hierarchy = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"C:\\문서\\예산안.hwp","level":1,"count":1,"date":0,"sentences":[]}]}}"#.as_bytes()).unwrap();
+        let body = decode_rows(r#"{"ok":true,"result":{"hits":[{"doc_id":41,"path":"c:/문서/예산안.hwp","level":8,"count":2,"date":0,"sentences":[{"ord":1,"para":3,"level":8,"adjacent":false}]}]}}"#.as_bytes()).unwrap();
+        let batches = [
+            (crate::tm_state::ResultKind::Names, names),
+            (crate::tm_state::ResultKind::Hierarchy, hierarchy),
+            (crate::tm_state::ResultKind::Body, body),
+        ];
+        let combined = crate::tm_state::combine_results(&batches, |r| {
+            r.path.replace('/', "\\").to_lowercase()
+        });
+        assert_eq!(combined.len(), 1);
+        assert_eq!(combined[0].row.name, "예산안.hwp");
+        assert_eq!(
+            combined[0].kinds,
+            [
+                crate::tm_state::ResultKind::Names,
+                crate::tm_state::ResultKind::Hierarchy,
+                crate::tm_state::ResultKind::Body,
+            ]
+        );
+    }
+
+    #[test]
+    fn kfind_response_empty_errors_groups_and_tier_caps_flow() {
+        use crate::tm_state::{ResultKind, combine_results};
+        assert!(
+            decode_rows(br#"{"ok":true,"result":{"hits":[]}}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            decode_names(br#"{"ok":true,"result":{"items":[]}}"#)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            decode_rows(br#"{"ok":false,"error":"service offline"}"#)
+                .unwrap_err()
+                .contains("offline")
+        );
+        assert_eq!(kfind_core::parse_groups("예산; 결산"), ["예산", "결산"]);
+
+        let names: Vec<Row> = (0..25)
+            .map(|i| Row {
+                path: format!("n{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let hierarchy: Vec<Row> = (0..25)
+            .map(|i| Row {
+                path: format!("h{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let body: Vec<Row> = (0..50)
+            .map(|i| Row {
+                path: format!("b{i}"),
+                ..Row::default()
+            })
+            .collect();
+        let combined = combine_results(
+            &[
+                (ResultKind::Names, names),
+                (ResultKind::Hierarchy, hierarchy),
+                (ResultKind::Body, body),
+            ],
+            |r| r.path.clone(),
+        );
+        assert_eq!(combined.len(), 80);
+        assert_eq!(combined.iter().filter(|r| r.priority == 0).count(), 20);
+        assert_eq!(combined.iter().filter(|r| r.priority == 1).count(), 20);
+        assert_eq!(combined.iter().filter(|r| r.priority == 2).count(), 40);
+    }
+
     #[test]
     fn service_error_and_original_text_absence() {
         assert!(
