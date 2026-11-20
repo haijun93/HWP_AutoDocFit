@@ -124,6 +124,7 @@ pub enum Command {
     Resume,
     ClearAll,
     Quit,
+    OpenSettings,
 }
 
 const ID_AUTOSTART_ON: usize = 100;
@@ -131,6 +132,7 @@ const ID_AUTOSTART_OFF: usize = 101;
 const ID_RESUME: usize = 110;
 const ID_CLEAR: usize = 120;
 const ID_QUIT: usize = 121;
+const ID_OPEN_SETTINGS: usize = 122;
 const ID_FLAG: usize = 130; // + Flag 순서
 const ID_THEME: usize = 160; // + ThemePref::ALL 순서
 const ID_PAUSE: usize = 50_000; // + 분(0~1440)
@@ -148,6 +150,7 @@ pub fn command_id(c: Command) -> usize {
         Command::Resume => ID_RESUME,
         Command::ClearAll => ID_CLEAR,
         Command::Quit => ID_QUIT,
+        Command::OpenSettings => ID_OPEN_SETTINGS,
     }
 }
 
@@ -158,6 +161,7 @@ pub fn command_of(id: usize) -> Option<Command> {
         ID_RESUME => Some(Command::Resume),
         ID_CLEAR => Some(Command::ClearAll),
         ID_QUIT => Some(Command::Quit),
+        ID_OPEN_SETTINGS => Some(Command::OpenSettings),
         _ if (ID_FLAG..ID_FLAG + Flag::ALL.len()).contains(&id) => Some(Command::Toggle(Flag::ALL[id - ID_FLAG])),
         _ if (ID_THEME..ID_THEME + ThemePref::ALL.len()).contains(&id) => Some(Command::Theme(ThemePref::ALL[id - ID_THEME])),
         _ if (ID_PAUSE..=ID_PAUSE + 1440).contains(&id) => Some(Command::Pause((id - ID_PAUSE) as u32)),

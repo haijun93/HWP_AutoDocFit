@@ -24,6 +24,7 @@ mod popup;
 mod prewarm;
 mod preview;
 mod settings_menu;
+mod settings_window;
 mod sqlite;
 mod store;
 mod thumb;
@@ -1010,6 +1011,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 set_paused(hwnd, wp != 0);
                 0
             }
+            settings_window::OPEN_MESSAGE => {
+                std::thread::Builder::new().name("kagent-settings-window".into())
+                    .spawn(settings_window::open_live).ok();
+                0
+            }
             WM_SETTINGS => {
                 register_hotkey(hwnd);
                 refresh_theme(true);
@@ -1051,6 +1057,17 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     // 인스턴스 mutex·트레이·DB를 열기 전에 번들 버전만 조회한다.
+    if has("--capture-dir") {
+        if let Some(i) = args.iter().position(|a| a == "--capture-dir") {
+            if let Some(dir) = args.get(i + 1) { unsafe { std::env::set_var("KAGENT_CAPTURE_DIR", dir); } }
+        }
+        settings_window::open(true, has("--dark"));
+        return;
+    }
+    if has("--settings") {
+        settings_window::open(false, has("--dark"));
+        return;
+    }
     if has("--version") {
         println!("{}", crate::json::to_string(&crate::json::Value::obj(vec![
             ("ok", true.into()), ("version", VERSION.into()),

@@ -1255,6 +1255,7 @@ fn run_settings_command(hwnd: HWND, c: Command) {
             }
         }
         Command::ClearAll => clear_all(hwnd),
+        Command::OpenSettings => crate::settings_window::request_open(),
         Command::Quit => unsafe {
             let text = "몽땅클립보드를 끌까요?\n\n복사 기록과 빠른 목록 단축키가 멈춥니다. 기록은 지워지지 않으며, \
                         앱의 몽땅클립보드 화면에서 다시 켤 수 있습니다.";
