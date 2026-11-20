@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -52,12 +53,21 @@ class DocGridScreen extends StatefulWidget {
 }
 
 class _DocGridScreenState extends State<DocGridScreen> {
+  Timer? _scanUiTimer;
+  DateTime _scanNow = DateTime.now();
+  String get _scanElapsed {
+    final seconds = _scanNow.difference(_scanStartedAt ?? _scanNow).inSeconds;
+    return '${seconds ~/ 60}분 ${seconds % 60}초 경과';
+  }
   String? _currentFolder;
   List<Map<String, Object?>> _documents = [];
   bool _loading = false;
   String? _errorMessage;
   bool _scanRunning = false;
-  int _scanProgress = 0;
+  int _scanVisited = 0;
+  String _scanFolder = '';
+  DateTime? _scanStartedAt;
+  DateTime? _scanLastProgressAt;
 
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
@@ -68,9 +78,15 @@ class _DocGridScreenState extends State<DocGridScreen> {
     _loadDefault();
   }
 
+  @override
+  void dispose() {
+    _scanUiTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadDefault() async {
     try {
-      setState(() { _loading = true; _scanRunning = true; _scanProgress = 0; _errorMessage = null; });
+      setState(() { _loading = true; _scanRunning = true; _scanVisited = 0; _scanFolder = ''; _scanStartedAt = DateTime.now(); _scanLastProgressAt = _scanStartedAt; _scanNow = DateTime.now(); _scanUiTimer?.cancel(); _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now()); }); _errorMessage = null; });
       final res = await widget.api('doc_grid', ['list_default', {}]);
       if (!mounted) return;
       if (res is Map && res['ok'] == true) {
@@ -83,7 +99,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
             final progress = await widget.api('doc_grid', ['scan_progress', {}]);
             if (progress is! Map || progress['ok'] != true) break;
             state = '${progress['state'] ?? 'running'}';
-            setState(() { _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0; });
+            setState(() { _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0; _scanFolder = '${progress['current_folder'] ?? ''}'; _scanStartedAt ??= DateTime.now(); _scanLastProgressAt = DateTime.now(); });
             if (state == 'complete' || state == 'cancelled') result = progress['result'];
             if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
@@ -266,8 +282,10 @@ class _DocGridScreenState extends State<DocGridScreen> {
     if (_loading) {
       if (_scanRunning) {
         return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          SizedBox(width: 320, child: LinearProgressIndicator(value: _scanProgress == 0 ? null : _scanProgress / 100)),
-          const SizedBox(height: 12), Text('문서 검색 중... $_scanProgress%'),
+          const SizedBox(width: 320, child: LinearProgressIndicator()),
+          const SizedBox(height: 12), Text('문서 검색 중 · 훑은 항목 $_scanVisited개 · $_scanElapsed'),
+          if (_scanFolder.isNotEmpty) Text('현재 폴더: $_scanFolder', maxLines: 2, overflow: TextOverflow.ellipsis),
+          if (_scanLastProgressAt != null && _scanNow.difference(_scanLastProgressAt!) > const Duration(seconds: 15)) const Text('15초 동안 새 항목이 없습니다. 현재 폴더 응답을 기다리는 중입니다. 계속되면 스캔을 취소할 수 있습니다.'),
           const SizedBox(height: 8), OutlinedButton.icon(
             key: const ValueKey('docGridCancelScanButton'), onPressed: _cancelScan,
             icon: const Icon(Icons.cancel_outlined), label: const Text('스캔 취소'),

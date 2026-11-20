@@ -1106,7 +1106,7 @@ void main() {
           return {
             'ok': true,
             'state': cancelled ? 'cancelled' : 'running',
-            'progress': 23,
+          'visited': 23,
             if (cancelled) 'result': {'scanned': 0, 'added': 0, 'updated': 0},
           };
         }
@@ -1138,7 +1138,7 @@ void main() {
         directoryPicker: () async => '/test/photos-excluded',
       ))));
       await tester.pump(const Duration(milliseconds: 140));
-      expect(find.text('사진 검색 중... 23%'), findsOneWidget);
+      expect(find.textContaining('훑은 항목'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('photoAlbumCancelScanButton')));
       await tester.pump(const Duration(milliseconds: 140));
       await tester.pumpAndSettle();

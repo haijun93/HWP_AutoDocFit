@@ -229,7 +229,7 @@ class DocGridService:
                         if cancel_event is not None and cancel_event.is_set():
                             return
                         if on_progress is not None:
-                            on_progress()
+                            on_progress(str(target_dir))
                         try:
                             # 숨김 파일 및 임시 파일 제외
                             name = entry.name
@@ -309,10 +309,10 @@ class DocGridService:
     def start_default_scan(self) -> dict[str, Any]:
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
             visited = 0
-            def tick() -> None:
+            def tick(current_folder: str = "") -> None:
                 nonlocal visited
                 visited += 1
-                report(visited)
+                report(visited, current_folder)
             docs = self.list_default_documents(cancel_event=cancel, on_progress=tick,
                                                excluded_folders=read_exclusions(self.settings_store))
             return {"documents": docs, "roots": [str(p) for p in self._default_roots()]}

@@ -20,6 +20,7 @@ from docfit_app.doc_grid_service import (
     render_text_card,
 )
 from docfit_core.timemachine import thumbs
+from docfit_app.background_scan import BackgroundScan
 
 
 def picture_bytes(fmt="PNG", size=(320, 200), color="blue"):
@@ -100,6 +101,23 @@ def make_xlsx(path: Path, text: str = "엑셀 첫 행 텍스트", has_thumb: boo
 
 
 class DocGridServiceTests(unittest.TestCase):
+    def test_background_scan_reports_factual_count_without_percent(self):
+        scan = BackgroundScan()
+        entered = threading.Event()
+        release = threading.Event()
+        def worker(report, cancel):
+            report(123, 'C:/sample')
+            entered.set()
+            release.wait(2)
+            return {}
+        scan.start(worker)
+        self.assertTrue(entered.wait(1))
+        status = scan.progress()
+        self.assertEqual(status['visited'], 123)
+        self.assertEqual(status['current_folder'], 'C:/sample')
+        self.assertNotIn('progress', status)
+        self.assertIsNotNone(status['last_progress_at'])
+        release.set()
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)

@@ -7,6 +7,25 @@ const _kTestPngBase64 =
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
 void main() {
+  testWidgets('스캔 중 가짜 백분율 대신 실제 진행 정보를 표시한다', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Future<Object?> mockApi(String method, List<Object?> args) async {
+      if (args.first == 'list_default') return {'ok': true, 'task_id': 'scan'};
+      if (args.first == 'scan_progress') return {'ok': true, 'state': 'running', 'visited': 120, 'current_folder': 'C:/docs'};
+      return {'ok': true};
+    }
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(api: mockApi)));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(find.textContaining('훑은 항목 120개'), findsOneWidget);
+    expect(find.textContaining('99%'), findsNothing);
+    expect(find.textContaining('현재 폴더: C:/docs'), findsOneWidget);
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump(const Duration(milliseconds: 140));
+  });
+
   testWidgets('문서뷰: 기본 범위를 불러와 빈 결과를 표시하고 폴더 선택 UI를 노출하지 않는다', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
@@ -227,7 +246,7 @@ void main() {
         return {
           'ok': true,
           'state': cancelled ? 'cancelled' : 'running',
-          'progress': 17,
+          'visited': 17,
           if (cancelled) 'result': {'documents': <Map<String, Object?>>[]},
         };
       }
@@ -246,10 +265,9 @@ void main() {
       directoryPicker: () async => '/test/excluded',
     )));
     await tester.pump(const Duration(milliseconds: 140));
-    expect(find.text('문서 검색 중... 17%'), findsOneWidget);
+    expect(find.textContaining('훑은 항목 17개'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('docGridCancelScanButton')));
     await tester.pump(const Duration(milliseconds: 140));
-    await tester.pumpAndSettle();
     expect(calls, contains('scan_cancel'));
     expect(find.byKey(const ValueKey('docGridExcludedFoldersButton')), findsOneWidget);
 

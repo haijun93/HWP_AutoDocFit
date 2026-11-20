@@ -45,7 +45,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   List<Map<String, Object?>>? _searchResults;
   bool _loading = false;
   bool _scanRunning = false;
-  int _scanProgress = 0;
+  int _scanVisited = 0;
+  String _scanFolder = '';
+  DateTime? _scanStartedAt;
+  DateTime? _scanLastProgressAt;
+  Timer? _scanUiTimer;
+  DateTime _scanNow = DateTime.now();
   String? _errorMessage;
 
   // 보기 모드: 'date'(날짜별), 'folder'(폴더별), 'camera'(카메라별), 'location'(위치별)
@@ -80,6 +85,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
   @override
   void dispose() {
+    _scanUiTimer?.cancel();
     _searchController.dispose();
     _tagDraftController.dispose();
     super.dispose();
@@ -89,7 +95,15 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     setState(() {
       _loading = true;
       _scanRunning = true;
-      _scanProgress = 0;
+      _scanVisited = 0;
+      _scanFolder = '';
+      _scanStartedAt = DateTime.now();
+      _scanLastProgressAt = _scanStartedAt;
+      _scanNow = DateTime.now();
+      _scanUiTimer?.cancel();
+      _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now());
+      });
       _errorMessage = null;
     });
 
@@ -107,7 +121,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           if (progress is! Map || progress['ok'] != true) break;
           state = '${progress['state'] ?? 'running'}';
           setState(() {
-            _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0;
+            _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0;
+            _scanFolder = '${progress['current_folder'] ?? ''}';
+            _scanStartedAt ??= DateTime.now();
+            _scanLastProgressAt = DateTime.now();
           });
           if (state == 'failed') {
             throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
@@ -378,7 +395,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     setState(() {
       _loading = true;
       _scanRunning = true;
-      _scanProgress = 0;
       _errorMessage = null;
     });
 
@@ -396,7 +412,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           if (progress is! Map || progress['ok'] != true) break;
           state = '${progress['state'] ?? 'running'}';
           setState(() {
-            _scanProgress = (progress['progress'] as num?)?.toInt() ?? 0;
+            _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0;
+            _scanFolder = '${progress['current_folder'] ?? ''}';
+            _scanStartedAt ??= DateTime.now();
+            _scanLastProgressAt = DateTime.now();
           });
           if (state == 'failed') {
             throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
@@ -1183,12 +1202,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             children: [
               SizedBox(
                 width: 320,
-                child: LinearProgressIndicator(
-                  value: _scanProgress == 0 ? null : _scanProgress / 100,
-                ),
+                child: const LinearProgressIndicator(),
               ),
               const SizedBox(height: 12),
-              Text('사진 검색 중... $_scanProgress%'),
+              Text('사진 검색 중 · 훑은 항목 $_scanVisited개 · ${_scanNow.difference(_scanStartedAt ?? _scanNow).inSeconds}초 경과'),
+              if (_scanFolder.isNotEmpty) Text('현재 폴더: $_scanFolder', maxLines: 2, overflow: TextOverflow.ellipsis),
+              if (_scanLastProgressAt != null && _scanNow.difference(_scanLastProgressAt!) > const Duration(seconds: 15)) const Text('15초 동안 새 항목이 없습니다. 현재 폴더 응답을 기다리는 중입니다. 계속되면 스캔을 취소할 수 있습니다.'),
               const SizedBox(height: 8),
               OutlinedButton.icon(
                 key: const ValueKey('photoAlbumCancelScanButton'),

@@ -5,6 +5,7 @@ import hashlib
 import io
 import os
 import tempfile
+import threading
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -20,6 +21,8 @@ from docfit_app.photo_album_service import (
     PhotoAlbumService,
     read_exif_metadata,
 )
+from docfit_app.background_scan import BackgroundScan
+from docfit_app.background_scan import BackgroundScan
 from docfit_core.hwpx import open_hwpx_safely
 
 
@@ -95,6 +98,23 @@ def compute_sha256(path: Path | str) -> str:
 
 
 class TestPhotoAlbumService(unittest.TestCase):
+    def test_background_scan_reports_factual_folder_and_count(self):
+        scan = BackgroundScan()
+        entered = threading.Event()
+        release = threading.Event()
+        def worker(report, cancel):
+            report(7, 'C:/photos')
+            entered.set()
+            release.wait(2)
+            return {}
+        scan.start(worker)
+        self.assertTrue(entered.wait(1))
+        status = scan.progress()
+        self.assertEqual(status['visited'], 7)
+        self.assertEqual(status['current_folder'], 'C:/photos')
+        self.assertNotIn('progress', status)
+        release.set()
+
     """PhotoAlbumService의 핵심 기능 단위 시험."""
 
     def setUp(self):
