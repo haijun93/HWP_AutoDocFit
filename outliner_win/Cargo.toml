@@ -1,0 +1,45 @@
+[package]
+name = "outliner_win"
+version = "0.1.0"
+edition = "2024"
+description = "아웃라이너 Rust+Win32 네이티브 창(2단계 첫 카드: 읽기 전용 블록 목록 + 한글 IME 순서 탐침)"
+license = "MIT"
+publish = false
+
+# 다른 크레이트(ktm·kagent)와 같이 독립 작업 공간으로 둔다.
+[workspace]
+
+# 의존성은 3개뿐이다(새 외부 크레이트 없음).
+#  - outliner_core : 블록 파서·편집 엔진(경로 의존성, 이미 저장소에 있음)
+#  - windows-sys   : Win32 호출(ktm·kagent·ui_theme 과 같은 0.59, 이미 Cargo.lock 에 있는 버전)
+#  - ui_theme      : 다크·밝게·고대비 팔레트(경로 의존성, 외부 크레이트 없음). 색 표를 새로 만들지 않고
+#                    저장소 공용 부품을 쓰라는 설계 문서 2.4절의 재사용 항목이다.
+[dependencies]
+outliner_core = { path = "../outliner_core" }
+ui_theme = { path = "../ui_theme" }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Performance",
+    "Win32_System_SystemInformation",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bin]]
+name = "outliner_win"
+path = "src/main.rs"
+
+[[bin]]
+name = "outliner-ime-probe"
+path = "src/bin/outliner-ime-probe.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
