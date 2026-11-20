@@ -25,12 +25,14 @@ from PIL import Image, ImageDraw, ImageFont
 
 from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.rules import cloud_only, excluded_name
+from docfit_app.kfind_process import PIPE_NAME
 from docfit_core.timemachine.store import path_key
 from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
-from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan
+from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots
+from . import library_scan_cache
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,11 @@ MAX_PREVIEW_TEXT_LENGTH: int = 300
 def find_klib_executable() -> Path | None:
     """klib(Rust) 실행 바이너리를 검색한다."""
     return _find_klib_executable()
+
+
+def query_names_service(extensions: Any, excluded: Any = ()):
+    from .rust_scan import service_names_query
+    return service_names_query(extensions, excluded, pipe_name=PIPE_NAME)
 
 
 def render_text_card(
@@ -256,8 +263,8 @@ class DocGridService:
                     path = row["path"]
                     key = self.cache.key(path, int(row.get("mtime_ns", round(row["mtime"] * 1_000_000_000))), row["size"])
                     results.append({"path": path, "name": row["name"], "stem": Path(row["name"]).stem,
-                        "ext": row["ext"].lower(), "size": row["size"], "mtime": row["mtime"],
-                        "cloud": row["cloud"], "thumb_key": key, "has_thumb": False})
+                        "ext": row["ext"].lower(), "size": row.get("size", 0), "mtime": row.get("mtime", 0),
+                        "cloud": row.get("cloud", False), "thumb_key": key, "has_thumb": False})
                 results.sort(key=lambda item: item["name"].casefold())
                 return results
             if cancel_event is not None and cancel_event.is_set():
@@ -267,36 +274,79 @@ class DocGridService:
 
     def list_default_documents(
         self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
-        excluded_folders: Any = (),
+        excluded_folders: Any = (), return_engine: bool = False,
     ) -> list[dict[str, Any]]:
         """Desktop과 고정 드라이브의 지원 문서를 기본 제외 규칙으로 나열한다."""
         results: dict[str, dict[str, Any]] = {}
+        engine = "python"
+        rows = None
+        if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
+            rows = query_names_service(DOC_EXTENSIONS, excluded_folders)
+            if rows is not None: engine = "service"
+        if rows is None and os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
+            rows = _scan_default_roots(DOC_EXTENSIONS, excluded_folders, executable=self._get_klib_exe(),
+                                         cancel_event=cancel_event,
+                                         on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
+                                         roots=self._default_roots())
+            if rows is not None: engine = "klib"
+        if rows is not None:
+            for row in rows:
+                path = row["path"]
+                name = row["name"]
+                ext = row["ext"]
+                if engine == "service":
+                    key = self.cache.key(path, 0, 0)
+                    results[os.path.normcase(path)] = {"path": path, "name": name, "stem": Path(name).stem,
+                        "ext": ext.lower(), "thumb_key": key, "has_thumb": False}
+                    continue
+                try:
+                    st = Path(path).stat() if "size" not in row or "mtime" not in row else None
+                except OSError:
+                    continue
+                size = int(row.get("size", st.st_size if st else 0))
+                mtime = row.get("mtime", st.st_mtime if st else 0)
+                cloud = bool(row.get("cloud", False if st is None else cloud_only(getattr(st, "st_file_attributes", 0))))
+                if cloud: continue
+                key = self.cache.key(path, int(row.get("mtime_ns", st.st_mtime_ns if st else round(mtime * 1e9))), size)
+                results[os.path.normcase(path)] = {"path": path, "name": name, "stem": Path(name).stem,
+                    "ext": ext.lower(), "size": size, "mtime": mtime,
+                    "cloud": cloud, "thumb_key": key, "has_thumb": False}
+            result = sorted(results.values(), key=lambda item: item["name"].casefold())
+            return (result, engine) if return_engine else result
         for root in self._default_roots():
             if cancel_event is not None and cancel_event.is_set():
                 break
-            if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root):
-                continue
-            try:
-                for item in self.list_documents(root, recursive=True, cancel_event=cancel_event,
-                                                on_progress=on_progress, excluded_folders=excluded_folders):
-                    if item.get("cloud"):
-                        continue
-                    results[os.path.normcase(item["path"])] = item
-            except OSError:
-                continue
-        return sorted(results.values(), key=lambda item: item["name"].casefold())
+            if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root): continue
+            if engine == "python":
+                try:
+                    for item in self.list_documents(root, recursive=True, cancel_event=cancel_event,
+                                                    on_progress=on_progress, excluded_folders=excluded_folders):
+                        if not item.get("cloud"): results[os.path.normcase(item["path"])] = item
+                except OSError: continue
+        result = sorted(results.values(), key=lambda item: item["name"].casefold())
+        return (result, engine) if return_engine else result
 
     def start_default_scan(self) -> dict[str, Any]:
+        excluded = read_exclusions(self.settings_store)
+        roots = [str(p) for p in self._default_roots()]
+        cached = library_scan_cache.load("documents", DOC_EXTENSIONS, excluded, roots=roots)
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
             visited = 0
             def tick(current_folder: str = "") -> None:
                 nonlocal visited
                 visited += 1
                 report(visited, current_folder)
-            docs = self.list_default_documents(cancel_event=cancel, on_progress=tick,
-                                               excluded_folders=read_exclusions(self.settings_store))
-            return {"documents": docs, "roots": [str(p) for p in self._default_roots()]}
-        return self._background_scan.start(worker)
+            docs, engine = self.list_default_documents(cancel_event=cancel, on_progress=tick,
+                                                       excluded_folders=excluded, return_engine=True)
+            if not cancel.is_set(): library_scan_cache.save("documents", DOC_EXTENSIONS, excluded, docs, roots=roots)
+            return {"documents": docs, "roots": roots, "engine": engine}
+        started = self._background_scan.start(worker, initial_result={"documents": cached, "roots": roots, "engine": "cache"}
+                                              if cached is not None else None,
+                                              engine="cache" if cached is not None else None)
+        if cached is not None and started.get("ok"):
+            live = [item for item in cached if Path(item.get("path", "")).is_file()]
+            started["result"] = {"documents": [{**item, "state": "cached"} for item in live], "roots": roots, "engine": "cache"}
+        return started
 
     def _run_klib_preview(self, hwp_path: Path, out_png: Path, timeout: float = 10.0) -> dict[str, Any]:
         """klib preview <hwp> <out.png> 실행 및 JSON 파싱."""

@@ -102,6 +102,18 @@ pub enum Request {
         #[serde(default = "default_true")]
         hidden: bool,
     },
+    /// Document/photo view: return every indexed file matching extensions and excluded paths.
+    NamesList {
+        extensions: Vec<String>,
+        #[serde(default)]
+        roots: Vec<String>,
+        #[serde(default)]
+        exclude: Vec<String>,
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "default_names_list_limit")]
+        limit: usize,
+    },
     /// FN1: 파일명 색인 (다시) 만들기. 서비스 모드는 roots 없이(고정 드라이브 전체), 사용자 모드는 roots 필수.
     NamesBuild {
         #[serde(default)]
@@ -144,6 +156,7 @@ fn default_stale_limit() -> usize {
 fn default_names_limit() -> usize {
     100
 }
+fn default_names_list_limit() -> usize { 10_000 }
 fn default_true() -> bool {
     true
 }
@@ -585,6 +598,9 @@ impl Handler {
                     .query(sid, &text, limit, sort.as_deref(), hidden, flag)?;
                 r["id"] = json!(id);
                 Ok(r)
+            }
+            Request::NamesList { extensions, roots, exclude, offset, limit } => {
+                self.names.list(&extensions, &roots, &exclude, offset, limit)
             }
             Request::NamesBuild { roots } => self.names.build(roots),
             Request::NamesStatus {} => self.names.status(),

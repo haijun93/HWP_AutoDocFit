@@ -116,6 +116,25 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     try {
       final started = await widget.api('photo_album', ['scan_default', {}]);
+      if (started is Map && started['state'] == 'cached' && started['result'] is Map) {
+        final cachedItems = (started['result']['photos'] is List ? started['result']['photos'] as List : const [])
+            .whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
+        final groups = <int, Map<String, Object?>>{};
+        for (final photo in cachedItems) {
+          final date = '${photo['date_taken'] ?? ''}';
+          final year = date.length >= 4 ? int.tryParse(date.substring(0, 4)) ?? 1970 : 1970;
+          final month = date.length >= 7 ? int.tryParse(date.substring(5, 7)) ?? 1 : 1;
+          final key = year * 100 + month;
+          final group = groups.putIfAbsent(key, () => {'year': year, 'month': month, 'label': '$year년 $month월', 'photos': <Map<String, Object?>>[]});
+          (group['photos'] as List<Map<String, Object?>>).add(photo);
+        }
+        if (mounted) setState(() { _groups = groups.values.toList(); _loading = false; });
+      }
+      if (started is Map && started['state'] == 'cached') {
+        setState(() { _loading = false; _scanRunning = true; });
+        await _loadPhotos(_currentFolder ?? '');
+        if (mounted) setState(() { _scanRunning = false; });
+      }
       if (started is Map && started['task_id'] != null) {
         var state = 'running';
         while (state == 'running' || state == 'cancelling') {

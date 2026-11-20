@@ -380,6 +380,51 @@ impl NamesService {
         }))
     }
 
+    /// Fast, unpaged file-list query used by the document and photo views.
+    pub fn list(&self, extensions: &[String], roots: &[String], exclude: &[String], offset: usize, limit: usize) -> Result<Value> {
+        use kfind_names::flag::{DELETED, DIR};
+        if self.state().name() != "ready" {
+            return Err(format!("names index unavailable ({})", self.state().name()).into());
+        }
+        if extensions.is_empty() || extensions.len() > 64 || exclude.len() > 4096 || roots.len() > 128 || limit == 0 || limit > 10_000 {
+            return Err("invalid names_list filters".into());
+        }
+        let extensions: std::collections::HashSet<String> = extensions.iter()
+            .map(|value| value.trim_start_matches('.').to_lowercase())
+            .filter(|value| !value.is_empty() && value.len() <= 16 && value.bytes().all(|b| b.is_ascii_alphanumeric()))
+            .collect();
+        if extensions.is_empty() { return Err("invalid names_list extensions".into()); }
+        let excluded: Vec<String> = exclude.iter().map(|p| normalized_path(p)).collect();
+        let included: Vec<String> = roots.iter().map(|p| normalized_path(p)).collect();
+        let g = self.names.read().map_err(|_| "names poisoned")?;
+        let Some(names) = g.as_ref() else {
+            return Err(format!("names index unavailable ({})", self.state().name()).into());
+        };
+        let view = names.view();
+        let mut items = Vec::new();
+        let mut cursor = offset.min(names.len());
+        let mut done = true;
+        for raw_id in offset.min(names.len())..names.len() {
+            cursor = raw_id + 1;
+            let id = raw_id as u32;
+            if view.flags[id as usize] & (DIR | DELETED) != 0 { continue; }
+            let name = view.name_of(id);
+            if name.starts_with('.') || name.to_lowercase().contains("#ieeee") { continue; }
+            let Some((_, ext)) = name.rsplit_once('.') else { continue };
+            if !extensions.contains(&ext.to_lowercase()) { continue; }
+            let path = view.full_path(id);
+            let canonical = normalized_path(&path);
+            if !included.is_empty() && !included.iter().any(|root| canonical == *root || canonical.starts_with(&format!("{root}\\"))) { continue; }
+            if excluded.iter().any(|root| canonical == *root || canonical.starts_with(&format!("{root}\\"))) { continue; }
+            let reserved = ["windows", "program files", "program files (x86)", "programdata", "$recycle.bin",
+                "system volume information", "appdata", "node_modules", ".git", ".svn", ".hg", "venv", ".venv"];
+            if canonical.split('\\').any(|part| reserved.contains(&part)) { continue; }
+            items.push(json!({"path":path,"name":name}));
+            if items.len() == limit { done = cursor >= names.len(); break; }
+        }
+        Ok(json!({"state":"ready","next":cursor,"done":done,"items":items}))
+    }
+
     pub fn status(&self) -> Result<Value> {
         let (entries, generation, heap, delta) = {
             let g = self.names.read().map_err(|_| "names poisoned")?;
@@ -398,6 +443,10 @@ impl NamesService {
             "failed": match &i.state { State::Failed(e) => Some(e.clone()), _ => None },
         }))
     }
+}
+
+fn normalized_path(value: &str) -> String {
+    value.replace('/', "\\").trim_end_matches('\\').to_lowercase()
 }
 
 /// SID의 프로필 경로(`ProfileList\<SID>\ProfileImagePath`).

@@ -101,6 +101,17 @@ class _DocGridScreenState extends State<DocGridScreen> {
       if (!mounted) return;
       if (res is Map && res['ok'] == true) {
         Object? result = res;
+        if (res['state'] == 'cached' && res['result'] is Map) {
+          final cachedResult = res['result'] as Map;
+          final cachedItems = cachedResult['documents'];
+          if (cachedItems is List) {
+            setState(() {
+              _documents = cachedItems.whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
+              _loading = false;
+              _currentFolder = '모든 고정 드라이브';
+            });
+          }
+        }
         if (res['task_id'] != null) {
           var state = 'running';
           while (state == 'running' || state == 'cancelling') {

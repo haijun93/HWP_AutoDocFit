@@ -39,7 +39,8 @@ from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
-from .rust_scan import scan as _rust_scan
+from .rust_scan import scan as _rust_scan, scan_default_roots as _scan_default_roots
+from . import library_scan_cache
 from .doc_grid_service import find_klib_executable
 
 logger = logging.getLogger(__name__)
@@ -570,6 +571,7 @@ class PhotoAlbumService:
         self._drive_roots = tuple(drive_roots) if drive_roots is not None else None
         self._background_scan = BackgroundScan()
         self.settings_store = settings_store
+        self._default_name_paths: set[str] | None = None
 
     def _get_klib_exe(self) -> Path | None:
         return find_klib_executable()
@@ -630,9 +632,15 @@ class PhotoAlbumService:
                     break
                 path = Path(row["path"])
                 name = row["name"]
-                st_size = row["size"]
-                mtime = row["mtime"]
-                is_cloud = row["cloud"]
+                if "size" not in row or "mtime" not in row or "cloud" not in row:
+                    try:
+                        st = path.stat()
+                        st_size, mtime = st.st_size, st.st_mtime
+                        is_cloud = cloud_only(getattr(st, "st_file_attributes", 0))
+                    except OSError:
+                        continue
+                else:
+                    st_size, mtime, is_cloud = row["size"], row["mtime"], row["cloud"]
                 path_str = str(path)
                 scanned_count += 1
                 if is_cloud:
@@ -743,10 +751,54 @@ class PhotoAlbumService:
         }
 
     def scan_default_scope(self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
-                           excluded_folders: Any = ()) -> dict[str, Any]:
+                           excluded_folders: Any = (), return_engine: bool = False) -> dict[str, Any]:
         """Desktop 및 고정 드라이브 사진을 스캔한다. 이동식·네트워크는 제외한다."""
         scanned = added = updated = 0
+        engine = "python"
+        rows = None
+        if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() == "python":
+            engine = "python"
+        else:
+            from .doc_grid_service import query_names_service
+            rows = query_names_service(PHOTO_EXTENSIONS, excluded_folders)
+            if rows is not None: engine = "service"
+            else:
+                rows = _scan_default_roots(PHOTO_EXTENSIONS, excluded_folders,
+                    executable=self._get_klib_exe(), cancel_event=cancel_event,
+                    on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
+                    roots=self._default_roots())
+                if rows is not None: engine = "klib"
+        if rows is not None:
+            self._default_name_paths = {os.path.normcase(os.path.abspath(row["path"])) for row in rows} if engine == "service" else None
+            # Name-index rows lack metadata; only seed unseen paths, and defer stat/EXIF until a visible item needs it.
+            for root in self._default_roots():
+                if cancel_event is not None and cancel_event.is_set(): break
+                if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root): continue
+                self.db.register_folder(str(root))
+                matching = []
+                root_norm = os.path.normcase(os.path.abspath(str(root)))
+                for row in rows:
+                    try: common = os.path.commonpath([os.path.normcase(os.path.abspath(row["path"])), root_norm])
+                    except ValueError: continue
+                    if common == root_norm: matching.append(row)
+                if engine == "service":
+                    existing = {row["path"] for row in self.db.list_photos(str(root))}
+                    added_rows = 0
+                    for row in matching:
+                        path = Path(row["path"])
+                        if str(path) in existing or (cancel_event is not None and cancel_event.is_set()): continue
+                        self.db.upsert_photo(path=str(path), folder=str(path.parent), filename=row["name"],
+                            size=0, mtime=0, date_taken="", orientation=1, cloud=0)
+                        added_rows += 1
+                    result = {"scanned": len(matching), "added": added_rows, "updated": 0}
+                else:
+                    result = self._apply_default_rows(root, matching, cancel_event)
+                scanned += result["scanned"]; added += result["added"]; updated += result["updated"]
+            response = {"ok": True, "roots": [str(p) for p in self._default_roots()], "scanned": scanned,
+                        "added": added, "updated": updated, "engine": engine}
+            return (response, engine) if return_engine else response
         roots = []
+        self._default_name_paths = None
         for root in self._default_roots():
             if cancel_event is not None and cancel_event.is_set():
                 break
@@ -760,18 +812,71 @@ class PhotoAlbumService:
                 scanned += result.get("scanned", 0)
                 added += result.get("added", 0)
                 updated += result.get("updated", 0)
-        return {"ok": True, "roots": roots, "scanned": scanned, "added": added, "updated": updated}
+        response = {"ok": True, "roots": roots, "scanned": scanned, "added": added, "updated": updated, "engine": "python"}
+        return (response, engine) if return_engine else response
+
+    def _apply_default_rows(self, root: Path, rows: list[dict[str, Any]], cancel_event: threading.Event | None) -> dict[str, int]:
+        scanned = added = updated = 0
+        existing = {p["path"]: p for p in self.db.list_photos(str(root))}
+        for row in rows:
+            if cancel_event is not None and cancel_event.is_set(): break
+            path = Path(row["path"])
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            cloud = bool(row.get("cloud", cloud_only(getattr(st, "st_file_attributes", 0))))
+            old = existing.get(str(path))
+            scanned += 1
+            if old and old["size"] == st.st_size and old["cloud"] == cloud and abs(old["mtime"] - st.st_mtime) < .001: continue
+            date_taken, orientation = (None, 1) if cloud else read_exif_metadata(path)
+            if date_taken is None: date_taken = datetime.fromtimestamp(st.st_mtime)
+            self.db.upsert_photo(path=str(path), folder=str(path.parent), filename=path.name, size=st.st_size,
+                mtime=st.st_mtime, date_taken=date_taken.strftime("%Y-%m-%d %H:%M:%S") if date_taken else None,
+                orientation=orientation, cloud=cloud)
+            if old is None: added += 1
+            else: updated += 1
+        return {"scanned": scanned, "added": added, "updated": updated}
 
     def start_default_scan(self) -> dict[str, Any]:
+        excluded = read_exclusions(self.settings_store)
+        roots = [str(p) for p in self._default_roots()]
+        cached = library_scan_cache.load("photos", PHOTO_EXTENSIONS, excluded, roots=roots)
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
             visited = 0
             def tick(current_folder: str = "") -> None:
                 nonlocal visited
                 visited += 1
                 report(visited, current_folder)
-            return self.scan_default_scope(cancel_event=cancel, on_progress=tick,
-                                           excluded_folders=read_exclusions(self.settings_store))
-        return self._background_scan.start(worker)
+            result, engine = self.scan_default_scope(cancel_event=cancel, on_progress=tick,
+                excluded_folders=excluded, return_engine=True)
+            rows = []
+            roots = [os.path.normcase(os.path.abspath(str(root))) for root in self._default_roots()]
+            for root in self._default_roots(): rows.extend(self.db.list_photos(str(root)))
+            existing = []
+            for row in rows:
+                try: path = os.path.normcase(os.path.abspath(row["path"]))
+                except OSError: continue
+                valid = path in self._default_name_paths if self._default_name_paths is not None else Path(row["path"]).is_file()
+                if valid and any(os.path.commonpath([path, root]) == root for root in roots): existing.append(row)
+            rows = existing
+            if not cancel.is_set(): library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
+            result["engine"] = engine
+            return result
+        initial = {"photos": cached, "engine": "cache"} if cached is not None else None
+        started = self._background_scan.start(worker, initial_result=initial,
+                                              engine="cache" if cached is not None else None)
+        if cached is not None and started.get("ok"):
+            started["result"] = {"photos": [{**item, "state": "cached"} for item in cached], "engine": "cache"}
+        return started
+
+    def cached_default_photos(self) -> dict[str, Any]:
+        excluded = read_exclusions(self.settings_store)
+        rows = library_scan_cache.load("photos", PHOTO_EXTENSIONS, excluded, roots=[str(p) for p in self._default_roots()])
+        photos = [] if rows is None else [dict(row, name=row.get("filename", row.get("name", "")))
+            for row in rows if Path(row.get("path", "")).is_file()]
+        return {"ok": True, "photos": photos, "state": "cached" if rows is not None else "empty",
+                "engine": "cache" if rows is not None else None}
 
     # ---- 2. 연·월 묶음 목록 및 검색 ----
 
@@ -783,6 +888,14 @@ class PhotoAlbumService:
         # 연·월별로 그룹화
         groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
         for p in photos:
+            path_key = os.path.normcase(os.path.abspath(p["path"]))
+            service_row = self._default_name_paths is not None and path_key in self._default_name_paths
+            if self._default_name_paths is not None and not service_row:
+                continue
+            try:
+                st = None if service_row else os.stat(p["path"])
+            except OSError:
+                continue
             dt_str = p.get("date_taken") or ""
             year, month = 0, 0
             if len(dt_str) >= 7:
@@ -811,16 +924,14 @@ class PhotoAlbumService:
                 "orientation": p["orientation"],
                 "cloud": p["cloud"],
                 "has_thumb": False,
+                "metadata_pending": bool(service_row and not p["size"] and not p["mtime"] and not p["date_taken"]),
             }
-            # 썸네일 캐시 존재 여부 검사
-            try:
-                st = os.stat(p["path"])
+            if st is not None:
                 thumb_key = self.cache.key(p["path"], st.st_mtime_ns, st.st_size)
                 item["thumb_key"] = thumb_key
                 item["has_thumb"] = bool(not p["cloud"] and self.cache.get(thumb_key) is not None)
-            except OSError:
+            else:
                 item["thumb_key"] = ""
-                item["has_thumb"] = False
 
             groups.setdefault(key, []).append(item)
 
@@ -1746,6 +1857,9 @@ class PhotoAlbumService:
         try:
             if action == "scan_default":
                 return self.start_default_scan()
+
+            if action == "cached_default_photos":
+                return self.cached_default_photos()
 
             if action == "scan_progress":
                 return self._background_scan.progress()
