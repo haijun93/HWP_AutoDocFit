@@ -139,6 +139,15 @@ def _recompress_images(page, dpi: int, quality: int) -> int:
     return changed
 
 
+def _permission_bits(value) -> int:
+    """암호화 사전의 /P를 32비트 부호 없는 값으로 맞춘다.
+
+    PDF 표준은 /P를 부호 있는 32비트 정수로 적게 해 Acrobat 등 많은 프로그램이 음수(예: -3904)로 저장한다.
+    pypdf는 다시 쓸 때 같은 비트를 양수(4294963392)로 적으므로, 부호 형식이 달라도 같은 권한이면 같다고 본다.
+    """
+    return int(value) & 0xFFFFFFFF
+
+
 def compress_pdf(
     source: str | Path,
     target: str | Path,
@@ -174,7 +183,7 @@ def compress_pdf(
             raise PdfCompressError(f"{MAX_PAGES}쪽보다 많은 PDF는 줄이지 않습니다.")
         if _has_signature(reader):
             raise PdfCompressError("전자서명이 있는 PDF는 다시 저장하면 서명이 무효가 되어 줄이지 않습니다.")
-        permissions = int(reader.trailer["/Encrypt"]["/P"]) if secured else None
+        permissions = _permission_bits(reader.trailer["/Encrypt"]["/P"]) if secured else None
         pages_before = _page_signature(reader)
         owner_password = secrets.token_urlsafe(24) if secured else None
 
@@ -257,7 +266,7 @@ def compress_pdf(
         if bool(check.is_encrypted) != secured:
             raise PdfCompressError("결과 PDF의 보안 설정이 원본과 달라 저장하지 않았습니다.")
         if secured:
-            if not check.decrypt("") or int(check.trailer["/Encrypt"]["/P"]) != permissions:
+            if not check.decrypt("") or _permission_bits(check.trailer["/Encrypt"]["/P"]) != permissions:
                 raise PdfCompressError("결과 PDF의 권한 설정이 원본과 달라 저장하지 않았습니다.")
         if _page_signature(check) != pages_before:
             raise PdfCompressError("결과 PDF의 쪽 수나 쪽 크기가 원본과 달라 저장하지 않았습니다.")

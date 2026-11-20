@@ -67,6 +67,37 @@ class PdfCompressTests(unittest.TestCase):
         self.assertEqual(int(after.trailer["/Encrypt"]["/P"]), int(before.trailer["/Encrypt"]["/P"]))
         self.assertIn("보안 유지", result.summary())
 
+    def test_secured_pdf_with_negative_signed_permission_value(self):
+        """/P가 음수(-3904)로 저장된 원본(Acrobat 등)도 같은 권한이면 압축해 저장한다(2026-11-20 사용자 오류)."""
+        import io
+        from pypdf import PdfReader, PdfWriter
+        from docfit_core.pdf_compress import compress_pdf
+
+        writer = PdfWriter(clone_from=str(self.scan))
+        writer.encrypt(user_password="", owner_password="owner", permissions_flag=4294963392, algorithm="RC4-128")
+        buffer = io.BytesIO()
+        writer.write(buffer)
+        raw = buffer.getvalue()
+        self.assertIn(b"/P 4294963392", raw)
+        negative = self.root / "negative_p.pdf"
+        negative.write_bytes(raw.replace(b"/P 4294963392", b"/P -3904"))
+        before = PdfReader(str(negative))
+        before.decrypt("")
+        self.assertEqual(int(before.trailer["/Encrypt"]["/P"]), -3904)
+
+        result = compress_pdf(negative, self.root / "negative_out.pdf")
+        self.assertTrue(result.secured)
+        after = PdfReader(str(result.target))
+        self.assertTrue(after.decrypt(""))
+        self.assertEqual(int(after.trailer["/Encrypt"]["/P"]) & 0xFFFFFFFF, -3904 & 0xFFFFFFFF)
+
+    def test_permission_bits_normalizes_signed_and_unsigned_values(self):
+        from docfit_core.pdf_compress import _permission_bits
+
+        self.assertEqual(_permission_bits(-3904), 4294963392)
+        self.assertEqual(_permission_bits(4294963392), 4294963392)
+        self.assertEqual(_permission_bits(-44), 4294967252)
+
     def test_refusals(self):
         from docfit_core.pdf_compress import NothingToCompress, PdfCompressError, compress_pdf
 
