@@ -98,6 +98,8 @@ unsafe fn reposition(hwnd: HWND) {
     mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
     GetMonitorInfoW(monitor, &mut mi);
     let dpi = GetDpiForWindow(hwnd).max(96);
+    let menus = visible_menus();
+    let logical_width = ((menus.len() as i32 * 36) + 32).min((mi.rcMonitor.right - mi.rcMonitor.left) * 96 / dpi as i32);
     let d = dock::dock_rect(
         dock::Rect {
             left: mi.rcWork.left,
@@ -113,7 +115,7 @@ unsafe fn reposition(hwnd: HWND) {
         },
         dock::Edge::Auto,
         dpi,
-        400,
+        logical_width.max(160),
         56,
         18,
     );
@@ -258,6 +260,14 @@ unsafe fn paint(hwnd: HWND) {
     for (i, item) in menus.iter().enumerate() {
         let x = 16 + spacing * i as i32 + spacing / 2;
         let y = r.bottom / 2;
+        if i > 0 && menus[i - 1].group != item.group {
+            let divider = CreatePen(PS_SOLID, 1, palette.border);
+            let old_divider = SelectObject(mem, divider);
+            MoveToEx(mem, x - spacing / 2, y - size / 2, ptr::null_mut());
+            LineTo(mem, x - spacing / 2, y + size / 2);
+            SelectObject(mem, old_divider);
+            DeleteObject(divider);
+        }
         let key = dock::IconCacheKey { tab: item.tab, dpi, size_px: size };
         let shapes = ICON_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().entry(key).or_insert_with(|| dock::icon_shapes(item.tab).to_vec()).clone();
         draw_icon(mem, &shapes, x - size / 2, y - size / 2, size, palette.foreground, palette.accent);

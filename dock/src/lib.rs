@@ -185,20 +185,35 @@ pub const TAB_NAMES: [&str; 16] = [
 pub struct MenuItem {
     pub tab: u8,
     pub name: &'static str,
+    pub group: u8,
 }
+
+/// Kept in the same order as `WorkspaceTabBar.kSidebarGroups`.
+pub const SIDEBAR_GROUPS: [(&str, &[u8]); 4] = [
+    ("문서 작업", &[0, 1, 5]),
+    ("그리기", &[2, 3, 4]),
+    ("찾기·자료", &[7, 8, 9]),
+    ("변환·도구", &[6, 10, 11, 14, 15]),
+];
+
 pub fn menu_items(hidden_tabs: &[u8], developer_mode: bool) -> Vec<MenuItem> {
-    (0..16u8)
-        .filter(|n| {
-            *n == 0
-                || ((*n == 12 || *n == 13 || *n == 15) && developer_mode)
-                || (!hidden_tabs.contains(n) && *n != 15)
-        })
-        .filter(|n| (*n != 12 && *n != 13 && *n != 15) || developer_mode)
-        .map(|tab| MenuItem {
-            tab,
-            name: TAB_NAMES[tab as usize],
-        })
-        .collect()
+    let mut result = Vec::new();
+    for (group, (_, tabs)) in SIDEBAR_GROUPS.iter().enumerate() {
+        for &tab in *tabs {
+            let developer_only = matches!(tab, 12 | 13 | 15);
+            if (developer_only && !developer_mode) || (tab != 0 && hidden_tabs.contains(&tab)) {
+                continue;
+            }
+            result.push(MenuItem { tab, name: TAB_NAMES[tab as usize], group: group as u8 });
+        }
+        // Developer-only entries live in the existing '찾기·자료' grouping.
+        if group == 2 && developer_mode {
+            for tab in [12, 13] {
+                result.push(MenuItem { tab, name: TAB_NAMES[tab as usize], group: group as u8 });
+            }
+        }
+    }
+    result
 }
 
 /// Read `hidden_tabs` from the app's UTF-8 settings JSON. Invalid or missing
@@ -387,7 +402,7 @@ mod tests {
                 .map(|m| format!("{}:{}", m.tab, m.name))
                 .collect::<Vec<_>>()
                 .join("|"),
-            "0:문서편집|2:표그림판|3:다이어그램|4:마인드맵|5:붙임사진 편집|6:파일명 일괄변경|7:몽땅검색|8:문서뷰|9:사진뷰|10:파일변환|11:PDF 편집|14:아웃라이너"
+            "0:문서편집|5:붙임사진 편집|2:표그림판|3:다이어그램|4:마인드맵|7:몽땅검색|8:문서뷰|9:사진뷰|6:파일명 일괄변경|10:파일변환|11:PDF 편집|14:아웃라이너"
         );
         assert_eq!(menu_items(&[1], true).first().unwrap().tab, 0);
         assert!(menu_items(&[12, 13], true).iter().any(|i| i.tab == 12));
@@ -397,6 +412,13 @@ mod tests {
                 .iter()
                 .all(|i| i.tab != 12 && i.tab != 13 && i.tab != 15)
         )
+    }
+    #[test]
+    fn sidebar_group_order_and_hidden_tabs_are_shared_with_dock() {
+        let items = menu_items(&[1, 3, 8, 10], false);
+        assert_eq!(items.iter().map(|item| item.tab).collect::<Vec<_>>(), [0, 5, 2, 4, 7, 9, 6, 11, 14]);
+        assert_eq!(items.iter().map(|item| item.group).collect::<Vec<_>>(), [0, 0, 1, 1, 2, 2, 3, 3, 3]);
+        assert_eq!(menu_items(&[], true).iter().map(|item| item.tab).collect::<Vec<_>>(), [0,1,5,2,3,4,7,8,9,12,13,6,10,11,14,15]);
     }
     #[test]
     fn routing_table_and_tab_event_contract() {
