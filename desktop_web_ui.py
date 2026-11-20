@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import importlib.util
+import json
 import logging
 import os
 import subprocess
@@ -4018,7 +4019,9 @@ def _bind_file_drop(web_window, bridge):
                 else:
                     bridge.receive_drop(paths)
                 # 프런트엔드가 다음 폴링 주기를 기다리지 않고 최신 상태를 다시 읽게 한다.
-                web_window.run_js("window.dispatchEvent(new Event('docfit-documents-dropped'));")
+                web_window.run_js(
+                    "window.dispatchEvent(new CustomEvent('docfit-documents-dropped', "
+                    f"{{detail: {json.dumps(paths)}}}));")
             elif files:
                 bridge._tk(lambda: bridge.gui.status_var.set(
                     "드롭한 파일 경로를 읽지 못했습니다. 문서 선택 버튼을 이용해 주세요."))

@@ -1,11 +1,63 @@
 import 'dart:async';
 
+import 'package:docfit_ui/core/document_drop_paths_stub.dart';
 import 'package:docfit_ui/features/pdf_edit/pdf_edit_workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('PDF 탭이 비활성이면 파일 놓기를 처리하지 않는다', (tester) async {
+    final apiCalls = <List<Object?>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: TickerMode(
+          enabled: false,
+          child: Scaffold(
+            body: PdfEditWorkspace(
+              api: (name, args) async {
+                apiCalls.add([name, ...args]);
+                return {'ok': true, 'data': {'pages': []}};
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    dispatchDocumentDropPaths(['C:/docs/dropped.pdf']);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('pdfEditDropZone')), findsOneWidget);
+    expect(apiCalls, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('PDF 탭이 활성화되면 놓은 PDF 경로를 목록에 바로 추가한다', (tester) async {
+    tester.view.physicalSize = const Size(1024, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final apiCalls = <List<Object?>>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PdfEditWorkspace(
+            api: (name, args) async {
+              apiCalls.add([name, ...args]);
+              return {'ok': true, 'data': {'pages': []}};
+            },
+          ),
+        ),
+      ),
+    );
+    dispatchDocumentDropPaths(['C:/docs/dropped.pdf']);
+    await tester.pumpAndSettle();
+    expect(find.text('dropped.pdf'), findsOneWidget);
+    expect(apiCalls.single, [
+      'pdf_edit',
+      {'action': 'info', 'source': 'C:/docs/dropped.pdf'},
+    ]);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('PDF 편집 드롭 영역과 비활성 실행 상태를 표시한다', (tester) async {
     tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
     tester.binding.window.devicePixelRatioTestValue = 1;

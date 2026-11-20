@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/drop_events.dart';
+import '../../core/document_drop_paths_stub.dart';
 import '../../core/theme/app_theme.dart';
 
 class PdfEditWorkspace extends StatefulWidget {
@@ -45,11 +46,12 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   String? _completedPath;
   bool _dragActive = false;
   void Function()? _stopDropWatch;
+  bool _dropWatchActive = false;
 
   @override
   void initState() {
     super.initState();
-    _stopDropWatch = watchDocumentDrops(_onDocumentDrop);
+    _stopDropWatch = watchDocumentDropPaths(_onDocumentDrop);
   }
 
   @override
@@ -59,8 +61,14 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     super.dispose();
   }
 
-  void _onDocumentDrop() {
-    if (mounted && !_busy) _pickSource();
+  void _onDocumentDrop(List<String> paths) {
+    if (!mounted || _busy || !_dropWatchActive) return;
+    for (final path in paths) {
+      if (path.toLowerCase().endsWith('.pdf')) {
+        _addFile(path);
+        return;
+      }
+    }
   }
 
   String _outputFor(String path, [String suffix = '_편집']) =>
@@ -446,6 +454,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
 
   @override
   Widget build(BuildContext context) {
+    _dropWatchActive = TickerMode.of(context);
     final c = context.colors;
     return LayoutBuilder(
       builder: (context, constraints) {

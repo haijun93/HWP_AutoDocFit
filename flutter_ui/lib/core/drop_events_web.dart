@@ -14,3 +14,16 @@ void Function() watchDocumentDrops(void Function() callback) {
   return () =>
       web.window.removeEventListener('docfit-documents-dropped', listener);
 }
+
+void Function() watchDocumentDropPaths(void Function(List<String>) callback) {
+  final listener = ((web.Event event) {
+    final detail = (event as web.CustomEvent).detail;
+    if (detail == null || !detail.isA<JSArray<JSString>>()) return;
+    callback(
+      (detail as JSArray<JSString>).toDart.map((path) => path.toDart).toList(),
+    );
+  }).toJS;
+  web.window.addEventListener('docfit-documents-dropped', listener);
+  return () =>
+      web.window.removeEventListener('docfit-documents-dropped', listener);
+}
