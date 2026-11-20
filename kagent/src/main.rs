@@ -1057,8 +1057,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
     // 인스턴스 mutex·트레이·DB를 열기 전에 번들 버전만 조회한다.
-    if has("--capture-dir") {
-        if let Some(i) = args.iter().position(|a| a == "--capture-dir") {
+    if has("--capture-dir") || has("--capture-settings") {
+        if let Some(i) = args.iter().position(|a| a == "--capture-dir" || a == "--capture-settings") {
             if let Some(dir) = args.get(i + 1) { unsafe { std::env::set_var("KAGENT_CAPTURE_DIR", dir); } }
         }
         settings_window::open(true, has("--dark"));

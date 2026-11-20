@@ -4,10 +4,18 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, RECT},
     Graphics::Gdi::{
-        CreateSolidBrush, DeleteObject, FillRect, SetBkMode, SetTextColor, TRANSPARENT,
+        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, PAINTSTRUCT, SetBkColor,
+        SetBkMode, SetTextColor, TRANSPARENT,
     },
     System::LibraryLoader::GetModuleHandleW,
-    UI::{HiDpi::GetDpiForWindow, WindowsAndMessaging::*},
+    UI::{
+        HiDpi::{
+            DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForSystem, GetDpiForWindow,
+            SetProcessDpiAwarenessContext,
+        },
+        Input::KeyboardAndMouse::VK_ESCAPE,
+        WindowsAndMessaging::*,
+    },
 };
 
 pub const OPEN_MESSAGE: u32 = WM_APP + 42;
@@ -25,6 +33,7 @@ const PASTE: i32 = 1022;
 const EXCEL: i32 = 1023;
 const PREVIEW: i32 = 1024;
 const SHOTS: i32 = 1025;
+const AUTOSTART: i32 = 1026;
 const STATUS: i32 = 1030;
 const DONE: u32 = WM_APP + 41;
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
@@ -40,7 +49,7 @@ pub fn layout(dpi: u32) -> Layout {
     let s = |n: i32| n * dpi.max(96) as i32 / 96;
     Layout {
         width: s(650),
-        height: s(790),
+        height: s(900),
         row: s(34),
         margin: s(28),
     }
@@ -81,6 +90,7 @@ pub fn request_open() {
 fn run(live: bool) {
     LIVE.store(live, Ordering::Relaxed);
     unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         if WINDOW.load(Ordering::Relaxed) != 0 {
             let h = WINDOW.load(Ordering::Relaxed) as HWND;
             ShowWindow(h, SW_RESTORE);
@@ -104,6 +114,7 @@ fn run(live: bool) {
             hIconSm: std::ptr::null_mut(),
         };
         RegisterClassExW(&wc);
+        let dpi = GetDpiForSystem().max(96) as i32;
         let h = CreateWindowExW(
             WS_EX_APPWINDOW,
             cls.as_ptr(),
@@ -111,8 +122,8 @@ fn run(live: bool) {
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            680,
-            830,
+            680 * dpi / 96,
+            940 * dpi / 96,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             inst,
@@ -282,35 +293,53 @@ unsafe fn build(h: HWND) {
         );
         checkbox(h, PREVIEW, "그림 미리보기", s.preview_images, 498);
         checkbox(h, SHOTS, "화면캡처 폴더 감시", s.watch_screenshots, 534);
+        child(
+            h,
+            1107,
+            "STATIC",
+            "캡처 종류: 글 · 그림 · 파일 (모두 허용)",
+            28,
+            568,
+            610,
+            28,
+            0,
+        );
         let exc = if s.excluded_apps.is_empty() {
             "제외 앱: 없음".to_string()
         } else {
             format!("제외 앱: {}", s.excluded_apps.join(", "))
         };
-        child(h, 1104, "STATIC", &exc, 28, 580, 610, 30, 0);
+        child(h, 1104, "STATIC", &exc, 28, 600, 610, 30, 0);
         let off = if s.capture_dirs_off.is_empty() {
             "폴더별 캡처 끄기: 없음".to_string()
         } else {
             format!("폴더별 캡처 끄기: {}", s.capture_dirs_off.join(", "))
         };
-        child(h, 1105, "STATIC", &off, 28, 612, 610, 30, 0);
+        child(h, 1105, "STATIC", &off, 28, 632, 610, 30, 0);
         child(
             h,
             1106,
             "STATIC",
             "기록은 이 PC 사용자 폴더에 암호화되어 저장됩니다. 외부로 전송하지 않습니다.",
             28,
-            650,
+            692,
             610,
             30,
             0,
         );
         checkbox(
             h,
+            AUTOSTART,
+            "Windows 로그인 시 자동 실행",
+            crate::autostart_enabled().unwrap_or(false),
+            660,
+        );
+        checkbox(
+            h,
             CONSENT,
             "안내를 읽었고 몽땅클립보드 사용에 동의합니다",
             false,
-            690,
+            728,
         );
         child(
             h,
@@ -318,7 +347,7 @@ unsafe fn build(h: HWND) {
             "STATIC",
             "설정은 저장 즉시 적용됩니다. 켜기에는 동의가 필요합니다.",
             28,
-            730,
+            772,
             610,
             28,
             0,
@@ -329,7 +358,7 @@ unsafe fn build(h: HWND) {
             "BUTTON",
             "설정 저장",
             300,
-            765,
+            820,
             100,
             32,
             WS_TABSTOP,
@@ -340,12 +369,12 @@ unsafe fn build(h: HWND) {
             "BUTTON",
             "몽땅클립보드 켜기",
             410,
-            765,
+            820,
             155,
             32,
             WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
         );
-        child(h, CANCEL, "BUTTON", "닫기", 575, 765, 70, 32, WS_TABSTOP);
+        child(h, CANCEL, "BUTTON", "닫기", 575, 820, 70, 32, WS_TABSTOP);
     }
 }
 fn persist(h: HWND) {
@@ -381,6 +410,7 @@ fn persist(h: HWND) {
         ("max_age_days", val(AGE).into()),
     ]);
     s.apply(&p);
+    let autostart_result = crate::set_autostart(get(AUTOSTART));
     let result = if LIVE.load(Ordering::Relaxed) {
         crate::update_settings(&p);
         Ok(())
@@ -389,6 +419,7 @@ fn persist(h: HWND) {
     };
     let msg = result
         .err()
+        .or_else(|| autostart_result.err())
         .unwrap_or_else(|| "설정을 저장했습니다.".into());
     unsafe {
         SetWindowTextW(GetDlgItem(h, STATUS), wide(&msg).as_ptr());
@@ -421,6 +452,10 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
                 }
                 0
             }
+            WM_KEYDOWN if w as u32 == VK_ESCAPE as u32 => {
+                DestroyWindow(h);
+                0
+            }
             DONE => {
                 if w == 1 {
                     DestroyWindow(h);
@@ -438,6 +473,18 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
                 SetTextColor(w as _, p.text);
                 CreateSolidBrush(p.bg) as isize
             }
+            WM_CTLCOLORBTN => {
+                let p = ui_theme::palette();
+                SetBkMode(w as _, TRANSPARENT as i32);
+                SetTextColor(w as _, p.text);
+                CreateSolidBrush(p.bg) as isize
+            }
+            WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+                let p = ui_theme::palette();
+                SetBkColor(w as _, p.bg);
+                SetTextColor(w as _, p.text);
+                CreateSolidBrush(p.bg) as isize
+            }
             WM_ERASEBKGND => {
                 let p = ui_theme::palette();
                 let mut r: RECT = std::mem::zeroed();
@@ -446,6 +493,20 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
                 FillRect(w as _, &r, b);
                 DeleteObject(b);
                 1
+            }
+            WM_PAINT => {
+                let mut ps: PAINTSTRUCT = std::mem::zeroed();
+                let dc = BeginPaint(h, &mut ps);
+                let s = if LIVE.load(Ordering::Relaxed) {
+                    crate::app().settings.lock().unwrap().clone()
+                } else {
+                    load()
+                };
+                let mut r: RECT = std::mem::zeroed();
+                GetClientRect(h, &mut r);
+                paint_surface(dc, r.right, r.bottom, &s, ui_theme::palette());
+                EndPaint(h, &ps);
+                0
             }
             WM_DESTROY => {
                 WINDOW.store(0, Ordering::Relaxed);
@@ -499,21 +560,8 @@ fn capture_png(dark: bool) {
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::env::temp_dir().join("kagent-capture"));
     let _ = std::fs::create_dir_all(&dir);
-    let (w, h) = (650u32, 790u32);
-    let mut rgba = vec![255u8; (w * h * 4) as usize];
-    let (bg, fg) = if dark {
-        (ui_theme::rgb(23, 29, 38), ui_theme::rgb(226, 232, 240))
-    } else {
-        (ui_theme::rgb(255, 255, 255), ui_theme::rgb(34, 34, 34))
-    };
-    for px in rgba.chunks_exact_mut(4) {
-        px[0] = (bg & 255) as u8;
-        px[1] = ((bg >> 8) & 255) as u8;
-        px[2] = ((bg >> 16) & 255) as u8;
-        px[3] = 255;
-    }
-    let dc = unsafe { GetDC(std::ptr::null_mut()) };
-    let mem = unsafe { CreateCompatibleDC(dc) };
+    let (w, h) = (680u32, 900u32);
+    let mem = unsafe { CreateCompatibleDC(std::ptr::null_mut()) };
     let info = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -547,51 +595,20 @@ fn capture_png(dark: bool) {
             0,
         );
         let old = SelectObject(mem, bmp);
-        let brush = CreateSolidBrush(bg);
-        let r = RECT {
-            left: 0,
-            top: 0,
-            right: w as i32,
-            bottom: h as i32,
+        let palette = if dark {
+            ui_theme::Palette::DARK
+        } else {
+            ui_theme::Palette::LIGHT
         };
-        FillRect(mem, &r, brush);
-        DeleteObject(brush);
-        SetTextColor(mem, fg);
-        SetBkMode(mem, TRANSPARENT as i32);
-        for (t, y) in [
-            ("몽땅클립보드 설정", 36),
-            (
-                "복사한 내용을 이 PC에 암호화해 보관하고 다시 붙여넣습니다.",
-                88,
-            ),
-            ("보관 개수 500개", 145),
-            ("항목 하나 최대 크기 10MB", 185),
-            ("전체 최대 크기 200MB", 225),
-            ("보관 기간 30일", 265),
-            ("스티커 메모처럼 화면에 유지", 365),
-            ("항상 위", 401),
-            ("고르면 바로 붙여넣기", 437),
-            ("엑셀 표는 목표 결과로 붙이기", 473),
-            ("그림 미리보기", 509),
-            ("화면캡처 폴더 감시", 545),
-            (
-                "기록은 이 PC에 암호화해 저장되며 외부로 전송되지 않습니다.",
-                665,
-            ),
-            ("☐ 안내를 읽었고 몽땅클립보드 사용에 동의합니다", 710),
-            ("설정 저장        몽땅클립보드 켜기        닫기", 765),
-        ] {
-            let u = wide(t);
-            TextOutW(mem, 28, y, u.as_ptr(), u.len().saturating_sub(1) as i32);
-        }
+        paint_surface(mem, w as i32, h as i32, &load(), palette);
         std::ptr::copy_nonoverlapping(bits as *const u8, raw.as_mut_ptr(), raw.len());
         SelectObject(mem, old);
         DeleteObject(bmp);
         DeleteDC(mem);
-        ReleaseDC(std::ptr::null_mut(), dc);
     }
     for px in raw.chunks_exact_mut(4) {
         px.swap(0, 2);
+        px[3] = 255;
     }
     let path = dir.join(if dark {
         "kclip-settings-dark.png"
@@ -609,6 +626,198 @@ fn capture_png(dark: bool) {
     }
     let _ = std::fs::write(path, out);
 }
+
+/// 실제 창의 WM_PAINT와 캡처 모드가 함께 쓰는 화면 그리기 함수.
+unsafe fn paint_surface(
+    dc: windows_sys::Win32::Graphics::Gdi::HDC,
+    w: i32,
+    h: i32,
+    s: &Settings,
+    p: ui_theme::Palette,
+) {
+    use windows_sys::Win32::Graphics::Gdi::*;
+    unsafe {
+        let bg = CreateSolidBrush(p.bg);
+        let all = RECT {
+            left: 0,
+            top: 0,
+            right: w,
+            bottom: h,
+        };
+        FillRect(dc, &all, bg);
+        DeleteObject(bg);
+        SetBkMode(dc, TRANSPARENT as i32);
+        SetTextColor(dc, p.text);
+        let font = CreateFontW(
+            19,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            5,
+            0,
+            wide("맑은 고딕").as_ptr(),
+        );
+        let old_font = SelectObject(dc, font);
+        let text = |x: i32, y: i32, value: &str| {
+            let u = wide(value);
+            TextOutW(dc, x, y, u.as_ptr(), u.len().saturating_sub(1) as i32);
+        };
+        let box_control = |r: RECT| {
+            let fill = CreateSolidBrush(p.bg);
+            FillRect(dc, &r, fill);
+            DeleteObject(fill);
+            let edge = CreateSolidBrush(p.border);
+            FrameRect(dc, &r, edge);
+            DeleteObject(edge);
+        };
+        let line = |y: i32| {
+            MoveToEx(dc, 24, y, std::ptr::null_mut());
+            LineTo(dc, w - 24, y);
+        };
+        text(28, 22, "몽땅클립보드 설정");
+        text(
+            28,
+            52,
+            "복사한 내용을 이 PC에 암호화해 보관하고 다시 붙여넣습니다.",
+        );
+        text(28, 83, "보관 설정");
+        let combos = [
+            ("보관 개수", format!("{}개", s.max_items), 116),
+            (
+                "항목 하나 최대 크기",
+                format!("{} MB", s.max_item_bytes / 1048576),
+                156,
+            ),
+            (
+                "전체 최대 크기",
+                format!("{} MB", s.max_total_bytes / 1048576),
+                196,
+            ),
+            (
+                "보관 기간",
+                format!("{}일", s.max_age_days.round() as i64),
+                236,
+            ),
+        ];
+        for (label, value, y) in combos {
+            text(28, y + 3, label);
+            let r = RECT {
+                left: 285,
+                top: y - 4,
+                right: 545,
+                bottom: y + 28,
+            };
+            box_control(r);
+            text(294, y + 2, &value);
+        }
+        text(
+            28,
+            280,
+            &format!("단축키: {} · 암호화 저장: 항상 켜짐", s.hotkey),
+        );
+        text(28, 322, "동작 설정");
+        let flags = [
+            ("스티커 메모처럼 화면에 유지", s.sticky_popup, 354),
+            ("항상 위", s.always_on_top, 390),
+            ("고르면 바로 붙여넣기", s.auto_paste, 426),
+            ("엑셀 표는 목표 결과로 붙이기", s.excel_target_paste, 462),
+            ("그림 미리보기", s.preview_images, 498),
+            ("화면캡처 폴더 감시", s.watch_screenshots, 534),
+        ];
+        for (label, on, y) in flags {
+            box_control(RECT {
+                left: 29,
+                top: y + 3,
+                right: 45,
+                bottom: y + 19,
+            });
+            if on {
+                MoveToEx(dc, 32, y + 11, std::ptr::null_mut());
+                LineTo(dc, 37, y + 16);
+                LineTo(dc, 43, y + 6);
+            }
+            text(54, y, label);
+        }
+        text(28, 568, "캡처 종류: 글 · 그림 · 파일 (모두 허용)");
+        let apps = if s.excluded_apps.is_empty() {
+            "없음".to_string()
+        } else {
+            s.excluded_apps.join(", ")
+        };
+        let folders = if s.capture_dirs_off.is_empty() {
+            "없음".to_string()
+        } else {
+            s.capture_dirs_off.join(", ")
+        };
+        text(
+            28,
+            600,
+            &format!(
+                "제외 앱 (표시 전용): {}{}",
+                apps.chars().take(60).collect::<String>(),
+                if apps.chars().count() > 60 { "…" } else { "" }
+            ),
+        );
+        text(
+            28,
+            632,
+            &format!(
+                "폴더별 캡처 끄기 (표시 전용): {}{}",
+                folders.chars().take(60).collect::<String>(),
+                if folders.chars().count() > 60 {
+                    "…"
+                } else {
+                    ""
+                }
+            ),
+        );
+        line(650);
+        let auto = crate::autostart_enabled().unwrap_or(false);
+        text(
+            28,
+            664,
+            if auto {
+                "☑ Windows 로그인 시 자동 실행"
+            } else {
+                "□ Windows 로그인 시 자동 실행"
+            },
+        );
+        text(
+            28,
+            696,
+            "기록은 이 PC 사용자 폴더에 암호화되어 저장됩니다. 외부로 전송하지 않습니다.",
+        );
+        text(28, 732, "□ 안내를 읽었고 몽땅클립보드 사용에 동의합니다");
+        text(
+            28,
+            776,
+            "설정은 저장 즉시 적용됩니다. 켜기에는 동의가 필요합니다.",
+        );
+        let buttons = [
+            (300, 820, 400, 852, "설정 저장"),
+            (410, 820, 565, 852, "몽땅클립보드 켜기"),
+            (575, 820, 645, 852, "닫기"),
+        ];
+        for (l, t, r, b, label) in buttons {
+            box_control(RECT {
+                left: l,
+                top: t,
+                right: r,
+                bottom: b,
+            });
+            text(l + 8, t + 7, label);
+        }
+        SelectObject(dc, old_font);
+        DeleteObject(font);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,7 +826,7 @@ mod tests {
         for d in [96, 120, 144, 192] {
             let l = layout(d);
             assert_eq!(l.width, 650 * d as i32 / 96);
-            assert!(l.height >= 790);
+            assert_eq!(l.height, 900 * d as i32 / 96);
         }
     }
     #[test]
