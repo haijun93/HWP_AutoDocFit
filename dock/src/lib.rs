@@ -263,6 +263,24 @@ const FOLDER: &[IconShape] = &[IconShape::Polygon { points: &[(3., 6.), (10., 6.
 const NOTE: &[IconShape] = &[IconShape::Rect { left: 4., top: 3., right: 20., bottom: 21., filled: false }, IconShape::Line { x1: 8., y1: 8., x2: 16., y2: 8. }, IconShape::Line { x1: 8., y1: 12., x2: 16., y2: 12. }, IconShape::Line { x1: 8., y1: 16., x2: 14., y2: 16. }, IconShape::Circle { cx: 18., cy: 18., radius: 2., filled: true }];
 const OUTLINE: &[IconShape] = &[IconShape::Line { x1: 5., y1: 5., x2: 5., y2: 19. }, IconShape::Line { x1: 5., y1: 7., x2: 10., y2: 7. }, IconShape::Line { x1: 5., y1: 12., x2: 10., y2: 12. }, IconShape::Line { x1: 5., y1: 17., x2: 10., y2: 17. }, IconShape::Rect { left: 11., top: 5., right: 20., bottom: 9., filled: false }, IconShape::Rect { left: 11., top: 10., right: 20., bottom: 14., filled: false }, IconShape::Rect { left: 11., top: 15., right: 20., bottom: 19., filled: false }];
 const BENCH: &[IconShape] = &[IconShape::Circle { cx: 12., cy: 12., radius: 8., filled: false }, IconShape::Line { x1: 12., y1: 12., x2: 17., y2: 8. }, IconShape::Circle { cx: 12., cy: 12., radius: 2., filled: true }];
+/// 사이드메뉴(Flutter `tab_navigation_shell.dart`의 `Icons.*_outlined`)와 같은 Material Icons(Outlined) 글자 코드.
+/// 사이드메뉴와 Dock이 같은 모양을 쓰도록 탭 번호별로 한 곳에 둔다(글꼴: `assets/MaterialIconsOutlined-Regular.otf`, Apache-2.0).
+/// 0 문서편집 description · 1 표템플릿 table_chart · 2 표그림판 draw · 3 다이어그램 account_tree · 4 마인드맵 hub ·
+/// 5 붙임사진 편집 brush · 6 파일명 일괄변경 drive_file_rename_outline · 7 몽땅검색 history_toggle_off ·
+/// 8 문서뷰 grid_view · 9 사진뷰 photo_library · 10 파일변환 transform · 11 PDF 편집 picture_as_pdf ·
+/// 12 자료함 dashboard_customize · 13 업무자료함 menu_book · 14 아웃라이너 account_tree · 15 검색 벤치마크 speed.
+pub fn icon_glyph(tab: u8) -> Option<char> {
+    let code = match tab {
+        0 => 0xE873, 1 => 0xE265, 2 => 0xE746, 3 => 0xE97A, 4 => 0xE9F4, 5 => 0xE3AE, 6 => 0xE9A2, 7 => 0xF17D,
+        8 => 0xE9B0, 9 => 0xE413, 10 => 0xE428, 11 => 0xE415, 12 => 0xE99B, 13 => 0xEA19, 14 => 0xE97A, 15 => 0xE9E4,
+        _ => return None,
+    };
+    char::from_u32(code)
+}
+
+/// Dock 아이콘 글꼴의 글꼴 이름(Windows에 임시 등록해서 쓴다).
+pub const ICON_FONT_FACE: &str = "Material Icons Outlined";
+
 pub fn icon_shapes(tab: u8) -> &'static [IconShape] {
     match tab { 0 => DOC, 1 => TABLE, 2 => GRID, 3 => POLYGON4, 4 => MIND, 5 => PICTURE, 6 => RENAME, 7 => SEARCH, 8 => VIEW, 9 => PHOTO, 10 => CONVERT, 11 => PDF, 12 => FOLDER, 13 => NOTE, 14 => OUTLINE, 15 => BENCH, _ => &[] }
 }
@@ -310,6 +328,18 @@ pub fn keyboard_step(state: FocusState, key: Key) -> (FocusState, KeyAction) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn every_dock_tab_has_a_sidebar_matching_glyph() {
+        for tab in 0..TAB_NAMES.len() as u8 {
+            assert!(icon_glyph(tab).is_some(), "tab {tab}");
+        }
+        assert_eq!(icon_glyph(TAB_NAMES.len() as u8), None);
+        // 사이드메뉴 12개와 같은 순서·같은 아이콘(탭 0~11).
+        let sidebar = ['\u{E873}', '\u{E265}', '\u{E746}', '\u{E97A}', '\u{E9F4}', '\u{E3AE}', '\u{E9A2}', '\u{F17D}', '\u{E9B0}', '\u{E413}', '\u{E428}', '\u{E415}'];
+        for (tab, glyph) in sidebar.iter().enumerate() {
+            assert_eq!(icon_glyph(tab as u8), Some(*glyph), "tab {tab}");
+        }
+    }
     fn r(left: i32, top: i32, right: i32, bottom: i32) -> Rect {
         Rect {
             left,

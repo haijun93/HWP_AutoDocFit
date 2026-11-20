@@ -17,6 +17,16 @@ use windows_sys::Win32::{
     },
 };
 static STATE: OnceLock<Mutex<bool>> = OnceLock::new();
+/// 사이드메뉴와 같은 Material Icons(Outlined) 글꼴(Apache-2.0). 프로세스 안에서만 임시 등록하며 설치하지 않는다.
+static ICON_FONT: &[u8] = include_bytes!("../assets/MaterialIconsOutlined-Regular.otf");
+static ICON_FONT_OK: OnceLock<bool> = OnceLock::new();
+fn icon_font_ready() -> bool {
+    *ICON_FONT_OK.get_or_init(|| unsafe {
+        let mut count = 0u32;
+        let handle = AddFontMemResourceEx(ICON_FONT.as_ptr() as *const _, ICON_FONT.len() as u32, ptr::null(), &mut count);
+        !handle.is_null() && count > 0
+    })
+}
 static HWND_VALUE: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 static LAST_MOUSE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(u64::MAX);
 static HOVER_TAB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
@@ -260,7 +270,10 @@ unsafe fn paint(hwnd: HWND) {
         let y = r.bottom / 2;
         let key = dock::IconCacheKey { tab: item.tab, dpi, size_px: size };
         let shapes = ICON_CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().entry(key).or_insert_with(|| dock::icon_shapes(item.tab).to_vec()).clone();
-        draw_icon(mem, &shapes, x - size / 2, y - size / 2, size, palette.foreground, palette.accent);
+        // 사이드메뉴와 같은 글자 모양을 우선 쓰고, 글꼴 등록에 실패하면 예전 도형으로 그린다.
+        if !draw_glyph_icon(mem, item.tab, x - size / 2, y - size / 2, size, palette.foreground) {
+            draw_icon(mem, &shapes, x - size / 2, y - size / 2, size, palette.foreground, palette.accent);
+        }
         let state = WINDOW_STATES.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().get(&item.tab).copied().unwrap_or(dock::WindowState::Closed);
         if dock::running_dot(state) { let dot = CreateSolidBrush(palette.accent); let old = SelectObject(mem, dot); Ellipse(mem, x-3, y+size/2+3, x+3, y+size/2+9); SelectObject(mem, old); DeleteObject(dot); }
         if focus == i { let pen = CreatePen(PS_SOLID, 1, palette.accent); let old = SelectObject(mem, pen); let brush = GetStockObject(NULL_BRUSH as i32); let oldb = SelectObject(mem, brush); Ellipse(mem, x-size/2-3, y-size/2-3, x+size/2+3, y+size/2+3); SelectObject(mem, oldb); SelectObject(mem, old); DeleteObject(pen); }
@@ -292,6 +305,31 @@ fn activate_tab(tab: u8) {
     let _ = open_tab(tab);
     let hwnd = HWND_VALUE.load(std::sync::atomic::Ordering::Relaxed) as HWND;
     unsafe { InvalidateRect(hwnd, ptr::null(), 0); }
+}
+/// Material Icons 글자 하나를 size×size 칸에 그린다(글꼴 높이 = 칸 높이, 위쪽 기준 맞춤). 그리면 true.
+unsafe fn draw_glyph_icon(dc: HDC, tab: u8, ox: i32, oy: i32, size: i32, fg: u32) -> bool {
+    let Some(glyph) = dock::icon_glyph(tab) else { return false };
+    if !icon_font_ready() {
+        return false;
+    }
+    let face: Vec<u16> = dock::ICON_FONT_FACE.encode_utf16().chain(std::iter::once(0)).collect();
+    let font = CreateFontW(-size, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32, OUT_DEFAULT_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, ANTIALIASED_QUALITY as u32, (DEFAULT_PITCH | FF_DONTCARE) as u32, face.as_ptr());
+    if font.is_null() {
+        return false;
+    }
+    let old_font = SelectObject(dc, font);
+    let old_color = SetTextColor(dc, fg);
+    let old_mode = SetBkMode(dc, TRANSPARENT as i32);
+    let old_align = SetTextAlign(dc, (TA_LEFT | TA_TOP) as u32);
+    let mut buf = [0u16; 2];
+    let text = glyph.encode_utf16(&mut buf);
+    TextOutW(dc, ox, oy, text.as_ptr(), text.len() as i32);
+    SetTextAlign(dc, old_align);
+    SetBkMode(dc, old_mode);
+    SetTextColor(dc, old_color);
+    SelectObject(dc, old_font);
+    DeleteObject(font);
+    true
 }
 unsafe fn draw_icon(dc: HDC, shapes: &[dock::IconShape], ox: i32, oy: i32, size: i32, fg: u32, accent: u32) {
     let s = size as f32 / 24.;

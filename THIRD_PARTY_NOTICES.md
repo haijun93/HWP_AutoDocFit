@@ -80,6 +80,7 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | tokio 1.54, windows-service 0.8.1, serde 1.0, serde_json 1.0, windows-sys 0.59 | 색인 서비스 실행 파일(`crates/kfind`, `kfind.exe`, Rust) | tokio: MIT, 나머지: MIT OR Apache-2.0 | 의존성: `crates/kfind/Cargo.toml`·`Cargo.lock`, 라이선스는 일반 지식 |
 | file_selector, web, webview_flutter_windows 1.2.0 | Flutter 화면 | BSD-3-Clause | 의존성: `flutter_ui/pubspec.yaml`, 라이선스는 일반 지식 |
 | Material Icons 글꼴(Flutter 포함) | 화면 아이콘 | Apache-2.0 | 일반 지식 |
+| Material Icons Outlined 글꼴(`dock/assets/MaterialIconsOutlined-Regular.otf`, 하단 Dock 아이콘) | 사이드메뉴와 같은 모양의 Dock 아이콘(프로세스 안에서만 임시 등록) | Apache-2.0 (`dock/assets/MaterialIcons-LICENSE.txt`, 출처: google/material-design-icons) | 파일 |
 
 #### 소스 코드 제공 (GPL·LGPL 구성요소)
 
