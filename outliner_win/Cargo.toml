@@ -2,14 +2,14 @@
 name = "outliner_win"
 version = "0.1.0"
 edition = "2024"
-description = "아웃라이너 Rust+Win32 네이티브 창(2단계 첫 카드: 읽기 전용 블록 목록 + 한글 IME 순서 탐침)"
+description = "아웃라이너 Rust+Win32 네이티브 창(블록 목록 + 한글 IME 순서 탐침 + 3단계 핵심 편집(입력·Enter 분할·Tab·삭제·저장))"
 license = "MIT"
 publish = false
 
 # 다른 크레이트(ktm·kagent)와 같이 독립 작업 공간으로 둔다.
 [workspace]
 
-# 의존성은 3개뿐이다(새 외부 크레이트 없음).
+# 의존성은 4개다(새 외부 크레이트 없음: serde_json 은 outliner_core 가 이미 쓰는 것).
 #  - outliner_core : 블록 파서·편집 엔진(경로 의존성, 이미 저장소에 있음)
 #  - windows-sys   : Win32 호출(ktm·kagent·ui_theme 과 같은 0.59, 이미 Cargo.lock 에 있는 버전)
 #  - ui_theme      : 다크·밝게·고대비 팔레트(경로 의존성, 외부 크레이트 없음). 색 표를 새로 만들지 않고
@@ -17,6 +17,7 @@ publish = false
 [dependencies]
 outliner_core = { path = "../outliner_core" }
 ui_theme = { path = "../ui_theme" }
+serde_json = "1"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

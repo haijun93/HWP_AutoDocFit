@@ -48,6 +48,38 @@ impl Metrics {
     pub fn text_x(&self, depth: usize) -> i32 {
         self.pad + self.indent_w + depth as i32 * self.indent_w
     }
+
+    /// TODO·DONE 체크 칸이 있을 때 글자가 밀리는 폭(`draw` 의 `tx += 2*b + 8` 과 같은 값).
+    pub fn status_shift(&self, dpi: u32) -> i32 {
+        2 * scale(7, dpi) + scale(8, dpi)
+    }
+
+    /// 편집 중 블록 위에 겹칠 EDIT 의 위치(클라이언트 좌표). 글자 시작 x 는 목록의 글자와 같고
+    /// (EDIT 왼쪽 여백 4px 만큼 앞으로 당긴다), 줄 높이 안에서 위아래 가운데에 놓인다.
+    pub fn edit_rect(&self, dpi: u32, depth: usize, has_status: bool, slot: usize, width: i32) -> RECT {
+        let mut tx = self.text_x(depth);
+        if has_status {
+            tx += self.status_shift(dpi);
+        }
+        let top = self.header_h + slot as i32 * self.row_h + scale(3, dpi);
+        RECT { left: tx - scale(4, dpi), top, right: (width - self.pad).max(tx), bottom: top + self.row_h - 2 * scale(3, dpi) }
+    }
+}
+
+/// 그리기에 덧붙는 정보(편집 중 줄·안내 문구·변경 표시).
+#[derive(Clone, Debug, Default)]
+pub struct Extras {
+    /// 화면 줄 번호(`rows` 안). 이 줄의 글자는 EDIT 가 덮으므로 그리지 않고 테두리만 그린다.
+    pub editing_row: Option<usize>,
+    /// 머리글 오른쪽에 블록 수 대신 보일 안내(오류·경고·저장함).
+    pub message: Option<String>,
+    /// 저장하지 않은 변경 → 머리글 제목 앞에 ●.
+    pub dirty: bool,
+}
+
+/// 편집 창(EDIT)과 같은 글꼴을 만든다(호출한 쪽이 `DeleteObject`).
+pub unsafe fn create_font(dpi: u32) -> HFONT {
+    unsafe { font(&Metrics::new(dpi), false) }
 }
 
 unsafe fn font(m: &Metrics, bold: bool) -> HFONT {
@@ -113,8 +145,13 @@ unsafe fn polygon(dc: HDC, color: u32, pts: &[POINT]) {
     }
 }
 
-/// `w`×`h` 화소의 `dc` 에 목록을 그린다.
+/// `w`×`h` 화소의 `dc` 에 목록을 그린다(읽기 전용 모양).
 pub unsafe fn draw(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi: u32, title: &str) {
+    unsafe { draw_ext(dc, w, h, view, pal, dpi, title, &Extras::default()) }
+}
+
+/// `draw` + 편집 중 줄·안내 문구·변경 표시.
+pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi: u32, title: &str, extras: &Extras) {
     unsafe {
         let m = Metrics::new(dpi);
         fill(dc, RECT { left: 0, top: 0, right: w, bottom: h }, pal.bg);
@@ -127,10 +164,16 @@ pub unsafe fn draw(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi: u32
         fill(dc, RECT { left: 0, top: 0, right: w, bottom: m.header_h }, pal.head_bg);
         SelectObject(dc, bold);
         let head = RECT { left: m.pad, top: 0, right: w - m.pad, bottom: m.header_h };
-        text(dc, title, head, pal.text, DT_LEFT);
+        let shown_title = if extras.dirty { format!("● {title}") } else { title.to_string() };
+        text(dc, &shown_title, head, pal.text, DT_LEFT);
         SelectObject(dc, normal);
-        let counts = format!("블록 {}개 · 보이는 줄 {}", view.block_count(), view.rows.len());
-        text(dc, &counts, head, pal.text_sub, DT_RIGHT);
+        match &extras.message {
+            Some(msg) => text(dc, msg, head, pal.accent, DT_RIGHT),
+            None => {
+                let counts = format!("블록 {}개 · 보이는 줄 {}", view.block_count(), view.rows.len());
+                text(dc, &counts, head, pal.text_sub, DT_RIGHT);
+            }
+        }
         fill(dc, RECT { left: 0, top: m.header_h - 1, right: w, bottom: m.header_h }, pal.divider);
 
         if view.rows.is_empty() {
@@ -193,6 +236,15 @@ pub unsafe fn draw(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi: u32
                     color = pal.row_text(selected, pal.text_muted);
                 }
                 tx += 2 * b + scale(8, dpi);
+            }
+            if extras.editing_row == Some(index) {
+                // 글자는 EDIT 가 덮는다. 테두리만(EDIT 바깥 1px).
+                let er = m.edit_rect(dpi, row.depth, row.status.is_some(), slot, w);
+                let outer = RECT { left: er.left - 1, top: er.top - 1, right: er.right + 1, bottom: er.bottom + 1 };
+                let brush = CreateSolidBrush(pal.accent);
+                FrameRect(dc, &outer, brush);
+                DeleteObject(brush);
+                continue;
             }
             if row.text.is_empty() {
                 continue;

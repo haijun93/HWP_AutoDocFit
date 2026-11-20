@@ -27,6 +27,7 @@ name = "outliner_win"
 version = "0.1.0"
 dependencies = [
  "outliner_core",
+ "serde_json",
  "ui_theme",
  "windows-sys",
 ]

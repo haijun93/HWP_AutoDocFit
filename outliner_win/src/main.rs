@@ -1,7 +1,8 @@
 #![windows_subsystem = "windows"]
-//! `outliner_win [문서.md]` — 읽기 전용 블록 목록 창.
+//! `outliner_win [문서.md]` — 블록 목록 + 편집 창(Enter/F2/더블클릭 편집, Ctrl+S 저장).
 //! `outliner_win --capture-dir <폴더> [--dark|--hc] [--dpi N] [--file 문서.md]` — 창 없이 PNG 를 쓰고 끝난다.
-use outliner_win::{SAMPLE_MD, capture, view::View, window};
+//! `--capture-edit` 를 더하면 편집 중 상태(EDIT 겹침·분할 직후) PNG 3장을 더 쓴다(메모리에서만 편집, 저장 안 함).
+use outliner_win::{SAMPLE_MD, capture, docio, edit::Editor, view::View, window};
 use ui_theme::Kind;
 
 struct Args {
@@ -9,15 +10,17 @@ struct Args {
     kind: Kind,
     dpi: u32,
     file: Option<String>,
+    capture_edit: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None };
+    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None, capture_edit: false };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--capture-dir" => a.capture_dir = Some(it.next().ok_or("--capture-dir 에 폴더가 필요합니다")?),
             "--dark" => a.kind = Kind::Dark,
+            "--capture-edit" => a.capture_edit = true,
             "--hc" => a.kind = Kind::HighContrast,
             "--dpi" => a.dpi = it.next().and_then(|v| v.parse().ok()).ok_or("--dpi 에 숫자가 필요합니다")?,
             "--file" => a.file = Some(it.next().ok_or("--file 에 경로가 필요합니다")?),
@@ -30,12 +33,14 @@ fn parse_args() -> Result<Args, String> {
 
 fn run() -> Result<String, String> {
     let args = parse_args()?;
-    let (text, title) = match &args.file {
-        Some(path) => (
-            std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
-            std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-        ),
-        None => (SAMPLE_MD.to_string(), "샘플 문서".to_string()),
+    let (text, title, info) = match &args.file {
+        Some(path) => {
+            // 파일은 한 번만 읽어 SHA-256 과 문서가 같은 내용을 보게 한다.
+            let (_doc, text, info) = docio::load_file(std::path::Path::new(path))?;
+            let title = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            (text, title, Some(info))
+        }
+        None => (SAMPLE_MD.to_string(), "샘플 문서".to_string(), None),
     };
     let mut view = View::from_markdown(&text)?;
     match args.capture_dir {
@@ -43,9 +48,20 @@ fn run() -> Result<String, String> {
             // 캡처에서는 선택 줄(두 번째 블록 아래)을 하나 보이게 해 선택 색도 확인한다.
             view.set_selected(2.min(view.rows.len().saturating_sub(1)), 18);
             let path = capture::capture_to(std::path::Path::new(&dir), &view, args.kind, args.dpi, &title)?;
-            Ok(format!("{}", path.display()))
+            let mut lines = vec![format!("{}", path.display())];
+            if args.capture_edit {
+                for p in capture::capture_edit_set(std::path::Path::new(&dir), &text, args.kind, args.dpi, &title)? {
+                    lines.push(format!("{}", p.display()));
+                }
+            }
+            Ok(lines.join("
+"))
         }
-        None => window::run(view, &title).map(|_| String::new()),
+        None => {
+            let baseline = outliner_core::serialize(&view.doc);
+            let editor = Editor::new(view, window::WinHost::new(), info, baseline);
+            window::run(editor, &title).map(|_| String::new())
+        }
     }
 }
 
