@@ -158,6 +158,10 @@ void main() {
     );
 
     // 파일변환 탭: 드롭 영역·변환 목록을 쓰고 문서편집 탭으로 튀지 않는다.
+    final sidebarList = find.descendant(of: find.byType(WorkspaceTabBar), matching: find.byType(Scrollable)).first;
+    final sidebarPos = tester.state<ScrollableState>(sidebarList).position;
+    sidebarPos.jumpTo(sidebarPos.maxScrollExtent); // 묶음 제목 때문에 아래로 밀릴 수 있다(SIDEBAR1)
+    await tester.pump();
     await tester.tap(find.text('파일변환'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));

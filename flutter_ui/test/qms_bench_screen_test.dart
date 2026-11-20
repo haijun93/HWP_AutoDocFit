@@ -29,6 +29,9 @@ void main() {
   });
 
   testWidgets('개발자 모드가 켜져 있으면 사이드메뉴에 검색 벤치마크(15)가 노출된다', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1300); // 묶음 제목 때문에 세로를 넉넉히(SIDEBAR1)
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await tester.pumpWidget(
       MaterialApp(
         home: TabNavigationShell(

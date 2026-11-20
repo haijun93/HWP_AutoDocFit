@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 /// 누르면 공용 실행기(`external_app`)에 실행을 요청한다. 실행 파일이 없으면 설치 안내·지정 창.
 Future<void> _size(
   WidgetTester tester, [
-  Size size = const Size(1400, 900),
+  Size size = const Size(1400, 1300), // 묶음 제목이 생겨 세로를 넉넉히(SIDEBAR1)
 ]) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;

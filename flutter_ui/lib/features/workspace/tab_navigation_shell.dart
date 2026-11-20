@@ -463,6 +463,93 @@ class WorkspaceTabBar extends StatelessWidget {
     ));
   }
 
+  /// 사이드메뉴 묶음(탭 번호 체계는 그대로, 보이는 순서·구분선만 묶음별로 나눈다).
+  /// 참고 화면(2026-11-19)처럼 접힘은 묶음 사이 얇은 구분선, 펼침은 작은 묶음 제목을 쓴다.
+  static const kSidebarGroups = <(String, List<int>)>[
+    ('문서 작업', [0, 1, 5]),
+    ('그리기', [2, 3, 4]),
+    ('찾기·자료', [7, 8, 9]),
+    ('변환·도구', [6, kTabFileConversion, kTabPdfEdit, kTabOutliner, kTabQmsBench]),
+  ];
+
+  bool _tabVisible(int i) =>
+      i != 12 && i != 13 && i < labels.length && !hiddenTabs.contains(i) && (i != kTabQmsBench || developerMode);
+
+  Widget _groupHeader(BuildContext context, String title, bool first) {
+    if (!expanded) {
+      return first ? const SizedBox(height: 2) : const Padding(padding: EdgeInsets.symmetric(vertical: 6, horizontal: 8), child: Divider(height: 1));
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(12, first ? 4 : 12, 12, 4),
+      child: Text(
+        title,
+        key: ValueKey('workspaceGroup-$title'),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: context.colors.textSecondary),
+      ),
+    );
+  }
+
+  List<Widget> _buildItems(BuildContext context, Color color) {
+    Widget tab(int i) => _TabPill(
+          key: Key('workspaceTab-$i'),
+          label: labels[i],
+          icon: icons[i],
+          selected: selectedExtra == null && i == selectedIndex,
+          color: color,
+          expanded: expanded,
+          onPreview: onPreview == null ? null : () => onPreview!(i),
+          onPreviewCancel: onPreviewCancel,
+          onTap: () => onSelected(i),
+        );
+    Widget extra(Key key, String label, IconData icon, WorkspaceExtraPage page, Widget screen) => _TabPill(
+          key: key,
+          label: label,
+          icon: icon,
+          selected: selectedExtra == page,
+          color: color,
+          expanded: expanded,
+          onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(page),
+          onPreviewCancel: onPreviewCancel,
+          onTap: () => _openExtra(context, page, label, screen),
+        );
+    final out = <Widget>[];
+    var first = true;
+    for (final (title, ids) in kSidebarGroups) {
+      final items = <Widget>[
+        for (final i in ids)
+          if (_tabVisible(i)) tab(i),
+        // 가상 폴더·업무자료함은 '찾기·자료' 묶음 끝에 둔다.
+        if (title == '찾기·자료') ...[
+          if (libraryScreen != null)
+            extra(const ValueKey('library-open'), '가상 폴더', Icons.dashboard_customize_outlined, WorkspaceExtraPage.library, libraryScreen!),
+          if (notebookScreen != null)
+            extra(const ValueKey('notebook-open'), '업무자료함', Icons.menu_book_outlined, WorkspaceExtraPage.notebook, notebookScreen!),
+        ],
+      ];
+      if (items.isEmpty) continue;
+      out.add(_groupHeader(context, title, first));
+      out.addAll(items);
+      first = false;
+    }
+    // 외부 프로그램(사진첩2·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
+    // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
+    if (developerMode && onOpenExternalApp != null) {
+      out.add(_groupHeader(context, '외부 프로그램', first));
+      for (final app in kExternalApps) {
+        out.add(_TabPill(
+          key: app.menuKey,
+          label: app.label,
+          icon: app.icon,
+          selected: false,
+          color: color,
+          expanded: expanded,
+          onTap: () => onOpenExternalApp!(context, app),
+        ));
+      }
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     final color = Theme.of(context).colorScheme.primary;
@@ -497,59 +584,7 @@ class WorkspaceTabBar extends StatelessWidget {
               child: ListView(
                 controller: scrollController,
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                children: [
-                  for (var i = 0; i < labels.length; i++)
-                    if (i != 12 && i != 13 && !hiddenTabs.contains(i))
-                      if (i != kTabQmsBench || developerMode)
-                        _TabPill(
-                        key: Key('workspaceTab-$i'),
-                        label: labels[i],
-                        icon: icons[i],
-                        selected: selectedExtra == null && i == selectedIndex,
-                        color: color,
-                        expanded: expanded,
-                        onPreview: onPreview == null ? null : () => onPreview!(i),
-                        onPreviewCancel: onPreviewCancel,
-                        onTap: () => onSelected(i),
-                      ),
-                  if (libraryScreen != null)
-                    _TabPill(
-                      key: const ValueKey('library-open'),
-                      label: '가상 폴더',
-                      icon: Icons.dashboard_customize_outlined,
-                      selected: selectedExtra == WorkspaceExtraPage.library,
-                      color: color,
-                      expanded: expanded,
-                      onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.library),
-                      onPreviewCancel: onPreviewCancel,
-                      onTap: () => _openExtra(context, WorkspaceExtraPage.library, '가상 폴더', libraryScreen!),
-                    ),
-                  if (notebookScreen != null)
-                    _TabPill(
-                      key: const ValueKey('notebook-open'),
-                      label: '업무자료함',
-                      icon: Icons.menu_book_outlined,
-                      selected: selectedExtra == WorkspaceExtraPage.notebook,
-                      color: color,
-                      expanded: expanded,
-                      onPreview: onPreviewExtra == null ? null : () => onPreviewExtra!(WorkspaceExtraPage.notebook),
-                      onPreviewCancel: onPreviewCancel,
-                      onTap: () => _openExtra(context, WorkspaceExtraPage.notebook, '업무자료함', notebookScreen!),
-                    ),
-                  // 외부 프로그램(사진첩2·아웃라이너·사진관리)은 별도 프로그램이라 실행창을 바꾸지 않고,
-                  // 마우스 올림 호출도 하지 않는다. 같은 _TabPill을 써서 접힘·사이드메뉴 모드 정렬을 맞춘다.
-                  if (developerMode && onOpenExternalApp != null)
-                    for (final app in kExternalApps)
-                      _TabPill(
-                        key: app.menuKey,
-                        label: app.label,
-                        icon: app.icon,
-                        selected: false,
-                        color: color,
-                        expanded: expanded,
-                        onTap: () => onOpenExternalApp!(context, app),
-                      ),
-                ],
+                children: _buildItems(context, color),
               ),
             ),
     if (trailing != null) ...[
@@ -614,10 +649,10 @@ class _TabPill extends StatelessWidget {
       onEnter: (_) => onPreview?.call(),
       onExit: (_) => onPreviewCancel?.call(),
       child: Material(
-        color: selected ? color.withValues(alpha: .10) : Colors.transparent,
-        borderRadius: BorderRadius.circular(8),
+        color: selected ? color.withValues(alpha: expanded ? .10 : .16) : Colors.transparent,
+        borderRadius: BorderRadius.circular(expanded ? 8 : 12),
         child: InkWell(
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(expanded ? 8 : 12),
           onTap: onTap,
           child: Stack(
             children: [
@@ -652,7 +687,7 @@ class _TabPill extends StatelessWidget {
                   ],
                 ),
               ),
-              if (selected)
+              if (selected && expanded)
                 Positioned(
                   left: 0,
                   top: 8,
