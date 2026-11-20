@@ -659,6 +659,10 @@ fn worker(rx: std::sync::mpsc::Receiver<(Capture, String)>) {
                 None => continue,
             },
         };
+        let settings=app().settings.lock().unwrap().clone();
+        if (kind=="text" && !settings.capture_text) || (kind=="image" && !settings.capture_images) || (kind=="files" && !settings.capture_files) {
+            continue;
+        }
         let web_url = if kind == "text" {
             open_item::classify_web_text(&String::from_utf8_lossy(&data)).or_else(|| {
                 clip::unpack_formats(&extra).into_iter().find_map(|(name, value)|

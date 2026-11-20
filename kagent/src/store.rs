@@ -29,6 +29,9 @@ pub struct Settings {
     pub paused: bool,
     pub hotkey: String,
     pub excluded_apps: Vec<String>,
+    pub capture_text: bool,
+    pub capture_images: bool,
+    pub capture_files: bool,
     /// 스크린샷 폴더(Win+PrtScn·캡처 도구 자동 저장)에 새로 생긴 PNG도 기록.
     pub watch_screenshots: bool,
     /// 자동 인식한 화면캡처 폴더 중 사용자가 끈 폴더(소문자 경로, `capture_dirs::plan`).
@@ -71,6 +74,9 @@ impl Default for Settings {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            capture_text: true,
+            capture_images: true,
+            capture_files: true,
             watch_screenshots: true,
             capture_dirs_off: Vec::new(),
             timeline_roots: Vec::new(),
@@ -111,6 +117,9 @@ impl Settings {
             ("paused", self.paused.into()),
             ("hotkey", self.hotkey.as_str().into()),
             ("excluded_apps", Value::Arr(self.excluded_apps.iter().map(|s| s.as_str().into()).collect())),
+            ("capture_text", self.capture_text.into()),
+            ("capture_images", self.capture_images.into()),
+            ("capture_files", self.capture_files.into()),
             ("watch_screenshots", self.watch_screenshots.into()),
             ("capture_dirs_off", Value::Arr(self.capture_dirs_off.iter().map(|s| s.as_str().into()).collect())),
             ("timeline_roots", Value::Arr(self.timeline_roots.iter().map(|s| s.as_str().into()).collect())),
@@ -169,6 +178,9 @@ impl Settings {
         if let Some(list) = string_list(v, "excluded_apps", true, 100) {
             self.excluded_apps = list;
         }
+        if let Some(b) = v.bool("capture_text") { self.capture_text = b; }
+        if let Some(b) = v.bool("capture_images") { self.capture_images = b; }
+        if let Some(b) = v.bool("capture_files") { self.capture_files = b; }
         if let Some(b) = v.bool("watch_screenshots") {
             self.watch_screenshots = b;
         }
