@@ -6,6 +6,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../common/thumb_size_slider.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 
 /// 파일 크기 문자열 형식화.
@@ -80,6 +81,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   @override
   void initState() {
     super.initState();
+    _restoreThumbSize();
     _initFolders();
   }
 
@@ -89,6 +91,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     _searchController.dispose();
     _tagDraftController.dispose();
     super.dispose();
+  }
+
+  Future<void> _restoreThumbSize() async {
+    final saved = await loadThumbSize(widget.api, 'photo_album');
+    if (saved != null && mounted) setState(() => _thumbSize = saved);
   }
 
   Future<void> _initFolders() async {
@@ -1002,33 +1009,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
               ),
               const SizedBox(width: 6),
               // 썸네일 크기 조절
-              Tooltip(
-                message: '썸네일 크기 조절',
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.photo_size_select_actual_outlined,
-                      size: 16,
-                      color: Colors.grey,
-                    ),
-                    SizedBox(
-                      width: 80,
-                      child: Slider(
-                        key: const ValueKey('photoAlbumThumbSizeSlider'),
-                        value: _thumbSize,
-                        min: 100,
-                        max: 240,
-                        divisions: 7,
-                        onChanged: (val) {
-                          setState(() {
-                            _thumbSize = val;
-                          });
-                        },
-                      ),
-                    ),
-                  ],
-                ),
+              ThumbSizeSlider(
+                sliderKey: const ValueKey('photoAlbumThumbSizeSlider'),
+                value: _thumbSize,
+                onChanged: (val) => setState(() => _thumbSize = val),
+                onChangeEnd: (val) =>
+                    saveThumbSize(widget.api, 'photo_album', val),
               ),
               const SizedBox(width: 6),
               // 선택 모드 토글

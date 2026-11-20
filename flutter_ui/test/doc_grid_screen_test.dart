@@ -282,4 +282,67 @@ void main() {
     expect(calls, contains('excluded_folder_remove'));
     expect(find.text('/test/excluded'), findsNothing);
   });
+
+  testWidgets('문서뷰: 썸네일 크기 슬라이더가 격자 크기를 바꾸고 저장하며 다시 열면 복원한다', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final docs = [
+      for (var i = 0; i < 6; i++)
+        {
+          'path': '/test/docs/문서$i.pdf',
+          'name': '문서$i.pdf',
+          'stem': '문서$i',
+          'ext': 'pdf',
+          'size': 512,
+          'mtime': 1700000000.0,
+          'cloud': true,
+        },
+    ];
+    double? stored;
+    final calls = <List<Object?>>[];
+    Future<Object?> mockApi(String method, List<Object?> args) async {
+      calls.add([method, ...args]);
+      switch (args.first) {
+        case 'list_default':
+          return {'ok': true, 'documents': docs};
+        case 'thumb_size_get':
+          return {'ok': true, 'size': stored ?? 190.0};
+        case 'thumb_size_set':
+          stored = ((args[1] as Map)['size'] as num).toDouble();
+          return {'ok': true, 'size': stored};
+      }
+      return {'ok': true};
+    }
+
+    double cardWidth() => tester.getSize(find.byKey(const ValueKey('docCard-/test/docs/문서0.pdf'))).width;
+    double extent() {
+      final grid = tester.widget<GridView>(find.byKey(const ValueKey('docGridView')));
+      return (grid.gridDelegate as SliverGridDelegateWithMaxCrossAxisExtent).maxCrossAxisExtent;
+    }
+
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(api: mockApi)));
+    await tester.pumpAndSettle();
+    expect(extent(), 190.0);
+    final before = cardWidth();
+    expect(before, lessThanOrEqualTo(190.0));
+
+    // 슬라이더를 최소로 → 카드 폭 감소, 목록 유지, 저장 호출
+    final slider = find.byKey(const ValueKey('docGridThumbSizeSlider'));
+    expect(slider, findsOneWidget);
+    await tester.drag(slider, const Offset(-200, 0));
+    await tester.pumpAndSettle();
+    expect(extent(), 100.0);
+    expect(cardWidth(), lessThan(before));
+    expect(find.text('문서5.pdf'), findsOneWidget);
+    expect(stored, 100.0);
+
+    // 다시 열면 저장값 복원
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(api: mockApi)));
+    await tester.pumpAndSettle();
+    expect(extent(), 100.0);
+    expect(calls.where((c) => c[1] == 'thumb_size_get'), hasLength(2));
+  });
 }

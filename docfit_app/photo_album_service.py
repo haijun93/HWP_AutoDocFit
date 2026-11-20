@@ -37,6 +37,7 @@ from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.rules import cloud_only, excluded_name
 from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
+from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
 
 logger = logging.getLogger(__name__)
@@ -1712,6 +1713,9 @@ class PhotoAlbumService:
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()
+
+            if action in ("thumb_size_get", "thumb_size_set"):
+                return handle_thumb_size(self.settings_store, "photo_album", action, payload)
 
             if action == "excluded_folders_get":
                 return {"ok": True, "folders": read_exclusions(self.settings_store)}

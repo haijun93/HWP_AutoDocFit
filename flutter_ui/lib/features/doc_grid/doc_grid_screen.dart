@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../common/thumb_size_slider.dart';
 
 /// 문서 확장자별 대표 테마 색상.
 Color _docExtColor(String ext) {
@@ -72,9 +73,13 @@ class _DocGridScreenState extends State<DocGridScreen> {
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
 
+  // 썸네일 크기 (100 ~ 240, 기본 190 = 기존 고정값). 설정에 저장·복원한다.
+  double _thumbSize = 190.0;
+
   @override
   void initState() {
     super.initState();
+    _restoreThumbSize();
     _loadDefault();
   }
 
@@ -82,6 +87,11 @@ class _DocGridScreenState extends State<DocGridScreen> {
   void dispose() {
     _scanUiTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _restoreThumbSize() async {
+    final saved = await loadThumbSize(widget.api, 'doc_grid');
+    if (saved != null && mounted) setState(() => _thumbSize = saved);
   }
 
   Future<void> _loadDefault() async {
@@ -241,6 +251,13 @@ class _DocGridScreenState extends State<DocGridScreen> {
                         ],
                       ),
                     ),
+                    ThumbSizeSlider(
+                      sliderKey: const ValueKey('docGridThumbSizeSlider'),
+                      value: _thumbSize,
+                      onChanged: (val) => setState(() => _thumbSize = val),
+                      onChangeEnd: (val) =>
+                          saveThumbSize(widget.api, 'doc_grid', val),
+                    ),
                     IconButton(
                       key: const ValueKey('docGridExcludedFoldersButton'),
                       tooltip: '제외할 폴더',
@@ -384,8 +401,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
           child: GridView.builder(
             key: const ValueKey('docGridView'),
             padding: const EdgeInsets.all(16),
-            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-              maxCrossAxisExtent: 190,
+            gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+              maxCrossAxisExtent: _thumbSize,
               childAspectRatio: 0.74,
               crossAxisSpacing: 14,
               mainAxisSpacing: 14,
@@ -556,6 +573,7 @@ class _DocCardState extends State<_DocCard> {
                         Image.memory(
                           _thumbBytes!,
                           fit: BoxFit.contain,
+                          filterQuality: FilterQuality.medium,
                           width: double.infinity,
                           height: double.infinity,
                         )
