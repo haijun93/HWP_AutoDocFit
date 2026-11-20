@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart';
 import 'tab_navigation_shell.dart';
 import 'dock_mode_controller.dart';
+import 'quick_action_bar.dart';
 
 /// 사용자가 끈 왼쪽 메뉴 번호. 비어 있으면 모두 켠 상태다.
 /// 저장값은 시작 때 get_state의 hidden_tabs로 채우고, 선택 창에서 저장하면 바로 바꾼다.
@@ -91,6 +92,18 @@ class _MenuDisplayModeSettingState extends State<MenuDisplayModeSetting> {
             DropdownMenuItem(value: 'dock', child: Text('하단 Dock')),
           ],
           onChanged: _busy ? null : _change,
+        ),
+      ),
+      ValueListenableBuilder<bool>(
+        valueListenable: quickBarVisibleNotifier,
+        builder: (context, visible, _) => SwitchListTile(
+          key: const Key('quickBarSetting'),
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.view_sidebar_outlined),
+          title: const Text('오른쪽 빠른 실행 막대'),
+          subtitle: const Text('새 문서·클립보드·작업 로그·사용 방법을 아이콘으로 바로 열어요. (창 폭 1100px 미만에서는 자동으로 접혀요)'),
+          value: visible,
+          onChanged: setQuickBarVisible,
         ),
       ),
       if (_error != null)

@@ -19,6 +19,7 @@ import '../pdf_edit/pdf_edit_workspace.dart';
 import '../outliner/outliner_workspace.dart';
 import '../qms_bench/qms_bench_screen.dart';
 import 'tab_navigation_shell.dart';
+import 'quick_action_bar.dart';
 
 /// Workspace adapter for Tab 1: Document Editor / Processing
 class DocumentEditorAdapter extends StatelessWidget {
@@ -189,8 +190,11 @@ class IntegratedWorkspace extends StatelessWidget {
     this.photoAlbumScreen,
     this.qmsBenchScreen,
     this.hiddenTabs = kDefaultHiddenTabs,
+    this.quickActions = const [],
   });
 
+  /// 오른쪽 빠른 실행 막대 항목.
+  final List<QuickAction> quickActions;
   final Widget? trailing;
   final ValueListenable<bool?>? savedSidebarExpanded;
   final ValueChanged<bool>? onSidebarExpandedChanged;
@@ -228,6 +232,7 @@ class IntegratedWorkspace extends StatelessWidget {
           ),
       notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
+      quickActions: quickActions,
       documentEditor: DocumentEditorAdapter(child: documentEditorWidget),
       tableTemplates: TableTemplatesAdapter(api: api),
       tableSketch: TableSketchAdapter(api: api),

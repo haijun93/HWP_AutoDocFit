@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import '../../core/close_guards.dart';
 import '../../core/theme/app_theme.dart';
 import '../external_apps/external_app_launcher.dart';
+import 'quick_action_bar.dart';
 
 /// 탭 번호: PDF 편집은 파일변환 뒤에 둔다.
 const kTabPaint = 5;
@@ -28,6 +29,14 @@ const kSidebarAutoExpandWidth = 900.0;
 /// 열어도 사이드메뉴가 사라지지 않게). 열려 있는 동안에만 화면을 만들어 끌어 놓기 감시가
 /// 화면을 열 때 시작하고 다른 메뉴로 옮기면 멈춘다.
 enum WorkspaceExtraPage { library, notebook }
+
+/// 위쪽 가로 탭 묶음(SIDEBAR2). 같은 종류의 화면을 한 줄 글자 탭으로 오가게 한다.
+/// 왼쪽 메뉴 항목과 탭 번호(kTab*)는 그대로이고, 묶음의 화면 중 둘 이상이 보일 때만 탭 줄이 나온다.
+const kSubTabGroups = <(String, List<int>)>[
+  ('그리기', [2, 3, 4]),
+  ('찾기·보기', [8, 9]),
+  ('변환', [kTabFileConversion, kTabPdfEdit]),
+];
 
 const kFileRenameMenuEnabled = true;
 const kDefaultHiddenTabs = kFileRenameMenuEnabled ? <int>{} : <int>{kTabFileRename};
@@ -98,6 +107,7 @@ class TabNavigationShell extends StatefulWidget {
     this.libraryScreen,
     this.notebookScreen,
     this.onOpenExternalApp,
+    this.quickActions = const [],
   }) : assert(initialIndex >= 0 && initialIndex < kTabCount);
 
   final Widget documentEditor;
@@ -128,6 +138,9 @@ class TabNavigationShell extends StatefulWidget {
   final Widget? notebookScreen;
   /// 개발자 모드 전용 외부 프로그램(사진첩2·아웃라이너·사진관리) 실행. 실행창을 바꾸지 않고 새 창을 띄운다.
   final ExternalAppOpener? onOpenExternalApp;
+
+  /// 오른쪽 빠른 실행 막대 항목. 비어 있으면 막대를 만들지 않는다.
+  final List<QuickAction> quickActions;
   final ValueChanged<int>? onTabChanged;
 
   /// 왼쪽 메뉴 아래쪽의 앱 전체 메뉴(사용 방법·작업 로그·설정 등).
@@ -268,6 +281,76 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     }
   }
 
+  /// 지금 탭이 속한 가로 탭 묶음의 보이는 화면 번호(없으면 빈 목록).
+  List<int> _subTabIds() {
+    for (final (_, ids) in kSubTabGroups) {
+      if (!ids.contains(_index)) continue;
+      return [for (final i in ids) if (!widget.hiddenTabs.contains(i)) i];
+    }
+    return const [];
+  }
+
+  Widget _buildSubTabs(BuildContext context) {
+    final ids = _subTabIds();
+    final color = Theme.of(context).colorScheme.primary;
+    return Material(
+      color: context.colors.surface,
+      child: Container(
+        key: const ValueKey('workspaceSubTabs'),
+        height: 40,
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: context.colors.line))),
+        child: ListView(
+          scrollDirection: Axis.horizontal,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          children: [
+            for (final i in ids)
+              Semantics(
+                selected: i == _index,
+                button: true,
+                label: _labels[i],
+                excludeSemantics: true,
+                child: InkWell(
+                  key: ValueKey('workspaceSubTab-$i'),
+                  onTap: () => _select(i),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      border: Border(bottom: BorderSide(width: 3, color: i == _index ? color : Colors.transparent)),
+                    ),
+                    // 왼쪽 메뉴와 같은 이름이라 Text 대신 RichText로 그린다(이름 찾기 중복 방지, 읽기 이름은 Semantics가 맡는다).
+                    child: RichText(
+                      textScaler: MediaQuery.textScalerOf(context),
+                      text: TextSpan(
+                        text: _labels[i],
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: i == _index ? FontWeight.w700 : FontWeight.w500,
+                          color: i == _index ? color : context.colors.textSecondary,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 오른쪽 빠른 실행 막대. 창이 좁거나 사용자가 숨기면 접고, 숨긴 경우에만 다시 보이기 손잡이를 둔다.
+  Widget _buildQuickBar(BuildContext context) => ValueListenableBuilder<bool>(
+        valueListenable: quickBarVisibleNotifier,
+        builder: (context, visible, _) {
+          if (MediaQuery.sizeOf(context).width < kQuickBarMinWindowWidth) return const SizedBox.shrink();
+          if (!visible) {
+            return const SizedBox(width: 20, child: QuickBarRevealHandle());
+          }
+          return QuickActionBar(actions: widget.quickActions);
+        },
+      );
+
   @override
   Widget build(BuildContext context) {
     final pages = [
@@ -359,6 +442,10 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                     onOpenExtra: _openExtra,
                   ),
                   Expanded(
+                    child: Column(
+                      children: [
+                        if (_subTabIds().length > 1 && extraPage == null) _buildSubTabs(context),
+                        Expanded(
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
@@ -385,7 +472,11 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                         ?extraPage,
                       ],
                     ),
+                        ),
+                      ],
+                    ),
                   ),
+                  if (widget.quickActions.isNotEmpty) _buildQuickBar(context),
                 ],
               ),
             ),

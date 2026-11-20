@@ -38,6 +38,7 @@ import 'features/workspace/sidebar_menu_settings.dart';
 import 'features/workspace/dock_mode_controller.dart';
 import 'features/workspace/tab_open_events.dart';
 import 'features/kclip/kclip_dialog.dart';
+import 'features/workspace/quick_action_bar.dart';
 
 export 'core/api/abbreviation_api.dart' show ApiCall;
 
@@ -390,6 +391,43 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
             .then<void>((_) {}, onError: (_) {}),
       );
     },
+    // 오른쪽 빠른 실행 막대(자주 쓰는 동작). 알림 숫자의 데이터 출처가 정해지기 전까지 배지는 0(숨김).
+    quickActions: [
+      QuickAction(
+        id: 'new-document',
+        label: '새 문서',
+        icon: Icons.note_add_outlined,
+        onPressed: (context) => _showNewDocument(context, widget.api),
+      ),
+      QuickAction(
+        id: 'kclip',
+        label: '클립보드',
+        icon: Icons.content_paste_search,
+        tooltip: '몽땅클립보드 (복사 기록 · Ctrl+Shift+V)',
+        onPressed: (context) async {
+          if (_kclipOpen) return;
+          _kclipOpen = true;
+          try {
+            await showKClipStickyWindow(context, widget.api);
+          } finally {
+            _kclipOpen = false;
+          }
+        },
+      ),
+      QuickAction(
+        id: 'log',
+        label: '작업 로그',
+        icon: Icons.receipt_long_outlined,
+        onPressed: (_) => workspace.currentState?.showLog(),
+      ),
+      QuickAction(
+        id: 'help',
+        label: '사용 방법',
+        icon: Icons.help_outline_rounded,
+        tooltip: '사용 방법 (F1)',
+        onPressed: (_) => workspace.currentState?.showHelp(),
+      ),
+    ],
     // 앱 메뉴(사용 방법·작업 로그·설정)는 왼쪽 메뉴 아래쪽에 둔다.
     trailing: Builder(
       builder: (context) => LayoutBuilder(
