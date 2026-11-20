@@ -126,7 +126,11 @@ class OutlinerService:
                 args.pop('action', None)
                 args.pop('page', None)
                 operation = args.pop('operation', None)
-                return self._engine({'id': action, 'op': operation if action == 'edit' else action, 'document': markdown, 'args': args})
+                if action == 'edit':
+                    # 엔진은 op='edit' 아래 args.action 으로 편집 명령(set_text·insert·delete 등)을 받는다.
+                    # 예전에는 편집 명령을 op 로 바로 보내 '지원하지 않는 명령: set_text' 오류가 났다(v2.2.83).
+                    args['action'] = operation
+                return self._engine({'id': action, 'op': action, 'document': markdown, 'args': args})
             raise ServiceError('INVALID_ACTION', '지원하지 않는 아웃라이너 작업입니다.')
 
     def _load(self, page_name):
