@@ -120,6 +120,13 @@ class ComPerfTest(unittest.TestCase):
         self.assertGreater(counter.by_call["outer"][1], 0.0)
         self.assertEqual(counter.by_call["outer"][1], counter.total_seconds)
 
+    def test_failed_call_name_is_retained(self):
+        counter = com_perf.ComCounter()
+        error = RuntimeError("server fault")
+        with self.assertRaisesRegex(RuntimeError, "server fault"):
+            counter.timed("HAction.Run()", lambda: (_ for _ in ()).throw(error))
+        self.assertEqual("HAction.Run()", counter.last_error_call)
+
     def test_finish_document_writes_json_when_directory_is_set(self):
         with tempfile.TemporaryDirectory() as folder:
             env = {com_perf.ENV_ENABLE: "1", com_perf.ENV_OUTPUT_DIR: folder}

@@ -45,6 +45,8 @@ class ComCounter:
         self.by_call: dict[str, list] = {}
         # (단계 이름, 호출한 우리 함수 이름) -> [호출 수, 초]
         self.by_caller: dict[tuple, list] = {}
+        self.last_call: str | None = None
+        self.last_error_call: str | None = None
         self._depth = 0
 
     def set_stage(self, name):
@@ -73,8 +75,12 @@ class ComCounter:
         outermost = self._depth == 0
         self._depth += 1
         started = self._clock()
+        self.last_call = call_name
         try:
             return function(*args, **kwargs)
+        except Exception:
+            self.last_error_call = call_name
+            raise
         finally:
             elapsed = self._clock() - started
             self._depth -= 1

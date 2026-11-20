@@ -857,8 +857,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                    최종검수, str(검수보고서) if 검수보고서 else None))
 
             except Exception as e:
+                from docfit_core.com_errors import user_message as _com_user_message
+                from docfit_core import com_perf as _com_perf
+                _error_stage = _com_perf.counter().stage
+                _error_call = _com_perf.counter().last_error_call
+                _error_text = _com_user_message(e, stage=_error_stage, call=_error_call)
+                로그(f"문서 처리 오류 문맥: 단계={_error_stage}, COM 호출={_error_call or '확인되지 않음'}")
                 traceback.print_exc()
-                gui_queue.put(("fatal_error", str(e)))
+                gui_queue.put(("fatal_error", _error_text))
             finally:
                 절전_방지(False)
                 # COM 객체는 생성한 작업 스레드에서 반드시 정리한다.
