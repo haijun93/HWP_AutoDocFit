@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/drop_events.dart';
-import '../../core/document_drop_paths_stub.dart';
 import '../../core/theme/app_theme.dart';
 
 class PdfEditWorkspace extends StatefulWidget {
