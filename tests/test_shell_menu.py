@@ -50,8 +50,8 @@ class ShellMenuTests(unittest.TestCase):
     def test_register_exact_menu_and_quoted_commands(self):
         menu.register(self.exe, registry=self.reg)
         self.assertEqual(sum('DocFitCommand' in values for values in self.reg.data.values()), 6)
-        base = menu.ROOT + r'\.hwp\shell\HwpAutoDocFit'
-        self.assertEqual(self.reg.data[base]['MUIVerb'], '한글편집 후처리')
+        base = menu.ROOT + r'\.hwp\shell\MongttangFileConvert'
+        self.assertEqual(self.reg.data[base]['MUIVerb'], '몽땅파일변환')
         self.assertEqual(self.reg.data[base]['MultiSelectModel'], 'Player')
 
         commands = [v[''] for p, v in self.reg.data.items() if p.endswith('\\command')]
@@ -87,15 +87,15 @@ class ShellMenuTests(unittest.TestCase):
         menu.unregister(registry=self.reg)
         self.assertFalse(menu.status(registry=self.reg)['registered'])
         self.assertTrue(any(p.endswith('Other') for p in self.reg.data))
-        self.assertFalse(any('HwpAutoDocFit' in p for p in self.reg.data))
+        self.assertFalse(any('HwpAutoDocFit' in p or 'MongttangFileConvert' in p for p in self.reg.data))
 
     def test_status_and_path_refresh_only_when_registered(self):
-        with patch.object(menu, 'launch_command', return_value=[self.exe]):
+        with patch.object(menu, 'launch_command', return_value=[self.exe]), patch.object(menu, 'ctx_exe_for', return_value=None):
             menu.refresh_registered(registry=self.reg)
             self.assertEqual(self.reg.data, {})
             menu.register(r'C:\old\launcher.exe', registry=self.reg)
             menu.refresh_registered(registry=self.reg)
-            self.assertEqual(menu.status(registry=self.reg), {'registered': True, 'command': f'"{self.exe}"'})
+            self.assertEqual(menu.status(registry=self.reg), {'registered': True, 'command': f'"{self.exe}"', 'ctx': '', 'legacy': False})
             before = dict(self.reg.data)
             menu.refresh_registered(registry=self.reg)
             self.assertEqual(self.reg.data, before)

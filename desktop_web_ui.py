@@ -1484,9 +1484,10 @@ class DesktopWebBridge:
             if 'freeze_tracing' in values:
                 self._set_freeze_tracing(bool(values['freeze_tracing']))
             if 'shell_menu' in values:
-                from docfit_app.shell_menu import register, unregister, launch_command
+                from docfit_app.shell_menu import register, unregister, launch_command, ctx_exe_for
                 if values['shell_menu']:
-                    register(launch_command())
+                    command = launch_command()
+                    register(command, ctx_exe=ctx_exe_for(command))
                 else:
                     unregister()
             self.gui._Flutter설정_반영(values)

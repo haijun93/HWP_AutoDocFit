@@ -72,6 +72,13 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\HwpAutoD
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.png\shell\HwpAutoDocFit"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpg\shell\HwpAutoDocFit"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpeg\shell\HwpAutoDocFit"; Flags: dontcreatekey uninsdeletekey
+; 탐색기 오른쪽 버튼 메뉴 '몽땅파일변환'(CTXMENU2). 등록은 앱 설정 '탐색기 우클릭 메뉴'를 켤 때만 하고, 제거 때 새 키를 지운다(위 줄은 예전 '한글편집 후처리' 키 흔적 정리).
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.hwp\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.hwpx\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.pdf\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.png\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpg\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpeg\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
 
 [Code]
 // 설치(업데이트) 전에 이 계정에서 돌고 있는 앱 도우미를 끝낸다(v2.2.65 오류 보고, 2026-11-14).
@@ -96,6 +103,8 @@ begin
   StopHelper('hierarchy.exe');
   // 몽땅검색 단축키 앱도 창 없이 상주해 Restart Manager가 닫지 못한다(이 PC 재현: "모든 응용 프로그램을 자동으로 닫지 못했습니다", 2026-11-14).
   StopHelper('ktm.exe');
+  // 우클릭 메뉴 전달 프로그램(mdm-ctx.exe)은 클릭 때만 잠깐 도는 비상주 프로그램이지만, 모으는 동안(최대 30초) 파일을 붙잡을 수 있다.
+  StopHelper('mdm-ctx.exe');
   Sleep(500);
   Result := '';
 end;

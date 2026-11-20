@@ -200,6 +200,17 @@ jobs:
           (Get-FileHash resources/kvf.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/kvf.exe.sha256
           if (!(Test-Path resources/kvf.exe) -or !(Test-Path resources/kvf.exe.sha256)) { throw 'kvf bundle missing' }
 
+      - name: Build context-menu forwarder (mdm-ctx.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path mdm-ctx/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path mdm-ctx/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item mdm-ctx/target/release/mdm-ctx.exe resources/mdm-ctx.exe -Force
+          if (!(Test-Path resources/mdm-ctx.exe)) { throw 'mdm-ctx bundle missing' }
+
       - name: Build PDF edit engine (pdf-edit.exe, Rust)
         shell: pwsh
         run: |
@@ -290,7 +301,7 @@ jobs:
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {

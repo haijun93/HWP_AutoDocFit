@@ -34,6 +34,9 @@ binaries.append((str(dock_sha256), 'resources'))
 klib_exe = root / 'resources' / 'klib.exe'
 if klib_exe.is_file():
     binaries.append((str(klib_exe), 'resources'))
+mdm_ctx_exe = root / 'resources' / 'mdm-ctx.exe'
+if mdm_ctx_exe.is_file():
+    binaries.append((str(mdm_ctx_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

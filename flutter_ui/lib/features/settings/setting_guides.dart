@@ -850,7 +850,7 @@ final Map<String, SettingGuide> settingGuides = {
   'shell_menu': SettingGuide(
     'general',
     '탐색기 우클릭 메뉴',
-    '현재 사용자에게만 등록해요. Windows 11에서는 파일 우클릭 → 더 많은 옵션 표시 → 한글편집 후처리에서 변환할 수 있어요.',
+    '현재 사용자에게만 등록해요. Windows 11에서는 파일 우클릭 → 더 많은 옵션 표시 → 몽땅파일변환에서 변환할 수 있어요.',
   ),
   'always_on_top': SettingGuide('program', '항상 위에 표시', '앱 창을 다른 창보다 위에 둬요.'),
   'mongttang_search': SettingGuide(

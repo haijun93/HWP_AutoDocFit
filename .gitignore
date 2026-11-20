@@ -59,3 +59,7 @@ resources/ktm.exe
 resources/ktm.exe.sha256
 
 pdf_edit_core/target/
+
+# 몽땅파일변환 우클릭 전달 프로그램(Rust) 빌드 산출물
+mdm-ctx/target/
+resources/mdm-ctx.exe
