@@ -27,7 +27,7 @@ class DefaultLibraryScanTests(unittest.TestCase):
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
                 state = service.command("scan_progress")
-                observed.append(state["progress"])
+                observed.append(state.get("visited", 0))
                 if state["state"] == "complete":
                     break
                 time.sleep(0.002)
@@ -81,7 +81,7 @@ class DefaultLibraryScanTests(unittest.TestCase):
             observed = []
             while time.monotonic() < deadline:
                 state = service.command("scan_progress")
-                observed.append(state["progress"])
+                observed.append(state.get("visited", 0))
                 if state["state"] == "complete":
                     break
                 time.sleep(0.002)
