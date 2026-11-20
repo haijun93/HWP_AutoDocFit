@@ -28,7 +28,7 @@ class PdfEditServiceTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.source = self.root / 'source.pdf'
         self.source.write_bytes(PDF)
-        self.executable = self.root / 'pdf-edit.exe'
+        self.executable = self.root / ('pdf-edit.exe' if os.name == 'nt' else 'pdf-edit')
         self.executable.write_bytes(b'fake')
         self.runner = Mock(return_value=Mock(returncode=0, stderr=''))
         self.service = PdfEditService(self.executable, self.runner)
@@ -145,7 +145,7 @@ class PdfEditServiceTests(unittest.TestCase):
         from docfit_app import pdf_edit_service
 
         app_dir = self.root / 'installed'
-        bundled = app_dir / '_internal' / 'resources' / 'pdf-edit.exe'
+        bundled = app_dir / '_internal' / 'resources' / ('pdf-edit.exe' if os.name == 'nt' else 'pdf-edit')
         bundled.parent.mkdir(parents=True)
         bundled.write_bytes(b'bundled')
         with patch.object(pdf_edit_service.sys, 'executable', str(app_dir / 'HWP_AutoDocFit.exe')):
@@ -156,7 +156,7 @@ class PdfEditServiceTests(unittest.TestCase):
         from docfit_app import pdf_edit_service
 
         meipass = self.root / 'meipass'
-        bundled = meipass / 'resources' / 'pdf-edit.exe'
+        bundled = meipass / 'resources' / ('pdf-edit.exe' if os.name == 'nt' else 'pdf-edit')
         bundled.parent.mkdir(parents=True)
         bundled.write_bytes(b'bundled')
         with patch.object(pdf_edit_service.sys, '_MEIPASS', str(meipass), create=True):

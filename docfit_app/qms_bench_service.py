@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 from pathlib import Path
 import shutil
@@ -83,6 +84,10 @@ class QmsBenchService:
     def _verify_path_inside_benchmarks(self, path_str: Optional[str]) -> Path:
         if not path_str:
             return self.benchmarks_dir
+        # Windows absolute paths stay absolute when received on Linux; Path.resolve()
+        # would otherwise treat e.g. C:/Windows as a harmless relative child.
+        if os.name != "nt" and ntpath.isabs(path_str) and not Path(path_str).is_absolute():
+            raise ServiceError("INVALID_PATH", "사용자 데이터 폴더 밖의 경로는 사용할 수 없습니다.")
         candidate = Path(path_str)
         resolved = (
             candidate.resolve()

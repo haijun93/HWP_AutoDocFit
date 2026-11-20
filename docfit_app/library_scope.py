@@ -55,30 +55,39 @@ def is_excluded_path(path: str | Path, excluded_folders: Iterable[str | Path] = 
     """
     try:
         raw_target = str(path)
-        target = Path(ntpath.normpath(raw_target) if len(raw_target) >= 2 and raw_target[1] == ":" else os.path.abspath(raw_target))
-        name_parts = target.parts
+        windows_target = _is_windows_path(raw_target)
+        target = Path(ntpath.normpath(raw_target) if windows_target else os.path.abspath(raw_target))
+        name_parts = ntpath.normpath(raw_target).replace("/", "\\").split("\\") if windows_target else target.parts
         if base is not None:
             raw_base = str(base)
-            base_path = Path(ntpath.normpath(raw_base) if len(raw_base) >= 2 and raw_base[1] == ":" else os.path.abspath(raw_base))
+            windows_base = _is_windows_path(raw_base)
+            base_path = Path(ntpath.normpath(raw_base) if windows_base else os.path.abspath(raw_base))
             base_key = _canonical(base_path)
             target_key0 = _canonical(target)
-            sep0 = "\\" if len(base_key) >= 2 and base_key[1] == ":" else os.sep
+            sep0 = "\\" if windows_base else os.sep
             if target_key0 == base_key:
                 name_parts = ()
             elif target_key0.startswith(base_key + sep0):
-                name_parts = target.parts[len(base_path.parts):]
+                if windows_base:
+                    name_parts = ntpath.normpath(raw_target).replace("/", "\\").split("\\")[len(ntpath.normpath(raw_base).replace("/", "\\").split("\\")):]
+                else:
+                    name_parts = target.parts[len(base_path.parts):]
         parts = {part.casefold() for part in name_parts}
         if parts & _EXCLUDED_NAMES:
             return True
         target_key = _canonical(target)
         for item in excluded_folders:
             excluded = _canonical(item)
-            sep = "\\" if len(excluded) >= 2 and excluded[1] == ":" else os.sep
+            sep = "\\" if _is_windows_path(str(item)) else os.sep
             if target_key == excluded or target_key.startswith(excluded + sep):
                 return True
     except (OSError, TypeError, ValueError):
         return True
     return False
+
+
+def _is_windows_path(raw: str) -> bool:
+    return (len(raw) >= 2 and raw[1] == ":") or raw.startswith(("\\\\", "//"))
 
 
 def fixed_drive_roots() -> tuple[Path, ...]:
