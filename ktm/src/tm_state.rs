@@ -870,12 +870,14 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             }
         }
         Event::SearchPartFinished { generation, kind, count, final_part } => {
-            if state.tab == Tab::All && matches!(state.phase, Phase::Searching | Phase::Results) && generation == state.generation {
+            if state.tab == Tab::All && matches!(state.phase, Phase::Searching | Phase::Results | Phase::Error) && generation == state.generation {
                 state.arrived_parts |= match kind { ResultKind::Names => 1, ResultKind::Hierarchy => 2, ResultKind::Body => 4 };
                 state.result_count = count;
                 state.phase = Phase::Results;
+                state.error = None;
                 state.selected = (count > 0).then_some(0);
                 if final_part || state.arrived_parts.count_ones() >= state.pending_parts as u32 {
+                    state.pending_parts = 0;
                     if !state.query.trim().is_empty() { crate::settings::push_recent_query(&mut state.recent_queries, &state.query); }
                 }
             }
@@ -884,11 +886,16 @@ pub fn step(current: &State, event: Event) -> (State, Vec<Effect>) {
             generation,
             message,
         } => {
-            // 통합 검색은 갈래 일부가 먼저 와서 Results가 되었어도 결과가 0건이면 오류로 바꿀 수 있다.
-            let all_failed_empty = state.phase == Phase::Results && state.result_count == 0;
-            if (state.phase == Phase::Searching || all_failed_empty) && generation == state.generation {
-                state.phase = Phase::Error;
-                state.error = Some(message);
+            if generation == state.generation {
+                if state.phase == Phase::Searching {
+                    state.phase = Phase::Error;
+                    state.error = Some(message);
+                } else if state.tab == Tab::All && state.phase == Phase::Results && state.result_count == 0 {
+                    // Show the service/index failure immediately after an empty partial
+                    // result. A later successful leg can replace the error state.
+                    state.phase = Phase::Error;
+                    state.error = Some(message);
+                }
             }
         }
         Event::MoveSelection(delta) => {
@@ -1552,6 +1559,43 @@ mod tests {
         let (s, _) = step(&s, Event::SearchPartFinished { generation: g, kind: ResultKind::Body, count: 2, final_part: false });
         let (s2, _) = step(&s, Event::SearchFailed { generation: g, message: "x".into() });
         assert_eq!(s2.phase, Phase::Results);
+    }
+
+    #[test]
+    fn all_search_first_empty_part_does_not_hide_later_service_error() {
+        let (s, _) = step(&visible(), Event::Input("합의각서".into()));
+        let generation = s.generation;
+        let (s, _) = step(
+            &s,
+            Event::SearchPartFinished {
+                generation,
+                kind: ResultKind::Hierarchy,
+                count: 0,
+                final_part: false,
+            },
+        );
+        assert_eq!(s.phase, Phase::Results);
+        let (s, _) = step(&s, Event::SearchPartFinished {
+            generation,
+            kind: ResultKind::Body,
+            count: 0,
+            final_part: false,
+        });
+        let (s, _) = step(&s, Event::SearchPartFinished {
+            generation,
+            kind: ResultKind::Names,
+            count: 0,
+            final_part: false,
+        });
+        let (s, _) = step(
+            &s,
+            Event::SearchFailed {
+                generation,
+                message: "파일명 색인 준비 중 (empty)".into(),
+            },
+        );
+        assert_eq!(s.phase, Phase::Error);
+        assert_eq!(s.error.as_deref(), Some("파일명 색인 준비 중 (empty)"));
     }
 
     #[test]

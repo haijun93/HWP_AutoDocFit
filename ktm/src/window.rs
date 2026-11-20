@@ -1897,6 +1897,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             // ⑥b 결과가 없거나 검색 중일 때 빈 화면 대신 안내를 보인다.
             if u.rows.is_empty() && !u.state.query.trim().is_empty() {
                 let note = match u.state.phase {
+                    Phase::Error => u.state.error.as_deref().map(|message| ("검색을 완료하지 못했습니다", message)),
                     Phase::Results => Some((
                         "검색 결과가 없습니다",
                         "철자·띄어쓰기를 바꾸거나, 기간·형식 조건을 '전체'로 바꿔 보세요.",
@@ -3963,19 +3964,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                                 }
                                 Err(message) => {
                                     if with(|u| u.state.tab) == Tab::All {
-                                        let kind = match tab { Tab::Names => tm_state::ResultKind::Names, Tab::Hierarchy => tm_state::ResultKind::Hierarchy, _ => tm_state::ResultKind::Body };
-                                        let count = with(|u| u.rows.len());
                                         eprintln!("combined search leg failed: {message}");
-                                        // 세 갈래가 모두 실패하면(서비스·색인 없음 등) 빈 결과가 아니라 오류로 알린다.
-                                        let all_failed = edit(|u| {
-                                            u.leg_errors.push(message.clone());
-                                            u.leg_errors.len() >= 3
-                                        });
-                                        if all_failed {
-                                            event(h, Event::SearchFailed { generation: g, message });
-                                        } else {
-                                            event(h, Event::SearchPartFinished { generation: g, kind, count, final_part: false });
-                                        }
+                                        edit(|u| { u.leg_errors.push(message.clone()); });
+                                        event(h, Event::SearchFailed { generation: g, message });
                                     } else {
                                         event(h, Event::SearchFailed { generation: g, message });
                                     }

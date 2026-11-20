@@ -1069,6 +1069,24 @@ fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
         .collect())
 }
 
+/// Reads name-index state from the service pipe without changing service state.
+pub fn pipe_names_status(name: &str) -> Result<Value> {
+    let bytes = pipe_call_with_timeout(
+        name,
+        &json!({"command":"names_status"}),
+        PIPE_LIGHT_TIMEOUT,
+    )?;
+    decode_names_status(&bytes)
+}
+
+fn decode_names_status(bytes: &[u8]) -> Result<Value> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+    if value["ok"] != true {
+        return Err(value["error"].as_str().unwrap_or("색인 상태 조회 오류").to_owned());
+    }
+    value.get("result").cloned().ok_or_else(|| "색인 상태 응답이 없습니다.".into())
+}
+
 /// 크기 글: 1023 B · 1.5 KB · 12.3 MB · 1.2 GB.
 pub fn format_size(n: u64) -> String {
     const U: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -1701,6 +1719,21 @@ mod tests {
         assert_eq!(format_size(5 * 1024 * 1024), "5.0 MB");
         assert_eq!(format_filetime(0), None);
         assert!(pipe_names(r"\\.\pipe\ktm-none-test-pipe", "예산", "size").is_err());
+    }
+
+    #[test]
+    fn names_status_decodes_read_only_status_envelope() {
+        let status = decode_names_status(
+            br#"{"ok":true,"result":{"state":"empty","mode":"user","entries":0,"volumes":[],"last_error":null}}"#,
+        )
+        .unwrap();
+        assert_eq!(status["state"], "empty");
+        assert_eq!(status["entries"], 0);
+        assert_eq!(
+            decode_names_status(br#"{"ok":false,"error":"service offline"}"#)
+                .unwrap_err(),
+            "service offline"
+        );
     }
     #[test]
     fn replay_replacement_deletion_and_missing_index() {
