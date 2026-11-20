@@ -219,7 +219,7 @@ Idle ──[켜기]──> Working(deadline = 시작+15초, [취소] 활성)
 - 오류 코드는 지금 것을 그대로 쓴다: `KCLIP_CONSENT·KCLIP_MISSING·KCLIP_INTEGRITY·KCLIP_START_TIMEOUT·KCLIP_TIMEOUT·KCLIP_COMMAND`(`kclip_service.py`).
 - 동의문은 **Rust 상수 한 곳**(현 `main.rs:1372` 문구). Python 복제본은 Python 소비자가 없어지면 삭제.
 
-**클립보드 설정 페이지**(켜진 뒤): 상단 상태줄(기록 중·개수 · 단축키 칩 · 일시정지(30분/1시간/3시간/다시 켤 때까지 — Flutter는 2가지뿐이고 kagent 메뉴는 4가지이므로 **4가지로 합침**, `settings_menu.rs:15-16` ) · 모두 지우기(확인) · 끄기) + 설정 목록(보관 개수·항목 최대 MB·전체 최대 MB·보관 기간 / 자동 실행 / 스티커·항상 위·고르면 붙여넣기·엑셀 목표 결과·그림 미리보기 / 화면캡처 폴더 감시·폴더별 끄기 / 화면 테마는 ⑤에서 공용). 값 선택지는 `settings_menu.rs`의 `MAX_ITEMS`(6)·`MAX_TOTAL_MB`(5)·`MAX_ITEM_MB`(5)·`MAX_AGE_DAYS`(4)를 그대로 쓰되 **선택지에 없는 현재 값은 "현재 N"으로 보이는** 기존 규칙(`settings_menu.rs:226-231`)을 유지한다. 새로 얹는 것은 **단축키 변경·제외 앱 편집**(지금 UI 없음)뿐이며 사용자 확인 후 진행.
+**클립보드 설정 페이지**(켜진 뒤): 상단 상태줄(기록 중·개수 · 단축키 칩 · 일시정지(30분/1시간/3시간/다시 켤 때까지 — Flutter는 2가지뿐이고 kagent 메뉴는 4가지이므로 **4가지로 합침**, `settings_menu.rs:17-18`) · 모두 지우기(확인) · 끄기) + 설정 목록(보관 개수·항목 최대 MB·전체 최대 MB·보관 기간 / 자동 실행 / 스티커·항상 위·고르면 붙여넣기·엑셀 목표 결과·그림 미리보기 / 화면캡처 폴더 감시·폴더별 끄기 / 화면 테마는 ⑤에서 공용). 값 선택지는 `settings_menu.rs`의 `MAX_ITEMS`(6)·`MAX_TOTAL_MB`(5)·`MAX_ITEM_MB`(5)·`MAX_AGE_DAYS`(4)를 그대로 쓰되 **선택지에 없는 현재 값은 "현재 N"으로 보이는** 기존 규칙(`settings_menu.rs:226-231`)을 유지한다. 새로 얹는 것은 **단축키 변경·제외 앱 편집**(지금 UI 없음)뿐이며 사용자 확인 후 진행.
 
 **kagent ⚙ 메뉴와의 관계**: 빠른 목록의 ⚙ 메뉴(`popup.rs:1208`)는 그대로 두고 맨 아래에 "전체 설정 열기…"만 추가한다(`ksettings.exe --page clip` 실행, 이미 떠 있으면 활성화). 두 화면은 같은 `Settings::apply`를 지나므로 값이 늘 같다(`settings_menu.rs:3-5` 주석과 같은 원칙).
 
