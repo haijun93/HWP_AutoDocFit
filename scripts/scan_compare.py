@@ -167,7 +167,7 @@ def write_profile(path: Path, data: dict):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", type=Path)
-    ap.add_argument("--binary", type=Path, default=REPO / "klib" / "target" / "release" / "klib.exe")
+    ap.add_argument("--binary", type=Path, default=Path(os.environ.get("KLIB_EXE", REPO / "klib" / "target" / "release" / "klib.exe")))
     ap.add_argument("--profile-out", type=Path)
     ap.add_argument("--mode", choices=("docs", "photos", "both"), default="both")
     ap.add_argument("--self-test", action="store_true")

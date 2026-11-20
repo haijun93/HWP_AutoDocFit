@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 @unittest.skipUnless(os.name == "nt", "Windows 전용 Rust FindFirstFileExW 비교 시험")
 class ScanCompareTests(unittest.TestCase):
     def test_temporary_tree_matches_python_and_rust(self):
-        binary = Path(os.environ.get("SCANRUST_KLIB", ROOT / "klib" / "target" / "release" / "klib.exe"))
+        binary = Path(os.environ.get("SCANRUST_KLIB", os.environ.get("KLIB_EXE", ROOT / "klib" / "target" / "release" / "klib.exe")))
         if not binary.is_file():
             self.skipTest(f"Rust binary is not built: {binary}")
         with tempfile.TemporaryDirectory(prefix="scan-compare-test-") as temp:

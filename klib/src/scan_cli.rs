@@ -15,8 +15,7 @@ const DEFAULT_EXTS: &[&str] = &["hwp", "hwpx", "xls", "xlsx", "ppt", "pptx", "pd
 const EXCLUDED_DIRS: &[&str] = &[
     "windows", "program files", "program files (x86)", "programdata", "$recycle.bin",
     "system volume information", "appdata", "node_modules", ".git", ".svn", ".hg",
-    "venv", ".venv", "temp", "packages", "user data", "cache", "code cache",
-    "gpucache", "__pycache__", ".dart_tool", ".gradle", ".idea", ".vscode", "target", "build",
+    "venv", ".venv",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,7 +176,7 @@ mod tests {
         assert!(excluded_name("#ieeee-bad.pdf")); assert!(!excluded_name("~$draft.pdf"));
     }
     #[test] fn default_extensions_are_document_only() { assert!(DEFAULT_EXTS.contains(&"pdf")); assert!(!DEFAULT_EXTS.contains(&"jpg")); }
-    #[test] fn defaults_include_development_exclusions() { for n in ["target","build","packages","temp","__pycache__"] { assert!(EXCLUDED_DIRS.contains(&n)); } }
+    #[test] fn defaults_match_library_scope_reserved_directories() { for n in ["windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information", "appdata", "node_modules", ".git", ".svn", ".hg", "venv", ".venv"] { assert!(EXCLUDED_DIRS.contains(&n)); } assert!(!EXCLUDED_DIRS.contains(&"target")); }
     #[test] fn custom_exclusion_is_case_insensitive_and_component_bounded() {
         let root = PathBuf::from(r"C:\root");
         let excluded = vec![PathBuf::from(r"C:\root\Skip")];

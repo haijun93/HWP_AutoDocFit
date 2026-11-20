@@ -196,6 +196,34 @@ class DocGridServiceTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.service.list_documents(non_existent)
 
+    def test_recursive_scan_uses_rust_and_skips_thumbnail_cache_lookup(self):
+        target = self.docs_dir / "recursive.pdf"
+        target.write_bytes(b"pdf")
+        row = {"path": str(target), "name": target.name, "ext": "pdf", "size": 3,
+               "mtime": target.stat().st_mtime, "mtime_ns": target.stat().st_mtime_ns, "cloud": False}
+        with patch("docfit_app.doc_grid_service._rust_scan", return_value=[row]) as rust, \
+             patch.object(self.service.cache, "get", side_effect=AssertionError("cache queried while scanning")):
+            result = self.service.list_documents(self.docs_dir, recursive=True)
+        rust.assert_called_once()
+        self.assertEqual(result[0]["path"], str(target))
+        self.assertFalse(result[0]["has_thumb"])
+
+    def test_recursive_scan_falls_back_when_klib_is_missing(self):
+        target = self.docs_dir / "fallback.pdf"
+        target.write_bytes(b"pdf")
+        with patch("docfit_app.doc_grid_service._rust_scan", return_value=None):
+            result = self.service.list_documents(self.docs_dir, recursive=True)
+        self.assertEqual([row["name"] for row in result], [target.name])
+
+    def test_recursive_scan_honors_python_engine_environment(self):
+        target = self.docs_dir / "forced.pdf"
+        target.write_bytes(b"pdf")
+        with patch.dict(os.environ, {"DOCFIT_SCAN_ENGINE": "python"}), \
+             patch("docfit_app.doc_grid_service._rust_scan") as rust:
+            result = self.service.list_documents(self.docs_dir, recursive=True)
+        rust.assert_not_called()
+        self.assertEqual([row["name"] for row in result], [target.name])
+
     # 2. 캐시 시험 (Cache)
     def test_cache_hit_and_invalidation(self):
         """첫 요청 시 생성 및 캐시 저장, 두 번째 요청 시 캐시 반환, 수정 시 재계산 확인."""

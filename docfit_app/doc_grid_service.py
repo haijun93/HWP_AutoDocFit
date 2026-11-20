@@ -30,6 +30,7 @@ from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
+from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +45,7 @@ MAX_PREVIEW_TEXT_LENGTH: int = 300
 
 def find_klib_executable() -> Path | None:
     """klib(Rust) 실행 바이너리를 검색한다."""
-    base = Path(getattr(sys, "_MEIPASS", ""))
-    if base.is_dir():
-        for candidate_name in ("klib.exe", "klib"):
-            target = base / "resources" / candidate_name
-            if target.is_file():
-                return target
-
-    repo = Path(__file__).resolve().parents[1]
-    name = "klib.exe" if os.name == "nt" else "klib"
-    for candidate in (
-        repo / "resources" / name,
-        repo / "klib" / "target" / "release" / name,
-        repo / "klib" / "target" / "debug" / name,
-    ):
-        if candidate.is_file():
-            return candidate
-    return None
+    return _find_klib_executable()
 
 
 def render_text_card(
@@ -207,6 +192,47 @@ class DocGridService:
             return self._klib_executable_path
         return find_klib_executable()
 
+    def _python_list_documents(self, folder_path: Path, recursive: bool, cancel_event: threading.Event | None,
+                               on_progress: Any | None, excluded_folders: Any) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        def scan_dir(target_dir: Path) -> None:
+            try:
+                with os.scandir(target_dir) as iterator:
+                    for entry in iterator:
+                        if cancel_event is not None and cancel_event.is_set():
+                            return
+                        if on_progress is not None:
+                            on_progress(str(target_dir))
+                        try:
+                            name = entry.name
+                            if name.startswith(".") or excluded_name(name):
+                                continue
+                            if entry.is_dir(follow_symlinks=False):
+                                if recursive and not is_excluded_path(entry.path, excluded_folders, base=folder_path):
+                                    scan_dir(Path(entry.path))
+                                continue
+                            if not entry.is_file(follow_symlinks=False) or is_excluded_path(entry.path, excluded_folders, base=folder_path):
+                                continue
+                            ext = os.path.splitext(name)[1].lower()
+                            if ext not in DOC_EXTENSIONS:
+                                continue
+                            try:
+                                st = entry.stat(follow_symlinks=False)
+                            except OSError:
+                                continue
+                            key = self.cache.key(entry.path, st.st_mtime_ns, st.st_size)
+                            has_thumb = bool(not cloud_only(getattr(st, "st_file_attributes", 0)) and self.cache.get(key) is not None) if os.environ.get("DOCFIT_SCAN_ENGINE", "").casefold() == "python" or not recursive else False
+                            results.append({"path": os.path.abspath(entry.path), "name": name, "stem": Path(name).stem,
+                                "ext": ext.lstrip("."), "size": st.st_size, "mtime": st.st_mtime,
+                                "cloud": cloud_only(getattr(st, "st_file_attributes", 0)), "thumb_key": key, "has_thumb": has_thumb})
+                        except OSError:
+                            continue
+            except OSError:
+                pass
+        scan_dir(folder_path)
+        results.sort(key=lambda item: item["name"].casefold())
+        return results
+
     def list_documents(
         self,
         folder: str | Path,
@@ -221,70 +247,23 @@ class DocGridService:
         if not folder_path.is_dir():
             raise FileNotFoundError(f"폴더를 찾을 수 없거나 디렉터리가 아닙니다: {folder}")
 
-        results: list[dict[str, Any]] = []
-
-        def scan_dir(target_dir: Path) -> None:
-            try:
-                with os.scandir(target_dir) as iterator:
-                    for entry in iterator:
-                        if cancel_event is not None and cancel_event.is_set():
-                            return
-                        if on_progress is not None:
-                            on_progress(str(target_dir))
-                        try:
-                            # 숨김 파일 및 임시 파일 제외
-                            name = entry.name
-                            if name.startswith(".") or excluded_name(name):
-                                continue
-
-                            if entry.is_dir(follow_symlinks=False):
-                                if recursive and not is_excluded_path(entry.path, excluded_folders, base=folder_path):
-                                    scan_dir(Path(entry.path))
-                                continue
-
-                            if not entry.is_file(follow_symlinks=False):
-                                continue
-                            if is_excluded_path(entry.path, excluded_folders, base=folder_path):
-                                continue
-
-                            ext = os.path.splitext(name)[1].lower()
-                            if ext not in DOC_EXTENSIONS:
-                                continue
-
-                            try:
-                                stat_info = entry.stat(follow_symlinks=False)
-                            except OSError:
-                                continue
-
-                            attrs = getattr(stat_info, "st_file_attributes", 0)
-                            is_cloud = cloud_only(attrs)
-
-                            mtime = stat_info.st_mtime
-                            mtime_ns = stat_info.st_mtime_ns
-                            size = stat_info.st_size
-
-                            key = self.cache.key(entry.path, mtime_ns, size)
-                            has_thumb = bool(not is_cloud and self.cache.get(key) is not None)
-
-                            results.append({
-                                "path": os.path.abspath(entry.path),
-                                "name": name,
-                                "stem": Path(name).stem,
-                                "ext": ext.lstrip(".").lower(),
-                                "size": size,
-                                "mtime": mtime,
-                                "cloud": is_cloud,
-                                "thumb_key": key,
-                                "has_thumb": has_thumb,
-                            })
-                        except OSError:
-                            continue
-            except OSError:
-                pass
-
-        scan_dir(folder_path)
-        results.sort(key=lambda item: item["name"].casefold())
-        return results
+        if recursive and os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
+            rust_rows = _rust_scan(folder_path, DOC_EXTENSIONS, excluded_folders, executable=self._get_klib_exe(), cancel_event=cancel_event,
+                                   on_progress=(lambda n, p: on_progress(p)) if on_progress else None)
+            if rust_rows is not None:
+                results = []
+                for row in rust_rows:
+                    path = row["path"]
+                    key = self.cache.key(path, int(row.get("mtime_ns", round(row["mtime"] * 1_000_000_000))), row["size"])
+                    results.append({"path": path, "name": row["name"], "stem": Path(row["name"]).stem,
+                        "ext": row["ext"].lower(), "size": row["size"], "mtime": row["mtime"],
+                        "cloud": row["cloud"], "thumb_key": key, "has_thumb": False})
+                results.sort(key=lambda item: item["name"].casefold())
+                return results
+            if cancel_event is not None and cancel_event.is_set():
+                return []
+            # A missing or malformed Rust scanner falls through to the canonical Python walk.
+        return self._python_list_documents(folder_path, recursive, cancel_event, on_progress, excluded_folders)
 
     def list_default_documents(
         self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,

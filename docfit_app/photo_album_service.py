@@ -39,6 +39,8 @@ from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
+from .rust_scan import scan as _rust_scan
+from .doc_grid_service import find_klib_executable
 
 logger = logging.getLogger(__name__)
 
@@ -569,6 +571,9 @@ class PhotoAlbumService:
         self._background_scan = BackgroundScan()
         self.settings_store = settings_store
 
+    def _get_klib_exe(self) -> Path | None:
+        return find_klib_executable()
+
     def _default_roots(self) -> tuple[Path, ...]:
         return tuple(Path(p) for p in (self._drive_roots if self._drive_roots is not None else current_default_roots()))
 
@@ -614,6 +619,40 @@ class PhotoAlbumService:
 
         # 기존 DB의 사진 정보를 캐싱하여 증분 비교 최적화
         existing_photos = {p["path"]: p for p in self.db.list_photos(str(folder_path))}
+
+        rust_rows = None
+        if recursive and os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
+            rust_rows = _rust_scan(folder_path, PHOTO_EXTENSIONS, excluded_folders, executable=self._get_klib_exe(), cancel_event=cancel_event,
+                                   on_progress=(lambda n, p: on_progress(p)) if on_progress else None)
+        if rust_rows is not None:
+            for row in rust_rows:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                path = Path(row["path"])
+                name = row["name"]
+                st_size = row["size"]
+                mtime = row["mtime"]
+                is_cloud = row["cloud"]
+                path_str = str(path)
+                scanned_count += 1
+                if is_cloud:
+                    date_taken, orientation = None, 1
+                else:
+                    date_taken, orientation = read_exif_metadata(path)
+                    if date_taken is None:
+                        date_taken = datetime.fromtimestamp(mtime)
+                old = existing_photos.get(path_str)
+                if old is not None and old["size"] == st_size and old["cloud"] == is_cloud and abs(old["mtime"] - mtime) < 0.001:
+                    continue
+                self.db.upsert_photo(path=path_str, folder=str(path.parent), filename=name,
+                    size=st_size, mtime=mtime, date_taken=date_taken.strftime("%Y-%m-%d %H:%M:%S") if date_taken else None,
+                    orientation=orientation, cloud=is_cloud)
+                if old is None:
+                    added_count += 1
+                else:
+                    updated_count += 1
+            return {"ok": True, "folder": str(folder_path), "scanned": scanned_count,
+                    "added": added_count, "updated": updated_count}
 
         def scan_dir(target_dir: Path) -> None:
             nonlocal scanned_count, added_count, updated_count

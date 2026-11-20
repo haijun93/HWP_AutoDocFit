@@ -2,10 +2,13 @@
 import tempfile
 import time
 import unittest
+import os
+import threading
 from pathlib import Path
 
 from docfit_app.doc_grid_service import DocGridService
 from docfit_app.photo_album_service import PhotoAlbumService
+from docfit_app.rust_scan import scan as rust_scan
 
 
 class DefaultLibraryScanTests(unittest.TestCase):
@@ -88,6 +91,25 @@ class DefaultLibraryScanTests(unittest.TestCase):
             self.assertEqual(state["state"], "complete")
             self.assertEqual(observed, sorted(observed))
             self.assertEqual(state["result"]["scanned"], 1)
+
+    def test_rust_scan_cancel_terminates_child_process(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            binary = Path(os.environ.get("KLIB_EXE", Path(__file__).resolve().parents[1] / "klib" / "target" / "release" / "klib.exe"))
+            if not binary.is_file():
+                self.skipTest(f"klib binary is unavailable: {binary}")
+            for index in range(1000):
+                (root / f"{index:04}.pdf").touch()
+            cancel = threading.Event()
+            def stop_after_ten(visited, _folder):
+                if visited >= 10:
+                    cancel.set()
+            started = time.monotonic()
+            rows = rust_scan(root, {".pdf"}, executable=binary, cancel_event=cancel, on_progress=stop_after_ten)
+            self.assertIsNotNone(rows)
+            self.assertTrue(cancel.is_set())
+            self.assertLess(len(rows), 1000)
+            self.assertLess(time.monotonic() - started, 3)
 
 
 if __name__ == "__main__":
