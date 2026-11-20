@@ -223,6 +223,16 @@ class KClipServiceTests(unittest.TestCase):
         self.assertTrue(any("--enable" in c for c in calls))
         self.assertTrue(any("--status" in c for c in calls))
 
+    def test_lifecycle_timeout_is_reported_as_actionable_failure(self):
+        import subprocess
+        def runner(args, **kwargs):
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        service = KClipService(bundled=lambda: self.exe, command_runner=runner, lifecycle_timeout=0.01)
+        result = service.enable({"consent": True})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "KCLIP_TIMEOUT")
+        self.assertIn("diagnostic", result)
+
     def test_enable_requires_consent_then_installs_starts_autostarts(self):
         self.assertEqual(self.service.command("enable", {})["code"], "KCLIP_CONSENT")
         self.assertEqual(self.calls, [])

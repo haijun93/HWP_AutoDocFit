@@ -12,6 +12,29 @@ class _FakeKClipFfi extends KClipFfi {
 }
 
 void main() {
+  testWidgets('켜기 성공 시 자동 닫고, 제한 시간 실패를 안내한다', (tester) async {
+    tester.view.physicalSize = const Size(1000, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    Future<Object?> api(String method, List<Object?> args) async {
+      if (method == 'window_control') return {'ok': true, 'maximized': false};
+      if (args.first == 'status') return {'ok': true, 'running': false, 'available': true, 'status': {}};
+      if (args.first == 'enable') return {'ok': true, 'running': true, 'autostart': false};
+      if (args.first == 'list') return {'ok': true, 'items': []};
+      if (args.first == 'settings_get') return {'ok': true, 'settings': {}};
+      return {'ok': true};
+    }
+    var closed = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: KClipPanel(api: api, onClose: () => closed = true))));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('kclip-consent')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+    await tester.pumpAndSettle();
+    expect(closed, isTrue);
+    expect(find.textContaining('몽땅클립보드를 켰습니다.'), findsOneWidget);
+  });
+
   testWidgets('Rust FFI가 실패하면 목록을 Python 중계로 자동 대체한다', (tester) async {
     final fallback = <String>[];
     Future<Object?> api(String method, List<Object?> args) async {

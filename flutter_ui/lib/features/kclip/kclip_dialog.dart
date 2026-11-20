@@ -433,7 +433,7 @@ class _KClipPanelState extends State<KClipPanel> {
       autostart = s['autostart'] == true;
     });
     _ffi ??= widget.ffi ?? KClipFfi.tryOpen(libraryPath: s['ffi_library'] as String?);
-    if (running) {
+          if (running) {
       final list = await _call('list', {
         'limit': 200,
         if (query.isNotEmpty) 'query': query,
@@ -639,7 +639,18 @@ class _KClipPanelState extends State<KClipPanel> {
     if (busy) return;
     setState(() => busy = true);
     try {
-      final result = await _call(action, payload);
+      Map result;
+      try {
+        result = await _call(action, payload).timeout(
+          action == 'enable' ? const Duration(seconds: 15) : const Duration(seconds: 30),
+        );
+      } on TimeoutException {
+        if (mounted) setState(() => message = '몽땅클립보드를 켜지 못했습니다. 다시 시도해 주세요. 진단: enable timeout');
+        return;
+      } catch (error) {
+        if (mounted) setState(() => message = '몽땅클립보드를 켜지 못했습니다. 다시 시도해 주세요. 진단: $error');
+        return;
+      }
       if (result['ok'] == false) return;
       if (action == 'enable') {
         if (result['running'] == true && mounted) {
@@ -651,17 +662,20 @@ class _KClipPanelState extends State<KClipPanel> {
         // 상주 프로그램이 처음 뜰 때는 1.5초보다 오래 걸릴 수 있어 최대 10초까지 기다린다.
         for (var attempt = 0; attempt < 200; attempt++) {
           await _reload();
+          if (result['running'] == true && !running && mounted) {
+            setState(() => status = {...status, 'running': true});
+          }
           if (running || !mounted) break;
           await Future<void>.delayed(const Duration(milliseconds: 50));
         }
         if (mounted) {
-          setState(() {
-            if (running) {
-              if (done != null) message = done;
-            } else {
-              message = '몽땅클립보드 상주 프로그램을 시작하지 못했습니다.';
-            }
-          });
+          if (running || result['running'] == true) {
+            if (!running) setState(() => status = {...status, 'running': true});
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(const SnackBar(content: Text('몽땅클립보드를 켰습니다.')));
+            widget.onClose?.call();
+            return;
+          }
+          setState(() => message = '몽땅클립보드 상주 프로그램을 시작하지 못했습니다.');
         }
       } else {
         if (result['ok'] != false && done != null && mounted) {

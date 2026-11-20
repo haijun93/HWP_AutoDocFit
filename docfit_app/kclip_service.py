@@ -57,7 +57,7 @@ class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
                  bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep,
-                 command_runner=None, ffi_library=None, version_reader=None):
+                 command_runner=None, ffi_library=None, version_reader=None, lifecycle_timeout=15):
         self._excel_service = excel
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
@@ -70,6 +70,7 @@ class KClipService:
         self._installed = installed
         self._version_reader = version_reader or (lambda: self._lifecycle("--version").get("version"))
         self._runner = command_runner or subprocess.run
+        self._lifecycle_timeout = lifecycle_timeout
         self._ffi_library = (Path(ffi_library) if ffi_library is not None else
                              Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1])) / "resources" / "kclip_ffi.dll")
         self._pause_file = Path(tempfile.gettempdir()) / f"docfit-kclip-pause-{os.getpid()}.json"
@@ -128,13 +129,15 @@ class KClipService:
         if exe is None:
             return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
         try:
-            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=60)
+            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=self._lifecycle_timeout)
             result = json.loads(completed.stdout.strip().splitlines()[-1])
             if completed.returncode or not isinstance(result, dict):
                 raise ValueError("invalid lifecycle response")
             return result
-        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as error:
-            return dict(ok=False, code="KCLIP_COMMAND", message=str(error))
+        except subprocess.TimeoutExpired as error:
+            return dict(ok=False, code="KCLIP_TIMEOUT", message="몽땅클립보드 명령 응답 시간이 초과됐습니다.", diagnostic=str(error))
+        except (OSError, ValueError, IndexError) as error:
+            return dict(ok=False, code="KCLIP_COMMAND", message=str(error), diagnostic=type(error).__name__)
 
     def enable(self, payload):
         if payload.get("consent") is not True:
@@ -150,9 +153,11 @@ class KClipService:
                     return dict(ok=False, code="KCLIP_INTEGRITY", message="몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요.")
             if not self.client.running():
                 installed = self._install(exe); self._start(installed)
-                for _ in range(100):
+                for _ in range(75):
                     if self.client.running(): break
                     self._sleep(0.02)
+                else:
+                    return dict(ok=False, code="KCLIP_START_TIMEOUT", message="몽땅클립보드가 시작되지 않았습니다.", diagnostic="agent_not_running")
             else:
                 result = self.upgrade_if_stale()
                 if not result.get("ok"):
@@ -166,12 +171,15 @@ class KClipService:
         res = self._lifecycle("--enable", *args)
         if not res.get("ok"):
             return res
-        for _ in range(100):
+        for _ in range(75):
             st = self.status()
             if st.get("ok") and st.get("running"):
                 return st
             self._sleep(0.02)
-        return self.status()
+        status = self.status()
+        if not status.get("running"):
+            return dict(ok=False, code="KCLIP_START_TIMEOUT", message="몽땅클립보드가 시작되지 않았습니다.", diagnostic="agent_not_running")
+        return status
 
     def upgrade_if_stale(self):
         """앱 시작·켜기 때 번들과 실행 중인 버전을 확인한다. 데이터·설정은 건드리지 않는다."""
