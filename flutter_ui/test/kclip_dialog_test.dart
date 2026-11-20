@@ -12,6 +12,34 @@ class _FakeKClipFfi extends KClipFfi {
 }
 
 void main() {
+  testWidgets('설정 창 방식 기본 대화상자와 Windows 창 선택을 저장하고 연다', (tester) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final calls = <String>[];
+    Future<Object?> api(String method, List<Object?> args) async {
+      final action = args.first as String;
+      calls.add('$method:$action');
+      if (method == 'window_control') return {'ok': true, 'maximized': false};
+      if (method == 'kclip_window' && action == 'settings_mode') return {'ok': true, 'mode': 'dialog'};
+      if (method == 'kclip') {
+        if (action == 'status') return {'ok': true, 'running': true, 'status': {}};
+        if (action == 'list') return {'ok': true, 'items': []};
+        if (action == 'settings_get') return {'ok': true, 'settings': {}};
+      }
+      return {'ok': true, 'mode': 'native'};
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: KClipPanel(api: api))));
+    await tester.pumpAndSettle();
+    expect(find.text('설정 창: 앱 대화상자'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('kclip-settings-window-mode')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('설정 창: Windows 창').last);
+    await tester.pumpAndSettle();
+    expect(calls, contains('kclip_window:open_settings'));
+    expect(calls.where((c) => c == 'kclip_window:settings_mode').length, 2);
+  });
+
   testWidgets('켜기 성공 시 자동 닫고, 제한 시간 실패를 안내한다', (tester) async {
     tester.view.physicalSize = const Size(1000, 800);
     tester.view.devicePixelRatio = 1;

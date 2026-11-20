@@ -291,6 +291,7 @@ class _KClipPanelState extends State<KClipPanel> {
   List<Map> captureDirs = const [];
   bool consent = false;
   bool autostart = false;
+  String settingsMode = 'dialog';
   bool minimized = false;
   bool isTop = false;
   bool maximized = false;
@@ -427,6 +428,12 @@ class _KClipPanelState extends State<KClipPanel> {
 
   Future<void> _reload() async {
     final s = await _call('status');
+    try {
+      final mode = await widget.api('kclip_window', ['settings_mode', const {}]);
+      if (mode is Map && (mode['mode'] == 'native' || mode['mode'] == 'dialog')) {
+        settingsMode = mode['mode'] as String;
+      }
+    } catch (_) {}
     if (!mounted) return;
     setState(() {
       status = s;
@@ -835,6 +842,26 @@ class _KClipPanelState extends State<KClipPanel> {
       spacing: 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
+        DropdownButton<String>(
+          key: const ValueKey('kclip-settings-window-mode'),
+          value: settingsMode,
+          items: const [
+            DropdownMenuItem(value: 'dialog', child: Text('설정 창: 앱 대화상자')),
+            DropdownMenuItem(value: 'native', child: Text('설정 창: Windows 창')),
+          ],
+          onChanged: (mode) async {
+            if (mode == null) return;
+            final saved = await widget.api('kclip_window', ['settings_mode', {'value': mode}]);
+            if (!mounted || saved is! Map || saved['ok'] != true) return;
+            setState(() => settingsMode = mode);
+            if (mode == 'native') {
+              final opened = await widget.api('kclip_window', ['open_settings', const {}]);
+              if (opened is Map && opened['ok'] == false) {
+                setState(() => message = '${opened['message'] ?? 'Windows 설정 창을 열지 못했습니다.'}');
+              }
+            }
+          },
+        ),
         SizedBox(
           width: 300,
           child: CheckboxListTile(

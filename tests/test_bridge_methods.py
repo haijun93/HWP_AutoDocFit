@@ -66,6 +66,15 @@ class BridgeWrapperBehaviorTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 bridge.set_menu_display_mode("floating")
 
+    def test_kclip_settings_mode_defaults_to_dialog_and_accepts_native(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            bridge, store = self._bridge(folder)
+            self.assertEqual(bridge.kclip_window("settings_mode"), {"ok": True, "mode": "dialog"})
+            self.assertEqual(bridge.kclip_window("settings_mode", {"value": "native"}), {"ok": True, "mode": "native"})
+            self.assertEqual(store.read().get("kclip_settings_mode"), "native")
+            self.assertFalse(bridge.kclip_window("settings_mode", {"value": "other"})["ok"])
+
     def test_outliner_and_pdf_edit_reject_non_dict_payloads(self):
         import tempfile
         from docfit_app.api_contract import ServiceError

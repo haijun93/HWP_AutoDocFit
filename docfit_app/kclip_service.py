@@ -350,6 +350,20 @@ class KClipService:
             return self._copy_no_shade(payload)
         if action == "status":
             return self.status()
+        if action == "settings_window":
+            exe = self._bundled()
+            if exe is None:
+                return dict(ok=False, code="KCLIP_MISSING", message="몽땅클립보드 설정 창 프로그램을 찾지 못했습니다.")
+            try:
+                status = self.client.status_file() or {}
+                args = [str(exe), "--settings"]
+                pipe = status.get("pipe")
+                if isinstance(pipe, str) and pipe.startswith(r"\\.\pipe\HwpAutoDocFit.kagent."):
+                    args.extend(["--pipe", pipe])
+                subprocess.Popen(args, close_fds=True)
+                return dict(ok=True)
+            except OSError as error:
+                return dict(ok=False, code="KCLIP_SETTINGS", message=f"설정 창을 열지 못했습니다: {error}")
         if action == "enable":
             return self.enable(payload)
         if action == "disable":

@@ -27,6 +27,17 @@ pub(crate) fn parse_hotkey(text: &str) -> Option<(u32, u32)> {
     (vk != 0 && mods != MOD_NOREPEAT).then_some((mods, vk))
 }
 
+pub(crate) fn hotkey_rejection_reason(text: &str) -> Option<&'static str> {
+    let parts: Vec<_> = text.split('+').map(|p| p.trim().to_ascii_lowercase()).collect();
+    if parts.iter().any(|p| p == "win") { return Some("Windows 키 조합은 예약되어 있어 사용할 수 없습니다."); }
+    if parts == ["alt", "f4"] || parts == ["f4", "alt"] { return Some("Alt+F4는 창 닫기 예약 키입니다."); }
+    if parts.iter().any(|p| p == "del" || p == "delete")
+        && parts.iter().any(|p| p == "ctrl") && parts.iter().any(|p| p == "alt") {
+        return Some("Ctrl+Alt+Delete는 Windows 보안 예약 키입니다.");
+    }
+    None
+}
+
 /// 성공하면 실패 기억을 초기화하고, 같은 조합의 연속 실패는 한 번만 알린다.
 pub(crate) fn hotkey_failure_notice(previous: Option<&str>, text: &str, ok: bool) -> (Option<String>, bool) {
     if ok { (None, false) } else { (Some(text.to_string()), previous != Some(text)) }
@@ -76,5 +87,13 @@ mod tests {
         assert_eq!(parse_hotkey("Alt+F2"), Some((MOD_NOREPEAT | MOD_ALT, 0x71)));
         assert_eq!(parse_hotkey("V"), None);
         assert_eq!(parse_hotkey("Ctrl+Space"), None);
+    }
+
+    #[test]
+    fn rejects_reserved_hotkey_combinations_with_reasons() {
+        assert!(hotkey_rejection_reason("Win+V").is_some());
+        assert!(hotkey_rejection_reason("Alt+F4").is_some());
+        assert!(hotkey_rejection_reason("Ctrl+Alt+Delete").is_some());
+        assert_eq!(hotkey_rejection_reason("Ctrl+Shift+V"), None);
     }
 }

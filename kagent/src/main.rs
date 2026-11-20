@@ -600,8 +600,12 @@ pub fn set_autostart(enabled: bool) -> Result<(), String> {
     if std::env::var_os("KAGENT_TEST_ROOT").is_some() {
         return Err("시험 실행에서는 자동 실행 등록을 바꾸지 않습니다.".into());
     }
+    set_autostart_named(enabled, settings_menu::RUN_NAME)
+}
+
+fn set_autostart_named(enabled: bool, value_name: &str) -> Result<(), String> {
     let key = open_run_key(KEY_SET_VALUE | KEY_QUERY_VALUE).ok_or("자동 실행 등록 위치를 열지 못했습니다.")?;
-    let name = wide(settings_menu::RUN_NAME);
+    let name = wide(value_name);
     let r = if enabled {
         let exe = std::env::current_exe().map_err(|e| e.to_string());
         match exe {
@@ -1543,6 +1547,42 @@ mod lifecycle_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn autostart_registration_uses_and_removes_only_a_temporary_run_value() {
+        let name = format!("KClipSet3-Test-{}", std::process::id());
+        let _ = set_autostart_named(false, &name);
+        let registered = set_autostart_named(true, &name);
+        let observed = open_run_key(KEY_QUERY_VALUE).and_then(|key| {
+            let name_w = wide(&name);
+            let mut data = vec![0u16; 2048];
+            let mut len = (data.len() * 2) as u32;
+            let mut kind = 0u32;
+            let result = unsafe { RegQueryValueExW(key, name_w.as_ptr(), std::ptr::null_mut(), &mut kind,
+                data.as_mut_ptr() as *mut u8, &mut len) };
+            unsafe { RegCloseKey(key); }
+            (result == 0 && kind == REG_SZ).then(|| String::from_utf16_lossy(&data[..(len as usize / 2).min(data.len())]))
+        });
+        let removed = set_autostart_named(false, &name);
+        let absent = open_run_key(KEY_QUERY_VALUE).map(|key| {
+            let name_w = wide(&name);
+            let mut data = vec![0u16; 2048];
+            let mut len = (data.len() * 2) as u32;
+            let mut kind = 0u32;
+            let result = unsafe { RegQueryValueExW(key, name_w.as_ptr(), std::ptr::null_mut(), &mut kind,
+                data.as_mut_ptr() as *mut u8, &mut len) };
+            unsafe { RegCloseKey(key); }
+            result == 2
+        }).unwrap_or(false);
+        assert!(registered.is_ok(), "temporary Run value registration failed: {registered:?}");
+        let expected_exe = std::env::current_exe().unwrap().to_string_lossy().to_lowercase();
+        assert!(observed.as_deref().is_some_and(|v| {
+            let value = v.trim_end_matches('\0').to_lowercase();
+            value.contains(&expected_exe) && value.ends_with("--delay 30")
+        }));
+        assert!(removed.is_ok(), "temporary Run value removal failed: {removed:?}");
+        assert!(absent, "temporary Run value remained after cleanup");
+    }
 
 
     #[test]

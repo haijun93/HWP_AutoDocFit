@@ -2476,6 +2476,20 @@ class DesktopWebBridge:
             _set_window_on_top(window, bool(enabled))
 
         try:
+            payload = payload if isinstance(payload, dict) else {}
+            store = self._settings_store()
+            if action == "settings_mode":
+                if "value" in payload:
+                    value = payload.get("value")
+                    if value not in ("dialog", "native"):
+                        return {"ok": False, "message": "설정 창 방식을 확인해 주세요."}
+                    store.update(lambda current: current.update({"kclip_settings_mode": value}))
+                return {"ok": True, "mode": store.read().get("kclip_settings_mode", "dialog")}
+            if action == "open_settings":
+                from docfit_app.kclip_service import KClipService
+                service = getattr(self, "_kclip_service", None) or KClipService()
+                self._kclip_service = service
+                return service.command("settings_window", {})
             store = self._settings_store()
             return kclip_window_state.command(store, action, payload, apply_topmost)
         except Exception as exc:

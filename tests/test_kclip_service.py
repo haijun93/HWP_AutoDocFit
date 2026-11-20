@@ -64,6 +64,13 @@ class KClipServiceTests(unittest.TestCase):
         service = KClipService(self.client, bundled=lambda: self.exe, ffi_library=library)
         self.assertEqual(service.status()["ffi_library"], str(library))
 
+    def test_native_settings_launch_forwards_running_agent_pipe(self):
+        self.client.on = True
+        with patch("docfit_app.kclip_service.subprocess.Popen") as popen:
+            result = self.service.command("settings_window")
+        self.assertTrue(result["ok"])
+        self.assertEqual(popen.call_args.args[0], [str(self.exe), "--settings", "--pipe", self.client.status_file()["pipe"]])
+
     def test_stale_running_agent_is_replaced_and_restarted(self):
         # 앱 업데이트 뒤에도 예전 에이전트가 떠 있던 문제: 설치된 파일이 앱 파일과 다르면 끄고 바꿔 다시 켠다.
         self.installed.write_bytes(b"MZ old build")

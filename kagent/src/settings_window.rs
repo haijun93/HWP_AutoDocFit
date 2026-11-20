@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use windows_sys::Win32::{
     Foundation::{HWND, LPARAM, RECT},
     Graphics::Gdi::{
-        BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, PAINTSTRUCT, SetBkColor,
+        BeginPaint, CreateFontW, CreateSolidBrush, DeleteObject, EndPaint, FillRect, PAINTSTRUCT, SetBkColor,
         SetBkMode, SetTextColor, TRANSPARENT,
     },
     System::LibraryLoader::GetModuleHandleW,
@@ -14,7 +14,7 @@ use windows_sys::Win32::{
             SetProcessDpiAwarenessContext,
         },
         Input::KeyboardAndMouse::VK_ESCAPE,
-        WindowsAndMessaging::*,
+    WindowsAndMessaging::*,
     },
 };
 
@@ -49,6 +49,27 @@ const STATUS: i32 = 1030;
 const DONE: u32 = WM_APP + 41;
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[link(name = "user32")]
+unsafe extern "system" { fn EnableWindow(hwnd: HWND, enabled: i32) -> i32; fn GetKeyState(key: i32) -> i16; }
+type SubclassProc = unsafe extern "system" fn(HWND, u32, usize, isize, usize, usize) -> isize;
+#[link(name = "comctl32")]
+unsafe extern "system" {
+    fn SetWindowSubclass(hwnd: HWND, proc: Option<SubclassProc>, id: usize, data: usize) -> i32;
+    fn DefSubclassProc(hwnd: HWND, msg: u32, wparam: usize, lparam: isize) -> isize;
+}
+#[repr(C)]
+struct BrowseInfoW {
+    owner: HWND, root: *mut std::ffi::c_void, display_name: *mut u16, title: *const u16,
+    flags: u32, callback: Option<unsafe extern "system" fn(HWND, u32, isize, isize) -> i32>,
+    param: isize, image: i32,
+}
+#[link(name = "shell32")]
+unsafe extern "system" {
+    fn SHBrowseForFolderW(info: *mut BrowseInfoW) -> *mut std::ffi::c_void;
+    fn SHGetPathFromIDListW(pidl: *mut std::ffi::c_void, path: *mut u16) -> i32;
+}
+#[link(name = "ole32")]
+unsafe extern "system" { fn CoTaskMemFree(memory: *mut std::ffi::c_void); }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Layout {
     pub width: i32,
@@ -198,7 +219,7 @@ unsafe fn checkbox(h: HWND, id: i32, text: &str, on: bool, y: i32) {
 }
 unsafe fn listbox(h: HWND, id: i32, rows: &[String], y: i32) {
     unsafe {
-        child(h,id,"LISTBOX","",28,y,450,72,LBS_NOTIFY as u32|WS_VSCROLL|WS_BORDER|WS_TABSTOP);
+        child(h,id,"LISTBOX","",28,y,450,64,LBS_NOTIFY as u32|WS_VSCROLL|WS_BORDER|WS_TABSTOP|LBS_NOINTEGRALHEIGHT as u32);
         let c=GetDlgItem(h,id);
         for row in rows { SendMessageW(c,LB_ADDSTRING,0,wide(row).as_ptr() as LPARAM); }
     }
@@ -315,24 +336,26 @@ unsafe fn build(h: HWND) {
         checkbox(h,CAP_TEXT,"글 기록 허용",s.capture_text,550);
         checkbox(h,CAP_IMAGE,"그림 기록 허용",s.capture_images,586);
         checkbox(h,CAP_FILE,"파일 기록 허용",s.capture_files,622);
-        child(h, 1104, "STATIC", "제외 앱 (실행 파일 이름)", 28, 660, 450, 25, 0);
-        listbox(h,APP_LIST,&s.excluded_apps,686);
-        child(h, 1105, "STATIC", "폴더별 캡처 끄기", 28, 750, 450, 25, 0);
-        listbox(h,FOLDER_LIST,&s.capture_dirs_off,776);
-        child(h,LIST_EDIT,"EDIT","",28,842,330,28,WS_BORDER as u32|ES_AUTOHSCROLL as u32|WS_TABSTOP);
-        child(h,APP_ADD,"BUTTON","앱 추가",486,686,90,30,WS_TABSTOP);
-        child(h,APP_DEL,"BUTTON","앱 삭제",486,724,90,30,WS_TABSTOP);
-        child(h,FOLDER_ADD,"BUTTON","폴더 추가",486,776,90,30,WS_TABSTOP);
-        child(h,FOLDER_DEL,"BUTTON","폴더 삭제",486,814,90,30,WS_TABSTOP);
-        child(h,1108,"STATIC","단축키 (입력한 뒤 저장)",28,882,240,25,0);
-        child(h,HOTKEY_EDIT,"EDIT",&s.hotkey,260,878,220,30,WS_BORDER as u32|ES_AUTOHSCROLL as u32|WS_TABSTOP);
+        child(h, 1104, "STATIC", "제외 앱 (실행 파일 이름)", 28, 634, 450, 25, 0);
+        listbox(h,APP_LIST,&s.excluded_apps,660);
+        child(h, 1105, "STATIC", "폴더별 캡처 끄기", 28, 732, 450, 25, 0);
+        listbox(h,FOLDER_LIST,&s.capture_dirs_off,758);
+        child(h,1107,"STATIC","추가할 앱 이름(.exe) 또는 폴더 경로",28,850,430,24,0);
+        child(h,LIST_EDIT,"EDIT","",28,874,330,28,WS_BORDER as u32|ES_AUTOHSCROLL as u32|WS_TABSTOP);
+        child(h,APP_ADD,"BUTTON","앱 추가",486,660,90,30,WS_TABSTOP);
+        child(h,APP_DEL,"BUTTON","앱 삭제",486,698,90,30,WS_TABSTOP);
+        child(h,FOLDER_ADD,"BUTTON","폴더 추가",486,758,90,30,WS_TABSTOP);
+        child(h,FOLDER_DEL,"BUTTON","폴더 삭제",486,796,90,30,WS_TABSTOP);
+        child(h,1108,"STATIC","단축키 (입력한 뒤 저장)",28,922,240,25,0);
+        child(h,HOTKEY_EDIT,"EDIT",&s.hotkey,260,918,220,30,WS_BORDER as u32|ES_AUTOHSCROLL as u32|WS_TABSTOP);
+        SetWindowSubclass(GetDlgItem(h, HOTKEY_EDIT), Some(hotkey_capture_proc), 1, h as usize);
         child(
             h,
             1106,
             "STATIC",
             "기록은 이 PC 사용자 폴더에 암호화되어 저장됩니다. 외부로 전송하지 않습니다.",
             28,
-            968,
+            1002,
             610,
             30,
             0,
@@ -342,22 +365,22 @@ unsafe fn build(h: HWND) {
             AUTOSTART,
             "Windows 로그인 시 자동 실행",
             crate::autostart_enabled().unwrap_or(false),
-            936,
+            964,
         );
         checkbox(
             h,
             CONSENT,
             "안내를 읽었고 몽땅클립보드 사용에 동의합니다",
             false,
-            1000,
+            1034,
         );
         child(
             h,
             STATUS,
             "STATIC",
-            "설정은 저장 즉시 적용됩니다. 켜기에는 동의가 필요합니다.",
+            "실행 중이면 저장 즉시 적용하고, 꺼져 있으면 다음 시작부터 적용합니다.",
             28,
-            1032,
+            1066,
             610,
             28,
             0,
@@ -368,7 +391,7 @@ unsafe fn build(h: HWND) {
             "BUTTON",
             "설정 저장",
             300,
-            1090,
+            1104,
             100,
             32,
             WS_TABSTOP,
@@ -379,12 +402,13 @@ unsafe fn build(h: HWND) {
             "BUTTON",
             "몽땅클립보드 켜기",
             410,
-            1090,
+            1104,
             155,
             32,
             WS_TABSTOP | BS_DEFPUSHBUTTON as u32,
         );
-        child(h, CANCEL, "BUTTON", "닫기", 575, 1090, 70, 32, WS_TABSTOP);
+        child(h, CANCEL, "BUTTON", "닫기", 575, 1104, 70, 32, WS_TABSTOP);
+        EnableWindow(GetDlgItem(h, ENABLE), 0);
     }
 }
 fn persist(h: HWND) {
@@ -408,6 +432,10 @@ fn persist(h: HWND) {
             .unwrap_or(0)
     };
     let hotkey=unsafe {read_edit(GetDlgItem(h,HOTKEY_EDIT))};
+    if let Some(reason) = crate::hotkey::hotkey_rejection_reason(&hotkey) {
+        unsafe { SetWindowTextW(GetDlgItem(h,STATUS),wide(reason).as_ptr()); }
+        return;
+    }
     if crate::hotkey::parse_hotkey(&hotkey).is_none() {
         unsafe {SetWindowTextW(GetDlgItem(h,STATUS),wide("단축키가 유효하지 않습니다. Ctrl/Alt/Shift/Win 중 하나와 사용 가능한 키를 입력하세요.").as_ptr());}
         return;
@@ -443,16 +471,40 @@ fn persist(h: HWND) {
     let p=crate::json::Value::Obj(fields);
     s.apply(&p);
     let autostart_result = crate::set_autostart(get(AUTOSTART));
+    let external_pipe = std::env::args().collect::<Vec<_>>().windows(2)
+        .find(|pair| pair[0] == "--pipe").map(|pair| pair[1].clone());
+    let mut external_hotkey_conflict = false;
+    let mut external_pipe_applied = false;
     let result = if LIVE.load(Ordering::Relaxed) {
         crate::update_settings(&p);
         Ok(())
+    } else if let Some(pipe) = external_pipe {
+        let request = crate::json::Value::obj(vec![
+            ("cmd", "settings_set".into()), ("settings", p.clone()),
+        ]);
+        match crate::lifecycle_pipe_request(&pipe, &request) {
+            Some(reply) if reply.bool("ok") == Some(true) => {
+                external_hotkey_conflict = reply.bool("hotkey_ok") == Some(false);
+                external_pipe_applied = true;
+                Ok(())
+            }
+            _ => save(&s),
+        }
     } else {
         save(&s)
     };
+    let hotkey_conflict = external_hotkey_conflict || (LIVE.load(Ordering::Relaxed)
+        && !crate::app().hotkey_ok.load(std::sync::atomic::Ordering::Relaxed));
     let msg = result
         .err()
         .or_else(|| autostart_result.err())
-        .unwrap_or_else(|| "설정을 저장했습니다.".into());
+        .unwrap_or_else(|| if hotkey_conflict {
+            "설정은 저장했지만 다른 프로그램과 단축키가 겹칩니다. 다른 조합을 지정해 주세요.".into()
+        } else if LIVE.load(Ordering::Relaxed) || external_pipe_applied {
+            "설정을 저장하고 실행 중인 몽땅클립보드에 적용했습니다.".into()
+        } else {
+            "설정을 저장했습니다. 에이전트가 실행 중이 아니므로 다음 시작부터 적용됩니다.".into()
+        });
     unsafe {
         SetWindowTextW(GetDlgItem(h, STATUS), wide(&msg).as_ptr());
     }
@@ -481,19 +533,76 @@ unsafe fn edit_list(h:HWND, list_id:i32, add:bool){
         let ix=SendMessageW(list,LB_GETCURSEL,0,0);if ix>=0 {SendMessageW(list,LB_DELETESTRING,ix as usize,0);}
     }
 }
+unsafe fn add_folder_from_dialog(h: HWND) {
+    let mut display = vec![0u16; 260];
+    let title = wide("캡처를 끌 폴더 선택");
+    let mut info = BrowseInfoW {
+        owner: h, root: std::ptr::null_mut(), display_name: display.as_mut_ptr(),
+        title: title.as_ptr(), flags: 0x0001 | 0x0040,
+        callback: None, param: 0, image: 0,
+    };
+    let pidl = unsafe { SHBrowseForFolderW(&mut info) };
+    if pidl.is_null() { return; }
+    let mut path = vec![0u16; 32768];
+    let ok = unsafe { SHGetPathFromIDListW(pidl, path.as_mut_ptr()) } != 0;
+    unsafe { CoTaskMemFree(pidl); }
+    if ok {
+        let len = path.iter().position(|c| *c == 0).unwrap_or(path.len());
+        let value = String::from_utf16_lossy(&path[..len]);
+        unsafe { SetWindowTextW(GetDlgItem(h, LIST_EDIT), wide(&value).as_ptr()); edit_list(h, FOLDER_LIST, true); }
+    }
+}
+unsafe extern "system" fn hotkey_capture_proc(edit: HWND, msg: u32, key: usize, lparam: isize, id: usize, data: usize) -> isize {
+    if msg == WM_KEYDOWN {
+        let vk = key as u32;
+        if matches!(vk, 0x10 | 0x11 | 0x12 | 0x5b | 0x5c) {
+            return unsafe { DefSubclassProc(edit, msg, key, lparam) };
+        }
+        let key_name = match vk {
+            0x30..=0x39 | 0x41..=0x5a => (vk as u8 as char).to_string(),
+            0x70..=0x87 => format!("F{}", vk - 0x70 + 1),
+            _ => {
+                unsafe { SetWindowTextW(GetDlgItem(data as HWND, STATUS), wide("문자·숫자 또는 F1~F24 키 조합을 입력해 주세요.").as_ptr()); }
+                return 0;
+            }
+        };
+        let mut parts: Vec<String> = Vec::new();
+        for (vk, name) in [(0x11,"Ctrl"),(0x12,"Alt"),(0x10,"Shift"),(0x5b,"Win")] {
+            if unsafe { GetKeyState(vk) } < 0 { parts.push(name.to_string()); }
+        }
+        if parts.is_empty() {
+            unsafe { SetWindowTextW(GetDlgItem(data as HWND, STATUS), wide("단축키는 Ctrl, Alt, Shift 또는 Win 키와 함께 지정해 주세요.").as_ptr()); }
+            return 0;
+        }
+        parts.push(key_name);
+        let chord = parts.join("+");
+        unsafe { SetWindowTextW(edit, wide(&chord).as_ptr()); }
+        return 0;
+    }
+    unsafe { DefSubclassProc(edit, msg, key, lparam) }
+}
 unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize {
     unsafe {
         match m {
             WM_CREATE => {
                 build(h);
+                let title_font = CreateFontW(24,0,0,0,700,0,0,0,1,0,0,5,0,wide("맑은 고딕").as_ptr());
+                let heading_font = CreateFontW(21,0,0,0,700,0,0,0,1,0,0,5,0,wide("맑은 고딕").as_ptr());
+                SendMessageW(GetDlgItem(h,1100),WM_SETFONT,title_font as usize,1);
+                SendMessageW(GetDlgItem(h,1101),WM_SETFONT,heading_font as usize,1);
+                SendMessageW(GetDlgItem(h,1103),WM_SETFONT,heading_font as usize,1);
+                SendMessageW(GetDlgItem(h,1104),WM_SETFONT,heading_font as usize,1);
+                SendMessageW(GetDlgItem(h,1105),WM_SETFONT,heading_font as usize,1);
                 0
             }
             WM_COMMAND => {
                 match (w & 0xffff) as i32 {
+                    CONSENT => { EnableWindow(GetDlgItem(h, ENABLE),
+                        (SendMessageW(GetDlgItem(h, CONSENT), BM_GETCHECK, 0, 0) == 1) as i32); },
                     APPLY => persist(h),
                     APP_ADD => edit_list(h,APP_LIST,true),
                     APP_DEL => edit_list(h,APP_LIST,false),
-                    FOLDER_ADD => edit_list(h,FOLDER_LIST,true),
+                    FOLDER_ADD => add_folder_from_dialog(h),
                     FOLDER_DEL => edit_list(h,FOLDER_LIST,false),
                     CANCEL => {
                         DestroyWindow(h);
@@ -517,6 +626,8 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
                 0
             }
             DONE => {
+                EnableWindow(GetDlgItem(h, ENABLE),
+                    (SendMessageW(GetDlgItem(h, CONSENT), BM_GETCHECK, 0, 0) == 1) as i32);
                 if w == 1 {
                     DestroyWindow(h);
                 } else {
@@ -578,6 +689,10 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
     }
 }
 fn enable(h: HWND) {
+    unsafe {
+        EnableWindow(GetDlgItem(h, ENABLE), 0);
+        SetWindowTextW(GetDlgItem(h, STATUS), wide("몽땅클립보드를 켜는 중입니다. 최대 15초 기다립니다…").as_ptr());
+    }
     let hwnd = h as isize;
     std::thread::spawn(move || {
         let deadline = std::time::Instant::now() + enable_timeout();
@@ -596,10 +711,10 @@ fn enable(h: HWND) {
                     if std::time::Instant::now() >= deadline {
                         let _ = c.kill();
                         let _ = c.wait();
-                        break 2usize;
+                        break classify_enable(false, true);
                     }
                     match c.try_wait() {
-                        Ok(Some(s)) => break if s.success() { 1 } else { 0 },
+                        Ok(Some(s)) => break classify_enable(s.success(), false),
                         Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
                         Err(_) => {
                             let _ = c.kill();
@@ -743,13 +858,18 @@ unsafe fn paint_surface(
             MoveToEx(dc, 24, y, std::ptr::null_mut());
             LineTo(dc, w - 24, y);
         };
+        let title_font = CreateFontW(27,0,0,0,700,0,0,0,1,0,0,5,0,wide("맑은 고딕").as_ptr());
+        let heading_font = CreateFontW(23,0,0,0,700,0,0,0,1,0,0,5,0,wide("맑은 고딕").as_ptr());
+        SelectObject(dc,title_font);
         text(28, 22, "몽땅클립보드 설정");
+        SelectObject(dc,heading_font);
         text(
             28,
             52,
             "복사한 내용을 이 PC에 암호화해 보관하고 다시 붙여넣습니다.",
         );
         text(28, 82, "보관 설정");
+        SelectObject(dc,old_font);
         let combos = [
             ("보관 개수", format!("{}개", s.max_items), 118),
             (
@@ -784,7 +904,9 @@ unsafe fn paint_surface(
             270,
             &format!("단축키: {} · 암호화 저장: 항상 켜짐", s.hotkey),
         );
+        SelectObject(dc,heading_font);
         text(28, 310, "동작 설정");
+        SelectObject(dc,old_font);
         let flags = [
             ("스티커 메모처럼 화면에 유지", s.sticky_popup, 334),
             ("항상 위", s.always_on_top, 370),
@@ -816,47 +938,48 @@ unsafe fn paint_surface(
             if on {let pen=CreatePen(PS_SOLID,2,p.toggle_on_text);let old_pen=SelectObject(dc,pen);MoveToEx(dc,x+3,584,std::ptr::null_mut());LineTo(dc,x+8,589);LineTo(dc,x+17,577);SelectObject(dc,old_pen);DeleteObject(pen);}
             text(x+28,574,label);
         }
-        let apps = if s.excluded_apps.is_empty() {
-            "없음".to_string()
-        } else {
-            s.excluded_apps.join(", ")
-        };
-        let folders = if s.capture_dirs_off.is_empty() {
-            "없음".to_string()
-        } else {
-            s.capture_dirs_off.join(", ")
-        };
-        text(28,660,"제외 앱");
-        box_control(RECT{left:28,top:680,right:470,bottom:740});
-        text(34,688,&if apps.is_empty(){"(없음)".into()}else{apps.clone()});
-        text(28,750,"폴더별 캡처 끄기");
-        box_control(RECT{left:28,top:770,right:470,bottom:830});
-        text(34,778,&if folders.is_empty(){"(없음)".into()}else{folders.clone()});
-        box_control(RECT{left:28,top:842,right:358,bottom:870});
-        text(28,882,"단축키 (입력한 뒤 저장)");
-        box_control(RECT{left:260,top:878,right:480,bottom:908});
-        text(266,883,&s.hotkey);
-        line(920);
+        SelectObject(dc,heading_font);
+        text(28,634,"제외 앱");
+        SelectObject(dc,old_font);
+        box_control(RECT{left:28,top:660,right:470,bottom:724});
+        for (i,row) in s.excluded_apps.iter().take(3).enumerate() { text(34,668+i as i32*18,row); }
+        if s.excluded_apps.is_empty() { text(34,668,"(없음)"); }
+        for (y,label) in [(660,"앱 추가"),(698,"앱 삭제"),(758,"폴더 추가"),(796,"폴더 삭제")] {
+            box_control(RECT{left:486,top:y,right:576,bottom:y+30});
+            text(494,y+7,label);
+        }
+        SelectObject(dc,heading_font);
+        text(28,732,"폴더별 캡처 끄기");
+        SelectObject(dc,old_font);
+        box_control(RECT{left:28,top:758,right:470,bottom:822});
+        for (i,row) in s.capture_dirs_off.iter().take(3).enumerate() { text(34,766+i as i32*18,row); }
+        if s.capture_dirs_off.is_empty() { text(34,766,"(없음)"); }
+        text(28,850,"추가할 앱 이름(.exe) 또는 폴더 경로");
+        box_control(RECT{left:28,top:874,right:358,bottom:902});
+        text(28,922,"단축키 (입력한 뒤 저장)");
+        box_control(RECT{left:260,top:918,right:480,bottom:948});
+        text(266,923,&s.hotkey);
+        line(956);
         let auto = crate::autostart_enabled().unwrap_or(false);
-        for (y,label,on) in [(936,"Windows 로그인 시 자동 실행",auto),(1000,"안내를 읽었고 몽땅클립보드 사용에 동의합니다",false)] {
+        for (y,label,on) in [(964,"Windows 로그인 시 자동 실행",auto),(1034,"안내를 읽었고 몽땅클립보드 사용에 동의합니다",false)] {
             box_control(RECT{left:29,top:y+3,right:49,bottom:y+23});
             if on { let pen=CreatePen(PS_SOLID,2,p.toggle_on_text);let old_pen=SelectObject(dc,pen);MoveToEx(dc,31,y+13,std::ptr::null_mut());LineTo(dc,36,y+18);LineTo(dc,46,y+7);SelectObject(dc,old_pen);DeleteObject(pen); }
             text(58,y,label);
         }
         text(
             28,
-            968,
+            1002,
             "기록은 이 PC 사용자 폴더에 암호화되어 저장됩니다. 외부로 전송하지 않습니다.",
         );
         text(
             28,
-            1032,
-            "설정은 저장 즉시 적용됩니다. 켜기에는 동의가 필요합니다.",
+            1066,
+            "실행 중이면 저장 즉시 적용하고, 꺼져 있으면 다음 시작부터 적용합니다.",
         );
         let buttons = [
-            (300, 1090, 400, 1122, "설정 저장"),
-            (410, 1090, 565, 1122, "몽땅클립보드 켜기"),
-            (575, 1090, 645, 1122, "닫기"),
+            (315, 1104, 405, 1136, "설정 저장"),
+            (420, 1104, 560, 1136, "몽땅클립보드 켜기"),
+            (575, 1104, 645, 1136, "닫기"),
         ];
         for (l, t, r, b, label) in buttons {
             box_control(RECT {
@@ -868,6 +991,8 @@ unsafe fn paint_surface(
             text(l + 8, t + 7, label);
         }
         SelectObject(dc, old_font);
+        DeleteObject(title_font);
+        DeleteObject(heading_font);
         DeleteObject(font);
     }
 }
@@ -919,8 +1044,18 @@ mod tests {
     fn enable_deadline_is_bounded() {
         assert_eq!(enable_timeout(), std::time::Duration::from_secs(15));
     }
+    #[test]
+    fn fake_enable_lifecycle_success_failure_and_timeout_are_terminal() {
+        assert_eq!(classify_enable(true, false), 1);
+        assert_eq!(classify_enable(false, false), 0);
+        assert_eq!(classify_enable(false, true), 2);
+    }
 }
 
 fn enable_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(15)
+}
+
+fn classify_enable(success: bool, timed_out: bool) -> usize {
+    if timed_out { 2 } else if success { 1 } else { 0 }
 }
