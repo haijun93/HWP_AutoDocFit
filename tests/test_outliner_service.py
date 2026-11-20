@@ -44,6 +44,26 @@ class OutlinerServiceTest(unittest.TestCase):
                 self.assertEqual(result['markdown'], '- Hi\n')
                 self.assertEqual(json.loads(runner.call_args.kwargs['input'])['op'], 'load')
 
+    def test_edit_operations_are_sent_to_the_engine_as_op_edit_with_args_action(self):
+        """set_text·insert·delete 는 op='edit' 아래 args.action 으로 보낸다('지원하지 않는 명령: set_text' 사고, v2.2.83)."""
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'engine.exe'
+            executable.touch()
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'markdown': '- x\n', 'document': {'blocks': []}}})
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(folder, executable=executable, runner=runner)
+            for operation in ('set_text', 'insert', 'delete'):
+                service.execute({'action': 'edit', 'operation': operation, 'page': 'Home',
+                                 'markdown': '- a\n', 'block_id': 1, 'text': 'x'})
+                sent = json.loads(runner.call_args.kwargs['input'])
+                self.assertEqual(sent['op'], 'edit')
+                self.assertEqual(sent['args']['action'], operation)
+                self.assertEqual(sent['args']['block_id'], 1)
+                self.assertEqual(sent['args']['text'], 'x')
+                self.assertNotIn('operation', sent['args'])
+
 
 if __name__ == '__main__':
     unittest.main()
