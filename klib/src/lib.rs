@@ -10,4 +10,5 @@ pub mod legacy_records;
 pub mod classify_levels;
 pub mod unify_marker;
 pub mod scan_hwp;
+pub mod scan_cli;
 pub mod photo;

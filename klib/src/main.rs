@@ -15,6 +15,7 @@ mod nb_store;
 mod nb_split_check;
 mod nb_transform;
 mod scan;
+mod scan_cli;
 mod extract;
 pub(crate) mod hwp5;
 mod index_content;
@@ -106,6 +107,10 @@ fn main() {
         }
         let roots: Vec<std::path::PathBuf> = args[1..].iter().map(std::path::PathBuf::from).collect();
         scan_hwp::run(&roots);
+        return;
+    }
+    if args.first().is_some_and(|a| a == "scan") {
+        if let Err(error) = scan_cli::run(&args[1..]) { eprintln!("klib scan: {error}"); std::process::exit(1); }
         return;
     }
     if args.first().is_some_and(|a| a == "tm-scan") {
