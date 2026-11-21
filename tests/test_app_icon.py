@@ -28,7 +28,7 @@ class AppIconTest(unittest.TestCase):
         self.assertIn('HWP_AutoDocFit.spec', workflow)
         self.assertIn('HWP_AutoDocFit.spec', build)
         import ast
-        tree = ast.parse((ROOT / 'HWP_AutoDocFit.spec').read_text())
+        tree = ast.parse((ROOT / 'HWP_AutoDocFit.spec').read_text(encoding='utf-8'))
         exe = next(n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'EXE')
         icon = ast.literal_eval(next(n for n in ast.walk(next(k.value for k in exe.keywords if k.arg == 'icon')) if isinstance(n, ast.Constant) and n.value == 'app_icon.ico'))
         self.assertEqual(icon, 'app_icon.ico')
