@@ -2462,6 +2462,17 @@ class DesktopWebBridge:
             raise ServiceError("INVALID_INPUT", "변환 창 입력을 확인해 주세요.")
         return self._service_response(lambda: service.execute(payload))
 
+    def rename_window(self, payload):
+        """파일명 일괄변경 화면 방식(`rename_ui`)과 Win32 미리보기 창 실행."""
+        from docfit_app.api_contract import ServiceError
+        service = getattr(self, "_rename_window_service", None)
+        if service is None:
+            from docfit_app.rename_window_service import RenameWindowService
+            service = self._rename_window_service = RenameWindowService(self._settings_store())
+        if not isinstance(payload, dict):
+            raise ServiceError("INVALID_INPUT", "파일명 변경 창 입력을 확인해 주세요.")
+        return self._service_response(lambda: service.execute(payload))
+
     def _dock_runtime(self):
         runtime = getattr(self, "_dock_runtime_instance", None)
         if runtime is None:
@@ -4044,7 +4055,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
-            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "photoview_window", "conversion_window", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
+            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "photoview_window", "conversion_window", "rename_window", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
             "set_conversion_target", "set_pdf_compress_target_mb", "set_pdf_compress_method", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))

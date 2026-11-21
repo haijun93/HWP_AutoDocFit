@@ -9,6 +9,16 @@ $Bundle = Join-Path $OutputPath "prototype"
 if (Test-Path $Bundle) { throw "Prototype output already exists. Choose a new -Output directory." }
 Push-Location $Root
 try {
+    $SavedCargoTargetDir = $env:CARGO_TARGET_DIR
+    try {
+        if (-not $env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR = Join-Path $Root 'rename_win\target' }
+        $RenameCargoTargetDir = $env:CARGO_TARGET_DIR
+        $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:PATH"
+        cargo test --release --locked --manifest-path rename_win/Cargo.toml
+        if ($LASTEXITCODE -ne 0) { throw "rename_win tests failed" }
+        cargo build --release --locked --manifest-path rename_win/Cargo.toml --bin rename_win
+        if ($LASTEXITCODE -ne 0) { throw "rename_win build failed" }
+    } finally { $env:CARGO_TARGET_DIR = $SavedCargoTargetDir }
     & (Join-Path $Root 'scripts\build_flow_editor.ps1') -Npm $Npm
     & $Python -m pip check
     if ($LASTEXITCODE -ne 0) { throw "Python dependency check failed" }
@@ -48,6 +58,9 @@ try {
     New-Item -ItemType Directory -Force $Backend | Out-Null
     Copy-Item -Recurse -Force (Join-Path $OutputPath "backend-build/HWP_AutoDocFit_Backend/*") $Backend
     Copy-Item -Force (Join-Path $Root "MapoHwpAutoDocFitSecurity.dll") $Backend
+    $NativeResources = Join-Path $Bundle "resources"
+    New-Item -ItemType Directory -Force $NativeResources | Out-Null
+    Copy-Item -Force (Join-Path $RenameCargoTargetDir "release\rename_win.exe") $NativeResources
     @{ kind = "native-prototype"; protocol_version = 1; engine_ready = $false;
        version = "1.74 Native Prototype 1" } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $Bundle "manifest.json")
     Get-ChildItem -Recurse -File $Bundle | ForEach-Object {

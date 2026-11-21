@@ -156,6 +156,19 @@ class BridgeWrapperBehaviorTests(unittest.TestCase):
                 bridge.conversion_window("not a dict")
         self.assertIn("conversion_window", browser_api_names())
 
+    def test_rename_window_bridge_reads_and_writes_rename_ui(self):
+        import tempfile
+        from docfit_app.api_contract import ServiceError
+        with tempfile.TemporaryDirectory() as folder:
+            bridge, store = self._bridge(folder)
+            self.assertEqual(bridge.rename_window({'action': 'ui_mode'})['data'], {'mode': 'flutter'})
+            self.assertEqual(bridge.rename_window({'action': 'open_if_native'})['data'], {'mode': 'flutter', 'opened': False})
+            self.assertEqual(bridge.rename_window({'action': 'ui_mode', 'value': 'native'})['data'], {'mode': 'native'})
+            self.assertEqual(store.read().get('rename_ui'), 'native')
+            self.assertFalse(bridge.rename_window({'action': 'ui_mode', 'value': 'x'})['ok'])
+            with self.assertRaises(ServiceError): bridge.rename_window('not a dict')
+        self.assertIn('rename_window', browser_api_names())
+
     def test_outliner_and_pdf_edit_reject_non_dict_payloads(self):
         import tempfile
         from docfit_app.api_contract import ServiceError

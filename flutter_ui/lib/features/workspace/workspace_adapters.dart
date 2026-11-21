@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
-import '../file_rename/file_rename_screen.dart';
+import '../file_rename/rename_ui_gate.dart';
 import '../timemachine/timemachine_screen.dart';
 import '../flows/flow_editor_screen.dart';
 import '../library/library_api.dart';
@@ -113,7 +113,7 @@ class FileRenameAdapter extends StatelessWidget {
   @override
   Widget build(BuildContext context) => KeyedSubtree(
     key: const ValueKey('tab-file-rename-adapter'),
-    child: FileRenameScreen(api: api),
+    child: RenameUiGate(api: api),
   );
 }
 

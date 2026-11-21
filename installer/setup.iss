@@ -115,6 +115,8 @@ begin
   StopHelper('photoview_win.exe');
   // 변환 창(convert_win.exe)이 열려 있으면 {app} 안 파일을 붙잡는다(설정 conversion_ui='native').
   StopHelper('convert_win.exe');
+  // 파일명 변경 미리보기 창(rename_win.exe)이 열려 있으면 설치 파일 교체를 막는다.
+  StopHelper('rename_win.exe');
   Sleep(500);
   Result := '';
 end;

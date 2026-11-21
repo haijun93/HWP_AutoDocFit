@@ -353,6 +353,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item convert_win/target/release/convert_win.exe resources/convert_win.exe -Force
           if (!(Test-Path resources/convert_win.exe)) { throw 'convert_win bundle missing' }
+      - name: Build file rename preview window (rename_win.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path rename_win/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path rename_win/Cargo.toml --bin rename_win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item rename_win/target/release/rename_win.exe resources/rename_win.exe -Force
+          if (!(Test-Path resources/rename_win.exe)) { throw 'rename_win bundle missing' }
       - name: Verify Rust binaries do not need the VC++ runtime
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh

@@ -1,0 +1,19 @@
+[package]
+name = "rename_win"
+version = "0.1.0"
+edition = "2024"
+description = "파일명 변경 Win32 뼈대: 읽기 전용 미리보기"
+publish = false
+
+[workspace]
+
+[dependencies]
+ui_theme = { path = "../ui_theme" }
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
+  "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"
+] }
+
+[[bin]]
+name = "rename_win"
+path = "src/main.rs"

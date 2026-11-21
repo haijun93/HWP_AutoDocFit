@@ -57,6 +57,10 @@ if photoview_win_exe.is_file():
 convert_win_exe = root / 'resources' / 'convert_win.exe'
 if convert_win_exe.is_file():
     binaries.append((str(convert_win_exe), 'resources'))
+# 파일명 변경 미리보기 Win32 창(rename_ui='native').
+rename_win_exe = root / 'resources' / 'rename_win.exe'
+if rename_win_exe.is_file():
+    binaries.append((str(rename_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))
