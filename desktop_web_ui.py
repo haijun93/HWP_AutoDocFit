@@ -931,6 +931,20 @@ class DesktopWebBridge:
         self._tk(add)
         return self.get_state()
 
+    def open_conversion_paths(self, paths, target):
+        """Named pipe 요청을 파일 변환 화면의 기존 목록 추가 흐름에 연결한다."""
+        from docfit_core.file_conversion import CONVERSION_OUTPUTS
+        target = str(target or "").lower()
+        if target not in CONVERSION_OUTPUTS or not isinstance(paths, (list, tuple)) or len(paths) > 2000:
+            return {"ok": False}
+        if self.gui.running:
+            return {"ok": False, "error": "busy"}
+        self.set_conversion_target(target)
+        self.set_mode("file_format")
+        for start in range(0, len(paths), 1000):
+            self.add_paths(paths[start:start + 1000])
+        return {"ok": True}
+
     def remove_file(self, index):
         def remove():
             try:
@@ -4283,6 +4297,8 @@ def run_webview(gui):
     tk_stopped = threading.Event()
     bridge.tk_stopped = tk_stopped
     window.events.closing += bridge.request_close
+    convert_receiver = None
+    window.events.closing += lambda *_args: convert_receiver.stop() if convert_receiver is not None else None
 
     def track_tk_destroy():
         try:
@@ -4335,6 +4351,15 @@ def run_webview(gui):
     def _on_loaded(*_args):
         _dismiss_splash()
         bind_file_drop(window)
+        nonlocal convert_receiver
+        try:
+            from docfit_app.convert_pipe import ConvertPipeReceiver
+            def queue_conversion_paths(paths, target):
+                threading.Thread(target=bridge.open_conversion_paths, args=(paths, target),
+                                 name="convert-pipe-dispatch", daemon=True).start()
+            convert_receiver = ConvertPipeReceiver(queue_conversion_paths).start()
+        except Exception:
+            logging.getLogger(__name__).exception("몽땅파일변환 파이프 수신기를 시작하지 못했습니다")
         # 첫 화면이 뜬 뒤에야 부가 시작 작업(런타임 배포·kfind 확인)을 시작한다(LAUNCH2).
         try:
             from docfit_app import startup_deferral

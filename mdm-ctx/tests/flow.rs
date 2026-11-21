@@ -44,6 +44,42 @@ fn calls(dir: &Path) -> Vec<Vec<String>> {
 }
 
 #[test]
+fn running_app_pipe_receives_one_json_request() {
+    use std::ffi::OsStr;
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr;
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Storage::FileSystem::{ReadFile, WriteFile};
+    use windows_sys::Win32::System::Pipes::{ConnectNamedPipe, CreateNamedPipeW, PIPE_TYPE_BYTE, PIPE_READMODE_BYTE, PIPE_WAIT};
+    let dir = setup("pipe");
+    let p = make(&dir, "파이프 전달.pdf");
+    let pipe_name = format!(r"\\.\pipe\HwpAutoDocFit.convert.test.{}", std::process::id());
+    let wide: Vec<u16> = OsStr::new(&pipe_name).encode_wide().chain(Some(0)).collect();
+    let server_name = wide.clone();
+    let server = std::thread::spawn(move || unsafe {
+        let handle: HANDLE = CreateNamedPipeW(server_name.as_ptr(), 0x3, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, 4096, 1 << 20, 0, ptr::null());
+        assert!(!handle.is_null());
+        assert!(ConnectNamedPipe(handle, ptr::null_mut()) != 0);
+        let mut buf = vec![0u8; 1 << 20]; let mut got = 0;
+        assert!(ReadFile(handle, buf.as_mut_ptr(), buf.len() as u32, &mut got, ptr::null_mut()) != 0);
+        buf.truncate(got as usize);
+        let response = b"{\"ok\":true}\n"; let mut sent = 0;
+        assert!(WriteFile(handle, response.as_ptr(), response.len() as u32, &mut sent, ptr::null_mut()) != 0);
+        CloseHandle(handle);
+        buf
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_mdm-ctx"))
+        .arg("--app").arg(fake_app()).arg("convert").arg(&p).arg("--to").arg("pdf").arg("--notify")
+        .env("MDM_CTX_TEST_ROOT", &dir).env("MDM_CTX_TEST_PIPE", pipe_name)
+        .env("MDM_FAKE_OUT", dir.join("out.txt")).env("MDM_CTX_QUIET_MS", "50").spawn().unwrap();
+    assert!(child.wait().unwrap().success());
+    let text = String::from_utf8(server.join().unwrap()).unwrap();
+    assert!(text.contains("\"cmd\":\"convert_open\"") && text.contains("\"target\":\"pdf\"") && text.contains("파이프 전달.pdf"), "payload: {text:?}");
+    assert!(calls(&dir).is_empty(), "파이프 성공 시 기존 앱 실행은 없어야 함");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn single_korean_space_path() {
     let dir = setup("one");
     let p = make(&dir, "공 백 문서.hwp");
