@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 
 fn fake_app() -> PathBuf {
-    let exe = std::env::current_exe().unwrap();
-    exe.parent().unwrap().parent().unwrap().join("examples").join("fake_app.exe")
+    // 시험 실행 파일 위치(deps/ 또는 새 build-dir 배치의 build/…/out)에 기대지 않고, 최종 산출물 폴더(CARGO_BIN_EXE)를 기준으로 examples 를 찾는다.
+    let bin = PathBuf::from(env!("CARGO_BIN_EXE_mdm-ctx"));
+    bin.parent().unwrap().join("examples").join("fake_app.exe")
 }
 fn setup(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("mdmctx_{name}_{}", std::process::id()));
