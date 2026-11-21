@@ -77,7 +77,8 @@ pub fn merged(input: &Value) -> Value {
     out
 }
 
-fn visible_schema() -> Vec<(String, String, Value)> {
+/// 화면에 노출되는 설정 잎(키, 종류 boolean|number|text|choice, 기본값). 설정 창이 키→컨트롤 매핑에 쓴다.
+pub fn visible_schema() -> Vec<(String, String, Value)> {
     fn walk(prefix: String, value: &Value, excluded: &std::collections::HashSet<&str>, out: &mut Vec<(String,String,Value)>) {
         let Some(map)=value.as_object() else { out.push((prefix.clone(), String::new(), value.clone())); return; };
         for (k,v) in map { let key=if prefix.is_empty(){k.clone()}else{format!("{prefix}.{k}")}; if prefix.is_empty() && excluded.contains(k.as_str()){continue} walk(key,v,excluded,out); }
@@ -85,7 +86,7 @@ fn visible_schema() -> Vec<(String, String, Value)> {
     let excluded: std::collections::HashSet<&str>=["ui_tk_fallback","hierarchy_engine","abbreviations","abbreviation_source","active_format_profile","rust_rename_preview","rust_timemachine_scan","rust_search_hierarchy","theme_mode","menu_display_mode","label_symbols_rev","report_files_rev","std_parspace_rev","std_supplement_rev"].into_iter().collect();
     let mut out=Vec::new(); walk(String::new(),&defaults(),&excluded,&mut out);
     let numeric=["punctuation_threshold","retry_body","retry_table","linespacing_min","linespacing_max","std_title_subtitle_pt"];
-    for (key,kind,value) in &mut out { let root=key.split('.').next().unwrap_or(""); *kind=if *key=="search_engine" {"choice".into()} else if value.is_boolean(){"boolean".into()} else if numeric.contains(&root)||key.ends_with(".size"){"number".into()} else {"text".into()}; }
+    for (key,kind,value) in &mut out { let root=key.split('.').next().unwrap_or(""); *kind=if *key=="search_engine" {"choice".into()} else if value.is_boolean(){"boolean".into()} else if numeric.contains(&root)||root.starts_with("std_parspace_")||key.ends_with(".size"){"number".into()} else {"text".into()}; }
     out
 }
 

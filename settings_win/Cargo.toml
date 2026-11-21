@@ -1,0 +1,33 @@
+[package]
+name = "settings_win"
+version = "0.1.0"
+edition = "2024"
+description = "앱 설정 창 Rust+Win32 2단계: 좌측 묶음 트리·우측 항목 목록·검색·저장/되돌리기(설정 소유자는 docfit_config)"
+license = "MIT"
+publish = false
+
+# 다른 크레이트와 같이 독립 작업 공간으로 둔다.
+[workspace]
+
+# 의존성 3개: docfit_config(설정 읽기·검증·원자 저장의 정본)·ui_theme(팔레트)·windows-sys(Win32).
+# serde_json 은 docfit_config 의 공개 API(Value)를 받기 위해 같은 버전을 직접 선언한다(새 외부 크레이트 아님).
+[dependencies]
+docfit_config = { path = "../docfit_config" }
+ui_theme = { path = "../ui_theme" }
+serde_json = { version = "1", features = ["preserve_order"] }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[[bin]]
+name = "settings_win"
+path = "src/main.rs"
