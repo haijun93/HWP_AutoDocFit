@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "ui_theme",
  "windows-sys",
 ]
 
@@ -93,6 +94,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "ui_theme"
+version = "0.1.0"
+dependencies = [
+ "windows-sys",
 ]
 
 [[package]]

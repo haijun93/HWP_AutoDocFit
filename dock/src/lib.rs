@@ -235,6 +235,10 @@ pub fn parse_hidden_tabs(settings_json: &str) -> std::collections::BTreeSet<u8> 
 pub fn tab_event_name(tab: u8) -> Option<String> {
     (tab < 16).then(|| format!("docfit-open-tab-{tab}"))
 }
+/// Event paired with `tab_event_name`; signaling it asks the Flutter host to collapse that tab.
+pub fn tab_close_event_name(tab: u8) -> Option<String> {
+    (tab < 16).then(|| format!("docfit-close-tab-{tab}"))
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Route { Search, VirtualFolder, Clipboard, MainTab(u8), Invalid }
@@ -250,6 +254,14 @@ pub fn click_state(state: WindowState) -> WindowState {
         WindowState::OpenUnfocused => WindowState::OpenFocused,
         WindowState::OpenFocused => WindowState::OpenUnfocused }
 }
+pub fn click_action(state: WindowState) -> ClickAction {
+    match state {
+        WindowState::OpenFocused => ClickAction::Close,
+        WindowState::Closed | WindowState::OpenUnfocused => ClickAction::Open,
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClickAction { Open, Close }
 pub fn running_dot(state: WindowState) -> bool { state != WindowState::Closed }
 
 /// Small GDI-friendly vector vocabulary. Coordinates are normalized to a 24×24 view box.
@@ -289,6 +301,9 @@ pub fn icon_size_px(dpi: u32, logical_size: i32) -> i32 { ((dpi.max(1) as i64 * 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Palette { pub foreground: u32, pub accent: u32, pub background: u32, pub border: u32 }
 pub const NORMAL_PALETTE: Palette = Palette { foreground: 0xF4F1ED, accent: 0x67B7D1, background: 0x302820, border: 0x706050 };
+pub const LIGHT_PALETTE: Palette = Palette { foreground: 0x202124, accent: 0x1769AA, background: 0xF5F6F8, border: 0xC3C7CD };
+pub const DARK_PALETTE: Palette = NORMAL_PALETTE;
+pub fn palette_for_theme(dark: bool) -> Palette { if dark { DARK_PALETTE } else { LIGHT_PALETTE } }
 pub fn palette_for_mode(normal: Palette, high_contrast: bool, window: u32, window_text: u32, highlight: u32, highlight_text: u32) -> Palette {
     if high_contrast { Palette { foreground: window_text, accent: highlight, background: window, border: highlight_text } } else { normal }
 }
@@ -365,7 +380,12 @@ mod tests {
         assert_eq!(
             dock_rect(r(80, 0, 1920, 1080), m, Edge::Auto, 96, 400, 56, 18).edge,
             Edge::Left
-        )
+        );
+        // Auto-hidden taskbars leave rcWork equal to rcMonitor; use the documented bottom default.
+        assert_eq!(dock_rect(m,m,Edge::Auto,96,400,56,18).rect,r(760,1006,1160,1062));
+        // Secondary monitor coordinates may be negative; placement remains centered in its own work area.
+        let secondary=r(-1920,0,0,1080); let work=r(-1920,0,0,1040);
+        assert_eq!(dock_rect(work,secondary,Edge::Bottom,96,400,56,18).rect,r(-1160,966,-760,1022));
     }
     #[test]
     fn hover_interpolation_dump() {
@@ -412,6 +432,16 @@ mod tests {
                 .iter()
                 .all(|i| i.tab != 12 && i.tab != 13 && i.tab != 15)
         )
+    }
+    #[test]
+    fn reclick_state_machine_opens_then_closes_and_reopens() {
+        let mut state=WindowState::Closed;
+        assert_eq!(click_action(state),ClickAction::Open); state=WindowState::OpenFocused;
+        assert_eq!(click_action(state),ClickAction::Close); state=WindowState::Closed;
+        assert_eq!(click_action(state),ClickAction::Open);
+        assert_eq!(tab_event_name(4).as_deref(),Some("docfit-open-tab-4"));
+        assert_eq!(tab_close_event_name(4).as_deref(),Some("docfit-close-tab-4"));
+        assert_eq!(tab_close_event_name(16),None);
     }
     #[test]
     fn sidebar_group_order_and_hidden_tabs_are_shared_with_dock() {

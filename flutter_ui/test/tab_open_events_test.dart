@@ -38,4 +38,20 @@ void main() {
     }
     request.dispose();
   });
+
+  test('Dock close event collapses only the matching active tab', () {
+    final request = ValueNotifier<int?>(4);
+    final listeners = <String, void Function()>{};
+    final stops = watchTabCloseEvents(tabRequest: request, watch: (name, callback) {
+      listeners[name] = callback;
+      return () => listeners.remove(name);
+    });
+    expect(tabCloseEventName(4), 'docfit-close-tab-4');
+    listeners['docfit-close-tab-3']!();
+    expect(request.value, 4);
+    listeners['docfit-close-tab-4']!();
+    expect(request.value, isNull);
+    for (final stop in stops) { stop(); }
+    request.dispose();
+  });
 }

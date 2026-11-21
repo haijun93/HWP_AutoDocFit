@@ -237,6 +237,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   bool developerMode = false;
   void Function()? _stopPhotoEditEvent;
   List<void Function()> _stopTabOpenEvents = const [];
+  List<void Function()> _stopTabCloseEvents = const [];
 
   @override
   void initState() {
@@ -269,12 +270,16 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       hiddenTabs: () => {...kDefaultHiddenTabs, ...hiddenTabsNotifier.value},
       bringToFront: bringWindowToFront,
     );
+    _stopTabCloseEvents = watchTabCloseEvents(tabRequest: tabRequest);
   }
 
   @override
   void dispose() {
     _stopPhotoEditEvent?.call();
     for (final stop in _stopTabOpenEvents) {
+      stop();
+    }
+    for (final stop in _stopTabCloseEvents) {
       stop();
     }
     HardwareKeyboard.instance.removeHandler(_onKClipHotkey);
