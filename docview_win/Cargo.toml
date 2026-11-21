@@ -1,0 +1,29 @@
+[package]
+name = "docview_win"
+version = "0.1.0"
+edition = "2024"
+description = "문서뷰 Rust+Win32 창 1단계: 격자 목록 읽기 전용 표시·가상화·스캔 진행·취소·캡처 모드(DOCVIEWWIN1)"
+license = "MIT"
+publish = false
+
+# 다른 크레이트와 같이 독립 작업 공간으로 둔다.
+[workspace]
+
+# 의존성은 ui_theme(경로)·windows-sys 둘뿐. klib 는 라이브러리로 묶지 않고 `klib scan` 실행 파일을 자식 프로세스로 호출한다
+# (tantivy·rusqlite 를 끌어와 빌드가 무거워지는 것을 피하고, Python 과 같은 JSON 줄 계약을 그대로 쓴다).
+[dependencies]
+ui_theme = { path = "../ui_theme" }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Time",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bin]]
+name = "docview_win"
+path = "src/main.rs"
