@@ -42,6 +42,13 @@ impl RecMap {
         self.packed.capacity() + self.wide.as_ref().map_or(0, |v| v.capacity() * 4)
     }
 
+    fn shrink_to_fit(&mut self) {
+        self.packed.shrink_to_fit();
+        if let Some(wide) = &mut self.wide {
+            wide.shrink_to_fit();
+        }
+    }
+
     pub fn get(&self, index: usize) -> Option<u32> {
         if index >= self.len {
             return None;
@@ -462,6 +469,32 @@ pub struct Names {
 }
 
 impl Names {
+    /// Release spare capacity in the completed index after a bulk build.
+    pub fn shrink_to_fit(&mut self) {
+        self.parent.shrink_to_fit();
+        self.fold_off.shrink_to_fit();
+        self.name_off.shrink_to_fit();
+        self.depth.shrink_to_fit();
+        self.ext.shrink_to_fit();
+        self.flags.shrink_to_fit();
+        self.size.shrink_to_fit();
+        self.mtime.shrink_to_fit();
+        self.end.shrink_to_fit();
+        self.fold.shrink_to_fit();
+        self.name.shrink_to_fit();
+        self.redirect.shrink_to_fit();
+        self.exts.names.shrink_to_fit();
+        for name in &mut self.exts.names {
+            name.shrink_to_fit();
+        }
+        self.exts.map.shrink_to_fit();
+        self.vols.shrink_to_fit();
+        for vol in &mut self.vols {
+            vol.name.shrink_to_fit();
+            vol.recmap.shrink_to_fit();
+        }
+    }
+
     pub fn view(&self) -> View<'_> {
         View {
             parent: &self.parent,
