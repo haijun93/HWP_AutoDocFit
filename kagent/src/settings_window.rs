@@ -123,6 +123,16 @@ fn run(live: bool) {
     LIVE.store(live, Ordering::Relaxed);
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        // `--settings` is started as a new process by the app. The process-local
+        // WINDOW handle only protects repeated opens from this process, so also
+        // look up the class across processes before creating another window.
+        let cls = wide("HwpAutoDocFit.KAgentSettings");
+        let existing = FindWindowW(cls.as_ptr(), std::ptr::null());
+        if !existing.is_null() {
+            ShowWindow(existing, SW_RESTORE);
+            SetForegroundWindow(existing);
+            return;
+        }
         if WINDOW.load(Ordering::Relaxed) != 0 {
             let h = WINDOW.load(Ordering::Relaxed) as HWND;
             ShowWindow(h, SW_RESTORE);
@@ -130,7 +140,6 @@ fn run(live: bool) {
             return;
         }
         let inst = GetModuleHandleW(std::ptr::null());
-        let cls = wide("HwpAutoDocFit.KAgentSettings");
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: 0,
