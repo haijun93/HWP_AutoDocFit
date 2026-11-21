@@ -167,6 +167,9 @@ class DesktopWebBridge:
         manager = getattr(self.gui, '_job_manager', None)
         if manager is not None:
             threading.Thread(target=manager.shutdown, daemon=True).start()
+        runtime = getattr(self, "_dock_runtime_instance", None)
+        if runtime is not None:
+            runtime.stop()
         self._file_dialogs.close()
         if self._freeze_tracer is not None:
             self._freeze_tracer.stop()
@@ -2391,8 +2394,18 @@ class DesktopWebBridge:
         runtime = getattr(self, "_dock_runtime_instance", None)
         if runtime is None:
             from docfit_app.dock_runtime import DockRuntime
-            runtime = self._dock_runtime_instance = DockRuntime()
+            runtime = self._dock_runtime_instance = DockRuntime(dispatch_js=self._dispatch_dock_js)
         return runtime
+
+    def _dispatch_dock_js(self, script):
+        window = getattr(self, "window", None)
+        if window is not None and hasattr(window, "run_js"):
+            def dispatch():
+                try:
+                    window.run_js(script)
+                except Exception:
+                    logging.getLogger(__name__).exception("Dock tab event JavaScript dispatch failed")
+            threading.Thread(target=dispatch, daemon=True).start()
 
     def dock_start(self):
         return self._dock_runtime().start()
