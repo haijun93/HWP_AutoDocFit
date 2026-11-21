@@ -47,6 +47,83 @@ class BenchAnalyzeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             p=Path(td)/"bad.json"; p.write_text("{")
             with self.assertRaises(qa.InputError): qa.load_result(p)
+    def test_23_paired_synthetic_adapters_different_latencies_and_correct_verdict(self):
+        kfind_run = {
+            "schema_version": 1,
+            "run": {"run_id": "run-kfind", "adapter": "kfind", "query_set_version": "set-synth", "repeats": 5, "started_at": "2026-11-21T00:00:00Z", "machine": {}, "indexes": {}},
+            "queries": [
+                {"digest": {"id": "q1", "kind": "korean_2char", "query_length": 2, "query_hash": "sha256:q1", "query_text": None}, "statistics": {"count": 5, "p50": 5.0, "p95": 8.0}, "result_count": 0, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q2", "kind": "korean_3char", "query_length": 3, "query_hash": "sha256:q2", "query_text": None}, "statistics": {"count": 5, "p50": 5.0, "p95": 9.0}, "result_count": 5, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q3", "kind": "korean_4char", "query_length": 4, "query_hash": "sha256:q3", "query_text": None}, "statistics": {"count": 5, "p50": 5.0, "p95": 10.0}, "result_count": 50, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q4", "kind": "korean_5char", "query_length": 5, "query_hash": "sha256:q4", "query_text": None}, "statistics": {"count": 5, "p50": 5.0, "p95": 11.0}, "result_count": 500, "timeouts": 0, "errors": 0},
+            ],
+            "resources": {"status": "available"},
+            "summary": {"completed": True}
+        }
+        ev_run = {
+            "schema_version": 1,
+            "run": {"run_id": "run-ev", "adapter": "everything", "query_set_version": "set-synth", "repeats": 5, "started_at": "2026-11-21T00:00:00Z", "machine": {}, "indexes": {}},
+            "queries": [
+                {"digest": {"id": "q1", "kind": "korean_2char", "query_length": 2, "query_hash": "sha256:q1", "query_text": None}, "statistics": {"count": 5, "p50": 50.0, "p95": 80.0}, "result_count": 0, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q2", "kind": "korean_3char", "query_length": 3, "query_hash": "sha256:q2", "query_text": None}, "statistics": {"count": 5, "p50": 50.0, "p95": 90.0}, "result_count": 5, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q3", "kind": "korean_4char", "query_length": 4, "query_hash": "sha256:q3", "query_text": None}, "statistics": {"count": 5, "p50": 50.0, "p95": 100.0}, "result_count": 50, "timeouts": 0, "errors": 0},
+                {"digest": {"id": "q4", "kind": "korean_5char", "query_length": 5, "query_hash": "sha256:q4", "query_text": None}, "statistics": {"count": 5, "p50": 50.0, "p95": 110.0}, "result_count": 500, "timeouts": 0, "errors": 0},
+            ],
+            "resources": {"status": "available"},
+            "summary": {"completed": True}
+        }
+        report = qa.render_report([kfind_run, ev_run])
+        # 1. 두 엔진의 p50이 분리되어 보고서에 5.0과 50.0이 각각 표시됨
+        self.assertIn("5.0", report)
+        self.assertIn("50.0", report)
+        # 2. 비율이 1.00x가 아니라 약 10배(0.10x)로 계산됨
+        self.assertIn("0.10x", report)
+        self.assertNotIn("1.00x", report)
+        # 3. '무승부'가 아니라 몽땅검색이 10배 빠르므로 올바른 판정 '승'
+        self.assertNotIn("| 무승부 |", report)
+        self.assertIn("| 승 |", report)
+        # 4. 보고서 끝 판정 기준 및 임계값(1.20) 명시
+        self.assertIn("## 판정 기준", report)
+        self.assertIn(f"{qa.REGRESSION_RATIO:.2f}x", report)
+
+    def test_24_paired_synthetic_adapters_reverse_order(self):
+        kfind_run = {
+            "schema_version": 1,
+            "run": {"run_id": "run-kfind", "adapter": "kfind", "query_set_version": "set-synth", "repeats": 5},
+            "queries": [
+                {"digest": {"id": "q1", "kind": "korean_2char", "query_length": 2, "query_hash": "sha256:q1"}, "statistics": {"count": 5, "p50": 5.0, "p95": 8.0}, "result_count": 10, "timeouts": 0, "errors": 0},
+            ],
+            "resources": {"status": "available"},
+            "summary": {"completed": True}
+        }
+        ev_run = {
+            "schema_version": 1,
+            "run": {"run_id": "run-ev", "adapter": "everything", "query_set_version": "set-synth", "repeats": 5},
+            "queries": [
+                {"digest": {"id": "q1", "kind": "korean_2char", "query_length": 2, "query_hash": "sha256:q1"}, "statistics": {"count": 5, "p50": 50.0, "p95": 80.0}, "result_count": 10, "timeouts": 0, "errors": 0},
+            ],
+            "resources": {"status": "available"},
+            "summary": {"completed": True}
+        }
+        report = qa.render_report([ev_run, kfind_run])
+        self.assertIn("0.10x", report)
+        self.assertNotIn("1.00x", report)
+        self.assertIn("| 승 |", report)
+
+    def test_25_single_adapter_no_fake_tie(self):
+        kfind_run = {
+            "schema_version": 1,
+            "run": {"run_id": "run-kfind", "adapter": "kfind", "query_set_version": "set-synth", "repeats": 5},
+            "queries": [
+                {"digest": {"id": "q1", "kind": "korean_2char", "query_length": 2, "query_hash": "sha256:q1"}, "statistics": {"count": 5, "p50": 5.0, "p95": 8.0}, "result_count": 10, "timeouts": 0, "errors": 0},
+            ],
+            "resources": {"status": "available"},
+            "summary": {"completed": True}
+        }
+        report = qa.render_report([kfind_run])
+        self.assertNotIn("| 무승부 |", report)
+        self.assertIn("비교 불가", report)
+
     def _temp_json(self,obj):
         f=tempfile.NamedTemporaryFile(mode="w",encoding="utf-8",suffix=".json",delete=False)
         json.dump(obj,f); f.close(); return f.name
