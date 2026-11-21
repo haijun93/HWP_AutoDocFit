@@ -5,7 +5,9 @@ use crate::panel::{ExcludePanel, Hit, PanelLayout};
 use crate::paint;
 use crate::scan::{Event, ScanJob, find_klib};
 use crate::sys::{fixed_drive_roots, tz_offset_secs, wide};
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::ptr::{null, null_mut};
 use std::sync::Arc;
 use ui_theme::{Palette, ThemePref};
@@ -17,6 +19,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const WM_SCAN: u32 = WM_APP + 1;
+const WM_SHELL_THUMB: u32 = WM_APP + 2;
 const TIMER_ELAPSED: usize = 1;
 
 #[derive(Clone, Default)]
@@ -53,6 +56,11 @@ struct State {
     panel: Option<ExcludePanel>,
     /// 제외 폴더가 바뀌어 지금 도는 스캔을 취소한 뒤 다시 시작해야 한다.
     rescan: bool,
+    thumb_service: grid_core::shell_thumb::ThumbnailService,
+    thumbs: HashMap<String, grid_core::shell_thumb::Bitmap>,
+    thumb_order: VecDeque<String>,
+    thumb_bytes: usize,
+    notify_hwnd: Arc<AtomicUsize>,
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -180,7 +188,34 @@ unsafe fn pump(hwnd: HWND, s: &mut State) {
     }
 }
 
-unsafe fn paint_window(hwnd: HWND, s: &State) {
+fn receive_shell_thumbs(s: &mut State) {
+    for completed in s.thumb_service.drain() {
+        if let Ok(bitmap) = completed.result {
+            let key = completed.path.to_string_lossy().into_owned();
+            let bytes = bitmap.bgra.len();
+            if bytes <= 64 * 1024 * 1024 {
+                if let Some(old) = s.thumbs.remove(&key) { s.thumb_bytes = s.thumb_bytes.saturating_sub(old.bgra.len()); s.thumb_order.retain(|p| p != &key); }
+                while s.thumb_bytes + bytes > 64 * 1024 * 1024 {
+                    let Some(oldest) = s.thumb_order.pop_front() else { break };
+                    if let Some(old) = s.thumbs.remove(&oldest) { s.thumb_bytes = s.thumb_bytes.saturating_sub(old.bgra.len()); }
+                    s.thumb_service.forget(std::path::Path::new(&oldest));
+                }
+                s.thumb_bytes += bytes;
+                s.thumb_order.push_back(key.clone());
+                s.thumbs.insert(key, bitmap);
+            }
+        }
+    }
+}
+
+unsafe fn paint_window(hwnd: HWND, s: &mut State) {
+    receive_shell_thumbs(s);
+    let (client_w, client_h) = client_size(hwnd);
+    let metrics = s.app.metrics(client_w, client_h, s.dpi);
+    let visible_paths: Vec<_> = metrics.visible_range(s.app.scroll, s.app.coll.len())
+        .filter_map(|i| s.app.coll.get(i).map(|d| PathBuf::from(&d.path))).collect();
+    s.thumb_service.set_visible(visible_paths.clone());
+    for p in visible_paths { let key = p.to_string_lossy().into_owned(); if s.thumbs.contains_key(&key) { s.thumb_order.retain(|v| v != &key); s.thumb_order.push_back(key); } }
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
@@ -189,7 +224,7 @@ unsafe fn paint_window(hwnd: HWND, s: &State) {
             let mem = CreateCompatibleDC(hdc);
             let bm = CreateCompatibleBitmap(hdc, w, h);
             let old = SelectObject(mem, bm);
-            paint::draw_with_panel(mem, w, h, &s.app, s.panel.as_ref(), &s.pal, s.dpi);
+            paint::draw_with_shell_thumbs(mem, w, h, &s.app, s.panel.as_ref(), &s.pal, s.dpi, &s.thumbs);
             BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
             SelectObject(mem, old);
             DeleteObject(bm);
@@ -506,6 +541,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 }
                 0
             }
+            WM_SHELL_THUMB => {
+                if let Some(s) = state(hwnd) { receive_shell_thumbs(s); redraw(hwnd); }
+                0
+            }
             WM_SCAN => {
                 if let Some(s) = state(hwnd) {
                     pump(hwnd, s);
@@ -524,6 +563,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_DESTROY => {
                 if let Some(s) = state(hwnd) {
+                    s.notify_hwnd.store(0, Ordering::Relaxed);
                     if let Some(j) = &s.job {
                         j.cancel();
                     }
@@ -613,7 +653,13 @@ pub fn run(opts: Options) -> Result<(), String> {
         let mut r = RECT { left: 0, top: 0, right: scale(DEFAULT_W, dpi), bottom: scale(DEFAULT_H, dpi) };
         AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPEDWINDOW, 0, 0, dpi);
         let no_scan = opts.no_scan;
-        let raw = Box::into_raw(Box::new(State { app, pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes, settings_path: path.clone(), panel: None, rescan: false }));
+        let notify_hwnd = Arc::new(AtomicUsize::new(0));
+        let worker_hwnd = Arc::clone(&notify_hwnd);
+        let thumb_service = grid_core::shell_thumb::ThumbnailService::new(4, Arc::new(move || {
+            let target = worker_hwnd.load(Ordering::Relaxed);
+            if target != 0 { PostMessageW(target as HWND, WM_SHELL_THUMB, 0, 0); }
+        }));
+        let raw = Box::into_raw(Box::new(State { app, pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes, settings_path: path.clone(), panel: None, rescan: false, thumb_service, thumbs: HashMap::new(), thumb_order: VecDeque::new(), thumb_bytes: 0, notify_hwnd }));
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),
@@ -632,6 +678,7 @@ pub fn run(opts: Options) -> Result<(), String> {
             drop(Box::from_raw(raw));
             return Err("창을 만들지 못했습니다".into());
         }
+        (*raw).notify_hwnd.store(hwnd as usize, Ordering::Relaxed);
         let real = GetDpiForWindow(hwnd).max(96);
         (*raw).dpi = real;
         ui_theme::apply_window(hwnd, kind);

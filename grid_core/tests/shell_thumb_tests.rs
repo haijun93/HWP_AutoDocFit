@@ -63,13 +63,38 @@ fn shell_thumbnail_benchmark_synthetic_only() {
     let files: Vec<_> = (0..20)
         .map(|i| root.join(format!("large-{i:02}.jpg")))
         .collect();
-    let start = Instant::now();
-    let successes = files
-        .iter()
-        .filter(|p| shell_thumb::thumbnail(p, 256).is_ok())
-        .count();
-    eprintln!(
-        "large20 successes={successes} total_s={:.4}",
-        start.elapsed().as_secs_f64()
-    );
+    for workers in [1usize, 2, 4, 8] {
+        let run_root = root.join(format!("pool-workers-{workers}-{}", std::process::id()));
+        std::fs::create_dir_all(&run_root).unwrap();
+        let worker_files: Vec<_> = files
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let dest = run_root.join(format!("large-{i:02}.jpg"));
+                std::fs::copy(p, &dest).unwrap();
+                dest
+            })
+            .collect();
+        let service = shell_thumb::ThumbnailService::new(workers, std::sync::Arc::new(|| {}));
+        let start = Instant::now();
+        service.set_visible(worker_files.clone());
+        let (mut completed, mut successes) = (0, 0);
+        while completed < worker_files.len() {
+            for result in service.drain() {
+                completed += 1;
+                if result.result.is_ok() {
+                    successes += 1;
+                }
+            }
+            assert!(
+                start.elapsed().as_secs() < 60,
+                "thumbnail pool stalled: {completed}/20"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        eprintln!(
+            "large20 sta_pool_workers={workers} successes={successes} total_s={:.4}",
+            start.elapsed().as_secs_f64()
+        );
+    }
 }

@@ -10,7 +10,7 @@ use windows_sys::Win32::Graphics::Gdi::*;
 
 pub use grid_core::fmt::blend;
 /// 한 칸: 자리표시 썸네일(THUMBRS 전) + 확장자 배지 + 이름 + 크기·수정일.
-unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32) {
+unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32, bitmap: Option<&grid_core::shell_thumb::Bitmap>) {
     unsafe {
         let s = |v: i32| scale(v, dpi);
         let col = ext_color(&d.ext);
@@ -20,19 +20,22 @@ unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, select
         let thumb = Rect::new(r.left + s(8), r.top + s(8), r.right - s(8), (r.bottom - info_h - s(4)).max(r.top + s(20)));
         let tint = Rect::new(thumb.left, thumb.top, thumb.right, thumb.bottom);
         boxed(hdc, &tint, blend(pal.bg, col, 0.10), blend(pal.bg, col, 0.22), 1, s(6));
+        if let Some(bitmap) = bitmap { draw_shell_bitmap(hdc, &thumb, bitmap); }
         // 문서 모양 자리표시(실제 썸네일은 THUMBRS 후속).
-        let ph = (thumb.height() * 62 / 100).min(thumb.width() * 100 / 80);
-        let pw = ph * 76 / 100;
-        let (cx, cy) = ((thumb.left + thumb.right) / 2, (thumb.top + thumb.bottom) / 2);
-        let page = Rect::new(cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2);
-        let ink = blend(pal.bg, col, 0.55);
-        boxed(hdc, &page, pal.bg, ink, s(2), s(4));
-        let fold = (pw / 4).max(s(4));
-        line(hdc, page.right - fold, page.top, page.right - fold, page.top + fold, ink, 1);
-        line(hdc, page.right - fold, page.top + fold, page.right, page.top + fold, ink, 1);
-        for k in 0..3 {
-            let y = page.top + ph * (45 + k * 14) / 100;
-            line(hdc, page.left + pw / 6, y, page.right - pw / 6 - if k == 2 { pw / 4 } else { 0 }, y, blend(pal.bg, col, 0.35), s(2));
+        if bitmap.is_none() {
+            let ph = (thumb.height() * 62 / 100).min(thumb.width() * 100 / 80);
+            let pw = ph * 76 / 100;
+            let (cx, cy) = ((thumb.left + thumb.right) / 2, (thumb.top + thumb.bottom) / 2);
+            let page = Rect::new(cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2);
+            let ink = blend(pal.bg, col, 0.55);
+            boxed(hdc, &page, pal.bg, ink, s(2), s(4));
+            let fold = (pw / 4).max(s(4));
+            line(hdc, page.right - fold, page.top, page.right - fold, page.top + fold, ink, 1);
+            line(hdc, page.right - fold, page.top + fold, page.right, page.top + fold, ink, 1);
+            for k in 0..3 {
+                let y = page.top + ph * (45 + k * 14) / 100;
+                line(hdc, page.left + pw / 6, y, page.right - pw / 6 - if k == 2 { pw / 4 } else { 0 }, y, blend(pal.bg, col, 0.35), s(2));
+            }
         }
         // 확장자 배지(왼쪽 아래).
         let label = badge_text(&d.ext);
@@ -50,6 +53,18 @@ unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, select
         let m = Rect::new(r.left + s(10), r.bottom - s(22), r.right - s(10), r.bottom - s(6));
         text(hdc, f.small, &m, &meta, pal.text_sub, ONE_LINE);
     }
+}
+
+unsafe fn draw_shell_bitmap(hdc: HDC, r: &Rect, bitmap: &grid_core::shell_thumb::Bitmap) {
+    if bitmap.width == 0 || bitmap.height == 0 || bitmap.bgra.len() < bitmap.width as usize * bitmap.height as usize * 4 { return; }
+    let mut info: BITMAPINFO = unsafe { std::mem::zeroed() };
+    info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    info.bmiHeader.biWidth = bitmap.width as i32;
+    info.bmiHeader.biHeight = -(bitmap.height as i32);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    unsafe { StretchDIBits(hdc, r.left, r.top, r.width(), r.height(), 0, 0, bitmap.width as i32, bitmap.height as i32, bitmap.bgra.as_ptr().cast(), &mut info, DIB_RGB_COLORS, SRCCOPY); }
 }
 
 unsafe fn draw_toolbar(hdc: HDC, f: &Fonts, tb: &Toolbar, app: &App, pal: &Palette, dpi: u32) {
@@ -223,6 +238,10 @@ pub fn draw(hdc: HDC, w: i32, h: i32, app: &App, pal: &Palette, dpi: u32) -> usi
 
 /// `draw` + (있으면) 제외 폴더 편집 패널. 실제 창과 캡처 모드가 같은 함수를 쓴다.
 pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32) -> usize {
+    draw_with_shell_thumbs(hdc, w, h, app, panel, pal, dpi, &std::collections::HashMap::new())
+}
+
+pub fn draw_with_shell_thumbs(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32, thumbs: &std::collections::HashMap<String, grid_core::shell_thumb::Bitmap>) -> usize {
     unsafe {
         let f = Fonts::new(dpi);
         let banner = app.banner_shown();
@@ -238,7 +257,7 @@ pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate
             SelectClipRgn(hdc, clip);
             for i in m.visible_range(app.scroll, app.coll.len()) {
                 if let Some(d) = app.coll.get(i) {
-                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.selected == Some(i), app.tz_offset, pal, dpi);
+                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.selected == Some(i), app.tz_offset, pal, dpi, thumbs.get(&d.path));
                     drawn += 1;
                 }
             }

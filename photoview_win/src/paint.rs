@@ -11,7 +11,7 @@ use windows_sys::Win32::Graphics::Gdi::*;
 
 pub use grid_core::fmt::blend;
 /// 한 칸: 자리표시 썸네일(THUMBRS 전·해와 산 그림) + 확장자 배지 + 파일 이름 + 크기·수정일.
-unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32) {
+unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32, bitmap: Option<&grid_core::shell_thumb::Bitmap>) {
     unsafe {
         let s = |v: i32| scale(v, dpi);
         let col = photo_color(&d.ext);
@@ -20,26 +20,29 @@ unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, select
         let info_h = s(44);
         let thumb = Rect::new(r.left + s(6), r.top + s(6), r.right - s(6), (r.bottom - info_h - s(2)).max(r.top + s(20)));
         boxed(hdc, &thumb, blend(pal.bg, col, 0.10), blend(pal.bg, col, 0.22), 1, s(6));
+        if let Some(bitmap) = bitmap { draw_shell_bitmap(hdc, &thumb, bitmap); }
         // 사진 모양 자리표시(실제 썸네일은 THUMBRS 후속): 해 + 산 두 개. 칸 모양에 맞게 안쪽 영역에 그린다.
-        let ink = blend(pal.bg, col, 0.45);
-        let inner = Rect::new(thumb.left + thumb.width() / 6, thumb.top + thumb.height() / 5, thumb.right - thumb.width() / 6, thumb.bottom - thumb.height() / 5);
-        let (iw, ih) = (inner.width(), inner.height());
-        let sun = (ih.min(iw) / 6).max(s(3));
-        let (sx, sy) = (inner.left + iw * 72 / 100, inner.top + ih * 24 / 100);
-        let (pen, br) = (CreatePen(PS_SOLID, 1, ink), CreateSolidBrush(ink));
-        let (op, ob) = (SelectObject(hdc, pen), SelectObject(hdc, br));
-        Ellipse(hdc, sx - sun, sy - sun, sx + sun, sy + sun);
-        let base = inner.bottom;
-        let hill = |x0: i32, x1: i32, peak_x: i32, peak_y: i32| {
-            let pts = [POINT { x: x0, y: base }, POINT { x: peak_x, y: peak_y }, POINT { x: x1, y: base }];
-            Polygon(hdc, pts.as_ptr(), 3);
-        };
-        hill(inner.left, inner.left + iw * 62 / 100, inner.left + iw * 30 / 100, inner.top + ih * 42 / 100);
-        hill(inner.left + iw * 34 / 100, inner.right, inner.left + iw * 68 / 100, inner.top + ih * 58 / 100);
-        SelectObject(hdc, op);
-        SelectObject(hdc, ob);
-        DeleteObject(pen);
-        DeleteObject(br);
+        if bitmap.is_none() {
+            let ink = blend(pal.bg, col, 0.45);
+            let inner = Rect::new(thumb.left + thumb.width() / 6, thumb.top + thumb.height() / 5, thumb.right - thumb.width() / 6, thumb.bottom - thumb.height() / 5);
+            let (iw, ih) = (inner.width(), inner.height());
+            let sun = (ih.min(iw) / 6).max(s(3));
+            let (sx, sy) = (inner.left + iw * 72 / 100, inner.top + ih * 24 / 100);
+            let (pen, br) = (CreatePen(PS_SOLID, 1, ink), CreateSolidBrush(ink));
+            let (op, ob) = (SelectObject(hdc, pen), SelectObject(hdc, br));
+            Ellipse(hdc, sx - sun, sy - sun, sx + sun, sy + sun);
+            let base = inner.bottom;
+            let hill = |x0: i32, x1: i32, peak_x: i32, peak_y: i32| {
+                let pts = [POINT { x: x0, y: base }, POINT { x: peak_x, y: peak_y }, POINT { x: x1, y: base }];
+                Polygon(hdc, pts.as_ptr(), 3);
+            };
+            hill(inner.left, inner.left + iw * 62 / 100, inner.left + iw * 30 / 100, inner.top + ih * 42 / 100);
+            hill(inner.left + iw * 34 / 100, inner.right, inner.left + iw * 68 / 100, inner.top + ih * 58 / 100);
+            SelectObject(hdc, op);
+            SelectObject(hdc, ob);
+            DeleteObject(pen);
+            DeleteObject(br);
+        }
         // 확장자 배지(왼쪽 아래).
         let label = badge_text(&d.ext);
         let bw = text_width(hdc, f.badge, &label) + s(12);
@@ -61,6 +64,18 @@ unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, select
         }
         text(hdc, f.small, &m, &meta, pal.text_sub, ONE_LINE);
     }
+}
+
+unsafe fn draw_shell_bitmap(hdc: HDC, r: &Rect, bitmap: &grid_core::shell_thumb::Bitmap) {
+    if bitmap.width == 0 || bitmap.height == 0 || bitmap.bgra.len() < bitmap.width as usize * bitmap.height as usize * 4 { return; }
+    let mut info: BITMAPINFO = unsafe { std::mem::zeroed() };
+    info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+    info.bmiHeader.biWidth = bitmap.width as i32;
+    info.bmiHeader.biHeight = -(bitmap.height as i32);
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    info.bmiHeader.biCompression = BI_RGB;
+    unsafe { StretchDIBits(hdc, r.left, r.top, r.width(), r.height(), 0, 0, bitmap.width as i32, bitmap.height as i32, bitmap.bgra.as_ptr().cast(), &mut info, DIB_RGB_COLORS, SRCCOPY); }
 }
 
 unsafe fn draw_toolbar(hdc: HDC, f: &Fonts, tb: &Toolbar, app: &App, pal: &Palette, dpi: u32) {
@@ -234,6 +249,10 @@ pub fn draw(hdc: HDC, w: i32, h: i32, app: &App, pal: &Palette, dpi: u32) -> usi
 
 /// `draw` + (있으면) 제외 폴더 편집 패널. 실제 창과 캡처 모드가 같은 함수를 쓴다.
 pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32) -> usize {
+    draw_with_shell_thumbs(hdc, w, h, app, panel, pal, dpi, &std::collections::HashMap::new())
+}
+
+pub fn draw_with_shell_thumbs(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32, thumbs: &std::collections::HashMap<String, grid_core::shell_thumb::Bitmap>) -> usize {
     unsafe {
         let f = Fonts::new(dpi);
         let banner = app.banner_shown();
@@ -249,7 +268,7 @@ pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate
             SelectClipRgn(hdc, clip);
             for i in m.visible_range(app.scroll, app.coll.len()) {
                 if let Some(d) = app.coll.get(i) {
-                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.selected == Some(i), app.tz_offset, pal, dpi);
+                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.selected == Some(i), app.tz_offset, pal, dpi, thumbs.get(&d.path));
                     drawn += 1;
                 }
             }

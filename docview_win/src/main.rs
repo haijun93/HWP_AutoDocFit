@@ -135,7 +135,16 @@ fn capture_real(a: &Args, dir: &str, size: Size, _thumb: f64) -> Result<String, 
     if panel.is_some() && a.scan_root.is_some() {
         tag = "realscan_panel".into();
     }
-    let (path, drawn) = capture::capture_with_panel(std::path::Path::new(dir), &tag, &app, panel.as_ref(), kind, dpi, size)?;
+    let mut thumbs = std::collections::HashMap::new();
+    let metrics = app.metrics(w, h, dpi);
+    for i in metrics.visible_range(app.scroll, app.coll.len()) {
+        if let Some(doc) = app.coll.get(i) {
+            if let Ok(bitmap) = grid_core::shell_thumb::thumbnail(std::path::Path::new(&doc.path), 256) {
+                thumbs.insert(doc.path.clone(), bitmap);
+            }
+        }
+    }
+    let (path, drawn) = capture::capture_with_shell_thumbs(std::path::Path::new(dir), &tag, &app, panel.as_ref(), kind, dpi, size, &thumbs)?;
     Ok(format!("{} (실제 스캔 항목 {}개, 그린 칸 {}, 제외 폴더 {}개)", path.display(), app.coll.len(), drawn, loaded.excluded.len()))
 }
 

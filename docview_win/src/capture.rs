@@ -42,9 +42,13 @@ pub fn capture_to(dir: &Path, tag: &str, app: &App, kind: Kind, dpi: u32, size: 
 
 /// `capture_to` + 제외 폴더 편집 패널(있으면).
 pub fn capture_with_panel(dir: &Path, tag: &str, app: &App, panel: Option<&crate::panel::ExcludePanel>, kind: Kind, dpi: u32, size: Size) -> Result<(PathBuf, usize), String> {
+    capture_with_shell_thumbs(dir, tag, app, panel, kind, dpi, size, &std::collections::HashMap::new())
+}
+
+pub fn capture_with_shell_thumbs(dir: &Path, tag: &str, app: &App, panel: Option<&crate::panel::ExcludePanel>, kind: Kind, dpi: u32, size: Size, thumbs: &std::collections::HashMap<String, grid_core::shell_thumb::Bitmap>) -> Result<(PathBuf, usize), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let (w, h) = (scale(size.0, dpi), scale(size.1, dpi));
-    let shot = render_with_panel(app, panel, &palette_of(kind), w, h, dpi)?;
+    let shot = grid_core::gdi::render(w, h, |hdc| crate::paint::draw_with_shell_thumbs(hdc, w, h, app, panel, &palette_of(kind), dpi, thumbs))?;
     let path = dir.join(format!("docview_{tag}_{}_{}dpi.png", kind_name(kind), dpi));
     crate::png::write(&path, shot.width, shot.height, &shot.bgra)?;
     Ok((path, shot.drawn))

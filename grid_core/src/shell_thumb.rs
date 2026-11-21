@@ -1,7 +1,8 @@
 //! Windows Explorer thumbnail provider via IShellItemImageFactory.
 use std::{
+    collections::{HashSet, VecDeque},
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{Arc, Condvar, Mutex, mpsc},
     time::Duration,
 };
 use windows::{
@@ -36,6 +37,140 @@ pub enum Error {
     NoPixels,
     Oversized,
 }
+
+/// A completed asynchronous request. Errors are strings so callers can pass results across UI
+/// boundaries without depending on the shell crate's error internals.
+pub struct Completed {
+    pub path: PathBuf,
+    pub result: Result<Bitmap, String>,
+}
+
+struct QueueState {
+    pending: VecDeque<PathBuf>,
+    active: HashSet<PathBuf>,
+    known: HashSet<PathBuf>,
+    stopped: bool,
+}
+
+/// Bounded STA-backed thumbnail workers. `set_visible` replaces queued work and preserves the
+/// order supplied by the view, so newly visible cells go first and old off-screen work is dropped.
+pub struct ThumbnailService {
+    queue: Arc<(Mutex<QueueState>, Condvar)>,
+    completed: Mutex<mpsc::Receiver<Completed>>,
+}
+
+impl ThumbnailService {
+    pub fn new(workers: usize, notify: Arc<dyn Fn() + Send + Sync>) -> Self {
+        let queue = Arc::new((
+            Mutex::new(QueueState {
+                pending: VecDeque::new(),
+                active: HashSet::new(),
+                known: HashSet::new(),
+                stopped: false,
+            }),
+            Condvar::new(),
+        ));
+        let (tx, rx) = mpsc::channel();
+        for index in 0..workers.clamp(1, 8) {
+            let queue = Arc::clone(&queue);
+            let tx = tx.clone();
+            let notify = Arc::clone(&notify);
+            let _ = std::thread::Builder::new()
+                .name(format!("shell-thumb-{index}"))
+                .spawn(move || {
+                    // Keep this worker in an STA for its lifetime. `thumbnail_sta` balances an
+                    // additional CoInitializeEx reference around each individual shell call.
+                    let worker_init = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+                    let _worker_com = ComGuard(worker_init.is_ok());
+                    loop {
+                        let path = {
+                            let (lock, wake) = &*queue;
+                            let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+                            while state.pending.is_empty() && !state.stopped {
+                                state = wake.wait(state).unwrap_or_else(|e| e.into_inner());
+                            }
+                            if state.stopped {
+                                return;
+                            }
+                            let path = state.pending.pop_front().expect("checked above");
+                            state.active.insert(path.clone());
+                            path
+                        };
+                        let result = if worker_init.is_ok() {
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                                thumbnail_sta(&path, 256)
+                            }))
+                            .unwrap_or(Err(Error::WorkerPanicked))
+                            .map_err(|e| e.to_string())
+                        } else {
+                            Err(format!("COM init HRESULT=0x{:08X}", worker_init.0 as u32))
+                        };
+                        {
+                            let (lock, _) = &*queue;
+                            let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+                            state.active.remove(&path);
+                        }
+                        let _ = tx.send(Completed { path, result });
+                        notify();
+                    }
+                });
+        }
+        drop(tx);
+        Self {
+            queue,
+            completed: Mutex::new(rx),
+        }
+    }
+
+    pub fn set_visible(&self, ordered_paths: impl IntoIterator<Item = PathBuf>) {
+        let (lock, wake) = &*self.queue;
+        let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+        let old_pending = std::mem::take(&mut state.pending);
+        for old in old_pending {
+            state.known.remove(&old);
+        }
+        let mut next = VecDeque::new();
+        let mut visible = HashSet::new();
+        for path in ordered_paths {
+            if visible.insert(path.clone())
+                && !state.known.contains(&path)
+                && !state.active.contains(&path)
+            {
+                state.known.insert(path.clone());
+                next.push_back(path);
+            }
+        }
+        state.pending = next;
+        wake.notify_all();
+    }
+
+    pub fn drain(&self) -> Vec<Completed> {
+        let rx = self.completed.lock().unwrap_or_else(|e| e.into_inner());
+        let mut out = Vec::new();
+        while let Ok(result) = rx.try_recv() {
+            out.push(result);
+        }
+        out
+    }
+
+    pub fn forget(&self, path: &Path) {
+        let (lock, _) = &*self.queue;
+        let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.active.contains(path) {
+            state.known.remove(path);
+        }
+    }
+}
+
+impl Drop for ThumbnailService {
+    fn drop(&mut self) {
+        let (lock, wake) = &*self.queue;
+        lock.lock().unwrap_or_else(|e| e.into_inner()).stopped = true;
+        wake.notify_all();
+        // Threads are detached: an in-process shell extension can hang indefinitely and Windows
+        // provides no safe way to abort its COM call during window shutdown.
+    }
+}
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{self:?}")
@@ -43,7 +178,7 @@ impl std::fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-/// Uses an isolated STA worker with a 15 s caller timeout. A hung shell extension can leave that
+/// Uses an isolated STA worker with a 3 s caller timeout. A hung shell extension can leave that
 /// worker blocked; Windows offers no safe way to abort an in-process COM call.
 pub fn thumbnail(path: &Path, size: u32) -> Result<Bitmap, Error> {
     if size == 0 || size > 4096 {
@@ -61,7 +196,7 @@ pub fn thumbnail(path: &Path, size: u32) -> Result<Bitmap, Error> {
             let _ = tx.send(result);
         })
         .map_err(|e| Error::Shell(e.to_string()))?;
-    match rx.recv_timeout(Duration::from_secs(15)) {
+    match rx.recv_timeout(Duration::from_secs(3)) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::Timeout),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::WorkerPanicked),
