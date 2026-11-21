@@ -180,8 +180,8 @@ fn index_collects_tag_and_property_values() {
     assert_eq!(index.properties["state"][0].1, "open");
 }
 #[test]
-fn daily_page_uses_iso_filename() {
-    assert_eq!(daily_page("2026-11-18").unwrap(), "2026-11-18.md");
+fn daily_page_uses_canonical_underscore_filename() {
+    assert_eq!(daily_page("2026-11-18").unwrap(), "2026_11_18.md");
 }
 #[test]
 fn daily_page_rejects_invalid_month() {
@@ -203,36 +203,93 @@ fn journal_names_round_trip_and_relative_dates_cover_boundaries() {
 
 #[test]
 fn journal_list_sorts_recent_first_and_ignores_invalid_names() {
-    assert_eq!(journal_list(["2025_01_01", "2026_02_03", "notes", "2025_12_31"]), ["2026_02_03", "2025_12_31", "2025_01_01"]);
+    assert_eq!(
+        journal_list([
+            "2025_01_01",
+            "2026-02-03.md",
+            "2026_02_03",
+            "notes",
+            "2025-12-31.MD"
+        ]),
+        ["2026_02_03", "2025_12_31", "2025_01_01"]
+    );
+}
+
+#[test]
+fn journal_name_normalization_handles_formats_extensions_and_calendar_boundaries() {
+    assert_eq!(
+        normalize_journal_name("2026-11-20.md").unwrap(),
+        "2026_11_20"
+    );
+    assert_eq!(normalize_journal_name("2026_11_20").unwrap(), "2026_11_20");
+    assert_eq!(
+        normalize_journal_name("2024-02-29.MD").unwrap(),
+        "2024_02_29"
+    );
+    assert_eq!(normalize_journal_name("2024_02_29").unwrap(), "2024_02_29");
+    assert!(normalize_journal_name("2026-13-40.md").is_err());
+    assert!(normalize_journal_name("2023_02_29.md").is_err());
+    assert!(normalize_journal_name("2024-02-29.txt").is_err());
+    assert!(normalize_journal_name("2026-11_20.md").is_err());
+    assert!(normalize_journal_name("한글.md").is_err());
 }
 
 #[test]
 fn query_combines_korean_predicates_across_pages_and_preserves_order() {
-    let a=parse("- TODO 회의 #업무 kind:: 문서 [[계획]]\n  - 하위 작업\n").unwrap();
-    let b=parse("- DONE 회의 #업무 kind:: 문서 [[계획]]\n").unwrap();
-    let results=query([("가나다",&a),("다른",&b)], "status:TODO|DONE tag:업무 text:회의 prop:kind=문서 link:계획").unwrap();
-    assert_eq!(results.len(),2);
-    assert_eq!(results[0].page,"가나다");
-    assert_eq!(results[0].path,["회의 #업무 kind:: 문서 [[계획]]"]);
-    assert_eq!(results[0].status.as_deref(),Some("TODO"));
+    let a = parse("- TODO 회의 #업무 kind:: 문서 [[계획]]\n  - 하위 작업\n").unwrap();
+    let b = parse("- DONE 회의 #업무 kind:: 문서 [[계획]]\n").unwrap();
+    let results = query(
+        [("가나다", &a), ("다른", &b)],
+        "status:TODO|DONE tag:업무 text:회의 prop:kind=문서 link:계획",
+    )
+    .unwrap();
+    assert_eq!(results.len(), 2);
+    assert_eq!(results[0].page, "가나다");
+    assert_eq!(results[0].path, ["회의 #업무 kind:: 문서 [[계획]]"]);
+    assert_eq!(results[0].status.as_deref(), Some("TODO"));
 }
 
 #[test]
 fn query_rejects_empty_bad_syntax_and_oversized_input() {
-    let d=parse("- 항목\n").unwrap();
-    assert_eq!(query([("p",&d)], ""),Err(OutlinerError::InvalidQuery("쿼리가 비어 있습니다".into())));
-    assert!(matches!(query([("p",&d)], "tag:"),Err(OutlinerError::InvalidQuery(_))));
-    assert!(matches!(query([("p",&d)], &"x".repeat(MAX_QUERY_BYTES+1)),Err(OutlinerError::InvalidQuery(_))));
+    let d = parse("- 항목\n").unwrap();
+    assert_eq!(
+        query([("p", &d)], ""),
+        Err(OutlinerError::InvalidQuery("쿼리가 비어 있습니다".into()))
+    );
+    assert!(matches!(
+        query([("p", &d)], "tag:"),
+        Err(OutlinerError::InvalidQuery(_))
+    ));
+    assert!(matches!(
+        query([("p", &d)], &"x".repeat(MAX_QUERY_BYTES + 1)),
+        Err(OutlinerError::InvalidQuery(_))
+    ));
 }
 
 #[test]
 fn json_api_exposes_query_and_journal_commands() {
-    let q=handle_request(serde_json::json!({"op":"query","args":{"query":"text:한글","pages":[{"page":"일지","document":"- TODO 한글\n"}]}}));
-    assert_eq!(q["ok"],true); assert_eq!(q["result"]["results"][0]["page"],"일지");
-    let j=handle_request(serde_json::json!({"op":"journal_name","args":{"date":"2026-11-19"}}));
-    assert_eq!(j["result"]["name"],"2026_11_19");
-    let l=handle_request(serde_json::json!({"op":"journal_list","args":{"names":["2026_01_01","2025_01_01"]}}));
-    assert_eq!(l["result"]["names"][0],"2026_01_01");
+    let q = handle_request(
+        serde_json::json!({"op":"query","args":{"query":"text:한글","pages":[{"page":"일지","document":"- TODO 한글\n"}]}}),
+    );
+    assert_eq!(q["ok"], true);
+    assert_eq!(q["result"]["results"][0]["page"], "일지");
+    let j = handle_request(serde_json::json!({"op":"journal_name","args":{"date":"2026-11-19"}}));
+    assert_eq!(j["result"]["name"], "2026_11_19");
+    let l = handle_request(
+        serde_json::json!({"op":"journal_list","args":{"names":["2026_01_01","2025_01_01"]}}),
+    );
+    assert_eq!(l["result"]["names"][0], "2026_01_01");
+}
+
+#[test]
+fn json_edit_split_accepts_grapheme_offset() {
+    let response = handle_request(serde_json::json!({
+        "op": "edit",
+        "document": "- 한글🙂\n",
+        "args": {"action": "split", "block_id": 1, "offset": 2}
+    }));
+    assert_eq!(response["ok"], true);
+    assert_eq!(response["result"]["markdown"], "- 한글\n- 🙂\n");
 }
 #[test]
 fn search_supports_two_scalar_partial_match() {
@@ -281,6 +338,66 @@ fn split_and_merge_keep_text_and_metadata_consistent() {
     edit(&mut doc, "merge", 1, None).unwrap();
     assert_eq!(doc.blocks[0].tags, ["tag"]);
 }
+
+#[test]
+fn cursor_split_uses_graphemes_for_korean_combining_marks_and_emoji() {
+    let mut doc = parse("- 가나🙂‍👩‍💻끝\n").unwrap();
+    edit_with_offset(&mut doc, "split", 1, None, Some(2)).unwrap();
+    assert_eq!(doc.blocks[0].text, "가나");
+    assert_eq!(doc.blocks[1].text, "🙂‍👩‍💻끝");
+
+    let mut doc = parse("- e\u{301}🙂‍👩‍💻Z\n").unwrap();
+    edit_with_offset(&mut doc, "split", 1, None, Some(1)).unwrap();
+    assert_eq!(doc.blocks[0].text, "e\u{301}");
+    assert_eq!(doc.blocks[1].text, "🙂‍👩‍💻Z");
+}
+
+#[test]
+fn cursor_split_handles_empty_start_end_and_out_of_range_offsets() {
+    let mut empty = parse("- \n").unwrap();
+    edit_with_offset(&mut empty, "split", 1, None, Some(0)).unwrap();
+    assert_eq!(empty.blocks[0].text, "");
+    assert_eq!(empty.blocks[1].text, "");
+
+    let mut start = parse("- text\n").unwrap();
+    edit_with_offset(&mut start, "split", 1, None, Some(0)).unwrap();
+    assert_eq!(start.blocks[0].text, "");
+    assert_eq!(start.blocks[1].text, "text");
+
+    let mut end = parse("- text\n").unwrap();
+    edit_with_offset(&mut end, "split", 1, None, Some(99)).unwrap();
+    assert_eq!(end.blocks[0].text, "text");
+    assert_eq!(end.blocks[1].text, "");
+}
+
+#[test]
+fn cursor_split_copies_structure_and_recomputes_text_metadata_per_fragment() {
+    let mut doc =
+        parse("- parent\n  - TODO title #front kind:: left #right other:: right\n").unwrap();
+    edit(&mut doc, "fold", 2, None).unwrap();
+    edit_with_offset(
+        &mut doc,
+        "split",
+        2,
+        None,
+        Some("title #front ".chars().count()),
+    )
+    .unwrap();
+
+    let front = &doc.blocks[1];
+    let back = &doc.blocks[2];
+    assert_eq!(front.id, 2);
+    assert_eq!(back.id, 3);
+    assert_eq!((front.indent, back.indent), (2, 2));
+    assert!(front.folded && back.folded);
+    assert_eq!(front.status.as_deref(), Some("TODO"));
+    assert_eq!(back.status.as_deref(), Some("TODO"));
+    assert_eq!(front.tags, ["front"]);
+    assert_eq!(back.tags, ["right"]);
+    assert!(front.properties.is_empty());
+    assert_eq!(back.properties["kind"], "left");
+    assert_eq!(back.properties["other"], "right");
+}
 #[test]
 fn atomic_save_replaces_existing_file() {
     let path = temp_path("replace");
@@ -294,6 +411,66 @@ fn atomic_save_failure_preserves_original_file() {
     let path = temp_path("failure");
     fs::write(&path, "original").unwrap();
     let result = save_atomic(&path.join("child.md"), "replacement");
+    assert!(result.is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "original");
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn content_digest_and_stale_detection_compare_exact_content() {
+    let digest = content_digest("같은 내용");
+    assert_eq!(digest.len(), 64);
+    assert!(!is_stale(&digest, "같은 내용"));
+    assert!(is_stale(&digest, "다른 내용"));
+}
+
+#[test]
+fn checked_atomic_save_detects_changes_and_missing_files() {
+    let path = temp_path("conflict");
+    fs::write(&path, "read version").unwrap();
+    let expected = content_digest("read version");
+    save_atomic_checked(&path, "saved version", Some(&expected)).unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), "saved version");
+
+    let expected = content_digest("saved version");
+    fs::write(&path, "changed elsewhere").unwrap();
+    assert_eq!(
+        save_atomic_checked(&path, "must not overwrite", Some(&expected)),
+        Err(OutlinerError::Conflict)
+    );
+    assert_eq!(fs::read_to_string(&path).unwrap(), "changed elsewhere");
+
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        save_atomic_checked(&path, "must not recreate", Some(&expected)),
+        Err(OutlinerError::Conflict)
+    );
+    assert!(!path.exists());
+}
+
+#[test]
+fn json_save_expected_digest_returns_conflict_without_overwriting() {
+    let path = temp_path("api-save-conflict");
+    fs::write(&path, "changed on disk").unwrap();
+    let response = handle_request(serde_json::json!({
+        "op": "save",
+        "args": {
+            "path": path.to_string_lossy(),
+            "markdown": "stale edit",
+            "expected_digest": content_digest("previous content")
+        }
+    }));
+    assert_eq!(response["ok"], false);
+    assert_eq!(response["error"]["code"], "CONFLICT");
+    assert_eq!(fs::read_to_string(&path).unwrap(), "changed on disk");
+    fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn checked_atomic_save_failure_does_not_replace_existing_content() {
+    let path = temp_path("checked-failure");
+    fs::write(&path, "original").unwrap();
+    let result = save_atomic_checked(&path.join("child.md"), "replacement", None);
     assert!(result.is_err());
     assert_eq!(fs::read_to_string(&path).unwrap(), "original");
     fs::remove_file(path).unwrap();
@@ -385,14 +562,22 @@ fn rename_page_updates_korean_page_names() {
 }
 
 #[test]
-fn rename_page_preserves_aliases() {
+fn rename_page_updates_alias_targets_and_preserves_alias_text() {
     let source = "- [[옛이름]] 변경대상\n- [[옛이름|별칭]] 유지대상\n- [[별칭|옛이름]] 유지대상\n- [별칭]([[옛이름]]) 유지대상\n";
     let (updated, changed) = update_page_links_text(source, "옛이름", "새이름");
     assert!(changed);
     assert_eq!(
         updated,
-        "- [[새이름]] 변경대상\n- [[옛이름|별칭]] 유지대상\n- [[별칭|옛이름]] 유지대상\n- [별칭]([[옛이름]]) 유지대상\n"
+        "- [[새이름]] 변경대상\n- [[새이름|별칭]] 유지대상\n- [[별칭|옛이름]] 유지대상\n- [별칭]([[옛이름]]) 유지대상\n"
     );
+}
+
+#[test]
+fn rename_page_matches_case_exactly_and_leaves_tags_untouched() {
+    let source = "- [[Page]] [[page]] #Page #page\n";
+    let (updated, changed) = update_page_links_text(source, "Page", "Renamed");
+    assert!(changed);
+    assert_eq!(updated, "- [[Renamed]] [[page]] #Page #page\n");
 }
 
 #[test]
@@ -453,10 +638,7 @@ fn rename_page_in_files_atomic_replacement_and_preview() {
         preview_res.affected_files,
         vec![file1.display().to_string(), file3.display().to_string()]
     );
-    assert_eq!(
-        fs::read_to_string(&file1).unwrap(),
-        "- [[옛페이지]] 링크\n"
-    );
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "- [[옛페이지]] 링크\n");
     assert_eq!(
         fs::read_to_string(&file3).unwrap(),
         "- 또 다른 [[옛페이지]] 링크\n"
@@ -466,10 +648,7 @@ fn rename_page_in_files_atomic_replacement_and_preview() {
     let exec_res = rename_page_in_files(&paths, "옛페이지", "새페이지", false).unwrap();
     assert!(!exec_res.preview);
     assert_eq!(exec_res.count, 2);
-    assert_eq!(
-        fs::read_to_string(&file1).unwrap(),
-        "- [[새페이지]] 링크\n"
-    );
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "- [[새페이지]] 링크\n");
     assert_eq!(
         fs::read_to_string(&file2).unwrap(),
         "- 다른 페이지 링크 [[다른곳]]\n"
@@ -478,6 +657,8 @@ fn rename_page_in_files_atomic_replacement_and_preview() {
         fs::read_to_string(&file3).unwrap(),
         "- 또 다른 [[새페이지]] 링크\n"
     );
+    assert_eq!(preview_res.affected_files, exec_res.affected_files);
+    assert_eq!(preview_res.count, exec_res.count);
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -528,3 +709,24 @@ fn api_handles_resolve_block_ref_and_rename_page() {
     assert_eq!(res_rename["result"]["changed"], true);
 }
 
+#[test]
+fn api_rename_preview_markdown_matches_applied_markdown() {
+    let document = "- [[옛페이지|별칭]] #옛페이지\n```md\n[[옛페이지]]\n```\n";
+    let preview = handle_request(serde_json::json!({
+        "op": "rename_page",
+        "document": document,
+        "args": {"old_name": "옛페이지", "new_name": "새페이지", "preview": true}
+    }));
+    let applied = handle_request(serde_json::json!({
+        "op": "rename_page",
+        "document": document,
+        "args": {"old_name": "옛페이지", "new_name": "새페이지", "preview": false}
+    }));
+    assert_eq!(preview["ok"], true);
+    assert_eq!(applied["ok"], true);
+    assert_eq!(preview["result"]["markdown"], applied["result"]["markdown"]);
+    assert_eq!(
+        preview["result"]["markdown"],
+        "- [[새페이지|별칭]] #옛페이지\n```md\n[[옛페이지]]\n```\n"
+    );
+}

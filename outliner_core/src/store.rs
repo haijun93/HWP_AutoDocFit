@@ -1,4 +1,5 @@
 use crate::{parse, serialize, Document, OutlinerError, MAX_DOCUMENT_BYTES};
+use sha2::{Digest, Sha256};
 use std::{
     fs,
     io::Write,
@@ -8,6 +9,17 @@ use std::{
 
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// SHA-256 of the exact UTF-8 bytes, encoded as 64 lowercase hexadecimal digits.
+pub fn content_digest(content: &str) -> String {
+    let digest = Sha256::digest(content.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Returns whether the content currently on disk differs from the content read earlier.
+pub fn is_stale(read_digest: &str, current: &str) -> bool {
+    read_digest != content_digest(current)
+}
+
 /// Reads a UTF-8 Markdown file and parses its contents.
 pub fn load(path: &Path) -> Result<Document, OutlinerError> {
     let content = fs::read_to_string(path).map_err(|error| OutlinerError::Io(error.to_string()))?;
@@ -16,6 +28,28 @@ pub fn load(path: &Path) -> Result<Document, OutlinerError> {
 
 /// Writes through a same-directory temporary file and replaces the destination on success.
 pub fn save_atomic(path: &Path, content: &str) -> Result<(), OutlinerError> {
+    save_atomic_checked(path, content, None)
+}
+
+/// Saves atomically and optionally rejects a file changed since its caller read it.
+/// If an expected digest is supplied, a missing file is also a conflict.
+pub fn save_atomic_checked(
+    path: &Path,
+    content: &str,
+    expected_digest: Option<&str>,
+) -> Result<(), OutlinerError> {
+    if let Some(expected) = expected_digest {
+        let current = fs::read_to_string(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                OutlinerError::Conflict
+            } else {
+                OutlinerError::Io(error.to_string())
+            }
+        })?;
+        if is_stale(expected, &current) {
+            return Err(OutlinerError::Conflict);
+        }
+    }
     if content.len() > MAX_DOCUMENT_BYTES {
         return Err(OutlinerError::DocumentTooLarge);
     }

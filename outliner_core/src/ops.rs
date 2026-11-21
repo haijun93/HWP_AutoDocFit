@@ -2,6 +2,7 @@ use crate::{
     parse_serialize::{block_from_text, refresh_metadata},
     Block, Document, LineNode, OutlinerError,
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 fn find_block(document: &Document, id: u64) -> Result<usize, OutlinerError> {
     document
@@ -33,6 +34,17 @@ pub fn edit(
     operation: &str,
     id: u64,
     text: Option<&str>,
+) -> Result<(), OutlinerError> {
+    edit_with_offset(document, operation, id, text, None)
+}
+
+/// Applies an operation with an optional grapheme offset for cursor based splitting.
+pub fn edit_with_offset(
+    document: &mut Document,
+    operation: &str,
+    id: u64,
+    text: Option<&str>,
+    offset: Option<usize>,
 ) -> Result<(), OutlinerError> {
     let block_index = find_block(document, id)?;
     let sequence_index = document
@@ -100,14 +112,29 @@ pub fn edit(
             document.blocks.swap(block_index, other_block_index);
         }
         "split" => {
-            let separator =
-                text.ok_or_else(|| OutlinerError::Invalid("분할 문자열이 필요합니다".into()))?;
-            let (left, right) = document.blocks[block_index]
-                .text
-                .split_once(separator)
-                .ok_or_else(|| OutlinerError::Invalid("분할 문자열이 없습니다".into()))?;
-            let left = left.to_owned();
-            let right = right.to_owned();
+            let source = document.blocks[block_index].text.clone();
+            let (left, right) = if let Some(offset) = offset {
+                let boundaries: Vec<usize> = source
+                    .grapheme_indices(true)
+                    .map(|(byte_index, _)| byte_index)
+                    .chain(std::iter::once(source.len()))
+                    .collect();
+                let byte_offset = boundaries[offset.min(boundaries.len() - 1)];
+                (
+                    source[..byte_offset].to_owned(),
+                    source[byte_offset..].to_owned(),
+                )
+            } else {
+                let separator =
+                    text.ok_or_else(|| OutlinerError::Invalid("분할 문자열이 필요합니다".into()))?;
+                let (left, right) = source
+                    .split_once(separator)
+                    .ok_or_else(|| OutlinerError::Invalid("분할 문자열이 없습니다".into()))?;
+                (left.to_owned(), right.to_owned())
+            };
+
+            // The original id stays on the front block. Indent, folded, and TODO status are
+            // copied to the new block; tags/properties/links are recalculated from each fragment.
             let mut right_block = document.blocks[block_index].clone();
             let new_id = next_id(document);
             document.blocks[block_index].text = left;
@@ -162,14 +189,12 @@ pub fn edit(
             };
         }
         "toggle_status" => {
-            document.blocks[block_index].status = match document.blocks[block_index]
-                .status
-                .as_deref()
-            {
-                Some("TODO") => Some("DONE".into()),
-                Some("DONE") | None => Some("TODO".into()),
-                Some(_) => Some("TODO".into()),
-            };
+            document.blocks[block_index].status =
+                match document.blocks[block_index].status.as_deref() {
+                    Some("TODO") => Some("DONE".into()),
+                    Some("DONE") | None => Some("TODO".into()),
+                    Some(_) => Some("TODO".into()),
+                };
         }
         "set_text" => {
             document.blocks[block_index].text = text

@@ -67,8 +67,8 @@ fn is_fence_end(line: &str, fence_char: char, fence_count: usize) -> bool {
     count >= fence_count
 }
 
-/// Replaces `[[old_name]]` with `[[new_name]]` on a single line,
-/// leaving aliases, nested links, and inline code untouched.
+/// Replaces a matching page target on one line while preserving wiki-link aliases.
+/// Nested links and inline code are left untouched.
 pub fn update_line_links(line: &str, old_name: &str, new_name: &str) -> String {
     let chars: Vec<char> = line.chars().collect();
     let n = chars.len();
@@ -138,15 +138,11 @@ pub fn update_line_links(line: &str, old_name: &str, new_name: &str) -> String {
             let content_start = i + 2;
             let mut j = content_start;
             let mut has_nested_bracket = false;
-            let mut has_pipe = false;
             let mut close_idx = None;
 
             while j < n {
                 if chars[j] == '[' {
                     has_nested_bracket = true;
-                }
-                if chars[j] == '|' {
-                    has_pipe = true;
                 }
                 if chars[j] == ']' {
                     if j + 1 < n && chars[j + 1] == ']' {
@@ -163,11 +159,16 @@ pub fn update_line_links(line: &str, old_name: &str, new_name: &str) -> String {
             }
 
             if let Some(c_idx) = close_idx {
-                if !has_nested_bracket && !has_pipe {
-                    let target: String = chars[content_start..c_idx].iter().collect();
+                if !has_nested_bracket {
+                    let target_end = chars[content_start..c_idx]
+                        .iter()
+                        .position(|character| *character == '|')
+                        .map_or(c_idx, |offset| content_start + offset);
+                    let target: String = chars[content_start..target_end].iter().collect();
                     if target == old_name {
                         out.push_str("[[");
                         out.push_str(new_name);
+                        out.extend(chars[target_end..c_idx].iter());
                         out.push_str("]]");
                         i = c_idx + 2;
                         continue;
@@ -184,7 +185,7 @@ pub fn update_line_links(line: &str, old_name: &str, new_name: &str) -> String {
 }
 
 /// Updates page links in full document text, preserving line endings
-/// and ignoring fenced code blocks, inline code, aliases, and nested links.
+/// and ignoring fenced code blocks, inline code, nested links, and unrelated tags.
 pub fn update_page_links_text(content: &str, old_name: &str, new_name: &str) -> (String, bool) {
     if old_name.is_empty() || old_name == new_name {
         return (content.to_string(), false);

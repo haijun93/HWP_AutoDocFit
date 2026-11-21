@@ -38,7 +38,7 @@ fn cli_handles_parse_edit_search_backlinks_daily_page_and_errors() {
     assert_eq!(responses[1]["result"]["markdown"], "- new\n");
     assert_eq!(responses[2]["result"]["block_ids"], json!([1]));
     assert_eq!(responses[3]["result"]["block_ids"], json!([1]));
-    assert_eq!(responses[4]["result"]["filename"], "2026-11-18.md");
+    assert_eq!(responses[4]["result"]["filename"], "2026_11_18.md");
     assert_eq!(responses[5]["error"]["code"], "QUERY_TOO_SHORT");
     assert_eq!(responses[6]["id"], "r");
     assert_eq!(responses[6]["ok"], true);

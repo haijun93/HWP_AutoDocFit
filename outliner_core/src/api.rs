@@ -1,6 +1,8 @@
 use crate::{
-    backlinks, collect_markdown_files, daily_page, journal_name, journal_date, journal_relative, journal_list, query, edit, parse, rename_page_in_files,
-    resolve_block_ref, save_atomic, search, serialize, update_page_links_text, OutlinerError,
+    backlinks, collect_markdown_files, daily_page, edit_with_offset, journal_date, journal_list,
+    journal_name, journal_relative, normalize_journal_name, parse, query, rename_page_in_files,
+    resolve_block_ref, save_atomic_checked, search, serialize, update_page_links_text,
+    OutlinerError,
 };
 use serde_json::{json, Value};
 use std::{
@@ -27,24 +29,54 @@ pub fn handle_request(value: Value) -> Value {
     let result: Result<Value, OutlinerError> = (|| match operation {
         "daily_page" => Ok(json!({"filename": daily_page(args["date"].as_str().unwrap_or(""))?})),
         "journal_name" => {
-            let date=args["date"].as_str().or_else(|| args["name"].as_str()).unwrap_or("");
-            if date.contains('_') { Ok(json!({"date":journal_date(date)?,"name":date})) }
-            else { let name=journal_name(date)?; Ok(json!({"name":name,"yesterday":journal_name(&journal_relative(date,-1)?)?,"today":name,"tomorrow":journal_name(&journal_relative(date,1)?)?})) }
-        },
+            let date = args["date"]
+                .as_str()
+                .or_else(|| args["name"].as_str())
+                .unwrap_or("");
+            if date.contains('_') || date.to_ascii_lowercase().ends_with(".md") {
+                let name = normalize_journal_name(date)?;
+                Ok(json!({"date":journal_date(date)? ,"name":name}))
+            } else {
+                let name = journal_name(date)?;
+                Ok(
+                    json!({"name":name,"yesterday":journal_name(&journal_relative(date,-1)?)?,"today":name,"tomorrow":journal_name(&journal_relative(date,1)?)?}),
+                )
+            }
+        }
         "journal_list" => {
-            let names: Vec<&str> = args["names"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let names: Vec<&str> = args["names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
             Ok(json!({"names":journal_list(names)}))
         }
         "query" => {
-            let expression=args["query"].as_str().unwrap_or("");
-            let pages: Vec<(String, crate::Document)> = if let Some(items)=args["pages"].as_array() {
-                items.iter().map(|item| {
-                    let name=item["page"].as_str().ok_or_else(|| OutlinerError::Invalid("각 pages 항목에 page가 필요합니다".into()))?;
-                    let content=item["document"].as_str().ok_or_else(|| OutlinerError::Invalid("각 pages 항목에 document가 필요합니다".into()))?;
-                    Ok((name.to_owned(),parse(content)?))
-                }).collect::<Result<_,OutlinerError>>()?
-            } else { vec![(args["page"].as_str().unwrap_or("<document>").to_owned(),parse(document_text)?)] };
-            let refs: Vec<(&str,&crate::Document)> = pages.iter().map(|(n,d)|(n.as_str(),d)).collect();
+            let expression = args["query"].as_str().unwrap_or("");
+            let pages: Vec<(String, crate::Document)> = if let Some(items) =
+                args["pages"].as_array()
+            {
+                items
+                    .iter()
+                    .map(|item| {
+                        let name = item["page"].as_str().ok_or_else(|| {
+                            OutlinerError::Invalid("각 pages 항목에 page가 필요합니다".into())
+                        })?;
+                        let content = item["document"].as_str().ok_or_else(|| {
+                            OutlinerError::Invalid("각 pages 항목에 document가 필요합니다".into())
+                        })?;
+                        Ok((name.to_owned(), parse(content)?))
+                    })
+                    .collect::<Result<_, OutlinerError>>()?
+            } else {
+                vec![(
+                    args["page"].as_str().unwrap_or("<document>").to_owned(),
+                    parse(document_text)?,
+                )]
+            };
+            let refs: Vec<(&str, &crate::Document)> =
+                pages.iter().map(|(n, d)| (n.as_str(), d)).collect();
             Ok(json!({"results":query(refs,expression)?}))
         }
         "load" => {
@@ -59,7 +91,11 @@ pub fn handle_request(value: Value) -> Value {
             let path =
                 path_arg.ok_or_else(|| OutlinerError::Invalid("args.path가 필요합니다".into()))?;
             let content = args["markdown"].as_str().unwrap_or(document_text);
-            save_atomic(Path::new(path), content)?;
+            save_atomic_checked(
+                Path::new(path),
+                content,
+                args.get("expected_digest").and_then(Value::as_str),
+            )?;
             Ok(json!({"path": path, "saved": true}))
         }
         "parse" => Ok(serde_json::to_value(parse(document_text)?)
@@ -69,7 +105,20 @@ pub fn handle_request(value: Value) -> Value {
             let mut document = parse(document_text)?;
             let action = args["action"].as_str().unwrap_or("");
             let block_id = args["block_id"].as_u64().unwrap_or(0);
-            edit(&mut document, action, block_id, args["text"].as_str())?;
+            let offset = args.get("offset").and_then(|value| {
+                value.as_i64().map(|n| n.max(0) as usize).or_else(|| {
+                    value
+                        .as_u64()
+                        .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
+                })
+            });
+            edit_with_offset(
+                &mut document,
+                action,
+                block_id,
+                args["text"].as_str(),
+                offset,
+            )?;
             Ok(json!({"markdown": serialize(&document), "document": document}))
         }
         "search" => Ok(
@@ -87,8 +136,8 @@ pub fn handle_request(value: Value) -> Value {
                 .and_then(Value::as_str)
                 .unwrap_or("");
             let document = if let Some(path) = path_arg {
-                let content =
-                    fs::read_to_string(path).map_err(|error| OutlinerError::Io(error.to_string()))?;
+                let content = fs::read_to_string(path)
+                    .map_err(|error| OutlinerError::Io(error.to_string()))?;
                 parse(&content)?
             } else {
                 parse(document_text)?
