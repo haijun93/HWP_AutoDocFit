@@ -1064,6 +1064,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let has = |flag: &str| args.iter().any(|a| a == flag);
+    if let Some(i) = args.iter().position(|a| a == "--capture-popup") {
+        let Some(dir) = args.get(i + 1) else { eprintln!("--capture-popup requires an output folder"); std::process::exit(2); };
+        let dpi = args.iter().position(|a| a == "--dpi").and_then(|i| args.get(i + 1)).and_then(|s| s.parse::<u32>().ok()).unwrap_or(96).clamp(96, 192);
+        let size = args.iter().position(|a| a == "--size").and_then(|i| args.get(i + 1)).and_then(|s| s.split_once('x'))
+            .and_then(|(w, h)| Some((w.parse::<i32>().ok()?, h.parse::<i32>().ok()?))).unwrap_or((560, 420));
+        let scenario = args.iter().position(|a| a == "--scenario").and_then(|i| args.get(i + 1)).map(String::as_str).unwrap_or("all");
+        let result = unsafe { popup::capture(std::path::Path::new(dir), has("--dark"), dpi, size, scenario) };
+        if let Err(error) = result { eprintln!("popup capture failed: {error}"); std::process::exit(2); }
+        return;
+    }
     // 인스턴스 mutex·트레이·DB를 열기 전에 번들 버전만 조회한다.
     if has("--capture-dir") || has("--capture-settings") {
         if let Some(i) = args.iter().position(|a| a == "--capture-dir" || a == "--capture-settings") {

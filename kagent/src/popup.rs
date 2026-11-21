@@ -36,7 +36,7 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
-use crate::category::Category;
+use crate::category::{Category, CategorySet};
 use crate::settings_menu::{self, Command, Entry};
 use crate::frame::{GRIP, frame_hit, own_border, row_index, scale, style_frame, text_width};
 use crate::store::Summary;
@@ -189,6 +189,10 @@ fn head_button_glyph(b: HeadButton, pinned: bool, maximized: bool) -> char {
 /// 목록 첫 줄의 y(머리글 + 분류 메뉴바 + 키워드검색이면 입력 줄).
 fn list_top(head: i32, cat: i32, search_row: bool, row: i32) -> i32 {
     head + cat + if search_row { row } else { 0 }
+}
+
+fn capture_size(logical: (i32, i32), dpi: u32) -> (i32, i32) {
+    (logical.0 * dpi as i32 / 96, logical.1 * dpi as i32 / 96)
 }
 
 /// 줄 hover 버튼 동작.
@@ -520,6 +524,10 @@ fn popup_hwnd() -> HWND {
 }
 
 pub fn register(instance: HINSTANCE) {
+    register_with_topmost(instance, app().settings.lock().unwrap().always_on_top);
+}
+
+fn register_with_topmost(instance: HINSTANCE, topmost: bool) {
     unsafe {
         let class = wide(CLASS);
         let wc = WNDCLASSEXW {
@@ -537,7 +545,6 @@ pub fn register(instance: HINSTANCE) {
             hIconSm: std::ptr::null_mut(),
         };
         RegisterClassExW(&wc);
-        let topmost = app().settings.lock().unwrap().always_on_top;
         let ex_style = WS_EX_TOOLWINDOW | if topmost { WS_EX_TOPMOST } else { 0 };
         let hwnd = CreateWindowExW(ex_style, class.as_ptr(), wide("퀵몽땅클립보드").as_ptr(),
                                    // WS_THICKFRAME은 크기 조절·DWM 그림자용으로만 두고 틀 자체는 WM_NCCALCSIZE로 없앤다.
@@ -831,87 +838,57 @@ fn kind_tag(kind: &str) -> &'static str {
     }
 }
 
-struct PaintGuard {
-    hwnd: HWND,
-    ps: PAINTSTRUCT,
-    hdc: HDC,
-    mem: HDC,
-    bmp: HBITMAP,
-    old_bmp: HGDIOBJ,
-    old_font: HGDIOBJ,
-    fonts: Vec<HFONT>,
-}
-
+struct PaintGuard { hwnd: HWND, ps: PAINTSTRUCT, hdc: HDC, mem: HDC, bmp: HBITMAP, old_bmp: HGDIOBJ }
 impl Drop for PaintGuard {
-    fn drop(&mut self) {
-        unsafe {
-            if !self.mem.is_null() {
-                if !self.old_font.is_null() {
-                    SelectObject(self.mem, self.old_font);
-                }
-                if !self.old_bmp.is_null() {
-                    SelectObject(self.mem, self.old_bmp);
-                }
-                DeleteDC(self.mem);
-            }
-            for f in &self.fonts {
-                if !f.is_null() {
-                    DeleteObject(*f);
-                }
-            }
-            if !self.bmp.is_null() {
-                DeleteObject(self.bmp);
-            }
-            if !self.hdc.is_null() {
-                EndPaint(self.hwnd, &self.ps);
-            }
-        }
-    }
+    fn drop(&mut self) { unsafe {
+        if !self.mem.is_null() { if !self.old_bmp.is_null() { SelectObject(self.mem, self.old_bmp); } DeleteDC(self.mem); }
+        if !self.bmp.is_null() { DeleteObject(self.bmp); }
+        if !self.hdc.is_null() { EndPaint(self.hwnd, &self.ps); }
+    } }
 }
-
+struct FontGuard { dc: HDC, old: HGDIOBJ, fonts: Vec<HFONT> }
+impl Drop for FontGuard {
+    fn drop(&mut self) { unsafe { if !self.old.is_null() { SelectObject(self.dc, self.old); } for f in &self.fonts { if !f.is_null() { DeleteObject(*f); } } } }
+}
 unsafe fn paint(hwnd: HWND) {
     unsafe {
         let mut ps: PAINTSTRUCT = std::mem::zeroed();
         let hdc = BeginPaint(hwnd, &mut ps);
-        if hdc.is_null() {
-            return;
-        }
-        let mut guard = PaintGuard {
-            hwnd, ps, hdc, mem: std::ptr::null_mut(), bmp: std::ptr::null_mut(), old_bmp: std::ptr::null_mut(),
-            old_font: std::ptr::null_mut(), fonts: Vec::new(),
-        };
-
+        if hdc.is_null() { return; }
+        let mut guard = PaintGuard { hwnd, ps, hdc, mem: std::ptr::null_mut(), bmp: std::ptr::null_mut(), old_bmp: std::ptr::null_mut() };
         let mut rc: RECT = std::mem::zeroed();
         GetClientRect(hwnd, &mut rc);
-        let (w, h) = (rc.right, rc.bottom);
         let mem = CreateCompatibleDC(hdc);
-        if mem.is_null() {
-            return;
-        }
+        if mem.is_null() { return; }
         guard.mem = mem;
-        let bmp = CreateCompatibleBitmap(hdc, w, h);
-        if bmp.is_null() {
-            return;
-        }
+        let bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
+        if bmp.is_null() { return; }
         guard.bmp = bmp;
         guard.old_bmp = SelectObject(mem, bmp);
-
+        let pinned = { let s = app().settings.lock().unwrap(); s.sticky_popup && s.always_on_top };
+        let load_error = app().recent_error.lock().unwrap().clone();
+        let mut state = STATE.lock().unwrap();
+        paint_surface(hwnd, mem, rc, pinned, &load_error, ui_theme::palette(), &mut state);
+        BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+    }
+}
+/// HWND-independent drawing shared by WM_PAINT and capture.
+unsafe fn paint_surface(hwnd: HWND, mem: HDC, rc: RECT, pinned: bool, load_error: &str, p: ui_theme::Palette, st: &mut State) {
+    unsafe {
+        let (w, h) = (rc.right, rc.bottom);
         let mk = |px: i32, weight: i32, face: &str| {
             CreateFontW(-scale(hwnd, px), 0, 0, 0, weight, 0, 0, 0, 1, 0, 0, 5, 0, wide(face).as_ptr())
         };
-        let font = mk(15, 400, "맑은 고딕");
-        let small = mk(12, 400, "맑은 고딕");
-        let small_bold = mk(12, 700, "맑은 고딕");
-        let title_font = mk(13, 700, "맑은 고딕");
+        let font = mk(15, 400, "\u{B9D1}\u{C740} \u{ACE0}\u{B515}");
+        let small = mk(12, 400, "\u{B9D1}\u{C740} \u{ACE0}\u{B515}");
+        let small_bold = mk(12, 700, "\u{B9D1}\u{C740} \u{ACE0}\u{B515}");
+        let title_font = mk(13, 700, "\u{B9D1}\u{C740} \u{ACE0}\u{B515}");
         let glyph = mk(10, 400, "Segoe MDL2 Assets");
         let glyph_big = mk(14, 400, "Segoe MDL2 Assets");
-        guard.fonts = vec![font, small, small_bold, title_font, glyph, glyph_big];
-        if guard.fonts.iter().any(|f| f.is_null()) {
-            return;
-        }
-        guard.old_font = SelectObject(mem, font);
+        let mut fg = FontGuard { dc: mem, old: std::ptr::null_mut(), fonts: vec![font, small, small_bold, title_font, glyph, glyph_big] };
+        if fg.fonts.iter().any(|f| f.is_null()) { return; }
+        fg.old = SelectObject(mem, font);
         SetBkMode(mem, TRANSPARENT as i32);
-
         let fill = |r: RECT, color: u32| {
             let brush = CreateSolidBrush(color);
             if !brush.is_null() {
@@ -923,16 +900,13 @@ unsafe fn paint(hwnd: HWND) {
             let mut r = r;
             DrawTextW(mem, wide(s).as_ptr(), -1, &mut r, flags | DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX);
         };
-        let pinned = { let s = app().settings.lock().unwrap(); s.sticky_popup && s.always_on_top };
         // 색은 현재 테마 하나에서(밝게 = 예전 하드코딩 값 그대로, RUSTALL1 DARK1).
-        let p = ui_theme::palette();
         let head = scale(hwnd, HEAD_H);
         let cat_h = scale(hwnd, CAT_H);
         let row = scale(hwnd, ROW_H);
         let bw = scale(hwnd, CAPTION_W);
         fill(rc, p.bg);
 
-        let mut st = STATE.lock().unwrap();
         let maximized = st.restore_rect.is_some();
 
         // ① 상단 메뉴바
@@ -978,9 +952,7 @@ unsafe fn paint(hwnd: HWND) {
         let collapsed = h < head + cat_h + row;
         if collapsed {
             st.tab_spans.clear();
-            drop(st);
             own_border(mem, rc);
-            BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
             return;
         }
 
@@ -1043,7 +1015,6 @@ unsafe fn paint(hwnd: HWND) {
         if st.items.is_empty() {
             SelectObject(mem, font);
             SetTextColor(mem, p.text_muted);
-            let load_error = app().recent_error.lock().unwrap().clone();
             let msg = match tab {
                 // 저장소를 읽지 못해 비어 있는 경우를 "기록 없음"으로 잘못 알리지 않는다.
                 _ if !load_error.is_empty() => format!("목록을 불러오지 못했습니다: {load_error}"),
@@ -1095,9 +1066,86 @@ unsafe fn paint(hwnd: HWND) {
                 draw_open_icon(mem, open_rc, p.row_text(sel, p.icon));
             }
         }
-        drop(st);
         own_border(mem, rc);
-        BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
+    }
+}
+
+
+
+/// 화면 없이 합성 자료만으로 단축키 창의 실제 그리기 함수를 캡처한다.
+pub unsafe fn capture(dir: &std::path::Path, dark: bool, dpi: u32, size: (i32, i32), scenario: &str) -> Result<(), String> {
+    use windows_sys::Win32::Graphics::Gdi::{CreateDIBSection, BITMAPINFO, BITMAPINFOHEADER, RGBQUAD};
+    use windows_sys::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
+    unsafe {
+        SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        crate::frame::set_dpi_override(dpi);
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        let instance = windows_sys::Win32::System::LibraryLoader::GetModuleHandleW(std::ptr::null());
+        register_with_topmost(instance, false);
+        let hwnd = popup_hwnd();
+        if hwnd.is_null() { return Err("팝업 캡처용 숨김 창을 만들지 못했습니다".into()); }
+        let (w, h) = capture_size(size, dpi);
+        SetWindowPos(hwnd, std::ptr::null_mut(), 0, 0, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+        let long_text = "한글과 English mixed text — 선택한 항목의 긴 본문이 줄 끝에서 자연스럽게 잘리는지 확인합니다. ".repeat(3);
+        let samples = vec![
+            Summary { id: 1, kind: "text".into(), preview: "회의 안건과 결정 사항을 정리한 메모입니다".into(), pinned: true, cats: CategorySet::of(&[Category::All]), ..Default::default() },
+            Summary { id: 2, kind: "image".into(), preview: "그림 항목 · 1280 × 720".into(), cats: CategorySet::of(&[Category::All, Category::Image]), ..Default::default() },
+            Summary { id: 3, kind: "files".into(), preview: "보고서 최종본.docx 외 2개 파일".into(), cats: CategorySet::of(&[Category::All, Category::File, Category::Document]), ..Default::default() },
+            Summary { id: 4, kind: "text".into(), preview: long_text.clone(), cats: CategorySet::of(&[Category::All]), ..Default::default() },
+            Summary { id: 5, kind: "text".into(), preview: "메모: 내일 오전 10시 회의 / Bring the printed draft".into(), cats: CategorySet::of(&[Category::All]), ..Default::default() },
+            Summary { id: 6, kind: "files".into(), preview: "프로젝트 자료 폴더".into(), cats: CategorySet::of(&[Category::All, Category::Folder]), ..Default::default() },
+            Summary { id: 7, kind: "text".into(), preview: "https://example.test/회의-자료".into(), cats: CategorySet::of(&[Category::All, Category::Web]), ..Default::default() },
+            Summary { id: 8, kind: "image".into(), preview: "화면 캡처 · 1920 × 1080".into(), cats: CategorySet::of(&[Category::All, Category::Image, Category::Capture]), ..Default::default() },
+        ];
+        let scenarios: Vec<&str> = if scenario == "all" { vec!["empty", "mixed", "long_text", "selected", "search", "search_empty", "memo", "category_document", "category_image", "category_files", "category_folder", "category_web", "category_capture", "category_search", "error"] } else { vec![scenario] };
+        let palette = if dark { ui_theme::Palette::DARK } else { ui_theme::Palette::LIGHT };
+        let mut report = Vec::new();
+        for name in scenarios {
+            let mut st = STATE.lock().map_err(|_| "팝업 상태 잠금 실패")?;
+            *st = State { items: Vec::new(), sel: 0, top: 0, target: 0, hover: None, query: String::new(), comp: String::new(), seq: 0,
+                tab: 0, tab_spans: Vec::new(), hover_btn: None, pressed_btn: None, hover_tab: None, hover_action: None, restore_rect: None, minimized: false };
+            st.items = match name {
+                "empty" | "search_empty" | "error" => Vec::new(),
+                "long_text" => vec![samples[3].clone()],
+                "memo" => vec![samples[4].clone()],
+                "category_image" => vec![samples[1].clone()],
+                "category_files" => vec![samples[2].clone()],
+                "category_folder" => vec![samples[5].clone()],
+                "category_web" => vec![samples[6].clone()],
+                "category_capture" => vec![samples[7].clone()],
+                "category_document" => vec![samples[2].clone()],
+                _ => samples.clone(),
+            };
+            st.sel = if name == "selected" { 2 } else { 0 };
+            st.hover = if name == "selected" { Some(2) } else { None };
+            st.query = match name { "search" => "예산 Budget".into(), "search_empty" => "없는 검색어".into(), _ => String::new() };
+            st.tab = match name { "category_document" => 1, "category_image" => 2, "category_files" => 3, "category_folder" => 4, "category_web" => 5, "category_capture" => 6,
+                "category_search" | "search" | "search_empty" => SEARCH_TAB, _ => 0 };
+            drop(st);
+            let error = if name == "error" { "시험용 저장소 읽기 오류" } else { "" };
+            let dc = CreateCompatibleDC(std::ptr::null_mut());
+            let info = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h,
+                biPlanes: 1, biBitCount: 32, biCompression: BI_RGB, biSizeImage: 0, biXPelsPerMeter: 0, biYPelsPerMeter: 0, biClrUsed: 0, biClrImportant: 0 },
+                bmiColors: [RGBQUAD { rgbBlue: 0, rgbGreen: 0, rgbRed: 0, rgbReserved: 0 }] };
+            let mut bits = std::ptr::null_mut();
+            let bmp = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+            if dc.is_null() || bmp.is_null() { if !bmp.is_null() { DeleteObject(bmp); } if !dc.is_null() { DeleteDC(dc); } return Err("캡처 비트맵 생성 실패".into()); }
+            let old = SelectObject(dc, bmp);
+            let mut state = STATE.lock().unwrap();
+            paint_surface(hwnd, dc, RECT { left: 0, top: 0, right: w, bottom: h }, true, error, palette, &mut state);
+            let src = std::slice::from_raw_parts(bits as *const u8, (w * h * 4) as usize);
+            let rgba: Vec<u8> = src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], 255]).collect();
+            SelectObject(dc, old); DeleteObject(bmp); DeleteDC(dc);
+            let path = dir.join(format!("popup_{name}_{}_{}dpi_{}x{}.png", if dark { "dark" } else { "light" }, dpi, size.0, size.1));
+            let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+            let mut encoder = png::Encoder::new(file, w as u32, h as u32);
+            encoder.set_color(png::ColorType::Rgba); encoder.set_depth(png::BitDepth::Eight);
+            encoder.write_header().and_then(|mut writer| writer.write_image_data(&rgba)).map_err(|e| e.to_string())?;
+            report.push(format!("{}", path.display()));
+        }
+        std::fs::write(dir.join("popup-capture-report.txt"), report.join("\n")).map_err(|e| e.to_string())?;
+        DestroyWindow(hwnd); HWND_POPUP.store(0, Ordering::Relaxed);
+        Ok(())
     }
 }
 
@@ -1648,6 +1696,12 @@ mod tests {
     use super::*;
     use crate::category::CategorySet;
     use crate::frame::draws_own_border;
+
+    #[test]
+    fn capture_size_scales_logical_minimum_and_150_percent_dimensions() {
+        assert_eq!(capture_size((420, 122), 96), (420, 122));
+        assert_eq!(capture_size((560, 420), 144), (840, 630));
+    }
 
     #[test]
     fn caption_buttons_right_to_left_close_max_min_pin_memo_capture_settings() {

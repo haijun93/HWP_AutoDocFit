@@ -4,6 +4,7 @@
 //! 테두리 색은 현재 테마(`ui_theme::palette().border`)를 따른다(RUSTALL1 DARK1).
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicU32;
 
 use windows_sys::Win32::Foundation::{HWND, RECT, SIZE};
 use windows_sys::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FrameRect, GetTextExtentPoint32W, HDC};
@@ -67,6 +68,12 @@ pub(crate) fn draws_own_border(dwm_border: bool) -> bool {
 
 /// Windows 11에서 DWM 테두리를 쓰는지(창을 만들 때 정한다).
 static DWM_BORDER: AtomicBool = AtomicBool::new(false);
+static DPI_OVERRIDE: AtomicU32 = AtomicU32::new(0);
+
+/// 캡처 모드에서만 메모리 렌더링 배율을 고정한다.
+pub(crate) fn set_dpi_override(dpi: u32) {
+    DPI_OVERRIDE.store(dpi, Ordering::Relaxed);
+}
 
 #[repr(C)]
 struct Margins { left: i32, right: i32, top: i32, bottom: i32 }
@@ -117,7 +124,8 @@ pub(crate) unsafe fn own_border(mem: HDC, rc: RECT) {
 }
 
 pub(crate) fn scale(hwnd: HWND, v: i32) -> i32 {
-    let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96) as i32;
+    let override_dpi = DPI_OVERRIDE.load(Ordering::Relaxed);
+    let dpi = if override_dpi == 0 { unsafe { GetDpiForWindow(hwnd) }.max(96) } else { override_dpi } as i32;
     v * dpi / 96
 }
 
