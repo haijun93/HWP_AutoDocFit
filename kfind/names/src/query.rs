@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use memchr::memmem::Finder;
 use rayon::prelude::*;
 
-use crate::index::{EXT_OTHER, SIZE_UNKNOWN, TIME_UNKNOWN, View, ext_fold, flag};
+use crate::index::{EXT_OTHER, SIZE_UNKNOWN, TIME_UNKNOWN, View, ext_fold, flag, make_key};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -384,7 +384,7 @@ impl<'q> Plan<'q> {
     fn key(&self, v: &View, i: u32) -> u64 {
         match self.sort {
             Sort::Path => i as u64,
-            Sort::Name => v.key[i as usize] & ((1u64 << 56) - 1),
+            Sort::Name => make_key(0, v.fold_of(i)) & ((1u64 << 56) - 1),
             Sort::Size => match v.size[i as usize] {
                 SIZE_UNKNOWN => u64::MAX,
                 s => u64::MAX - 1 - s,
@@ -394,7 +394,7 @@ impl<'q> Plan<'q> {
                 t => (i64::MAX - t.max(0)) as u64,
             },
             Sort::Relevance => {
-                let base = v.key[i as usize] & ((1u64 << 62) - 1);
+                let base = make_key(v.depth[i as usize] as u32, v.fold_of(i)) & ((1u64 << 62) - 1);
                 // 글자 그대로 일치가 아니면 맨 위 비트(Q-F3). 등급은 그다음 2비트, 깊이·이름 앞부분은 한 비트 줄여
                 // 아래에 둔다(같은 열쇠끼리는 비교형 전체로 다시 가르므로 순서는 그대로).
                 let nonliteral = !self.literal.is_empty()

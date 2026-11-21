@@ -10,12 +10,12 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::crc::crc32c;
-use crate::index::{EXT_OTHER, ExtList, ExtTable, NONE, Names, View, Volume};
+use crate::index::{EXT_OTHER, ExtList, ExtTable, NONE, Names, RecMap, View, Volume};
 use crate::{Error, Result};
 
 pub const MAGIC: &[u8; 8] = b"KTMSEG01";
 /// 2: 크기·고친 시각 열(Q-F2) 추가.
-pub const FORMAT_VERSION: u32 = 2;
+pub const FORMAT_VERSION: u32 = 3;
 pub const KIND_NAMES: u32 = 1;
 const HEADER: usize = 64;
 
@@ -76,13 +76,13 @@ pub fn write(names: &Names, path: &Path) -> Result<u64> {
         while meta.len() % 8 != 0 {
             meta.push(0);
         }
-        recmap.extend_from_slice(&v.recmap);
+        recmap.extend(v.recmap.iter());
     }
     let sections: Vec<(u32, &[u8])> = vec![
         (sec::PARENT, bytes_of(&n.parent)),
         (sec::FOLD_OFF, bytes_of(&n.fold_off)),
         (sec::NAME_OFF, bytes_of(&n.name_off)),
-        (sec::KEY, bytes_of(&n.key)),
+        (sec::KEY, &n.depth),
         (sec::EXT, bytes_of(&n.ext)),
         (sec::FLAGS, &n.flags),
         (sec::END, bytes_of(&n.end)),
@@ -278,7 +278,7 @@ impl NamesSeg {
             vols.push(Volume {
                 name,
                 root_rec,
-                recmap: rm.to_vec(),
+                recmap: RecMap::from_vec(rm.to_vec()),
                 journal_id,
                 next_usn,
             });
@@ -298,7 +298,7 @@ impl NamesSeg {
         if v.parent.len() != n
             || v.fold_off.len() != n + 1
             || v.name_off.len() != n + 1
-            || v.key.len() != n
+            || v.depth.len() != n
             || v.ext.len() != n
             || v.flags.len() != n
             || v.size.len() != n
@@ -354,7 +354,7 @@ impl NamesSeg {
             parent: cast(self.raw(sec::PARENT))?,
             fold_off: cast(self.raw(sec::FOLD_OFF))?,
             name_off: cast(self.raw(sec::NAME_OFF))?,
-            key: cast(self.raw(sec::KEY))?,
+            depth: self.raw(sec::KEY),
             ext: cast(self.raw(sec::EXT))?,
             flags: self.raw(sec::FLAGS),
             size: cast(self.raw(sec::SIZE))?,
@@ -410,7 +410,7 @@ impl NamesSeg {
             parent: v.parent.to_vec(),
             fold_off: v.fold_off.to_vec(),
             name_off: v.name_off.to_vec(),
-            key: v.key.to_vec(),
+            depth: v.depth.to_vec(),
             ext: v.ext.to_vec(),
             flags: v.flags.to_vec(),
             size: v.size.to_vec(),

@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 use rayon::prelude::*;
 
-use crate::index::{ExtTable, NONE, Names, SIZE_UNKNOWN, TIME_UNKNOWN, Volume, ext_fold, flag, flags_of, make_key};
+use crate::index::{
+    ExtTable, NONE, Names, RecMap, SIZE_UNKNOWN, TIME_UNKNOWN, Volume, ext_fold, flag, flags_of,
+};
 use crate::source::rec_of;
 
 /// 색인 만들기. 레코드는 아무 순서로 넣어도 된다(MFT 열거 순서 그대로).
@@ -58,12 +60,29 @@ impl Builder {
 
     /// 항목 하나. 뿌리 폴더 자체(`rec == root_rec`)는 넣지 않아도 된다(`add_volume`이 만든다).
     pub fn push(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32) {
-        self.push_meta(vol, rec, parent_rec, name, attrs, SIZE_UNKNOWN, TIME_UNKNOWN);
+        self.push_meta(
+            vol,
+            rec,
+            parent_rec,
+            name,
+            attrs,
+            SIZE_UNKNOWN,
+            TIME_UNKNOWN,
+        );
     }
 
     /// `push`에 크기·고친 시각을 더한 것(Q-F2 크기·날짜 정렬).
     #[allow(clippy::too_many_arguments)]
-    pub fn push_meta(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32, size: u64, mtime: i64) {
+    pub fn push_meta(
+        &mut self,
+        vol: u16,
+        rec: u64,
+        parent_rec: u64,
+        name: &str,
+        attrs: u32,
+        size: u64,
+        mtime: i64,
+    ) {
         if name.is_empty() || vol as usize >= self.vols.len() {
             return;
         }
@@ -248,7 +267,7 @@ impl Builder {
         let mut fold_off = Vec::with_capacity(total + 1);
         let mut name = Vec::with_capacity(names.iter().map(|s| s.len()).sum());
         let mut name_off = Vec::with_capacity(total + 1);
-        let mut key = Vec::with_capacity(total);
+        let mut depths = Vec::with_capacity(total);
         let mut ext = Vec::with_capacity(total);
         let mut flags = Vec::with_capacity(total);
         let mut sizes = Vec::with_capacity(total);
@@ -277,7 +296,7 @@ impl Builder {
                 mtimes.push(self.mtime[o - nv]);
             }
             ext.push(exts.intern(ext_fold(names[o], fl & flag::DIR != 0)));
-            key.push(make_key(depth[n], folds[o].as_bytes()));
+            depths.push(depth[n].min(63) as u8);
         }
         fold_off.push(fold.len() as u32);
         // 레코드 표를 새 번호로.
@@ -288,10 +307,11 @@ impl Builder {
             .map(|((nm, rr), m)| Volume {
                 name: nm.clone(),
                 root_rec: *rr,
-                recmap: m
-                    .into_iter()
-                    .map(|o| if o == NONE { NONE } else { newid[o as usize] })
-                    .collect(),
+                recmap: RecMap::from_vec(
+                    m.into_iter()
+                        .map(|o| if o == NONE { NONE } else { newid[o as usize] })
+                        .collect(),
+                ),
                 journal_id: 0,
                 next_usn: 0,
             })
@@ -300,7 +320,7 @@ impl Builder {
             parent,
             fold_off,
             name_off,
-            key,
+            depth: depths,
             ext,
             flags,
             size: sizes,

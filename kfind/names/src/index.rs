@@ -11,6 +11,113 @@ pub const SIZE_UNKNOWN: u64 = u64::MAX;
 /// 고친 시각을 모름. 날짜 순에서 맨 뒤.
 pub const TIME_UNKNOWN: i64 = i64::MIN;
 
+/// Compact record-number → index lookup. Most indexes have fewer than 16,777,215 items,
+/// so three bytes per MFT record slot are enough; larger indexes use the wide fallback.
+#[derive(Debug, Clone, Default)]
+pub struct RecMap {
+    packed: Vec<u8>,
+    wide: Option<Vec<u32>>,
+    len: usize,
+}
+
+impl RecMap {
+    const NONE24: u32 = 0x00ff_ffff;
+
+    pub fn from_vec(values: Vec<u32>) -> Self {
+        let mut out = Self::default();
+        out.resize(values.len(), NONE);
+        for (i, value) in values.into_iter().enumerate() {
+            out.set(i, value);
+        }
+        out
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+    pub fn capacity_bytes(&self) -> usize {
+        self.packed.capacity() + self.wide.as_ref().map_or(0, |v| v.capacity() * 4)
+    }
+
+    pub fn get(&self, index: usize) -> Option<u32> {
+        if index >= self.len {
+            return None;
+        }
+        if let Some(v) = &self.wide {
+            return Some(v[index]);
+        }
+        let p = index * 3;
+        let n = self.packed[p] as u32
+            | ((self.packed[p + 1] as u32) << 8)
+            | ((self.packed[p + 2] as u32) << 16);
+        Some(if n == Self::NONE24 { NONE } else { n })
+    }
+
+    pub fn set(&mut self, index: usize, value: u32) {
+        if index >= self.len {
+            self.resize(index + 1, NONE);
+        }
+        if value != NONE && value >= Self::NONE24 {
+            let mut wide = self.iter().collect::<Vec<_>>();
+            wide[index] = value;
+            self.packed = Vec::new();
+            self.wide = Some(wide);
+            return;
+        }
+        if let Some(wide) = &mut self.wide {
+            wide[index] = value;
+            return;
+        }
+        let n = if value == NONE { Self::NONE24 } else { value };
+        let p = index * 3;
+        self.packed[p] = n as u8;
+        self.packed[p + 1] = (n >> 8) as u8;
+        self.packed[p + 2] = (n >> 16) as u8;
+    }
+
+    pub fn resize(&mut self, new_len: usize, value: u32) {
+        if new_len <= self.len {
+            self.len = new_len;
+            if let Some(v) = &mut self.wide {
+                v.truncate(new_len);
+            } else {
+                self.packed.truncate(new_len * 3);
+            }
+            return;
+        }
+        let old_len = self.len;
+        if let Some(wide) = &mut self.wide {
+            wide.resize(new_len, value);
+            self.len = new_len;
+            return;
+        }
+        if value != NONE && value >= Self::NONE24 {
+            let mut wide = self.iter().collect::<Vec<_>>();
+            wide.resize(new_len, value);
+            self.packed = Vec::new();
+            self.wide = Some(wide);
+            self.len = new_len;
+            return;
+        }
+        self.packed.resize(new_len * 3, 0);
+        self.len = new_len;
+        let fill = if value == NONE { Self::NONE24 } else { value };
+        for i in old_len..new_len {
+            let p = i * 3;
+            self.packed[p] = fill as u8;
+            self.packed[p + 1] = (fill >> 8) as u8;
+            self.packed[p + 2] = (fill >> 16) as u8;
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = u32> + '_ {
+        (0..self.len).map(|i| self.get(i).unwrap_or(NONE))
+    }
+}
+
 /// 항목 표지(u8).
 pub mod flag {
     pub const DIR: u8 = 1;
@@ -33,11 +140,6 @@ pub(crate) fn make_key(depth: u32, fold: &[u8]) -> u64 {
     let k = fold.len().min(7);
     p[1..1 + k].copy_from_slice(&fold[..k]);
     ((depth.min(63) as u64) << 56) | u64::from_be_bytes(p)
-}
-
-#[inline]
-pub(crate) fn key_depth(key: u64) -> u32 {
-    ((key >> 56) & 63) as u32
 }
 
 pub(crate) fn flags_of(attrs: u32) -> u8 {
@@ -158,7 +260,8 @@ pub struct View<'a> {
     pub fold_off: &'a [u32],
     /// 길이 n+1. 항목 i의 원래 이름(UTF-8) = `name[name_off[i] .. name_off[i+1]]`.
     pub name_off: &'a [u32],
-    pub key: &'a [u64],
+    /// Saturated tree depth. Sort prefixes are reconstructed from the folded-name pool.
+    pub depth: &'a [u8],
     pub ext: &'a [u16],
     pub flags: &'a [u8],
     /// 크기(바이트, 모르면 `SIZE_UNKNOWN`)·고친 시각(FILETIME 100ns, 모르면 `TIME_UNKNOWN`). Q-F2.
@@ -329,7 +432,7 @@ pub struct Volume {
     /// 뿌리 폴더의 레코드 번호(NTFS는 5).
     pub root_rec: u64,
     /// 레코드 번호 → 항목 번호.
-    pub recmap: Vec<u32>,
+    pub recmap: RecMap,
     /// USN 저널 ID와 다음에 읽을 USN(따라잡기용, 디렉터리 순회 원천은 0).
     pub journal_id: u64,
     pub next_usn: i64,
@@ -341,7 +444,7 @@ pub struct Names {
     pub(crate) parent: Vec<u32>,
     pub(crate) fold_off: Vec<u32>,
     pub(crate) name_off: Vec<u32>,
-    pub(crate) key: Vec<u64>,
+    pub(crate) depth: Vec<u8>,
     pub(crate) ext: Vec<u16>,
     pub(crate) flags: Vec<u8>,
     pub(crate) size: Vec<u64>,
@@ -364,7 +467,7 @@ impl Names {
             parent: &self.parent,
             fold_off: &self.fold_off,
             name_off: &self.name_off,
-            key: &self.key,
+            depth: &self.depth,
             ext: &self.ext,
             flags: &self.flags,
             size: &self.size,
@@ -410,7 +513,7 @@ impl Names {
         self.parent.capacity() * 4
             + self.fold_off.capacity() * 4
             + self.name_off.capacity() * 4
-            + self.key.capacity() * 8
+            + self.depth.capacity()
             + self.ext.capacity() * 2
             + self.flags.capacity()
             + self.size.capacity() * 8
@@ -421,7 +524,7 @@ impl Names {
             + self
                 .vols
                 .iter()
-                .map(|v| v.recmap.capacity() * 4)
+                .map(|v| v.recmap.capacity_bytes())
                 .sum::<usize>()
             + self.redirect.len() * 16
             + self
@@ -432,10 +535,30 @@ impl Names {
                 .sum::<usize>()
     }
 
+    /// Heap capacity split by persisted index column; diagnostic and benchmark helper.
+    pub fn heap_breakdown(&self) -> HeapBreakdown {
+        HeapBreakdown {
+            parent: self.parent.capacity() * 4,
+            fold_offsets: self.fold_off.capacity() * 4,
+            name_offsets: self.name_off.capacity() * 4,
+            sort_keys: self.depth.capacity(),
+            extensions: self.ext.capacity() * 2,
+            flags: self.flags.capacity(),
+            size: self.size.capacity() * 8,
+            mtime: self.mtime.capacity() * 8,
+            subtree_ends: self.end.capacity() * 4,
+            folded_names: self.fold.capacity(),
+            names: self.name.capacity(),
+            volume_record_maps: self.vols.iter().map(|v| v.recmap.capacity_bytes()).sum(),
+            other: self.redirect.len() * 16
+                + self.exts.names.iter().map(|n| n.len() + 56).sum::<usize>(),
+        }
+    }
+
     fn lookup(&self, vol: u16, rec: u64) -> u32 {
         self.vols
             .get(vol as usize)
-            .and_then(|v| v.recmap.get(rec as usize).copied())
+            .and_then(|v| v.recmap.get(rec as usize))
             .unwrap_or(NONE)
     }
 
@@ -445,7 +568,7 @@ impl Names {
         if r >= v.recmap.len() {
             v.recmap.resize(r + 1, NONE);
         }
-        v.recmap[r] = idx;
+        v.recmap.set(r, idx);
     }
 
     fn mark_deleted(&mut self, idx: u32) {
@@ -461,7 +584,7 @@ impl Names {
         let depth = if parent == NONE {
             0
         } else {
-            key_depth(self.key[parent as usize]) + 1
+            self.depth[parent as usize] as u32 + 1
         };
         let f = kfind_core::fold(name);
         self.fold.extend_from_slice(f.as_bytes());
@@ -472,7 +595,7 @@ impl Names {
         let fl = flags_of(attrs) | flag::APPENDED;
         let e = self.exts.intern(ext_fold(name, fl & flag::DIR != 0));
         self.parent.push(parent);
-        self.key.push(make_key(depth, f.as_bytes()));
+        self.depth.push(depth.min(63) as u8);
         self.ext.push(e);
         self.flags.push(fl);
         self.size.push(size);
@@ -489,7 +612,16 @@ impl Names {
 
     /// `upsert`에 크기·고친 시각(아는 것만)을 더한 것. 모르는 값은 옛 항목 값을 이어받는다.
     #[allow(clippy::too_many_arguments)]
-    pub fn upsert_meta(&mut self, vol: u16, rec: u64, parent_rec: u64, name: &str, attrs: u32, size: Option<u64>, mtime: Option<i64>) -> bool {
+    pub fn upsert_meta(
+        &mut self,
+        vol: u16,
+        rec: u64,
+        parent_rec: u64,
+        name: &str,
+        attrs: u32,
+        size: Option<u64>,
+        mtime: Option<i64>,
+    ) -> bool {
         if vol as usize >= self.vols.len() || name.is_empty() {
             return false;
         }
@@ -532,7 +664,13 @@ impl Names {
             }
             self.set_rec(vol, rec, new);
         } else {
-            let new = self.push_entry(pidx, name, attrs, size.unwrap_or(SIZE_UNKNOWN), mtime.unwrap_or(TIME_UNKNOWN));
+            let new = self.push_entry(
+                pidx,
+                name,
+                attrs,
+                size.unwrap_or(SIZE_UNKNOWN),
+                mtime.unwrap_or(TIME_UNKNOWN),
+            );
             self.set_rec(vol, rec, new);
         }
         self.generation += 1;
@@ -574,12 +712,12 @@ impl Names {
         for (vi, vol) in self.vols.iter().enumerate() {
             b.add_volume(&vol.name, vol.root_rec);
             let mut rec_of_idx: HashMap<u32, u64> = HashMap::new();
-            for (r, &i) in vol.recmap.iter().enumerate() {
+            for (r, i) in vol.recmap.iter().enumerate() {
                 if i != NONE {
                     rec_of_idx.insert(i, r as u64);
                 }
             }
-            for (r, &i) in vol.recmap.iter().enumerate() {
+            for (r, i) in vol.recmap.iter().enumerate() {
                 if i == NONE || !v.is_live(i) || r as u64 == vol.root_rec {
                     continue;
                 }
@@ -623,5 +761,84 @@ impl Names {
             || self.deleted > 0
             || !self.redirect.is_empty()
             || self.dirty
+    }
+}
+
+#[cfg(test)]
+mod recmap_tests {
+    use super::*;
+
+    #[test]
+    fn packed_record_map_matches_u32_reference() {
+        let mut reference = vec![NONE; 4096];
+        let mut packed = RecMap::from_vec(reference.clone());
+        let mut state = 0x4d59_5df4u32;
+        for _ in 0..1000 {
+            state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            let i = (state as usize) % reference.len();
+            let value = if state & 7 == 0 {
+                NONE
+            } else {
+                state % 3_343_000
+            };
+            reference[i] = value;
+            packed.set(i, value);
+        }
+        assert_eq!(packed.iter().collect::<Vec<_>>(), reference);
+        for i in 0..reference.len() {
+            assert_eq!(packed.get(i), Some(reference[i]));
+        }
+        assert_eq!(packed.get(reference.len()), None);
+        assert_eq!(packed.capacity_bytes(), reference.len() * 3);
+    }
+
+    #[test]
+    fn packed_record_map_resize_preserves_values_and_sentinel() {
+        let mut m = RecMap::from_vec(vec![NONE, 2, 0x00ff_fffe]);
+        m.resize(5, NONE);
+        assert_eq!(
+            m.iter().collect::<Vec<_>>(),
+            vec![NONE, 2, 0x00ff_fffe, NONE, NONE]
+        );
+        m.resize(2, NONE);
+        assert_eq!(m.iter().collect::<Vec<_>>(), vec![NONE, 2]);
+        m.resize(4, NONE);
+        assert_eq!(m.iter().collect::<Vec<_>>(), vec![NONE, 2, NONE, NONE]);
+    }
+}
+
+/// `Names` heap capacity grouped by stored column (excludes allocator bookkeeping).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HeapBreakdown {
+    pub parent: usize,
+    pub fold_offsets: usize,
+    pub name_offsets: usize,
+    pub sort_keys: usize,
+    pub extensions: usize,
+    pub flags: usize,
+    pub size: usize,
+    pub mtime: usize,
+    pub subtree_ends: usize,
+    pub folded_names: usize,
+    pub names: usize,
+    pub volume_record_maps: usize,
+    pub other: usize,
+}
+
+impl HeapBreakdown {
+    pub fn total(self) -> usize {
+        self.parent
+            + self.fold_offsets
+            + self.name_offsets
+            + self.sort_keys
+            + self.extensions
+            + self.flags
+            + self.size
+            + self.mtime
+            + self.subtree_ends
+            + self.folded_names
+            + self.names
+            + self.volume_record_maps
+            + self.other
     }
 }

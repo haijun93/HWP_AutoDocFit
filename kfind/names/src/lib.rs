@@ -21,7 +21,7 @@ pub mod source;
 pub mod walk;
 
 pub use build::Builder;
-pub use index::{NONE, Names, View, flag};
+pub use index::{HeapBreakdown, NONE, Names, RecMap, View, flag};
 pub use query::{Hit, Options, Query, Results, Searcher, Sort, parse};
 pub use seg::NamesSeg;
 pub use source::{Change, ChangeKind};

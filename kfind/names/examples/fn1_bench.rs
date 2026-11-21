@@ -2,7 +2,8 @@
 //! 파일 내용은 읽지 않는다(이름·속성만). 결과 이름은 출력하지 않고 개수만 적는다.
 //!
 //! cargo run --release --example fn1_bench -- --out <출력 폴더> [--runs 30] [--everything] [--kfind-exe PATH]
-#![cfg(windows)]
+#[cfg(windows)]
+mod windows_only {
 use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::sync::Mutex;
@@ -327,7 +328,7 @@ const QUERIES: &[(&str, &str)] = &[
 
 const TYPING: &[&str] = &["보고서", "program", "setup.exe"];
 
-fn main() {
+pub fn main() {
     let args: Vec<String> = std::env::args().collect();
     let out = arg(&args, "--out").unwrap_or_else(|| "fn1-out".into());
     let runs: usize = arg(&args, "--runs")
@@ -657,3 +658,10 @@ fn main() {
     std::fs::write(std::path::Path::new(&out).join("FN1_BENCH_RAW.md"), rep).unwrap();
     let _ = std::fs::remove_file(&segp);
 }
+}
+
+#[cfg(windows)]
+fn main() { windows_only::main(); }
+
+#[cfg(not(windows))]
+fn main() {}
