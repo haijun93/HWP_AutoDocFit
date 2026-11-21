@@ -1,7 +1,8 @@
 //! 실제 창: 메시지 처리·입력 EDIT 겹침·키보드·마우스·저장. 그림은 `paint::draw`, 값 처리는 `model::Model`.
-use crate::layout::{DEFAULT_H, DEFAULT_W, Hit, MIN_H, MIN_W, Rect, Shape, compute, scale};
+use crate::layout::{DEFAULT_H, DEFAULT_W, Hit, MIN_H, MIN_W, Rect, compute, scale};
 use crate::model::Model;
-use crate::paint::{self, Ui, Zone, shape_of, wide};
+use crate::controls::{self, COLORS};
+use crate::paint::{self, Overlay, Ui, Zone, shape_of, wide};
 use crate::schema::Control;
 use std::ptr::{null, null_mut};
 use ui_theme::{Palette, ThemePref};
@@ -80,7 +81,7 @@ unsafe fn create_edit(parent: HWND, id: isize, font: HFONT, dpi: u32, visible: b
 }
 
 fn is_edit_field(c: &Control) -> bool {
-    matches!(c, Control::Number { .. } | Control::Text)
+    matches!(c, Control::Number { .. } | Control::Text | Control::Font | Control::Folder)
 }
 
 /// 검색 EDIT·값 EDIT 의 자리를 현재 배치에 맞춘다.
@@ -92,15 +93,20 @@ unsafe fn sync_edits(hwnd: HWND, s: &mut State) {
         let input = Rect::new(lay.search.left + scale(38, s.dpi), lay.search.top, lay.search.right - scale(10, s.dpi), lay.search.bottom);
         let top = input.top + (input.height() - eh) / 2;
         SetWindowPos(s.search_edit, null_mut(), input.left, top, input.width(), eh, SWP_NOZORDER | SWP_NOACTIVATE);
+        if s.ui.overlay.as_ref().is_some_and(|o| o.is_panel()) {
+            let p = lay.overlay();
+            let y = p.input.top + (p.input.height() - eh) / 2;
+            SetWindowPos(s.value_edit, HWND_TOP, p.input.left + scale(6, s.dpi), y, p.input.width() - scale(12, s.dpi), eh, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            return;
+        }
         if let Some((key, _)) = s.editing.clone() {
             let visible = s.model.visible();
             let pos = visible.iter().position(|i| s.model.items[*i].key == key);
             match pos {
                 Some(n) => {
                     let row = lay.row_rect(n, s.ui.scroll);
-                    let parts = lay.row_parts(row, Shape::Number);
                     let item = &s.model.items[visible[n]];
-                    let field = if matches!(item.control, Control::Number { .. }) { parts.field } else { lay.row_parts(row, Shape::Text).field };
+                    let field = lay.row_parts(row, shape_of(&item.control)).field;
                     let inner = Rect::new(field.left + scale(6, s.dpi), field.top + (field.height() - eh) / 2, field.right - scale(6, s.dpi), field.top + (field.height() - eh) / 2 + eh);
                     let in_list = row.top >= lay.list.top && row.bottom <= lay.list.bottom;
                     if in_list {
@@ -220,6 +226,279 @@ unsafe fn move_focus(hwnd: HWND, s: &mut State, to: isize) {
     }
 }
 
+unsafe fn open_fonts(hwnd: HWND, s: &mut State, key: &str) {
+    unsafe {
+        end_edit(hwnd, s, false);
+        let cur = s.model.current_text(key).trim().to_lowercase();
+        let names = s.model.font_choices("");
+        let sel = names.iter().position(|n| n.to_lowercase() == cur).unwrap_or(0);
+        let (w, h) = client_size(hwnd);
+        let scroll = compute(w, h, s.dpi).overlay().scroll_to_show(sel, 0, names.len());
+        s.ui.overlay = Some(Overlay::Fonts { key: key.to_string(), filter: String::new(), sel, scroll });
+        set_edit_text(s, s.value_edit, "");
+        sync_edits(hwnd, s);
+        SetFocus(s.value_edit);
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+unsafe fn open_list_edit(hwnd: HWND, s: &mut State, key: &str) {
+    unsafe {
+        end_edit(hwnd, s, false);
+        s.ui.overlay = Some(Overlay::ListEdit { key: key.to_string(), sel: None, input: String::new(), scroll: 0, note: None });
+        set_edit_text(s, s.value_edit, "");
+        sync_edits(hwnd, s);
+        SetFocus(s.value_edit);
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+unsafe fn start_hotkey_wait(hwnd: HWND, s: &mut State, key: &str) {
+    unsafe {
+        end_edit(hwnd, s, false);
+        s.ui.overlay = Some(Overlay::HotkeyWait { key: key.to_string(), note: None });
+        SetFocus(hwnd);
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+unsafe fn close_overlay(hwnd: HWND, s: &mut State) {
+    unsafe {
+        s.ui.overlay = None;
+        ShowWindow(s.value_edit, SW_HIDE);
+        SetFocus(hwnd);
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+unsafe fn browse_folder(hwnd: HWND, s: &mut State, key: &str) {
+    unsafe {
+        end_edit(hwnd, s, false);
+        let now = s.model.current_text(key);
+        if let Some(path) = controls::pick_folder(hwnd, "폴더 선택", &now) {
+            s.model.set_text(key, &path);
+        }
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+fn key_down(vk: u16) -> bool {
+    unsafe { GetKeyState(vk as i32) < 0 }
+}
+
+/// 단축키 칸이 기다리는 중이면 눌린 키를 받는다. 처리했으면 true.
+unsafe fn hotkey_key(hwnd: HWND, s: &mut State, vk: u16) -> bool {
+    unsafe {
+        let Some(Overlay::HotkeyWait { key, .. }) = s.ui.overlay.clone() else { return false };
+        if vk == VK_ESCAPE {
+            s.ui.overlay = None;
+        } else if vk == VK_TAB {
+            s.ui.overlay = None;
+            InvalidateRect(hwnd, null(), 0);
+            return false;
+        } else {
+            match controls::hotkey_from_press(key_down(VK_CONTROL), key_down(VK_MENU), key_down(VK_SHIFT), key_down(VK_LWIN) || key_down(VK_RWIN), vk as u32) {
+                None => {}
+                Some(Ok(chord)) => {
+                    s.model.set_text(&key, &chord);
+                    s.ui.overlay = None;
+                }
+                Some(Err(why)) => s.ui.overlay = Some(Overlay::HotkeyWait { key, note: Some(why) }),
+            }
+        }
+        InvalidateRect(hwnd, null(), 0);
+        true
+    }
+}
+
+unsafe fn overlay_text_changed(hwnd: HWND, s: &mut State, text: &str) {
+    unsafe {
+        match s.ui.overlay.as_mut() {
+            Some(Overlay::Fonts { filter, sel, scroll, .. }) => {
+                *filter = text.to_string();
+                *sel = 0;
+                *scroll = 0;
+            }
+            Some(Overlay::ListEdit { input, note, .. }) => {
+                *input = text.to_string();
+                *note = None;
+            }
+            _ => {}
+        }
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+/// 글꼴 목록 줄을 고른다(값 반영 + 패널 닫기).
+unsafe fn choose_font(hwnd: HWND, s: &mut State, key: &str, name: &str) {
+    unsafe {
+        s.model.set_text(key, name);
+        close_overlay(hwnd, s);
+    }
+}
+
+/// 목록 편집 패널의 동작. `what`: "add" | "remove" | "up" | "down".
+unsafe fn list_action(hwnd: HWND, s: &mut State, what: &str) {
+    unsafe {
+        let Some(Overlay::ListEdit { key, sel, input, scroll, .. }) = s.ui.overlay.clone() else { return };
+        let (w, h) = client_size(hwnd);
+        let p = compute(w, h, s.dpi).overlay();
+        let mut new_sel = sel;
+        let mut new_input = input.clone();
+        let mut note = None;
+        match what {
+            "add" => match s.model.list_add(&key, &input) {
+                Ok(at) => {
+                    new_sel = Some(at);
+                    new_input.clear();
+                    set_edit_text(s, s.value_edit, "");
+                }
+                Err(e) => note = Some(e),
+            },
+            "remove" => {
+                if let Some(i) = sel {
+                    s.model.list_remove(&key, i);
+                    let n = s.model.current_list(&key).len();
+                    new_sel = if n == 0 { None } else { Some(i.min(n - 1)) };
+                }
+            }
+            "up" | "down" => {
+                if let Some(i) = sel {
+                    if let Some(to) = s.model.list_move(&key, i, if what == "up" { -1 } else { 1 }) {
+                        new_sel = Some(to);
+                    }
+                }
+            }
+            _ => {}
+        }
+        let count = s.model.current_list(&key).len();
+        let new_scroll = match new_sel {
+            Some(i) => p.scroll_to_show(i, scroll, count),
+            None => p.scroll_to_show(0, scroll.min(p.max_scroll(count)), count).min(p.max_scroll(count)),
+        };
+        s.ui.overlay = Some(Overlay::ListEdit { key, sel: new_sel, input: new_input, scroll: new_scroll, note });
+        InvalidateRect(hwnd, null(), 0);
+    }
+}
+
+/// 패널이 떠 있을 때의 키. `from_edit` = 입력 EDIT 가 키를 받은 경우(문자 편집 키는 EDIT 에 남긴다).
+unsafe fn overlay_key(hwnd: HWND, s: &mut State, vk: u16, from_edit: bool) -> bool {
+    unsafe {
+        let Some(o) = s.ui.overlay.clone() else { return false };
+        if !o.is_panel() {
+            return false;
+        }
+        let (w, h) = client_size(hwnd);
+        let p = compute(w, h, s.dpi).overlay();
+        if vk == VK_ESCAPE {
+            close_overlay(hwnd, s);
+            return true;
+        }
+        if vk == VK_TAB {
+            return true;
+        }
+        let page = (p.list.height() / p.item_h.max(1)).max(1) as isize;
+        match o {
+            Overlay::Fonts { key, filter, sel, scroll } => {
+                let names = s.model.font_choices(&filter);
+                let last = names.len() as isize - 1;
+                let to = match vk {
+                    VK_UP => sel as isize - 1,
+                    VK_DOWN => sel as isize + 1,
+                    VK_PRIOR => sel as isize - page,
+                    VK_NEXT => sel as isize + page,
+                    VK_HOME if !from_edit => 0,
+                    VK_END if !from_edit => last,
+                    VK_RETURN => {
+                        if let Some(name) = names.get(sel) {
+                            choose_font(hwnd, s, &key, name);
+                        }
+                        return true;
+                    }
+                    _ => return false,
+                };
+                if last >= 0 {
+                    let n = to.clamp(0, last) as usize;
+                    let sc = p.scroll_to_show(n, scroll, names.len());
+                    s.ui.overlay = Some(Overlay::Fonts { key, filter, sel: n, scroll: sc });
+                }
+                InvalidateRect(hwnd, null(), 0);
+                true
+            }
+            Overlay::ListEdit { key, sel, input, .. } => {
+                let count = s.model.current_list(&key).len();
+                match vk {
+                    VK_RETURN => list_action(hwnd, s, "add"),
+                    VK_DELETE if !from_edit || input.is_empty() => list_action(hwnd, s, "remove"),
+                    VK_UP | VK_DOWN if ctrl_down() => list_action(hwnd, s, if vk == VK_UP { "up" } else { "down" }),
+                    VK_UP | VK_DOWN | VK_PRIOR | VK_NEXT => {
+                        if count > 0 {
+                            let cur = sel.map(|i| i as isize).unwrap_or(-1);
+                            let to = match vk {
+                                VK_UP => cur - 1,
+                                VK_DOWN => cur + 1,
+                                VK_PRIOR => cur - page,
+                                _ => cur + page,
+                            };
+                            let n = to.clamp(0, count as isize - 1) as usize;
+                            if let Some(Overlay::ListEdit { sel: s2, scroll, .. }) = s.ui.overlay.as_mut() {
+                                *s2 = Some(n);
+                                *scroll = p.scroll_to_show(n, *scroll, count);
+                            }
+                        }
+                        InvalidateRect(hwnd, null(), 0);
+                    }
+                    _ => return false,
+                }
+                true
+            }
+            Overlay::HotkeyWait { .. } => false,
+        }
+    }
+}
+
+/// 패널 안·밖 클릭. 패널 밖이면 닫는다.
+unsafe fn overlay_click(hwnd: HWND, s: &mut State, x: i32, y: i32) {
+    unsafe {
+        let Some(o) = s.ui.overlay.clone() else { return };
+        let (w, h) = client_size(hwnd);
+        let p = compute(w, h, s.dpi).overlay();
+        if !p.panel.contains(x, y) || p.close_btn.contains(x, y) {
+            close_overlay(hwnd, s);
+            return;
+        }
+        match o {
+            Overlay::Fonts { key, filter, scroll, .. } => {
+                if p.list.contains(x, y) {
+                    let at = ((y - p.list.top + scroll) / p.item_h.max(1)) as usize;
+                    if let Some(name) = s.model.font_choices(&filter).get(at).cloned() {
+                        choose_font(hwnd, s, &key, &name);
+                    }
+                }
+            }
+            Overlay::ListEdit { key, scroll, .. } => {
+                if p.add_btn.contains(x, y) {
+                    list_action(hwnd, s, "add");
+                } else if p.remove_btn.contains(x, y) {
+                    list_action(hwnd, s, "remove");
+                } else if p.up_btn.contains(x, y) {
+                    list_action(hwnd, s, "up");
+                } else if p.down_btn.contains(x, y) {
+                    list_action(hwnd, s, "down");
+                } else if p.list.contains(x, y) {
+                    let at = ((y - p.list.top + scroll) / p.item_h.max(1)) as usize;
+                    let count = s.model.current_list(&key).len();
+                    if let Some(Overlay::ListEdit { sel, .. }) = s.ui.overlay.as_mut() {
+                        *sel = if at < count { Some(at) } else { None };
+                    }
+                }
+                InvalidateRect(hwnd, null(), 0);
+            }
+            Overlay::HotkeyWait { .. } => {}
+        }
+    }
+}
+
 /// 목록에서 포커스 줄의 기본 동작(Enter·Space).
 unsafe fn activate_row(hwnd: HWND, s: &mut State, n: usize) {
     unsafe {
@@ -229,7 +508,10 @@ unsafe fn activate_row(hwnd: HWND, s: &mut State, n: usize) {
         match item.control {
             Control::Check => s.model.toggle(&item.key),
             Control::Choice(_) => s.model.cycle(&item.key, 1),
-            Control::Number { .. } | Control::Text => begin_edit(hwnd, s, n),
+            Control::Color => s.model.cycle_color(&item.key, 1),
+            Control::Number { .. } | Control::Text | Control::Font | Control::Folder => begin_edit(hwnd, s, n),
+            Control::List { .. } => open_list_edit(hwnd, s, &item.key),
+            Control::Hotkey => start_hotkey_wait(hwnd, s, &item.key),
             Control::ReadOnly(_) => {}
         }
         InvalidateRect(hwnd, null(), 0);
@@ -252,6 +534,23 @@ fn shift_down() -> bool {
 unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u16) -> bool {
     unsafe {
         let rows = s.model.visible().len() as isize;
+        if s.ui.overlay.as_ref().is_some_and(|o| o.is_panel()) {
+            overlay_key(hwnd, s, vk, false);
+            return true;
+        }
+        if vk == VK_F4 && s.ui.zone == Zone::List {
+            // 글꼴·폴더 항목의 고르기/찾아보기(▾·[찾아보기…] 단추의 키보드 대응)
+            let visible = s.model.visible();
+            if let Some(&idx) = visible.get(s.ui.focus_row) {
+                let item = s.model.items[idx].clone();
+                match item.control {
+                    Control::Font => open_fonts(hwnd, s, &item.key),
+                    Control::Folder => browse_folder(hwnd, s, &item.key),
+                    _ => {}
+                }
+            }
+            return true;
+        }
         if vk == VK_TAB {
             let z = s.ui.zone.next(shift_down());
             focus_zone(hwnd, s, z);
@@ -324,6 +623,7 @@ unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u16) -> bool {
                         match item.control {
                             Control::Number { .. } => s.model.step(&item.key, d as i64),
                             Control::Choice(_) => s.model.cycle(&item.key, d),
+                            Control::Color => s.model.cycle_color(&item.key, d),
                             Control::Check => s.model.toggle(&item.key),
                             _ => {}
                         }
@@ -388,6 +688,14 @@ unsafe fn edit_key(msg: &MSG) -> bool {
                 _ => false,
             }
         } else if msg.hwnd == s.value_edit {
+            if s.ui.overlay.as_ref().is_some_and(|o| o.is_panel()) {
+                let empty = GetWindowTextLengthW(msg.hwnd) == 0;
+                return match vk {
+                    VK_ESCAPE | VK_UP | VK_DOWN | VK_PRIOR | VK_NEXT | VK_RETURN | VK_TAB => overlay_key(parent, s, vk, true),
+                    VK_DELETE if empty => overlay_key(parent, s, vk, true),
+                    _ => false,
+                };
+            }
             match vk {
                 VK_RETURN => {
                     end_edit(parent, s, false);
@@ -433,6 +741,13 @@ unsafe fn paint_window(hwnd: HWND, s: &State) {
 
 unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32) {
     unsafe {
+        if s.ui.overlay.as_ref().is_some_and(|o| o.is_panel()) {
+            overlay_click(hwnd, s, x, y);
+            return;
+        }
+        if s.ui.overlay.is_some() {
+            s.ui.overlay = None; // 단축키 입력 대기는 다른 곳을 누르면 끝난다
+        }
         end_edit(hwnd, s, false);
         let (w, h) = client_size(hwnd);
         let lay = compute(w, h, s.dpi);
@@ -470,6 +785,35 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32) {
                         }
                     }
                     Control::Text if parts.field.contains(x, y) => begin_edit(hwnd, s, n),
+                    Control::Color => {
+                        for (i, c) in COLORS.iter().enumerate() {
+                            if lay.swatch(parts.control, i).contains(x, y) {
+                                s.model.set_text(&item.key, c.0);
+                            }
+                        }
+                    }
+                    Control::Font => {
+                        if parts.plus.contains(x, y) {
+                            open_fonts(hwnd, s, &item.key);
+                        } else if parts.field.contains(x, y) {
+                            begin_edit(hwnd, s, n);
+                        }
+                    }
+                    Control::Folder => {
+                        if parts.plus.contains(x, y) {
+                            browse_folder(hwnd, s, &item.key);
+                        } else if parts.field.contains(x, y) {
+                            begin_edit(hwnd, s, n);
+                        }
+                    }
+                    Control::List { .. } if parts.field.contains(x, y) || parts.plus.contains(x, y) => open_list_edit(hwnd, s, &item.key),
+                    Control::Hotkey => {
+                        if parts.plus.contains(x, y) {
+                            s.model.set_text(&item.key, "");
+                        } else if parts.field.contains(x, y) {
+                            start_hotkey_wait(hwnd, s, &item.key);
+                        }
+                    }
                     _ => {}
                 }
                 InvalidateRect(hwnd, null(), 0);
@@ -561,6 +905,19 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     let delta = ((wp >> 16) as u16 as i16) as i32;
                     let (w, h) = client_size(hwnd);
                     let lay = compute(w, h, s.dpi);
+                    let p = lay.overlay();
+                    let count = match &s.ui.overlay {
+                        Some(Overlay::Fonts { filter, .. }) => Some(s.model.font_choices(filter).len()),
+                        Some(Overlay::ListEdit { key, .. }) => Some(s.model.current_list(key).len()),
+                        _ => None,
+                    };
+                    if let Some(count) = count {
+                        if let Some(Overlay::Fonts { scroll, .. } | Overlay::ListEdit { scroll, .. }) = s.ui.overlay.as_mut() {
+                            *scroll = (*scroll - delta * p.item_h / 120).clamp(0, p.max_scroll(count));
+                        }
+                        InvalidateRect(hwnd, null(), 0);
+                        return 0;
+                    }
                     let rows = s.model.visible().len();
                     s.ui.scroll = lay.clamp_scroll(s.ui.scroll - delta * lay.row_h / 240, rows);
                     sync_edits(hwnd, s);
@@ -568,9 +925,12 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 }
                 0
             }
-            WM_KEYDOWN => {
+            WM_KEYDOWN | WM_SYSKEYDOWN => {
                 if let Some(s) = state(hwnd) {
-                    if on_key(hwnd, s, wp as u16) {
+                    if hotkey_key(hwnd, s, wp as u16) {
+                        return 0;
+                    }
+                    if msg == WM_KEYDOWN && on_key(hwnd, s, wp as u16) {
                         return 0;
                     }
                 }
@@ -594,6 +954,9 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                             let t = edit_text(from);
                             s.model.set_search(&t);
                             reset_view(hwnd, s);
+                        } else if from == s.value_edit && s.ui.overlay.as_ref().is_some_and(|o| o.is_panel()) {
+                            let t = edit_text(from);
+                            overlay_text_changed(hwnd, s, &t);
                         } else if from == s.value_edit {
                             if let Some((key, _)) = s.editing.clone() {
                                 let t = edit_text(from);
@@ -667,6 +1030,33 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
         }
+    }
+}
+
+/// 단일 인스턴스: 같은 설정 파일을 여는 창이 이미 떠 있으면 그 창을 앞으로 가져오고 true(이 프로세스는 곧 끝낸다).
+/// 뮤텍스 이름에 설정 파일 경로의 해시를 붙여, 다른 설정 파일(시험·캡처)을 여는 창과는 섞이지 않는다.
+pub fn activate_existing_instance(settings_path: &str) -> bool {
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in settings_path.to_lowercase().bytes() {
+            hash = (hash ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        let name = format!(r"Local\HwpAutoDocFit.SettingsWin.Singleton.{hash:016x}");
+        // 핸들은 일부러 닫지 않는다: 프로세스가 끝날 때까지 뮤텍스를 쥐고 있어야 한다.
+        let handle = CreateMutexW(null(), 0, wide(&name).as_ptr());
+        if handle.is_null() || GetLastError() != ERROR_ALREADY_EXISTS {
+            return false;
+        }
+        let existing = FindWindowW(wide("SettingsWinMain").as_ptr(), null());
+        if !existing.is_null() {
+            if IsIconic(existing) != 0 {
+                ShowWindow(existing, SW_RESTORE);
+            }
+            SetForegroundWindow(existing);
+        }
+        true
     }
 }
 

@@ -41,6 +41,10 @@ if mdm_ctx_exe.is_file():
 outliner_win_exe = root / 'resources' / 'outliner_win.exe'
 if outliner_win_exe.is_file():
     binaries.append((str(outliner_win_exe), 'resources'))
+# 설정 Win32 창(설정 settings_ui='native' 일 때 앱의 [설정] 진입이 연다). 있으면 넣는다(없으면 앱이 안내만 하고 기존 화면을 연다).
+settings_win_exe = root / 'resources' / 'settings_win.exe'
+if settings_win_exe.is_file():
+    binaries.append((str(settings_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

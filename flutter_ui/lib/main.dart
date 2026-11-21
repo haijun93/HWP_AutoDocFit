@@ -30,6 +30,7 @@ import 'features/conversion/floating_format_picker.dart';
 import 'features/conversion/merge_order_dialog.dart';
 import 'features/progress/live_progress.dart';
 import 'features/settings/settings_dialog.dart';
+import 'features/settings/settings_ui_gate.dart';
 import 'features/settings/update_panel.dart';
 import 'features/stages/stage_board.dart';
 import 'features/workspace/workspace_adapters.dart';
@@ -1641,17 +1642,20 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     onPressed: () => showLog(),
                     icon: const Icon(Icons.receipt_long_outlined),
                   ),
-                  IconButton(
-                    tooltip: '설정',
-                    visualDensity: isNarrow ? VisualDensity.compact : null,
-                    padding: isNarrow ? EdgeInsets.zero : null,
-                    constraints: isNarrow
-                        ? const BoxConstraints(minWidth: 32, minHeight: 32)
-                        : null,
-                    onPressed: () async {
-                      if (mounted) scaffoldKey.currentState?.openEndDrawer();
-                    },
-                    icon: const Icon(Icons.settings_outlined),
+                  // 오른쪽 클릭은 설정 방식과 관계없이 앱 안 설정 서랍을 연다(새 창 방식에서 기존 화면으로 돌아오는 길).
+                  GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onSecondaryTap: () => scaffoldKey.currentState?.openEndDrawer(),
+                    child: IconButton(
+                      tooltip: '설정',
+                      visualDensity: isNarrow ? VisualDensity.compact : null,
+                      padding: isNarrow ? EdgeInsets.zero : null,
+                      constraints: isNarrow
+                          ? const BoxConstraints(minWidth: 32, minHeight: 32)
+                          : null,
+                      onPressed: () => openSettings(),
+                      icon: const Icon(Icons.settings_outlined),
+                    ),
                   ),
                   SizedBox(width: isNarrow ? 6 : 12),
                 ],
@@ -3838,7 +3842,17 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
 
   // ---- 설정 서랍 ----------------------------------------------------
 
-  void openSettings() => scaffoldKey.currentState?.openEndDrawer();
+  /// [설정] 진입. 설정 `settings_ui` 가 'native' 이면 Win32 설정 창을 열고(앱 안 서랍은 열지 않음),
+  /// 기본('flutter')이거나 창을 열지 못하면 기존 설정 서랍을 연다.
+  Future<void> openSettings() async {
+    final result = await openNativeSettingsIfEnabled(widget.api);
+    if (!mounted) return;
+    if (result.opened) return;
+    if (result.message.isNotEmpty) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(result.message)));
+    }
+    scaffoldKey.currentState?.openEndDrawer();
+  }
 
   Future<void> showLog() async {
     String logText;
@@ -4062,6 +4076,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
                     if (saved == true) await refresh();
                   },
           ),
+          SettingsUiModeTile(api: widget.api),
           ListTile(
             key: const Key('sidebarMenuSettings'),
             contentPadding: EdgeInsets.zero,

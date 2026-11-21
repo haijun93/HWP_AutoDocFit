@@ -163,7 +163,7 @@ class ApplicationService:
                        'dock_start':0, 'dock_ready':1, 'dock_stop':0})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1,'qms_bench':1})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1,'settings_window':1,'qms_bench':1})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
         if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album', 'qms_bench') and len(args) in (1, 2)) and len(args)!=counts[method]:
@@ -322,6 +322,14 @@ class ApplicationService:
             if not isinstance(payload, dict):
                 raise ServiceError('INVALID_INPUT', '아웃라이너 입력을 확인해 주세요.')
             return response(lambda: self._outliner_service.execute(payload))
+        if method == 'settings_window':
+            from .settings_window_service import SettingsWindowService
+            if getattr(self, '_settings_window_service', None) is None:
+                self._settings_window_service = SettingsWindowService(self.store)
+            payload = args[0]
+            if not isinstance(payload, dict):
+                raise ServiceError('INVALID_INPUT', '설정 창 입력을 확인해 주세요.')
+            return response(lambda: self._settings_window_service.execute(payload))
         if method == 'qms_bench':
             from .qms_bench_service import QmsBenchService
             if getattr(self, '_qms_bench_service', None) is None:

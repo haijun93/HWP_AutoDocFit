@@ -222,6 +222,17 @@ jobs:
           Copy-Item outliner_win/target/release/outliner_win.exe resources/outliner_win.exe -Force
           if (!(Test-Path resources/outliner_win.exe)) { throw 'outliner_win bundle missing' }
 
+      - name: Build settings window (settings_win.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path settings_win/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path settings_win/Cargo.toml --bin settings_win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item settings_win/target/release/settings_win.exe resources/settings_win.exe -Force
+          if (!(Test-Path resources/settings_win.exe)) { throw 'settings_win bundle missing' }
+
       - name: Build PDF edit engine (pdf-edit.exe, Rust)
         shell: pwsh
         run: |
@@ -312,7 +323,7 @@ jobs:
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {

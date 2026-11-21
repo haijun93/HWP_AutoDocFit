@@ -1,4 +1,5 @@
 //! 그리기(GDI). 실제 창과 캡처 모드가 같은 `draw` 를 쓴다. 색은 모두 `ui_theme::Palette` 에서만 가져온다.
+use crate::controls::{COLORS, color_index, color_label};
 use crate::layout::{Hit, Layout, Rect, Shape, compute, scale};
 use crate::model::Model;
 use crate::schema::{Control, GROUPS, value_text};
@@ -29,9 +30,33 @@ impl Zone {
     }
 }
 
+/// 목록 위에 겹쳐 뜨는 패널·입력 대기 상태(한 번에 하나).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Overlay {
+    /// 글꼴 고르기: 필터 글 + 선택 줄(필터된 목록 안) + 스크롤.
+    Fonts { key: String, filter: String, sel: usize, scroll: i32 },
+    /// 문자열 목록 편집: 선택 줄 + 새 값 입력 글 + 스크롤 + 안내(오류) 글.
+    ListEdit { key: String, sel: Option<usize>, input: String, scroll: i32, note: Option<String> },
+    /// 단축키 칸이 키 입력을 기다리는 중(+ 직전에 거부한 이유).
+    HotkeyWait { key: String, note: Option<String> },
+}
+
+impl Overlay {
+    pub fn key(&self) -> &str {
+        match self {
+            Overlay::Fonts { key, .. } | Overlay::ListEdit { key, .. } | Overlay::HotkeyWait { key, .. } => key,
+        }
+    }
+    /// 패널이 뜨는 종류인가(단축키 대기는 패널이 없다).
+    pub fn is_panel(&self) -> bool {
+        !matches!(self, Overlay::HotkeyWait { .. })
+    }
+}
+
 /// 모델 밖의 화면 상태.
 #[derive(Clone, Debug)]
 pub struct Ui {
+    pub overlay: Option<Overlay>,
     pub zone: Zone,
     /// 목록(보이는 항목 순서) 안의 포커스 줄.
     pub focus_row: usize,
@@ -41,7 +66,7 @@ pub struct Ui {
 
 impl Default for Ui {
     fn default() -> Self {
-        Ui { zone: Zone::List, focus_row: 0, hover: Hit::None, scroll: 0 }
+        Ui { overlay: None, zone: Zone::List, focus_row: 0, hover: Hit::None, scroll: 0 }
     }
 }
 
@@ -55,6 +80,10 @@ struct Fonts {
 }
 
 unsafe fn make_font(px: i32, weight: i32) -> HFONT {
+    unsafe { make_font_face(px, weight, FACE) }
+}
+
+unsafe fn make_font_face(px: i32, weight: i32, face: &str) -> HFONT {
     unsafe {
         CreateFontW(
             -px,
@@ -70,7 +99,7 @@ unsafe fn make_font(px: i32, weight: i32) -> HFONT {
             CLIP_DEFAULT_PRECIS as u32,
             CLEARTYPE_QUALITY as u32,
             (DEFAULT_PITCH | FF_DONTCARE) as u32,
-            wide(FACE).as_ptr(),
+            wide(face).as_ptr(),
         )
     }
 }
@@ -195,6 +224,11 @@ pub fn shape_of(c: &Control) -> Shape {
         Control::Number { .. } => Shape::Number,
         Control::Text => Shape::Text,
         Control::Choice(_) => Shape::Choice,
+        Control::Color => Shape::Color,
+        Control::Font => Shape::Font,
+        Control::Folder => Shape::Folder,
+        Control::List { .. } => Shape::List,
+        Control::Hotkey => Shape::Hotkey,
         Control::ReadOnly(_) => Shape::ReadOnly,
     }
 }
@@ -263,6 +297,43 @@ fn read_only_value(model: &Model, key: &str) -> String {
     let v = model.saved_value(key);
     let t = value_text(&v);
     if t.is_empty() { "(비어 있음)".to_string() } else { t }
+}
+
+fn list_summary(items: &[String]) -> String {
+    if items.is_empty() { "(비어 있음)".to_string() } else { format!("{}개: {}", items.len(), items.join(", ")) }
+}
+
+fn hotkey_text(v: &str) -> String {
+    if v.is_empty() { "(없음)".to_string() } else { v.to_string() }
+}
+
+/// 기본값 안내 글.
+fn default_display(item: &crate::schema::Item) -> String {
+    let d = match &item.control {
+        Control::Check => if item.default.as_bool().unwrap_or(false) { "켬".to_string() } else { "끔".to_string() },
+        Control::Color => color_label(&value_text(&item.default)),
+        Control::List { .. } => list_summary(&value_text(&item.default).split(", ").filter(|s| !s.is_empty()).map(str::to_string).collect::<Vec<_>>()),
+        Control::Hotkey => hotkey_text(&value_text(&item.default)),
+        _ => value_text(&item.default),
+    };
+    if d.is_empty() { "(비어 있음)".to_string() } else { d }
+}
+
+/// 입력칸 모양의 상자와 그 안 글. 오른쪽 단추는 따로 그린다.
+#[allow(clippy::too_many_arguments)]
+unsafe fn field_box(hdc: HDC, f: &Fonts, r: &Rect, s: &str, err: bool, muted: bool, pal: &Palette, dpi: u32) {
+    unsafe {
+        boxed(hdc, r, pal.bg, if err { pal.close_hover } else { pal.border }, scale(if err { 2 } else { 1 }, dpi), scale(8, dpi));
+        let inner = Rect::new(r.left + scale(10, dpi), r.top, r.right - scale(8, dpi), r.bottom);
+        text(hdc, f.normal, &inner, s, if muted { pal.text_faint } else { pal.text }, ONE_LINE);
+    }
+}
+
+unsafe fn small_button(hdc: HDC, f: &Fonts, r: &Rect, label: &str, enabled: bool, pal: &Palette, dpi: u32) {
+    unsafe {
+        boxed(hdc, r, pal.bg, if enabled { pal.border } else { pal.divider }, 1, scale(8, dpi));
+        text(hdc, f.small, r, label, if enabled { pal.text } else { pal.text_faint }, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 }
 
 /// 한 항목 줄.
@@ -346,6 +417,54 @@ unsafe fn draw_row(hdc: HDC, f: &Fonts, lay: &Layout, model: &Model, ui: &Ui, pa
                     draw_focus(hdc, &fr, pal, dpi, scale(10, dpi));
                 }
             }
+            Control::Color => {
+                let now = model.current_text(&item.key);
+                let at = color_index(&now);
+                for (i, c) in COLORS.iter().enumerate() {
+                    let r = lay.swatch(parts.control, i);
+                    boxed(hdc, &r, c.2, pal.border, 1, scale(5, dpi));
+                    if at == Some(i) {
+                        let ring = Rect::new(r.left - scale(3, dpi), r.top - scale(3, dpi), r.right + scale(3, dpi), r.bottom + scale(3, dpi));
+                        draw_focus(hdc, &ring, pal, dpi, scale(8, dpi));
+                    }
+                }
+                let name = if at.is_some() { format!("선택: {}", color_label(&now)) } else { format!("목록에 없는 값: {now}") };
+                text(hdc, f.small, &parts.chip, &name, pal.text, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                if focused {
+                    let fr = Rect::new(parts.control.left - scale(6, dpi), parts.control.top - scale(4, dpi), parts.control.right + scale(6, dpi), parts.control.bottom + scale(4, dpi));
+                    draw_focus(hdc, &fr, pal, dpi, scale(10, dpi));
+                }
+            }
+            Control::Font | Control::Folder | Control::List { .. } | Control::Hotkey => {
+                let waiting = matches!(&ui.overlay, Some(Overlay::HotkeyWait { key, .. }) if *key == item.key);
+                let (shown, muted) = match &item.control {
+                    Control::List { .. } => (list_summary(&model.current_list(&item.key)), model.current_list(&item.key).is_empty()),
+                    Control::Hotkey if waiting => ("키를 누르세요…".to_string(), true),
+                    Control::Hotkey => {
+                        let v = model.current_text(&item.key);
+                        (hotkey_text(&v), v.is_empty())
+                    }
+                    _ => (model.current_text(&item.key), false),
+                };
+                field_box(hdc, f, &parts.field, &shown, error.is_some(), muted, pal, dpi);
+                if waiting {
+                    draw_focus(hdc, &parts.field, pal, dpi, scale(8, dpi));
+                }
+                match &item.control {
+                    Control::Font => {
+                        boxed(hdc, &parts.plus, pal.bg, pal.border, 1, scale(8, dpi));
+                        draw_triangle(hdc, parts.plus.left + parts.plus.width() / 2, parts.plus.top + parts.plus.height() / 2, scale(5, dpi), pal.icon);
+                    }
+                    Control::Folder => small_button(hdc, f, &parts.plus, "찾아보기…", true, pal, dpi),
+                    Control::List { .. } => small_button(hdc, f, &parts.plus, "편집…", true, pal, dpi),
+                    Control::Hotkey => small_button(hdc, f, &parts.plus, "지우기", !model.current_text(&item.key).is_empty(), pal, dpi),
+                    _ => {}
+                }
+                if focused {
+                    let fr = Rect::new(parts.control.left - 3, parts.control.top - 3, parts.control.right + 3, parts.control.bottom + 3);
+                    draw_focus(hdc, &fr, pal, dpi, scale(10, dpi));
+                }
+            }
             Control::ReadOnly(why) => {
                 boxed(hdc, &parts.field, pal.bg, pal.divider, 1, scale(8, dpi));
                 let inner = Rect::new(parts.field.left + scale(10, dpi), parts.field.top, parts.field.right - scale(8, dpi), parts.field.bottom);
@@ -357,16 +476,18 @@ unsafe fn draw_row(hdc: HDC, f: &Fonts, lay: &Layout, model: &Model, ui: &Ui, pa
                 }
             }
         }
-        if let Some(why) = error {
+        let note = match &ui.overlay {
+            Some(Overlay::HotkeyWait { key, note }) if *key == item.key => note.clone(),
+            _ => None,
+        };
+        if let Some(why) = error.or(note) {
             chip(hdc, f.small, &parts.extra, &format!("오류: {why}"), pal.close_hover, pal.on_close_hover, false, dpi);
-        } else if matches!(item.control, Control::Check | Control::Number { .. } | Control::Text | Control::Choice(_)) && !item.summary.is_empty() {
-            // 기본값 안내(편집 가능한 항목).
-            let d = match &item.control {
-                Control::Check => if item.default.as_bool().unwrap_or(false) { "켬".to_string() } else { "끔".to_string() },
-                _ => value_text(&item.default),
-            };
-            let d = if d.is_empty() { "(비어 있음)".to_string() } else { d };
-            text(hdc, f.small, &parts.extra, &format!("기본값: {d}"), pal.text_faint, ONE_LINE);
+        } else if matches!(&ui.overlay, Some(Overlay::HotkeyWait { key, .. }) if *key == item.key) {
+            text(hdc, f.small, &parts.extra, "Ctrl·Alt·Shift·Win 과 함께 키를 누르세요. Esc 로 취소", pal.accent, ONE_LINE);
+        } else if let Some(w) = model.warning_of(&item.key) {
+            text(hdc, f.small, &parts.extra, &format!("※ {w}"), pal.text_sub, ONE_LINE);
+        } else if item.control.is_editable() && !item.summary.is_empty() {
+            text(hdc, f.small, &parts.extra, &format!("기본값: {}", default_display(item)), pal.text_faint, ONE_LINE);
         }
     }
 }
@@ -386,6 +507,105 @@ unsafe fn draw_button(hdc: HDC, f: &Fonts, r: &Rect, label: &str, primary: bool,
             let g = Rect::new(r.left - 3, r.top - 3, r.right + 3, r.bottom + 3);
             draw_focus(hdc, &g, pal, dpi, scale(12, dpi));
         }
+    }
+}
+
+/// 글꼴 고르기·목록 편집 패널.
+unsafe fn draw_overlay(hdc: HDC, f: &Fonts, lay: &Layout, model: &Model, o: &Overlay, pal: &Palette, dpi: u32) {
+    unsafe {
+        let p = lay.overlay();
+        let label = model.item_index(o.key()).map(|i| model.items[i].label.clone()).unwrap_or_default();
+        boxed(hdc, &p.panel, pal.bg, pal.accent, scale(2, dpi), scale(14, dpi));
+        let (title, note) = match o {
+            Overlay::Fonts { .. } => (format!("글꼴 고르기 · {label}"), None),
+            Overlay::ListEdit { note, .. } => (format!("목록 편집 · {label}"), note.clone()),
+            Overlay::HotkeyWait { .. } => (String::new(), None),
+        };
+        let title_w = if note.is_some() { p.title.width() / 2 } else { p.title.width() };
+        text(hdc, f.bold, &Rect::new(p.title.left, p.title.top, p.title.left + title_w, p.title.bottom), &title, pal.text, ONE_LINE);
+        if let Some(n) = &note {
+            chip(hdc, f.small, &Rect::new(p.title.left + title_w, p.title.top + scale(2, dpi), p.title.right, p.title.bottom - scale(2, dpi)), n, pal.close_hover, pal.on_close_hover, true, dpi);
+        }
+        // 입력칸(실제 창에서는 EDIT 가 이 자리를 덮는다)
+        let (input_text, placeholder) = match o {
+            Overlay::Fonts { filter, .. } => (filter.clone(), "글꼴 이름 찾기"),
+            Overlay::ListEdit { input, .. } => (input.clone(), "새 값 입력 후 Enter"),
+            Overlay::HotkeyWait { .. } => (String::new(), ""),
+        };
+        boxed(hdc, &p.input, pal.bg, pal.accent, scale(1, dpi), scale(8, dpi));
+        let inner = Rect::new(p.input.left + scale(10, dpi), p.input.top, p.input.right - scale(8, dpi), p.input.bottom);
+        if input_text.is_empty() {
+            text(hdc, f.normal, &inner, placeholder, pal.text_faint, ONE_LINE);
+        } else {
+            text(hdc, f.normal, &inner, &input_text, pal.text, ONE_LINE);
+        }
+        if matches!(o, Overlay::ListEdit { .. }) {
+            small_button(hdc, f, &p.add_btn, "추가", true, pal, dpi);
+        } else {
+            let filter = match o { Overlay::Fonts { filter, .. } => filter.as_str(), _ => "" };
+            let n = model.font_choices(filter).len();
+            text(hdc, f.small, &p.add_btn, &format!("{n}개"), pal.text_faint, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        }
+        // 목록
+        boxed(hdc, &p.list, pal.bg, pal.divider, 1, scale(8, dpi));
+        let saved = SaveDC(hdc);
+        IntersectClipRect(hdc, p.list.left + 1, p.list.top + 1, p.list.right - 1, p.list.bottom - 1);
+        match o {
+            Overlay::Fonts { key, filter, sel, scroll } => {
+                let names = model.font_choices(filter);
+                let cur = model.current_text(key);
+                if names.is_empty() {
+                    text(hdc, f.normal, &p.list, "맞는 글꼴이 없습니다. 이름을 직접 입력해도 됩니다.", pal.text_muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                }
+                for (n, name) in names.iter().enumerate() {
+                    let r = p.item_rect(n, *scroll);
+                    if r.bottom < p.list.top || r.top > p.list.bottom {
+                        continue;
+                    }
+                    if n == *sel {
+                        boxed(hdc, &Rect::new(r.left + 2, r.top + 1, r.right - 2, r.bottom - 1), pal.selected, pal.selected, 1, scale(6, dpi));
+                    }
+                    let sample = make_font_face(scale(15, dpi), 400, name);
+                    let fg = pal.row_text(n == *sel, pal.text);
+                    let mark = if name.to_lowercase() == cur.trim().to_lowercase() { "✓ " } else { "" };
+                    text(hdc, sample, &Rect::new(r.left + scale(12, dpi), r.top, r.right - scale(8, dpi), r.bottom), &format!("{mark}{name}"), fg, ONE_LINE);
+                    DeleteObject(sample);
+                }
+            }
+            Overlay::ListEdit { key, sel, scroll, .. } => {
+                let items = model.current_list(key);
+                if items.is_empty() {
+                    text(hdc, f.normal, &p.list, "목록이 비어 있습니다. 위 입력칸에 값을 쓰고 [추가]를 누르세요.", pal.text_muted, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                }
+                for (n, it) in items.iter().enumerate() {
+                    let r = p.item_rect(n, *scroll);
+                    if r.bottom < p.list.top || r.top > p.list.bottom {
+                        continue;
+                    }
+                    let on = *sel == Some(n);
+                    if on {
+                        boxed(hdc, &Rect::new(r.left + 2, r.top + 1, r.right - 2, r.bottom - 1), pal.selected, pal.selected, 1, scale(6, dpi));
+                    }
+                    let fg = pal.row_text(on, pal.text);
+                    text(hdc, f.small, &Rect::new(r.left + scale(10, dpi), r.top, r.left + scale(36, dpi), r.bottom), &format!("{}", n + 1), pal.row_text(on, pal.text_faint), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                    text(hdc, f.normal, &Rect::new(r.left + scale(38, dpi), r.top, r.right - scale(8, dpi), r.bottom), it, fg, ONE_LINE);
+                }
+            }
+            Overlay::HotkeyWait { .. } => {}
+        }
+        RestoreDC(hdc, saved);
+        if let Overlay::ListEdit { sel, key, .. } = o {
+            let count = model.current_list(key).len();
+            let (has, at) = (sel.is_some(), sel.unwrap_or(0));
+            small_button(hdc, f, &p.remove_btn, "삭제", has, pal, dpi);
+            small_button(hdc, f, &p.up_btn, "▲ 위로", has && at > 0, pal, dpi);
+            small_button(hdc, f, &p.down_btn, "▼ 아래로", has && at + 1 < count, pal, dpi);
+        } else {
+            let hint = Rect::new(p.panel.left + scale(16, dpi), p.close_btn.top, p.close_btn.left - scale(8, dpi), p.close_btn.bottom);
+            text(hdc, f.small, &hint, "↑↓ 고르기 · Enter 선택 · Esc 닫기", pal.text_faint, ONE_LINE);
+        }
+        boxed(hdc, &p.close_btn, pal.accent, pal.accent, 1, scale(8, dpi));
+        text(hdc, f.bold, &p.close_btn, "닫기", pal.bg, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
 }
 
@@ -467,6 +687,11 @@ pub fn draw(hdc: HDC, w: i32, h: i32, model: &Model, ui: &Ui, pal: &Palette, dpi
             boxed(hdc, &r, pal.border, pal.border, 1, scale(5, dpi));
         }
         RestoreDC(hdc, saved);
+        if let Some(o) = &ui.overlay {
+            if o.is_panel() {
+                draw_overlay(hdc, &f, &lay, model, o, pal, dpi);
+            }
+        }
 
         // 바닥 띠: 상태 + [되돌리기][저장]
         fill(hdc, &lay.footer, pal.head_bg);

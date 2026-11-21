@@ -19,11 +19,21 @@ fn key_to_control_mapping_covers_every_key() {
     let (_d, p) = temp_settings(None);
     let m = Model::load(&p).unwrap();
     let c = m.counts();
-    // 화면 노출 잎 102개 + 화면 밖 14개 = 116. 편집 89·미구현 11·소유자 둘 이상 2·내부 14.
-    assert_eq!(m.items.len(), 116);
-    assert_eq!((c.editable, c.unimplemented, c.multi_owner, c.internal), (89, 11, 2, 14));
-    // 모든 최상위 키(99개)가 어느 항목에든 나타난다.
+    // 항목 수는 소유자 스키마에서 계산한다(키가 늘어도 깨지지 않게 숫자를 고정하지 않는다).
+    let schema = docfit_config::visible_schema();
+    let roots: std::collections::HashSet<String> = schema.iter().map(|(k, _, _)| k.split('.').next().unwrap().to_string()).collect();
     let defaults = docfit_config::defaults();
+    let internal_expected = defaults.as_object().unwrap().keys().filter(|k| !roots.contains(*k)).count();
+    assert_eq!(m.items.len(), schema.len() + internal_expected);
+    assert_eq!(c.internal, internal_expected);
+    assert_eq!(c.unimplemented, 0, "화면에 보이는 모든 키에 컨트롤이 있어야 한다");
+    assert_eq!(c.editable + c.multi_owner + c.internal + c.unimplemented, m.items.len());
+    // 소유자가 둘 이상인 키는 설계 5-1 의 두 키뿐이고 읽기 전용이다.
+    let mut multi: Vec<&str> = m.items.iter().filter(|i| matches!(i.control, Control::ReadOnly(ReadOnly::MultiOwner(_)))).map(|i| i.key.as_str()).collect();
+    multi.sort();
+    assert_eq!(multi, ["always_on_top", "mongttang_search"]);
+    assert_eq!(c.multi_owner, multi.len());
+    // 모든 최상위 키가 어느 항목에든 나타난다.
     for key in defaults.as_object().unwrap().keys() {
         assert!(m.items.iter().any(|i| i.key == *key || i.key.starts_with(&format!("{key}."))), "{key} 없음");
     }
@@ -31,7 +41,7 @@ fn key_to_control_mapping_covers_every_key() {
     for i in &m.items {
         match (&i.control, i.default.is_boolean()) {
             (Control::Check, b) => assert!(b, "{}", i.key),
-            (Control::Number { .. } | Control::Text | Control::Choice(_), b) => assert!(!b, "{}", i.key),
+            (Control::Number { .. } | Control::Text | Control::Choice(_) | Control::Color | Control::Font | Control::Folder, b) => assert!(!b, "{}", i.key),
             _ => {}
         }
     }
@@ -44,12 +54,19 @@ fn key_to_control_mapping_covers_every_key() {
     assert!(matches!(get("search_engine"), Control::Choice(ref o) if o.len() == 2));
     assert_eq!(get("title_owner_text"), Control::Text);
     assert_eq!(get("label_symbols.□"), Control::Check);
-    assert!(matches!(get("color"), Control::ReadOnly(ReadOnly::Unimplemented(_))));
-    assert!(matches!(get("hwp_font_folder"), Control::ReadOnly(ReadOnly::Unimplemented(_))));
-    assert!(matches!(get("symbol_fonts.□.font"), Control::ReadOnly(ReadOnly::Unimplemented(_))));
+    assert_eq!(get("color"), Control::Color);
+    assert_eq!(get("hwp_font_folder"), Control::Folder);
+    assert_eq!(get("paste_add_folder"), Control::Folder);
+    for key in ["symbol_fonts.□.font", "symbol_fonts.ㅇ.font", "symbol_fonts.-.font", "symbol_fonts.※.font", "symbol_fonts.*.font", "symbol_fonts.•.font", "table_fonts.header.font", "table_fonts.body.font"] {
+        assert_eq!(get(key), Control::Font, "{key}");
+    }
     assert!(matches!(get("always_on_top"), Control::ReadOnly(ReadOnly::MultiOwner(_))));
     assert!(matches!(get("mongttang_search"), Control::ReadOnly(ReadOnly::MultiOwner(_))));
     assert!(matches!(get("theme_mode"), Control::ReadOnly(ReadOnly::Internal(_))));
+    // 화면 방식 전환 키는 앱 설정 화면에 보이지 않는 내부 키다(Python EXCLUDED 와 같게).
+    for key in ["settings_ui", "outliner_ui", "kclip_settings_mode"] {
+        assert!(matches!(get(key), Control::ReadOnly(ReadOnly::Internal(_))), "{key}");
+    }
 }
 
 #[test]
@@ -281,7 +298,7 @@ fn layout_has_no_overlap_at_all_dpi_and_sizes() {
             for n in 0..3 {
                 let row = l.row_rect(n, 0);
                 assert!(!row.overlaps(&l.row_rect(n + 1, 0)));
-                for shape in [Shape::Check, Shape::Number, Shape::Text, Shape::Choice, Shape::ReadOnly] {
+                for shape in [Shape::Check, Shape::Number, Shape::Text, Shape::Choice, Shape::Color, Shape::Font, Shape::Folder, Shape::List, Shape::Hotkey, Shape::ReadOnly] {
                     let p = l.row_parts(row, shape);
                     for r in [p.dot, p.label, p.summary, p.extra, p.control, p.field] {
                         assert!(r.inside(&row), "{shape:?} {r:?} 가 줄 {row:?} 밖 (dpi {dpi})");
@@ -292,6 +309,19 @@ fn layout_has_no_overlap_at_all_dpi_and_sizes() {
                     if shape == Shape::Number {
                         assert!(p.minus.inside(&row) && p.plus.inside(&row));
                         assert!(!p.field.overlaps(&p.minus) && !p.minus.overlaps(&p.plus) && p.field.width() > layout::scale(40, dpi));
+                    }
+                    if matches!(shape, Shape::Font | Shape::Folder | Shape::List | Shape::Hotkey) {
+                        assert!(p.plus.inside(&row) && p.field.inside(&row), "{shape:?} 단추/칸이 줄 밖 (dpi {dpi})");
+                        assert!(!p.field.overlaps(&p.plus) && p.field.width() > layout::scale(100, dpi), "{shape:?} 입력칸이 좁다 (dpi {dpi}, {w}x{h})");
+                    }
+                    if shape == Shape::Color {
+                        let sw: Vec<Rect> = (0..9).map(|i| l.swatch(p.control, i)).collect();
+                        for (i, r) in sw.iter().enumerate() {
+                            assert!(r.inside(&p.control) && r.width() > 0, "견본 {i} 가 컨트롤 밖 (dpi {dpi})");
+                            if i > 0 {
+                                assert!(!r.overlaps(&sw[i - 1]), "견본 겹침 (dpi {dpi})");
+                            }
+                        }
                     }
                     if shape == Shape::ReadOnly {
                         assert!(p.chip.inside(&row), "꼬리표가 줄 밖: {:?} {row:?}", p.chip);
@@ -324,4 +354,26 @@ fn layout_hit_testing_and_scroll() {
     assert!(s > 0 && l.row_rect(33, s).bottom <= l.list.bottom);
     let back = l.scroll_to_show(0, s, 34);
     assert_eq!(back, 0);
+}
+
+#[test]
+fn overlay_panel_fits_inside_list_area_at_all_sizes() {
+    for dpi in [96u32, 120, 144, 192] {
+        for (w, h) in [(layout::DEFAULT_W, layout::DEFAULT_H), (layout::MIN_W, layout::MIN_H), (1400, 900)] {
+            let (w, h) = (layout::scale(w, dpi), layout::scale(h, dpi));
+            let l = layout::compute(w, h, dpi);
+            let o = l.overlay();
+            assert!(o.panel.inside(&l.list), "패널이 목록 영역 밖 (dpi {dpi}, {w}x{h})");
+            for r in [o.title, o.input, o.add_btn, o.list, o.remove_btn, o.up_btn, o.down_btn, o.close_btn] {
+                assert!(r.inside(&o.panel), "{r:?} 가 패널 밖 (dpi {dpi}, {w}x{h})");
+            }
+            assert!(!o.input.overlaps(&o.add_btn) && !o.list.overlaps(&o.input) && !o.list.overlaps(&o.close_btn));
+            assert!(!o.remove_btn.overlaps(&o.up_btn) && !o.up_btn.overlaps(&o.down_btn) && !o.down_btn.overlaps(&o.close_btn));
+            assert!(o.list.height() >= o.item_h * 3, "목록 줄이 3개도 안 보임 (dpi {dpi}, {w}x{h})");
+            // 스크롤 계산
+            assert_eq!(o.max_scroll(2), 0);
+            let max = o.max_scroll(400);
+            assert!(max > 0 && o.scroll_to_show(399, 0, 400) == max && o.scroll_to_show(0, max, 400) == 0);
+        }
+    }
 }

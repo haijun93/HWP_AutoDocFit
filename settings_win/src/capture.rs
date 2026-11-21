@@ -69,3 +69,18 @@ pub fn apply_demo_edits(model: &mut Model) {
     model.set_text("retry_body", "20");
     model.set_text("punctuation_threshold", "7.5");
 }
+
+/// 새 컨트롤 장면용 시연 변경(모델 API 로 실제 편집, 파일은 건드리지 않는다): 색·글꼴·폴더(없는 폴더 하나)·목록·단축키.
+pub fn apply_control_demo_edits(model: &mut Model) {
+    model.set_text("color", "green");
+    model.set_text("table_fonts.header.font", "맑은 고딕");
+    model.set_text("symbol_fonts.ㅇ.font", "맑은 고딕");
+    model.set_text("hwp_font_folder", r"C:\Windows\Fonts");
+    model.set_text("paste_add_folder", r"C:\없는폴더\붙여넣기 문서");
+    if model.item_index("demo.excluded_apps").is_some() {
+        for app in ["notepad.exe", "calc.exe", "mspaint.exe"] {
+            let _ = model.list_add("demo.excluded_apps", app);
+        }
+        model.set_text("demo.hotkey", "Ctrl+Alt+K");
+    }
+}

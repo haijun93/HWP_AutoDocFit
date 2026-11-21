@@ -124,7 +124,8 @@ impl Layout {
             Shape::Check => s(120),
             Shape::Number => s(150),
             Shape::Choice => s(210),
-            Shape::Text | Shape::ReadOnly => s(250),
+            Shape::Folder => s(300),
+            Shape::Text | Shape::ReadOnly | Shape::Color | Shape::Font | Shape::List | Shape::Hotkey => s(250),
         };
         let top = row.top + s(10);
         let right = row.right - s(14);
@@ -134,6 +135,16 @@ impl Layout {
             let plus = Rect::new(control.right - b, control.top, control.right, control.bottom);
             let minus = Rect::new(plus.left - s(4) - b, control.top, plus.left - s(4), control.bottom);
             (minus, plus, Rect::new(control.left, control.top, minus.left - s(6), control.bottom))
+        } else if let Some(bw) = match shape {
+            Shape::Font => Some(s(34)),
+            Shape::Folder => Some(s(92)),
+            Shape::Hotkey => Some(s(64)),
+            Shape::List => Some(s(84)),
+            _ => None,
+        } {
+            // 입력칸 오른쪽의 단추는 `plus` 자리를 쓴다.
+            let plus = Rect::new(control.right - bw, control.top, control.right, control.bottom);
+            (Rect::default(), plus, Rect::new(control.left, control.top, plus.left - s(6), control.bottom))
         } else {
             (Rect::default(), Rect::default(), control)
         };
@@ -145,6 +156,34 @@ impl Layout {
         let summary = Rect::new(text_left, label.bottom, text_right, label.bottom + s(36));
         let extra = Rect::new(text_left, summary.bottom + s(4), text_right, summary.bottom + s(4) + s(24));
         RowParts { dot, label, summary, extra, control, field, minus, plus, chip }
+    }
+
+    /// 색 견본 `i`(0..9)의 칸. `control` 은 `row_parts` 의 컨트롤 영역.
+    pub fn swatch(&self, control: Rect, i: usize) -> Rect {
+        let size = self.s(22);
+        let gap = (control.width() - 9 * size) / 8;
+        let left = control.left + i as i32 * (size + gap);
+        let top = control.top + (control.height() - size) / 2;
+        Rect::new(left, top, left + size, top + size)
+    }
+
+    /// 겹침 패널(글꼴 목록·목록 편집)의 배치. 목록 영역 가운데에 둔다.
+    pub fn overlay(&self) -> OverlayParts {
+        let s = |v: i32| self.s(v);
+        let w = (self.list.width() - s(48)).min(s(460));
+        let h = (self.list.height() - s(24)).min(s(440));
+        let left = self.list.left + (self.list.width() - w) / 2;
+        let top = self.list.top + (self.list.height() - h) / 2;
+        let panel = Rect::new(left, top, left + w, top + h);
+        let title = Rect::new(panel.left + s(16), panel.top + s(10), panel.right - s(16), panel.top + s(38));
+        let add_btn = Rect::new(panel.right - s(16) - s(72), title.bottom + s(6), panel.right - s(16), title.bottom + s(6) + s(34));
+        let input = Rect::new(panel.left + s(16), add_btn.top, add_btn.left - s(8), add_btn.bottom);
+        let bottom_row = Rect::new(panel.left + s(16), panel.bottom - s(16) - s(34), panel.right - s(16), panel.bottom - s(16));
+        let list = Rect::new(panel.left + s(16), input.bottom + s(10), panel.right - s(16), bottom_row.top - s(10));
+        let bw = s(74);
+        let btn = |n: i32| Rect::new(bottom_row.left + n * (bw + s(8)), bottom_row.top, bottom_row.left + n * (bw + s(8)) + bw, bottom_row.bottom);
+        let close_btn = Rect::new(bottom_row.right - bw, bottom_row.top, bottom_row.right, bottom_row.bottom);
+        OverlayParts { panel, title, input, add_btn, list, remove_btn: btn(0), up_btn: btn(1), down_btn: btn(2), close_btn, item_h: s(32) }
     }
 
     pub fn hit(&self, x: i32, y: i32, scroll: i32, rows: usize) -> Hit {
@@ -182,6 +221,16 @@ pub enum Shape {
     Number,
     Text,
     Choice,
+    /// 견본 9개 한 줄.
+    Color,
+    /// 입력칸 + ▾ 단추.
+    Font,
+    /// 입력칸 + [찾아보기].
+    Folder,
+    /// 요약 칸 + [편집…].
+    List,
+    /// 키 입력 칸 + [지우기].
+    Hotkey,
     ReadOnly,
 }
 
@@ -196,6 +245,43 @@ pub struct RowParts {
     pub minus: Rect,
     pub plus: Rect,
     pub chip: Rect,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OverlayParts {
+    pub panel: Rect,
+    pub title: Rect,
+    pub input: Rect,
+    pub add_btn: Rect,
+    pub list: Rect,
+    pub remove_btn: Rect,
+    pub up_btn: Rect,
+    pub down_btn: Rect,
+    pub close_btn: Rect,
+    pub item_h: i32,
+}
+
+impl OverlayParts {
+    /// 목록 영역의 `n` 번째 줄(스크롤 `scroll` 화소).
+    pub fn item_rect(&self, n: usize, scroll: i32) -> Rect {
+        let top = self.list.top + n as i32 * self.item_h - scroll;
+        Rect::new(self.list.left, top, self.list.right, top + self.item_h)
+    }
+    pub fn max_scroll(&self, count: usize) -> i32 {
+        (count as i32 * self.item_h - self.list.height()).max(0)
+    }
+    /// `n` 번째 줄이 보이도록 스크롤을 조정한다.
+    pub fn scroll_to_show(&self, n: usize, scroll: i32, count: usize) -> i32 {
+        let top = n as i32 * self.item_h;
+        let mut s = scroll;
+        if top < s {
+            s = top;
+        }
+        if top + self.item_h > s + self.list.height() {
+            s = top + self.item_h - self.list.height();
+        }
+        s.clamp(0, self.max_scroll(count))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

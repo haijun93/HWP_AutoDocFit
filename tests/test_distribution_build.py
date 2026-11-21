@@ -45,13 +45,28 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn("cargo test --release --locked --manifest-path outliner_win/Cargo.toml", workflow)
         self.assertIn("cargo build --release --locked --manifest-path outliner_win/Cargo.toml --bin outliner_win", workflow)
         self.assertIn("Copy-Item outliner_win/target/release/outliner_win.exe resources/outliner_win.exe", workflow)
-        self.assertIn("'outliner_win.exe')", workflow)  # VC++ 런타임 비의존 검사 목록
+        self.assertIn("'outliner_win.exe'", workflow)  # VC++ 런타임 비의존 검사 목록
         self.assertIn("outliner_win.exe", spec)
         self.assertIn("StopHelper('outliner_win.exe')", iss)
         gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
         self.assertIn("outliner_win/target/", gitignore)
         # 이 PC 전용 경로(.cargo/config.toml 의 target-dir 등)를 저장소에 넣지 않는다.
         self.assertFalse((ROOT / "outliner_win" / ".cargo").exists())
+        self.assertNotIn("target-dir", (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
+
+    def test_settings_window_is_tested_built_and_packaged_like_outliner_window(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-windows-exe.yml").read_text(encoding="utf-8")
+        spec = (ROOT / "HWP_AutoDocFit.spec").read_text(encoding="utf-8")
+        iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
+        self.assertIn("cargo test --release --locked --manifest-path settings_win/Cargo.toml", workflow)
+        self.assertIn("cargo build --release --locked --manifest-path settings_win/Cargo.toml --bin settings_win", workflow)
+        self.assertIn("Copy-Item settings_win/target/release/settings_win.exe resources/settings_win.exe", workflow)
+        self.assertIn("'settings_win.exe')", workflow)  # VC++ 런타임 비의존 검사 목록
+        self.assertIn("settings_win.exe", spec)
+        self.assertIn("StopHelper('settings_win.exe')", iss)
+        self.assertIn("settings_win/target/", (ROOT / ".gitignore").read_text(encoding="utf-8"))
+        # 이 PC 전용 경로(.cargo/config.toml 의 target-dir 등)를 저장소에 넣지 않는다.
+        self.assertFalse((ROOT / "settings_win" / ".cargo").exists())
         self.assertNotIn("target-dir", (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
 
     def test_qms_bench_engine_is_built_hashed_and_packaged_like_pdf_editor(self):

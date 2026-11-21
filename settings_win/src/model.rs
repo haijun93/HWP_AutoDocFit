@@ -28,6 +28,8 @@ pub struct Model {
     /// 1글자 검색을 Enter 로 확정했는지.
     pub search_forced: bool,
     pub status: Option<Status>,
+    /// 설치된 글꼴 이름(글꼴 목록·경고용. 시험에서는 비어 있을 수 있다).
+    pub fonts: Vec<String>,
 }
 
 pub fn lookup<'a>(root: &'a Value, key: &str) -> Option<&'a Value> {
@@ -52,7 +54,16 @@ impl Model {
             search: String::new(),
             search_forced: false,
             status: None,
+            #[cfg(windows)]
+            fonts: crate::controls::installed_fonts(),
+            #[cfg(not(windows))]
+            fonts: Vec::new(),
         })
+    }
+
+    /// 시연용 항목(목록·단축키 컨트롤)을 덧붙인다. 캡처 모드·시험 전용.
+    pub fn add_demo_items(&mut self) {
+        self.items.extend(crate::schema::demo_items());
     }
 
     fn read(path: &Path) -> Result<(Value, String), String> {
@@ -110,7 +121,9 @@ impl Model {
             (Value::String(s), Some(Control::Number { .. })) => Value::String(s.trim().to_string()),
             _ => value,
         };
-        if value == self.saved_value(key) {
+        let saved = self.saved_value(key);
+        let same = value == saved || (saved.is_null() && matches!(&value, Value::Array(a) if a.is_empty()));
+        if same {
             self.edits.remove(key);
         } else {
             self.edits.insert(key.to_string(), value);
@@ -120,6 +133,85 @@ impl Model {
 
     pub fn set_text(&mut self, key: &str, text: &str) {
         self.set_value(key, Value::String(text.to_string()));
+    }
+
+    /// 목록 값(항목이 문자열 배열이 아니면 빈 목록).
+    pub fn current_list(&self, key: &str) -> Vec<String> {
+        match self.current(key) {
+            Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    fn list_max(&self, key: &str) -> usize {
+        match self.item_index(key).map(|i| &self.items[i].control) {
+            Some(Control::List { max }) => *max,
+            _ => 0,
+        }
+    }
+
+    fn put_list(&mut self, key: &str, list: Vec<String>) {
+        self.set_value(key, Value::Array(list.into_iter().map(Value::String).collect()));
+    }
+
+    /// 목록 끝에 추가(검사: 빈 글·길이·중복·개수). 성공하면 새 항목 번호.
+    pub fn list_add(&mut self, key: &str, text: &str) -> Result<usize, String> {
+        let mut list = self.current_list(key);
+        let entry = crate::controls::check_list_entry(&list, text, self.list_max(key))?;
+        list.push(entry);
+        let at = list.len() - 1;
+        self.put_list(key, list);
+        Ok(at)
+    }
+
+    pub fn list_remove(&mut self, key: &str, at: usize) -> bool {
+        let mut list = self.current_list(key);
+        if at >= list.len() {
+            return false;
+        }
+        list.remove(at);
+        self.put_list(key, list);
+        true
+    }
+
+    /// `at` 번째 항목을 `delta`(-1 위·+1 아래)만큼 옮긴다. 옮겨진 새 자리를 돌려준다.
+    pub fn list_move(&mut self, key: &str, at: usize, delta: i32) -> Option<usize> {
+        let mut list = self.current_list(key);
+        let to = at as i32 + delta;
+        if at >= list.len() || to < 0 || to as usize >= list.len() {
+            return None;
+        }
+        list.swap(at, to as usize);
+        self.put_list(key, list);
+        Some(to as usize)
+    }
+
+    /// 색 선택 순환(견본 ←→).
+    pub fn cycle_color(&mut self, key: &str, dir: i32) {
+        let n = crate::controls::COLORS.len() as i32;
+        let at = crate::controls::color_index(&self.current_text(key)).map(|i| i as i32).unwrap_or(if dir > 0 { -1 } else { 0 });
+        let next = (at + dir).rem_euclid(n) as usize;
+        self.set_text(key, crate::controls::COLORS[next].0);
+    }
+
+    /// 글꼴 고르기 목록(이름에 `filter` 글이 들어 있는 것, 대소문자 무시).
+    pub fn font_choices(&self, filter: &str) -> Vec<String> {
+        let q = filter.trim().to_lowercase();
+        self.fonts.iter().filter(|f| q.is_empty() || f.to_lowercase().contains(&q)).cloned().collect()
+    }
+
+    /// 편집 가능하지만 저장은 막지 않는 알림(폴더가 없음·설치되지 않은 글꼴).
+    pub fn warning_of(&self, key: &str) -> Option<String> {
+        let item = &self.items[self.item_index(key)?];
+        let now = self.current_text(key);
+        match item.control {
+            Control::Folder => crate::controls::folder_warning(&now),
+            Control::Font if !self.fonts.is_empty() && !now.trim().is_empty() => {
+                let want = now.trim().to_lowercase();
+                if self.fonts.iter().any(|f| f.to_lowercase() == want) { None } else { Some("이 PC에 설치된 글꼴 목록에 없습니다(한/글 전용 글꼴일 수 있음).".into()) }
+            }
+            _ => None,
+        }
     }
 
     pub fn toggle(&mut self, key: &str) {
@@ -162,12 +254,12 @@ impl Model {
     /// 이 항목의 입력 오류(이유). 개별 규칙 + 최소≤최대 교차 검사.
     pub fn error_of(&self, key: &str) -> Option<String> {
         let item = &self.items[self.item_index(key)?];
-        if let (Control::Number { .. } | Control::Text, Some(Value::String(s))) = (&item.control, self.edits.get(key)) {
+        if let (true, Some(Value::String(s))) = (item.control.is_text_like(), self.edits.get(key)) {
             if let Some(why) = explain(item, s) {
                 return Some(why);
             }
-            // docfit_config 가 거부하는데 위 규칙에 없는 경우도 놓치지 않는다.
-            if docfit_config::validate_patch(&json!({ key: s })).is_err() {
+            // docfit_config 가 거부하는데 위 규칙에 없는 경우도 놓치지 않는다(시연 항목은 스키마 밖이라 제외).
+            if !key.starts_with("demo.") && docfit_config::validate_patch(&json!({ key: s })).is_err() {
                 return Some("허용되지 않는 값입니다.".into());
             }
         }

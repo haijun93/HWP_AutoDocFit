@@ -308,7 +308,8 @@ void main() {
       {'name': '문서.hwp', 'folder': r'C:\문서'},
     ];
     Future<Object?> api(String name, List<Object?> args) async {
-      if (name != 'get_state') calls.add([name, ...args]);
+      // settings_window: [설정] 진입 문지기·서랍의 설정 창 방식 줄이 부르는 읽기 명령(이 시험의 대상이 아니다).
+      if (name != 'get_state' && name != 'settings_window') calls.add([name, ...args]);
       if (name == 'set_stage') {
         final stages = state['stages'] as List;
         (stages.firstWhere((s) => s['key'] == args[0]) as Map)['on'] = args[1];
@@ -823,6 +824,7 @@ void main() {
         calls.where(
           (name) =>
               name != 'get_state' &&
+              name != 'settings_window' &&
               name != 'enable_close_guard' &&
               name != 'table_units' &&
               name != 'table_sketch' &&

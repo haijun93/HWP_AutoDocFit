@@ -22,7 +22,7 @@ pub const GROUPS: [GroupDef; 11] = [
     GroupDef { id: "general", title: "일반", subtitle: "탐색기 메뉴" },
     GroupDef { id: "program", title: "프로그램·네트워크", subtitle: "창·업데이트" },
     GroupDef { id: "dev", title: "개발자 도구", subtitle: "도형 편집기" },
-    GroupDef { id: "internal", title: "내부 값(화면 밖)", subtitle: "편집하지 않는 키 14개" },
+    GroupDef { id: "internal", title: "내부 값(화면 밖)", subtitle: "편집하지 않는 내부 키" },
 ];
 
 /// 편집하지 않는 키의 사유.
@@ -61,12 +61,27 @@ pub enum Control {
     Text,
     /// (저장 값, 화면 이름) 목록.
     Choice(Vec<(String, String)>),
+    /// 색 견본 9개 중 하나(`controls::COLORS`).
+    Color,
+    /// 글꼴 이름: 직접 입력 + 설치된 글꼴 목록에서 고르기.
+    Font,
+    /// 폴더 경로: 직접 입력 + [찾아보기] 대화상자.
+    Folder,
+    /// 문자열 목록(추가·삭제·순서). 값은 JSON 배열.
+    List { max: usize },
+    /// 단축키(키를 눌러 입력).
+    Hotkey,
     ReadOnly(ReadOnly),
 }
 
 impl Control {
     pub fn is_editable(&self) -> bool {
         !matches!(self, Control::ReadOnly(_))
+    }
+
+    /// 값이 입력 글(문자열)로 저장되는 종류.
+    pub fn is_text_like(&self) -> bool {
+        matches!(self, Control::Number { .. } | Control::Text | Control::Font | Control::Folder | Control::Hotkey)
     }
 }
 
@@ -129,17 +144,18 @@ fn group_of(key: &str) -> usize {
 /// 소유자가 둘 이상인 키(설계 문서 ⑤-1 표) 중 앱 `settings.json` 의 화면 노출 키.
 fn multi_owner(key: &str) -> Option<&'static str> {
     match key {
-        "mongttang_search" => Some("소유자 2(설계 5-D): 앱 키 + 몽땅검색 자동 실행. 임의로 쓰지 않음"),
-        "always_on_top" => Some("소유자 3(설계 5-B): 앱 창·빠른 목록·옛 스티커 창. 임의로 쓰지 않음"),
+        "mongttang_search" => Some("소유자 2(설계 5-D): 저장하면 상주 프로그램도 켜고 꺼야 해서 앱 설정 서랍에서만 바꿉니다"),
+        "always_on_top" => Some("소유자 3(설계 5-B): 켜는 즉시 창을 바꾸는 전용 명령이 필요해 앱 설정 서랍에서만 바꿉니다"),
         _ => None,
     }
 }
 
-fn unimplemented_of(key: &str) -> Option<&'static str> {
+/// 키 이름으로 정해지는 복잡한 컨트롤(스키마 종류는 모두 text).
+fn special_control(key: &str) -> Option<Control> {
     match key {
-        "color" => Some("색 선택 콤보가 필요"),
-        "hwp_font_folder" | "paste_add_folder" => Some("폴더 선택 대화상자가 필요"),
-        k if k.ends_with(".font") => Some("글꼴 목록 콤보(직접 입력 가능)가 필요"),
+        "color" => Some(Control::Color),
+        "hwp_font_folder" | "paste_add_folder" => Some(Control::Folder),
+        k if k.ends_with(".font") => Some(Control::Font),
         _ => None,
     }
 }
@@ -148,6 +164,7 @@ fn internal_note(key: &str) -> &'static str {
     match key {
         "theme_mode" => "소유자 4(설계 5-A): 전용 명령으로만 변경",
         "menu_display_mode" => "전용 명령(set_menu_display_mode)으로만 변경",
+        "kclip_settings_mode" | "outliner_ui" | "settings_ui" => "화면 방식 전환 키: 해당 화면의 전용 명령으로만 변경",
         k if k.ends_with("_rev") => "마이그레이션이 쓰는 내부 번호",
         _ => "내부·전용 경로 키(save_settings 불가)",
     }
@@ -161,8 +178,8 @@ fn make_item(key: &str, kind: &str, default: &Value) -> Item {
     let haystack = format!("{label} {title} {summary}").to_lowercase();
     let control = if let Some(note) = multi_owner(key) {
         Control::ReadOnly(ReadOnly::MultiOwner(note))
-    } else if let Some(what) = unimplemented_of(key) {
-        Control::ReadOnly(ReadOnly::Unimplemented(what))
+    } else if let Some(c) = special_control(key) {
+        c
     } else {
         match kind {
             "boolean" => Control::Check,
@@ -208,11 +225,31 @@ pub fn build_items() -> Vec<Item> {
     items
 }
 
+/// 시연용 항목(설정 키가 아님): 저장소 스키마에는 아직 목록·단축키 키가 없어, 두 컨트롤을 실제 그리기·동작 코드로 보이기 위해
+/// 캡처 모드(`--demo-controls`)와 시험에서만 모델에 덧붙인다. 실제 창에는 나타나지 않는다.
+pub fn demo_items() -> Vec<Item> {
+    let mk = |key: &str, label: &str, summary: &str, control: Control, default: Value| Item {
+        key: key.into(),
+        label: label.into(),
+        summary: summary.into(),
+        haystack: format!("{label} {summary}").to_lowercase(),
+        group: group_index("program"),
+        control,
+        default,
+    };
+    vec![
+        mk("demo.excluded_apps", "시연: 제외할 프로그램 목록", "목록 컨트롤 시연(설정 키 아님). [편집…]으로 추가·삭제·순서를 바꿉니다.", Control::List { max: 100 }, Value::Array(vec![])),
+        mk("demo.hotkey", "시연: 단축키 입력", "단축키 컨트롤 시연(설정 키 아님). 칸을 눌러 키를 누르면 입력됩니다.", Control::Hotkey, Value::String("Ctrl+Alt+Space".into())),
+    ]
+}
+
 /// 저장 값을 입력칸 글로(문자열은 그대로, 그 밖은 JSON 한 줄).
 pub fn value_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Bool(b) => if *b { "켬".into() } else { "끔".into() },
+        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "),
+        Value::Null => String::new(),
         other => other.to_string(),
     }
 }
@@ -239,6 +276,11 @@ pub fn explain(item: &Item, text: &str) -> Option<String> {
             }
             None
         }
+        Control::Font => crate::controls::explain_font(text),
+        Control::Folder => crate::controls::explain_folder(text).or_else(|| {
+            if text.chars().count() > 4096 || text.contains('\0') { Some("사용할 수 없는 문자가 있습니다.".into()) } else { None }
+        }),
+        Control::Hotkey => crate::controls::normalize_hotkey(text).err(),
         Control::Text => {
             if text.chars().count() > 4096 {
                 Some("4096자를 넘을 수 없습니다.".into())
