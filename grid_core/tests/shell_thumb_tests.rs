@@ -7,6 +7,22 @@ use std::{path::PathBuf, time::Instant};
 fn shell_thumbnail_benchmark_synthetic_only() {
     let root =
         PathBuf::from(std::env::var_os("SHELL_THUMB_FIXTURES").expect("SHELL_THUMB_FIXTURES"));
+    if let Some(windir) = std::env::var_os("WINDIR") {
+        let probe = PathBuf::from(windir).join("System32").join("notepad.exe");
+        let start = Instant::now();
+        match shell_thumb::thumbnail(&probe, 128) {
+            Ok(b) => eprintln!(
+                "probe=notepad result=ok dims={}x{} elapsed_s={:.4}",
+                b.width,
+                b.height,
+                start.elapsed().as_secs_f64()
+            ),
+            Err(e) => eprintln!(
+                "probe=notepad result=error elapsed_s={:.4} error={e}",
+                start.elapsed().as_secs_f64()
+            ),
+        }
+    }
     for ext in ["jpg", "png", "pdf", "txt"] {
         let p = root.join(format!("sample.{ext}"));
         let start = Instant::now();

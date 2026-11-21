@@ -31,6 +31,7 @@ pub enum Error {
     InvalidSize,
     PathEncoding,
     Timeout,
+    WorkerPanicked,
     Shell(String),
     NoPixels,
     Oversized,
@@ -53,11 +54,18 @@ pub fn thumbnail(path: &Path, size: u32) -> Result<Bitmap, Error> {
     std::thread::Builder::new()
         .name("shell-thumb-sta".into())
         .spawn(move || {
-            let _ = tx.send(unsafe { thumbnail_sta(&path, size) });
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+                thumbnail_sta(&path, size)
+            }))
+            .unwrap_or(Err(Error::WorkerPanicked));
+            let _ = tx.send(result);
         })
         .map_err(|e| Error::Shell(e.to_string()))?;
-    rx.recv_timeout(Duration::from_secs(15))
-        .map_err(|_| Error::Timeout)?
+    match rx.recv_timeout(Duration::from_secs(15)) {
+        Ok(result) => result,
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(Error::Timeout),
+        Err(mpsc::RecvTimeoutError::Disconnected) => Err(Error::WorkerPanicked),
+    }
 }
 
 struct ComGuard(bool);
@@ -83,19 +91,57 @@ unsafe fn thumbnail_sta(path: &PathBuf, size: u32) -> Result<Bitmap, Error> {
     let absolute = path
         .canonicalize()
         .map_err(|e| Error::Shell(format!("path: {e}")))?;
+    if !absolute.is_absolute() || !absolute.is_file() {
+        return Err(Error::Shell("path is not an existing file".into()));
+    }
     let mut wide: Vec<u16> = absolute.as_os_str().encode_wide().collect();
+    // std::fs::canonicalize may return an extended-length path (\\?\...), which
+    // SHCreateItemFromParsingName rejects for otherwise valid shell items.
+    const VERBATIM: &[u16] = &[b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
+    const VERBATIM_UNC: &[u16] = &[
+        b'\\' as u16,
+        b'\\' as u16,
+        b'?' as u16,
+        b'\\' as u16,
+        b'U' as u16,
+        b'N' as u16,
+        b'C' as u16,
+        b'\\' as u16,
+    ];
+    if wide.starts_with(VERBATIM_UNC) {
+        wide.drain(..VERBATIM_UNC.len());
+        wide.splice(0..0, [b'\\' as u16, b'\\' as u16]);
+    } else if wide.starts_with(VERBATIM) {
+        wide.drain(..VERBATIM.len());
+    }
+    for unit in &mut wide {
+        if *unit == b'/' as u16 {
+            *unit = b'\\' as u16;
+        }
+    }
     wide.push(0);
     let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let initialized = hr.is_ok();
-    if hr.is_err() && hr.0 != 0x80010106u32 as i32 {
-        return Err(Error::Shell(format!("COM init: {hr}")));
+    if hr.is_err() {
+        return Err(Error::Shell(format!(
+            "COM init HRESULT=0x{:08X}",
+            hr.0 as u32
+        )));
     }
     let _com = ComGuard(initialized);
     let item: IShellItem = unsafe { SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None) }
-        .map_err(|e| Error::Shell(format!("item: {e}")))?;
-    let factory: IShellItemImageFactory = item
-        .cast()
-        .map_err(|e| Error::Shell(format!("image factory: {e}")))?;
+        .map_err(|e| {
+            Error::Shell(format!(
+                "SHCreateItemFromParsingName HRESULT=0x{:08X}",
+                e.code().0 as u32
+            ))
+        })?;
+    let factory: IShellItemImageFactory = item.cast().map_err(|e| {
+        Error::Shell(format!(
+            "IShellItemImageFactory HRESULT=0x{:08X}",
+            e.code().0 as u32
+        ))
+    })?;
     let bitmap = unsafe {
         factory.GetImage(
             SIZE {
@@ -105,7 +151,7 @@ unsafe fn thumbnail_sta(path: &PathBuf, size: u32) -> Result<Bitmap, Error> {
             SIIGBF_RESIZETOFIT,
         )
     }
-    .map_err(|e| Error::Shell(format!("GetImage: {e}")))?;
+    .map_err(|e| Error::Shell(format!("GetImage HRESULT=0x{:08X}", e.code().0 as u32)))?;
     let _bitmap = BitmapGuard(bitmap);
     let mut object = BITMAP::default();
     if unsafe {
