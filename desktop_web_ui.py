@@ -134,6 +134,7 @@ class DesktopWebBridge:
         self._closed = False
         self.conversion_target = "hwpx"
         self.pdf_compress_target_mb = 10
+        self.pdf_compress_method = "auto"
         self._conversion_prerequisites_checked = 0.0
         self._conversion_prerequisites_cache = None
         self._conversion_prerequisites_lock = threading.Lock()
@@ -698,6 +699,7 @@ class DesktopWebBridge:
         bulk_state = getattr(self, "_bulk_state", None)
         state["hwp_bulk"] = bulk_state.as_dict() if bulk_state else None
         state["pdf_compress_target_mb"] = getattr(self, "pdf_compress_target_mb", 10)
+        state["pdf_compress_method"] = getattr(self, "pdf_compress_method", "auto")
         return state
 
     def _can_start(self, mode, files, running, conversion_targets=None):
@@ -829,9 +831,10 @@ class DesktopWebBridge:
                         "넣은 순서대로 한 PDF로 합침 · 파일마다 책갈피 · 암호 PDF는 제외")},
             # PDF 압축은 한/글·변환 엔진 없이 PDF 안의 그림·스트림만 다시 저장한다(보안 PDF는 같은 권한 유지).
             {"format": "pdfz", "label": "PDF 압축", "enabled": valid and all(s == ".pdf" for s in suffixes),
+             "method": getattr(self, "pdf_compress_method", "auto"),
              "reason": (invalid_reason if not valid else
                         "PDF 파일에만 쓸 수 있습니다" if any(s != ".pdf" for s in suffixes) else
-                        "글자·쪽은 그대로, 그림만 다시 저장 · 보안 PDF는 같은 권한 유지")},
+                        "기본은 글자 보존 · 목표 미달 시 이미지 PDF로 전환 가능 · 보안 PDF는 이미지 PDF 전환 불가")},
             {"format": "pdfi", "label": "이미지 PDF", "enabled": valid and pdf_ready,
              "reason": (invalid_reason if not valid else
                         pdf_reason if not pdf_ready else
@@ -1001,6 +1004,15 @@ class DesktopWebBridge:
             raise ValueError("올바른 목표 크기(MB)를 입력해 주세요.") from exc
         return self.get_state()
 
+    def set_pdf_compress_method(self, method):
+        method = str(method or "").lower()
+        if method not in {"auto", "preserve_text", "image_pdf"}:
+            raise ValueError("PDF 압축 방식은 자동 전환, 글자 보존, 이미지 PDF 중에서 골라 주세요.")
+        if self.gui.running:
+            raise ValueError("작업 중에는 PDF 압축 방식을 바꿀 수 없습니다.")
+        self.pdf_compress_method = method
+        return self.get_state()
+
     def start_single_file_conversion(self, file_index, target):
         """현재 공통 변환 가능성 판단을 적용해 선택한 입력 하나를 고정하여 변환한다."""
         from docfit_app.api_contract import ServiceError
@@ -1071,6 +1083,7 @@ class DesktopWebBridge:
             progress=gui_queue.put, stop_event=stop_event,
             runtime_factory=lambda: runtime, log=gui.로그표시,
             pdf_target_bytes=getattr(self, "pdf_compress_target_mb", 10) * 1024 * 1024,
+            pdf_compress_method=getattr(self, "pdf_compress_method", "auto"),
         )
         gui.worker = manager.thread(identifier)
         return identifier
@@ -1368,6 +1381,7 @@ class DesktopWebBridge:
                         runtime_factory=lambda: runtime,
                         log=gui.로그표시,
                         pdf_target_bytes=getattr(self, "pdf_compress_target_mb", 10) * 1024 * 1024,
+                        pdf_compress_method=getattr(self, "pdf_compress_method", "auto"),
                     )
                     gui.worker = manager.thread(identifier)
                 elif file_order:
@@ -3973,7 +3987,7 @@ class _BrowserApi:
             "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
             "doc_grid", "pdf_edit", "outliner", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
-            "set_conversion_target", "set_pdf_compress_target_mb", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
+            "set_conversion_target", "set_pdf_compress_target_mb", "set_pdf_compress_method", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))
 

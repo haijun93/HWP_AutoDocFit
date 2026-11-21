@@ -45,7 +45,11 @@ def start_conversion_job(manager, files, target, output_dir=None, *, job_id=None
                 'outcome':'ok' if success and not failed else 'partial' if success else 'nothing_saved',
                 'success':success, 'failed':failed, 'skipped':skipped,
                 'results':[{'source':item['source'], 'status':{'success':'converted','skipped':'skipped','failed':'failed'}[item['status']],
-                            'reason':item['error'], 'output':item['output']} for item in results if item['source'] is not None],
+                            'reason':item['error'], 'output':item['output'],
+                            **({'method':item['method'], 'text_preserved':item['text_preserved'],
+                                'reached_target':item['reached_target']}
+                               if 'method' in item else {})}
+                           for item in results if item['source'] is not None],
             })
         if terminal_event:
             legacy_event(adapter, 'conversion', terminal_event)
@@ -96,7 +100,10 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
     class Events:
         def put(self, event):
             if event[0] == 'saved':
-                results.append(dict(source=event[1], output=event[2], status='success', error=None, event_source=event[1]))
+                result = dict(source=event[1], output=event[2], status='success', error=None, event_source=event[1])
+                if len(event) > 9 and event[7] is not None:
+                    result.update(method=event[7], text_preserved=event[8], reached_target=event[9])
+                results.append(result)
             elif event[0] == 'document_error':
                 results.append(dict(source=event[1], output=None,
                                     status='skipped' if is_same_format(event[1], target_format) else 'failed', error=event[2], event_source=event[1]))
@@ -194,7 +201,11 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                 elif target_format == "pdfz":
                     from docfit_core.pdf_compress import compress_pdf
                     target_bytes = kwargs.get("pdf_target_bytes", 10 * 1024 * 1024)
-                    압축결과 = compress_pdf(source, target, target_bytes=target_bytes)
+                    압축결과 = compress_pdf(
+                        source, target, target_bytes=target_bytes,
+                        method=kwargs.get("pdf_compress_method", "auto"),
+                        cancel_check=중단_event.is_set,
+                    )
                     로그(f"PDF 압축: {source.name} {압축결과.summary()}")
                 elif target_format == "pdfi":
                     convert_to_raster_pdf(app, source, target)
@@ -205,7 +216,10 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                 info = 압축결과.summary() if target_format == "pdfz" else None
                 final_size = 압축결과.after if target_format == "pdfz" else None
                 steps = 압축결과.step if target_format == "pdfz" else None
-                gui_queue.put(("saved", str(source), str(target), None, info, final_size, steps))
+                gui_queue.put(("saved", str(source), str(target), None, info, final_size, steps,
+                               압축결과.method if target_format == "pdfz" else None,
+                               압축결과.text_preserved if target_format == "pdfz" else None,
+                               압축결과.reached_target if target_format == "pdfz" else None))
                 로그(f"파일 변환 완료: {source.name} → {target.name}")
             except Exception as exc:
                 failures += 1

@@ -337,7 +337,10 @@ def legacy_event(manager, identifier, item):
     elif event == 'document_error':
         manager.report(identifier, 'log', {'message':str(values[1]), 'source':str(values[0]), 'legacy_event':'document_error', 'legacy_values':[str(values[0]), str(values[1])]})
     elif event == 'saved':
-        manager.report(identifier, 'item_done', {'source':str(values[0]), 'status':'converted', 'output':str(values[1])})
+        details = {'source':str(values[0]), 'status':'converted', 'output':str(values[1])}
+        if len(values) > 9 and values[7] is not None:
+            details.update(method=values[7], text_preserved=values[8], reached_target=values[9])
+        manager.report(identifier, 'item_done', details)
         manager.report(identifier, 'progress', {'percent':100 * progress['file'] / progress['total'] if progress['total'] else 0})
     elif event == 'file_conversion_summary':
         manager.report(identifier, 'conversion_summary', values[0])

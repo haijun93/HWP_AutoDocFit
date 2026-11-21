@@ -504,6 +504,30 @@ class ConversionWorkspace extends StatelessWidget {
           'MB (기본 10)',
           style: TextStyle(fontSize: 12, color: context.colors.muted),
         ),
+        const SizedBox(width: 10),
+        DropdownButton<String>(
+          key: const Key('pdfCompressMethod'),
+          value: (host.conversionTargets.whereType<Map>().where(
+            (item) => item['format'] == 'pdfz',
+          ).firstOrNull?['method'] as String?) ?? 'auto',
+          onChanged: host.locked
+              ? null
+              : (value) {
+                  if (value != null) {
+                    host.apiCall('set_pdf_compress_method', [value]);
+                  }
+                },
+          items: const [
+            DropdownMenuItem(value: 'auto', child: Text('목표 미달 때 이미지 PDF')),
+            DropdownMenuItem(value: 'preserve_text', child: Text('글자 보존')),
+            DropdownMenuItem(value: 'image_pdf', child: Text('이미지 PDF 사용')),
+          ],
+        ),
+        const SizedBox(width: 6),
+        Tooltip(
+          message: '이미지 PDF는 쪽마다 그림으로 바뀌어 글자 선택·검색이 되지 않습니다.',
+          child: Icon(Icons.info_outline, size: 16, color: context.colors.muted),
+        ),
       ],
     ),
   );

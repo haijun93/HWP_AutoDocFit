@@ -3,6 +3,7 @@
 import hashlib
 import tempfile
 import unittest
+import random
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -179,6 +180,73 @@ class PdfCompressTests(unittest.TestCase):
             compress_pdf(self.scan, self.root / "invalid.pdf", target_bytes=0)
         with self.assertRaisesRegex(PdfCompressError, "목표 파일 크기는 0보다 커야 합니다"):
             compress_pdf(self.scan, self.root / "invalid.pdf", target_bytes=-1024)
+
+    def _vector_pdf(self, path):
+        """그림이 없고 벡터 경로 데이터가 큰 임시 PDF."""
+        from pypdf import PdfWriter
+        from pypdf.generic import DecodedStreamObject, NameObject
+
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=612, height=792)
+        rng = random.Random(42)
+        # 화면에는 거의 빈 쪽만 보이지만 클립 영역 밖에 복잡한 벡터 경로가 많다.
+        # 이 경우 쪽 이미지화는 벡터 데이터를 크게 줄일 수 있다.
+        paths = ["0 0 1 1 re W n", "BT /F1 12 Tf 40 750 Td (Vector text sample) Tj ET"]
+        for _ in range(2500):
+            x, y = rng.randrange(612), rng.randrange(792)
+            x2, y2 = rng.randrange(612), rng.randrange(792)
+            paths.append(f"{x} {y} m {x2} {y2} l S")
+        stream = DecodedStreamObject()
+        stream.set_data("\n".join(paths).encode("ascii"))
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        with path.open("wb") as output:
+            writer.write(output)
+
+    def test_auto_switches_vector_pdf_to_raster_and_reports_state(self):
+        from pypdf import PdfReader
+        from docfit_core.pdf_compress import compress_pdf
+
+        source, target = self.root / "vector.pdf", self.root / "vector_out.pdf"
+        self._vector_pdf(source)
+        original = source.read_bytes()
+        result = compress_pdf(source, target, target_bytes=10 * 1024, method="auto")
+        self.assertEqual(source.read_bytes(), original)
+        self.assertEqual(result.method, "image_pdf")
+        self.assertFalse(result.text_preserved)
+        original_pages, converted_pages = PdfReader(str(source)).pages, PdfReader(str(target)).pages
+        self.assertEqual(len(original_pages), len(converted_pages))
+        self.assertEqual(
+            [(round(float(p.mediabox.width), 1), round(float(p.mediabox.height), 1)) for p in original_pages],
+            [(round(float(p.mediabox.width), 1), round(float(p.mediabox.height), 1)) for p in converted_pages],
+        )
+        from docfit_core.pdf_compress import _page_texts
+        self.assertTrue(_page_texts(source)[0].strip())
+        self.assertFalse(_page_texts(target)[0].strip())
+        self.assertIn("글자 선택·검색 불가", result.summary())
+
+    def test_user_selected_image_pdf_and_cancellation(self):
+        from pypdf import PdfReader
+        from docfit_core.pdf_compress import PdfCompressCancelled, compress_pdf
+
+        source, target = self.root / "vector_choice.pdf", self.root / "chosen.pdf"
+        self._vector_pdf(source)
+        result = compress_pdf(source, target, target_bytes=10 * 1024, method="image_pdf")
+        self.assertEqual(result.method, "image_pdf")
+        self.assertFalse(result.text_preserved)
+        self.assertEqual(len(PdfReader(str(source)).pages), len(PdfReader(str(target)).pages))
+        self.assertTrue(result.reached_target)
+        cancelled = self.root / "cancelled.pdf"
+        with self.assertRaises(PdfCompressCancelled):
+            compress_pdf(source, cancelled, method="image_pdf", cancel_check=lambda: True)
+        self.assertFalse(cancelled.exists())
+
+    def test_secure_pdf_rejects_image_pdf_selection(self):
+        from docfit_core.pdf_compress import PdfCompressError, compress_pdf
+
+        secured = self.root / "secure_image.pdf"
+        _encrypt(self.scan, secured)
+        with self.assertRaisesRegex(PdfCompressError, "권한·암호가 유지되지 않아"):
+            compress_pdf(secured, self.root / "secure_image_out.pdf", method="image_pdf")
 
 
 if __name__ == "__main__":

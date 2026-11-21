@@ -951,7 +951,17 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           live['queue'] = [for (final item in (data['results'] as List? ?? const [])) {
             'name': '${item['source']}'.replaceAll('\\', '/').split('/').last,
             'state': item['status'] == 'converted' ? 'done' : item['status'],
-            'note': item['output'] ?? item['reason'] ?? '',
+            'note': [
+              item['output'] ?? item['reason'] ?? '',
+              if (item['text_preserved'] == false)
+                '이미지 PDF: 글자 선택·검색 불가',
+              if (item['reached_target'] == false) '목표 크기 미달',
+            ].where((part) => '$part'.isNotEmpty).join(' · '),
+            if (item['method'] != null) 'method': item['method'],
+            if (item['text_preserved'] != null)
+              'text_preserved': item['text_preserved'],
+            if (item['reached_target'] != null)
+              'reached_target': item['reached_target'],
           }];
         }
         if (event['type'] == 'item_done' || event['type'] == 'item_failed') {
@@ -960,7 +970,19 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
           final index = queue.indexWhere((item) => item['name'] == source);
           if (index >= 0) {
             queue[index]['state'] = data['status'] == 'skipped' ? 'skipped' : data['status'] == 'converted' ? 'done' : 'failed';
-            queue[index]['note'] = data['output'] ?? data['reason'] ?? '';
+            queue[index]['note'] = [
+              data['output'] ?? data['reason'] ?? '',
+              if (data['text_preserved'] == false)
+                '이미지 PDF: 글자 선택·검색 불가',
+              if (data['reached_target'] == false) '목표 크기 미달',
+            ].where((part) => '$part'.isNotEmpty).join(' · ');
+            if (data['method'] != null) queue[index]['method'] = data['method'];
+            if (data['text_preserved'] != null) {
+              queue[index]['text_preserved'] = data['text_preserved'];
+            }
+            if (data['reached_target'] != null) {
+              queue[index]['reached_target'] = data['reached_target'];
+            }
           }
           live['queue'] = queue;
         }

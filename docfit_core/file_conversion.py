@@ -258,7 +258,8 @@ def convert_to_pdf(app, source: str | Path, target: str | Path) -> Path:
 
 
 @pdfium_guard.exclusive()
-def convert_to_raster_pdf(app, source: str | Path, target: str | Path, *, dpi: int = IMAGE_DPI) -> Path:
+def convert_to_raster_pdf(app, source: str | Path, target: str | Path, *, dpi: int = IMAGE_DPI,
+                          quality: int = 82, cancel_check=None) -> Path:
     """모든 입력 형식을 쪽마다 고해상도 그림으로 렌더링한 뒤 하나의 PDF로 묶어 글자 선택·검색이 안 되는 이미지 PDF로 변환한다."""
     import tempfile
     from PIL import Image
@@ -289,13 +290,18 @@ def convert_to_raster_pdf(app, source: str | Path, target: str | Path, *, dpi: i
             pages = []
             scale = max(1.0, min(float(dpi) / 72.0, 300.0 / 72.0))
             for page_idx in range(len(doc)):
+                if cancel_check and cancel_check():
+                    raise InterruptedError("PDF 압축이 취소되었습니다.")
                 page = doc[page_idx]
                 pil_img = page.render(scale=scale).to_pil()
                 if pil_img.mode != "RGB":
                     pil_img = pil_img.convert("RGB")
                 pages.append(pil_img)
 
-            pages[0].save(target, format="PDF", save_all=True, append_images=pages[1:], resolution=float(dpi))
+            if cancel_check and cancel_check():
+                raise InterruptedError("PDF 압축이 취소되었습니다.")
+            pages[0].save(target, format="PDF", save_all=True, append_images=pages[1:],
+                          resolution=float(dpi), quality=max(1, min(int(quality), 95)))
             for p in pages:
                 try:
                     p.close()

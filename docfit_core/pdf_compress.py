@@ -35,6 +35,15 @@ COMPRESS_STEPS: list[tuple[int, int, str]] = [
 ]
 MAX_STEPS = len(COMPRESS_STEPS)
 
+# PDF 전체를 쪽 그림으로 바꿀 때의 품질 단계. 기존 렌더링·PDF 생성 엔진을 재사용한다.
+IMAGE_PDF_STEPS: list[tuple[int, int, str]] = [
+    (150, 82, "이미지 PDF (150dpi · 품질 82)"),
+    (120, 72, "이미지 PDF (120dpi · 품질 72)"),
+    (100, 62, "이미지 PDF (100dpi · 품질 62)"),
+    (85, 52, "이미지 PDF (85dpi · 품질 52)"),
+    (72, 42, "이미지 PDF (72dpi · 품질 42)"),
+]
+
 
 class PdfCompressError(ValueError):
     """사용자에게 그대로 보여 줄 수 있는 처리 거부·실패."""
@@ -42,6 +51,10 @@ class PdfCompressError(ValueError):
 
 class NothingToCompress(PdfCompressError):
     """이미 충분히 작아 결과 파일을 만들지 않음."""
+
+
+class PdfCompressCancelled(PdfCompressError):
+    """사용자가 PDF 압축을 취소함."""
 
 
 @dataclass(frozen=True)
@@ -54,6 +67,8 @@ class CompressResult:
     step: str = ""
     reached_target: bool = True
     reason: str = ""
+    method: str = "preserve_text"
+    text_preserved: bool = True
 
     @property
     def saving(self) -> float:
@@ -65,6 +80,8 @@ class CompressResult:
             text += f" · {self.step}"
         if self.secured:
             text += " · 보안 유지"
+        if not self.text_preserved:
+            text += " · 이미지 PDF(글자 선택·검색 불가)"
         if not self.reached_target and self.reason:
             text += f" ({self.reason})"
         return text
@@ -85,6 +102,17 @@ def _has_signature(reader) -> bool:
 def _page_signature(reader):
     return [(round(float(p.mediabox.width), 1), round(float(p.mediabox.height), 1), int(p.get("/Rotate", 0) or 0))
             for p in reader.pages]
+
+
+def _raster_page_signature(reader):
+    """이미지 PDF의 쪽은 회전 대신 가로·세로 크기에 회전을 반영하므로 유효 크기로 비교한다."""
+    result = []
+    for page in reader.pages:
+        width, height = float(page.mediabox.width), float(page.mediabox.height)
+        if int(page.get("/Rotate", 0) or 0) % 180:
+            width, height = height, width
+        result.append((round(min(width, height), 1), round(max(width, height), 1)))
+    return result
 
 
 @pdfium_guard.exclusive()
@@ -154,6 +182,9 @@ def compress_pdf(
     *,
     level: str | None = None,
     target_bytes: int | None = DEFAULT_TARGET_BYTES,
+    method: str = "auto",
+    app=None,
+    cancel_check=None,
 ) -> CompressResult:
     """PDF를 줄여 target에 새로 저장한다. 원본은 읽기만 하고 target은 덮어쓰지 않는다."""
     from pypdf import PdfReader, PdfWriter
@@ -163,6 +194,8 @@ def compress_pdf(
         raise PdfCompressError("지원하지 않는 압축 강도입니다.")
     if target_bytes is not None and target_bytes <= 0:
         raise PdfCompressError("목표 파일 크기는 0보다 커야 합니다.")
+    if method not in {"auto", "preserve_text", "image_pdf"}:
+        raise PdfCompressError("지원하지 않는 PDF 압축 방식입니다.")
     if source.is_symlink() or not source.is_file() or source.suffix.lower() != ".pdf":
         raise PdfCompressError("PDF 압축은 일반 PDF 파일에만 쓸 수 있습니다.")
     if target.suffix.lower() != ".pdf" or target.exists():
@@ -183,6 +216,8 @@ def compress_pdf(
             raise PdfCompressError(f"{MAX_PAGES}쪽보다 많은 PDF는 줄이지 않습니다.")
         if _has_signature(reader):
             raise PdfCompressError("전자서명이 있는 PDF는 다시 저장하면 서명이 무효가 되어 줄이지 않습니다.")
+        if secured and method == "image_pdf":
+            raise PdfCompressError("보안 PDF는 이미지 PDF 방식으로 바꾸면 권한·암호가 유지되지 않아 처리하지 않습니다.")
         permissions = _permission_bits(reader.trailer["/Encrypt"]["/P"]) if secured else None
         pages_before = _page_signature(reader)
         owner_password = secrets.token_urlsafe(24) if secured else None
@@ -200,6 +235,8 @@ def compress_pdf(
         reached_target: bool = False
 
         for dpi, quality, step_label in steps:
+            if cancel_check and cancel_check():
+                raise PdfCompressCancelled("PDF 압축이 취소되었습니다.")
             writer = PdfWriter(clone_from=reader)
             images = 0
             setting = (dpi, quality) if dpi is not None else None
@@ -249,6 +286,53 @@ def compress_pdf(
 
         after = best_size
         buffer = best_buffer
+        chosen_method = "preserve_text"
+        text_preserved = True
+
+        # 이미지 PDF는 그림 재압축으로 목표 크기에 못 미친 경우에만 자동 시도한다.
+        if method == "image_pdf" or (method == "auto" and not reached_target and not secured):
+            from docfit_core.file_conversion import convert_to_raster_pdf
+
+            raster_best: Path | None = None
+            raster_best_size = before + 1
+            raster_step = ""
+            raster_reached = False
+            with tempfile.TemporaryDirectory(prefix="docfit_pdfimg_") as folder:
+                for dpi, quality, label in IMAGE_PDF_STEPS:
+                    if cancel_check and cancel_check():
+                        raise PdfCompressCancelled("PDF 압축이 취소되었습니다.")
+                    candidate = Path(folder) / f"{dpi}.pdf"
+                    try:
+                        convert_to_raster_pdf(app, source, candidate, dpi=dpi, quality=quality,
+                                              cancel_check=cancel_check)
+                    except InterruptedError as exc:
+                        if cancel_check and cancel_check():
+                            raise PdfCompressCancelled("PDF 압축이 취소되었습니다.") from exc
+                        raise
+                    current = candidate.stat().st_size
+                    check_raster = PdfReader(str(candidate))
+                    if (len(check_raster.pages) != len(pages_before)
+                            or _raster_page_signature(check_raster) != [
+                                (round(min(w, h), 1), round(max(w, h), 1))
+                                for w, h, _ in pages_before
+                            ]):
+                        continue
+                    if current < raster_best_size:
+                        raster_best_size, raster_best, raster_step = current, candidate, label
+                    if target_bytes is not None and current <= target_bytes:
+                        raster_best_size, raster_best, raster_step = current, candidate, label
+                        raster_reached = True
+                        break
+                if raster_best is not None and (method == "image_pdf" or raster_best_size < after):
+                    buffer = io.BytesIO(raster_best.read_bytes())
+                    after = raster_best_size
+                    best_step = raster_step
+                    chosen_method = "image_pdf"
+                    text_preserved = False
+                    reached_target = raster_reached or (target_bytes is None)
+                    reason = "" if reached_target else f"이미지 PDF 변환 후에도 목표 {_size(target_bytes)}에 못 미침"
+        elif method == "auto" and not reached_target and secured:
+            reason += " · 보안 PDF는 권한·암호 보호를 위해 이미지 PDF 전환을 건너뜀"
     except PdfCompressError:
         raise
     except Exception as exc:
@@ -268,12 +352,21 @@ def compress_pdf(
         if secured:
             if not check.decrypt("") or _permission_bits(check.trailer["/Encrypt"]["/P"]) != permissions:
                 raise PdfCompressError("결과 PDF의 권한 설정이 원본과 달라 저장하지 않았습니다.")
-        if _page_signature(check) != pages_before:
+        if text_preserved and _page_signature(check) != pages_before:
             raise PdfCompressError("결과 PDF의 쪽 수나 쪽 크기가 원본과 달라 저장하지 않았습니다.")
-        if _page_texts(temporary) != _page_texts(source):
+        if not text_preserved and (
+            len(check.pages) != len(pages_before)
+            or _raster_page_signature(check) != [
+                (round(min(w, h), 1), round(max(w, h), 1)) for w, h, _ in pages_before
+            ]
+        ):
+            raise PdfCompressError("이미지 PDF 결과의 쪽 수나 쪽 크기가 원본과 달라 저장하지 않았습니다.")
+        if text_preserved and _page_texts(temporary) != _page_texts(source):
             raise PdfCompressError("결과 PDF의 글자가 원본과 달라 저장하지 않았습니다.")
         # hard link는 대상 이름이 작업 중 먼저 생긴 경우에도 덮어쓰지 않는다.
         os.link(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
-    return CompressResult(target, before, after, secured, best_images, step=best_step, reached_target=reached_target, reason=reason)
+    return CompressResult(target, before, after, secured, best_images, step=best_step,
+                          reached_target=reached_target, reason=reason,
+                          method=chosen_method, text_preserved=text_preserved)
