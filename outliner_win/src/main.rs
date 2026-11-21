@@ -11,16 +11,22 @@ struct Args {
     dpi: u32,
     file: Option<String>,
     capture_edit: bool,
+    capture_shell: bool,
+    data_dir: Option<String>,
+    recent_file: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None, capture_edit: false };
+    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None, capture_edit: false, capture_shell: false, data_dir: None, recent_file: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--capture-dir" => a.capture_dir = Some(it.next().ok_or("--capture-dir 에 폴더가 필요합니다")?),
             "--dark" => a.kind = Kind::Dark,
             "--capture-edit" => a.capture_edit = true,
+            "--capture-shell" => a.capture_shell = true,
+            "--data-dir" => a.data_dir = Some(it.next().ok_or("--data-dir 에 폴더가 필요합니다")?),
+            "--recent-file" => a.recent_file = Some(it.next().ok_or("--recent-file 에 경로가 필요합니다")?),
             "--hc" => a.kind = Kind::HighContrast,
             "--dpi" => a.dpi = it.next().and_then(|v| v.parse().ok()).ok_or("--dpi 에 숫자가 필요합니다")?,
             "--file" => a.file = Some(it.next().ok_or("--file 에 경로가 필요합니다")?),
@@ -31,8 +37,49 @@ fn parse_args() -> Result<Args, String> {
     Ok(a)
 }
 
+/// 데이터 폴더: `--data-dir` > 환경변수 `OUTLINER_WIN_DATA` > `%APPDATA%\HwpAutoDocFit\Outliner`(앱의 `outliner_service.py` 와 같은 위치).
+fn data_dir(args: &Args) -> Result<std::path::PathBuf, String> {
+    if let Some(d) = &args.data_dir {
+        return Ok(d.into());
+    }
+    if let Some(d) = std::env::var_os("OUTLINER_WIN_DATA") {
+        return Ok(d.into());
+    }
+    let base = std::env::var_os("APPDATA").ok_or("APPDATA 를 찾을 수 없습니다")?;
+    Ok(std::path::PathBuf::from(base).join("HwpAutoDocFit").join("Outliner"))
+}
+
+/// 최근 페이지 파일: `--recent-file` > 환경변수 `OUTLINER_WIN_RECENT` > `%LOCALAPPDATA%\HwpAutoDocFit\outliner_recent.json`(Flutter 와 공유).
+fn recent_file(args: &Args) -> Option<std::path::PathBuf> {
+    if let Some(f) = &args.recent_file {
+        return Some(f.into());
+    }
+    if let Some(f) = std::env::var_os("OUTLINER_WIN_RECENT") {
+        return Some(f.into());
+    }
+    std::env::var_os("LOCALAPPDATA").map(|b| std::path::PathBuf::from(b).join("HwpAutoDocFit").join("outliner_recent.json"))
+}
+
 fn run() -> Result<String, String> {
     let args = parse_args()?;
+    if args.capture_shell {
+        let dir = args.capture_dir.clone().ok_or("--capture-shell 에는 --capture-dir 가 필요합니다")?;
+        let dir = std::path::Path::new(&dir);
+        let data = args.data_dir.clone().map(std::path::PathBuf::from).unwrap_or_else(|| dir.join("data"));
+        let paths = capture::capture_shell_set(dir, &data, args.kind, args.dpi)?;
+        return Ok(paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("
+"));
+    }
+    if args.file.is_none() && args.capture_dir.is_none() {
+        // 페이지 모드: 데이터 폴더의 페이지를 목록으로 보여 주고 오늘의 일지를 연다.
+        if window::activate_existing_instance() {
+            return Ok(String::new()); // 이미 열린 창을 앞으로 가져왔다
+        }
+        let store = outliner_win::pages::PageStore::new(data_dir(&args)?, recent_file(&args));
+        let mut shell = outliner_win::shell::Shell::with_store(window::WinHost::new(), store, outliner_win::clock::now)?;
+        shell.start()?;
+        return window::run_shell(shell, "아웃라이너").map(|_| String::new());
+    }
     let (text, title, info) = match &args.file {
         Some(path) => {
             // 파일은 한 번만 읽어 SHA-256 과 문서가 같은 내용을 보게 한다.

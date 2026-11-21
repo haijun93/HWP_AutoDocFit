@@ -75,6 +75,19 @@ class BridgeWrapperBehaviorTests(unittest.TestCase):
             self.assertEqual(store.read().get("kclip_settings_mode"), "native")
             self.assertFalse(bridge.kclip_window("settings_mode", {"value": "other"})["ok"])
 
+    def test_outliner_ui_setting_goes_through_the_existing_outliner_bridge(self):
+        """새 브리지 메서드 없이 기존 `outliner` 로 화면 방식을 읽고 쓴다(허용 목록·dispatch 개수 변경 없음)."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            bridge, store = self._bridge(folder)
+            first = bridge.outliner({"action": "ui_mode"})
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["data"], {"mode": "flutter"})
+            self.assertEqual(bridge.outliner({"action": "ui_mode", "value": "native"})["data"], {"mode": "native"})
+            self.assertEqual(store.read().get("outliner_ui"), "native")
+            self.assertFalse(bridge.outliner({"action": "ui_mode", "value": "x"})["ok"])
+        self.assertIn("outliner", browser_api_names())
+
     def test_outliner_and_pdf_edit_reject_non_dict_payloads(self):
         import tempfile
         from docfit_app.api_contract import ServiceError

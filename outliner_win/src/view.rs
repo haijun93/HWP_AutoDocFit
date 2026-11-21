@@ -206,4 +206,31 @@ impl View {
         self.first = ensure_visible(self.first, self.selected, self.rows.len(), page);
         true
     }
+
+    /// 화면 줄 안에서 문서 블록 `block` 의 줄 번호.
+    pub fn row_of_block(&self, block: usize) -> Option<usize> {
+        self.rows.iter().position(|r| r.block == block)
+    }
+
+    /// 블록 `block` 이 보이도록(접힌 조상은 펼침) 그 줄을 선택한다. 블록이 없으면 false.
+    pub fn reveal_block(&mut self, block: usize, page: usize) -> bool {
+        if block >= self.doc.blocks.len() {
+            return false;
+        }
+        let mut need = self.doc.blocks[block].indent;
+        for i in (0..block).rev() {
+            if self.doc.blocks[i].indent < need {
+                need = self.doc.blocks[i].indent;
+                self.doc.blocks[i].folded = false;
+            }
+        }
+        self.rows = build_rows(&self.doc);
+        match self.row_of_block(block) {
+            Some(row) => {
+                self.set_selected(row, page);
+                true
+            }
+            None => false,
+        }
+    }
 }

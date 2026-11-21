@@ -2382,7 +2382,7 @@ class DesktopWebBridge:
         service = getattr(self, "_outliner_service", None)
         if service is None:
             from docfit_app.outliner_service import OutlinerService
-            service = self._outliner_service = OutlinerService(self._settings_store()._path.parent)
+            service = self._outliner_service = OutlinerService(self._settings_store()._path.parent, settings=self._settings_store())
         if not isinstance(payload, dict):
             raise ServiceError("INVALID_INPUT", "아웃라이너 입력을 확인해 주세요.")
         return self._service_response(lambda: service.execute(payload))

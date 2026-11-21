@@ -34,7 +34,7 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "바탕 화면 바로 가기 만들기"; GroupDescription: "추가 바로 가기:"; Flags: unchecked
 
 [Files]
-; kvf.exe, pdf-edit.exe, outliner.exe, dock.exe, qms_bench.exe와 SHA256은 resources 꾸러미에 포함. Dock은 DOCK2에서 자동 시작하지 않는다.
+; kvf.exe, pdf-edit.exe, outliner.exe, outliner_win.exe, dock.exe, qms_bench.exe와 SHA256은 resources 꾸러미에 포함. Dock은 DOCK2에서 자동 시작하지 않는다.
 Source: "..\dist\HWP_AutoDocFit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -105,6 +105,8 @@ begin
   StopHelper('ktm.exe');
   // 우클릭 메뉴 전달 프로그램(mdm-ctx.exe)은 클릭 때만 잠깐 도는 비상주 프로그램이지만, 모으는 동안(최대 30초) 파일을 붙잡을 수 있다.
   StopHelper('mdm-ctx.exe');
+  // 아웃라이너 창(outliner_win.exe)이 열려 있으면 {app} 안 파일을 붙잡는다(설정 outliner_ui='native').
+  StopHelper('outliner_win.exe');
   Sleep(500);
   Result := '';
 end;

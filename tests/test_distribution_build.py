@@ -38,6 +38,22 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn("Build the outliner Rust engine", spec)
         self.assertIn("outliner.exe", spec)
 
+    def test_outliner_window_is_tested_built_and_packaged_like_mdm_ctx(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-windows-exe.yml").read_text(encoding="utf-8")
+        spec = (ROOT / "HWP_AutoDocFit.spec").read_text(encoding="utf-8")
+        iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
+        self.assertIn("cargo test --release --locked --manifest-path outliner_win/Cargo.toml", workflow)
+        self.assertIn("cargo build --release --locked --manifest-path outliner_win/Cargo.toml --bin outliner_win", workflow)
+        self.assertIn("Copy-Item outliner_win/target/release/outliner_win.exe resources/outliner_win.exe", workflow)
+        self.assertIn("'outliner_win.exe')", workflow)  # VC++ 런타임 비의존 검사 목록
+        self.assertIn("outliner_win.exe", spec)
+        self.assertIn("StopHelper('outliner_win.exe')", iss)
+        gitignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("outliner_win/target/", gitignore)
+        # 이 PC 전용 경로(.cargo/config.toml 의 target-dir 등)를 저장소에 넣지 않는다.
+        self.assertFalse((ROOT / "outliner_win" / ".cargo").exists())
+        self.assertNotIn("target-dir", (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
+
     def test_qms_bench_engine_is_built_hashed_and_packaged_like_pdf_editor(self):
         workflow = (ROOT / ".github" / "workflows" / "build-windows-exe.yml").read_text(encoding="utf-8")
         spec = (ROOT / "HWP_AutoDocFit.spec").read_text(encoding="utf-8")

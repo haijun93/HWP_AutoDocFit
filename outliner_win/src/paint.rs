@@ -82,7 +82,7 @@ pub unsafe fn create_font(dpi: u32) -> HFONT {
     unsafe { font(&Metrics::new(dpi), false) }
 }
 
-unsafe fn font(m: &Metrics, bold: bool) -> HFONT {
+pub(crate) unsafe fn font(m: &Metrics, bold: bool) -> HFONT {
     unsafe {
         CreateFontW(
             -m.font_h,
@@ -103,7 +103,7 @@ unsafe fn font(m: &Metrics, bold: bool) -> HFONT {
     }
 }
 
-unsafe fn fill(dc: HDC, r: RECT, color: u32) {
+pub(crate) unsafe fn fill(dc: HDC, r: RECT, color: u32) {
     unsafe {
         let brush = CreateSolidBrush(color);
         FillRect(dc, &r, brush);
@@ -111,7 +111,7 @@ unsafe fn fill(dc: HDC, r: RECT, color: u32) {
     }
 }
 
-unsafe fn text(dc: HDC, s: &str, mut r: RECT, color: u32, flags: u32) {
+pub(crate) unsafe fn text(dc: HDC, s: &str, mut r: RECT, color: u32, flags: u32) {
     unsafe {
         SetTextColor(dc, color);
         let w = wide(s);
@@ -119,7 +119,7 @@ unsafe fn text(dc: HDC, s: &str, mut r: RECT, color: u32, flags: u32) {
     }
 }
 
-unsafe fn line(dc: HDC, color: u32, width: i32, pts: &[(i32, i32)]) {
+pub(crate) unsafe fn line(dc: HDC, color: u32, width: i32, pts: &[(i32, i32)]) {
     unsafe {
         let pen = CreatePen(PS_SOLID, width, color);
         let old = SelectObject(dc, pen);
@@ -142,6 +142,44 @@ unsafe fn polygon(dc: HDC, color: u32, pts: &[POINT]) {
         SelectObject(dc, op);
         DeleteObject(brush);
         DeleteObject(pen);
+    }
+}
+
+/// 현재 글꼴로 `s` 를 그릴 때의 가로 폭.
+pub(crate) unsafe fn text_width(dc: HDC, s: &str) -> i32 {
+    unsafe {
+        let w = wide(s);
+        let mut size = std::mem::zeroed();
+        GetTextExtentPoint32W(dc, w.as_ptr(), (w.len() - 1) as i32, &mut size);
+        size.cx
+    }
+}
+
+/// 한 줄의 글에서 `[[링크]]` 가 차지하는 가로 구간 `(왼쪽, 오른쪽, 페이지 이름)`(글자 시작 x = `tx`).
+pub fn link_spans_x(row_text: &str, tx: i32, dpi: u32) -> Vec<(i32, i32, String)> {
+    let segs = crate::links::segments(row_text);
+    if segs.iter().all(|s| s.link.is_none()) {
+        return Vec::new();
+    }
+    unsafe {
+        let screen = GetDC(null_mut());
+        let dc = CreateCompatibleDC(screen);
+        let f = font(&Metrics::new(dpi), false);
+        let old = SelectObject(dc, f);
+        let mut x = tx;
+        let mut out = Vec::new();
+        for seg in &segs {
+            let wd = text_width(dc, &seg.text);
+            if let Some(name) = &seg.link {
+                out.push((x, x + wd, name.clone()));
+            }
+            x += wd;
+        }
+        SelectObject(dc, old);
+        DeleteObject(f);
+        DeleteDC(dc);
+        ReleaseDC(null_mut(), screen);
+        out
     }
 }
 
@@ -249,8 +287,20 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             if row.text.is_empty() {
                 continue;
             }
-            let r = RECT { left: tx, top, right: w - m.pad, bottom: top + m.row_h };
-            text(dc, &row.text, r, color, DT_LEFT);
+            let segs = crate::links::segments(&row.text);
+            if segs.iter().all(|s| s.link.is_none()) {
+                let r = RECT { left: tx, top, right: w - m.pad, bottom: top + m.row_h };
+                text(dc, &row.text, r, color, DT_LEFT);
+            } else {
+                // `[[링크]]` 는 강조색으로 이어 그린다(클릭 판정은 `link_spans_x` 가 같은 폭으로 계산).
+                let mut x = tx;
+                for seg in &segs {
+                    let r = RECT { left: x, top, right: (w - m.pad).max(x), bottom: top + m.row_h };
+                    let c = if seg.link.is_some() { pal.row_text(selected, pal.accent) } else { color };
+                    text(dc, &seg.text, r, c, DT_LEFT);
+                    x += text_width(dc, &seg.text);
+                }
+            }
         }
         SelectObject(dc, old_font);
         DeleteObject(normal);

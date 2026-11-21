@@ -13,29 +13,65 @@ import threading
 from .api_contract import ServiceError
 
 
+UI_MODES = ('flutter', 'native')
+UI_SETTING = 'outliner_ui'
+
+
 class OutlinerService:
-    def __init__(self, data_root, executable=None, runner=subprocess.run):
+    def __init__(self, data_root, executable=None, runner=subprocess.run, settings=None,
+                 native_executable=None, launcher=subprocess.Popen):
         self.root = (Path(data_root) / 'Outliner').resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.executable = Path(executable) if executable else self._find_executable()
         self.runner = runner
+        # 화면 방식 설정('flutter' 기본 | 'native')과 Win32 창(outliner_win.exe) 실행. 기능은 전부 Rust 창이 맡고 여기는 켜기만 한다.
+        self.settings = settings
+        self._native_executable = Path(native_executable) if native_executable else None
+        self.launcher = launcher
         self._lock = threading.RLock()
         self._versions: dict[str, str] = {}
         self._recent: list[str] = []
 
     @staticmethod
-    def _find_executable():
-        name = 'outliner.exe' if os.name == 'nt' else 'outliner'
+    def _find_executable(name=None, dev_dir='outliner_core', which='outliner'):
+        name = name or ('outliner.exe' if os.name == 'nt' else 'outliner')
         app_root = Path(__file__).resolve().parents[1]
         candidates = []
         for base in (Path(sys.executable).resolve().parent, Path(getattr(sys, '_MEIPASS', app_root))):
             candidates.extend((base / '_internal' / 'resources' / name, base / 'resources' / name))
-        candidates.extend((app_root / 'resources' / name, app_root / 'outliner_core' / 'target' / 'release' / name))
+        candidates.extend((app_root / 'resources' / name, app_root / dev_dir / 'target' / 'release' / name))
         for candidate in candidates:
             if candidate.is_file():
                 return candidate
-        found = shutil.which('outliner')
+        found = shutil.which(which)
         return Path(found) if found else candidates[0]
+
+    @property
+    def native_executable(self):
+        if self._native_executable is None:
+            self._native_executable = self._find_executable('outliner_win.exe', 'outliner_win', 'outliner_win')
+        return self._native_executable
+
+    def _ui_mode(self, payload):
+        if self.settings is None:
+            raise ServiceError('OUTLINER_UNAVAILABLE', '설정을 읽을 수 없습니다.')
+        if 'value' in payload:
+            value = payload.get('value')
+            if value not in UI_MODES:
+                raise ServiceError('INVALID_INPUT', '아웃라이너 화면 방식을 확인해 주세요.')
+            self.settings.update(lambda current: current.update({UI_SETTING: value}))
+        mode = self.settings.read().get(UI_SETTING, 'flutter')
+        return {'mode': mode if mode in UI_MODES else 'flutter'}
+
+    def _open_native(self):
+        exe = self.native_executable
+        if not exe.is_file():
+            raise ServiceError('OUTLINER_WINDOW_MISSING', '아웃라이너 창 프로그램(outliner_win.exe)을 찾을 수 없습니다.')
+        try:
+            self.launcher([str(exe), '--data-dir', str(self.root)], close_fds=True)
+        except OSError:
+            raise ServiceError('OUTLINER_WINDOW_FAILED', '아웃라이너 창을 열지 못했습니다.') from None
+        return {'opened': True}
 
     def _path(self, value):
         if not isinstance(value, str) or not value or Path(value).name != value or value in {'.', '..'}:
@@ -72,6 +108,10 @@ class OutlinerService:
     def execute(self, payload):
         action = payload.get('action')
         with self._lock:
+            if action == 'ui_mode':
+                return self._ui_mode(payload)
+            if action == 'open_native':
+                return self._open_native()
             if action == 'list':
                 pages = [{'name': p.stem, 'path': p.name} for p in sorted(self.root.glob('*.md')) if p.is_file()]
                 return {'pages': pages, 'recent': [name for name in self._recent if any(p['name'] == name for p in pages)]}

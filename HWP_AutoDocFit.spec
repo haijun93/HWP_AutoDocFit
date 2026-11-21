@@ -37,6 +37,10 @@ if klib_exe.is_file():
 mdm_ctx_exe = root / 'resources' / 'mdm-ctx.exe'
 if mdm_ctx_exe.is_file():
     binaries.append((str(mdm_ctx_exe), 'resources'))
+# 아웃라이너 Win32 창(설정 outliner_ui='native' 일 때 앱이 연다). mdm-ctx 처럼 있으면 넣는다(없으면 앱이 안내만 한다).
+outliner_win_exe = root / 'resources' / 'outliner_win.exe'
+if outliner_win_exe.is_file():
+    binaries.append((str(outliner_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

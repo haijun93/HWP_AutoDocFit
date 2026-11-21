@@ -16,7 +16,7 @@ import '../photo_album/photo_album_screen.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import '../pdf_edit/pdf_edit_workspace.dart';
-import '../outliner/outliner_workspace.dart';
+import '../outliner/outliner_ui_gate.dart';
 import '../qms_bench/qms_bench_screen.dart';
 import 'tab_navigation_shell.dart';
 import 'quick_action_bar.dart';
@@ -317,7 +317,7 @@ class _LazyOutlinerAdapterState extends State<_LazyOutlinerAdapter> {
     final active = TickerMode.valuesOf(context).enabled;
     if (active && !_visited) _visited = true;
     return _visited
-        ? OutlinerWorkspace(api: widget.api)
+        ? OutlinerUiGate(api: widget.api)
         : const SizedBox.expand();
   }
 }

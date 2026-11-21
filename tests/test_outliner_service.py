@@ -65,5 +65,75 @@ class OutlinerServiceTest(unittest.TestCase):
                 self.assertNotIn('operation', sent['args'])
 
 
+class FakeSettings:
+    def __init__(self):
+        self.values = {}
+
+    def read(self):
+        return dict(self.values)
+
+    def update(self, change):
+        change(self.values)
+
+
+class OutlinerNativeWindowTest(unittest.TestCase):
+    """설정 outliner_ui('flutter' 기본 | 'native')와 Win32 창(outliner_win.exe) 실행 — 앱 쪽에는 켜기만 있다."""
+
+    def _service(self, folder, **kw):
+        executable = Path(folder) / 'engine.exe'
+        executable.touch()
+        return OutlinerService(folder, executable=executable, **kw)
+
+    def test_ui_mode_defaults_to_flutter_saves_native_and_rejects_other_values(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = FakeSettings()
+            service = self._service(folder, settings=settings)
+            self.assertEqual(service.execute({'action': 'ui_mode'}), {'mode': 'flutter'})
+            self.assertEqual(service.execute({'action': 'ui_mode', 'value': 'native'}), {'mode': 'native'})
+            self.assertEqual(settings.values['outliner_ui'], 'native')
+            with self.assertRaises(ServiceError) as raised:
+                service.execute({'action': 'ui_mode', 'value': 'tk'})
+            self.assertEqual(raised.exception.code, 'INVALID_INPUT')
+            self.assertEqual(settings.values['outliner_ui'], 'native')
+            settings.values['outliner_ui'] = 'garbage'
+            self.assertEqual(service.execute({'action': 'ui_mode'}), {'mode': 'flutter'})
+
+    def test_ui_mode_without_settings_store_is_a_service_error(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with self.assertRaises(ServiceError):
+                self._service(folder).execute({'action': 'ui_mode'})
+
+    def test_open_native_starts_the_window_with_the_outliner_data_folder(self):
+        with tempfile.TemporaryDirectory() as folder:
+            exe = Path(folder) / 'outliner_win.exe'
+            exe.touch()
+            launcher = unittest.mock.Mock()
+            service = self._service(folder, native_executable=exe, launcher=launcher)
+            self.assertEqual(service.execute({'action': 'open_native'}), {'opened': True})
+            args = launcher.call_args.args[0]
+            self.assertEqual(args[0], str(exe))
+            self.assertEqual(args[1], '--data-dir')
+            self.assertEqual(Path(args[2]), Path(folder).resolve() / 'Outliner')
+
+    def test_open_native_reports_missing_program_and_launch_failure(self):
+        with tempfile.TemporaryDirectory() as folder:
+            service = self._service(folder, native_executable=Path(folder) / 'none.exe', launcher=unittest.mock.Mock())
+            with self.assertRaises(ServiceError) as raised:
+                service.execute({'action': 'open_native'})
+            self.assertEqual(raised.exception.code, 'OUTLINER_WINDOW_MISSING')
+            exe = Path(folder) / 'outliner_win.exe'
+            exe.touch()
+            service = self._service(folder, native_executable=exe, launcher=unittest.mock.Mock(side_effect=OSError('x')))
+            with self.assertRaises(ServiceError) as raised:
+                service.execute({'action': 'open_native'})
+            self.assertEqual(raised.exception.code, 'OUTLINER_WINDOW_FAILED')
+
+    def test_setting_is_registered_with_a_flutter_default_and_excluded_from_exports(self):
+        from docfit_app.configuration_service import EXCLUDED
+        from docfit_app.settings_schema import DEFAULTS
+        self.assertEqual(DEFAULTS['outliner_ui'], 'flutter')
+        self.assertIn('outliner_ui', EXCLUDED)
+
+
 if __name__ == '__main__':
     unittest.main()
