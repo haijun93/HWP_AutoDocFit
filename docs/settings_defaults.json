@@ -140,6 +140,7 @@
   "settings_ui": "flutter",
   "docview_ui": "flutter",
   "photoview_ui": "flutter",
+  "conversion_ui": "flutter",
   "hidden_tabs": [],
   "library_excluded_folders": []
 }

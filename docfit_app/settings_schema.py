@@ -11,6 +11,8 @@ DEFAULTS = {
     'docview_ui': 'flutter',
     # 사진뷰 화면 방식: 'flutter'(앱 안 탭, 기본) | 'native'(Rust+Win32 창 photoview_win.exe). PHOTOWIN2
     'photoview_ui': 'flutter',
+    # 몽땅파일변환 화면 방식: 'flutter'(기본) | 'native'(Rust+Win32 convert_win.exe).
+    'conversion_ui': 'flutter',
     # 퀵몽땅검색 단축키 앱(ktm.exe, Ctrl+Alt+Space): 기본 켬(MG3 사용자 지시). 끄면 상주 프로그램을 끄고 자동 실행을 푼다.
     'mongttang_search': True,
     'file_rename_sendto': False,

@@ -163,7 +163,7 @@ class ApplicationService:
                        'dock_start':0, 'dock_ready':1, 'dock_stop':0})
         counts.update({'table_template':2,'document_tool':2,'get_pending_dialog':0,'stage_config':2,'set_stage':2,'set_stage_default':1})
         counts.update({'set_option':2,'set_include_spacing':1,'set_reset_spacing':1,'set_table_spacing':1,'set_exclude_tables':1,'set_range':3,'set_card_option':2})
-        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1,'settings_window':1,'docview_window':1,'photoview_window':1,'qms_bench':1})
+        counts.update({'flow_editor':2,'idioms':2,'hangul_fonts':2,'table_units':2,'table_sketch':2,'file_rename':2,'kclip':2,'kclip_window':2,'timemachine':2,'library':2,'external_app':2,'doc_grid':2,'photo_album':2,'pdf_edit':1,'outliner':1,'settings_window':1,'docview_window':1,'photoview_window':1,'conversion_window':1,'qms_bench':1})
         if method not in counts:
             raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
         if not (method in ('table_sketch', 'file_rename', 'kclip', 'kclip_window', 'timemachine', 'library', 'external_app', 'doc_grid', 'photo_album', 'qms_bench') and len(args) in (1, 2)) and len(args)!=counts[method]:
@@ -338,6 +338,14 @@ class ApplicationService:
             if not isinstance(payload, dict):
                 raise ServiceError('INVALID_INPUT', '문서뷰 창 입력을 확인해 주세요.')
             return response(lambda: self._docview_window_service.execute(payload))
+        if method == 'conversion_window':
+            from .conversion_window_service import ConversionWindowService
+            if getattr(self, '_conversion_window_service', None) is None:
+                self._conversion_window_service = ConversionWindowService(self.store)
+            payload = args[0]
+            if not isinstance(payload, dict):
+                raise ServiceError('INVALID_INPUT', '변환 창 입력을 확인해 주세요.')
+            return response(lambda: self._conversion_window_service.execute(payload))
         if method == 'photoview_window':
             from .photoview_window_service import PhotoViewWindowService
             if getattr(self, '_photoview_window_service', None) is None:
@@ -490,4 +498,3 @@ class ApplicationService:
                 self._library_service.close()
             return {'closed':True}
         raise ServiceError('NOT_AVAILABLE','지원하지 않는 명령입니다.')
-
