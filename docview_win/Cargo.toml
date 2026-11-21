@@ -12,6 +12,7 @@ publish = false
 # 의존성은 ui_theme(경로)·windows-sys 둘뿐. klib 는 라이브러리로 묶지 않고 `klib scan` 실행 파일을 자식 프로세스로 호출한다
 # (tantivy·rusqlite 를 끌어와 빌드가 무거워지는 것을 피하고, Python 과 같은 JSON 줄 계약을 그대로 쓴다).
 [dependencies]
+grid_core = { path = "../grid_core" }
 ui_theme = { path = "../ui_theme" }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",

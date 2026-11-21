@@ -3,56 +3,12 @@ use crate::layout::{DEFAULT_H, DEFAULT_W, scale};
 use crate::model::App;
 use crate::paint::draw;
 use std::path::{Path, PathBuf};
-use std::ptr::null_mut;
 use ui_theme::{Kind, Palette};
-use windows_sys::Win32::Graphics::Gdi::*;
 
-pub struct Shot {
-    pub width: usize,
-    pub height: usize,
-    /// 위에서 아래로의 BGRA.
-    pub bgra: Vec<u8>,
-    /// 이번 그리기에서 실제로 그린 칸 수.
-    pub drawn: usize,
-}
+pub use grid_core::gdi::{Shot, kind_name, palette_of};
 
 pub fn render(app: &App, pal: &Palette, width: i32, height: i32, dpi: u32) -> Result<Shot, String> {
-    unsafe {
-        let screen = GetDC(null_mut());
-        let mem = CreateCompatibleDC(screen);
-        let bm = CreateCompatibleBitmap(screen, width, height);
-        let old = SelectObject(mem, bm);
-        let drawn = draw(mem, width, height, app, pal, dpi);
-        SelectObject(mem, old);
-        let mut info: BITMAPINFO = std::mem::zeroed();
-        info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-        info.bmiHeader.biWidth = width;
-        info.bmiHeader.biHeight = -height;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
-        let got = GetDIBits(screen, bm, 0, height as u32, pixels.as_mut_ptr().cast(), &mut info, DIB_RGB_COLORS);
-        DeleteObject(bm);
-        DeleteDC(mem);
-        ReleaseDC(null_mut(), screen);
-        if got == 0 {
-            return Err("캡처 실패(GetDIBits)".into());
-        }
-        Ok(Shot { width: width as usize, height: height as usize, bgra: pixels, drawn })
-    }
-}
-
-pub fn palette_of(kind: Kind) -> Palette {
-    Palette::of(kind, &ui_theme::sys_colors())
-}
-
-pub fn kind_name(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Light => "light",
-        Kind::Dark => "dark",
-        Kind::HighContrast => "highcontrast",
-    }
+    grid_core::gdi::render(width, height, |hdc| draw(hdc, width, height, app, pal, dpi))
 }
 
 /// 화면 크기(96 DPI 기준 논리 크기, 기본 1100x720).

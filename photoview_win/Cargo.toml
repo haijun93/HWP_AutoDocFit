@@ -1,0 +1,29 @@
+[package]
+name = "photoview_win"
+version = "0.1.0"
+edition = "2024"
+description = "사진뷰 Rust+Win32 창 1단계: 격자 목록 읽기 전용 표시·가상화·스캔 진행·취소·캡처 모드(PHOTOWIN1)"
+license = "MIT"
+publish = false
+
+# 다른 크레이트와 같이 독립 작업 공간으로 둔다.
+[workspace]
+
+# 의존성은 grid_core(경로, 문서뷰와 공용 부품)·ui_theme(경로)·windows-sys 셋뿐. klib 는 문서뷰와 같이 `klib scan` 실행 파일을 자식 프로세스로 호출한다.
+[dependencies]
+grid_core = { path = "../grid_core" }
+ui_theme = { path = "../ui_theme" }
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Time",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[[bin]]
+name = "photoview_win"
+path = "src/main.rs"

@@ -6,6 +6,15 @@ version = 4
 name = "docview_win"
 version = "0.1.0"
 dependencies = [
+ "grid_core",
+ "ui_theme",
+ "windows-sys",
+]
+
+[[package]]
+name = "grid_core"
+version = "0.1.0"
+dependencies = [
  "ui_theme",
  "windows-sys",
 ]

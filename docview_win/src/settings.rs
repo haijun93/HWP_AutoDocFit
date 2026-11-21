@@ -6,18 +6,13 @@ use std::path::PathBuf;
 /// `ui_thumb_sizes` 설정 키와 화면 이름.
 pub const THUMB_KEY: &str = "ui_thumb_sizes";
 pub const THUMB_VIEW: &str = "doc_grid";
-pub const MIN_THUMB: f64 = 100.0;
-pub const MAX_THUMB: f64 = 240.0;
+pub use grid_core::thumb::{MAX_THUMB, MIN_THUMB, clamp_thumb};
 pub const DEFAULT_DOC_THUMB: f64 = 190.0;
 /// 제외 폴더 설정 키.
 pub const EXCLUDED_KEY: &str = "library_excluded_folders";
 /// 문서뷰 화면 선택 키('flutter' 기본 | 'native'). 이번 단계는 읽기만(앱 연결은 다음 카드).
 pub const UI_KEY: &str = "docview_ui";
 
-/// `_clamp` 와 같다: 숫자가 아니거나 NaN 이면 기본값, 아니면 100~240 으로 맞춘다.
-pub fn clamp_thumb(value: f64, default: f64) -> f64 {
-    if value.is_nan() { default } else { value.clamp(MIN_THUMB, MAX_THUMB) }
-}
 
 /// `docfit_config::settings_path` 와 같은 위치 규칙(APPDATA → LOCALAPPDATA → 홈 → 임시).
 pub fn settings_path() -> PathBuf {

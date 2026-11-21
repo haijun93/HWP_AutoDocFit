@@ -65,3 +65,5 @@ mdm-ctx/target/
 outliner_win/target/
 settings_win/target/
 resources/mdm-ctx.exe
+grid_core/target/
+photoview_win/target/

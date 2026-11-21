@@ -1,0 +1,21 @@
+[package]
+name = "grid_core"
+version = "0.1.0"
+edition = "2024"
+description = "문서뷰·사진뷰 Rust+Win32 창 공용 부품: 격자 배치·가상화, 스캔 자식 프로세스 읽기·취소, 목록 모델, GDI 그리기 도우미, PNG 캡처 인코더(PHOTOWIN1)"
+license = "MIT"
+publish = false
+
+# 다른 크레이트와 같이 독립 작업 공간으로 둔다.
+[workspace]
+
+[dependencies]
+ui_theme = { path = "../ui_theme" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Time",
+] }
