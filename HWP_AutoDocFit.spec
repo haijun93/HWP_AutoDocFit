@@ -49,6 +49,10 @@ if settings_win_exe.is_file():
 docview_win_exe = root / 'resources' / 'docview_win.exe'
 if docview_win_exe.is_file():
     binaries.append((str(docview_win_exe), 'resources'))
+# 사진뷰 Win32 창(설정 photoview_ui='native' 일 때 앱의 사진뷰 탭이 연다). 있으면 넣는다(없으면 앱이 안내만 하고 기존 화면을 연다).
+photoview_win_exe = root / 'resources' / 'photoview_win.exe'
+if photoview_win_exe.is_file():
+    binaries.append((str(photoview_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

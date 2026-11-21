@@ -2,7 +2,7 @@
 name = "photoview_win"
 version = "0.1.0"
 edition = "2024"
-description = "사진뷰 Rust+Win32 창 1단계: 격자 목록 읽기 전용 표시·가상화·스캔 진행·취소·캡처 모드(PHOTOWIN1)"
+description = "사진뷰 Rust+Win32 창: 격자 목록·가상화·스캔 진행·취소·캡처 모드(PHOTOWIN1), 제외 폴더 편집·앱 설정 읽기·앱 연결(PHOTOWIN2)"
 license = "MIT"
 publish = false
 
@@ -11,18 +11,28 @@ publish = false
 
 # 의존성은 grid_core(경로, 문서뷰와 공용 부품)·ui_theme(경로)·windows-sys 셋뿐. klib 는 문서뷰와 같이 `klib scan` 실행 파일을 자식 프로세스로 호출한다.
 [dependencies]
+docfit_config = { path = "../docfit_config" }
 grid_core = { path = "../grid_core" }
 ui_theme = { path = "../ui_theme" }
+serde_json = { version = "1", features = ["preserve_order"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_Com",
     "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "photoview_win"

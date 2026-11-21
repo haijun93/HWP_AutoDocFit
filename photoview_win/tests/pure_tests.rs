@@ -452,29 +452,7 @@ fn cancel_kills_the_child_process() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(windows)]
-#[test]
-fn real_klib_scan_if_available() {
-    let Some(exe) = scan::find_klib() else {
-        eprintln!("klib.exe 없음: 실제 klib 사진 스캔 시험 건너뜀");
-        return;
-    };
-    let dir = std::env::temp_dir().join(format!("photoview_win_scan_{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("하위 폴더")).unwrap();
-    for f in ["가.jpg", "나.PNG", "하위 폴더/다.heic", "무시.txt", "문서.hwp"] {
-        std::fs::write(dir.join(f), b"x").unwrap();
-    }
-    let mut job = ScanJob::start_klib(&exe, &[dir.clone()], &[], Arc::new(|| {})).unwrap();
-    let (docs, _, fin, err) = wait_finished(&job, Duration::from_secs(30));
-    job.join();
-    let _ = std::fs::remove_dir_all(&dir);
-    assert_eq!(err, None);
-    assert_eq!(fin, Some(false));
-    let mut names: Vec<_> = docs.iter().map(|d| d.name.clone()).collect();
-    names.sort();
-    assert_eq!(names, ["가.jpg", "나.PNG", "다.heic"]);
-}
+// 실제 klib 로 도는 스캔 시험(건너뛰지 않는다)은 `tests/real_klib_tests.rs`.
 
 // ---------- 설정 읽기 ----------
 

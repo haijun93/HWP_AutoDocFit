@@ -14,6 +14,7 @@ import '../external_apps/external_app_launcher.dart';
 import '../doc_grid/doc_grid_screen.dart';
 import '../doc_grid/docview_ui_gate.dart';
 import '../photo_album/photo_album_screen.dart';
+import '../photo_album/photoview_ui_gate.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
 import '../pdf_edit/pdf_edit_workspace.dart';
@@ -331,7 +332,7 @@ class _LazyPhotoAlbumAdapterState extends State<_LazyPhotoAlbumAdapter> {
     final active = TickerMode.valuesOf(context).enabled;
     if (active && !_visited) _visited = true;
     return _visited
-        ? PhotoAlbumAdapter(api: widget.api)
+        ? PhotoViewUiGate(api: widget.api)
         : const SizedBox.expand();
   }
 }

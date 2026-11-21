@@ -1,5 +1,7 @@
 #![windows_subsystem = "windows"]
 //! `photoview_win [--settings 파일] [--klib klib.exe] [--synthetic N] [--no-scan]` — 사진뷰 창(읽기 전용 격자).
+//! `photoview_win --capture-dir <폴더> --scan-root <폴더> --klib <klib.exe> --settings <파일> [--panel] [--panel-add <폴더>] [--dark] [--dpi N]`
+//!   — 합성 모델 대신 **실제 `klib scan`** 결과(제외 폴더는 설정에서 읽어 `--exclude` 로 전달)와 제외 폴더 편집 패널을 그린다(PHOTOWIN2).
 //! `photoview_win --capture-dir <폴더> [--dark] [--dpi N] [--size WxH] [--scene 이름] [--settings 파일]`
 //!   — 창 없이 PNG 를 쓰고 끝난다. `--capture-set` 은 모든 장면을 라이트·다크·150% 로 한 번에 쓴다.
 //!   결과 줄(장면·파일·그린 칸 수)은 `PHOTOVIEW_WIN_OUT` 파일에도 적는다(GUI 하위 시스템이라 콘솔이 없다).
@@ -20,6 +22,9 @@ struct Args {
     klib: Option<String>,
     synthetic: Option<usize>,
     no_scan: bool,
+    scan_root: Option<String>,
+    panel: bool,
+    panel_add: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -38,6 +43,12 @@ fn parse_args() -> Result<Args, String> {
             "--klib" => a.klib = Some(val("파일")?),
             "--synthetic" => a.synthetic = Some(val("개수")?.parse().map_err(|_| "--synthetic 에 숫자가 필요합니다".to_string())?),
             "--no-scan" => a.no_scan = true,
+            "--scan-root" => a.scan_root = Some(val("폴더")?),
+            "--panel" => a.panel = true,
+            "--panel-add" => {
+                a.panel = true;
+                a.panel_add = Some(val("폴더")?);
+            }
             other => return Err(format!("알 수 없는 인자: {other}")),
         }
     }
@@ -64,6 +75,9 @@ fn run() -> Result<String, String> {
         Some(p) => settings::thumb_size(&settings::read_text(std::path::Path::new(p))),
         None => settings::DEFAULT_PHOTO_THUMB,
     };
+    if a.scan_root.is_some() || a.panel {
+        return capture_real(&a, &dir, size, thumb);
+    }
     let mut jobs: Vec<(String, Kind, u32)> = Vec::new();
     if a.capture_set {
         for s in SCENES {
@@ -87,6 +101,41 @@ fn run() -> Result<String, String> {
         lines.push(format!("{} (항목 {}개 중 {}칸 그림)", path.display(), app.coll.len(), drawn));
     }
     Ok(lines.join("\n"))
+}
+
+/// 실제 `klib scan` 결과(와 선택적으로 제외 폴더 패널)를 그려 PNG 로 쓴다.
+fn capture_real(a: &Args, dir: &str, size: Size, _thumb: f64) -> Result<String, String> {
+    use photoview_win::model::{ScanState, ScanView};
+    let settings_path = a.settings.as_ref().map(std::path::PathBuf::from).ok_or("--scan-root/--panel 에는 --settings 가 필요합니다")?;
+    let loaded = settings::load(&settings_path);
+    let kind = if a.dark { Kind::Dark } else { Kind::Light };
+    let dpi = a.dpi.unwrap_or(96);
+    let (w, h) = (photoview_win::layout::scale(size.0, dpi), photoview_win::layout::scale(size.1, dpi));
+    let mut app = photoview_win::synth::new_app(loaded.thumb);
+    app.excluded_count = loaded.excluded.len();
+    app.tz_offset = photoview_win::sys::tz_offset_secs();
+    let mut tag = "panel".to_string();
+    if let Some(root) = &a.scan_root {
+        let exe = a.klib.as_ref().map(std::path::PathBuf::from).or_else(photoview_win::scan::find_klib).ok_or("klib 실행 파일을 찾지 못했습니다(--klib 또는 KLIB_EXE)")?;
+        let started = std::time::Instant::now();
+        let got = photoview_win::scan::scan_blocking(&exe, &[std::path::PathBuf::from(root)], &loaded.excluded, std::time::Duration::from_secs(60))?;
+        app.engine = "klib scan".into();
+        app.coll.replace(got.docs);
+        app.scan = ScanView { state: ScanState::Complete, visited: got.visited, folder: String::new(), elapsed_secs: started.elapsed().as_secs() };
+        let m = app.metrics(w, h, dpi);
+        app.select(&m, Some(0));
+        tag = "realscan".into();
+    }
+    let mut panel = if a.panel { Some(photoview_win::panel::ExcludePanel::open(&settings_path)) } else { None };
+    // `--panel-add <폴더>`: 패널에서 [폴더 추가] 로 고른 것과 같은 저장 경로(`ExcludePanel::add`)를 실제로 실행한 뒤 그린다(설정 파일에 쓴다 — 임시 파일로만 쓸 것).
+    if let (Some(p), Some(folder)) = (panel.as_mut(), a.panel_add.as_deref()) {
+        p.add(folder);
+    }
+    if panel.is_some() && a.scan_root.is_some() {
+        tag = "realscan_panel".into();
+    }
+    let (path, drawn) = capture::capture_with_panel(std::path::Path::new(dir), &tag, &app, panel.as_ref(), kind, dpi, size)?;
+    Ok(format!("{} (실제 스캔 항목 {}개, 그린 칸 {}, 제외 폴더 {}개)", path.display(), app.coll.len(), drawn, loaded.excluded.len()))
 }
 
 fn main() {

@@ -331,11 +331,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item docview_win/target/release/docview_win.exe resources/docview_win.exe -Force
           if (!(Test-Path resources/docview_win.exe)) { throw 'docview_win bundle missing' }
+      - name: Build photo view window (photoview_win.exe, Rust)
+        # klib 다음에 둔다: 시험이 실제 `klib scan` 을 자식 프로세스로 돌린다(KLIB_EXE). klib 가 없으면 시험이 실패한다(건너뛰지 않음).
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          $env:KLIB_EXE = (Resolve-Path resources/klib.exe).Path
+          cargo test --release --locked --manifest-path photoview_win/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path photoview_win/Cargo.toml --bin photoview_win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item photoview_win/target/release/photoview_win.exe resources/photoview_win.exe -Force
+          if (!(Test-Path resources/photoview_win.exe)) { throw 'photoview_win bundle missing' }
       - name: Verify Rust binaries do not need the VC++ runtime
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {

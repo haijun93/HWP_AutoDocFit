@@ -1,6 +1,7 @@
 //! 실제 창: 메시지 처리·마우스·키보드·스캔 스레드 연결. 그림은 `paint::draw`, 값 처리는 `model::App`.
 use crate::layout::{DEFAULT_H, DEFAULT_W, MIN_H, MIN_W, Toolbar, scale};
 use crate::model::{App, Nav, ScanState};
+use crate::panel::{ExcludePanel, Hit, PanelLayout};
 use crate::paint;
 use crate::scan::{Event, ScanJob, find_klib};
 use crate::sys::{fixed_drive_roots, tz_offset_secs, wide};
@@ -46,6 +47,12 @@ struct State {
     high: Option<u16>,
     opts: Options,
     excludes: Vec<String>,
+    /// 설정 파일(앱과 같은 파일). 제외 폴더 저장과 revision 검사에 쓴다.
+    settings_path: PathBuf,
+    /// 열려 있는 제외 폴더 편집 패널(모달).
+    panel: Option<ExcludePanel>,
+    /// 제외 폴더가 바뀌어 지금 도는 스캔을 취소한 뒤 다시 시작해야 한다.
+    rescan: bool,
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -162,6 +169,9 @@ unsafe fn pump(hwnd: HWND, s: &mut State) {
             if let Some(mut j) = s.job.take() {
                 j.join();
             }
+            if std::mem::take(&mut s.rescan) {
+                start_scan(hwnd, s);
+            }
         }
         let (w, h) = client_size(hwnd);
         let m = s.app.metrics(w, h, s.dpi);
@@ -179,7 +189,7 @@ unsafe fn paint_window(hwnd: HWND, s: &State) {
             let mem = CreateCompatibleDC(hdc);
             let bm = CreateCompatibleBitmap(hdc, w, h);
             let old = SelectObject(mem, bm);
-            paint::draw(mem, w, h, &s.app, &s.pal, s.dpi);
+            paint::draw_with_panel(mem, w, h, &s.app, s.panel.as_ref(), &s.pal, s.dpi);
             BitBlt(hdc, 0, 0, w, h, mem, 0, 0, SRCCOPY);
             SelectObject(mem, old);
             DeleteObject(bm);
@@ -196,8 +206,70 @@ unsafe fn set_thumb_from_x(hwnd: HWND, s: &mut State, x: i32) {
     s.app.set_thumb(tb.slider_value(x), |t| crate::layout::Metrics::with_spec(crate::layout::GridSpec::PHOTO, w, h, dpi, t, banner));
 }
 
+/// 패널을 닫는다. 이 패널에서 저장한 변경이 있으면 새 제외 폴더로 다시 검색한다(도는 중이면 취소하고 끝나면 다시).
+unsafe fn close_panel(hwnd: HWND, s: &mut State) {
+    let Some(p) = s.panel.take() else { return };
+    if !p.changed {
+        return;
+    }
+    s.excludes = p.items.clone();
+    s.app.excluded_count = s.excludes.len();
+    if s.job.is_some() {
+        s.rescan = true;
+        unsafe { cancel_scan(hwnd, s) };
+    } else {
+        unsafe { start_scan(hwnd, s) };
+    }
+}
+
+unsafe fn panel_add(hwnd: HWND, s: &mut State) {
+    let initial = s.panel.as_ref().and_then(|p| p.selected.and_then(|i| p.items.get(i).cloned())).unwrap_or_default();
+    let picked = crate::folder::pick_folder(hwnd, "사진 검색에서 뺄 폴더를 고르세요", &initial);
+    if let (Some(folder), Some(p)) = (picked, s.panel.as_mut()) {
+        p.add(&folder);
+    }
+}
+
+unsafe fn panel_click(hwnd: HWND, s: &mut State, x: i32, y: i32) {
+    let (w, h) = client_size(hwnd);
+    let l = PanelLayout::new(w, h, s.dpi);
+    let Some(p) = s.panel.as_mut() else { return };
+    match l.hit(x, y, p) {
+        Hit::Add => unsafe { panel_add(hwnd, s) },
+        Hit::Remove => {
+            p.remove_selected();
+        }
+        Hit::Close => unsafe { close_panel(hwnd, s) },
+        Hit::Row(i) => p.select(Some(i)),
+        Hit::Inside | Hit::Outside => {}
+    }
+    redraw(hwnd);
+}
+
+unsafe fn panel_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
+    let (w, h) = client_size(hwnd);
+    let rows = PanelLayout::new(w, h, s.dpi).visible_rows();
+    let Some(p) = s.panel.as_mut() else { return false };
+    match vk as u16 {
+        VK_ESCAPE => unsafe { close_panel(hwnd, s) },
+        VK_UP => p.step(-1, rows),
+        VK_DOWN => p.step(1, rows),
+        VK_DELETE => {
+            p.remove_selected();
+        }
+        VK_INSERT => unsafe { panel_add(hwnd, s) },
+        _ => return true, // 모달: 다른 키는 삼킨다.
+    }
+    redraw(hwnd);
+    true
+}
+
 unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
     unsafe {
+        if s.panel.is_some() {
+            panel_click(hwnd, s, x, y);
+            return;
+        }
         let (w, h) = client_size(hwnd);
         let tb = Toolbar::new(w, s.dpi);
         s.app.search_focus = false;
@@ -217,8 +289,7 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
                 SetCapture(hwnd);
                 set_thumb_from_x(hwnd, s, x);
             } else if tb.exclude.contains(x, y) {
-                let list = if s.excludes.is_empty() { "제외한 폴더가 없습니다.".to_string() } else { s.excludes.join("\n") };
-                MessageBoxW(hwnd, wide(&format!("{list}\n\n(1단계는 읽기 전용입니다. 추가·삭제는 다음 단계에서 지원합니다.)")).as_ptr(), wide("제외할 폴더").as_ptr(), MB_OK);
+                s.panel = Some(ExcludePanel::open(&s.settings_path));
             } else if tb.action.contains(x, y) {
                 if s.job.is_some() {
                     cancel_scan(hwnd, s);
@@ -251,6 +322,9 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
 
 unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
     unsafe {
+        if s.panel.is_some() {
+            return panel_key(hwnd, s, vk);
+        }
         let (w, h) = client_size(hwnd);
         let m = s.app.metrics(w, h, s.dpi);
         let nav = match vk as u16 {
@@ -298,7 +372,7 @@ unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
 }
 
 unsafe fn on_char(hwnd: HWND, s: &mut State, ch: u16) {
-    if !s.app.search_focus {
+    if s.panel.is_some() || !s.app.search_focus {
         return;
     }
     let mut q = s.app.coll.query.clone();
@@ -406,6 +480,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 if let Some(s) = state(hwnd) {
                     let notches = ((wp >> 16) as u16 as i16) as i32;
                     let (w, h) = client_size(hwnd);
+                    if let Some(p) = s.panel.as_mut() {
+                        p.wheel(-notches / 120 * 3, PanelLayout::new(w, h, s.dpi).visible_rows());
+                        redraw(hwnd);
+                        return 0;
+                    }
                     let m = s.app.metrics(w, h, s.dpi);
                     s.app.scroll_by(&m, -notches * m.stride() / 360);
                     redraw(hwnd);
@@ -468,6 +547,33 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
     }
 }
 
+/// 단일 인스턴스: 같은 설정 파일을 여는 사진뷰가 이미 떠 있으면 그 창을 앞으로 가져오고 true(이 프로세스는 곧 끝낸다).
+/// 뮤텍스 이름에 설정 파일 경로의 해시를 붙여, 다른 설정 파일(시험·캡처)을 여는 창과는 섞이지 않는다.
+pub fn activate_existing_instance(settings_path: &str) -> bool {
+    use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    unsafe {
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for b in settings_path.to_lowercase().bytes() {
+            hash = (hash ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        let name = format!(r"Local\HwpAutoDocFit.PhotoViewWin.Singleton.{hash:016x}");
+        // 핸들은 일부러 닫지 않는다: 프로세스가 끝날 때까지 뮤텍스를 쥐고 있어야 한다.
+        let handle = CreateMutexW(null(), 0, wide(&name).as_ptr());
+        if handle.is_null() || GetLastError() != ERROR_ALREADY_EXISTS {
+            return false;
+        }
+        let existing = FindWindowW(wide("PhotoViewWinMain").as_ptr(), null());
+        if !existing.is_null() {
+            if IsIconic(existing) != 0 {
+                ShowWindow(existing, SW_RESTORE);
+            }
+            SetForegroundWindow(existing);
+        }
+        true
+    }
+}
+
 pub fn run(opts: Options) -> Result<(), String> {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -491,15 +597,23 @@ pub fn run(opts: Options) -> Result<(), String> {
         let (kind, pal) = ui_theme::current(pref);
         let dpi = GetDpiForSystem().max(96);
         let path = opts.settings.clone().unwrap_or_else(crate::settings::settings_path);
-        let text = crate::settings::read_text(&path);
-        let mut app = crate::synth::new_app(crate::settings::thumb_size(&text));
-        let excludes = crate::settings::excluded_folders(&text);
+        // 이미 같은 설정 파일로 열린 사진뷰가 있으면 그 창을 앞으로 가져오고 이 프로세스는 끝낸다.
+        if activate_existing_instance(&path.to_string_lossy()) {
+            return Ok(());
+        }
+        // 앱 설정은 설정 소유자 docfit_config 로 읽는다(썸네일 크기·제외 폴더). 읽지 못하면 기본값 + 상태줄 안내.
+        let loaded = crate::settings::load(&path);
+        let mut app = crate::synth::new_app(loaded.thumb);
+        let excludes = loaded.excluded;
         app.excluded_count = excludes.len();
+        if let Some(e) = loaded.error {
+            app.notice = e;
+        }
         app.tz_offset = tz_offset_secs();
         let mut r = RECT { left: 0, top: 0, right: scale(DEFAULT_W, dpi), bottom: scale(DEFAULT_H, dpi) };
         AdjustWindowRectExForDpi(&mut r, WS_OVERLAPPEDWINDOW, 0, 0, dpi);
         let no_scan = opts.no_scan;
-        let raw = Box::into_raw(Box::new(State { app, pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes }));
+        let raw = Box::into_raw(Box::new(State { app, pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes, settings_path: path.clone(), panel: None, rescan: false }));
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),

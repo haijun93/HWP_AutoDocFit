@@ -122,6 +122,23 @@ class BridgeWrapperBehaviorTests(unittest.TestCase):
                 bridge.docview_window("not a dict")
         self.assertIn("docview_window", browser_api_names())
 
+    def test_photoview_window_bridge_reads_and_writes_photoview_ui(self):
+        """새 브리지 메서드 `photoview_window`: 사진뷰 화면 방식 읽기·쓰기. 기본 'flutter' 에서는 창을 열지 않는다."""
+        import tempfile
+        from docfit_app.api_contract import ServiceError
+        with tempfile.TemporaryDirectory() as folder:
+            bridge, store = self._bridge(folder)
+            first = bridge.photoview_window({"action": "ui_mode"})
+            self.assertTrue(first["ok"])
+            self.assertEqual(first["data"], {"mode": "flutter"})
+            self.assertEqual(bridge.photoview_window({"action": "open_if_native"})["data"], {"mode": "flutter", "opened": False})
+            self.assertEqual(bridge.photoview_window({"action": "ui_mode", "value": "native"})["data"], {"mode": "native"})
+            self.assertEqual(store.read().get("photoview_ui"), "native")
+            self.assertFalse(bridge.photoview_window({"action": "ui_mode", "value": "x"})["ok"])
+            with self.assertRaises(ServiceError):
+                bridge.photoview_window("not a dict")
+        self.assertIn("photoview_window", browser_api_names())
+
     def test_outliner_and_pdf_edit_reject_non_dict_payloads(self):
         import tempfile
         from docfit_app.api_contract import ServiceError

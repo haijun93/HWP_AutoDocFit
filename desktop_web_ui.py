@@ -2440,6 +2440,17 @@ class DesktopWebBridge:
             raise ServiceError("INVALID_INPUT", "문서뷰 창 입력을 확인해 주세요.")
         return self._service_response(lambda: service.execute(payload))
 
+    def photoview_window(self, payload):
+        """사진뷰 화면 방식(`docview_ui`)과 Win32 사진뷰 창(docview_win.exe) 실행."""
+        from docfit_app.api_contract import ServiceError
+        service = getattr(self, "_photoview_window_service", None)
+        if service is None:
+            from docfit_app.photoview_window_service import PhotoViewWindowService
+            service = self._photoview_window_service = PhotoViewWindowService(self._settings_store())
+        if not isinstance(payload, dict):
+            raise ServiceError("INVALID_INPUT", "사진뷰 창 입력을 확인해 주세요.")
+        return self._service_response(lambda: service.execute(payload))
+
     def _dock_runtime(self):
         runtime = getattr(self, "_dock_runtime_instance", None)
         if runtime is None:
@@ -4022,7 +4033,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
-            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
+            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "photoview_window", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
             "set_conversion_target", "set_pdf_compress_target_mb", "set_pdf_compress_method", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))
