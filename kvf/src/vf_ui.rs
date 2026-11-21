@@ -53,7 +53,7 @@ impl Rect {
 pub struct PanelGeom {
     pub rect: Rect,
     pub header: Rect,
-    /// 목록 알림 줄(불러오는 중 등). 알림이 없으면 빈 사각형.
+    /// 목록 알림 줄(불러오는 중 등). 좁은 영역에서 긴 안내가 두 줄로 접히도록 한 줄 반 높이. 알림이 없으면 빈 사각형.
     pub message: Rect,
     pub rows: Rect,
     pub icons: bool,
@@ -199,7 +199,7 @@ impl Chrome {
                 let rect = Rect { left: r.left, top: body.top + r.top, right: r.right, bottom: body.top + r.bottom };
                 let header = Rect { left: rect.left, top: rect.top, right: rect.right, bottom: (rect.top + row_h).min(rect.bottom) };
                 let message = if message_row {
-                    Rect { left: rect.left, top: header.bottom, right: rect.right, bottom: (header.bottom + row_h).min(rect.bottom) }
+                    Rect { left: rect.left, top: header.bottom, right: rect.right, bottom: (header.bottom + row_h * 3 / 2).min(rect.bottom) }
                 } else {
                     Rect { left: rect.left, top: header.bottom, right: rect.right, bottom: header.bottom }
                 };
@@ -516,8 +516,8 @@ mod tests {
         let l = Layout::for_count(1);
         let a = Chrome::compute(96, 600, 420, false, false, false, &l);
         let b = Chrome::compute(96, 600, 420, false, false, true, &l);
-        assert_eq!(b.panels[0].rows.top, a.panels[0].rows.top + ROW);
-        assert!(b.panels[0].message.height() == ROW && a.panels[0].message.is_empty());
+        assert_eq!(b.panels[0].rows.top, a.panels[0].rows.top + ROW * 3 / 2);
+        assert!(b.panels[0].message.height() == ROW * 3 / 2 && a.panels[0].message.is_empty());
         assert!(!b.panels[0].message.overlaps(&b.panels[0].header));
     }
     #[test]

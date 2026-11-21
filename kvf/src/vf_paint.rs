@@ -15,7 +15,18 @@ use windows_sys::Win32::{
 
 pub const SPACES: [Option<&str>; 5] = [None, Some("core"), Some("basis"), Some("reference"), Some("temp")];
 pub const LABELS: [&str; 5] = ["전체", "핵심자료", "기초자료", "참고자료", "임시저장소"];
+const NOTE_TEXT: &str = "5,000개 초과 생략";
 pub const TOOLBAR_LABELS: [&str; 4] = ["영역 ▾", "목록", "큰 아이콘", "새로고침"];
+
+/// 항목 종류 꼬리표(한글 화면에 영어 꼬리표가 섞이지 않게). 모르는 종류는 그대로 보인다.
+pub fn kind_label(kind: &str) -> &str {
+    match kind {
+        "file" => "파일",
+        "folder" => "폴더",
+        "link" => "링크",
+        other => other,
+    }
+}
 
 pub fn window_title(name: &str) -> String {
     format!("퀵가상폴더 · {name} ▾")
@@ -182,10 +193,17 @@ pub unsafe fn draw(mem: HDC, sc: &Scene, ch: &Chrome) {
         // 상태줄
         fill(r(&ch.status), palette.plain_head_bg);
         SetTextColor(mem, palette.text);
-        text(&sc.status_line(), r(&ch.status_text), DT_END_ELLIPSIS);
+        let mut status_text = r(&ch.status_text);
         if let Some(note) = &ch.status_note {
-            text("5,000개 초과 생략", r(note), DT_END_ELLIPSIS | DT_RIGHT);
+            // 안내 칸을 고정 170px로 잡으면 좁은 창에서 상태 문구가 일찍 잘리므로 실제 글자 폭만 쓴다.
+            let label = wide(NOTE_TEXT);
+            let mut size = std::mem::zeroed();
+            let measured = if GetTextExtentPoint32W(mem, label.as_ptr(), (label.len() - 1) as i32, &mut size) != 0 { size.cx + pad } else { 0 };
+            let left = if measured > 0 { (note.right - measured).max(note.left) } else { note.left };
+            text(NOTE_TEXT, RECT { left, top: note.top, right: note.right, bottom: note.bottom }, DT_END_ELLIPSIS | DT_RIGHT);
+            status_text.right = (left - pad).max(status_text.left);
         }
+        text(&sc.status_line(), status_text, DT_END_ELLIPSIS);
         frame::own_border(mem, r(&ch.client));
         SelectObject(mem, oldfont);
         DeleteObject(font);
@@ -214,6 +232,8 @@ unsafe fn draw_panel(
         }
         let panel_id = format!("p{}", index + 1);
         if sc.drag_target == Some(panel_id.as_str()) {
+            // 놓을 영역: 활성 영역 테두리와 구별되도록 머리글을 강조색 바탕으로 칠한다.
+            fill(r(&geom.header), palette.selected);
             outline(rect, palette.accent_line);
             outline(RECT { left: rect.left + 1, top: rect.top + 1, right: rect.right - 1, bottom: rect.bottom - 1 }, palette.accent_line);
             fill(RECT { left: rect.left, top: rect.top, right: rect.right, bottom: rect.top + vf_ui::sc(sc.dpi, 3).min(geom.rect.height()) }, palette.accent_line);
@@ -229,7 +249,12 @@ unsafe fn draw_panel(
             fill(RECT { left: geom.header.left, top: geom.header.bottom - 1, right: geom.header.right, bottom: geom.header.bottom }, palette.border);
         }
         if !sc.message.is_empty() {
-            text(&sc.message, RECT { left: geom.message.left + pad, top: geom.message.top, right: geom.message.right - pad, bottom: geom.message.bottom }, DT_END_ELLIPSIS);
+            // 좁은 영역에서도 끝의 안내(F5 등)가 잘리지 않게 두 줄까지 접는다.
+            let mut m = RECT { left: geom.message.left + pad, top: geom.message.top + vf_ui::sc(sc.dpi, 3), right: geom.message.right - pad, bottom: geom.message.bottom };
+            if m.right > m.left && m.bottom > m.top {
+                let value = wide(&sc.message);
+                DrawTextW(mem, value.as_ptr(), (value.len() - 1) as i32, &mut m, DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS);
+            }
         }
         let len = sc.rows_len(index);
         let panel_selection = sc.layout.panels.get(index).map(|p| p.selection.as_slice()).unwrap_or(&[]);
@@ -244,7 +269,7 @@ unsafe fn draw_panel(
             let (name, line) = match row {
                 RowRef::Library(item) => {
                     let category = SPACES.iter().position(|space| *space == Some(item.space.as_str())).unwrap_or(0);
-                    (item.display_name.as_str(), format!("[{}] {} · {}", item.kind, item.display_name, LABELS[category]))
+                    (item.display_name.as_str(), format!("[{}] {} · {}", kind_label(&item.kind), item.display_name, LABELS[category]))
                 }
                 RowRef::Virtual(v) => (v.display_name.as_str(), format!("[가상] {}", v.display_name)),
             };
@@ -255,7 +280,12 @@ unsafe fn draw_panel(
             if geom.icons {
                 let icon_h = vf_ui::sc(sc.dpi, vf_ui::ICON_H);
                 text("▣", RECT { left: slot.left, top: slot.top, right: slot.right, bottom: (slot.top + icon_h).min(slot.bottom) }, DT_CENTER);
-                text(name, RECT { left: slot.left + pad, top: slot.top + icon_h, right: slot.right - pad, bottom: (slot.top + icon_h + vf_ui::sc(sc.dpi, vf_ui::ROW)).min(slot.bottom) }, DT_CENTER | DT_END_ELLIPSIS);
+                // 이름은 두 줄까지 접어 앞 몇 글자만 보이는 문제를 줄인다.
+                let mut nr = RECT { left: slot.left + pad, top: slot.top + icon_h, right: slot.right - pad, bottom: slot.bottom };
+                if nr.right > nr.left && nr.bottom > nr.top {
+                    let value = wide(name);
+                    DrawTextW(mem, value.as_ptr(), (value.len() - 1) as i32, &mut nr, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX | DT_END_ELLIPSIS | DT_EDITCONTROL);
+                }
             } else {
                 text(&line, RECT { left: slot.left + pad, top: slot.top, right: slot.right - pad, bottom: slot.bottom }, DT_END_ELLIPSIS);
             }
@@ -298,6 +328,11 @@ mod tests {
         let m = mk("불러오는 중…");
         assert_eq!(m.rows_len(0), 3);
         assert!(m.row(0, 3).is_none());
+    }
+    #[test]
+    fn kind_labels_are_korean_and_unknown_kinds_pass_through() {
+        assert_eq!((kind_label("file"), kind_label("folder"), kind_label("link")), ("파일", "폴더", "링크"));
+        assert_eq!(kind_label("기타"), "기타");
     }
     #[test]
     fn status_counts_virtual_selection_of_active_panel() {

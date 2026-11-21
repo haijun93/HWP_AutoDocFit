@@ -174,6 +174,7 @@ pub fn case(name: &str) -> Option<Case> {
         "search" => {
             c.query = "보고서".into();
             c.filtered = vec![1, 5, 8];
+            c.selected = Some(5);
             c.layout = Layout::for_count(2);
         }
         "truncated_status" => {
