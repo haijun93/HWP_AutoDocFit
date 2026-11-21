@@ -270,11 +270,11 @@ EXE 빌드는 Flutter 검사·자산 검증 실패 시 중단한다. 런타임 �
 | 항목 | 현재 값 |
 |---|---|
 | 제품 | 한/글 2020 문서(HWP/HWPX)를 공문서 규칙에 맞게 자동 후처리하는 Windows 데스크톱 앱(Python·Tkinter 백엔드 + pywebview/WebView2 UI) |
-| 최신 배포 | **v1.76.5 핫픽스** (2026-10-17) — 서식 적용 회귀 수정·서식 복사 재연 개선·다운로드 재개 |
-| 직전 배포 | v1.70 (2026-10-05, 첫 정식 버전) — 앱 이름 '한글편집 후처리', 문단 위 여백 기본값 15/15/15/8/4/0pt, 계층 검토 창 장·중제목·여백 보완 |
-| 브랜치 | `main` = 정식(배포선), `alpha` = 새 기능 시험판 |
-| 원격 | `github` = 원본(https://github.com/haijun93/hwp-auto-docfit), `origin` = GitLab 백업(gitlab.aigov.go.kr/haijun93/hwp_autodocfit) |
-| 사용자 업데이트 | 앱이 GitLab "최신 릴리스"를 조회해 새 exe를 알림 |
+| 최신 배포 | **v2.2.85** (2026-11-21) — 스캔 Rust 전환·문서뷰 썸네일 크기·사이드바 개선 |
+| 직전 배포 | v2.2.84 (2026-11-20) — 퀵몽땅검색 색인 실패 사유 표시·아웃라이너 수정·웹 빌드 안정화 |
+| 브랜치 | `main` = 정식(배포선), 기능 브랜치(`feature/…`) = 새 기능 개발(2026-11-12 지시로 `alpha` 폐지) |
+| 원격 | `github` = 원본(https://github.com/haijun93/hwp-auto-docfit), `origin` = GitLab 백업(2026-11-11 지시로 푸시·접속 전면 중단) |
+| 사용자 업데이트 | 앱이 GitHub "최신 릴리스"를 조회해 새 exe를 알림(GitLab은 접속 중단) |
 | 테스트 | `python -m unittest discover -s tests` → 703개 통과(2026-10-06 기준) |
 | 사용자 | 마포구청 공무원(개발자이자 실사용자). 한국어로 소통, 결과는 개조식 공문서 문체를 선호 |
 
@@ -347,6 +347,9 @@ Flutter 서식 관리의 기본 데이터 표 학습·초기화를 추가했다.
 
 Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build.bat`와 GitHub 빌드에도 포함됩니다. 생성된 웹 리소스는 Git에서 제외합니다. 화면 검사는 `scripts/preview_flutter.py`(선택 의존성 Playwright, 설치된 Edge 사용)로 수행하며 사용자 문서는 처리하지 않습니다. `desktop_web_ui._BrowserApi`는 명령만 공개합니다. Tk GUI나 WebView 창 자체를 `js_api`에 공개하면 pywebview의 재귀 탐색으로 COM 스레드 오류가 발생하므로 금지합니다.
 | `TODO.md` | 작업 예정·완료 기록(사용자가 "나중에 해"라고 한 항목의 원천) |
+
+### 현재 구조 (2026-11-21 기준)
+문서뷰·사진뷰 스캔은 `klib scan`(Rust) → 파일명 색인 서비스 → Python 순으로 폴백하여 대량 파일 훑기 속도를 개선했다. 앱 설정 저장소는 Rust 라이브러리 `docfit_config`로 전환 중이며 아직 Python과 병행 운용된다. 몽땅클립보드 설정·켜기는 전용 Win32 네이티브 창(`kagent/src/settings_window.rs`)으로 분리되었고, 메인 화면 배치는 하단 Dock과 사이드바 구조(1차 묶음·위쪽 가로 탭·오른쪽 빠른 실행 막대)로 개편되어 작동한다.
 
 ---
 
@@ -429,7 +432,7 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 
 ## 5. 작업 규칙 (반드시 지킬 것)
 
-1. **새 기능은 `alpha` 브랜치에서** 개발하고, 사용자가 "베타에 적용"이라고 하면 `main`으로 합쳐 배포합니다.
+1. **새 기능은 기능 브랜치(`feature/…`)에서** 개발하고, 시험을 통과한 뒤 `main`으로 합쳐 배포합니다(2026-11-12 지시로 `alpha` 브랜치는 폐지 및 삭제됨).
 2. **★ 2026-11-11 사용자 지시: GitLab(`origin`) 저장소는 별도 명령 때까지 절대 건드리지 않는다(푸시·태그·삭제·릴리스·downloads·API 모두 금지). 푸시는 `github`에만. 이 PC·맥의 git 설정과 pre-push 훅이 GitLab 푸시를 막고 있으며 되돌리거나 우회하지 말 것.** (아래 문서 곳곳의 `git push origin …` 단계는 재개 지시가 있을 때까지 건너뛴다.)
    **푸시 순서(재개 후)**: `github` 먼저, 그다음 같은 ref를 `origin`(GitLab)에 미러링. GitLab 쪽에서 개발하거나 충돌을 풀지 마세요.
 3. **GitLab 보안 검사(Semgrep 등)가 푸시를 거부할 수 있습니다.** 특히 새로 만들거나 바꾼 파일에서 표준 `xml` 모듈을 import하면 `use-defused-xml` 규칙에 걸립니다. XML 파싱은 `defusedxml`만 쓰고, 새 모듈에는 표준 `xml`을 넣지 마세요(검사 우회용 주석이 아니라 실제로 고칠 것). 옛 태그 `v1.64`는 이 문제로 GitHub에만 있습니다.
@@ -441,26 +444,19 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 
 ---
 
-## 6. 배포 절차 (정식·베타)
+## 6. 배포 절차 (최신화: 2026-11-20 지시 반영)
 
-1. `alpha` → `main` 병합(보통 fast-forward). 충돌 시 `TODO.md`는 완료 기록이 더 많은 쪽 기준으로 정리.
-2. 버전 올리기: `hwp-auto-docfit.py`의 `APP_VERSION`, `README.md` 5행, `website/index.html`(5곳), 새 릴리스 노트 `releases/vX.Y-beta.N.md`(SHA-256 자리는 `SHA256_PLACEHOLDER`).
+1. **작업 폴더 worktree**: 시험 간섭과 브랜치 오염을 막기 위해 별도 worktree에서 배포 작업을 진행한다.
+2. **버전 올리기**: `hwp-auto-docfit.py`의 `APP_VERSION` 한 줄, `README.md` 두 곳(GitHub용 `.github/README.md`, GitLab용 `README.md`), 새 릴리스 노트 `releases/vX.md`(SHA-256 자리는 `SHA256_PLACEHOLDER`).
    - 자동 업데이트는 버전 문자열의 숫자 3개로 비교합니다(`_버전_튜플`: "1.68 Beta 2" → (1, 68, 2)).
-   - 그래서 1.69 다음 정식판은 '1.7'이 아니라 **'1.70'**입니다('1.7' → (1, 7, 0)은 1.69보다 낮아 기존 앱이 업데이트를 알리지 않음).
-   - README 두 개(GitHub용 `.github/README.md`, GitLab용 `README.md`)를 함께 갱신한다. 본문은 같게 유지하고 각 호스트의 다운로드 링크와 상대 경로를 확인한다.
-2-1. **개선 효과 표는 넣지 않는다(2026-10-17 사용자 지시)**. 대신 서식 복사 100% 재연 시험(scripts/format_fidelity_pc.py)을 반드시 돌려 결과를 배포 검증에 적고, README.md를 함께 갱신한다.
-3. 전체 테스트 통과 확인 → 커밋 → `git push github main` → `git push origin main`.
-4. **exe 빌드**: CI는 alpha·release/1.76.4 및 기존 빌드 브랜치를 지원한다.
-   - 검증할 소스 커밋을 release/1.76.4에 강제 푸시 없이 올린다.
-   - CI가 EXE를 해당 버전의 draft release 자산으로 업로드하고 출처·전달 정보·SHA256·창/OCR 보고서를 release-assets에 커밋한다.
-   - v1.76.3부터 EXE/런타임 ZIP은 Git에 새로 기록하지 않는다(100MiB 파일 제한). tag 워크플로가 draft EXE를 내려받아 해시를 검사한 뒤 통합 ZIP과 함께 게시한다.
-   - 해당 산출물 커밋을 main에 fast-forward한다. 동시 main 변경은 먼저 검토한다.
-5. CI에서 EXE를 실제 실행해 보이는 창의 버전을 확인한다(windows-ui-smoke.json).
-   산출물 출처·SHA256을 검증하고 릴리스 노트에 EXE SHA256을 대문자로 기록한다.
-   실제 한/글 문서의 붙여넣기·COM 조판은 별도 검증으로 구분한다.
-6. **태그**: `git tag -a vX.Y-beta.N -m "…"` → `git push github <태그>` → `git push origin <태그>`. GitLab CI(`release-windows`)가 메인 exe·시험용 텍스트를(통합 압축팩은 GitLab 첨부 한도 100MB 때문에 GitHub에만, 2026-10-11), GitHub 릴리스가 메인 exe·통합 압축팩을 자동 첨부합니다. 설정 초기화 exe는 배포하지 않습니다.
-7. 확인: `https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest`가 새 태그를 가리키는지, 내려받은 exe 해시가 노트와 같은지.
-8. **GitLab 내려받기(필수, 2026-10-22)**: 공공기관 PC는 GitHub가 막혀 있고 GitLab 릴리스 페이지는 로그인 없이 404다. GitHub 릴리스 게시 뒤 `.venv\Scripts\python.exe scripts\publish_gitlab_downloads.py X.Y.Z`로 GitLab `downloads` 브랜치(부모 없는 커밋 하나, 강제 갱신)에 exe·SHA256SUMS·예시 TXT를 올리고, README 다운로드 링크(`-/raw/downloads/<파일>?inline=false`)의 버전을 바꾼다. 큰 푸시는 502가 나면 다시 시도한다. GitLab main이 많이 뒤처졌으면 커밋을 몇 개씩 나눠 푸시한다.
+   - 개선 효과 표는 넣지 않는다(2026-10-17 사용자 지시). 대신 서식 복사 100% 재연 시험(`scripts/format_fidelity_pc.py`)을 돌려 배포 검증에 기록.
+3. **전체 시험 통과 확인**: 전체 Python 시험(`KLIB_EXE` 지정) + `flutter analyze` + `flutter build web --release` + `flutter test`.
+   - 시험 결과를 확인하는 명령과 푸시를 한 명령으로 묶어 시험 실패 시 푸시되지 않게 한다.
+4. **릴리스 브랜치 푸시**: 검증할 소스 커밋을 릴리스 브랜치(`release/vX-int`)에 푸시한다(`git push github release/vX-int`). (★ 2026-11-11 지시: GitLab `origin` 푸시는 절대 금지, GitHub에만 푸시).
+5. **CI 빌드 및 해시 확인**: CI가 EXE를 빌드하여 draft release 자산으로 업로드하고 출처·SHA256을 보고하면 산출물 해시를 대조해 릴리스 노트에 대문자로 기록한다.
+6. **태그 및 게시**: `git tag -a vX -m "…"` → `git push github <태그>` → GitHub 릴리스 게시.
+7. **main 병합**: 해당 릴리스 브랜치 커밋을 `main`에 병합(fast-forward)하고 `git push github main`으로 푸시.
+8. **이 PC 설치 지침(2026-11-20 지시)**: 이 PC에 설치는 사용자가 명시적으로 요청할 때만 수행한다(기본적으로 설치본 시험 없이 게시).
 
 ---
 
@@ -503,11 +499,21 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 - **Flutter UI는 웹 빌드다(2026-11-19)**: `flutter build web`(WebView 호스팅)이라 `dart:io`·`dart:html`·`dart:ffi`를 import하면 `flutter test`(VM)와 `flutter analyze`는 통과해도 CI 웹 빌드가 깨진다. 프로세스·파일·파이프 같은 OS 기능은 Python 백엔드 API로 호출한다(DOCK4 사례).
 - **CI는 `flutter analyze`의 info도 실패로 본다**: 불필요한 import 한 줄로 v2.2.75 첫 빌드가 실패했다. 워커 보고에 `flutter analyze` 종료코드 1이 있으면 병합하지 않는다.
 - **전체 Python 시험은 한 번에 하나, 별도 폴더에서**: 15~25분 걸리고, 다른 컴파일·시험과 겹치면 속도 시험이 거짓 실패하며 60분 넘게 걸린다. 시험이 도는 폴더에서 브랜치를 바꾸거나 파일을 건드리면 결과가 무효가 된다.
-- **릴리스 후보 순서**: 별도 worktree → 버전 올림(CRLF 한 줄) → 전체 시험(후보 커밋으로 빌드한 klib를 `KLIB_EXE`로 지정) → `release/vX-int`만 푸시 → CI exe 커밋 확인 → 산출물 해시 대조 → 설치(UAC 승인이 필요해 수 시간 지연될 수 있음) → 태그 → main 병합. main과 release를 같은 SHA로 동시에 푸시하지 않는다.
+- **릴리스 후보 순서(최신: 2026-11-20 지시)**: 작업 폴더 worktree → 버전 올림(hwp-auto-docfit.py 한 줄, README 두 곳, releases/vX.md) → 전체 Python 시험(KLIB_EXE 지정) + `flutter analyze` + `flutter build web --release` + `flutter test` → 릴리스 브랜치 푸시(`release/vX-int`) → CI → 해시 확인 → 태그 → 게시 → main 병합. 이 PC에 설치는 사용자가 요청할 때만 수행한다(2026-11-20 지시: 기본적으로 설치본 시험 없이 게시). main과 release를 같은 SHA로 동시에 푸시하지 않는다.
 - **푸시는 시험 성공에 묶는다**: 시험 결과를 확인하는 명령과 푸시를 따로 두면 실패한 채 올라간다(QMSTIME 사고). 같은 명령에서 성공일 때만 푸시한다.
 - **워커 보고는 이 PC에서 다시 돌려 판정한다**: 임시 폴더가 AppData 아래냐 E:냐에 따라 제외 규칙이 달라지던 결함(DEFAULTALL), 링크 환경 차 등이 이렇게 드러났다. 보고서를 믿고 병합하지 않는다.
 - **맥 워커**: Codex는 SSH로 되지만 Gemini·Claude는 키체인 때문에 화면 터미널에 켜 둔 대기 프로그램(`agy_worker.sh`, `claude_worker.sh`)으로만 실행된다. `tools/run_mac.sh`(번들로 코드 전송, 결과를 `mac/<이름>` 브랜치로 받음)와 `tools/run_gemini.sh`(이 PC Gemini 직접 실행)를 쓴다. 맥 스튜디오는 외장 2TB의 `~/docfit-ext` 링크 아래에서 작업한다. 맥 결과도 이 PC에서 재시험 후 병합한다.
 - **Codex 정책 오탐**: 도중에 끊기고 최종 보고 파일이 없으며 로그 끝에 `Invalid prompt`가 있으면 오탐이다. 카드 문구를 중립적으로 다시 쓰고, 작업 트리의 부분 변경을 이어서 완성하는 카드로 재시도한다.
+- **Flutter API 허용 목록과 브리지 동기화**: Flutter(WebView)가 부르는 API 이름은 `DesktopWebBridge` 메서드에 구현되어 있어야 할 뿐 아니라, `desktop_web_ui.py`의 `_BrowserApi` 허용 목록에도 등록되어 있어야 한다. 브리지에 메서드가 있어도 허용 목록에서 빠지면 화면이 "앱 연결을 기다리고 있습니다" 오류를 내며 멈춘다(v2.2.81 문서뷰·아웃라이너·PDF 편집·Dock 누락 사고). `tests/test_bridge_methods.py`가 화면이 부르는 모든 API가 브리지 메서드와 `_BrowserApi` 허용 목록에 존재하는지 검사한다.
+- **아웃라이너 엔진 요청 형식**: 아웃라이너 엔진 요청은 `op='edit'`와 `args.action`(set_text, insert, delete 등)을 함께 보내는 형태여야 한다. `op='set_text'` 형태로 직접 전송하면 엔진에서 "지원하지 않는 명령: set_text" 오류를 내며 글자가 기록되지 않는다(v2.2.84에서 실제 엔진 확인으로 수정).
+- **Flutter 웹 빌드 사전 검증**: Flutter UI는 WebView 호스팅 웹 빌드이므로, `flutter analyze`와 Dart VM 단위 시험(`flutter test`)만으로는 웹 컴파일 오류(예: 동일 함수 중복 정의/가져오기)를 잡지 못한다(v2.2.83 CI 실패 사례: watchDocumentDropPaths 중복 정의로 웹 빌드 실패). 릴리스 전에는 반드시 `flutter build web --release`를 실행해 웹 번들 컴파일 성공을 확인해야 한다.
+- **tests/fixtures 바이너리 커밋 제외**: 시험 실행 과정에서 `tests/fixtures` 아래의 바이너리 파일이 변경될 수 있으므로, git 상태를 점검하여 변경된 바이너리는 커밋에서 제외하고 되돌려야 한다.
+- **빌드 산출물 경로 환경변수 사용**: 워커가 카드 작업 중 `.cargo/config.toml`에 특정 PC 전용 절대 경로(예: `E:/cargo-target` 등)를 하드코딩하여 커밋하는 사고가 있었다. 빌드 산출물 경로는 저장소 내 설정 파일에 넣지 말고 반드시 `CARGO_TARGET_DIR` 환경변수로만 지정해야 한다.
+- **Rust 크레이트 시험 시 MinGW PATH 설정**: Rust 크레이트(kagent, kvf 등)의 gnu 툴체인 시험 시 기본 rustup 툴체인에는 `libdwmapi.a`가 없어 `-ldwmapi` 링크 오류가 발생한다. 반드시 PATH 맨 앞에 휴대용 MinGW(`%LOCALAPPDATA%/DocFitTools/mingw64/bin`)를 추가하고 시험을 실행해야 한다.
+- **워커 캡처 PNG의 PM 직접 육안 확인**: 워커가 카드 결과로 보고한 캡처 PNG 파일은 PM이 이미지 보기 도구로 직접 열어서 확인해야 한다(가짜 시안 목업이나 컨트롤이 없는 빈 화면으로 보고하는 사례 방지).
+
+### 작업자 3기기 분산 배치 요약 (docs/WORKER_OPERATIONS_2026-11-19.md)
+개발 및 검증 부하를 분산하기 위해 3기기 체계로 운영한다. ① **이 PC (Windows)**: Win32·한/글 COM·릴리스·설치 파일·CI 및 최종 판정(맥 작업 재시험 후 병합)을 전담하며, Claude(PM)·Codex 1·Gemini 1이 배치된다. ② **맥 스튜디오**: 이식 가능한 Rust(kfind-core, outliner_core 등)·순수 Python 서비스 및 Flutter 위젯 작업을 담당하며 `tools/run_mac.sh studio <codex|gemini>`로 호출한다(Claude ngaytot9, Codex 2, Gemini 2). ③ **맥북 에어**: 문서 정리·가벼운 Python 카드·작은 Rust 이식 및 코드 읽기 점검을 수행하며 `tools/run_mac.sh air gemini`로 호출한다(Gemini 3). 맥북 에어에는 Flutter가 없어 화면 작업은 맡기지 않으며, 모든 워커의 결과물은 반드시 이 PC에서 재시험을 통과한 뒤에만 병합한다.
 
 ## 8. 최근 작업 이력 (2026-09-26 세션)
 
