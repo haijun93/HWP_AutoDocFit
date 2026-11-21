@@ -18,4 +18,7 @@ pub mod state;
 pub mod thumb;
 
 #[cfg(windows)]
+pub mod shell_thumb;
+
+#[cfg(windows)]
 pub mod gdi;

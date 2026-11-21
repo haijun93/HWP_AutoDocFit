@@ -59,3 +59,21 @@ fn collection_sorts_by_key_once_and_is_stable() {
     c.toggle_direction();
     assert_eq!(c.get(0).unwrap().name, "c.jpg");
 }
+
+#[test]
+fn thumbnail_cache_is_byte_bounded_lru() {
+    let mut c = grid_core::thumb::ByteLru::new(5);
+    c.insert("a", 1, 3); c.insert("b", 2, 2);
+    assert_eq!(c.get(&"a"), Some(1));
+    c.insert("c", 3, 2);
+    assert_eq!(c.get(&"b"), None); assert_eq!(c.get(&"a"), Some(1));
+    assert_eq!(c.used_bytes(), 5);
+    c.insert("huge", 4, 6); assert_eq!(c.get(&"huge"), None);
+}
+
+#[test]
+fn thumbnail_queue_prioritizes_visible_and_cancels_pending() {
+    let mut q = grid_core::thumb::ThumbQueue::default();
+    q.set_visible([1, 2]); q.set_visible([2, 3]);
+    assert_eq!(q.pop(), Some(2)); assert_eq!(q.pop(), Some(3)); assert_eq!(q.pop(), None);
+}
