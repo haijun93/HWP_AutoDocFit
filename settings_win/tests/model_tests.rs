@@ -19,10 +19,10 @@ fn key_to_control_mapping_covers_every_key() {
     let (_d, p) = temp_settings(None);
     let m = Model::load(&p).unwrap();
     let c = m.counts();
-    // 화면 노출 잎 100개 + 화면 밖 14개 = 114. 편집 87·미구현 11·소유자 둘 이상 2·내부 14.
-    assert_eq!(m.items.len(), 114);
-    assert_eq!((c.editable, c.unimplemented, c.multi_owner, c.internal), (87, 11, 2, 14));
-    // 모든 최상위 키 97개가 어느 항목에든 나타난다.
+    // 화면 노출 잎 102개 + 화면 밖 14개 = 116. 편집 89·미구현 11·소유자 둘 이상 2·내부 14.
+    assert_eq!(m.items.len(), 116);
+    assert_eq!((c.editable, c.unimplemented, c.multi_owner, c.internal), (89, 11, 2, 14));
+    // 모든 최상위 키(99개)가 어느 항목에든 나타난다.
     let defaults = docfit_config::defaults();
     for key in defaults.as_object().unwrap().keys() {
         assert!(m.items.iter().any(|i| i.key == *key || i.key.starts_with(&format!("{key}."))), "{key} 없음");
