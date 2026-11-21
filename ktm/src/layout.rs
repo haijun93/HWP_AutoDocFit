@@ -1418,6 +1418,16 @@ mod tests {
         assert_eq!(sidebar_width(true, 300), 150);
     }
     #[test]
+    fn sidebar_open_keeps_content_width_when_window_grows_by_sidebar() {
+        // 사이드바를 열면 창을 사이드바 폭만큼 넓혀(window.rs) 내용 영역이 기본 폭 700 아래로 줄지 않는다.
+        let base = 700;
+        let grown = base + SIDEBAR_W;
+        assert_eq!(sidebar_width(true, grown), SIDEBAR_W);
+        assert_eq!(grown - sidebar_width(true, grown), base);
+        // 닫으면 다시 기본 폭을 전부 쓴다.
+        assert_eq!(base - sidebar_width(false, base), base);
+    }
+    #[test]
     fn sidebar_width_is_zero_when_closed() {
         assert_eq!(sidebar_width(false, 800), 0);
     }

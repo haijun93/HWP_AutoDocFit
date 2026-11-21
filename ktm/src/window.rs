@@ -389,7 +389,9 @@ fn event(h: HWND, e: Event) {
                     let mut mi: MONITORINFO = std::mem::zeroed();
                     mi.cbSize = std::mem::size_of_val(&mi) as u32;
                     GetMonitorInfoW(mon, &mut mi);
-                    let w = scale(h, 700).min(mi.rcWork.right - mi.rcWork.left);
+                    // 사이드바가 열려 있으면 그 폭만큼 넓혀 내용 영역(칩·단추 줄)이 좁아지지 않게 한다.
+                    let side_extra = if with(|u| u.state.options.sidebar_open) { ktm::layout::SIDEBAR_W } else { 0 };
+                    let w = (scale(h, 700) + side_extra).min(mi.rcWork.right - mi.rcWork.left);
                     let hh = scale(h, 510).min(mi.rcWork.bottom - mi.rcWork.top);
                     SetWindowPos(
                         h,
@@ -815,6 +817,25 @@ unsafe fn create_fonts(h: HWND) {
     }
 }
 
+/// 사이드바를 열고 닫을 때 창 폭을 사이드바 폭만큼 늘리고 줄인다(작업 영역을 넘지 않는 범위에서).
+unsafe fn resize_for_sidebar(h: HWND, opened: bool) {
+    unsafe {
+        let mut rc: RECT = std::mem::zeroed();
+        GetWindowRect(h, &mut rc);
+        let mon = MonitorFromWindow(h, MONITOR_DEFAULTTONEAREST);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of_val(&mi) as u32;
+        GetMonitorInfoW(mon, &mut mi);
+        let delta = ktm::layout::SIDEBAR_W;
+        let min_w = scale(h, 520);
+        let work_w = mi.rcWork.right - mi.rcWork.left;
+        let width = rc.right - rc.left;
+        let new_w = if opened { (width + delta).min(work_w.max(width)) } else { (width - delta).max(min_w.min(width)) };
+        let left = if opened { rc.left.min(mi.rcWork.right - new_w).max(mi.rcWork.left) } else { rc.left };
+        SetWindowPos(h, null_mut(), left, rc.top, new_w, rc.bottom - rc.top, SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+}
+
 unsafe fn layout(h: HWND) {
     unsafe {
         let mut r: RECT = std::mem::zeroed();
@@ -877,7 +898,16 @@ unsafe fn layout(h: HWND) {
 unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg: u32) {
     unsafe {
         let saved = SaveDC(dc);
-        IntersectClipRect(dc, rc.left, rc.top, rc.right, rc.bottom);
+        // 한 줄에 다 들어가지 않는 이름은 칸 끝을 '…'로 표시한다(예전에는 글자가 중간에서 뚝 잘렸다).
+        let full = wide(s);
+        let mut full_size: SIZE = std::mem::zeroed();
+        GetTextExtentPoint32W(dc, full.as_ptr(), (full.len() - 1) as i32, &mut full_size);
+        let ellipsis = wide("…");
+        let mut ell_size: SIZE = std::mem::zeroed();
+        GetTextExtentPoint32W(dc, ellipsis.as_ptr(), 1, &mut ell_size);
+        let truncated = full_size.cx > rc.right - rc.left;
+        let text_right = if truncated { (rc.right - ell_size.cx).max(rc.left) } else { rc.right };
+        IntersectClipRect(dc, rc.left, rc.top, text_right, rc.bottom);
         let mut offset = 0;
         let mut x = rc.left;
         for (start, end) in ktm::highlight::ranges_terms(s, terms)
@@ -912,6 +942,13 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
                 x += size.cx;
             }
             offset = end;
+        }
+        if truncated {
+            SelectClipRgn(dc, null_mut());
+            IntersectClipRect(dc, rc.left, rc.top, rc.right, rc.bottom);
+            SetTextColor(dc, fg);
+            SetBkMode(dc, TRANSPARENT as i32);
+            TextOutW(dc, text_right, rc.top + (rc.bottom - rc.top - ell_size.cy) / 2, ellipsis.as_ptr(), 1);
         }
         RestoreDC(dc, saved);
     }
@@ -1881,7 +1918,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let ey = bands.list_top + scale(h, 12);
                     SelectObject(mem, u.title_font);
                     text(
-                        "검색하지 못했습니다",
+                        "검색을 완료하지 못했습니다",
                         RECT { left: lpad, top: ey, right: r.right - pad, bottom: ey + scale(h, 26) },
                         p.text,
                         0,
@@ -1897,7 +1934,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             // ⑥b 결과가 없거나 검색 중일 때 빈 화면 대신 안내를 보인다.
             if u.rows.is_empty() && !u.state.query.trim().is_empty() {
                 let note = match u.state.phase {
-                    Phase::Error => u.state.error.as_deref().map(|message| ("검색을 완료하지 못했습니다", message)),
+                    // 오류는 위 ⑥a가 이미 제목·사유를 그린다(겹쳐 그리면 글자가 뭉개진다).
                     Phase::Results => Some((
                         "검색 결과가 없습니다",
                         "철자·띄어쓰기를 바꾸거나, 기간·형식 조건을 '전체'로 바꿔 보세요.",
@@ -2362,7 +2399,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
         frame::own_border(mem, r);
 
         if let Some(kind) = with(|u| u.modal) {
-            fill(r, 0x70000000);
+            // 모달 뒤 화면을 어둡게 한다. `fill`은 알파를 무시해 검은 면이 되므로 반투명 합성을 쓴다.
+            {
+                let dim_dc = CreateCompatibleDC(mem);
+                let dim_bmp = CreateCompatibleBitmap(mem, 1, 1);
+                let old_bmp = SelectObject(dim_dc, dim_bmp);
+                let black = CreateSolidBrush(0);
+                FillRect(dim_dc, &RECT { left: 0, top: 0, right: 1, bottom: 1 }, black);
+                DeleteObject(black);
+                let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 112, AlphaFormat: 0 };
+                AlphaBlend(mem, r.left, r.top, r.right - r.left, r.bottom - r.top, dim_dc, 0, 0, 1, 1, blend);
+                SelectObject(dim_dc, old_bmp);
+                DeleteObject(dim_bmp);
+                DeleteDC(dim_dc);
+            }
             let count = if kind == ktm::layout::ModalKind::Statistics {
                 2
             } else {
@@ -3346,6 +3396,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
 
                 if y < head && x >= side_w && x < side_w + scale(h, 30) {
                     event(h, Event::ToggleSidebar);
+                    resize_for_sidebar(h, with(|u| u.state.options.sidebar_open));
                     layout(h);
                     InvalidateRect(h, null(), 0);
                     return 0;

@@ -28,6 +28,10 @@ const SCENARIOS: &[&str] = &[
     "18_no_results",
     "19_within_open",
     "20_status_text",
+    "21_mixed_names",
+    "22_date_today",
+    "23_date_year",
+    "24_error_incomplete",
 ];
 
 fn rows() -> Vec<Row> {
@@ -54,6 +58,31 @@ fn rows() -> Vec<Row> {
         mk(5, "공사 계약 변경 기안문.docx", "C:\\문서\\계약", "계약금액 조정에 따른 예산 반영 필요", "5쪽", vec![Body]),
         mk(6, "업무 메모.txt", "C:\\문서\\메모", "예산 관련 메모", "2행", vec![Body]),
         mk(7, "아주 아주 긴 파일 이름이 들어간 사업 추진 계획서 최종 수정본 v3.hwp", "C:\\문서\\아주\\깊은\\폴더\\경로\\예시", "긴 이름의 파일에서도 글자가 겹치지 않아야 한다", "7쪽", vec![Hierarchy]),
+    ]
+}
+
+/// 한글·영문·숫자가 섞인 이름과 경로 장면용 고정 자료.
+fn mixed_rows() -> Vec<Row> {
+    use tm_state::ResultKind::*;
+    let mk = |i: u64, name: &str, parent: &str, snippet: &str| Row {
+        doc_id: i,
+        path: format!("{parent}\\{name}"),
+        name: name.into(),
+        parent: parent.into(),
+        snippet: snippet.into(),
+        location: "1쪽".into(),
+        match_kinds: vec![Body, Names],
+        date: 20261100 + i as i64,
+        rank: i as usize,
+        snippet_tried: true,
+        preview: snippet.into(),
+        ..Row::default()
+    };
+    vec![
+        mk(1, "FY2026_budget_plan_v2 최종본(수정).xlsx", "D:\\Reports\\2026 예산\\Q4", "Budget 항목별 집행액 and 예산 잔액 합계 1,234,567원"),
+        mk(2, "Meeting_Minutes_2026-11-19 회의록.docx", "C:\\Users\\kim\\Documents\\회의", "다음 budget review 일정을 확정하고 예산 담당자에게 공유한다."),
+        mk(3, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_abcdefghijklmnopqrstuvwxyz_no_space_long_name.pdf", "E:\\아카이브", "공백 없는 긴 영문 이름"),
+        mk(4, "예산.hwp", "C:\\a", ""),
     ]
 }
 
@@ -90,7 +119,9 @@ unsafe fn setup(h: HWND, name: &str) {
         let query = match name {
             "03_results" | "05_date_7d" | "06_date_30d" | "07_ext_pdf" | "08_options_open" | "09_autocomplete"
             | "12_stats" | "13_stats_history" | "14_settings" | "15_sidebar" | "16_grid" | "17_collapsed"
-            | "19_within_open" | "20_status_text" | "10_error" | "11_searching" => "예산",
+            | "19_within_open" | "20_status_text" | "10_error" | "11_searching" | "22_date_today" | "23_date_year"
+            | "24_error_incomplete" => "예산",
+            "21_mixed_names" => "budget 예산",
             "04_related_chips" => "예산; 공사 계약; 안전관리계획",
             "18_no_results" => "존재하지않는검색어",
             _ => "",
@@ -186,6 +217,7 @@ unsafe fn setup(h: HWND, name: &str) {
                     result_phase(u);
                     u.rows.clear();
                     u.state.result_count = 0;
+                    u.state.folder_counts.clear();
                     u.state.selected = None;
                 }
                 "19_within_open" => {
@@ -197,12 +229,40 @@ unsafe fn setup(h: HWND, name: &str) {
                     result_phase(u);
                     u.status_text = "표시 결과를 클립보드에 복사했습니다".into();
                 }
+                "21_mixed_names" => {
+                    result_phase(u);
+                    u.rows = mixed_rows();
+                    u.state.result_count = u.rows.len();
+                    u.terms = vec!["budget".into(), "예산".into()];
+                }
+                "22_date_today" => {
+                    result_phase(u);
+                    u.state.date_filter = DateFilter::Today;
+                }
+                "23_date_year" => {
+                    result_phase(u);
+                    u.state.date_filter = DateFilter::ThisYear;
+                }
+                "24_error_incomplete" => {
+                    u.state.phase = Phase::Error;
+                    u.state.query = query.into();
+                    u.state.error = Some("색인이 아직 완료되지 않아 일부 폴더를 검색하지 못했습니다. 잠시 뒤 다시 시도해 주세요.".into());
+                }
                 _ => {}
             }
         });
+        // 실제 앱처럼 사이드바가 열려 있으면 창 폭을 사이드바 폭만큼 넓힌다.
+        let (bw, bh) = BASE_SIZE.with(|c| c.get());
+        let extra = if with(|u| u.state.options.sidebar_open) { ktm::layout::SIDEBAR_W } else { 0 };
+        SetWindowPos(h, null_mut(), -32000, -32000, bw + extra, bh, SWP_NOZORDER | SWP_NOACTIVATE);
         layout(h);
         pump(30);
     }
+}
+
+thread_local! {
+    /// 사이드바가 닫힌 기본 창 크기(물리 화소). `run`이 정한다.
+    static BASE_SIZE: std::cell::Cell<(i32, i32)> = const { std::cell::Cell::new((0, 0)) };
 }
 
 fn crc_table() -> [u32; 256] {
@@ -414,7 +474,15 @@ pub unsafe fn run(h: HWND, dir: &Path, dpi: i32, scenario: &str) -> Result<(), S
         }));
         frame::set_dpi_override(dpi);
         create_fonts(h);
-        let (w, ht) = (700 * dpi / 96, 510 * dpi / 96);
+        // `--size 520x300` 처럼 논리 크기(96dpi 기준)를 주면 그 크기로 만든다(최소 창 크기 점검용).
+        let (lw, lh) = std::env::args()
+            .collect::<Vec<_>>()
+            .windows(2)
+            .find(|a| a[0] == "--size")
+            .and_then(|a| a[1].split_once('x').and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?))))
+            .unwrap_or((700, 510));
+        let (w, ht) = (lw * dpi / 96, lh * dpi / 96);
+        BASE_SIZE.with(|c| c.set((w, ht)));
         SetWindowPos(h, null_mut(), -32000, -32000, w, ht, SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
         layout(h);
         pump(100);
