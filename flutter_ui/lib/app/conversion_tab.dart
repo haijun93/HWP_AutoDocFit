@@ -76,7 +76,7 @@ class _ConversionTabState extends State<ConversionTab> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_loaded && !_loading) _load(host);
     });
-    if (_native)
+    if (_native) {
       return Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460),
@@ -105,6 +105,7 @@ class _ConversionTabState extends State<ConversionTab> {
           ),
         ),
       );
+    }
     return Column(
       children: [
         Align(

@@ -53,6 +53,10 @@ if docview_win_exe.is_file():
 photoview_win_exe = root / 'resources' / 'photoview_win.exe'
 if photoview_win_exe.is_file():
     binaries.append((str(photoview_win_exe), 'resources'))
+# 몽땅파일변환 Win32 창(설정 conversion_ui='native' 일 때 앱의 변환 탭이 연다). 있으면 넣는다(없으면 앱이 안내만 하고 기존 화면을 연다).
+convert_win_exe = root / 'resources' / 'convert_win.exe'
+if convert_win_exe.is_file():
+    binaries.append((str(convert_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

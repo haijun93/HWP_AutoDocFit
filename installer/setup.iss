@@ -34,7 +34,7 @@ Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
 Name: "desktopicon"; Description: "바탕 화면 바로 가기 만들기"; GroupDescription: "추가 바로 가기:"; Flags: unchecked
 
 [Files]
-; kvf.exe, pdf-edit.exe, outliner.exe, outliner_win.exe, settings_win.exe, docview_win.exe, photoview_win.exe, dock.exe, qms_bench.exe와 SHA256은 resources 꾸러미에 포함. Dock은 DOCK2에서 자동 시작하지 않는다.
+; kvf.exe, pdf-edit.exe, outliner.exe, outliner_win.exe, settings_win.exe, docview_win.exe, photoview_win.exe, convert_win.exe, dock.exe, qms_bench.exe와 SHA256은 resources 꾸러미에 포함. Dock은 DOCK2에서 자동 시작하지 않는다.
 Source: "..\dist\HWP_AutoDocFit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -113,6 +113,8 @@ begin
   StopHelper('docview_win.exe');
   // 사진뷰 창(photoview_win.exe)이 열려 있으면 {app} 안 파일을 붙잡는다(설정 photoview_ui='native').
   StopHelper('photoview_win.exe');
+  // 변환 창(convert_win.exe)이 열려 있으면 {app} 안 파일을 붙잡는다(설정 conversion_ui='native').
+  StopHelper('convert_win.exe');
   Sleep(500);
   Result := '';
 end;

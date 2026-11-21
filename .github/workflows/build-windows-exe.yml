@@ -343,11 +343,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item photoview_win/target/release/photoview_win.exe resources/photoview_win.exe -Force
           if (!(Test-Path resources/photoview_win.exe)) { throw 'photoview_win bundle missing' }
+      - name: Build conversion window (convert_win.exe, Rust)
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path convert_win/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --locked --manifest-path convert_win/Cargo.toml --bin convert_win
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Copy-Item convert_win/target/release/convert_win.exe resources/convert_win.exe -Force
+          if (!(Test-Path resources/convert_win.exe)) { throw 'convert_win bundle missing' }
       - name: Verify Rust binaries do not need the VC++ runtime
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {

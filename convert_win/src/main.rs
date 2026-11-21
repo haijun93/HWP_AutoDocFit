@@ -1,4 +1,5 @@
 #![windows_subsystem = "windows"]
+mod logic;
 #[cfg(windows)]
 #[path = "win.rs"]
 mod win;

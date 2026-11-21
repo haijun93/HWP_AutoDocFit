@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart' show WorkspaceTabBar;
+import 'package:docfit_ui/features/workspace/tab_navigation_shell.dart'
+    show WorkspaceTabBar;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -238,6 +239,7 @@ void main() {
               s != 'get_state' &&
               s != 'enable_close_guard' &&
               s != 'table_units' &&
+              s != 'conversion_window' &&
               s != 'table_sketch' &&
               s != 'flow_editor' &&
               s != 'timemachine',
@@ -309,7 +311,11 @@ void main() {
     ];
     Future<Object?> api(String name, List<Object?> args) async {
       // settings_window: [설정] 진입 문지기·서랍의 설정 창 방식 줄이 부르는 읽기 명령(이 시험의 대상이 아니다).
-      if (name != 'get_state' && name != 'settings_window') calls.add([name, ...args]);
+      if (name != 'get_state' &&
+          name != 'settings_window' &&
+          name != 'conversion_window') {
+        calls.add([name, ...args]);
+      }
       if (name == 'set_stage') {
         final stages = state['stages'] as List;
         (stages.firstWhere((s) => s['key'] == args[0]) as Map)['on'] = args[1];
@@ -825,6 +831,7 @@ void main() {
           (name) =>
               name != 'get_state' &&
               name != 'settings_window' &&
+              name != 'conversion_window' &&
               name != 'enable_close_guard' &&
               name != 'table_units' &&
               name != 'table_sketch' &&
@@ -1330,7 +1337,12 @@ void main() {
 }
 
 Future<void> _scrollSidebarToEnd(WidgetTester tester) async {
-  final list = find.descendant(of: find.byType(WorkspaceTabBar), matching: find.byType(Scrollable)).first;
+  final list = find
+      .descendant(
+        of: find.byType(WorkspaceTabBar),
+        matching: find.byType(Scrollable),
+      )
+      .first;
   final position = tester.state<ScrollableState>(list).position;
   position.jumpTo(position.maxScrollExtent);
   await tester.pumpAndSettle();
