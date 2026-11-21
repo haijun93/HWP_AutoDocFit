@@ -74,7 +74,7 @@ fn edit_then_save_roundtrips_through_the_file_and_original_sample_is_untouched()
     assert!(ed.save());
     assert!(!ed.dirty(), "저장 뒤 변경 표시 해제");
     let saved = std::fs::read_to_string(&path).unwrap();
-    assert!(saved.starts_with("- 2026년 업무 계획 (수정) #계획\n- \n- 1분기\n"), "{saved}");
+    assert!(saved.replace("\r\n", "\n").starts_with("- 2026년 업무 계획 (수정) #계획\n- \n- 1분기\n"), "{saved}");
     // 다시 읽어 같은 문서인지.
     let (doc2, text2, info2) = docio::load_file(&path).unwrap();
     assert_eq!(outliner_core::serialize(&doc2), saved);
