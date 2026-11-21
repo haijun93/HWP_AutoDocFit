@@ -12,9 +12,26 @@ pub fn dispatch() -> Result<()> {
     Ok(())
 }
 fn service_main(_: Vec<OsString>) {
-    if let Err(e) = run() {
-        eprintln!("{e}");
+    let dir = crate::errlog::log_dir_for(&index_root().unwrap_or_else(fallback_root));
+    match std::panic::catch_unwind(run) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => crate::errlog::report(&dir, &format!("service error: {e}")),
+        Err(_) => crate::errlog::report(&dir, "service panic"),
     }
+}
+fn index_root() -> Option<PathBuf> {
+    let args: Vec<_> = std::env::args_os().collect();
+    args.windows(2)
+        .find(|w| w[0] == "--index-root")
+        .map(|w| PathBuf::from(&w[1]))
+}
+// --index-root 가 없을 때의 로그 위치: %ProgramData%/HwpAutoDocFit/index 와 같은 형제 폴더.
+fn fallback_root() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("HwpAutoDocFit")
+        .join("index")
 }
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args_os().collect();

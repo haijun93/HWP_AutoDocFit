@@ -1,4 +1,5 @@
 pub mod doctable;
+pub mod errlog;
 pub mod ingest;
 pub mod install;
 pub mod names;

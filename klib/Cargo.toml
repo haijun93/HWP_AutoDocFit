@@ -26,7 +26,8 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Pipes",
     "Win32_System_Threading",
 ] }
-tantivy = "0.27"
+# 자체 토크나이저(KoBigram·Bigram)만 쓰므로 stemmer·stopwords 기본 기능은 끈다. lz4·columnar-zstd 는 기존 색인 호환을 위해 유지.
+tantivy = { version = "0.27", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
 md5 = "0.7"
 sha2 = "0.10"
 regex = "1"
