@@ -2,6 +2,8 @@
 
 pub const LABELS: &[(&str, &str)] = &[
     ("search_engine", "검색 엔진"),
+    ("hidden_tabs", "숨길 메뉴 번호"),
+    ("library_excluded_folders", "문서뷰·사진뷰 제외 폴더"),
     ("shell_menu", "탐색기 우클릭 메뉴"),
     ("mongttang_search", "퀵몽땅검색 단축키(Ctrl+Alt+Space)"),
     ("file_rename_sendto", "탐색기 보내기 메뉴에 파일명 일괄변경 넣기"),

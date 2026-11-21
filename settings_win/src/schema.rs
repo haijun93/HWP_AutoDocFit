@@ -183,6 +183,7 @@ fn make_item(key: &str, kind: &str, default: &Value) -> Item {
     } else {
         match kind {
             "boolean" => Control::Check,
+            "list" => Control::List { max: if key == "hidden_tabs" { 13 } else { docfit_config::LIST_MAX_ITEMS } },
             "number" => Control::Number {
                 integer: INTEGER_KEYS.contains(&key),
                 positive: key.ends_with(".size") || key == "std_title_subtitle_pt",
@@ -225,7 +226,7 @@ pub fn build_items() -> Vec<Item> {
     items
 }
 
-/// 시연용 항목(설정 키가 아님): 저장소 스키마에는 아직 목록·단축키 키가 없어, 두 컨트롤을 실제 그리기·동작 코드로 보이기 위해
+/// 시연용 항목(설정 키가 아님): 목록 컨트롤은 이제 실제 키(`hidden_tabs`·`library_excluded_folders`)가 쓰지만 단축키 키는 앱 설정에 없어, 두 컨트롤을 실제 그리기·동작 코드로 보이기 위해
 /// 캡처 모드(`--demo-controls`)와 시험에서만 모델에 덧붙인다. 실제 창에는 나타나지 않는다.
 pub fn demo_items() -> Vec<Item> {
     let mk = |key: &str, label: &str, summary: &str, control: Control, default: Value| Item {
@@ -243,12 +244,32 @@ pub fn demo_items() -> Vec<Item> {
     ]
 }
 
+/// 메뉴 번호 → 이름(Flutter `tab_navigation_shell.dart` 의 `_labels` 순서, 0 = 문서편집).
+pub const MENU_NAMES: [&str; 16] = [
+    "문서편집", "표템플릿", "표그림판", "다이어그램", "마인드맵", "붙임사진 편집", "파일명 일괄변경", "몽땅검색",
+    "문서뷰", "사진뷰", "파일변환", "PDF 편집", "설정", "사용 방법", "아웃라이너", "검색 벤치마크",
+];
+
+/// 목록 항목을 패널에 보일 글로: 메뉴 번호 목록은 "3  다이어그램", 그 밖은 그대로.
+pub fn list_entry_label(key: &str, entry: &str) -> String {
+    if docfit_config::list_kind(key) == docfit_config::ListKind::MenuNumber {
+        if let Some(name) = entry.trim().parse::<usize>().ok().and_then(|n| MENU_NAMES.get(n)) {
+            return format!("{entry}  {name}");
+        }
+    }
+    entry.to_string()
+}
+
 /// 저장 값을 입력칸 글로(문자열은 그대로, 그 밖은 JSON 한 줄).
 pub fn value_text(v: &Value) -> String {
     match v {
         Value::String(s) => s.clone(),
         Value::Bool(b) => if *b { "켬".into() } else { "끔".into() },
-        Value::Array(a) => a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string).or_else(|| v.as_i64().map(|n| n.to_string())))
+            .collect::<Vec<_>>()
+            .join(", "),
         Value::Null => String::new(),
         other => other.to_string(),
     }

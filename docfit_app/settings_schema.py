@@ -144,6 +144,18 @@ DEFAULTS = {
     "search_engine": "kfind",
 }
 
+# 목록 키(SETTINGSWIN4): 예전부터 설정 파일에 저장되던 키의 '표현'만 Win32 설정 창(docfit_config 골든)에 더한 것이다.
+# 없을 때의 동작과 같은 빈 목록이 기본값이다. 일부러 DEFAULTS 에 넣지 않았다: 서식 엔진의 설정_불러오기·설정_저장이
+# DEFAULTS 전체를 읽고 되쓰므로, 넣으면 작업 중 바뀐 숨길 메뉴·제외 폴더를 낡은 값으로 덮어쓸 수 있다.
+#   hidden_tabs = 숨길 메뉴 번호(application_service.clean_hidden_tabs 규칙), library_excluded_folders = 문서뷰·사진뷰 제외 폴더.
+LIST_DEFAULTS = {
+    "hidden_tabs": [],
+    "library_excluded_folders": [],
+}
+
+# docs/settings_defaults.json(골든)·docfit_config 가 아는 모든 최상위 키의 기본값.
+ALL_DEFAULTS = {**DEFAULTS, **LIST_DEFAULTS}
+
 SEARCH_ENGINES = ("kfind", "legacy")
 
 MENU_DISPLAY_MODES = ("sidebar", "dock")

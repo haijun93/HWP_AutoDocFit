@@ -3,7 +3,7 @@
 //! `settings_win --capture-dir <폴더> [--dark|--hc] [--dpi N] [--group <묶음>] [--search 글] [--demo-edits] [--settings 파일]`
 //!   — 창 없이 PNG 를 쓰고 끝난다(설정 파일은 읽기만 한다). `--capture-set` 은 라이트·다크·150%·검색 상태를 한 번에,
 //!   `--capture-controls` 는 색·폴더·글꼴·목록·단축키 컨트롤 장면을 한 번에 쓴다.
-//!   개별 장면: `--focus-key <키>`(그 줄로 스크롤) · `--overlay fonts|list|hotkey`(패널·입력 대기 상태) · `--demo-controls`(시연 항목 덧붙임).
+//!   개별 장면: `--focus-key <키>`(그 줄로 스크롤) · `--overlay fonts|list|hotkey`(패널·입력 대기 상태; fonts·list 는 --focus-key 의 항목) · `--demo-controls`(시연 항목 덧붙임).
 use settings_win::paint::{Overlay, Ui};
 use settings_win::{capture, layout, model::Model, schema::GROUPS, window};
 use ui_theme::Kind;
@@ -184,7 +184,7 @@ fn run() -> Result<String, String> {
         if let Some(kind) = &j.overlay {
             let key = match kind.as_str() {
                 "fonts" => j.focus_key.clone().ok_or("--overlay fonts 에는 --focus-key 가 필요합니다")?,
-                "list" => "demo.excluded_apps".to_string(),
+                "list" => j.focus_key.clone().unwrap_or_else(|| "demo.excluded_apps".to_string()),
                 "hotkey" => "demo.hotkey".to_string(),
                 other => return Err(format!("알 수 없는 --overlay: {other}")),
             };

@@ -13,7 +13,7 @@ import pprint
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from docfit_app.settings_schema import DEFAULTS
+from docfit_app.settings_schema import ALL_DEFAULTS, DEFAULTS, LIST_DEFAULTS
 from docfit_app.settings_migrations import migrate
 from docfit_app.configuration_service import ConfigurationService
 from docfit_app.settings_service import SettingsService
@@ -71,7 +71,7 @@ def compare_case(exe, name, initial):
         # get is a full merged object; migrate is deliberately a separate raw migrated object.
         # Compare all stored and default keys (the Python UI snapshot intentionally excludes 14 internal keys).
         from copy import deepcopy
-        expected_merged=deepcopy(DEFAULTS)
+        expected_merged=deepcopy(ALL_DEFAULTS)
         for k,v in py_migrated.items():
             if isinstance(expected_merged.get(k),dict) and isinstance(v,dict): expected_merged[k].update(v)
             else: expected_merged[k]=v
@@ -81,12 +81,12 @@ def compare_case(exe, name, initial):
             for key, value in src.items():
                 if isinstance(dst.get(key), dict) and isinstance(value, dict): merge_nested(dst[key], value)
                 else: dst[key] = value
-        expected_merged=DEFAULTS.copy()
+        expected_merged=ALL_DEFAULTS.copy()
         from copy import deepcopy
-        expected_merged=deepcopy(DEFAULTS)
+        expected_merged=deepcopy(ALL_DEFAULTS)
         merge_nested(expected_merged, py_migrated)
         for k,v in py_before.items():
-            if k in DEFAULTS and not isinstance(v,dict): expected_merged[k]=v
+            if k in ALL_DEFAULTS and not isinstance(v,dict): expected_merged[k]=v
         if expected_merged.get("search_engine") not in ("kfind","legacy"): expected_merged["search_engine"]="kfind"
         if rs_get.get("value") != expected_merged:
             differences.append({"operation": "get", "python": expected_merged, "rust": rs_get.get("value")})
@@ -133,6 +133,35 @@ def compare_case(exe, name, initial):
         return {"case": name, "equal": not differences, "differences": differences}
 
 
+def list_key_cases(exe):
+    """목록 키(hidden_tabs·library_excluded_folders): 스키마 일치 + Rust 검증이 Python 정리 규칙과 같은 결론을 내는지.
+
+    Python 은 이 키를 저장 때 거르지 않고 읽을 때 정리한다(clean_hidden_tabs / read_exclusions). 그래서 '정리해도 바뀌지 않는 값'만
+    Rust 가 받아야 한다(정렬·중복 없는 번호, 빈 글 없는 경로)."""
+    from docfit_app.application_service import clean_hidden_tabs
+    from docfit_app.configuration_service import fields
+    differences = []
+    for key in ("hidden_tabs", "library_excluded_folders"):
+        if LIST_DEFAULTS.get(key) != [] or key in DEFAULTS:
+            differences.append({"operation": "list-default", "key": key, "python": LIST_DEFAULTS.get(key)})
+        if any(f["key"] == key for f in fields()):
+            differences.append({"operation": "list-in-flutter-form", "key": key})
+    tab_cases = [[], [1], [1, 3, 15], [12], [13], [0], [16], [3, 1], [3, 3], ["3"], [True], [1.5], [2, 12], None, "3"]
+    for candidate in tab_cases:
+        py_ok = isinstance(candidate, list) and clean_hidden_tabs(candidate) == candidate
+        rs = rust_cli(exe, "validate", Path(tempfile.gettempdir()) / "settings-compare-unused.json", {"hidden_tabs": candidate})
+        if bool(rs.get("ok")) != py_ok:
+            differences.append({"operation": "list-validate", "key": "hidden_tabs", "value": candidate, "python": py_ok, "rust": rs.get("ok")})
+    folder_cases = [[], ["C:/a"], ["C:/a", "D:/b"], [""], ["  "], [1], ["C:/a", "c:/A"], "x", None]
+    for candidate in folder_cases:
+        py_ok = (isinstance(candidate, list) and all(isinstance(v, str) and v.strip() for v in candidate)
+                 and len({v.strip().lower() for v in candidate}) == len(candidate))
+        rs = rust_cli(exe, "validate", Path(tempfile.gettempdir()) / "settings-compare-unused.json", {"library_excluded_folders": candidate})
+        if bool(rs.get("ok")) != py_ok:
+            differences.append({"operation": "list-validate", "key": "library_excluded_folders", "value": candidate, "python": py_ok, "rust": rs.get("ok")})
+    return {"case": "list-keys", "equal": not differences, "differences": differences}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--exe", type=Path, help="built settings-core executable")
@@ -146,9 +175,10 @@ def main():
         print(f"Rust CLI not found: {exe}", file=sys.stderr)
         return 2
     results = [compare_case(exe, name, value) for name, value in cases().items()]
+    results.append(list_key_cases(exe))
     defaults_file = json.loads((ROOT / "docs" / "settings_defaults.json").read_text(encoding="utf-8"))
-    if defaults_file != DEFAULTS:
-        results.append({"case": "defaults-golden", "equal": False, "differences": [{"python_top_level": len(DEFAULTS), "rust_golden_top_level": len(defaults_file)}]})
+    if defaults_file != ALL_DEFAULTS:
+        results.append({"case": "defaults-golden", "equal": False, "differences": [{"python_top_level": len(ALL_DEFAULTS), "rust_golden_top_level": len(defaults_file)}]})
     report = {"cases": len(results), "equal": all(r["equal"] for r in results), "results": results}
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")
     print(json.dumps(report, ensure_ascii=False, indent=2))

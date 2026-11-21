@@ -298,3 +298,85 @@ fn concurrent_writers_never_lose_either_save() {
     assert!(accepted >= 1 || r.get("retry_table").is_none());
     assert!(docfit_config::read_json(&p).is_ok(), "파일은 항상 읽을 수 있는 JSON");
 }
+
+// ---------- 실제 목록 키(SETTINGSWIN4) ----------
+
+/// 소유자 스키마에서 '목록' 종류인 키를 전부 찾는다(개수를 고정하지 않는다).
+fn schema_list_keys() -> Vec<String> {
+    docfit_config::visible_schema().into_iter().filter(|(_, kind, _)| kind == "list").map(|(k, _, _)| k).collect()
+}
+
+#[test]
+fn every_list_kind_key_in_the_schema_gets_a_list_control_in_a_real_group() {
+    let (_d, p) = temp_settings(None);
+    let m = Model::load(&p).unwrap();
+    let keys = schema_list_keys();
+    assert!(!keys.is_empty(), "스키마에 목록 키가 하나도 없다");
+    for key in &keys {
+        let item = &m.items[m.item_index(key).unwrap_or_else(|| panic!("{key} 가 설정 창 항목에 없다"))];
+        assert!(matches!(item.control, Control::List { .. }), "{key} 는 목록 컨트롤이어야 한다");
+        assert_ne!(item.group, settings_win::schema::group_index("internal"), "{key} 가 내부(화면 밖) 묶음에 들어갔다");
+        assert!(!item.label.is_empty() && item.label != *key, "{key} 의 화면 이름이 없다");
+    }
+}
+
+#[test]
+fn hidden_tabs_list_stores_sorted_integers_and_refuses_required_menus() {
+    let (_d, p) = temp_settings(Some(r#"{"hidden_tabs":[4,2],"keep":{"a":1}}"#));
+    let mut m = Model::load(&p).unwrap();
+    let key = "hidden_tabs";
+    assert_eq!(m.current_list(key), ["4", "2"], "저장 값 그대로 보인다");
+    assert!(m.list_add(key, "12").unwrap_err().contains("항상"));
+    assert!(m.list_add(key, "13").is_err());
+    assert!(m.list_add(key, "0").is_err() && m.list_add(key, "16").is_err());
+    assert!(m.list_add(key, "abc").is_err() && m.list_add(key, "").is_err());
+    assert!(m.list_add(key, "4").unwrap_err().contains("이미"));
+    assert_eq!(m.list_add(key, "3"), Ok(1), "정렬된 자리");
+    assert_eq!(m.list_move(key, 0, 1), None, "번호 목록은 순서를 바꾸지 않는다");
+    assert!(m.save().is_ok());
+    let saved = raw(&p);
+    assert_eq!(saved["hidden_tabs"], json!([2, 3, 4]), "오름차순 정수 배열(Python clean_hidden_tabs 와 같은 모양)");
+    assert_eq!(saved["keep"], json!({"a": 1}));
+}
+
+#[test]
+fn library_excluded_folders_list_checks_paths_and_ignores_trailing_separator() {
+    let (_d, p) = temp_settings(None);
+    let mut m = Model::load(&p).unwrap();
+    let key = "library_excluded_folders";
+    assert_eq!(m.list_add(key, r"  D:\자료\임시\ "), Ok(0));
+    assert!(m.list_add(key, r"d:\자료\임시").unwrap_err().contains("이미"), "끝 구분자·대소문자 무시 중복");
+    assert!(m.list_add(key, r"D:\a|b").is_err(), "예약 문자");
+    assert_eq!(m.list_add(key, r"E:\"), Ok(1), "드라이브 루트는 그대로");
+    assert_eq!(m.list_move(key, 1, -1), Some(0), "폴더 목록은 순서를 바꿀 수 있다");
+    assert!(m.save().is_ok());
+    assert_eq!(raw(&p)[key], json!([r"E:\", r"D:\자료\임시"]));
+    let again = Model::load(&p).unwrap();
+    assert_eq!(again.current_list(key), [r"E:\", r"D:\자료\임시"]);
+}
+
+#[test]
+fn list_keys_default_is_empty_and_reset_to_default_clears() {
+    let (_d, p) = temp_settings(Some(r#"{"hidden_tabs":[5]}"#));
+    let mut m = Model::load(&p).unwrap();
+    for key in schema_list_keys() {
+        let default = m.items[m.item_index(&key).unwrap()].default.clone();
+        assert_eq!(default, json!([]), "{key}: 기본값은 빈 목록(없을 때 동작과 같음)");
+    }
+    m.reset_to_default("hidden_tabs");
+    assert!(m.is_changed("hidden_tabs"));
+    assert!(m.save().is_ok());
+    assert_eq!(raw(&p)["hidden_tabs"], json!([]));
+}
+
+#[test]
+fn menu_number_entries_show_their_menu_name_and_other_lists_do_not() {
+    use settings_win::schema::{list_entry_label, MENU_NAMES};
+    assert_eq!(list_entry_label("hidden_tabs", "3"), "3  다이어그램");
+    assert_eq!(list_entry_label("hidden_tabs", "99"), "99", "이름 없는 번호는 그대로");
+    assert_eq!(list_entry_label("library_excluded_folders", "3"), "3");
+    // 숨길 수 있는 번호는 모두 이름이 있어야 한다(번호 범위는 docfit_config 규칙에서 계산).
+    for n in (0..=20).filter(|n| docfit_config::is_hideable_menu(*n)) {
+        assert!(MENU_NAMES.get(n as usize).is_some_and(|s| !s.is_empty()), "{n} 번 메뉴 이름이 없다");
+    }
+}

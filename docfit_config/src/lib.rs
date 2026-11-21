@@ -77,7 +77,7 @@ pub fn merged(input: &Value) -> Value {
     out
 }
 
-/// 화면에 노출되는 설정 잎(키, 종류 boolean|number|text|choice, 기본값). 설정 창이 키→컨트롤 매핑에 쓴다.
+/// 화면에 노출되는 설정 잎(키, 종류 boolean|number|text|choice|list, 기본값). 설정 창이 키→컨트롤 매핑에 쓴다.
 pub fn visible_schema() -> Vec<(String, String, Value)> {
     fn walk(prefix: String, value: &Value, excluded: &std::collections::HashSet<&str>, out: &mut Vec<(String,String,Value)>) {
         let Some(map)=value.as_object() else { out.push((prefix.clone(), String::new(), value.clone())); return; };
@@ -86,11 +86,55 @@ pub fn visible_schema() -> Vec<(String, String, Value)> {
     let excluded: std::collections::HashSet<&str>=["ui_tk_fallback","hierarchy_engine","abbreviations","abbreviation_source","active_format_profile","rust_rename_preview","rust_timemachine_scan","rust_search_hierarchy","theme_mode","menu_display_mode","kclip_settings_mode","outliner_ui","settings_ui","label_symbols_rev","report_files_rev","std_parspace_rev","std_supplement_rev"].into_iter().collect();
     let mut out=Vec::new(); walk(String::new(),&defaults(),&excluded,&mut out);
     let numeric=["punctuation_threshold","retry_body","retry_table","linespacing_min","linespacing_max","std_title_subtitle_pt"];
-    for (key,kind,value) in &mut out { let root=key.split('.').next().unwrap_or(""); *kind=if *key=="search_engine" {"choice".into()} else if value.is_boolean(){"boolean".into()} else if numeric.contains(&root)||root.starts_with("std_parspace_")||key.ends_with(".size"){"number".into()} else {"text".into()}; }
+    for (key,kind,value) in &mut out { let root=key.split('.').next().unwrap_or(""); *kind=if *key=="search_engine" {"choice".into()} else if value.is_array(){"list".into()} else if value.is_boolean(){"boolean".into()} else if numeric.contains(&root)||root.starts_with("std_parspace_")||key.ends_with(".size"){"number".into()} else {"text".into()}; }
     out
 }
 
 fn decimal(s: &str) -> Option<f64> { let t=s.trim(); if t.is_empty(){return None} let n=t.parse::<f64>().ok()?; if n.is_finite(){Some(n)}else{None} }
+
+/// 목록 키의 항목 종류(키 이름·기본값 `[]` 은 그대로, 표현만 목록). 규칙은 Python 쪽 정리 함수와 같다:
+/// `hidden_tabs` = `application_service.clean_hidden_tabs`(정수 1~15, 12·13 제외, 정렬·중복 없음),
+/// `library_excluded_folders` = `library_exclusions.read_exclusions`(빈 글 아닌 문자열).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListKind { Text, Folder, MenuNumber }
+
+pub const LIST_MAX_ITEMS: usize = 1000;
+pub const LIST_ITEM_MAX_CHARS: usize = 4096;
+
+pub fn list_kind(key: &str) -> ListKind {
+    match key { "hidden_tabs" => ListKind::MenuNumber, "library_excluded_folders" => ListKind::Folder, _ => ListKind::Text }
+}
+
+/// 숨길 메뉴 번호로 쓸 수 있는가(1~15, 필수 메뉴 12·13 제외).
+pub fn is_hideable_menu(n: i64) -> bool { (1..=15).contains(&n) && n != 12 && n != 13 }
+
+fn validate_list(key: &str, value: &Value) -> Result<(), SettingsError> {
+    let bad = |what: &str| SettingsError::new("INVALID_INPUT", format!("{key} {what}"));
+    let Some(items) = value.as_array() else { return Err(bad("type")); };
+    if items.len() > LIST_MAX_ITEMS { return Err(bad("too many items")); }
+    match list_kind(key) {
+        ListKind::MenuNumber => {
+            let mut prev = 0i64;
+            for v in items {
+                // Python `type(v) is int` 와 같게: 불리언·소수·글은 거부. 정렬·중복 없음만 허용(정리 결과와 같아야 한다).
+                let Some(n) = v.as_i64() else { return Err(bad("item type")); };
+                if !is_hideable_menu(n) { return Err(bad("item range")); }
+                if n <= prev { return Err(bad("order or duplicate")); }
+                prev = n;
+            }
+        }
+        ListKind::Folder | ListKind::Text => {
+            let mut seen = std::collections::HashSet::new();
+            for v in items {
+                let Some(s) = v.as_str() else { return Err(bad("item type")); };
+                if s.trim().is_empty() { return Err(bad("blank item")); }
+                if s.chars().count() > LIST_ITEM_MAX_CHARS || s.contains('\0') { return Err(bad("item string")); }
+                if !seen.insert(s.trim().to_lowercase()) { return Err(bad("duplicate")); }
+            }
+        }
+    }
+    Ok(())
+}
 
 pub fn validate_patch(patch: &Value) -> Result<Value, SettingsError> {
     let map=patch.as_object().ok_or_else(|| SettingsError::new("INVALID_INPUT","patch must be object"))?;
@@ -100,6 +144,7 @@ pub fn validate_patch(patch: &Value) -> Result<Value, SettingsError> {
         match kind.as_str() {
             "boolean" if !value.is_boolean()=>return Err(SettingsError::new("INVALID_INPUT",format!("{key} type"))),
             "boolean"=>{},
+            "list"=>validate_list(key,value)?,
             _=>{
                 let Some(s)=value.as_str() else{return Err(SettingsError::new("INVALID_INPUT",format!("{key} type")));};
                 if s.chars().count()>4096 || s.contains('\0') { return Err(SettingsError::new("INVALID_INPUT",format!("{key} string"))); }
@@ -160,6 +205,20 @@ fn atomic_write_unlocked(path:&Path,value:&Value)->Result<(),SettingsError>{let 
     #[test] fn defaults_has_at_least_97_top_level_keys(){assert!(defaults().as_object().unwrap().len()>=97);}
     #[test] fn read_corrupt_is_error_and_missing_is_empty(){let d=tempdir().unwrap();let p=d.path().join("s.json");assert_eq!(read_json(&p).unwrap(),json!({}));fs::write(&p,"{").unwrap();assert_eq!(read_json(&p).unwrap_err().code,"SETTINGS_READ_FAILED");}
     #[test] fn preserves_unknown_and_migrates(){let v=json!({"custom":{"x":1},"all_linespacing":true});let r=merged(&v);assert_eq!(r["custom"]["x"],1);assert_eq!(r["all_exclude_linespacing"],false);}
+    #[test] fn list_keys_are_visible_lists_with_empty_defaults(){let v=visible_schema();for key in ["hidden_tabs","library_excluded_folders"]{let (_,kind,d)=v.iter().find(|(k,_,_)|k==key).unwrap_or_else(||panic!("{key} not visible"));assert_eq!(kind,"list");assert_eq!(d,&json!([]));}}
+    #[test] fn list_validation_matches_the_app_cleaning_rules(){
+        let ok=|k:&str,v:Value|validate_patch(&json!({k:v})).is_ok();
+        assert!(ok("hidden_tabs",json!([])));assert!(ok("hidden_tabs",json!([1,3,15])));
+        for bad in [json!([12]),json!([13]),json!([0]),json!([16]),json!([3,1]),json!([3,3]),json!(["3"]),json!([true]),json!([1.5]),json!("3"),json!(null)]{assert!(!ok("hidden_tabs",bad.clone()),"{bad}");}
+        assert!(ok("library_excluded_folders",json!(["C:/a","D:/b"])));
+        for bad in [json!([""]),json!(["  "]),json!([1]),json!(["C:/a","c:/A"]),json!(["a\u{0}b"]),json!("x")]{assert!(!ok("library_excluded_folders",bad.clone()),"{bad}");}
+        let many:Vec<String>=(0..=LIST_MAX_ITEMS).map(|i|format!("C:/f{i}")).collect();assert!(!ok("library_excluded_folders",json!(many)));
+    }
+    #[test] fn list_keys_roundtrip_and_keep_unknown_keys(){let d=tempdir().unwrap();let p=d.path().join("s.json");fs::write(&p,r#"{"custom":{"x":1},"hidden_tabs":[2]}"#).unwrap();
+        let got=get(&p).unwrap();assert_eq!(got["hidden_tabs"],json!([2]));assert_eq!(got["library_excluded_folders"],json!([]));
+        set(&p,&json!({"hidden_tabs":[2,5],"library_excluded_folders":["C:/x"]})).unwrap();let raw=read_json(&p).unwrap();
+        assert_eq!(raw["hidden_tabs"],json!([2,5]));assert_eq!(raw["library_excluded_folders"],json!(["C:/x"]));assert_eq!(raw["custom"]["x"],1);
+        assert_eq!(set(&p,&json!({"hidden_tabs":[13]})).unwrap_err().code,"INVALID_INPUT");}
     #[test] fn large_file_roundtrip(){let d=tempdir().unwrap();let p=d.path().join("s.json");let v=json!({"big":"x".repeat(2*1024*1024)});atomic_write(&p,&v).unwrap();assert_eq!(read_json(&p).unwrap(),v);}
     #[test] fn concurrent_updates_do_not_lose_keys(){let d=tempdir().unwrap();let p=Arc::new(d.path().join("s.json"));let mut joins=vec![];for i in 0..8{let p=p.clone();joins.push(thread::spawn(move||{let _guard=FileLock::acquire(&p.with_file_name("s.json.lock")).unwrap();let mut v=read_json(&p).unwrap();v.as_object_mut().unwrap().insert(format!("k{i}"),json!(i));atomic_write_unlocked(&p,&v).unwrap();}));}for j in joins{j.join().unwrap();}let v=read_json(&p).unwrap();for i in 0..8{assert_eq!(v[format!("k{i}")],i);}}
 }

@@ -175,6 +175,34 @@ pub fn check_list_entry(items: &[String], text: &str, max: usize) -> Result<Stri
     Ok(t.to_string())
 }
 
+/// 목록 종류별 항목 검사(`docfit_config::list_kind`): 글 목록은 `check_list_entry`, 폴더 목록은 폴더 글자 규칙 + 끝 구분자 무시 중복,
+/// 메뉴 번호 목록은 숨길 수 있는 번호(1~15, 12·13 제외)만. 돌려주는 글이 목록에 들어갈 값이다.
+pub fn check_list_entry_of(kind: docfit_config::ListKind, items: &[String], text: &str, max: usize) -> Result<String, String> {
+    use docfit_config::ListKind;
+    match kind {
+        ListKind::Text => check_list_entry(items, text, max),
+        ListKind::Folder => {
+            let t = text.trim();
+            let t = if t.len() > 3 { t.trim_end_matches(['\\', '/']) } else { t };
+            if let Some(why) = explain_folder(t) {
+                return Err(why);
+            }
+            let key = |s: &str| s.trim().trim_end_matches(['\\', '/']).to_lowercase();
+            if !t.is_empty() && items.iter().any(|i| key(i) == key(t)) {
+                return Err("이미 목록에 있습니다.".into());
+            }
+            check_list_entry(items, t, max)
+        }
+        ListKind::MenuNumber => {
+            let Ok(n) = text.trim().parse::<i64>() else { return Err("메뉴 번호(숫자)를 입력해 주세요.".into()) };
+            if !docfit_config::is_hideable_menu(n) {
+                return Err("1~15 사이 번호만 쓸 수 있고, 12·13번 메뉴는 항상 보입니다.".into());
+            }
+            check_list_entry(items, &n.to_string(), max)
+        }
+    }
+}
+
 // ---------- 글꼴 열거·폴더 대화상자(Win32) ----------
 
 #[cfg(windows)]

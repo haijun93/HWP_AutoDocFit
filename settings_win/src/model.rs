@@ -135,10 +135,17 @@ impl Model {
         self.set_value(key, Value::String(text.to_string()));
     }
 
-    /// 목록 값(항목이 문자열 배열이 아니면 빈 목록).
+    /// 목록 값(문자열 배열, 메뉴 번호 목록은 정수 배열을 글로. 그 밖의 항목은 건너뜀).
     pub fn current_list(&self, key: &str) -> Vec<String> {
         match self.current(key) {
-            Value::Array(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+            Value::Array(a) => a
+                .iter()
+                .filter_map(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Number(n) => n.as_i64().map(|n| n.to_string()),
+                    _ => None,
+                })
+                .collect(),
             _ => Vec::new(),
         }
     }
@@ -150,18 +157,26 @@ impl Model {
         }
     }
 
+    /// 목록을 값으로 넣는다. 메뉴 번호 목록은 저장 형식(오름차순 정수 배열)으로 바꾼다.
     fn put_list(&mut self, key: &str, list: Vec<String>) {
-        self.set_value(key, Value::Array(list.into_iter().map(Value::String).collect()));
+        if docfit_config::list_kind(key) == docfit_config::ListKind::MenuNumber {
+            let mut nums: Vec<i64> = list.iter().filter_map(|s| s.trim().parse().ok()).collect();
+            nums.sort_unstable();
+            nums.dedup();
+            self.set_value(key, Value::Array(nums.into_iter().map(|n| Value::from(n)).collect()));
+        } else {
+            self.set_value(key, Value::Array(list.into_iter().map(Value::String).collect()));
+        }
     }
 
-    /// 목록 끝에 추가(검사: 빈 글·길이·중복·개수). 성공하면 새 항목 번호.
+    /// 목록 끝에 추가(검사: 빈 글·길이·중복·개수). 성공하면 새 항목 번호(메뉴 번호 목록은 정렬되므로 들어간 자리).
     pub fn list_add(&mut self, key: &str, text: &str) -> Result<usize, String> {
         let mut list = self.current_list(key);
-        let entry = crate::controls::check_list_entry(&list, text, self.list_max(key))?;
-        list.push(entry);
-        let at = list.len() - 1;
+        let kind = docfit_config::list_kind(key);
+        let entry = crate::controls::check_list_entry_of(kind, &list, text, self.list_max(key))?;
+        list.push(entry.clone());
         self.put_list(key, list);
-        Ok(at)
+        Ok(self.current_list(key).iter().position(|x| *x == entry).unwrap_or(0))
     }
 
     pub fn list_remove(&mut self, key: &str, at: usize) -> bool {
@@ -176,6 +191,9 @@ impl Model {
 
     /// `at` 번째 항목을 `delta`(-1 위·+1 아래)만큼 옮긴다. 옮겨진 새 자리를 돌려준다.
     pub fn list_move(&mut self, key: &str, at: usize, delta: i32) -> Option<usize> {
+        if docfit_config::list_kind(key) == docfit_config::ListKind::MenuNumber {
+            return None; // 번호 목록은 늘 오름차순이다.
+        }
         let mut list = self.current_list(key);
         let to = at as i32 + delta;
         if at >= list.len() || to < 0 || to as usize >= list.len() {

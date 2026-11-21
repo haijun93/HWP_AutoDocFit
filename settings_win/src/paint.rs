@@ -588,7 +588,7 @@ unsafe fn draw_overlay(hdc: HDC, f: &Fonts, lay: &Layout, model: &Model, o: &Ove
                     }
                     let fg = pal.row_text(on, pal.text);
                     text(hdc, f.small, &Rect::new(r.left + scale(10, dpi), r.top, r.left + scale(36, dpi), r.bottom), &format!("{}", n + 1), pal.row_text(on, pal.text_faint), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                    text(hdc, f.normal, &Rect::new(r.left + scale(38, dpi), r.top, r.right - scale(8, dpi), r.bottom), it, fg, ONE_LINE);
+                    text(hdc, f.normal, &Rect::new(r.left + scale(38, dpi), r.top, r.right - scale(8, dpi), r.bottom), &crate::schema::list_entry_label(key, it), fg, ONE_LINE);
                 }
             }
             Overlay::HotkeyWait { .. } => {}

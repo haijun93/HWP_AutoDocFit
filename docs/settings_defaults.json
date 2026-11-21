@@ -137,5 +137,7 @@
   "search_engine": "kfind",
   "kclip_settings_mode": "dialog",
   "outliner_ui": "flutter",
-  "settings_ui": "flutter"
+  "settings_ui": "flutter",
+  "hidden_tabs": [],
+  "library_excluded_folders": []
 }
