@@ -4332,7 +4332,19 @@ def run_webview(gui):
         except Exception:
             pass
 
-    window.events.loaded += lambda *_args: (_dismiss_splash(), bind_file_drop(window))
+    def _on_loaded(*_args):
+        _dismiss_splash()
+        bind_file_drop(window)
+        # 첫 화면이 뜬 뒤에야 부가 시작 작업(런타임 배포·kfind 확인)을 시작한다(LAUNCH2).
+        try:
+            from docfit_app import startup_deferral
+            startup_deferral.mark('webview_loaded')
+            if DEFERRED_STARTUP is not None:
+                DEFERRED_STARTUP.trigger()
+        except Exception:
+            logging.getLogger(__name__).debug('deferred startup trigger failed', exc_info=True)
+
+    window.events.loaded += _on_loaded
 
     def initialize_webview(web_window):
         _dismiss_splash()
@@ -4401,3 +4413,5 @@ def run_webview(gui):
 APP_VERSION = ""
 APP_NAME = ""
 APP_ICON = ""
+# LAUNCH2: 진입점이 넣는 지연 시작 작업(DeferredStartup). 없으면 아무것도 하지 않는다.
+DEFERRED_STARTUP = None

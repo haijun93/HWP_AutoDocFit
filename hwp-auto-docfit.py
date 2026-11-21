@@ -3416,22 +3416,24 @@ def main():
     except OSError:
         pass
 
+    from docfit_app import startup_deferral
+    startup_deferral.mark("main_enter")
+    # 런타임 배포·kfind 확인은 첫 화면과 무관하므로 웹 창 loaded 뒤로 미룬다(LAUNCH2).
+    지연_작업 = []
     if getattr(_selftest_sys, "frozen", False):
         def _배경_런타임_배포():
-            try:
-                from docfit_core.kordoc_runtime import deploy_embedded_runtime
-                from docfit_core.kordoc_bridge import KORDOC_VERSION
-                deploy_embedded_runtime(KORDOC_VERSION)
-            except Exception:
-                pass
+            from docfit_core.kordoc_runtime import deploy_embedded_runtime
+            from docfit_core.kordoc_bridge import KORDOC_VERSION
+            deploy_embedded_runtime(KORDOC_VERSION)
 
-        threading.Thread(target=_배경_런타임_배포, name="kordoc-deploy", daemon=True).start()
+        지연_작업.append(_배경_런타임_배포)
 
-    try:
+    def _kfind_확인():
         from docfit_app.kfind_process import ensure_kfind_running
-        threading.Thread(target=ensure_kfind_running, name="kfind-ensure", daemon=True).start()
-    except Exception:
-        pass
+        ensure_kfind_running()
+
+    지연_작업.append(_kfind_확인)
+    지연 = startup_deferral.DeferredStartup(지연_작업)
 
     # WebView2가 있으면 반응형 웹 화면을 주 UI로 사용하고, 문서 처리·설정 창은
     # 기존 Tk 백엔드에 연결한다. WebView 초기화 문제 진단·복구 시 환경변수로
@@ -3439,6 +3441,7 @@ def main():
     tk_only = os.environ.get("HWP_AUTODOCFIT_UI", "").strip().lower() == "tk"
     if tk_only or importlib.util.find_spec("webview") is None:
         _닫기_스플래시()
+        지연.trigger()
         root = TkinterDnD.Tk()
         _앱아이콘_적용(root)
         gui = HwpAutoDocFitGUI(root)
@@ -3482,12 +3485,14 @@ def main():
         import desktop_web_ui
 
         desktop_web_ui.APP_NAME = APP_NAME
+        desktop_web_ui.DEFERRED_STARTUP = 지연
         desktop_web_ui.APP_VERSION = APP_VERSION
         desktop_web_ui.STAGE_ORDER = 진행단계_순서
         desktop_web_ui.APP_ICON = str(번들_앱아이콘_찾기() or "")
         화면 = desktop_web_ui.PendingGui(준비됨, 보관)
         object.__setattr__(화면, "_settings_path", 설정_파일_경로())
         if not desktop_web_ui.run_webview(화면):
+            지연.trigger()
             tk_준비_확인()
             _닫기_스플래시()
             보관["root"].after(0, lambda: 웹모드_기본창_복원(보관["root"]))
@@ -3495,6 +3500,7 @@ def main():
         tk_준비_확인()
     except Exception as 오류:
         tk_준비_확인()
+        지연.trigger()
         _닫기_스플래시()
         def 기존화면_안내(시작오류):
             messagebox.showwarning(

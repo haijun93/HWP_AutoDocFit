@@ -110,7 +110,9 @@ class AppStartupWiringTests(unittest.TestCase):
         self.assertEqual(raw.count(b"\n"), raw.count(b"\r\n"))
         text = raw.decode("utf-8")
         self.assertIn("from docfit_app.kfind_process import ensure_kfind_running", text)
-        self.assertIn('target=ensure_kfind_running, name="kfind-ensure", daemon=True', text)
+        # LAUNCH2: 첫 화면(loaded) 뒤 DeferredStartup 스레드에서 실행한다.
+        self.assertIn("ensure_kfind_running()", text)
+        self.assertIn("DeferredStartup(", text)
 
 
 class KfindPackagingTests(unittest.TestCase):
