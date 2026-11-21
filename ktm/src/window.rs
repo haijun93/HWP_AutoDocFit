@@ -390,7 +390,7 @@ fn event(h: HWND, e: Event) {
                     mi.cbSize = std::mem::size_of_val(&mi) as u32;
                     GetMonitorInfoW(mon, &mut mi);
                     // 사이드바가 열려 있으면 그 폭만큼 넓혀 내용 영역(칩·단추 줄)이 좁아지지 않게 한다.
-                    let side_extra = if with(|u| u.state.options.sidebar_open) { ktm::layout::SIDEBAR_W } else { 0 };
+                    let side_extra = if with(|u| u.state.options.sidebar_open) { scale(h, ktm::layout::SIDEBAR_W) } else { 0 };
                     let w = (scale(h, 700) + side_extra).min(mi.rcWork.right - mi.rcWork.left);
                     let hh = scale(h, 510).min(mi.rcWork.bottom - mi.rcWork.top);
                     SetWindowPos(
@@ -826,7 +826,7 @@ unsafe fn resize_for_sidebar(h: HWND, opened: bool) {
         let mut mi: MONITORINFO = std::mem::zeroed();
         mi.cbSize = std::mem::size_of_val(&mi) as u32;
         GetMonitorInfoW(mon, &mut mi);
-        let delta = ktm::layout::SIDEBAR_W;
+        let delta = scale(h, ktm::layout::SIDEBAR_W);
         let min_w = scale(h, 520);
         let work_w = mi.rcWork.right - mi.rcWork.left;
         let width = rc.right - rc.left;
@@ -847,7 +847,7 @@ unsafe fn layout(h: HWND) {
         let box_h = scale(h, SEARCH_BOX_H);
         let ed_margin_x = scale(h, 8);
         let ed_margin_y = scale(h, 4);
-        let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
+        let side_w = { let full = scale(h, SIDEBAR_W); with(|u| ktm::layout::sidebar_width_px(u.state.options.sidebar_open, r.right, full)) };
 
         MoveWindow(
             with(|u| u.edit),
@@ -1147,7 +1147,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         fill(r, p.bg);
 
-        let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
+        let side_w = { let full = scale(h, SIDEBAR_W); with(|u| ktm::layout::sidebar_width_px(u.state.options.sidebar_open, r.right, full)) };
         if side_w > 0 {
             fill(
                 RECT {
@@ -1540,15 +1540,21 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let group_left = lpad + scale(h, 235);
             let group_right = r.right - scale(h, 132);
             let group_mid = group_left + (group_right - group_left) / 2;
+            let fit_label = |full: String, short: String, avail: i32| -> String {
+                ktm::layout::pick_fitting_label(&[full, short], avail, |t| {
+                    let w = wide(t);
+                    let mut sz: SIZE = std::mem::zeroed();
+                    GetTextExtentPoint32W(mem, w.as_ptr(), (w.len() - 1) as i32, &mut sz);
+                    sz.cx
+                })
+            };
+            let arrow_f = if u.state.options.collapsed_filename { " ▸" } else { " ▾" };
+            let arrow_b = if u.state.options.collapsed_body { " ▸" } else { " ▾" };
             text(
-                &format!(
-                    "파일명 매치 {}{}",
-                    groups.filename,
-                    if u.state.options.collapsed_filename {
-                        " ▸"
-                    } else {
-                        " ▾"
-                    }
+                &fit_label(
+                    format!("파일명 매치 {}{}", groups.filename, arrow_f),
+                    format!("이름 {}{}", groups.filename, arrow_f),
+                    group_mid - group_left,
                 ),
                 RECT {
                     left: group_left,
@@ -1560,14 +1566,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 DT_END_ELLIPSIS,
             );
             text(
-                &format!(
-                    "본문 매치 {}{}",
-                    groups.body,
-                    if u.state.options.collapsed_body {
-                        " ▸"
-                    } else {
-                        " ▾"
-                    }
+                &fit_label(
+                    format!("본문 매치 {}{}", groups.body, arrow_b),
+                    format!("본문 {}{}", groups.body, arrow_b),
+                    group_right - group_mid,
                 ),
                 RECT {
                     left: group_mid,
@@ -2072,16 +2074,22 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 // 바둑판 카드에서도 [폴더 열기] 단추 왼쪽에서 끝내 확장자 꼬리표와 겹치지 않게 한다.
                 let badge_right = text_right;
                 let ext = ktm::backend::extension_label(&row.name);
+                // 배지 사각형은 글자 높이 기준으로 첫 줄 한가운데에 맞춘다(고배율에서 글자가 아래로 치우치지 않게).
+                let mut badge_ts: SIZE = std::mem::zeroed();
+                let probe = wide("가");
+                GetTextExtentPoint32W(mem, probe.as_ptr(), 1, &mut badge_ts);
+                let badge_h = (badge_ts.cy + scale(h, 4)).min(line_h1);
+                let badge_top = gy + scale(h, 1) + (line_h1 - scale(h, 1) - badge_h) / 2;
                 let ext_rc = RECT {
                     left: badge_right - badge_w,
-                    top: gy + scale(h, 3),
+                    top: badge_top,
                     right: badge_right,
-                    bottom: gy + line_h1 - scale(h, 2),
+                    bottom: badge_top + badge_h,
                 };
                 fill(ext_rc, p.tab_hover);
                 text(ext, ext_rc, p.text_sub, DT_CENTER);
                 if !reason_label.is_empty() {
-                    let reason_rc = RECT { left: badge_right - badge_w - reason_w - scale(h, 4), top: gy + scale(h, 3), right: badge_right - badge_w - scale(h, 4), bottom: gy + line_h1 - scale(h, 2) };
+                    let reason_rc = RECT { left: badge_right - badge_w - reason_w - scale(h, 4), top: badge_top, right: badge_right - badge_w - scale(h, 4), bottom: badge_top + badge_h };
                     fill(reason_rc, p.selected);
                     text(&reason_label, reason_rc, p.accent, DT_CENTER);
                 }
@@ -2120,7 +2128,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         RECT {
                             left: path_left,
                             top: gy + scale(h, 2),
-                            right: name_limit,
+                            right: name_limit - scale(h, 8),
                             bottom: gy + line_h1,
                         },
                         p.row_text(sel, p.text_faint),
@@ -2294,7 +2302,13 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         &sel_r.location
                     };
 
-                    let pad_l = scale(h, 12);
+                    let no_preview = preview_text.is_empty();
+                    let preview_text: &str = if no_preview {
+                        "본문 발췌가 없습니다"
+                    } else {
+                        preview_text
+                    };
+                    let pad_l = side_w + scale(h, 12);
                     let pad_r = r.right - scale(h, 12);
                     let line_step = scale(h, 18);
                     let content_top = prev_y + scale(h, 6);
@@ -2312,7 +2326,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                             bottom: r.bottom - status_h - scale(h, 4),
                         },
                         line_step,
-                        p.text,
+                        if no_preview { p.text_faint } else { p.text },
                         highlight_bg,
                     );
                 }
@@ -3372,7 +3386,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         return 0;
                     }
                 }
-                let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, rc_w.right));
+                let side_w = { let full = scale(h, SIDEBAR_W); with(|u| ktm::layout::sidebar_width_px(u.state.options.sidebar_open, rc_w.right, full)) };
                 let logical_sidebar_x = x * SIDEBAR_W / side_w.max(1);
                 let sidebar_top = scale(h, 40);
                 let logical_sidebar_y =

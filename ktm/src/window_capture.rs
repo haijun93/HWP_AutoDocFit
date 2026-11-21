@@ -253,7 +253,7 @@ unsafe fn setup(h: HWND, name: &str) {
         });
         // 실제 앱처럼 사이드바가 열려 있으면 창 폭을 사이드바 폭만큼 넓힌다.
         let (bw, bh) = BASE_SIZE.with(|c| c.get());
-        let extra = if with(|u| u.state.options.sidebar_open) { ktm::layout::SIDEBAR_W } else { 0 };
+        let extra = if with(|u| u.state.options.sidebar_open) { scale(h, ktm::layout::SIDEBAR_W) } else { 0 };
         SetWindowPos(h, null_mut(), -32000, -32000, bw + extra, bh, SWP_NOZORDER | SWP_NOACTIVATE);
         layout(h);
         pump(30);
@@ -423,7 +423,7 @@ unsafe fn interaction_checks(h: HWND) -> Vec<String> {
         // 기간 칩 클릭 → 기간 상태가 바뀌고 검색창 글자는 그대로다.
         let bands = with(|u| quick_layout(h, u));
         let pad = scale(h, 12);
-        let side_w = with(|u| sidebar_width(u.state.options.sidebar_open, r.right));
+        let side_w = { let full = scale(h, SIDEBAR_W); with(|u| ktm::layout::sidebar_width_px(u.state.options.sidebar_open, r.right, full)) };
         let fy = (bands.filters.top + bands.filters.bottom) / 2;
         let before = with(|u| u.state.query.clone());
         let mut fx = pad + scale(h, 34);

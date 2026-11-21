@@ -172,13 +172,13 @@ mod tests {
     #[test]
     fn related_query_groups_are_ready_for_chips_in_input_order() {
         let dump = related_query_chips("2026; 공사 계약", 320, 100).join("\n");
-        assert_eq!(dump, "2026:0:0:56\n공사 계약:60:0:64");
+        assert_eq!(dump, "2026:0:0:56\n공사 계약:62:0:64");
     }
 
     #[test]
     fn related_query_chip_view_dump_wraps_with_layout_and_suppresses_single_query() {
         let dump = related_query_chips("2026; 공사 계약; 안전관리계획", 130, 100).join("\n");
-        assert_eq!(dump, "2026:0:0:56\n공사 계약:60:0:64\n안전관리계획:0:28:72");
+        assert_eq!(dump, "2026:0:0:56\n공사 계약:62:0:64\n안전관리계획:0:28:72");
         assert!(related_query_chips("단일 검색어", 320, 100).is_empty());
         assert_no_replacement_question_marks(&dump);
     }

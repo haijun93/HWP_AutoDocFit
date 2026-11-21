@@ -563,8 +563,13 @@ pub fn match_groups(names: &[String], snippets: &[String]) -> MatchGroups {
 }
 
 pub fn sidebar_width(open: bool, width: i32) -> i32 {
+    sidebar_width_px(open, width, SIDEBAR_W)
+}
+
+/// DPI 배율을 적용한 사이드바 화소 폭(`full`=`scale(SIDEBAR_W)`)을 쓰는 같은 계산. 창 폭의 절반을 넘지 않는다.
+pub fn sidebar_width_px(open: bool, width: i32, full: i32) -> i32 {
     if open {
-        SIDEBAR_W.min(width.max(0) / 2)
+        full.min(width.max(0) / 2)
     } else {
         0
     }
@@ -1059,9 +1064,25 @@ pub fn related_chip_rects(
             right: (x + width).min(right),
             bottom: y + height - 2 * s / 100,
         });
-        x += width + 4 * s / 100;
+        x += width + related_chip_gap(s);
     }
     rects
+}
+
+/// 연관 검색어 칩 사이 가로 간격(논리 6px에 DPI 배율 `scale`(100=96dpi)을 곱한다).
+pub fn related_chip_gap(scale: i32) -> i32 {
+    (6 * scale.max(1) / 100).max(2)
+}
+
+/// 후보 라벨을 긴 것부터 보고 `avail` 화소 안에 들어가는 첫 후보를 돌려준다.
+/// 모두 넘치면 마지막(가장 짧은) 후보를 쓴다. `measure`는 라벨의 화소 폭.
+pub fn pick_fitting_label(candidates: &[String], avail: i32, measure: impl Fn(&str) -> i32) -> String {
+    for c in candidates {
+        if measure(c) <= avail {
+            return c.clone();
+        }
+    }
+    candidates.last().cloned().unwrap_or_default()
 }
 
 /// 행 오른쪽 [폴더 열기] 단추 영역 계산.
@@ -1426,6 +1447,40 @@ mod tests {
         assert_eq!(grown - sidebar_width(true, grown), base);
         // 닫으면 다시 기본 폭을 전부 쓴다.
         assert_eq!(base - sidebar_width(false, base), base);
+    }
+    #[test]
+    fn sidebar_width_scales_with_dpi_and_keeps_content_width() {
+        // 144dpi(배율 150%): 사이드바 330px, 창을 330px 넓히면 내용 폭 700*1.5가 그대로다.
+        let full = SIDEBAR_W * 150 / 100;
+        assert_eq!(full, 330);
+        let base = 1050;
+        let grown = base + full;
+        assert_eq!(sidebar_width_px(true, grown, full), full);
+        assert_eq!(grown - sidebar_width_px(true, grown, full), base);
+        // 96dpi 기본값은 예전 함수와 같다.
+        assert_eq!(sidebar_width_px(true, 920, SIDEBAR_W), sidebar_width(true, 920));
+        // 좁은 창에서는 절반을 넘지 않는다.
+        assert_eq!(sidebar_width_px(true, 400, full), 200);
+        assert_eq!(sidebar_width_px(false, 920, full), 0);
+    }
+    #[test]
+    fn related_chip_gap_scales_with_dpi() {
+        assert_eq!(related_chip_gap(100), 6);
+        assert_eq!(related_chip_gap(150), 9);
+        assert!(related_chip_gap(0) >= 2);
+        let groups = vec!["예산".to_string(), "계획".to_string()];
+        let rects = related_chip_rects(&groups, 0, 0, 2000, 150);
+        assert_eq!(rects[1].left - rects[0].right, 9);
+    }
+    #[test]
+    fn pick_fitting_label_falls_back_to_short_form() {
+        let c = vec!["파일명 매치 7 ▾".to_string(), "이름 7 ▾".to_string()];
+        let m = |s: &str| s.chars().count() as i32 * 10;
+        assert_eq!(pick_fitting_label(&c, 200, m), "파일명 매치 7 ▾");
+        assert_eq!(pick_fitting_label(&c, 90, m), "이름 7 ▾");
+        // 모두 넘치면 가장 짧은 것.
+        assert_eq!(pick_fitting_label(&c, 10, m), "이름 7 ▾");
+        assert_eq!(pick_fitting_label(&[], 10, m), "");
     }
     #[test]
     fn sidebar_width_is_zero_when_closed() {
