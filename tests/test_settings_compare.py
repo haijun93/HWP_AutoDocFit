@@ -8,12 +8,21 @@ import unittest
 from scripts.settings_compare import compare_case, cases
 
 
+def _settings_core_exe(root):
+    """빌드된 settings-core 실행 파일 위치: SETTINGS_CORE_EXE → CARGO_TARGET_DIR → 저장소 안 docfit_config/target (없으면 시험을 건너뛴다)."""
+    explicit = os.environ.get("SETTINGS_CORE_EXE")
+    if explicit:
+        return Path(explicit)
+    target = os.environ.get("CARGO_TARGET_DIR")
+    base = Path(target) if target else root / "docfit_config" / "target"
+    return base / "debug" / "settings-core.exe"
+
+
 class SettingsCompareTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows-only settings parity integration")
     def test_python_and_rust_match_on_isolated_cases(self):
         root = Path(__file__).resolve().parents[1]
-        target = Path(os.environ.get("CARGO_TARGET_DIR", "E:/cargo-target/SETTINGSRS1"))
-        exe = target / "debug" / "settings-core.exe"
+        exe = _settings_core_exe(root)
         if not exe.exists():
             self.skipTest(f"Rust CLI not built: {exe}")
         for name, value in cases().items():
@@ -24,7 +33,7 @@ class SettingsCompareTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "nt", "Windows lock interoperability")
     def test_python_and_rust_process_locks_exclude_each_other(self):
         root = Path(__file__).resolve().parents[1]
-        exe = Path(os.environ.get("CARGO_TARGET_DIR", "E:/cargo-target/SETTINGSRS1")) / "debug" / "settings-core.exe"
+        exe = _settings_core_exe(Path(__file__).resolve().parents[1])
         if not exe.exists(): self.skipTest("Rust CLI not built")
         with tempfile.TemporaryDirectory(prefix="settings-lock-") as folder:
             path = Path(folder) / "settings.json"

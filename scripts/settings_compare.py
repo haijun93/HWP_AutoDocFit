@@ -147,7 +147,7 @@ def main():
         return 2
     results = [compare_case(exe, name, value) for name, value in cases().items()]
     defaults_file = json.loads((ROOT / "docs" / "settings_defaults.json").read_text(encoding="utf-8"))
-    if defaults_file != DEFAULTS or len(defaults_file) != 97:
+    if defaults_file != DEFAULTS:
         results.append({"case": "defaults-golden", "equal": False, "differences": [{"python_top_level": len(DEFAULTS), "rust_golden_top_level": len(defaults_file)}]})
     report = {"cases": len(results), "equal": all(r["equal"] for r in results), "results": results}
     sys.stdout.reconfigure(encoding="utf-8", errors="backslashreplace")

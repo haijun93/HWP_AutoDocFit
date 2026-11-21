@@ -134,5 +134,7 @@
   "ui_tk_fallback": false,
   "hierarchy_engine": false,
   "theme_mode": "system",
-  "search_engine": "kfind"
+  "search_engine": "kfind",
+  "kclip_settings_mode": "dialog",
+  "outliner_ui": "flutter"
 }
