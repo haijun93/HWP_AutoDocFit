@@ -430,6 +430,19 @@ unsafe fn do_button(hwnd: HWND, b: Btn) {
             }
             Btn::New => return begin_prompt(hwnd, PromptKind::NewPage),
             Btn::Rename => return begin_prompt(hwnd, PromptKind::Rename),
+            Btn::NewBlock => {
+                let page = page_rows(hwnd, s);
+                if s.shell.page.is_none() {
+                    return;
+                }
+                s.shell.editor.add_block_at_end(page);
+            }
+            Btn::Indent | Btn::Outdent => {
+                if s.shell.page.is_none() {
+                    return;
+                }
+                s.shell.editor.nav_command(if b == Btn::Indent { Cmd::Indent } else { Cmd::Outdent });
+            }
             Btn::Delete => {
                 let Some(name) = s.shell.page.clone() else { return };
                 let msg = format!("'{name}' 페이지를 삭제할까요?\n\n삭제하면 데이터 폴더의 .trash 폴더로 옮겨지며, 파일 탐색기에서 되돌릴 수 있습니다.");
@@ -579,7 +592,7 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
             }
             if let Some(l) = lay.left.filter(|l| l.contains(x, y)) {
                 if let Some(slot) = lay.slot_at(l, y) {
-                    let items = layout::left_items(&s.shell.pages, &s.shell.recent);
+                    let items = s.shell.left_list();
                     if let Some(LeftItem::Page(name)) = items.get(s.shell.left_first + slot) {
                         let r = s.shell.open_page(&name.clone());
                         report(s, r);
@@ -666,7 +679,7 @@ unsafe fn wheel(hwnd: HWND, delta: i32, x: i32, y: i32) {
             ((first as isize + step).max(0) as usize).min(total.saturating_sub(slots))
         };
         if lay.panels && lay.left.is_some_and(|l| l.contains(x, y)) {
-            let total = layout::left_items(&s.shell.pages, &s.shell.recent).len();
+            let total = s.shell.left_list().len();
             s.shell.left_first = mv(s.shell.left_first, total, lay.left_slots());
         } else if lay.panels && lay.right.is_some_and(|r| r.contains(x, y)) {
             let total = layout::right_items(&s.shell.back).len();

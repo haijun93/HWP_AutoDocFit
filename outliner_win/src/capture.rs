@@ -176,3 +176,47 @@ pub fn capture_shell_set(dir: &Path, data: &Path, kind: Kind, dpi: u32) -> Resul
     shot(&mut hn, "shell_backlinks")?;
     Ok(out)
 }
+
+/// 격차 카드(OUTLINERWIN5)로 추가한 기능 3개의 캡처: ① `＋ 새 블록` 단추 ② `들여쓰기` 단추 ③ 검색 칸 글로 거른 왼쪽 페이지 목록.
+/// 실제 (보이지 않는) 창·실제 EDIT 로 그린다. 시연 폴더 외에는 아무것도 쓰지 않는다.
+pub fn capture_gap_set(dir: &Path, data: &Path, kind: Kind, dpi: u32) -> Result<Vec<PathBuf>, String> {
+    use crate::edit::EditHost;
+    use crate::layout::Btn;
+    use crate::pages::PageStore;
+    use crate::shell::Shell;
+    use crate::window::{Harness, WinHost};
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !data.join("2026_11_21.md").exists() {
+        seed_demo_pages(data)?;
+    }
+    let store = PageStore::new(data, Some(dir.join("recent_gap.json")));
+    let mut shell = Shell::with_store(WinHost::new(), store, demo_clock)?;
+    shell.start()?;
+    shell.open_page("2026_11_21")?;
+    let (w, h) = (crate::paint::scale(1000, dpi), crate::paint::scale(600, dpi));
+    let mut hn = Harness::new_shell(shell, "아웃라이너", kind, dpi, w, h)?;
+    let name = |tag: &str| dir.join(format!("outliner_{tag}_{}_{}dpi.png", kind_name(kind), dpi));
+    let mut out = Vec::new();
+    let mut shot = |hn: &mut Harness, tag: &str| -> Result<(), String> {
+        hn.layout();
+        let s = hn.render()?;
+        let path = name(tag);
+        crate::png::write(&path, s.width, s.height, &s.bgra)?;
+        out.push(path);
+        Ok(())
+    };
+    // ③ 검색 칸에 한 글자("예")만 넣으면 왼쪽 "전체 페이지" 가 이름에 그 글자가 든 것으로 줄어든다(Flutter 의 페이지 이름 필터).
+    hn.type_search("예");
+    shot(&mut hn, "gap_filter")?;
+    hn.type_search("");
+    // ② "회의 자료 인쇄"(앞 형제가 있는 블록)를 골라 `들여쓰기` 단추.
+    hn.editor().view.set_selected(2, 15);
+    hn.press(Btn::Indent);
+    shot(&mut hn, "gap_indent")?;
+    // ① `＋ 새 블록`: 문서 맨 끝에 빈 블록이 생기고 편집이 시작된다.
+    hn.press(Btn::NewBlock);
+    let t = "단추로 추가한 새 블록";
+    hn.editor().host.set_text(t, t.encode_utf16().count());
+    shot(&mut hn, "gap_newblock")?;
+    Ok(out)
+}

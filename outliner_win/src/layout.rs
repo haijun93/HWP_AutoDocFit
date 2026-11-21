@@ -34,6 +34,11 @@ pub enum Btn {
     New,
     Rename,
     Delete,
+    /// 문서 끝에 새 블록(Flutter 머리글의 + 단추).
+    NewBlock,
+    /// 선택·편집 중인 블록 들여쓰기(Flutter 블록 줄의 단추).
+    Indent,
+    Outdent,
 }
 
 impl Btn {
@@ -43,12 +48,15 @@ impl Btn {
             Btn::New => "＋ 새 페이지",
             Btn::Rename => "이름 바꾸기",
             Btn::Delete => "삭제",
+            Btn::NewBlock => "＋ 새 블록",
+            Btn::Indent => "들여쓰기",
+            Btn::Outdent => "내어쓰기",
         }
     }
 }
 
-/// 위쪽 줄 단추 4개(오른쪽 끝까지 가도 되도록 폭만 고정).
-pub const BUTTONS: [Btn; 4] = [Btn::Today, Btn::New, Btn::Rename, Btn::Delete];
+/// 위쪽 줄 단추 7개(앞 4개 = 페이지, 뒤 3개 = 블록). 폭만 고정.
+pub const BUTTONS: [Btn; 7] = [Btn::Today, Btn::New, Btn::Rename, Btn::Delete, Btn::NewBlock, Btn::Indent, Btn::Outdent];
 
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
@@ -59,7 +67,7 @@ pub struct Layout {
     pub top: R,
     pub search_label: R,
     pub search_edit: R,
-    pub buttons: [R; 4],
+    pub buttons: [R; 7],
     pub left: Option<R>,
     pub center: R,
     pub right: Option<R>,
@@ -80,7 +88,7 @@ pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
             top: R::default(),
             search_label: R::default(),
             search_edit: R::default(),
-            buttons: [R::default(); 4],
+            buttons: [R::default(); 7],
             left: None,
             center: R::new(0, 0, w, h),
             right: None,
@@ -99,13 +107,13 @@ pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
     let right = show_right.then(|| R::new(w - rw, top_h, w, h));
     let center = R::new(left.map_or(0, |r| r.r), top_h, right.map_or(w, |r| r.l), h);
     let label = R::new(pad, 0, pad + scale(40, dpi), top_h);
-    let edit = R::new(label.r, scale(8, dpi), label.r + scale(240, dpi), top_h - scale(8, dpi));
-    let widths = [scale(52, dpi), scale(92, dpi), scale(96, dpi), scale(52, dpi)];
-    let mut buttons = [R::default(); 4];
+    let edit = R::new(label.r, scale(8, dpi), label.r + scale(190, dpi), top_h - scale(8, dpi));
+    let widths = [scale(46, dpi), scale(92, dpi), scale(88, dpi), scale(46, dpi), scale(84, dpi), scale(64, dpi), scale(64, dpi)];
+    let mut buttons = [R::default(); 7];
     let mut x = edit.r + scale(14, dpi);
     for (i, bw) in widths.iter().enumerate() {
         buttons[i] = R::new(x, scale(8, dpi), x + bw, top_h - scale(8, dpi));
-        x += bw + scale(6, dpi);
+        x += bw + scale(if i == 3 { 16 } else { 5 }, dpi);
     }
     Layout {
         dpi,
@@ -172,6 +180,25 @@ impl Layout {
 pub enum LeftItem {
     Label(String),
     Page(String),
+}
+
+/// 검색 칸 글로 거른 왼쪽 목록(Flutter 의 페이지 이름 필터): 최근 목록은 그대로, 전체 목록만 이름에 글이 들어 있는 것으로 줄인다.
+/// 글이 비면 `left_items` 와 같다.
+pub fn left_items_filtered(pages: &[String], recent: &[String], query: &str) -> Vec<LeftItem> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return left_items(pages, recent);
+    }
+    let mut v = Vec::new();
+    let recents: Vec<&String> = recent.iter().filter(|r| pages.contains(r)).take(8).collect();
+    if !recents.is_empty() {
+        v.push(LeftItem::Label("최근 페이지".into()));
+        v.extend(recents.into_iter().map(|r| LeftItem::Page(r.clone())));
+    }
+    let hit: Vec<&String> = pages.iter().filter(|p| p.to_lowercase().contains(&q)).collect();
+    v.push(LeftItem::Label(format!("전체 페이지 ({}/{})", hit.len(), pages.len())));
+    v.extend(hit.into_iter().map(|p| LeftItem::Page(p.clone())));
+    v
 }
 
 /// 왼쪽 목록: "최근" 머리글 + 최근 페이지(최대 8) + "전체 페이지" 머리글 + 모든 페이지.

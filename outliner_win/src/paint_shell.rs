@@ -131,7 +131,7 @@ unsafe fn draw_left<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: 
         SelectObject(dc, fb);
         text(dc, "페이지", rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
-        let items = layout::left_items(&shell.pages, &shell.recent);
+        let items = shell.left_list();
         let slots = lay.left_slots() + 1;
         for (slot, item) in items.iter().skip(shell.left_first).take(slots).enumerate() {
             let top = lay.list_top(l) + slot as i32 * lay.item_h;

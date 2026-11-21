@@ -501,3 +501,68 @@ fn without_popup_enter_still_splits_and_ctrl_enter_does_not_split() {
     assert_eq!(sh.editor.view.doc.blocks.len(), 2, "기존 Enter 분할은 그대로");
     assert_eq!(sh.editor.view.doc.blocks[1].text, "나");
 }
+
+// ---------- OUTLINERWIN5: 새 블록 단추·왼쪽 목록 이름 필터 ----------
+
+#[test]
+fn add_block_at_end_appends_same_indent_block_and_starts_editing() {
+    let (mut sh, _d) = shell_in("addblk", &[("가", "- A\n  - A1\n")]);
+    sh.open_page("가").unwrap();
+    // 입력 중인 글은 먼저 확정한다.
+    sh.editor.start_edit_selected();
+    sh.editor.host.type_text("A 고침");
+    assert!(sh.editor.add_block_at_end(10));
+    assert_eq!(sh.editor.markdown(), "- A 고침\n  - A1\n  - \n");
+    assert_eq!(sh.editor.editing_block(), Some(2));
+    assert_eq!((sh.editor.host.text.as_str(), sh.editor.host.sel), ("", (0, 0)));
+    // 편집 중이 아니어도 된다(목록 상태에서 단추).
+    sh.editor.finish_edit();
+    assert!(sh.editor.add_block_at_end(10));
+    assert_eq!(sh.editor.view.doc.blocks.len(), 4);
+}
+
+#[test]
+fn add_block_at_end_reveals_folded_ancestors_and_fails_on_empty_document() {
+    let (mut sh, _d) = shell_in("addblk2", &[("가", "- A\n  - A1\n")]);
+    sh.open_page("가").unwrap();
+    sh.editor.view.set_selected(0, 10);
+    sh.editor.view.set_fold(true, 10);
+    assert_eq!(sh.editor.view.rows.len(), 1, "A1 은 접혀 숨는다");
+    assert!(sh.editor.add_block_at_end(10));
+    assert_eq!(sh.editor.view.rows.len(), 3, "접힌 조상을 펼쳐 새 줄이 보인다");
+    // 블록이 0개인 문서: 오류 안내만 하고 바뀌지 않는다.
+    let view = outliner_win::view::View::from_markdown("").unwrap();
+    let mut ed = Editor::new(view, Fake::default(), None, String::new());
+    assert!(!ed.add_block_at_end(10));
+    assert!(ed.message.is_some() && ed.view.doc.blocks.is_empty());
+}
+
+#[test]
+fn left_list_filters_all_pages_by_search_text_but_keeps_recent() {
+    use outliner_win::layout::LeftItem;
+    let (mut sh, _d) = shell_in("leftflt", &[("예산 지침", "- a\n"), ("회의록", "- b\n"), ("주간 업무", "- c\n"), ("Budget", "- d\n")]);
+    let names = |sh: &Shell<Fake>| -> Vec<String> {
+        sh.left_list().into_iter().filter_map(|i| if let LeftItem::Page(n) = i { Some(n) } else { None }).collect()
+    };
+    let labels = |sh: &Shell<Fake>| -> Vec<String> {
+        sh.left_list().into_iter().filter_map(|i| if let LeftItem::Label(n) = i { Some(n) } else { None }).collect()
+    };
+    let all = names(&sh);
+    assert_eq!(all.len(), 5 + 1, "전체 5개 + 최근(오늘 일지) 1줄");
+    sh.set_query("예");
+    assert_eq!(labels(&sh)[1], "전체 페이지 (1/5)");
+    assert!(names(&sh).contains(&"예산 지침".to_string()) && !names(&sh).contains(&"회의록".to_string()));
+    sh.left_first = 3;
+    sh.set_query("BUD");
+    assert_eq!(sh.left_first, 0, "질의가 바뀌면 맨 위로");
+    assert!(names(&sh).contains(&"Budget".to_string()), "대소문자 무시");
+    sh.set_query("없는이름");
+    assert_eq!(labels(&sh)[1], "전체 페이지 (0/5)");
+    assert!(sh.left_list().iter().filter(|i| matches!(i, LeftItem::Page(_))).count() == 1, "최근 줄만 남는다");
+    // 이름 입력 줄이 열려 있으면 거르지 않는다.
+    sh.begin_prompt(PromptKind::NewPage);
+    assert_eq!(names(&sh).len(), 6);
+    sh.cancel_prompt();
+    sh.close_search();
+    assert_eq!(names(&sh), all);
+}

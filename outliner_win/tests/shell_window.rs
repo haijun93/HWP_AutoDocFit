@@ -347,3 +347,56 @@ fn clicking_a_popup_candidate_inserts_that_page_link() {
     assert!(hn.editor().popup.is_none());
     assert!(hn.editor().editing(), "편집은 유지된다");
 }
+
+#[test]
+fn toolbar_has_seven_buttons_inside_the_window_and_hit_testing_matches() {
+    for dpi in [96u32, 192] {
+        let (w, h) = (outliner_win::paint::scale(1000, dpi), outliner_win::paint::scale(600, dpi));
+        let lay = layout::compute(w, h, dpi, true);
+        let want = [Btn::Today, Btn::New, Btn::Rename, Btn::Delete, Btn::NewBlock, Btn::Indent, Btn::Outdent];
+        for (i, b) in want.iter().enumerate() {
+            let r = lay.buttons[i];
+            assert!(r.r <= w && r.l >= lay.search_edit.r, "{dpi}dpi 단추 {i} 가 창 안에 있다");
+            assert_eq!(lay.button_at((r.l + r.r) / 2, (r.t + r.b) / 2), Some(*b));
+            if i > 0 {
+                assert!(lay.buttons[i - 1].r <= r.l, "단추가 겹치지 않는다");
+            }
+        }
+        assert!(lay.buttons[6].r <= outliner_win::paint::scale(820, dpi), "기본 창 폭(820)에서도 모두 보인다");
+    }
+}
+
+#[test]
+fn block_buttons_add_indent_outdent_and_left_filter_click_opens_page() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut hn, _d) = harness("blk_btn", Kind::Light, 96);
+    hn.layout();
+    let n = hn.editor().view.doc.blocks.len();
+    // 새 블록: 맨 끝에 같은 단계의 빈 블록, 편집 시작.
+    let last_indent = hn.editor().view.doc.blocks[n - 1].indent;
+    hn.press(Btn::NewBlock);
+    assert_eq!(hn.editor().view.doc.blocks.len(), n + 1);
+    assert_eq!(hn.editor().editing_block(), Some(n));
+    assert_eq!(hn.editor().view.doc.blocks[n].indent, last_indent);
+    // 들여쓰기·내어쓰기(편집 유지).
+    hn.press(Btn::Indent);
+    assert_eq!(hn.editor().view.doc.blocks[n].indent, last_indent + 1);
+    assert_eq!(hn.editor().editing_block(), Some(n));
+    hn.press(Btn::Outdent);
+    assert_eq!(hn.editor().view.doc.blocks[n].indent, last_indent);
+    // 목록 상태(편집 아님)에서도 선택 블록에 적용.
+    hn.editor().finish_edit();
+    hn.editor().view.set_selected(2, 15);
+    let before = hn.editor().view.doc.blocks[2].indent;
+    hn.press(Btn::Indent);
+    assert_eq!(hn.editor().view.doc.blocks[2].indent, before + 1);
+    // 왼쪽 목록 이름 필터: 한 글자만 넣어도 줄고, 줄어든 목록의 항목 클릭이 그 페이지를 연다.
+    hn.type_search("예");
+    let lay = hn.layout_now();
+    let items = hn.shell().left_list();
+    assert_eq!(items.last(), Some(&LeftItem::Page("예산 지침".into())));
+    let l = lay.left.unwrap();
+    let y = lay.list_top(l) + (items.len() as i32 - 1) * lay.item_h + lay.item_h / 2;
+    hn.click_at(l.l + 20, y, false);
+    assert_eq!(hn.shell().page.as_deref(), Some("예산 지침"));
+}

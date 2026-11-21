@@ -102,6 +102,12 @@ impl<H: EditHost> Shell<H> {
         self.editor.recent_names = self.recent.clone();
     }
 
+    /// 왼쪽 패널에 그릴 목록(검색 칸 글로 거른 것). 이름 입력 줄이 열려 있는 동안은 거르지 않는다.
+    pub fn left_list(&self) -> Vec<crate::layout::LeftItem> {
+        let q = if self.prompt.is_some() { "" } else { self.query.as_str() };
+        crate::layout::left_items_filtered(&self.pages, &self.recent, q)
+    }
+
     pub fn refresh_backlinks(&mut self) {
         self.back_first = 0;
         let (Some(store), Some(page)) = (self.store.clone(), self.page.clone()) else {
@@ -234,6 +240,7 @@ impl<H: EditHost> Shell<H> {
     /// 검색어가 바뀔 때마다(Enter 불필요) 부른다. 2글자 미만이면 결과를 닫는다.
     pub fn set_query(&mut self, q: &str) {
         self.query = q.to_string();
+        self.left_first = 0;
         self.hit_sel = 0;
         self.hit_first = 0;
         if q.trim().chars().count() < 2 {

@@ -12,12 +12,13 @@ struct Args {
     file: Option<String>,
     capture_edit: bool,
     capture_shell: bool,
+    capture_gap: bool,
     data_dir: Option<String>,
     recent_file: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None, capture_edit: false, capture_shell: false, data_dir: None, recent_file: None };
+    let mut a = Args { capture_dir: None, kind: Kind::Light, dpi: 96, file: None, capture_edit: false, capture_shell: false, capture_gap: false, data_dir: None, recent_file: None };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -25,6 +26,7 @@ fn parse_args() -> Result<Args, String> {
             "--dark" => a.kind = Kind::Dark,
             "--capture-edit" => a.capture_edit = true,
             "--capture-shell" => a.capture_shell = true,
+            "--capture-gap" => a.capture_gap = true,
             "--data-dir" => a.data_dir = Some(it.next().ok_or("--data-dir 에 폴더가 필요합니다")?),
             "--recent-file" => a.recent_file = Some(it.next().ok_or("--recent-file 에 경로가 필요합니다")?),
             "--hc" => a.kind = Kind::HighContrast,
@@ -62,6 +64,14 @@ fn recent_file(args: &Args) -> Option<std::path::PathBuf> {
 
 fn run() -> Result<String, String> {
     let args = parse_args()?;
+    if args.capture_gap {
+        let dir = args.capture_dir.clone().ok_or("--capture-gap 에는 --capture-dir 가 필요합니다")?;
+        let dir = std::path::Path::new(&dir);
+        let data = args.data_dir.clone().map(std::path::PathBuf::from).unwrap_or_else(|| dir.join("data"));
+        let paths = capture::capture_gap_set(dir, &data, args.kind, args.dpi)?;
+        return Ok(paths.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join("
+"));
+    }
     if args.capture_shell {
         let dir = args.capture_dir.clone().ok_or("--capture-shell 에는 --capture-dir 가 필요합니다")?;
         let dir = std::path::Path::new(&dir);

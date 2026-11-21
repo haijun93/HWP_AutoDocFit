@@ -817,6 +817,32 @@ impl<H: EditHost> Editor<H> {
         }
     }
 
+    /// 문서 맨 끝에 같은 단계의 빈 블록을 만들고 편집을 시작한다(Flutter 머리글 + 단추: `insert('')` 를 마지막 블록 뒤에).
+    /// 편집 중 글은 먼저 확정한다. 접힌 조상이 있으면 펼쳐 새 줄이 보이게 한다.
+    pub fn add_block_at_end(&mut self, page: usize) -> bool {
+        self.message = None;
+        if self.session.is_some() && !self.commit_text() {
+            return false;
+        }
+        let Some(last) = self.view.doc.blocks.len().checked_sub(1) else {
+            self.fail("블록이 없어 추가할 수 없습니다".into());
+            return false;
+        };
+        let mut tx = Tx::new(&self.view.doc);
+        match tx.insert_after(last, "").and_then(|_| tx.finish()) {
+            Ok(doc) => {
+                self.install(doc, last + 1);
+                self.view.reveal_block(last + 1, page);
+                self.begin(last + 1, Some(0));
+                true
+            }
+            Err(e) => {
+                self.fail(format!("블록을 추가하지 못했습니다: {e}"));
+                false
+            }
+        }
+    }
+
     /// 편집 중이 아닐 때의 목록 명령(들여쓰기·내어쓰기)도 같은 경로로 처리한다.
     pub fn nav_command(&mut self, cmd: Cmd) {
         self.submit(cmd, 0, false, false);
