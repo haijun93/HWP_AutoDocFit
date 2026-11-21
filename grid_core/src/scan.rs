@@ -195,10 +195,13 @@ pub fn klib_args(extensions: &[&str], roots: &[PathBuf], excludes: &[String]) ->
     a
 }
 
-/// klib 실행 파일을 찾는다: `DOCFIT_KLIB` → 이 실행 파일 옆·상위 폴더의 `klib.exe`·`resources`·`klib/target`.
+/// klib 실행 파일을 찾는다: `DOCFIT_KLIB` → `KLIB_EXE`(Python `rust_scan.find_klib_executable` 과 같은 이름) →
+/// 이 실행 파일 옆·상위 폴더의 `klib.exe`·`resources`·`klib/target`.
 pub fn find_klib() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("DOCFIT_KLIB").map(PathBuf::from).filter(|p| p.is_file()) {
-        return Some(p);
+    for var in ["DOCFIT_KLIB", "KLIB_EXE"] {
+        if let Some(p) = std::env::var_os(var).map(PathBuf::from).filter(|p| p.is_file()) {
+            return Some(p);
+        }
     }
     let exe = std::env::current_exe().ok()?;
     let name = if cfg!(windows) { "klib.exe" } else { "klib" };

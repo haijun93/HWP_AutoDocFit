@@ -165,8 +165,64 @@ unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Pale
     }
 }
 
+/// 제외 폴더 편집 패널(창 위에 떠 있는 모달 상자). 뒤 화면은 그대로 두고 그림자 테두리로만 띄운다.
+unsafe fn draw_panel(hdc: HDC, f: &Fonts, w: i32, h: i32, p: &crate::panel::ExcludePanel, pal: &Palette, dpi: u32) {
+    use crate::panel::{PanelLayout, Tone};
+    unsafe {
+        let s = |v: i32| scale(v, dpi);
+        let l = PanelLayout::new(w, h, dpi);
+        // 그림자 + 상자.
+        let d = l.dialog;
+        boxed(hdc, &Rect::new(d.left + s(4), d.top + s(6), d.right + s(4), d.bottom + s(6)), blend(pal.head_bg, 0x0000_0000, 0.35), blend(pal.head_bg, 0x0000_0000, 0.35), 1, s(14));
+        boxed(hdc, &d, pal.bg, pal.accent, s(2), s(14));
+        text(hdc, f.title, &l.title, "제외할 폴더", pal.text, ONE_LINE);
+        text(hdc, f.small, &l.hint, "여기에 추가한 폴더(와 그 아래 폴더)는 문서 검색에서 빠집니다.
+windows·program files·appdata·node_modules·.git 등은 항상 제외됩니다.", pal.text_sub, DT_LEFT | DT_WORDBREAK);
+        // 목록.
+        boxed(hdc, &l.list, pal.head_bg, pal.divider, 1, s(8));
+        if p.items.is_empty() {
+            text(hdc, f.normal, &l.list, "제외한 폴더가 없습니다.", pal.text_muted, CENTER);
+        } else {
+            let clip = CreateRectRgn(l.list.left + 1, l.list.top + 1, l.list.right - 1, l.list.bottom - 1);
+            SelectClipRgn(hdc, clip);
+            for row in 0..l.visible_rows() {
+                let i = p.scroll + row;
+                let Some(item) = p.items.get(i) else { break };
+                let r = l.row_rect(row);
+                let inner = Rect::new(r.left + s(4), r.top + s(2), r.right - s(4), r.bottom - s(2));
+                if p.selected == Some(i) {
+                    boxed(hdc, &inner, pal.selected, pal.accent, 1, s(6));
+                }
+                text(hdc, f.normal, &Rect::new(r.left + s(14), r.top, r.right - s(12), r.bottom), item, pal.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS);
+            }
+            SelectClipRgn(hdc, null_mut());
+            DeleteObject(clip);
+            // 목록이 더 길면 오른쪽에 가는 스크롤 표시.
+            let vis = l.visible_rows();
+            if p.items.len() > vis {
+                let track = Rect::new(l.list.right - s(8), l.list.top + s(4), l.list.right - s(4), l.list.bottom - s(4));
+                let th = (track.height() * vis as i32 / p.items.len() as i32).max(s(16));
+                let top = track.top + (track.height() - th) * p.scroll as i32 / (p.items.len() - vis).max(1) as i32;
+                boxed(hdc, &Rect::new(track.left, top, track.right, top + th), pal.text_faint, pal.text_faint, 1, track.width());
+            }
+        }
+        // 안내 줄(저장 결과·충돌·오류).
+        let tone_color = if p.tone == Tone::Error { ext_color("ppt") } else { pal.text_sub };
+        let note = if p.message.is_empty() && p.changed { "닫으면 바뀐 제외 폴더로 새로 검색합니다." } else { p.message.as_str() };
+        text(hdc, f.small, &l.message, note, tone_color, DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+        button(hdc, f, &l.add, "폴더 추가…", true, true, pal, dpi);
+        button(hdc, f, &l.remove, "선택 삭제", p.selected.is_some(), false, pal, dpi);
+        button(hdc, f, &l.close, "닫기", true, false, pal, dpi);
+    }
+}
+
 /// 전체 그리기. 반환: 이번에 실제로 그린 칸 수(가상화 확인용).
 pub fn draw(hdc: HDC, w: i32, h: i32, app: &App, pal: &Palette, dpi: u32) -> usize {
+    draw_with_panel(hdc, w, h, app, None, pal, dpi)
+}
+
+/// `draw` + (있으면) 제외 폴더 편집 패널. 실제 창과 캡처 모드가 같은 함수를 쓴다.
+pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32) -> usize {
     unsafe {
         let f = Fonts::new(dpi);
         let banner = app.banner_shown();
@@ -198,6 +254,9 @@ pub fn draw(hdc: HDC, w: i32, h: i32, app: &App, pal: &Palette, dpi: u32) -> usi
         }
         draw_toolbar(hdc, &f, &Toolbar::new(w, dpi), app, pal, dpi);
         draw_status(hdc, &f, w, h, app, pal, dpi);
+        if let Some(p) = panel {
+            draw_panel(hdc, &f, w, h, p, pal, dpi);
+        }
         f.free();
         drawn
     }

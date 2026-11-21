@@ -61,12 +61,31 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertIn("cargo test --release --locked --manifest-path settings_win/Cargo.toml", workflow)
         self.assertIn("cargo build --release --locked --manifest-path settings_win/Cargo.toml --bin settings_win", workflow)
         self.assertIn("Copy-Item settings_win/target/release/settings_win.exe resources/settings_win.exe", workflow)
-        self.assertIn("'settings_win.exe')", workflow)  # VC++ 런타임 비의존 검사 목록
+        self.assertIn("'settings_win.exe'", workflow)  # VC++ 런타임 비의존 검사 목록
         self.assertIn("settings_win.exe", spec)
         self.assertIn("StopHelper('settings_win.exe')", iss)
         self.assertIn("settings_win/target/", (ROOT / ".gitignore").read_text(encoding="utf-8"))
         # 이 PC 전용 경로(.cargo/config.toml 의 target-dir 등)를 저장소에 넣지 않는다.
         self.assertFalse((ROOT / "settings_win" / ".cargo").exists())
+        self.assertNotIn("target-dir", (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
+
+    def test_docview_window_is_tested_built_and_packaged_like_the_other_windows(self):
+        workflow = (ROOT / ".github" / "workflows" / "build-windows-exe.yml").read_text(encoding="utf-8")
+        spec = (ROOT / "HWP_AutoDocFit.spec").read_text(encoding="utf-8")
+        iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
+        self.assertIn("cargo test --release --locked --manifest-path docview_win/Cargo.toml", workflow)
+        self.assertIn("cargo build --release --locked --manifest-path docview_win/Cargo.toml --bin docview_win", workflow)
+        self.assertIn("Copy-Item docview_win/target/release/docview_win.exe resources/docview_win.exe", workflow)
+        self.assertIn("'docview_win.exe'", workflow)  # VC++ 런타임 비의존 검사 목록
+        self.assertIn("docview_win.exe", spec)
+        self.assertIn("StopHelper('docview_win.exe')", iss)
+        self.assertIn("docview_win/target/", (ROOT / ".gitignore").read_text(encoding="utf-8"))
+        # 시험이 실제 klib 를 쓰므로 klib 빌드 뒤에 둔다(KLIB_EXE).
+        self.assertLess(workflow.index("Build klib (Rust)"), workflow.index("Build document view window"))
+        block = workflow[workflow.index("Build document view window"):workflow.index("Verify Rust binaries do not need")]
+        self.assertIn("KLIB_EXE", block)
+        # 이 PC 전용 경로(.cargo/config.toml 의 target-dir 등)를 저장소에 넣지 않는다.
+        self.assertFalse((ROOT / "docview_win" / ".cargo").exists())
         self.assertNotIn("target-dir", (ROOT / ".cargo" / "config.toml").read_text(encoding="utf-8"))
 
     def test_qms_bench_engine_is_built_hashed_and_packaged_like_pdf_editor(self):

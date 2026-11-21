@@ -98,8 +98,8 @@ docview_win ──(자식 프로세스) klib scan --roots <고정 드라이브�
 | 단계 | 내용 | 상태 |
 |---|---|---|
 | 1 (이 카드) | 새 크레이트 `docview_win`: 격자·가상화·선택·키보드·슬라이더(읽기)·검색·정렬·스캔 진행·취소·캡처 모드·시험 | 구현 완료, 실기 대기 |
-| 2 | 제외 폴더 관리(추가·삭제·저장), 슬라이더 값 저장(`docfit_config`), 더블클릭 열기, 15초 무응답 안내, IME 입력, 저장본 즉시 표시, 오른쪽 버튼 메뉴(CTXMENU3 연동 검토) | 예정 |
+| 2 | 제외 폴더 관리(추가·삭제·저장) — **DOCVIEWWIN2 에서 구현**; 남음: 슬라이더 값 저장(`docfit_config`), 더블클릭 열기, 15초 무응답 안내, IME 입력, 저장본 즉시 표시, 오른쪽 버튼 메뉴(CTXMENU3 연동 검토) | 일부 완료 |
 | 3 | 엔진 service 경로(named pipe `names_status`/`names_list`)·메타 보충·엔진 표시 | 예정 |
 | 4 | 실제 썸네일(THUMBRS 연동: 캐시 키 §4·보이는 칸 요청·취소) | THUMBRS2 이후 |
-| 5 | 앱 연결: `docview_ui` 설정·릴리스 번들·CI·Flutter 게이트(기본 flutter → 실기 확인 후 native 전환 → Flutter 화면·Python 제거) | 다음 카드 |
+| 5 | 앱 연결: `docview_ui` 설정·릴리스 번들·CI·Flutter 게이트(기본 flutter → 실기 확인 후 native 전환 → Flutter 화면·Python 제거) | 연결·번들 구현(DOCVIEWWIN2, `docs/DOCVIEWWIN2_RESULT_2026-11-22.md`), native 기본 전환은 실기 확인 후 |
 | 6 | 사진뷰 격자 재사용(`docview_win` 격자·가상화 부품을 공용 크레이트로 분리 검토) | G4 후속 |

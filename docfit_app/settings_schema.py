@@ -7,6 +7,8 @@ DEFAULTS = {
     'outliner_ui': 'flutter',
     # 설정 창 방식: 'flutter'(앱 안 서랍·전체 설정, 기본) | 'native'(Rust+Win32 창 settings_win.exe). SETTINGSWIN3
     'settings_ui': 'flutter',
+    # 문서뷰 화면 방식: 'flutter'(앱 안 탭, 기본) | 'native'(Rust+Win32 창 docview_win.exe). DOCVIEWWIN2
+    'docview_ui': 'flutter',
     # 퀵몽땅검색 단축키 앱(ktm.exe, Ctrl+Alt+Space): 기본 켬(MG3 사용자 지시). 끄면 상주 프로그램을 끄고 자동 실행을 푼다.
     'mongttang_search': True,
     'file_rename_sendto': False,

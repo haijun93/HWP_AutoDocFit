@@ -2,7 +2,7 @@
 name = "docview_win"
 version = "0.1.0"
 edition = "2024"
-description = "문서뷰 Rust+Win32 창 1단계: 격자 목록 읽기 전용 표시·가상화·스캔 진행·취소·캡처 모드(DOCVIEWWIN1)"
+description = "문서뷰 Rust+Win32 창: 격자 목록·가상화·스캔 진행·취소·캡처 모드(DOCVIEWWIN1), 제외 폴더 편집·앱 설정 읽기·앱 연결(DOCVIEWWIN2)"
 license = "MIT"
 publish = false
 
@@ -11,19 +11,30 @@ publish = false
 
 # 의존성은 ui_theme(경로)·windows-sys 둘뿐. klib 는 라이브러리로 묶지 않고 `klib scan` 실행 파일을 자식 프로세스로 호출한다
 # (tantivy·rusqlite 를 끌어와 빌드가 무거워지는 것을 피하고, Python 과 같은 JSON 줄 계약을 그대로 쓴다).
+# 설정(제외 폴더 읽기·저장·revision 충돌 검사)은 설정 소유자 docfit_config 로만 한다(DOCVIEWWIN2). serde_json 은 그 공개 API(Value)를 받기 위한 같은 버전.
 [dependencies]
+docfit_config = { path = "../docfit_config" }
 grid_core = { path = "../grid_core" }
 ui_theme = { path = "../ui_theme" }
+serde_json = { version = "1", features = ["preserve_order"] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security",
     "Win32_Storage_FileSystem",
+    "Win32_System_Com",
     "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
     "Win32_System_Time",
     "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [[bin]]
 name = "docview_win"

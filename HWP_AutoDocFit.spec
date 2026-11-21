@@ -45,6 +45,10 @@ if outliner_win_exe.is_file():
 settings_win_exe = root / 'resources' / 'settings_win.exe'
 if settings_win_exe.is_file():
     binaries.append((str(settings_win_exe), 'resources'))
+# 문서뷰 Win32 창(설정 docview_ui='native' 일 때 앱의 문서뷰 탭이 연다). 있으면 넣는다(없으면 앱이 안내만 하고 기존 화면을 연다).
+docview_win_exe = root / 'resources' / 'docview_win.exe'
+if docview_win_exe.is_file():
+    binaries.append((str(docview_win_exe), 'resources'))
 hierarchy_exe = root / 'resources' / 'hierarchy.exe'
 if hierarchy_exe.is_file():
     binaries.append((str(hierarchy_exe), 'resources'))

@@ -12,6 +12,7 @@ import '../notebook/notebook_api.dart';
 import '../notebook/notebook_screen.dart';
 import '../external_apps/external_app_launcher.dart';
 import '../doc_grid/doc_grid_screen.dart';
+import '../doc_grid/docview_ui_gate.dart';
 import '../photo_album/photo_album_screen.dart';
 import '../table_sketch/table_sketch_screen.dart';
 import '../table_units/table_units_screen.dart';
@@ -288,7 +289,7 @@ class _LazyDocGridAdapterState extends State<_LazyDocGridAdapter> {
     final active = TickerMode.valuesOf(context).enabled;
     if (active && !_visited) _visited = true;
     return _visited
-        ? DocGridAdapter(api: widget.api)
+        ? DocViewUiGate(api: widget.api)
         : const SizedBox.expand();
   }
 }

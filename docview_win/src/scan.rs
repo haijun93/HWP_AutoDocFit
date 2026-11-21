@@ -53,3 +53,50 @@ impl ScanJob {
 pub fn klib_args(roots: &[PathBuf], excludes: &[String]) -> Vec<String> {
     grid_core::scan::klib_args(&DOC_EXTENSIONS, roots, excludes)
 }
+
+/// 동기 스캔 결과(시험·캡처 모드용): 모든 문서와 취소 여부.
+#[derive(Debug)]
+pub struct Scanned {
+    pub docs: Vec<Doc>,
+    pub cancelled: bool,
+    /// 마지막 배치가 알린 훑은 수.
+    pub visited: usize,
+}
+
+/// `klib scan` 을 실제로 돌려 끝날 때까지 기다린다. 오류(자식 종료 코드·잘못된 줄·시간 초과)는 `Err` 로 돌려준다.
+/// `limit` 안에 끝나지 않으면 자식 프로세스를 죽이고 오류로 끝낸다.
+pub fn scan_blocking(exe: &Path, roots: &[PathBuf], excludes: &[String], limit: std::time::Duration) -> Result<Scanned, String> {
+    let mut job = ScanJob::start_klib(exe, roots, excludes, Arc::new(|| {}))?;
+    let out = collect(&job, limit);
+    if out.is_err() {
+        job.cancel();
+    }
+    job.join();
+    out
+}
+
+/// 이벤트를 끝까지(또는 `limit` 까지) 모은다.
+pub fn collect(job: &ScanJob, limit: std::time::Duration) -> Result<Scanned, String> {
+    use grid_core::scan::Event as E;
+    let start = std::time::Instant::now();
+    let mut out = Scanned { docs: Vec::new(), cancelled: false, visited: 0 };
+    loop {
+        for e in job.drain() {
+            match e {
+                E::Batch { docs, visited, .. } => {
+                    out.docs.extend(docs);
+                    out.visited = visited;
+                }
+                E::Finished { cancelled } => {
+                    out.cancelled = cancelled;
+                    return Ok(out);
+                }
+                E::Failed(msg) => return Err(msg),
+            }
+        }
+        if start.elapsed() > limit {
+            return Err(format!("스캔이 {}초 안에 끝나지 않았습니다.", limit.as_secs()));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}

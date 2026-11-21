@@ -83,7 +83,7 @@ pub fn visible_schema() -> Vec<(String, String, Value)> {
         let Some(map)=value.as_object() else { out.push((prefix.clone(), String::new(), value.clone())); return; };
         for (k,v) in map { let key=if prefix.is_empty(){k.clone()}else{format!("{prefix}.{k}")}; if prefix.is_empty() && excluded.contains(k.as_str()){continue} walk(key,v,excluded,out); }
     }
-    let excluded: std::collections::HashSet<&str>=["ui_tk_fallback","hierarchy_engine","abbreviations","abbreviation_source","active_format_profile","rust_rename_preview","rust_timemachine_scan","rust_search_hierarchy","theme_mode","menu_display_mode","kclip_settings_mode","outliner_ui","settings_ui","label_symbols_rev","report_files_rev","std_parspace_rev","std_supplement_rev"].into_iter().collect();
+    let excluded: std::collections::HashSet<&str>=["ui_tk_fallback","hierarchy_engine","abbreviations","abbreviation_source","active_format_profile","rust_rename_preview","rust_timemachine_scan","rust_search_hierarchy","theme_mode","menu_display_mode","kclip_settings_mode","outliner_ui","settings_ui","docview_ui","label_symbols_rev","report_files_rev","std_parspace_rev","std_supplement_rev"].into_iter().collect();
     let mut out=Vec::new(); walk(String::new(),&defaults(),&excluded,&mut out);
     let numeric=["punctuation_threshold","retry_body","retry_table","linespacing_min","linespacing_max","std_title_subtitle_pt"];
     for (key,kind,value) in &mut out { let root=key.split('.').next().unwrap_or(""); *kind=if *key=="search_engine" {"choice".into()} else if value.is_array(){"list".into()} else if value.is_boolean(){"boolean".into()} else if numeric.contains(&root)||root.starts_with("std_parspace_")||key.ends_with(".size"){"number".into()} else {"text".into()}; }
