@@ -87,6 +87,10 @@ def main():
             home=Path(r"C:\HWP_AUTODOCFIT")
             pack=home/"HWP_AutoDocFit_kordoc_runtime.zip"
             expected=Path("resources/HWP_AutoDocFit_kordoc_runtime.zip.sha256").read_text().split()[0]
+            # LAUNCH2 이후 런타임 배포는 첫 화면(loaded 이벤트) 뒤에 시작하므로, 창이 보인 직후에는 ZIP 이 아직 없을 수 있다 — 기다린다.
+            pack_deadline=time.monotonic()+180
+            while time.monotonic()<pack_deadline and not pack.is_file():
+                time.sleep(.5)
             with pack.open("rb") as stream:
                 assert hashlib.file_digest(stream,"sha256").hexdigest()==expected
             engine_version=json.loads(Path("kordoc_pack/package.json").read_text())["dependencies"]["kordoc"]
