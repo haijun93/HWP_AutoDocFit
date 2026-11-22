@@ -59,6 +59,7 @@ def main():
         'seconds': round(perf_counter() - started, 3),
         'errors': errors, 'saved': len(saved),
         'output_files': [output.name for output in outputs],
+        'page_counts': [event[3] if len(event) > 3 else None for event in saved],
         'paragraph_counts': [inspection.paragraph_count for inspection in inspections],
         'text_preserved_ignoring_whitespace': [
             ''.join(inspection.text.split()) == original_text for inspection in inspections],
