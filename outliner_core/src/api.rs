@@ -1,5 +1,5 @@
 use crate::{
-    backlinks, collect_markdown_files, daily_page, edit_with_offset, journal_date, journal_list,
+    backlinks, collect_markdown_files, daily_page, edit_many, edit_with_offset, journal_date, journal_list,
     journal_name, journal_relative, normalize_journal_name, parse, query, rename_page_in_files,
     resolve_block_ref, save_atomic_checked, search, serialize, update_page_links_text,
     OutlinerError, UndoHistory,
@@ -124,13 +124,15 @@ pub fn handle_request(value: Value) -> Value {
                         .map(|n| usize::try_from(n).unwrap_or(usize::MAX))
                 })
             });
-            edit_with_offset(
-                &mut document,
-                action,
-                block_id,
-                args["text"].as_str(),
-                offset,
-            )?;
+            if let Some(ids) = args.get("block_ids").and_then(Value::as_array) {
+                let ids: Vec<u64> = ids.iter().filter_map(Value::as_u64).collect();
+                if ids.len() != args["block_ids"].as_array().map_or(0, Vec::len) {
+                    return Err(OutlinerError::Invalid("block_ids는 정수 배열이어야 합니다".into()));
+                }
+                edit_many(&mut document, action, &ids, args["text"].as_str())?;
+            } else {
+                edit_with_offset(&mut document, action, block_id, args["text"].as_str(), offset)?;
+            }
             let mut result = json!({"markdown": serialize(&document), "document": document});
             // 선택 사항: args.history 가 있으면 이 편집 직전 문서를 되돌리기 단계로 기록해 돌려준다(없으면 구버전과 같다).
             if args.get("history").is_some_and(|value| !value.is_null()) {

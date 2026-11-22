@@ -35,6 +35,26 @@ const EM_SETMARGINS: u32 = 0x00D3;
 const EM_POSFROMCHAR: u32 = 0x00D6;
 const EM_SCROLLCARET: u32 = 0x00B7;
 const EM_CHARFROMPOS: u32 = 0x00D7;
+const CF_UNICODETEXT: u32 = 13;
+const GMEM_MOVEABLE: u32 = 2;
+
+#[link(name = "user32")]
+unsafe extern "system" {
+    fn OpenClipboard(hwnd: HWND) -> BOOL;
+    fn EmptyClipboard() -> BOOL;
+    fn SetClipboardData(format: u32, memory: HANDLE) -> HANDLE;
+    fn GetClipboardData(format: u32) -> HANDLE;
+    fn CloseClipboard() -> BOOL;
+}
+
+#[link(name = "kernel32")]
+unsafe extern "system" {
+    fn GlobalAlloc(flags: u32, bytes: usize) -> HGLOBAL;
+    fn GlobalLock(memory: HGLOBAL) -> *mut core::ffi::c_void;
+    fn GlobalUnlock(memory: HGLOBAL) -> BOOL;
+    fn GlobalFree(memory: HGLOBAL) -> HGLOBAL;
+    fn GlobalSize(memory: HGLOBAL) -> usize;
+}
 
 /// EDIT 하나뿐이라 IME 상태는 전역(서브클래스 프로시저가 `State` 를 잡지 않고도 갱신해야 해서).
 static COMPOSING: AtomicBool = AtomicBool::new(false);
@@ -495,13 +515,17 @@ unsafe fn search_key(parent: HWND, vk: u16) -> bool {
 
 /// 목록(편집 아님) 상태의 키.
 unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
+    unsafe { key_down_modifiers(hwnd, vk, ctrl_down(), alt_down(), shift_down()) }
+}
+
+unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool) -> bool {
     unsafe {
         let Some(s) = state(hwnd) else { return false };
         if s.shell.editor.editing() {
             return false;
         }
         let page = page_rows(hwnd, s);
-        let (ctrl, alt) = (ctrl_down(), alt_down());
+        let (ctrl, alt) = (ctrl, alt);
         if s.shell.panels() {
             if ctrl && vk == b'F' as u16 {
                 focus_search(hwnd);
@@ -533,8 +557,33 @@ unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
             VK_END => Some(Nav::End),
             _ => None,
         };
-        if alt && (vk == VK_UP || vk == VK_DOWN) {
-            s.shell.editor.nav_command(if vk == VK_UP { Cmd::MoveUp } else { Cmd::MoveDown });
+        if vk == VK_ESCAPE && s.shell.editor.view.selection_anchor.is_some() {
+            s.shell.editor.view.clear_selection();
+        } else if alt && (vk == VK_UP || vk == VK_DOWN) {
+            if shift {
+                s.shell.editor.selection_command(if vk == VK_UP { "up" } else { "down" });
+            } else {
+                s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
+            }
+        } else if shift && (vk == VK_UP || vk == VK_DOWN) {
+            s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
+        } else if (vk == VK_LEFT || vk == VK_RIGHT) && s.shell.editor.view.selection_anchor.is_some() {
+            s.shell.editor.selection_command(if vk == VK_LEFT { "fold" } else { "unfold" });
+        } else if ctrl && !alt && s.shell.editor.view.selection_anchor.is_some() && matches!(vk, 0x43 | 0x58 | 0x56) {
+            if vk == 0x56 {
+                if let Some(text) = clipboard_read(hwnd) { s.shell.editor.selection_paste(&text); }
+            } else {
+                let ids = s.shell.editor.view.selected_block_ids();
+                let markdown = s.shell.editor.view.doc.blocks.iter().filter(|b| ids.contains(&b.id))
+                    .map(|b| {
+                        let status = b.status.as_deref().map(|value| format!("{value} ")).unwrap_or_default();
+                        format!("{}- {status}{}", " ".repeat(b.indent), b.text)
+                    }).collect::<Vec<_>>().join("\r\n");
+                clipboard_write(hwnd, &markdown);
+                if vk == 0x58 { s.shell.editor.selection_command("delete"); }
+            }
+        } else if (vk == 0x2E || vk == VK_TAB) && s.shell.editor.view.selection_anchor.is_some() {
+            s.shell.editor.selection_command(if vk == 0x2E { "delete" } else if shift { "outdent" } else { "indent" });
         } else if ctrl && vk == VK_RETURN {
             s.shell.editor.nav_command(Cmd::Toggle);
         } else if let Some(nav) = nav {
@@ -544,16 +593,54 @@ unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
         } else if vk == VK_RETURN || vk == VK_F2 {
             s.shell.editor.start_edit_selected();
         } else if vk == VK_TAB {
-            s.shell.editor.nav_command(if shift_down() { Cmd::Outdent } else { Cmd::Indent });
+            s.shell.editor.nav_command(if shift { Cmd::Outdent } else { Cmd::Indent });
         } else if vk == b'S' as u16 && ctrl {
             s.shell.editor.save();
         } else if ctrl && !alt && (vk == VK_Z || vk == VK_Y) {
-            s.shell.editor.history_step(!(vk == VK_Y || shift_down()));
+            s.shell.editor.history_step(!(vk == VK_Y || shift));
         } else {
             return false;
         }
         ui_sync(hwnd, true);
         true
+    }
+}
+
+unsafe fn clipboard_write(hwnd: HWND, text: &str) {
+    unsafe {
+        if OpenClipboard(hwnd) == 0 { return; }
+        EmptyClipboard();
+        let utf16: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+        let memory = GlobalAlloc(GMEM_MOVEABLE, utf16.len() * 2);
+        if !memory.is_null() {
+            let target = GlobalLock(memory) as *mut u16;
+            if !target.is_null() {
+                std::ptr::copy_nonoverlapping(utf16.as_ptr(), target, utf16.len());
+                GlobalUnlock(memory);
+                if SetClipboardData(CF_UNICODETEXT, memory).is_null() { GlobalFree(memory); }
+            } else { GlobalFree(memory); }
+        }
+        CloseClipboard();
+    }
+}
+
+unsafe fn clipboard_read(hwnd: HWND) -> Option<String> {
+    unsafe {
+        if OpenClipboard(hwnd) == 0 { return None; }
+        let handle = GetClipboardData(CF_UNICODETEXT);
+        let value = if handle.is_null() { None } else {
+            let size = GlobalSize(handle) / 2;
+            let ptr = GlobalLock(handle) as *const u16;
+            if ptr.is_null() { None } else {
+                let slice = std::slice::from_raw_parts(ptr, size);
+                let len = slice.iter().position(|c| *c == 0).unwrap_or(size);
+                let text = String::from_utf16_lossy(&slice[..len]);
+                GlobalUnlock(handle);
+                Some(text)
+            }
+        };
+        CloseClipboard();
+        value
     }
 }
 
@@ -1253,6 +1340,11 @@ impl Harness {
     /// 부모 창(목록)이 받은 키.
     pub fn list_key(&mut self, vk: u16) -> bool {
         unsafe { key_down(self.hwnd, vk) }
+    }
+
+    /// 가짜 키보드 수정자를 지정해 목록 단축키를 시험한다.
+    pub fn list_key_modifiers(&mut self, vk: u16, ctrl: bool, alt: bool, shift: bool) -> bool {
+        unsafe { key_down_modifiers(self.hwnd, vk, ctrl, alt, shift) }
     }
 
     /// 편집 명령 뒤 화면 배치(EDIT 위치)를 맞춘다.

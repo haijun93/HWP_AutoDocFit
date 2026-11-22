@@ -20,7 +20,7 @@
 | `save` | `path`: destination | `markdown` (otherwise top-level `document`); optional `expected_digest`: SHA-256 hex from the content read earlier | `path`, `saved: true`; a mismatch or missing destination with an expected digest returns `CONFLICT` without saving |
 | `parse` | — | top-level `document` | Parsed document model |
 | `serialize` | — | top-level `document` | `markdown`: serialized document |
-| `edit` | `action`, `block_id` | `text` for text-taking actions; `offset` for cursor split | Updated `markdown` and parsed `document` |
+| `edit` | `action`, `block_id` for one block or `block_ids` for a selection | `text` for text-taking actions; `offset` for cursor split | Updated `markdown` and parsed `document` |
 | `search` | `query` | top-level `document` | `block_ids` |
 | `backlinks` | `target` | top-level `document` | `block_ids` |
 | `resolve_block_ref`, `block_ref` | One of `uuid`, `id`, `block_id`, `target` | `path` to load a file, or top-level `document` | Resolution object including `found`, block data, and backlinks |
@@ -42,6 +42,11 @@ Unknown operations return `INVALID_OPERATION`; malformed input objects return `I
 | `set_status` | `text`: `TODO`, `DONE`, or empty string | Sets or clears status |
 | `toggle_status` | — | Cycles `None → TODO → DONE → TODO` |
 | `set_text` | `text` | Replaces selected block text |
+| `paste` | `text` (Markdown/plain text lines) | Multi-target only; inserts the lines after the last selected block |
+
+### Multi-block edits (OUTLINERSEL1, 2026-11-23)
+
+Existing single-block requests are unchanged. To apply the same operation to multiple IDs, add `args.block_ids` to the existing `op: "edit"` request; `block_id` remains accepted for older callers. IDs are deduplicated and applied in document order. The edit is atomic: if any target cannot perform the operation, the request fails without changing the document. `args.history` records the entire multi-block command as one undo step. Supported operations are the existing single-block edit actions plus `paste` (text is split into lines and inserted after the last target).
 
 Split behavior is intentionally explicit: the original block ID remains on the front block and the new block receives a fresh ID. Indent, folded state, and TODO status are copied to the new block. Tags, properties, page links, and block references are recalculated from each resulting text fragment.
 

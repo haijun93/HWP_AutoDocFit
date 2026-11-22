@@ -73,6 +73,22 @@ fn layout_shows_panels_only_when_wide_enough_and_one_file_mode_has_none() {
 }
 
 #[test]
+fn list_keyboard_extends_selection_applies_batch_and_undoes_once() {
+    let _g = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let (mut h, _) = harness("multi-select", Kind::Light, 96);
+    h.shell().open_page("회의록").unwrap();
+    h.editor().view.set_selected(1, 20);
+    let before = h.editor().markdown();
+    assert!(h.list_key_modifiers(outliner_win::edit::VK_DOWN, false, true, false));
+    assert_eq!(h.editor().view.selected_block_ids().len(), 2);
+    assert!(h.list_key_modifiers(0x09, false, false, false));
+    assert_ne!(h.editor().markdown(), before);
+    assert!(h.editor().can_undo());
+    assert!(h.editor().history_step(true));
+    assert_eq!(h.editor().markdown(), before);
+}
+
+#[test]
 fn left_items_list_recent_first_then_all_and_right_items_group_by_page() {
     let pages: Vec<String> = ["가", "나", "다"].iter().map(|s| s.to_string()).collect();
     let recent = vec!["나".to_string(), "없음".to_string(), "다".to_string()];

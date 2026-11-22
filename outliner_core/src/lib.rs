@@ -100,7 +100,7 @@ mod store;
 pub use api::handle_request;
 pub use history::{UndoHistory, MAX_UNDO_BYTES, MAX_UNDO_DEPTH};
 pub use index::{backlinks, build_index, resolve_block_ref, BlockRefResolution, Index};
-pub use ops::{edit, edit_with_offset};
+pub use ops::{edit, edit_many, edit_with_offset};
 pub use parse_serialize::{parse, serialize};
 pub use rename::{
     collect_markdown_files, rename_page_in_files, update_line_links, update_page_links_text,

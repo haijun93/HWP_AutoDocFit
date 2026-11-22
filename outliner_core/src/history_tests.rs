@@ -157,14 +157,26 @@ fn api_history_push_undo_redo_and_clear() {
         "args":{"action":"undo","history":state,"page":"P","version":"v1"}}));
     assert_eq!(undone["result"]["markdown"], before);
     assert_eq!(undone["result"]["changed"], true);
-    assert_eq!(undone["result"]["document"]["blocks"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        undone["result"]["document"]["blocks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
     assert_eq!(undone["result"]["can_redo"], true);
     let state = undone["result"]["history"].clone();
 
     let redone = call(json!({"op":"history","document":before,
         "args":{"action":"redo","history":state,"page":"P","version":"v1"}}));
     assert_eq!(redone["result"]["markdown"], after);
-    assert_eq!(redone["result"]["document"]["blocks"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        redone["result"]["document"]["blocks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 
     // 되돌릴 것이 없으면 오류가 아니라 changed=false.
     let empty = call(json!({"op":"history","document":after,"args":{"action":"undo"}}));
@@ -189,7 +201,9 @@ fn api_history_push_undo_redo_and_clear() {
 #[test]
 fn edit_request_without_history_is_unchanged_and_with_history_records() {
     let doc = "- 가\n";
-    let plain = call(json!({"op":"edit","document":doc,"args":{"action":"set_text","block_id":1,"text":"나"}}));
+    let plain = call(
+        json!({"op":"edit","document":doc,"args":{"action":"set_text","block_id":1,"text":"나"}}),
+    );
     assert_eq!(plain["ok"], true);
     assert!(plain["result"].get("history").is_none());
     assert_eq!(plain["result"]["markdown"], "- 나\n");
@@ -204,4 +218,34 @@ fn edit_request_without_history_is_unchanged_and_with_history_records() {
     let again = call(json!({"op":"history","document":"- 나\n",
         "args":{"action":"undo","history":tracked["result"]["history"]}}));
     assert_eq!(again["result"]["markdown"], "- 가\n");
+}
+
+#[test]
+fn multi_block_edit_is_atomic_and_one_history_step() {
+    let before = "- a\n- b\n- c\n";
+    let moved = call(json!({"op":"edit","document":before,
+        "args":{"action":"down","block_ids":[1,2],"history":{"undo":[],"redo":[]}}}));
+    assert_eq!(moved["ok"], true, "{moved}");
+    assert_eq!(moved["result"]["markdown"], "- c\n- a\n- b\n");
+    assert_eq!(moved["result"]["history"]["undo"], json!([before]));
+    let undone = call(
+        json!({"op":"history","document":moved["result"]["markdown"],
+        "args":{"action":"undo","history":moved["result"]["history"]}}),
+    );
+    assert_eq!(undone["result"]["markdown"], before);
+
+    let indented = call(json!({"op":"edit","document":before,
+        "args":{"action":"indent","block_ids":[2,3]}}));
+    assert_eq!(indented["result"]["markdown"], "- a\n - b\n - c\n");
+    let deleted = call(json!({"op":"edit","document":before,
+        "args":{"action":"delete","block_ids":[1,3]}}));
+    assert_eq!(deleted["result"]["markdown"], "- b\n");
+    let pasted = call(json!({"op":"edit","document":before,
+        "args":{"action":"paste","block_ids":[1],"text":"- pasted\n  - child\n"}}));
+    assert_eq!(pasted["ok"], true, "{pasted}");
+    assert_eq!(pasted["result"]["document"]["blocks"][1]["text"], "pasted");
+    assert_eq!(pasted["result"]["document"]["blocks"][2]["indent"], 2);
+    let atomic = call(json!({"op":"edit","document":before,
+        "args":{"action":"indent","block_ids":[1,2]}}));
+    assert_eq!(atomic["ok"], false);
 }

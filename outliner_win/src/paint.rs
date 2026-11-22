@@ -208,7 +208,7 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
         match &extras.message {
             Some(msg) => text(dc, msg, head, pal.accent, DT_RIGHT),
             None => {
-                let counts = format!("블록 {}개 · 보이는 줄 {}", view.block_count(), view.rows.len());
+                let counts = format!("블록 {}개 · Alt+↑ 선택 · Alt+Shift 이동", view.block_count());
                 text(dc, &counts, head, pal.text_sub, DT_RIGHT);
             }
         }
@@ -225,7 +225,9 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             let row = &view.rows[index];
             let top = m.header_h + slot as i32 * m.row_h;
             let band = RECT { left: 0, top, right: w, bottom: top + m.row_h };
-            let selected = index == view.selected;
+            let in_range = view.selection_anchor.zip(view.selection_end)
+                .is_some_and(|(a, b)| index >= a.min(b) && index <= a.max(b));
+            let selected = index == view.selected || in_range;
             if selected {
                 fill(dc, band, pal.selected);
             }

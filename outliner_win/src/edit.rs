@@ -886,6 +886,41 @@ impl<H: EditHost> Editor<H> {
         self.submit(cmd, 0, false, false);
     }
 
+    /// 선택된 블록에 한 명령을 적용하고 전체를 하나의 UndoHistory 단계로 기록한다.
+    pub fn selection_command(&mut self, action: &str) {
+        if self.editing() { return; }
+        let ids = self.view.selected_block_ids();
+        if ids.is_empty() { return; }
+        if ids.len() == 1 && matches!(action, "up" | "down") {
+            self.execute(if action == "up" { Cmd::MoveUp } else { Cmd::MoveDown });
+            return;
+        }
+        self.recorded(|ed| match outliner_core::edit_many(&mut ed.view.doc, action, &ids, None) {
+            Ok(()) => {
+                let keep = ids.first().and_then(|id| ed.view.doc.blocks.iter().position(|b| b.id == *id)).unwrap_or(0);
+                ed.view.rows = build_rows(&ed.view.doc);
+                ed.view.selected = ed.view.row_of_block(keep).unwrap_or(0);
+                ed.view.clear_selection();
+            }
+            Err(e) => ed.fail(e.to_string()),
+        });
+    }
+
+    pub fn selection_paste(&mut self, markdown: &str) {
+        if self.editing() { return; }
+        let ids = self.view.selected_block_ids();
+        if ids.is_empty() { return; }
+        self.recorded(|ed| match outliner_core::edit_many(&mut ed.view.doc, "paste", &ids, Some(markdown)) {
+            Ok(()) => {
+                let keep = ids.last().and_then(|id| ed.view.doc.blocks.iter().position(|b| b.id == *id)).unwrap_or(0);
+                ed.view.rows = build_rows(&ed.view.doc);
+                ed.view.selected = ed.view.row_of_block(keep).unwrap_or(0);
+                ed.view.clear_selection();
+            }
+            Err(e) => ed.fail(e.to_string()),
+        });
+    }
+
     // ---------- 실행 취소 / 다시 실행 ----------
 
     pub fn can_undo(&self) -> bool {

@@ -156,6 +156,8 @@ pub struct View {
     pub selected: usize,
     /// 맨 위에 보이는 줄.
     pub first: usize,
+    pub selection_anchor: Option<usize>,
+    pub selection_end: Option<usize>,
 }
 
 impl View {
@@ -163,7 +165,7 @@ impl View {
         let mut doc = outliner_core::parse(text).map_err(|e| e.to_string())?;
         apply_collapsed_property(&mut doc);
         let rows = build_rows(&doc);
-        Ok(View { doc, rows, selected: 0, first: 0 })
+        Ok(View { doc, rows, selected: 0, first: 0, selection_anchor: None, selection_end: None })
     }
 
     pub fn block_count(&self) -> usize {
@@ -172,11 +174,36 @@ impl View {
 
     pub fn select(&mut self, nav: Nav, page: usize) {
         self.selected = move_selection(self.selected, self.rows.len(), nav, page);
+        self.clear_selection();
         self.first = ensure_visible(self.first, self.selected, self.rows.len(), page);
+    }
+
+    pub fn extend_selection(&mut self, nav: Nav, page: usize) {
+        if self.rows.is_empty() { return; }
+        let anchor = *self.selection_anchor.get_or_insert(self.selected);
+        self.selected = move_selection(self.selected, self.rows.len(), nav, page);
+        self.selection_anchor = Some(anchor);
+        self.selection_end = Some(self.selected);
+        self.first = ensure_visible(self.first, self.selected, self.rows.len(), page);
+    }
+
+    pub fn clear_selection(&mut self) {
+        self.selection_anchor = None;
+        self.selection_end = None;
+    }
+
+    pub fn selected_block_ids(&self) -> Vec<u64> {
+        let Some(anchor) = self.selection_anchor else {
+            return self.rows.get(self.selected).map(|r| vec![self.doc.blocks[r.block].id]).unwrap_or_default();
+        };
+        let end = self.selection_end.unwrap_or(anchor);
+        let (lo, hi) = (anchor.min(end), anchor.max(end));
+        self.rows[lo..=hi].iter().map(|r| self.doc.blocks[r.block].id).collect()
     }
 
     pub fn set_selected(&mut self, index: usize, page: usize) {
         self.selected = index.min(self.rows.len().saturating_sub(1));
+        self.clear_selection();
         self.first = ensure_visible(self.first, self.selected, self.rows.len(), page);
     }
 

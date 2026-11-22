@@ -25,6 +25,43 @@ class DamagedRecentPagesStore implements RecentPagesStore {
 }
 
 void main() {
+  testWidgets('Alt arrows select blocks and Alt Shift moves selection in one edit', (tester) async {
+    final requests = <Map>[];
+    const blocks = [
+      {'id': 1, 'text': 'one', 'indent': 0, 'folded': false},
+      {'id': 2, 'text': 'two', 'indent': 0, 'folded': false},
+      {'id': 3, 'text': 'three', 'indent': 0, 'folded': false},
+    ];
+    Future<Object?> api(String method, [List<Object?> args = const []]) async {
+      final p = Map<String, Object?>.from(args.first as Map);
+      requests.add(p);
+      if (p['action'] == 'list') return {'ok': true, 'data': {'pages': []}};
+      if (p['action'] == 'daily') return {'ok': true, 'data': {'page': 'Today', 'markdown': '- one\n- two\n- three\n', 'version': 'v1', 'document': {'blocks': blocks}}};
+      if (p['action'] == 'backlinks') return {'ok': true, 'data': {'block_ids': []}};
+      if (p['action'] == 'edit') return {'ok': true, 'data': {'markdown': '- three\n- one\n- two\n', 'document': {'blocks': [blocks[2], blocks[0], blocks[1]]}}};
+      if (p['action'] == 'save') return {'ok': true, 'data': {'version': 'v2'}};
+      return {'ok': true, 'data': {}};
+    }
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: OutlinerWorkspace(api: api, recentPagesStore: MemoryRecentPagesStore()))));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('outliner-block-1')));
+    await tester.pump();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pumpAndSettle();
+    expect(find.text('2개 선택'), findsOneWidget);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pumpAndSettle();
+    final edit = requests.lastWhere((p) => p['action'] == 'edit');
+    expect(edit['operation'], 'down');
+    expect(edit['block_ids'], [1, 2]);
+  });
+
   test('file recent page store reads and writes only its supplied directory', () async {
     final directory = await Directory.systemTemp.createTemp('outliner-store-');
     addTearDown(() => directory.delete(recursive: true));
@@ -249,11 +286,19 @@ void main() {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('up:2'));
+    expect(find.text('2개 선택'), findsOneWidget);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
-    expect(operations, contains('down:2'));
+    expect(operations, contains('up:null'));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
+    expect(operations, contains('down:null'));
     await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft); await tester.pump(const Duration(milliseconds: 100));

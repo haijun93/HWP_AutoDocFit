@@ -59,6 +59,10 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   final Map<Object, TextEditingController> _editors = {};
   final Map<Object, FocusNode> _focusNodes = {};
   String _linkQuery = '';
+  final Set<Object?> _selectedIds = <Object?>{};
+  Object? _selectionAnchor;
+  Object? _selectionCurrent;
+  String _selectionClipboard = '';
 
   /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 페이지를 바꾸거나 저장이 거절되면 비운다.
   final OutlinerHistory _history = OutlinerHistory();
@@ -183,6 +187,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
 
   void _applyDocument(Map doc) {
     _history.clear();
+    _selectedIds.clear();
+    _selectionAnchor = null;
+    _selectionCurrent = null;
     _page = doc['page'] as String?;
     _markdown = doc['markdown'] as String? ?? '';
     _version = doc['version'] as String?;
@@ -316,6 +323,59 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
     });
+  }
+
+  Future<void> _editSelection(String operation, [String? text]) async {
+    if (_page == null || _busy || _selectedIds.isEmpty) return;
+    final ids = _blocks.map((b) => b['id']).where(_selectedIds.contains).toList();
+    await _run(() async {
+      final before = _markdown;
+      final result = await _call({
+        'action': 'edit', 'operation': operation, 'page': _page,
+        'markdown': _markdown, 'block_ids': ids, 'text': ?text,
+      });
+      _markdown = result['markdown'] as String? ?? _markdown;
+      _blocks = (result['document']?['blocks'] as List? ?? []).whereType<Map>().toList();
+      await _saveRecording(before);
+      _selectedIds.removeWhere((id) => !_blocks.any((b) => b['id'] == id));
+    });
+  }
+
+  void _extendSelection(Object? id) {
+    final visible = _visibleBlocks;
+    final index = visible.indexWhere((b) => b['id'] == id);
+    if (index < 0) return;
+    final anchor = _selectionAnchor ?? id;
+    final anchorIndex = visible.indexWhere((b) => b['id'] == anchor);
+    final base = anchorIndex < 0 ? index : anchorIndex;
+    final lo = base < index ? base : index;
+    final hi = base > index ? base : index;
+    setState(() {
+      _selectedIds
+        ..clear()
+        ..addAll(visible.sublist(lo, hi + 1).map((b) => b['id']));
+      _selectionAnchor ??= id;
+      _selectionCurrent = id;
+    });
+  }
+
+  Future<void> _copySelection({required bool cut}) async {
+    final chosen = _blocks.where((b) => _selectedIds.contains(b['id'])).toList();
+    if (chosen.isEmpty) return;
+    final value = chosen.map((b) {
+      final status = b['status'] == null ? '' : '${b['status']} ';
+      return '${' ' * (b['indent'] as int? ?? 0)}- $status${b['text'] ?? ''}';
+    }).join('\n');
+    _selectionClipboard = value;
+    await Clipboard.setData(ClipboardData(text: value));
+    if (cut) await _editSelection('delete');
+  }
+
+  Future<void> _pasteSelection() async {
+    if (_selectedIds.isEmpty) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final value = data?.text ?? _selectionClipboard;
+    if (value.isNotEmpty) await _editSelection('paste', value);
   }
 
   /// 줄 추가 뒤 입력 위치를 새 블록으로 옮긴다. 새로 생긴 블록(없으면 바로 다음 블록)을 찾는다.
@@ -630,6 +690,10 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                             ),
                       ),
                     ),
+                    const Tooltip(
+                      message: '블록 선택 Alt+↑/↓ · 범위 Shift+↑/↓ · 해제 Esc · 이동 Alt+Shift+↑/↓ · 복사/잘라내기/붙여넣기 Ctrl+C/X/V',
+                      child: Icon(Icons.keyboard_outlined, size: 18),
+                    ),
                     // 단추가 포커스를 가져가면 입력 중이던 칸이 확정 전 글을 잃으므로 포커스를 받지 않게 한다.
                     ExcludeFocus(
                       child: IconButton(
@@ -678,6 +742,20 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                   ],
                 ),
               ),
+              if (_selectedIds.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Wrap(
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text('${_selectedIds.length}개 선택'),
+                      IconButton(tooltip: '선택 블록 삭제 (Delete)', onPressed: _busy ? null : () => _editSelection('delete'), icon: const Icon(Icons.delete_outline)),
+                      IconButton(tooltip: '선택 블록 들여쓰기 (Tab)', onPressed: _busy ? null : () => _editSelection('indent'), icon: const Icon(Icons.format_indent_increase)),
+                      IconButton(tooltip: '선택 블록 내어쓰기 (Shift+Tab)', onPressed: _busy ? null : () => _editSelection('outdent'), icon: const Icon(Icons.format_indent_decrease)),
+                      IconButton(tooltip: '선택 블록 접기', onPressed: _busy ? null : () => _editSelection('fold'), icon: const Icon(Icons.unfold_less)),
+                    ],
+                  ),
+                ),
               if (_message.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 24),
@@ -698,7 +776,14 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                           left: ((block['indent'] as int? ?? 0) * 24)
                               .toDouble(),
                         ),
-                        child: Row(
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: _selectedIds.contains(block['id'])
+                                ? Theme.of(context).colorScheme.primaryContainer
+                                : null,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
                           children: [
                             IconButton(
                               tooltip: '접기/펼치기',
@@ -746,6 +831,53 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       final value = controller.text;
                                       final selection = controller.selection;
                                       final mods = HardwareKeyboard.instance;
+                                      final composingNow = controller.value.composing;
+                                      final composing = composingNow.isValid && !composingNow.isCollapsed;
+                                      final selectionSafe = !composing && selection.isCollapsed && value == '${block['text'] ?? ''}';
+                                      if (selectionSafe && mods.isAltPressed && !mods.isControlPressed &&
+                                          (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowDown)) {
+                                        final visible = _visibleBlocks;
+                                        final at = visible.indexWhere((b) => b['id'] == (_selectionCurrent ?? id));
+                                        if (at >= 0) {
+                                          final next = (at + (key == LogicalKeyboardKey.arrowUp ? -1 : 1)).clamp(0, visible.length - 1);
+                                          if (mods.isShiftPressed) {
+                                            _selectionAnchor ??= id;
+                                            _editSelection(key == LogicalKeyboardKey.arrowUp ? 'up' : 'down');
+                                            _selectionCurrent = visible[next]['id'];
+                                          } else {
+                                            _selectionAnchor ??= id;
+                                            _extendSelection(visible[next]['id']);
+                                          }
+                                        }
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (selectionSafe && mods.isShiftPressed && !mods.isAltPressed && !mods.isControlPressed &&
+                                          (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowDown)) {
+                                        final visible = _visibleBlocks;
+                                        final at = visible.indexWhere((b) => b['id'] == (_selectionCurrent ?? id));
+                                        if (at >= 0) {
+                                          _selectionAnchor ??= id;
+                                          final next = (at + (key == LogicalKeyboardKey.arrowUp ? -1 : 1)).clamp(0, visible.length - 1);
+                                          _extendSelection(visible[next]['id']);
+                                        }
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (selectionSafe && key == LogicalKeyboardKey.escape && _selectedIds.isNotEmpty) {
+                                        setState(() { _selectedIds.clear(); _selectionAnchor = null; _selectionCurrent = null; });
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (selectionSafe && (mods.isControlPressed || mods.isMetaPressed) &&
+                                          (key == LogicalKeyboardKey.keyC || key == LogicalKeyboardKey.keyX || key == LogicalKeyboardKey.keyV) &&
+                                          _selectedIds.isNotEmpty) {
+                                        if (key == LogicalKeyboardKey.keyV) { _pasteSelection(); }
+                                        else { _copySelection(cut: key == LogicalKeyboardKey.keyX); }
+                                        return KeyEventResult.handled;
+                                      }
+                                      if (selectionSafe && _selectedIds.isNotEmpty &&
+                                          (key == LogicalKeyboardKey.delete || key == LogicalKeyboardKey.backspace)) {
+                                        _editSelection('delete');
+                                        return KeyEventResult.handled;
+                                      }
                                       // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z: 확정하지 않은 글이 있거나 한글 조합 중이면
                                       // 칸 자체의 글자 되돌리기에 맡기고(ignored), 없으면 문서 단위 이력을 쓴다.
                                       if ((mods.isControlPressed || mods.isMetaPressed) &&
@@ -767,13 +899,15 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                         return KeyEventResult.handled;
                                       }
                                       if (key == LogicalKeyboardKey.tab) {
-                                        _setTextAndEdit(
-                                          block,
-                                          mods.isShiftPressed
-                                              ? 'outdent'
-                                              : 'indent',
-                                          value,
-                                        );
+                                        if (_selectedIds.isNotEmpty && selectionSafe) {
+                                          _editSelection(mods.isShiftPressed ? 'outdent' : 'indent');
+                                        } else {
+                                          _setTextAndEdit(
+                                            block,
+                                            mods.isShiftPressed ? 'outdent' : 'indent',
+                                            value,
+                                          );
+                                        }
                                         return KeyEventResult.handled;
                                       }
                                       if (key == LogicalKeyboardKey.enter &&
@@ -790,20 +924,6 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                           block['folded'] == true
                                               ? 'unfold'
                                               : 'fold',
-                                        );
-                                        return KeyEventResult.handled;
-                                      }
-                                      if (mods.isAltPressed &&
-                                          (key == LogicalKeyboardKey.arrowUp ||
-                                              key ==
-                                                  LogicalKeyboardKey
-                                                      .arrowDown)) {
-                                        _setTextAndEdit(
-                                          block,
-                                          key == LogicalKeyboardKey.arrowUp
-                                              ? 'up'
-                                              : 'down',
-                                          value,
                                         );
                                         return KeyEventResult.handled;
                                       }
@@ -920,6 +1040,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               ),
                             ),
                           ],
+                          ),
                         ),
                       ),
                     if (_linkQuery.isNotEmpty) ...[

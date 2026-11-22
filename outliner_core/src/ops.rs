@@ -213,5 +213,75 @@ pub fn edit_with_offset(
     Ok(())
 }
 
+/// Applies one operation to an ordered selection as a single atomic edit.
+/// IDs are interpreted in document order; on failure the input document is unchanged.
+pub fn edit_many(
+    document: &mut Document,
+    operation: &str,
+    ids: &[u64],
+    text: Option<&str>,
+) -> Result<(), OutlinerError> {
+    let mut indices: Vec<usize> = ids.iter().map(|id| find_block(document, *id)).collect::<Result<_, _>>()?;
+    indices.sort_unstable();
+    indices.dedup();
+    if indices.is_empty() {
+        return Err(OutlinerError::Invalid("선택한 블록이 없습니다".into()));
+    }
+    let mut candidate = document.clone();
+    let mut selected: Vec<u64> = indices.iter().map(|i| candidate.blocks[*i].id).collect();
+    match operation {
+        "paste" => {
+            let value = text.ok_or_else(|| OutlinerError::Invalid("text가 필요합니다".into()))?;
+            let after = *indices.last().unwrap();
+            let anchor_id = candidate.blocks[after].id;
+            let anchor_indent = candidate.blocks[after].indent;
+            let pasted = crate::parse(value)?;
+            let base_indent = pasted.blocks.iter().map(|b| b.indent).min().unwrap_or(0);
+            let mut insert_after = anchor_id;
+            for block in pasted.blocks {
+                edit(&mut candidate, "insert", insert_after, Some(&block.text))?;
+                let inserted = find_block(&candidate, insert_after)? + 1;
+                candidate.blocks[inserted].indent = anchor_indent + block.indent.saturating_sub(base_indent);
+                candidate.blocks[inserted].status = block.status;
+                candidate.blocks[inserted].folded = block.folded;
+                insert_after = candidate.blocks[inserted].id;
+            }
+        }
+        "up" | "down" => {
+            if operation == "up" {
+                for id in &selected {
+                    let i = find_block(&candidate, *id)?;
+                    if i > 0 && !selected.contains(&candidate.blocks[i - 1].id) {
+                        edit(&mut candidate, "up", *id, None)?;
+                    }
+                }
+            } else {
+                selected.reverse();
+                for id in &selected {
+                    let i = find_block(&candidate, *id)?;
+                    if i + 1 < candidate.blocks.len()
+                        && !selected.contains(&candidate.blocks[i + 1].id)
+                    {
+                        edit(&mut candidate, "down", *id, None)?;
+                    }
+                }
+            }
+        }
+        "delete" => {
+            selected.reverse();
+            for id in &selected {
+                edit(&mut candidate, operation, *id, text)?;
+            }
+        }
+        _ => {
+            for id in &selected {
+                edit(&mut candidate, operation, *id, text)?;
+            }
+        }
+    }
+    *document = candidate;
+    Ok(())
+}
+
 #[allow(dead_code)]
 fn _block_type_anchor(_: Block) {}
