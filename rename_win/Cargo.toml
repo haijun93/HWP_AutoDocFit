@@ -2,16 +2,18 @@
 name = "rename_win"
 version = "0.1.0"
 edition = "2024"
-description = "파일명 변경 Win32 뼈대: 읽기 전용 미리보기"
+description = "파일명 변경 Win32 창 2단계: 파일 선택·드롭·규칙 입력, 미리보기 전용(디스크 변경 없음)"
 publish = false
 
 [workspace]
 
 [dependencies]
 ui_theme = { path = "../ui_theme" }
+grid_core = { path = "../grid_core" }
 windows-sys = { version = "0.59", features = [
   "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_System_LibraryLoader",
-  "Win32_UI_HiDpi", "Win32_UI_WindowsAndMessaging"
+  "Win32_System_Memory", "Win32_UI_Controls_Dialogs", "Win32_UI_HiDpi",
+  "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"
 ] }
 
 [[bin]]
