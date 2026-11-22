@@ -12,6 +12,7 @@ import subprocess
 import sys
 
 from .api_contract import ServiceError
+from .package_integrity import missing_window_message
 
 
 UI_MODES = ('flutter', 'native')
@@ -72,7 +73,7 @@ class DocViewWindowService:
     def open_native(self):
         exe = self.executable
         if not exe.is_file():
-            raise ServiceError('DOCVIEW_WINDOW_MISSING', '문서뷰 창 프로그램(docview_win.exe)을 찾을 수 없습니다.')
+            raise ServiceError('DOCVIEW_WINDOW_MISSING', missing_window_message('문서뷰 창 프로그램','docview_win.exe'))
         args = [str(exe)]
         if self._settings_path:
             args += ['--settings', str(self._settings_path)]

@@ -22,6 +22,7 @@ from types import SimpleNamespace
 from docfit_core.progress_guide import guide_state, progress_view
 from docfit_core.stage_selection import STAGE_EXAMPLES, default_choice, stages_for_mode
 from docfit_app.api_contract import response
+from docfit_app.package_integrity import check_frozen_package
 from docfit_app.app_state import STAGE_ORDER
 from docfit_core.file_conversion import IMAGE_INPUT_EXTENSIONS
 from docfit_core.file_conversion import CONVERSION_INPUTS as SUPPORTED_INPUT_EXTENSIONS, CONVERSION_OUTPUTS
@@ -152,6 +153,10 @@ class DesktopWebBridge:
             startup = threading.Timer(30, self._prepare_timemachine_service)
             startup.daemon = True
             startup.start()
+            # 설치가 중간에 끊겨 Win32 창 프로그램이 빠졌는지 시작 때 한 번 점검해 로그에 남긴다(PKGWIN1).
+            check = threading.Timer(5, check_frozen_package)
+            check.daemon = True
+            check.start()
 
     def _prepare_timemachine_service(self):
         if self._closed or self.user_closing:

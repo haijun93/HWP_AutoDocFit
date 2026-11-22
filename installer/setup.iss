@@ -161,6 +161,68 @@ begin
   Result := '';
 end;
 
+// 설치 완료 확인(PKGWIN1, 2026-11-22): 설치가 파일 교체 도중 끊기면(앱 실행 중 DeleteFile 코드 5 등) Inno는 조용히 되돌리고
+// 끝낸다. 시작·완료·미완료를 install.log 에 남기고, 완료 직후 필수 Win32 창 프로그램 유무를 확인해 빠졌으면 안내한다.
+// 기존 설치 동작(파일 목록·순서·[Run])은 바꾸지 않는다. 기록·안내 실패는 설치를 막지 않는다.
+var
+  InstallStarted: Boolean;
+  InstallFinished: Boolean;
+
+function MissingWindowExes: String;
+var
+  Names: array of String;
+  I: Integer;
+begin
+  Result := '';
+  SetArrayLength(Names, 7);
+  Names[0] := 'outliner_win.exe';
+  Names[1] := 'settings_win.exe';
+  Names[2] := 'docview_win.exe';
+  Names[3] := 'photoview_win.exe';
+  Names[4] := 'convert_win.exe';
+  Names[5] := 'rename_win.exe';
+  Names[6] := 'mdm-ctx.exe';
+  for I := 0 to 6 do
+    if not FileExists(ExpandConstant('{app}\_internal\resources\' + Names[I])) then
+      Result := Result + ' ' + Names[I];
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Missing: String;
+begin
+  if CurStep = ssInstall then
+  begin
+    InstallStarted := True;
+    InstallLog('파일 설치 시작');
+  end;
+  if CurStep = ssPostInstall then
+  begin
+    InstallFinished := True;
+    Missing := MissingWindowExes;
+    if Missing = '' then
+      InstallLog('파일 설치 끝(필수 창 프로그램 확인됨)')
+    else
+    begin
+      InstallLog('파일 설치 끝, 그러나 꾸러미에 없는 파일:' + Missing);
+      if not WizardSilent then
+        MsgBox('설치 파일 일부(' + Trim(Missing) + ')가 빠져 있습니다.' + #13#10 +
+               '한/글 후처리 앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);
+    end;
+  end;
+end;
+
+procedure DeinitializeSetup;
+begin
+  if InstallStarted and (not InstallFinished) then
+  begin
+    InstallLog('설치가 끝나지 않고 중단됨(변경은 되돌려짐)');
+    if not WizardSilent then
+      MsgBox('설치가 완료되지 않았습니다. 한/글 후처리 앱이 실행 중이면 파일을 바꿀 수 없습니다.' + #13#10 +
+             '앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);
+  end;
+end;
+
 // 설정에서 관리자 서비스(HwpAutoDocFit.Index)를 설치했다면 서비스가 {app} 안의 kfind.exe를 가리킨다.
 // 파일을 지우기 전에 관리자 권한으로 kfind --uninstall(서비스 중지·삭제·공개 색인 삭제)을 부른다.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

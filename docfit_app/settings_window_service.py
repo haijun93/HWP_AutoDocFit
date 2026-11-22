@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from .api_contract import ServiceError
+from .package_integrity import missing_window_message
 
 
 UI_MODES = ('flutter', 'native')
@@ -61,7 +62,7 @@ class SettingsWindowService:
     def open_native(self):
         exe = self.executable
         if not exe.is_file():
-            raise ServiceError('SETTINGS_WINDOW_MISSING', '설정 창 프로그램(settings_win.exe)을 찾을 수 없습니다.')
+            raise ServiceError('SETTINGS_WINDOW_MISSING', missing_window_message('설정 창 프로그램','settings_win.exe'))
         args = [str(exe)]
         if self._settings_path:
             args += ['--settings', str(self._settings_path)]

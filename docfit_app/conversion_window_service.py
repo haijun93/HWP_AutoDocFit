@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 from .api_contract import ServiceError
+from .package_integrity import missing_window_message
 
 UI_MODES = ('flutter', 'native')
 UI_SETTING = 'conversion_ui'
@@ -37,7 +38,7 @@ class ConversionWindowService:
         mode=self.settings.read().get(UI_SETTING,'flutter')
         return mode if mode in UI_MODES else 'flutter'
     def open_native(self):
-        if not self.executable.is_file(): raise ServiceError('CONVERSION_WINDOW_MISSING','몽땅파일변환 창(convert_win.exe)을 찾을 수 없습니다.')
+        if not self.executable.is_file(): raise ServiceError('CONVERSION_WINDOW_MISSING',missing_window_message('몽땅파일변환 창','convert_win.exe'))
         try: self.launcher([str(self.executable)], close_fds=True)
         except OSError: raise ServiceError('CONVERSION_WINDOW_FAILED','몽땅파일변환 창을 열지 못했습니다.') from None
         return {'opened':True}

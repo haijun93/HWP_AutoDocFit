@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 from .api_contract import ServiceError
+from .package_integrity import missing_window_message
 
 UI_MODES = ('flutter', 'native')
 UI_SETTING = 'rename_ui'
@@ -45,7 +46,7 @@ class RenameWindowService:
             if action == 'open_if_native' and mode != 'native':
                 return {'mode': 'flutter', 'opened': False}
             if not self.executable.is_file():
-                raise ServiceError('RENAME_WINDOW_MISSING', '파일명 변경 Win32 창(rename_win.exe)을 찾을 수 없습니다.')
+                raise ServiceError('RENAME_WINDOW_MISSING', missing_window_message('파일명 변경 Win32 창','rename_win.exe'))
             try:
                 self.launcher([str(self.executable)], close_fds=True)
             except OSError:

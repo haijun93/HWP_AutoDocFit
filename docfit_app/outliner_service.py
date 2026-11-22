@@ -11,6 +11,7 @@ import sys
 import threading
 
 from .api_contract import ServiceError
+from .package_integrity import missing_window_message
 
 
 UI_MODES = ('flutter', 'native')
@@ -66,7 +67,7 @@ class OutlinerService:
     def _open_native(self):
         exe = self.native_executable
         if not exe.is_file():
-            raise ServiceError('OUTLINER_WINDOW_MISSING', '아웃라이너 창 프로그램(outliner_win.exe)을 찾을 수 없습니다.')
+            raise ServiceError('OUTLINER_WINDOW_MISSING', missing_window_message('아웃라이너 창 프로그램','outliner_win.exe'))
         try:
             self.launcher([str(exe), '--data-dir', str(self.root)], close_fds=True)
         except OSError:
