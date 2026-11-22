@@ -43,9 +43,9 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; WorkingDir: "{app
 
 [Run]
 ; 몽땅검색(ktm.exe, Ctrl+Alt+Space): 기본 켬. 사용자가 설정에서 끈 경우(ktm.disabled)는 설치본만 바꾸고 켜지 않는다.
-Filename: "{app}\_internal\resources\ktm.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\_internal\resources\ktm.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist; BeforeInstall: LogRunStart('ktm.exe'); AfterInstall: LogRunEnd('ktm.exe')
 ; 퀵가상폴더(kvf.exe, Win+Shift+F): 기본 켬. 사용자가 설정에서 끈 경우(kvf.disabled)는 설치본만 바꾸고 켜지 않는다.
-Filename: "{app}\_internal\resources\kvf.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist
+Filename: "{app}\_internal\resources\kvf.exe"; Parameters: "--install --respect-disabled"; Flags: runhidden waituntilterminated skipifdoesntexist; BeforeInstall: LogRunStart('kvf.exe'); AfterInstall: LogRunEnd('kvf.exe')
 Filename: "{app}\{#AppExe}"; Description: "한글편집 후처리 실행"; Flags: nowait postinstall skipifsilent
 
 Filename: "{app}\{#AppExe}"; Flags: nowait; Check: WizardSilent
@@ -81,6 +81,38 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpg\shell\Mongttan
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpeg\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
 
 [Code]
+// 설치 기록(INSTALL1, 2026-11-22): 설치·정리 단계의 결과를 %LOCALAPPDATA%\HwpAutoDocFit\logs\install.log에 덧붙인다.
+// 기록 실패는 설치를 막지 않는다(예외를 삼킨다). Inno는 [Run] 종료 코드를 [Code]에 주지 않으므로
+// [Run]은 "시작 전 대상 파일 유무"와 "끝남"만 남기고, 종료 코드는 /LOG 로 만든 Inno 자체 로그(Running ... / Process exit code)로 확인한다.
+procedure InstallLog(const Msg: String);
+var
+  Dir: String;
+begin
+  try
+    Dir := ExpandConstant('{localappdata}\HwpAutoDocFit\logs');
+    ForceDirectories(Dir);
+    SaveStringToFile(Dir + '\install.log',
+      GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + ' v{#AppVersion} ' + Msg + #13#10, True);
+  except
+  end;
+end;
+
+procedure LogRunStart(const ExePath: String);
+var
+  P: String;
+begin
+  P := ExpandConstant('{app}\_internal\resources\' + ExePath);
+  if FileExists(P) then
+    InstallLog('[Run] 시작: ' + P)
+  else
+    InstallLog('[Run] 건너뜀(파일 없음): ' + P);
+end;
+
+procedure LogRunEnd(const Name: String);
+begin
+  InstallLog('[Run] 끝: ' + Name);
+end;
+
 // 설치(업데이트) 전에 이 계정에서 돌고 있는 앱 도우미를 끝낸다(v2.2.65 오류 보고, 2026-11-14).
 // 몽땅클립보드(kagent)·자료함(klib)·가상 폴더(kvf)·색인(kfind 사용자 모드)·위계(hierarchy)는 창이 없어
 // Restart Manager가 정상 종료를 요청하지 못하고, 붙잡은 {app} 안 파일(_internal\VCRUNTIME140.dll 등) 교체가 실패한다.
@@ -89,13 +121,21 @@ procedure StopHelper(const ExeName: String);
 var
   ResultCode: Integer;
 begin
-  Exec(ExpandConstant('{sys}\taskkill.exe'),
+  if Exec(ExpandConstant('{sys}\taskkill.exe'),
        '/F /IM ' + ExeName + ' /FI "USERNAME eq ' + GetUserNameString + '"',
-       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    // taskkill: 0=종료함, 128=해당 프로세스 없음(정상). 그 밖의 코드만 기록한다.
+    if (ResultCode <> 0) and (ResultCode <> 128) then
+      InstallLog('taskkill ' + ExeName + ' 종료 코드 ' + IntToStr(ResultCode));
+  end
+  else
+    InstallLog('taskkill ' + ExeName + ' 실행 실패: ' + SysErrorMessage(ResultCode));
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  InstallLog('설치 준비 시작');
   StopHelper('kagent.exe');
   StopHelper('klib.exe');
   StopHelper('kvf.exe');
@@ -134,6 +174,11 @@ begin
     if FileExists(KfindExe) and
        Exec(ExpandConstant('{sys}\sc.exe'), 'query HwpAutoDocFit.Index', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
        (ResultCode = 0) then
-      ShellExec('runas', KfindExe, '--uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    begin
+      if ShellExec('runas', KfindExe, '--uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        InstallLog('제거: kfind --uninstall 종료 코드 ' + IntToStr(ResultCode))
+      else
+        InstallLog('제거: kfind --uninstall 실행 실패(권한 거부 등): ' + SysErrorMessage(ResultCode));
+    end;
   end;
 end;
