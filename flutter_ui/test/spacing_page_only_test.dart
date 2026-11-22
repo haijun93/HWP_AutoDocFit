@@ -34,6 +34,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('작업 방식 선택'));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('advancedOptionsTitle-spacing')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('spacingExcludePagefitSwitch')));
       await tester.pumpAndSettle();
       expect(calls.last, ['set_card_option', 'spacing_exclude_pagefit', false]);

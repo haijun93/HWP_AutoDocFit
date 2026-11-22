@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -75,34 +77,26 @@ class StageBoard extends StatefulWidget {
 
   final List stages;
   final bool locked;
-  final void Function(String key, bool on) onToggle;
+  final FutureOr<void> Function(String key, bool on) onToggle;
 
   @override
   State<StageBoard> createState() => _StageBoardState();
 }
 
 class _StageBoardState extends State<StageBoard> {
-  String group = 'all';
+  // 묶음별 펼침 상태(화면이 떠 있는 동안 기억).
+  final Map<String, bool> open = {};
   String? focus;
 
   List<(int, Map)> get _numbered => [
     for (var i = 0; i < widget.stages.length; i++) (i, widget.stages[i] as Map),
   ];
 
-  List<(int, Map)> _visible() {
-    if (group == 'all') return _numbered;
-    return [
-      for (final item in _numbered)
-        if (stageGroupOf('${item.$2['key']}') == group) item,
-    ];
-  }
-
   Map? get _focused {
     for (final (_, stage) in _numbered) {
       if (stage['key'] == focus) return stage;
     }
-    final visible = _visible();
-    return visible.isEmpty ? null : visible.first.$2;
+    return _numbered.isEmpty ? null : _numbered.first.$2;
   }
 
   void _toggle(Map stage, bool on) {
@@ -113,150 +107,104 @@ class _StageBoardState extends State<StageBoard> {
   @override
   Widget build(BuildContext context) {
     final groups = [
-      for (final g in stageGroups)
-        if (g.id == 'all' ||
-            _numbered.any((s) => stageGroupOf('${s.$2['key']}') == g.id))
-          g,
+      for (final g in stageGroups.skip(1))
+        if (_numbered.any((s) => stageGroupOf('${s.$2['key']}') == g.id)) g,
     ];
-    if (!groups.any((g) => g.id == group)) group = 'all';
     return LayoutBuilder(
       builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final cards = Column(
+        final sections = Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [for (final (i, s) in _visible()) _card(i, s)],
+          children: [for (final g in groups) _section(g)],
         );
-        if (width >= 1040) {
+        final width = constraints.maxWidth;
+        if (width >= 720) {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: 210,
-                child: Column(
-                  children: [for (final g in groups) _groupTile(g, false)],
-                ),
-              ),
+              Expanded(child: sections),
               const SizedBox(width: 12),
-              Expanded(child: cards),
-              const SizedBox(width: 12),
-              SizedBox(width: 360, child: _previewPane()),
-            ],
-          );
-        }
-        final chips = SizedBox(
-          height: 58,
-          child: ListView(
-            scrollDirection: Axis.horizontal,
-            children: [for (final g in groups) _groupTile(g, true)],
-          ),
-        );
-        if (width >= 720) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              chips,
-              const SizedBox(height: 8),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(child: cards),
-                  const SizedBox(width: 12),
-                  SizedBox(width: 320, child: _previewPane()),
-                ],
-              ),
+              SizedBox(width: width >= 1040 ? 360 : 320, child: _previewPane()),
             ],
           );
         }
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            chips,
-            const SizedBox(height: 8),
-            _previewPane(),
-            const SizedBox(height: 12),
-            cards,
-          ],
+          children: [_previewPane(), const SizedBox(height: 12), sections],
         );
       },
     );
   }
 
-  Widget _groupTile(StageGroup item, bool compact) {
-    final selected = item.id == group;
-    final members = item.id == 'all'
-        ? _numbered
-        : [
-            for (final s in _numbered)
-              if (stageGroupOf('${s.$2['key']}') == item.id) s,
-          ];
+  /// 묶음 하나: 제목 줄(펼침·'N/M 사용'·묶음 전체 켜기/끄기)과 접히는 단계 카드 목록.
+  Widget _section(StageGroup item) {
+    final members = [
+      for (final s in _numbered)
+        if (stageGroupOf('${s.$2['key']}') == item.id) s,
+    ];
     final on = members.where((s) => s.$2['on'] == true).length;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8, right: 8),
+    final isOpen = open[item.id] ?? false;
+    final allOn = on == members.length;
+    final noneOn = on == 0;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: Kiosk.cardBox(context),
       child: Material(
-        color: selected ? context.kiosk.blueSoft : context.kiosk.card,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          key: ValueKey('stage-group-${item.id}'),
-          borderRadius: BorderRadius.circular(16),
-          onTap: () => setState(() {
-            group = item.id;
-            focus = null;
-          }),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: compact ? 8 : 12,
-            ),
-            child: Row(
-              mainAxisSize: compact ? MainAxisSize.min : MainAxisSize.max,
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: selected
-                        ? context.kiosk.blueFill
-                        : context.kiosk.canvas,
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(
-                    item.icon,
-                    size: 18,
-                    color: selected ? context.kiosk.onBlue : context.kiosk.sub,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        compact
-                            ? '${item.title} $on/${members.length}'
-                            : item.title,
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          color: selected
-                              ? context.kiosk.blue
-                              : context.kiosk.ink,
-                        ),
-                      ),
-                      if (!compact)
-                        Text(
-                          '${item.subtitle} · $on/${members.length}',
-                          style: Kiosk.caption(context),
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+        type: MaterialType.transparency,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+          key: PageStorageKey('stage-section-${item.id}'),
+          initiallyExpanded: isOpen,
+          onExpansionChanged: (v) => open[item.id] = v,
+          leading: Icon(item.icon, color: context.kiosk.sub),
+          title: Text(
+            '${item.title}  $on/${members.length}',
+            key: ValueKey('stage-section-title-${item.id}'),
+            style: Kiosk.cardTitle(context).copyWith(fontSize: 16),
           ),
+          subtitle: Text(
+            '${item.subtitle} · ${members.length}개 중 $on개 사용',
+            style: Kiosk.caption(context),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 6),
+          children: [
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    key: ValueKey('stage-section-on-${item.id}'),
+                    onPressed: widget.locked || allOn
+                        ? null
+                        : () => _setAll(members, true),
+                    child: const Text('묶음 전체 켜기'),
+                  ),
+                  TextButton(
+                    key: ValueKey('stage-section-off-${item.id}'),
+                    onPressed: widget.locked || noneOn
+                        ? null
+                        : () => _setAll(members, false),
+                    child: const Text('묶음 전체 끄기'),
+                  ),
+                ],
+              ),
+            ),
+            for (final (i, s) in members) _card(i, s),
+          ],
+        ),
         ),
       ),
     );
+  }
+
+  /// 묶음의 바뀌어야 할 단계만 차례로 켜고 끈다(한 단계씩 누른 것과 똑같이 앱에 전달).
+  Future<void> _setAll(List<(int, Map)> members, bool on) async {
+    for (final (_, stage) in members) {
+      if ((stage['on'] == true) != on) {
+        await widget.onToggle('${stage['key']}', on);
+      }
+    }
   }
 
   Widget _badge(String text, {bool strong = true}) => Container(

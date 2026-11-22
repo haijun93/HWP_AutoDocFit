@@ -598,6 +598,8 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   Map<String, dynamic> state = {};
   int tab = 0;
   bool busy = false, polling = false, wasRunning = false;
+  // 카드별 '고급 설정' 펼침 상태(화면이 떠 있는 동안 기억).
+  final Map<String, bool> advancedOpen = {};
   int commandVersion = 0;
 
   /// 테마 저장은 [command]의 busy 검사를 거치지 않는다(다른 명령 처리 중에도 저장, DARK1-R).
@@ -2233,259 +2235,217 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
   Map get docHints => state['doc_hints'] as Map? ?? const {};
   bool get showTableOptions => true;
 
-  Widget modeOptions(String optionMode) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+  // 카드 옵션 한 줄(스위치). 키·문구·동작은 예전 화면 그대로다.
+  Widget optionRow(
+    Key key,
+    String label,
+    bool value,
+    ValueChanged<bool>? onChanged, {
+    String? imageKey,
+  }) => Row(
     children: [
-      if (optionMode == 'spacing') ...[
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '자간 정리',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            const OptionImageButton('spacing_enabled'),
-            Switch(
-              key: const Key('spacingEnabledSwitch'),
-              value: spacingEnabled,
-              onChanged: locked
-                  ? null
-                  : (on) => command('set_card_option', ['spacing_enabled', on]),
-            ),
-          ],
+      Expanded(
+        child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600)),
+      ),
+      if (imageKey != null) OptionImageButton(imageKey),
+      Switch(key: key, value: value, onChanged: onChanged),
+    ],
+  );
+
+  Widget optionHint(String text) =>
+      Text(text, style: TextStyle(fontSize: 12, color: _s.faint));
+
+  // 카드의 '고급 설정' 접기. 핵심 옵션 1~2개만 바로 보이게 하고 나머지는 여기에 둔다.
+  // 펼침 상태는 카드(작업 유형)별로 화면이 떠 있는 동안 기억하고, 접혀 있어도 켜 둔 옵션 수를 제목에 보여 준다.
+  Widget advancedOptions(String optionMode, List<Widget> children, int onCount) {
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        key: PageStorageKey('advancedOptions-$optionMode'),
+        tilePadding: EdgeInsets.zero,
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        initiallyExpanded: advancedOpen[optionMode] ?? false,
+        onExpansionChanged: (v) => advancedOpen[optionMode] = v,
+        title: Text(
+          onCount > 0 ? '고급 설정 · $onCount개 켜 둠' : '고급 설정',
+          key: Key('advancedOptionsTitle-$optionMode'),
+          style: const TextStyle(fontWeight: FontWeight.w600),
         ),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '페이지 맞춤 제외',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            const OptionImageButton('spacing_exclude_pagefit'),
-            Switch(
-              key: const Key('spacingExcludePagefitSwitch'),
-              value: excludePageFit,
-              onChanged: locked
-                  ? null
-                  : (on) =>
-                        command('set_card_option', ['spacing_exclude_pagefit', on]),
-            ),
-          ],
+        children: children,
+      ),
+    );
+  }
+
+  Widget modeOptions(String optionMode) {
+    ValueChanged<bool>? cardChange(String key) =>
+        locked ? null : (on) => command('set_card_option', [key, on]);
+    final cellImage = optionMode == 'spacing'
+        ? 'spacing_cell_image_to_bg'
+        : 'all_cell_image_to_bg';
+    final cellImageKey = optionMode == 'spacing'
+        ? 'spacingCellImageToBgSwitch'
+        : 'allCellImageToBgSwitch';
+    final cellImageOn = cardOption(cellImage);
+    final core = <Widget>[];
+    final advanced = <Widget>[];
+    var advancedOn = 0;
+    void adv(bool on) {
+      if (on) advancedOn++;
+    }
+
+    if (optionMode == 'spacing') {
+      core.addAll([
+        optionRow(
+          const Key('spacingEnabledSwitch'),
+          '자간 정리',
+          spacingEnabled,
+          cardChange('spacing_enabled'),
+          imageKey: 'spacing_enabled',
         ),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '표 셀 그림을 배경으로 변경',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            Switch(
-              key: const Key('spacingCellImageToBgSwitch'),
-              value: (state['card_options'] as Map?)?['spacing_cell_image_to_bg'] as bool? ?? false,
-              onChanged: locked
-                  ? null
-                  : (on) => command('set_card_option', ['spacing_cell_image_to_bg', on]),
-            ),
-          ],
+        optionRow(
+          const Key('spacingExcludePagefitSwitch'),
+          '페이지 맞춤 제외',
+          excludePageFit,
+          cardChange('spacing_exclude_pagefit'),
+          imageKey: 'spacing_exclude_pagefit',
         ),
         if (!spacingEnabled)
-          Text(
+          optionHint(
             spacingPageFit
                 ? '자간·장평·줄 병합은 그대로 두고 문단·표의 세로 간격과 페이지 배치만 조정해요.'
                 : '자간 정리를 끄고 페이지 맞춤도 제외하면 할 일이 없습니다.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
-  // 켜면 문서에 이미 있는 자간을 0%로 되돌리는 단계를 건너뛴다.
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '기존 자간 초기화 제외',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            Switch(
-              key: const Key('resetSpacingSwitch'),
-              value: excludeResetSpacing,
-              onChanged: locked || !spacingEnabled
-                  ? null
-                  : (on) => command('set_card_option', ['spacing_exclude_reset', on]),
-            ),
-          ],
+      ]);
+      adv(cellImageOn);
+      adv(excludeResetSpacing);
+      adv(!tableSpacing);
+      advanced.addAll([
+        optionRow(
+          Key(cellImageKey),
+          '표 셀 그림을 배경으로 변경',
+          cellImageOn,
+          cardChange(cellImage),
+        ),
+        // 켜면 문서에 이미 있는 자간을 0%로 되돌리는 단계를 건너뛴다.
+        optionRow(
+          const Key('resetSpacingSwitch'),
+          '기존 자간 초기화 제외',
+          excludeResetSpacing,
+          locked || !spacingEnabled
+              ? null
+              : (on) => command('set_card_option', ['spacing_exclude_reset', on]),
         ),
         if (spacingEnabled && excludeResetSpacing)
-          Text(
-            '문서에 있던 자간은 그대로 두고 그 위에서 정리해요.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
-          ),
+          optionHint('문서에 있던 자간은 그대로 두고 그 위에서 정리해요.'),
         // '표 제외'를 켜면 표 칸 안 문장은 자간 정리 대상에서 뺀다(설정 table_spacing의 반대 값).
         if (showTableOptions)
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  '표 제외',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              Switch(
-                key: const Key('tableSpacingSwitch'),
-                value: !tableSpacing,
-                onChanged: locked || !spacingEnabled
-                    ? null
-                    : (on) => command('set_table_spacing', [!on]),
-              ),
-            ],
+          optionRow(
+            const Key('tableSpacingSwitch'),
+            '표 제외',
+            !tableSpacing,
+            locked || !spacingEnabled
+                ? null
+                : (on) => command('set_table_spacing', [!on]),
           ),
-        if (!tableSpacing)
-          Text(
-            '표 칸 안 문장은 자간 정리에서 빼요.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
+        if (!tableSpacing) optionHint('표 칸 안 문장은 자간 정리에서 빼요.'),
+      ]);
+    } else if (optionMode == 'unify') {
+      Widget unifyRow((String, String, String) o) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          optionRow(
+            Key('${o.$1}Switch'),
+            o.$2,
+            cardOption(o.$1),
+            cardChange(o.$1),
+            imageKey: o.$1,
           ),
-      ],
-      if (optionMode == 'unify') ...[
-        const SizedBox(height: 8),
-        for (final o in const [
-          ('unify_exclude_tables', '표 제외', '기본 표 서식·표 서식통일을 빼요.'),
-          ('unify_exclude_spacing', '자간 정리 제외', '서식통일이 고친 문장의 자간은 그대로 둬요.'),
-          ('unify_exclude_pagefit', '페이지 맞춤 제외', '문단 아래 간격 페이지 맞춤을 빼요.'),
-          ('unify_keep_layout', '원본 쪽 구성 유지', '보고서별 쪽 수·시작 쪽을 원본과 같게 맞춰요.'),
-          (
-            'unify_full_format',
-            '전체 서식 맞추기',
-            '글꼴·크기뿐 아니라 색·밑줄·정렬·여백·내어쓰기도 맞춰요.',
-          ),
-        ].where((o) => o.$1 != 'unify_exclude_tables' || showTableOptions)) ...[
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  o.$2,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              OptionImageButton(o.$1),
-              Switch(
-                key: Key('${o.$1}Switch'),
-                value: cardOption(o.$1),
-                onChanged: locked
-                    ? null
-                    : (on) => command('set_card_option', [o.$1, on]),
-              ),
-            ],
-          ),
-          if (cardOption(o.$1))
-            Text(o.$3, style: TextStyle(fontSize: 12, color: _s.faint)),
+          if (cardOption(o.$1)) optionHint(o.$3),
         ],
-      ],
-      if (optionMode == 'all') ...[
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            const Expanded(child: Text('표 셀 그림을 배경으로 변경', style: TextStyle(fontWeight: FontWeight.w600))),
-            Switch(
-              key: const Key('allCellImageToBgSwitch'),
-              value: (state['card_options'] as Map?)?['all_cell_image_to_bg'] as bool? ?? false,
-              onChanged: locked ? null : (on) => command('set_card_option', ['all_cell_image_to_bg', on]),
-            ),
-          ],
+      );
+      const coreOptions = [
+        ('unify_exclude_tables', '표 제외', '기본 표 서식·표 서식통일을 빼요.'),
+        ('unify_exclude_spacing', '자간 정리 제외', '서식통일이 고친 문장의 자간은 그대로 둬요.'),
+      ];
+      const advancedOptionList = [
+        ('unify_exclude_pagefit', '페이지 맞춤 제외', '문단 아래 간격 페이지 맞춤을 빼요.'),
+        ('unify_keep_layout', '원본 쪽 구성 유지', '보고서별 쪽 수·시작 쪽을 원본과 같게 맞춰요.'),
+        (
+          'unify_full_format',
+          '전체 서식 맞추기',
+          '글꼴·크기뿐 아니라 색·밑줄·정렬·여백·내어쓰기도 맞춰요.',
         ),
-        // 끄면 기존 자간은 그대로 두고 서식만 적용한다(서식 적용).
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '자간 조정 포함',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            const OptionImageButton('all_include_spacing'),
-            Switch(
-              key: const Key('includeSpacingSwitch'),
-              value: includeSpacing,
-              onChanged: locked
-                  ? null
-                  : (on) => command('set_include_spacing', [on]),
-            ),
-          ],
+      ];
+      for (final o in coreOptions.where(
+        (o) => o.$1 != 'unify_exclude_tables' || showTableOptions,
+      )) {
+        core.add(unifyRow(o));
+      }
+      for (final o in advancedOptionList) {
+        adv(cardOption(o.$1));
+        advanced.add(unifyRow(o));
+      }
+    } else if (optionMode == 'all') {
+      // 끄면 기존 자간은 그대로 두고 서식만 적용한다(서식 적용).
+      core.addAll([
+        optionRow(
+          const Key('includeSpacingSwitch'),
+          '자간 조정 포함',
+          includeSpacing,
+          locked ? null : (on) => command('set_include_spacing', [on]),
+          imageKey: 'all_include_spacing',
         ),
-        if (!includeSpacing)
-          Text(
-            '기존 자간은 그대로 두고 서식만 적용해요.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
-          ),
+        if (!includeSpacing) optionHint('기존 자간은 그대로 두고 서식만 적용해요.'),
         // 켜면 표 관련 작업을 모두 빼고 정리한다(제목·개요 서식 표는 정리).
         if (showTableOptions)
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  '표 제외',
-                  style: TextStyle(fontWeight: FontWeight.w600),
-                ),
-              ),
-              Switch(
-                key: const Key('excludeTablesSwitch'),
-                value: excludeTables,
-                onChanged: locked
-                    ? null
-                    : (on) => command('set_exclude_tables', [on]),
-              ),
-            ],
+          optionRow(
+            const Key('excludeTablesSwitch'),
+            '표 제외',
+            excludeTables,
+            locked ? null : (on) => command('set_exclude_tables', [on]),
           ),
         if (excludeTables)
-          Text(
-            '표 관련 작업은 모두 빼고 정리해요. 제목·개요 서식 표는 정리해요.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
-          ),
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '줄 간격 적용 제외',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            Switch(
-              key: const Key('allLinespacingSwitch'),
-              value: cardOption('all_exclude_linespacing'),
-              onChanged: locked
-                  ? null
-                  : (on) => command('set_card_option', ['all_exclude_linespacing', on]),
-            ),
-          ],
+          optionHint('표 관련 작업은 모두 빼고 정리해요. 제목·개요 서식 표는 정리해요.'),
+      ]);
+      adv(cellImageOn);
+      adv(cardOption('all_exclude_linespacing'));
+      adv(cardOption('all_exclude_pagefit'));
+      advanced.addAll([
+        optionRow(
+          Key(cellImageKey),
+          '표 셀 그림을 배경으로 변경',
+          cellImageOn,
+          cardChange(cellImage),
+        ),
+        optionRow(
+          const Key('allLinespacingSwitch'),
+          '줄 간격 적용 제외',
+          cardOption('all_exclude_linespacing'),
+          cardChange('all_exclude_linespacing'),
         ),
         // 켜면 문단 아래 간격 페이지 맞춤·관련 문단 페이지 배치를 뺀다.
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                '페이지 맞춤 제외',
-                style: TextStyle(fontWeight: FontWeight.w600),
-              ),
-            ),
-            Switch(
-              key: const Key('allExcludePagefitSwitch'),
-              value: cardOption('all_exclude_pagefit'),
-              onChanged: locked
-                  ? null
-                  : (on) =>
-                        command('set_card_option', ['all_exclude_pagefit', on]),
-            ),
-          ],
+        optionRow(
+          const Key('allExcludePagefitSwitch'),
+          '페이지 맞춤 제외',
+          cardOption('all_exclude_pagefit'),
+          cardChange('all_exclude_pagefit'),
         ),
         if (cardOption('all_exclude_pagefit'))
-          Text(
-            '문단 아래 간격 페이지 맞춤·관련 문단 페이지 배치를 빼요.',
-            style: TextStyle(fontSize: 12, color: _s.faint),
-          ),
+          optionHint('문단 아래 간격 페이지 맞춤·관련 문단 페이지 배치를 빼요.'),
+      ]);
+    }
+    if (core.isEmpty && advanced.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 8),
+        ...core,
+        if (advanced.isNotEmpty) advancedOptions(optionMode, advanced, advancedOn),
+        optionHint('여기서 바꾼 값은 설정 화면과 아래 세부 작업에도 똑같이 반영돼요.'),
       ],
-    ],
-  );
+    );
+  }
 
   // ---- 서식 관리: 예시 보고서를 끌어다 놓아 서식 복제, 이름 바꾸기·세부 수정·삭제 ----
   Map get formatTask => state['format_task'] as Map? ?? const {};
@@ -3243,6 +3203,16 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
             stagesChanged
                 ? '처음 기본값과 다르게 조정했어요.${saved ? ' 다음 실행에도 이 구성을 써요.' : ''}'
                 : '모든 세부 작업을 표시해요. 끄면 그 단계는 건너뛰어요.',
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${stages.length}개 중 $stagesOn개 사용',
+            key: const Key('stageSummary'),
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          Text(
+            '묶음 제목을 눌러 펼치고, 묶음 전체 켜기·끄기로 한꺼번에 바꿀 수 있어요. 카드의 옵션과 같은 설정이라 어느 쪽에서 바꿔도 서로 맞춰져요.',
+            style: TextStyle(fontSize: 12, color: _s.faint),
           ),
           const SizedBox(height: 12),
           const Divider(),

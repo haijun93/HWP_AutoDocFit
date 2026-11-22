@@ -339,6 +339,9 @@ void main() {
     await tester.ensureVisible(find.text('세부 작업  1/2'));
     await tester.tap(find.text('세부 작업  1/2'));
     await tester.pumpAndSettle();
+    // 세부 작업은 묶음별로 접혀 있다: '문서 서식' 묶음을 펼친다.
+    await tester.tap(find.byKey(const ValueKey('stage-section-title-prepare')));
+    await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('2. 서식통일'));
     await tester.tap(find.text('2. 서식통일'));
     await tester.pumpAndSettle();
@@ -453,6 +456,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('작업 방식 선택'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('advancedOptionsTitle-spacing')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('resetSpacingSwitch')), findsOneWidget);
     await tester.tap(find.byKey(const Key('resetSpacingSwitch')));
     await tester.pumpAndSettle();
@@ -487,6 +492,8 @@ void main() {
     await tester.tap(find.text('작업 방식 선택'));
     await tester.pumpAndSettle();
     // 선택한 자간 정리 카드의 '표 제외'를 켜면 table_spacing을 끈다.
+    await tester.tap(find.byKey(const Key('advancedOptionsTitle-spacing')));
+    await tester.pumpAndSettle();
     expect(find.text('표 제외'), findsOneWidget);
     await tester.tap(find.byKey(const Key('tableSpacingSwitch')));
     await tester.pumpAndSettle();
@@ -562,6 +569,8 @@ void main() {
     expect(calls.last, ['set_card_option', 'unify_exclude_spacing', true]);
     expect(find.text('서식통일이 고친 문장의 자간은 그대로 둬요.'), findsOneWidget);
     await tester.tap(find.text('한 번에 적용').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('advancedOptionsTitle-all')));
     await tester.pumpAndSettle();
     await tester.ensureVisible(
       find.byKey(const Key('allExcludePagefitSwitch')),

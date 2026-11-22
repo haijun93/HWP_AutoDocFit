@@ -73,6 +73,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('작업 방식 선택'));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('advancedOptionsTitle-spacing')));
+    await tester.pumpAndSettle();
     expect(find.byKey(const Key('resetSpacingSwitch')), findsOneWidget);
     expect(find.byKey(const Key('tableSpacingSwitch')), findsOneWidget);
     expect(find.text('작업할 쪽 범위'), findsOneWidget);
