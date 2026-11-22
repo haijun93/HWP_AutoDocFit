@@ -212,6 +212,15 @@ def _read_photo_group_meta(path: Path | str) -> dict[str, Any]:
     return res
 
 
+def _path_within_root(path, root):
+    """path 가 root 아래(또는 같음)인지 본다. 드라이브가 다르면(여러 드라이브 PC) commonpath 가
+    ValueError('Paths don't have the same drive')를 내므로 그 경우는 '아래 아님'으로 본다."""
+    try:
+        return os.path.commonpath([path, root]) == root
+    except ValueError:
+        return False
+
+
 class PhotoAlbumDb:
     """사용자 데이터 디렉터리 SQLite 기반 사진 메타데이터·태그·즐겨찾기 저장소."""
 
@@ -858,7 +867,7 @@ class PhotoAlbumService:
                 try: path = os.path.normcase(os.path.abspath(row["path"]))
                 except OSError: continue
                 valid = path in self._default_name_paths if self._default_name_paths is not None else Path(row["path"]).is_file()
-                if valid and any(os.path.commonpath([path, root]) == root for root in roots): existing.append(row)
+                if valid and any(_path_within_root(path, root) for root in roots): existing.append(row)
             rows = existing
             if not cancel.is_set(): library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
             result["engine"] = engine

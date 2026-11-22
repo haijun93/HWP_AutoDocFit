@@ -711,3 +711,16 @@ class TestPhotoAlbumBridge(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PathWithinRootAcrossDrivesTests(unittest.TestCase):
+    def test_different_drive_is_not_inside_and_does_not_raise(self):
+        import ntpath
+        from unittest import mock
+        from docfit_app import photo_album_service as svc
+        bs = chr(92)
+        def w(*parts): return bs.join(parts)
+        with mock.patch.object(svc.os, 'path', ntpath):
+            self.assertFalse(svc._path_within_root(w('c:', 'users', 'a', 'x.jpg'), w('e:', 'photos')))
+            self.assertTrue(svc._path_within_root(w('e:', 'photos', '2026', 'x.jpg'), w('e:', 'photos')))
+            self.assertFalse(svc._path_within_root(w('e:', 'other', 'x.jpg'), w('e:', 'photos')))
