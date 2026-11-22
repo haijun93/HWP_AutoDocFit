@@ -12,7 +12,7 @@
 |---:|---|---|
 |1|`docfit_engine/spacing.py` `단어중간_줄바꿈방지`, 1339행부터|문단/화면줄 순회 안에서 분리 후보를 검사하고, 성공 여부를 확인하려고 자간·장평 적용과 줄범위 재측정을 반복한다. 아래 `단어모드_줄범위` 및 `단어모드_자간적용`으로 이어진다. 전체 분기·최대 반복 횟수는 입력과 옵션 의존이라 여기서 총량 산출 불가.|
 |2|`docfit_engine/spacing.py` `_자간자동조정_본체`, 1559행부터|`while True`가 화면줄 끝 이동, 분리 판정, 선택, 자간/장평 변경, 다음 상태 재검사를 반복한다. `최대시도`와 `총_시도_상한=max(최대시도*8,40)`이 있으나 조건별 호출 수는 달라진다.|
-|3|`docfit_engine/spacing.py` `단어모드_줄범위`, 486–519행|호출 1회에 최소 `SetPos`, `MoveLineBegin`, `GetPos`, `MoveLineEnd`, `GetPos`, `MoveNextChar`, `GetPos` 등 여러 COM 조작이 연속된다. 분기에서는 추가 이동·위치 읽기가 있다. 상위 루프에서 화면줄/후보마다 다시 불린다. SPD2의 기억 재사용 대상이며 기본은 비활성(`DOCFIT_SPACING_MEMO=reuse`에서 동작).|
+|3|`docfit_engine/spacing.py` `단어모드_줄범위`, 486–519행|호출 1회에 최소 `SetPos`, `MoveLineBegin`, `GetPos`, `MoveLineEnd`, `GetPos`, `MoveNextChar`, `GetPos` 등 여러 COM 조작이 연속된다. 분기에서는 추가 이동·위치 읽기가 있다. 상위 루프에서 화면줄/후보마다 다시 불린다. SPDMEMO2 ALLQA 전후 비교 후 기본 `reuse`로 전환했다. `DOCFIT_SPACING_MEMO=off`로 끌 수 있다.|
 |4|`docfit_engine/spacing.py` `단어모드_한글자`, 463–484행|글자 경계 확인 1회에 `SetPos`, 이동 `Run`, `GetPos`, 범위 선택, 선택 텍스트 스캔(`InitScan`/`GetText`/`ReleaseScan`), `Cancel`을 수행할 수 있다. 주변 후보 문자마다 반복.|
 |5|`docfit_engine/spacing.py` `단어모드_서식보관`, 881행부터|문자 범위를 이동하며 자간·장평 필드를 읽고 연속 구간을 구성한다. 문자/구간마다 선택과 HParameterSet 속성 읽기가 발생한다. `단어모드_자간보관`(928행)이 이를 호출하며 각도 조정 후보에서 반복된다. 정확한 필드 읽기 횟수는 연속 구간과 텍스트에 따라 변한다.|
 |6|`docfit_engine/spacing.py` `단어모드_자간적용`, 934–945행|저장된 각 run마다 선택 → `CreateAction('CharShape')` → `CreateSet` → 필드별 `SetItem` → `Execute`; 호출은 조정 단계마다 반복된다. run 수는 선택 범위 서식 조각 수에 좌우된다.|

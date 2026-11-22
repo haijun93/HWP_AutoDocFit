@@ -10,18 +10,18 @@ from docfit_engine.spacing import _줄검사기억, _install
 class SpacingMemoUnitTest(unittest.TestCase):
     """_줄검사기억 상태 머신 및 검증 모드 기본 동작 단위 테스트."""
 
-    def test_default_mode_is_inactive(self):
-        """환경 변수가 없거나 verify가 아니면 기억이 비활성('없음')이다."""
+    def test_default_mode_reuses_confirmed_results(self):
+        """환경 변수가 없으면 검증된 편집 전 기억을 재사용한다."""
         with patch.dict(os.environ, {}, clear=True):
             memo = _줄검사기억()
             memo.시작()
-            self.assertEqual(memo.상태, "없음")
-            self.assertFalse(memo.활성)
-            # 비활성 상태에서는 호출을 기록하지 않음
+            self.assertEqual(memo.모드, "reuse")
+            self.assertEqual(memo.상태, "편집전")
+            self.assertTrue(memo.활성)
             memo.검증_줄범위((0, 0, 10), ((0, 0, 0), (0, 0, 20)))
-            self.assertEqual(memo.호출, 0)
+            self.assertEqual(memo.호출, 1)
             self.assertEqual(memo.적중, 0)
-            self.assertIsNone(memo.종료())
+            self.assertIn("모드=reuse", memo.종료())
 
     def test_off_mode_is_inactive(self):
         """DOCFIT_SPACING_MEMO=off는 기억 기능을 명시적으로 끈다."""

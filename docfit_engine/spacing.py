@@ -27,7 +27,7 @@ class _줄검사기억:
         self.모드 = ''
 
     def 시작(self):
-        mode = os.environ.get('DOCFIT_SPACING_MEMO', '').strip().lower()
+        mode = os.environ.get('DOCFIT_SPACING_MEMO', 'reuse').strip().lower()
         self.모드 = mode
         if mode in ('verify', 'reuse'):
             self.활성 = True
