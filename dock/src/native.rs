@@ -75,6 +75,7 @@ pub fn run() {
         SetLayeredWindowAttributes(hwnd, 0, 235, LWA_ALPHA);
         reposition(hwnd);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if auto_hide_enabled() { SetTimer(hwnd, 3, 100, None); }
         SetWinEventHook(
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
@@ -93,16 +94,14 @@ pub fn run() {
         CloseHandle(m);
     }
 }
-unsafe fn reposition(hwnd: HWND) {
-    let foreground = GetForegroundWindow();
-    let monitor = MonitorFromWindow(if foreground.is_null() { hwnd } else { foreground }, MONITOR_DEFAULTTONEAREST);
+unsafe fn dock_layout_for_monitor(hwnd: HWND, monitor: HMONITOR) -> dock::DockRect {
     let mut mi: MONITORINFO = std::mem::zeroed();
     mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
     GetMonitorInfoW(monitor, &mut mi);
     let dpi = GetDpiForWindow(hwnd).max(96);
     let menus = visible_menus();
     let logical_width = ((menus.len() as i32 * 36) + 32).min((mi.rcMonitor.right - mi.rcMonitor.left) * 96 / dpi as i32);
-    let d = dock::dock_rect(
+    dock::dock_rect(
         dock::Rect {
             left: mi.rcWork.left,
             top: mi.rcWork.top,
@@ -120,7 +119,12 @@ unsafe fn reposition(hwnd: HWND) {
         logical_width.max(160),
         56,
         18,
-    );
+    )
+}
+unsafe fn reposition(hwnd: HWND) {
+    let foreground = GetForegroundWindow();
+    let monitor = MonitorFromWindow(if foreground.is_null() { hwnd } else { foreground }, MONITOR_DEFAULTTONEAREST);
+    let d = dock_layout_for_monitor(hwnd, monitor);
     SetWindowPos(
         hwnd,
         HWND_TOPMOST,
@@ -161,6 +165,25 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             DefWindowProcW(hwnd, msg, w, l)
         }
         WM_TIMER => {
+            if w == 3 {
+                if auto_hide_enabled() && IsWindowVisible(hwnd) == 0 && *STATE.get().unwrap().lock().unwrap() {
+                    let mut point: POINT = std::mem::zeroed();
+                    if GetCursorPos(&mut point) != 0 {
+                        let foreground = GetForegroundWindow();
+                        let monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+                        let mut mi: MONITORINFO = std::mem::zeroed(); mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                        if GetMonitorInfoW(monitor, &mut mi) != 0 {
+                            let bounds = dock::Rect { left: mi.rcMonitor.left, top: mi.rcMonitor.top, right: mi.rcMonitor.right, bottom: mi.rcMonitor.bottom };
+                            let layout = dock_layout_for_monitor(hwnd, monitor);
+                            if dock::pointer_on_reveal_edge((point.x, point.y), bounds, layout.edge, 2) {
+                                reposition(hwnd);
+                                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                            }
+                        }
+                    }
+                }
+                return 0;
+            }
             if w == 2 { KillTimer(hwnd, 2); InvalidateRect(hwnd, ptr::null(), 0); return 0; }
             let mut p: POINT = std::mem::zeroed();
             GetCursorPos(&mut p);
@@ -233,7 +256,14 @@ unsafe extern "system" fn foreground_changed(
         && fr.top <= mi.rcMonitor.top
         && fr.right >= mi.rcMonitor.right
         && fr.bottom >= mi.rcMonitor.bottom;
-    if full {
+    let hidden = if auto_hide_enabled() {
+        let d = dock_layout_for_monitor(dock, monitor);
+        dock::foreground_covers_dock(
+            dock::Rect { left: fr.left, top: fr.top, right: fr.right, bottom: fr.bottom },
+            d.rect,
+        )
+    } else { full };
+    if hidden {
         ShowWindow(dock, SW_HIDE);
     } else if *STATE.get().unwrap().lock().unwrap() {
         ShowWindow(dock, SW_SHOWNOACTIVATE);
@@ -339,6 +369,11 @@ fn setting_dark() -> bool {
     let path=std::path::PathBuf::from(appdata).join("HwpAutoDocFit").join("settings.json");
     let mode=std::fs::read_to_string(path).ok().and_then(|s|serde_json::from_str::<serde_json::Value>(&s).ok()).and_then(|v|v.get("theme_mode").and_then(|x|x.as_str()).map(str::to_owned));
     match mode.as_deref(){Some("dark")=>true,Some("light")=>false,_=>ui_theme::system_dark()}
+}
+fn auto_hide_enabled() -> bool {
+    let Some(appdata) = std::env::var_os("APPDATA") else { return false };
+    let path = std::path::PathBuf::from(appdata).join("HwpAutoDocFit").join("settings.json");
+    std::fs::read_to_string(path).ok().is_some_and(|s| dock::parse_auto_hide(&s))
 }
 fn resolved_palette(force_hc: bool, dark_override: Option<bool>) -> dock::Palette {
     let sys=ui_theme::sys_colors();

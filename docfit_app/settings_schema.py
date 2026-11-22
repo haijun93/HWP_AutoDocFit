@@ -149,6 +149,8 @@ DEFAULTS = {
     "hierarchy_engine": False,
     # 화면 테마: "system"(윈도 설정 따름)·"light"·"dark". 몽땅클립보드 상주 프로그램에도 전달한다.
     "theme_mode": "system",
+    # 독이 최대화 창 뒤에서 자동 숨김·가장자리 호버로 다시 나타남. 기본값은 기존 동작 유지.
+    "dock_auto_hide": False,
     "search_engine": "kfind",
 }
 

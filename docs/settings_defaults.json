@@ -134,6 +134,7 @@
   "ui_tk_fallback": false,
   "hierarchy_engine": false,
   "theme_mode": "system",
+  "dock_auto_hide": false,
   "search_engine": "kfind",
   "kclip_settings_mode": "dialog",
   "outliner_ui": "flutter",

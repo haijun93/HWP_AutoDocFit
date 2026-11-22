@@ -24,6 +24,23 @@ pub enum Edge {
     Right,
     Auto,
 }
+/// 포그라운드 창이 독 화면 영역과 일부라도 겹치는지 판정한다.
+pub fn foreground_covers_dock(foreground: Rect, dock: Rect) -> bool {
+    foreground.left < dock.right && foreground.right > dock.left
+        && foreground.top < dock.bottom && foreground.bottom > dock.top
+}
+
+/// 선택된 모니터 가장자리의 재등장 허용 영역 안에 포인터가 있는지 판정한다.
+pub fn pointer_on_reveal_edge(point: (i32, i32), monitor: Rect, edge: Edge, tolerance: i32) -> bool {
+    let t = tolerance.max(0);
+    match edge {
+        Edge::Bottom => point.0 >= monitor.left && point.0 < monitor.right && point.1 >= monitor.bottom - t && point.1 <= monitor.bottom,
+        Edge::Top => point.0 >= monitor.left && point.0 < monitor.right && point.1 >= monitor.top && point.1 < monitor.top + t,
+        Edge::Left => point.0 >= monitor.left && point.0 < monitor.left + t && point.1 >= monitor.top && point.1 < monitor.bottom,
+        Edge::Right => point.0 >= monitor.right - t && point.0 <= monitor.right && point.1 >= monitor.top && point.1 < monitor.bottom,
+        Edge::Auto => false,
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DockRect {
     pub rect: Rect,
@@ -230,6 +247,10 @@ pub fn parse_hidden_tabs(settings_json: &str) -> std::collections::BTreeSet<u8> 
         .filter(|n| (1..=15).contains(n) && *n != 12 && *n != 13)
         .map(|n| n as u8).collect()
 }
+pub fn parse_auto_hide(settings_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(settings_json).ok()
+        .and_then(|v| v.get("dock_auto_hide").and_then(|x| x.as_bool())).unwrap_or(false)
+}
 
 /// Stable Win32 auto-reset event name used to request a Flutter tab.
 pub fn tab_event_name(tab: u8) -> Option<String> {
@@ -386,6 +407,26 @@ mod tests {
         // Secondary monitor coordinates may be negative; placement remains centered in its own work area.
         let secondary=r(-1920,0,0,1080); let work=r(-1920,0,0,1040);
         assert_eq!(dock_rect(work,secondary,Edge::Bottom,96,400,56,18).rect,r(-1160,966,-760,1022));
+    }
+    #[test]
+    fn auto_hide_overlap_and_reveal_edge_decisions() {
+        let dock = r(400, 950, 800, 1010);
+        assert!(foreground_covers_dock(r(0, 0, 1920, 1040), dock));
+        assert!(!foreground_covers_dock(r(0, 0, 1920, 940), dock));
+        assert!(!foreground_covers_dock(r(0, 0, 400, 1080), dock));
+        let monitor = r(0, 0, 1920, 1080);
+        assert!(pointer_on_reveal_edge((900, 1079), monitor, Edge::Bottom, 2));
+        assert!(!pointer_on_reveal_edge((900, 1077), monitor, Edge::Bottom, 2));
+        assert!(pointer_on_reveal_edge((0, 500), monitor, Edge::Left, 2));
+        assert!(!pointer_on_reveal_edge((4, 500), monitor, Edge::Left, 2));
+        assert!(pointer_on_reveal_edge((900, 0), monitor, Edge::Top, 2));
+        assert!(!pointer_on_reveal_edge((900, 2), monitor, Edge::Top, 2));
+        assert!(pointer_on_reveal_edge((1919, 500), monitor, Edge::Right, 2));
+        assert!(!pointer_on_reveal_edge((1917, 500), monitor, Edge::Right, 2));
+        assert!(!pointer_on_reveal_edge((900, 1079), monitor, Edge::Auto, 2));
+        assert!(!parse_auto_hide("{}"));
+        assert!(!parse_auto_hide(r#"{"dock_auto_hide":"true"}"#));
+        assert!(parse_auto_hide(r#"{"dock_auto_hide":true}"#));
     }
     #[test]
     fn hover_interpolation_dump() {
