@@ -7,7 +7,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    Graphics::Gdi::*,
+    Graphics::{Gdi::*, GdiPlus::{FillModeAlternate, GdipAddPathArc, GdipClosePathFigure, GdipCreateFromHDC, GdipCreatePath, GdipCreatePen1, GdipCreateSolidFill, GdipDeleteBrush, GdipDeleteGraphics, GdipDeletePath, GdipDeletePen, GdipDrawEllipse, GdipDrawPath, GdipFillEllipse, GdipFillPath, GdipSetPixelOffsetMode, GdipSetSmoothingMode, GdiplusShutdown, GdiplusStartup, GdiplusStartupInput, GdiplusStartupOutput, GpBrush, GpGraphics, GpPath, GpPen, GpSolidFill, PixelOffsetModeHalf, SmoothingModeAntiAlias, UnitPixel}},
     System::{LibraryLoader::GetModuleHandleW, SystemInformation::GetTickCount64, Threading::*},
     UI::{
         Accessibility::{HWINEVENTHOOK, SetWinEventHook},
@@ -36,7 +36,7 @@ fn icon_font_ready() -> bool {
     })
 }
 unsafe fn draw_glyph(dc: HDC, glyph: char, ox: i32, oy: i32, size: i32, fg: u32) -> bool {
-    let font = CreateFontW(-size, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32, OUT_TT_ONLY_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, ANTIALIASED_QUALITY as u32, (DEFAULT_PITCH | FF_DONTCARE) as u32, wide(ICON_FONT_FACE).as_ptr());
+    let font = CreateFontW(-size, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32, OUT_TT_ONLY_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, CLEARTYPE_QUALITY as u32, (DEFAULT_PITCH | FF_DONTCARE) as u32, wide(ICON_FONT_FACE).as_ptr());
     if font.is_null() { return false; }
     let old = SelectObject(dc, font);
     let mut buf = [0u16; 2]; let text = glyph.encode_utf16(&mut buf);
@@ -49,6 +49,68 @@ unsafe fn draw_glyph(dc: HDC, glyph: char, ox: i32, oy: i32, size: i32, fg: u32)
     SelectObject(dc, old); DeleteObject(font);
     ok
 }
+/// GDI+ 안티앨리어싱 도형(알약·링·점). WinRust 방식을 참고해 독자 구현: SmoothingModeAntiAlias + PixelOffsetModeHalf, 둥근 사각형은 GdipAddPathArc 경로.
+/// 시작 실패나 그래픽스 생성 실패 시 `Aa::new`가 None을 돌려주며 호출부가 기존 GDI 도형으로 폴백한다.
+static GDIP_TOKEN: OnceLock<usize> = OnceLock::new();
+fn gdip_token() -> usize {
+    *GDIP_TOKEN.get_or_init(|| unsafe {
+        let input = GdiplusStartupInput { GdiplusVersion: 1, DebugEventCallback: 0, SuppressBackgroundThread: 0, SuppressExternalCodecs: 0 };
+        let mut token = 0usize;
+        let mut out: GdiplusStartupOutput = std::mem::zeroed();
+        if GdiplusStartup(&mut token, &input, &mut out) == 0 { token } else { 0 }
+    })
+}
+/// 프로세스 종료 직전 한 번 호출(시작한 적 없거나 실패했으면 아무 일도 하지 않음).
+fn gdip_shutdown() { if let Some(&t) = GDIP_TOKEN.get() { if t != 0 { unsafe { GdiplusShutdown(t) } } } }
+/// COLORREF(0x00BBGGRR) → 불투명 ARGB.
+fn argb(c: u32) -> u32 { 0xFF00_0000 | ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF) }
+struct Aa(*mut GpGraphics);
+impl Aa {
+    unsafe fn new(dc: HDC) -> Option<Aa> {
+        if gdip_token() == 0 { return None; }
+        let mut g: *mut GpGraphics = ptr::null_mut();
+        if GdipCreateFromHDC(dc, &mut g) != 0 || g.is_null() { return None; }
+        GdipSetSmoothingMode(g, SmoothingModeAntiAlias);
+        GdipSetPixelOffsetMode(g, PixelOffsetModeHalf);
+        Some(Aa(g))
+    }
+    /// 면 색(fill)과 1픽셀 테두리(line)를 가진 둥근 사각형. 좌표는 GDI RoundRect와 같은 정수 경계(오른쪽·아래 제외)를 받아 선이 픽셀 가운데에 오도록 0.5 안쪽으로 맞춘다.
+    unsafe fn round_rect(&self, l: i32, t: i32, r: i32, b: i32, diameter: i32, fill: u32, line: u32) -> bool {
+        let (x, y, w, h) = (l as f32 + 0.5, t as f32 + 0.5, (r - l - 1) as f32, (b - t - 1) as f32);
+        let d = (diameter as f32).min(w).min(h);
+        let mut path: *mut GpPath = ptr::null_mut();
+        if GdipCreatePath(FillModeAlternate, &mut path) != 0 || path.is_null() { return false; }
+        GdipAddPathArc(path, x, y, d, d, 180.0, 90.0);
+        GdipAddPathArc(path, x + w - d, y, d, d, 270.0, 90.0);
+        GdipAddPathArc(path, x + w - d, y + h - d, d, d, 0.0, 90.0);
+        GdipAddPathArc(path, x, y + h - d, d, d, 90.0, 90.0);
+        GdipClosePathFigure(path);
+        let (mut brush, mut pen): (*mut GpSolidFill, *mut GpPen) = (ptr::null_mut(), ptr::null_mut());
+        let ok = GdipCreateSolidFill(argb(fill), &mut brush) == 0 && GdipCreatePen1(argb(line), 1.0, UnitPixel, &mut pen) == 0;
+        if ok { GdipFillPath(self.0, brush as *mut GpBrush, path); GdipDrawPath(self.0, pen, path); }
+        if !brush.is_null() { GdipDeleteBrush(brush as *mut GpBrush); }
+        if !pen.is_null() { GdipDeletePen(pen); }
+        GdipDeletePath(path);
+        ok
+    }
+    /// 외접 사각형(GDI Ellipse 인자와 같은 정수 경계)의 원. fill이면 면, 아니면 1픽셀 선.
+    unsafe fn ellipse(&self, l: i32, t: i32, r: i32, b: i32, color: u32, fill: bool) -> bool {
+        let (x, y, w, h) = (l as f32, t as f32, (r - l) as f32, (b - t) as f32);
+        if fill {
+            let mut brush: *mut GpSolidFill = ptr::null_mut();
+            if GdipCreateSolidFill(argb(color), &mut brush) != 0 || brush.is_null() { return false; }
+            GdipFillEllipse(self.0, brush as *mut GpBrush, x, y, w, h);
+            GdipDeleteBrush(brush as *mut GpBrush);
+        } else {
+            let mut pen: *mut GpPen = ptr::null_mut();
+            if GdipCreatePen1(argb(color), 1.0, UnitPixel, &mut pen) != 0 || pen.is_null() { return false; }
+            GdipDrawEllipse(self.0, pen, x + 0.5, y + 0.5, w - 1.0, h - 1.0);
+            GdipDeletePen(pen);
+        }
+        true
+    }
+}
+impl Drop for Aa { fn drop(&mut self) { unsafe { GdipDeleteGraphics(self.0); } } }
 const CLASS: &str = "HwpAutoDocFit.Dock";
 #[repr(C)]
 struct HighContrast { cb_size: u32, flags: u32, scheme: *mut u16 }
@@ -57,7 +119,7 @@ fn wide(s: &str) -> Vec<u16> {
 }
 pub fn run() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
-    if args.iter().any(|a| a == "--capture-dir") { let _ = capture_mode(&args); return; }
+    if args.iter().any(|a| a == "--capture-dir") { let _ = capture_mode(&args); gdip_shutdown(); return; }
     unsafe {
         let mutex_name = wide("Local\\HwpAutoDocFit.Dock.Singleton");
         let m = CreateMutexW(ptr::null(), 1, mutex_name.as_ptr());
@@ -118,6 +180,7 @@ pub fn run() {
             DispatchMessageW(&msg);
         }
         CloseHandle(m);
+        gdip_shutdown();
     }
 }
 unsafe fn dock_layout_for_monitor(hwnd: HWND, monitor: HMONITOR) -> dock::DockRect {
@@ -323,7 +386,8 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
     let edge = CreatePen(PS_SOLID, 1, palette.border);
     let old_brush = SelectObject(mem, bg);
     let old_pen = SelectObject(mem, edge);
-    RoundRect(mem, 2, 2, r.right - 2, r.bottom - 2, 24, 24);
+    let aa_pill = Aa::new(mem).is_some_and(|g| g.round_rect(2, 2, r.right - 2, r.bottom - 2, 24, palette.background, palette.border));
+    if !aa_pill { RoundRect(mem, 2, 2, r.right - 2, r.bottom - 2, 24, 24); }
     let size = dock::icon_size_px(dpi, 24);
     let sc = |n: i32| ((n as i64 * dpi as i64 + 48) / 96) as i32;
     let pad = sc(16);
@@ -339,12 +403,18 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
         let glyph_drawn = icon_font_ready() && dock::icon_glyph(item.tab).is_some_and(|g| draw_glyph(mem, g, x-size/2, y-size/2, size, palette.foreground));
         if !glyph_drawn { draw_icon(mem, dock::icon_shapes(item.tab), x-size/2, y-size/2, size, palette.foreground, palette.accent); }
         if focus == i {
-            let pen=CreatePen(PS_SOLID,1,palette.accent); let op=SelectObject(mem,pen); let ob=SelectObject(mem,GetStockObject(NULL_BRUSH as i32));
-            Ellipse(mem,x-size/2-sc(3),y-size/2-sc(3),x+size/2+sc(3),y+size/2+sc(3));
-            SelectObject(mem,ob); SelectObject(mem,op); DeleteObject(pen);
+            let (l, t, rr, bb) = (x-size/2-sc(3), y-size/2-sc(3), x+size/2+sc(3), y+size/2+sc(3));
+            if !Aa::new(mem).is_some_and(|g| g.ellipse(l, t, rr, bb, palette.accent, false)) {
+                let pen=CreatePen(PS_SOLID,1,palette.accent); let op=SelectObject(mem,pen); let ob=SelectObject(mem,GetStockObject(NULL_BRUSH as i32));
+                Ellipse(mem,l,t,rr,bb);
+                SelectObject(mem,ob); SelectObject(mem,op); DeleteObject(pen);
+            }
         }
         let state = WINDOW_STATES.get_or_init(|| Mutex::new(std::collections::HashMap::new())).lock().unwrap().get(&item.tab).copied().unwrap_or(dock::WindowState::Closed);
-        if dock::running_dot(state) { let dot=CreateSolidBrush(palette.accent); let ob=SelectObject(mem,dot); Ellipse(mem,x-sc(3),y+size/2+sc(2),x+sc(3),y+size/2+sc(8)); SelectObject(mem,ob); DeleteObject(dot); }
+        if dock::running_dot(state) {
+            let (l, t, rr, bb) = (x-sc(3), y+size/2+sc(2), x+sc(3), y+size/2+sc(8));
+            if !Aa::new(mem).is_some_and(|g| g.ellipse(l, t, rr, bb, palette.accent, true)) { let dot=CreateSolidBrush(palette.accent); let ob=SelectObject(mem,dot); Ellipse(mem,l,t,rr,bb); SelectObject(mem,ob); DeleteObject(dot); }
+        }
         if labels {
             let name=wide(item.name); SetBkMode(mem, TRANSPARENT as i32); SetTextColor(mem,palette.foreground);
             let font=CreateFontW(-sc(9),0,0,0,FW_NORMAL as i32,0,0,0,DEFAULT_CHARSET as u32,OUT_DEFAULT_PRECIS as u32,CLIP_DEFAULT_PRECIS as u32,CLEARTYPE_QUALITY as u32,(DEFAULT_PITCH|FF_DONTCARE) as u32,wide("맑은 고딕").as_ptr());
