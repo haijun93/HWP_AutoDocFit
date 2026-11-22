@@ -5,16 +5,24 @@ mod win;
 #[cfg(windows)]
 fn main() {
     let mut args = std::env::args().skip(1);
-    let (mut capture, mut selftest, mut dpi) = (None, None, 96u32);
+    let (mut capture, mut selftest, mut dpi, mut data_dir) = (None, None, 96u32, None);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--capture" => capture = args.next(),
             "--selftest" => selftest = args.next(),
+            "--data-dir" => data_dir = args.next(),
             "--dpi" => dpi = args.next().and_then(|v| v.parse().ok()).unwrap_or(96),
             _ => {
                 fail(&format!("알 수 없는 인자: {a}"), 2);
             }
         }
+    }
+    if selftest.is_some() && data_dir.is_none() {
+        let t = std::env::temp_dir().join(format!("renamewin5-selftest-data-{}", std::process::id()));
+        data_dir = Some(t.to_string_lossy().into_owned());
+    }
+    if let Err(e) = win::set_data_dir(data_dir) {
+        fail(&e, 1);
     }
     let result = if let Some(path) = capture {
         win::capture(std::path::Path::new(&path), dpi).map(|_| ())

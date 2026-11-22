@@ -1,5 +1,7 @@
 //! 읽기 전용 파일 이름 미리보기의 순수 계산부. 디스크 접근은 모두 호출자가 주입한다.
 
+pub mod apply;
+
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -231,6 +233,8 @@ pub struct Model {
     pub rules: Rules,
     pub rows: Vec<PreviewRow>,
     pub dirs: HashMap<String, Vec<String>>,
+    /// `files` 와 같은 순서의 사전 상태(크기·수정시간). 적용 직전 재확인에 쓴다.
+    pub prints: Vec<Option<apply::Fingerprint>>,
     pub scroll: usize,
 }
 
@@ -241,6 +245,16 @@ impl Model {
         paths: &[String],
         is_file: impl Fn(&str) -> bool,
         list_dir: impl Fn(&str) -> Vec<String>,
+    ) -> usize {
+        self.add_paths_with(paths, is_file, list_dir, |_| None)
+    }
+    /// `add_paths` + 파일별 사전 상태(`stat`) 기록.
+    pub fn add_paths_with(
+        &mut self,
+        paths: &[String],
+        is_file: impl Fn(&str) -> bool,
+        list_dir: impl Fn(&str) -> Vec<String>,
+        stat: impl Fn(&str) -> Option<apply::Fingerprint>,
     ) -> usize {
         let mut added = 0;
         for p in paths {
@@ -259,6 +273,7 @@ impl Model {
                 self.dirs.insert(e.dir.clone(), names);
             }
             self.files.push(e);
+            self.prints.push(stat(p));
             added += 1;
         }
         self.recompute();
@@ -266,6 +281,7 @@ impl Model {
     }
     pub fn clear(&mut self) {
         self.files.clear();
+        self.prints.clear();
         self.dirs.clear();
         self.scroll = 0;
         self.recompute();

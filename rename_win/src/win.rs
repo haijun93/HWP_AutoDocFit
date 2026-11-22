@@ -1,6 +1,16 @@
 //! Win32 창: 파일 드롭·열기 대화상자·규칙 입력(편집 컨트롤)·미리보기. 디스크의 파일 이름은 바꾸지 않는다.
+use rename_win::apply::{self, RealFs};
 use rename_win::{Model, RowStatus, invalid_reason, parse_digits, parse_open_buffer};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path, ptr::null_mut};
+use std::{
+    ffi::OsString,
+    os::windows::ffi::OsStringExt,
+    path::{Path, PathBuf},
+    ptr::null_mut,
+    sync::{
+        OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
@@ -11,15 +21,43 @@ use windows_sys::Win32::{
     UI::{
         Controls::Dialogs::*,
         HiDpi::*,
+        Input::KeyboardAndMouse::{EnableWindow, IsWindowEnabled},
         Shell::{DROPFILES, DragAcceptFiles, DragFinish, DragQueryFileW, HDROP},
         WindowsAndMessaging::*,
     },
 };
 
-const TITLE: &str = "파일명 일괄변경 · 미리보기";
+const TITLE: &str = "파일명 일괄변경";
 const ID_FIELD0: i32 = 101; // 접두사, 접미사, 자릿수, 찾을 말, 바꿀 말
 const ID_OPEN: i32 = 201;
 const ID_CLEAR: i32 = 202;
+const ID_APPLY: i32 = 203;
+const ID_UNDO: i32 = 204;
+/// (x, y, w) 96dpi — 적용·되돌리기 단추.
+const BTN_APPLY: (i32, i32, i32) = (700, 152, 170);
+const BTN_UNDO: (i32, i32, i32) = (884, 152, 206);
+static DATA_DIR: OnceLock<PathBuf> = OnceLock::new();
+/// 시험용: 확인 대화상자를 건너뛴다.
+static NO_CONFIRM: AtomicBool = AtomicBool::new(false);
+
+/// 데이터 폴더: `--data-dir` > 환경변수 `RENAME_WIN_DATA` > `%APPDATA%\HwpAutoDocFit\Rename`.
+pub fn set_data_dir(dir: Option<String>) -> Result<(), String> {
+    let d = match dir.or_else(|| std::env::var("RENAME_WIN_DATA").ok()).filter(|v| !v.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => PathBuf::from(std::env::var_os("APPDATA").ok_or("APPDATA 를 찾을 수 없습니다")?)
+            .join("HwpAutoDocFit")
+            .join("Rename"),
+    };
+    let _ = DATA_DIR.set(d);
+    Ok(())
+}
+fn journal_path() -> PathBuf {
+    DATA_DIR
+        .get()
+        .cloned()
+        .unwrap_or_else(|| std::env::temp_dir().join("HwpAutoDocFitRename"))
+        .join(apply::JOURNAL_FILE)
+}
 const EN_CHANGE: u32 = 0x0300;
 const FIELD_LABELS: [&str; 5] = ["접두사", "접미사", "순번 자릿수", "찾을 말", "바꿀 말"];
 /// 96dpi 기준 (x, y, w) — 라벨은 x-라벨폭 위치에 그린다.
@@ -54,6 +92,8 @@ struct Ui {
     edits: [HWND; 5],
     note: String,
     ready: bool,
+    /// 되돌릴 수 있는 직전 작업의 이동 건수.
+    undo_n: Option<usize>,
 }
 
 unsafe fn ui(hwnd: HWND) -> &'static mut Ui {
@@ -125,6 +165,98 @@ fn status_label(m: &Model, i: usize) -> (String, COLORREF) {
     }
 }
 
+fn can_apply(m: &Model) -> bool {
+    !m.files.is_empty() && m.count(RowStatus::Changed) > 0 && m.count(RowStatus::Conflict) == 0 && m.count(RowStatus::Invalid) == 0
+}
+fn undo_label(n: Option<usize>) -> String {
+    match n {
+        Some(n) => format!("직전 작업 되돌리기 ({n})"),
+        None => "직전 작업 되돌리기".into(),
+    }
+}
+fn fake_button(hdc: HDC, dpi: u32, pos: (i32, i32, i32), label: &str, enabled: bool) {
+    let r = RECT { left: sc(pos.0, dpi), top: sc(pos.1, dpi), right: sc(pos.0 + pos.2, dpi), bottom: sc(pos.1 + FIELD_H, dpi) };
+    fill(hdc, r, rgb(225, 228, 234));
+    let c = if enabled { rgb(45, 55, 70) } else { rgb(160, 168, 180) };
+    put(hdc, dpi, pos.0 + 14, pos.1 + 1, pos.2 - 28, label, c);
+}
+fn refresh_buttons(hwnd: HWND) {
+    let u = unsafe { ui(hwnd) };
+    u.undo_n = apply::undoable_count(&journal_path());
+    unsafe {
+        EnableWindow(GetDlgItem(hwnd, ID_APPLY), can_apply(&u.model) as i32);
+        EnableWindow(GetDlgItem(hwnd, ID_UNDO), u.undo_n.is_some() as i32);
+        SetWindowTextW(GetDlgItem(hwnd, ID_UNDO), wide(&undo_label(u.undo_n)).as_ptr());
+    }
+}
+
+fn confirm(hwnd: HWND, text: &str) -> bool {
+    if NO_CONFIRM.load(Ordering::Relaxed) {
+        return true;
+    }
+    unsafe { MessageBoxW(hwnd, wide(text).as_ptr(), wide(TITLE).as_ptr(), MB_YESNO | MB_ICONQUESTION) == IDYES }
+}
+fn alert(hwnd: HWND, text: &str) {
+    if !NO_CONFIRM.load(Ordering::Relaxed) {
+        unsafe { MessageBoxW(hwnd, wide(text).as_ptr(), wide(TITLE).as_ptr(), MB_OK | MB_ICONWARNING) };
+    }
+}
+
+fn do_apply(hwnd: HWND) {
+    let u = unsafe { ui(hwnd) };
+    let plan = match apply::build_plan(&u.model) {
+        Ok(p) => p,
+        Err(e) => {
+            u.note = e;
+            unsafe { InvalidateRect(hwnd, null_mut(), 0) };
+            return;
+        }
+    };
+    if !confirm(hwnd, &format!("{}개 파일의 이름을 바꿉니다. 적용 후 ‘직전 작업 되돌리기’로 되돌릴 수 있습니다. 계속할까요?", plan.len())) {
+        return;
+    }
+    match apply::apply(&plan, &journal_path(), &RealFs) {
+        Ok(r) => {
+            u.model.clear();
+            u.note = format!("{}개 이름 변경 완료 · ‘직전 작업 되돌리기’로 되돌릴 수 있습니다", r.renamed);
+        }
+        Err((msg, r)) => {
+            let mut t = format!("중단: {msg}");
+            if r.renamed > 0 {
+                t += &format!(" · 이미 바뀐 {}개는 되돌리기로 복구할 수 있습니다", r.renamed);
+            }
+            if !r.stranded.is_empty() {
+                t += &format!(" · 임시 이름으로 남은 파일 {}개: {}", r.stranded.len(), r.stranded.join(", "));
+            }
+            alert(hwnd, &t);
+            u.note = t;
+            u.model.clear();
+        }
+    }
+    refresh_buttons(hwnd);
+    unsafe { InvalidateRect(hwnd, null_mut(), 0) };
+}
+
+fn do_undo(hwnd: HWND) {
+    let u = unsafe { ui(hwnd) };
+    let n = u.undo_n.unwrap_or(0);
+    if !confirm(hwnd, &format!("직전 작업({n}건)을 되돌립니다. 계속할까요?")) {
+        return;
+    }
+    u.note = match apply::undo_last(&journal_path(), &RealFs) {
+        Ok(r) if r.skipped.is_empty() => format!("{}개 되돌림 완료", r.restored),
+        Ok(r) => {
+            let t = format!("{}개 되돌림 · {}개 건너뜀: {}", r.restored, r.skipped.len(), r.skipped.join(" / "));
+            alert(hwnd, &t);
+            t
+        }
+        Err(e) => e,
+    };
+    u.model.clear();
+    refresh_buttons(hwnd);
+    unsafe { InvalidateRect(hwnd, null_mut(), 0) };
+}
+
 /// 화면 전체를 그린다. `fake_fields`가 있으면(캡처) 편집 칸을 직접 그린다.
 fn draw(hdc: HDC, w: i32, h: i32, u: &Ui, fake_fields: Option<[String; 5]>) {
     let dpi = u.dpi;
@@ -144,7 +276,7 @@ fn draw(hdc: HDC, w: i32, h: i32, u: &Ui, fake_fields: Option<[String; 5]>) {
         24,
         42,
         bw - 48,
-        "미리보기 전용입니다. 이 창은 디스크의 파일 이름을 바꾸지 않습니다.",
+        "규칙을 입력하고 미리보기를 확인한 뒤 ‘이름 변경 적용’을 누르세요. 적용한 직전 작업은 되돌릴 수 있습니다.",
         muted,
     );
     for (i, label) in FIELD_LABELS.iter().enumerate() {
@@ -187,7 +319,11 @@ fn draw(hdc: HDC, w: i32, h: i32, u: &Ui, fake_fields: Option<[String; 5]>) {
         "자릿수 0 = 순번 없음 · 찾아 바꾸기는 확장자를 제외한 이름에 적용",
         muted,
     );
-    put(hdc, dpi, 24, 156, bw - 48, &u.model.summary(), ink);
+    put(hdc, dpi, 24, 156, BTN_APPLY.0 - 40, &u.model.summary(), ink);
+    if fake_fields.is_some() {
+        fake_button(hdc, dpi, BTN_APPLY, "이름 변경 적용", can_apply(&u.model));
+        fake_button(hdc, dpi, BTN_UNDO, &undo_label(u.undo_n), u.undo_n.is_some());
+    }
     // 목록
     let col2 = 24 + (bw - 48 - 220) / 2;
     let stat = bw - 24 - 210;
@@ -256,12 +392,13 @@ fn fs_list_dir(dir: &str) -> Vec<String> {
 fn add_paths(hwnd: HWND, paths: Vec<String>) {
     let u = unsafe { ui(hwnd) };
     let total = paths.len();
-    let n = u.model.add_paths(&paths, fs_is_file, fs_list_dir);
+    let n = u.model.add_paths_with(&paths, fs_is_file, fs_list_dir, |p| apply::stat_file(Path::new(p)));
     u.note = if total > n {
         format!("{n}개 추가 · {}개 건너뜀(폴더이거나 이미 목록에 있음)", total - n)
     } else {
         format!("{n}개 추가")
     };
+    refresh_buttons(hwnd);
     unsafe { InvalidateRect(hwnd, null_mut(), 0) };
 }
 
@@ -293,6 +430,11 @@ fn layout_children(hwnd: HWND) {
             let (x, y, w) = FIELD_POS[i];
             MoveWindow(h, sc(x, u.dpi), sc(y, u.dpi), sc(w, u.dpi), sc(FIELD_H, u.dpi), 1);
             SendMessageW(h, WM_SETFONT, u.font as usize, 1);
+        }
+        for (id, (x, y, w)) in [(ID_APPLY, BTN_APPLY), (ID_UNDO, BTN_UNDO)] {
+            let b = GetDlgItem(hwnd, id);
+            MoveWindow(b, sc(x, u.dpi), sc(y, u.dpi), sc(w, u.dpi), sc(FIELD_H, u.dpi), 1);
+            SendMessageW(b, WM_SETFONT, u.font as usize, 1);
         }
         for (id, x) in [(ID_OPEN, 700), (ID_CLEAR, 830)] {
             let b = GetDlgItem(hwnd, id);
@@ -353,7 +495,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     );
                 }
                 let button = wide("BUTTON");
-                for (id, label) in [(ID_OPEN, "파일 열기…"), (ID_CLEAR, "목록 비우기")] {
+                for (id, label) in [(ID_OPEN, "파일 열기…"), (ID_CLEAR, "목록 비우기"), (ID_APPLY, "이름 변경 적용"), (ID_UNDO, "직전 작업 되돌리기")] {
                     let t = wide(label);
                     CreateWindowExW(
                         0,
@@ -374,6 +516,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 DragAcceptFiles(hwnd, 1);
                 u.ready = true;
                 u.model.recompute();
+                refresh_buttons(hwnd);
                 0
             }
             WM_DROPFILES => {
@@ -386,13 +529,19 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 let u = ui(hwnd);
                 if u.ready && code == EN_CHANGE && (ID_FIELD0..ID_FIELD0 + 5).contains(&id) {
                     read_rules(u);
+                    refresh_buttons(hwnd);
                     InvalidateRect(hwnd, null_mut(), 0);
                 } else if id == ID_OPEN && code == BN_CLICKED {
                     open_dialog(hwnd);
                 } else if id == ID_CLEAR && code == BN_CLICKED {
                     u.model.clear();
                     u.note = "목록을 비웠습니다".into();
+                    refresh_buttons(hwnd);
                     InvalidateRect(hwnd, null_mut(), 0);
+                } else if id == ID_APPLY && code == BN_CLICKED && can_apply(&u.model) {
+                    do_apply(hwnd);
+                } else if id == ID_UNDO && code == BN_CLICKED && u.undo_n.is_some() {
+                    do_undo(hwnd);
                 }
                 0
             }
@@ -464,6 +613,7 @@ fn create_window(visible: bool) -> Result<(HWND, *mut Ui), String> {
             edits: [null_mut(); 5],
             note: String::new(),
             ready: false,
+            undo_n: None,
         }));
         let title = wide(TITLE);
         let mut style = WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN;
@@ -519,6 +669,7 @@ pub fn capture(path: &Path, dpi: u32) -> Result<std::path::PathBuf, String> {
         edits: [null_mut(); 5],
         note: "6개 추가".into(),
         ready: true,
+        undo_n: Some(3),
     };
     u.model.rules.prefix = "정리_".into();
     u.model.rules.digits = 3;
@@ -586,6 +737,7 @@ pub fn selftest(out: &Path) -> Result<bool, String> {
         std::fs::write(dir.join(n), b"x").map_err(|e| e.to_string())?;
     }
     let before = dir_snapshot(&dir);
+    NO_CONFIRM.store(true, Ordering::Relaxed);
     let (hwnd, st) = create_window(false)?;
     let mut log = Vec::new();
     let mut ok = true;
@@ -618,11 +770,40 @@ pub fn selftest(out: &Path) -> Result<bool, String> {
     let u = unsafe { ui(hwnd) };
     check("비우기 단추 → 목록 비움", u.model.files.is_empty());
     check("디스크의 파일 이름은 그대로", dir_snapshot(&dir) == before);
+    // ---- 3단계: 적용·되돌리기(임시 폴더, 확인 대화상자 생략) ----
+    let btn = |id: i32| unsafe { IsWindowEnabled(GetDlgItem(hwnd, id)) != 0 };
+    check("빈 목록: 적용·되돌리기 단추 비활성", !btn(ID_APPLY) && !btn(ID_UNDO));
+    send_drop(hwnd, &[p("a.txt"), p("b.txt")]);
+    set_field(hwnd, 0, "");
+    set_field(hwnd, 2, "0");
+    set_field(hwnd, 3, "");
+    set_field(hwnd, 4, "");
+    set_field(hwnd, 0, "정리_");
+    check("정리_a_001.txt 와 충돌 없음(번호 없음) → 적용 단추 활성", btn(ID_APPLY));
+    set_field(hwnd, 2, "3");
+    check("충돌 있으면 적용 단추 비활성", !btn(ID_APPLY));
+    set_field(hwnd, 2, "0");
+    set_field(hwnd, 0, "a?");
+    check("이름 오류 있으면 적용 단추 비활성", !btn(ID_APPLY));
+    set_field(hwnd, 0, "정리_");
+    unsafe { SendMessageW(hwnd, WM_COMMAND, ID_APPLY as usize, 0) };
+    let after: Vec<String> = dir_snapshot(&dir);
+    check("적용: 이름이 실제로 바뀜", after.contains(&"정리_a.txt".to_string()) && after.contains(&"정리_b.txt".to_string()) && !after.contains(&"b.txt".to_string()));
+    check("적용 후 되돌리기 단추 활성", btn(ID_UNDO));
+    check("저널 파일이 데이터 폴더에 생김", journal_path().is_file());
+    unsafe { SendMessageW(hwnd, WM_COMMAND, ID_UNDO as usize, 0) };
+    check("되돌리기: 원래 이름으로 복원", dir_snapshot(&dir) == before);
+    check("되돌린 뒤 되돌리기 단추 비활성", !btn(ID_UNDO));
     unsafe {
         DestroyWindow(hwnd);
         drop(Box::from_raw(st));
     }
     let _ = std::fs::remove_dir_all(&dir);
+    if let Some(d) = DATA_DIR.get() {
+        if d.starts_with(std::env::temp_dir()) {
+            let _ = std::fs::remove_dir_all(d);
+        }
+    }
     std::fs::write(out, log.join("\n") + "\n").map_err(|e| e.to_string())?;
     Ok(ok)
 }
