@@ -1,9 +1,14 @@
 //! hwpx_fmt — HWPX 직접 처리기 Rust 이식 프로토타입(RSXML1).
-//! 처리기: 표 날짜 칸 한 줄(`date`), 표 두 글자 칸(`twochar`).
+//! 처리기: 표 날짜 칸 한 줄(`date`), 표 두 글자 칸(`twochar`), 개요 표 첫 빈칸(`overview_lead`),
+//! 쪽 번호 모양(`page_number`), 자간 초기화(`spacing_reset`).
+pub mod config;
 pub mod dom;
+pub mod extra;
+pub mod marker;
 pub mod rules;
 pub mod zipio;
 
+use config::Config;
 use dom::Doc;
 use rules::{is_date_cell, is_format_table, is_section_name, protected_tables, py_strip, unprotected_cells, R};
 use std::path::Path;
@@ -16,6 +21,9 @@ pub type Selections = Vec<(String, Vec<usize>)>;
 pub enum Processor {
     Date,
     TwoChar,
+    OverviewLead,
+    PageNumber,
+    SpacingReset,
 }
 
 impl Processor {
@@ -23,6 +31,9 @@ impl Processor {
         match name {
             "date" | "표날짜칸_hwpx_처리" => Some(Processor::Date),
             "twochar" | "두글자칸_hwpx_처리" => Some(Processor::TwoChar),
+            "overview_lead" | "개요첫칸_hwpx_처리" => Some(Processor::OverviewLead),
+            "page_number" | "쪽번호_hwpx_처리" => Some(Processor::PageNumber),
+            "spacing_reset" | "자간초기화_hwpx_처리" => Some(Processor::SpacingReset),
             _ => None,
         }
     }
@@ -143,40 +154,109 @@ fn apply_twochar(d: &mut Doc) -> R<usize> {
 
 // ---- 공개 API --------------------------------------------------------
 
-fn survey_doc(p: Processor, d: &Doc) -> R<Vec<usize>> {
+fn survey_doc(p: Processor, d: &Doc, cfg: &Config) -> R<Vec<usize>> {
     match p {
         Processor::Date => survey_date(d),
         Processor::TwoChar => Ok((0..twochar_targets(d)?.len()).collect()),
+        Processor::OverviewLead => Ok((0..extra::overview_targets(d)?.len()).collect()),
+        Processor::PageNumber => Ok(extra::page_number_survey(d, cfg)),
+        Processor::SpacingReset => Ok(vec![0]),
     }
+}
+
+/// 설정 중 이 처리기가 반영하지 못하는 값이 있으면 거부한다(조용히 다른 결과를 내지 않는다).
+fn check_config(p: Processor, cfg: &Config) -> R<()> {
+    match p {
+        Processor::TwoChar | Processor::OverviewLead if !cfg.title_owner_text.is_empty() => {
+            config::unsupported("제목_담당자_글 설정(title_owner_text)은 서식표 판별에 반영하지 못합니다.")
+        }
+        Processor::SpacingReset if cfg.indent_rules_nonempty => {
+            config::unsupported("내어쓰기_규칙(indent_rules) 설정은 자간 초기화 보호 구간에 반영하지 못합니다.")
+        }
+        Processor::SpacingReset if cfg.marker_scheme_active => {
+            config::unsupported("활성 항목기호 체계(marker_scheme_active)는 자간 초기화 보호 구간에 반영하지 못합니다.")
+        }
+        _ => Ok(()),
+    }
+}
+
+/// 구역 번호를 정수로 본 오름차순 키(같으면 압축 안 순서). 파이썬 `sorted(key=int(...))` 와 같다.
+fn section_number_key(name: &str) -> (usize, String) {
+    let digits = name.trim_start_matches("Contents/section").trim_end_matches(".xml").trim_start_matches('0');
+    (digits.len(), digits.to_string())
+}
+
+fn parse_sections_sorted(contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
+    let mut v = parse_sections(contents)?;
+    v.sort_by_key(|(n, _, _)| section_number_key(n)); // 안정 정렬
+    Ok(v)
+}
+
+/// 파이썬 처리기 첫머리: 모든 Contents/*.xml 을 읽어 보므로 구역이 아닌 항목이 깨져 있어도 처리 전체가 실패한다.
+fn check_other_xml(contents: &Contents) -> R<()> {
+    for (n, data) in contents.iter() {
+        if n.starts_with("Contents/") && n.ends_with(".xml") && !is_section_name(n) {
+            dom::parse(data).map_err(|e| format!("{n}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn ordered_sections(p: Processor, contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
+    match p {
+        Processor::OverviewLead | Processor::SpacingReset => parse_sections_sorted(contents),
+        _ => parse_sections(contents),
+    }
+}
+
+fn parse_header(contents: &Contents) -> R<(usize, Doc)> {
+    let i = contents.iter().position(|(n, _)| n == "Contents/header.xml").ok_or("Contents/header.xml 이 없습니다.")?;
+    Ok((i, dom::parse(&contents[i].1).map_err(|e| format!("Contents/header.xml: {e}"))?))
 }
 
 /// 조사 모드: 구역별 대상 목록(파이썬 처리기를 selections=None 으로 부른 결과).
 pub fn survey(p: Processor, source: &Path) -> R<Selections> {
+    survey_with(p, source, &Config::default())
+}
+
+pub fn survey_with(p: Processor, source: &Path, cfg: &Config) -> R<Selections> {
+    check_config(p, cfg)?;
     let contents = zipio::read_hwpx_safely(source)?;
+    check_other_xml(&contents)?;
+    if p == Processor::SpacingReset {
+        parse_header(&contents)?;
+    }
     let mut out = vec![];
-    for (n, _, d) in parse_sections(&contents)? {
-        out.push((n, survey_doc(p, &d)?));
+    for (n, _, d) in ordered_sections(p, &contents)? {
+        out.push((n, survey_doc(p, &d, cfg)?));
     }
     Ok(out)
+}
+
+pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&Selections>) -> R<usize> {
+    process_with(p, source, target, selections, &Config::default())
 }
 
 /// 처리 모드(파이썬 처리기를 selections 와 target 을 주어 부른 것과 같음). 바꾼 칸 수를 돌려준다.
 /// selections 가 None 이면 먼저 조사한 결과를 쓴다. 대상이 하나도 없으면 원본을 그대로 복사한다.
 /// 두글자 처리는 파이썬처럼 목록 내용이 아니라 '비었는지'만 본다.
-pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&Selections>) -> R<usize> {
+pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Option<&Selections>, cfg: &Config) -> R<usize> {
+    check_config(p, cfg)?;
     if let (Ok(a), Ok(b)) = (std::fs::canonicalize(source), std::fs::canonicalize(target)) {
         if a == b {
             return Err("입력과 출력이 같은 파일입니다(원본 보존).".into());
         }
     }
     let mut contents = zipio::read_hwpx_safely(source)?;
-    let sections = parse_sections(&contents)?;
+    check_other_xml(&contents)?;
+    let sections = ordered_sections(p, &contents)?;
+    let mut header = if p == Processor::SpacingReset { Some(parse_header(&contents)?) } else { None };
     let sel: Selections = match selections {
         Some(s) => s.clone(),
         None => {
             let mut v = vec![];
             for (n, _, d) in &sections {
-                v.push((n.clone(), survey_doc(p, d)?));
+                v.push((n.clone(), survey_doc(p, d, cfg)?));
             }
             v
         }
@@ -184,6 +264,32 @@ pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&S
     if sel.iter().all(|(_, items)| items.is_empty()) {
         zipio::copy_file_safely(source, target)?;
         return Ok(0);
+    }
+    if p == Processor::SpacingReset {
+        let mut docs: Vec<(String, usize, Doc)> = sections;
+        let (hidx, hdoc) = header.as_mut().unwrap();
+        let stats = {
+            let mut refs: Vec<&mut Doc> = docs.iter_mut().map(|(_, _, d)| d).collect();
+            extra::reset_spacing(hdoc, &mut refs)?
+        };
+        if stats.runs == 0 {
+            zipio::copy_file_safely(source, target)?;
+            return Ok(0);
+        }
+        for (_, idx, d) in &docs {
+            contents[*idx].1 = d.tostring();
+        }
+        contents[*hidx].1 = hdoc.tostring();
+        zipio::write_hwpx_safely(&contents, target)?;
+        return Ok(stats.paragraphs);
+    }
+    if p == Processor::PageNumber {
+        // 파이썬은 selections 에 든 구역 이름으로 구역을 찾는다(없으면 KeyError).
+        for (n, _) in &sel {
+            if !sections.iter().any(|(s, _, _)| s == n) {
+                return Err(format!("선택 목록의 구역이 문서에 없습니다: {n}"));
+            }
+        }
     }
     let mut count = 0;
     for (name, idx, mut d) in sections {
@@ -193,6 +299,13 @@ pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&S
                 count += apply_date(&mut d, items)?;
             }
             Processor::TwoChar => count += apply_twochar(&mut d)?,
+            Processor::OverviewLead => count += extra::apply_overview(&mut d)?,
+            Processor::PageNumber => {
+                // 파이썬은 selections 에 든 구역만 다시 쓴다.
+                let Some((_, items)) = sel.iter().find(|(n, _)| *n == name) else { continue };
+                count += extra::apply_page_number(&mut d, items, cfg)?;
+            }
+            Processor::SpacingReset => unreachable!(),
         }
         contents[idx].1 = d.tostring();
     }

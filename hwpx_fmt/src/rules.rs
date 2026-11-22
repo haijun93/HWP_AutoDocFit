@@ -379,17 +379,33 @@ fn overview_table(d: &Doc, table: usize) -> R<bool> {
     Ok(!text.is_empty() && clen(&text) >= 15 && !RE_BULLET.is_match(&text) && !text.starts_with("붙임"))
 }
 
-/// 서식표_종류판별: 서식 표(제목·중제목·붙임·한 칸 상자)이면 true.
-pub fn is_format_table(d: &Doc, table: usize) -> R<bool> {
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum FormatKind {
+    Title,
+    Mid,
+    Attach,
+    Box,
+}
+
+/// 서식표_종류판별: 제목(title*)·중제목(midtitle*)·붙임(attach*)·한 칸 상자(box), 그 밖은 None.
+pub fn format_kind(d: &Doc, table: usize) -> R<Option<FormatKind>> {
     if title_kind(d, table)?.is_some() {
         let cells = d.cells(table);
         let title = py_strip(&d.jstr(cells[0])).to_string();
         if !title.is_empty() && clen(&title) <= 160 && !title.starts_with("붙임") {
-            return Ok(true);
+            return Ok(Some(FormatKind::Title));
         }
     }
-    if mid_kind(d, table)?.is_some() || attach_kind(d, table)?.is_some() {
-        return Ok(true);
+    if mid_kind(d, table)?.is_some() {
+        return Ok(Some(FormatKind::Mid));
     }
-    overview_table(d, table)
+    if attach_kind(d, table)?.is_some() {
+        return Ok(Some(FormatKind::Attach));
+    }
+    Ok(if overview_table(d, table)? { Some(FormatKind::Box) } else { None })
+}
+
+/// 서식 표(제목·중제목·붙임·한 칸 상자)이면 true.
+pub fn is_format_table(d: &Doc, table: usize) -> R<bool> {
+    Ok(format_kind(d, table)?.is_some())
 }

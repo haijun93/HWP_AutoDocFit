@@ -1,4 +1,4 @@
-"""RSXML1: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
+"""RSXML1·RSXML2: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
 
 Rust 바이너리가 없으면 건너뛴다(--bin/HWPX_FMT_BIN/CARGO_TARGET_DIR/release/hwpx_fmt). 한/글 COM 은 쓰지 않는다.
 """
@@ -55,6 +55,32 @@ class CorpusTest(unittest.TestCase):
     def test_corpus_size(self):
         self.assertGreaterEqual(len(parity.synthetic_cases()) + len(parity.random_cases()), 30)
 
+    def test_rsxml2_cases_cover_each_processor_30_times_and_are_valid_hwpx(self):
+        import io
+        import zipfile
+        cases = parity.rsxml2_cases_module().build(parity)
+        for name in ('overview_lead', 'page_number', 'spacing_reset'):
+            self.assertGreaterEqual(sum(1 for _, jobs in cases.values() if any(j[0] == name for j in jobs)), 30, name)
+        for cname, (data, jobs) in cases.items():
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                self.assertIn('Contents/header.xml', z.namelist(), cname)
+            for _, cfg in jobs:
+                self.assertTrue(cfg is None or cfg in parity.rsxml2_cases_module().CONFIGS, cname)
+
+    def test_python_settings_are_applied_and_restored(self):
+        g = {'표준서식_설정': {'keep': 1}, '제목_담당자_글': 'x'}
+
+        def fn():
+            pass
+        fn.__globals__.update(g)
+        restore = parity.apply_py_settings(fn, {'page_number': {'pos': 'A'}, 'title_owner_text': '담당'})
+        self.assertEqual(fn.__globals__['표준서식_설정'], {'쪽번호': {'pos': 'A'}})
+        self.assertEqual(fn.__globals__['제목_담당자_글'], '담당')
+        restore()
+        self.assertEqual(fn.__globals__['표준서식_설정'], {'keep': 1})
+        self.assertEqual(fn.__globals__['제목_담당자_글'], 'x')
+        del fn.__globals__['표준서식_설정'], fn.__globals__['제목_담당자_글']
+
 
 @unittest.skipUnless(parity.find_bin(None), 'hwpx_fmt 바이너리가 없습니다(cargo build --release 후 HWPX_FMT_BIN 지정)')
 class ParityTest(unittest.TestCase):
@@ -70,6 +96,20 @@ class ParityTest(unittest.TestCase):
         # 시험이 공허하지 않도록: 실제로 바뀐 쌍과 둘 다 거부한 쌍이 모두 있어야 한다
         self.assertGreater(sum(1 for r in results if r['py_count']), 30)
         self.assertGreater(sum(1 for r in results if r['py_error'] and r['rs_error']), 10)
+        # RSXML2 처리기마다 전용 합성 사례 30건 이상, 그중 실제로 바뀐 것이 있어야 한다
+        for name in ('overview_lead', 'page_number', 'spacing_reset'):
+            own = [r for r in results if r['processor'] == name and r['kind'] == 'rsxml2']
+            self.assertGreaterEqual(len(own), 30, name)
+            self.assertGreaterEqual(sum(1 for r in own if r['py_count']), 15, name)
+
+    def test_unsupported_settings_are_rejected_not_ignored(self):
+        work = Path(tempfile.mkdtemp(prefix='rsxml_unsupported_test_'))
+        try:
+            results, failures = parity.run_unsupported(parity.find_bin(None), work)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        self.assertEqual(failures, 0, [r for r in results if not r['ok']])
+        self.assertGreaterEqual(len(results), 10)
 
 
 if __name__ == '__main__':

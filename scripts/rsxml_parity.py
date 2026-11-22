@@ -1,6 +1,9 @@
-"""RSXML1 차이 0 시험 하네스: 파이썬 처리기와 Rust CLI(hwpx_fmt)를 같은 HWPX 에 돌려 결과 XML 을 트리 단위로 비교한다.
+"""RSXML1·RSXML2 차이 0 시험 하네스: 파이썬 처리기와 Rust CLI(hwpx_fmt)를 같은 HWPX 에 돌려 결과 XML 을 트리 단위로 비교한다.
 
-처리기: 표날짜칸_hwpx_처리(date), 두글자칸_hwpx_처리(twochar).
+처리기: 표날짜칸_hwpx_처리(date), 두글자칸_hwpx_처리(twochar), 개요첫칸_hwpx_처리(overview_lead),
+        쪽번호_hwpx_처리(page_number), 자간초기화_hwpx_처리(spacing_reset).
+설정: 파이썬 전역 설정(표준서식_설정 등)을 사례별로 바꿔 부르고, 같은 값을 --config JSON 으로 Rust 에 넘긴다.
+      Rust 가 반영하지 못하는 설정은 '미지원 입력'(종료 코드 4, 출력 파일 없음)으로 거부해야 한다(unsupported_cases).
 입력: 합성 HWPX(scripts 안에서 생성, 사용자 문서 없음) + tests/fixtures 의 기존 HWPX.
 비교: 압축 항목 이름·순서, 바이너리 항목 바이트, XML 항목은 정규화한 트리(네임스페이스 접두사 무시·속성 순서 무시·
       t 요소 밖 공백뿐인 글/꼬리 무시)가 같은지. 한 건이라도 다르면 차이를 그대로 출력하고 종료 코드 1.
@@ -30,9 +33,14 @@ from defusedxml import ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 NS = ('xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
       'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"')
-PROCESSORS = {'date': '표날짜칸_hwpx_처리', 'twochar': '두글자칸_hwpx_처리'}
+PROCESSORS = {'date': '표날짜칸_hwpx_처리', 'twochar': '두글자칸_hwpx_처리', 'overview_lead': '개요첫칸_hwpx_처리',
+              'page_number': '쪽번호_hwpx_처리', 'spacing_reset': '자간초기화_hwpx_처리'}
+# 모든 문서(합성 공통·fixture)에 처리기별로 거는 기본 설정 이름(rsxml2_cases.CONFIGS 의 키)
+DEFAULT_CONFIG = {'page_number': 'page_std'}
 HEADER = f'<?xml version="1.0" encoding="UTF-8"?><hh:head {NS}><hh:refList/></hh:head>'
 
 
@@ -387,8 +395,38 @@ def load_python_processors():
     return {k: ns[v] for k, v in PROCESSORS.items()}
 
 
-def run_py(fn, src, dst):
+_MISSING = object()
+
+
+def apply_py_settings(fn, cfg):
+    """파이썬 처리기가 읽는 전역 설정을 cfg(Rust --config 와 같은 사전)로 맞추고, 되돌리는 함수를 돌려준다."""
+    g = fn.__globals__
+    keys = ('표준서식_설정', '활성_항목기호_체계', '제목_담당자_글')
+    saved = {k: g.get(k, _MISSING) for k in keys}
+    std = {}
+    if cfg:
+        if cfg.get('page_number'):
+            std['쪽번호'] = dict(cfg['page_number'])
+        if cfg.get('indent_rules'):
+            std['내어쓰기_규칙'] = dict(cfg['indent_rules'])
+        g['제목_담당자_글'] = cfg.get('title_owner_text') or ''
+    else:
+        g['제목_담당자_글'] = ''
+    g['표준서식_설정'] = std
+    g['활성_항목기호_체계'] = None
+
+    def restore():
+        for k, v in saved.items():
+            if v is _MISSING:
+                g.pop(k, None)
+            else:
+                g[k] = v
+    return restore
+
+
+def run_py(fn, src, dst, cfg=None):
     """파이썬: (조사 결과, 개수, 오류). 실패하면 dst 가 없어야 한다."""
+    restore = apply_py_settings(fn, cfg)
     try:
         old = sys.stdout
         sys.stdout = io.StringIO()
@@ -400,48 +438,114 @@ def run_py(fn, src, dst):
         return sel, n, None
     except Exception as exc:
         return None, None, f'{type(exc).__name__}: {exc}'
+    finally:
+        restore()
 
 
-def run_rs(binpath, name, src, dst):
-    s = subprocess.run([binpath, 'survey', name, str(src)], capture_output=True, text=True, encoding='utf-8')
+def cfg_args(cfg, cfg_file):
+    if cfg is None:
+        return []
+    Path(cfg_file).write_text(json.dumps(cfg, ensure_ascii=False), encoding='utf-8')
+    return ['--config', str(cfg_file)]
+
+
+def run_rs(binpath, name, src, dst, cfg=None, cfg_file=None):
+    extra = cfg_args(cfg, cfg_file)
+    s = subprocess.run([binpath, 'survey', name, str(src)] + extra, capture_output=True, text=True, encoding='utf-8')
     if s.returncode != 0:
         return None, None, s.stderr.strip()
     sel = json.loads(s.stdout)
-    p = subprocess.run([binpath, name, str(src), str(dst)], capture_output=True, text=True, encoding='utf-8')
+    p = subprocess.run([binpath, name, str(src), str(dst)] + extra, capture_output=True, text=True, encoding='utf-8')
     if p.returncode != 0:
         return sel, None, p.stderr.strip()
     return sel, json.loads(p.stdout)['count'], None
 
 
+def mutated_fixtures():
+    """tests/fixtures 의 실제 HWPX 구조를 쓰되, 대상이 생기도록 일부만 바꾼 변형(자간 -5 / 쪽 번호 요소 삽입)."""
+    import re
+    out = {}
+    for f in sorted((ROOT / 'tests' / 'fixtures').glob('*.hwpx')):
+        with zipfile.ZipFile(f) as z:
+            items = [(i, z.read(i.filename)) for i in z.infolist()]
+
+        def rebuild(fn):
+            bio = io.BytesIO()
+            with zipfile.ZipFile(bio, 'w') as z:
+                for info, data in items:
+                    z.writestr(info.filename, fn(info.filename, data),
+                               compress_type=zipfile.ZIP_STORED if info.filename == 'mimetype' else zipfile.ZIP_DEFLATED)
+            return bio.getvalue()
+
+        def sp(name, data):
+            if name == 'Contents/header.xml':
+                text = data.decode('utf-8')
+                text = re.sub(r'(<hh:spacing [^>]*>)', lambda m: re.sub(r'="-?\d+"', '="-5"', m.group(1)), text)
+                return text.encode('utf-8')
+            return data
+
+        def pn(name, data):
+            if re.fullmatch(r'Contents/section\d+\.xml', name):
+                text = data.decode('utf-8')
+                text = re.sub(r'(<hp:run [^>]*>)', r'\1<hp:ctrl><hp:pageNum pos="TOP_LEFT" formatType="X" sideChar=""/></hp:ctrl>', text, count=1)
+                return text.encode('utf-8')
+            return data
+        out[f'fixturesp_{f.stem}'] = rebuild(sp)
+        out[f'fixturepn_{f.stem}'] = rebuild(pn)
+    return out
+
+
 def build_corpus(work):
+    """{문서 이름: (종류, 경로, [(처리기, 설정 이름)])}. 공통 문서는 모든 처리기에, 처리기 전용 사례는 정해진 처리기에 건다."""
+    import rsxml2_cases
+    everyone = list(PROCESSORS)
     corpus = {}
+    (work / 'in').mkdir(exist_ok=True)
     for name, data in {**synthetic_cases(), **random_cases()}.items():
-        (work / 'in').mkdir(exist_ok=True)
         p = work / 'in' / f'{name}.hwpx'
         p.write_bytes(data)
-        corpus[name] = ('synthetic', p)
+        corpus[name] = ('synthetic', p, [(x, DEFAULT_CONFIG.get(x)) for x in everyone])
     for f in sorted((ROOT / 'tests' / 'fixtures').glob('*.hwpx')):
         p = work / 'in' / f'fixture_{f.stem}.hwpx'
         shutil.copyfile(f, p)
-        corpus[f'fixture_{f.stem}'] = ('fixture', p)
+        corpus[f'fixture_{f.stem}'] = ('fixture', p, [(x, DEFAULT_CONFIG.get(x)) for x in everyone])
+    for name, data in mutated_fixtures().items():
+        p = work / 'in' / f'{name}.hwpx'
+        p.write_bytes(data)
+        corpus[name] = ('fixture_mutated', p, [(x, DEFAULT_CONFIG.get(x)) for x in everyone])
     for name, data in malicious_cases().items():
         p = work / 'in' / f'mal_{name}.hwpx'
         p.write_bytes(data)
-        corpus[f'mal_{name}'] = ('malicious', p)
+        corpus[f'mal_{name}'] = ('malicious', p, [(x, DEFAULT_CONFIG.get(x)) for x in everyone])
+    for name, (data, jobs) in rsxml2_cases.build(sys.modules[__name__]).items():
+        p = work / 'in' / f'{name}.hwpx'
+        p.write_bytes(data)
+        corpus[name] = ('rsxml2', p, jobs)
     return corpus
+
+
+def rsxml2_cases_module():
+    import rsxml2_cases
+    return rsxml2_cases
+
+
+def config_dict(name):
+    return None if name is None else rsxml2_cases_module().CONFIGS[name]
 
 
 def run_parity(binpath, work, procs):
     corpus = build_corpus(work)
     results, failures = [], 0
-    for name, (kind, src) in corpus.items():
+    (work / 'out').mkdir(exist_ok=True)
+    for name, (kind, src, jobs) in corpus.items():
         before = sha(src)
-        for pname, fn in procs.items():
+        for pname, cfgname in jobs:
+            fn = procs[pname]
+            cfg = config_dict(cfgname)
             out_py, out_rs = work / 'out' / f'{name}.{pname}.py.hwpx', work / 'out' / f'{name}.{pname}.rs.hwpx'
-            out_py.parent.mkdir(exist_ok=True)
-            psel, pn, perr = run_py(fn, src, out_py)
-            rsel, rn, rerr = run_rs(binpath, pname, src, out_rs)
-            rec = {'doc': name, 'kind': kind, 'processor': pname, 'py_count': pn, 'rs_count': rn,
+            psel, pn, perr = run_py(fn, src, out_py, cfg)
+            rsel, rn, rerr = run_rs(binpath, pname, src, out_rs, cfg, work / 'out' / f'{name}.{pname}.cfg.json')
+            rec = {'doc': name, 'kind': kind, 'processor': pname, 'config': cfgname, 'py_count': pn, 'rs_count': rn,
                    'py_error': perr, 'rs_error': rerr, 'ok': True, 'diffs': [], 'strict_noise': 0}
             if perr or rerr:
                 # 둘 다 거부해야 같다. 한쪽만 실패하거나, 실패했는데 출력 파일이 남으면 차이.
@@ -466,7 +570,7 @@ def run_parity(binpath, work, procs):
                 if not same:
                     rec['ok'] = False
                     rec['diffs'].extend(diffs)
-                if all(not v for v in psel.values()) and out_rs.read_bytes() != src.read_bytes():
+                if (all(not v for v in psel.values()) or (pname == 'spacing_reset' and not pn)) and out_rs.read_bytes() != src.read_bytes():
                     rec['ok'] = False
                     rec['diffs'].append('대상이 없는데 출력이 입력과 바이트 단위로 다름(복사해야 함)')
             if sha(src) != before:
@@ -478,11 +582,48 @@ def run_parity(binpath, work, procs):
     return results, failures
 
 
+def run_unsupported(binpath, work):
+    """반영하지 못하는 설정은 종료 코드 4 와 '미지원 입력' 메시지로 거부하고 출력 파일을 만들지 않아야 한다."""
+    import rsxml2_cases
+    out, failures = [], 0
+    (work / 'uns').mkdir(exist_ok=True)
+    for name, pname, cfg, data in rsxml2_cases.unsupported_cases(sys.modules[__name__]):
+        src, dst, cf = work / 'uns' / f'{name}.hwpx', work / 'uns' / f'{name}.out.hwpx', work / 'uns' / f'{name}.json'
+        src.write_bytes(data)
+        cf.write_text(json.dumps(cfg, ensure_ascii=False), encoding='utf-8')
+        rec = {'case': name, 'processor': pname, 'ok': True, 'diffs': []}
+        for mode, argv in (('survey', [binpath, 'survey', pname, str(src), '--config', str(cf)]),
+                           ('process', [binpath, pname, str(src), str(dst), '--config', str(cf)])):
+            r = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8')
+            if r.returncode != 4 or not r.stderr.startswith('미지원 입력'):
+                rec['ok'] = False
+                rec['diffs'].append(f'{mode}: 종료 코드 {r.returncode}, 오류 {r.stderr.strip()!r} (4 와 미지원 입력이어야 함)')
+        if dst.exists():
+            rec['ok'] = False
+            rec['diffs'].append('미지원 입력인데 출력 파일이 만들어짐')
+        failures += not rec['ok']
+        out.append(rec)
+    return out, failures
+
+
+HEADER_SP = (f'<?xml version="1.0" encoding="UTF-8"?><hh:head {NS}><hh:refList><hh:charProperties itemCnt="3">'
+             '<hh:charPr id="0"><hh:spacing hangul="0" latin="0"/></hh:charPr>'
+             '<hh:charPr id="1"><hh:spacing hangul="-5" latin="-5"/></hh:charPr>'
+             '<hh:charPr id="2"><hh:spacing hangul="3" latin="0"/></hh:charPr>'
+             '</hh:charProperties></hh:refList></hh:head>')
+
+
 def large_doc(tables=500):
+    """표 500개: 보통 표 3×3(날짜·두 글자 칸·자간 대상 글 포함) + 제목/개요 쌍 + 쪽 번호."""
     body = []
-    for i in range(tables):
+    pairs = tables // 10
+    for i in range(tables - 2 * pairs):
         body.append(grid([['구분', '내용', '비고'], ['2026. 10. 10.', '10', f'항목{i}'], ['확인', 'ab', '’26. 10. 11.(일)']]))
-    return one(host(*body))
+    for i in range(pairs):
+        body.append(title_table_type1())
+        body.append(tbl([[tc('', 0, 0, raw_sub=para(f'개요 본문은 열다섯 글자를 넘는 한 칸 상자 글입니다 {i}'))]], rowcnt=1, colcnt=1))
+    pn = ''.join('<hp:p><hp:run><hp:ctrl><hp:pageNum pos="TOP_LEFT" formatType="X" sideChar=""/></hp:ctrl></hp:run></hp:p>' for _ in range(20))
+    return hwpx_bytes({'Contents/section0.xml': section(host(*body) + pn)}, header=HEADER_SP)
 
 
 def bench(binpath, work, procs):
@@ -490,13 +631,19 @@ def bench(binpath, work, procs):
     src.write_bytes(large_doc(500))
     out = {}
     for pname, fn in procs.items():
+        cfg = config_dict(DEFAULT_CONFIG.get(pname))
         dp, dr = work / f'bench.{pname}.py.hwpx', work / f'bench.{pname}.rs.hwpx'
+        restore = apply_py_settings(fn, cfg)
+        try:
+            t0 = time.perf_counter()
+            sel = fn(str(src))
+            n = fn(str(src), str(dp), selections=sel)
+            t_py = time.perf_counter() - t0
+        finally:
+            restore()
         t0 = time.perf_counter()
-        sel = fn(str(src))
-        n = fn(str(src), str(dp), selections=sel)
-        t_py = time.perf_counter() - t0
-        t0 = time.perf_counter()
-        r = subprocess.run([binpath, pname, str(src), str(dr)], capture_output=True, text=True, encoding='utf-8')
+        r = subprocess.run([binpath, pname, str(src), str(dr)] + cfg_args(cfg, work / f'bench.{pname}.json'),
+                           capture_output=True, text=True, encoding='utf-8')
         t_rs = time.perf_counter() - t0
         same, diffs, _ = compare_outputs(dp, dr)
         out[pname] = {'tables': 500, 'py_seconds': round(t_py, 3), 'rs_seconds': round(t_rs, 3),
@@ -520,20 +667,36 @@ def main(argv=None):
     work.mkdir(parents=True, exist_ok=True)
     procs = load_python_processors()
     results, failures = run_parity(binpath, work, procs)
+    unsupported, unsupported_failures = run_unsupported(binpath, work)
     docs = {r['doc'] for r in results}
     failed_docs = {r['doc'] for r in results if not r['ok']}
     changed = sum(1 for r in results if r['py_count'])
     summary = {'docs': len(docs), 'doc_processor_pairs': len(results), 'passed_pairs': len(results) - failures,
                'failed_pairs': failures, 'passed_docs': len(docs) - len(failed_docs), 'failed_docs': len(failed_docs),
                'pairs_with_changes': changed, 'strict_whitespace_noise_pairs': sum(1 for r in results if r['strict_noise']),
-               'both_rejected_pairs': sum(1 for r in results if r['py_error'] and r['rs_error'])}
+               'both_rejected_pairs': sum(1 for r in results if r['py_error'] and r['rs_error']),
+               'unsupported_checks': len(unsupported), 'unsupported_failed': unsupported_failures}
+    per = {}
+    for r in results:
+        d = per.setdefault(r['processor'], {'pairs': 0, 'passed': 0, 'changed': 0, 'docs_targeted': 0, 'both_rejected': 0})
+        d['pairs'] += 1
+        d['passed'] += bool(r['ok'])
+        d['changed'] += bool(r['py_count'])
+        d['docs_targeted'] += r['kind'] in ('rsxml2', 'fixture_mutated')
+        d['both_rejected'] += bool(r['py_error'] and r['rs_error'])
+    summary['per_processor'] = per
     print(json.dumps(summary, ensure_ascii=False))
+    for r in unsupported:
+        if not r['ok']:
+            print(f"미지원 검사 실패: {r['case']} [{r['processor']}]")
+            for d in r['diffs']:
+                print('   ', d)
     for r in results:
         if not r['ok']:
             print(f"차이: {r['doc']} [{r['processor']}]")
             for d in r['diffs']:
                 print('   ', d)
-    report = {'summary': summary, 'results': results}
+    report = {'summary': summary, 'results': results, 'unsupported': unsupported}
     if args.bench:
         report['bench'] = bench(binpath, work, procs)
         print(json.dumps(report['bench'], ensure_ascii=False))
@@ -541,7 +704,7 @@ def main(argv=None):
         Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding='utf-8')
     if not args.keep:
         shutil.rmtree(work, ignore_errors=True)
-    return 1 if failures else 0
+    return 1 if (failures or unsupported_failures) else 0
 
 
 if __name__ == '__main__':

@@ -197,3 +197,50 @@ impl Doc {
         out.into_bytes()
     }
 }
+
+// ---- 트리 수정(RSXML2): 선행 순회 배열은 수정 뒤 iter() 구간이 맞지 않을 수 있으므로,
+//      수정은 모든 조사를 끝낸 뒤에만 하고 직렬화는 children 목록으로만 한다.
+impl Doc {
+    /// parent 의 자식에서 child 를 뺀다(ElementTree.remove: 자식과 그 꼬리 글이 함께 사라짐).
+    pub fn remove_child(&mut self, parent: usize, child: usize) {
+        self.nodes[parent].children.retain(|&c| c != child);
+    }
+
+    /// 부분 트리를 깊은 복사한다(꼬리 글 포함, copy.deepcopy 와 같음). 새 요소는 배열 끝에 쌓이고 새 뿌리 번호를 돌려준다.
+    pub fn clone_subtree(&mut self, src: usize) -> usize {
+        let base = self.nodes.len();
+        let mut order = vec![];
+        let mut stack = vec![src];
+        while let Some(i) = stack.pop() {
+            order.push(i);
+            for &c in self.nodes[i].children.iter().rev() {
+                stack.push(c);
+            }
+        }
+        let map: std::collections::HashMap<usize, usize> = order.iter().enumerate().map(|(k, &i)| (i, base + k)).collect();
+        for &i in &order {
+            let mut n = self.nodes[i].clone();
+            n.children = n.children.iter().map(|c| map[c]).collect();
+            n.end = 0;
+            self.nodes.push(n);
+        }
+        // end(하위 끝 다음 번호): 복사본은 선행 순서로 이어져 있으므로 자식 중 마지막의 end 를 따른다.
+        for k in (0..order.len()).rev() {
+            let id = base + k;
+            let e = match self.nodes[id].children.last() {
+                Some(&l) => self.nodes[l].end,
+                None => id + 1,
+            };
+            self.nodes[id].end = e;
+        }
+        base
+    }
+
+    pub fn insert_child(&mut self, parent: usize, pos: usize, child: usize) {
+        self.nodes[parent].children.insert(pos, child);
+    }
+
+    pub fn append_child(&mut self, parent: usize, child: usize) {
+        self.nodes[parent].children.push(child);
+    }
+}
