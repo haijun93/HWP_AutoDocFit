@@ -300,6 +300,10 @@ pub struct ApplyReport {
     pub renamed: usize,
     /// 임시 이름으로 남아 복구하지 못한 파일(있으면 사용자에게 알려야 함).
     pub stranded: Vec<String>,
+    /// 사용자가 중간에 취소했다(이미 끝난 항목은 저널에 남아 되돌릴 수 있고, 임시 이름은 원래 이름으로 복구했다).
+    pub cancelled: bool,
+    /// 취소로 건드리지 않은 항목 수.
+    pub remaining: usize,
 }
 
 fn item_line(run: &str, seq: usize, s: &Step, ok: bool, err: &str) -> String {
@@ -320,6 +324,19 @@ fn item_line(run: &str, seq: usize, s: &Step, ok: bool, err: &str) -> String {
 /// 계획을 적용한다. 사전 확인 실패 시 디스크·저널 모두 손대지 않는다.
 /// 중간 실패 시 임시 이름으로 남은 파일은 원래 이름으로 복구를 시도하고, 이미 끝난 변경은 저널에 남겨 되돌릴 수 있다.
 pub fn apply(plan: &[PlanItem], journal: &Path, fs: &dyn Fs) -> Result<ApplyReport, (String, ApplyReport)> {
+    apply_cancellable(plan, journal, fs, &|| false)
+}
+
+/// `apply` + 취소 확인. `cancel`은 이동 한 건을 끝낼 때마다, 다음 건을 시작하기 전에 불린다.
+/// 순환·대소문자 변경처럼 임시 이름을 거치는 묶음은 임시 이동이 모두 끝나면 최종 이동까지 마친 뒤에야 멈춘다(묶음 단위).
+/// 취소되면 진행 중이던 건은 끝까지 마치고 멈춘 뒤, 임시 이름으로 남은 파일을 원래 이름으로 복구하고
+/// 저널에 `end`(status=cancelled)를 적는다. 결과는 `Ok`(report.cancelled=true) — 이미 끝난 항목은 되돌릴 수 있다.
+pub fn apply_cancellable(
+    plan: &[PlanItem],
+    journal: &Path,
+    fs: &dyn Fs,
+    cancel: &dyn Fn() -> bool,
+) -> Result<ApplyReport, (String, ApplyReport)> {
     let mut rep = ApplyReport::default();
     verify_plan(plan).map_err(|e| (e, ApplyReport::default()))?;
     let run = new_run_id();
@@ -331,7 +348,13 @@ pub fn apply(plan: &[PlanItem], journal: &Path, fs: &dyn Fs) -> Result<ApplyRepo
     let mut done: Vec<&Step> = Vec::new();
     let mut seq = 0usize;
     let mut failure: Option<String> = None;
+    let mut cancelled = false;
     for s in &steps {
+        // 순환 묶음의 마지막 단계(tmp2)는 이미 모든 임시 이동이 끝난 뒤이므로 취소를 무시하고 묶음을 끝낸다.
+        if s.via != "tmp2" && cancel() {
+            cancelled = true;
+            break;
+        }
         seq += 1;
         match fs.rename(&s.src, &s.dst) {
             Ok(()) => {
@@ -349,7 +372,7 @@ pub fn apply(plan: &[PlanItem], journal: &Path, fs: &dyn Fs) -> Result<ApplyRepo
             }
         }
     }
-    if let Some(msg) = failure {
+    if failure.is_some() || cancelled {
         // 임시 이름으로 남은 것(tmp1 은 했으나 tmp2 는 못 한 것)을 원래 이름으로 복구
         let finished: HashSet<PathBuf> = done.iter().filter(|s| s.via == "tmp2").map(|s| s.src.clone()).collect();
         for s in done.iter().rev().filter(|s| s.via == "tmp1" && !finished.contains(&s.dst)) {
@@ -366,15 +389,21 @@ pub fn apply(plan: &[PlanItem], journal: &Path, fs: &dyn Fs) -> Result<ApplyRepo
             }
         }
         rep.renamed = done.iter().filter(|s| s.via != "tmp1").count();
+        let status = if failure.is_some() { "failed" } else { "cancelled" };
         let _ = j.write(line(&[
             ("type", V::S("end")),
             ("run", V::S(&run)),
-            ("status", V::S("failed")),
+            ("status", V::S(status)),
             ("renamed", V::N(rep.renamed as u128)),
             ("stranded", V::N(rep.stranded.len() as u128)),
             ("ts", V::N(now_secs())),
         ]));
-        return Err((msg, rep));
+        if let Some(msg) = failure {
+            return Err((msg, rep));
+        }
+        rep.cancelled = true;
+        rep.remaining = plan.len().saturating_sub(rep.renamed + rep.stranded.len());
+        return Ok(rep);
     }
     rep.renamed = plan.len();
     let _ = j.write(line(&[
@@ -411,7 +440,15 @@ fn read_runs(journal: &Path) -> Vec<RunInfo> {
                         size: o.get("size").and_then(|v| v.parse().ok()).unwrap_or(0),
                         mtime_ns: o.get("mtime").and_then(|v| v.parse().ok()).unwrap_or(0),
                     };
-                    r.moves.push((o.get("src").cloned().unwrap_or_default(), o.get("dst").cloned().unwrap_or_default(), fp));
+                    let (src, dst) = (o.get("src").cloned().unwrap_or_default(), o.get("dst").cloned().unwrap_or_default());
+                    if o.get("via").map(String::as_str) == Some("recover") {
+                        // 임시 이름 복구는 앞서 기록된 임시 이동(tmp1)을 상쇄한다
+                        if let Some(k) = r.moves.iter().rposition(|m| m.0 == dst && m.1 == src) {
+                            r.moves.remove(k);
+                        }
+                    } else {
+                        r.moves.push((src, dst, fp));
+                    }
                 }
             }
             "undo_end" => {
@@ -482,6 +519,82 @@ pub fn undo_last(journal: &Path, fs: &dyn Fs) -> Result<UndoReport, String> {
         ("skipped", V::N(rep.skipped.len() as u128)),
         ("ts", V::N(now_secs())),
     ]));
+    Ok(rep)
+}
+
+// ---- 저널 정리 ----
+/// 저널에 남기는 기본 기간(일).
+pub const JOURNAL_KEEP_DAYS: u64 = 90;
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct PruneReport {
+    /// 지운 작업(run) 수: 기간이 지난 것 + 이미 되돌린 것.
+    pub removed_runs: usize,
+    pub kept_runs: usize,
+    /// 지운 줄 수(깨진 줄·시작 줄 없는 줄 포함).
+    pub removed_lines: usize,
+}
+
+/// 기간이 지난 작업과 되돌리기를 마친 작업(`undo_end` 있음)을 저널에서 지운다.
+/// 되돌리지 않은 최근 작업은 그대로 둔다. 바꿀 것이 없으면 파일을 건드리지 않고, 바꿀 때는
+/// 임시 파일에 쓴 뒤 교체한다. `now`는 UNIX 초(시험에서 주입).
+pub fn prune_journal(journal: &Path, now: u64, keep_days: u64) -> io::Result<PruneReport> {
+    let bytes = match std::fs::read(journal) {
+        Ok(b) => b,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(PruneReport::default()),
+        Err(e) => return Err(e),
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let cutoff = now.saturating_sub(keep_days.saturating_mul(86_400));
+    let parsed: Vec<(&str, Option<HashMap<String, String>>)> =
+        text.lines().filter(|l| !l.trim().is_empty()).map(|l| (l, parse_line(l))).collect();
+    let mut start_ts: HashMap<String, Option<u64>> = HashMap::new();
+    let mut undone: HashSet<String> = HashSet::new();
+    for (_, o) in &parsed {
+        let Some(o) = o else { continue };
+        match o.get("type").map(String::as_str) {
+            Some("start") => {
+                start_ts.insert(o.get("run").cloned().unwrap_or_default(), o.get("ts").and_then(|v| v.parse().ok()));
+            }
+            Some("undo_end") => {
+                undone.insert(o.get("target").cloned().unwrap_or_default());
+            }
+            _ => {}
+        }
+    }
+    let drop_run = |id: &str| -> bool {
+        match start_ts.get(id) {
+            None => true, // 시작 줄이 없는 고아 줄
+            Some(ts) => undone.contains(id) || ts.is_some_and(|t| t < cutoff),
+        }
+    };
+    let mut out = String::new();
+    let mut rep = PruneReport::default();
+    for (raw, o) in &parsed {
+        let keep = match o {
+            None => false,
+            Some(o) => {
+                let key = match o.get("type").map(String::as_str) {
+                    Some("undo_start" | "undo_item" | "undo_end") => o.get("target"),
+                    _ => o.get("run"),
+                };
+                key.is_some_and(|k| !drop_run(k))
+            }
+        };
+        if keep {
+            out.push_str(raw);
+            out.push('\n');
+        } else {
+            rep.removed_lines += 1;
+        }
+    }
+    rep.removed_runs = start_ts.keys().filter(|id| drop_run(id)).count();
+    rep.kept_runs = start_ts.len() - rep.removed_runs;
+    if rep.removed_lines > 0 {
+        let tmp = journal.with_extension("jsonl.tmp");
+        std::fs::write(&tmp, out.as_bytes())?;
+        std::fs::rename(&tmp, journal)?;
+    }
     Ok(rep)
 }
 
@@ -774,6 +887,163 @@ mod tests {
         assert!(d.join("b.txt").exists() && d.join("x_a.txt").exists());
         undo_last(&j, &RealFs).unwrap();
         assert!(d.join("a.txt").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    fn fake_run(id: &str, ts: u64, undone: bool) -> String {
+        let mut t = format!(
+            "{}\n{}\n{}\n",
+            line(&[("type", V::S("start")), ("run", V::S(id)), ("ts", V::N(ts as u128)), ("count", V::N(1))]),
+            line(&[
+                ("type", V::S("item")),
+                ("run", V::S(id)),
+                ("seq", V::N(1)),
+                ("via", V::S("direct")),
+                ("src", V::S("C:\\x\\a")),
+                ("dst", V::S("C:\\x\\b")),
+                ("size", V::N(1)),
+                ("mtime", V::N(1)),
+                ("ok", V::B(true)),
+                ("err", V::S(""))
+            ]),
+            line(&[("type", V::S("end")), ("run", V::S(id)), ("status", V::S("done")), ("renamed", V::N(1)), ("stranded", V::N(0)), ("ts", V::N(ts as u128))]),
+        );
+        if undone {
+            t += &format!(
+                "{}\n{}\n",
+                line(&[("type", V::S("undo_start")), ("target", V::S(id)), ("ts", V::N(ts as u128 + 5))]),
+                line(&[("type", V::S("undo_end")), ("target", V::S(id)), ("restored", V::N(1)), ("skipped", V::N(0)), ("ts", V::N(ts as u128 + 6))]),
+            );
+        }
+        t
+    }
+
+    #[test]
+    fn prune_removes_old_and_undone_runs_only() {
+        let d = tmp("prune");
+        let j = d.join("j.jsonl");
+        let now = 200 * 86_400u64;
+        let text = fake_run("old", now - 91 * 86_400, false)
+            + &fake_run("undone", now - 2 * 86_400, true)
+            + &fake_run("edge", now - 90 * 86_400, false) // 정확히 90일 = 아직 유지
+            + &fake_run("recent", now - 86_400, false)
+            + "{\"type\":\"item\",\"run\":\"ghost\"}\n{깨진 줄\n";
+        std::fs::write(&j, &text).unwrap();
+        let r = prune_journal(&j, now, JOURNAL_KEEP_DAYS).unwrap();
+        assert_eq!((r.removed_runs, r.kept_runs), (2, 2), "{r:?}");
+        let after = read(j.clone());
+        assert!(after.contains("\"run\":\"edge\"") && after.contains("\"run\":\"recent\""));
+        assert!(!after.contains("\"old\"") && !after.contains("\"undone\"") && !after.contains("ghost"));
+        assert!(after.lines().all(|l| parse_line(l).is_some()));
+        assert_eq!(r.removed_lines, 3 + 5 + 1 + 1);
+        assert_eq!(undoable_count(&j), Some(1));
+        assert!(!j.with_extension("jsonl.tmp").exists());
+        // 두 번째 호출은 아무것도 바꾸지 않는다
+        let r2 = prune_journal(&j, now, JOURNAL_KEEP_DAYS).unwrap();
+        assert_eq!((r2.removed_runs, r2.removed_lines, r2.kept_runs), (0, 0, 2));
+        assert_eq!(read(j.clone()), after);
+        // 저널이 없으면 빈 결과
+        assert_eq!(prune_journal(&d.join("none.jsonl"), now, 90).unwrap(), PruneReport::default());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn prune_keeps_undoable_run_and_undo_still_works_afterwards() {
+        let d = tmp("prune2");
+        mk(&d, &[("a.txt", "1"), ("b.txt", "2")]);
+        let j = d.join("data").join(JOURNAL_FILE);
+        apply_model(&model(&d, &["a.txt"], rules("x_")), &j, &RealFs).unwrap();
+        undo_last(&j, &RealFs).unwrap();
+        apply_model(&model(&d, &["b.txt"], rules("y_")), &j, &RealFs).unwrap();
+        let r = prune_journal(&j, now_secs() as u64, JOURNAL_KEEP_DAYS).unwrap();
+        assert_eq!((r.removed_runs, r.kept_runs), (1, 1));
+        assert_eq!(undoable_count(&j), Some(1));
+        undo_last(&j, &RealFs).unwrap();
+        assert!(d.join("b.txt").exists());
+        // 오래된 작업은 아직 되돌릴 수 있어도 기간이 지나면 지운다
+        apply_model(&model(&d, &["b.txt"], rules("z_")), &j, &RealFs).unwrap();
+        let far = now_secs() as u64 + 91 * 86_400;
+        assert_eq!(prune_journal(&j, far, JOURNAL_KEEP_DAYS).unwrap().kept_runs, 0);
+        assert_eq!(undoable_count(&j), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn cancel_between_items_stops_and_leaves_done_undoable() {
+        let d = tmp("cancel");
+        mk(&d, &[("a.txt", "1"), ("b.txt", "22"), ("c.txt", "333")]);
+        let m = model(&d, &["a.txt", "b.txt", "c.txt"], rules("n_"));
+        let plan = build_plan(&m).unwrap();
+        let j = d.join("data").join(JOURNAL_FILE);
+        let calls = Cell::new(0);
+        let r = apply_cancellable(&plan, &j, &RealFs, &|| {
+            calls.set(calls.get() + 1);
+            calls.get() > 1 // 첫 건을 끝낸 뒤 취소
+        })
+        .unwrap();
+        assert!(r.cancelled && r.renamed == 1 && r.remaining == 2 && r.stranded.is_empty(), "{r:?}");
+        assert_eq!(names(&d), vec!["b.txt", "c.txt", "data/rename_journal.jsonl", "n_a.txt"]);
+        let text = read(j.clone());
+        assert!(text.contains("\"status\":\"cancelled\"") && !text.contains("\"status\":\"done\""));
+        assert_eq!(undoable_count(&j), Some(1));
+        let u = undo_last(&j, &RealFs).unwrap();
+        assert_eq!((u.restored, u.skipped.len()), (1, 0));
+        assert_eq!(names(&d), vec!["a.txt", "b.txt", "c.txt", "data/rename_journal.jsonl"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn cancel_before_first_item_changes_nothing_but_logs_end() {
+        let d = tmp("cancel0");
+        mk(&d, &[("a.txt", "1")]);
+        let plan = plan_of(&d, &[("a.txt", "z.txt")]);
+        let j = d.join("j.jsonl");
+        let r = apply_cancellable(&plan, &j, &RealFs, &|| true).unwrap();
+        assert!(r.cancelled && r.renamed == 0 && r.remaining == 1);
+        assert_eq!(names(&d), vec!["a.txt", "j.jsonl"]);
+        assert!(read(j.clone()).contains("\"status\":\"cancelled\""));
+        assert_eq!(undoable_count(&j), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// 순환(a↔b)은 a→임시, b→임시, 임시→b, 임시→a 네 건. 취소 확인은 앞의 두 건 앞에서만 불린다.
+    fn cancel_cycle_at(tag: &str, at: usize) -> (ApplyReport, PathBuf, PathBuf, usize) {
+        let d = tmp(tag);
+        mk(&d, &[("a.txt", "AAA"), ("b.txt", "BBBB")]);
+        let plan = plan_of(&d, &[("a.txt", "b.txt"), ("b.txt", "a.txt")]);
+        let j = d.join("j.jsonl");
+        let calls = Cell::new(0);
+        let r = apply_cancellable(&plan, &j, &RealFs, &|| {
+            calls.set(calls.get() + 1);
+            calls.get() >= at
+        })
+        .unwrap();
+        (r, d, j, calls.get())
+    }
+
+    #[test]
+    fn cancel_during_temp_phase_restores_original_names() {
+        // 2번째 확인에서 취소 = a→임시 만 끝난 상태 → 임시 이름을 원래 이름으로 복구
+        let (r, d, j, _) = cancel_cycle_at("cancelcycle", 2);
+        assert!(r.cancelled && r.stranded.is_empty() && r.renamed == 0 && r.remaining == 2, "{r:?}");
+        assert_eq!(names(&d), vec!["a.txt", "b.txt", "j.jsonl"]);
+        assert_eq!((read(d.join("a.txt")), read(d.join("b.txt"))), ("AAA".to_string(), "BBBB".to_string()));
+        let text = read(j.clone());
+        assert!(text.contains("\"via\":\"recover\"") && text.contains("\"status\":\"cancelled\""));
+        assert!(!names(&d).iter().any(|n| n.contains(".rename-tmp-")));
+        assert_eq!(undoable_count(&j), None, "복구로 상쇄된 이동은 되돌릴 작업이 아니다");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn cancel_after_temp_moves_finishes_the_bundle() {
+        // 3번째 확인은 호출되지 않는다(최종 이동 단계는 취소 무시) → 묶음이 끝까지 적용된다
+        let (r, d, j, calls) = cancel_cycle_at("cancelcycle2", 3);
+        assert_eq!(calls, 2);
+        assert!(!r.cancelled && r.renamed == 2 && r.stranded.is_empty(), "{r:?}");
+        assert_eq!((read(d.join("a.txt")), read(d.join("b.txt"))), ("BBBB".to_string(), "AAA".to_string()));
+        assert!(!names(&d).iter().any(|n| n.contains(".rename-tmp-")));
+        assert!(read(j.clone()).contains("\"status\":\"done\""));
         let _ = std::fs::remove_dir_all(&d);
     }
 

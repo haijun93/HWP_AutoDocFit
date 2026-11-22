@@ -1,6 +1,7 @@
 //! 읽기 전용 파일 이름 미리보기의 순수 계산부. 디스크 접근은 모두 호출자가 주입한다.
 
 pub mod apply;
+pub mod colors;
 
 use std::collections::HashMap;
 
@@ -45,7 +46,7 @@ pub fn mark_collisions(rows: &mut [PreviewRow], existing: &[&str]) {
     }
 }
 
-/// 사용자가 입력한 규칙. 모두 순수 문자열 규칙이며 정규식은 쓰지 않는다.
+/// 사용자가 입력한 규칙. `use_regex`가 꺼져 있으면 순수 문자열 규칙(기본)이다.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Rules {
     pub prefix: String,
@@ -54,6 +55,8 @@ pub struct Rules {
     pub digits: usize,
     pub find: String,
     pub replace: String,
+    /// true면 `find`를 Rust `regex` 패턴으로, `replace`를 `$1`·`${name}` 대체식으로 해석한다.
+    pub use_regex: bool,
 }
 
 impl Default for Rules {
@@ -64,8 +67,26 @@ impl Default for Rules {
             digits: 3,
             find: String::new(),
             replace: String::new(),
+            use_regex: false,
         }
     }
+}
+
+/// 정규식 모드의 찾을 말을 컴파일한다. 비었거나 정규식 모드가 아니면 `Ok(None)`.
+/// 잘못된 패턴은 이름 오류가 아니라 입력 오류이므로 `Err(사유 한 줄)`로 돌려준다.
+pub fn compile_find(rules: &Rules) -> Result<Option<regex::Regex>, String> {
+    if !rules.use_regex || rules.find.is_empty() {
+        return Ok(None);
+    }
+    regex::RegexBuilder::new(&rules.find)
+        .size_limit(1 << 20)
+        .build()
+        .map(Some)
+        .map_err(|e| {
+            let m = e.to_string();
+            let last = m.lines().last().unwrap_or("").trim().trim_start_matches("error:").trim().to_string();
+            if last.is_empty() { "정규식을 해석할 수 없음".to_string() } else { last }
+        })
 }
 
 /// 자릿수 입력 문자열을 0..=9로 해석한다. 비었거나 숫자가 아니면 0.
@@ -102,8 +123,18 @@ fn split_ext(name: &str) -> (&str, &str) {
 
 /// 규칙 전체를 한 이름에 적용한다(찾아 바꾸기 → 접두사·접미사 → 순번). 확장자는 유지.
 pub fn apply_rules(name: &str, rules: &Rules, number: usize) -> String {
+    // 잘못된 정규식은 찾아 바꾸기를 건너뛴다(오류는 `Model::input_error`가 따로 알린다).
+    apply_rules_with(name, rules, number, compile_find(rules).ok().flatten().as_ref())
+}
+
+/// 컴파일해 둔 정규식(`re`)이 있으면 그것으로, 없으면 순수 문자열로 찾아 바꾼다.
+pub fn apply_rules_with(name: &str, rules: &Rules, number: usize, re: Option<&regex::Regex>) -> String {
     let (stem, ext) = split_ext(name);
     let mut stem = if rules.find.is_empty() {
+        stem.to_string()
+    } else if let Some(re) = re {
+        re.replace_all(stem, rules.replace.as_str()).into_owned()
+    } else if rules.use_regex {
         stem.to_string()
     } else {
         stem.replace(&rules.find, &rules.replace)
@@ -153,11 +184,12 @@ pub fn analyze(
     rules: &Rules,
     dirs: &HashMap<String, Vec<String>>,
 ) -> Vec<PreviewRow> {
+    let re = compile_find(rules).ok().flatten();
     let mut rows: Vec<PreviewRow> = files
         .iter()
         .enumerate()
         .map(|(i, f)| {
-            let proposed = apply_rules(&f.name, rules, i + 1);
+            let proposed = apply_rules_with(&f.name, rules, i + 1, re.as_ref());
             let status = if proposed == f.name {
                 RowStatus::Unchanged
             } else if invalid_reason(&proposed).is_some() {
@@ -236,6 +268,8 @@ pub struct Model {
     /// `files` 와 같은 순서의 사전 상태(크기·수정시간). 적용 직전 재확인에 쓴다.
     pub prints: Vec<Option<apply::Fingerprint>>,
     pub scroll: usize,
+    /// 규칙 입력 자체의 오류(예: 잘못된 정규식). 있으면 이름 오류가 아니라 입력 오류로 따로 표시하고 적용을 막는다.
+    pub input_error: Option<String>,
 }
 
 impl Model {
@@ -287,6 +321,7 @@ impl Model {
         self.recompute();
     }
     pub fn recompute(&mut self) {
+        self.input_error = compile_find(&self.rules).err().map(|e| format!("정규식 오류: {e}"));
         self.rows = analyze(&self.files, &self.rules, &self.dirs);
         self.scroll = self.scroll.min(self.rows.len().saturating_sub(1));
     }
@@ -296,6 +331,9 @@ impl Model {
     pub fn summary(&self) -> String {
         if self.files.is_empty() {
             return "파일을 끌어 놓거나 ‘파일 열기’로 고르세요".to_string();
+        }
+        if let Some(e) = &self.input_error {
+            return e.clone();
         }
         format!(
             "{}개 · 변경 예정 {} · 변화 없음 {} · 충돌 {} · 이름 오류 {}",
@@ -378,6 +416,7 @@ mod tests {
             digits: 2,
             find: "사진".into(),
             replace: "img".into(),
+            use_regex: false,
         };
         assert_eq!(apply_rules("사진 3.JPG", &r, 5), "행사_img 3_완_05.JPG");
         let none = Rules {
@@ -545,5 +584,63 @@ mod tests {
         m.clear();
         assert!(m.rows.is_empty());
         assert!(m.summary().contains("끌어 놓"));
+    }
+
+    #[test]
+    fn regex_rules_replace_with_groups_and_keep_extension() {
+        let r = Rules { find: r"(\d{4})-(\d{2})".into(), replace: "$2.$1".into(), use_regex: true, digits: 0, ..Rules::default() };
+        assert_eq!(apply_rules("보고 2026-11.hwpx", &r, 1), "보고 11.2026.hwpx");
+        // 확장자는 대상이 아니다
+        let r = Rules { find: r"\d+".into(), replace: "N".into(), use_regex: true, digits: 0, ..Rules::default() };
+        assert_eq!(apply_rules("a12b345.mp4", &r, 1), "aNbN.mp4");
+        // 정규식 끔: 같은 패턴이 글자 그대로 취급된다
+        let lit = Rules { use_regex: false, ..r.clone() };
+        assert_eq!(apply_rules(r"x\d+y.txt", &lit, 1), "xNy.txt");
+        assert_eq!(apply_rules("a12.txt", &lit, 1), "a12.txt");
+        let named = Rules { find: r"(?P<n>\d+)".into(), replace: "<${n}>".into(), use_regex: true, digits: 0, ..Rules::default() };
+        assert_eq!(apply_rules("f7.txt", &named, 1), "f<7>.txt");
+    }
+
+    #[test]
+    fn invalid_regex_is_input_error_not_name_error() {
+        let mut m = Model::default();
+        m.add_paths(&[r"D:\a\x1.txt".to_string(), r"D:\a\x2.txt".to_string()], |_| true, |_| vec![]);
+        m.rules = Rules { find: "(미완".into(), replace: "z".into(), use_regex: true, digits: 0, ..Rules::default() };
+        m.recompute();
+        let msg = m.input_error.clone().expect("입력 오류");
+        assert!(msg.starts_with("정규식 오류"), "{msg}");
+        assert_eq!(m.summary(), msg);
+        // 어떤 행도 '이름 오류'가 아니다(찾아 바꾸기는 건너뛴 채 나머지 규칙만 적용)
+        assert_eq!(m.count(RowStatus::Invalid), 0);
+        assert_eq!(m.count(RowStatus::Unchanged), 2);
+        // 고치면 오류가 사라진다
+        m.rules.find = "x".into();
+        m.recompute();
+        assert!(m.input_error.is_none());
+        assert_eq!(m.rows[0].proposed, "z1.txt");
+        // 정규식을 끄면 같은 글자는 평범한 문자열
+        m.rules = Rules { find: "(".into(), replace: "z".into(), use_regex: false, digits: 0, ..Rules::default() };
+        m.recompute();
+        assert!(m.input_error.is_none());
+    }
+
+    #[test]
+    fn regex_can_still_produce_invalid_or_conflicting_names() {
+        let mut m = Model::default();
+        m.add_paths(&[r"D:\a\a1".to_string(), r"D:\a\a2".to_string()], |_| true, |_| vec![]);
+        m.rules = Rules { find: r"\d".into(), replace: "".into(), use_regex: true, digits: 0, ..Rules::default() };
+        m.recompute();
+        assert!(m.input_error.is_none());
+        // 둘 다 "a" 가 되어 뒤의 행이 충돌
+        assert_eq!((m.rows[0].status, m.rows[1].status), (RowStatus::Changed, RowStatus::Conflict));
+        m.rules.find = r"a\d".into();
+        m.recompute();
+        assert_eq!(m.count(RowStatus::Invalid), 2); // 이름이 통째로 지워짐 → 이름이 비어 있음
+    }
+
+    #[test]
+    fn regex_too_complex_is_input_error() {
+        let r = Rules { find: "(a{1000}){1000}".into(), use_regex: true, ..Rules::default() };
+        assert!(compile_find(&r).is_err());
     }
 }

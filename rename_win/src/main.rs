@@ -6,11 +6,14 @@ mod win;
 fn main() {
     let mut args = std::env::args().skip(1);
     let (mut capture, mut selftest, mut dpi, mut data_dir) = (None, None, 96u32, None);
+    let mut bad_regex = false;
     while let Some(a) = args.next() {
         match a.as_str() {
             "--capture" => capture = args.next(),
             "--selftest" => selftest = args.next(),
             "--data-dir" => data_dir = args.next(),
+            "--theme" => win::set_theme_pref(&args.next().unwrap_or_default()),
+            "--bad-regex" => bad_regex = true,
             "--dpi" => dpi = args.next().and_then(|v| v.parse().ok()).unwrap_or(96),
             _ => {
                 fail(&format!("알 수 없는 인자: {a}"), 2);
@@ -25,7 +28,7 @@ fn main() {
         fail(&e, 1);
     }
     let result = if let Some(path) = capture {
-        win::capture(std::path::Path::new(&path), dpi).map(|_| ())
+        win::capture(std::path::Path::new(&path), dpi, bad_regex).map(|_| ())
     } else if let Some(path) = selftest {
         match win::selftest(std::path::Path::new(&path)) {
             Ok(true) => Ok(()),
