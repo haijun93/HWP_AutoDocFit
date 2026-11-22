@@ -1,3 +1,7 @@
+# OUTLINERQA1 인계 (2026-11-23)
+
+`feature/OUTLINERQA1`에서 Logseq 공개 기능 기준과 Flutter·Win32·엔진 차이를 문서화했다(`docs/OUTLINERQA1_RESULT_2026-11-22.md`). Flutter Tab/Shift+Tab이 입력 문자를 저장하지 않던 결함을 먼저 실패 시험으로 재현하고 `_setTextAndEdit` 경로로 수정했다. Core 70+CLI 1, Win32 124, Flutter 위젯 6, Python 서비스 9 통과; `flutter analyze` 지적 0. 실제 한글 IME, 설치본의 `outliner_win.exe`, 다중 선택·드래그·undo/redo·블록 참조 UI·Flutter 전역 검색/역링크는 남았다. Logseq Windows 기본 블록 이동은 Alt+Shift+위/아래이고 현재 Win32 Alt+위/아래와 달라 실기 UX 판정이 필요하다. 푸시·태그·한/글 COM·실행 앱 접근 없음.
+
 # APP1-G·I·J·H 인계 (2026-11-14)
 
 `feature/kfind-app`, `2335d18c` 이후 Gemini 미커밋 변경을 검토·보완해 채택. github/main은 이미 병합되어 있었으며 fetch 후 추가 커밋 0건. 상자/NBIDX1 kfind 동기화와 legacy 대체, 공통 search_engine 설정·상태 표시, 실제 시험 파이프 동등성 도구, 서버 상자 범위 검색·count 배지·자료 ID로 메모 열기 구현. Python 관련 104개 및 상자 삭제 보강 55개 통과. Flutter 관련 37개, 같은 이름 메모 보강 4개, ISUI/타임머신/업무자료함 연결 109개 통과, 최신 analyze 0건. 합성 문서 2개·86질의 실제 서비스 비교 A 차이 0, 두 번 독립 실행 JSON 바이트 동일. 비교 B 미설명 15건·Tantivy·실사용 지연·실문서군·되돌리기 관문은 APP1-K 후속. E:도 exFAT라 전체 시험은 NTFS C: 작업 트리와 TEMP에서 실행(잠금 2개). 전체 시작 시점 3,095개(1,188.755초): 기존 조회 속도 기준 실패 1·제외 13, 같은 실패 1개 단독 재확인 통과. 최신 보강분 NTFS 관련 106개 통과. 최종 discovery는 3,101개이며 최신 전체 재실행은 하지 않았다. 생성 fixture 4개 복원·잠금 2개 해제 확인. `reports/APP1_GIJH_2026-11-14.md`, `reports/APP1-equiv-2026-11-14.md`. main/GitLab/태그/릴리스 변경 금지 유지.

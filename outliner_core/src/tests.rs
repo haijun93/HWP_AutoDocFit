@@ -500,6 +500,56 @@ fn extracts_links_tags_properties_backlinks_and_search() {
     assert_eq!(search(&doc, "관계"), Ok(vec![]));
     assert_eq!(search(&doc, "태"), Err(OutlinerError::QueryTooShort));
 }
+
+#[test]
+fn synthetic_korean_outliner_workflow_covers_core_edit_and_query_features() {
+    let source = "- TODO 첫 항목 [[계획]] #업무 종류:: 메모 id:: blk-1\n  - 자식 항목\n- DONE 다음 항목 ((blk-1))\n";
+    let mut doc = parse(source).unwrap();
+
+    assert_eq!(doc.blocks.len(), 3);
+    assert_eq!(doc.blocks[0].page_links, ["계획"]);
+    assert_eq!(doc.blocks[0].tags, ["업무"]);
+    assert_eq!(doc.blocks[0].properties["종류"], "메모");
+    assert_eq!(doc.blocks[0].status.as_deref(), Some("TODO"));
+    assert_eq!(backlinks(&doc, "계획"), [1]);
+    assert_eq!(backlinks(&doc, "blk-1"), [3]);
+
+    // Simulate typing in Korean and pressing Enter at a grapheme boundary.
+    edit(
+        &mut doc,
+        "set_text",
+        1,
+        Some("한글입력시험🙂 #업무 kind:: 메모"),
+    )
+    .unwrap();
+    edit_with_offset(&mut doc, "split", 1, None, Some(4)).unwrap();
+    assert_eq!(doc.blocks[0].text, "한글입력");
+    assert_eq!(doc.blocks[1].text, "시험🙂 #업무 kind:: 메모");
+
+    // Tab / Shift+Tab, fold / unfold, and Alt+Up / Alt+Down engine operations.
+    edit(&mut doc, "indent", 2, None).unwrap();
+    assert_eq!(doc.blocks.iter().find(|block| block.id == 2).unwrap().indent, 3);
+    edit(&mut doc, "outdent", 2, None).unwrap();
+    assert_eq!(doc.blocks.iter().find(|block| block.id == 2).unwrap().indent, 2);
+    edit(&mut doc, "fold", 1, None).unwrap();
+    assert!(doc.blocks[0].folded);
+    edit(&mut doc, "unfold", 1, None).unwrap();
+    assert!(!doc.blocks[0].folded);
+    edit(&mut doc, "up", 2, None).unwrap();
+    assert_eq!(doc.blocks.iter().find(|block| block.id == 2).unwrap().text, "자식 항목");
+    edit(&mut doc, "down", 2, None).unwrap();
+    assert_eq!(doc.blocks.iter().find(|block| block.id == 1).unwrap().text, "한글입력");
+
+    // Delete a synthetic block, then merge adjacent blocks with the engine's defined spacing.
+    edit(&mut doc, "delete", 2, None).unwrap();
+    assert_eq!(doc.blocks.len(), 3);
+    edit(&mut doc, "merge", 1, None).unwrap();
+    assert_eq!(doc.blocks.iter().find(|block| block.id == 1).unwrap().text, "한글입력 시험🙂 #업무 kind:: 메모");
+    assert_eq!(search(&doc, "한글입력").unwrap(), [1]);
+    let matches = query([("합성", &doc)], "text:한글입 tag:업무").unwrap();
+    assert_eq!(matches.len(), 1);
+    assert!(serialize(&doc).contains("- TODO 한글입력 시험🙂 #업무 kind:: 메모"));
+}
 #[test]
 fn edit_operations_cover_insert_delete_indent_fold_move_split_merge() {
     let mut doc = parse("- one\n- two\n- three\n").unwrap();

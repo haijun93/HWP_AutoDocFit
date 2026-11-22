@@ -617,11 +617,12 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       final selection = controller.selection;
                                       final mods = HardwareKeyboard.instance;
                                       if (key == LogicalKeyboardKey.tab) {
-                                        _edit(
+                                        _setTextAndEdit(
                                           block,
                                           mods.isShiftPressed
                                               ? 'outdent'
                                               : 'indent',
+                                          value,
                                         );
                                         return KeyEventResult.handled;
                                       }

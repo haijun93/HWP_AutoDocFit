@@ -233,12 +233,19 @@ void main() {
     final newField = tester.widget<EditableText>(find.descendant(of: find.byKey(const ValueKey('outliner-block-3')), matching: find.byType(EditableText)));
     expect(newField.focusNode.hasFocus, isTrue);
     await tester.tap(second); await tester.pump();
+    await tester.enterText(second, '두 번째 한글 수정');
     await tester.sendKeyEvent(LogicalKeyboardKey.tab); await tester.pump(const Duration(milliseconds: 100));
     expect(operations, contains('indent:2'));
+    final tabCommit = operations.indexOf('set_text:2');
+    expect(tabCommit, greaterThanOrEqualTo(0));
+    expect(tabCommit, lessThan(operations.indexOf('indent:2')));
     await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft); await tester.pump(const Duration(milliseconds: 100));
     expect(operations, contains('outdent:2'));
+    final shiftTabCommit = operations.lastIndexOf('set_text:2');
+    expect(shiftTabCommit, greaterThanOrEqualTo(0));
+    expect(shiftTabCommit, lessThan(operations.lastIndexOf('outdent:2')));
     await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft); await tester.pump(const Duration(milliseconds: 100));
@@ -265,5 +272,68 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.backspace);
     await tester.pump(const Duration(milliseconds: 100));
     expect(operations, contains('delete:1'));
+  });
+
+  testWidgets('synthetic Korean input is committed before Enter creates the next block', (tester) async {
+    final requests = <Map>[];
+    List<Map<String, Object?>> blocks = [
+      {'id': 1, 'text': '첫 항목', 'indent': 0, 'folded': false},
+    ];
+    Future<Object?> api(String method, [List<Object?> args = const []]) async {
+      final payload = Map<String, Object?>.from(args.first as Map);
+      if (payload['action'] == 'list') {
+        return {'ok': true, 'data': {'pages': [{'name': '합성'}]}};
+      }
+      if (payload['action'] == 'daily' || payload['action'] == 'load') {
+        return {'ok': true, 'data': {
+          'page': '합성',
+          'markdown': '- 첫 항목\n',
+          'version': '1',
+          'document': {'blocks': blocks},
+        }};
+      }
+      if (payload['action'] == 'backlinks') {
+        return {'ok': true, 'data': {'block_ids': []}};
+      }
+      if (payload['action'] == 'edit') {
+        requests.add(payload);
+        if (payload['operation'] == 'set_text') {
+          blocks = blocks.map((block) => block['id'] == payload['block_id']
+              ? {...block, 'text': payload['text']}
+              : block).toList();
+        } else if (payload['operation'] == 'insert') {
+          blocks = [...blocks, {'id': 2, 'text': '', 'indent': 0, 'folded': false}];
+        }
+        return {'ok': true, 'data': {
+          'markdown': blocks.map((block) => '- ${block['text']}\n').join(),
+          'document': {'blocks': blocks},
+        }};
+      }
+      if (payload['action'] == 'save') return {'ok': true, 'data': {'version': '2'}};
+      return {'ok': true, 'data': {}};
+    }
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: OutlinerWorkspace(
+        api: api,
+        recentPagesStore: MemoryRecentPagesStore(),
+      )),
+    ));
+    await tester.pumpAndSettle();
+    final first = find.byKey(const ValueKey('outliner-block-1'));
+    await tester.tap(first);
+    await tester.enterText(first, '한글 입력 시험');
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(requests.map((request) => request['operation']), ['set_text', 'insert']);
+    expect(requests.first['text'], '한글 입력 시험');
+    expect(find.byKey(const ValueKey('outliner-block-2')), findsOneWidget);
+    final nextField = tester.widget<EditableText>(find.descendant(
+      of: find.byKey(const ValueKey('outliner-block-2')),
+      matching: find.byType(EditableText),
+    ));
+    expect(nextField.focusNode.hasFocus, isTrue);
   });
 }
