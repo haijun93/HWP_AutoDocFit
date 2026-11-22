@@ -6,6 +6,7 @@ mod win;
 #[cfg(windows)]
 fn main() {
     let mut args = std::env::args().skip(1);
+    let mut paths=Vec::new();
     let mut capture = None;
     let mut capture_state = None;
     while let Some(a) = args.next() {
@@ -13,16 +14,13 @@ fn main() {
             capture = args.next();
         } else if a == "--capture-state" {
             capture = args.next(); capture_state = args.next();
-        } else {
-            eprintln!("알 수 없는 인자: {a}");
-            std::process::exit(2);
-        }
+        } else { paths.push(a); }
     }
     let result = if let Some(path) = capture {
         if let Some(mode)=capture_state { win::capture_status(std::path::Path::new(&path),&mode).map(|p|p.display().to_string()) }
         else { win::capture(std::path::Path::new(&path)).map(|p| p.display().to_string()) }
     } else {
-        win::run().map(|_| String::new())
+        win::run(paths).map(|_| String::new())
     };
     if let Err(e) = result {
         let msg: Vec<u16> = format!("{e}\0").encode_utf16().collect();

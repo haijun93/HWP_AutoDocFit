@@ -1,5 +1,5 @@
 use crate::logic::{self, Event, FileResult, FileStatus, Hit, Layout, Model, TARGETS};
-use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::PathBuf, ptr::null_mut, sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex}};
+use std::{ffi::OsString, os::windows::ffi::{OsStringExt, OsStrExt}, path::PathBuf, ptr::null_mut, sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex}};
 use windows_sys::Win32::{
     Foundation::*,
     Graphics::Gdi::*,
@@ -16,8 +16,18 @@ impl Default for State { fn default()->Self { Self { model:Model::default(), res
 const WM_TIMER: u32 = 0x0113;
 const WM_APP: u32 = 0x8000;
 const WM_WORKER_DONE: u32 = WM_APP + 1;
+const WM_OPEN_REQUEST: u32 = WM_APP + 2;
+const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.convert";
+struct OpenRequest { target: String, paths: Vec<PathBuf> }
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
+}
+fn open_path(path:&std::path::Path, folder:bool) {
+    let Some(candidate)=logic::validated_open_path(path,folder,|p|p.is_file(),|p|p.is_dir()) else { return; };
+    let Ok(valid)=candidate.canonicalize() else { return; };
+    let target:Vec<u16>=valid.as_os_str().encode_wide().chain(Some(0)).collect();
+    let verb=wide("open");
+    unsafe { windows_sys::Win32::UI::Shell::ShellExecuteW(null_mut(),verb.as_ptr(),target.as_ptr(),null_mut(),null_mut(),1); }
 }
 unsafe fn state(hwnd: HWND) -> &'static mut State {
     unsafe { &mut *(GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State) }
@@ -92,7 +102,7 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
         );
     }
     let results = st.results.lock().unwrap();
-    let head = if st.worker_done { st.model.header() } else { format!("변환 진행 중  ·  {}/{}", results.iter().filter(|x| matches!(x.status,FileStatus::Succeeded|FileStatus::Failed(_)|FileStatus::Cancelled)).count(), results.len()) };
+    let head = if st.worker_done { st.model.header() } else { format!("변환 진행 중  ·  {}/{}", results.iter().filter(|x| matches!(x.status,FileStatus::Succeeded(_)|FileStatus::Failed(_)|FileStatus::Cancelled)).count(), results.len()) };
     text(hdc, 28, 198, &head, color(45, 55, 70));
     fill(hdc, lay.list_rect(), color(255, 255, 255));
     if results.is_empty() {
@@ -100,8 +110,8 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
     } else {
         for (i, item) in results.iter().take(lay.visible_rows()).enumerate() {
             let name=item.source.file_name().unwrap_or_default().to_string_lossy();
-            let (mark,c)=match &item.status { FileStatus::Waiting=>("대기",color(100,110,125)), FileStatus::Running=>("진행",color(20,95,190)), FileStatus::Succeeded=>("완료",color(20,130,70)), FileStatus::Failed(_)=>("실패",color(190,45,45)), FileStatus::Cancelled=>("취소",color(130,100,40)) };
-            text(hdc, 48, logic::ROW_TOP + i as i32 * logic::ROW_STEP, &format!("{mark}  {name}"), c);
+            let (mark,c,detail)=match &item.status { FileStatus::Waiting=>("대기",color(100,110,125),String::new()), FileStatus::Running=>("진행",color(20,95,190),String::new()), FileStatus::Succeeded(_)=>("완료",color(20,130,70),String::new()), FileStatus::Failed(reason)=>("실패",color(190,45,45),reason.clone()), FileStatus::Cancelled=>("취소",color(130,100,40),String::new()) };
+            text(hdc, 48, logic::ROW_TOP + i as i32 * logic::ROW_STEP, &format!("{mark}  {name}  {detail}"), c);
         }
         if results.len()>lay.visible_rows() {
             text(hdc,48,logic::ROW_TOP+lay.visible_rows() as i32*logic::ROW_STEP,&format!("외 {}개",results.len()-lay.visible_rows()),color(130,140,154));
@@ -109,6 +119,7 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
     }
     drop(results);
     let cr=lay.cancel_rect(); fill(hdc,cr,color(225,229,235)); text(hdc,cr.left+24,cr.top+15,"취소",color(45,55,70));
+    let fr=lay.folder_rect(); fill(hdc,fr,color(225,229,235)); text(hdc,fr.left+12,fr.top+15,"폴더 열기",color(45,55,70));
     let s = lay.start_rect();
     fill(hdc, s, color(40, 105, 190));
     text(hdc, s.left + 26, s.top + 15, "변환 시작", color(255, 255, 255));
@@ -153,12 +164,12 @@ fn start_conversion(hwnd: HWND, s: &mut State) {
                     let output_dir=file.parent().unwrap_or_else(||std::path::Path::new("."));
                     let temps_before=conversion_temps(output_dir);
                     let args=logic::engine_file_args(file,&format);
-                    let mut child=match std::process::Command::new(&exe).args(args).spawn() {
+                    let mut child=match std::process::Command::new(&exe).args(args).stderr(std::process::Stdio::piped()).spawn() {
                         Ok(c)=>c, Err(e)=>{let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())}; continue}
                     };
                     loop {
                         if cancel.load(Ordering::Acquire) { let _=child.kill(); let _=child.wait(); remove_new_conversion_temps(output_dir,&temps_before); let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Cancel(i)); break; }
-                        match child.try_wait() { Ok(Some(status))=>{let mut r=shared.lock().unwrap(); logic::transition(&mut r,if status.success(){Event::Success(i)}else{Event::Failure(i)}); break}, Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(100)), Err(e)=>{let _=child.kill();let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())};break} }
+                        match child.try_wait() { Ok(Some(status))=>{let output=child.wait_with_output().ok(); let mut r=shared.lock().unwrap(); if status.success() { if let Some(x)=r.get_mut(i) { x.status=FileStatus::Succeeded(logic::output_path_for(file,&format).unwrap_or_else(||file.clone())); } } else if let Some(x)=r.get_mut(i) { x.status=FileStatus::Failed(logic::failure_reason(status.code(),&output.map(|o|String::from_utf8_lossy(&o.stderr).into_owned()).unwrap_or_default())); } break}, Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(100)), Err(e)=>{let _=child.kill();let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())};break} }
                     }
                     if cancel.load(Ordering::Acquire) { break; }
                 }
@@ -209,9 +220,15 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     Hit::Target(i) => state(hwnd).model.select(i),
                     Hit::Start => start_conversion(hwnd, state(hwnd)),
                     Hit::Cancel => if let Some(c)=&state(hwnd).cancel { c.store(true,Ordering::Release); },
+                    Hit::OpenFolder => { let st=state(hwnd); if let Some(item)=st.results.lock().unwrap().iter().find(|x|matches!(x.status,FileStatus::Succeeded(_))) { if let FileStatus::Succeeded(p)=&item.status { open_path(p,true); } } },
                     Hit::None => {}
                 }
                 InvalidateRect(hwnd, null_mut(), 1);
+                0
+            }
+            WM_LBUTTONDBLCLK => {
+                let y=((lp>>16)&0xffff) as i16 as i32;
+                if y>=logic::ROW_TOP { let i=((y-logic::ROW_TOP)/logic::ROW_STEP) as usize; if let Some(item)=state(hwnd).results.lock().unwrap().get(i) { if let FileStatus::Succeeded(path)=&item.status { open_path(path,false); } } }
                 0
             }
             WM_PAINT => {
@@ -226,6 +243,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             WM_TIMER => { InvalidateRect(hwnd,null_mut(),1); 0 }
             WM_CLOSE => { let st=state(hwnd); if st.worker_done { DestroyWindow(hwnd); } else { st.close_requested=true; if let Some(c)=&st.cancel { c.store(true,Ordering::Release); } } 0 }
             WM_WORKER_DONE => { let st=state(hwnd); st.worker_done=true; st.cancel=None; KillTimer(hwnd,1); if st.close_requested { DestroyWindow(hwnd); } else { InvalidateRect(hwnd,null_mut(),1); } 0 }
+            WM_OPEN_REQUEST => { let req=Box::from_raw(wp as *mut OpenRequest); let st=state(hwnd); st.model.add_dropped(req.paths,|p|p.is_file()); if let Some(i)=TARGETS.iter().position(|(_,v)|*v==req.target) { st.model.select(i); } SetForegroundWindow(hwnd); InvalidateRect(hwnd,null_mut(),1); 0 }
             WM_DESTROY => {
                 let p = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !p.is_null() {
@@ -238,13 +256,53 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
         }
     }
 }
-pub fn run() -> Result<(), String> {
+
+fn pipe_server(hwnd: usize) {
+    use windows_sys::Win32::{Foundation::*,Storage::FileSystem::*,System::Pipes::*};
+    loop { unsafe {
+        let name=wide(PIPE_NAME);
+        let pipe=CreateNamedPipeW(name.as_ptr(), PIPE_ACCESS_DUPLEX, PIPE_TYPE_BYTE|PIPE_READMODE_BYTE|PIPE_WAIT, 1, 4096, 1_048_576, 0, null_mut());
+        if pipe.is_null() || pipe as isize == -1 { std::thread::sleep(std::time::Duration::from_millis(250)); continue; }
+        let connected=ConnectNamedPipe(pipe,null_mut())!=0 || GetLastError()==ERROR_PIPE_CONNECTED;
+        if connected {
+            let mut buf=vec![0u8;1_048_577]; let mut read=0;
+            if ReadFile(pipe,buf.as_mut_ptr(),buf.len() as u32,&mut read,null_mut())!=0 {
+                let data=&buf[..read as usize];
+                let result=logic::decode_open_request(data.split(|b|*b==b'\n').next().unwrap_or(data));
+                let (response, request)=match result {
+                    Ok((target,paths))=>{ let valid:Vec<_>=paths.into_iter().filter(|p|p.is_file()).collect(); if valid.is_empty(){(r#"{"ok":false,"error":"no_supported_files"}"#.to_string(),None)}else{(format!(r#"{{"ok":true,"added":{}}}"#,valid.len()),Some(OpenRequest{target,paths:valid}))} },
+                    Err(e)=>(format!(r#"{{"ok":false,"error":"{e}"}}"#),None),
+                };
+                if let Some(req)=request { PostMessageW(hwnd as HWND,WM_OPEN_REQUEST,Box::into_raw(Box::new(req)) as WPARAM,0); }
+                let response=response+"\n"; let mut written=0; let _=WriteFile(pipe,response.as_ptr(),response.len() as u32,&mut written,null_mut());
+            }
+        }
+        DisconnectNamedPipe(pipe); CloseHandle(pipe);
+    } }
+}
+
+fn forward_to_instance(args:&[String]) {
+    use windows_sys::Win32::{Foundation::*,Storage::FileSystem::*};
+    if args.is_empty(){return;}
+    let target="pdf";
+    let paths:Vec<_>=args.iter().map(|p|p.as_str()).collect();
+    let payload=serde_json::json!({"cmd":"convert_open","target":target,"paths":paths}).to_string()+"\n";
     unsafe {
+        let name=wide(PIPE_NAME);
+        for _ in 0..40 { let h=CreateFileW(name.as_ptr(),GENERIC_READ|GENERIC_WRITE,0,null_mut(),OPEN_EXISTING,0,null_mut()); if !h.is_null() && h as isize != -1 { let mut written=0; let _=WriteFile(h,payload.as_ptr(),payload.len() as u32,&mut written,null_mut()); CloseHandle(h); return; } std::thread::sleep(std::time::Duration::from_millis(50)); }
+    }
+}
+pub fn run(args:Vec<String>) -> Result<(), String> {
+    unsafe {
+        let mutex_name=wide("Local\\HwpAutoDocFit.ConvertWin");
+        let mutex=windows_sys::Win32::System::Threading::CreateMutexW(std::ptr::null(),0,mutex_name.as_ptr());
+        if mutex.is_null(){return Err("단일 인스턴스 뮤텍스를 만들지 못했습니다".into());}
+        if GetLastError()==ERROR_ALREADY_EXISTS { CloseHandle(mutex); forward_to_instance(&args); let cls=wide("ConvertWinStage1"); let existing=FindWindowW(cls.as_ptr(),std::ptr::null()); if !existing.is_null(){SetForegroundWindow(existing);} return Ok(()); }
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         let inst = GetModuleHandleW(std::ptr::null());
         let cls = wide("ConvertWinStage1");
         let wc = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS,
             lpfnWndProc: Some(proc),
             hInstance: inst,
             hCursor: LoadCursorW(null_mut(), IDC_ARROW),
@@ -271,13 +329,17 @@ pub fn run() -> Result<(), String> {
         );
         if hwnd.is_null() {
             drop(Box::from_raw(st));
+            CloseHandle(mutex);
             return Err("창을 만들지 못했습니다".into());
         }
+        let hwnd_num=hwnd as usize;
+        std::thread::spawn(move||pipe_server(hwnd_num));
         let mut m: MSG = std::mem::zeroed();
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
             TranslateMessage(&m);
             DispatchMessageW(&m);
         }
+        CloseHandle(mutex);
         Ok(())
     }
 }

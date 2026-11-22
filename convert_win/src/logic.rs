@@ -22,7 +22,7 @@ pub const ROW_STEP: i32 = 28;
 
 /// 파일 한 건의 명시적 변환 상태. 전이는 `transition`만으로 적용한다.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FileStatus { Waiting, Running, Succeeded, Failed(String), Cancelled }
+pub enum FileStatus { Waiting, Running, Succeeded(PathBuf), Failed(String), Cancelled }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileResult { pub source: PathBuf, pub status: FileStatus }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum Event { Start(usize), Success(usize), Failure(usize), Cancel(usize) }
 pub fn transition(items: &mut [FileResult], event: Event) {
     match event {
         Event::Start(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Waiting { x.status=FileStatus::Running; } },
-        Event::Success(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Running { x.status=FileStatus::Succeeded; } },
+        Event::Success(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Running { x.status=FileStatus::Succeeded(x.source.clone()); } },
         Event::Failure(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Running { x.status=FileStatus::Failed("변환 실패".into()); } },
         Event::Cancel(from) => for x in items.iter_mut().skip(from) { if matches!(x.status, FileStatus::Waiting|FileStatus::Running) { x.status=FileStatus::Cancelled; } },
     }
@@ -45,7 +45,7 @@ pub fn results(files: &[PathBuf]) -> Vec<FileResult> { files.iter().cloned().map
    transition(&mut v,Event::Start(0)); transition(&mut v,Event::Success(0));
    transition(&mut v,Event::Start(1)); transition(&mut v,Event::Failure(1));
    transition(&mut v,Event::Cancel(2));
-   assert_eq!(v[0].status,FileStatus::Succeeded);
+   assert!(matches!(v[0].status,FileStatus::Succeeded(_)));
    assert!(matches!(v[1].status,FileStatus::Failed(_)));
    assert_eq!(v[2].status,FileStatus::Cancelled);
  }
@@ -69,6 +69,7 @@ pub enum Hit {
     Target(usize),
     Start,
     Cancel,
+    OpenFolder,
     None,
 }
 
@@ -93,6 +94,7 @@ impl Layout {
         Rect { left: self.w - 220, top: self.h - 70, right: self.w - MARGIN, bottom: self.h - 24 }
     }
     pub fn cancel_rect(&self) -> Rect { Rect { left: self.w - 340, top: self.h - 70, right: self.w - 232, bottom: self.h - 24 } }
+    pub fn folder_rect(&self) -> Rect { Rect { left: self.w - 470, top: self.h - 70, right: self.w - 350, bottom: self.h - 24 } }
     /// 목록 칸에 한 번에 그릴 수 있는 줄 수(최소 1).
     pub fn visible_rows(&self) -> usize {
         let room = self.list_rect().bottom - ROW_TOP;
@@ -108,6 +110,7 @@ impl Layout {
             return Hit::Start;
         }
         if self.cancel_rect().contains(x,y) { return Hit::Cancel; }
+        if self.folder_rect().contains(x,y) { return Hit::OpenFolder; }
         Hit::None
     }
 }
@@ -148,6 +151,38 @@ impl Model {
 pub fn engine_file_args(file:&Path, format:&str)->Vec<std::ffi::OsString> { vec!["convert".into(),file.as_os_str().to_owned(),"--to".into(),format.into(),"--notify".into()] }
 
 /// 기존 앱 실행 파일 찾기: 환경변수 지정 → 이 창 옆의 HWP_AutoDocFit.exe. 실제 파일일 때만 돌려준다.
+pub fn output_path_for(source: &Path, format: &str) -> Option<PathBuf> {
+    let extension = match format { "hwpx"=>"hwpx", "pdf"|"pdfm"=>"pdf", "png"=>"png", "jpg"=>"jpg", "txt"=>"txt", "md"=>"md", _=>return None };
+    let marker=format!("({}변경)",format.to_uppercase());
+    let stem=source.file_stem()?.to_string_lossy(); let parent=source.parent().unwrap_or_else(||Path::new("."));
+    let mut candidate=parent.join(format!("{stem}{marker}.{extension}")); let mut index=2;
+    while candidate.exists() { candidate=parent.join(format!("{stem}{marker} ({index}).{extension}")); index+=1; }
+    Some(candidate)
+}
+
+pub fn validated_open_path(path: &Path, folder: bool, is_file: impl Fn(&Path)->bool, is_dir: impl Fn(&Path)->bool) -> Option<PathBuf> {
+    let candidate=if folder { path.parent()? } else { path };
+    if !(if folder { is_dir(candidate) } else { is_file(candidate) }) { return None; }
+    Some(candidate.to_path_buf())
+}
+
+pub fn failure_reason(code: Option<i32>, stderr: &str) -> String {
+    let line=stderr.lines().next().unwrap_or("").trim();
+    match (code,line.is_empty()) { (Some(c),true)=>format!("엔진 종료 코드 {c}"), (Some(c),false)=>format!("엔진 종료 코드 {c}: {line}"), (None,true)=>"엔진 종료 코드 확인 불가".into(), (None,false)=>format!("엔진 종료 코드 확인 불가: {line}") }
+}
+
+pub fn decode_open_request(data: &[u8]) -> Result<(String,Vec<PathBuf>), &'static str> {
+    if data.len()>1_048_576 { return Err("too_large"); }
+    let req:serde_json::Value=serde_json::from_slice(data).map_err(|_|"invalid_json")?;
+    if req.get("cmd").and_then(|v|v.as_str())!=Some("convert_open") { return Err("invalid_cmd"); }
+    let target=req.get("target").and_then(|v|v.as_str()).ok_or("invalid_target")?;
+    if !TARGETS.iter().any(|(_,f)|*f==target) { return Err("invalid_target"); }
+    let values=req.get("paths").and_then(|v|v.as_array()).ok_or("invalid_paths")?;
+    if values.is_empty()||values.len()>2000 { return Err("invalid_paths"); }
+    let paths=values.iter().map(|v|v.as_str().map(PathBuf::from).ok_or("invalid_paths")).collect::<Result<Vec<_>,_>>()?;
+    Ok((target.to_owned(),paths))
+}
+
 pub fn resolve_engine(
     env: Option<PathBuf>,
     current_exe: Option<PathBuf>,
@@ -245,6 +280,28 @@ mod tests {
     fn engine_args_follow_the_existing_convert_command() {
         let args:Vec<String>=engine_file_args(Path::new("b b.pdf"),"pdf").iter().map(|a|a.to_string_lossy().into_owned()).collect();
         assert_eq!(args,["convert","b b.pdf","--to","pdf","--notify"]);
+    }
+
+    #[test] fn output_and_failure_details_are_stable() {
+        assert_eq!(output_path_for(Path::new("a/file.hwp"),"pdf"),Some(p("a/file(PDF변경).pdf")));
+        assert_eq!(output_path_for(Path::new("a/file.hwp"),"pdfm"),Some(p("a/file(PDFM변경).pdf")));
+        assert_eq!(failure_reason(Some(7),"first line\nsecond"),"엔진 종료 코드 7: first line");
+        assert_eq!(failure_reason(Some(2),""),"엔진 종료 코드 2");
+    }
+
+    #[test] fn open_request_checks_command_target_and_paths() {
+        let payload=format!(r#"{{"cmd":"convert_open","target":"pdf","paths":["{}"]}}"#, "한글.pdf");
+        let (target,paths)=decode_open_request(payload.as_bytes()).unwrap();
+        assert_eq!(target,"pdf"); assert_eq!(paths,[p("한글.pdf")]);
+        assert_eq!(decode_open_request(br#"{"cmd":"wrong","target":"pdf","paths":["a"]}"#),Err("invalid_cmd"));
+        assert!(decode_open_request(br#"{"cmd":"convert_open","target":"exe","paths":["a"]}"#).is_err());
+    }
+
+    #[test] fn open_path_requires_the_expected_existing_kind() {
+        let path=std::env::current_exe().unwrap();
+        assert!(validated_open_path(&path,false,|p|p.is_file(),|p|p.is_dir()).is_some());
+        assert!(validated_open_path(&path,true,|_|false,|p|p.is_dir()).is_some());
+        assert!(validated_open_path(Path::new("missing"),false,|_|false,|_|false).is_none());
     }
 
     #[test]
