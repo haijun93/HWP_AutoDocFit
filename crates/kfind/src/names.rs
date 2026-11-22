@@ -12,7 +12,8 @@
 //! 사용자 모드: `roots`(조사 폴더)만 디렉터리 순회, 제외 없음(그 사용자가 열 수 있는 것만 보임).
 use crate::Result;
 use kfind_names::query::hits;
-use kfind_names::{Builder, Names, Options, Searcher, Sort, parse};
+use kfind_names::query::parse_groups;
+use kfind_names::{Builder, Names, Options, Searcher, Sort};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,6 +21,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 pub const MAX_LIMIT: usize = 1000;
+/// 한 질의의 `;` 묶음 최대 개수.
+pub const MAX_GROUPS: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum State {
@@ -360,7 +363,11 @@ impl NamesService {
             drop(g);
             return Err(format!("names index unavailable ({})", self.state().name()).into());
         };
-        let q = parse(text);
+        // `;` 로 나눈 묶음은 교집합(묶음 하나면 예전 단일 질의와 같다).
+        let q = parse_groups(text);
+        if q.len() > MAX_GROUPS {
+            return Err("too many groups".into());
+        }
         let deny = self.deny_for(sid, names);
         let opts = Options { limit: limit.min(MAX_LIMIT), sort, deny, hidden, cancel: Some(cancel), ..Default::default() };
         let v = names.view();
@@ -370,7 +377,7 @@ impl NamesService {
                 ss.clear();
             }
             let s = ss.entry(sid.to_string()).or_insert_with(Searcher::new);
-            s.search(&v, names.generation(), &q, &opts).map_err(|e| e.to_string())?
+            s.search_groups(&v, names.generation(), &q, &opts).map_err(|e| e.to_string())?
         };
         let search_ms = started.elapsed().as_secs_f64() * 1000.0;
         let items: Vec<Value> = hits(&v, &r.top).into_iter().map(|h| json!({"name":h.name,"dir":h.dir,"is_dir":h.is_dir,"size":h.size,"mtime":h.mtime})).collect();

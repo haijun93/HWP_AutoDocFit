@@ -60,6 +60,16 @@ fn user_mode_build_query_status() {
     assert_eq!(q["total"], 1);
     let q = call(&h, json!({"command":"names_query","id":4,"text":"예산집행 ext:hwp 계획"})).unwrap();
     assert_eq!((q["total"].as_u64(), q["narrowed"].as_bool()), (Some(1), Some(true)));
+    // QMS2PIPE1: `;` 묶음 교집합(text 만으로, 새 필드 없음 → 구버전 요청 JSON 그대로 호환).
+    let q = call(&h, json!({"command":"names_query","id":31,"text":"예산; 계획"})).unwrap();
+    assert_eq!(q["total"], 1);
+    let q = call(&h, json!({"command":"names_query","id":32,"text":"예산; 결과; ext:pdf"})).unwrap();
+    assert_eq!(q["total"], 1);
+    let q = call(&h, json!({"command":"names_query","id":33,"text":"예산; 회의"})).unwrap();
+    assert_eq!(q["total"], 0);
+    let q = call(&h, json!({"command":"names_query","id":34,"text":"예산집행 ext:hwp;pdf"})).unwrap();
+    assert_eq!(q["total"], 2);
+    assert!(call(&h, json!({"command":"names_query","id":35,"text":"a;b;c;d;e;f;g;h;i"})).is_err());
     let q = call(&h, json!({"command":"names_query","id":5,"text":"path:업무 -예산","sort":"name"})).unwrap();
     let names: Vec<&str> = q["items"].as_array().unwrap().iter().map(|i| i["name"].as_str().unwrap()).collect();
     assert_eq!(names, vec!["2026", "회의록.txt"]);

@@ -151,6 +151,54 @@ pub fn parse(text: &str) -> Query {
     q
 }
 
+/// `;` 묶음 나누기. 따옴표 안의 `;`와 `ext:hwp;pdf` 꼴(ext: 낱말 안, 바로 뒤에 글자가 이어지는 `;`)은 가르지 않는다.
+/// `;` 가 없으면 입력 전체를 하나로 돌려준다(1묶음 = 기존 `parse` 와 같은 입력).
+pub fn split_groups(text: &str) -> Vec<String> {
+    if !text.contains(';') {
+        return vec![text.to_string()];
+    }
+    let mut groups = Vec::new();
+    let mut cur = String::new();
+    let mut token = String::new();
+    let mut quoted = false;
+    let mut it = text.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && c.is_whitespace() {
+            token.clear();
+        } else if !quoted && c == ';' {
+            let in_ext = strip_prefix_ci(&token, "ext:").is_some()
+                && it.peek().is_some_and(|n| !n.is_whitespace() && *n != ';');
+            if !in_ext {
+                groups.push(std::mem::take(&mut cur));
+                token.clear();
+                continue;
+            }
+        }
+        cur.push(c);
+        if !(c == '"' || c.is_whitespace() && !quoted) {
+            token.push(c);
+        }
+    }
+    groups.push(cur);
+    groups
+}
+
+/// 질의 글 → `;` 로 나눈 묶음별 `Query`(빈 묶음은 버림). 모두 비면 빈 질의 하나.
+/// 묶음이 하나뿐이면 `vec![parse(text)]` 와 같다.
+pub fn parse_groups(text: &str) -> Vec<Query> {
+    let parts = split_groups(text);
+    if parts.len() == 1 {
+        return vec![parse(&parts[0])];
+    }
+    let mut out: Vec<Query> = parts.iter().map(|g| parse(g)).filter(|q| !q.is_empty()).collect();
+    if out.is_empty() {
+        out.push(Query::default());
+    }
+    out
+}
+
 /// 결과 순서.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Sort {
@@ -309,7 +357,6 @@ fn subtract(x: &Ranges, y: &Ranges) -> Ranges {
     out
 }
 
-#[cfg(test)]
 fn in_ranges(r: &Ranges, i: u32) -> bool {
     let k = r.partition_point(|&(a, _)| a <= i);
     k > 0 && i < r[k - 1].1
@@ -571,6 +618,28 @@ impl<'q> Plan<'q> {
         Ok(out)
     }
 
+    fn verify_any(&self, v: &View, cands: &[u32], collect: bool, full: bool) -> Out {
+        if full {
+            self.verify_full(v, cands, collect)
+        } else {
+            self.verify(v, cands, collect)
+        }
+    }
+
+    /// 다른 묶음의 후보 번호를 이 묶음 조건 전부(경로·제외 포함)로 확인한다(`;` 교집합용).
+    fn verify_full(&self, v: &View, cands: &[u32], collect: bool) -> Out {
+        let mut out = Out::default();
+        for &i in cands {
+            if i < v.base_len && !in_ranges(&self.allowed, i) {
+                continue;
+            }
+            if self.accept(v, i, true, true) {
+                self.take(v, i, &mut out, collect);
+            }
+        }
+        out
+    }
+
     /// 앞 결과(후보 번호)만 확인한다. 후보는 경로·제외·종류·확장자 조건을 이미 지난 것.
     fn verify(&self, v: &View, cands: &[u32], collect: bool) -> Out {
         let mut out = Out::default();
@@ -764,6 +833,7 @@ fn run(
     opts: &Options,
     cands: Option<&[u32]>,
     collect: bool,
+    full_verify: bool,
 ) -> Result<(usize, Vec<u32>, Vec<u32>)> {
     let reduced = reduce_words(&q.words);
     let p = plan(v, q, opts, &reduced);
@@ -773,10 +843,10 @@ fn run(
         let parts = if c.len() < 50_000 { 1 } else { threads * 4 };
         let size = c.len().div_ceil(parts).max(1);
         let outs: Vec<Out> = if parts == 1 {
-            vec![p.verify(v, c, collect)]
+            vec![p.verify_any(v, c, collect, full_verify)]
         } else {
             c.par_chunks(size)
-                .map(|ch| p.verify(v, ch, collect))
+                .map(|ch| p.verify_any(v, ch, collect, full_verify))
                 .collect()
         };
         if cancelled(cancel) {
@@ -810,12 +880,18 @@ fn run(
 
 /// 한 번 질의(앞 결과를 쓰지 않음).
 pub fn search(v: &View, q: &Query, opts: &Options) -> Result<Results> {
-    let (total, top, _) = run(v, q, opts, None, false)?;
+    let (total, top, _) = run(v, q, opts, None, false, false)?;
     Ok(Results {
         total,
         top,
         narrowed: false,
     })
+}
+
+/// 묶음이 얼마나 희소(결과가 적을)해 보이는가: 1차 낱말 길이 > 확장자 > 경로 조건 > 낱말 수.
+fn sparsity(q: &Query) -> (usize, bool, usize, usize) {
+    let longest = q.words.iter().map(|w| w.len()).max().unwrap_or(0);
+    (longest, !q.exts.is_empty(), q.path.len(), q.words.len())
 }
 
 /// 같은 범위 조건 아래, 새 질의의 일치가 늘 앞 질의의 일치 안에 드는가.
@@ -860,6 +936,39 @@ impl Searcher {
         self.last = None;
     }
 
+    /// `;` 묶음 교집합(같은 이름이 모든 묶음 조건을 만족). 묶음 하나면 `search` 와 완전히 같다.
+    /// 희소해 보이는 묶음(1차 낱말이 길고 확장자·경로 조건이 있는 것)을 먼저 훑고, 나머지 묶음은 그 후보만 확인한다.
+    /// 후보가 0이 되면 뒤 묶음은 평가하지 않는다. 여러 묶음일 때는 앞 결과 좁히기 캐시를 쓰지 않는다.
+    pub fn search_groups(
+        &mut self,
+        v: &View,
+        generation: u64,
+        groups: &[Query],
+        opts: &Options,
+    ) -> Result<Results> {
+        match groups {
+            [] => return self.search(v, generation, &Query::default(), opts),
+            [one] => return self.search(v, generation, one, opts),
+            _ => {}
+        }
+        self.last = None;
+        let mut order: Vec<&Query> = groups.iter().collect();
+        order.sort_by_key(|q| std::cmp::Reverse(sparsity(q)));
+        let mut all = opts.clone();
+        all.limit = 0;
+        let (last, rest) = order.split_last().expect("2+ groups");
+        let mut ids: Option<Vec<u32>> = None;
+        for q in rest {
+            let (_, _, found) = run(v, q, &all, ids.as_deref(), true, ids.is_some())?;
+            if found.is_empty() {
+                return Ok(Results::default());
+            }
+            ids = Some(found);
+        }
+        let (total, top, _) = run(v, last, opts, ids.as_deref(), false, true)?;
+        Ok(Results { total, top, narrowed: false })
+    }
+
     /// `generation`: 색인 세대(바뀌면 앞 결과를 버린다).
     pub fn search(
         &mut self,
@@ -879,7 +988,7 @@ impl Searcher {
             })
             .map(|l| l.ids);
         let narrowed = cands.is_some();
-        let r = run(v, q, opts, cands.as_deref(), true);
+        let r = run(v, q, opts, cands.as_deref(), true, false);
         let (total, top, ids) = match r {
             Ok(x) => x,
             Err(e) => {
@@ -968,5 +1077,28 @@ mod tests {
             b"ab".to_vec(),
         ];
         assert_eq!(reduce_words(&w), vec![b"abc".as_slice(), b"x".as_slice()]);
+    }
+
+    #[test]
+    fn split_groups_rules() {
+        assert_eq!(split_groups("예산 집행"), vec!["예산 집행"]);
+        assert_eq!(split_groups("2026; 공사 계약"), vec!["2026", " 공사 계약"]);
+        // ext: 안의 ; 는 가르지 않는다.
+        assert_eq!(split_groups("예산 ext:hwp;pdf"), vec!["예산 ext:hwp;pdf"]);
+        assert_eq!(split_groups("예산;ext:hwp;pdf"), vec!["예산", "ext:hwp;pdf"]);
+        // 따옴표 안도 가르지 않는다.
+        assert_eq!(split_groups("\"a;b\" c"), vec!["\"a;b\" c"]);
+        assert_eq!(split_groups("a;;b"), vec!["a", "", "b"]);
+    }
+
+    #[test]
+    fn parse_groups_drops_empty_and_matches_parse_for_one() {
+        for t in ["", "예산 집행 -초안 ext:hwp;.PDF path:문서 file:", r#""Annual Report" docs\plan"#, "folder: !tmp - ."] {
+            assert_eq!(parse_groups(t), vec![parse(t)], "{t}");
+        }
+        assert_eq!(parse_groups("a;b;c").len(), 3);
+        assert_eq!(parse_groups("a; ;b").len(), 2);
+        assert_eq!(parse_groups(";"), vec![Query::default()]);
+        assert_eq!(parse_groups("예산;ext:hwp;pdf")[1].exts, vec![b"hwp".to_vec(), b"pdf".to_vec()]);
     }
 }
