@@ -37,6 +37,14 @@ pub fn transition(items: &mut [FileResult], event: Event) {
 }
 pub fn results(files: &[PathBuf]) -> Vec<FileResult> { files.iter().cloned().map(|source| FileResult { source, status: FileStatus::Waiting }).collect() }
 
+/// 병합 CLI 호출 인자. 입력 경로 순서가 결과 PDF의 파일 순서가 된다.
+pub fn merge_engine_args(files: &[PathBuf]) -> Vec<std::ffi::OsString> {
+    let mut args: Vec<std::ffi::OsString> = vec!["convert".into()];
+    args.extend(files.iter().map(|p| p.as_os_str().to_owned()));
+    args.extend(["--to".into(), "pdfm".into(), "--notify".into()]);
+    args
+}
+
 #[cfg(test)] mod progress_tests {
  use super::*;
  #[test] fn success_failure_cancel_and_empty_transitions() {
@@ -120,6 +128,7 @@ impl Layout {
 pub struct Model {
     pub files: Vec<PathBuf>,
     pub target: usize,
+    pub selected_file: usize,
 }
 impl Model {
     /// 드롭된 경로를 목록에 더한다. 파일이 아닌 것(폴더·없는 경로)과 이미 있는 경로는 건너뛴다.
@@ -140,6 +149,13 @@ impl Model {
     }
     pub fn select(&mut self, i: usize) {
         self.target = i.min(TARGETS.len() - 1);
+    }
+    pub fn move_file(&mut self, from: usize, delta: isize) -> bool {
+        let Some(to) = from.checked_add_signed(delta) else { return false; };
+        if from >= self.files.len() || to >= self.files.len() { return false; }
+        self.files.swap(from, to);
+        self.selected_file = to;
+        true
     }
     pub fn format(&self) -> &'static str {
         TARGETS[self.target.min(TARGETS.len() - 1)].1
@@ -197,6 +213,7 @@ pub fn sample_model() -> Model {
     Model {
         files: vec!["보고서.hwp".into(), "회의자료.hwpx".into(), "스캔본.pdf".into()],
         target: 1,
+        selected_file: 0,
     }
 }
 
@@ -263,6 +280,22 @@ mod tests {
         assert_eq!(m.add_dropped([p("b.pdf")], exists), 0);
         assert_eq!(m.add_dropped(Vec::new(), exists), 0);
         assert_eq!(m.files.len(), 2);
+    }
+
+    #[test]
+    fn merge_order_moves_and_clamps_without_losing_files() {
+        let mut m=Model { files: vec![p("a.pdf"),p("b.pdf"),p("c.pdf")], target:2, selected_file:1 };
+        assert!(m.move_file(1,-1));
+        assert_eq!(m.files,[p("b.pdf"),p("a.pdf"),p("c.pdf")]);
+        assert_eq!(m.selected_file,0);
+        assert!(!m.move_file(0,-1));
+        assert!(!m.move_file(2,1));
+    }
+
+    #[test]
+    fn merge_cli_arguments_preserve_the_selected_path_order() {
+        let args:Vec<String>=merge_engine_args(&[p("b b.pdf"),p("a.pdf"),p("c.pdf")]).iter().map(|a|a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args,["convert","b b.pdf","a.pdf","c.pdf","--to","pdfm","--notify"]);
     }
 
     #[test]

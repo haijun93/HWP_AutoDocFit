@@ -6,6 +6,7 @@ use windows_sys::Win32::{
     System::LibraryLoader::GetModuleHandleW,
     UI::{
         HiDpi::*,
+        Input::KeyboardAndMouse::{GetAsyncKeyState, SetFocus, VK_DOWN, VK_MENU, VK_UP},
         Shell::{DragAcceptFiles, DragFinish, DragQueryFileW, HDROP},
         WindowsAndMessaging::*,
     },
@@ -111,7 +112,11 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
         for (i, item) in results.iter().take(lay.visible_rows()).enumerate() {
             let name=item.source.file_name().unwrap_or_default().to_string_lossy();
             let (mark,c,detail)=match &item.status { FileStatus::Waiting=>("대기",color(100,110,125),String::new()), FileStatus::Running=>("진행",color(20,95,190),String::new()), FileStatus::Succeeded(_)=>("완료",color(20,130,70),String::new()), FileStatus::Failed(reason)=>("실패",color(190,45,45),reason.clone()), FileStatus::Cancelled=>("취소",color(130,100,40),String::new()) };
-            text(hdc, 48, logic::ROW_TOP + i as i32 * logic::ROW_STEP, &format!("{mark}  {name}  {detail}"), c);
+            let row_y=logic::ROW_TOP + i as i32 * logic::ROW_STEP;
+            if st.worker_done && st.model.format()=="pdfm" && st.model.selected_file==i {
+                fill(hdc,logic::Rect{left:34,top:row_y-4,right:w-34,bottom:row_y+20},color(225,239,255));
+            }
+            text(hdc, 48, row_y, &format!("{mark}  {name}  {detail}"), c);
         }
         if results.len()>lay.visible_rows() {
             text(hdc,48,logic::ROW_TOP+lay.visible_rows() as i32*logic::ROW_STEP,&format!("외 {}개",results.len()-lay.visible_rows()),color(130,140,154));
@@ -158,7 +163,23 @@ fn start_conversion(hwnd: HWND, s: &mut State) {
             let shared=s.results.clone(); let cancel=Arc::new(AtomicBool::new(false)); s.cancel=Some(cancel.clone()); s.worker_done=false;
             let hwnd_num=hwnd as usize;
             std::thread::spawn(move || {
-                for (i,file) in files.iter().enumerate() {
+                if format=="pdfm" {
+                    let args=logic::merge_engine_args(&files);
+                    let mut r=shared.lock().unwrap();
+                    for i in 0..files.len() { logic::transition(&mut r,Event::Start(i)); }
+                    drop(r);
+                    let output_dir=files[0].parent().unwrap_or_else(||std::path::Path::new("."));
+                    let before=conversion_temps(output_dir);
+                    let outcome=std::process::Command::new(&exe).args(args).output();
+                    let mut r=shared.lock().unwrap();
+                    match outcome {
+                        Ok(out) if out.status.success()=>{ for i in 0..files.len() { if let Some(x)=r.get_mut(i) { x.status=FileStatus::Succeeded(files[0].clone()); } } },
+                        Ok(out)=>{ let reason=logic::failure_reason(out.status.code(),&String::from_utf8_lossy(&out.stderr)); for x in r.iter_mut() { x.status=FileStatus::Failed(reason.clone()); } },
+                        Err(e)=>for x in r.iter_mut() { x.status=FileStatus::Failed(e.to_string()); },
+                    }
+                    drop(r);
+                    if cancel.load(Ordering::Acquire) { remove_new_conversion_temps(output_dir,&before); }
+                } else { for (i,file) in files.iter().enumerate() {
                     if cancel.load(Ordering::Acquire) { let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Cancel(i)); break; }
                     { let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Start(i)); }
                     let output_dir=file.parent().unwrap_or_else(||std::path::Path::new("."));
@@ -172,7 +193,7 @@ fn start_conversion(hwnd: HWND, s: &mut State) {
                         match child.try_wait() { Ok(Some(status))=>{let output=child.wait_with_output().ok(); let mut r=shared.lock().unwrap(); if status.success() { if let Some(x)=r.get_mut(i) { x.status=FileStatus::Succeeded(logic::output_path_for(file,&format).unwrap_or_else(||file.clone())); } } else if let Some(x)=r.get_mut(i) { x.status=FileStatus::Failed(logic::failure_reason(status.code(),&output.map(|o|String::from_utf8_lossy(&o.stderr).into_owned()).unwrap_or_default())); } break}, Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(100)), Err(e)=>{let _=child.kill();let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())};break} }
                     }
                     if cancel.load(Ordering::Acquire) { break; }
-                }
+                } }
                 unsafe { PostMessageW(hwnd_num as HWND, WM_WORKER_DONE, 0, 0); }
             });
             unsafe { SetTimer(hwnd,1,100,None); }
@@ -212,10 +233,16 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             WM_LBUTTONUP => {
+                SetFocus(hwnd);
                 let x = (lp & 0xffff) as i16 as i32;
                 let y = ((lp >> 16) & 0xffff) as i16 as i32;
                 let mut r: RECT = std::mem::zeroed();
                 GetClientRect(hwnd, &mut r);
+                let st=state(hwnd);
+                if st.worker_done && st.model.format()=="pdfm" && y>=logic::ROW_TOP {
+                    let i=((y-logic::ROW_TOP)/logic::ROW_STEP) as usize;
+                    if i<st.model.files.len() { st.model.selected_file=i; }
+                }
                 match Layout::new(r.right, r.bottom).hit(x, y) {
                     Hit::Target(i) => state(hwnd).model.select(i),
                     Hit::Start => start_conversion(hwnd, state(hwnd)),
@@ -224,6 +251,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     Hit::None => {}
                 }
                 InvalidateRect(hwnd, null_mut(), 1);
+                0
+            }
+            WM_KEYDOWN => {
+                let st=state(hwnd);
+                if st.worker_done && st.model.format()=="pdfm" && (wp==VK_UP as usize || wp==VK_DOWN as usize) {
+                    let alt=(GetAsyncKeyState(VK_MENU as i32) as u16 & 0x8000)!=0;
+                    if alt { let delta=if wp==VK_UP as usize {-1} else {1}; let i=st.model.selected_file; st.model.move_file(i,delta); *st.results.lock().unwrap()=logic::results(&st.model.files); InvalidateRect(hwnd,null_mut(),1); }
+                }
                 0
             }
             WM_LBUTTONDBLCLK => {
