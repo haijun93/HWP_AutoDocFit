@@ -1,6 +1,5 @@
 //! 창 없이 시험하는 부분: 레이아웃·클릭 판정·파일 목록 모델·드롭 경로 정리·변환 명령 인자.
 //! Win32 호출은 `win.rs` 에만 있고, 여기에는 순수 함수만 둔다.
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 /// (화면에 보이는 이름, 기존 변환 엔진의 `--to` 값). 순서가 곧 단추 순서다.
@@ -21,6 +20,37 @@ pub const TARGET_BOTTOM: i32 = 164;
 pub const ROW_TOP: i32 = 244;
 pub const ROW_STEP: i32 = 28;
 
+/// 파일 한 건의 명시적 변환 상태. 전이는 `transition`만으로 적용한다.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FileStatus { Waiting, Running, Succeeded, Failed(String), Cancelled }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileResult { pub source: PathBuf, pub status: FileStatus }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Event { Start(usize), Success(usize), Failure(usize), Cancel(usize) }
+pub fn transition(items: &mut [FileResult], event: Event) {
+    match event {
+        Event::Start(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Waiting { x.status=FileStatus::Running; } },
+        Event::Success(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Running { x.status=FileStatus::Succeeded; } },
+        Event::Failure(i) => if let Some(x)=items.get_mut(i) { if x.status==FileStatus::Running { x.status=FileStatus::Failed("변환 실패".into()); } },
+        Event::Cancel(from) => for x in items.iter_mut().skip(from) { if matches!(x.status, FileStatus::Waiting|FileStatus::Running) { x.status=FileStatus::Cancelled; } },
+    }
+}
+pub fn results(files: &[PathBuf]) -> Vec<FileResult> { files.iter().cloned().map(|source| FileResult { source, status: FileStatus::Waiting }).collect() }
+
+#[cfg(test)] mod progress_tests {
+ use super::*;
+ #[test] fn success_failure_cancel_and_empty_transitions() {
+   assert!(results(&[]).is_empty());
+   let mut v=results(&["a.hwp".into(),"b.hwp".into(),"c.hwp".into()]);
+   transition(&mut v,Event::Start(0)); transition(&mut v,Event::Success(0));
+   transition(&mut v,Event::Start(1)); transition(&mut v,Event::Failure(1));
+   transition(&mut v,Event::Cancel(2));
+   assert_eq!(v[0].status,FileStatus::Succeeded);
+   assert!(matches!(v[1].status,FileStatus::Failed(_)));
+   assert_eq!(v[2].status,FileStatus::Cancelled);
+ }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
     pub left: i32,
@@ -38,6 +68,7 @@ impl Rect {
 pub enum Hit {
     Target(usize),
     Start,
+    Cancel,
     None,
 }
 
@@ -61,6 +92,7 @@ impl Layout {
     pub fn start_rect(&self) -> Rect {
         Rect { left: self.w - 220, top: self.h - 70, right: self.w - MARGIN, bottom: self.h - 24 }
     }
+    pub fn cancel_rect(&self) -> Rect { Rect { left: self.w - 340, top: self.h - 70, right: self.w - 232, bottom: self.h - 24 } }
     /// 목록 칸에 한 번에 그릴 수 있는 줄 수(최소 1).
     pub fn visible_rows(&self) -> usize {
         let room = self.list_rect().bottom - ROW_TOP;
@@ -75,6 +107,7 @@ impl Layout {
         if self.start_rect().contains(x, y) {
             return Hit::Start;
         }
+        if self.cancel_rect().contains(x,y) { return Hit::Cancel; }
         Hit::None
     }
 }
@@ -111,27 +144,8 @@ impl Model {
     pub fn header(&self) -> String {
         format!("변환할 파일  ·  {}개", self.files.len())
     }
-    /// 그릴 줄들과 넘친 개수. 넘치면 호출한 쪽이 "외 N개" 줄을 더한다.
-    pub fn rows(&self, max_rows: usize) -> (Vec<String>, usize) {
-        let shown = self.files.len().min(max_rows);
-        let rows = self.files[..shown].iter().map(|p| row_label(p)).collect();
-        (rows, self.files.len() - shown)
-    }
-    /// 기존 변환 엔진 호출 인자: `convert <파일…> --to <형식> --notify`. 파일이 없으면 None.
-    pub fn engine_args(&self) -> Option<Vec<OsString>> {
-        if self.files.is_empty() {
-            return None;
-        }
-        let mut args: Vec<OsString> = vec!["convert".into()];
-        args.extend(self.files.iter().map(|f| f.as_os_str().to_owned()));
-        args.extend(["--to".into(), self.format().into(), "--notify".into()]);
-        Some(args)
-    }
 }
-
-pub fn row_label(p: &Path) -> String {
-    format!("☐  {}", p.file_name().unwrap_or_default().to_string_lossy())
-}
+pub fn engine_file_args(file:&Path, format:&str)->Vec<std::ffi::OsString> { vec!["convert".into(),file.as_os_str().to_owned(),"--to".into(),format.into(),"--notify".into()] }
 
 /// 기존 앱 실행 파일 찾기: 환경변수 지정 → 이 창 옆의 HWP_AutoDocFit.exe. 실제 파일일 때만 돌려준다.
 pub fn resolve_engine(
@@ -228,28 +242,9 @@ mod tests {
     }
 
     #[test]
-    fn header_and_rows_report_overflow() {
-        let mut m = Model::default();
-        assert_eq!(m.header(), "변환할 파일  ·  0개");
-        assert_eq!(m.rows(3), (vec![], 0));
-        m.files = (0..5).map(|i| p(&format!("C:/문서/파일{i}.hwp"))).collect();
-        assert_eq!(m.header(), "변환할 파일  ·  5개");
-        let (rows, more) = m.rows(3);
-        assert_eq!(rows, ["☐  파일0.hwp", "☐  파일1.hwp", "☐  파일2.hwp"]);
-        assert_eq!(more, 2);
-        assert_eq!(m.rows(10).1, 0);
-    }
-
-    #[test]
     fn engine_args_follow_the_existing_convert_command() {
-        let mut m = Model::default();
-        assert_eq!(m.engine_args(), None);
-        m.files = vec![p("a.hwp"), p("b b.pdf")];
-        m.select(1);
-        let args: Vec<String> = m.engine_args().unwrap().iter().map(|a| a.to_string_lossy().into_owned()).collect();
-        assert_eq!(args, ["convert", "a.hwp", "b b.pdf", "--to", "pdf", "--notify"]);
-        m.select(2);
-        assert!(m.engine_args().unwrap().iter().any(|a| a == "pdfm"));
+        let args:Vec<String>=engine_file_args(Path::new("b b.pdf"),"pdf").iter().map(|a|a.to_string_lossy().into_owned()).collect();
+        assert_eq!(args,["convert","b b.pdf","--to","pdf","--notify"]);
     }
 
     #[test]

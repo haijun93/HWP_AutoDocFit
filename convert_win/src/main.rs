@@ -7,16 +7,20 @@ mod win;
 fn main() {
     let mut args = std::env::args().skip(1);
     let mut capture = None;
+    let mut capture_state = None;
     while let Some(a) = args.next() {
         if a == "--capture" {
             capture = args.next();
+        } else if a == "--capture-state" {
+            capture = args.next(); capture_state = args.next();
         } else {
             eprintln!("알 수 없는 인자: {a}");
             std::process::exit(2);
         }
     }
     let result = if let Some(path) = capture {
-        win::capture(std::path::Path::new(&path)).map(|p| p.display().to_string())
+        if let Some(mode)=capture_state { win::capture_status(std::path::Path::new(&path),&mode).map(|p|p.display().to_string()) }
+        else { win::capture(std::path::Path::new(&path)).map(|p| p.display().to_string()) }
     } else {
         win::run().map(|_| String::new())
     };
