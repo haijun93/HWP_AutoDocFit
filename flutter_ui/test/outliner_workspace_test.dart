@@ -228,6 +228,10 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pump(const Duration(milliseconds: 100));
     expect(operations, contains('insert:1'));
+    await tester.pump(const Duration(milliseconds: 100));
+    // Enter 로 줄이 추가되면 입력 위치(포커스)가 새 줄로 옮겨가야 한다.
+    final newField = tester.widget<EditableText>(find.descendant(of: find.byKey(const ValueKey('outliner-block-3')), matching: find.byType(EditableText)));
+    expect(newField.focusNode.hasFocus, isTrue);
     await tester.tap(second); await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.tab); await tester.pump(const Duration(milliseconds: 100));
     expect(operations, contains('indent:2'));

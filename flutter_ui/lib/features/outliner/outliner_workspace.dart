@@ -312,8 +312,36 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     });
   }
 
+  /// 줄 추가 뒤 입력 위치를 새 블록으로 옮긴다. 새로 생긴 블록(없으면 바로 다음 블록)을 찾는다.
+  Object? _newBlockIdAfter(Map block, Set<Object?> beforeIds) {
+    for (final b in _blocks) {
+      if (!beforeIds.contains(b['id'])) return b['id'];
+    }
+    final index = _blocks.indexWhere((b) => b['id'] == block['id']);
+    if (index >= 0 && index + 1 < _blocks.length) return _blocks[index + 1]['id'];
+    return null;
+  }
+
+  void _focusBlockAfterBuild(Object? id) {
+    if (id == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final node = _focusNodes[id];
+      if (node != null && node.canRequestFocus) {
+        node.requestFocus();
+        final controller = _editors[id];
+        if (controller != null) {
+          controller.selection =
+              TextSelection.collapsed(offset: controller.text.length);
+        }
+      }
+    });
+  }
+
   Future<void> _commitAndInsert(Map block, String text) async {
     if (_page == null || _busy) return;
+    final beforeIds = _blocks.map((b) => b['id']).toSet();
+    Object? focusId;
     await _run(() async {
       var result = await _call({
         'action': 'edit',
@@ -335,9 +363,11 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       _blocks = (result['document']?['blocks'] as List? ?? [])
           .whereType<Map>()
           .toList();
+      focusId = _newBlockIdAfter(block, beforeIds);
       await _save();
       if (_page != null) await _rememberPage(_page!);
     });
+    _focusBlockAfterBuild(focusId);
   }
 
   Future<void> _save() async {
