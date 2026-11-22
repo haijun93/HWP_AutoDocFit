@@ -23,6 +23,16 @@ class SpacingMemoUnitTest(unittest.TestCase):
             self.assertEqual(memo.적중, 0)
             self.assertIsNone(memo.종료())
 
+    def test_off_mode_is_inactive(self):
+        """DOCFIT_SPACING_MEMO=off는 기억 기능을 명시적으로 끈다."""
+        with patch.dict(os.environ, {'DOCFIT_SPACING_MEMO': 'off'}, clear=True):
+            memo = _줄검사기억()
+            memo.시작()
+            self.assertEqual(memo.모드, 'off')
+            self.assertEqual(memo.상태, "없음")
+            self.assertFalse(memo.활성)
+            self.assertIsNone(memo.종료())
+
     def test_verify_mode_lifecycle_and_hits(self):
         """DOCFIT_SPACING_MEMO=verify일 때의 적중 및 호출 집계 검증."""
         with patch.dict(os.environ, {'DOCFIT_SPACING_MEMO': 'verify'}):
