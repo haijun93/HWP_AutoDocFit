@@ -103,6 +103,31 @@ pub struct SysColors {
 }
 
 impl Palette {
+    /// Eight readable search-group colors (background, foreground), ordered by group.
+    pub fn group_highlight(&self, index: usize, dark: bool) -> (u32, u32) {
+        const LIGHT: [(u32, u32); 8] = [
+            (0x00D9ECFF, 0x00202B38),
+            (0x00DDF5E3, 0x001A3020),
+            (0x00F5E2FF, 0x00331F3A),
+            (0x00FFE5D6, 0x00382018),
+            (0x00FFF2C6, 0x00352B12),
+            (0x00D8F4F4, 0x00192F32),
+            (0x00E4E4FF, 0x0022223A),
+            (0x00F7DFE5, 0x00351F27),
+        ];
+        const DARK: [(u32, u32); 8] = [
+            (rgb(0x35, 0x62, 0x91), 0x00FFFFFF),
+            (rgb(0x36, 0x70, 0x4C), 0x00FFFFFF),
+            (rgb(0x70, 0x4A, 0x83), 0x00FFFFFF),
+            (rgb(0x8A, 0x52, 0x36), 0x00FFFFFF),
+            (rgb(0x7A, 0x67, 0x2E), 0x00FFFFFF),
+            (rgb(0x2E, 0x6D, 0x70), 0x00FFFFFF),
+            (rgb(0x4F, 0x58, 0x91), 0x00FFFFFF),
+            (rgb(0x83, 0x46, 0x5A), 0x00FFFFFF),
+        ];
+        if dark { DARK[index % 8] } else { LIGHT[index % 8] }
+    }
+
     /// 밝게: 이전 popup.rs·preview.rs·frame.rs·kvf window.rs 하드코딩 값 그대로(화면 픽셀 동일).
     pub const LIGHT: Palette = Palette {
         bg: 0x00FFFFFF,

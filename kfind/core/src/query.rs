@@ -79,6 +79,42 @@ pub fn parse_groups(q: &str) -> Vec<&str> {
     groups
 }
 
+/// File-name and UI group splitting: semicolons inside quotes or an `ext:` token
+/// are literal. Empty groups are preserved to match the names search parser.
+pub fn split_semicolon_groups(q: &str) -> Vec<String> {
+    if !q.contains(';') {
+        return vec![q.to_owned()];
+    }
+    let mut groups = Vec::new();
+    let mut cur = String::new();
+    let mut token = String::new();
+    let mut quoted = false;
+    let mut it = q.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == '"' {
+            quoted = !quoted;
+        } else if !quoted && c.is_whitespace() {
+            token.clear();
+        } else if !quoted && c == ';' {
+            let ext = token
+                .get(..4)
+                .is_some_and(|p| p.eq_ignore_ascii_case("ext:"))
+                && it.peek().is_some_and(|n| !n.is_whitespace() && *n != ';');
+            if !ext {
+                groups.push(std::mem::take(&mut cur));
+                token.clear();
+                continue;
+            }
+        }
+        cur.push(c);
+        if c != '"' && !(c.is_whitespace() && !quoted) {
+            token.push(c);
+        }
+    }
+    groups.push(cur);
+    groups
+}
+
 /// 고급 질의 문법 파싱 결과 (QMS-QUERY).
 ///
 /// - 정확 구문: `"…"` / `“…”` -> `phrases`
@@ -643,6 +679,14 @@ pub(crate) fn split_dict(w: &str, is_word: impl FnMut(&str) -> bool) -> Option<V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_semicolon_split_preserves_filename_service_rules() {
+        assert_eq!(split_semicolon_groups("2026; 공사 계약"), ["2026", " 공사 계약"]);
+        assert_eq!(split_semicolon_groups("예산 ext:hwp;pdf"), ["예산 ext:hwp;pdf"]);
+        assert_eq!(split_semicolon_groups("예산;ext:hwp;pdf"), ["예산", "ext:hwp;pdf"]);
+        assert_eq!(split_semicolon_groups("\"a;b\" c"), ["\"a;b\" c"]);
+    }
 
     #[test]
     fn parse_drops_short_and_dupes() {

@@ -13,19 +13,17 @@ pub struct ViewRow {
     pub excerpt: String,
     pub highlights: Vec<(usize, usize)>,
     pub badges: Vec<String>,
+    pub group_highlights: Vec<(usize, usize, usize)>,
 }
 
 /// Textual view of the related-query chips under the search edit.
 pub fn related_query_chips(query: &str, width: i32, scale: i32) -> Vec<String> {
-    let groups: Vec<String> = kfind_core::parse_groups(query)
-        .into_iter()
-        .map(str::to_owned)
-        .collect();
-    let rects = crate::layout::related_chip_rects(&groups, 0, 0, width, scale);
-    groups
-        .into_iter()
-        .zip(rects)
-        .map(|(label, rect)| {
+    let groups = kfind_core::split_semicolon_groups(query);
+    if groups.len() < 2 { return Vec::new(); }
+    let labels: Vec<String> = groups.into_iter().take(8)
+        .enumerate().map(|(i, label)| format!("{}. {}", i + 1, label.trim())).collect();
+    let rects = crate::layout::related_chip_rects(&labels, 0, 0, width, scale);
+    labels.into_iter().zip(rects).map(|(label, rect)| {
             format!(
                 "{}:{}:{}:{}",
                 label,
@@ -39,12 +37,22 @@ pub fn related_query_chips(query: &str, width: i32, scale: i32) -> Vec<String> {
 
 /// Format one result as the strings and highlight spans the native row painter consumes.
 pub fn result_row(row: &Row, terms: &[String], kinds: &[ResultKind], all_tab: bool) -> ViewRow {
+    let mut view = result_row_with_groups(row, terms, &[terms.to_vec()], kinds, all_tab);
+    view.badges.retain(|badge| !badge.ends_with("묶음 일치"));
+    view
+}
+
+/// Format a row with group-specific excerpt spans and visible evidence badges.
+pub fn result_row_with_groups(row: &Row, terms: &[String], groups: &[Vec<String>], kinds: &[ResultKind], all_tab: bool) -> ViewRow {
     let kind = extension_label(&row.name).to_string();
     let name = row.name.clone();
     let path = row.parent.clone();
     let excerpt = if row.snippet.is_empty() { row.location.clone() } else { row.snippet.clone() };
     let excerpt_terms = if row.snippet.is_empty() { &[][..] } else { terms };
     let highlights = highlight::ranges_terms(&excerpt, excerpt_terms);
+    let group_highlights = if row.snippet.is_empty() { Vec::new() } else {
+        groups.iter().enumerate().flat_map(|(g, words)| highlight::ranges_terms(&excerpt, words).into_iter().map(move |(a,b)| (a,b,g))).collect()
+    };
     let mut badges = vec![kind.clone()];
     if all_tab && !kinds.is_empty() {
         badges.push(kinds.iter().map(|k| match k {
@@ -54,11 +62,14 @@ pub fn result_row(row: &Row, terms: &[String], kinds: &[ResultKind], all_tab: bo
         }).collect::<Vec<_>>().join("·"));
     }
     if !row.snippet.is_empty() {
+        for (i, group) in groups.iter().enumerate().take(8) {
+            if !highlight::ranges_terms(&excerpt, group).is_empty() { badges.push(format!("{}묶음 일치", i + 1)); }
+        }
         if let Some(badge) = compute_location_badge(&row.location) {
             badges.push(badge);
         }
     }
-    ViewRow { kind, name, path, excerpt, highlights, badges }
+    ViewRow { kind, name, path, excerpt, highlights, badges, group_highlights }
 }
 
 /// The visible text of the empty-query topic buttons, using the painter's exact label rule.
@@ -172,13 +183,24 @@ mod tests {
     #[test]
     fn related_query_groups_are_ready_for_chips_in_input_order() {
         let dump = related_query_chips("2026; 공사 계약", 320, 100).join("\n");
-        assert_eq!(dump, "2026:0:0:56\n공사 계약:62:0:64");
+        assert_eq!(dump, "1. 2026:0:0:80\n2. 공사 계약:86:0:88");
+    }
+
+    #[test]
+    fn view_dump_keeps_each_group_index_on_excerpt_matches() {
+        let row = row("예산.hwp", "C:\\문서", "예산 공사 계약 안전관리계획", "1쪽");
+        let groups = vec![vec!["예산".into()], vec!["공사".into(), "계약".into()], vec!["안전관리계획".into()]];
+        let view = result_row_with_groups(&row, &[], &groups, &[], false);
+        assert!(view.group_highlights.iter().any(|(_, _, group)| *group == 0));
+        assert!(view.group_highlights.iter().any(|(_, _, group)| *group == 1));
+        assert!(view.group_highlights.iter().any(|(_, _, group)| *group == 2));
+        assert!(view.badges.contains(&"3묶음 일치".into()));
     }
 
     #[test]
     fn related_query_chip_view_dump_wraps_with_layout_and_suppresses_single_query() {
         let dump = related_query_chips("2026; 공사 계약; 안전관리계획", 130, 100).join("\n");
-        assert_eq!(dump, "2026:0:0:56\n공사 계약:62:0:64\n안전관리계획:0:28:72");
+        assert_eq!(dump, "1. 2026:0:0:80\n2. 공사 계약:0:28:88\n3. 안전관리계획:0:56:96");
         assert!(related_query_chips("단일 검색어", 320, 100).is_empty());
         assert_no_replacement_question_marks(&dump);
     }

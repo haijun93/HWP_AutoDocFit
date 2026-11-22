@@ -215,7 +215,7 @@ fn scale_u(h: HWND, n: i32, u: &Ui) -> i32 {
 fn quick_layout(h: HWND, u: &Ui) -> QuickSearchLayout {
     let mut r: RECT = unsafe { std::mem::zeroed() };
     unsafe { GetClientRect(h, &mut r); }
-    let groups = kfind_core::parse_groups(&u.state.query);
+    let groups = kfind_core::split_semicolon_groups(&u.state.query);
     ktm::layout::quick_search_layout(
         scale_u(h, 100, u), r.right, r.bottom, groups.len() > 1, u.state.options.options_open,
         !u.state.autocompletes.is_empty(),
@@ -952,6 +952,43 @@ unsafe fn highlighted(dc: HDC, s: &str, terms: &[String], rc: RECT, fg: u32, bg:
         }
         RestoreDC(dc, saved);
     }
+}
+
+unsafe fn highlighted_groups(dc: HDC, s: &str, groups: &[Vec<String>], rc: RECT, fg: u32, palette: ui_theme::Palette) {
+    unsafe {
+        let mut spans: Vec<(usize, usize, usize)> = groups.iter().enumerate().flat_map(|(g, terms)|
+            ktm::highlight::ranges_terms(s, terms).into_iter().map(move |(a,b)| (a,b,g))
+        ).collect();
+        spans.sort_by_key(|x| (x.0, x.1));
+        let mut merged: Vec<(usize, usize, usize)> = Vec::new();
+        for (a,b,g) in spans {
+            if let Some(last) = merged.last_mut().filter(|x| a < x.1) { last.1 = last.1.max(b); }
+            else { merged.push((a,b,g)); }
+        }
+        let saved = SaveDC(dc);
+        let mut offset = 0usize;
+        let mut x = rc.left;
+        for (start,end,group) in merged.into_iter().chain(std::iter::once((s.len(),s.len(),0))) {
+            let pieces = if start == end { vec![(start,end,None)] } else { vec![(offset,start,None),(start,end,Some(group))] };
+            for (a,b,g) in pieces {
+                if a >= b { continue; }
+                let w = wide(&s[a..b]); let mut size: SIZE = std::mem::zeroed();
+                GetTextExtentPoint32W(dc,w.as_ptr(),(w.len()-1) as i32,&mut size);
+                if let Some(i) = g { let (bg,fg2)=palette.group_highlight(i, ui_theme::theme().kind == ui_theme::Kind::Dark); SetTextColor(dc,fg2); SetBkColor(dc,bg); SetBkMode(dc,OPAQUE as i32); }
+                else { SetTextColor(dc,fg); SetBkMode(dc,TRANSPARENT as i32); }
+                TextOutW(dc,x,rc.top+(rc.bottom-rc.top-size.cy)/2,w.as_ptr(),(w.len()-1) as i32); x+=size.cx;
+            }
+            offset=end;
+        }
+        RestoreDC(dc,saved);
+    }
+}
+
+fn query_group_terms(query: &str) -> Vec<Vec<String>> {
+    kfind_core::split_semicolon_groups(query).into_iter().take(8).map(|g| {
+        g.split_whitespace().filter(|w| !w.starts_with("ext:") && !w.starts_with("path:") && !w.starts_with("file:") && !w.starts_with('-'))
+            .map(|w| w.trim_matches(['"','“','”']).to_owned()).filter(|w| !w.is_empty()).collect()
+    }).collect()
 }
 
 unsafe fn draw_preview_lines(
@@ -2192,12 +2229,11 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
 
                 // 둘째 줄: 발췌 문장 (강조 하이라이트) 및 일치 문장 옆 위치 배지
-                let (snippet, terms): (&str, &[String]) = if row.snippet.is_empty() {
-                    (&row.location, &[])
+                let snippet: &str = if row.snippet.is_empty() {
+                    &row.location
                 } else {
-                    (&row.snippet, &u.terms)
+                    &row.snippet
                 };
-                let highlight_bg = 0x8AF0FE;
                 SelectObject(mem, u.small);
 
                 let mut snip_left = side_w + scale(h, 68);
@@ -2206,6 +2242,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 }
                 let line_top = gy + line_h1;
                 let line_bottom = line_top + line_h2;
+
+                let group_terms = query_group_terms(&u.state.query);
+                if !row.snippet.is_empty() {
+                    for (gi, terms) in group_terms.iter().enumerate() {
+                        if ktm::highlight::ranges_terms(snippet, terms).is_empty() { continue; }
+                        let label = format!("{}", gi + 1);
+                        let (bg, fg) = p.group_highlight(gi, ui_theme::theme().kind == ui_theme::Kind::Dark);
+                        let bw = scale(h, 18);
+                        let badge = RECT { left: snip_left, top: line_top + scale(h, 1), right: snip_left + bw, bottom: line_bottom - scale(h, 1) };
+                        fill(badge, bg);
+                        text(&label, badge, fg, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                        snip_left += bw + scale(h, 4);
+                    }
+                }
 
                 // ① 일치 문장 옆 위치 배지 (쪽·시트·행 등 kfind 위치 메타가 있는 것만, 없으면 생략)
                 if u.settings.show_location {
@@ -2242,10 +2292,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     }
                 }
 
-                highlighted(
+                highlighted_groups(
                     mem,
                     snippet,
-                    terms,
+                    &group_terms,
                     RECT {
                         left: snip_left,
                         top: line_top,
@@ -2257,19 +2307,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         bottom: line_bottom,
                     },
                     p.row_text(sel, p.text),
-                    highlight_bg,
+                    p,
                 );
             }
 
             // ② 검색창 아래 연관 검색어 묶음 칩
-            let related_groups: Vec<String> = kfind_core::parse_groups(&u.state.query)
-                .into_iter().map(str::to_owned).collect();
+            let related_groups = kfind_core::split_semicolon_groups(&u.state.query);
             let chip_top = quick_layout(h, u).related.top;
-            let chip_rects = related_chip_rects(&related_groups, pad + side_w, chip_top, r.right - pad, scale(h, 100));
+            let chip_labels: Vec<String> = related_groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
+            let chip_rects = related_chip_rects(&chip_labels, pad + side_w, chip_top, r.right - pad, scale(h, 100));
             SelectObject(mem, u.small);
-            for (group, chip) in related_groups.iter().zip(chip_rects.iter()) {
-                fill(*chip, p.tab_hover);
-                text(group, *chip, p.tab_text, DT_CENTER | DT_END_ELLIPSIS | DT_SINGLELINE);
+            for (i, (group, chip)) in chip_labels.iter().zip(chip_rects.iter()).enumerate() {
+                let (bg, fg) = p.group_highlight(i, ui_theme::theme().kind == ui_theme::Kind::Dark);
+                fill(*chip, bg);
+                text(group, *chip, fg, DT_CENTER | DT_END_ELLIPSIS | DT_SINGLELINE);
             }
 
             // ③ 결과 선택 시 미리보기 줄 (선택 행의 일치 문단 전체 3줄)
@@ -3852,8 +3903,9 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     }
                 } else if hit_quick_band(x, y, bands.related)
                 {
-                    let groups = with(|u| kfind_core::parse_groups(&u.state.query).into_iter().map(str::to_owned).collect::<Vec<_>>());
-                    let rects = related_chip_rects(&groups, pad + side_w, bands.related.top, rc_w.right - pad, scale(h, 100));
+                    let groups = with(|u| kfind_core::split_semicolon_groups(&u.state.query));
+                    let labels: Vec<String> = groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
+                    let rects = related_chip_rects(&labels, pad + side_w, bands.related.top, rc_w.right - pad, scale(h, 100));
                     if let Some(index) = rects.iter().position(|rc| x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
                         if let Some(group) = groups.get(index) { event(h, Event::Input(group.clone())); }
                     }
@@ -4372,7 +4424,7 @@ pub fn run() -> Result<(), String> {
                                 return Ok(Answer {
                                     rows,
                                     terms,
-                                    groups: kfind_core::parse_groups(&q).into_iter().map(str::to_owned).collect(),
+                                    groups: kfind_core::split_semicolon_groups(&q),
                                     folder_counts: Vec::new(),
                                     autocompletes: Vec::new(),
                                 });
@@ -4388,7 +4440,7 @@ pub fn run() -> Result<(), String> {
                                 return Ok(Answer {
                                     rows,
                                     terms,
-                                    groups: kfind_core::parse_groups(&q).into_iter().map(str::to_owned).collect(),
+                                    groups: kfind_core::split_semicolon_groups(&q),
                                     folder_counts: Vec::new(),
                                     autocompletes: Vec::new(),
                                 });

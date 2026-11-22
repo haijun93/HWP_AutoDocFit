@@ -767,7 +767,7 @@ impl Backend {
         Ok(Answer {
             rows,
             terms,
-            groups: kfind_core::parse_groups(query).into_iter().map(str::to_owned).collect(),
+            groups: kfind_core::split_semicolon_groups(query),
             folder_counts,
             autocompletes,
         })

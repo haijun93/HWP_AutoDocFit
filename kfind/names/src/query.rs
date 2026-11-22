@@ -154,35 +154,7 @@ pub fn parse(text: &str) -> Query {
 /// `;` 묶음 나누기. 따옴표 안의 `;`와 `ext:hwp;pdf` 꼴(ext: 낱말 안, 바로 뒤에 글자가 이어지는 `;`)은 가르지 않는다.
 /// `;` 가 없으면 입력 전체를 하나로 돌려준다(1묶음 = 기존 `parse` 와 같은 입력).
 pub fn split_groups(text: &str) -> Vec<String> {
-    if !text.contains(';') {
-        return vec![text.to_string()];
-    }
-    let mut groups = Vec::new();
-    let mut cur = String::new();
-    let mut token = String::new();
-    let mut quoted = false;
-    let mut it = text.chars().peekable();
-    while let Some(c) = it.next() {
-        if c == '"' {
-            quoted = !quoted;
-        } else if !quoted && c.is_whitespace() {
-            token.clear();
-        } else if !quoted && c == ';' {
-            let in_ext = strip_prefix_ci(&token, "ext:").is_some()
-                && it.peek().is_some_and(|n| !n.is_whitespace() && *n != ';');
-            if !in_ext {
-                groups.push(std::mem::take(&mut cur));
-                token.clear();
-                continue;
-            }
-        }
-        cur.push(c);
-        if !(c == '"' || c.is_whitespace() && !quoted) {
-            token.push(c);
-        }
-    }
-    groups.push(cur);
-    groups
+    kfind_core::split_semicolon_groups(text)
 }
 
 /// 질의 글 → `;` 로 나눈 묶음별 `Query`(빈 묶음은 버림). 모두 비면 빈 질의 하나.

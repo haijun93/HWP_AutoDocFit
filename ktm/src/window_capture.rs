@@ -140,6 +140,12 @@ unsafe fn setup(h: HWND, name: &str) {
                 ..State::default()
             };
             u.rows = fixtures.clone();
+            if name == "04_related_chips" {
+                if let Some(row) = u.rows.get_mut(1) {
+                    row.snippet = "2026년도 예산 집행은 공사 계약과 안전관리계획에 맞춰 추진한다.".into();
+                    row.preview = row.snippet.clone();
+                }
+            }
             u.terms = vec!["예산".into()];
             u.timing = Some(Instant::now());
         };
