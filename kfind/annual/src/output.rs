@@ -988,8 +988,8 @@ mod tests {
         let svg = weekly_documents_svg(&input);
 
         assert!(svg.contains("1주차부터 53주차"));
-        assert!(svg.contains("1주: 5건"));
-        assert!(svg.contains("53주: 20건"));
+        assert!(svg.contains("1주차: 5건"));
+        assert!(svg.contains("53주차: 20건"));
         assert!(svg.contains("width=\"9\" height=\"260\""));
         assert!(svg.contains(">1주</text>") && svg.contains(">53주</text>"));
         assert!(!svg.contains(">2주</text>") && !svg.contains(">3주</text>"));
