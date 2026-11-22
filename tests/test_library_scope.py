@@ -25,6 +25,7 @@ class LibraryScopeTests(unittest.TestCase):
         excluded = [r"D:\Private"]
         self.assertTrue(is_excluded_path(r"D:\Private\a.pdf", excluded))
         self.assertFalse(is_excluded_path(r"D:\Private-old\a.pdf", excluded))
+        self.assertFalse(is_excluded_path(r"E:\Private\a.pdf", excluded))
 
 
 if __name__ == "__main__":

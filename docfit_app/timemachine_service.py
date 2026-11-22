@@ -19,6 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from docfit_core.timemachine import thumbs
+from docfit_core.path_utils import path_is_within
 from docfit_core.timemachine.content_search import ContentSearchIndex
 from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
 from docfit_core.timemachine.content_search import CURRENT_HIERARCHY_SCHEMA_VERSION
@@ -691,7 +692,7 @@ class TimemachineService:
         for root in self._settings["roots"]:
             root_path = os.path.normcase(os.path.normpath(os.path.abspath(root)))
             try:
-                if os.path.commonpath((root_path, file_path)) == root_path:
+                if path_is_within(file_path, root_path):
                     return Path(os.path.relpath(file_path, root_path)).parts[:-1]
             except ValueError:
                 continue
@@ -708,7 +709,7 @@ class TimemachineService:
                 root_path = os.path.normcase(os.path.normpath(os.path.abspath(root))).casefold()
                 file_path = os.path.normcase(os.path.normpath(os.path.abspath(path)))
                 file_path = file_path.casefold()
-                if os.path.commonpath((root_path, file_path)) == root_path:
+                if path_is_within(file_path, root_path):
                     return True
             except (OSError, ValueError):
                 continue
@@ -718,7 +719,7 @@ class TimemachineService:
     def _real_path_under_root(path, root):
         try:
             path, root = (os.path.normcase(value).casefold() for value in (path, root))
-            return os.path.commonpath((path, root)) == root
+            return path_is_within(path, root)
         except (OSError, ValueError):
             return False
 
@@ -1341,7 +1342,7 @@ class TimemachineService:
         for root in self._settings["roots"]:
             base = os.path.normcase(os.path.realpath(root)).casefold()
             try:
-                if os.path.commonpath((base, real)) == base:
+                if path_is_within(real, base):
                     return True
             except ValueError:
                 continue

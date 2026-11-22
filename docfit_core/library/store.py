@@ -6,6 +6,8 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
+from docfit_core.path_utils import path_is_within
+
 
 SCHEMA = """
 PRAGMA foreign_keys=ON;
@@ -137,10 +139,7 @@ class LibraryStore:
             rows = self._db.execute("SELECT id,path,path_key FROM files WHERE library_id=?", (int(library_id),)).fetchall()
             remove = []
             for row in rows:
-                try:
-                    inside = os.path.commonpath((root_key, row["path_key"])) == root_key
-                except ValueError:
-                    inside = False
+                inside = path_is_within(row["path_key"], root_key)
                 if inside and row["path_key"] not in seen:
                     remove.append(row["id"])
             if remove:
@@ -154,10 +153,7 @@ class LibraryStore:
             rows = self._db.execute("SELECT path,path_key,size,mtime,ctime FROM files WHERE library_id=?",
                                     (int(library_id),)).fetchall()
         for row in rows:
-            try:
-                inside = os.path.commonpath((root_key, row["path_key"])) == root_key
-            except ValueError:
-                inside = False
+            inside = path_is_within(row["path_key"], root_key)
             if inside:
                 result[row["path_key"]] = (row["size"], row["mtime"], row["ctime"])
         return result

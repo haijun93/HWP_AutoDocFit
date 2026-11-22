@@ -34,6 +34,7 @@ from docfit_core.batch_format import _serialize
 from docfit_core.hwpx import open_hwpx_safely
 from docfit_core.table_builder import _Header, _cell, _child, _element, _table, _tag
 from docfit_core.timemachine import thumbs
+from docfit_core.path_utils import path_is_within
 from docfit_core.timemachine.rules import cloud_only, excluded_name
 from .library_scope import current_default_roots, is_excluded_path
 from .background_scan import BackgroundScan
@@ -213,12 +214,8 @@ def _read_photo_group_meta(path: Path | str) -> dict[str, Any]:
 
 
 def _path_within_root(path, root):
-    """path 가 root 아래(또는 같음)인지 본다. 드라이브가 다르면(여러 드라이브 PC) commonpath 가
-    ValueError('Paths don't have the same drive')를 내므로 그 경우는 '아래 아님'으로 본다."""
-    try:
-        return os.path.commonpath([path, root]) == root
-    except ValueError:
-        return False
+    """path 가 root 아래인지(드라이브가 다르면 아님). 공용 도우미 path_is_within 으로 위임한다."""
+    return path_is_within(path, root)
 
 
 class PhotoAlbumDb:
@@ -787,9 +784,7 @@ class PhotoAlbumService:
                 matching = []
                 root_norm = os.path.normcase(os.path.abspath(str(root)))
                 for row in rows:
-                    try: common = os.path.commonpath([os.path.normcase(os.path.abspath(row["path"])), root_norm])
-                    except ValueError: continue
-                    if common == root_norm: matching.append(row)
+                    if path_is_within(os.path.normcase(os.path.abspath(row["path"])), root_norm): matching.append(row)
                 if engine == "service":
                     existing = {row["path"] for row in self.db.list_photos(str(root))}
                     added_rows = 0
@@ -867,7 +862,7 @@ class PhotoAlbumService:
                 try: path = os.path.normcase(os.path.abspath(row["path"]))
                 except OSError: continue
                 valid = path in self._default_name_paths if self._default_name_paths is not None else Path(row["path"]).is_file()
-                if valid and any(_path_within_root(path, root) for root in roots): existing.append(row)
+                if valid and any(path_is_within(path, root) for root in roots): existing.append(row)
             rows = existing
             if not cancel.is_set(): library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
             result["engine"] = engine

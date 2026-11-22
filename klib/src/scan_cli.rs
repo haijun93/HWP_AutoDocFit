@@ -68,7 +68,7 @@ fn excluded_path(path: &Path, base: &Path, custom: &[PathBuf]) -> bool {
 fn wide(s: &std::ffi::OsStr) -> Vec<u16> { s.encode_wide().chain(Some(0)).collect() }
 
 #[cfg(windows)]
-fn scan_dir(dir: PathBuf, base: PathBuf, exts: Arc<Vec<String>>, excludes: Arc<Vec<PathBuf>>, todo: mpsc::Sender<PathBuf>, out: mpsc::Sender<Item>, cancel: Arc<AtomicBool>) {
+fn scan_dir(dir: PathBuf, base: PathBuf, exts: Arc<Vec<String>>, excludes: Arc<Vec<PathBuf>>, todo: mpsc::Sender<PathBuf>, out: mpsc::Sender<Item>, cancel: Arc<AtomicBool>, errors: Arc<AtomicBool>) {
     use windows_sys::Win32::{
         Foundation::{CloseHandle, GetLastError, ERROR_NO_MORE_FILES, INVALID_HANDLE_VALUE},
         Storage::FileSystem::{FindFirstFileExW, FindNextFileW, FindExInfoBasic, FindExSearchNameMatch, WIN32_FIND_DATAW, FIND_FIRST_EX_LARGE_FETCH},
@@ -78,7 +78,7 @@ fn scan_dir(dir: PathBuf, base: PathBuf, exts: Arc<Vec<String>>, excludes: Arc<V
     let q = wide(query.as_os_str());
     let mut data: WIN32_FIND_DATAW = unsafe { std::mem::zeroed() };
     let h = unsafe { FindFirstFileExW(q.as_ptr(), FindExInfoBasic, (&mut data as *mut WIN32_FIND_DATAW).cast(), FindExSearchNameMatch, std::ptr::null(), FIND_FIRST_EX_LARGE_FETCH) };
-    if h == INVALID_HANDLE_VALUE { return; }
+    if h == INVALID_HANDLE_VALUE { errors.store(true, Ordering::Relaxed); return; }
     loop {
         if cancel.load(Ordering::Relaxed) { break; }
         let len = data.cFileName.iter().position(|&x| x == 0).unwrap_or(data.cFileName.len());
@@ -107,7 +107,7 @@ fn scan_dir(dir: PathBuf, base: PathBuf, exts: Arc<Vec<String>>, excludes: Arc<V
             }
         }
         if unsafe { FindNextFileW(h, &mut data) } == 0 {
-            let e = unsafe { GetLastError() }; if e != ERROR_NO_MORE_FILES { /* unreadable directory */ }
+            let e = unsafe { GetLastError() }; if e != ERROR_NO_MORE_FILES { errors.store(true, Ordering::Relaxed); }
             break;
         }
     }
@@ -115,7 +115,7 @@ fn scan_dir(dir: PathBuf, base: PathBuf, exts: Arc<Vec<String>>, excludes: Arc<V
 }
 
 #[cfg(not(windows))]
-fn scan_dir(_dir: PathBuf, _base: PathBuf, _exts: Arc<Vec<String>>, _excludes: Arc<Vec<PathBuf>>, _todo: mpsc::Sender<PathBuf>, _out: mpsc::Sender<Item>, _cancel: Arc<AtomicBool>) {}
+fn scan_dir(_dir: PathBuf, _base: PathBuf, _exts: Arc<Vec<String>>, _excludes: Arc<Vec<PathBuf>>, _todo: mpsc::Sender<PathBuf>, _out: mpsc::Sender<Item>, _cancel: Arc<AtomicBool>, _errors: Arc<AtomicBool>) {}
 
 fn escape(s: &str) -> String { let mut o = String::with_capacity(s.len()+2); o.push('"'); for c in s.chars() { match c { '"'=>o.push_str("\\\""), '\\'=>o.push_str("\\\\"), '\n'=>o.push_str("\\n"), '\r'=>o.push_str("\\r"), '\t'=>o.push_str("\\t"), c if c < ' '=>o.push_str(&format!("\\u{:04x}", c as u32)), c=>o.push(c) } } o.push('"'); o }
 fn emit(item: &Item) -> io::Result<()> {
@@ -128,6 +128,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
     #[cfg(not(windows))] { let _ = opts; return Err("klib scan requires Windows".into()); }
     #[cfg(windows)] {
         let stdin_cancel = Arc::new(AtomicBool::new(false));
+        let scan_errors = Arc::new(AtomicBool::new(false));
         let exts = Arc::new(opts.exts); let excludes = Arc::new(opts.excludes);
         let (out_tx, out_rx) = mpsc::channel::<Item>();
         let queue = Arc::new((Mutex::new(VecDeque::new()), std::sync::Condvar::new()));
@@ -137,7 +138,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         let mut joins = Vec::new();
         for _ in 0..workers {
             let q = queue.clone(); let pending = pending.clone(); let exts = exts.clone(); let excludes = excludes.clone();
-            let cancel = stdin_cancel.clone(); let out = out_tx.clone();
+            let cancel = stdin_cancel.clone(); let out = out_tx.clone(); let errors = scan_errors.clone();
             joins.push(thread::spawn(move || loop {
                 if cancel.load(Ordering::Relaxed) { break; }
                 let next = {
@@ -153,7 +154,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
                 };
                 let Some((path, root)) = next else { break; };
                 let (dir_tx, dir_rx) = mpsc::channel();
-                scan_dir(path, root.clone(), exts.clone(), excludes.clone(), dir_tx, out.clone(), cancel.clone());
+                scan_dir(path, root.clone(), exts.clone(), excludes.clone(), dir_tx, out.clone(), cancel.clone(), errors.clone());
                 for child in dir_rx {
                     pending.fetch_add(1, Ordering::AcqRel);
                     q.0.lock().unwrap().push_back((child, root.clone()));
@@ -165,6 +166,7 @@ pub fn run(args: &[String]) -> Result<(), String> {
         drop(out_tx);
         while let Ok(item) = out_rx.recv() { if emit(&item).is_err() { stdin_cancel.store(true, Ordering::Relaxed); break; } }
         for j in joins { let _ = j.join(); }
+        if scan_errors.load(Ordering::Relaxed) { return Err("one or more scan directories could not be read".into()); }
         Ok(())
     }
 }

@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 import unicodedata
 from defusedxml import ElementTree as ET
+from ..path_utils import path_is_within
 from ..hwpx import open_hwpx_safely, open_zip_safely
 from .extract_text import extract_text as _extract_text_by_format
 from .extractors import ExtractionError, extract_document
@@ -1114,7 +1115,7 @@ class ContentSearchIndex:
         for r in rows:
             path = os.path.abspath(r["path"])
             if allowed is not None and not any(
-                os.path.commonpath((os.path.normcase(path), root)) == root
+                path_is_within(os.path.normcase(path), root)
                 for root in allowed
                 if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(path)[0].casefold()
             ):
@@ -1133,7 +1134,7 @@ class ContentSearchIndex:
                      if not excluded_name(os.path.basename(row["path"]))]
             if allowed is not None:
                 paths = [path for path in paths if any(
-                    os.path.commonpath((path, root)) == root for root in allowed
+                    path_is_within(path, root) for root in allowed
                     if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(path)[0].casefold())]
             return {"needs_reindex_count": count, "needs_reindex": count > 0,
                     "reindex_guide": "기존 본문 색인은 위계 정보가 없어 재색인이 필요합니다." if count else None,
@@ -1410,7 +1411,7 @@ class ContentSearchIndex:
                 self.db.commit()
         allowed = [os.path.normcase(os.path.abspath(root)) for root in roots] if roots else None
         return [os.path.abspath(row["path"]) for row in rows if not excluded_name(os.path.basename(row["path"])) and (allowed is None or any(
-            os.path.commonpath((os.path.normcase(os.path.abspath(row["path"])), root)) == root
+            path_is_within(os.path.normcase(os.path.abspath(row["path"])), root)
             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row["path"]))[0].casefold()))]
 
     def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance", start=None, end=None):
@@ -1486,7 +1487,7 @@ class ContentSearchIndex:
             if any(part.casefold() == "$recycle.bin" for part in Path(p).parts):
                 continue
             if allowed is not None and not any(
-                os.path.commonpath((os.path.normcase(p), root)) == root
+                path_is_within(os.path.normcase(p), root)
                 for root in allowed
                 if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(p)[0].casefold()
             ):
@@ -2136,7 +2137,7 @@ class ContentSearchIndex:
                     continue
                 if any(part.casefold() == "$recycle.bin" for part in Path(path).parts):
                     continue
-                if allowed is not None and not any(os.path.commonpath((normalized, root)) == root for root in allowed
+                if allowed is not None and not any(path_is_within(normalized, root) for root in allowed
                         if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(normalized)[0].casefold()):
                     continue
                 ext = (meta["extension"] or Path(path).suffix.lstrip(".")).lower()
@@ -2325,7 +2326,7 @@ class ContentSearchIndex:
                     continue
                 if allowed is None or any(
                     entry["drive"] == os.path.splitdrive(root)[0].casefold()
-                    and os.path.commonpath((entry["norm_path"], root)) == root
+                    and path_is_within(entry["norm_path"], root)
                     for root in allowed
                 ):
                     out.append({key: entry[key] for key in ("path", "name", "size", "mtime", "extension")})
@@ -2339,7 +2340,7 @@ class ContentSearchIndex:
         allowed = [os.path.normcase(os.path.abspath(r)) for r in roots] if roots else None
         return [dict(r) for r in rows if not any(p.casefold() == "$recycle.bin" for p in Path(r["path"]).parts)
                 and not excluded_name(os.path.basename(r["path"]))
-                and (allowed is None or any(os.path.commonpath((os.path.normcase(os.path.abspath(r["path"])), root)) == root
+                and (allowed is None or any(path_is_within(os.path.normcase(os.path.abspath(r["path"])), root)
                                             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(r["path"]))[0].casefold()))]
 
     def related_candidates(self, path, roots=None):
@@ -2443,7 +2444,7 @@ class ContentSearchIndex:
             if allowed is not None:
                 item_path = os.path.normcase(os.path.abspath(row_path))
                 if not any(
-                    os.path.commonpath((item_path, root)) == root
+                    path_is_within(item_path, root)
                     for root in allowed
                     if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row_path))[0].casefold()
                 ):

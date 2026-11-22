@@ -130,7 +130,7 @@ def scan_default_roots(extensions: set[str] | frozenset[str], excluded: Any = ()
     if not executable: return None
     from .library_scope import current_default_roots, _EXCLUDED_NAMES
     scan_roots = [Path(p) for p in (roots if roots is not None else current_default_roots()) if Path(p).is_dir()]
-    if not scan_roots: return []
+    if not scan_roots: return None
     command = [str(executable), "scan", "--roots", *map(str, scan_roots), "--ext",
                ",".join(sorted(x.lstrip(".").lower() for x in extensions)), "--json-lines"]
     excludes = [str(root / name) for root in scan_roots for name in _EXCLUDED_NAMES]

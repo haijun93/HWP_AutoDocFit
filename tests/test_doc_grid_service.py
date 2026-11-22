@@ -196,6 +196,34 @@ class DocGridServiceTests(unittest.TestCase):
         with self.assertRaises(FileNotFoundError):
             self.service.list_documents(non_existent)
 
+    def test_default_scan_visits_all_synthetic_drive_roots(self):
+        roots = []
+        for drive in ("C", "E", "F"):
+            root = self.root / drive
+            root.mkdir()
+            (root / f"{drive}.pdf").write_bytes(b"pdf")
+            roots.append(root)
+        service = DocGridService(thumb_dir=self.thumbs_dir, drive_roots=roots)
+        with patch.dict(os.environ, {"DOCFIT_SCAN_ENGINE": "python"}):
+            docs = service.list_default_documents()
+        self.assertEqual({row["name"] for row in docs}, {"C.pdf", "E.pdf", "F.pdf"})
+
+    def test_default_scan_reports_when_no_root_is_available(self):
+        service = DocGridService(thumb_dir=self.thumbs_dir, drive_roots=[self.root / "missing"])
+        with self.assertRaisesRegex(FileNotFoundError, "고정 드라이브 또는 Desktop"):
+            service.list_default_documents()
+
+    def test_python_scan_surfaces_directory_read_errors(self):
+        with patch("docfit_app.doc_grid_service.os.scandir", side_effect=PermissionError("denied")):
+            with self.assertRaisesRegex(OSError, "문서 폴더를 읽지 못했습니다: denied"):
+                self.service.list_documents(self.docs_dir)
+
+    def test_empty_persistent_scan_cache_is_not_used_as_initial_result(self):
+        with patch("docfit_app.doc_grid_service.library_scan_cache.load", return_value=[]), \
+             patch.object(self.service._background_scan, "start", return_value={"ok": True}) as start:
+            self.service.start_default_scan()
+        self.assertIsNone(start.call_args.kwargs["initial_result"])
+
     def test_recursive_scan_uses_rust_and_skips_thumbnail_cache_lookup(self):
         target = self.docs_dir / "recursive.pdf"
         target.write_bytes(b"pdf")
