@@ -800,6 +800,20 @@ class ContentSearchTests(unittest.TestCase):
         self.assertEqual([item["best_level"] for item in found], ["문서 제목", "본문"])
         self.assertEqual([item["total_matches"] for item in found], [2, 1])
 
+    def test_single_synthetic_table_paragraph_is_extracted_and_counted_once(self):
+        path = self.root / "single-table-paragraph.hwpx"
+        write_hwpx_paragraphs(path, [{"text": "단일표문단검색", "is_table_cell": True}])
+
+        records = extract_paragraphs(path)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].text, "단일표문단검색")
+        self.assertTrue(records[0].is_table_cell)
+
+        self.index.index_file(path)
+        found = self.index.search("단일표문단검색")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["total_matches"], len(records))
+
     def test_hierarchy_order_same_level_same_mentions_newer_document_first(self):
         p_old = self.root / "z_older.txt"
         p_new = self.root / "a_newer.txt"

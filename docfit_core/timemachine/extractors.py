@@ -28,6 +28,8 @@ class ExtractionRecord:
     is_table_cell: bool = False
     style_name: str | None = None
     outline_level: int | None = None
+    table_rows: int | None = None
+    table_cols: int | None = None
 
 
 class ExtractionError(ValueError):

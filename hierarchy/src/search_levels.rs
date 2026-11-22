@@ -15,6 +15,55 @@ fn string<'a>(p: &'a Value, key: &str) -> &'a str {
 fn cell(p: &Value) -> bool {
     p["is_table_cell"].as_bool().unwrap_or(false)
 }
+fn hierarchy_table(p: &Value) -> bool {
+    cell(p)
+        && p["table_rows"].as_u64() == Some(1)
+        && p["table_cols"].as_u64().map(|n| n > 0).unwrap_or(false)
+        && chapter(string(p, "text")).map(|(_, title)| title).unwrap_or(false)
+}
+fn excluded_table(p: &Value) -> bool {
+    cell(p) && !hierarchy_table(p)
+}
+fn chapter_candidate(s: &str) -> String {
+    let mut candidate = s.trim();
+    for _ in 0..3 {
+        let prefixes = [
+            "[붙임",
+            "[첨부",
+            "[참고",
+            "【별표",
+            "【붙임",
+            "【첨부",
+            "【참고",
+            "(별첨",
+            "(붙임",
+            "(첨부",
+            "(참고",
+        ];
+        let Some(prefix) = prefixes
+            .iter()
+            .find(|prefix| candidate.starts_with(**prefix))
+        else {
+            break;
+        };
+        let close = if prefix.starts_with('[') {
+            ']'
+        } else if prefix.starts_with('【') {
+            '】'
+        } else {
+            ')'
+        };
+        if let Some(end) = candidate.find(close) {
+            if end > 24 {
+                break;
+            }
+            candidate = candidate[end + close.len_utf8()..].trim_start();
+        } else {
+            break;
+        }
+    }
+    candidate.to_owned()
+}
 fn markdown_table_row(text: &str) -> bool {
     let text = text.trim();
     text.len() >= 2 && !text.contains('\n') && text.starts_with('|') && text.ends_with('|')
@@ -62,15 +111,21 @@ fn symbol(s: &str) -> Option<&'static str> {
     }
 }
 fn chapter(s: &str) -> Option<(u32, bool)> {
-    let rest = s.strip_prefix('제')?;
+    let candidate = chapter_candidate(s);
+    let rest = candidate.strip_prefix('제')?;
+    let rest = rest.trim_start();
     let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-    let tail = rest.get(digits.len()..)?.strip_prefix('장')?;
-    if !tail.is_empty() && !tail.chars().next()?.is_whitespace() {
+    let tail = rest.get(digits.len()..)?.trim_start().strip_prefix('장')?;
+    if !tail.is_empty()
+        && !tail.chars().next()?.is_whitespace()
+        && !matches!(tail.chars().next()?, '.' | '．' | ':' | '：')
+    {
         return None;
     }
+    let title = tail.trim_start().trim_start_matches(['.', '．', ':', '：']).trim();
     Some((
         digits.parse().ok()?,
-        !tail.trim().is_empty() && s.chars().count() <= 60,
+        !title.is_empty() && s.chars().count() <= 60,
     ))
 }
 /// Python `str.isalpha()` per character: Unicode General_Category L* only.
@@ -116,7 +171,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
         .enumerate()
         .map(|(i, p)| {
             let raw = string(p, "text");
-            if !cell(p) {
+            if !excluded_table(p) {
                 if let Some((label, body)) = raw.trim_start().split_once([':', '：']) {
                     if !body.trim().is_empty() {
                         let marker = match label.trim_end() {
@@ -145,7 +200,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
     let table: Vec<bool> = paragraphs
         .iter()
         .enumerate()
-        .map(|(i, p)| cell(p) || (plain && markdown_table_row(&texts[i])))
+        .map(|(i, p)| excluded_table(p) || (plain && markdown_table_row(&texts[i])))
         .collect();
     let evidence: Vec<String> = texts
         .iter()
@@ -170,7 +225,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
             .any(|(i, h)| !cell(&paragraphs[i]) && h.is_some())
     {
         for (i, t) in texts.iter().enumerate() {
-            if cell(&paragraphs[i]) || t.trim().chars().count() > 60 {
+            if excluded_table(&paragraphs[i]) || t.trim().chars().count() > 60 {
                 continue;
             }
             let found = if let Some((n, true)) = chapter(t.trim()) {
@@ -215,7 +270,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
         .iter()
         .enumerate()
         .filter(|(i, _)| {
-            !cell(&paragraphs[*i])
+            !excluded_table(&paragraphs[*i])
                 && string(&paragraphs[*i], "style_name").is_empty()
                 && paragraphs[*i]["outline_level"].is_null()
         })
@@ -230,8 +285,10 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
     if !numbered.is_empty() {
         let order = ["Ⅰ.", "I.", "1.", "가.", "(1)", "①", "㉠", "㉮"];
         // 문단마다 한 번만 판정한다(계열 8개마다 다시 부르면 긴 문서에서 8배 느림).
-        let families: Vec<Option<String>> =
-            evidence.iter().map(|t| classify_marker(t).map(|v| v.0)).collect();
+        let families: Vec<Option<String>> = evidence
+            .iter()
+            .map(|t| classify_marker(t).map(|v| v.0))
+            .collect();
         let observed: Vec<_> = order
             .iter()
             .filter_map(|f| {
@@ -331,12 +388,13 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
                 } else {
                     numbered_level(if top <= 1 { d - 1 } else { d })
                 }
-            } else if plain
-                && chapter(s).is_some()
+            } else if chapter(s).is_some()
                 && string(p, "style_name").is_empty()
                 && outline.is_none()
             {
-                if confirmed_chapters && chapter(s).unwrap().1 {
+                if (confirmed_chapters || ext == "hwpx" || hierarchy_table(p))
+                    && chapter(s).unwrap().1
+                {
                     "chapter"
                 } else {
                     "body"
@@ -498,9 +556,49 @@ mod tests {
         assert_eq!(ordinal("II. 계획", "I."), Some(2));
     }
     #[test]
+    fn chapter_prefixes_are_only_removed_at_paragraph_start() {
+        assert_eq!(chapter("[붙임 1] 제1장 총칙"), Some((1, true)));
+        assert_eq!(chapter("【별표】 제2장 산출기준"), Some((2, true)));
+        assert_eq!(chapter("(별첨) 제3장 운영"), Some((3, true)));
+        assert_eq!(chapter("본문에서 제1장에 명시된 바와 같이"), None);
+        assert_eq!(chapter("제1장본문"), None);
+    }
+    #[test]
+    fn simple_tables_can_supply_chapters_but_data_tables_cannot() {
+        let p = vec![
+            json!({"text":"제1장 총칙","source_path":"x.hwpx","is_table_cell":true,"table_rows":1,"table_cols":1}),
+            json!({"text":"제2장 적용","source_path":"x.hwpx","is_table_cell":true,"table_rows":1,"table_cols":2}),
+            json!({"text":"제3장 데이터","source_path":"x.hwpx","is_table_cell":true,"table_rows":2,"table_cols":2}),
+            json!({"text":"일반 문장","source_path":"x.hwpx","is_table_cell":true,"table_rows":2,"table_cols":2}),
+        ];
+        assert_eq!(
+            classify(&p),
+            ["chapter", "chapter", "table_cell", "table_cell"]
+        );
+        assert_eq!(
+            classify(&[json!({"text":"제1장 총칙","source_path":"x.hwpx","is_table_cell":true,"table_rows":1,"table_cols":1})]),
+            ["chapter"]
+        );
+    }
+    #[test]
+    fn unstyled_hwpx_chapter_is_a_heading_but_mid_sentence_citation_is_body() {
+        let p = vec![
+            json!({"text":"제1장 운영 지침","source_path":"synthetic.hwpx"}),
+            json!({"text":"본문에서 제1장에 명시된 바와 같이","source_path":"synthetic.hwpx"}),
+        ];
+        assert_eq!(classify(&p), ["chapter", "body"]);
+    }
+    #[test]
     fn title_cell_letters_follow_python_isalpha() {
         // HRUST1 실문서 차이: 로마 숫자(Nl) 한 글자 칸은 Python에서 글자가 아니다.
-        for (c, expected) in [('Ⅰ', false), ('Ⓐ', false), ('가', true), ('A', true), ('ʰ', true), ('1', false)] {
+        for (c, expected) in [
+            ('Ⅰ', false),
+            ('Ⓐ', false),
+            ('가', true),
+            ('A', true),
+            ('ʰ', true),
+            ('1', false),
+        ] {
             assert_eq!(python_isalpha(c), expected, "{c}");
         }
         let p = vec![

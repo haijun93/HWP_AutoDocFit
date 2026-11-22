@@ -135,6 +135,8 @@ class ParagraphRecord:
     outline_level: int | None = None
     table_cell_id: int | None = None
     table_id: int | None = None
+    table_rows: int | None = None
+    table_cols: int | None = None
 
 
 @dataclass
@@ -197,9 +199,10 @@ def _plain_numbered_levels(paragraphs):
     candidates, groups = {}, {}
     for position, paragraph in enumerate(paragraphs):
         text = paragraph.text.strip()
-        if paragraph.is_table_cell or len(text) > 60:
+        if (paragraph.is_table_cell and not _hierarchy_table(paragraph)) or len(text) > 60:
             continue
-        chapter = re.match(r"^제([0-9]+)장\s+\S", text)
+        chapter_text = _chapter_candidate(text)
+        chapter = re.match(r"^제\s*([0-9]+)\s*장(?:\s|$|[.．:：])", chapter_text)
         marker = classify_marker(text)
         if chapter:
             family, ordinal = "제N장", (int(chapter.group(1)),)
@@ -224,21 +227,46 @@ def _plain_numbered_levels(paragraphs):
 
 def _plain_chapter_levels(path, paragraphs):
     """표시 없는 TXT/MD 장 제목은 짧은 연속 번호 두 개 이상을 근거로 삼는다."""
-    if Path(path).suffix.lower() not in {".txt", ".md", ".pdf"}:
+    if Path(path).suffix.lower() not in {".txt", ".md", ".pdf", ".hwpx"}:
         return {}
     candidates = {}
     for position, paragraph in enumerate(paragraphs):
-        if paragraph.is_table_cell or paragraph.style_name or paragraph.outline_level is not None:
+        if ((paragraph.is_table_cell and not _hierarchy_table(paragraph))
+                or paragraph.style_name or paragraph.outline_level is not None):
             continue
         text = paragraph.text.strip()
-        match = re.match(r"^제([0-9]+)장(?:\s|$)", text)
+        candidate = _chapter_candidate(text)
+        match = re.match(r"^제\s*([0-9]+)\s*장(?:\s|$|[.．:：])", candidate)
         if match:
-            number = int(match.group(1)) if len(text) <= 60 and text[match.end():].strip() else None
+            number = int(match.group(1)) if len(text) <= 60 and candidate[match.end():].strip() else None
             candidates[position] = number
     numbers = [number for number in candidates.values() if number is not None]
     confirmed = any(b == a + 1 for a, b in zip(numbers, numbers[1:]))
-    return {position: "chapter" if confirmed and number is not None else "body"
+    hwpx_chapter = Path(path).suffix.lower() == ".hwpx"
+    return {position: "chapter" if number is not None and
+            (confirmed or hwpx_chapter or _hierarchy_table(paragraphs[position])) else "body"
             for position, number in candidates.items()}
+
+
+def _hierarchy_table(paragraph):
+    """제목/장 텍스트가 든 1x1 제목 상자 및 1행 표만 위계 대상으로 삼는다."""
+    simple_shape = paragraph.table_rows == 1 and bool(paragraph.table_cols and paragraph.table_cols > 0)
+    return bool(simple_shape and re.match(
+        r"^제\s*[0-9]+\s*장(?:\s+|\s*[.．:：]\s*)\S", _chapter_candidate(paragraph.text)))
+
+
+_CHAPTER_PREFIX = re.compile(r"^(?:\[(?:붙임|첨부|참고)(?:\s*\d+)?\]|【(?:별표|붙임|첨부|참고)(?:\s*\d+)?】|\((?:별첨|붙임|첨부|참고)(?:\s*\d+)?\))\s*")
+
+
+def _chapter_candidate(text):
+    """문단 시작의 짧은 표식만 제거한다. 문장 중간 표기는 절대 검색하지 않는다."""
+    candidate = text.strip()
+    for _ in range(3):
+        match = _CHAPTER_PREFIX.match(candidate)
+        if not match or match.end() > 24:
+            break
+        candidate = candidate[match.end():].lstrip()
+    return candidate
 
 
 def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[ParagraphRecord],
@@ -283,7 +311,8 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                     "source_path": os.fspath(path), "paragraph_index": p.paragraph_index,
                     "is_table_cell": p.is_table_cell, "style_name": p.style_name,
                     "outline_level": p.outline_level, "table_cell_id": p.table_cell_id,
-                    "table_id": p.table_id} for p in paragraphs]
+                    "table_id": p.table_id, "table_rows": p.table_rows,
+                    "table_cols": p.table_cols} for p in paragraphs]
         engine_levels = analyze_levels(payload)
         if engine_levels is None:
             engine_levels = search_levels(payload)
@@ -350,7 +379,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
         level = None
 
         # [지적 4 반영] 표 셀 문단은 표 셀 예외를 최우선으로 적용하여 최하위인 table_cell로 고정
-        if p.is_table_cell or paragraph_position in markdown_table_rows:
+        if (p.is_table_cell and not _hierarchy_table(p)) or paragraph_position in markdown_table_rows:
             level = "table_cell"
         else:
             # 1. HWPX 명시 제목/heading 스타일과 outline level
@@ -464,6 +493,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
                 style_name=p.style_name,
                 outline_level=p.outline_level,
                 table_cell_id=p.table_cell_id, table_id=p.table_id,
+                table_rows=p.table_rows, table_cols=p.table_cols,
             )
         )
     return _fallback_document_title(path, apply_label_levels(classified))
@@ -514,7 +544,8 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             level = engine_level
         elif isinstance(engine_level, str):
             level = {"제목": "document_title", **ROLE_TO_LEVEL}.get(engine_level, "body")
-        if paragraph.is_table_cell and not ("search_levels" in result and level == "document_title"):
+        if (paragraph.is_table_cell and not _hierarchy_table(paragraph)
+                and not ("search_levels" in result and level == "document_title")):
             level = "table_cell"
         if level not in LEVEL_ORDER and level != "table_cell":
             level = "body"
@@ -523,6 +554,7 @@ def convert_engine_levels_to_records(paragraphs: list[ParagraphRecord], result: 
             level_rank=LEVEL_RANKS.get(level, LEVEL_RANKS["body"]),
             is_table_cell=paragraph.is_table_cell, style_name=paragraph.style_name,
             outline_level=paragraph.outline_level, table_cell_id=paragraph.table_cell_id, table_id=paragraph.table_id,
+            table_rows=paragraph.table_rows, table_cols=paragraph.table_cols,
         ))
     return converted
 
@@ -555,6 +587,10 @@ def extract_paragraphs(path: str | os.PathLike[str]) -> list[ParagraphRecord]:
                        and hierarchy_records[record.sequence - 1].text == record.text else None),
         table_id=(hierarchy_records[record.sequence - 1].table_id
                   if ext == "hwpx" and record.sequence <= len(hierarchy_records) else None),
+        table_rows=(hierarchy_records[record.sequence - 1].table_rows
+                    if ext == "hwpx" and record.sequence <= len(hierarchy_records) else None),
+        table_cols=(hierarchy_records[record.sequence - 1].table_cols
+                    if ext == "hwpx" and record.sequence <= len(hierarchy_records) else None),
     ) for record in extracted]
     return classify_paragraph_levels(path, paragraphs)
 
@@ -580,12 +616,16 @@ def extract_paragraphs_legacy(path, ext):
             index = 0
             cell_counter = 0
             table_counter = 0
+            table_dimensions = {}
             def walk(node, in_table=False, cell_id=None, table_id=None):
                 nonlocal index, cell_counter, table_counter
                 tag = _tag_name(node)
                 if tag in ("tbl", "table"):
                     table_counter += 1
                     table_id = table_counter
+                    rows = [child for child in node.iter() if _tag_name(child) in ("tr", "row")]
+                    table_dimensions[table_id] = (len(rows), max((sum(1 for child in row.iter()
+                        if _tag_name(child) in ("tc", "cell")) for row in rows), default=1))
                 if tag in ("tc", "cell"):
                     cell_counter += 1
                     current_cell = cell_counter
@@ -612,9 +652,11 @@ def extract_paragraphs_legacy(path, ext):
                             if _tag_name(child) in ("pPr", "p_pr"):
                                 style_id = style_id or child.attrib.get("styleIDRef") or child.attrib.get("styleID")
                                 outline = outline or child.attrib.get("outlineLevel") or child.attrib.get("outline_level")
+                        dims = table_dimensions.get(table_id, (None, None))
                         records.append(ParagraphRecord(index, text, "body", LEVEL_ORDER.index("body"), in_table,
                             style_map.get(style_id) if style_id else node.attrib.get("styleName"),
-                            int(outline) if outline and outline.isdigit() else None, cell_id, table_id))
+                            int(outline) if outline and outline.isdigit() else None, cell_id, table_id,
+                            *dims))
                         index += 1
                     for child in node:
                         walk(child, in_table, cell_id, table_id)

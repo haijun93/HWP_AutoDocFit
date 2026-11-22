@@ -173,6 +173,22 @@ class TimeMachineExtractorsTests(unittest.TestCase):
         self.assertEqual(records[2].section, "section1")
         self.assertEqual(records[2].text, "섹션1 첫 번째 문단")
 
+    def test_hwpx_extracts_paragraphs_inside_synthetic_one_cell_table(self):
+        """합성 1x1 표 내부 문단도 추출하고 표 크기 메타데이터를 전달한다."""
+        from docfit_core.timemachine.content_search import extract_paragraphs_legacy
+
+        path = self.root / "synthetic-table.hwpx"
+        with ZipFile(path, "w") as archive:
+            archive.writestr("Contents/header.xml", "<head/>")
+            archive.writestr("Contents/section0.xml", """<section><tbl><tr><tc><p>
+                <run><t>제1장 총칙</t></run></p></tc></tr></tbl></section>""")
+        hierarchy = extract_paragraphs_legacy(path, "hwpx")
+        records = extract_hwpx(path, hierarchy_records=hierarchy)
+        self.assertEqual(1, len(records))
+        self.assertEqual("제1장 총칙", records[0].text)
+        self.assertTrue(records[0].is_table_cell)
+        self.assertEqual((1, 1), (records[0].table_rows, records[0].table_cols))
+
     def test_docx_paragraph_and_header_locations(self):
         """본문 문단 및 머리글/바닥글 위치 확인."""
         path = FIXTURES_DIR / "sample.docx"

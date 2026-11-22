@@ -40,7 +40,18 @@ def _extract_paragraph_text(p_elem: ET.Element) -> str:
     text = "".join(parts).strip()
     if not text:
         # hp:t 외에 일반 <p>text</p> 구조 대응
-        text = "".join(p_elem.itertext()).strip()
+        fallback: list[str] = []
+        def collect_text(node: ET.Element, root: bool = False) -> None:
+            if not root and _local_name(node.tag) in {"p", "tbl"}:
+                return
+            if node.text:
+                fallback.append(node.text)
+            for child in node:
+                collect_text(child)
+                if child.tail:
+                    fallback.append(child.tail)
+        collect_text(p_elem, True)
+        text = "".join(fallback).strip()
     return text
 
 
@@ -120,22 +131,26 @@ def extract_hwpx(path: Path | str, hierarchy_records: list | None = None) -> lis
                     return
                 if tag == "p":
                     in_cell = in_table
-                    if in_cell:
-                        return
+                    # A table can be nested inside an outer paragraph wrapper.
+                    # The hierarchy extractor intentionally omits that empty
+                    # wrapper, so do not let it consume the next real record.
+                    node_text = _extract_paragraph_text(node)
                     hierarchy = hierarchy_records[hierarchy_index] if hierarchy_records and hierarchy_index < len(hierarchy_records) else None
-                    if hierarchy is not None:
+                    if hierarchy is not None and node_text:
                         p_text = hierarchy.text.strip()
                     else:
-                        p_text = _extract_paragraph_text(node)
+                        p_text = node_text
                     if p_text:
                         records.append(ExtractionRecord(
                             text=p_text, location_kind="paragraph",
                             location_label=f"{section_stem} 문단 {p_idx}", sequence=seq,
                             section=section_stem,
                             hierarchy_level=hierarchy.level if hierarchy else None,
-                            is_table_cell=bool(hierarchy and hierarchy.is_table_cell),
+                            is_table_cell=bool(in_cell or (hierarchy and hierarchy.is_table_cell)),
                             style_name=hierarchy.style_name if hierarchy else None,
                             outline_level=hierarchy.outline_level if hierarchy else None,
+                            table_rows=hierarchy.table_rows if hierarchy else None,
+                            table_cols=hierarchy.table_cols if hierarchy else None,
                         ))
                         p_idx += 1
                         seq += 1
