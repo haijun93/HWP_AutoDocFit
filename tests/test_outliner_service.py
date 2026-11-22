@@ -84,6 +84,25 @@ class OutlinerNativeWindowTest(unittest.TestCase):
         executable.touch()
         return OutlinerService(folder, executable=executable, **kw)
 
+    def test_history_requests_map_operation_to_engine_args_action_and_keep_page(self):
+        """실행 취소(OUTLINERUNDO1): history 는 op='history', args.action=operation, page 유지."""
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'engine.exe'
+            executable.touch()
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'markdown': '- a\n', 'can_undo': False}})
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(folder, executable=executable, runner=runner)
+            result = service.execute({'action': 'history', 'operation': 'undo', 'page': 'Home',
+                                      'markdown': '- b\n', 'version': 'v1', 'history': None})
+            sent = json.loads(runner.call_args.kwargs['input'])
+            self.assertEqual(sent['op'], 'history')
+            self.assertEqual(sent['document'], '- b\n')
+            self.assertEqual(sent['args']['action'], 'undo')
+            self.assertEqual(sent['args']['page'], 'Home')
+            self.assertEqual(result['markdown'], '- a\n')
+
     def test_ui_mode_defaults_to_flutter_saves_native_and_rejects_other_values(self):
         with tempfile.TemporaryDirectory() as folder:
             settings = FakeSettings()

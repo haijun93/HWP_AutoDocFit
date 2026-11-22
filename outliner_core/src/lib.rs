@@ -89,6 +89,7 @@ pub struct Document {
 }
 
 mod api;
+mod history;
 mod index;
 mod ops;
 mod parse_serialize;
@@ -97,6 +98,7 @@ mod search;
 mod store;
 
 pub use api::handle_request;
+pub use history::{UndoHistory, MAX_UNDO_BYTES, MAX_UNDO_DEPTH};
 pub use index::{backlinks, build_index, resolve_block_ref, BlockRefResolution, Index};
 pub use ops::{edit, edit_with_offset};
 pub use parse_serialize::{parse, serialize};
@@ -244,3 +246,6 @@ pub fn parse_file(path: &Path) -> Result<Document, OutlinerError> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod history_tests;

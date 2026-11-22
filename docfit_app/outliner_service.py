@@ -158,17 +158,19 @@ class OutlinerService:
                 version = self._digest(path)
                 self._versions[path.name] = version
                 return {'page': path.stem, 'version': version, 'saved': True}
-            if action in {'edit', 'search', 'backlinks', 'parse'}:
+            if action in {'edit', 'history', 'search', 'backlinks', 'parse'}:
                 page = self._path(payload.get('page'))
                 markdown = payload.get('markdown')
                 if not isinstance(markdown, str):
                     raise ServiceError('INVALID_INPUT', '페이지 내용을 확인해 주세요.')
                 args = dict(payload)
                 args.pop('action', None)
-                args.pop('page', None)
+                if action != 'history':
+                    args.pop('page', None)  # history 는 page 로 이력 소속 페이지를 구분한다
                 operation = args.pop('operation', None)
-                if action == 'edit':
-                    # 엔진은 op='edit' 아래 args.action 으로 편집 명령(set_text·insert·delete 등)을 받는다.
+                if action in {'edit', 'history'}:
+                    # 엔진은 op='edit' 아래 args.action 으로 편집 명령(set_text·insert·delete 등)을, op='history' 아래 args.action 으로
+                    # 이력 명령(push·undo·redo·clear·status·rebase, 아웃라이너 UNDO1)을 받는다.
                     # 예전에는 편집 명령을 op 로 바로 보내 '지원하지 않는 명령: set_text' 오류가 났다(v2.2.83).
                     args['action'] = operation
                 return self._engine({'id': action, 'op': action, 'document': markdown, 'args': args})

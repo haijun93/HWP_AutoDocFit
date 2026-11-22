@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/theme/app_theme.dart';
+import 'outliner_history.dart';
 
 class OutlinerWorkspace extends StatefulWidget {
   const OutlinerWorkspace({super.key, required this.api, this.recentPagesStore});
@@ -58,6 +59,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   final Map<Object, TextEditingController> _editors = {};
   final Map<Object, FocusNode> _focusNodes = {};
   String _linkQuery = '';
+
+  /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 페이지를 바꾸거나 저장이 거절되면 비운다.
+  final OutlinerHistory _history = OutlinerHistory();
 
   List<Map> get _visibleBlocks {
     final visible = <Map>[];
@@ -178,6 +182,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   }
 
   void _applyDocument(Map doc) {
+    _history.clear();
     _page = doc['page'] as String?;
     _markdown = doc['markdown'] as String? ?? '';
     _version = doc['version'] as String?;
@@ -295,6 +300,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   Future<void> _edit(Map block, String operation, [String? text]) async {
     if (_page == null || _busy) return;
     await _run(() async {
+      final before = _markdown;
       final result = await _call({
         'action': 'edit',
         'operation': operation,
@@ -307,7 +313,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       _blocks = (result['document']?['blocks'] as List? ?? [])
           .whereType<Map>()
           .toList();
-      await _save();
+      await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
     });
   }
@@ -343,6 +349,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     final beforeIds = _blocks.map((b) => b['id']).toSet();
     Object? focusId;
     await _run(() async {
+      final before = _markdown;
       var result = await _call({
         'action': 'edit',
         'operation': 'set_text',
@@ -364,10 +371,82 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
           .whereType<Map>()
           .toList();
       focusId = _newBlockIdAfter(block, beforeIds);
-      await _save();
+      await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
     });
     _focusBlockAfterBuild(focusId);
+  }
+
+  /// 저장하고, 성공하면 이번 편집 묶음(직전 마크다운 [before])을 한 단계로 기록한다.
+  /// 저장이 거절되면(충돌 등 외부 변경) 이력의 기준이 어긋났으므로 비운다.
+  Future<void> _saveRecording(String before) async {
+    try {
+      await _save();
+    } catch (_) {
+      _history.clear();
+      rethrow;
+    }
+    if (_markdown != before) _history.record(before);
+  }
+
+  /// 입력 칸에 아직 확정(Enter·Tab 등)하지 않은 글이 있는 블록. 있으면 칸 자체의 글자 되돌리기가 먼저다.
+  Map? _pendingBlock() {
+    for (final block in _blocks) {
+      final controller = _editors[block['id']];
+      final focus = _focusNodes[block['id']];
+      // 포커스가 없는 칸은 다음 그리기에서 문서 글로 맞춰지므로 '미확정 입력'이 아니다.
+      if (controller != null &&
+          focus != null &&
+          focus.hasFocus &&
+          controller.text != '${block['text'] ?? ''}') {
+        return block;
+      }
+    }
+    return null;
+  }
+
+  void _syncEditorsToBlocks() {
+    for (final block in _blocks) {
+      final controller = _editors[block['id']];
+      final text = '${block['text'] ?? ''}';
+      if (controller != null && controller.text != text) {
+        controller.value = TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        );
+      }
+    }
+  }
+
+  /// 문서 단위 되돌리기/다시 실행. 확정하지 않은 입력이 있으면 그 입력만 되돌리고(칸을 확정 상태로 복원) 문서는 건드리지 않는다.
+  Future<void> _stepHistory({required bool undo}) async {
+    if (_page == null || _busy) return;
+    if (_pendingBlock() != null) {
+      if (undo) {
+        _syncEditorsToBlocks();
+        setState(() {});
+      }
+      return;
+    }
+    if (undo ? !_history.canUndo : !_history.canRedo) return;
+    await _run(() async {
+      try {
+        final target = undo ? _history.undo(_markdown) : _history.redo(_markdown);
+        if (target == null) return;
+        final parsed = await _call({
+          'action': 'parse',
+          'page': _page,
+          'markdown': target,
+        });
+        _markdown = target;
+        _blocks = (parsed['blocks'] as List? ?? []).whereType<Map>().toList();
+        _syncEditorsToBlocks();
+        await _save();
+      } catch (_) {
+        _history.clear();
+        rethrow;
+      }
+    });
   }
 
   Future<void> _save() async {
@@ -388,6 +467,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   ) async {
     if (_page == null || _busy) return;
     await _run(() async {
+      final before = _markdown;
       var result = await _call({
         'action': 'edit',
         'operation': 'set_text',
@@ -409,7 +489,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       _blocks = (result['document']?['blocks'] as List? ?? [])
           .whereType<Map>()
           .toList();
-      await _save();
+      await _saveRecording(before);
       if (_page != null) await _rememberPage(_page!);
     });
   }
@@ -511,7 +591,29 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
         ),
         VerticalDivider(width: 1, color: c.line),
         Expanded(
-          child: Column(
+          // 입력 칸에 포커스가 없을 때(단추 등)의 Ctrl+Z/Ctrl+Y. 칸에 포커스가 있으면 칸의 처리가 먼저다.
+          child: Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) return KeyEventResult.ignored;
+              final mods = HardwareKeyboard.instance;
+              final key = event.logicalKey;
+              if (!(mods.isControlPressed || mods.isMetaPressed) ||
+                  mods.isAltPressed ||
+                  (key != LogicalKeyboardKey.keyZ &&
+                      key != LogicalKeyboardKey.keyY)) {
+                return KeyEventResult.ignored;
+              }
+              if (_focusNodes.values.any((n) => n.hasFocus)) {
+                return KeyEventResult.ignored;
+              }
+              _stepHistory(
+                undo: key == LogicalKeyboardKey.keyZ && !mods.isShiftPressed,
+              );
+              return KeyEventResult.handled;
+            },
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
@@ -527,6 +629,34 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                               fontWeight: FontWeight.w700,
                             ),
                       ),
+                    ),
+                    // 단추가 포커스를 가져가면 입력 중이던 칸이 확정 전 글을 잃으므로 포커스를 받지 않게 한다.
+                    ExcludeFocus(
+                      child: IconButton(
+                      key: const ValueKey('outliner-undo'),
+                      tooltip: '실행 취소 (Ctrl+Z)',
+                      onPressed:
+                          _page == null ||
+                              _busy ||
+                              !(_history.canUndo || _pendingBlock() != null)
+                          ? null
+                          : () => _stepHistory(undo: true),
+                      icon: const Icon(Icons.undo),
+                    ),
+                    ),
+                    ExcludeFocus(
+                      child: IconButton(
+                      key: const ValueKey('outliner-redo'),
+                      tooltip: '다시 실행 (Ctrl+Y)',
+                      onPressed:
+                          _page == null ||
+                              _busy ||
+                              !_history.canRedo ||
+                              _pendingBlock() != null
+                          ? null
+                          : () => _stepHistory(undo: false),
+                      icon: const Icon(Icons.redo),
+                    ),
                     ),
                     IconButton(
                       tooltip: '이름 바꾸기',
@@ -616,6 +746,26 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                       final value = controller.text;
                                       final selection = controller.selection;
                                       final mods = HardwareKeyboard.instance;
+                                      // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z: 확정하지 않은 글이 있거나 한글 조합 중이면
+                                      // 칸 자체의 글자 되돌리기에 맡기고(ignored), 없으면 문서 단위 이력을 쓴다.
+                                      if ((mods.isControlPressed || mods.isMetaPressed) &&
+                                          !mods.isAltPressed &&
+                                          (key == LogicalKeyboardKey.keyZ ||
+                                              key == LogicalKeyboardKey.keyY)) {
+                                        final composing = controller.value.composing;
+                                        final pending =
+                                            value != '${block['text'] ?? ''}';
+                                        if (pending ||
+                                            (composing.isValid &&
+                                                !composing.isCollapsed)) {
+                                          return KeyEventResult.ignored;
+                                        }
+                                        final redo =
+                                            key == LogicalKeyboardKey.keyY ||
+                                            mods.isShiftPressed;
+                                        _stepHistory(undo: !redo);
+                                        return KeyEventResult.handled;
+                                      }
                                       if (key == LogicalKeyboardKey.tab) {
                                         _setTextAndEdit(
                                           block,
@@ -676,6 +826,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                                     ?.text ??
                                                 '${previous['text'] ?? ''}';
                                             _run(() async {
+                                              final mergeBefore = _markdown;
                                               final result = await _call({
                                                 'action': 'edit',
                                                 'operation': 'set_text',
@@ -697,7 +848,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                                           as List)
                                                       .whereType<Map>()
                                                       .toList();
-                                              await _save();
+                                              await _saveRecording(mergeBefore);
                                               if (_page != null) await _rememberPage(_page!);
                                             });
                                           }
@@ -832,6 +983,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                 ),
               ),
             ],
+          ),
           ),
         ),
         SizedBox(

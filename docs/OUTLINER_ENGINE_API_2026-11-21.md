@@ -61,3 +61,21 @@ Do not send `op: "set_text"` directly; this is an unsupported operation and retu
 `content_digest(content)` computes SHA-256 over the exact UTF-8 bytes and returns 64 lowercase hexadecimal characters. `is_stale(read_digest, current)` is true when the digest differs. `save_atomic_checked(path, content, expected_digest)` checks current on-disk content before the atomic replacement. `save_atomic` remains available and keeps its previous unchecked behavior.
 
 `sha2` is used because another crate in this repository already depends on it. `unicode-segmentation` supplies Unicode grapheme boundaries for cursor splitting; counting Rust `char`s would split combining sequences and joined emoji. No Windows APIs are used by `outliner_core`.
+
+## `history` — 문서 단위 실행 취소/다시 실행 (OUTLINERUNDO1, 2026-11-23)
+
+엔진은 요청마다 문서를 새로 파싱하는 무상태 방식이라, 이력은 직렬화된 마크다운 스냅숏 스택(`UndoHistory`)이며 호출자가 `args.history` 로 넘기고 응답으로 돌려받는다. 구버전 요청은 바뀌지 않는다(`edit` 는 `args.history` 가 없으면 이전과 같은 응답).
+
+`op: "history"`, 최상위 `document` = 지금 마크다운, `args`:
+
+| `args.action` | 필요한 인자 | 동작 |
+|---|---|---|
+| `push` | `before`: 편집 직전 마크다운 | 되돌리기 한 단계 기록(다시 실행 스택 비움). 편집 묶음은 묶음 직전 마크다운으로 한 번만 `push` 하면 한 단계 |
+| `undo` / `redo` | — | 한 단계 이동. 응답 `markdown`·`document`·`changed:true`. 단계가 없으면 오류가 아니라 `changed:false` |
+| `clear` | — | 이력 비움 |
+| `rebase` | `version` | 자기 저장 뒤 파일 버전만 갱신(비우지 않음) |
+| `status`(기본) | — | 상태만 돌려줌 |
+
+공통 선택 인자: `history`(이전 응답의 상태, 없으면 빈 이력), `page`·`version`. 이력이 쌓인 `page` 와 다르거나 `version` 이 다르면(외부 변경) 먼저 이력을 비우고 응답에 `cleared:true`. 응답 필드: `history`, `can_undo`, `can_redo`, `undo_count`, `redo_count`, `cleared`, `changed`, `markdown`(+`document` 는 `changed` 일 때).
+
+한도: 단계 200(`MAX_UNDO_DEPTH`), 스냅숏 바이트 합계 32 MiB(`MAX_UNDO_BYTES`). 넘으면 가장 오래된 단계부터 버리고, 스냅숏 하나가 한도보다 크면 기록하지 않고 이력을 비운다. `edit` 에 `args.history` 를 주면 그 편집 직전 문서를 기록한 `history` 를 결과에 더해 준다. Python 서비스(`outliner` 의 `history` action)는 `operation` 을 `args.action` 으로 보낸다.

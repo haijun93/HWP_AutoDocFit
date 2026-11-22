@@ -2,13 +2,25 @@ use crate::{
     backlinks, collect_markdown_files, daily_page, edit_with_offset, journal_date, journal_list,
     journal_name, journal_relative, normalize_journal_name, parse, query, rename_page_in_files,
     resolve_block_ref, save_atomic_checked, search, serialize, update_page_links_text,
-    OutlinerError,
+    OutlinerError, UndoHistory,
 };
 use serde_json::{json, Value};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+
+fn history_from(args: &Value) -> Result<UndoHistory, OutlinerError> {
+    match args.get("history") {
+        None | Some(Value::Null) => Ok(UndoHistory::default()),
+        Some(value) => serde_json::from_value(value.clone())
+            .map_err(|error| OutlinerError::Invalid(format!("args.history 형식 오류: {error}"))),
+    }
+}
+
+fn history_value(history: &UndoHistory) -> Result<Value, OutlinerError> {
+    serde_json::to_value(history).map_err(|error| OutlinerError::Invalid(error.to_string()))
+}
 
 fn invalid_request(id: Value, message: String) -> Value {
     json!({"id": id, "ok": false, "error": {"code": "INVALID_REQUEST", "message": message}})
@@ -119,7 +131,62 @@ pub fn handle_request(value: Value) -> Value {
                 args["text"].as_str(),
                 offset,
             )?;
-            Ok(json!({"markdown": serialize(&document), "document": document}))
+            let mut result = json!({"markdown": serialize(&document), "document": document});
+            // 선택 사항: args.history 가 있으면 이 편집 직전 문서를 되돌리기 단계로 기록해 돌려준다(없으면 구버전과 같다).
+            if args.get("history").is_some_and(|value| !value.is_null()) {
+                let mut history = history_from(&args)?;
+                history.bind(args["page"].as_str(), args["version"].as_str());
+                history.record(document_text);
+                result["history"] = history_value(&history)?;
+            }
+            Ok(result)
+        }
+        "history" => {
+            let action = args["action"].as_str().unwrap_or("status");
+            let mut history = history_from(&args)?;
+            let cleared = history.bind(args["page"].as_str(), args["version"].as_str());
+            let mut changed = false;
+            let mut markdown = document_text.to_owned();
+            match action {
+                "push" => {
+                    let before = args["before"].as_str().ok_or_else(|| {
+                        OutlinerError::Invalid("args.before(편집 직전 마크다운)가 필요합니다".into())
+                    })?;
+                    history.record(before);
+                }
+                "undo" | "redo" => {
+                    let step = if action == "undo" {
+                        history.undo(document_text)
+                    } else {
+                        history.redo(document_text)
+                    };
+                    if let Some(text) = step {
+                        markdown = text;
+                        changed = true;
+                    }
+                }
+                "clear" => history.clear(),
+                "rebase" => history.rebase(args["version"].as_str()),
+                "status" => {}
+                other => {
+                    return Err(OutlinerError::Invalid(format!("지원하지 않는 history 작업: {other}")))
+                }
+            }
+            let mut result = json!({
+                "history": history_value(&history)?,
+                "can_undo": history.can_undo(),
+                "can_redo": history.can_redo(),
+                "undo_count": history.undo_len(),
+                "redo_count": history.redo_len(),
+                "cleared": cleared,
+                "changed": changed,
+                "markdown": markdown,
+            });
+            if changed {
+                result["document"] = serde_json::to_value(parse(&markdown)?)
+                    .map_err(|error| OutlinerError::Invalid(error.to_string()))?;
+            }
+            Ok(result)
         }
         "search" => Ok(
             json!({"block_ids": search(&parse(document_text)?, args["query"].as_str().unwrap_or(""))?}),

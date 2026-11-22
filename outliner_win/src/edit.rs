@@ -10,7 +10,7 @@
 use crate::docio::{self, FileInfo, SaveError};
 use crate::links::{self, LinkCtx};
 use crate::view::{View, build_rows};
-use outliner_core::Document;
+use outliner_core::{Document, UndoHistory};
 use std::collections::VecDeque;
 
 pub const VK_BACK: u16 = 0x08;
@@ -20,6 +20,8 @@ pub const VK_ESCAPE: u16 = 0x1B;
 pub const VK_UP: u16 = 0x26;
 pub const VK_DOWN: u16 = 0x28;
 pub const VK_S: u16 = 0x53;
+pub const VK_Y: u16 = 0x59;
+pub const VK_Z: u16 = 0x5A;
 
 /// EDIT 컨트롤(또는 시험용 가짜)이 해 주는 일.
 pub trait EditHost {
@@ -162,6 +164,8 @@ pub struct Editor<H: EditHost> {
     pub popup: Option<Popup>,
     /// Esc 로 닫은 `[[` 의 위치 — 같은 `[[` 에서는 다시 열지 않는다.
     popup_off: Option<usize>,
+    /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 편집 명령 하나(=Enter 의 글 확정+분할 등)가 한 단계다.
+    pub history: UndoHistory,
 }
 
 /// 한 줄 규칙: 줄바꿈·탭은 공백으로.
@@ -319,6 +323,7 @@ impl<H: EditHost> Editor<H> {
             recent_names: Vec::new(),
             popup: None,
             popup_off: None,
+            history: UndoHistory::default(),
         }
     }
 
@@ -336,6 +341,7 @@ impl<H: EditHost> Editor<H> {
         self.alert = None;
         self.popup = None;
         self.popup_off = None;
+        self.history.clear(); // 다른 문서: 이력은 쓸 수 없다
     }
 
     pub fn editing(&self) -> bool {
@@ -425,6 +431,12 @@ impl<H: EditHost> Editor<H> {
         if ev.ctrl && ev.vk == VK_S && !ev.alt {
             self.submit(Cmd::Save, ev.now_ms, false, composing);
             return KeyResult::Swallow;
+        }
+        // Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z: 확정하지 않은 글이 있거나 조합 중이면 EDIT 자체의 글자 되돌리기에 맡기고(Pass),
+        // 없으면 문서 단위 이력을 쓴다.
+        if ev.ctrl && !ev.alt && (ev.vk == VK_Z || ev.vk == VK_Y) {
+            let redo = ev.vk == VK_Y || ev.shift;
+            return if self.history_step(!redo) { KeyResult::Swallow } else { KeyResult::Pass };
         }
         // 자동완성 팝업이 열려 있으면 ↑↓·Enter·Tab·Esc 는 팝업이 먼저 받는다(조합 중이면 확정만 하고 명령은 버림).
         if self.popup.is_some() && !ev.alt && !ev.ctrl && !candidate {
@@ -660,7 +672,21 @@ impl<H: EditHost> Editor<H> {
         }
     }
 
+    /// `f` 가 문서를 바꿨으면 바뀌기 전 마크다운을 되돌리기 한 단계로 기록한다(여러 엔진 호출도 한 단계).
+    fn recorded<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let before = outliner_core::serialize(&self.view.doc);
+        let result = f(self);
+        if outliner_core::serialize(&self.view.doc) != before {
+            self.history.record(&before);
+        }
+        result
+    }
+
     fn execute(&mut self, cmd: Cmd) {
+        self.recorded(|ed| ed.execute_inner(cmd));
+    }
+
+    fn execute_inner(&mut self, cmd: Cmd) {
         self.message = None;
         if let Cmd::Cancel = cmd {
             self.popup = None;
@@ -787,6 +813,10 @@ impl<H: EditHost> Editor<H> {
 
     /// 편집 중 글을 확정하고 편집을 끝낸다(접기 클릭 등 줄이 사라질 수 있는 동작 전에). 반영 실패면 false.
     pub fn finish_edit(&mut self) -> bool {
+        self.recorded(|ed| ed.finish_edit_inner())
+    }
+
+    fn finish_edit_inner(&mut self) -> bool {
         if self.session.is_none() {
             return true;
         }
@@ -803,6 +833,10 @@ impl<H: EditHost> Editor<H> {
 
     /// 편집 중인 줄과 상관없이 `block` 의 TODO 상태를 토글한다(체크 칸 클릭). 편집 중이면 글을 먼저 확정하고 편집은 유지.
     pub fn toggle_block(&mut self, block: usize) {
+        self.recorded(|ed| ed.toggle_block_inner(block));
+    }
+
+    fn toggle_block_inner(&mut self, block: usize) {
         self.message = None;
         if self.session.is_some() && !self.commit_text() {
             return;
@@ -820,6 +854,10 @@ impl<H: EditHost> Editor<H> {
     /// 문서 맨 끝에 같은 단계의 빈 블록을 만들고 편집을 시작한다(Flutter 머리글 + 단추: `insert('')` 를 마지막 블록 뒤에).
     /// 편집 중 글은 먼저 확정한다. 접힌 조상이 있으면 펼쳐 새 줄이 보이게 한다.
     pub fn add_block_at_end(&mut self, page: usize) -> bool {
+        self.recorded(|ed| ed.add_block_at_end_inner(page))
+    }
+
+    fn add_block_at_end_inner(&mut self, page: usize) -> bool {
         self.message = None;
         if self.session.is_some() && !self.commit_text() {
             return false;
@@ -848,6 +886,57 @@ impl<H: EditHost> Editor<H> {
         self.submit(cmd, 0, false, false);
     }
 
+    // ---------- 실행 취소 / 다시 실행 ----------
+
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    /// 한 단계 되돌리거나(`undo`) 다시 실행한다. 처리했으면 true(키를 삼킨다).
+    /// 편집 중 확정하지 않은 글이 있거나 한글 조합 중이면 false — 호출한 쪽이 EDIT 자체의 글자 되돌리기에 넘긴다.
+    /// 되돌릴 단계가 없어도 true(문서 단위 키이므로 EDIT 의 글자 단위로 새지 않게 한다).
+    pub fn history_step(&mut self, undo: bool) -> bool {
+        self.message = None;
+        let editing = self.editing_block();
+        if let Some(block) = editing {
+            let committed = self.view.doc.blocks.get(block).map(|b| b.text.clone()).unwrap_or_default();
+            if self.host.composing() || self.typed_text() != committed {
+                return false;
+            }
+        }
+        let current = outliner_core::serialize(&self.view.doc);
+        let target = if undo { self.history.undo(&current) } else { self.history.redo(&current) };
+        let Some(markdown) = target else {
+            self.message = Some(if undo { "되돌릴 편집이 없습니다" } else { "다시 실행할 편집이 없습니다" }.into());
+            return true;
+        };
+        match docio::parse_doc(&markdown) {
+            Ok(doc) => {
+                let keep = editing.or_else(|| self.view.rows.get(self.view.selected).map(|r| r.block)).unwrap_or(0);
+                self.install(doc, keep);
+                self.popup = None;
+                self.popup_off = None;
+                if let Some(block) = editing {
+                    self.session = None;
+                    // 되돌린 문서에 그 블록이 없으면(분할·추가를 되돌림) 마지막 블록으로 옮겨 편집을 이어 간다.
+                    if let Some(last) = self.view.doc.blocks.len().checked_sub(1) {
+                        self.begin(block.min(last), None);
+                    }
+                }
+                self.message = Some(if undo { "실행 취소" } else { "다시 실행" }.into());
+            }
+            Err(e) => {
+                self.history.clear();
+                self.fail(format!("되돌리지 못했습니다(이력을 비움): {e}"));
+            }
+        }
+        true
+    }
+
     // ---------- 저장 ----------
 
     /// 열어 둔 파일에 저장(저장 직전 SHA-256 비교). 성공하면 true.
@@ -865,6 +954,7 @@ impl<H: EditHost> Editor<H> {
                 true
             }
             Err(SaveError::Conflict(m)) => {
+                self.history.clear(); // 파일이 다른 곳에서 바뀜: 이력의 기준이 어긋났다
                 self.conflict = true;
                 self.message = Some(format!("⚠ {m}"));
                 self.alert = Some(m);
@@ -880,6 +970,10 @@ impl<H: EditHost> Editor<H> {
 
     /// 창 닫기 전: 편집 중 글을 확정(조합 중이면 먼저 확정)한다. 반영에 실패하면 false.
     pub fn flush_for_close(&mut self) -> bool {
+        self.recorded(|ed| ed.flush_for_close_inner())
+    }
+
+    fn flush_for_close_inner(&mut self) -> bool {
         if self.session.is_none() {
             return true;
         }

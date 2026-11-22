@@ -2,7 +2,7 @@
 //! 키·IME 처리는 `edit::Editor`(순수 상태 기계)에 맡기고, 여기서는 메시지를 `KeyEvent` 로 바꾸고
 //! 결과(EDIT 위치·제목 줄 ●·안내 문구)를 화면에 반영만 한다.
 use crate::capture::{Shot, palette_of};
-use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult};
+use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_Y, VK_Z};
 use crate::layout::{self, Btn, Layout, LeftItem, RightItem};
 use crate::paint::{Extras, Metrics, create_font, scale, wide};
 use crate::paint_shell::{draw_shell, edit_rect_of};
@@ -547,6 +547,8 @@ unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
             s.shell.editor.nav_command(if shift_down() { Cmd::Outdent } else { Cmd::Indent });
         } else if vk == b'S' as u16 && ctrl {
             s.shell.editor.save();
+        } else if ctrl && !alt && (vk == VK_Z || vk == VK_Y) {
+            s.shell.editor.history_step(!(vk == VK_Y || shift_down()));
         } else {
             return false;
         }
