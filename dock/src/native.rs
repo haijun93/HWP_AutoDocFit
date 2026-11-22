@@ -160,7 +160,6 @@ pub fn run() {
             return;
         }
         HWND_VALUE.store(hwnd as isize, std::sync::atomic::Ordering::Relaxed);
-        SetLayeredWindowAttributes(hwnd, 0, 235, LWA_ALPHA);
         reposition(hwnd);
         ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         if auto_hide_enabled() { SetTimer(hwnd, 3, 100, None); }
@@ -223,6 +222,7 @@ unsafe fn reposition(hwnd: HWND) {
         d.rect.height(),
         SWP_NOACTIVATE,
     );
+    refresh(hwnd);
 }
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LRESULT {
     match msg {
@@ -243,7 +243,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                     if HOVER_TAB.swap(tab, std::sync::atomic::Ordering::Relaxed) != tab {
                         HOVER_TICK.store(GetTickCount64(), std::sync::atomic::Ordering::Relaxed);
                         SetTimer(hwnd, 2, 420, None);
-                        InvalidateRect(hwnd, ptr::null(), 0);
+                        refresh(hwnd);
                     }
                 if GetCapture() != hwnd {
                     SetCapture(hwnd);
@@ -273,7 +273,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                 }
                 return 0;
             }
-            if w == 2 { KillTimer(hwnd, 2); InvalidateRect(hwnd, ptr::null(), 0); return 0; }
+            if w == 2 { KillTimer(hwnd, 2); refresh(hwnd); return 0; }
             let mut p: POINT = std::mem::zeroed();
             GetCursorPos(&mut p);
             let key = ((p.y as u16 as u64) << 16) | (p.x as u16 as u64);
@@ -305,7 +305,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
                 let (next, action) = dock::keyboard_step(dock::FocusState { selected: focus, count: menus.len() }, key);
                 KEY_FOCUS.store(next.selected, std::sync::atomic::Ordering::Relaxed);
                 if let dock::KeyAction::Activate(i) = action { activate_tab(menus[i].tab); }
-                InvalidateRect(hwnd, ptr::null(), 0);
+                refresh(hwnd);
                 if key != dock::Key::Other { return 0; }
             }
             DefWindowProcW(hwnd, msg, w, l)
@@ -358,36 +358,76 @@ unsafe extern "system" fn foreground_changed(
         ShowWindow(dock, SW_SHOWNOACTIVATE);
     }
 }
-unsafe fn paint(hwnd: HWND) {
-    let mut ps: PAINTSTRUCT = std::mem::zeroed();
-    let dc = BeginPaint(hwnd, &mut ps);
+/// per-pixel alpha 창은 WM_PAINT 로 그려지지 않으므로 직접 UpdateLayeredWindow 로 갱신한다(InvalidateRect 대용).
+unsafe fn refresh(hwnd: HWND) {
     let mut r: RECT = std::mem::zeroed();
     GetClientRect(hwnd, &mut r);
-    let mem = CreateCompatibleDC(dc);
-    let bmp = CreateCompatibleBitmap(dc, r.right, r.bottom);
-    let old = SelectObject(mem, bmp);
+    if r.right < 8 || r.bottom < 8 { return; }
     let mut hc = HighContrast { cb_size: std::mem::size_of::<HighContrast>() as u32, flags: 0, scheme: ptr::null_mut() };
     let high_contrast = SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc.cb_size, &mut hc as *mut _ as *mut _, 0) != 0 && (hc.flags & 1) != 0;
     let palette = resolved_palette(high_contrast, None);
     let dpi = GetDpiForWindow(hwnd).max(96);
     let menus = visible_menus();
     let focus = KEY_FOCUS.load(std::sync::atomic::Ordering::Relaxed);
-    draw_dock(mem, r, dpi, palette, &menus, focus, false);
-    GdiFlush();
-    BitBlt(dc, 0, 0, r.right, r.bottom, mem, 0, 0, SRCCOPY);
-    SelectObject(mem, old);
-    DeleteObject(bmp);
-    DeleteDC(mem);
+    let Some(dib) = render_layered(dpi, palette, &menus, focus, false, r.right, r.bottom) else { return };
+    let size = SIZE { cx: r.right, cy: r.bottom };
+    let src = POINT { x: 0, y: 0 };
+    let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: LAYER_OPACITY, AlphaFormat: AC_SRC_ALPHA as u8 };
+    UpdateLayeredWindow(hwnd, ptr::null_mut(), ptr::null(), &size, dib.dc, &src, 0, &blend, ULW_ALPHA);
+}
+unsafe fn paint(hwnd: HWND) {
+    let mut ps: PAINTSTRUCT = std::mem::zeroed();
+    BeginPaint(hwnd, &mut ps);
     EndPaint(hwnd, &ps);
+    refresh(hwnd);
+}
+/// 창 전체 불투명도(기존 LWA_ALPHA 235 와 같은 값).
+const LAYER_OPACITY: u8 = 235;
+
+/// 알약 본체(면+1픽셀 테두리). 알약 마스크도 같은 함수로 그려 기하가 어긋나지 않게 한다. GDI+ 실패 시 GDI RoundRect 폴백.
+unsafe fn draw_pill(dc: HDC, r: RECT, fill: u32, line: u32) {
+    if Aa::new(dc).is_some_and(|g| g.round_rect(2, 2, r.right - 2, r.bottom - 2, 24, fill, line)) { return; }
+    let bg = CreateSolidBrush(fill); let edge = CreatePen(PS_SOLID, 1, line);
+    let (ob, op) = (SelectObject(dc, bg), SelectObject(dc, edge));
+    RoundRect(dc, 2, 2, r.right - 2, r.bottom - 2, 24, 24);
+    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(bg); DeleteObject(edge);
+}
+/// 32비트 상향식이 아닌 하향식 DIB 섹션 + 메모리 DC.
+struct Dib { dc: HDC, bmp: HBITMAP, old: HGDIOBJ, bits: *mut u8, w: i32, h: i32 }
+impl Dib {
+    unsafe fn new(w: i32, h: i32) -> Option<Dib> {
+        if w <= 0 || h <= 0 { return None; }
+        let mut bi: BITMAPINFO = std::mem::zeroed();
+        bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32; bi.bmiHeader.biWidth = w; bi.bmiHeader.biHeight = -h;
+        bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = BI_RGB;
+        let dc = CreateCompatibleDC(ptr::null_mut());
+        if dc.is_null() { return None; }
+        let mut bits: *mut core::ffi::c_void = ptr::null_mut();
+        let bmp = CreateDIBSection(dc, &bi, DIB_RGB_COLORS, &mut bits, ptr::null_mut(), 0);
+        if bmp.is_null() || bits.is_null() { DeleteDC(dc); return None; }
+        let old = SelectObject(dc, bmp);
+        Some(Dib { dc, bmp, old, bits: bits as *mut u8, w, h })
+    }
+    unsafe fn pixels(&mut self) -> &mut [u8] { std::slice::from_raw_parts_mut(self.bits, (self.w * self.h * 4) as usize) }
+}
+impl Drop for Dib { fn drop(&mut self) { unsafe { SelectObject(self.dc, self.old); DeleteObject(self.bmp); DeleteDC(self.dc); } } }
+/// 독 전체를 그려 per-pixel alpha(premultiplied BGRA) DIB 로 돌려준다. 알약 밖은 알파 0(완전 투명).
+/// 방식: ① 검정으로 초기화된 DIB 에 평소처럼 그린다(알약 가장자리 AA 픽셀은 검정과 섞여 이미 coverage 만큼 premultiplied 상태).
+/// ② 같은 알약을 흰색으로 그린 마스크 DIB 에서 coverage 를 읽어 알파로 쓰고, 색이 알파를 넘지 않게 한다(글리프·글자는 알약 안쪽이라 알파 255).
+unsafe fn render_layered(dpi: u32, palette: dock::Palette, menus: &[dock::MenuItem], focus: usize, labels: bool, w: i32, h: i32) -> Option<Dib> {
+    let mut main = Dib::new(w, h)?;
+    let mut mask = Dib::new(w, h)?;
+    let r = RECT { left: 0, top: 0, right: w, bottom: h };
+    draw_dock(main.dc, r, dpi, palette, menus, focus, labels);
+    draw_pill(mask.dc, r, 0x00FF_FFFF, 0x00FF_FFFF);
+    GdiFlush();
+    let m: Vec<u8> = mask.pixels().to_vec();
+    dock::apply_pill_mask(main.pixels(), &m);
+    Some(main)
 }
 
 unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: &[dock::MenuItem], focus: usize, labels: bool) {
-    let bg = CreateSolidBrush(palette.background);
-    let edge = CreatePen(PS_SOLID, 1, palette.border);
-    let old_brush = SelectObject(mem, bg);
-    let old_pen = SelectObject(mem, edge);
-    let aa_pill = Aa::new(mem).is_some_and(|g| g.round_rect(2, 2, r.right - 2, r.bottom - 2, 24, palette.background, palette.border));
-    if !aa_pill { RoundRect(mem, 2, 2, r.right - 2, r.bottom - 2, 24, 24); }
+    draw_pill(mem, r, palette.background, palette.border);
     let size = dock::icon_size_px(dpi, 24);
     let sc = |n: i32| ((n as i64 * dpi as i64 + 48) / 96) as i32;
     let pad = sc(16);
@@ -429,7 +469,6 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
             DrawTextW(mem,name.as_ptr(),-1,&mut tr,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
         }
     }
-    SelectObject(mem,old_brush); SelectObject(mem,old_pen); DeleteObject(bg); DeleteObject(edge);
 }
 fn capture_mode(args: &[String]) -> Result<(), String> {
     let mut dir=None; let mut dpi=96u32; let mut dark=false; let mut hc=false;
@@ -442,22 +481,19 @@ fn capture_mode(args: &[String]) -> Result<(), String> {
     let dir=std::path::PathBuf::from(dir.ok_or("--capture-dir 필요")?); std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
     unsafe {
         let width=((16*104+32) as u64*dpi as u64+48)/96; let width=width as i32; let height=((88u64*dpi as u64+48)/96) as i32;
-        let mut bi: BITMAPINFO=std::mem::zeroed(); bi.bmiHeader.biSize=std::mem::size_of::<BITMAPINFOHEADER>() as u32; bi.bmiHeader.biWidth=width; bi.bmiHeader.biHeight=-height; bi.bmiHeader.biPlanes=1; bi.bmiHeader.biBitCount=32; bi.bmiHeader.biCompression=BI_RGB;
-        let dc=CreateCompatibleDC(ptr::null_mut()); let mut bits: *mut core::ffi::c_void=ptr::null_mut(); let bmp=CreateDIBSection(dc,&bi,DIB_RGB_COLORS,&mut bits,ptr::null_mut(),0);
-        if bmp.is_null() || bits.is_null(){DeleteDC(dc);return Err("메모리 비트맵 생성 실패".into());}
-        let old=SelectObject(dc,bmp); let r=RECT{left:0,top:0,right:width,bottom:height};
         let p=resolved_palette(hc,Some(dark));
         WINDOW_STATES.get_or_init(||Mutex::new(std::collections::HashMap::new())).lock().unwrap().insert(0,dock::WindowState::OpenFocused);
-        let all=dock::menu_items(&[],true); draw_dock(dc,r,dpi,p,&all,0,true); GdiFlush();
-        let px=std::slice::from_raw_parts(bits as *const u8,(width*height*4) as usize); let mut rgb=Vec::with_capacity((width*height*3) as usize);
-        for q in px.chunks_exact(4){rgb.extend_from_slice(&[q[2],q[1],q[0]]);}
-        let mut raw=Vec::with_capacity(rgb.len()+height as usize); for row in rgb.chunks_exact(width as usize*3){raw.push(0);raw.extend_from_slice(row);}
-        let mut z=vec![0x78,0x01]; let mut blocks=raw.chunks(65535).peekable(); while let Some(b)=blocks.next(){z.push(u8::from(blocks.peek().is_none()));z.extend_from_slice(&(b.len() as u16).to_le_bytes());z.extend_from_slice(&(!(b.len() as u16)).to_le_bytes());z.extend_from_slice(b);}
-        let(mut a,mut b)=(1u32,0u32);for q in &raw{a=(a+*q as u32)%65521;b=(b+a)%65521;}z.extend_from_slice(&((b<<16)|a).to_be_bytes());
-        let mut out=b"\x89PNG\r\n\x1a\n".to_vec(); let mut add=|kind:&[u8;4],data:&[u8]|{out.extend_from_slice(&(data.len() as u32).to_be_bytes());out.extend_from_slice(kind);out.extend_from_slice(data);let mut crc=0xffff_ffffu32;for q in kind.iter().chain(data){crc^=*q as u32;for _ in 0..8{crc=if crc&1!=0{0xedb88320^(crc>>1)}else{crc>>1};}}out.extend_from_slice(&(!crc).to_be_bytes());};
-        let mut ih=Vec::new();ih.extend_from_slice(&(width as u32).to_be_bytes());ih.extend_from_slice(&(height as u32).to_be_bytes());ih.extend_from_slice(&[8,2,0,0,0]);add(b"IHDR",&ih);add(b"IDAT",&z);add(b"IEND",&[]);
-        let suffix=if hc{"hc"}else if dark{"dark"}else{"light"};let path=dir.join(format!("dock_{suffix}_{dpi}.png"));std::fs::write(&path,out).map_err(|e|e.to_string())?;
-        SelectObject(dc,old);DeleteObject(bmp);DeleteDC(dc);println!("{}",path.file_name().unwrap_or_default().to_string_lossy());
+        let all=dock::menu_items(&[],true);
+        let mut dib=render_layered(dpi,p,&all,0,true,width,height).ok_or("메모리 비트맵 생성 실패")?;
+        let px=dib.pixels().to_vec();
+        let suffix=if hc{"hc"}else if dark{"dark"}else{"light"};
+        // 알파 포함 PNG(원본 알파 확인용)와, 마젠타 위에 실제 불투명도로 합성한 RGB PNG(눈으로 모서리 확인용)
+        let straight=dock::unpremultiply_bgra_to_rgba(&px);
+        let over=dock::composite_over_bgra(&px,LAYER_OPACITY,[255,0,255]);
+        let name=format!("dock_{suffix}_{dpi}.png");
+        std::fs::write(dir.join(&name),dock::encode_png(width as u32,height as u32,3,&over)).map_err(|e|e.to_string())?;
+        std::fs::write(dir.join(format!("dock_{suffix}_{dpi}_alpha.png")),dock::encode_png(width as u32,height as u32,4,&straight)).map_err(|e|e.to_string())?;
+        println!("{name}");
     } Ok(())
 }
 fn visible_menus() -> Vec<dock::MenuItem> { let hidden = hidden_tabs(); dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false) }
@@ -493,7 +529,7 @@ fn activate_tab(tab: u8) {
     drop(states);
     if action == dock::ClickAction::Close { let _ = close_tab(tab); } else { let _ = open_tab(tab); }
     let hwnd = HWND_VALUE.load(std::sync::atomic::Ordering::Relaxed) as HWND;
-    unsafe { InvalidateRect(hwnd, ptr::null(), 0); }
+    unsafe { refresh(hwnd); }
 }
 
 fn close_tab(tab: u8) -> bool {
@@ -655,4 +691,35 @@ fn run_sibling(name: &str, arg: Option<&str>) -> bool {
     let mut command = std::process::Command::new(exe);
     if let Some(arg) = arg { command.arg(arg); }
     command.spawn().is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    /// 헤드리스 렌더 결과(premultiplied BGRA)에서 알약 밖 모서리 알파는 0, 알약 안쪽은 불투명, 색은 알파를 넘지 않는다.
+    fn check(dpi: u32, dark: bool, hc: bool) {
+        unsafe {
+            let w = (((16 * 104 + 32) as u64 * dpi as u64 + 48) / 96) as i32; let h = ((88u64 * dpi as u64 + 48) / 96) as i32;
+            let p = resolved_palette(hc, Some(dark));
+            let all = dock::menu_items(&[], true);
+            let mut d = render_layered(dpi, p, &all, 0, true, w, h).expect("render");
+            let px = d.pixels().to_vec();
+            let at = |x: i32, y: i32| { let i = ((y * w + x) * 4) as usize; [px[i], px[i + 1], px[i + 2], px[i + 3]] };
+            for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1), (1, 1), (w - 2, h - 2), (3, 3)] {
+                assert_eq!(at(x, y), [0, 0, 0, 0], "코너 ({x},{y}) dpi={dpi} dark={dark} hc={hc} 가 투명이어야 함");
+            }
+            assert_eq!(at(w / 2, h / 2)[3], 255, "알약 안쪽은 불투명");
+            assert_eq!(at(w / 2, 4)[3], 255, "알약 위쪽 변 안쪽은 불투명");
+            assert!(px.chunks_exact(4).all(|q| q[0] <= q[3] && q[1] <= q[3] && q[2] <= q[3]), "premultiplied 위반");
+            let transparent = px.chunks_exact(4).filter(|q| q[3] == 0).count();
+            assert!(transparent > 0 && transparent < px.len() / 4 / 10, "투명 픽셀은 모서리 쪽에만 있어야 함: {transparent}");
+        }
+    }
+    #[test] fn corners_transparent_light_100() { check(96, false, false); }
+    #[test] fn corners_transparent_light_125() { check(120, false, false); }
+    #[test] fn corners_transparent_light_150() { check(144, false, false); }
+    #[test] fn corners_transparent_dark_100() { check(96, true, false); }
+    #[test] fn corners_transparent_dark_125() { check(120, true, false); }
+    #[test] fn corners_transparent_dark_150() { check(144, true, false); }
+    #[test] fn corners_transparent_high_contrast() { check(96, false, true); }
 }

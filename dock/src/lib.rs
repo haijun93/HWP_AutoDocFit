@@ -382,6 +382,62 @@ pub fn keyboard_step(state: FocusState, key: Key) -> (FocusState, KeyAction) {
     }
 }
 
+/// 알약 마스크(흰색 알약을 검정 위에 그린 BGRA, 파랑 채널=coverage)로 알파를 정한다.
+/// 알약 밖(coverage 0)은 B·G·R·A 모두 0(완전 투명), 안은 알파=coverage, 색은 premultiplied 이므로 알파를 넘지 않게 자른다.
+pub fn apply_pill_mask(pixels: &mut [u8], mask: &[u8]) {
+    for (p, m) in pixels.chunks_exact_mut(4).zip(mask.chunks_exact(4)) {
+        let a = m[0];
+        if a == 0 { p.copy_from_slice(&[0, 0, 0, 0]); continue; }
+        p[0] = p[0].min(a); p[1] = p[1].min(a); p[2] = p[2].min(a); p[3] = a;
+    }
+}
+/// premultiplied BGRA → 비premultiplied RGBA.
+pub fn unpremultiply_bgra_to_rgba(bgra: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bgra.len());
+    for p in bgra.chunks_exact(4) {
+        let a = p[3] as u32;
+        let un = |c: u8| if a == 0 { 0 } else { ((c as u32 * 255 + a / 2) / a).min(255) as u8 };
+        out.extend_from_slice(&[un(p[2]), un(p[1]), un(p[0]), p[3]]);
+    }
+    out
+}
+/// premultiplied BGRA 를 창 불투명도(opacity/255)로 단색 배경 위에 합성한 RGB.
+pub fn composite_over_bgra(bgra: &[u8], opacity: u8, bg: [u8; 3]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bgra.len() / 4 * 3);
+    for p in bgra.chunks_exact(4) {
+        let a = p[3] as u32 * opacity as u32 / 255; // 유효 알파
+        let ch = |src_premul: u8, b: u8| ((src_premul as u32 * opacity as u32 / 255) + b as u32 * (255 - a) / 255).min(255) as u8;
+        out.extend_from_slice(&[ch(p[2], bg[0]), ch(p[1], bg[1]), ch(p[0], bg[2])]);
+    }
+    out
+}
+/// 비압축(stored) zlib 로 PNG 인코딩. channels 3=RGB, 4=RGBA.
+pub fn encode_png(width: u32, height: u32, channels: u8, data: &[u8]) -> Vec<u8> {
+    let stride = width as usize * channels as usize;
+    let mut raw = Vec::with_capacity(data.len() + height as usize);
+    for row in data.chunks_exact(stride) { raw.push(0); raw.extend_from_slice(row); }
+    let mut z = vec![0x78, 0x01];
+    let mut blocks = raw.chunks(65535).peekable();
+    while let Some(b) = blocks.next() {
+        z.push(u8::from(blocks.peek().is_none()));
+        z.extend_from_slice(&(b.len() as u16).to_le_bytes()); z.extend_from_slice(&(!(b.len() as u16)).to_le_bytes()); z.extend_from_slice(b);
+    }
+    let (mut a, mut b) = (1u32, 0u32);
+    for q in &raw { a = (a + *q as u32) % 65521; b = (b + a) % 65521; }
+    z.extend_from_slice(&((b << 16) | a).to_be_bytes());
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    let mut add = |kind: &[u8; 4], d: &[u8]| {
+        out.extend_from_slice(&(d.len() as u32).to_be_bytes()); out.extend_from_slice(kind); out.extend_from_slice(d);
+        let mut crc = 0xffff_ffffu32;
+        for q in kind.iter().chain(d) { crc ^= *q as u32; for _ in 0..8 { crc = if crc & 1 != 0 { 0xedb88320 ^ (crc >> 1) } else { crc >> 1 }; } }
+        out.extend_from_slice(&(!crc).to_be_bytes());
+    };
+    let mut ih = Vec::new(); ih.extend_from_slice(&width.to_be_bytes()); ih.extend_from_slice(&height.to_be_bytes());
+    ih.extend_from_slice(&[8, if channels == 4 { 6 } else { 2 }, 0, 0, 0]);
+    add(b"IHDR", &ih); add(b"IDAT", &z); add(b"IEND", &[]);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -589,5 +645,29 @@ mod tests {
         let hc = palette_for_mode(NORMAL_PALETTE, true, 0x111, 0x222, 0x333, 0x444);
         assert_eq!(hc, Palette { foreground: 0x222, accent: 0x333, background: 0x111, border: 0x444 });
         assert_eq!(palette_for_mode(NORMAL_PALETTE, false, 0, 0, 0, 0), NORMAL_PALETTE);
+    }
+
+    #[test]
+    fn pill_mask_makes_outside_transparent_and_clamps_color() {
+        let mut px = vec![9, 9, 9, 0, 200, 100, 50, 0, 10, 20, 30, 0];
+        let mask = vec![0, 0, 0, 0, 255, 255, 255, 255, 40, 40, 40, 255];
+        apply_pill_mask(&mut px, &mask);
+        assert_eq!(&px[0..4], &[0, 0, 0, 0]);
+        assert_eq!(&px[4..8], &[200, 100, 50, 255]);
+        assert_eq!(&px[8..12], &[10, 20, 30, 40]);
+    }
+    #[test]
+    fn unpremultiply_and_composite() {
+        let px = vec![0, 0, 0, 0, 0, 0, 128, 255];
+        assert_eq!(unpremultiply_bgra_to_rgba(&px), vec![0, 0, 0, 0, 128, 0, 0, 255]);
+        let c = composite_over_bgra(&px, 255, [255, 0, 255]);
+        assert_eq!(&c[0..3], &[255, 0, 255]);
+        assert_eq!(&c[3..6], &[128, 0, 0]);
+    }
+    #[test]
+    fn png_has_signature_and_color_type() {
+        let p = encode_png(2, 1, 4, &[0; 8]);
+        assert_eq!(&p[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(p[25], 6);
     }
 }
