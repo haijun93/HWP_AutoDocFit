@@ -315,6 +315,30 @@ pub fn icon_shapes(tab: u8) -> &'static [IconShape] {
     match tab { 0 => DOC, 1 => TABLE, 2 => GRID, 3 => POLYGON4, 4 => MIND, 5 => PICTURE, 6 => RENAME, 7 => SEARCH, 8 => VIEW, 9 => PHOTO, 10 => CONVERT, 11 => PDF, 12 => FOLDER, 13 => NOTE, 14 => OUTLINE, 15 => BENCH, _ => &[] }
 }
 
+/// 사이드바(`tab_navigation_shell.dart`)와 같은 Material Icons 글리프의 코드포인트(Flutter icons.dart 기준).
+/// 독 탭 0..=11·14·15 는 사이드바 인덱스와 같고, 12(자료함)=가상 폴더(dashboard_customize_outlined),
+/// 13(업무자료함/노트북)=업무자료함(menu_book_outlined)이다. tools/make_dock_icon_font.py 의 목록과 같아야 한다.
+pub const ICON_CODEPOINTS: [u32; 16] = [
+    0xefae,  // 0 description_outlined
+    0xf41d,  // 1 table_chart_outlined
+    0xf05ed, // 2 draw_outlined
+    0xee36,  // 3 account_tree_outlined
+    0xf0616, // 4 hub_outlined
+    0xef02,  // 5 brush_outlined
+    0xe20b,  // 6 drive_file_rename_outline
+    0xe316,  // 7 history_toggle_off
+    0xf0d7,  // 8 grid_view_outlined
+    0xf29d,  // 9 photo_library_outlined
+    0xe678,  // 10 transform
+    0xf2a4,  // 11 picture_as_pdf_outlined
+    0xefa0,  // 12 dashboard_customize_outlined (가상 폴더)
+    0xf1c2,  // 13 menu_book_outlined (업무자료함)
+    0xee36,  // 14 account_tree_outlined (아웃라이너, 사이드바 14)
+    0xf3c3,  // 15 speed_outlined
+];
+/// 탭의 Material Icons 글리프 문자. 범위 밖이면 None.
+pub fn icon_glyph(tab: u8) -> Option<char> { ICON_CODEPOINTS.get(tab as usize).and_then(|&c| char::from_u32(c)) }
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct IconCacheKey { pub tab: u8, pub dpi: u32, pub size_px: i32 }
 pub fn icon_size_px(dpi: u32, logical_size: i32) -> i32 { ((dpi.max(1) as i64 * logical_size as i64 + 48) / 96) as i32 }
@@ -524,6 +548,25 @@ mod tests {
         assert_eq!(icon_size_px(96, 24), 24);
         assert_eq!(icon_size_px(144, 24), 36);
         assert_ne!(icon_shapes(0), icon_shapes(1));
+    }
+
+    #[test]
+    fn icon_glyphs_match_sidebar_material_icons() {
+        // 사이드바 _icons[0..16] (Flutter icons.dart 코드포인트) 와 독 탭 대응.
+        let sidebar: [u32; 16] = [0xefae, 0xf41d, 0xf05ed, 0xee36, 0xf0616, 0xef02, 0xe20b, 0xe316, 0xf0d7, 0xf29d, 0xe678, 0xf2a4, 0xf36e, 0xe30b, 0xee36, 0xf3c3];
+        for tab in 0..16u8 {
+            let g = icon_glyph(tab).unwrap_or_else(|| panic!("missing glyph {tab}"));
+            assert!(g as u32 >= 0xe000, "PUA glyph expected for tab {tab}");
+            // 12·13 은 사이드바 인덱스가 아닌 '가상 폴더'·'업무자료함' 별도 항목과 대응
+            if tab != 12 && tab != 13 { assert_eq!(g as u32, sidebar[tab as usize], "tab {tab}"); }
+        }
+        assert_eq!(icon_glyph(12).map(|c| c as u32), Some(0xefa0));
+        assert_eq!(icon_glyph(13).map(|c| c as u32), Some(0xf1c2));
+        assert!(icon_glyph(16).is_none());
+        // 가상 폴더·업무자료함 외에는 서로 다른 메뉴(14=아웃라이너 제외)가 같은 글리프를 쓰지 않는다
+        for a in 0..16usize { for b in a + 1..16usize {
+            if (a, b) != (3, 14) { assert_ne!(ICON_CODEPOINTS[a], ICON_CODEPOINTS[b], "{a} vs {b}"); }
+        } }
     }
     #[test]
     fn tooltip_delay_and_position_dump() {

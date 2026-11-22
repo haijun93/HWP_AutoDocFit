@@ -23,6 +23,32 @@ static HOVER_TAB: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::n
 static HOVER_TICK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static KEY_FOCUS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static WINDOW_STATES: OnceLock<Mutex<std::collections::HashMap<u8, dock::WindowState>>> = OnceLock::new();
+/// 사이드바와 같은 Material Icons 글리프만 담은 서브셋 글꼴(Apache-2.0, dock/assets/MaterialIcons-LICENSE.txt).
+static ICON_FONT: &[u8] = include_bytes!("../assets/MaterialIconsDock.otf");
+const ICON_FONT_FACE: &str = "Material Icons";
+static ICON_FONT_OK: OnceLock<bool> = OnceLock::new();
+/// 프로세스 전용 등록(AddFontMemResourceEx). 실패하면 기존 벡터 아이콘으로 그린다.
+fn icon_font_ready() -> bool {
+    *ICON_FONT_OK.get_or_init(|| unsafe {
+        let mut n = 0u32;
+        let h = AddFontMemResourceEx(ICON_FONT.as_ptr() as *const _, ICON_FONT.len() as u32, ptr::null(), &mut n);
+        !h.is_null() && n > 0
+    })
+}
+unsafe fn draw_glyph(dc: HDC, glyph: char, ox: i32, oy: i32, size: i32, fg: u32) -> bool {
+    let font = CreateFontW(-size, 0, 0, 0, FW_NORMAL as i32, 0, 0, 0, DEFAULT_CHARSET as u32, OUT_TT_ONLY_PRECIS as u32, CLIP_DEFAULT_PRECIS as u32, ANTIALIASED_QUALITY as u32, (DEFAULT_PITCH | FF_DONTCARE) as u32, wide(ICON_FONT_FACE).as_ptr());
+    if font.is_null() { return false; }
+    let old = SelectObject(dc, font);
+    let mut buf = [0u16; 2]; let text = glyph.encode_utf16(&mut buf);
+    let (prev_mode, prev_color, prev_align) = (SetBkMode(dc, TRANSPARENT as i32), SetTextColor(dc, fg), SetTextAlign(dc, TA_LEFT | TA_TOP));
+    let mut tm: TEXTMETRICW = std::mem::zeroed(); GetTextMetricsW(dc, &mut tm);
+    let mut sz: SIZE = std::mem::zeroed(); GetTextExtentPoint32W(dc, text.as_ptr(), text.len() as i32, &mut sz);
+    let x = ox + (size - sz.cx) / 2; let y = oy + (size - tm.tmHeight) / 2;
+    let ok = ExtTextOutW(dc, x, y, 0, ptr::null(), text.as_ptr(), text.len() as u32, ptr::null()) != 0;
+    SetTextAlign(dc, prev_align); SetTextColor(dc, prev_color); SetBkMode(dc, prev_mode);
+    SelectObject(dc, old); DeleteObject(font);
+    ok
+}
 const CLASS: &str = "HwpAutoDocFit.Dock";
 #[repr(C)]
 struct HighContrast { cb_size: u32, flags: u32, scheme: *mut u16 }
@@ -310,7 +336,8 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
             MoveToEx(mem, x-spacing/2, sc(6), ptr::null_mut()); LineTo(mem, x-spacing/2, r.bottom-sc(6));
             SelectObject(mem, op); DeleteObject(divider);
         }
-        draw_icon(mem, dock::icon_shapes(item.tab), x-size/2, y-size/2, size, palette.foreground, palette.accent);
+        let glyph_drawn = icon_font_ready() && dock::icon_glyph(item.tab).is_some_and(|g| draw_glyph(mem, g, x-size/2, y-size/2, size, palette.foreground));
+        if !glyph_drawn { draw_icon(mem, dock::icon_shapes(item.tab), x-size/2, y-size/2, size, palette.foreground, palette.accent); }
         if focus == i {
             let pen=CreatePen(PS_SOLID,1,palette.accent); let op=SelectObject(mem,pen); let ob=SelectObject(mem,GetStockObject(NULL_BRUSH as i32));
             Ellipse(mem,x-size/2-sc(3),y-size/2-sc(3),x+size/2+sc(3),y+size/2+sc(3));
