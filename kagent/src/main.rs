@@ -1390,9 +1390,12 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
     use crate::json::Value;
     let root = std::env::var("KAGENT_DATA").ok().map(std::path::PathBuf::from)
         .unwrap_or_else(|| std::path::PathBuf::from(util::data_dir()));
-    let _guard = match LifecycleLock::acquire(&root) {
-        Ok(guard) => guard,
-        Err(error) => return lifecycle_error(&root, &error),
+    // --status 는 파일을 읽기만 한다. 설치·갱신 중인 다른 명령 때문에 최대 15초 줄을 서지 않도록 잠금을 잡지 않는다.
+    let _guard = if command == "--status" { None } else {
+        match LifecycleLock::acquire(&root) {
+            Ok(guard) => Some(guard),
+            Err(error) => return lifecycle_error(&root, &error),
+        }
     };
     let target = root.join("kagent.exe");
     let source = std::env::current_exe().ok();

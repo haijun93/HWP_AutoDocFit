@@ -53,12 +53,77 @@ def push_theme(mode, client=None):
         return False
 
 
+class _Steps:
+    """켜기 경로의 구간별 경과 시간(ms) 기록. 진행 표시용 '지금 구간' 이름도 알린다."""
+
+    def __init__(self, on_phase=None, clock=time.monotonic):
+        self._clock = clock
+        self._on_phase = on_phase
+        self.start = clock()
+        self.rows = []
+
+    def __call__(self, name):
+        return _Step(self, name)
+
+    def elapsed_ms(self):
+        return int((self._clock() - self.start) * 1000)
+
+    def table(self):
+        return [dict(step=name, ms=ms) for name, ms in self.rows]
+
+    def summary(self):
+        return ", ".join(f"{name} {ms}ms" for name, ms in self.rows) or "-"
+
+
+class _Step:
+    def __init__(self, steps, name):
+        self._steps, self._name = steps, name
+
+    def __enter__(self):
+        self._t0 = self._steps._clock()
+        if self._steps._on_phase:
+            self._steps._on_phase(self._name)
+        return self
+
+    def __exit__(self, *exc):
+        self._steps.rows.append((self._name, int((self._steps._clock() - self._t0) * 1000)))
+        return False
+
+
+_REASON_MESSAGES = (
+    ("update busy", "다른 몽땅클립보드 설치·갱신 작업이 끝나기를 기다리다 시간이 지났습니다. 잠시 뒤 다시 시도해 주세요."),
+    ("integrity", "몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요."),
+    ("still_running", "실행 중인 이전 몽땅클립보드가 종료되지 않아 새로 켜지 못했습니다."),
+    ("start timeout", "몽땅클립보드 프로그램이 제때 시작되지 않았습니다. 백신 검사 등으로 느려졌을 수 있으니 잠시 뒤 다시 시도해 주세요."),
+    ("start:", "몽땅클립보드 프로그램을 시작하지 못했습니다."),
+    ("install", "몽땅클립보드 프로그램 파일을 교체하지 못했습니다. 다른 프로그램이 파일을 쓰고 있을 수 있습니다."),
+    ("no_bundle", "이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다."),
+    ("시험 실행", "시험 실행에서는 자동 실행 등록을 바꾸지 않습니다."),
+)
+
+
+def explain_failure(result):
+    """kagent 가 돌려준 reason 만 있는 실패에 사람이 읽을 사유를 붙인다(이미 message 가 있으면 그대로)."""
+    if not isinstance(result, dict) or result.get("ok") is not False or result.get("message"):
+        return result
+    reason = str(result.get("reason") or result.get("code") or "")
+    for key, text in _REASON_MESSAGES:
+        if key in reason:
+            return dict(result, message=text, diagnostic=result.get("diagnostic") or reason)
+    return dict(result, message="몽땅클립보드를 켜지 못했습니다.", diagnostic=result.get("diagnostic") or reason or "unknown")
+
+
 class KClipService:
     def __init__(self, client=None, *, installer=kc.install, starter=kc.start, autostart=kc.set_autostart,
                  autostart_status=kc.autostart_enabled,
                  bundled=bundled_exe, installed=kc.installed_exe, excel=None, sleep=time.sleep,
-                 command_runner=None, ffi_library=None, version_reader=None, lifecycle_timeout=15):
+                 command_runner=None, ffi_library=None, version_reader=None, lifecycle_timeout=15,
+                 enable_timeout=40):
         self._excel_service = excel
+        self._enable_timeout = enable_timeout
+        self._enable_job = None
+        self._enable_job_lock = threading.Lock()
+        self._enable_job_seq = 0
         self._sleep = sleep
         self.client = client or kc.KAgentClient()
         self._injected_client = client is not None
@@ -124,12 +189,13 @@ class KClipService:
                     db_path=result.get("db_path") or (str(Path(folder) / "clip.db") if folder is not None else None),
                     ffi_library=str(self._ffi_library) if self._ffi_library.is_file() else None)
 
-    def _lifecycle(self, command, *args):
+    def _lifecycle(self, command, *args, timeout=None):
         exe = self._bundled()
         if exe is None:
             return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
         try:
-            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8", timeout=self._lifecycle_timeout)
+            completed = self._runner([str(exe), command, *args], capture_output=True, text=True, encoding="utf-8",
+                                     timeout=timeout if timeout is not None else self._lifecycle_timeout)
             result = json.loads(completed.stdout.strip().splitlines()[-1])
             if completed.returncode or not isinstance(result, dict):
                 raise ValueError("invalid lifecycle response")
@@ -139,47 +205,159 @@ class KClipService:
         except (OSError, ValueError, IndexError) as error:
             return dict(ok=False, code="KCLIP_COMMAND", message=str(error), diagnostic=type(error).__name__)
 
-    def enable(self, payload):
+    def _integrity_ok(self, exe):
+        """번들 옆 .sha256 이 있으면 내용과 맞는지 본다(없으면 통과). 켜기 때 한 번만 읽는다."""
+        sidecar = exe.with_name(exe.name + ".sha256")
+        if not sidecar.exists():
+            return True
+        import hashlib
+        return hashlib.sha256(exe.read_bytes()).hexdigest() == sidecar.read_text(encoding="ascii").strip().lower()
+
+    def _already_current_and_running(self, exe):
+        """같은 버전이 설치돼 있고 이미 실행 중이면 True. 이때는 재설치·재시작을 하지 않는다.
+        설치본과 번들의 크기가 다르면(같은 버전 재빌드 가능성) 보수적으로 False 로 두어 정식 경로를 탄다."""
+        if not self.client.running():
+            return False
+        running_version = (self.client.status_file() or {}).get("version")
+        if not isinstance(running_version, str) or not running_version:
+            return False
+        bundled_version = self._version_reader()
+        if not isinstance(bundled_version, str) or bundled_version.strip() != running_version.strip():
+            return False
+        try:
+            return Path(self._installed()).stat().st_size == Path(exe).stat().st_size
+        except OSError:
+            return False
+
+    def enable(self, payload, *, _steps=None):
+        """동기식 켜기. 결과에 구간별 시간(timings, ms)을 붙이고 로그로 남긴다."""
+        steps = _steps or _Steps()
+        try:
+            result = self._enable_blocking(payload, steps)
+        finally:
+            _log.info("몽땅클립보드 켜기 구간: %s (합계 %dms)", steps.summary(), steps.elapsed_ms())
+        if isinstance(result, dict):
+            result = dict(explain_failure(result), timings=steps.table(), elapsed_ms=steps.elapsed_ms())
+        return result
+
+    def _enable_blocking(self, payload, steps):
         if payload.get("consent") is not True:
             return dict(ok=False, code="KCLIP_CONSENT", message="안내를 읽고 동의해 주세요.")
+        want_autostart = payload.get("autostart", True) is True
         if self._injected_client:
             exe = self._bundled()
             if exe is None:
                 return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
-            sidecar = exe.with_name(exe.name + ".sha256")
-            if sidecar.exists():
-                import hashlib
-                if hashlib.sha256(exe.read_bytes()).hexdigest() != sidecar.read_text(encoding="ascii").strip().lower():
+            with steps("무결성 확인"):
+                if not self._integrity_ok(exe):
                     return dict(ok=False, code="KCLIP_INTEGRITY", message="몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요.")
             if not self.client.running():
-                installed = self._install(exe); self._start(installed)
-                for _ in range(75):
-                    if self.client.running(): break
-                    self._sleep(0.02)
-                else:
-                    return dict(ok=False, code="KCLIP_START_TIMEOUT", message="몽땅클립보드가 시작되지 않았습니다.", diagnostic="agent_not_running")
+                with steps("설치"):
+                    installed = self._install(exe)
+                with steps("시작"):
+                    self._start(installed)
+                with steps("시작 확인"):
+                    for _ in range(75):
+                        if self.client.running(): break
+                        self._sleep(0.02)
+                    else:
+                        return dict(ok=False, code="KCLIP_START_TIMEOUT", message="몽땅클립보드가 시작되지 않았습니다.", diagnostic="agent_not_running")
             else:
-                result = self.upgrade_if_stale()
+                with steps("버전 확인·필요 시 갱신"):
+                    result = self.upgrade_if_stale()
                 if not result.get("ok"):
                     return result
-            try: self._autostart(payload.get("autostart", True) is True)
-            except OSError: pass
-            return self.status()
+            with steps("자동 실행 등록"):
+                try: self._autostart(want_autostart)
+                except OSError: pass
+            with steps("상태 조회"):
+                return self.status()
+        exe = self._bundled()
+        if exe is None:
+            return dict(ok=False, code="KCLIP_MISSING", message="이 버전에는 몽땅클립보드 프로그램이 들어 있지 않습니다.")
+        with steps("무결성 확인"):
+            if not self._integrity_ok(exe):
+                return dict(ok=False, code="KCLIP_INTEGRITY", message="몽땅클립보드 프로그램 파일이 손상됐습니다. 다시 설치해 주세요.")
+        with steps("실행 중 버전 확인"):
+            try:
+                current = self._already_current_and_running(exe)
+            except (OSError, ValueError, kc.KAgentError):
+                current = False
+        if current:
+            # 이미 같은 버전이 실행 중: 해시 재계산·재설치·재시작 없이 자동 실행 등록만 맞춘다.
+            with steps("자동 실행 등록"):
+                try: self._autostart(want_autostart)
+                except (OSError, ImportError): pass
+            with steps("상태 조회"):
+                status = self.status()
+            return dict(status, reason="already_running") if status.get("ok") else status
         args = ["--consent"]
-        if payload.get("autostart", True) is True:
+        if want_autostart:
             args.append("--autostart")
-        res = self._lifecycle("--enable", *args)
+        with steps("kagent --enable"):
+            res = self._lifecycle("--enable", *args, timeout=self._enable_timeout)
         if not res.get("ok"):
+            if res.get("code") == "KCLIP_TIMEOUT":
+                # 응답은 늦었지만 에이전트는 이미 떠 있을 수 있다: 실제 상태를 한 번 더 확인한다.
+                with steps("시간 초과 뒤 상태 재확인"):
+                    if self.client.running():
+                        status = self.status()
+                        if status.get("ok") and status.get("running"):
+                            return dict(status, reason="recovered_after_timeout")
             return res
-        for _ in range(75):
-            st = self.status()
-            if st.get("ok") and st.get("running"):
-                return st
-            self._sleep(0.02)
-        status = self.status()
+        with steps("시작 확인"):
+            for _ in range(75):
+                st = self.status()
+                if st.get("ok") and st.get("running"):
+                    return st
+                self._sleep(0.02)
+            status = self.status()
         if not status.get("running"):
             return dict(ok=False, code="KCLIP_START_TIMEOUT", message="몽땅클립보드가 시작되지 않았습니다.", diagnostic="agent_not_running")
         return status
+
+    # ---- 비동기 켜기: 요청은 곧바로 '시작 중'을 돌려주고, 화면은 enable_progress 로 짧게 묻는다 ----
+    def enable_async(self, payload):
+        if payload.get("consent") is not True:
+            return dict(ok=False, code="KCLIP_CONSENT", message="안내를 읽고 동의해 주세요.")
+        with self._enable_job_lock:
+            job = self._enable_job
+            if job is not None and job["state"] == "running":
+                return self._job_view(job)
+            self._enable_job_seq += 1
+            job = self._enable_job = dict(id=self._enable_job_seq, state="running", phase="준비 중",
+                                           started=time.monotonic(), result=None)
+            threading.Thread(target=self._run_enable_job, args=(job, dict(payload)), daemon=True,
+                             name="kclip-enable").start()
+            return self._job_view(job)
+
+    def _run_enable_job(self, job, payload):
+        def phase(name):
+            job["phase"] = name
+        steps = _Steps(on_phase=phase)
+        try:
+            result = self.enable(payload, _steps=steps)
+        except Exception as error:  # 어떤 오류도 '진행 중'으로 남기지 않는다.
+            _log.warning("몽땅클립보드 켜기 작업 실패", exc_info=True)
+            result = dict(ok=False, code="KCLIP_ERROR", message="몽땅클립보드를 켜지 못했습니다.",
+                          diagnostic=f"{type(error).__name__}: {error}", failed_phase=job.get("phase"))
+        if isinstance(result, dict) and result.get("ok") is False:
+            result.setdefault("failed_phase", job.get("phase"))
+        job["result"] = result
+        job["state"] = "done" if isinstance(result, dict) and result.get("ok") is not False else "failed"
+
+    def _job_view(self, job):
+        elapsed = int((time.monotonic() - job["started"]) * 1000)
+        if job["state"] == "running":
+            return dict(ok=True, starting=True, state="running", phase=job["phase"], elapsed_ms=elapsed,
+                        running=False, job=job["id"])
+        return dict(job["result"], starting=False, state=job["state"], job=job["id"])
+
+    def enable_progress(self):
+        job = self._enable_job
+        if job is None:
+            return dict(ok=True, starting=False, state="idle")
+        return self._job_view(job)
 
     def upgrade_if_stale(self):
         """앱 시작·켜기 때 번들과 실행 중인 버전을 확인한다. 데이터·설정은 건드리지 않는다."""
@@ -365,7 +543,9 @@ class KClipService:
             except OSError as error:
                 return dict(ok=False, code="KCLIP_SETTINGS", message=f"설정 창을 열지 못했습니다: {error}")
         if action == "enable":
-            return self.enable(payload)
+            return self.enable_async(payload) if payload.get("async") is True else self.enable(payload)
+        if action == "enable_progress":
+            return self.enable_progress()
         if action == "disable":
             return self.disable(payload)
         if action == "autostart":

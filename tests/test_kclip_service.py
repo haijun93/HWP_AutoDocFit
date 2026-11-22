@@ -225,6 +225,7 @@ class KClipServiceTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, status_payload)
             return subprocess.CompletedProcess(args, 0, '{"ok":true}')
         service = KClipService(bundled=lambda: self.exe, command_runner=runner, sleep=lambda _s: None)
+        service.client = FakeClient()  # 이 PC 의 실제 에이전트 상태에 기대지 않는다
         result = service.enable({"consent": True, "autostart": True})
         self.assertTrue(result["running"])
         self.assertTrue(any("--enable" in c for c in calls))
@@ -234,11 +235,165 @@ class KClipServiceTests(unittest.TestCase):
         import subprocess
         def runner(args, **kwargs):
             raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
-        service = KClipService(bundled=lambda: self.exe, command_runner=runner, lifecycle_timeout=0.01)
+        service = KClipService(bundled=lambda: self.exe, command_runner=runner, lifecycle_timeout=0.01, enable_timeout=0.01)
+        service.client = FakeClient()  # 이 PC 의 실제 에이전트 상태에 기대지 않는다
         result = service.enable({"consent": True})
         self.assertFalse(result["ok"])
         self.assertEqual(result["code"], "KCLIP_TIMEOUT")
         self.assertIn("diagnostic", result)
+
+    # ---- KCLIPSLOW1: 켜기 지연·15초 벽 개선 ----
+    def _prod_service(self, runner, client=None, **kw):
+        service = KClipService(bundled=lambda: self.exe, installed=lambda: self.installed, command_runner=runner,
+                               sleep=lambda _s: None, **kw)
+        service.client = client or FakeClient()  # 실제 PC 상태 대신 가짜 클라이언트
+        return service
+
+    def _runner(self, calls, enable=None, version="0.1.1", running_status=True):
+        import subprocess
+        status_payload = json.dumps({"ok": True, "running": running_status, "available": True, "autostart": True,
+                                     "consent": "x", "status": {"items": 1}})
+        def runner(args, **kwargs):
+            calls.append(args)
+            if "--enable" in args:
+                return enable(args, kwargs) if enable else subprocess.CompletedProcess(args, 0, '{"ok":true}')
+            if "--version" in args:
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "version": version}))
+            if "--status" in args:
+                return subprocess.CompletedProcess(args, 0, status_payload)
+            return subprocess.CompletedProcess(args, 0, '{"ok":true}')
+        return runner
+
+    def test_enable_records_per_step_timings(self):
+        result = self.service.command("enable", {"consent": True})
+        names = [row["step"] for row in result["timings"]]
+        self.assertEqual(names, ["무결성 확인", "설치", "시작", "시작 확인", "자동 실행 등록", "상태 조회"])
+        self.assertIn("elapsed_ms", result)
+
+    def test_already_running_same_version_skips_hash_install_and_restart(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.on = True
+        calls = []
+        auto = []
+        service = self._prod_service(self._runner(calls), self.client)
+        service._autostart = lambda on: auto.append(on)
+        result = service.enable({"consent": True, "autostart": True})
+        self.assertTrue(result["running"])
+        self.assertEqual(result["reason"], "already_running")
+        self.assertFalse(any("--enable" in c for c in calls))
+        self.assertEqual(auto, [True])
+
+    def test_running_but_different_version_takes_full_enable_path(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.on = True
+        calls = []
+        service = self._prod_service(self._runner(calls, version="0.2.0"), self.client)
+        result = service.enable({"consent": True})
+        self.assertTrue(any("--enable" in c for c in calls))
+        self.assertTrue(result["running"])
+
+    def test_fast_path_still_checks_integrity(self):
+        self.installed.write_bytes(self.exe.read_bytes())
+        self.client.on = True
+        self.exe.with_name("kagent.exe.sha256").write_text("00" * 32, encoding="ascii")
+        calls = []
+        result = self._prod_service(self._runner(calls), self.client).enable({"consent": True})
+        self.assertEqual(result["code"], "KCLIP_INTEGRITY")
+        self.assertEqual(calls, [])
+
+    def test_timeout_rechecks_real_state_and_reports_success_when_running(self):
+        import subprocess
+        self.client.on = True
+        self.client.version = "0.0.9"  # 구버전 → 정식 경로
+        calls = []
+        def enable(args, kwargs):
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        service = self._prod_service(self._runner(calls, enable=enable), self.client)
+        result = service.enable({"consent": True})
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["running"])
+        self.assertEqual(result["reason"], "recovered_after_timeout")
+
+    def test_timeout_with_agent_not_running_stays_failure_with_reason(self):
+        import subprocess
+        def enable(args, kwargs):
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        result = self._prod_service(self._runner([], enable=enable)).enable({"consent": True})
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["code"], "KCLIP_TIMEOUT")
+
+    def test_kagent_reason_only_failure_gets_readable_message(self):
+        import subprocess
+        def enable(args, kwargs):
+            return subprocess.CompletedProcess(args, 0, '{"ok":false,"reason":"update busy"}')
+        result = self._prod_service(self._runner([], enable=enable)).enable({"consent": True})
+        self.assertFalse(result["ok"])
+        self.assertIn("기다리다", result["message"])
+        self.assertEqual(result["diagnostic"], "update busy")
+
+    def test_slow_lifecycle_each_step_slow_is_reported_in_timings(self):
+        import subprocess
+        ticks = iter(range(0, 1000, 5))
+        from docfit_app import kclip_service as ks
+        steps = ks._Steps(clock=lambda: next(ticks))
+        def enable(args, kwargs):
+            return subprocess.CompletedProcess(args, 0, '{"ok":true}')
+        service = self._prod_service(self._runner([], enable=enable))
+        result = service.enable({"consent": True}, _steps=steps)
+        self.assertTrue(result["ok"])
+        self.assertTrue(all(row["ms"] >= 5000 for row in result["timings"]))
+        self.assertIn("kagent --enable", [row["step"] for row in result["timings"]])
+
+    def test_async_enable_returns_immediately_then_progress_reaches_done(self):
+        import subprocess, threading
+        gate = threading.Event()
+        def enable(args, kwargs):
+            gate.wait(5)
+            return subprocess.CompletedProcess(args, 0, '{"ok":true}')
+        service = self._prod_service(self._runner([], enable=enable))
+        first = service.command("enable", {"consent": True, "async": True})
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["starting"])
+        self.assertEqual(first["state"], "running")
+        again = service.command("enable", {"consent": True, "async": True})
+        self.assertEqual(again["job"], first["job"])  # 중복 요청은 같은 작업
+        for _ in range(500):
+            progress = service.command("enable_progress")
+            if progress["phase"] == "kagent --enable":
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(progress["state"], "running")
+        self.assertEqual(progress["phase"], "kagent --enable")
+        gate.set()
+        for _ in range(200):
+            progress = service.command("enable_progress")
+            if progress["state"] != "running":
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(progress["state"], "done")
+        self.assertTrue(progress["running"])
+        self.assertIn("timings", progress)
+
+    def test_async_enable_failure_reports_state_and_reason(self):
+        import subprocess, threading
+        def enable(args, kwargs):
+            return subprocess.CompletedProcess(args, 0, '{"ok":false,"reason":"still_running"}')
+        service = self._prod_service(self._runner([], enable=enable))
+        service.command("enable", {"consent": True, "async": True})
+        for _ in range(200):
+            progress = service.command("enable_progress")
+            if progress["state"] != "running":
+                break
+            threading.Event().wait(0.01)
+        self.assertEqual(progress["state"], "failed")
+        self.assertFalse(progress["ok"])
+        self.assertIn("종료되지 않아", progress["message"])
+        self.assertEqual(progress["failed_phase"], "kagent --enable")
+
+    def test_async_enable_without_consent_is_refused_synchronously(self):
+        service = self._prod_service(self._runner([]))
+        self.assertEqual(service.command("enable", {"async": True})["code"], "KCLIP_CONSENT")
+        self.assertEqual(service.command("enable_progress")["state"], "idle")
 
     def test_enable_requires_consent_then_installs_starts_autostarts(self):
         self.assertEqual(self.service.command("enable", {})["code"], "KCLIP_CONSENT")

@@ -915,6 +915,140 @@ void main() {
       expect(find.byKey(const ValueKey('kclip-autostart-running')), findsOneWidget);
     });
 
+    // ---- KCLIPSLOW1: 즉시 응답 + 상태 조회 ----
+    Future<void> openEnable(WidgetTester tester, Future<Object?> Function(String, List<Object?>) api) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(MaterialApp(home: Scaffold(
+        body: SizedBox(height: 760, child: KClipPanel(api: api)),
+      )));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('kclip-consent')));
+      await tester.pump();
+    }
+
+    testWidgets('켜기는 async 로 즉시 응답을 받고 단계 이름을 보여 준 뒤 완료되면 설정 화면으로 간다', (tester) async {
+      var progressCalls = 0;
+      var up = false;
+      Map<String, Object?>? enablePayload;
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        switch (args[0] as String) {
+          case 'status':
+            return {'ok': true, 'running': up, 'available': true, 'consent': '안내문', 'status': up ? {'items': 1} : {}};
+          case 'enable':
+            enablePayload = (args[1] as Map).cast<String, Object?>();
+            return {'ok': true, 'starting': true, 'state': 'running', 'phase': '준비 중', 'running': false};
+          case 'enable_progress':
+            progressCalls++;
+            if (progressCalls < 3) return {'ok': true, 'state': 'running', 'phase': 'kagent --enable'};
+            up = true;
+            return {'ok': true, 'state': 'done', 'running': true, 'autostart': true};
+          case 'list':
+            return {'ok': true, 'items': []};
+          case 'settings_get':
+            return {'ok': true, 'settings': {}};
+        }
+        return {'ok': true};
+      }
+
+      await openEnable(tester, api);
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(enablePayload?['async'], true);
+      expect(find.textContaining('켜는 중…'), findsOneWidget);
+      expect(find.textContaining('kagent --enable'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pumpAndSettle();
+      expect(progressCalls, 3);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
+    });
+
+    testWidgets('켜기 실패는 구체적 사유·단계·진단을 보여 주고 단추를 다시 누를 수 있다', (tester) async {
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        switch (args[0] as String) {
+          case 'status':
+            return {'ok': true, 'running': false, 'available': true, 'consent': '안내문', 'status': {}};
+          case 'enable':
+            return {'ok': true, 'starting': true, 'state': 'running', 'phase': '준비 중'};
+          case 'enable_progress':
+            return {
+              'ok': false, 'state': 'failed', 'message': '다른 설치 작업이 끝나기를 기다리다 시간이 지났습니다.',
+              'diagnostic': 'update busy', 'failed_phase': 'kagent --enable',
+            };
+        }
+        return {'ok': true};
+      }
+
+      await openEnable(tester, api);
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('기다리다 시간이 지났습니다'), findsOneWidget);
+      expect(find.textContaining('update busy'), findsOneWidget);
+      expect(find.textContaining('kagent --enable'), findsOneWidget);
+      expect(find.byKey(const ValueKey('kclip-enable')), findsOneWidget);
+      expect(tester.widget<FilledButton>(find.byKey(const ValueKey('kclip-enable'))).onPressed, isNotNull);
+    });
+
+    testWidgets('조회 제한(60초)이 지나도 실제로 떠 있으면 실패로 단정하지 않고 성공 처리한다', (tester) async {
+      var progressCalls = 0;
+      var up = false;
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        switch (args[0] as String) {
+          case 'status':
+            return {'ok': true, 'running': up, 'available': true, 'consent': '안내문', 'status': up ? {'items': 1} : {}};
+          case 'enable':
+            return {'ok': true, 'starting': true, 'state': 'running', 'phase': '준비 중'};
+          case 'enable_progress':
+            if (++progressCalls == 200) up = true; // 마지막 조회 직전에야 에이전트가 응답
+            return {'ok': true, 'state': 'running', 'phase': 'kagent --enable'};
+          case 'list':
+            return {'ok': true, 'items': []};
+          case 'settings_get':
+            return {'ok': true, 'settings': {}};
+        }
+        return {'ok': true};
+      }
+
+      await openEnable(tester, api);
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pump(const Duration(seconds: 70));
+      await tester.pumpAndSettle();
+      expect(progressCalls, 200);
+      expect(find.byKey(const ValueKey('kclip-disable')), findsOneWidget);
+      expect(find.textContaining('enable poll timeout'), findsNothing);
+    });
+
+    testWidgets('조회 제한이 지나도 꺼져 있으면 마지막 단계와 진단을 알려 준다', (tester) async {
+      Future<Object?> api(String method, List<Object?> args) async {
+        if (method == 'window_control') return {'ok': true, 'maximized': false};
+        if (method != 'kclip') return {'ok': true};
+        switch (args[0] as String) {
+          case 'status':
+            return {'ok': true, 'running': false, 'available': true, 'consent': '안내문', 'status': {}};
+          case 'enable':
+            return {'ok': true, 'starting': true, 'state': 'running', 'phase': '준비 중'};
+          case 'enable_progress':
+            return {'ok': true, 'state': 'running', 'phase': '시작 확인'};
+        }
+        return {'ok': true};
+      }
+
+      await openEnable(tester, api);
+      await tester.tap(find.byKey(const ValueKey('kclip-enable')));
+      await tester.pump(const Duration(seconds: 70));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('마지막 단계: 시작 확인'), findsOneWidget);
+      expect(find.textContaining('enable poll timeout'), findsOneWidget);
+    });
+
     testWidgets('동의 체크 없이는 켜기 단추가 눌리지 않아 enable을 보내지 않는다', (tester) async {
       tester.view.physicalSize = const Size(1200, 900);
       tester.view.devicePixelRatio = 1;

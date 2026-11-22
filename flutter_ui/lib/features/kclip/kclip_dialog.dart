@@ -298,6 +298,7 @@ class _KClipPanelState extends State<KClipPanel> {
   final TextEditingController _memo = TextEditingController();
   bool busy = false;
   String message = '';
+  String enablePhase = '';
   String query = '';
   String category = '전체';
   Timer? _debounce;
@@ -638,6 +639,84 @@ class _KClipPanelState extends State<KClipPanel> {
     );
   }
 
+  /// 실제로 상주 프로그램이 떠 있는지 한 번 확인한다(응답이 늦었을 때 '실패'로 단정하지 않기 위해).
+  Future<bool> _confirmRunning() async {
+    try {
+      final s = await _call('status').timeout(const Duration(seconds: 10));
+      return s['ok'] != false && s['running'] == true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  String _enableFailure(Map r) {
+    final base = (r['message'] as String?)?.isNotEmpty == true
+        ? r['message'] as String
+        : '몽땅클립보드를 켜지 못했습니다.';
+    final diag = r['diagnostic'] ?? r['reason'];
+    final phase = r['failed_phase'];
+    return '$base${phase != null ? ' (단계: $phase)' : ''}${diag != null ? ' 진단: $diag' : ''}';
+  }
+
+  /// 켜기를 '즉시 응답 + 상태 조회'로 진행한다. 성공(또는 이미 실행 중)이면 상태 맵을, 실패하면 null 을 돌려준다.
+  /// 실패 사유는 message 에 이미 채워 둔다.
+  Future<Map?> _startEnable(Map<String, Object?>? payload) async {
+    if (mounted) setState(() { enablePhase = '요청 중'; message = ''; });
+    Map result;
+    try {
+      result = await _call('enable', {...?payload, 'async': true})
+          .timeout(const Duration(seconds: 10));
+    } on TimeoutException {
+      if (await _confirmRunning()) {
+        final s = await _call('status');
+        return {...s, 'running': true};
+      }
+      if (mounted) setState(() => message = '켜기 요청에 10초 안에 응답이 없었습니다. 다시 시도해 주세요. 진단: enable request timeout');
+      return null;
+    } catch (error) {
+      if (mounted) setState(() => message = '몽땅클립보드를 켜지 못했습니다. 진단: $error');
+      return null;
+    }
+    if (result['ok'] == false) {
+      if (mounted) setState(() => message = _enableFailure(result));
+      return null;
+    }
+    if (result['starting'] != true) return result; // 이전 방식(동기) 응답과 호환
+    // 최대 60초(0.3초 × 200회): 단계 이름을 보여 주며 상태를 묻는다. 시간이 지나면 실제 상태를 한 번 더 본다.
+    for (var attempt = 0; attempt < 200 && mounted; attempt++) {
+      if (mounted) setState(() => enablePhase = '${result['phase'] ?? '진행 중'}');
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      Map p;
+      try {
+        p = await _call('enable_progress').timeout(const Duration(seconds: 10));
+      } catch (_) {
+        continue; // 한 번의 조회 실패는 다음 조회로 넘긴다.
+      }
+      if (p['state'] == 'running') {
+        result = p;
+        continue;
+      }
+      if (p['ok'] == false) {
+        // 실패 직전에도 에이전트가 실제로 떠 있으면 성공으로 본다.
+        if (await _confirmRunning()) {
+          final s = await _call('status');
+          return {...s, 'running': true};
+        }
+        if (mounted) setState(() => message = _enableFailure(p));
+        return null;
+      }
+      return p;
+    }
+    if (!mounted) return null;
+    if (await _confirmRunning()) {
+      final s = await _call('status');
+      return {...s, 'running': true};
+    }
+    setState(() => message =
+        '켜는 데 60초가 넘게 걸려 중단했습니다. 마지막 단계: ${result['phase'] ?? '알 수 없음'}. 잠시 뒤 다시 시도해 주세요. 진단: enable poll timeout');
+    return null;
+  }
+
   Future<void> _act(
     String action, [
     Map<String, Object?>? payload,
@@ -647,16 +726,20 @@ class _KClipPanelState extends State<KClipPanel> {
     setState(() => busy = true);
     try {
       Map result;
-      try {
-        result = await _call(action, payload).timeout(
-          action == 'enable' ? const Duration(seconds: 15) : const Duration(seconds: 30),
-        );
-      } on TimeoutException {
-        if (mounted) setState(() => message = '몽땅클립보드를 켜지 못했습니다. 다시 시도해 주세요. 진단: enable timeout');
-        return;
-      } catch (error) {
-        if (mounted) setState(() => message = '몽땅클립보드를 켜지 못했습니다. 다시 시도해 주세요. 진단: $error');
-        return;
+      if (action == 'enable') {
+        final started = await _startEnable(payload);
+        if (started == null) return;
+        result = started;
+      } else {
+        try {
+          result = await _call(action, payload).timeout(const Duration(seconds: 30));
+        } on TimeoutException {
+          if (mounted) setState(() => message = '요청 응답이 30초 안에 오지 않았습니다. 진단: $action timeout');
+          return;
+        } catch (error) {
+          if (mounted) setState(() => message = '요청을 처리하지 못했습니다. 진단: $error');
+          return;
+        }
       }
       if (result['ok'] == false) return;
       if (action == 'enable') {
@@ -817,7 +900,9 @@ class _KClipPanelState extends State<KClipPanel> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : const Icon(Icons.power_settings_new),
-          label: Text(busy ? '켜는 중…' : '몽땅클립보드 켜기'),
+          label: Text(busy
+              ? (enablePhase.isEmpty ? '켜는 중…' : '켜는 중… ($enablePhase)')
+              : '몽땅클립보드 켜기'),
         ),
       ],
     );
