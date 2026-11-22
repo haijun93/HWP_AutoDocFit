@@ -1,0 +1,548 @@
+"""RSXML1 차이 0 시험 하네스: 파이썬 처리기와 Rust CLI(hwpx_fmt)를 같은 HWPX 에 돌려 결과 XML 을 트리 단위로 비교한다.
+
+처리기: 표날짜칸_hwpx_처리(date), 두글자칸_hwpx_처리(twochar).
+입력: 합성 HWPX(scripts 안에서 생성, 사용자 문서 없음) + tests/fixtures 의 기존 HWPX.
+비교: 압축 항목 이름·순서, 바이너리 항목 바이트, XML 항목은 정규화한 트리(네임스페이스 접두사 무시·속성 순서 무시·
+      t 요소 밖 공백뿐인 글/꼬리 무시)가 같은지. 한 건이라도 다르면 차이를 그대로 출력하고 종료 코드 1.
+사용: python scripts/rsxml_parity.py [--bin 경로] [--json 결과.json] [--bench] [--keep 폴더]
+Rust 바이너리: --bin, 환경변수 HWPX_FMT_BIN, 또는 CARGO_TARGET_DIR/release/hwpx_fmt(.exe).
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import html
+import io
+import json
+import os
+import random
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import zipfile
+from pathlib import Path
+
+from defusedxml import ElementTree as ET
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+NS = ('xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
+      'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"')
+PROCESSORS = {'date': '표날짜칸_hwpx_처리', 'twochar': '두글자칸_hwpx_처리'}
+HEADER = f'<?xml version="1.0" encoding="UTF-8"?><hh:head {NS}><hh:refList/></hh:head>'
+
+
+# ---------------------------------------------------------------- 합성 HWPX 생성
+
+def t(text, extra=''):
+    return f'<hp:t{extra}>{text}</hp:t>' if text is not None else ''
+
+
+def para(text, raw=None):
+    body = raw if raw is not None else t(text)
+    return f'<hp:p paraPrIDRef="1"><hp:run charPrIDRef="1">{body}</hp:run></hp:p>'
+
+
+def tc(content, row=0, col=0, rspan=1, cspan=1, sub_attr='', raw_sub=None, with_sublist=True):
+    """content: 문자열이면 한 문단, 리스트면 문단 여럿, 이미 만든 XML 이면 raw_sub 로."""
+    if raw_sub is None:
+        paras = [content] if isinstance(content, str) else content
+        raw_sub = ''.join(para(p) for p in paras)
+    sub = f'<hp:subList{sub_attr}>{raw_sub}</hp:subList>' if with_sublist else ''
+    return (f'<hp:tc borderFillIDRef="1">{sub}<hp:cellAddr colAddr="{col}" rowAddr="{row}"/>'
+            f'<hp:cellSpan colSpan="{cspan}" rowSpan="{rspan}"/><hp:cellSz width="5669" height="2835"/></hp:tc>')
+
+
+def tbl(rows, caption=None, rowcnt=None, colcnt=None, attrs=''):
+    """rows: tc XML 목록의 목록."""
+    rc = len(rows) if rowcnt is None else rowcnt
+    cc = max((len(r) for r in rows), default=0) if colcnt is None else colcnt
+    cap = f'<hp:caption>{para(html.escape(caption, quote=False))}</hp:caption>' if caption is not None else ''
+    trs = ''.join('<hp:tr>' + ''.join(r) + '</hp:tr>' for r in rows)
+    return f'<hp:tbl rowCnt="{rc}" colCnt="{cc}"{attrs}>{cap}{trs}</hp:tbl>'
+
+
+def grid(texts, **kw):
+    """texts: 2차원 글 목록 → 표."""
+    rows = [[tc(x, r, c) for c, x in enumerate(row)] for r, row in enumerate(texts)]
+    return tbl(rows, **kw)
+
+
+def host(*tables):
+    """표를 문단 안에 둔다."""
+    return ''.join(f'<hp:p><hp:run>{x}</hp:run></hp:p>' for x in tables)
+
+
+def section(body, decl='<?xml version="1.0" encoding="UTF-8"?>', extra=''):
+    return f'{decl}<hs:sec {NS}>{extra}{body}</hs:sec>'
+
+
+def hwpx_bytes(sections, extra_files=None, header=HEADER, dir_entries=()):
+    bio = io.BytesIO()
+    with zipfile.ZipFile(bio, 'w') as z:
+        z.writestr('mimetype', 'application/hwp+zip', compress_type=zipfile.ZIP_STORED)
+        z.writestr('Contents/header.xml', header, compress_type=zipfile.ZIP_DEFLATED)
+        for name, xml in sections.items():
+            data = xml.encode('utf-8') if isinstance(xml, str) else xml
+            z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        for name, data in (extra_files or {}).items():
+            z.writestr(name, data, compress_type=zipfile.ZIP_DEFLATED)
+        for name in dir_entries:
+            z.writestr(name, b'')
+    return bio.getvalue()
+
+
+def one(body, **kw):
+    return hwpx_bytes({'Contents/section0.xml': section(body, **kw)})
+
+
+def title_table_type1():
+    # 2x2: 제목(2열 병합) / 날짜 / 담당자
+    cells = [[tc('보고서 제목', 0, 0, cspan=2)], [tc('2026. 10. 10.', 1, 0), tc('담당 과장 홍길동', 1, 1)]]
+    return tbl(cells, rowcnt=2, colcnt=2)
+
+
+def title_table_type3():
+    return tbl([[tc('제목입니다', 0, 0)], [tc('담당: 홍길동 ☎ 3153-8660', 1, 0)]], rowcnt=2, colcnt=1)
+
+
+def design_bar_table():
+    # 장식 막대 표: 글 칸이 첫 행에서 모든 행을 덮고, 빈 점선 칸이 있다
+    return tbl([[tc('구분', 0, 0, rspan=2), tc('', 0, 1)], [tc('', 1, 1)]], rowcnt=2, colcnt=2)
+
+
+def diagram_table():
+    cells = []
+    for r in range(3):
+        cells.append([tc('구분' if (r, c) == (0, 0) else '', r, c) for c in range(4)])
+    return tbl(cells)
+
+
+def flow_table():
+    return grid([['접수', '→', '구분']])
+
+
+def synthetic_cases():
+    cases = {}
+    cases['two_hangul_basic'] = one(host(grid([['구분', '내용'], ['비고', '확인']])))
+    cases['mixed_digits'] = one(host(grid([['10', '1부', '가1'], ['ab', '한글a', '구분']])))
+    cases['already_spaced'] = one(host(grid([['구 분', '내 용'], ['구분', '비고']])))
+    cases['three_hangul'] = one(host(grid([['구분란', '구분'], ['가나다라', '나']])))
+    cases['whitespace_padded'] = one(host(grid([[' 구분 ', '\u3000내용\u3000'], ['\t비고', '확인']])))
+    cases['split_runs_not_target'] = one(host(tbl([[tc('', 0, 0, raw_sub=para(None, raw=t('구') + t('분')))]])))
+    cases['t_with_child_skipped'] = one(host(tbl([[tc('', 0, 0, raw_sub=para(None, raw='<hp:t>구<hp:fwSpace/>분</hp:t>')),
+                                                  tc('', 0, 1, raw_sub=para(None, raw='<hp:t>구분<hp:lineBreak/></hp:t>'))]])))
+    cases['blank_t_siblings'] = one(host(tbl([[tc('', 0, 0, raw_sub=para(None, raw=t('  ') + t('구분') + t('')))]])))
+    cases['protected_design_bar'] = one(host(design_bar_table(), grid([['구분', '내용']])))
+    cases['protected_diagram_with_nested'] = one(host(
+        tbl([[tc('', 0, 0, raw_sub=para(None, raw=grid([['구분', '내용']])))] + [tc('', 0, c) for c in range(1, 4)]] +
+            [[tc('', r, c) for c in range(4)] for r in range(1, 3)])))
+    cases['protected_flow'] = one(host(flow_table(), grid([['구분', '내용']])))
+    cases['protected_unit_caption'] = one(host(grid([['구분', '내용']], caption='(단위: 개소)'),
+                                               grid([['구분', '내용']], caption='<표 1> 현황')))
+    cases['format_title1'] = one(host(title_table_type1(), grid([['구분', '내용']])))
+    cases['format_title3'] = one(host(title_table_type3()))
+    cases['format_title_twochar_title'] = one(host(tbl([[tc('보고', 0, 0, cspan=2)],
+                                                        [tc('2026. 10. 10.', 1, 0), tc('담당 홍길동', 1, 1)]], rowcnt=2, colcnt=2)))
+    cases['format_midtitle_roman'] = one(host(grid([['Ⅰ.', '개요']]), grid([['Ⅱ.', '', '현황']])))
+    cases['midtitle_digit_not_format'] = one(host(grid([['1', '개요']])))
+    cases['format_attach'] = one(host(grid([['붙임 1', '서류']]), grid([['붙임', '', '서류']]), grid([['붙임2', '서류']]),
+                                      grid([['붙임물', '서류']])))
+    cases['overview_box_vs_short'] = one(host(grid([['구분']]), grid([['이것은 열다섯 글자가 넘는 개요 상자 글입니다']])))
+    cases['nested_duplicate_target'] = one(host(
+        tbl([[tc('', 0, 0, raw_sub=para(None, raw=grid([['구분']])))]])))
+    cases['nested_in_cell_with_text'] = one(host(
+        tbl([[tc('', 0, 0, raw_sub=para('구분') + para(None, raw=grid([['내용']])))]])))
+    # 날짜 칸
+    cases['date_basic'] = one(host(grid([['’26. 10. 10.(토)', '2026년 10월 10일(토) 14:00'], ['10. 6.(화) 10:00 ~', '구분']])))
+    cases['date_negative'] = one(host(grid([['관광정책과장: 조희옥 ☎3153-8660', '구분', '', '2026. 10. 10.부터 민원 안내 서비스를 시범 운영하여 대기 시간을 줄임']])))
+    cases['date_already_squeeze'] = one(host(tbl([[tc('2026. 10. 10.', 0, 0, sub_attr=' lineWrap="SQUEEZE"'),
+                                                  tc('2026. 10. 11.', 0, 1, sub_attr=' lineWrap="BREAK"')]])))
+    cases['date_no_sublist'] = one(host(tbl([[tc('x', 0, 0, with_sublist=False), tc('2026. 10. 10.', 0, 1)]])))
+    cases['date_cell_with_nested_table'] = one(host(
+        tbl([[tc('', 0, 0, raw_sub=para('2026. 10. 10.') + para(None, raw=grid([['2026. 10. 11.']]))),
+              tc('2026. 10. 12.', 0, 1)]])))
+    cases['date_in_protected'] = one(host(tbl([[tc('2026. 10. 10.', 0, 0, rspan=2), tc('', 0, 1)], [tc('', 1, 1)]],
+                                             rowcnt=2, colcnt=2), grid([['2026. 10. 10.']])))
+    cases['date_in_format_title'] = one(host(title_table_type1()))
+    cases['date_nested_outer_inner'] = one(host(
+        tbl([[tc('', 0, 0, raw_sub=para(None, raw=grid([['2026. 10. 10.', '구분']]))), tc('2026. 10. 11.', 0, 1)]])))
+    cases['date_multi_paragraph_cell'] = one(host(grid([[['2026. 10. 10.', '(토)'], ['10:00', '2026. 10. 10.', 'x']]])))
+    cases['date_weekday_forms'] = one(host(grid([['10.6.(화)', '2026-10-10', '26/10/10 10:00', '2026.10.10.(토)~11.(일)', '10월 6일(화)']])))
+    cases['date_long_remainder'] = one(host(grid([['2026. 10. 10. 참석자 명단 확인 필요', '2026. 10. 10.']])))
+    cases['no_tables'] = one('<hp:p><hp:run><hp:t>구분</hp:t></hp:run></hp:p>')
+    cases['empty_body'] = one('')
+    # 여러 구역
+    cases['multi_section_ordering'] = hwpx_bytes({
+        'Contents/section0.xml': section(host(grid([['구분', '내용']]))),
+        'Contents/section1.xml': section(host(grid([['2026. 10. 10.']]))),
+        'Contents/section10.xml': section(host(grid([['비고', '확인']]))),
+        'Contents/section2.xml': section('<hp:p/>'),
+        'Contents/sectionX.xml': section(host(grid([['구분', '내용']]))),   # 구역 이름 아님 → 손대지 않음
+    })
+    cases['targets_only_in_second_section'] = hwpx_bytes({
+        'Contents/section0.xml': section(host(grid([['10', 'ab']]))),
+        'Contents/section1.xml': section(host(grid([['구분', '2026. 10. 10.']]))),
+    })
+    cases['no_targets_anywhere_copy'] = one(host(grid([['10', 'ab'], ['text', 'x']])))
+    cases['binary_and_dirs'] = hwpx_bytes({'Contents/section0.xml': section(host(grid([['구분', '내용']])))},
+                                          extra_files={'BinData/image1.png': bytes(range(256)) * 40,
+                                                       'Preview/PrvText.txt': '미리보기'.encode('utf-8')},
+                                          dir_entries=('BinData/',))
+    # XML 표현 차이
+    cases['entities_cdata_attrs'] = one(host(tbl([[tc('', 0, 0, raw_sub=para(None, raw='<hp:t><![CDATA[구분]]></hp:t>')),
+                                                  tc('', 0, 1, raw_sub=para(None, raw='<hp:t>&#xAC00;&#xB098;</hp:t>')),
+                                                  tc('', 0, 2, raw_sub=para(None, raw='<hp:t>a &amp; b &lt; c &gt; d 2026. 10. 10.</hp:t>'))]],
+                                                attrs=' memo="따옴표&quot;와 &amp; 줄바꿈&#10;탭&#9;"')))
+    cases['comments_and_pi'] = one(host('<!-- 주석 -->' + grid([['구분', '<!--x-->내용']]) + '<?pi data?>'),
+                                    extra='<!-- 앞 주석 --><?target value?>')
+    cases['pretty_printed_whitespace'] = one('\n  <hp:p>\n    <hp:run>\n      ' + grid([['구분', '내용']]).replace('><', '>\n      <') + '\n    </hp:run>\n  </hp:p>\n')
+    cases['declaration_standalone'] = one(host(grid([['구분', '내용']])), decl='<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>')
+    cases['bom_utf8_section'] = hwpx_bytes({'Contents/section0.xml': b'\xef\xbb\xbf' + section(host(grid([['구분', '내용']]))).encode('utf-8')})
+    cases['unusual_prefixes'] = hwpx_bytes({'Contents/section0.xml': (
+        '<?xml version="1.0"?><a:sec xmlns:a="http://www.hancom.co.kr/hwpml/2011/section" xmlns:b="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+        '<b:p><b:run><b:tbl rowCnt="1" colCnt="2"><b:tr><b:tc><b:subList><b:p><b:run><b:t>구분</b:t></b:run></b:p></b:subList></b:tc>'
+        '<b:tc><b:subList lineWrap="BREAK"><b:p><b:t>2026. 10. 10.</b:t></b:p></b:subList></b:tc></b:tr></b:tbl></b:run></b:p></a:sec>')})
+    cases['tail_text_in_cells'] = one(host(tbl([[tc('', 0, 0, raw_sub='<hp:p><hp:run><hp:t>구분</hp:t>꼬리</hp:run></hp:p>')]])))
+    cases['rowcnt_missing_attrs'] = one(host('<hp:tbl><hp:tr><hp:tc><hp:subList><hp:p><hp:t>구분</hp:t></hp:p></hp:subList></hp:tc></hp:tr></hp:tbl>'))
+    cases['unicode_whitespace_cells'] = one(host(grid([[' 구분 ', '구분', '구​분', ' 내용 ', '　비고']])))
+    cases['invalid_control_char_rejected'] = one(host(grid([['구분', '내용']])))
+    cases['invalid_char_reference_rejected'] = one(host(grid([['구분&#1;', '내용']])))
+    cases['hangul_boundaries'] = one(host(grid([['가힣', '\uac00\ud7a3', '가', '힣a', 'ㄱㄴ', '漢字', '구분.', '구.분']])))
+    cases['one_two_hangul_in_t_with_extra'] = one(host(tbl([[tc('', 0, 0, raw_sub=para(None, raw=t('구분') + t('   ')))]])))
+    return cases
+
+
+def random_cases(count=12, seed=20261122):
+    rnd = random.Random(seed)
+    pool = ['구분', '내용', '비고', '확인', '10', '1부', '가나다', '', '2026. 10. 10.', '’26. 10. 10.(토)', '10. 6.(화)',
+            '이것은 긴 글입니다 열다섯 글자 이상', '붙임 1', 'Ⅰ.', 'Ⅱ', '→', '담당: 홍길동', '(단위: 개)', ' 구분 ', 'ab']
+
+    def rand_table(depth=0):
+        rows, cols = rnd.randint(1, 3), rnd.randint(1, 4)
+        trs = []
+        for r in range(rows):
+            cells = []
+            for c in range(cols):
+                if depth < 2 and rnd.random() < 0.12:
+                    cells.append(tc('', r, c, raw_sub=para(rnd.choice(pool)) + para(None, raw=rand_table(depth + 1))))
+                else:
+                    cells.append(tc(rnd.choice(pool), r, c, sub_attr=rnd.choice(['', '', ' lineWrap="SQUEEZE"', ' lineWrap="BREAK"'])))
+            trs.append(cells)
+        cap = rnd.choice([None, None, None, '(단위: 건)', '<표 1> 현황'])
+        return tbl(trs, caption=cap, rowcnt=rows, colcnt=cols)
+
+    out = {}
+    for i in range(count):
+        secs = {}
+        for s in range(rnd.randint(1, 3)):
+            secs[f'Contents/section{s}.xml'] = section(host(*[rand_table() for _ in range(rnd.randint(1, 8))]))
+        out[f'random_{i:02d}'] = hwpx_bytes(secs)
+    return out
+
+
+def malicious_cases():
+    """둘 다 거부해야 하는 입력(안전 검사 일치 확인)."""
+    ok_sec = section(host(grid([['구분', '내용']])))
+
+    def make(mutator):
+        bio = io.BytesIO()
+        with zipfile.ZipFile(bio, 'w') as z:
+            mutator(z)
+        return bio.getvalue()
+
+    def base(z, skip=()):
+        if 'header' not in skip:
+            z.writestr('Contents/header.xml', HEADER)
+        if 'section' not in skip:
+            z.writestr('Contents/section0.xml', ok_sec)
+
+    out = {}
+    out['evil_path_traversal'] = make(lambda z: (base(z), z.writestr('../evil.xml', b'x')))
+    out['evil_path_absolute'] = make(lambda z: (base(z), z.writestr('/abs.xml', b'x')))
+    out['evil_path_drive'] = make(lambda z: (base(z), z.writestr('C:/win.xml', b'x')))
+    out['evil_path_backslash_dotdot'] = make(lambda z: (base(z), z.writestr('a\\..\\b.xml', b'x')))
+    out['missing_header'] = make(lambda z: base(z, skip=('header',)))
+    out['missing_section'] = make(lambda z: base(z, skip=('section',)))
+
+    def dup(z):
+        base(z)
+        with __import__('warnings').catch_warnings():
+            __import__('warnings').simplefilter('ignore')
+            z.writestr('Contents/section0.xml', ok_sec)
+    out['duplicate_entry'] = make(dup)
+
+    def symlink(z):
+        base(z)
+        info = zipfile.ZipInfo('link')
+        info.external_attr = (0o120777 << 16)
+        z.writestr(info, 'Contents/header.xml')
+    out['symlink_entry'] = make(symlink)
+
+    def bomb(z):
+        base(z)
+        z.writestr(zipfile.ZipInfo('bomb.bin'), b'\0' * (120 * 1024 * 1024), compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    out['zip_bomb_ratio'] = make(bomb)
+    out['not_a_zip'] = b'this is not a zip file'
+    return out
+
+
+# ---------------------------------------------------------------- 정규화·비교
+
+def _ws_only(s):
+    return s is None or s == '' or s.strip() == ''
+
+
+def norm_tree(el, strict=False):
+    """(확장 이름, 정렬한 속성, 글, 꼬리, 자식들). t 요소 밖 공백뿐인 글/꼬리는 ''로 본다(strict 면 그대로)."""
+    is_t = el.tag.rsplit('}', 1)[-1] == 't'
+
+    def clean(s, keep):
+        if s is None:
+            return ''
+        return s if (strict or keep or not _ws_only(s)) else ''
+    return (el.tag, tuple(sorted(el.attrib.items())), clean(el.text, is_t), clean(el.tail, False),
+            tuple(norm_tree(c, strict) for c in el))
+
+
+def first_diff(a, b, path='/'):
+    if a[0] != b[0]:
+        return f'{path}: 이름 {a[0]!r} != {b[0]!r}'
+    if a[1] != b[1]:
+        return f'{path}{a[0]}: 속성 {a[1]!r} != {b[1]!r}'
+    if a[2] != b[2]:
+        return f'{path}{a[0]}: 글 {a[2]!r} != {b[2]!r}'
+    if a[3] != b[3]:
+        return f'{path}{a[0]}: 꼬리 {a[3]!r} != {b[3]!r}'
+    if len(a[4]) != len(b[4]):
+        return f'{path}{a[0]}: 자식 수 {len(a[4])} != {len(b[4])}'
+    for i, (x, y) in enumerate(zip(a[4], b[4])):
+        d = first_diff(x, y, f'{path}{a[0].rsplit("}", 1)[-1]}[{i}]/')
+        if d:
+            return d
+    return None
+
+
+def read_zip(path):
+    with zipfile.ZipFile(path) as z:
+        return [(i.filename, z.read(i.filename), i.compress_type) for i in z.infolist()]
+
+
+def compare_outputs(py_path, rs_path):
+    """(같은가, 차이 설명 목록, 엄격 비교 차이 수)."""
+    diffs, strict_diffs = [], 0
+    a, b = read_zip(py_path), read_zip(rs_path)
+    if [x[0] for x in a] != [x[0] for x in b]:
+        diffs.append(f'압축 항목 이름·순서 다름: {[x[0] for x in a]} != {[x[0] for x in b]}')
+        return False, diffs, strict_diffs
+    for (name, da, ca), (_, db, cb) in zip(a, b):
+        if name == 'mimetype' and (ca != cb):
+            diffs.append(f'mimetype 압축 방식 다름 {ca} != {cb}')
+        if name.endswith('.xml') and name.startswith('Contents/'):
+            try:
+                ta, tb = ET.fromstring(da), ET.fromstring(db)
+            except Exception as exc:
+                diffs.append(f'{name}: XML 읽기 실패 {exc}')
+                continue
+            na, nb = norm_tree(ta), norm_tree(tb)
+            if na != nb:
+                diffs.append(f'{name}: {first_diff(na, nb)}')
+            elif norm_tree(ta, True) != norm_tree(tb, True):
+                strict_diffs += 1
+        elif da != db:
+            diffs.append(f'{name}: 바이트 다름 ({len(da)} vs {len(db)})')
+    return not diffs, diffs, strict_diffs
+
+
+# ---------------------------------------------------------------- 실행
+
+def find_bin(arg):
+    cands = [arg, os.environ.get('HWPX_FMT_BIN')]
+    tgt = os.environ.get('CARGO_TARGET_DIR')
+    exe = 'hwpx_fmt.exe' if os.name == 'nt' else 'hwpx_fmt'
+    if tgt:
+        cands.append(str(Path(tgt) / 'release' / exe))
+    cands.append(str(ROOT / 'hwpx_fmt' / 'target' / 'release' / exe))
+    for c in cands:
+        if c and Path(c).is_file():
+            return str(Path(c).resolve())
+    return None
+
+
+def sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def load_python_processors():
+    old = sys.stdout
+    sys.stdout = io.StringIO()
+    try:
+        ns = runpy.run_path(str(ROOT / 'hwp-auto-docfit.py'))
+    finally:
+        sys.stdout = old
+    return {k: ns[v] for k, v in PROCESSORS.items()}
+
+
+def run_py(fn, src, dst):
+    """파이썬: (조사 결과, 개수, 오류). 실패하면 dst 가 없어야 한다."""
+    try:
+        old = sys.stdout
+        sys.stdout = io.StringIO()
+        try:
+            sel = fn(str(src))
+            n = fn(str(src), str(dst), selections=sel)
+        finally:
+            sys.stdout = old
+        return sel, n, None
+    except Exception as exc:
+        return None, None, f'{type(exc).__name__}: {exc}'
+
+
+def run_rs(binpath, name, src, dst):
+    s = subprocess.run([binpath, 'survey', name, str(src)], capture_output=True, text=True, encoding='utf-8')
+    if s.returncode != 0:
+        return None, None, s.stderr.strip()
+    sel = json.loads(s.stdout)
+    p = subprocess.run([binpath, name, str(src), str(dst)], capture_output=True, text=True, encoding='utf-8')
+    if p.returncode != 0:
+        return sel, None, p.stderr.strip()
+    return sel, json.loads(p.stdout)['count'], None
+
+
+def build_corpus(work):
+    corpus = {}
+    for name, data in {**synthetic_cases(), **random_cases()}.items():
+        (work / 'in').mkdir(exist_ok=True)
+        p = work / 'in' / f'{name}.hwpx'
+        p.write_bytes(data)
+        corpus[name] = ('synthetic', p)
+    for f in sorted((ROOT / 'tests' / 'fixtures').glob('*.hwpx')):
+        p = work / 'in' / f'fixture_{f.stem}.hwpx'
+        shutil.copyfile(f, p)
+        corpus[f'fixture_{f.stem}'] = ('fixture', p)
+    for name, data in malicious_cases().items():
+        p = work / 'in' / f'mal_{name}.hwpx'
+        p.write_bytes(data)
+        corpus[f'mal_{name}'] = ('malicious', p)
+    return corpus
+
+
+def run_parity(binpath, work, procs):
+    corpus = build_corpus(work)
+    results, failures = [], 0
+    for name, (kind, src) in corpus.items():
+        before = sha(src)
+        for pname, fn in procs.items():
+            out_py, out_rs = work / 'out' / f'{name}.{pname}.py.hwpx', work / 'out' / f'{name}.{pname}.rs.hwpx'
+            out_py.parent.mkdir(exist_ok=True)
+            psel, pn, perr = run_py(fn, src, out_py)
+            rsel, rn, rerr = run_rs(binpath, pname, src, out_rs)
+            rec = {'doc': name, 'kind': kind, 'processor': pname, 'py_count': pn, 'rs_count': rn,
+                   'py_error': perr, 'rs_error': rerr, 'ok': True, 'diffs': [], 'strict_noise': 0}
+            if perr or rerr:
+                # 둘 다 거부해야 같다. 한쪽만 실패하거나, 실패했는데 출력 파일이 남으면 차이.
+                if not (perr and rerr):
+                    rec['ok'] = False
+                    rec['diffs'].append(f'한쪽만 실패: 파이썬={perr!r} Rust={rerr!r}')
+                if perr and out_py.exists():
+                    rec['ok'] = False
+                    rec['diffs'].append('파이썬이 실패했는데 출력 파일이 남음')
+                if rerr and out_rs.exists():
+                    rec['ok'] = False
+                    rec['diffs'].append('Rust 가 실패했는데 출력 파일이 남음')
+            else:
+                if psel != rsel:
+                    rec['ok'] = False
+                    rec['diffs'].append(f'조사 결과 다름: 파이썬={psel} Rust={rsel}')
+                if pn != rn:
+                    rec['ok'] = False
+                    rec['diffs'].append(f'바꾼 개수 다름: 파이썬={pn} Rust={rn}')
+                same, diffs, noise = compare_outputs(out_py, out_rs)
+                rec['strict_noise'] = noise
+                if not same:
+                    rec['ok'] = False
+                    rec['diffs'].extend(diffs)
+                if all(not v for v in psel.values()) and out_rs.read_bytes() != src.read_bytes():
+                    rec['ok'] = False
+                    rec['diffs'].append('대상이 없는데 출력이 입력과 바이트 단위로 다름(복사해야 함)')
+            if sha(src) != before:
+                rec['ok'] = False
+                rec['diffs'].append('입력 원본이 바뀜')
+            if not rec['ok']:
+                failures += 1
+            results.append(rec)
+    return results, failures
+
+
+def large_doc(tables=500):
+    body = []
+    for i in range(tables):
+        body.append(grid([['구분', '내용', '비고'], ['2026. 10. 10.', '10', f'항목{i}'], ['확인', 'ab', '’26. 10. 11.(일)']]))
+    return one(host(*body))
+
+
+def bench(binpath, work, procs):
+    src = work / 'large.hwpx'
+    src.write_bytes(large_doc(500))
+    out = {}
+    for pname, fn in procs.items():
+        dp, dr = work / f'bench.{pname}.py.hwpx', work / f'bench.{pname}.rs.hwpx'
+        t0 = time.perf_counter()
+        sel = fn(str(src))
+        n = fn(str(src), str(dp), selections=sel)
+        t_py = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        r = subprocess.run([binpath, pname, str(src), str(dr)], capture_output=True, text=True, encoding='utf-8')
+        t_rs = time.perf_counter() - t0
+        same, diffs, _ = compare_outputs(dp, dr)
+        out[pname] = {'tables': 500, 'py_seconds': round(t_py, 3), 'rs_seconds': round(t_rs, 3),
+                      'speedup': round(t_py / t_rs, 1) if t_rs else None, 'py_count': n,
+                      'rs_count': json.loads(r.stdout)['count'] if r.returncode == 0 else None, 'identical': same}
+    return out
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--bin')
+    ap.add_argument('--json')
+    ap.add_argument('--bench', action='store_true')
+    ap.add_argument('--keep')
+    args = ap.parse_args(argv)
+    binpath = find_bin(args.bin)
+    if not binpath:
+        print('hwpx_fmt 바이너리를 찾지 못했습니다(--bin 또는 HWPX_FMT_BIN).', file=sys.stderr)
+        return 3
+    work = Path(args.keep) if args.keep else Path(tempfile.mkdtemp(prefix='rsxml_parity_'))
+    work.mkdir(parents=True, exist_ok=True)
+    procs = load_python_processors()
+    results, failures = run_parity(binpath, work, procs)
+    docs = {r['doc'] for r in results}
+    failed_docs = {r['doc'] for r in results if not r['ok']}
+    changed = sum(1 for r in results if r['py_count'])
+    summary = {'docs': len(docs), 'doc_processor_pairs': len(results), 'passed_pairs': len(results) - failures,
+               'failed_pairs': failures, 'passed_docs': len(docs) - len(failed_docs), 'failed_docs': len(failed_docs),
+               'pairs_with_changes': changed, 'strict_whitespace_noise_pairs': sum(1 for r in results if r['strict_noise']),
+               'both_rejected_pairs': sum(1 for r in results if r['py_error'] and r['rs_error'])}
+    print(json.dumps(summary, ensure_ascii=False))
+    for r in results:
+        if not r['ok']:
+            print(f"차이: {r['doc']} [{r['processor']}]")
+            for d in r['diffs']:
+                print('   ', d)
+    report = {'summary': summary, 'results': results}
+    if args.bench:
+        report['bench'] = bench(binpath, work, procs)
+        print(json.dumps(report['bench'], ensure_ascii=False))
+    if args.json:
+        Path(args.json).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding='utf-8')
+    if not args.keep:
+        shutil.rmtree(work, ignore_errors=True)
+    return 1 if failures else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
