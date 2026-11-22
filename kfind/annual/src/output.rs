@@ -312,6 +312,83 @@ pub fn monthly_documents_svg(input: &AnnualInput) -> String {
     svg
 }
 
+/// Render total document counts for ISO week numbers 1 through 53 as an SVG bar chart.
+/// Counts for the same week number are added across ISO years.
+pub fn weekly_documents_svg(input: &AnnualInput) -> String {
+    const W: u32 = 900;
+    const H: u32 = 380;
+    const LEFT: u32 = 54;
+    const RIGHT: u32 = 20;
+    const TOP: u32 = 58;
+    const BOTTOM: u32 = 318;
+    const PLOT_W: u32 = W - LEFT - RIGHT;
+    const PLOT_H: u32 = BOTTOM - TOP;
+
+    let mut svg = svg_start(
+        "주차별 문서 수",
+        "ISO 1주차부터 53주차까지 주차별 문서 작업량 추이",
+        W,
+        H,
+    );
+    svg.push_str(&format!("<text x=\"{}\" y=\"28\" text-anchor=\"middle\" font-size=\"18\">주차별 문서 수</text>", W / 2));
+
+    let mut values = [0u64; 53];
+    if let Some(report) = &input.report {
+        for weeks in report.stats.topic_by_iso_week.values() {
+            for (&(_, week), &count) in weeks {
+                if (1..=53).contains(&week) {
+                    let total = &mut values[(week - 1) as usize];
+                    *total = total.saturating_add(u64::from(count));
+                }
+            }
+        }
+    }
+    let max = values.iter().copied().max().unwrap_or(0);
+    let scale_max = max.max(1);
+
+    // 0, 중간값, 최댓값 눈금과 수평 격자로 값이 0인 입력에서도 축을 표시한다.
+    let mut ticks = vec![0, scale_max / 2, scale_max];
+    ticks.sort_unstable();
+    ticks.dedup();
+    for tick in ticks {
+        let y = BOTTOM - ((u128::from(tick) * u128::from(PLOT_H)) / u128::from(scale_max)) as u32;
+        svg.push_str(&format!(
+            "<line x1=\"{LEFT}\" y1=\"{y}\" x2=\"{}\" y2=\"{y}\" stroke=\"{}\"/><text x=\"{}\" y=\"{}\" text-anchor=\"end\" font-size=\"10\">{tick}</text>",
+            LEFT + PLOT_W,
+            chart_colors::GRID,
+            LEFT - 8,
+            y + 4,
+        ));
+    }
+
+    let slot = f64::from(PLOT_W) / 53.0;
+    let bar_width = (slot * 0.62).floor().max(1.0) as u32;
+    for (index, &value) in values.iter().enumerate() {
+        let x = LEFT + (slot * index as f64).round() as u32;
+        let bar_height = ((u128::from(value) * u128::from(PLOT_H)) / u128::from(scale_max)) as u32;
+        let y = BOTTOM - bar_height;
+        svg.push_str(&format!(
+            "<rect x=\"{}\" y=\"{y}\" width=\"{bar_width}\" height=\"{bar_height}\" fill=\"{}\"><title>{}주차: {value}건</title></rect>",
+            x + (slot.floor() as u32).saturating_sub(bar_width) / 2,
+            chart_colors::BAR,
+            index + 1,
+        ));
+    }
+    // 53개 라벨이 겹치지 않도록 4주 간격으로 표시하고 마지막 53주차도 보인다.
+    for week in (1..=53).filter(|&week| week == 1 || (week - 1) % 4 == 0 || week == 53) {
+        let index = week - 1;
+        let x = LEFT + (slot * index as f64).round() as u32 + (slot / 2.0).round() as u32;
+        svg.push_str(&format!(
+            "<text x=\"{x}\" y=\"340\" text-anchor=\"middle\" font-size=\"10\">{week}주</text>"
+        ));
+    }
+    svg.push_str(&format!(
+        "<line x1=\"{LEFT}\" y1=\"{BOTTOM}\" x2=\"{}\" y2=\"{BOTTOM}\" stroke=\"#667085\"/><line x1=\"{LEFT}\" y1=\"{TOP}\" x2=\"{LEFT}\" y2=\"{BOTTOM}\" stroke=\"#667085\"/></g></svg>",
+        LEFT + PLOT_W,
+    ));
+    svg
+}
+
 /// Render each ISO year-week and weekday count as a labeled heatmap cell.
 pub fn weekday_heatmap_svg(input: &AnnualInput) -> String {
     const W: u32 = 760;
@@ -649,6 +726,7 @@ pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Resul
     fs::write(folder.join("인수인계_연보.md"), render_markdown(input))?;
     write_report_json(folder.join("보고서_데이터.json"), input)?;
     write_svg(folder.join("월별_문서수.svg"), &monthly_documents_svg(input))?;
+    write_svg(folder.join("주차별_문서수.svg"), &weekly_documents_svg(input))?;
     write_svg(folder.join("주차_요일_열지도.svg"), &weekday_heatmap_svg(input))?;
     write_svg(folder.join("주제별_월_타임라인.svg"), &topic_timeline_svg(input))?;
     for (name, csv) in [
@@ -873,7 +951,7 @@ mod tests {
     #[test]
     fn chart_svgs_are_balanced_and_empty_input_is_valid() {
         let input = AnnualInput::default();
-        for svg in [monthly_documents_svg(&input), weekday_heatmap_svg(&input), topic_timeline_svg(&input)] {
+        for svg in [monthly_documents_svg(&input), weekly_documents_svg(&input), weekday_heatmap_svg(&input), topic_timeline_svg(&input)] {
             assert!(svg.starts_with("<svg "));
             assert!(svg.contains("<title") && svg.contains("<desc"));
             assert_well_formed_svg(&svg);
@@ -899,6 +977,46 @@ mod tests {
         let heatmap = weekday_heatmap_svg(&input);
         assert!(heatmap.contains("2020-W53"));
         assert_well_formed_svg(&heatmap);
+    }
+
+    #[test]
+    fn weekly_chart_sums_iso_years_scales_and_shows_sparse_labels() {
+        let mut input = sample();
+        let weeks = &mut input.report.as_mut().unwrap().stats.topic_by_iso_week;
+        weeks.insert(0, [((2025, 1), 2), ((2026, 1), 3), ((2026, 53), 10)].into());
+        weeks.insert(1, [((2026, 53), 10)].into());
+        let svg = weekly_documents_svg(&input);
+
+        assert!(svg.contains("1주차부터 53주차"));
+        assert!(svg.contains("1주: 5건"));
+        assert!(svg.contains("53주: 20건"));
+        assert!(svg.contains("width=\"9\" height=\"260\""));
+        assert!(svg.contains(">1주</text>") && svg.contains(">53주</text>"));
+        assert!(!svg.contains(">2주</text>") && !svg.contains(">3주</text>"));
+        assert_well_formed_svg(&svg);
+    }
+
+    #[test]
+    fn weekly_chart_with_all_zero_counts_keeps_axes_and_valid_svg() {
+        let mut input = sample();
+        input.report.as_mut().unwrap().stats.topic_by_iso_week.insert(
+            0,
+            [((2026, 1), 0), ((2026, 53), 0)].into(),
+        );
+        let svg = weekly_documents_svg(&input);
+        assert!(svg.contains("<text x=\"46\"")); // y축 눈금
+        assert!(svg.contains("x1=\"54\" y1=\"318\"")); // x축
+        assert!(svg.contains("height=\"0\""));
+        assert_well_formed_svg(&svg);
+    }
+
+    #[test]
+    fn weekly_chart_output_file_is_written() {
+        let d = tempfile::tempdir().unwrap();
+        write_outputs(&sample(), d.path()).unwrap();
+        let svg = fs::read_to_string(d.path().join("주차별_문서수.svg")).unwrap();
+        assert!(svg.starts_with("<svg "));
+        assert_well_formed_svg(&svg);
     }
 
     #[test]
