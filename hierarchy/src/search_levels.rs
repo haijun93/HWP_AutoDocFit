@@ -165,6 +165,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
         .unwrap_or("")
         .to_lowercase();
     let plain = matches!(ext.as_str(), "txt" | "md");
+    let text_hierarchy = plain || matches!(ext.as_str(), "hwpx" | "hwp");
     let mut labels = HashMap::new();
     let texts: Vec<String> = paragraphs
         .iter()
@@ -218,7 +219,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
     let first = heads.iter().position(|h| *h == Some(1));
     let mut candidates = HashMap::new();
     let mut groups: Vec<(String, Vec<(usize, u32)>)> = Vec::new();
-    if plain
+    if text_hierarchy
         && !heads
             .iter()
             .enumerate()
@@ -392,7 +393,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
                 && string(p, "style_name").is_empty()
                 && outline.is_none()
             {
-                if (confirmed_chapters || ext == "hwpx" || hierarchy_table(p))
+                if (confirmed_chapters || matches!(ext.as_str(), "hwpx" | "hwp") || hierarchy_table(p))
                     && chapter(s).unwrap().1
                 {
                     "chapter"
@@ -402,7 +403,7 @@ pub fn classify(paragraphs: &[Value]) -> Vec<String> {
             } else {
                 let classified = classify_marker(s);
                 let family = classified.as_ref().map(|v| v.0.as_str()).unwrap_or("");
-                if plain && matches!(family, "Ⅰ." | "I." | "1." | "가.") {
+                if text_hierarchy && matches!(family, "Ⅰ." | "I." | "1." | "가.") {
                     if s.chars().count() <= 60 {
                         *plain_levels
                             .get(if family == "I." { "Ⅰ." } else { family })
@@ -587,6 +588,60 @@ mod tests {
             json!({"text":"본문에서 제1장에 명시된 바와 같이","source_path":"synthetic.hwpx"}),
         ];
         assert_eq!(classify(&p), ["chapter", "body"]);
+    }
+    #[test]
+    fn hwp_and_hwpx_use_the_same_text_hierarchy_without_duplicate_table_rows() {
+        let texts = [
+            "제1장 총칙",
+            "제2장 적용",
+            "1. 적용 범위",
+            "2. 시행 방법",
+            "가. 대상",
+            "나. 처리 절차",
+            "□ 확인 사항",
+            "ㅇ 안내 사항",
+            "- 유의 사항",
+            "* 참고 사항",
+            "일반 본문 문단",
+        ];
+        let mut hwp: Vec<_> = texts
+            .iter()
+            .map(|text| json!({"text":text,"source_path":"synthetic.hwp"}))
+            .collect();
+        hwp.push(json!({"text":"2. 표 셀 번호","source_path":"synthetic.hwp","is_table_cell":true}));
+        hwp.push(json!({"text":"□ 글상자 항목","source_path":"synthetic.hwp"}));
+        hwp.push(json!({"text":"일반 본문 문단","source_path":"synthetic.hwp"}));
+        let hwpx: Vec<_> = hwp
+            .iter()
+            .map(|p| {
+                let mut p = p.clone();
+                p["source_path"] = json!("synthetic.hwpx");
+                p
+            })
+            .collect();
+
+        let hwp_levels = classify(&hwp);
+        let hwpx_levels = classify(&hwpx);
+        assert_eq!(hwp_levels, hwpx_levels);
+        assert_eq!(
+            hwp_levels,
+            [
+                "chapter",
+                "chapter",
+                "section",
+                "section",
+                "topic",
+                "topic",
+                "square",
+                "circle",
+                "dash",
+                "asterisk",
+                "body",
+                "table_cell",
+                "square",
+                "body",
+            ]
+        );
     }
     #[test]
     fn title_cell_letters_follow_python_isalpha() {

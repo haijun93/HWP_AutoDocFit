@@ -3,8 +3,10 @@ import unittest
 import time
 import sqlite3
 import os
+import json
 from pathlib import Path
 from zipfile import ZipFile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from docfit_core.timemachine.content_search import (
@@ -813,6 +815,65 @@ class ContentSearchTests(unittest.TestCase):
         found = self.index.search("단일표문단검색")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0]["total_matches"], len(records))
+
+    def test_synthetic_klib_hwp_paragraphs_are_classified_once_like_hwpx(self):
+        paragraphs = [
+            {"text": "제1장 총칙", "location_kind": "paragraph"},
+            {"text": "제2장 적용", "location_kind": "paragraph"},
+            {"text": "1. 적용 범위", "location_kind": "paragraph"},
+            {"text": "2. 시행 방법", "location_kind": "paragraph"},
+            {"text": "가. 대상", "location_kind": "paragraph"},
+            {"text": "나. 처리 절차", "location_kind": "paragraph"},
+            {"text": "□ 확인 사항", "location_kind": "paragraph"},
+            {"text": "ㅇ 안내 사항", "location_kind": "paragraph"},
+            {"text": "- 유의 사항", "location_kind": "paragraph"},
+            {"text": "* 참고 사항", "location_kind": "paragraph"},
+            {"text": "단일집계확인XYZ", "location_kind": "paragraph"},
+            {"text": "2. 표 셀 번호", "location_kind": "table_cell", "is_table_cell": True},
+            {"text": "□ 글상자 항목", "location_kind": "textbox"},
+            {"text": "일반 본문 문단", "location_kind": "paragraph"},
+        ]
+        hwp = self.root / "synthetic.hwp"
+        hwp.write_bytes(b"synthetic only")
+        payload = json.dumps({"paragraphs": paragraphs}, ensure_ascii=False).encode("utf-8")
+        completed = SimpleNamespace(returncode=0, stdout=payload)
+        with patch("docfit_core.timemachine.extractors_hwp._klib_executable", return_value=Path("klib.exe")), \
+                patch("docfit_core.timemachine.extractors_hwp.subprocess.run", return_value=completed), \
+                patch("docfit_app.hierarchy_bridge.analyze_levels", return_value=None), \
+                patch("docfit_app.hierarchy_bridge.search_levels", return_value=None):
+            from docfit_core.timemachine.extractors_hwp import extract_hwp
+
+            raw_hwp_records = extract_hwp(hwp)
+            hwp_records = extract_paragraphs(hwp)
+            self.index.index_file(hwp)
+
+        hwpx = self.root / "synthetic.hwpx"
+        write_hwpx_paragraphs(hwpx, [
+            {"text": item["text"], "is_table_cell": item.get("is_table_cell", False)}
+            for item in paragraphs
+        ])
+        hwpx_records = extract_paragraphs(hwpx)
+
+        self.assertEqual(len(hwp_records), len(paragraphs))
+        self.assertEqual([p.text for p in hwp_records], [p.text for p in hwpx_records])
+        self.assertEqual([p.level for p in hwp_records], [p.level for p in hwpx_records])
+        self.assertEqual(
+            [p.level for p in hwp_records],
+            ["chapter", "chapter", "section", "section", "topic", "topic",
+             "square", "circle", "dash", "asterisk", "body", "table_cell", "square", "body"],
+        )
+        self.assertEqual(hwp_records[0].level, "chapter")
+        self.assertEqual(hwp_records[1].level, "chapter")
+        self.assertEqual(hwp_records[2].level, "section")
+        self.assertEqual(hwp_records[4].level, "topic")
+        self.assertEqual(hwp_records[10].level, "body")
+        self.assertEqual(hwp_records[11].level, "table_cell")
+        self.assertTrue(hwp_records[11].is_table_cell)
+        self.assertEqual(raw_hwp_records[12].section, "글상자")
+
+        found = self.index.search("단일집계확인XYZ")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["total_matches"], 1)
 
     def test_hierarchy_order_same_level_same_mentions_newer_document_first(self):
         p_old = self.root / "z_older.txt"

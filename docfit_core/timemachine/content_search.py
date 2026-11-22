@@ -189,7 +189,7 @@ def _sort_hierarchy_results(items: list[dict], *, sort: str) -> None:
 
 
 def _plain_numbered_levels(paragraphs):
-    """TXT/MD 번호 계열의 연속성과 첫 등장 순서를 확인한다."""
+    """텍스트 기반 문서의 번호 계열 연속성과 첫 등장 순서를 확인한다."""
     from ..marker_scheme import classify_marker, _ordinal
 
     # Markdown 제목이 위계를 명시한 문서의 번호 목록은 본문으로 유지한다.
@@ -226,8 +226,8 @@ def _plain_numbered_levels(paragraphs):
 
 
 def _plain_chapter_levels(path, paragraphs):
-    """표시 없는 TXT/MD 장 제목은 짧은 연속 번호 두 개 이상을 근거로 삼는다."""
-    if Path(path).suffix.lower() not in {".txt", ".md", ".pdf", ".hwpx"}:
+    """서식 없는 문서의 제N장 표기를 텍스트 문단만으로 판정한다."""
+    if Path(path).suffix.lower() not in {".txt", ".md", ".pdf", ".hwpx", ".hwp"}:
         return {}
     candidates = {}
     for position, paragraph in enumerate(paragraphs):
@@ -242,9 +242,9 @@ def _plain_chapter_levels(path, paragraphs):
             candidates[position] = number
     numbers = [number for number in candidates.values() if number is not None]
     confirmed = any(b == a + 1 for a, b in zip(numbers, numbers[1:]))
-    hwpx_chapter = Path(path).suffix.lower() == ".hwpx"
+    self_describing_hwp = Path(path).suffix.lower() in {".hwpx", ".hwp"}
     return {position: "chapter" if number is not None and
-            (confirmed or hwpx_chapter or _hierarchy_table(paragraphs[position])) else "body"
+            (confirmed or self_describing_hwp or _hierarchy_table(paragraphs[position])) else "body"
             for position, number in candidates.items()}
 
 
@@ -342,7 +342,7 @@ def classify_paragraph_levels(path: str | os.PathLike[str], paragraphs: list[Par
     # 표의 구분 기호가 본문 기호 체계의 증거로 섞이지 않게 한다.
     texts = [p.text if i not in markdown_table_rows else "" for i, p in enumerate(paragraphs)]
     plain_levels = (_plain_numbered_levels(paragraphs)
-                    if Path(path).suffix.lower() in {".txt", ".md", ".pdf"} else None)
+                    if Path(path).suffix.lower() in {".txt", ".md", ".pdf", ".hwpx", ".hwp"} else None)
     scheme = detect_scheme(texts)
     numbered_levels = {family: _NUMBERED_FAMILY_LEVELS[family]
                        for family in scheme.family_levels if family in _NUMBERED_FAMILY_LEVELS}
