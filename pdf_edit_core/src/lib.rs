@@ -1,4 +1,6 @@
 //! Offline PDF page editing with no-clobber output publication.
+pub mod pdf_classify;
+pub mod pipeline;
 use lopdf::{dictionary, Document, Object, ObjectId};
 use std::{
     collections::HashSet,
@@ -28,7 +30,10 @@ fn load(path: &Path) -> Result<Document> {
     if path.metadata()?.len() > 1024 * 1024 * 1024 {
         return Err(invalid("PDF exceeds 1 GB"));
     }
-    let doc = Document::load(path)?;
+    validate_doc(Document::load(path)?)
+}
+/// 편집 가능한 문서인지(암호화·서명·쪽수) 검사하고 그대로 돌려준다.
+fn validate_doc(doc: Document) -> Result<Document> {
     if doc.is_encrypted() {
         return Err(invalid(
             "Encrypted PDFs require protection-preserving editing",
@@ -135,11 +140,13 @@ pub fn page_count(path: impl AsRef<Path>) -> Result<usize> {
 pub struct PageInfo { pub number: usize, pub width: f64, pub height: f64, pub rotation: i64 }
 /// Read page dimensions (in PDF points) and effective rotation without modifying the source.
 pub fn page_info(path: impl AsRef<Path>) -> Result<Vec<PageInfo>> {
-    let doc = load(path.as_ref())?;
+    page_info_of(&load(path.as_ref())?)
+}
+fn page_info_of(doc: &Document) -> Result<Vec<PageInfo>> {
     let mut result = Vec::new();
     for (number, id) in doc.get_pages() {
-        let box_value = inherited(&doc, id, b"MediaBox")?
-            .or(inherited(&doc, id, b"CropBox")?)
+        let box_value = inherited(doc, id, b"MediaBox")?
+            .or(inherited(doc, id, b"CropBox")?)
             .ok_or_else(|| invalid("Page has no MediaBox"))?;
         let values = box_value.as_array().map_err(|_| invalid("Invalid page box"))?;
         if values.len() != 4 { return Err(invalid("Invalid page box")); }
@@ -147,7 +154,7 @@ pub fn page_info(path: impl AsRef<Path>) -> Result<Vec<PageInfo>> {
         let y0 = values[1].as_float().or_else(|_| values[1].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
         let x1 = values[2].as_float().or_else(|_| values[2].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
         let y1 = values[3].as_float().or_else(|_| values[3].as_i64().map(|v| v as f32)).map_err(|_| invalid("Invalid page box"))? as f64;
-        let rotation = inherited(&doc, id, b"Rotate")?.map(|v| v.as_i64().map_err(|_| invalid("Invalid page rotation"))).transpose()?.unwrap_or(0).rem_euclid(360);
+        let rotation = inherited(doc, id, b"Rotate")?.map(|v| v.as_i64().map_err(|_| invalid("Invalid page rotation"))).transpose()?.unwrap_or(0).rem_euclid(360);
         let (width, height) = ((x1-x0).abs(), (y1-y0).abs());
         let (width, height) = if rotation % 180 == 90 {(height,width)} else {(width,height)};
         if !width.is_finite() || !height.is_finite() || width <= 0.0 || height <= 0.0 { return Err(invalid("Invalid page dimensions")); }
@@ -161,6 +168,15 @@ pub fn reorder(input: impl AsRef<Path>, output: impl AsRef<Path>, order: &[usize
     select(&mut doc, order)?;
     save(&mut doc, output.as_ref(), order.len())
 }
+fn delete_doc(doc: &mut Document, remove: &[usize]) -> Result<usize> {
+    let n = doc.get_pages().len();
+    if remove.is_empty() || remove.iter().any(|p| *p == 0 || *p > n) {
+        return Err(invalid("Invalid deletion selection"));
+    }
+    let keep = (1..=n).filter(|p| !remove.contains(p)).collect::<Vec<_>>();
+    select(doc, &keep)?;
+    Ok(keep.len())
+}
 pub fn delete_pages(
     input: impl AsRef<Path>,
     output: impl AsRef<Path>,
@@ -168,13 +184,36 @@ pub fn delete_pages(
 ) -> Result<()> {
     validate_output(output.as_ref())?;
     let mut doc = load(input.as_ref())?;
-    let n = doc.get_pages().len();
-    if remove.is_empty() || remove.iter().any(|p| *p == 0 || *p > n) {
-        return Err(invalid("Invalid deletion selection"));
+    let kept = delete_doc(&mut doc, remove)?;
+    save(&mut doc, output.as_ref(), kept)
+}
+fn rotate_doc(doc: &mut Document, pages: &[usize], degrees: i64) -> Result<()> {
+    let ids = doc.get_pages();
+    if pages.is_empty() || degrees % 90 != 0 {
+        return Err(invalid("Select pages and a multiple of 90 degrees"));
     }
-    let keep = (1..=n).filter(|p| !remove.contains(p)).collect::<Vec<_>>();
-    select(&mut doc, &keep)?;
-    save(&mut doc, output.as_ref(), keep.len())
+    let mut seen = HashSet::new();
+    // 1단계: 전부 검증하고 새 각도를 계산(실패 시 문서는 변하지 않는다).
+    let mut updates = Vec::with_capacity(pages.len());
+    for n in pages {
+        if *n == 0 || *n > ids.len() || !seen.insert(*n) {
+            return Err(invalid("Invalid or duplicate page"));
+        }
+        let id = ids[&(*n as u32)];
+        let old = inherited(doc, id, b"Rotate")?
+            .map(|v| v.as_i64())
+            .transpose()?
+            .unwrap_or(0);
+        updates.push((
+            id,
+            (old.rem_euclid(360) + degrees.rem_euclid(360)).rem_euclid(360),
+        ));
+    }
+    // 2단계: 적용.
+    for (id, angle) in updates {
+        doc.get_object_mut(id)?.as_dict_mut()?.set("Rotate", angle);
+    }
+    Ok(())
 }
 pub fn rotate_pages(
     input: impl AsRef<Path>,
@@ -184,26 +223,9 @@ pub fn rotate_pages(
 ) -> Result<()> {
     validate_output(output.as_ref())?;
     let mut doc = load(input.as_ref())?;
-    let ids = doc.get_pages();
-    if pages.is_empty() || degrees % 90 != 0 {
-        return Err(invalid("Select pages and a multiple of 90 degrees"));
-    }
-    let mut seen = HashSet::new();
-    for n in pages {
-        if *n == 0 || *n > ids.len() || !seen.insert(*n) {
-            return Err(invalid("Invalid or duplicate page"));
-        }
-        let id = ids[&(*n as u32)];
-        let old = inherited(&doc, id, b"Rotate")?
-            .map(|v| v.as_i64())
-            .transpose()?
-            .unwrap_or(0);
-        doc.get_object_mut(id)?.as_dict_mut()?.set(
-            "Rotate",
-            (old.rem_euclid(360) + degrees.rem_euclid(360)).rem_euclid(360),
-        );
-    }
-    save(&mut doc, output.as_ref(), ids.len())
+    let count = doc.get_pages().len();
+    rotate_doc(&mut doc, pages, degrees)?;
+    save(&mut doc, output.as_ref(), count)
 }
 pub fn split(
     input: impl AsRef<Path>,
