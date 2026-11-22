@@ -173,7 +173,7 @@ impl Doc {
                         esc_attr(v, &mut out);
                         out.push('"');
                     }
-                    if n.children.is_empty() && n.text.is_none() {
+                    if n.children.is_empty() && n.text.as_deref().map_or(true, str::is_empty) {
                         out.push_str(" />");
                         if let Some(t) = &n.tail { esc_text(t, &mut out); }
                     } else {
@@ -242,5 +242,43 @@ impl Doc {
 
     pub fn append_child(&mut self, parent: usize, child: usize) {
         self.nodes[parent].children.push(child);
+    }
+
+    /// 새 요소(글·꼬리 없음, 자식 없음)를 배열 끝에 만든다. XML_요소_생성 과 같다.
+    pub fn new_elem(&mut self, qname: &str, attrs: Vec<(String, String)>) -> usize {
+        let id = self.nodes.len();
+        self.nodes.push(Node { qname: qname.to_string(), local: local_of(qname), attrs, text: None, tail: None, children: vec![], end: id + 1 });
+        id
+    }
+
+    /// root 아래 모든 요소(자기 포함)를 자식 목록으로 선행 순회한다. 수정 뒤에도 맞다(iter() 구간은 수정 뒤 틀릴 수 있다).
+    pub fn walk(&self, root: usize) -> Vec<usize> {
+        let mut out = vec![];
+        let mut stack = vec![root];
+        while let Some(i) = stack.pop() {
+            out.push(i);
+            for &c in self.nodes[i].children.iter().rev() {
+                stack.push(c);
+            }
+        }
+        out
+    }
+
+    /// 다른 문서의 트리를 통째로 복사해 붙인다(새 뿌리 번호를 돌려준다; 뿌리의 꼬리 글은 없다).
+    pub fn graft(&mut self, other: &Doc) -> usize {
+        let base = self.nodes.len();
+        for n in &other.nodes {
+            let mut m = n.clone();
+            m.children = m.children.iter().map(|c| c + base).collect();
+            m.end += base;
+            self.nodes.push(m);
+        }
+        self.nodes[base].tail = None;
+        base
+    }
+
+    /// 요소의 자식 중 위치(ElementTree list(parent).index(child)).
+    pub fn index_of(&self, parent: usize, child: usize) -> Option<usize> {
+        self.nodes[parent].children.iter().position(|&c| c == child)
     }
 }

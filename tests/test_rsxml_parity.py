@@ -1,4 +1,4 @@
-"""RSXML1·RSXML2: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
+"""RSXML1·RSXML2·RSXML3: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
 
 Rust 바이너리가 없으면 건너뛴다(--bin/HWPX_FMT_BIN/CARGO_TARGET_DIR/release/hwpx_fmt). 한/글 COM 은 쓰지 않는다.
 """
@@ -80,6 +80,84 @@ class CorpusTest(unittest.TestCase):
         self.assertEqual(fn.__globals__['표준서식_설정'], {'keep': 1})
         self.assertEqual(fn.__globals__['제목_담당자_글'], 'x')
         del fn.__globals__['표준서식_설정'], fn.__globals__['제목_담당자_글']
+
+
+class Rsxml3CorpusTest(unittest.TestCase):
+    NEW = ('asterisk_superscript', 'attachment_font', 'colon_label', 'blank_lines', 'emphasis')
+
+    @classmethod
+    def setUpClass(cls):
+        parity.load_python_processors()   # 학습 함수(서식표_종류판별 등) 이름공간 준비
+        import rsxml3_cases
+        cls.mod = rsxml3_cases
+        cls.cases = rsxml3_cases.build(parity, parity.PY_NS)
+
+    def test_each_new_processor_has_30_plus_valid_synthetic_documents(self):
+        import io
+        import zipfile
+        for name in self.NEW:
+            n = sum(1 for _, jobs in self.cases.values() if any(j[0] == name for j in jobs))
+            self.assertGreaterEqual(n, 30, name)
+        for cname, (data, jobs) in self.cases.items():
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                self.assertIn('Contents/header.xml', z.namelist(), cname)
+            for _, cfg in jobs:
+                self.assertTrue(cfg is None or isinstance(cfg, dict) or cfg in self.mod.CONFIGS, cname)
+
+    def test_learned_profiles_come_from_python_learners(self):
+        # 프로필은 손으로 쓴 값이 아니라 파이썬 학습 함수가 만든 것이어야 한다(슬롯·강조 항목이 실제로 있다).
+        blank = [jobs[0][1]['blank_line_profile'] for n, (_, jobs) in self.cases.items() if n.startswith('blk_example_')]
+        self.assertEqual(len(blank), 4)
+        self.assertTrue(all(p.get('slots') for p in blank))
+        emp = self.cases['emp_example'][1][0][1]['emphasis_words']
+        self.assertTrue(any(e.get('bold') for e in emp) and any(e.get('kind') == 'color' for e in emp))
+
+    def test_python_settings_cover_new_keys_and_restore(self):
+        def fn():
+            pass
+        before = dict(fn.__globals__)
+        restore = parity.apply_py_settings(fn, {'std_symbols': False, 'symbol_rules': [['ㅇ', 0, '글꼴', 12]], 'colon_label_enabled': False,
+                                                'ratio_reduce': True, 'blank_line_profile': {'slots': {'a': 1}}, 'emphasis_words': [{'x': 1}]})
+        g = fn.__globals__
+        self.assertEqual(g['표준서식_설정'], {'기호_규칙': [['ㅇ', 0, '글꼴', 12]], '빈줄_서식': {'slots': {'a': 1}}, '강조_낱말': [{'x': 1}]})
+        self.assertEqual((g['표준서식_기호_사용'], g['알파_콜론라벨_정렬_사용'], g['장평_줄이기_사용']), (False, False, True))
+        restore()
+        for k in ('표준서식_설정', '표준서식_기호_사용', '알파_콜론라벨_정렬_사용', '장평_줄이기_사용', '제목_담당자_글', '활성_항목기호_체계'):
+            self.assertEqual(g.get(k), before.get(k), k)
+
+
+@unittest.skipUnless(parity.find_bin(None), 'hwpx_fmt 바이너리가 없습니다(cargo build --release 후 HWPX_FMT_BIN 지정)')
+class Rsxml3ParityTest(unittest.TestCase):
+    NEW = Rsxml3CorpusTest.NEW
+
+    def test_new_processors_identical_and_changing(self):
+        work = Path(tempfile.mkdtemp(prefix='rsxml3_parity_test_'))
+        try:
+            procs = {k: v for k, v in parity.load_python_processors().items() if k in self.NEW}
+            old_only = parity.ONLY
+            parity.ONLY = set(self.NEW)
+            try:
+                results, failures = parity.run_parity(parity.find_bin(None), work, procs)
+            finally:
+                parity.ONLY = old_only
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        bad = [(r['doc'], r['processor'], r['diffs']) for r in results if not r['ok']]
+        self.assertEqual(failures, 0, bad)
+        for name in self.NEW:
+            own = [r for r in results if r['processor'] == name and r['kind'] == 'rsxml3']
+            self.assertGreaterEqual(len(own), 30, name)
+            self.assertGreaterEqual(sum(1 for r in own if r['py_count']), 10, name)
+
+    def test_comparator_catches_deliberately_broken_output(self):
+        work = Path(tempfile.mkdtemp(prefix='rsxml3_sabotage_test_'))
+        try:
+            procs = parity.load_python_processors()
+            rows, bad = parity.run_sabotage(parity.find_bin(None), work, procs)
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        self.assertEqual(bad, 0, rows)
+        self.assertGreaterEqual(sum(len(r['detected']) for r in rows), 20)
 
 
 @unittest.skipUnless(parity.find_bin(None), 'hwpx_fmt 바이너리가 없습니다(cargo build --release 후 HWPX_FMT_BIN 지정)')

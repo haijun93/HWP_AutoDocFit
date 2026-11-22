@@ -21,6 +21,9 @@ pub fn clen(s: &str) -> usize {
 }
 
 /// 파이썬 int(str) 대응(공백 허용, 부호, 숫자). 실패하면 오류(파이썬은 ValueError 로 중단).
+pub fn py_int_pub(s: &str) -> R<i64> {
+    py_int(s)
+}
 fn py_int(s: &str) -> R<i64> {
     let t = py_strip(s);
     let body = t.strip_prefix(['+', '-']).unwrap_or(t);
@@ -90,6 +93,18 @@ impl Doc {
     pub fn jstr(&self, e: usize) -> String {
         let mut s = String::new();
         for i in self.iter(e) {
+            if self.tag(i) == "t" {
+                if let Some(t) = &self.nodes[i].text {
+                    s.push_str(t);
+                }
+            }
+        }
+        s
+    }
+    /// jstr 와 같지만 수정 뒤에도 맞다(자식 목록으로 순회).
+    pub fn jstr_walk(&self, e: usize) -> String {
+        let mut s = String::new();
+        for i in self.walk(e) {
             if self.tag(i) == "t" {
                 if let Some(t) = &self.nodes[i].text {
                     s.push_str(t);

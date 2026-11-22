@@ -4,8 +4,12 @@
 pub mod config;
 pub mod dom;
 pub mod extra;
+pub mod fmt3;
 pub mod marker;
 pub mod rules;
+pub mod run3;
+pub mod run3b;
+pub mod style;
 pub mod zipio;
 
 use config::Config;
@@ -24,6 +28,11 @@ pub enum Processor {
     OverviewLead,
     PageNumber,
     SpacingReset,
+    AsteriskSuper,
+    AttachFont,
+    ColonLabel,
+    BlankLines,
+    Emphasis,
 }
 
 impl Processor {
@@ -34,12 +43,22 @@ impl Processor {
             "overview_lead" | "개요첫칸_hwpx_처리" => Some(Processor::OverviewLead),
             "page_number" | "쪽번호_hwpx_처리" => Some(Processor::PageNumber),
             "spacing_reset" | "자간초기화_hwpx_처리" => Some(Processor::SpacingReset),
+            "asterisk_superscript" | "별표위첨자_hwpx_처리" => Some(Processor::AsteriskSuper),
+            "attachment_font" | "붙임글꼴_hwpx_처리" => Some(Processor::AttachFont),
+            "colon_label" | "콜론라벨_hwpx_처리" => Some(Processor::ColonLabel),
+            "blank_lines" | "빈줄서식_hwpx_처리" => Some(Processor::BlankLines),
+            "emphasis" | "강조낱말_hwpx_처리" => Some(Processor::Emphasis),
             _ => None,
         }
     }
+
+    /// RSXML3 처리기(선택 항목이 번호 하나가 아닐 수 있어 survey_json/process_json 으로 부른다).
+    pub fn is_rsxml3(self) -> bool {
+        matches!(self, Processor::AsteriskSuper | Processor::AttachFont | Processor::ColonLabel | Processor::BlankLines | Processor::Emphasis)
+    }
 }
 
-fn parse_sections(contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
+pub fn parse_sections(contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
     let mut v = vec![];
     for (i, (n, data)) in contents.iter().enumerate() {
         if is_section_name(n) {
@@ -161,6 +180,7 @@ fn survey_doc(p: Processor, d: &Doc, cfg: &Config) -> R<Vec<usize>> {
         Processor::OverviewLead => Ok((0..extra::overview_targets(d)?.len()).collect()),
         Processor::PageNumber => Ok(extra::page_number_survey(d, cfg)),
         Processor::SpacingReset => Ok(vec![0]),
+        _ => Err("RSXML3 처리기는 survey_json 으로 부르세요.".into()),
     }
 }
 
@@ -186,14 +206,14 @@ fn section_number_key(name: &str) -> (usize, String) {
     (digits.len(), digits.to_string())
 }
 
-fn parse_sections_sorted(contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
+pub fn parse_sections_sorted(contents: &Contents) -> R<Vec<(String, usize, Doc)>> {
     let mut v = parse_sections(contents)?;
     v.sort_by_key(|(n, _, _)| section_number_key(n)); // 안정 정렬
     Ok(v)
 }
 
 /// 파이썬 처리기 첫머리: 모든 Contents/*.xml 을 읽어 보므로 구역이 아닌 항목이 깨져 있어도 처리 전체가 실패한다.
-fn check_other_xml(contents: &Contents) -> R<()> {
+pub fn check_other_xml(contents: &Contents) -> R<()> {
     for (n, data) in contents.iter() {
         if n.starts_with("Contents/") && n.ends_with(".xml") && !is_section_name(n) {
             dom::parse(data).map_err(|e| format!("{n}: {e}"))?;
@@ -209,7 +229,7 @@ fn ordered_sections(p: Processor, contents: &Contents) -> R<Vec<(String, usize, 
     }
 }
 
-fn parse_header(contents: &Contents) -> R<(usize, Doc)> {
+pub fn parse_header(contents: &Contents) -> R<(usize, Doc)> {
     let i = contents.iter().position(|(n, _)| n == "Contents/header.xml").ok_or("Contents/header.xml 이 없습니다.")?;
     Ok((i, dom::parse(&contents[i].1).map_err(|e| format!("Contents/header.xml: {e}"))?))
 }
@@ -220,6 +240,9 @@ pub fn survey(p: Processor, source: &Path) -> R<Selections> {
 }
 
 pub fn survey_with(p: Processor, source: &Path, cfg: &Config) -> R<Selections> {
+    if p.is_rsxml3() {
+        return Err("RSXML3 처리기는 survey_json 으로 부르세요.".into());
+    }
     check_config(p, cfg)?;
     let contents = zipio::read_hwpx_safely(source)?;
     check_other_xml(&contents)?;
@@ -241,6 +264,9 @@ pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&S
 /// selections 가 None 이면 먼저 조사한 결과를 쓴다. 대상이 하나도 없으면 원본을 그대로 복사한다.
 /// 두글자 처리는 파이썬처럼 목록 내용이 아니라 '비었는지'만 본다.
 pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Option<&Selections>, cfg: &Config) -> R<usize> {
+    if p.is_rsxml3() {
+        return Err("RSXML3 처리기는 process_json 으로 부르세요.".into());
+    }
     check_config(p, cfg)?;
     if let (Ok(a), Ok(b)) = (std::fs::canonicalize(source), std::fs::canonicalize(target)) {
         if a == b {
@@ -305,12 +331,34 @@ pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Opti
                 let Some((_, items)) = sel.iter().find(|(n, _)| *n == name) else { continue };
                 count += extra::apply_page_number(&mut d, items, cfg)?;
             }
-            Processor::SpacingReset => unreachable!(),
+            _ => unreachable!(),
         }
         contents[idx].1 = d.tostring();
     }
     zipio::write_hwpx_safely(&contents, target)?;
     Ok(count)
+}
+
+/// 조사 모드(모든 처리기). 선택 목록을 JSON 으로 돌려준다.
+pub fn survey_json(p: Processor, source: &Path, cfg: &Config) -> R<serde_json::Value> {
+    if p.is_rsxml3() {
+        run3::survey(p, source, cfg)
+    } else {
+        Ok(selections_to_json(&survey_with(p, source, cfg)?))
+    }
+}
+
+/// 처리 모드(모든 처리기). selections 는 survey_json 이 돌려준 모양의 JSON.
+pub fn process_json(p: Processor, source: &Path, target: &Path, sel: Option<&serde_json::Value>, cfg: &Config) -> R<usize> {
+    if p.is_rsxml3() {
+        run3::process(p, source, target, sel, cfg)
+    } else {
+        let s = match sel {
+            Some(v) => Some(selections_from_json(v)?),
+            None => None,
+        };
+        process_with(p, source, target, s.as_ref(), cfg)
+    }
 }
 
 pub fn selections_to_json(s: &Selections) -> serde_json::Value {
