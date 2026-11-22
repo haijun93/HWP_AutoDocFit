@@ -675,9 +675,12 @@ class BrowserApiTests(unittest.TestCase):
         from desktop_web_ui import DesktopWebBridge
         source = (Path(__file__).resolve().parents[1] / "flutter_ui" / "lib" / "main.dart").read_text(encoding="utf-8")
         keys = set(re.findall(r"command\('set_card_option', \['([a-z_]+)'", source))
-        start = source.index("if (optionMode == 'unify')")
-        block = source[start:source.index("command('set_card_option', [o.$1", start)]
-        keys |= set(re.findall(r"\(\s*'((?:spacing|all|unify)_[a-z_]+)',", block))
+        # OPTUI1(2026-11-23)로 카드 옵션 위젯이 modeOptions() 안의 cardChange/cardOption 도우미를 쓴다. 그 함수 본문에서 키를 모은다.
+        start = source.index("Widget modeOptions(String optionMode)")
+        end = source.index(chr(10) + "  Widget ", start + 10)
+        block = source[start:end]
+        keys |= set(re.findall(r"(?:cardChange|cardOption)\('([a-z_]+)'", block))
+        keys |= set(re.findall(r"^\s*'((?:spacing|all|unify)_[a-z_]+)',\s*$", block, re.M))
         self.assertIn("unify_full_format", keys)
         self.assertEqual(sorted(keys - set(DesktopWebBridge._CARD_OPTIONS)), [])
 
