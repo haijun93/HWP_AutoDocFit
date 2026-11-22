@@ -1288,6 +1288,12 @@ impl Drop for LifecycleLock {
 fn lifecycle_status(root: &std::path::Path) -> Option<crate::json::Value> {
     std::fs::read_to_string(root.join("status.json")).ok().and_then(|s| crate::json::parse(&s))
 }
+pub(crate) fn lifecycle_agent_running() -> bool {
+    let root = std::env::var("KAGENT_DATA").ok().map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(util::data_dir()));
+    lifecycle_status(&root).is_some_and(|status| lifecycle_alive(&status))
+}
+
 fn lifecycle_alive(status: &crate::json::Value) -> bool {
     use windows_sys::Win32::System::Threading::{OpenProcess, GetExitCodeProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     let Some(pid) = status.num("pid").filter(|n| *n > 0.0 && *n <= u32::MAX as f64) else { return false; };
@@ -1316,6 +1322,15 @@ struct NativeLifecycle<'a> {
     old: Option<&'a [u8]>,
     pending: Option<std::process::Child>,
 }
+fn record_lifecycle_elapsed(root: &std::path::Path, step: &str, elapsed_ms: u128) {
+    let path = root.join("lifecycle-timings.jsonl");
+    let value = crate::json::Value::obj(vec![("step", step.into()), ("elapsed_ms", (elapsed_ms as i64).into())]);
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "{}", crate::json::to_string(&value));
+    }
+}
+
 fn atomic_agent_write(target: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
     let temp = target.with_extension(format!("{}.new", std::process::id()));
     let result = (|| {
@@ -1336,49 +1351,62 @@ fn atomic_agent_write(target: &std::path::Path, bytes: &[u8]) -> Result<(), Stri
 }
 impl lifecycle::Runtime for NativeLifecycle<'_> {
     fn quit_and_wait(&mut self) -> Result<(), String> {
-        let status = lifecycle_status(self.root).filter(lifecycle_alive);
-        if status.is_none() {
-            if let Some(child) = self.pending.as_mut() {
-                if child.try_wait().map_err(|e| e.to_string())?.is_none() {
-                    return Err("new agent has no status; previous binary kept in kagent.previous".into());
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let status = lifecycle_status(self.root).filter(lifecycle_alive);
+            if status.is_none() {
+                if let Some(child) = self.pending.as_mut() {
+                    if child.try_wait().map_err(|e| e.to_string())?.is_none() {
+                        return Err("new agent has no status; previous binary kept in kagent.previous".into());
+                    }
                 }
+                return Ok(());
             }
-            return Ok(());
-        }
-        let status = status.unwrap();
-        let Some(pipe) = status.str("pipe").filter(|p| p.starts_with(r"\\.\pipe\HwpAutoDocFit.kagent.")) else {
-            return Err("invalid agent pipe".into());
-        };
-        // 종료 요청만 보낸다. 무응답 프로세스를 강제로 죽이지 않는다.
-        let pipe = pipe.to_owned();
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let request = crate::json::Value::obj(vec![("cmd", "quit".into())]);
-            let _ = tx.send(lifecycle_pipe_request(&pipe, &request));
-        });
-        let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
-        for _ in 0..150 {
-            if !lifecycle_alive(&status) { return Ok(()); }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        Err("still_running".into())
+            let status = status.unwrap();
+            let Some(pipe) = status.str("pipe").filter(|p| p.starts_with(r"\\.\pipe\HwpAutoDocFit.kagent.")) else {
+                return Err("invalid agent pipe".into());
+            };
+            let pipe = pipe.to_owned();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let request = crate::json::Value::obj(vec![("cmd", "quit".into())]);
+                let _ = tx.send(lifecycle_pipe_request(&pipe, &request));
+            });
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(2));
+            for _ in 0..150 {
+                if !lifecycle_alive(&status) { return Ok(()); }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err("still_running".into())
+        })();
+        record_lifecycle_elapsed(self.root, "shutdown_wait", started.elapsed().as_millis());
+        result
     }
     fn install(&mut self) -> Result<(), String> {
-        // 종료·복구가 불가능한 경우에도 이전 실행 파일을 별도 보존한다.
-        if let Some(old) = self.old { atomic_agent_write(&self.root.join("kagent.previous"), old)?; }
-        atomic_agent_write(self.target, self.current)
+        let started = std::time::Instant::now();
+        let result = (|| {
+            if let Some(old) = self.old { atomic_agent_write(&self.root.join("kagent.previous"), old)?; }
+            atomic_agent_write(self.target, self.current)
+        })();
+        record_lifecycle_elapsed(self.root, "install", started.elapsed().as_millis());
+        result
     }
     fn start_and_wait(&mut self) -> Result<(), String> {
-        let mut child = std::process::Command::new(self.target).spawn().map_err(|e| e.to_string())?;
-        for _ in 0..150 {
-            if let Some(status) = lifecycle_status(self.root) {
-                if status.num("pid") == Some(child.id() as f64) && lifecycle_alive(&status) { return Ok(()); }
+        let started = std::time::Instant::now();
+        let result = (|| {
+            let mut child = std::process::Command::new(self.target).spawn().map_err(|e| e.to_string())?;
+            for _ in 0..3000 {
+                if let Some(status) = lifecycle_status(self.root) {
+                    if status.num("pid") == Some(child.id() as f64) && lifecycle_alive(&status) { return Ok(()); }
+                }
+                if let Some(code) = child.try_wait().map_err(|e| e.to_string())? { return Err(format!("agent exited: {code}")); }
+                std::thread::sleep(std::time::Duration::from_millis(20));
             }
-            if let Some(code) = child.try_wait().map_err(|e| e.to_string())? { return Err(format!("agent exited: {code}")); }
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        self.pending = Some(child);
-        Err("agent start timeout".into())
+            self.pending = Some(child);
+            Err("agent start timeout after 60s".into())
+        })();
+        record_lifecycle_elapsed(self.root, "start_wait", started.elapsed().as_millis());
+        result
     }
     fn rollback(&mut self) -> Result<(), String> {
         if let Some(old) = self.old { atomic_agent_write(self.target, old) }
@@ -1417,11 +1445,15 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
                 return Value::obj(vec![("ok", false.into()), ("code", "KCLIP_CONSENT".into())]);
             }
             let hash_sidecar = source.with_file_name(format!("{}.sha256", source.file_name().unwrap().to_string_lossy()));
+            let hash_started = std::time::Instant::now();
             if let Ok(expected) = std::fs::read_to_string(hash_sidecar) {
                 if sha256_file(source).as_deref() != Some(expected.trim().to_ascii_lowercase().as_str()) {
+                    if command == "--enable" { record_lifecycle_elapsed(&root, "hash_integrity_failed", hash_started.elapsed().as_millis()); }
                     return lifecycle_error(&root, "integrity");
                 }
             }
+            if command == "--enable" { record_lifecycle_elapsed(&root, "hash_integrity", hash_started.elapsed().as_millis()); }
+            let read_started = std::time::Instant::now();
             let current = match std::fs::read(source) {
                 Ok(bytes) => bytes,
                 Err(error) => return lifecycle_error(&root, &error.to_string()),
@@ -1431,6 +1463,7 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                 Err(error) => return lifecycle_error(&root, &error.to_string()),
             };
+            if command == "--enable" { record_lifecycle_elapsed(&root, "read_bundled_and_installed", read_started.elapsed().as_millis()); }
             let status = lifecycle_status(&root);
             let was_running = status.as_ref().is_some_and(lifecycle_alive);
             if command == "--upgrade-if-stale" && old.is_none() && !was_running {
@@ -1441,19 +1474,27 @@ fn lifecycle_command(command: &str, args: &[String]) -> crate::json::Value {
             let stale = lifecycle::stale(old.as_deref() != Some(current.as_slice()), was_running,
                 status.as_ref().and_then(|s| s.str("version")), VERSION);
             let mut runtime = NativeLifecycle { root: &root, target: &target, current: &current, old: old.as_deref(), pending: None };
+            let update_started = std::time::Instant::now();
             match lifecycle::update(&mut runtime, was_running, stale, command == "--enable") {
                 Ok((upgraded, restarted)) => {
+                    if command == "--enable" { record_lifecycle_elapsed(&root, "quit_install_start_and_wait", update_started.elapsed().as_millis()); }
                     let _ = std::fs::remove_file(root.join("kagent.previous"));
                     if command == "--enable" {
+                        let autostart_started = std::time::Instant::now();
                         if let Err(error) = set_autostart(args.iter().any(|a| a == "--autostart")) {
+                            record_lifecycle_elapsed(&root, "autostart_registration_failed", autostart_started.elapsed().as_millis());
                             return lifecycle_error(&root, &error);
                         }
+                        record_lifecycle_elapsed(&root, "autostart_registration", autostart_started.elapsed().as_millis());
                     }
                     Value::obj(vec![("ok", true.into()), ("upgraded", upgraded.into()),
                         ("restarted", restarted.into()), ("installed", target.to_string_lossy().into_owned().into()),
                         ("version", VERSION.into())])
                 }
-                Err(error) => lifecycle_error(&root, &error),
+                Err(error) => {
+                    if command == "--enable" { record_lifecycle_elapsed(&root, "quit_install_start_failed", update_started.elapsed().as_millis()); }
+                    lifecycle_error(&root, &error)
+                }
             }
         }
 

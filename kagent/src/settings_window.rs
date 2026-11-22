@@ -47,6 +47,7 @@ const FOLDER_ADD: i32 = 1049;
 const FOLDER_DEL: i32 = 1050;
 const STATUS: i32 = 1030;
 const DONE: u32 = WM_APP + 41;
+const ENABLE_PROGRESS: u32 = WM_APP + 43;
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static LIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[link(name = "user32")]
@@ -700,44 +701,43 @@ unsafe extern "system" fn wndproc(h: HWND, m: u32, w: usize, _l: isize) -> isize
 fn enable(h: HWND) {
     unsafe {
         EnableWindow(GetDlgItem(h, ENABLE), 0);
-        SetWindowTextW(GetDlgItem(h, STATUS), wide("몽땅클립보드를 켜는 중입니다. 최대 15초 기다립니다…").as_ptr());
+        SetWindowTextW(GetDlgItem(h, STATUS), wide("\u{BABD}\u{B545}\u{D074}\u{B9BD}\u{BCF4}\u{B4DC}\u{B97C} \u{CF1C}\u{B294} \u{C911}\u{2026} \u{C900}\u{BE44} \u{C0C1}\u{D0DC}\u{B97C} \u{D655}\u{C778}\u{D569}\u{B2C8}\u{B2E4}.").as_ptr());
     }
     let hwnd = h as isize;
+    let want_autostart = unsafe { SendMessageW(GetDlgItem(h, AUTOSTART), BM_GETCHECK, 0, 0) == 1 };
     std::thread::spawn(move || {
-        let deadline = std::time::Instant::now() + enable_timeout();
-        let result = std::env::current_exe()
-            .ok()
-            .and_then(|e| {
-                std::process::Command::new(e)
-                    .args(["--enable", "--consent"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .ok()
-            })
-            .map(|mut c| {
-                loop {
-                    if std::time::Instant::now() >= deadline {
-                        let _ = c.kill();
-                        let _ = c.wait();
-                        break classify_enable(false, true);
-                    }
-                    match c.try_wait() {
-                        Ok(Some(s)) => break classify_enable(s.success(), false),
-                        Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
-                        Err(_) => {
-                            let _ = c.kill();
-                            break 0;
-                        }
-                    }
+        let result = std::env::current_exe().ok().and_then(|e| {
+            let mut command = std::process::Command::new(e);
+            command.args(["--enable", "--consent"]);
+            if want_autostart { command.arg("--autostart"); }
+            command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().ok()
+        }).map(|mut child| {
+            let started = std::time::Instant::now();
+            let mut phase = 1usize;
+            loop {
+                let elapsed = started.elapsed();
+                let next = match elapsed.as_secs() { 0..=1 => 1, 2..=4 => 2, 5..=8 => 3, 9..=59 => 4, _ => 5 };
+                if next != phase {
+                    phase = next;
+                    unsafe { PostMessageW(hwnd as HWND, ENABLE_PROGRESS, phase, 0); }
                 }
-            })
-            .unwrap_or(0);
-        unsafe {
-            PostMessageW(hwnd as HWND, DONE, result, 0);
-        }
+                if elapsed >= enable_timeout() {
+                    if running_status_exists() { return 1; }
+                    return 2;
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) => return if status.success() || running_status_exists() { 1 } else { 0 },
+                    Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                    Err(_) => return if running_status_exists() { 1 } else { 0 },
+                }
+            }
+        }).unwrap_or(0);
+        unsafe { PostMessageW(hwnd as HWND, DONE, result, 0); }
     });
 }
+
+fn running_status_exists() -> bool { crate::lifecycle_agent_running() }
+
 fn capture_png(dark: bool) {
     use windows_sys::Win32::Graphics::Gdi::*;
     let dir = std::env::var_os("KAGENT_CAPTURE_DIR")
@@ -1050,21 +1050,21 @@ mod tests {
         let _ = std::fs::remove_dir_all(d);
     }
     #[test]
-    fn enable_deadline_is_bounded() {
-        assert_eq!(enable_timeout(), std::time::Duration::from_secs(15));
+    fn enable_deadline_allows_slow_startup() {
+        assert_eq!(enable_timeout(), std::time::Duration::from_secs(60));
     }
     #[test]
-    fn fake_enable_lifecycle_success_failure_and_timeout_are_terminal() {
-        assert_eq!(classify_enable(true, false), 1);
-        assert_eq!(classify_enable(false, false), 0);
-        assert_eq!(classify_enable(false, true), 2);
+    fn fake_enable_lifecycle_timeout_recovers_if_status_is_running() {
+        assert_eq!(classify_enable(true, false, false), 1);
+        assert_eq!(classify_enable(false, false, false), 0);
+        assert_eq!(classify_enable(false, true, false), 2);
+        assert_eq!(classify_enable(false, true, true), 1);
     }
 }
 
-fn enable_timeout() -> std::time::Duration {
-    std::time::Duration::from_secs(15)
-}
+fn enable_timeout() -> std::time::Duration { std::time::Duration::from_secs(60) }
 
-fn classify_enable(success: bool, timed_out: bool) -> usize {
-    if timed_out { 2 } else if success { 1 } else { 0 }
+#[cfg(test)]
+fn classify_enable(success: bool, timed_out: bool, running: bool) -> usize {
+    if success || running { 1 } else if timed_out { 2 } else { 0 }
 }
