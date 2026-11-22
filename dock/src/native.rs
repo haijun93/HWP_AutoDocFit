@@ -49,6 +49,16 @@ unsafe fn draw_glyph(dc: HDC, glyph: char, ox: i32, oy: i32, size: i32, fg: u32)
     SelectObject(dc, old); DeleteObject(font);
     ok
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TooltipRect { left: i32, top: i32, right: i32, bottom: i32 }
+fn tooltip_rect(anchor_x: i32, measured_text_width: i32, font_height: i32, dpi: u32, bounds: (i32, i32)) -> TooltipRect {
+    let scale = |n: i32| ((n as i64 * dpi.max(96) as i64 + 48) / 96) as i32;
+    let (left_bound, right_bound) = bounds;
+    let width = (measured_text_width + scale(16)).min((right_bound-left_bound).max(1));
+    let left = (anchor_x-width/2).clamp(left_bound, (right_bound-width).max(left_bound));
+    let height = font_height.max(scale(9)) + scale(8);
+    TooltipRect { left, top: scale(5), right: left+width, bottom: scale(5)+height }
+}
 /// GDI+ 안티앨리어싱 도형(알약·링·점). WinRust 방식을 참고해 독자 구현: SmoothingModeAntiAlias + PixelOffsetModeHalf, 둥근 사각형은 GdipAddPathArc 경로.
 /// 시작 실패나 그래픽스 생성 실패 시 `Aa::new`가 None을 돌려주며 호출부가 기존 GDI 도형으로 폴백한다.
 static GDIP_TOKEN: OnceLock<usize> = OnceLock::new();
@@ -205,7 +215,7 @@ unsafe fn dock_layout_for_monitor(hwnd: HWND, monitor: HMONITOR) -> dock::DockRe
         dock::Edge::Auto,
         dpi,
         logical_width.max(160),
-        56,
+        76,
         18,
     )
 }
@@ -234,9 +244,16 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             let key = ((l as u32 as u16 as u64) << 16) | (l as u32 as u16 as u64);
             if LAST_MOUSE.swap(key, std::sync::atomic::Ordering::Relaxed) != key {
                 let mut r: RECT = std::mem::zeroed(); GetClientRect(hwnd, &mut r);
+                let mx = (l as i32 as i16) as i32;
+                let my = ((l >> 16) as i16) as i32;
                 let menus = visible_menus();
                 if !menus.is_empty() {
-                    let x = (l as u32 as u16) as i32;
+                    if mx < 0 || mx >= r.right || my < 0 || my >= r.bottom {
+                        HOVER_TAB.store(-1, std::sync::atomic::Ordering::Relaxed);
+                        InvalidateRect(hwnd, ptr::null(), 0);
+                        return DefWindowProcW(hwnd, msg, w, l);
+                    }
+                    let x = mx;
                     let spacing = (r.right - 32).max(1) / menus.len() as i32;
                     let idx = ((x - 16) / spacing.max(1)).clamp(0, menus.len() as i32 - 1) as usize;
                     let tab = menus[idx].tab as i32;
@@ -280,6 +297,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             if LAST_MOUSE.swap(key, std::sync::atomic::Ordering::Relaxed) == key {
                 KillTimer(hwnd, 1);
                 ReleaseCapture();
+                HOVER_TAB.store(-1, std::sync::atomic::Ordering::Relaxed);
+                InvalidateRect(hwnd, ptr::null(), 0);
             }
             0
         }
@@ -288,6 +307,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, w: WPARAM, l: LPARAM) -> LR
             0
         }
         WM_LBUTTONUP => {
+            HOVER_TAB.store(-1, std::sync::atomic::Ordering::Relaxed);
             let mut r: RECT = std::mem::zeroed();
             GetClientRect(hwnd, &mut r);
             let x = (l as u32 as u16) as i32;
@@ -353,6 +373,8 @@ unsafe extern "system" fn foreground_changed(
         )
     } else { full };
     if hidden {
+        HOVER_TAB.store(-1, std::sync::atomic::Ordering::Relaxed);
+        InvalidateRect(dock, ptr::null(), 0);
         ShowWindow(dock, SW_HIDE);
     } else if *STATE.get().unwrap().lock().unwrap() {
         ShowWindow(dock, SW_SHOWNOACTIVATE);
@@ -369,7 +391,7 @@ unsafe fn refresh(hwnd: HWND) {
     let dpi = GetDpiForWindow(hwnd).max(96);
     let menus = visible_menus();
     let focus = KEY_FOCUS.load(std::sync::atomic::Ordering::Relaxed);
-    let Some(dib) = render_layered(dpi, palette, &menus, focus, false, r.right, r.bottom) else { return };
+    let Some(dib) = render_layered(dpi, palette, &menus, focus, false, r.right, r.bottom, None) else { return };
     let size = SIZE { cx: r.right, cy: r.bottom };
     let src = POINT { x: 0, y: 0 };
     let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: LAYER_OPACITY, AlphaFormat: AC_SRC_ALPHA as u8 };
@@ -414,11 +436,12 @@ impl Drop for Dib { fn drop(&mut self) { unsafe { SelectObject(self.dc, self.old
 /// 독 전체를 그려 per-pixel alpha(premultiplied BGRA) DIB 로 돌려준다. 알약 밖은 알파 0(완전 투명).
 /// 방식: ① 검정으로 초기화된 DIB 에 평소처럼 그린다(알약 가장자리 AA 픽셀은 검정과 섞여 이미 coverage 만큼 premultiplied 상태).
 /// ② 같은 알약을 흰색으로 그린 마스크 DIB 에서 coverage 를 읽어 알파로 쓰고, 색이 알파를 넘지 않게 한다(글리프·글자는 알약 안쪽이라 알파 255).
-unsafe fn render_layered(dpi: u32, palette: dock::Palette, menus: &[dock::MenuItem], focus: usize, labels: bool, w: i32, h: i32) -> Option<Dib> {
+unsafe fn render_layered(dpi: u32, palette: dock::Palette, menus: &[dock::MenuItem], focus: usize, labels: bool, w: i32, h: i32, tip: Option<(&str, i32)>) -> Option<Dib> {
     let mut main = Dib::new(w, h)?;
     let mut mask = Dib::new(w, h)?;
     let r = RECT { left: 0, top: 0, right: w, bottom: h };
     draw_dock(main.dc, r, dpi, palette, menus, focus, labels);
+    if let Some((name, anchor)) = tip { draw_tooltip(main.dc, r, dpi, palette, name, anchor); }
     draw_pill(mask.dc, r, 0x00FF_FFFF, 0x00FF_FFFF);
     GdiFlush();
     let m: Vec<u8> = mask.pixels().to_vec();
@@ -432,7 +455,7 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
     let sc = |n: i32| ((n as i64 * dpi as i64 + 48) / 96) as i32;
     let pad = sc(16);
     let spacing = (r.right - 2 * pad).max(1) / menus.len().max(1) as i32;
-    let y = if labels { sc(29) } else { r.bottom / 2 };
+    let y = if labels { sc(29) } else { r.bottom - sc(22) };
     for (i, item) in menus.iter().enumerate() {
         let x = pad + spacing * i as i32 + spacing / 2;
         if i > 0 && menus[i - 1].group != item.group {
@@ -464,39 +487,79 @@ unsafe fn draw_dock(mem: HDC, r: RECT, dpi: u32, palette: dock::Palette, menus: 
             SelectObject(mem,old_font); DeleteObject(font);
         }
         if HOVER_TAB.load(std::sync::atomic::Ordering::Relaxed)==item.tab as i32 && GetTickCount64().saturating_sub(HOVER_TICK.load(std::sync::atomic::Ordering::Relaxed))>=400 && !labels {
-            let name=wide(item.name); SetBkMode(mem,TRANSPARENT as i32); SetTextColor(mem,palette.foreground);
-            let mut tr=RECT{left:(x-70).max(2),top:r.bottom-22,right:(x+70).min(r.right-2),bottom:r.bottom-4};
-            DrawTextW(mem,name.as_ptr(),-1,&mut tr,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+            draw_tooltip(mem, r, dpi, palette, item.name, x);
         }
     }
 }
+unsafe fn draw_tooltip(dc: HDC, r: RECT, dpi: u32, palette: dock::Palette, label: &str, anchor_x: i32) {
+    let sc = |n: i32| ((n as i64 * dpi as i64 + 48) / 96) as i32;
+    let name = wide(label);
+    let font = CreateFontW(-sc(9),0,0,0,FW_NORMAL as i32,0,0,0,DEFAULT_CHARSET as u32,OUT_DEFAULT_PRECIS as u32,CLIP_DEFAULT_PRECIS as u32,CLEARTYPE_QUALITY as u32,(DEFAULT_PITCH|FF_DONTCARE) as u32,wide("맑은 고딕").as_ptr());
+    if font.is_null() { return; }
+    let old = SelectObject(dc, font);
+    let mut extent: SIZE = std::mem::zeroed();
+    GetTextExtentPoint32W(dc, name.as_ptr(), (name.len()-1) as i32, &mut extent);
+    let geometry = tooltip_rect(anchor_x, extent.cx, sc(12), dpi, (sc(4), r.right-sc(4)));
+    let bg = CreateSolidBrush(palette.background);
+    let edge = CreatePen(PS_SOLID, 1, palette.border);
+    let old_brush=SelectObject(dc,bg); let old_pen=SelectObject(dc,edge);
+    if !Aa::new(dc).is_some_and(|g|g.round_rect(geometry.left,geometry.top,geometry.right,geometry.bottom,sc(8),palette.background,palette.border)) {
+        RoundRect(dc,geometry.left,geometry.top,geometry.right,geometry.bottom,sc(8),sc(8));
+    }
+    SetBkMode(dc,TRANSPARENT as i32); SetTextColor(dc,palette.foreground);
+    let mut text_rect=RECT{left:geometry.left+sc(7),top:geometry.top,right:geometry.right-sc(7),bottom:geometry.bottom};
+    DrawTextW(dc,name.as_ptr(),-1,&mut text_rect,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    SelectObject(dc,old_brush); SelectObject(dc,old_pen); SelectObject(dc,old); DeleteObject(bg); DeleteObject(edge); DeleteObject(font);
+}
 fn capture_mode(args: &[String]) -> Result<(), String> {
-    let mut dir=None; let mut dpi=96u32; let mut dark=false; let mut hc=false;
+    let mut dir=None; let mut dpi=96u32; let mut dark=false; let mut hc=false; let mut hover=None;
     let mut i=0; while i<args.len() { match args[i].as_str() {
         "--capture-dir" => { i+=1; dir=args.get(i).cloned(); },
         "--dpi" => { i+=1; dpi=args.get(i).ok_or("--dpi 값 없음")?.parse().map_err(|_| "잘못된 --dpi")?; },
-        "--dark" => dark=true, "--hc" => hc=true, other => return Err(format!("알 수 없는 인자: {other}")),
+        "--dark" => dark=true, "--hc" => hc=true, "--hover-tab" => { i+=1; hover=args.get(i).ok_or("--hover-tab 값 없음")?.parse::<usize>().ok(); if hover.is_none(){return Err("잘못된 --hover-tab".into());} }, other => return Err(format!("알 수 없는 인자: {other}")),
     } i+=1; }
     if dpi<48 || dpi>384 { return Err("--dpi 범위는 48..384".into()); }
     let dir=std::path::PathBuf::from(dir.ok_or("--capture-dir 필요")?); std::fs::create_dir_all(&dir).map_err(|e|e.to_string())?;
     unsafe {
-        let width=((16*104+32) as u64*dpi as u64+48)/96; let width=width as i32; let height=((88u64*dpi as u64+48)/96) as i32;
+        let width=((16*104+32) as u64*dpi as u64+48)/96; let width=width as i32; let height=(((if hover.is_some(){76u64}else{88u64})*dpi as u64+48)/96) as i32;
         let p=resolved_palette(hc,Some(dark));
         WINDOW_STATES.get_or_init(||Mutex::new(std::collections::HashMap::new())).lock().unwrap().insert(0,dock::WindowState::OpenFocused);
         let all=dock::menu_items(&[],true);
-        let mut dib=render_layered(dpi,p,&all,0,true,width,height).ok_or("메모리 비트맵 생성 실패")?;
+        let tip=hover.and_then(|index|all.get(index).map(|item|(item.name,width*(index as i32*104+68)/((all.len() as i32*104)+32))));
+        let mut dib=render_layered(dpi,p,&all,0,hover.is_none(),width,height,tip).ok_or("메모리 비트맵 생성 실패")?;
         let px=dib.pixels().to_vec();
         let suffix=if hc{"hc"}else if dark{"dark"}else{"light"};
         // 알파 포함 PNG(원본 알파 확인용)와, 마젠타 위에 실제 불투명도로 합성한 RGB PNG(눈으로 모서리 확인용)
         let straight=dock::unpremultiply_bgra_to_rgba(&px);
         let over=dock::composite_over_bgra(&px,LAYER_OPACITY,[255,0,255]);
-        let name=format!("dock_{suffix}_{dpi}.png");
+        let hover_suffix=hover.map(|index|format!("_hover_{index}")).unwrap_or_default();
+        let name=format!("dock_{suffix}_{dpi}{hover_suffix}.png");
         std::fs::write(dir.join(&name),dock::encode_png(width as u32,height as u32,3,&over)).map_err(|e|e.to_string())?;
-        std::fs::write(dir.join(format!("dock_{suffix}_{dpi}_alpha.png")),dock::encode_png(width as u32,height as u32,4,&straight)).map_err(|e|e.to_string())?;
+        std::fs::write(dir.join(format!("dock_{suffix}_{dpi}{hover_suffix}_alpha.png")),dock::encode_png(width as u32,height as u32,4,&straight)).map_err(|e|e.to_string())?;
         println!("{name}");
     } Ok(())
 }
 fn visible_menus() -> Vec<dock::MenuItem> { let hidden = hidden_tabs(); dock::menu_items(&hidden.iter().copied().collect::<Vec<_>>(), false) }
+#[cfg(test)]
+mod tooltip_tests {
+    use super::tooltip_rect;
+    #[test]
+    fn tooltip_is_centered_and_clamped_at_screen_edges() {
+        let center=tooltip_rect(500,80,12,96,(0,1000));
+        assert_eq!((center.left,center.right),(452,548));
+        let left=tooltip_rect(5,80,12,96,(0,1000));
+        assert_eq!(left.left,0);
+        let right=tooltip_rect(995,80,12,96,(0,1000));
+        assert_eq!(right.right,1000);
+    }
+    #[test]
+    fn tooltip_grows_for_long_labels_and_scales_for_dpi() {
+        let short=tooltip_rect(300,50,12,96,(0,1000));
+        let long=tooltip_rect(300,260,18,144,(0,1000));
+        assert!(long.right-long.left > short.right-short.left);
+        assert_eq!(long.bottom-long.top,30);
+    }
+}
 fn setting_dark() -> bool {
     let Some(appdata)=std::env::var_os("APPDATA") else{return ui_theme::system_dark()};
     let path=std::path::PathBuf::from(appdata).join("HwpAutoDocFit").join("settings.json");
@@ -702,7 +765,7 @@ mod tests {
             let w = (((16 * 104 + 32) as u64 * dpi as u64 + 48) / 96) as i32; let h = ((88u64 * dpi as u64 + 48) / 96) as i32;
             let p = resolved_palette(hc, Some(dark));
             let all = dock::menu_items(&[], true);
-            let mut d = render_layered(dpi, p, &all, 0, true, w, h).expect("render");
+            let mut d = render_layered(dpi, p, &all, 0, true, w, h, None).expect("render");
             let px = d.pixels().to_vec();
             let at = |x: i32, y: i32| { let i = ((y * w + x) * 4) as usize; [px[i], px[i + 1], px[i + 2], px[i + 3]] };
             for (x, y) in [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1), (1, 1), (w - 2, h - 2), (3, 3)] {
