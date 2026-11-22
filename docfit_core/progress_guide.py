@@ -4,6 +4,8 @@
 처리 코드가 넘기는 단계 이름을 앞부분 일치로 안내 항목에 연결한다.
 """
 
+from .progress_weights import estimate_remaining, weighted_ratio
+
 # (키, 안내 문장, 이 항목으로 연결할 단계 이름 앞부분)
 GUIDE_ITEMS = (
     ("open", "문서를 열고 작업할 준비를 하고 있어요.", ("열기", "변환")),
@@ -179,11 +181,14 @@ def plan_keys(mode, selection=None):
 
 
 def progress_view(mode, key=None, visited=(), *, selection=None, running=False, files=(), doc=None,
-                  results=(), failures=None, target=None, elapsed=None, conversion_summary=None):
+                  results=(), failures=None, target=None, elapsed=None, conversion_summary=None,
+                  stage_elapsed=None, stage_reported=None, eta_history=(), scale=None):
     """진행 화면 한 장에 필요한 값(기능별 제목·단계·문서 대기열·안내 문구)을 만든다(순수 함수).
 
     files: 작업 문서 경로 목록, doc: (지금 문서 순번 1부터, 전체 수) 또는 None,
     results: 저장된 결과 [{"source": 원본 파일 이름, "name": 결과 파일 이름}], failures: {원본 경로: 실패 이유}.
+    stage_elapsed: 지금 단계가 시작된 뒤 지난 초, stage_reported: 엔진이 알린 (처리 수, 전체 수),
+    eta_history: 이전 (경과 초, 진행률) 표본, scale: 문서 크기 보정(1.0=기준 문서).
     """
     meta = MODE_META.get(mode, MODE_META["all"])
     files = [str(f) for f in files or ()]
@@ -243,10 +248,15 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
     elif mode == "file_format":
         ratio = settled / total if total else 0.0
     else:
-        inner = (sum(1 for s in steps if s["state"] == "done") / len(steps)) if steps else 0.0
+        # 단계 무게는 기준선 시간 비중(progress_weights). 지금 단계 안의 진행도 더한다.
+        inner = weighted_ratio([s["key"] for s in steps], [s["key"] for s in steps if s["state"] == "done"],
+                               key if current is not None else None, stage_elapsed=stage_elapsed,
+                               reported=stage_reported, total_seconds=None, scale=scale) if steps else 0.0
         before = max(settled, index - 1 if index else 0)
         ratio = (before + inner) / max(total, 1)
     ratio = max(0.0, min(1.0, ratio))
+    eta = (estimate_remaining(elapsed, ratio, eta_history) if running and not finished
+           else {"state": "none", "seconds": None, "low": None, "high": None})
 
     label = _TARGET_LABELS.get(str(target or "").lower(), str(target or "").upper())
     if mode == "file_format":
@@ -276,6 +286,7 @@ def progress_view(mode, key=None, visited=(), *, selection=None, running=False, 
         "queue": queue,
         "conversion_summary": conversion_summary,
         "ratio": round(ratio, 4),
+        "eta": eta,
         "tips": list(TIPS.get(mode, TIPS["all"])),
         "elapsed": int(elapsed) if elapsed is not None else None,
         "target": label,

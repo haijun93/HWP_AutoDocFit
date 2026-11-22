@@ -540,9 +540,18 @@ class DesktopWebBridge:
         elapsed = None
         if started is not None:
             elapsed = max(0.0, (time.monotonic() if gui.running or ended is None else ended) - started)
-        return progress_view(
+        now = time.monotonic()
+        key = getattr(gui, "_안내키", None)
+        clock = getattr(self, "_stage_clock", None)
+        if clock is None or clock[0] != key or clock[2] != started:
+            if clock is None or clock[2] != started:
+                self._eta_history = []   # 새 작업이 시작되면 남은 시간 표본을 비운다
+            self._stage_clock = clock = (key, now, started)
+        stage_elapsed = now - clock[1] if gui.running else None
+        history = getattr(self, "_eta_history", [])
+        view = progress_view(
             mode,
-            getattr(gui, "_안내키", None),
+            key,
             getattr(gui, "_안내지남", ()),
             selection=getattr(gui, "_진행_세부작업", None),
             running=bool(gui.running),
@@ -554,7 +563,15 @@ class DesktopWebBridge:
             conversion_summary=getattr(gui, "_변환_요약", None),
             target=self.conversion_target,
             elapsed=elapsed,
+            stage_elapsed=stage_elapsed,
+            stage_reported=getattr(gui, "_안내세부", None),
+            eta_history=history,
         )
+        if gui.running and elapsed is not None and view["ratio"] > 0:
+            if not history or elapsed - history[-1][0] >= 3.0:
+                history.append((elapsed, view["ratio"]))
+                del history[:-40]
+        return view
 
     def check_update(self):
         service = self._tk(lambda: self.gui._업데이트_서비스())

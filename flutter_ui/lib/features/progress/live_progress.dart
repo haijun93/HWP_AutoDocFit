@@ -32,6 +32,39 @@ IconData _modeIcon(String icon) => switch (icon) {
   _ => Icons.auto_awesome_rounded,
 };
 
+String _span(int seconds) {
+  if (seconds < 60) {
+    final rounded = ((seconds + 4) ~/ 5) * 5;
+    return '${rounded < 5 ? 5 : rounded}초';
+  }
+  return '${(seconds + 59) ~/ 60}분';
+}
+
+/// 남은 시간 문구. 엔진의 `eta`({state, seconds, low, high})를 사람이 읽는 말로 바꾼다.
+/// [passed]는 엔진 값을 받은 뒤 화면에서 흐른 초(값이 튀지 않게 그만큼 줄여 보여 준다).
+/// 표시할 것이 없으면 null.
+@visibleForTesting
+String? etaLabel(Object? eta, {int passed = 0}) {
+  if (eta is! Map) return null;
+  final state = '${eta['state']}';
+  if (state == 'calculating') return '남은 시간 계산 중';
+  final low = ((eta['low'] as num?)?.toInt() ?? -1);
+  final high = ((eta['high'] as num?)?.toInt() ?? -1);
+  if (low < 0 || high < 0) return null;
+  final lo = (low - passed).clamp(0, 1 << 30);
+  final hi = (high - passed).clamp(0, 1 << 30);
+  if (state == 'estimate') {
+    return hi <= 2 ? '곧 끝나요' : '남은 시간 약 ${_span(hi)}';
+  }
+  if (state != 'range') return null;
+  if (hi < 60) {
+    final a = _span(lo), b = _span(hi);
+    return a == b ? '남은 시간 약 $b' : '남은 시간 약 ${a.replaceAll('초', '')}~$b';
+  }
+  final a = (lo + 59) ~/ 60, b = (hi + 59) ~/ 60;
+  return a >= b ? '남은 시간 약 $b분' : '남은 시간 약 $a~$b분';
+}
+
 String _clock(int seconds) {
   final m = seconds ~/ 60;
   final s = seconds % 60;
@@ -166,7 +199,11 @@ class _LiveProgressState extends State<LiveProgress>
       const SizedBox(height: 24),
       Center(child: _ring()),
       const SizedBox(height: 20),
-          _badgeRow(),
+      _badgeRow(),
+      if (running && !isConversion && live['ratio'] != null) ...[
+        const SizedBox(height: 14),
+        _weightedBar(),
+      ],
       if (running && tips.isNotEmpty) ...[
         const SizedBox(height: 20),
         _tipCard(),
@@ -364,6 +401,44 @@ class _LiveProgressState extends State<LiveProgress>
           ),
         ),
       ),
+    );
+  }
+
+  /// 단계별 실제 시간 비중으로 채우는 전체 막대 + 남은 시간. 값이 줄지 않게 부드럽게 늘어난다.
+  Widget _weightedBar() {
+    final ratio = ((live['ratio'] as num?)?.toDouble() ?? 0).clamp(0.0, 1.0);
+    final eta = etaLabel(live['eta'], passed: _sinceSync);
+    return Column(
+      key: const ValueKey('weighted-progress'),
+      children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween(end: ratio),
+          duration: _d(900),
+          curve: Curves.easeOutCubic,
+          builder: (context, value, _) => ClipRRect(
+            borderRadius: BorderRadius.circular(999),
+            child: LinearProgressIndicator(
+              key: const ValueKey('weighted-bar'),
+              value: value,
+              minHeight: 8,
+              color: _p.blueDeep,
+              backgroundColor: _p.blueSoft,
+            ),
+          ),
+        ),
+        if (eta != null) ...[
+          const SizedBox(height: 8),
+          Text(
+            eta,
+            key: const ValueKey('eta-label'),
+            style: TextStyle(
+              fontSize: 13,
+              color: _p.muted,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ],
     );
   }
 

@@ -181,4 +181,66 @@ void main() {
     await tester.pump();
     expect(tester.hasRunningAnimations, isFalse);
   });
+
+  group('남은 시간 문구', () {
+    test('계산 중·점 추정·범위·끝', () {
+      expect(etaLabel({'state': 'calculating'}), '남은 시간 계산 중');
+      expect(
+        etaLabel({'state': 'estimate', 'seconds': 100, 'low': 100, 'high': 100}),
+        '남은 시간 약 2분',
+      );
+      expect(
+        etaLabel({'state': 'estimate', 'seconds': 32, 'low': 32, 'high': 32}),
+        '남은 시간 약 35초',
+      );
+      expect(
+        etaLabel({'state': 'range', 'seconds': 200, 'low': 150, 'high': 290}),
+        '남은 시간 약 3~5분',
+      );
+      expect(
+        etaLabel({'state': 'range', 'seconds': 30, 'low': 20, 'high': 40}),
+        '남은 시간 약 20~40초',
+      );
+      expect(
+        etaLabel({'state': 'estimate', 'seconds': 1, 'low': 1, 'high': 1}),
+        '곧 끝나요',
+      );
+      expect(etaLabel({'state': 'none'}), isNull);
+      expect(etaLabel(null), isNull);
+    });
+
+    test('화면에서 흐른 초만큼 줄여 보여 준다', () {
+      final eta = {'state': 'estimate', 'seconds': 100, 'low': 100, 'high': 100};
+      expect(etaLabel(eta, passed: 50), '남은 시간 약 50초');
+    });
+  });
+
+  testWidgets('가중 진행 막대와 남은 시간을 보여 준다', (tester) async {
+    final live = _spacing()
+      ..['ratio'] = 0.4
+      ..['eta'] = {'state': 'range', 'seconds': 200, 'low': 150, 'high': 290};
+    await _pump(tester, live);
+    final bar = tester.widget<LinearProgressIndicator>(
+      find.byKey(const ValueKey('weighted-bar')),
+    );
+    expect(bar.value, closeTo(0.4, 0.01));
+    expect(find.text('남은 시간 약 3~5분'), findsOneWidget);
+    // 기존 단계 이름·표시는 그대로
+    expect(find.text('본문 자간'), findsWidgets);
+    expect(find.text('문서 열기'), findsWidgets);
+  });
+
+  testWidgets('처음에는 계산 중, 끝나면 막대와 남은 시간이 사라진다', (tester) async {
+    await _pump(
+      tester,
+      _spacing()..['eta'] = {'state': 'calculating'},
+    );
+    expect(find.text('남은 시간 계산 중'), findsOneWidget);
+    await _pump(
+      tester,
+      _spacing(running: false, finished: true)..['eta'] = {'state': 'none'},
+    );
+    expect(find.byKey(const ValueKey('eta-label')), findsNothing);
+    expect(find.byKey(const ValueKey('weighted-bar')), findsNothing);
+  });
 }
