@@ -23,7 +23,7 @@ List<void Function()> watchTabOpenEvents({
 }) => [
   for (var tab = 0; tab < kTabCount; tab++)
     watch(tabOpenEventName(tab), () {
-      if (tab != 0 && (tab == 12 || tab == 13 || hiddenTabs().contains(tab))) return;
+      if (tab != 0 && hiddenTabs().contains(tab)) return;
       tabRequest.value = null;
       tabRequest.value = tab;
       bringToFront();

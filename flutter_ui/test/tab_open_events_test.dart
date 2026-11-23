@@ -29,10 +29,18 @@ void main() {
     expect(find.text('tab:4'), findsOneWidget);
     expect(focused, 1);
 
+    listeners['docfit-open-tab-12']!();
+    await tester.pump();
+    expect(request.value, 12);
+    listeners['docfit-open-tab-13']!();
+    await tester.pump();
+    expect(request.value, 13);
+    expect(focused, 3);
+
     listeners['docfit-open-tab-3']!();
     await tester.pump();
-    expect(find.text('tab:4'), findsOneWidget);
-    expect(focused, 1);
+    expect(find.text('tab:13'), findsOneWidget);
+    expect(focused, 3);
     for (final stop in stops) {
       stop();
     }

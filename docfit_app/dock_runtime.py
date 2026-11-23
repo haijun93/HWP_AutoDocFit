@@ -15,6 +15,12 @@ PIPE_NAME = r"\\.\pipe\HwpAutoDocFit.dock"
 _TAB_EVENT_COUNT = 16
 
 
+def _tab_event_name(kind: str, tab: int) -> str:
+    if kind not in ("open", "close") or not 0 <= tab < _TAB_EVENT_COUNT:
+        raise ValueError("Invalid dock tab event")
+    return f"docfit-{kind}-tab-{tab}"
+
+
 class _TabEventReceiver:
     """Temporary Python-to-Flutter bridge while the Python host remains in place.
 
@@ -48,7 +54,7 @@ class _TabEventReceiver:
         try:
             for kind in ("open", "close"):
                 for tab in range(_TAB_EVENT_COUNT):
-                    name = f"docfit-{kind}-tab-{tab}"
+                    name = _tab_event_name(kind, tab)
                     handle = self._kernel32.CreateEventW(None, False, False, name)
                     if not handle:
                         raise OSError(self._ctypes.get_last_error(), f"CreateEventW failed: {name}")

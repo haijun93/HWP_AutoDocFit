@@ -3,7 +3,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from docfit_app.application_service import ApplicationService
-from docfit_app.dock_runtime import DockRuntime, bundled_exe
+from docfit_app.dock_runtime import DockRuntime, _tab_event_name, bundled_exe
 
 
 class FakeProcess:
@@ -15,6 +15,14 @@ class FakeProcess:
 
 
 class DockRuntimeTests(unittest.TestCase):
+    def test_python_event_names_match_rust_and_flutter_for_extra_pages(self):
+        self.assertEqual(_tab_event_name("open", 12), "docfit-open-tab-12")
+        self.assertEqual(_tab_event_name("open", 13), "docfit-open-tab-13")
+        self.assertEqual(_tab_event_name("close", 12), "docfit-close-tab-12")
+        self.assertEqual(_tab_event_name("close", 13), "docfit-close-tab-13")
+        with self.assertRaises(ValueError):
+            _tab_event_name("open", 16)
+
     def test_start_ready_and_stop_use_injected_process_and_pipe(self):
         calls = []
         process = FakeProcess()

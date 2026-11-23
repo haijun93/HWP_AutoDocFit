@@ -168,6 +168,40 @@ void main2() {
     expect(selected, const [kTabFileRename]);
   });
 
+  testWidgets('Dock 탭 12와 13은 가상 폴더와 업무자료함 화면을 각각 연다', (tester) async {
+    await _size(tester, 1400);
+    final request = ValueNotifier<int?>(null);
+    await tester.pumpWidget(MaterialApp(home: TabNavigationShell(
+      documentEditor: const SizedBox(),
+      tableTemplates: const SizedBox(),
+      tableSketch: const SizedBox(),
+      diagram: const SizedBox(),
+      mindMap: const SizedBox(),
+      fileConversion: const SizedBox(),
+      paint: const SizedBox(),
+      fileRename: const SizedBox(),
+      timemachine: const SizedBox(),
+      docGrid: const SizedBox(),
+      libraryScreen: const Text('library-screen'),
+      notebookScreen: const Text('notebook-screen'),
+      developerMode: true,
+      tabRequest: request,
+    )));
+
+    request.value = 12;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('workspace-extra-library')), findsOneWidget);
+    expect(find.text('library-screen'), findsOneWidget);
+    expect(find.text('notebook-screen'), findsNothing);
+
+    request.value = 13;
+    await tester.pump();
+    expect(find.byKey(const ValueKey('workspace-extra-notebook')), findsOneWidget);
+    expect(find.text('notebook-screen'), findsOneWidget);
+    expect(find.text('library-screen'), findsNothing);
+    request.dispose();
+  });
+
   testWidgets('왼쪽 메뉴: 낮은 창에서도 넘치지 않는다', (tester) async {
     await _size(tester, 800, 200);
     await tester.pumpWidget(_shell());

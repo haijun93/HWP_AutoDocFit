@@ -261,7 +261,15 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
 
   void _applyTabRequest() {
     final index = widget.tabRequest?.value;
-    if (index != null && mounted) _select(index);
+    if (!mounted) return;
+    if (index == null) {
+      if (_extra != null) setState(() => _extra = null);
+    } else if (index == 12 || index == 13) {
+      final page = index == 12 ? WorkspaceExtraPage.library : WorkspaceExtraPage.notebook;
+      if (_extra != page) setState(() => _extra = page);
+    } else {
+      _select(index);
+    }
   }
 
   /// 햄버거 단추 순환(사용자 지시 2026-11-07): 일반 모드는 펼치기 ↔ 닫기만 되풀이하고,

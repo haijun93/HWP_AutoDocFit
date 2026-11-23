@@ -262,10 +262,9 @@ pub fn tab_close_event_name(tab: u8) -> Option<String> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Route { Search, VirtualFolder, Clipboard, MainTab(u8), Invalid }
+pub enum Route { Search, MainTab(u8), Invalid }
 pub fn route(tab: u8) -> Route {
-    match tab { 7 => Route::Search, 12 => Route::VirtualFolder, 13 => Route::Clipboard,
-        0..=15 => Route::MainTab(tab), _ => Route::Invalid }
+    match tab { 7 => Route::Search, 0..=15 => Route::MainTab(tab), _ => Route::Invalid }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -574,11 +573,14 @@ mod tests {
     #[test]
     fn routing_table_and_tab_event_contract() {
         assert_eq!(route(7), Route::Search);
-        assert_eq!(route(12), Route::VirtualFolder);
-        assert_eq!(route(13), Route::Clipboard);
+        assert_eq!(route(12), Route::MainTab(12));
+        assert_eq!(route(13), Route::MainTab(13));
+        assert_ne!(route(12), route(13));
         for tab in [0,1,2,3,4,5,6,8,9,10,11,14,15] { assert_eq!(route(tab), Route::MainTab(tab)); }
         assert_eq!(route(16), Route::Invalid);
         assert_eq!(tab_event_name(4).as_deref(), Some("docfit-open-tab-4"));
+        assert_eq!(tab_event_name(12).as_deref(), Some("docfit-open-tab-12"));
+        assert_eq!(tab_event_name(13).as_deref(), Some("docfit-open-tab-13"));
         assert_eq!(tab_event_name(15).as_deref(), Some("docfit-open-tab-15"));
         assert_eq!(tab_event_name(16), None);
     }

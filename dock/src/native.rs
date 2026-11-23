@@ -713,8 +713,6 @@ fn open_tab(tab: u8) -> bool {
             let Some(exe) = sibling_exe("ktm.exe") else { return false };
             std::process::Command::new(exe).arg("--show").spawn().is_ok()
         }
-        dock::Route::VirtualFolder => run_sibling("kvf.exe", Some("--show")),
-        dock::Route::Clipboard => launch_sibling("kagent.exe"),
         dock::Route::MainTab(tab) => {
             let Some(name) = dock::tab_event_name(tab) else { return false };
             let name = wide(&name);
@@ -746,16 +744,6 @@ fn hidden_tabs() -> std::collections::BTreeSet<u8> {
 fn sibling_exe(name: &str) -> Option<std::path::PathBuf> {
     std::env::current_exe().ok()?.parent().map(|p| p.join(name)).filter(|p| p.is_file())
 }
-fn launch_sibling(name: &str) -> bool {
-    sibling_exe(name).and_then(|p| std::process::Command::new(p).spawn().ok()).is_some()
-}
-fn run_sibling(name: &str, arg: Option<&str>) -> bool {
-    let Some(exe) = sibling_exe(name) else { return false };
-    let mut command = std::process::Command::new(exe);
-    if let Some(arg) = arg { command.arg(arg); }
-    command.spawn().is_ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
