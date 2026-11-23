@@ -9,6 +9,7 @@ pub mod cluster;
 pub mod date;
 pub mod document_date;
 pub mod history;
+pub mod hwpx;
 pub mod norm;
 pub mod output;
 pub mod series;

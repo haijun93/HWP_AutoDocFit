@@ -723,12 +723,14 @@ pub fn write_report_json(path: impl AsRef<Path>, input: &AnnualInput) -> io::Res
 pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Result<()> {
     let folder = folder.as_ref();
     fs::create_dir_all(folder)?;
-    fs::write(folder.join("인수인계_연보.md"), render_markdown(input))?;
-    write_report_json(folder.join("보고서_데이터.json"), input)?;
-    write_svg(folder.join("월별_문서수.svg"), &monthly_documents_svg(input))?;
-    write_svg(folder.join("주차별_문서수.svg"), &weekly_documents_svg(input))?;
-    write_svg(folder.join("주차_요일_열지도.svg"), &weekday_heatmap_svg(input))?;
-    write_svg(folder.join("주제별_월_타임라인.svg"), &topic_timeline_svg(input))?;
+    let source = folder.join("원자료");
+    fs::create_dir_all(&source)?;
+    fs::write(source.join("인수인계_연보.md"), render_markdown(input))?;
+    write_report_json(source.join("보고서_데이터.json"), input)?;
+    write_svg(&source.join("월별_문서수.svg"), &monthly_documents_svg(input))?;
+    write_svg(&source.join("주차별_문서수.svg"), &weekly_documents_svg(input))?;
+    write_svg(&source.join("주차_요일_열지도.svg"), &weekday_heatmap_svg(input))?;
+    write_svg(&source.join("주제별_월_타임라인.svg"), &topic_timeline_svg(input))?;
     for (name, csv) in [
         ("월별_주제.csv", monthly_topics_csv(input)),
         ("주제별_타임라인.csv", topic_timeline_csv(input)),
@@ -739,8 +741,9 @@ pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Resul
     ] {
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(csv.as_bytes());
-        fs::write(folder.join(name), bytes)?;
+        fs::write(source.join(name), bytes)?;
     }
+    crate::hwpx::write_hwpx_outputs(input, folder)?;
     Ok(())
 }
 
@@ -876,7 +879,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
         for n in ["월별_주제.csv", "주제별_타임라인.csv", "주기_업무.csv", "폴더_이력.csv"] {
-            let b = fs::read(d.path().join(n)).unwrap();
+            let b = fs::read(d.path().join("원자료").join(n)).unwrap();
             assert_eq!(&b[..3], &[0xef, 0xbb, 0xbf]);
         }
     }
@@ -884,14 +887,16 @@ mod tests {
     fn output_writes_markdown_and_three_csvs() {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
+        assert!(d.path().join("인수인계서.hwpx").is_file());
+        assert!(d.path().join("실적보고서.hwpx").is_file());
         for n in [
-            "인수인계_연보.md",
-            "월별_주제.csv",
-            "주제별_타임라인.csv",
-            "주차별_주제.csv",
-            "요일_열지도.csv",
-            "주기_업무.csv",
-            "폴더_이력.csv",
+            "원자료/인수인계_연보.md",
+            "원자료/월별_주제.csv",
+            "원자료/주제별_타임라인.csv",
+            "원자료/주차별_주제.csv",
+            "원자료/요일_열지도.csv",
+            "원자료/주기_업무.csv",
+            "원자료/폴더_이력.csv",
         ] {
             assert!(d.path().join(n).is_file());
         }
@@ -924,7 +929,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
         for name in ["주제별_타임라인.csv", "주차별_주제.csv", "요일_열지도.csv"] {
-            let bytes = fs::read(d.path().join(name)).unwrap();
+            let bytes = fs::read(d.path().join("원자료").join(name)).unwrap();
             assert_eq!(&bytes[..3], &[0xef, 0xbb, 0xbf]);
         }
     }
@@ -1014,7 +1019,7 @@ mod tests {
     fn weekly_chart_output_file_is_written() {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
-        let svg = fs::read_to_string(d.path().join("주차별_문서수.svg")).unwrap();
+        let svg = fs::read_to_string(d.path().join("원자료/주차별_문서수.svg")).unwrap();
         assert!(svg.starts_with("<svg "));
         assert_well_formed_svg(&svg);
     }
@@ -1153,6 +1158,6 @@ mod tests {
         // write_outputs 전체 호출 시에도 보고서_데이터.json이 정상 생성되는지 확인
         let out_dir = d.path().join("outputs");
         write_outputs(&input, &out_dir).unwrap();
-        assert!(out_dir.join("보고서_데이터.json").is_file());
+        assert!(out_dir.join("원자료/보고서_데이터.json").is_file());
     }
 }
