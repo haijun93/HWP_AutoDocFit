@@ -44,6 +44,21 @@ void main() {
     expect(find.byKey(const Key('workspaceTab-3')), findsOneWidget);
   });
 
+  testWidgets('위쪽 가로 탭 글자는 한글 글꼴(NotoSansKR)로 그린다 — RichText 가 앱 글꼴을 잃어 한글이 네모로 깨지던 문제', (t) async {
+    _size(t, 1400);
+    await t.pumpWidget(_app());
+    for (final i in [2, 3, 4]) {
+      final rich = t.widget<RichText>(find.descendant(
+        of: find.byKey(ValueKey('workspaceSubTab-$i')),
+        matching: find.byType(RichText),
+      ));
+      final style = rich.text.style!;
+      // 시험 앱은 기본 테마(Roboto)라 fontFamily 는 테마를 따른다. 실제 앱 테마는 NotoSansKR 이고, 어느 쪽이든 한글 글꼴이 대체 목록에 있어야 한글이 깨지지 않는다.
+      expect(style.fontFamily, isNotNull, reason: '탭 $i 글꼴');
+      expect(style.fontFamilyFallback, contains('NotoSansKR'), reason: '탭 $i 대체 글꼴');
+    }
+  });
+
   testWidgets('위쪽 가로 탭: 묶음 밖 화면·보이는 화면이 하나뿐이면 나오지 않는다', (t) async {
     _size(t, 1400);
     await t.pumpWidget(_app(k: UniqueKey(), initial: 0));

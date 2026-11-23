@@ -331,7 +331,11 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
                       textScaler: MediaQuery.textScalerOf(context),
                       text: TextSpan(
                         text: _labels[i],
-                        style: TextStyle(
+                        // RichText 는 DefaultTextStyle 을 상속하지 않아 앱 글꼴(NotoSansKR)이 빠지면 한글이 네모로 깨진다.
+                        // 테마의 본문 스타일을 바탕으로 쓰고, 글꼴이 비면 NotoSansKR 을 직접 지정한다.
+                        style: (Theme.of(context).textTheme.bodyMedium ?? const TextStyle()).copyWith(
+                          fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily ?? 'NotoSansKR',
+                          fontFamilyFallback: const ['NotoSansKR', 'NotoSansSymbols2', 'STIXTwoMath'],
                           fontSize: 13,
                           fontWeight: i == _index ? FontWeight.w700 : FontWeight.w500,
                           color: i == _index ? color : context.colors.textSecondary,
