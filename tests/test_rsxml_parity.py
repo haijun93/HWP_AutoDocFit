@@ -1,4 +1,4 @@
-"""RSXML1·RSXML2·RSXML3: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
+"""RSXML1~RSXML4: 파이썬 처리기와 Rust CLI(hwpx_fmt)의 결과가 같은지(차이 0) 시험한다.
 
 Rust 바이너리가 없으면 건너뛴다(--bin/HWPX_FMT_BIN/CARGO_TARGET_DIR/release/hwpx_fmt). 한/글 COM 은 쓰지 않는다.
 """
@@ -158,6 +158,84 @@ class Rsxml3ParityTest(unittest.TestCase):
             shutil.rmtree(work, ignore_errors=True)
         self.assertEqual(bad, 0, rows)
         self.assertGreaterEqual(sum(len(r['detected']) for r in rows), 20)
+
+
+class Rsxml4CorpusTest(unittest.TestCase):
+    NEW = ('table_width', 'table_style', 'table_style_align', 'connector_tab')
+
+    @classmethod
+    def setUpClass(cls):
+        parity.load_python_processors()
+        import rsxml4_cases
+        cls.mod = rsxml4_cases
+        cls.cases = rsxml4_cases.build(parity, parity.PY_NS)
+
+    def test_each_processor_has_30_plus_valid_synthetic_documents(self):
+        import io
+        import zipfile
+        for name in self.NEW:
+            n = sum(1 for _, jobs in self.cases.values() if any(j[0] == name for j in jobs))
+            self.assertGreaterEqual(n, 30, name)
+        for cname, (data, jobs) in self.cases.items():
+            with zipfile.ZipFile(io.BytesIO(data)) as z:
+                self.assertIn('Contents/header.xml', z.namelist(), cname)
+            for _, cfg in jobs:
+                self.assertTrue(cfg is None or isinstance(cfg, dict) or cfg in self.mod.CONFIGS, cname)
+
+    def test_style_profiles_come_from_python_learner_and_default(self):
+        from docfit_core.table_style import valid_style
+        for key in ('ts_default', 'ts_learned', 'ts_learned_2head', 'ts_learned_ns0'):
+            style = self.mod.CONFIGS[key]['table_style']
+            self.assertTrue(valid_style(style), key)
+            self.assertGreaterEqual(len(style['borders']), 2, key)
+        self.assertFalse(valid_style(self.mod.CONFIGS['ts_invalid_version']['table_style']))
+        self.assertIn('ns0:', next(iter(self.mod.CONFIGS['ts_learned_ns0']['table_style']['borders'].values())))
+        self.assertTrue(any(c.get('bold') for c in self.mod.CONFIGS['ts_learned']['table_style']['chars'].values()))
+
+    def test_rounding_tie_and_chain_documents_exist(self):
+        self.assertGreaterEqual(sum(1 for n in self.cases if n.startswith('w_tie_round_')), 8)
+        self.assertGreaterEqual(sum(1 for n in self.cases if n.startswith('a_after_width_')), 20)
+        self.assertGreaterEqual(sum(1 for n in self.cases if n.startswith('a_after_style_')), 10)
+
+    def test_python_settings_cover_new_keys_and_restore(self):
+        def fn():
+            pass
+        before = dict(fn.__globals__)
+        restore = parity.apply_py_settings(fn, {'table_style': {'version': 1}, 'connector_tab_enabled': False})
+        g = fn.__globals__
+        self.assertEqual(g['활성_표서식_프로필'], {'version': 1})
+        self.assertFalse(g['알파_연결부호_탭정렬_사용'])
+        restore()
+        for k in ('활성_표서식_프로필', '알파_연결부호_탭정렬_사용'):
+            self.assertEqual(g.get(k), before.get(k), k)
+
+
+@unittest.skipUnless(parity.find_bin(None), 'hwpx_fmt 바이너리가 없습니다(cargo build --release 후 HWPX_FMT_BIN 지정)')
+class Rsxml4ParityTest(unittest.TestCase):
+    NEW = Rsxml4CorpusTest.NEW
+
+    def test_new_processors_identical_and_changing(self):
+        work = Path(tempfile.mkdtemp(prefix='rsxml4_parity_test_'))
+        try:
+            procs = {k: v for k, v in parity.load_python_processors().items() if k in self.NEW}
+            old_only = parity.ONLY
+            parity.ONLY = set(self.NEW)
+            try:
+                results, failures = parity.run_parity(parity.find_bin(None), work, procs)
+            finally:
+                parity.ONLY = old_only
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        bad = [(r['doc'], r['processor'], r['diffs']) for r in results if not r['ok']]
+        self.assertEqual(failures, 0, bad)
+        for name in self.NEW:
+            own = [r for r in results if r['processor'] == name and r['kind'] == 'rsxml4']
+            self.assertGreaterEqual(len(own), 30, name)
+            self.assertGreaterEqual(sum(1 for r in own if r['py_count']), 15, name)
+
+    def test_sabotage_pairs_cover_new_processors(self):
+        covered = {p for _, p, _ in parity.SABOTAGE_PAIRS}
+        self.assertTrue(set(self.NEW) <= covered)
 
 
 @unittest.skipUnless(parity.find_bin(None), 'hwpx_fmt 바이너리가 없습니다(cargo build --release 후 HWPX_FMT_BIN 지정)')

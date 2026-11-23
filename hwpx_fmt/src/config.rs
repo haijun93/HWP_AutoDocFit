@@ -8,6 +8,8 @@
 //! RSXML3 추가 키: "std_symbols"(표준서식_기호_사용, 기본 true), "symbol_rules"(표준서식_설정["기호_규칙"], [[기호,?,글꼴,크기],…]),
 //! "colon_label_enabled"(알파_콜론라벨_정렬_사용, 기본 true), "ratio_reduce"(장평_줄이기_사용, 기본 false),
 //! "blank_line_profile"(표준서식_설정["빈줄_서식"], 파이썬 blank_lines.learn 이 만든 사전), "emphasis_words"(표준서식_설정["강조_낱말"] 목록).
+//! RSXML4 추가 키: "table_style"(활성_표서식_프로필: 파이썬 learn_from_table/default_style 이 만든 사전), "connector_tab_enabled"(알파_연결부호_탭정렬_사용, 기본 true),
+//! "standard_margin_planned"(표준서식이 편집 여백을 바꿀 예정이라 `_최종_본문폭` 이 쪽 정보와 달라지는가, 기본 false; true 면 연결 부호 탭은 거부).
 //! 알 수 없는 키, 반영하지 못하는 값은 조용히 무시하지 않고 `미지원 입력:` 오류로 거부한다(종료 코드 4).
 use crate::rules::R;
 
@@ -29,6 +31,9 @@ pub struct Config {
     pub ratio_reduce: bool,
     pub blank_line_profile: Option<serde_json::Value>,
     pub emphasis_words: Vec<serde_json::Value>,
+    pub table_style: Option<serde_json::Value>,
+    pub connector_tab_enabled: bool,
+    pub standard_margin_planned: bool,
 }
 
 impl Default for Config {
@@ -44,6 +49,9 @@ impl Default for Config {
             ratio_reduce: false,
             blank_line_profile: None,
             emphasis_words: vec![],
+            table_style: None,
+            connector_tab_enabled: true,
+            standard_margin_planned: false,
         }
     }
 }
@@ -88,6 +96,19 @@ impl Config {
                 "std_symbols" => c.std_symbols = val.as_bool().ok_or_else(|| format!("{UNSUPPORTED} std_symbols 는 true/false 여야 합니다."))?,
                 "colon_label_enabled" => {
                     c.colon_label_enabled = val.as_bool().ok_or_else(|| format!("{UNSUPPORTED} colon_label_enabled 는 true/false 여야 합니다."))?
+                }
+                "connector_tab_enabled" => {
+                    c.connector_tab_enabled = val.as_bool().ok_or_else(|| format!("{UNSUPPORTED} connector_tab_enabled 는 true/false 여야 합니다."))?
+                }
+                "standard_margin_planned" => {
+                    c.standard_margin_planned = val.as_bool().ok_or_else(|| format!("{UNSUPPORTED} standard_margin_planned 는 true/false 여야 합니다."))?
+                }
+                "table_style" => {
+                    c.table_style = match val {
+                        serde_json::Value::Null => None,
+                        serde_json::Value::Object(_) => Some(val.clone()),
+                        _ => return unsupported("table_style 은 객체여야 합니다."),
+                    }
                 }
                 "ratio_reduce" => c.ratio_reduce = val.as_bool().ok_or_else(|| format!("{UNSUPPORTED} ratio_reduce 는 true/false 여야 합니다."))?,
                 "symbol_rules" => {

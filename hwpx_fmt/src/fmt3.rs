@@ -776,11 +776,7 @@ pub fn label_of(text: &str) -> Option<(usize, usize, usize)> {
 }
 
 fn sum_em(cs: &[char]) -> f64 {
-    let mut t = 0.0;
-    for &c in cs {
-        t += char_em(c);
-    }
-    t
+    crate::style::py_sum(cs.iter().map(|&c| char_em(c)))
 }
 
 /// `stretch`: (자간 %, 장평 %)

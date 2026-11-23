@@ -37,7 +37,7 @@ fn get<'a>(v: &'a Value, k: &str) -> Option<&'a Value> {
 // ---- XML 조각(프로필) ----------------------------------------------------
 
 /// 대상 문서 뿌리의 xmlns 선언 → {이름공간 URI: 접두사}(같은 URI 는 뒤의 선언이 이긴다)
-fn uri_prefixes(target: &Doc) -> HashMap<String, String> {
+pub(crate) fn uri_prefixes(target: &Doc) -> HashMap<String, String> {
     let mut m = HashMap::new();
     for (k, v) in &target.nodes[0].attrs {
         if let Some(p) = k.strip_prefix("xmlns:") {
@@ -48,7 +48,7 @@ fn uri_prefixes(target: &Doc) -> HashMap<String, String> {
 }
 
 /// 프로필의 XML 조각을 읽어 접두사를 대상 문서의 것으로 바꾼다(파이썬은 Clark 이름을 직렬화기가 등록 접두사로 쓴다).
-fn parse_fragment(xml: &str, target: &Doc) -> R<Doc> {
+pub(crate) fn parse_fragment(xml: &str, target: &Doc) -> R<Doc> {
     let mut f = dom::parse(xml.as_bytes()).map_err(|e| format!("프로필 XML 조각 오류: {e}"))?;
     let want = uri_prefixes(target);
     // 선언 범위(선행 순회)

@@ -159,6 +159,62 @@ pub fn char_em(ch: char) -> f64 {
     0.55
 }
 
+/// 파이썬 내장 `sum()`(3.12 이상)의 부동소수 합: 정수 항목은 처음 실수가 나오기 전까지 정수로 더하고,
+/// 실수 항목부터는 Neumaier 보정 합산을 쓴다(CPython bltinmodule.c). `add_int` 는 실수 단계에서 보정 없이 더한다.
+#[derive(Default)]
+pub struct PySum {
+    int_total: i64,
+    started: bool,
+    f: f64,
+    c: f64,
+}
+
+impl PySum {
+    pub fn new() -> PySum {
+        PySum::default()
+    }
+    pub fn add_int(&mut self, v: i64) {
+        if self.started {
+            self.f += v as f64;
+        } else {
+            self.int_total += v;
+        }
+    }
+    pub fn add(&mut self, x: f64) {
+        if !self.started {
+            self.started = true;
+            self.f = self.int_total as f64 + x;
+            return;
+        }
+        let t = self.f + x;
+        if self.f.abs() >= x.abs() {
+            self.c += (self.f - t) + x;
+        } else {
+            self.c += (x - t) + self.f;
+        }
+        self.f = t;
+    }
+    /// 합(실수가 하나도 없었으면 정수 합)
+    pub fn total(&self) -> f64 {
+        if !self.started {
+            return self.int_total as f64;
+        }
+        if self.c != 0.0 && self.c.is_finite() {
+            self.f + self.c
+        } else {
+            self.f
+        }
+    }
+}
+
+pub fn py_sum<I: IntoIterator<Item = f64>>(it: I) -> f64 {
+    let mut s = PySum::new();
+    for x in it {
+        s.add(x);
+    }
+    s.total()
+}
+
 /// 파이썬 round(x)(짝수 쪽 반올림) → 정수
 pub fn py_round(x: f64) -> i64 {
     x.round_ties_even() as i64

@@ -40,11 +40,13 @@ NS = ('xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" xmlns:hh="http://
 PROCESSORS = {'date': '표날짜칸_hwpx_처리', 'twochar': '두글자칸_hwpx_처리', 'overview_lead': '개요첫칸_hwpx_처리',
               'page_number': '쪽번호_hwpx_처리', 'spacing_reset': '자간초기화_hwpx_처리',
               'asterisk_superscript': '별표위첨자_hwpx_처리', 'attachment_font': '붙임글꼴_hwpx_처리',
-              'colon_label': '콜론라벨_hwpx_처리', 'blank_lines': '빈줄서식_hwpx_처리', 'emphasis': '강조낱말_hwpx_처리'}
+              'colon_label': '콜론라벨_hwpx_처리', 'blank_lines': '빈줄서식_hwpx_처리', 'emphasis': '강조낱말_hwpx_처리',
+              'table_width': '표너비_hwpx_처리', 'table_style': '기본표서식_hwpx_처리', 'table_style_align': '기본표서식_hwpx_처리',
+              'connector_tab': '연결부호탭_hwpx_처리'}
 ONLY = None   # --only 로 정한 처리기 이름 집합(None 이면 전부)
 PY_NS = {}    # 파이썬 처리기 이름공간(학습용 함수 접근)
 # 모든 문서(합성 공통·fixture)에 처리기별로 거는 기본 설정 이름(rsxml2_cases.CONFIGS 의 키)
-DEFAULT_CONFIG = {'page_number': 'page_std'}
+DEFAULT_CONFIG = {'page_number': 'page_std', 'table_style': 'ts_default', 'table_style_align': 'ts_default'}
 HEADER = f'<?xml version="1.0" encoding="UTF-8"?><hh:head {NS}><hh:refList/></hh:head>'
 
 
@@ -407,7 +409,8 @@ _MISSING = object()
 def apply_py_settings(fn, cfg):
     """파이썬 처리기가 읽는 전역 설정을 cfg(Rust --config 와 같은 사전)로 맞추고, 되돌리는 함수를 돌려준다."""
     g = fn.__globals__
-    keys = ('표준서식_설정', '활성_항목기호_체계', '제목_담당자_글', '표준서식_기호_사용', '알파_콜론라벨_정렬_사용', '장평_줄이기_사용')
+    keys = ('표준서식_설정', '활성_항목기호_체계', '제목_담당자_글', '표준서식_기호_사용', '알파_콜론라벨_정렬_사용', '장평_줄이기_사용',
+            '활성_표서식_프로필', '알파_연결부호_탭정렬_사용')
     saved = {k: g.get(k, _MISSING) for k in keys}
     std = {}
     if cfg:
@@ -429,6 +432,8 @@ def apply_py_settings(fn, cfg):
     g['표준서식_기호_사용'] = c3.get('std_symbols', True)
     g['알파_콜론라벨_정렬_사용'] = c3.get('colon_label_enabled', True)
     g['장평_줄이기_사용'] = c3.get('ratio_reduce', False)
+    g['활성_표서식_프로필'] = c3.get('table_style')
+    g['알파_연결부호_탭정렬_사용'] = c3.get('connector_tab_enabled', True)
     if c3.get('marker_scheme_active') and fn.__name__ in ('별표위첨자_hwpx_처리', '붙임글꼴_hwpx_처리', '콜론라벨_hwpx_처리', '빈줄서식_hwpx_처리', '강조낱말_hwpx_처리'):
         from docfit_core.marker_scheme import detect_scheme
         g['활성_항목기호_체계'] = detect_scheme(['1. 가', '2. 나', '1) 다', '2) 라', '가. 마', '나. 바'])
@@ -550,6 +555,14 @@ def build_corpus(work):
         p = work / 'in' / f'{name}.hwpx'
         p.write_bytes(data)
         corpus[name] = ('rsxml3', p, jobs)
+    import rsxml4_cases
+    for name, (data, jobs) in rsxml4_cases.build(sys.modules[__name__], PY_NS).items():
+        jobs = [j for j in jobs if ONLY is None or j[0] in ONLY]
+        if not jobs:
+            continue
+        p = work / 'in' / f'{name}.hwpx'
+        p.write_bytes(data)
+        corpus[name] = ('rsxml4', p, jobs)
     return corpus
 
 
@@ -564,7 +577,8 @@ def config_dict(name):
     if isinstance(name, dict):
         return name
     import rsxml3_cases
-    return {**rsxml2_cases_module().CONFIGS, **rsxml3_cases.CONFIGS}[name]
+    import rsxml4_cases
+    return {**rsxml2_cases_module().CONFIGS, **rsxml3_cases.CONFIGS, **rsxml4_cases.CONFIGS}[name]
 
 
 def run_parity(binpath, work, procs):
@@ -620,9 +634,11 @@ def run_unsupported(binpath, work):
     """반영하지 못하는 설정은 종료 코드 4 와 '미지원 입력' 메시지로 거부하고 출력 파일을 만들지 않아야 한다."""
     import rsxml2_cases
     import rsxml3_cases
+    import rsxml4_cases
     out, failures = [], 0
     (work / 'uns').mkdir(exist_ok=True)
-    for name, pname, cfg, data in (rsxml2_cases.unsupported_cases(sys.modules[__name__]) + rsxml3_cases.unsupported_cases(sys.modules[__name__])):
+    for name, pname, cfg, data in (rsxml2_cases.unsupported_cases(sys.modules[__name__]) + rsxml3_cases.unsupported_cases(sys.modules[__name__])
+                                   + rsxml4_cases.unsupported_cases(sys.modules[__name__])):
         if ONLY is not None and pname not in ONLY:
             continue
         src, dst, cf = work / 'uns' / f'{name}.hwpx', work / 'uns' / f'{name}.out.hwpx', work / 'uns' / f'{name}.json'
@@ -709,6 +725,44 @@ def bench3(binpath, work, procs):
     return out
 
 
+def large_doc4(tables=400, toc_groups=500):
+    """RSXML4 속도 시험용: 3×3 데이터 표 tables 개(칸 너비·기본 표 서식 대상) + 연결 부호 문단 묶음 toc_groups 개(문단 3000개)."""
+    import rsxml4_cases as m4
+    import rsxml4_cases_b as b4
+    body = [m4.pagepr(), m4.T('□ 추진 배경')]
+    for i in range(tables):
+        body.append(m4.host(b4.data_table([['구분', '내용', '비고'], [f'가{i}', '긴 문장이 들어 있는 칸입니다 이 글은 길다', '10'], ['나', '짧음', '2026. 10. 10.']])))
+    for i in range(toc_groups):
+        body += [m4.T(f'제{i}장 총칙 ........ {i}'), m4.T(f'제{i}장 목적과 범위 ........ {i + 10}'), m4.T(f'제{i}장 부칙 ........ {i + 20}'),
+                 m4.T('중간 글'), m4.T('가나다'), m4.T('라마바')]
+    return m4.pack(sys.modules[__name__], m4.sec(*body), b4.DOC_HEADER)
+
+
+def bench4(binpath, work, procs):
+    src = work / 'large4.hwpx'
+    src.write_bytes(large_doc4())
+    out = {}
+    for pname in ('table_width', 'table_style', 'connector_tab'):
+        fn = procs[pname]
+        cfg = config_dict(DEFAULT_CONFIG.get(pname))
+        dp, dr = work / f'b4.{pname}.py.hwpx', work / f'b4.{pname}.rs.hwpx'
+        restore = apply_py_settings(fn, cfg)
+        try:
+            t0 = time.perf_counter()
+            sel = fn(str(src))
+            n = fn(str(src), str(dp), selections=sel)
+            t_py = time.perf_counter() - t0
+        finally:
+            restore()
+        t0 = time.perf_counter()
+        r = subprocess.run([binpath, pname, str(src), str(dr)] + cfg_args(cfg, work / f'b4.{pname}.json'), capture_output=True, text=True, encoding='utf-8')
+        t_rs = time.perf_counter() - t0
+        same, diffs, _ = compare_outputs(dp, dr)
+        out[pname] = {'tables': 400, 'toc_paragraphs': 3000, 'py_seconds': round(t_py, 3), 'rs_seconds': round(t_rs, 3), 'speedup': round(t_py / t_rs, 1) if t_rs else None,
+                      'py_count': n, 'rs_count': json.loads(r.stdout)['count'] if r.returncode == 0 else None, 'identical': same}
+    return out
+
+
 def bench(binpath, work, procs):
     src = work / 'large.hwpx'
     src.write_bytes(large_doc(500))
@@ -738,7 +792,9 @@ def bench(binpath, work, procs):
 # ---------------------------------------------------------------- 정규화가 실제 서식 차이를 가리지 않는지 확인(일부러 망가뜨린 출력)
 
 SABOTAGE_PAIRS = [('ast_lines_all', 'asterisk_superscript', None), ('att_align_two_kinds', 'attachment_font', None),
-                  ('col_basic', 'colon_label', None), ('blk_basic_same', 'blank_lines', 'inline'), ('emp_plain_same', 'emphasis', 'inline')]
+                  ('col_basic', 'colon_label', None), ('blk_basic_same', 'blank_lines', 'inline'), ('emp_plain_same', 'emphasis', 'inline'),
+                  ('w_two_col', 'table_width', None), ('w_random_03', 'table_width', None), ('k_toc_dots', 'connector_tab', None), ('k_pull_forward_cell', 'connector_tab', None),
+                  ('s_basic_3x3', 'table_style', 'ts_default'), ('s_profile_learned', 'table_style', 'ts_learned'), ('a_after_width_w_two_col', 'table_style_align', 'ts_default')]
 
 
 def _mut_zip(path, out, fn):
@@ -784,6 +840,13 @@ def run_sabotage(binpath, work, procs):
         ('M6 글 안 글자 바꿈', False, r'(<hp:t>)([^<]+)', lambda m: f'{m.group(1)}{m.group(2)[:-1]}X'),
         ('M7 글 안 공백 하나 추가', False, r'(<hp:t>)([^<]+)', lambda m: f'{m.group(1)} {m.group(2)}'),
         ('M8 이름공간 주소 바꿈', False, r'(xmlns:hp="[^"]+)(")', lambda m: f'{m.group(1)}X{m.group(2)}'),
+        ('M10 칸 너비 바꿈', False, r'(<hp:cellSz width=")(\d+)(")', lambda m: f'{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}'),
+        ('M11 표 폭 바꿈', False, r'(<hp:sz width=")(\d+)(")', lambda m: f'{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}'),
+        ('M12 탭 위치 바꿈', True, r'(<hh:tabItem pos=")(\d+)(")', lambda m: f'{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}'),
+        ('M13 칸 테두리 참조 바꿈', False, r'(<hp:tc borderFillIDRef=")(\d+)(")', lambda m: f'{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}'),
+        ('M14 테두리 정의 바꿈', True, r'(<hh:leftBorder type=")(\w+)(")', lambda m: f'{m.group(1)}X{m.group(3)}'),
+        ('M15 탭 요소 종류 바꿈', False, r'(<hp:tab width="0" leader=")(\d+)(")', lambda m: f'{m.group(1)}{int(m.group(2)) + 1}{m.group(3)}'),
+        ('M16 머리 새 글꼴 이름 바꿈', True, r'(<hh:font id="\d+" face=")([^"]+)(")(?![\s\S]*<hh:font id=")', lambda m: f'{m.group(1)}X{m.group(3)}'),
         ('M9 run 하나 삭제', False, r'<hp:run [^>]*>(?:(?!</hp:run>).)*</hp:run>', lambda m: ''),
     ]
     must_ignore = [
@@ -793,6 +856,8 @@ def run_sabotage(binpath, work, procs):
     ]
     rows, bad = [], 0
     for doc, pname, cfgname in SABOTAGE_PAIRS:
+        if pname not in procs or doc not in corpus:
+            continue
         _, src, jobs = corpus[doc]
         cfg = config_dict(dict(jobs).get(pname))
         out_py, out_rs = work / 'sab' / f'{doc}.py.hwpx', work / 'sab' / f'{doc}.rs.hwpx'
@@ -834,6 +899,7 @@ def main(argv=None):
     ap.add_argument('--json')
     ap.add_argument('--bench', action='store_true')
     ap.add_argument('--bench3', action='store_true', help='RSXML3 처리기 속도만 잰다')
+    ap.add_argument('--bench4', action='store_true', help='RSXML4 처리기 속도만 잰다')
     ap.add_argument('--keep')
     ap.add_argument('--sabotage', action='store_true', help='출력을 일부러 망가뜨려 비교기가 잡는지 확인')
     ap.add_argument('--only', help='처리기 이름을 쉼표로(기본: 전부)')
@@ -850,6 +916,10 @@ def main(argv=None):
     if ONLY:
         procs = {k: v for k, v in procs.items() if k in ONLY}
     results, failures = run_parity(binpath, work, procs)
+    if args.bench4:
+        print(json.dumps(bench4(binpath, work, procs), ensure_ascii=False))
+        shutil.rmtree(work, ignore_errors=True)
+        return 0
     if args.bench3:
         print(json.dumps(bench3(binpath, work, procs), ensure_ascii=False))
         shutil.rmtree(work, ignore_errors=True)
@@ -877,7 +947,7 @@ def main(argv=None):
         d['pairs'] += 1
         d['passed'] += bool(r['ok'])
         d['changed'] += bool(r['py_count'])
-        d['docs_targeted'] += r['kind'] in ('rsxml2', 'rsxml3', 'fixture_mutated')
+        d['docs_targeted'] += r['kind'] in ('rsxml2', 'rsxml3', 'rsxml4', 'fixture_mutated')
         d['both_rejected'] += bool(r['py_error'] and r['rs_error'])
     summary['per_processor'] = per
     print(json.dumps(summary, ensure_ascii=False))

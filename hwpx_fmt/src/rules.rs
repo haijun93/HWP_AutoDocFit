@@ -13,7 +13,7 @@ pub fn py_ws(c: char) -> bool {
 pub fn py_strip(s: &str) -> &str {
     s.trim_matches(py_ws)
 }
-fn nows(s: &str) -> String {
+pub fn nows(s: &str) -> String {
     s.chars().filter(|c| !py_ws(*c)).collect()
 }
 pub fn clen(s: &str) -> usize {
@@ -144,12 +144,12 @@ impl Doc {
 
 // ---------------- docfit_core/table_style.py ----------------
 
-fn size(d: &Doc, t: usize) -> R<(i64, i64)> {
+pub fn size(d: &Doc, t: usize) -> R<(i64, i64)> {
     Ok((py_int(d.attr(t, "rowCnt").unwrap_or("0"))?, py_int(d.attr(t, "colCnt").unwrap_or("0"))?))
 }
 
 /// (행, 열, 행 병합 수, 열 병합 수)
-fn position(d: &Doc, tc: usize) -> R<(i64, i64, i64, i64)> {
+pub fn position(d: &Doc, tc: usize) -> R<(i64, i64, i64, i64)> {
     let addr = d.child(tc, "cellAddr");
     let span = d.child(tc, "cellSpan");
     let g = |e: Option<usize>, k: &str, def: &str| -> R<i64> {
@@ -216,11 +216,16 @@ fn is_flow_table(d: &Doc, t: usize) -> bool {
     d.cells(t).into_iter().any(|c| is_arrow_cell(d, c))
 }
 
-fn has_unit_caption(d: &Doc, t: usize) -> bool {
+pub fn has_unit_caption(d: &Doc, t: usize) -> bool {
     match d.child(t, "caption") {
         Some(c) => nows(&d.own_text(c)).contains("단위"),
         None => false,
     }
+}
+
+/// table_style.is_drawn_table = design | diagram | flow
+pub fn is_drawn_table(d: &Doc, t: usize) -> R<bool> {
+    Ok(is_design_table(d, t)? || is_diagram_table(d, t)? || is_flow_table(d, t))
 }
 
 /// is_user_designed_table = is_drawn_table(design|diagram|flow) or has_unit_caption
@@ -279,7 +284,7 @@ fn opaque(d: &Doc, c: usize, names: &[&str]) -> bool {
     d.iter(c).any(|i| names.contains(&d.tag(i)))
 }
 
-fn mid_cells(d: &Doc, table: usize, digit_ok: bool) -> R<Vec<usize>> {
+pub fn mid_cells(d: &Doc, table: usize, digit_ok: bool) -> R<Vec<usize>> {
     let cells = d.cells(table);
     let (rows, cols) = size(d, table)?;
     if rows != 1 || cols < 2 || cells.len() as i64 != cols {
@@ -321,7 +326,7 @@ fn mid_kind(d: &Doc, table: usize) -> R<Option<u8>> {
     Ok(Some(if cols == 3 { 1 } else { 2 }))
 }
 
-fn attach_kind(d: &Doc, table: usize) -> R<Option<u8>> {
+pub fn attach_kind(d: &Doc, table: usize) -> R<Option<u8>> {
     let cells = d.cells(table);
     let (rows, cols) = (py_int(d.attr(table, "rowCnt").unwrap_or("0"))?, py_int(d.attr(table, "colCnt").unwrap_or("0"))?);
     if rows != 1 || (cols != 2 && cols != 3) || cells.len() as i64 != cols {
@@ -339,6 +344,11 @@ fn attach_kind(d: &Doc, table: usize) -> R<Option<u8>> {
 }
 
 fn title_kind(d: &Doc, table: usize) -> R<Option<u8>> {
+    title_kind_blank(d, table, false)
+}
+
+/// `제목_유형판별(table, 빈칸허용)`: blank_ok 면 날짜·담당자 칸이 모두 빈 표도 같은 유형으로 본다.
+pub fn title_kind_blank(d: &Doc, table: usize, blank_ok: bool) -> R<Option<u8>> {
     let cells = d.cells(table);
     if cells.len() != 2 && cells.len() != 3 {
         return Ok(None);
@@ -361,10 +371,11 @@ fn title_kind(d: &Doc, table: usize) -> R<Option<u8>> {
     if ps.iter().any(|&p| RE_BULLET_LEAD_WS.is_match(&d.jstr(p))) {
         return Ok(None);
     }
+    let info_blank = blank_ok && !cells[1..].iter().any(|&c| !py_strip(&d.jstr(c)).is_empty());
     if cells.len() == 2 || three_rows {
         for &c in &cells[1..] {
             // _설정_담당자_글인가: 설정 값(제목_담당자_글)이 기본값 ''이면 항상 거짓
-            if !RE_OWNER_B.is_match(&d.jstr(c)) {
+            if !info_blank && !RE_OWNER_B.is_match(&d.jstr(c)) {
                 return Ok(None);
             }
         }
@@ -376,10 +387,10 @@ fn title_kind(d: &Doc, table: usize) -> R<Option<u8>> {
     }
     let date = d.jstr(cells[1]);
     let owner = d.jstr(cells[2]);
-    if !RE_TITLE_DATE.is_match(&date) {
+    if !info_blank && !RE_TITLE_DATE.is_match(&date) {
         return Ok(None);
     }
-    if !RE_OWNER_A.is_match(&owner) {
+    if !info_blank && !RE_OWNER_A.is_match(&owner) {
         return Ok(None);
     }
     Ok(Some(if ps.len() == 2 { 2 } else { 1 }))

@@ -3,7 +3,7 @@ use hwpx_fmt::{process_json, survey_json, Processor};
 use std::path::Path;
 use std::process::ExitCode;
 
-const USAGE: &str = "사용법:\n  hwpx_fmt <처리기> <입력.hwpx> <출력.hwpx> [--selections 파일.json] [--config 설정.json]   처리\n  hwpx_fmt survey <처리기> <입력.hwpx> [--config 설정.json]                                  조사 모드(대상 목록 JSON 출력)\n처리기: date | twochar | overview_lead | page_number | spacing_reset | asterisk_superscript | attachment_font | colon_label | blank_lines | emphasis\n설정(JSON): page_number, title_owner_text, indent_rules, marker_scheme_active, std_symbols, symbol_rules, colon_label_enabled, ratio_reduce, blank_line_profile, emphasis_words (알 수 없는 키·반영 못 하는 값은 '미지원 입력'으로 거부, 종료 코드 4)\n결과는 표준출력 JSON 한 줄. 입력 파일은 바꾸지 않는다.";
+const USAGE: &str = "사용법:\n  hwpx_fmt <처리기> <입력.hwpx> <출력.hwpx> [--selections 파일.json] [--config 설정.json]   처리\n  hwpx_fmt survey <처리기> <입력.hwpx> [--config 설정.json]                                  조사 모드(대상 목록 JSON 출력)\n처리기: date | twochar | overview_lead | page_number | spacing_reset | asterisk_superscript | attachment_font | colon_label | blank_lines | emphasis | table_width | table_style | table_style_align | connector_tab\n설정(JSON): page_number, title_owner_text, indent_rules, marker_scheme_active, std_symbols, symbol_rules, colon_label_enabled, ratio_reduce, blank_line_profile, emphasis_words, table_style, connector_tab_enabled, standard_margin_planned (알 수 없는 키·반영 못 하는 값은 '미지원 입력'으로 거부, 종료 코드 4)\n결과는 표준출력 JSON 한 줄. 입력 파일은 바꾸지 않는다.";
 
 fn run(args: &[String]) -> Result<String, String> {
     // 위치 인자와 --selections/--config 분리

@@ -2,6 +2,8 @@
 //! 처리기: 표 날짜 칸 한 줄(`date`), 표 두 글자 칸(`twochar`), 개요 표 첫 빈칸(`overview_lead`),
 //! 쪽 번호 모양(`page_number`), 자간 초기화(`spacing_reset`).
 pub mod config;
+pub mod conn;
+pub mod eaw;
 pub mod dom;
 pub mod extra;
 pub mod fmt3;
@@ -9,7 +11,10 @@ pub mod marker;
 pub mod rules;
 pub mod run3;
 pub mod run3b;
+pub mod run4;
 pub mod style;
+pub mod tbl;
+pub mod tstyle;
 pub mod zipio;
 
 use config::Config;
@@ -33,6 +38,10 @@ pub enum Processor {
     ColonLabel,
     BlankLines,
     Emphasis,
+    TableWidth,
+    TableStyle,
+    TableStyleAlign,
+    ConnectorTab,
 }
 
 impl Processor {
@@ -48,11 +57,20 @@ impl Processor {
             "colon_label" | "콜론라벨_hwpx_처리" => Some(Processor::ColonLabel),
             "blank_lines" | "빈줄서식_hwpx_처리" => Some(Processor::BlankLines),
             "emphasis" | "강조낱말_hwpx_처리" => Some(Processor::Emphasis),
+            "table_width" | "표너비_hwpx_처리" => Some(Processor::TableWidth),
+            "table_style" | "기본표서식_hwpx_처리" => Some(Processor::TableStyle),
+            "table_style_align" => Some(Processor::TableStyleAlign),
+            "connector_tab" | "연결부호탭_hwpx_처리" => Some(Processor::ConnectorTab),
             _ => None,
         }
     }
 
     /// RSXML3 처리기(선택 항목이 번호 하나가 아닐 수 있어 survey_json/process_json 으로 부른다).
+    /// RSXML4 처리기(표 칸 너비·기본 표 서식·정렬 재확인·연결 부호 탭).
+    pub fn is_rsxml4(self) -> bool {
+        matches!(self, Processor::TableWidth | Processor::TableStyle | Processor::TableStyleAlign | Processor::ConnectorTab)
+    }
+
     pub fn is_rsxml3(self) -> bool {
         matches!(self, Processor::AsteriskSuper | Processor::AttachFont | Processor::ColonLabel | Processor::BlankLines | Processor::Emphasis)
     }
@@ -201,7 +219,7 @@ fn check_config(p: Processor, cfg: &Config) -> R<()> {
 }
 
 /// 구역 번호를 정수로 본 오름차순 키(같으면 압축 안 순서). 파이썬 `sorted(key=int(...))` 와 같다.
-fn section_number_key(name: &str) -> (usize, String) {
+pub(crate) fn section_number_key(name: &str) -> (usize, String) {
     let digits = name.trim_start_matches("Contents/section").trim_end_matches(".xml").trim_start_matches('0');
     (digits.len(), digits.to_string())
 }
@@ -240,8 +258,8 @@ pub fn survey(p: Processor, source: &Path) -> R<Selections> {
 }
 
 pub fn survey_with(p: Processor, source: &Path, cfg: &Config) -> R<Selections> {
-    if p.is_rsxml3() {
-        return Err("RSXML3 처리기는 survey_json 으로 부르세요.".into());
+    if p.is_rsxml3() || p.is_rsxml4() {
+        return Err("RSXML3·4 처리기는 survey_json 으로 부르세요.".into());
     }
     check_config(p, cfg)?;
     let contents = zipio::read_hwpx_safely(source)?;
@@ -264,8 +282,8 @@ pub fn process(p: Processor, source: &Path, target: &Path, selections: Option<&S
 /// selections 가 None 이면 먼저 조사한 결과를 쓴다. 대상이 하나도 없으면 원본을 그대로 복사한다.
 /// 두글자 처리는 파이썬처럼 목록 내용이 아니라 '비었는지'만 본다.
 pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Option<&Selections>, cfg: &Config) -> R<usize> {
-    if p.is_rsxml3() {
-        return Err("RSXML3 처리기는 process_json 으로 부르세요.".into());
+    if p.is_rsxml3() || p.is_rsxml4() {
+        return Err("RSXML3·4 처리기는 process_json 으로 부르세요.".into());
     }
     check_config(p, cfg)?;
     if let (Ok(a), Ok(b)) = (std::fs::canonicalize(source), std::fs::canonicalize(target)) {
@@ -341,7 +359,9 @@ pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Opti
 
 /// 조사 모드(모든 처리기). 선택 목록을 JSON 으로 돌려준다.
 pub fn survey_json(p: Processor, source: &Path, cfg: &Config) -> R<serde_json::Value> {
-    if p.is_rsxml3() {
+    if p.is_rsxml4() {
+        run4::survey(p, source, cfg)
+    } else if p.is_rsxml3() {
         run3::survey(p, source, cfg)
     } else {
         Ok(selections_to_json(&survey_with(p, source, cfg)?))
@@ -350,7 +370,9 @@ pub fn survey_json(p: Processor, source: &Path, cfg: &Config) -> R<serde_json::V
 
 /// 처리 모드(모든 처리기). selections 는 survey_json 이 돌려준 모양의 JSON.
 pub fn process_json(p: Processor, source: &Path, target: &Path, sel: Option<&serde_json::Value>, cfg: &Config) -> R<usize> {
-    if p.is_rsxml3() {
+    if p.is_rsxml4() {
+        run4::process(p, source, target, sel, cfg)
+    } else if p.is_rsxml3() {
         run3::process(p, source, target, sel, cfg)
     } else {
         let s = match sel {
