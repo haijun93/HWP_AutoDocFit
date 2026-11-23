@@ -133,6 +133,153 @@ begin
     InstallLog('taskkill ' + ExeName + ' 실행 실패: ' + SysErrorMessage(ResultCode));
 end;
 
+// 잠긴 실행 파일 이름 바꾸기(INSTALL3, 2026-11-23): 관리자 색인 서비스(HwpAutoDocFit.Index)가 {app}\_internal\resources\kfind.exe 를
+// 직접 실행하므로 앱을 모두 닫아도 이 파일은 잠겨 있다. 실행 중인 파일은 지울 수는 없지만 이름은 바꿀 수 있으므로,
+// 복사 전에 잠긴 exe/dll 만 `<이름>.old-<시각>` 으로 바꿔 두면 새 파일이 원래 이름으로 설치된다(안 그러면 DeleteFile 코드 5 → 전체 롤백).
+// 잠기지 않은 파일은 건드리지 않는다. 설치가 끝까지 가면 .old-* 를 지우고(잠겨 있으면 다음 설치 때 정리),
+// 중간에 중단·롤백되면 원래 이름으로 되돌린다(원래 이름 파일이 없을 때만).
+var
+  RenamedOrig: array of String;
+  RenamedOld: array of String;
+  RenamedCount: Integer;
+  KfindRenamed: Boolean;
+
+function ResourcesDir: String;
+begin
+  Result := ExpandConstant('{app}\_internal\resources\');
+end;
+
+// 쓰기 공유 없이 열 수 있는지 확인한다(파일은 바꾸지 않음). 실행 중인 exe·로드된 dll 이면 열기가 실패한다.
+function IsFileLocked(const Path: String): Boolean;
+var
+  FS: TFileStream;
+begin
+  Result := False;
+  try
+    FS := TFileStream.Create(Path, fmOpenReadWrite or fmShareExclusive);
+    FS.Free;
+  except
+    Result := True;
+  end;
+end;
+
+procedure RememberRename(const Orig, OldPath: String);
+begin
+  SetArrayLength(RenamedOrig, RenamedCount + 1);
+  SetArrayLength(RenamedOld, RenamedCount + 1);
+  RenamedOrig[RenamedCount] := Orig;
+  RenamedOld[RenamedCount] := OldPath;
+  RenamedCount := RenamedCount + 1;
+end;
+
+// 앞선 설치가 남긴 .old-* 정리: 원래 이름 파일이 없으면 되돌리고(앞선 설치가 비정상 종료한 경우), 있으면 지운다(잠겨 있으면 그대로 둔다).
+procedure CleanStaleOld;
+var
+  FR: TFindRec;
+  Dir, Name, Orig: String;
+  P: Integer;
+begin
+  Dir := ResourcesDir;
+  if not DirExists(Dir) then Exit;
+  try
+    if FindFirst(Dir + '*.old-*', FR) then
+    try
+      repeat
+        Name := FR.Name;
+        P := Pos('.old-', Name);
+        if (P > 1) and (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0) then
+        begin
+          Orig := Dir + Copy(Name, 1, P - 1);
+          if not FileExists(Orig) then
+          begin
+            if RenameFile(Dir + Name, Orig) then
+              InstallLog('이전 설치가 남긴 ' + Name + ' 를 원래 이름으로 되돌림');
+          end
+          else
+            DeleteFile(Dir + Name);
+        end;
+      until not FindNext(FR);
+    finally
+      FindClose(FR);
+    end;
+  except
+    InstallLog('오래된 .old-* 정리 중 오류(무시)');
+  end;
+end;
+
+procedure RenameLockedResources;
+var
+  FR: TFindRec;
+  Dir, Name, Stamp, OldPath: String;
+  Pat: Integer;
+  Patterns: array of String;
+begin
+  RenamedCount := 0;
+  KfindRenamed := False;
+  Dir := ResourcesDir;
+  if not DirExists(Dir) then Exit;
+  Stamp := GetDateTimeString('yyyymmddhhnnss', #0, #0);
+  SetArrayLength(Patterns, 3);
+  Patterns[0] := '*.exe';
+  Patterns[1] := '*.dll';
+  Patterns[2] := '*.pyd';
+  try
+    for Pat := 0 to 2 do
+    begin
+      if FindFirst(Dir + Patterns[Pat], FR) then
+      try
+        repeat
+          Name := FR.Name;
+          if (FR.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0) and (Pos('.old-', Name) = 0) and IsFileLocked(Dir + Name) then
+          begin
+            OldPath := Dir + Name + '.old-' + Stamp;
+            if RenameFile(Dir + Name, OldPath) then
+            begin
+              RememberRename(Dir + Name, OldPath);
+              if CompareText(Name, 'kfind.exe') = 0 then KfindRenamed := True;
+              InstallLog('잠긴 파일 이름 변경: ' + Name + ' -> ' + Name + '.old-' + Stamp);
+            end
+            else
+              InstallLog('잠긴 파일 이름 변경 실패: ' + Name + ' (' + SysErrorMessage(DLLGetLastError) + ')');
+          end;
+        until not FindNext(FR);
+      finally
+        FindClose(FR);
+      end;
+    end;
+  except
+    InstallLog('잠긴 파일 확인 중 오류(무시)');
+  end;
+end;
+
+// 이름을 바꿔 둔 파일을 원래대로: 원래 이름 파일이 없을 때만(새 파일이 설치돼 있으면 그대로 둔다).
+// Final 이 참(설치 성공)이면 새 꾸러미에 없던 파일만 되돌리고, 나머지는 .old-* 를 지운다. 거짓(실패)이면 모두 되돌린다.
+procedure FinishRenamed(const Final: Boolean);
+var
+  I: Integer;
+begin
+  for I := 0 to RenamedCount - 1 do
+  begin
+    if not FileExists(RenamedOrig[I]) then
+    begin
+      if RenameFile(RenamedOld[I], RenamedOrig[I]) then
+        InstallLog('원래 이름으로 복원: ' + ExtractFileName(RenamedOrig[I]))
+      else
+        InstallLog('복원 실패(수동 확인 필요): ' + RenamedOld[I]);
+    end
+    else if Final then
+    begin
+      if DeleteFile(RenamedOld[I]) then
+        InstallLog('옛 파일 삭제: ' + ExtractFileName(RenamedOld[I]))
+      else
+        InstallLog('옛 파일이 실행 중이라 남겨 둠(다음 설치 때 정리): ' + ExtractFileName(RenamedOld[I]));
+    end
+    else
+      InstallLog('복원 생략(원래 이름 파일이 이미 있음): ' + ExtractFileName(RenamedOrig[I]));
+  end;
+  RenamedCount := 0;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   InstallLog('설치 준비 시작');
@@ -158,6 +305,9 @@ begin
   // 파일명 변경 미리보기 창(rename_win.exe)이 열려 있으면 설치 파일 교체를 막는다.
   StopHelper('rename_win.exe');
   Sleep(500);
+  // 앱·도우미를 끝낸 뒤에도 잠긴 파일(색인 서비스의 kfind.exe 등)은 이름을 바꿔 둔다.
+  CleanStaleOld;
+  RenameLockedResources;
   Result := '';
 end;
 
@@ -199,6 +349,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     InstallFinished := True;
+    FinishRenamed(True);
     Missing := MissingWindowExes;
     if Missing = '' then
       InstallLog('파일 설치 끝(필수 창 프로그램 확인됨)')
@@ -209,6 +360,13 @@ begin
         MsgBox('설치 파일 일부(' + Trim(Missing) + ')가 빠져 있습니다.' + #13#10 +
                '한/글 후처리 앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);
     end;
+    if KfindRenamed then
+    begin
+      InstallLog('색인 서비스가 실행 중이어서 새 색인 프로그램은 서비스를 다시 시작해야 적용됩니다');
+      if not WizardSilent then
+        MsgBox('색인 서비스가 실행 중이어서 새 색인 프로그램은 서비스를 다시 시작해야 적용됩니다.' + #13#10 +
+               '(관리자 권한으로 서비스 HwpAutoDocFit.Index 를 다시 시작하세요.)', mbInformation, MB_OK);
+    end;
   end;
 end;
 
@@ -217,6 +375,7 @@ begin
   if InstallStarted and (not InstallFinished) then
   begin
     InstallLog('설치가 끝나지 않고 중단됨(변경은 되돌려짐)');
+    FinishRenamed(False);
     if not WizardSilent then
       MsgBox('설치가 완료되지 않았습니다. 한/글 후처리 앱이 실행 중이면 파일을 바꿀 수 없습니다.' + #13#10 +
              '앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);

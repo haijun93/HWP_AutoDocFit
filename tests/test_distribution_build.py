@@ -181,6 +181,19 @@ class DistributionBuildTest(unittest.TestCase):
         self.assertLess(selftest_guard, mutex_check)
         self.assertLess(mutex_check, entrypoint)
 
+    def test_installer_renames_locked_resources_and_restores_on_abort(self):
+        # INSTALL3: 색인 서비스가 붙잡은 kfind.exe 등은 이름을 바꿔 두고, 중단·롤백되면 원래 이름으로 되돌린다.
+        iss = (ROOT / "installer" / "setup.iss").read_text(encoding="utf-8")
+        self.assertIn("RenameLockedResources;", iss)
+        self.assertIn("CleanStaleOld;", iss)
+        self.assertIn("'.old-'", iss)
+        self.assertIn("FinishRenamed(True);", iss)
+        self.assertIn("FinishRenamed(False);", iss)
+        deinit = iss[iss.index("procedure DeinitializeSetup;"):]
+        self.assertIn("FinishRenamed(False);", deinit.split("procedure CurUninstallStepChanged")[0])
+        self.assertIn("서비스를 다시 시작해야 적용됩니다", iss)
+        self.assertTrue((ROOT / "scripts" / "install3_locked_exe_test.py").exists())
+
     def test_release_test_procedure_makes_format_fidelity_the_only_final_acceptance_gate(self):
         procedure = (ROOT / "docs" / "RELEASE_TEST_PROCEDURE.md").read_text(encoding="utf-8")
         self.assertIn("서식재연검수절차", procedure)
