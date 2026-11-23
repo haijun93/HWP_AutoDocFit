@@ -28,6 +28,23 @@ def make_para_hwpx(path: Path, definitions: str, para_ref: str, table_id: str,
         )
 
 
+def make_border_fill_hwpx(path: Path, definitions: str, para_border_ref: str,
+                          cell_border_ref: str) -> None:
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        archive.writestr(
+            "Contents/header.xml",
+            "<header><borderFills>" + definitions + "</borderFills><paraProperties>"
+            '<paraPr id="0"><border borderFillIDRef="' + para_border_ref
+            + '"/></paraPr></paraProperties></header>',
+        )
+        archive.writestr(
+            "Contents/section0.xml",
+            '<section><pageBorderFill borderFillIDRef="' + para_border_ref
+            + '"/><tbl id="100"><tc borderFillIDRef="' + cell_border_ref
+            + '"><p><run><t>alpha</t></run></p></tc></tbl></section>',
+        )
+
+
 class AllqaToolsTests(unittest.TestCase):
     def test_docset_reads_only_marked_data(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,6 +76,26 @@ class AllqaToolsTests(unittest.TestCase):
             hashes_a, hashes_b = xml_hashes(a), xml_hashes(b)
             self.assertNotEqual(hashes_a["raw_format_xml_sha256"], hashes_b["raw_format_xml_sha256"])
             self.assertEqual(hashes_a["format_xml_sha256"], hashes_b["format_xml_sha256"])
+
+    def test_format_hash_normalizes_border_fill_ids_and_definition_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            a, b, changed = (Path(tmp) / name for name in ("a.hwpx", "b.hwpx", "changed.hwpx"))
+            none = '<borderFill id="__BORDER_ID__"><leftBorder type="NONE" width="0.1 mm"/></borderFill>'
+            solid = '<borderFill id="__BORDER_ID__"><leftBorder type="SOLID" width="0.3 mm"/></borderFill>'
+            make_border_fill_hwpx(
+                a, solid.replace("__BORDER_ID__", "4") + none.replace("__BORDER_ID__", "7"), "7", "4",
+            )
+            make_border_fill_hwpx(
+                b, none.replace("__BORDER_ID__", "2") + solid.replace("__BORDER_ID__", "8"), "2", "8",
+            )
+            make_border_fill_hwpx(
+                changed, none.replace("__BORDER_ID__", "2") + solid.replace("__BORDER_ID__", "8"), "2", "2",
+            )
+            hashes_a, hashes_b = xml_hashes(a), xml_hashes(b)
+            self.assertNotEqual(hashes_a["raw_format_xml_sha256"], hashes_b["raw_format_xml_sha256"])
+            self.assertEqual(hashes_a["format_xml_sha256"], hashes_b["format_xml_sha256"])
+            self.assertNotEqual(hashes_a["format_xml_sha256"],
+                                xml_hashes(changed)["format_xml_sha256"])
 
     def test_format_hash_keeps_real_paragraph_and_table_changes(self):
         with tempfile.TemporaryDirectory() as tmp:

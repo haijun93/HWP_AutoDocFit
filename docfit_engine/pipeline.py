@@ -825,6 +825,17 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         로그(f"문서 처리 오류: {파일} — {e}")
                         gui_queue.put(("document_error", str(파일), str(e)))
 
+                    if index < total and not 중단_요청됨():
+                        # FileClose alone leaves Hancom's document-to-document style state
+                        # alive. Start each next input in a fresh COM process so its HWPX
+                        # defaults and local style table do not depend on the prior file.
+                        if 자동닫기_설정:
+                            작업창_닫기()
+                        else:
+                            작업창_분리()
+                        hwp = 한글_COM_인스턴스_생성(독립=True)
+                        로그("다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작했습니다.")
+
                 로그("=" * 45)
                 로그(f"문장부호 줄병합 자간조정 통계({작업_반복횟수}회 누적): 대상 {문장부호_통계['대상']}건 (성공 {문장부호_통계['성공']}/실패 {문장부호_통계['실패']})")
                 로그(f"단어 분리 방지 통계({작업_반복횟수}회 누적): 대상 {단어분리_통계['대상']}건 (성공 {단어분리_통계['성공']}/실패 {단어분리_통계['실패']})")

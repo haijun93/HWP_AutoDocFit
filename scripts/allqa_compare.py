@@ -20,25 +20,37 @@ def _local_name(name: str) -> str:
     return name.rsplit("}", 1)[-1]
 
 
-def _element_signature(element: ET.Element, *, omit_para_id: bool = False) -> tuple:
+def _element_signature(element: ET.Element, *, omit_para_id: bool = False,
+                       omit_id: bool = False) -> tuple:
     """Return an attribute-order independent, text preserving XML signature."""
     attrs = tuple(sorted(
         (key, value) for key, value in element.attrib.items()
-        if not (omit_para_id and _local_name(key) == "id")
+        if not ((omit_para_id and _local_name(element.tag) == "paraPr"
+                 and _local_name(key) == "id")
+                or (omit_id and _local_name(key) == "id"))
     ))
     text = "" if _local_name(element.tag) == "t" else (element.text or "")
-    children = tuple(_element_signature(child) for child in element)
+    children = tuple(_element_signature(child, omit_id=omit_id) for child in element)
     return element.tag, attrs, text, children
 
 
 def _format_signature(element: ET.Element, para_defs: dict[str, tuple],
-                      referenced_table_ids: set[str]) -> tuple:
-    """Canonicalize only HWPX paragraph-property IDs and unreferenced table IDs."""
+                      referenced_table_ids: set[str],
+                      border_fill_defs: dict[str, tuple] | None = None, *,
+                      omit_para_id: bool = False, omit_id: bool = False) -> tuple:
+    """Canonicalize local paragraph/border-fill refs and unreferenced table IDs."""
+    border_fill_defs = border_fill_defs or {}
     attrs = []
     for key, value in element.attrib.items():
         local = _local_name(key)
         if local == "paraPrIDRef":
             value = repr(para_defs.get(value, ("unresolved-paraPrIDRef", value)))
+        elif local == "borderFillIDRef":
+            value = repr(border_fill_defs.get(value, ("unresolved-borderFillIDRef", value)))
+        if omit_para_id and _local_name(element.tag) == "paraPr" and local == "id":
+            continue
+        if omit_id and local == "id":
+            continue
         if (_local_name(element.tag) == "tbl" and local == "id"
                 and value not in referenced_table_ids):
             continue
@@ -51,19 +63,26 @@ def _format_signature(element: ET.Element, para_defs: dict[str, tuple],
         positions = [index for index, child in enumerate(children)
                      if _local_name(child.tag) == "paraPr"]
         definitions = sorted(
-            (_element_signature(child, omit_para_id=True) for child in children
+            (_format_signature(child, para_defs, referenced_table_ids, border_fill_defs,
+                                omit_para_id=True) for child in children
              if _local_name(child.tag) == "paraPr"), key=repr)
         for index, definition in zip(positions, definitions):
             children[index] = definition
-        normalized_children = tuple(
-            child if isinstance(child, tuple) else
-            _format_signature(child, para_defs, referenced_table_ids)
-            for child in children
-        )
-    else:
-        normalized_children = tuple(
-            _format_signature(child, para_defs, referenced_table_ids) for child in children
-        )
+    elif _local_name(element.tag) == "borderFills":
+        # Hancom may reorder borderFill definitions and rewrite their local IDs.
+        positions = [index for index, child in enumerate(children)
+                     if _local_name(child.tag) == "borderFill"]
+        definitions = sorted(
+            (_format_signature(child, para_defs, referenced_table_ids, border_fill_defs,
+                                omit_id=True) for child in children
+             if _local_name(child.tag) == "borderFill"), key=repr)
+        for index, definition in zip(positions, definitions):
+            children[index] = definition
+    normalized_children = tuple(
+        child if isinstance(child, tuple) else
+        _format_signature(child, para_defs, referenced_table_ids, border_fill_defs)
+        for child in children
+    )
     text = "" if _local_name(element.tag) == "t" else (element.text or "")
     return element.tag, tuple(sorted(attrs)), text, normalized_children
 
@@ -86,14 +105,19 @@ def xml_hashes(path: Path) -> dict[str, str]:
         names = [name for name in all_xml_names if name.startswith("Contents/")]
         roots = {name: all_roots[name] for name in names}
         para_defs: dict[str, tuple] = {}
+        border_fill_defs: dict[str, tuple] = {}
         header = roots.get("Contents/header.xml")
         if header is not None:
+            for element in header.iter():
+                if _local_name(element.tag) == "borderFill" and "id" in element.attrib:
+                    border_fill_defs[element.attrib["id"]] = _element_signature(
+                        element, omit_id=True)
             for element in header.iter():
                 if _local_name(element.tag) == "paraProperties":
                     for definition in element:
                         if _local_name(definition.tag) == "paraPr" and "id" in definition.attrib:
-                            para_defs[definition.attrib["id"]] = _element_signature(
-                                definition, omit_para_id=True)
+                            para_defs[definition.attrib["id"]] = _format_signature(
+                                definition, {}, set(), border_fill_defs, omit_para_id=True)
 
         all_ids = {element.attrib["id"] for root in all_roots.values() for element in root.iter()
                    if _local_name(element.tag) == "tbl" and "id" in element.attrib}
@@ -115,7 +139,7 @@ def xml_hashes(path: Path) -> dict[str, str]:
                 raw_format.update(ET.tostring(root, encoding="utf-8"))
             normalized_format.update(name.encode("utf-8"))
             normalized_format.update(repr(_format_signature(
-                root, para_defs, referenced_table_ids
+                root, para_defs, referenced_table_ids, border_fill_defs
             )).encode("utf-8"))
             normalized_format.update(b"\0")
     return {
