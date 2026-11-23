@@ -1,11 +1,25 @@
 import itertools
 import unittest
 
-from docfit_core.stage_registry import STAGE_REGISTRY, StagePlanDiff, plan_stages
+from docfit_core.stage_registry import STAGE_REGISTRY, StagePlanDiff, compare_stage_names, plan_stages
 from docfit_core.stage_selection import _MODE_STAGES
 
 
 class StageRegistryTest(unittest.TestCase):
+    def test_stage_name_comparison(self):
+        self.assertEqual(compare_stage_names(('a', 'b'), ('a', 'b')).differences, ())
+        self.assertTrue(compare_stage_names(('a', 'b'), ('b', 'a')).differences[0].startswith('순서:'))
+        self.assertTrue(compare_stage_names(('a', 'b'), ('a',)).differences[0].startswith('누락:'))
+        self.assertTrue(compare_stage_names(('a',), ('a', 'b')).differences[0].startswith('추가:'))
+
+    def test_page_range_plan_skips_document_global_xml_stages(self):
+        plan = plan_stages('format', {'standard_format': True, 'table_profile': True}, True,
+                           {key: True for key in _MODE_STAGES['format']})
+        ids = {stage.id for stage in plan}
+        self.assertNotIn('xml_table_date', ids)
+        self.assertNotIn('xml_table_two_chars', ids)
+        self.assertNotIn('xml_table_style', ids)
+
     def test_registry_ids_dependencies_and_mode_keys(self):
         ids = [item.id for item in STAGE_REGISTRY]
         self.assertEqual(len(ids), len(set(ids)))

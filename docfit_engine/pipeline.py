@@ -383,6 +383,39 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             if (서식단계_사용 and 쪽범위_요청 is None and 표준서식_설정.get("강조_낱말")
                     and stage_enabled(선택_세부작업, 'standard_format', 작업_모드)):
                 선행목록.append((True, '강조 낱말', 강조낱말_hwpx_처리, 'emphasis.hwpx', '제목·개요·붙임 선행 서식'))
+            # 선언표 shadow 점검: 비교만 하고 계획 결과로 실행 목록을 바꾸지 않는다.
+            try:
+                import os
+                if os.environ.get('DOCFIT_STAGE_PLAN_CHECK') == '1':
+                    from docfit_core.stage_registry import plan_stages, compare_stage_names
+                    options = {
+                        'standard_format': 표준서식_사용,
+                        'xml_spacing_reset': 자간초기화_XML_예정,
+                        'report_header_profile': bool(알파_머리서식복사_사용 and 활성_머리서식_프로필),
+                        'report_header_enabled': True,
+                        'titles_enabled': bool(제목4종_사용),
+                        'midtitle_enabled': bool(중제목_사용),
+                        'attachments_enabled': bool(붙임2종_사용),
+                        'box_profile': bool((활성_서식표_프로필 or {}).get('box')),
+                        'page_number': bool(표준서식_설정.get('쪽번호')),
+                        'table_profile': 기본표서식() is not None,
+                        'connector_tab': 알파_연결부호_탭정렬_사용,
+                        'colon_label': 알파_콜론라벨_정렬_사용,
+                        'blank_lines': bool(표준서식_설정.get('빈줄_서식')),
+                        'emphasis': bool(표준서식_설정.get('강조_낱말')),
+                    }
+                    expected = tuple(item.name for item in plan_stages(
+                        작업_모드, options, 쪽범위_요청 is not None, 선택_세부작업)
+                        if item.id.startswith('xml_'))
+                    actual = tuple(item[1] for item in 선행목록 if item[0])
+                    diff = compare_stage_names(expected, actual)
+                    if diff.differences:
+                        로그(f"[DOCFIT_STAGE_PLAN_CHECK] 모드={작업_모드}, 쪽범위={쪽범위_요청!r}, 차이={diff.differences!r}")
+            except Exception as exc:
+                try:
+                    로그(f"[DOCFIT_STAGE_PLAN_CHECK] 점검 실패(처리는 계속): {type(exc).__name__}: {exc}")
+                except Exception:
+                    pass
             if any(항목[0] for 항목 in 선행목록):
                 상태(f"{파일명} : 글자·제목·표 선행 서식")
                 알림 = {}

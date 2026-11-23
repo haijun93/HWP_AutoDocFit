@@ -164,3 +164,8 @@ class StagePlanDiff:
         order = ([f"순서: expected={self.expected!r}, actual={self.actual!r}"]
                  if not missing and not extra and self.expected != self.actual else [])
         return tuple(missing + extra + order)
+
+
+def compare_stage_names(expected, actual) -> StagePlanDiff:
+    """Compare enabled pipeline display names with the shadow plan."""
+    return StagePlanDiff(tuple(expected), tuple(actual))

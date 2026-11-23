@@ -457,6 +457,19 @@ class PipelineReviewTest(unittest.TestCase):
         self.assertEqual(len(fixed), 1)
         self.assertTrue(fixed[0]['color_runs'])
 
+    def test_shadow_stage_plan_hook_has_no_warning_for_mock_pipeline(self):
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'source.hwpx'
+            source.touch()
+            log = Mock()
+            with patch.dict(os.environ, {'DOCFIT_STAGE_PLAN_CHECK': '1'}):
+                self._process_document(source, {'쪽범위_요청': (2, 2), '로그': log,
+                                                '문서_처리_1회': lambda *a: False})
+        warnings = [str(call.args[0]) for call in log.call_args_list
+                    if '[DOCFIT_STAGE_PLAN_CHECK]' in str(call.args[0])]
+        self.assertEqual(warnings, [])
+
 
 if __name__ == '__main__':
     unittest.main()
