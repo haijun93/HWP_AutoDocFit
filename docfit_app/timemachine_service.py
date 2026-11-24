@@ -1155,6 +1155,7 @@ class TimemachineService:
                 row["file_name"] = row["name"]
             return {"ok": True, "items": rows, **self._engine_status()}
         if action == "content_export_markdown":
+            self._search_backend_mode()
             target = payload.get("path")
             if not isinstance(target, str) or not target.strip():
                 raise ValueError("Markdown 저장 경로를 확인해 주세요.")

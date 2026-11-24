@@ -125,11 +125,13 @@ def run_size(count: int, seed: int, deadline: float) -> dict:
                 backend.index_file(str(path))
                 if i % 1000 == 0 and time.monotonic() >= deadline:
                     result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
+                    result["documents_indexed_before_limit"] = i
                     result["status"] = "stopped_at_time_limit"
                     index.close()
                     result["max_rss_bytes"] = peak.peak or None
                     return result
             result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
+            result["documents_indexed_before_limit"] = len(paths)
 
             query_cases = {"short": "행정", "long": "행정 정책 문서 안전 지원", "and": "행정 정책", "phrase": '"행정 절차 지원"'}
             result["search"] = {}
