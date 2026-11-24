@@ -22,6 +22,25 @@
 - [ ] 동일 문서 집합에서 일반 전문검색 대비 구조검색의 Recall@k·MRR·문맥 정확도·인덱싱 시간·검색 지연·메모리를 측정한다. 목차 없는 PDF, 잘못된 번호 체계, 표 안 제목, kordoc의 `<hp:tab>`·불완전 내어쓰기를 별도 회귀군으로 포함한다.
 - [ ] 개인정보·원본 보존·오프라인 보안 기준을 점검하고, 외부 클라우드 검색 API를 기본 경로로 사용하지 않는다. 조사 결과와 구현 범위, 미지원 포맷·미검증 항목을 숨기지 않고 보고한다.
 
+## [미착수·핵심 개발] Rust 기반 고속·저자원 몽땅검색엔진 통합 (사용자 요청, 2026-11-24)
+
+목표: 기존 Python `ContentSearchIndex`·SQLite FTS5와 Rust `klib`·Tantivy가 분리된 현재 구조를 통합하여, 검색 시 원본 문서를 다시 열지 않고 낮은 메모리와 짧은 지연시간으로 문서·페이지·위계·표 위치를 반환한다. 기존 API와 SQLite fallback은 Rust 엔진의 검증이 끝날 때까지 보존한다.
+
+- [ ] `docfit_app/timemachine_service.py`가 `ContentSearchIndex`를 직접 호출하지 않도록 `SearchBackend` 계약(`index_file`, `remove_file`, `search`, `status`, `cancel`)을 정의하고 SQLite·Rust 구현을 같은 응답 형식으로 맞춘다. `content_search`, `content_index_*`, `content_errors`, Markdown 내보내기 API의 하위 호환성을 유지한다.
+- [ ] 기존 `klib/src/search.rs`를 몽땅검색 backend로 연결한다. 자료함·노트북 전용 경로에 머물지 않게 전체 조사 폴더의 문서 등록·삭제·변경 감지·검색을 연결하고, Rust 장애·미설치·인덱스 손상 시 SQLite로 자동 fallback한다.
+- [ ] Rust 색인 스키마를 확장한다: `document_id`, `node_id`, `parent_id`, `breadcrumb_id`, `level`, `page`, `paragraph`, `table`, `ocr`, `confidence`, `content_hash`, `schema_version`. 제목·장·절·표 제목과 본문을 분리해 위계 가중치와 경로 표시를 지원한다.
+- [ ] HWP/HWPX·PDF·DOCX·TXT·MD·XLSX의 색인 입력 계약을 Rust에서 통일한다. 텍스트 PDF는 페이지별 추출, 스캔 PDF는 별도 OCR 대기열 결과를 받아 색인하며, OCR 처리를 검색 요청 중에 실행하지 않는다.
+- [ ] 한국어 검색은 형태소 분석기를 기본 경로에서 제외하고 단어 토큰·문자 바이그램·숫자·날짜·파일명 토큰을 조합한다. `□·ㅇ·-·※`, 로마자·아라비아 숫자·한글 번호 체계와 기존 항목기호 공백 규칙을 위계 분석에 반영한다.
+- [ ] Tantivy writer를 문서마다 생성·commit·reload하지 않고 배치 writer로 전환한다. 100~500개 문서 단위 commit, 유휴 시간 세그먼트 병합, 읽기 전용 메모리 매핑 reader, 검색 Top-N 제한을 적용한다.
+- [ ] Python 검색의 후보 전체 메모리 적재·반복 `LIKE`·문서별 Python 후처리를 Rust 역색인·필드 필터·상위 후보 정렬로 대체한다. 긴 검색어·짧은 검색어·AND·phrase·near·exclude·ext/path/date 필터의 결과 계약을 회귀시험으로 고정한다.
+- [ ] Python과 Rust에 중복 저장되는 본문·바이그램·메타데이터의 책임을 정리한다. Rust 인덱스에는 검색 필드와 최소 stored field만 보관하고, SQLite에는 설정·오류·상태·fallback 메타데이터만 남기는 방안을 비교 측정한다.
+- [ ] 파일 크기·mtime만 확인하는 변경 감지를 빠른 해시와 필요 시 SHA-256으로 보강한다. `extractor_version`, `hierarchy_schema_version`, `ocr_model_version`, `index_version`을 캐시 키에 포함하고 변경 문서만 재색인한다.
+- [ ] Windows Named Pipe 기반 Rust IPC를 유지하되 요청·응답 크기·timeout·취소·프로세스 재시작·예약 이름·권한 검사를 명확히 한다. 검색 프로세스와 색인 프로세스를 분리해 색인 실패가 검색을 중단시키지 않게 한다.
+- [ ] `klib/src/content.rs`의 PDF·HWP·OCR·페이지 위치 누락을 보완하고, Rust가 직접 처리하지 못하는 형식은 명확한 상태와 Python fallback으로 보고한다. 원본 파일은 읽기 전용으로만 열고 결과·캐시 경로를 분리한다.
+- [ ] 동일 코퍼스에서 SQLite와 Rust 결과를 병행 비교한다. 상위 20개 일치율, Recall@k, MRR, 제목·장·절 누락률, 페이지 위치 정확도, OCR 문서 검색률을 측정하고 결과가 다르면 원인을 기록한다.
+- [ ] 성능 시험을 추가한다: 1천·1만·10만 문서, 10만·100만 문단 기준으로 cold/warm 검색 지연, 초기·증분 색인 시간, 검색 중 CPU·메모리, 색인 중 검색 지연, 인덱스 디스크 크기를 측정한다. 목표 수치와 실제 측정값을 분리 보고한다.
+- [ ] 기능 플래그로 `sqlite`, `rust`, `shadow_compare` 모드를 제공한다. Rust 결과를 검증한 뒤에만 기본 backend로 승격하고, Windows EXE·폐쇄망 설치·실제 한글 문서·스캔 PDF 시험을 통과하기 전에는 정식 배포로 표시하지 않는다.
+
 ## [미착수·AI 처리 최적화] Microsoft TokenEconomizer 적극 도입 검토 (사용자 요청, 2026-11-17)
 
 참고 저장소: https://github.com/microsoft/TokenEconomizer
