@@ -1,1 +1,1 @@
-- 2026-11-24: 기준 브랜치를 `1177bf13`로 정렬. Rust schema v5 구조·지문 저장과 변경 생략, shadow top20/집합 로그, 합성 품질 평가 도구 구현. Rust 검색 테스트 하네스 95개 빌드·핵심 테스트 종료코드 0, Python 관련 12건 통과. 합성 120문서·3질의 Recall@10/MRR 모두 SQLite·Rust 1.0; release 빌드·성능 측정·전체 Python 시험 진행 전.
+- 2026-11-24: Rust schema v5 위계·위치·SHA-256/extractor 변경 감지와 shadow 상위20/집합 로그 구현. 합성 품질(3질의) SQLite·Rust Recall@10/MRR 1.00, gold 순서 일치율 1.00/0.389. 1천·5천 성능 측정 및 전체 Python 3,597개(20 skip) OK; SRCH5 결과 문서 작성. 실제 한글·스캔 PDF·설치본 시험은 남음.
