@@ -86,6 +86,14 @@ class SearchBackendModeTests(unittest.TestCase):
         self.assertEqual(record["missing_in_rust"], ["sqlite-only.txt"])
         self.assertEqual(record["extra_in_rust"], ["rust-only.txt"])
         self.assertEqual(record["match_rate"], 0.5)
+        self.assertEqual(record["top20_overlap_count"], 1)
+        self.assertFalse(record["result_set_match"])
+        self.assertFalse(record["top20_set_match"])
+
+    def test_rust_index_rows_preserve_change_detection_flag(self):
+        rust = RustBackend.__new__(RustBackend)
+        rust._request = Mock(return_value={"indexed": True, "changed": False, "error": None})
+        self.assertEqual(rust.index_file("same.txt"), {"indexed": True, "changed": False, "error": None})
 
     def test_rust_rows_convert_to_existing_keyword_response_shape(self):
         rust = RustBackend.__new__(RustBackend)

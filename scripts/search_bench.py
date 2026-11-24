@@ -182,14 +182,21 @@ def run_size(count: int, seed: int, deadline: float, backend_mode="sqlite", klib
             query_thread.start()
             first_query_done.wait(timeout=5)
             incremental_started = time.perf_counter()
+            changed_rows = []
             for path in changed:
                 if time.monotonic() >= deadline:
                     break
-                backend.index_file(str(path))
+                changed_rows.append(backend.index_file(str(path)))
+            result["incremental_reindexed_documents"] = sum(bool(row.get("changed", True)) for row in changed_rows)
             stop_queries.set()
             query_thread.join()
             result["incremental_changed_documents"] = len(changed)
             result["incremental_index_seconds"] = round(time.perf_counter() - incremental_started, 3)
+            unchanged_started = time.perf_counter()
+            unchanged_rows = [backend.index_file(str(path)) for path in changed if time.monotonic() < deadline]
+            result["unchanged_documents_requested"] = len(unchanged_rows)
+            result["unchanged_documents_reindexed"] = sum(bool(row.get("changed", True)) for row in unchanged_rows)
+            result["unchanged_index_seconds"] = round(time.perf_counter() - unchanged_started, 3)
             result["search_while_indexing"] = {
                 "samples": len(query_lags),
                 "median_ms": round(statistics.median(query_lags), 3) if query_lags else None,

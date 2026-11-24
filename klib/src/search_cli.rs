@@ -37,7 +37,7 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
             let Some(path) = request.str("path") else { return error_value("path is required") };
             let name = request.str("name").unwrap_or_else(|| Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(""));
             match crate::content::index_file(ix, path, name, 0) {
-                Ok(()) => Value::obj(vec![("ok", true.into()), ("indexed", true.into()), ("error", Value::Null)]),
+                Ok(changed) => Value::obj(vec![("ok", true.into()), ("indexed", true.into()), ("changed", changed.into()), ("error", Value::Null)]),
                 Err(error) => error_value(&error),
             }
         }
@@ -53,7 +53,7 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
                 };
                 let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
                 match crate::content::index_file(ix, path, name, 0) {
-                    Ok(()) => results.push(Value::obj(vec![("indexed", true.into()), ("error", Value::Null)])),
+                    Ok(changed) => results.push(Value::obj(vec![("indexed", true.into()), ("changed", changed.into()), ("error", Value::Null)])),
                     Err(error) => results.push(Value::obj(vec![("indexed", false.into()), ("error", error.into())])),
                 }
             }
@@ -130,22 +130,34 @@ fn search(ix: &SearchIndex, request: &Value) -> Value {
         let mtime_value = mtime.map(Value::from).unwrap_or(Value::Null);
         let snippet = hit.snippets.first().cloned().unwrap_or_default();
         let highlights: Vec<Value> = hit.highlighted.into_iter().map(Value::from).collect();
-        let locations = vec![Value::obj(vec![
-            ("paragraph_index", 0usize.into()), ("snippet", snippet.clone().into()),
+        let locations: Vec<Value> = if hit.locations.is_empty() { vec![Value::obj(vec![
+            ("paragraph_index", (hit.paragraph_index as i64).into()), ("snippet", snippet.clone().into()),
+            ("level", (hit.level as i64).into()), ("table", hit.table.into()),
             ("highlights", Value::Arr(highlights.clone())), ("position", Value::obj(vec![
                 ("page", hit.page.map(|p| (p as i64).into()).unwrap_or(Value::Null)),
-                ("sheet", Value::Null), ("row", Value::Null),
-            ])), ("breadcrumb", Value::Arr(Vec::new())), ("breadcrumb_text", "".into()),
-        ])];
+                ("sheet", Value::Null), ("row", hit.row.map(|v|(v as i64).into()).unwrap_or(Value::Null)),
+            ])), ("breadcrumb", Value::Arr(hit.breadcrumb.iter().cloned().map(Value::from).collect())), ("breadcrumb_text", hit.breadcrumb_text.clone().into()),
+        ])] } else { hit.locations.iter().map(|loc| Value::obj(vec![
+            ("paragraph_index", (loc.paragraph_index as i64).into()), ("snippet", loc.snippet.clone().into()),
+            ("level", (loc.level as i64).into()), ("table", loc.table.into()),
+            ("highlights", Value::Arr(highlights.clone())), ("position", Value::obj(vec![
+                ("page", loc.page.map(|v|(v as i64).into()).unwrap_or(Value::Null)),
+                ("sheet", Value::Null), ("row", loc.row.map(|v|(v as i64).into()).unwrap_or(Value::Null)),
+            ])), ("breadcrumb", Value::Arr(loc.breadcrumb.iter().cloned().map(Value::from).collect())), ("breadcrumb_text", loc.breadcrumb.join(" > ").into()),
+        ])).collect() };
+        let breadcrumb: Vec<Value> = hit.breadcrumb.iter().cloned().map(Value::from).collect();
         if hierarchy {
             Value::obj(vec![
                 ("path", hit.path.clone().into()), ("name", hit.name.into()), ("extension", extension.clone().into()),
                 ("mtime", mtime_value.clone()), ("folder_path", Path::new(&hit.path).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default().into()),
                 ("folder_name", Path::new(&hit.path).parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).unwrap_or("").into()),
-                ("locations", Value::Arr(locations)), ("breadcrumb", Value::Arr(Vec::new())),
-                ("sections", Value::Arr(Vec::new())), ("breadcrumb_text", "".into()),
+                ("locations", Value::Arr(locations)), ("breadcrumb", Value::Arr(breadcrumb)),
+                ("sections", Value::Arr(Vec::new())), ("breadcrumb_text", hit.breadcrumb_text.into()),
                 ("snippet", snippet.into()), ("highlights", Value::Arr(highlights)),
-                ("position", Value::obj(vec![("page", hit.page.map(|p| (p as i64).into()).unwrap_or(Value::Null)), ("sheet", Value::Null), ("row", Value::Null)])),
+                ("position", Value::obj(vec![("page", hit.page.map(|p| (p as i64).into()).unwrap_or(Value::Null)), ("sheet", Value::Null), ("row", hit.row.map(|v|(v as i64).into()).unwrap_or(Value::Null))])),
+                ("paragraph_index", (hit.paragraph_index as i64).into()), ("node_id", hit.node_id.into()),
+                ("parent_id", hit.parent_id.map(Value::from).unwrap_or(Value::Null)),
+                ("level", (hit.level as i64).into()),
                 ("score", (hit.score as f64).into()),
             ])
         } else {

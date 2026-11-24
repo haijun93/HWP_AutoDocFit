@@ -22,8 +22,8 @@ const WRITER_HEAP: usize = 50_000_000;
 /// 색인 스키마 버전. 스키마나 색인에 넣는 내용이 바뀌면 올린다. 색인 폴더의 표시와 다르면 열 때 옛 색인을 버리고 다시 만든다.
 /// 1(표시 없음): 본문 필드를 모두 저장, `body_ko`·`body_bi` 중복. 2: 저장은 `body`만, `body_ko` 제거.
 /// 3: hwpx·docx를 문단 단위로 나눠 위계 수준(`level`)과 함께 색인.
-/// 4: 순위 계산에 쓰는 `path`·`level`·`mtime`·`page`와 `ext`를 FAST 필드로(저장 문서에서는 뺌).
-pub const SCHEMA_VERSION: u32 = 4;
+/// 4: 순위 계산용 FAST 필드. 5: 구조 위치 및 콘텐츠 지문·추출기 버전 저장.
+pub const SCHEMA_VERSION: u32 = 5;
 /// 색인이 온전히 만들어진 스키마 버전(다시 만들 때는 다 끝난 뒤에만 쓴다).
 const VERSION_FILE: &str = "klib_schema_version";
 /// 다시 만드는 중이라는 표시. 남아 있으면 중간에 죽은 것이므로 다음에 열 때 처음부터 다시 한다.
@@ -44,6 +44,20 @@ pub struct Paragraph {
     pub page: Option<u64>,
     pub sheet: Option<String>,
     pub row: Option<u64>,
+    pub content_hash: String,
+    pub extractor_version: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct SearchBlock {
+    pub level: u8,
+    pub text: String,
+    pub ordinal: u64,
+    pub node_id: String,
+    pub parent_id: Option<String>,
+    pub breadcrumb: Vec<String>,
+    pub table: bool,
+    pub row: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -63,6 +77,26 @@ pub struct SearchHit {
     pub box_ids: Vec<String>,
     pub hit_pages: Vec<Option<u64>>,
     pub highlighted: Vec<String>,
+    pub paragraph_index: u64,
+    pub breadcrumb: Vec<String>,
+    pub breadcrumb_text: String,
+    pub node_id: String,
+    pub parent_id: Option<String>,
+    pub table: bool,
+    pub row: Option<u64>,
+    pub locations: Vec<SearchLocation>,
+    pub level: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchLocation {
+    pub paragraph_index: u64,
+    pub page: Option<u64>,
+    pub row: Option<u64>,
+    pub table: bool,
+    pub snippet: String,
+    pub breadcrumb: Vec<String>,
+    pub level: u8,
 }
 
 #[derive(Clone)]
@@ -71,7 +105,9 @@ struct Fields {
     level: Field, body_bi: Field, body_jamo: Field,
     body_cho: Field, ext: Field, mtime: Field, page: Field, sheet: Field,
     row: Field, body: Field, notebook_id: Field, source_id: Field,
-    paragraph_ordinal: Field, location: Field,
+    paragraph_ordinal: Field, location: Field, node_id: Field, parent_id: Field,
+    breadcrumb: Field, content_hash: Field, extractor_version: Field,
+    is_table: Field,
 }
 
 pub struct SearchIndex {
@@ -196,12 +232,18 @@ fn schema() -> Schema {
     b.add_u64_field("source_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
     b.add_u64_field("paragraph_ordinal",tantivy::schema::INDEXED|tantivy::schema::STORED);
     b.add_text_field("location",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("node_id",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("parent_id",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("breadcrumb",tantivy::schema::STORED);
+    b.add_text_field("content_hash",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("extractor_version",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_u64_field("is_table",tantivy::schema::STORED);
     b.build()
 }
 /// 필드를 이름으로 찾는다(스키마에 없는 이름이면 오류).
 fn fields_of(schema: &Schema) -> tantivy::Result<Fields> {
     let f = |name: &str| schema.get_field(name);
-    Ok(Fields {doc_id:f("doc_id")?,path:f("path")?,box_ids:f("box_ids")?,name:f("name")?,name_cho:f("name_cho")?,title:f("title")?,level:f("level")?,body_bi:f("body_bi")?,body_jamo:f("body_jamo")?,body_cho:f("body_cho")?,ext:f("ext")?,mtime:f("mtime")?,page:f("page")?,sheet:f("sheet")?,row:f("row")?,body:f("body")?,notebook_id:f("notebook_id")?,source_id:f("source_id")?,paragraph_ordinal:f("paragraph_ordinal")?,location:f("location")?})
+    Ok(Fields {doc_id:f("doc_id")?,path:f("path")?,box_ids:f("box_ids")?,name:f("name")?,name_cho:f("name_cho")?,title:f("title")?,level:f("level")?,body_bi:f("body_bi")?,body_jamo:f("body_jamo")?,body_cho:f("body_cho")?,ext:f("ext")?,mtime:f("mtime")?,page:f("page")?,sheet:f("sheet")?,row:f("row")?,body:f("body")?,notebook_id:f("notebook_id")?,source_id:f("source_id")?,paragraph_ordinal:f("paragraph_ordinal")?,location:f("location")?,node_id:f("node_id")?,parent_id:f("parent_id")?,breadcrumb:f("breadcrumb")?,content_hash:f("content_hash")?,extractor_version:f("extractor_version")?,is_table:f("is_table")?})
 }
 /// 한 세그먼트의 FAST 열 묶음. 값이 하나도 없는 열은 세그먼트에 없을 수 있어 Option이다.
 struct Columns {
@@ -283,6 +325,12 @@ fn legacy_schema() -> Schema {
     b.add_u64_field("source_id",tantivy::schema::INDEXED|tantivy::schema::STORED);
     b.add_u64_field("paragraph_ordinal",tantivy::schema::INDEXED|tantivy::schema::STORED);
     b.add_text_field("location",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("node_id",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("parent_id",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("breadcrumb",tantivy::schema::STORED);
+    b.add_text_field("content_hash",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_text_field("extractor_version",tantivy::schema::STRING|tantivy::schema::STORED);
+    b.add_u64_field("is_table",tantivy::schema::STORED);
     b.build()
 }
 fn id(path: &str) -> String { format!("{:x}", md5::compute(path.to_lowercase().as_bytes())) }
@@ -460,31 +508,51 @@ impl SearchIndex {
         Ok(())
     }
     pub fn index_path(&self) -> &Path { &self.path }
+    /// 파일 원문 지문과 추출기 버전이 일치하면 재추출·재색인을 생략한다.
+    pub fn is_current(&self, path: &str, hash: &str, extractor_version: &str, name: &str, box_ids: &[String]) -> bool {
+        let query=tantivy::query::TermQuery::new(tantivy::Term::from_field_text(self.fields.path, path), IndexRecordOption::Basic);
+        let searcher=self.reader.searcher();
+        let Ok(rows)=searcher.search(&query,&TopDocs::with_limit(1).order_by_score()) else { return false };
+        let Some((_, address))=rows.first() else { return false };
+        let Ok(doc)=searcher.doc::<TantivyDocument>(*address) else { return false };
+        let indexed_boxes:std::collections::HashSet<&str>=doc.get_all(self.fields.box_ids).filter_map(|v|v.as_str()).collect();
+        let wanted_boxes:std::collections::HashSet<&str>=box_ids.iter().map(String::as_str).collect();
+        doc.get_first(self.fields.content_hash).and_then(|v|v.as_str())==Some(hash)
+            && doc.get_first(self.fields.extractor_version).and_then(|v|v.as_str())==Some(extractor_version)
+            && doc.get_first(self.fields.name).and_then(|v|v.as_str())==Some(name)
+            && indexed_boxes==wanted_boxes
+    }
     /// 검색에 쓰이는 세그먼트 수(측정·점검용).
     pub fn segment_count(&self) -> usize { self.reader.searcher().segment_readers().len() }
     /// 본문을 줄 단위 문단으로 나눠 넣는다. 모든 문단의 위계 수준은 `p.level`이다.
     pub fn add_or_update(&self, p: &Paragraph) -> tantivy::Result<()> {
-        self.put(p, p.body.split_inclusive(['\n','\r']).map(|part|(p.level,part)))
+        let blocks: Vec<_> = p.body.split_inclusive(['\n','\r']).enumerate().map(|(i, text)| SearchBlock {
+            level: p.level, text: text.trim().to_string(), ordinal: i as u64,
+            node_id: format!("{}#{i}", id(&p.path)), ..SearchBlock::default()
+        }).collect();
+        self.add_or_update_blocks(p, &blocks)
     }
     /// 문단마다 위계 수준이 다른 문서를 넣는다(수준, 글). `p.body`·`p.level`은 쓰지 않는다.
     /// 수준은 `hierarchy::search::aggregate`의 순위와 같다: 0은 본문, 1이 가장 위이고 클수록 아래.
-    pub fn add_or_update_blocks(&self, p: &Paragraph, blocks: &[(u8,String)]) -> tantivy::Result<()> {
-        self.put(p, blocks.iter().map(|(level,text)|(*level,text.as_str())))
+    pub fn add_or_update_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
+        self.put(p, blocks.iter())
     }
-    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=(u8,&'a str)>) -> tantivy::Result<()> {
+    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=&'a SearchBlock>) -> tantivy::Result<()> {
         self.write(|w| {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
-        for (level,part) in parts {
-            let text=part.trim(); if text.is_empty() { continue; }
-            let d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>p.title.clone(), self.fields.level=>level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string());
-            let mut d=d;
+        for block in parts {
+            let text=block.text.trim(); if text.is_empty() { continue; }
+            let crumb=block.breadcrumb.join("\u{1f}");
+            let title=if block.level>0 { text } else { p.title.as_str() };
+            let mut d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>title.to_string(), self.fields.level=>block.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string(), self.fields.paragraph_ordinal=>block.ordinal, self.fields.node_id=>block.node_id.clone(), self.fields.breadcrumb=>crumb, self.fields.content_hash=>p.content_hash.clone(), self.fields.extractor_version=>p.extractor_version.clone(), self.fields.is_table=>u64::from(block.table));
+            if let Some(parent_id)=&block.parent_id { d.add_text(self.fields.parent_id,parent_id); }
             #[cfg(test)]
             if let Some(body_ko)=self.legacy_body_ko { d.add_text(body_ko,text); }
             for box_id in &p.box_ids { d.add_text(self.fields.box_ids, box_id); }
             d.add_text(self.fields.name_cho,cho_text(&p.name));
             if let Some(page)=p.page { d.add_u64(self.fields.page,page); }
             if let Some(sheet)=&p.sheet { d.add_text(self.fields.sheet,sheet); }
-            if let Some(row)=p.row { d.add_u64(self.fields.row,row); }
+            if let Some(row)=block.row.or(p.row) { d.add_u64(self.fields.row,row); }
             w.add_document(d)?;
         }
         Ok(()) })
@@ -606,7 +674,14 @@ impl SearchIndex {
                 name:d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string(),
                 title:d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string(),
                 score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,
-                box_ids:d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect(),hit_pages:Vec::new(),highlighted:Vec::new()};
+                box_ids:d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect(),hit_pages:Vec::new(),highlighted:Vec::new(),
+                paragraph_index:d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0),
+                breadcrumb:d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").split('\u{1f}').filter(|s|!s.is_empty()).map(str::to_string).collect(),
+                breadcrumb_text:d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").replace('\u{1f}'," > "),
+                node_id:d.get_first(self.fields.node_id).and_then(|v|v.as_str()).unwrap_or("").to_string(),
+                parent_id:d.get_first(self.fields.parent_id).and_then(|v|v.as_str()).map(str::to_string),
+                table:d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
+                row:d.get_first(self.fields.row).and_then(|v|v.as_u64()), locations:Vec::new(), level:row.best_rank};
             let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
             let snippet=generator.snippet(body);
             hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
@@ -614,7 +689,19 @@ impl SearchIndex {
             groups.insert(row.document,hit);
         }
         for c in &candidates {
-            if let Some(hit) = groups.get_mut(&c.0) { hit.hit_pages.push(c.4); }
+            if let Some(hit) = groups.get_mut(&c.0) {
+                hit.hit_pages.push(c.4);
+                let d=searcher.doc::<TantivyDocument>(c.5)?;
+                let breadcrumb:Vec<String>=d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").split('\u{1f}').filter(|s|!s.is_empty()).map(str::to_string).collect();
+                let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
+                let snippet=generator.snippet(body);
+                hit.locations.push(SearchLocation {
+                    paragraph_index:d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0),
+                    page:c.4, row:d.get_first(self.fields.row).and_then(|v|v.as_u64()),
+                    table:d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
+                    snippet:snippet.fragment().to_string(), breadcrumb, level:columns[c.5.segment_ord as usize].level(c.5.doc_id),
+                });
+            }
         }
         let mut out: Vec<_>=Vec::with_capacity(ranked_len);
         // Search-policy output order comes from hierarchy::search::aggregate.
@@ -706,7 +793,7 @@ impl SearchIndex {
         let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
         for row in &ranked {
             let c=&candidates[row.document];
-            let hit=groups.entry(row.document).or_insert_with(||SearchHit{path:c.0.clone(),name:c.5.clone(),title:c.6.clone(),score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,box_ids:c.7.clone(),hit_pages:Vec::new(),highlighted:Vec::new()});
+            let hit=groups.entry(row.document).or_insert_with(||SearchHit{path:c.0.clone(),name:c.5.clone(),title:c.6.clone(),score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,box_ids:c.7.clone(),hit_pages:Vec::new(),highlighted:Vec::new(),paragraph_index:0,breadcrumb:Vec::new(),breadcrumb_text:String::new(),node_id:String::new(),parent_id:None,table:false,row:None,locations:Vec::new(),level:row.best_rank});
             let d=searcher.doc::<TantivyDocument>(c.8)?;
             let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
             let snippet=generator.snippet(body);
@@ -839,7 +926,7 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
  }
  fn temp()->PathBuf { use std::sync::atomic::{AtomicU64,Ordering}; static N:AtomicU64=AtomicU64::new(0); let p=std::env::temp_dir().join(format!("klib-search-{}-{}",std::process::id(),N.fetch_add(1,Ordering::Relaxed))); std::fs::create_dir_all(&p).unwrap();p }
  fn dir_size(p:&Path)->u64 { std::fs::read_dir(p).map(|d|d.filter_map(Result::ok).map(|e|{let m=e.metadata().unwrap(); if m.is_dir(){dir_size(&e.path())}else{m.len()}}).sum()).unwrap_or(0) }
- fn paragraph(path:&str,body:&str)->Paragraph {Paragraph{path:path.into(),box_ids:vec!["box-a".into()],name:"\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}".into(),title:"\u{ac80}\u{c0c9} \u{c81c}\u{baa9}".into(),level:2,body:body.into(),ext:"txt".into(),mtime:100,page:Some(1),sheet:None,row:None}}
+ fn paragraph(path:&str,body:&str)->Paragraph {Paragraph{path:path.into(),box_ids:vec!["box-a".into()],name:"\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}".into(),title:"\u{ac80}\u{c0c9} \u{c81c}\u{baa9}".into(),level:2,body:body.into(),ext:"txt".into(),mtime:100,page:Some(1),sheet:None,row:None,content_hash:String::new(),extractor_version:String::new()}}
  #[test] fn keyword_queries_require_all_terms_and_phrases_are_contiguous(){
     let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap(); let batch=ix.batch();
     ix.add_or_update(&paragraph("both.txt","행정 절차 지원 정책")).unwrap();
@@ -852,6 +939,20 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     assert_eq!(phrase.iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["both.txt"]);
     assert_eq!(ix.file_count(),3);
     drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
+ #[test] fn content_fingerprint_and_structure_are_persisted(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let mut p=paragraph("structured.md","ignored"); p.content_hash="sha256-a".into(); p.extractor_version="srch5-1".into();
+    let blocks=vec![SearchBlock{level:1,text:"제목 검색어".into(),ordinal:7,node_id:"node-7".into(),parent_id:None,breadcrumb:vec!["제목 검색어".into()],table:false,row:None},
+        SearchBlock{level:0,text:"본문 검색어".into(),ordinal:8,node_id:"node-8".into(),parent_id:Some("node-7".into()),breadcrumb:vec!["제목 검색어".into()],table:true,row:Some(2)}];
+    ix.add_or_update_blocks(&p,&blocks).unwrap();
+    assert!(ix.is_current("structured.md","sha256-a","srch5-1","한국어 문서", &["box-a".into()]));
+    assert!(!ix.is_current("structured.md","sha256-b","srch5-1","한국어 문서", &["box-a".into()]));
+    let hit=ix.search("본문 검색어",SearchOptions{limit:10}).unwrap().remove(0);
+    assert_eq!(hit.paragraph_index,8); assert_eq!(hit.node_id,"node-8");
+    assert_eq!(hit.parent_id.as_deref(),Some("node-7")); assert_eq!(hit.breadcrumb_text,"제목 검색어");
+    assert!(hit.table); assert_eq!(hit.row,Some(2)); assert!(!hit.locations.is_empty());
+    let _=std::fs::remove_dir_all(dir);
  }
  #[test] fn schema_has_reserved_fields(){let s=schema();for n in ["doc_id","path","box_ids","name","name_cho","title","level","body_bi","body_jamo","body_cho","ext","mtime","page","sheet","row","body"]{assert!(s.get_field(n).is_ok());}
     // 저장은 결과에 되읽는 필드만. 본문 글은 body 한 곳에만 저장하고, body_bi와 같던 body_ko는 없다.

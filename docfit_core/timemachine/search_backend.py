@@ -146,7 +146,7 @@ class RustBackend(SearchBackend):
 
     def index_file(self, path):
         return {key: value for key, value in self._request({"op": "index_file", "path": os.path.abspath(path)}).items()
-                if key in {"indexed", "error"}}
+                if key in {"indexed", "changed", "error"}}
 
     def index_files(self, paths, *, batch_size=250):
         paths = list(paths)
@@ -257,8 +257,14 @@ class ModeSearchBackend(SearchBackend):
                     sqlite_paths = [row.get("path") for row in sqlite_result[:20]]
                     rust_paths = [row.get("path") for row in rust_result[:20]]
                     left, right = set(sqlite_paths), set(rust_paths)
+                    all_left = {row.get("path") for row in sqlite_result}
+                    all_right = {row.get("path") for row in rust_result}
                     self._log({"operation": method, "query": args[0] if args else "",
                                "sqlite_top20": sqlite_paths, "rust_top20": rust_paths,
+                               "sqlite_result_count": len(sqlite_result), "rust_result_count": len(rust_result),
+                               "result_set_match": all_left == all_right,
+                               "top20_set_match": left == right,
+                               "top20_overlap_count": len(left & right),
                                "match_rate": len(left & right) / max(1, min(20, len(left), len(right))),
                                "missing_in_rust": sorted(left - right), "extra_in_rust": sorted(right - left)})
                 else:
