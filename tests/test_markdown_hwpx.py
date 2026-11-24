@@ -112,7 +112,10 @@ class MarkdownHwpxTest(unittest.TestCase):
 
     def test_unsupported_features_explicitly_warn(self):
         doc = parse_markdown("#### 원문 제목\n\n![그림](image.png)\n\n[링크](https://example.invalid/)\n\n```\n**코드 원문**\n```")
-        self.assertEqual(len(doc.warnings), 4)
+        # KORDOCC2: 4~6단 제목·코드 블록은 지원되므로 남은 경고는 그림(이미지 디렉터리 없음)·링크 대상 2건
+        self.assertEqual(len(doc.warnings), 2)
+        self.assertTrue(any("그림" in w for w in doc.warnings))
+        self.assertTrue(any("하이퍼링크" in w for w in doc.warnings))
         self.assertEqual(doc.blocks[-1].runs[0].text, "**코드 원문**")
 
     def test_deterministic_zip_and_hancom_package_references(self):
