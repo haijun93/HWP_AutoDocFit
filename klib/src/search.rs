@@ -990,9 +990,11 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     ix.add_or_update(&paragraph("one.txt","행정 업무")).unwrap();
     ix.add_or_update(&paragraph("spaced.txt","행정 절차 민원 지원")).unwrap();
     batch.finish().unwrap();
-    let and=ix.search("행정 정책",SearchOptions{limit:20}).unwrap();
+    let roots:Vec<String>=Vec::new();
+    let scope=ContentScope{roots:&roots,allowed:None,start:None,end:None,offset:0,limit:20,hydrate:true};
+    let and=ix.search_content("행정 정책",SearchOptions{limit:20},&scope).unwrap();
     assert_eq!(and.iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["both.txt"]);
-    let phrase=ix.search("\"행정 절차 지원\"",SearchOptions{limit:20}).unwrap();
+    let phrase=ix.search_content("\"행정 절차 지원\"",SearchOptions{limit:20},&scope).unwrap();
     assert_eq!(phrase.iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["both.txt"]);
     assert_eq!(ix.file_count(),3);
     drop(ix); let _=std::fs::remove_dir_all(dir);
@@ -1002,10 +1004,12 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     let mut p=paragraph("structured.md","ignored"); p.content_hash="sha256-a".into(); p.extractor_version="srch5-1".into();
     let blocks=vec![SearchBlock{level:1,text:"제목 검색어".into(),ordinal:7,node_id:"node-7".into(),parent_id:None,breadcrumb:vec!["제목 검색어".into()],table:false,row:None},
         SearchBlock{level:0,text:"본문 검색어".into(),ordinal:8,node_id:"node-8".into(),parent_id:Some("node-7".into()),breadcrumb:vec!["제목 검색어".into()],table:true,row:Some(2)}];
-    ix.add_or_update_blocks(&p,&blocks).unwrap();
+    ix.add_or_update_content_blocks(&p,&blocks).unwrap();
     assert!(ix.is_current("structured.md","sha256-a","srch5-1","한국어 문서", &["box-a".into()]));
     assert!(!ix.is_current("structured.md","sha256-b","srch5-1","한국어 문서", &["box-a".into()]));
-    let hit=ix.search("본문 검색어",SearchOptions{limit:10}).unwrap().remove(0);
+    let roots:Vec<String>=Vec::new();
+    let scope=ContentScope{roots:&roots,allowed:None,start:None,end:None,offset:0,limit:10,hydrate:true};
+    let hit=ix.search_content("본문 검색어",SearchOptions{limit:10},&scope).unwrap().remove(0);
     assert_eq!(hit.paragraph_index,8); assert_eq!(hit.node_id,"node-8");
     assert_eq!(hit.parent_id.as_deref(),Some("node-7")); assert_eq!(hit.breadcrumb_text,"제목 검색어");
     assert!(hit.table); assert_eq!(hit.row,Some(2)); assert!(!hit.locations.is_empty());
