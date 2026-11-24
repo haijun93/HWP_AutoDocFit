@@ -34,6 +34,32 @@ pub unsafe fn wait_results(h: HWND) -> Result<(), String> {
         Ok(())
     }
 }
+
+/// One isolated first-paint sample; never opens a document or changes installed settings.
+pub unsafe fn semi1(h: HWND, output: &std::path::Path) -> Result<(),String> {
+    unsafe {
+        if std::env::var_os("KTM_TEST_ROOT").is_none() { return Err("KTM_TEST_ROOT is required".into()); }
+        if !with(|u|u.settings.related_queries) { return Err("related_queries must be enabled".into()); }
+        pump_until(20000,||with(|u|u.warmed))?;
+        event(h,Event::Show);
+        UpdateWindow(h);
+        let started=Instant::now();
+        SetWindowTextW(with(|u|u.edit),wide("2026; 공사 계약").as_ptr());
+        pump_until(5000,||with(|u|u.last_input_paint_ms.is_some()))?;
+        let first=with(|u|u.last_input_paint_ms).ok_or("first paint missing")?;
+        wait_results(h)?;
+        let result_ms=ms(started);
+        let (rows,complete)=with(|u|(u.rows.len(),u.rows.iter().all(|r|r.group_matches.len()==2)));
+        if rows!=2 || !complete { return Err(format!("unexpected related rows {rows}, evidence={complete}")); }
+        capture(h,&output.with_extension("bmp"))?;
+        let report=serde_json::json!({"ok":true,"samples":1,"query":"2026; 공사 계약","rows":rows,
+            "complete_group_evidence":complete,"first_input_paint_ms":first,"input_to_results_ms":result_ms,
+            "first_paint_under_16ms":first<=16.0,"clock":"EN_CHANGE to EndPaint (GDI), not DWM presentation"});
+        std::fs::write(output,report.to_string()).map_err(|e|e.to_string())?;
+        DestroyWindow(h);
+        Ok(())
+    }
+}
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }

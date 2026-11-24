@@ -387,6 +387,21 @@ impl NamesService {
         }))
     }
 
+    /// Separate optional command; the existing names_query contract is unchanged.
+    pub fn query_related(&self, sid: &str, text: &str, limit: usize, cancel: Arc<AtomicBool>) -> Result<Value> {
+        let groups=kfind_core::related_query::parse_related_query(text).map_err(|e|e.to_string())?;
+        let g=self.names.read().map_err(|_|"names poisoned")?;
+        let names=g.as_ref().ok_or("names index unavailable")?;
+        let opts=Options { limit:limit.min(MAX_LIMIT),deny:self.deny_for(sid,names),cancel:Some(cancel),..Default::default() };
+        let v=names.view();
+        let r=kfind_names::query::search_related(&v,text,&opts).map_err(|e|e.to_string())?;
+        let items: Vec<Value>=hits(&v,&r.top).into_iter().map(|h|json!({
+            "name":h.name,"dir":h.dir,"is_dir":h.is_dir,"size":h.size,"mtime":h.mtime,
+            "group_matches":groups.iter().enumerate().map(|(i,g)|json!({"group_index":i,"query":g.query,"match_count":1,"filename":true})).collect::<Vec<_>>()
+        })).collect();
+        Ok(json!({"generation":names.generation(),"total":r.total,"items":items,"narrowed":false,"related_groups":true}))
+    }
+
     /// Fast, unpaged file-list query used by the document and photo views.
     pub fn list(&self, extensions: &[String], roots: &[String], exclude: &[String], offset: usize, limit: usize) -> Result<Value> {
         use kfind_names::flag::{DELETED, DIR};

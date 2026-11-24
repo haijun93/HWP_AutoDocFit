@@ -119,6 +119,8 @@ struct Ui {
     status: mpsc::Sender<String>,
     top: usize,
     timing: Option<Instant>,
+    first_input_paint: Option<Instant>,
+    last_input_paint_ms: Option<f64>,
     ready_at: Option<Instant>,
     hotkey: String,
     hotkey_error: String,
@@ -215,7 +217,7 @@ fn scale_u(h: HWND, n: i32, u: &Ui) -> i32 {
 fn quick_layout(h: HWND, u: &Ui) -> QuickSearchLayout {
     let mut r: RECT = unsafe { std::mem::zeroed() };
     unsafe { GetClientRect(h, &mut r); }
-    let groups = kfind_core::split_semicolon_groups(&u.state.query);
+    let groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
     ktm::layout::quick_search_layout(
         scale_u(h, 100, u), r.right, r.bottom, groups.len() > 1, u.state.options.options_open,
         !u.state.autocompletes.is_empty(),
@@ -984,7 +986,10 @@ unsafe fn highlighted_groups(dc: HDC, s: &str, groups: &[Vec<String>], rc: RECT,
     }
 }
 
-fn query_group_terms(query: &str) -> Vec<Vec<String>> {
+fn query_group_terms(query: &str, enabled: bool) -> Vec<Vec<String>> {
+    if enabled {
+        return kfind_core::related_query::parse_related_query(query).unwrap_or_default().into_iter().take(8).map(|g|g.terms).collect();
+    }
     kfind_core::split_semicolon_groups(query).into_iter().take(8).map(|g| {
         g.split_whitespace().filter(|w| !w.starts_with("ext:") && !w.starts_with("path:") && !w.starts_with("file:") && !w.starts_with('-'))
             .map(|w| w.trim_matches(['"','“','”']).to_owned()).filter(|w| !w.is_empty()).collect()
@@ -1102,6 +1107,11 @@ unsafe fn paint(h: HWND) {
             draw(h, dc, r);
         }
         EndPaint(h, &ps);
+        if let Some(start)=edit(|u|u.first_input_paint.take()) {
+            let elapsed=start.elapsed().as_secs_f64()*1000.0;
+            edit(|u|u.last_input_paint_ms=Some(elapsed));
+            log("first_input_paint_ms",elapsed);
+        }
         if let Some(start) = edit(|u| u.timing.take()) {
             log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
             if let Some(ready) = edit(|u| u.ready_at.take()) {
@@ -2145,7 +2155,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     scale(h, 70),
                     has_second_line_text && !path_text.is_empty(),
                 );
-                highlighted(
+                if u.settings.related_queries {
+                    highlighted_groups(mem,&row.name,&query_group_terms(&u.state.query,true),
+                        RECT { left:name_left,top:gy+scale(h,2),right:name_right,bottom:gy+line_h1 },p.row_text(sel,p.text),p);
+                } else { highlighted(
                     mem,
                     &row.name,
                     &u.terms,
@@ -2157,7 +2170,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     },
                     p.row_text(sel, p.text),
                     0x8AF0FE,
-                );
+                ); }
                 if let Some(path_left) = path_left {
                     SelectObject(mem, u.small);
                     text(
@@ -2243,10 +2256,12 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 let line_top = gy + line_h1;
                 let line_bottom = line_top + line_h2;
 
-                let group_terms = query_group_terms(&u.state.query);
-                if !row.snippet.is_empty() {
+                let group_terms = query_group_terms(&u.state.query, u.settings.related_queries);
+                if !row.snippet.is_empty() || row.group_matches.iter().any(|m|m.filename) {
                     for (gi, terms) in group_terms.iter().enumerate() {
-                        if ktm::highlight::ranges_terms(snippet, terms).is_empty() { continue; }
+                        if row.group_matches.is_empty() {
+                            if ktm::highlight::ranges_terms(snippet, terms).is_empty() { continue; }
+                        } else if !row.group_matches.iter().any(|m|m.group_index==gi && (m.filename || !m.paragraphs.is_empty())) { continue; }
                         let label = format!("{}", gi + 1);
                         let (bg, fg) = p.group_highlight(gi, ui_theme::theme().kind == ui_theme::Kind::Dark);
                         let bw = scale(h, 18);
@@ -2312,7 +2327,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             }
 
             // ② 검색창 아래 연관 검색어 묶음 칩
-            let related_groups = kfind_core::split_semicolon_groups(&u.state.query);
+            let related_groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
             let chip_top = quick_layout(h, u).related.top;
             let chip_labels: Vec<String> = related_groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
             let chip_rects = related_chip_rects(&chip_labels, pad + side_w, chip_top, r.right - pad, scale(h, 100));
@@ -3025,6 +3040,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 0
             }
             WM_COMMAND if (w >> 16) as u16 == EN_CHANGE as u16 => {
+                edit(|u| { if u.settings.related_queries { u.first_input_paint=Some(Instant::now()); u.last_input_paint_ms=None; } });
                 let ed = with(|u| u.edit);
                 let within_ed = with(|u| u.within_edit);
                 let source = l as HWND;
@@ -3903,7 +3919,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     }
                 } else if hit_quick_band(x, y, bands.related)
                 {
-                    let groups = with(|u| kfind_core::split_semicolon_groups(&u.state.query));
+                    let groups = with(|u| ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries));
                     let labels: Vec<String> = groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
                     let rects = related_chip_rects(&labels, pad + side_w, bands.related.top, rc_w.right - pad, scale(h, 100));
                     if let Some(index) = rects.iter().position(|rc| x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
@@ -4313,6 +4329,8 @@ pub fn run() -> Result<(), String> {
                 status: status_tx,
                 top: 0,
                 timing: None,
+                first_input_paint: None,
+                last_input_paint_ms: None,
                 ready_at: None,
                 hotkey: String::new(),
                 hotkey_error: String::new(),
@@ -4356,10 +4374,11 @@ pub fn run() -> Result<(), String> {
         let para_path = arg("--content-db")
             .map(PathBuf::from)
             .or_else(ktm::paragraphs::default_path);
+        let related_queries = settings.related_queries;
 
         std::thread::spawn(move || {
             let open =
-                |root: &PathBuf| Backend::open(root).map(|b| b.with_paragraphs(para_path.clone()));
+                |root: &PathBuf| Backend::open(root).map(|b| b.with_paragraphs(para_path.clone()).with_related_queries(related_queries));
             let mut backend: Option<Backend> = None;
             if !pipe_mode {
                 let t = Instant::now();
@@ -4414,6 +4433,7 @@ pub fn run() -> Result<(), String> {
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
+                                if related_queries { return ktm::backend::pipe_names_related(&pipe_name,&q,max_results); }
                                 let rows = ktm::backend::pipe_names_limit(
                                     &pipe_name,
                                     &q,
@@ -4429,7 +4449,7 @@ pub fn run() -> Result<(), String> {
                                     autocompletes: Vec::new(),
                                 });
                             }
-                            if pipe_mode {
+                            if pipe_mode && !related_queries {
                                 let rows = ktm::backend::pipe_search_limit(
                                     &pipe_name,
                                     &q,
@@ -4628,7 +4648,9 @@ pub fn run() -> Result<(), String> {
             sync_edit_text(ed, &query);
         }
 
-        if let Some(output) = arg("--self-test").or_else(|| arg("--measure")) {
+        if let Some(output)=arg("--semi1-probe") {
+            probe::semi1(h,std::path::Path::new(&output))?;
+        } else if let Some(output) = arg("--self-test").or_else(|| arg("--measure")) {
             probe::smoke(h, std::path::Path::new(&output), arg("--measure").is_some())?;
         }
 

@@ -16,6 +16,11 @@ use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Score, TantivyDocument};
 
+#[path = "../../kfind/core/src/related_query.rs"]
+pub mod related_query;
+#[path = "search_related.rs"]
+mod related;
+
 const TOKENIZER: &str = "ko_bigram";
 /// writer 힙 예산. writer는 처음 쓸 때 한 번만 만들고 계속 재사용한다.
 const WRITER_HEAP: usize = 50_000_000;

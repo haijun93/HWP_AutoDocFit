@@ -8,6 +8,7 @@ mod json;
 mod pipe;
 mod util;
 mod search;
+mod search_cli;
 mod content;
 mod reindex;
 mod notebook;
@@ -100,6 +101,11 @@ fn send_pipe_cmd(_cmd_json: &str) -> Option<String> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "search-content") {
+        let Some(dir)=args.get(1) else { eprintln!("search-content requires an isolated index directory"); std::process::exit(2); };
+        if let Err(e)=search_cli::run(dir) { eprintln!("{e}"); std::process::exit(1); }
+        return;
+    }
     if args.first().is_some_and(|a| a == "scan-hwp") {
         if args.len() < 2 {
             eprintln!("usage: klib scan-hwp <roots...>");

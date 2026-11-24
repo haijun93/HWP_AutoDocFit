@@ -61,9 +61,11 @@ pub fn result_row_with_groups(row: &Row, terms: &[String], groups: &[Vec<String>
             ResultKind::Body => "본문",
         }).collect::<Vec<_>>().join("·"));
     }
-    if !row.snippet.is_empty() {
+    if !row.snippet.is_empty() || row.group_matches.iter().any(|m|m.filename) {
         for (i, group) in groups.iter().enumerate().take(8) {
-            if !highlight::ranges_terms(&excerpt, group).is_empty() { badges.push(format!("{}묶음 일치", i + 1)); }
+            let matched = if row.group_matches.is_empty() { !highlight::ranges_terms(&excerpt, group).is_empty() }
+                else { row.group_matches.iter().any(|m|m.group_index==i && (m.filename || !m.paragraphs.is_empty())) };
+            if matched { badges.push(format!("{}묶음 일치", i + 1)); }
         }
         if let Some(badge) = compute_location_badge(&row.location) {
             badges.push(badge);

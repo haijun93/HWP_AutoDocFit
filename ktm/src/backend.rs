@@ -64,6 +64,8 @@ pub struct Answer {
 
 #[derive(Clone, Debug, Default)]
 pub struct Row {
+    /// Complete group evidence, independent of the currently displayed excerpt.
+    pub group_matches: Vec<GroupMatch>,
     pub match_kinds: Vec<crate::tm_state::ResultKind>,
     pub doc_id: u64,
     pub path: String,
@@ -83,6 +85,14 @@ pub struct Row {
     pub date: i64,
     /// 원래 검색 순위(관련도순 복원용).
     pub rank: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GroupMatch {
+    pub group_index: usize,
+    pub query: String,
+    pub paragraphs: Vec<(u32, u8)>,
+    pub filename: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -391,6 +401,7 @@ pub fn query_for_match_mode(query: &str, mode: crate::tm_state::MatchMode) -> St
 }
 
 pub struct Backend {
+    related_queries: bool,
     root: PathBuf,
     index: Index,
     table_stamp: Option<(u64, Option<std::time::SystemTime>)>,
@@ -401,6 +412,79 @@ pub struct Backend {
 }
 
 impl Backend {
+    fn search_related(&mut self, query: &str, date_range: Option<(i64,i64)>, folder: Option<&str>,
+                      ext: Option<&str>, top: usize,
+                      cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+                      _skip_cloud_network: bool) -> Result<Answer> {
+        use kfind_core::related_query::{parse_related_query, related_matches};
+        let groups = parse_related_query(query)?;
+        if groups.is_empty() { return Ok(Answer::default()); }
+        self.index.reload().map_err(|e|e.to_string())?;
+        self.open_paragraphs();
+        let paragraphs = self.paragraphs.as_mut().ok_or("묶음 검색에 필요한 문단 색인이 없습니다.")?;
+        self.paths = read_paths(&self.root.join("doctable.jsonl"), None)?;
+        let mut maps = Vec::<HashMap<u64,Row>>::new();
+        for (group_index, group) in groups.iter().enumerate() {
+            let anchor=group.terms.iter().max_by_key(|t|t.chars().count()).expect("nonempty group");
+            let opts = SearchOptions {
+                top: 0, refs_per_doc: usize::MAX, split: kfind_core::SplitMode::Off,
+                phrases: vec![anchor.clone()], cancel: cancel.clone(),
+                folder: folder.map(str::to_owned),
+                file_types: ext.and_then(kfind_core::parse_ext_term),
+                start_date: date_range.map(|d|d.0), end_date: date_range.map(|d|d.1),
+                ..SearchOptions::default()
+            };
+            // Bitmap candidates are a superset: the stored raw paragraph verifies
+            // punctuation and quoted whitespace using the common literal contract.
+            let result = self.index.search_by("", &opts, Order::Hierarchy).map_err(|e|e.to_string())?;
+            let mut found = HashMap::new();
+            for hit in result.hits {
+                if cancel.as_ref().is_some_and(|c|c.load(Ordering::Relaxed)) { return Err("검색 취소".into()); }
+                let Some(path)=self.paths.get(&hit.doc_id) else { continue; };
+                let mut matched = std::collections::BTreeMap::new();
+                let mut primary = None;
+                for sentence in &hit.sentences {
+                    if matched.contains_key(&sentence.para) { continue; }
+                    if let Some((body, location))=paragraphs.body_and_location(path,sentence.para)? {
+                        if related_matches(&body,group) {
+                            matched.insert(sentence.para,sentence.level);
+                            if primary.as_ref().is_none_or(|p: &(u8,u32,String,Option<String>)| (sentence.level,sentence.para)<(p.0,p.1)) {
+                                primary=Some((sentence.level,sentence.para,body,location));
+                            }
+                        }
+                    }
+                }
+                if let Some((level,para,body,location))=primary {
+                    let mut r=row(&hit,Some(path));
+                    r.level=level; r.para=Some(para); r.count=matched.len() as u32;
+                    r.snippet=crate::highlight::excerpt(&body,&group.terms,EXCERPT_BEFORE,EXCERPT_MAX);
+                    r.preview=body; r.snippet_tried=true;
+                    if let Some(location)=location { r.location=location; }
+                    r.group_matches.push(GroupMatch { group_index,query:group.query.clone(),paragraphs:matched.into_iter().collect(),filename:false });
+                    found.insert(hit.doc_id,r);
+                }
+            }
+            maps.push(found);
+        }
+        let mut rows: Vec<Row>=maps.remove(0).into_values().filter(|r|maps.iter().all(|m|m.contains_key(&r.doc_id))).collect();
+        for r in &mut rows {
+            for map in &maps {
+                let other=&map[&r.doc_id];
+                r.count=r.count.saturating_add(other.count);
+                r.group_matches.extend(other.group_matches.clone());
+                if (other.level,other.para)<(r.level,r.para) {
+                    r.level=other.level; r.para=other.para; r.snippet=other.snippet.clone();
+                    r.preview=other.preview.clone(); r.location=other.location.clone();
+                }
+            }
+        }
+        rows.sort_by(|a,b|a.level.cmp(&b.level).then_with(||b.count.cmp(&a.count)).then_with(||a.path.to_lowercase().cmp(&b.path.to_lowercase())));
+        rows.truncate(clamp_search_limit(top));
+        for (i,r) in rows.iter_mut().enumerate() { r.rank=i; }
+        Ok(Answer { rows, terms:groups.iter().flat_map(|g|g.terms.clone()).collect(),
+            groups:groups.iter().map(|g|g.query.clone()).collect(), ..Answer::default() })
+    }
+
     pub fn open(root: &Path) -> Result<Self> {
         // Index::open treats a missing manifest as empty; the UI needs an explicit
         // unavailable state and must never create the user's index directory.
@@ -420,6 +504,7 @@ impl Backend {
             other => other.to_string(),
         })?;
         Ok(Self {
+            related_queries: false,
             root: root.to_owned(),
             index,
             table_stamp: None,
@@ -433,6 +518,11 @@ impl Backend {
     /// 원문 문단 표 위치(없으면 원문 없이 위치만 보여 줌).
     pub fn with_paragraphs(mut self, path: Option<PathBuf>) -> Self {
         self.para_path = path;
+        self
+    }
+
+    pub fn with_related_queries(mut self, enabled: bool) -> Self {
+        self.related_queries = enabled;
         self
     }
 
@@ -605,6 +695,9 @@ impl Backend {
         cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
         skip_cloud_network: bool,
     ) -> Result<Answer> {
+        if self.related_queries {
+            return self.search_related(query, date_range, folder, ext, top, cancel, skip_cloud_network);
+        }
         self.index.reload().map_err(|e| e.to_string())?;
         let query = query.trim();
         if query.is_empty() {
@@ -774,6 +867,12 @@ impl Backend {
     }
 }
 
+pub fn display_query_groups(query: &str, enabled: bool) -> Vec<String> {
+    if enabled {
+        kfind_core::related_query::parse_related_query(query).unwrap_or_default().into_iter().map(|g|g.query).collect()
+    } else { kfind_core::split_semicolon_groups(query) }
+}
+
 fn row(hit: &DocHit, path: Option<&str>) -> Row {
     let path = path.unwrap_or_default().to_owned();
     let (parent, name) = if let Some(pos) = path.rfind('\\').or_else(|| path.rfind('/')) {
@@ -797,6 +896,7 @@ fn row(hit: &DocHit, path: Option<&str>) -> Row {
         .map(|s| format!("문단 {} · 위계 {}", s.para + 1, s.level))
         .unwrap_or_else(|| format!("위계 {}", hit.level));
     Row {
+        group_matches: Vec::new(),
         match_kinds: Vec::new(),
         doc_id: hit.doc_id,
         path,
@@ -1017,6 +1117,21 @@ pub fn pipe_names_limit(name: &str, query: &str, sort: &str, limit: usize) -> Re
         PIPE_SEARCH_TIMEOUT,
     )?;
     decode_names(&bytes)
+}
+
+pub fn pipe_names_related(name: &str, query: &str, limit: usize) -> Result<Answer> {
+    let groups=kfind_core::related_query::parse_related_query(query)?;
+    let bytes=pipe_call_with_timeout(name,&json!({"command":"names_related","id":1,"text":query,"limit":limit}),PIPE_SEARCH_TIMEOUT)?;
+    let value: Value=serde_json::from_slice(&bytes).map_err(|e|e.to_string())?;
+    if value["result"]["related_groups"]!=true { return Err("파일명 서비스에 연관 검색 기능이 필요합니다.".into()); }
+    let mut rows=decode_names(&bytes)?;
+    for r in &mut rows {
+        r.group_matches=groups.iter().enumerate().map(|(i,g)|GroupMatch {
+            group_index:i,query:g.query.clone(),paragraphs:Vec::new(),filename:true,
+        }).collect();
+    }
+    Ok(Answer { rows,terms:groups.iter().flat_map(|g|g.terms.clone()).collect(),
+        groups:groups.into_iter().map(|g|g.query).collect(),..Answer::default() })
 }
 
 fn decode_names(bytes: &[u8]) -> Result<Vec<Row>> {
@@ -1292,6 +1407,35 @@ mod pipe_error_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semi1_groups_use_raw_paragraphs_and_complete_evidence() {
+        use kfind_core::{Writer,WriterOptions,Sentence};
+        let t=Temp::new();
+        let mut writer=Writer::open(&t.0,WriterOptions::default()).unwrap();
+        writer.add_document(1,0,&[Sentence{para:0,level:0,text:"2026"},Sentence{para:1,level:8,text:"공사 계약"}]).unwrap();
+        writer.add_document(2,0,&[Sentence{para:0,level:8,text:"2026"},Sentence{para:1,level:8,text:"공사"},Sentence{para:2,level:8,text:"계약"}]).unwrap();
+        writer.add_document(3,0,&[Sentence{para:0,level:8,text:"2026"},Sentence{para:1,level:8,text:"공사 안내"},Sentence{para:1,level:8,text:"계약 검토"}]).unwrap();
+        writer.commit().unwrap();
+        let mut table=String::new();
+        for id in 1..=3 { table.push_str(&format!("{{\"op\":\"put\",\"key\":\"k{id}\",\"id\":{id},\"meta\":{{\"path\":\"synthetic/{id}.txt\"}}}}\n")); }
+        std::fs::write(t.0.join("doctable.jsonl"),table).unwrap();
+        let db=t.0.join("content.sqlite");
+        crate::paragraphs::create_fixture(&db,&[
+            ("synthetic/1.txt",0,"2026"),("synthetic/1.txt",1,"공사 계약"),
+            ("synthetic/2.txt",0,"2026"),("synthetic/2.txt",1,"공사"),("synthetic/2.txt",2,"계약"),
+            ("synthetic/3.txt",0,"2026"),("synthetic/3.txt",1,"공사 안내. 계약 검토.")]).unwrap();
+        let mut backend=Backend::open(&t.0).unwrap().with_paragraphs(Some(db)).with_related_queries(true);
+        let answer=backend.search_cancel(" ;2026;; 공사 계약;",false,None).unwrap();
+        assert_eq!(answer.rows.iter().map(|r|r.doc_id).collect::<Vec<_>>(),[1,3]);
+        assert_eq!(answer.groups,["2026","공사 계약"]);
+        assert_eq!(answer.rows[0].group_matches.len(),2);
+        assert_eq!(answer.rows[0].group_matches[1].paragraphs,[(1,8)]);
+        let groups=vec![vec!["2026".into()],vec!["공사".into(),"계약".into()]];
+        let view=crate::view_dump::result_row_with_groups(&answer.rows[0],&answer.terms,&groups,&[],false);
+        assert!(view.badges.contains(&"2묶음 일치".into()));
+        assert_eq!(display_query_groups("; 2026;; \"공사; 계약\";",true),["2026","\"공사; 계약\""]);
+    }
 
     #[cfg(windows)]
     fn fake_pipe(
