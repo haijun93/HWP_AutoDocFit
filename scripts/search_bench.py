@@ -18,7 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from docfit_core.timemachine.content_search import ContentSearchIndex
-from docfit_core.timemachine.search_backend import SqliteBackend
+from docfit_core.timemachine.search_backend import RustBackend, SqliteBackend
 
 
 WORDS = ("행정", "정책", "문서", "검색", "데이터", "민원", "안전", "환경", "지원", "절차",
@@ -31,8 +31,12 @@ def rss_bytes():
     """Return current working set and process peak working set where available."""
     try:
         import psutil  # type: ignore
-        info = psutil.Process().memory_info()
-        return info.rss, getattr(info, "peak_wset", info.rss)
+        process = psutil.Process()
+        processes = [process, *process.children(recursive=True)]
+        rss = sum(item.memory_info().rss for item in processes if item.is_running())
+        peak = max((getattr(item.memory_info(), "peak_wset", item.memory_info().rss)
+                    for item in processes if item.is_running()), default=rss)
+        return rss, peak
     except ImportError:
         if os.name == "nt":
             import ctypes
@@ -108,17 +112,19 @@ def database_bytes(database: Path) -> int:
     return sum(path.stat().st_size for path in database.parent.glob(database.name + "*") if path.is_file())
 
 
-def run_size(count: int, seed: int, deadline: float) -> dict:
+def run_size(count: int, seed: int, deadline: float, backend_mode="sqlite", klib_exe=None) -> dict:
     result = {"documents": count, "seed": seed}
     with tempfile.TemporaryDirectory(prefix=f"srch2-{count}-") as temp:
         folder = Path(temp) / "corpus"
         folder.mkdir()
         database = Path(temp) / "search.sqlite"
+        rust_index = Path(temp) / "tantivy-index"
         generation_started = time.perf_counter()
         paths = make_corpus(folder, count, seed)
         result["corpus_generation_seconds"] = round(time.perf_counter() - generation_started, 3)
-        index = ContentSearchIndex(database)
-        backend = SqliteBackend(index)
+        index = ContentSearchIndex(database) if backend_mode == "sqlite" else None
+        backend = SqliteBackend(index) if index is not None else RustBackend(
+            executable=klib_exe, index_dir=rust_index)
         with PeakSampler() as peak:
             started = time.perf_counter()
             for i, path in enumerate(paths, 1):
@@ -127,7 +133,8 @@ def run_size(count: int, seed: int, deadline: float) -> dict:
                     result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
                     result["documents_indexed_before_limit"] = i
                     result["status"] = "stopped_at_time_limit"
-                    index.close()
+                    if index is not None: index.close()
+                    if hasattr(backend, "close"): backend.close()
                     result["max_rss_bytes"] = peak.peak or None
                     return result
             result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
@@ -184,8 +191,10 @@ def run_size(count: int, seed: int, deadline: float) -> dict:
                 "errors": index_failures,
             }
             result["max_rss_bytes"] = peak.peak or None
-        index.close()
-        result["index_disk_bytes"] = database_bytes(database)
+        if index is not None: index.close()
+        if hasattr(backend, "close"): backend.close()
+        result["index_disk_bytes"] = (database_bytes(database) if backend_mode == "sqlite" else
+            sum(path.stat().st_size for path in rust_index.rglob("*") if path.is_file()))
         result["status"] = "complete" if time.monotonic() < deadline else "time_limit_reached"
     return result
 
@@ -195,9 +204,12 @@ def main() -> int:
     parser.add_argument("--sizes", type=int, nargs="+", default=[1000, 10000])
     parser.add_argument("--seed", type=int, default=20261124)
     parser.add_argument("--time-limit-minutes", type=float, default=28.0)
+    parser.add_argument("--backend", choices=("sqlite", "rust"), default="sqlite")
+    parser.add_argument("--klib-exe", help="Rust klib executable; defaults to KLIB_EXE/PATH")
     args = parser.parse_args()
     deadline = time.monotonic() + args.time_limit_minutes * 60
-    output = {"backend": "SQLite / ContentSearchIndex", "python": sys.version,
+    output = {"backend": "SQLite / ContentSearchIndex" if args.backend == "sqlite" else "Rust / klib Tantivy",
+              "python": sys.version,
               "seed": args.seed, "time_limit_minutes": args.time_limit_minutes, "runs": []}
     previous_rate = None
     for count in args.sizes:
@@ -212,7 +224,7 @@ def main() -> int:
                 output["runs"].append({"documents": count, "status": "skipped_predicted_over_time_limit",
                                        "estimated_seconds": round(estimate, 1), "remaining_seconds": round(remaining, 1)})
                 continue
-        run = run_size(count, args.seed, deadline)
+        run = run_size(count, args.seed, deadline, args.backend, args.klib_exe)
         output["runs"].append(run)
         if count == 1000 and run.get("initial_index_seconds"):
             previous_rate = max(run["initial_index_seconds"], 1.0) + run.get("corpus_generation_seconds", 0)

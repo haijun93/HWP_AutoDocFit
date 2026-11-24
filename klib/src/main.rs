@@ -19,6 +19,7 @@ mod scan_cli;
 mod extract;
 pub(crate) mod hwp5;
 mod index_content;
+mod search_cli;
 mod unify_marker;
 mod classify_levels;
 mod legacy_records;
@@ -160,6 +161,10 @@ fn main() {
     if args.first().is_some_and(|a| a == "index-content") {
         if args.len() < 3 { eprintln!("usage: klib index-content <db> <file-or-folder>..."); std::process::exit(2); }
         if let Err(error) = index_content::run(&args[1], &args[2..]) { eprintln!("{error}"); std::process::exit(1); }
+        return;
+    }
+    if args.first().is_some_and(|a| a == "search-content") {
+        search_cli::run();
         return;
     }
     if args.first().is_some_and(|a| a == "extract") {

@@ -12,6 +12,7 @@ from docfit_app.settings_schema import (
     validate_search_backend_mode,
 )
 from docfit_app.timemachine_service import TimemachineService
+from docfit_core.timemachine.search_backend import ModeSearchBackend, RustBackend
 
 
 class SearchBackendModeTests(unittest.TestCase):
@@ -27,16 +28,54 @@ class SearchBackendModeTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     validate_search_backend_mode(value)
 
-    def test_unavailable_rust_modes_log_reason_and_select_sqlite_fallback(self):
+    def test_mode_provider_returns_requested_mode_without_disabling_rust(self):
         for mode in ("rust", "shadow_compare"):
             service = TimemachineService.__new__(TimemachineService)
             service.search_backend_mode_provider = lambda mode=mode: mode
             service._settings = {}
             service._unsupported_search_backend_logged = set()
-            with self.subTest(mode=mode), self.assertLogs("docfit_app.timemachine_service", level="WARNING") as captured:
+            with self.subTest(mode=mode):
                 self.assertEqual(service._search_backend_mode(), mode)
-            self.assertIn("SQLite로 대체", captured.output[0])
-            self.assertIn("아직 연결되지 않았습니다", captured.output[0])
+
+    def test_rust_failure_falls_back_to_sqlite_and_logs_reason(self):
+        sqlite = Mock()
+        rust = Mock()
+        rust.search.side_effect = RuntimeError("klib unavailable")
+        sqlite.search.return_value = [{"path": "sqlite.txt"}]
+        backend = ModeSearchBackend(sqlite, rust, lambda: "rust")
+        with self.assertLogs("docfit_core.timemachine.search_backend", level="WARNING") as captured:
+            self.assertEqual(backend.search("query"), [{"path": "sqlite.txt"}])
+        self.assertIn("SQLite fallback", captured.output[0])
+
+    def test_shadow_compare_records_diffs_and_returns_sqlite_rows(self):
+        import json
+        import tempfile
+
+        sqlite = Mock()
+        rust = Mock()
+        sqlite.search.return_value = [{"path": "same.txt"}, {"path": "sqlite-only.txt"}]
+        rust.search.return_value = [{"path": "same.txt"}, {"path": "rust-only.txt"}]
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "shadow.jsonl"
+            backend = ModeSearchBackend(sqlite, rust, lambda: "shadow_compare", shadow_log=log)
+            result = backend.search("query", limit=20)
+            record = json.loads(log.read_text(encoding="utf-8"))
+        self.assertEqual(result, sqlite.search.return_value)
+        self.assertEqual(record["missing_in_rust"], ["sqlite-only.txt"])
+        self.assertEqual(record["extra_in_rust"], ["rust-only.txt"])
+        self.assertEqual(record["match_rate"], 1 / 3)
+
+    def test_rust_rows_convert_to_existing_keyword_response_shape(self):
+        rust = RustBackend.__new__(RustBackend)
+        rust._request = Mock(return_value={"results": [{
+            "path": "folder/doc.txt", "name": "doc.txt", "snippet": "정책 문서",
+            "position": {"page": None, "sheet": None, "row": None}, "score": 2,
+        }]})
+        rows = rust.search("정책 문서", limit=20)
+        self.assertEqual(rows[0]["name"], "doc.txt")
+        self.assertEqual(rows[0]["total_matches"], 2)
+        self.assertEqual(rows[0]["match_counts"], {"정책": 1, "문서": 1})
+        self.assertEqual(rows[0]["highlights"], [[0, 2], [3, 5]])
 
     def test_rust_mode_search_returns_sqlite_adapter_rows(self):
         service = TimemachineService.__new__(TimemachineService)

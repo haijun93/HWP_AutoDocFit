@@ -21,7 +21,7 @@ from types import SimpleNamespace
 from docfit_core.timemachine import thumbs
 from docfit_core.path_utils import path_is_within
 from docfit_core.timemachine.content_search import ContentSearchIndex
-from docfit_core.timemachine.search_backend import SearchBackend, SqliteBackend
+from docfit_core.timemachine.search_backend import ModeSearchBackend, RustBackend, SearchBackend, SqliteBackend
 from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
 from docfit_core.timemachine.content_search import CURRENT_HIERARCHY_SCHEMA_VERSION
 from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
@@ -61,7 +61,10 @@ class TimemachineService:
         excluded_rows = self.store.purge_excluded()
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
-        self.search_backend = search_backend if search_backend is not None else SqliteBackend(self.content_index)
+        self.search_backend = search_backend if search_backend is not None else ModeSearchBackend(
+            SqliteBackend(self.content_index),
+            RustBackend(index_dir=data_dir() / "timemachine-tantivy"),
+            self._search_backend_mode)
         self.kfind = kfind_client if kfind_client is not None else KfindClient()
         self._kfind_ids = itertools.count(secrets.randbits(63))
         self._kfind_pending = {}
@@ -163,12 +166,6 @@ class TimemachineService:
         source = (self.search_backend_mode_provider() if self.search_backend_mode_provider is not None
                   else self._settings.get("search_backend_mode", "sqlite"))
         requested = normalize_search_backend_mode(source)
-        if requested != "sqlite" and requested not in self._unsupported_search_backend_logged:
-            logging.getLogger(__name__).warning(
-                "search_backend_mode=%s 요청을 SQLite로 대체합니다: Rust search backend가 아직 연결되지 않았습니다.",
-                requested,
-            )
-            self._unsupported_search_backend_logged.add(requested)
         return requested
 
     def _engine_status(self):
@@ -468,6 +465,9 @@ class TimemachineService:
             if worker and worker.ident is not None and worker is not threading.current_thread():
                 worker.join()
         self.kfind.close()
+        close_backend = getattr(self.search_backend, "close", None)
+        if close_backend:
+            close_backend()
         self.content_index.close()
         self.store.close()
 
@@ -999,7 +999,7 @@ class TimemachineService:
         requested = self._search_engine()
         if backend_mode != "sqlite" or requested == "legacy":
             with self._content_lock:
-                reason = "configured_legacy" if requested == "legacy" else "unsupported_search_backend_mode"
+                reason = "configured_legacy" if requested == "legacy" else f"search_backend_mode_{backend_mode}"
                 self._engine_state.update(engine="legacy", engine_reason=reason)
             return legacy()
         if not self._settings["roots"]:
