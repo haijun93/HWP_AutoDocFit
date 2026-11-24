@@ -41,6 +41,25 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
                 Err(error) => error_value(&error),
             }
         }
+        "index_batch" => {
+            let Some(paths) = request.arr("paths") else { return error_value("paths is required") };
+            if paths.is_empty() || paths.len() > 500 { return error_value("paths must contain 1..500 files") }
+            let batch = ix.batch();
+            let mut results = Vec::with_capacity(paths.len());
+            for path in paths {
+                let Some(path) = (match path { Value::Str(path) => Some(path.as_str()), _ => None }) else {
+                    results.push(Value::obj(vec![("indexed", false.into()), ("error", "path must be a string".into())]));
+                    continue;
+                };
+                let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
+                match crate::content::index_file(ix, path, name, 0) {
+                    Ok(()) => results.push(Value::obj(vec![("indexed", true.into()), ("error", Value::Null)])),
+                    Err(error) => results.push(Value::obj(vec![("indexed", false.into()), ("error", error.into())])),
+                }
+            }
+            if let Err(error) = batch.finish() { return error_value(&error.to_string()) }
+            Value::obj(vec![("ok", true.into()), ("results", Value::Arr(results))])
+        }
         "remove_file" => match request.str("path") {
             Some(path) => match crate::content::remove_file(ix, path) {
                 Ok(()) => Value::obj(vec![("ok", true.into())]), Err(error) => error_value(&error),
@@ -48,7 +67,8 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
             None => error_value("path is required"),
         },
         "status" => Value::obj(vec![
-            ("ok", true.into()), ("document_count", (ix.doc_count() as usize).into()),
+            ("ok", true.into()), ("document_count", (ix.file_count() as usize).into()),
+            ("paragraph_count", (ix.doc_count() as usize).into()),
             ("index_path", index_dir.into()), ("state", "ready".into()),
         ]),
         "cancel" => Value::obj(vec![("ok", true.into()), ("cancelled", false.into())]),
@@ -59,15 +79,35 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
 
 fn search(ix: &SearchIndex, request: &Value) -> Value {
     let query = request.str("query").unwrap_or("");
-    let limit = request.i64("limit").unwrap_or(100).clamp(1, 500) as usize;
+    let limit = request.i64("limit").unwrap_or(100).clamp(1, 5000) as usize;
     let offset = request.i64("offset").unwrap_or(0).max(0) as usize;
-    let fetch_limit = limit.saturating_add(offset).saturating_mul(20).min(4000).max(limit);
-    let hits = match ix.search(query, SearchOptions { limit: fetch_limit }) {
-        Ok(hits) => hits,
-        Err(error) => return error_value(&error.to_string()),
+    let fetch_limit = limit.saturating_add(offset).saturating_mul(20).min(10000).max(limit);
+    let hierarchy = request.bool("hierarchy").unwrap_or(false);
+    let hits = if hierarchy && !query.contains('"') && !query.contains(':') && query.split_whitespace().count() > 1 {
+        // SQLite 위계 검색은 낱말을 문서 단위로 AND 결합한다. Tantivy 문단 검색을 낱말별로 한 뒤 경로 집합을 교차한다.
+        let mut terms = query.split_whitespace();
+        let first = match terms.next().map(|term| ix.search(term, SearchOptions { limit: 5000 })) {
+            Some(Ok(hits)) => hits,
+            Some(Err(error)) => return error_value(&error.to_string()),
+            None => Vec::new(),
+        };
+        let mut common: std::collections::HashSet<String> = first.iter().map(|hit| hit.path.clone()).collect();
+        for term in terms {
+            let term_hits = match ix.search(term, SearchOptions { limit: 5000 }) {
+                Ok(hits) => hits,
+                Err(error) => return error_value(&error.to_string()),
+            };
+            let paths: std::collections::HashSet<String> = term_hits.into_iter().map(|hit| hit.path).collect();
+            common.retain(|path| paths.contains(path));
+        }
+        first.into_iter().filter(|hit| common.contains(&hit.path)).collect()
+    } else {
+        match ix.search(query, SearchOptions { limit: fetch_limit }) {
+            Ok(hits) => hits,
+            Err(error) => return error_value(&error.to_string()),
+        }
     };
     let roots = request.arr("roots").unwrap_or(&[]);
-    let hierarchy = request.bool("hierarchy").unwrap_or(false);
     let rows: Vec<Value> = hits.into_iter().filter(|hit| {
         let path = hit.path.to_lowercase();
         let in_roots = roots.is_empty() || roots.iter().any(|root| match root {

@@ -92,11 +92,15 @@ def make_paragraphs(rng: random.Random, doc_number: int) -> str:
     return "\n".join(lines) + "\n"
 
 
-def make_corpus(folder: Path, count: int, seed: int) -> list[Path]:
+def make_corpus(folder: Path, count: int, seed: int, *, partition_size: int | None = None) -> list[Path]:
     rng = random.Random(seed)
     paths = []
     for number in range(count):
-        path = folder / f"synthetic_{number:06d}.txt"
+        destination = folder
+        if partition_size:
+            destination = folder / f"part_{number // partition_size:03d}"
+            destination.mkdir(exist_ok=True)
+        path = destination / f"synthetic_{number:06d}.txt"
         path.write_text(make_paragraphs(rng, number), encoding="utf-8")
         paths.append(path)
     return paths
@@ -127,16 +131,18 @@ def run_size(count: int, seed: int, deadline: float, backend_mode="sqlite", klib
             executable=klib_exe, index_dir=rust_index)
         with PeakSampler() as peak:
             started = time.perf_counter()
-            for i, path in enumerate(paths, 1):
-                backend.index_file(str(path))
-                if i % 1000 == 0 and time.monotonic() >= deadline:
-                    result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
-                    result["documents_indexed_before_limit"] = i
-                    result["status"] = "stopped_at_time_limit"
-                    if index is not None: index.close()
-                    if hasattr(backend, "close"): backend.close()
-                    result["max_rss_bytes"] = peak.peak or None
-                    return result
+            if backend_mode == "rust":
+                backend.index_files(paths, batch_size=250)
+            else:
+                for i, path in enumerate(paths, 1):
+                    backend.index_file(str(path))
+                    if time.monotonic() >= deadline:
+                        result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
+                        result["documents_indexed_before_limit"] = i
+                        result["status"] = "stopped_at_time_limit"
+                        index.close()
+                        result["max_rss_bytes"] = peak.peak or None
+                        return result
             result["initial_index_seconds"] = round(time.perf_counter() - started, 3)
             result["documents_indexed_before_limit"] = len(paths)
 

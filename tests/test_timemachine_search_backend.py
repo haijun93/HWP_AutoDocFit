@@ -2,13 +2,28 @@ import threading
 import unittest
 from unittest.mock import Mock
 
-from docfit_core.timemachine.search_backend import SearchBackend, SqliteBackend
+from docfit_core.timemachine.search_backend import RustBackend, SearchBackend, SqliteBackend
 
 
 class SearchBackendContractTests(unittest.TestCase):
     def setUp(self):
         self.index = Mock()
         self.backend = SqliteBackend(self.index)
+
+    def test_rust_index_files_sends_bounded_batches(self):
+        backend = RustBackend(executable="klib.exe")
+        backend._request = Mock(side_effect=[{"results": [{"indexed": True}] * 2},
+                                             {"results": [{"indexed": True}]}])
+        result = backend.index_files(["a.txt", "b.txt", "c.txt"], batch_size=2)
+        self.assertEqual(len(result), 3)
+        calls = backend._request.call_args_list
+        self.assertEqual([call.args[0]["op"] for call in calls], ["index_batch", "index_batch"])
+        self.assertEqual([len(call.args[0]["paths"]) for call in calls], [2, 1])
+
+    def test_rust_batch_size_is_capped(self):
+        backend = RustBackend(executable="klib.exe")
+        with self.assertRaises(ValueError):
+            backend.index_files(["a.txt"], batch_size=501)
 
     def test_sqlite_adapter_wraps_index_results_without_transforming_them(self):
         indexed = {"indexed": True, "error": None}

@@ -26,6 +26,15 @@ QUERIES = {
 }
 
 
+def collect_matches(backend, query, *, hierarchy, corpus, count):
+    # 100개 자료함으로 범위를 나눠 각 SQLite/Rust API의 500행 상한보다 작게 전체를 수집한다.
+    rows = []
+    for start in range(0, count, 100):
+        root = corpus / f"part_{start // 100:03d}"
+        rows.extend(backend.search(query, roots=[str(root)], hierarchy=hierarchy, limit=500))
+    return rows
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--count", type=int, default=1000)
@@ -33,42 +42,48 @@ def main():
     parser.add_argument("--klib-exe")
     parser.add_argument("--output", type=Path, help="save the full comparison JSON")
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix="srch3-compare-") as temp:
+    with tempfile.TemporaryDirectory(prefix="srch4-compare-") as temp:
         root = Path(temp)
         corpus = root / "corpus"
         corpus.mkdir()
         # make_corpus owns the same Random(seed) sequence as the SRCH2 benchmark.
-        paths = make_corpus(corpus, args.count, args.seed)
+        paths = make_corpus(corpus, args.count, args.seed, partition_size=100)
         sqlite_index = ContentSearchIndex(root / "sqlite.sqlite")
         sqlite = SqliteBackend(sqlite_index)
         rust = RustBackend(executable=args.klib_exe, index_dir=root / "tantivy")
         errors = []
-        for path in paths:
-            sqlite.index_file(str(path))
-            try:
-                rust.index_file(str(path))
-            except Exception as error:
-                errors.append({"path": path.name, "reason": str(error)})
-                break
+        sqlite.index_files(paths)
+        try:
+            batch_results = rust.index_files(paths, batch_size=250)
+            batch_failures = [row for row in batch_results if row.get("error")]
+        except Exception as error:
+            errors.append({"reason": str(error)})
+            batch_failures = []
         comparisons = {}
         if not errors:
             for name, (query, hierarchy) in QUERIES.items():
-                left = sqlite.search(query, hierarchy=hierarchy, limit=20)
-                right = rust.search(query, hierarchy=hierarchy, limit=20)
+                left = collect_matches(sqlite, query, hierarchy=hierarchy, corpus=corpus, count=args.count)
+                right = collect_matches(rust, query, hierarchy=hierarchy, corpus=corpus, count=args.count)
                 left_paths = [Path(row.get("path", "")).name for row in left]
                 right_paths = [Path(row.get("path", "")).name for row in right]
                 left_set, right_set = set(left_paths), set(right_paths)
+                left_top = {Path(row.get("path", "")).name for row in sqlite.search(query, hierarchy=hierarchy, limit=20)}
+                right_top = {Path(row.get("path", "")).name for row in rust.search(query, hierarchy=hierarchy, limit=20)}
                 comparisons[name] = {
                     "query": query,
-                    "sqlite_count": len(left_paths),
-                    "rust_count": len(right_paths),
-                    "top20_match_rate": len(left_set & right_set) / max(1, min(20, len(left_set), len(right_set))),
+                    "sqlite_match_count": len(left_set),
+                    "rust_match_count": len(right_set),
+                    "result_sets_truncated_by_api": False,
+                    "result_set_match_rate": len(left_set & right_set) / max(1, len(left_set | right_set)),
+                    "top20_overlap": len(left_top & right_top),
+                    "top20_match_rate": len(left_top & right_top) / max(1, min(20, len(left_top), len(right_top))),
                     "missing_in_rust": sorted(left_set - right_set),
                     "extra_in_rust": sorted(right_set - left_set),
                 }
         result = {"documents": args.count, "seed": args.seed,
                   "status": "complete" if not errors else "rust_error",
-                  "index_errors": errors, "comparisons": comparisons}
+                  "index_errors": errors, "batch_error_count": len(batch_failures),
+                  "rust_status": rust.status(), "comparisons": comparisons}
         encoded = json.dumps(result, ensure_ascii=False, indent=2)
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

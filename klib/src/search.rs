@@ -359,6 +359,20 @@ impl SearchIndex {
     pub fn clear(&self)->tantivy::Result<()> { self.write(|writer| { writer.delete_all_documents()?; Ok(()) }) }
     /// 지금 검색에 보이는 문서(문단) 수.
     pub fn doc_count(&self)->u64 { self.reader.searcher().num_docs() }
+    /// 고유 파일 수(문단 수와 구분해 SQLite 상태 계약에 사용).
+    pub fn file_count(&self)->u64 {
+        let searcher=self.reader.searcher();
+        let Ok(columns)=Columns::open(&searcher) else { return 0 };
+        let mut paths=std::collections::HashSet::new();
+        for (segment_ord, reader) in searcher.segment_readers().iter().enumerate() {
+            for doc_id in 0..reader.max_doc() {
+                if !reader.is_deleted(doc_id) && !columns[segment_ord].is_notebook(doc_id) {
+                    if let Ok(path)=columns[segment_ord].path(doc_id) { paths.insert(path); }
+                }
+            }
+        }
+        paths.len() as u64
+    }
     pub fn remove_notebook(&self,notebook_id:i64)->tantivy::Result<()> {
         self.write(|writer| { writer.delete_term(tantivy::Term::from_field_u64(self.fields.notebook_id,notebook_id as u64)); Ok(()) })
     }
@@ -506,6 +520,7 @@ impl SearchIndex {
                 synonym_terms.extend(group.iter().filter(|s|!s.eq_ignore_ascii_case(term)).cloned());
             }
         }
+        parser.set_conjunction_by_default();
         let base=parser.parse_query(&parsed.text).unwrap_or_else(|_| Box::new(tantivy::query::EmptyQuery));
         let mut query_clauses: Vec<(Occur, Box<dyn Query>)>=vec![(Occur::Should,base)];
         if !synonym_terms.is_empty() {
@@ -521,8 +536,11 @@ impl SearchIndex {
             q=Box::new(BooleanQuery::new(cho_clauses));
         }
         let searcher=self.reader.searcher();
-        let candidate_limit=options.limit.max(1).saturating_mul(20).min(4000);
-        let fuzzy=fuzzy_query(&parsed.text,self.fields.body_jamo);
+        let candidate_limit=options.limit.max(1).saturating_mul(20).min(10000);
+        // 여러 낱말 AND와 따옴표 구문은 오타 확장 시 OR로 풀지 않는다.
+        let fuzzy=if parsed.text.split_whitespace().count() <= 1 && !parsed.text.contains('"') {
+            fuzzy_query(&parsed.text,self.fields.body_jamo)
+        } else { None };
         let probe_limit=if parsed.filters.is_empty() && box_id.is_none() { candidate_limit.max(options.limit.max(1)) } else { options.limit.max(1) };
         let initial=if fuzzy.is_some() { Some(searcher.search(&q,&TopDocs::with_limit(probe_limit).order_by_score())?) } else { None };
         let mut expanded=false;
@@ -657,7 +675,7 @@ impl SearchIndex {
             }
         }
         q=Box::new(BooleanQuery::new(clauses));
-        let top=searcher.search(&q,&TopDocs::with_limit(options.limit.max(1).saturating_mul(20).min(4000)).order_by_score())?;
+        let top=searcher.search(&q,&TopDocs::with_limit(options.limit.max(1).saturating_mul(20).min(10000)).order_by_score())?;
         // First pass stores only compact metadata, not paragraph bodies or snippets.
         // 옛(버전 1) 색인은 저장 필드에서, 지금 색인은 FAST 열에서 문단마다 따로 읽는다(묶음·캐시 없는 기준 구현).
         let columns=if self.legacy_body_ko.is_none() { Some(Columns::open(&searcher)?) } else { None };
@@ -822,6 +840,19 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
  fn temp()->PathBuf { use std::sync::atomic::{AtomicU64,Ordering}; static N:AtomicU64=AtomicU64::new(0); let p=std::env::temp_dir().join(format!("klib-search-{}-{}",std::process::id(),N.fetch_add(1,Ordering::Relaxed))); std::fs::create_dir_all(&p).unwrap();p }
  fn dir_size(p:&Path)->u64 { std::fs::read_dir(p).map(|d|d.filter_map(Result::ok).map(|e|{let m=e.metadata().unwrap(); if m.is_dir(){dir_size(&e.path())}else{m.len()}}).sum()).unwrap_or(0) }
  fn paragraph(path:&str,body:&str)->Paragraph {Paragraph{path:path.into(),box_ids:vec!["box-a".into()],name:"\u{d55c}\u{ad6d}\u{c5b4} \u{bb38}\u{c11c}".into(),title:"\u{ac80}\u{c0c9} \u{c81c}\u{baa9}".into(),level:2,body:body.into(),ext:"txt".into(),mtime:100,page:Some(1),sheet:None,row:None}}
+ #[test] fn keyword_queries_require_all_terms_and_phrases_are_contiguous(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap(); let batch=ix.batch();
+    ix.add_or_update(&paragraph("both.txt","행정 절차 지원 정책")).unwrap();
+    ix.add_or_update(&paragraph("one.txt","행정 업무")).unwrap();
+    ix.add_or_update(&paragraph("spaced.txt","행정 절차 민원 지원")).unwrap();
+    batch.finish().unwrap();
+    let and=ix.search("행정 정책",SearchOptions{limit:20}).unwrap();
+    assert_eq!(and.iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["both.txt"]);
+    let phrase=ix.search("\"행정 절차 지원\"",SearchOptions{limit:20}).unwrap();
+    assert_eq!(phrase.iter().map(|h|h.path.as_str()).collect::<Vec<_>>(),["both.txt"]);
+    assert_eq!(ix.file_count(),3);
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
  #[test] fn schema_has_reserved_fields(){let s=schema();for n in ["doc_id","path","box_ids","name","name_cho","title","level","body_bi","body_jamo","body_cho","ext","mtime","page","sheet","row","body"]{assert!(s.get_field(n).is_ok());}
     // 저장은 결과에 되읽는 필드만. 본문 글은 body 한 곳에만 저장하고, body_bi와 같던 body_ko는 없다.
     assert!(s.get_field("body_ko").is_err());

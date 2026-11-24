@@ -50,6 +50,10 @@ class SqliteBackend(SearchBackend):
     def index_file(self, path: str) -> dict[str, Any]:
         return self.index.index_file(path)
 
+    def index_files(self, paths, *, batch_size=250):
+        # SQLite를 기본값으로 둘 때 기존 파일별 호출 순서와 응답을 보존한다.
+        return [self.index_file(path) for path in paths]
+
     def remove_file(self, path: str) -> None:
         return self.index.remove_file(path)
 
@@ -143,6 +147,18 @@ class RustBackend(SearchBackend):
     def index_file(self, path):
         return {key: value for key, value in self._request({"op": "index_file", "path": os.path.abspath(path)}).items()
                 if key in {"indexed", "error"}}
+
+    def index_files(self, paths, *, batch_size=250):
+        paths = list(paths)
+        if not paths:
+            return []
+        if not 1 <= batch_size <= 500:
+            raise ValueError("batch_size는 1~500이어야 합니다.")
+        results = []
+        for start in range(0, len(paths), batch_size):
+            batch = [os.path.abspath(path) for path in paths[start:start + batch_size]]
+            results.extend(self._request({"op": "index_batch", "paths": batch}).get("results", []))
+        return results
 
     def remove_file(self, path):
         self._request({"op": "remove_file", "path": os.path.abspath(path)})
@@ -258,6 +274,29 @@ class ModeSearchBackend(SearchBackend):
             return getattr(self.sqlite, method)(*args, **kwargs)
 
     def index_file(self, path): return self._operate("index_file", path)
+    def index_files(self, paths, *, batch_size=250):
+        paths = list(paths)
+        mode = self._mode()
+        if mode == "sqlite":
+            return self.sqlite.index_files(paths, batch_size=batch_size)
+        if mode == "shadow_compare":
+            sqlite_rows = self.sqlite.index_files(paths, batch_size=batch_size)
+            try:
+                self.rust.index_files(paths, batch_size=batch_size)
+            except Exception as error:
+                self._log({"operation": "index_files", "status": "rust_error", "reason": str(error)})
+                logging.getLogger(__name__).warning("shadow_compare Rust index_files 실패: %s", error)
+            return sqlite_rows
+        try:
+            rust_rows = self.rust.index_files(paths, batch_size=batch_size)
+            if len(rust_rows) != len(paths):
+                raise RuntimeError(f"Rust 배치 응답 수 불일치: {len(rust_rows)} / {len(paths)}")
+        except Exception as error:
+            logging.getLogger(__name__).warning("Rust index_files 실패, SQLite fallback 사용: %s", error)
+            return self.sqlite.index_files(paths, batch_size=batch_size)
+        # 파일별 추출 실패는 SQLite 단건 경로로 되돌려 기존 형식 지원을 유지한다.
+        return [self.sqlite.index_file(path) if row.get("error") else row
+                for path, row in zip(paths, rust_rows)]
     def remove_file(self, path): return self._operate("remove_file", path)
     def search(self, query, **kwargs): return self._operate("search", query, **kwargs)
     def status(self, **kwargs): return self._operate("status", **kwargs)

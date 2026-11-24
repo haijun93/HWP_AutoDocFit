@@ -47,6 +47,28 @@ class SearchBackendModeTests(unittest.TestCase):
             self.assertEqual(backend.search("query"), [{"path": "sqlite.txt"}])
         self.assertIn("SQLite fallback", captured.output[0])
 
+    def test_batch_index_uses_rust_and_falls_back_per_failed_file(self):
+        sqlite = Mock()
+        rust = Mock()
+        paths = ["ok.txt", "unsupported.txt"]
+        rust.index_files.return_value = [{"indexed": True, "error": None},
+                                         {"indexed": False, "error": "unsupported"}]
+        sqlite.index_file.return_value = {"indexed": True, "error": None}
+        backend = ModeSearchBackend(sqlite, rust, lambda: "rust")
+        rows = backend.index_files(paths, batch_size=250)
+        rust.index_files.assert_called_once_with(paths, batch_size=250)
+        sqlite.index_file.assert_called_once_with("unsupported.txt")
+        self.assertEqual(rows, [{"indexed": True, "error": None}, {"indexed": True, "error": None}])
+
+    def test_sqlite_batch_adapter_keeps_existing_per_file_calls(self):
+        sqlite = Mock()
+        rust = Mock()
+        sqlite.index_files.return_value = [{"indexed": True, "error": None}]
+        backend = ModeSearchBackend(sqlite, rust, lambda: "sqlite")
+        self.assertEqual(backend.index_files(["one.txt"]), sqlite.index_files.return_value)
+        sqlite.index_files.assert_called_once_with(["one.txt"], batch_size=250)
+        rust.index_files.assert_not_called()
+
     def test_shadow_compare_records_diffs_and_returns_sqlite_rows(self):
         import json
         import tempfile

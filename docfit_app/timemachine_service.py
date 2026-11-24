@@ -594,16 +594,22 @@ class TimemachineService:
                     with self._content_lock:
                         self._content_state.update(errors=errors)
                     advance()
-                for path in python_paths:
-                    if not proceed(): break
-                    result = self.search_backend.index_file(path)
-                    self._kfind_sync(path, result)
-                    seen += 1
-                    indexed += bool(result["indexed"])
-                    errors += bool(result["error"])
-                    with self._content_lock:
-                        self._content_state.update(seen=seen, indexed=indexed, errors=errors)
-                    advance()
+                batch_size = 250 if self._search_backend_mode() == "rust" else 1
+                for offset in range(0, len(python_paths), batch_size):
+                    batch_paths = []
+                    for path in python_paths[offset:offset + batch_size]:
+                        if not proceed(): break
+                        batch_paths.append(path)
+                    if not batch_paths: break
+                    results = self.search_backend.index_files(batch_paths, batch_size=batch_size)
+                    for path, result in zip(batch_paths, results):
+                        self._kfind_sync(path, result)
+                        seen += 1
+                        indexed += bool(result["indexed"])
+                        errors += bool(result["error"])
+                        with self._content_lock:
+                            self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                        advance()
             # 취소가 끝나기 전에 건너뛴 파일을 지우지 않도록 색인 완료 후 정리한다.
             if not cancel_event.is_set():
                 for path in stale_paths:
