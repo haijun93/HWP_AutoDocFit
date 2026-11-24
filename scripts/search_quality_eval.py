@@ -129,7 +129,7 @@ def main() -> int:
                     "equal": sets[0] == sets[1], "missing": sorted(sets[0] - sets[1]), "extra": sorted(sets[1] - sets[0])}
             if args.output:
                 args.output.parent.mkdir(parents=True, exist_ok=True)
-                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
             print(json.dumps(result, ensure_ascii=False, indent=2))
         finally:
             rust.close()

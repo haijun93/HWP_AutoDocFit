@@ -64,7 +64,7 @@ def main():
         finally:
             backend.close()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(json.dumps({"output": args.output.name, "runs": [{"documents": r["documents"], "ms": {
         k: v["median"]["total_ms"] for k, v in r["queries"].items()}} for r in result["runs"]]}, ensure_ascii=False))
     return 0

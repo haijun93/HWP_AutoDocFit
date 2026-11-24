@@ -107,16 +107,13 @@ fn search(ix: &SearchIndex, request: &Value) -> Value {
         // 문서 단위 AND. 교차 집합을 구할 때는 stored 문서·snippet을 읽지 않는다.
         let mut terms = query.split_whitespace();
         let first = terms.next().unwrap_or("");
-        let path_scope = ContentScope { roots:&roots, allowed:None, start:scope.start,
-            end:scope.end, offset:0, limit:5000, hydrate:false };
         for term in terms {
-            let term_hits = match ix.search_content(term, SearchOptions { limit: 5000 }, &path_scope) {
-                Ok(hits) => hits,
+            let paths = match ix.content_matching_paths(term) {
+                Ok(paths) => paths,
                 Err(error) => return error_value(&error.to_string()),
             };
-            let paths: std::collections::HashSet<String> = term_hits.into_iter().map(|hit| hit.path).collect();
             if let Some(common) = &mut common { common.retain(|path| paths.contains(path)); }
-            else { common = Some(paths); }
+            else { common = Some((*paths).clone()); }
         }
         scope.allowed=common.as_ref();
         match ix.search_content(first, SearchOptions { limit: 5000 }, &scope) {

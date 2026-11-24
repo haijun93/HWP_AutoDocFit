@@ -21,18 +21,54 @@ pub(super) struct ContentCache {
     generation: Option<u64>,
     documents: HashMap<DocAddress, Arc<TantivyDocument>>,
     paths: HashMap<(u32, u64), String>,
+    matching_paths: HashMap<String, Arc<HashSet<String>>>,
+    synonyms: Option<Arc<Vec<Vec<String>>>>,
 }
 impl ContentCache {
     fn use_generation(&mut self, generation: u64) {
         if self.generation != Some(generation) {
             self.documents.clear();
             self.paths.clear();
+            self.matching_paths.clear();
             self.generation = Some(generation);
+        }
+    }
+    fn use_synonyms(&mut self, synonyms: Arc<Vec<Vec<String>>>) {
+        if !self.synonyms.as_ref().is_some_and(|old| Arc::ptr_eq(old, &synonyms)) {
+            self.matching_paths.clear();
+            self.synonyms = Some(synonyms);
         }
     }
 }
 
 impl SearchIndex {
+    /// 문서 AND의 단어별 문서 집합. roots/날짜는 최종 선택 때 검사한다.
+    pub fn content_matching_paths(&self, query: &str) -> tantivy::Result<Arc<HashSet<String>>> {
+        let generation = self.reader.searcher().generation().generation_id();
+        let synonyms = self.load_synonyms();
+        {
+            let mut cache = self.content_cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.use_generation(generation);
+            cache.use_synonyms(synonyms.clone());
+            if let Some(paths) = cache.matching_paths.get(query) {
+                profile_add("and_paths_cache_hits", 1.0);
+                return Ok(paths.clone());
+            }
+        }
+        let scope = ContentScope { roots:&[], allowed:None, start:None, end:None, offset:0, limit:5000, hydrate:false };
+        let paths: Arc<HashSet<String>> = Arc::new(self.search_content(query, SearchOptions { limit:5000 }, &scope)?
+            .into_iter().map(|h| h.path).collect());
+        // 검색 중 커밋되면 이전 세대 결과를 새 세대 캐시에 넣지 않는다.
+        if self.reader.searcher().generation().generation_id() == generation {
+            let mut cache = self.content_cache.lock().unwrap_or_else(|e| e.into_inner());
+            cache.use_generation(generation);
+            cache.use_synonyms(synonyms);
+            if cache.matching_paths.len() >= 16 { cache.matching_paths.clear(); }
+            cache.matching_paths.insert(query.to_string(), paths.clone());
+        }
+        profile_add("and_paths_cache_misses", 1.0);
+        Ok(paths)
+    }
     pub(super) fn content_path(&self, searcher: &tantivy::Searcher, columns: &[Columns], address: DocAddress) -> tantivy::Result<String> {
         let column = &columns[address.segment_ord as usize];
         let Some(ord) = column.path_ord(address.doc_id) else { return Ok(String::new()); };

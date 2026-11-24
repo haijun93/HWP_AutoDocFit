@@ -19,8 +19,8 @@
       "rust_match_count": 1000,
       "result_sets_truncated_by_api": false,
       "result_set_match_rate": 1.0,
-      "top20_overlap": 3,
-      "top20_match_rate": 0.15,
+      "top20_overlap": 1,
+      "top20_match_rate": 0.05,
       "missing_in_rust": [],
       "extra_in_rust": []
     },
@@ -52,8 +52,8 @@
       "rust_match_count": 1000,
       "result_sets_truncated_by_api": false,
       "result_set_match_rate": 1.0,
-      "top20_overlap": 0,
-      "top20_match_rate": 0.0,
+      "top20_overlap": 1,
+      "top20_match_rate": 0.05,
       "missing_in_rust": [],
       "extra_in_rust": []
     }

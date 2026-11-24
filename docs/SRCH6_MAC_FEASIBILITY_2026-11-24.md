@@ -2,6 +2,8 @@
 
 범위: 로컬 소스 정적 점검과 Windows 빌드. 실제 macOS 컴파일·실행은 하지 않았으며 맥 워커 후속 카드로 분리한다. Windows 서비스와 GUI의 이식은 범위 밖이다.
 
+확인한 직접 Win32 호출에는 이미 cfg 가드가 있다. 아래 목록의 서비스 모듈 그래프가 크다는 사실만으로 macOS 컴파일 실패를 확정하지 않는다. 맥 후속 카드에서는 이번 target 의존성 분리 상태 그대로 먼저 빌드하고, 실제 오류가 드러난 부분만 최소 분리하는 순서를 권한다.
+
 ## 의존성과 차단점
 
 | 파일 | 현재 Windows 의존·대체 경로 | search-content 전용 최소안 |
@@ -22,8 +24,8 @@
 
 ## 권장 최소 후속 변경
 
-1. 이번 카드에서는 Cargo.toml의 Windows 의존성 조건 분리만 적용하고 Windows release·cargo 시험으로 확인한다. 다른 cfg나 서비스 코드는 변경하지 않는다.
-2. 맥 카드에서 main 진입점을 플랫폼별로 분리한다. `search`, `search_cli`, `content`, 공용 추출 모듈은 유지하고 `db`, `pipe`, `notebook`, `nb_store`, `reindex`, `scan*`, 서비스 전역은 필요한 곳만 cfg(windows)로 감싼다. search.rs의 notebook API 참조를 함께 분리해야 단순 모듈 숨김의 unresolved import를 피할 수 있다.
+1. 이번 카드에서는 Cargo.toml의 Windows 의존성 조건 분리만 적용했다. Windows release 빌드는 성공했으며 cargo 시험은 최종 결과 문서에 기록한다. 다른 cfg나 서비스 코드는 변경하지 않았다.
+2. 맥 카드에서 우선 현 상태를 빌드한다. 검색 전용 진입점 분리가 필요하면 `search`, `search_cli`, `content`, 공용 추출 모듈은 유지하고 `db`, `pipe`, `notebook`, `nb_store`, `reindex`, `scan*`, 서비스 전역은 필요한 곳만 cfg(windows)로 감싼다. search.rs의 notebook API 참조를 함께 분리해야 단순 모듈 숨김의 unresolved import를 피할 수 있다.
 3. 환경변수 없이 쓰는 기본 경로, 역슬래시, 파일 대소문자 비교를 먼저 시험한다. macOS에서 roots를 무조건 소문자화하면 대소문자를 구분하는 볼륨에서 범위가 잘못 합쳐질 수 있다.
 4. 검색 인덱스 재생성 잠금의 비Windows 분기를 실제 잠금으로 바꾼 뒤 두 프로세스 경합·중단 복구를 시험한다. 기존 fallback은 파일 열기에 성공한 두 프로세스를 배제하지 못한다.
 5. 맥에서 `cargo build --release --bin klib`, 공용 단위 시험, 합성 Markdown·TXT·HWPX JSONL 색인/검색/삭제/재시작을 실행한다. macOS 빌드 가능 여부는 이 단계 통과 전까지 **확인 못 함**이다.

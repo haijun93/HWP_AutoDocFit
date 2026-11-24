@@ -1,0 +1,112 @@
+{
+  "backend": "Rust / klib Tantivy",
+  "python": "3.15.2 (tags/v3.15.2:5e58eaa, Oct 25 2026, 17:27:03) [MSC v.1951 64 bit (AMD64)]",
+  "seed": 20261124,
+  "time_limit_minutes": 20.0,
+  "runs": [
+    {
+      "documents": 1000,
+      "seed": 20261124,
+      "corpus_generation_seconds": 2.937,
+      "initial_index_seconds": 5.007,
+      "documents_indexed_before_limit": 1000,
+      "search": {
+        "short": {
+          "query": "행정",
+          "cold_ms": 25.967,
+          "warm_median_ms": 12.855,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "long": {
+          "query": "행정 정책 문서 안전 지원",
+          "cold_ms": 6.27,
+          "warm_median_ms": 4.907,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "and": {
+          "query": "행정 정책",
+          "cold_ms": 14.695,
+          "warm_median_ms": 12.116,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "phrase": {
+          "query": "\"행정 절차 지원\"",
+          "cold_ms": 14.951,
+          "warm_median_ms": 13.03,
+          "warm_samples": 5,
+          "returned_documents": 20
+        }
+      },
+      "incremental_reindexed_documents": 10,
+      "incremental_changed_documents": 10,
+      "incremental_index_seconds": 3.069,
+      "unchanged_documents_requested": 10,
+      "unchanged_documents_reindexed": 0,
+      "unchanged_index_seconds": 0.007,
+      "search_while_indexing": {
+        "samples": 12,
+        "median_ms": 296.288,
+        "max_ms": 357.459,
+        "errors": []
+      },
+      "max_rss_bytes": 68050944,
+      "index_disk_bytes": 6195883,
+      "status": "complete"
+    },
+    {
+      "documents": 5000,
+      "seed": 20261124,
+      "corpus_generation_seconds": 14.486,
+      "initial_index_seconds": 45.499,
+      "documents_indexed_before_limit": 5000,
+      "search": {
+        "short": {
+          "query": "행정",
+          "cold_ms": 50.253,
+          "warm_median_ms": 18.248,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "long": {
+          "query": "행정 정책 문서 안전 지원",
+          "cold_ms": 9.801,
+          "warm_median_ms": 8.057,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "and": {
+          "query": "행정 정책",
+          "cold_ms": 22.357,
+          "warm_median_ms": 19.857,
+          "warm_samples": 5,
+          "returned_documents": 20
+        },
+        "phrase": {
+          "query": "\"행정 절차 지원\"",
+          "cold_ms": 29.386,
+          "warm_median_ms": 27.594,
+          "warm_samples": 5,
+          "returned_documents": 20
+        }
+      },
+      "incremental_reindexed_documents": 50,
+      "incremental_changed_documents": 50,
+      "incremental_index_seconds": 16.76,
+      "unchanged_documents_requested": 50,
+      "unchanged_documents_reindexed": 0,
+      "unchanged_index_seconds": 0.027,
+      "search_while_indexing": {
+        "samples": 52,
+        "median_ms": 329.453,
+        "max_ms": 393.494,
+        "errors": []
+      },
+      "max_rss_bytes": 79667200,
+      "index_disk_bytes": 30619590,
+      "status": "complete"
+    }
+  ]
+}

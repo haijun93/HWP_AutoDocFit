@@ -84,5 +84,33 @@ class Srch6RustSearchTests(unittest.TestCase):
         self.assertEqual(self.backend.search('"행정 정책"', hierarchy=True), [])
 
 
+    def test_document_and_cache_invalidates_when_synonyms_change(self):
+        synonyms = self.root / "index" / "data" / "synonyms.tsv"
+        synonyms.parent.mkdir(parents=True)
+        synonyms.write_text("정책\t운영\n", encoding="utf-8")
+        path = self.put("a.md", "# 계획\n\n행정 지원\n\n운영 현황")
+        self.backend.index_file(path)
+        self.assertEqual(len(self.backend.search("행정 정책", hierarchy=True)), 1)
+        self.assertEqual(len(self.backend.search("행정 정책", hierarchy=True)), 1)
+        synonyms.write_text("정책\t새로운자료\n", encoding="utf-8")
+        self.assertEqual(self.backend.search("행정 정책", hierarchy=True), [])
+
+    def test_document_and_cache_invalidates_on_second_term_and_keeps_live_date_filter(self):
+        path = self.put("scope/split.md", "# 계획\n\n행정 지원\n\n정책 운영")
+        self.backend.index_file(path)
+        request = {"op":"search", "query":"행정 정책", "hierarchy":True, "limit":20, "profile":True}
+        self.backend._request(request)
+        warm = self.backend._request(request)
+        self.assertEqual(warm["_profile"]["and_paths_cache_hits"], 1)
+        self.assertEqual(len(warm["results"]), 1)
+        self.assertEqual(self.backend.search("행정 정책", hierarchy=True, roots=[str(self.root / "other")]), [])
+        old_mtime = path.stat().st_mtime
+        os.utime(path, (old_mtime + 100, old_mtime + 100))
+        self.assertEqual(self.backend.search("행정 정책", hierarchy=True, end=old_mtime + 50), [])
+        path.write_text("# 계획\n\n행정 지원\n\n일반 운영", encoding="utf-8")
+        self.backend.index_file(path)
+        self.assertEqual(self.backend.search("행정 정책", hierarchy=True), [])
+
+
 if __name__ == "__main__":
     unittest.main()
