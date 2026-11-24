@@ -19,10 +19,10 @@ from search_bench import make_corpus
 
 
 QUERIES = {
-    "keyword": ("정책", False),
-    "and": ("정책 문서", False),
-    "phrase": ('"정책 안전 지침"', False),
-    "hierarchy": ("정책 안전 지침", True),
+    "keyword": ("행정", False),
+    "and": ("행정 정책", False),
+    "phrase": ('"행정 절차 지원"', False),
+    "hierarchy": ("행정 정책 문서 안전 지원", True),
 }
 
 
@@ -31,6 +31,7 @@ def main():
     parser.add_argument("--count", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=20261124)
     parser.add_argument("--klib-exe")
+    parser.add_argument("--output", type=Path, help="save the full comparison JSON")
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="srch3-compare-") as temp:
         root = Path(temp)
@@ -54,8 +55,8 @@ def main():
             for name, (query, hierarchy) in QUERIES.items():
                 left = sqlite.search(query, hierarchy=hierarchy, limit=20)
                 right = rust.search(query, hierarchy=hierarchy, limit=20)
-                left_paths = [row.get("path") for row in left]
-                right_paths = [row.get("path") for row in right]
+                left_paths = [Path(row.get("path", "")).name for row in left]
+                right_paths = [Path(row.get("path", "")).name for row in right]
                 left_set, right_set = set(left_paths), set(right_paths)
                 comparisons[name] = {
                     "query": query,
@@ -65,9 +66,14 @@ def main():
                     "missing_in_rust": sorted(left_set - right_set),
                     "extra_in_rust": sorted(right_set - left_set),
                 }
-        print(json.dumps({"documents": args.count, "seed": args.seed,
-                          "status": "complete" if not errors else "rust_error",
-                          "index_errors": errors, "comparisons": comparisons}, ensure_ascii=False, indent=2))
+        result = {"documents": args.count, "seed": args.seed,
+                  "status": "complete" if not errors else "rust_error",
+                  "index_errors": errors, "comparisons": comparisons}
+        encoded = json.dumps(result, ensure_ascii=False, indent=2)
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(encoded + "\n", encoding="utf-8")
+        print(encoded)
         rust.close()
         sqlite_index.close()
     return 0 if not errors else 2

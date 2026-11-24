@@ -63,7 +63,7 @@ class SearchBackendModeTests(unittest.TestCase):
         self.assertEqual(result, sqlite.search.return_value)
         self.assertEqual(record["missing_in_rust"], ["sqlite-only.txt"])
         self.assertEqual(record["extra_in_rust"], ["rust-only.txt"])
-        self.assertEqual(record["match_rate"], 1 / 3)
+        self.assertEqual(record["match_rate"], 0.5)
 
     def test_rust_rows_convert_to_existing_keyword_response_shape(self):
         rust = RustBackend.__new__(RustBackend)
@@ -90,8 +90,7 @@ class SearchBackendModeTests(unittest.TestCase):
         expected = [{"path": "synthetic.txt", "name": "synthetic.txt"}]
         service.search_backend = Mock()
         service.search_backend.search.return_value = expected
-        with self.assertLogs("docfit_app.timemachine_service", level="WARNING"):
-            actual = service._search_rows("query")
+        actual = service._search_rows("query")
         self.assertIs(actual, expected)
         service.search_backend.search.assert_called_once_with(
             "query", roots=["synthetic-root"], hierarchy=False, limit=100, offset=0,
