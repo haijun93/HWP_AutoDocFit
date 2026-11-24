@@ -22,6 +22,9 @@ PURPOSES = {
     'add_format_file': ('open', frozenset({'.hwp', '.hwpx'})),
     'idioms': ('open', frozenset({'.hwp', '.hwpx', '.ido'})),
     'table_template': ('open', frozenset({'.hwpx'})),
+    'pdf_edit_source': ('open', frozenset({'.pdf'})),
+    'pdf_edit_sources': ('open', frozenset({'.pdf'})),
+    'pdf_edit_output': ('save', frozenset({'.pdf'})),
     'flow_png': ('save', frozenset({'.png'})),
     'flow_hwpx': ('save', frozenset({'.hwpx'})),
     'notebook_hwpx': ('save', frozenset({'.hwpx'})),
@@ -34,7 +37,7 @@ PURPOSES = {
     # 외부 프로그램(사진첩2·아웃라이너·사진관리) 실행 파일 지정. 이름 검사는 external_apps_service.validate_exe가 한다.
     'external_app_exe': ('open', frozenset({'.exe'})),
 }
-MULTIPLE = frozenset({'add_files', 'add_format_file', 'rename_files'})
+MULTIPLE = frozenset({'add_files', 'add_format_file', 'rename_files', 'pdf_edit_sources'})
 
 
 def fail(code):
