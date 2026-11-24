@@ -1,3 +1,7 @@
+# SRCH6 인계 (2026-11-24, 검증 진행)
+
+`feature/SRCH6`, 기준 `3f65771d`. Rust JSONL 검색의 복원을 페이지 선택 뒤로 옮기고 세대별 경로/문단 캐시와 위계 가중 발생 수 순위를 추가했다. 기본 SQLite·공용 자료함 순위는 유지한다. Windows release·관련 Python 24개 OK, 합성 405문서/18질의 전체 집합 일치·품질 SQLite 동률, warm 프로파일 1천/5천 모두 30ms 미만. 정식 벤치·전체 집합 재검증·cargo·전체 Python은 진행 또는 대기다. 최종 판정은 `docs/SRCH6_RESULT_2026-11-24.md`를 본다. 맥 실기 빌드는 확인 못 함. 이 카드는 커밋만 하며 푸시·COM·사용자 원본 사용을 금지한다.
+
 # OUTLINERQA1 인계 (2026-11-23)
 
 `feature/OUTLINERQA1`에서 Logseq 공개 기능 기준과 Flutter·Win32·엔진 차이를 문서화했다(`docs/OUTLINERQA1_RESULT_2026-11-22.md`). Flutter Tab/Shift+Tab이 입력 문자를 저장하지 않던 결함을 먼저 실패 시험으로 재현하고 `_setTextAndEdit` 경로로 수정했다. Core 70+CLI 1, Win32 124, Flutter 위젯 6, Python 서비스 9 통과; `flutter analyze` 지적 0. 실제 한글 IME, 설치본의 `outliner_win.exe`, 다중 선택·드래그·undo/redo·블록 참조 UI·Flutter 전역 검색/역링크는 남았다. Logseq Windows 기본 블록 이동은 Alt+Shift+위/아래이고 현재 Win32 Alt+위/아래와 달라 실기 UX 판정이 필요하다. 푸시·태그·한/글 COM·실행 앱 접근 없음.

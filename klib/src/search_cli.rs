@@ -1,6 +1,6 @@
 //! Long-lived JSONL adapter for Python's optional Rust search backend.
 use crate::json::{self, Value};
-use crate::search::{SearchIndex, SearchOptions};
+use crate::search::{ContentScope, SearchIndex, SearchOptions};
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -9,10 +9,23 @@ pub fn run() {
     let mut stdout = io::BufWriter::new(io::stdout().lock());
     let mut index: Option<SearchIndex> = None;
     for line in stdin.lock().lines() {
-        let reply = match line {
+        let enabled = line.as_ref().ok().and_then(|line| json::parse(line)).is_some_and(|r| r.bool("profile").unwrap_or(false));
+        crate::search::profile_start(enabled);
+        let started = std::time::Instant::now();
+        let mut reply = match line {
             Ok(line) => handle(&line, &mut index),
             Err(error) => error_value(&error.to_string()),
         };
+        if enabled {
+            let mut profile = crate::search::profile_values();
+            profile.insert("rust_request_ms", started.elapsed().as_secs_f64() * 1000.0);
+            let serialization = std::time::Instant::now();
+            let _ = json::to_string(&reply);
+            profile.insert("json_serialize_ms", serialization.elapsed().as_secs_f64() * 1000.0);
+            if let Value::Obj(fields) = &mut reply {
+                fields.push(("_profile".into(), Value::obj(profile.into_iter().map(|(k,v)| (k, v.into())).collect())));
+            }
+        }
         let _ = writeln!(stdout, "{}", json::to_string(&reply));
         let _ = stdout.flush();
     }
@@ -83,47 +96,39 @@ fn search(ix: &SearchIndex, request: &Value) -> Value {
     let offset = request.i64("offset").unwrap_or(0).max(0) as usize;
     let fetch_limit = limit.saturating_add(offset).saturating_mul(20).min(10000).max(limit);
     let hierarchy = request.bool("hierarchy").unwrap_or(false);
+    let roots: Vec<String> = request.arr("roots").unwrap_or(&[]).iter().map(|root| match root {
+        Value::Str(root) => root.to_lowercase().trim_end_matches(['\\', '/']).to_string(),
+        _ => "\0".into(),
+    }).collect();
+    let mut scope = ContentScope { roots:&roots, allowed:None, start:request.num("start"),
+        end:request.num("end"), offset, limit, hydrate:true };
+    let mut common: Option<std::collections::HashSet<String>> = None;
     let hits = if hierarchy && !query.contains('"') && !query.contains(':') && query.split_whitespace().count() > 1 {
-        // SQLite 위계 검색은 낱말을 문서 단위로 AND 결합한다. Tantivy 문단 검색을 낱말별로 한 뒤 경로 집합을 교차한다.
+        // 문서 단위 AND. 교차 집합을 구할 때는 stored 문서·snippet을 읽지 않는다.
         let mut terms = query.split_whitespace();
-        let first = match terms.next().map(|term| ix.search(term, SearchOptions { limit: 5000 })) {
-            Some(Ok(hits)) => hits,
-            Some(Err(error)) => return error_value(&error.to_string()),
-            None => Vec::new(),
-        };
-        let mut common: std::collections::HashSet<String> = first.iter().map(|hit| hit.path.clone()).collect();
+        let first = terms.next().unwrap_or("");
+        let path_scope = ContentScope { roots:&roots, allowed:None, start:scope.start,
+            end:scope.end, offset:0, limit:5000, hydrate:false };
         for term in terms {
-            let term_hits = match ix.search(term, SearchOptions { limit: 5000 }) {
+            let term_hits = match ix.search_content(term, SearchOptions { limit: 5000 }, &path_scope) {
                 Ok(hits) => hits,
                 Err(error) => return error_value(&error.to_string()),
             };
             let paths: std::collections::HashSet<String> = term_hits.into_iter().map(|hit| hit.path).collect();
-            common.retain(|path| paths.contains(path));
+            if let Some(common) = &mut common { common.retain(|path| paths.contains(path)); }
+            else { common = Some(paths); }
         }
-        first.into_iter().filter(|hit| common.contains(&hit.path)).collect()
+        scope.allowed=common.as_ref();
+        match ix.search_content(first, SearchOptions { limit: 5000 }, &scope) {
+            Ok(hits) => hits, Err(error) => return error_value(&error.to_string()),
+        }
     } else {
-        match ix.search(query, SearchOptions { limit: fetch_limit }) {
+        match ix.search_content(query, SearchOptions { limit: fetch_limit }, &scope) {
             Ok(hits) => hits,
             Err(error) => return error_value(&error.to_string()),
         }
     };
-    let roots = request.arr("roots").unwrap_or(&[]);
-    let rows: Vec<Value> = hits.into_iter().filter(|hit| {
-        let path = hit.path.to_lowercase();
-        let in_roots = roots.is_empty() || roots.iter().any(|root| match root {
-            Value::Str(root) => {
-                let root = root.to_lowercase().trim_end_matches(|c| c == '\\' || c == '/').to_string();
-                path.starts_with(&root) && path.get(root.len()..).is_some_and(|tail| tail.is_empty() || tail.starts_with('\\') || tail.starts_with('/'))
-            }, _ => false,
-        });
-        if !in_roots { return false; }
-        let mtime = std::fs::metadata(&hit.path).ok().and_then(|meta| meta.modified().ok())
-            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_secs_f64());
-        let start = request.num("start");
-        let end = request.num("end");
-        start.is_none_or(|start| mtime.is_some_and(|mtime| mtime >= start))
-            && end.is_none_or(|end| mtime.is_some_and(|mtime| mtime < end))
-    }).skip(offset).take(limit).map(|hit| {
+    let rows: Vec<Value> = hits.into_iter().map(|hit| {
         let extension = Path::new(&hit.path).extension().and_then(|ext| ext.to_str()).unwrap_or("").to_lowercase();
         let mtime = std::fs::metadata(&hit.path).ok().and_then(|meta| meta.modified().ok())
             .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok()).map(|time| time.as_secs_f64());

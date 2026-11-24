@@ -15,6 +15,8 @@
 
 ## [미착수·핵심 개발] Rust 기반 고속·저자원 몽땅검색엔진 통합 (사용자 요청, 2026-11-24)
 
+> [상태 2026-11-24 SRCH6 진행] 선택형 Rust 검색의 페이지 선택 후 복원·세대별 캐시·발생 수 순위를 구현했다. 합성 18질의 품질과 1천/5천 warm 프로파일은 SQLite 수준에 도달했으나 정식 벤치·전체 시험은 진행 중이다. 기본 SQLite 유지. 결과와 잔여 관문은 `docs/SRCH6_RESULT_2026-11-24.md`, 맥 후속 설계는 `docs/SRCH6_MAC_FEASIBILITY_2026-11-24.md`에 기록한다.
+
 목표: 기존 Python `ContentSearchIndex`·SQLite FTS5와 Rust `klib`·Tantivy가 분리된 현재 구조를 통합하여, 검색 시 원본 문서를 다시 열지 않고 낮은 메모리와 짧은 지연시간으로 문서·페이지·위계·표 위치를 반환한다. 기존 API와 SQLite fallback은 Rust 엔진의 검증이 끝날 때까지 보존한다.
 
 - [ ] `docfit_app/timemachine_service.py`가 `ContentSearchIndex`를 직접 호출하지 않도록 `SearchBackend` 계약(`index_file`, `remove_file`, `search`, `status`, `cancel`)을 정의하고 SQLite·Rust 구현을 같은 응답 형식으로 맞춘다. `content_search`, `content_index_*`, `content_errors`, Markdown 내보내기 API의 하위 호환성을 유지한다.

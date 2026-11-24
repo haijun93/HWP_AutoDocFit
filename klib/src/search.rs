@@ -16,6 +16,27 @@ use tantivy::snippet::SnippetGenerator;
 use tantivy::tokenizer::{Token, TokenStream, Tokenizer};
 use tantivy::{doc, Index, IndexReader, IndexWriter, ReloadPolicy, Score, TantivyDocument};
 
+#[path = "search_content_policy.rs"]
+mod content_policy;
+pub use content_policy::ContentScope;
+
+// JSONL의 profile 요청에서만 수집한다. 일반 검색 응답·표준 출력에 진단을 섞지 않는다.
+thread_local! {
+    static PROFILE: std::cell::RefCell<Option<std::collections::BTreeMap<&'static str, f64>>> = const { std::cell::RefCell::new(None) };
+}
+pub(crate) fn profile_start(enabled: bool) {
+    PROFILE.with(|p| *p.borrow_mut() = enabled.then(Default::default));
+}
+pub(crate) fn profile_values() -> std::collections::BTreeMap<&'static str, f64> {
+    PROFILE.with(|p| p.borrow().clone().unwrap_or_default())
+}
+fn profile_add(name: &'static str, value: f64) {
+    PROFILE.with(|p| { if let Some(p) = p.borrow_mut().as_mut() { *p.entry(name).or_default() += value; } });
+}
+fn profile_elapsed(name: &'static str, start: std::time::Instant) {
+    profile_add(name, start.elapsed().as_secs_f64() * 1000.0);
+}
+
 const TOKENIZER: &str = "ko_bigram";
 /// writer 힙 예산. writer는 처음 쓸 때 한 번만 만들고 계속 재사용한다.
 const WRITER_HEAP: usize = 50_000_000;
@@ -65,7 +86,7 @@ pub struct SearchOptions {
     pub limit: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct SearchHit {
     pub path: String,
     pub name: String,
@@ -116,6 +137,7 @@ pub struct SearchIndex {
     fields: Fields,
     path: PathBuf,
     synonyms: Mutex<SynonymCache>,
+    content_cache: Mutex<content_policy::ContentCache>,
     /// 하나뿐인 writer와 묶음 상태. 잠금 순서: (DB 잠금 →) writer. 이 잠금을 쥔 채 DB·synonyms 잠금을 잡지 않는다.
     writer: Mutex<WriterState>,
     /// 옛 스키마 색인을 버려서 DB의 원본 목록으로 다시 채워야 하는 상태(`reindex::rebuild`가 끝내면 꺼진다).
@@ -480,7 +502,7 @@ impl SearchIndex {
         let fields=fields_of(&index.schema())?;
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(rebuild), rebuild_lock: Mutex::new(lock), writer_threads: 0, #[cfg(test)] legacy_body_ko: None})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), content_cache: Mutex::new(Default::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(rebuild), rebuild_lock: Mutex::new(lock), writer_threads: 0, #[cfg(test)] legacy_body_ko: None})
     }
     /// 시험 전용: 버전 1(옛) 스키마 색인을 버전 표시 없이 만든다(옛 프로그램이 남긴 색인 폴더와 같다).
     #[cfg(test)]
@@ -492,7 +514,7 @@ impl SearchIndex {
         let legacy_body_ko=Some(index.schema().get_field("body_ko")?);
         index.tokenizers().register(TOKENIZER, KoBigram);
         let reader=index.reader_builder().reload_policy(ReloadPolicy::Manual).try_into()?;
-        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(false), rebuild_lock: Mutex::new(None), writer_threads: 0, legacy_body_ko})
+        Ok(Self {index, reader, fields, path, synonyms: Mutex::new(SynonymCache::default()), content_cache: Mutex::new(Default::default()), writer: Mutex::new(WriterState::default()), rebuild: AtomicBool::new(false), rebuild_lock: Mutex::new(None), writer_threads: 0, legacy_body_ko})
     }
     /// 옛 색인을 버려서 원본으로 다시 채워야 하는지.
     pub fn needs_rebuild(&self) -> bool { self.rebuild.load(Ordering::SeqCst) }
@@ -576,6 +598,14 @@ impl SearchIndex {
         self.search_inner(query, options, None)
     }
     fn search_inner(&self, query: &str, options: SearchOptions, box_id: Option<i64>) -> tantivy::Result<Vec<SearchHit>> {
+        self.search_scoped(query, options, box_id, None)
+    }
+    /// opt-in JSONL 검색: 후보 수와 검색 의미는 유지하고 범위·페이지 선택 뒤 복원한다.
+    pub fn search_content(&self, query: &str, options: SearchOptions, scope: &ContentScope<'_>) -> tantivy::Result<Vec<SearchHit>> {
+        self.search_scoped(query, options, None, Some(scope))
+    }
+    fn search_scoped(&self, query: &str, options: SearchOptions, box_id: Option<i64>, scope: Option<&ContentScope<'_>>) -> tantivy::Result<Vec<SearchHit>> {
+        let phase = std::time::Instant::now();
         let parsed=parse_directives(query);
         // 본문 가중치 1.4 = 예전 body_ko 1.0 + body_bi 0.4(두 필드는 같은 색인이었으므로 점수·순서가 그대로다).
         let fields=[(self.fields.name,3.0),(self.fields.title,2.5),(self.fields.body_bi,1.4)];
@@ -646,6 +676,9 @@ impl SearchIndex {
         }
         q=Box::new(BooleanQuery::new(clauses));
         let top=if reusable { initial.unwrap().into_iter().take(candidate_limit).collect() } else { searcher.search(&q,&TopDocs::with_limit(candidate_limit).order_by_score())? };
+        profile_elapsed("tantivy_ms", phase);
+        profile_add("candidate_paragraphs", top.len() as f64);
+        let phase = std::time::Instant::now();
         // 후보: (문서 대표 번호, 점수, 위계 수준, 수정 시각, 쪽, 주소). 같은 경로의 문단은 가장 먼저 나온(점수가 가장 높은) 문단을 대표로 묶는다.
         // 경로 글자열은 세그먼트의 사전 번호마다 한 번만 푼다.
         let mut by_ord: HashMap<(u32,u64),usize> = HashMap::new();
@@ -656,21 +689,31 @@ impl SearchIndex {
             let document=match column.path_ord(addr.doc_id) {
                 Some(ord)=>match by_ord.get(&(addr.segment_ord,ord)) {
                     Some(&document)=>document,
-                    None=>{ let document=*by_path.entry(column.path(addr.doc_id)?).or_insert(i); by_ord.insert((addr.segment_ord,ord),document); document }
+                    None=>{ let path=if scope.is_some() { self.content_path(&searcher,&columns,addr)? } else { column.path(addr.doc_id)? }; let document=*by_path.entry(path).or_insert(i); by_ord.insert((addr.segment_ord,ord),document); document }
                 },
                 None=>*by_path.entry(String::new()).or_insert(i),
             };
             candidates.push((document,score,column.level(addr.doc_id),column.recency(addr.doc_id),column.page(addr.doc_id),addr));
         }
         let compact: Vec<_> = candidates.iter().map(|c| hierarchy::search::Candidate {document:c.0,score:c.1,hierarchy_rank:c.2,recency:c.3}).collect();
-        let ranked=hierarchy::search::aggregate(&compact, options.limit.max(1));
+        let ranked=hierarchy::search::aggregate(&compact, if scope.is_some() { usize::MAX } else { options.limit.max(1) });
+        profile_elapsed("aggregate_ms", phase);
+        let ranked=if let Some(scope)=scope { content_policy::select(&searcher, self.fields.body_bi, &parsed.text, &candidates, &by_path, ranked, scope)? } else { ranked };
+        if scope.is_some_and(|s| !s.hydrate) {
+            return ranked.into_iter().map(|row| {
+                let c=&candidates[row.document];
+                Ok(SearchHit { path: self.content_path(&searcher,&columns,c.5)?, score:row.best_score,
+                    paragraph_count:row.mentions, level:row.best_rank, ..SearchHit::default() })
+            }).collect();
+        }
+        let phase = std::time::Instant::now();
         let mut groups: HashMap<usize,SearchHit> = HashMap::new();
         let ranked_len=ranked.len();
         let mut generator=SnippetGenerator::create(&searcher,q.as_ref(),self.fields.body_bi)?;
         for row in &ranked {
             let c=&candidates[row.document];
-            let d=searcher.doc::<TantivyDocument>(c.5)?;
-            let mut hit=SearchHit{path:columns[c.5.segment_ord as usize].path(c.5.doc_id)?,
+            let d=if scope.is_some() { self.content_document(&searcher,c.5)? } else { std::sync::Arc::new(searcher.doc::<TantivyDocument>(c.5)?) };
+            let mut hit=SearchHit{path:if scope.is_some() { self.content_path(&searcher,&columns,c.5)? } else { columns[c.5.segment_ord as usize].path(c.5.doc_id)? },
                 name:d.get_first(self.fields.name).and_then(|v|v.as_str()).unwrap_or("").to_string(),
                 title:d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string(),
                 score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,
@@ -683,7 +726,9 @@ impl SearchIndex {
                 table:d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
                 row:d.get_first(self.fields.row).and_then(|v|v.as_u64()), locations:Vec::new(), level:row.best_rank};
             let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
+            let snippet_phase=std::time::Instant::now();
             let snippet=generator.snippet(body);
+            profile_elapsed("snippet_ms",snippet_phase);
             hit.highlighted.extend(snippet.highlighted().iter().map(|range|snippet.fragment()[range.clone()].to_string()));
             hit.snippets.push(snippet.fragment().to_string());
             groups.insert(row.document,hit);
@@ -691,10 +736,14 @@ impl SearchIndex {
         for c in &candidates {
             if let Some(hit) = groups.get_mut(&c.0) {
                 hit.hit_pages.push(c.4);
-                let d=searcher.doc::<TantivyDocument>(c.5)?;
+                let d=if scope.is_some() { self.content_document(&searcher,c.5)? } else { std::sync::Arc::new(searcher.doc::<TantivyDocument>(c.5)?) };
+                let breadcrumb_phase=std::time::Instant::now();
                 let breadcrumb:Vec<String>=d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").split('\u{1f}').filter(|s|!s.is_empty()).map(str::to_string).collect();
+                profile_elapsed("breadcrumb_ms",breadcrumb_phase);
                 let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
+                let snippet_phase=std::time::Instant::now();
                 let snippet=generator.snippet(body);
+                profile_elapsed("snippet_ms",snippet_phase);
                 hit.locations.push(SearchLocation {
                     paragraph_index:d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0),
                     page:c.4, row:d.get_first(self.fields.row).and_then(|v|v.as_u64()),
@@ -703,6 +752,9 @@ impl SearchIndex {
                 });
             }
         }
+        profile_elapsed("stored_breadcrumb_snippet_ms", phase);
+        profile_add("hydrated_documents", ranked_len as f64);
+        profile_add("locations", groups.values().map(|h| h.locations.len()).sum::<usize>() as f64);
         let mut out: Vec<_>=Vec::with_capacity(ranked_len);
         // Search-policy output order comes from hierarchy::search::aggregate.
         for row in ranked { if let Some(hit)=groups.remove(&row.document) { out.push(hit); } }

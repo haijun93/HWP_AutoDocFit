@@ -17,6 +17,42 @@ from docfit_core.timemachine.search_backend import RustBackend, SqliteBackend
 
 QUERIES = {"행정 절차": ("행정 절차",), "예산 편성": ("예산 편성",), "안전 점검": ("안전 점검",)}
 
+# 원래 세 질의는 그대로 두고 서로 어휘가 겹치지 않는 유형별 자료를 추가한다.
+SRCH6_CASES = [
+    ("제목", "주민 상담"), ("제목", "도시 녹화"), ("제목", "복지 연계"),
+    ("밀도", "교통 조사"), ("밀도", "문화 행사"), ("밀도", "체육 시설"),
+    ("위계", "재난 대응"), ("위계", "청년 창업"), ("위계", "보육 서비스"),
+    ("AND", "공원 정비"), ("AND", "도로 보수"), ("AND", "환경 보전"),
+    ("phrase", "디지털 역량"), ("phrase", "자원 순환"), ("phrase", "건강 증진"),
+]
+
+
+def build_srch6_corpus(root: Path):
+    gold = build_corpus(root)
+    types = {q: "기존 제목·밀도" for q in gold}
+    for i, (kind, terms) in enumerate(SRCH6_CASES, 3):
+        query = f'"{terms}"' if kind == "phrase" else terms
+        types[query] = kind
+        gold[query] = []
+        for n in range(4):
+            path = root / f"gold_{i}_{n}.md"
+            title = terms if kind in {"제목", "위계"} else "분야별 업무 기록"
+            if kind == "위계":
+                body = f"{'#' * (n + 1)} {title}\n\n관계 기관 협의를 진행한다.\n"
+            else:
+                body = f"# {title}\n\n" + (f"{terms} 실무 내용을 검토한다. " * (4 - n))
+            path.write_text(body, encoding="utf-8")
+            gold[query].append(path.name)
+        for n in range(12):
+            path = root / f"body_{i}_{n}.md"
+            body = f"# 일반 참고 기록\n\n{terms} 관련 현황을 확인한다.\n"
+            path.write_text(body, encoding="utf-8")
+        # 정답이 아닌 AND 단일어·phrase 비연속 자료도 둔다.
+        a, b = terms.split()
+        for n, text in enumerate([a, b, f"{a} 별도 검토 {b}"]):
+            (root / f"negative_{i}_{n}.md").write_text(f"# 참고 문서\n\n{text}\n", encoding="utf-8")
+    return gold, types
+
 
 def build_corpus(root: Path) -> dict[str, list[str]]:
     gold: dict[str, list[str]] = {}
@@ -66,11 +102,13 @@ def evaluate(backend, queries, gold, root):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--klib-exe")
+    parser.add_argument("--suite", choices=("srch5", "srch6"), default="srch5")
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="srch5-quality-") as temp:
         root = Path(temp) / "corpus"
         root.mkdir()
-        gold = build_corpus(root)
+        gold, types = build_srch6_corpus(root) if args.suite == "srch6" else (build_corpus(root), {})
         paths = list(root.glob("*.md"))
         sqlite_index = ContentSearchIndex(Path(temp) / "sqlite.sqlite")
         sqlite = SqliteBackend(sqlite_index)
@@ -79,10 +117,19 @@ def main() -> int:
         try:
             sqlite.index_files(paths)
             rust_errors = [r for r in rust.index_files(paths) if r.get("error")]
-            result = {"documents": len(paths), "queries": len(QUERIES), "gold_per_query": 4,
+            result = {"documents": len(paths), "queries": len(gold), "types": types, "gold_per_query": 4,
                       "status": "complete" if not rust_errors else "rust_index_errors",
-                      "sqlite": evaluate(sqlite, QUERIES, gold, root),
-                      "rust": evaluate(rust, QUERIES, gold, root), "rust_index_errors": rust_errors}
+                      "sqlite": evaluate(sqlite, gold, gold, root),
+                      "rust": evaluate(rust, gold, gold, root), "rust_index_errors": rust_errors}
+            result["result_sets"] = {}
+            for query in gold:
+                sets = [{Path(r["path"]).name for r in b.search(query, roots=[str(root)], hierarchy=True, limit=500)}
+                        for b in (sqlite, rust)]
+                result["result_sets"][query] = {"sqlite": len(sets[0]), "rust": len(sets[1]),
+                    "equal": sets[0] == sets[1], "missing": sorted(sets[0] - sets[1]), "extra": sorted(sets[1] - sets[0])}
+            if args.output:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             print(json.dumps(result, ensure_ascii=False, indent=2))
         finally:
             rust.close()

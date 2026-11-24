@@ -17,15 +17,6 @@ test = false
 
 [dependencies]
 rusqlite = { version = "0.41", features = ["bundled"] }
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_Security",
-    "Win32_Security_Authorization",
-    "Win32_Storage_FileSystem",
-    "Win32_System_IO",
-    "Win32_System_Pipes",
-    "Win32_System_Threading",
-] }
 # 자체 토크나이저(KoBigram·Bigram)만 쓰므로 stemmer·stopwords 기본 기능은 끈다. lz4·columnar-zstd 는 기존 색인 호환을 위해 유지.
 tantivy = { version = "0.27", default-features = false, features = ["mmap", "lz4-compression", "columnar-zstd-compression"] }
 md5 = "0.7"
@@ -41,6 +32,17 @@ unicode-normalization = "0.1"
 # 메모 편집기 코어(같은 저장소의 std 전용 크레이트, 외부 의존성 없음). 파이프 명령 edit_*를 위임한다.
 editor_core = { path = "../editor_core" }
 hierarchy = { path = "../hierarchy" }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
 
 [profile.release]
 opt-level = 3
