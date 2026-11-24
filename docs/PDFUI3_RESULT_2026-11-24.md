@@ -35,9 +35,19 @@
 - 최종 `flutter analyze`: `No issues found! (ran in 8.3s)`, 종료 코드 0.
 - 첫 전체 `flutter test`: `05:45 +821 ~3 -1: Some tests failed.` PDF 시험은 모두 통과했다. 별도 자료함 탐색기 더블클릭 시험 1건이 폴더 진입 후 파일 행을 찾지 못했다. 해당 화면은 `DateTime.now()`로 두 클릭 사이 500ms를 판단하므로 부하에 영향을 받을 가능성이 있다. 관련 없는 구현·시험은 수정하지 않았다.
 - 최종 전체 `flutter test --concurrency=1`: `11:43 +824 ~3: All tests passed!`, 종료 코드 0. 대상 시험 파일 111개, 통과 824건·기존 제외 3건, 실패 0건. 앞서 실패한 자료함 시험도 통과했으나 병렬 실행에서의 시간 의존성은 이번 수정 범위 밖으로 남긴다.
-- 전체 Python 시험: 실행 후 실제 Ran/OK 결과를 기록한다.
+- 전체 Python `python -m unittest discover -s tests`: 시험 모듈 397개를 대상으로 3,590건 실행, 통과 3,572건·조건부 제외 18건, 실패·오류 0건, 종료 코드 0. 실제 종료 요약:
 
-전체 Python 시험은 변경하지 않는 별도 소스 사본에서 기존 Python 3.14 가상환경을 사용하고, COM 시험 잠금을 획득한 상태에서 다른 시험·빌드와 겹치지 않게 실행한다. 엔진 경로는 실행 환경변수로만 지정한다.
+```text
+Ran 3590 tests in 1027.843s
+
+OK (skipped=18)
+```
+
+전체 Python 시험은 변경하지 않는 별도 소스 사본에서 실행했다. 작업 worktree에 가상환경이 없어 원본 worktree의 기존 Python 3.14 가상환경을 재사용했다. COM 시험 잠금을 획득한 상태에서 다른 시험·빌드와 겹치지 않게 실행했고, 종료 후 잠금 해제도 확인했다. 브리지·PDF 화면·위젯 시험 파일이 작업 브랜치와 사본에서 동일함을 해시로 대조했다. 엔진 경로와 임시 폴더는 실행 환경변수로만 지정했다. 기존 SyntaxWarning/ResourceWarning 출력은 있었으나 시험 실패·오류는 없었다.
+
+Python 종료 시 시험 sandbox의 `timeline-content.sqlite`를 정리하는 atexit 콜백에서 파일 사용 중 `PermissionError (WinError 32)`가 출력됐다. unittest 결과는 위의 OK이며 프로세스 종료 코드는 0이다. 이 임시 DB 정리 문제는 PDF 화면 수정과 별개로 남겼고 시험 코드를 변경하거나 숨기지 않았다.
+
+최종 변경 파일의 UTF-8 디코딩과 한글 diff를 확인했고 `git diff --check`를 통과했다. 원본 사용자 문서·본체 CRLF·기존 API 요청 형식은 변경하지 않았다.
 
 ## 확인하지 못한 것
 
