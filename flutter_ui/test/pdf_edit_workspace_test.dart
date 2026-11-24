@@ -31,6 +31,12 @@ void main() {
     dispatchDocumentDropPaths(['C:/docs/dropped.pdf']);
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('pdfEditDropZone')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('pdfEditRun')))
+          .onPressed,
+      isNull,
+    );
     expect(apiCalls, isEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -142,6 +148,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     var attempts = 0;
+    final retryResponse = Completer<Object?>();
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -156,7 +163,7 @@ void main() {
                     'error': {'message': 'PDF 엔진을 찾을 수 없습니다.'},
                   };
                 }
-                return _pdfResponse(args);
+                return retryResponse.future;
               }
               return {'ok': false};
             },
@@ -175,6 +182,15 @@ void main() {
       isNull,
     );
     await tester.tap(find.text('다시 시도'));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.text('PDF 쪽 정보를 읽고 있습니다…'), findsOneWidget);
+    expect(find.text('PDF 엔진을 찾을 수 없습니다.'), findsNothing);
+    retryResponse.complete(
+      _pdfResponse([
+        {'action': 'info'},
+      ]),
+    );
     await tester.pumpAndSettle();
     expect(attempts, 2);
     expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsOneWidget);
@@ -478,6 +494,23 @@ void main() {
     expect(find.textContaining('저장 거부'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
+
+  for (final size in [const Size(800, 700), const Size(1024, 600)]) {
+    testWidgets('작업 패널은 작은 화면에서도 누적 편집을 저장한다 ($size)', (tester) async {
+      await _loadPdf(tester, (name, args) async => _pdfResponse(args));
+      await _tapCard(tester, 1);
+      await tester.pump();
+      await tester.tap(find.byTooltip('오른쪽 90° 회전'));
+      await tester.pump();
+      tester.view.physicalSize = size;
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const Key('pdfEditRun')));
+      await tester.tap(find.byKey(const Key('pdfEditRun')));
+      await tester.pumpAndSettle();
+      expect(find.text('완료: C:/docs/source_편집.pdf'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   for (final dark in [false, true]) {
     testWidgets('PDF 화면 한글과 기호는 앱 글꼴 폴백을 상속한다 (dark=$dark)', (tester) async {
