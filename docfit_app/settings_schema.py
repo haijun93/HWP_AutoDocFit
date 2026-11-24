@@ -152,6 +152,8 @@ DEFAULTS = {
     # 독이 최대화 창 뒤에서 자동 숨김·가장자리 호버로 다시 나타남. 기본값은 기존 동작 유지.
     "dock_auto_hide": False,
     "search_engine": "kfind",
+    # Rust 몽땅검색 backend 연결 전까지는 모든 모드가 SQLite 경로를 유지한다.
+    "search_backend_mode": "sqlite",
 }
 
 # 목록 키(SETTINGSWIN4): 예전부터 설정 파일에 저장되던 키의 '표현'만 Win32 설정 창(docfit_config 골든)에 더한 것이다.
@@ -167,6 +169,19 @@ LIST_DEFAULTS = {
 ALL_DEFAULTS = {**DEFAULTS, **LIST_DEFAULTS}
 
 SEARCH_ENGINES = ("kfind", "legacy")
+
+SEARCH_BACKEND_MODES = ("sqlite", "rust", "shadow_compare")
+
+
+def normalize_search_backend_mode(value):
+    """알 수 없는 검색 backend 모드는 현재 동작인 SQLite로 되돌린다."""
+    return value if isinstance(value, str) and value in SEARCH_BACKEND_MODES else "sqlite"
+
+
+def validate_search_backend_mode(value):
+    if not isinstance(value, str) or value not in SEARCH_BACKEND_MODES:
+        raise ValueError("검색 backend 모드는 sqlite·rust·shadow_compare 중 하나여야 합니다.")
+    return value
 
 MENU_DISPLAY_MODES = ("sidebar", "dock")
 

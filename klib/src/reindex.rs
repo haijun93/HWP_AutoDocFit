@@ -144,7 +144,7 @@ mod tests {
         let dir = root.join("tantivy");
         {
             let old = SearchIndex::open_legacy_for_test(&dir).unwrap();
-            old.add_or_update(&Paragraph { path: path(&a), box_ids: vec![box1.to_string()], name: "가.txt".into(), title: String::new(), level: 0, body: "옛날 색인 내용".into(), ext: "txt".into(), mtime: 1, page: None, sheet: None, row: None }).unwrap();
+            old.add_or_update(&Paragraph { path: path(&a), box_ids: vec![box1.to_string()], name: "가.txt".into(), title: String::new(), level: 0, body: "옛날 색인 내용".into(), ext: "txt".into(), mtime: 1, page: None, sheet: None, row: None, content_hash: String::new(), extractor_version: String::new() }).unwrap();
         }
         let index = SearchIndex::open_or_create(&dir).unwrap();
         assert!(index.needs_rebuild());

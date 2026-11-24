@@ -1,0 +1,1311 @@
+{
+  "documents": 405,
+  "queries": 18,
+  "types": {
+    "행정 절차": "기존 제목·밀도",
+    "예산 편성": "기존 제목·밀도",
+    "안전 점검": "기존 제목·밀도",
+    "주민 상담": "제목",
+    "도시 녹화": "제목",
+    "복지 연계": "제목",
+    "교통 조사": "밀도",
+    "문화 행사": "밀도",
+    "체육 시설": "밀도",
+    "재난 대응": "위계",
+    "청년 창업": "위계",
+    "보육 서비스": "위계",
+    "공원 정비": "AND",
+    "도로 보수": "AND",
+    "환경 보전": "AND",
+    "\"디지털 역량\"": "phrase",
+    "\"자원 순환\"": "phrase",
+    "\"건강 증진\"": "phrase"
+  },
+  "gold_per_query": 4,
+  "status": "complete",
+  "sqlite": {
+    "행정 절차": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_0_0.md",
+        "gold_0_1.md",
+        "gold_0_2.md",
+        "gold_0_3.md",
+        "body_0_33.md",
+        "body_0_34.md",
+        "body_0_35.md",
+        "body_0_29.md",
+        "body_0_30.md",
+        "body_0_31.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "일반 업무 기록 33",
+        "일반 업무 기록 34",
+        "일반 업무 기록 35",
+        "일반 업무 기록 29",
+        "일반 업무 기록 30",
+        "일반 업무 기록 31"
+      ]
+    },
+    "예산 편성": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_1_0.md",
+        "gold_1_1.md",
+        "gold_1_2.md",
+        "gold_1_3.md",
+        "body_1_35.md",
+        "body_1_34.md",
+        "body_1_33.md",
+        "body_1_32.md",
+        "body_1_31.md",
+        "body_1_30.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "일반 업무 기록 35",
+        "일반 업무 기록 34",
+        "일반 업무 기록 33",
+        "일반 업무 기록 32",
+        "일반 업무 기록 31",
+        "일반 업무 기록 30"
+      ]
+    },
+    "안전 점검": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_2_0.md",
+        "gold_2_1.md",
+        "gold_2_2.md",
+        "gold_2_3.md",
+        "body_2_35.md",
+        "body_2_34.md",
+        "body_2_33.md",
+        "body_2_32.md",
+        "body_2_31.md",
+        "body_2_30.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "일반 업무 기록 35",
+        "일반 업무 기록 34",
+        "일반 업무 기록 33",
+        "일반 업무 기록 32",
+        "일반 업무 기록 31",
+        "일반 업무 기록 30"
+      ]
+    },
+    "주민 상담": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_3_0.md",
+        "gold_3_1.md",
+        "gold_3_2.md",
+        "gold_3_3.md",
+        "negative_3_2.md",
+        "body_3_10.md",
+        "body_3_11.md",
+        "body_3_6.md",
+        "body_3_7.md",
+        "body_3_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "도시 녹화": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_4_0.md",
+        "gold_4_1.md",
+        "gold_4_2.md",
+        "gold_4_3.md",
+        "negative_4_2.md",
+        "body_4_10.md",
+        "body_4_11.md",
+        "body_4_8.md",
+        "body_4_9.md",
+        "body_4_4.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "복지 연계": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_5_0.md",
+        "gold_5_1.md",
+        "gold_5_2.md",
+        "gold_5_3.md",
+        "body_5_10.md",
+        "body_5_11.md",
+        "negative_5_2.md",
+        "body_5_6.md",
+        "body_5_7.md",
+        "body_5_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "교통 조사": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_6_0.md",
+        "gold_6_1.md",
+        "gold_6_2.md",
+        "negative_6_2.md",
+        "body_6_10.md",
+        "body_6_11.md",
+        "body_6_8.md",
+        "body_6_9.md",
+        "body_6_4.md",
+        "body_6_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "문화 행사": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_7_0.md",
+        "gold_7_1.md",
+        "gold_7_2.md",
+        "negative_7_2.md",
+        "body_7_11.md",
+        "body_7_10.md",
+        "body_7_6.md",
+        "body_7_7.md",
+        "body_7_8.md",
+        "body_7_9.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "체육 시설": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_8_0.md",
+        "gold_8_1.md",
+        "gold_8_2.md",
+        "negative_8_2.md",
+        "body_8_11.md",
+        "body_8_10.md",
+        "body_8_9.md",
+        "body_8_8.md",
+        "body_8_7.md",
+        "body_8_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "재난 대응": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_9_0.md",
+        "gold_9_1.md",
+        "gold_9_2.md",
+        "gold_9_3.md",
+        "negative_9_2.md",
+        "body_9_11.md",
+        "body_9_10.md",
+        "body_9_6.md",
+        "body_9_7.md",
+        "body_9_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "청년 창업": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_10_0.md",
+        "gold_10_1.md",
+        "gold_10_2.md",
+        "gold_10_3.md",
+        "negative_10_2.md",
+        "body_10_11.md",
+        "body_10_10.md",
+        "body_10_9.md",
+        "body_10_8.md",
+        "body_10_7.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "보육 서비스": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_11_0.md",
+        "gold_11_1.md",
+        "gold_11_2.md",
+        "gold_11_3.md",
+        "negative_11_2.md",
+        "body_11_10.md",
+        "body_11_11.md",
+        "body_11_8.md",
+        "body_11_9.md",
+        "body_11_3.md"
+      ],
+      "top_10_breadcrumbs": [
+        "",
+        "",
+        "",
+        "",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "공원 정비": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_12_0.md",
+        "gold_12_1.md",
+        "gold_12_2.md",
+        "negative_12_2.md",
+        "body_12_11.md",
+        "body_12_10.md",
+        "body_12_6.md",
+        "body_12_7.md",
+        "body_12_8.md",
+        "body_12_9.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "도로 보수": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_13_0.md",
+        "gold_13_1.md",
+        "gold_13_2.md",
+        "negative_13_2.md",
+        "body_13_11.md",
+        "body_13_10.md",
+        "body_13_9.md",
+        "body_13_8.md",
+        "body_13_7.md",
+        "body_13_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "환경 보전": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_14_0.md",
+        "gold_14_1.md",
+        "gold_14_2.md",
+        "body_14_11.md",
+        "negative_14_2.md",
+        "body_14_10.md",
+        "body_14_9.md",
+        "body_14_8.md",
+        "body_14_7.md",
+        "body_14_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"디지털 역량\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_15_0.md",
+        "gold_15_1.md",
+        "gold_15_2.md",
+        "body_15_11.md",
+        "body_15_10.md",
+        "body_15_6.md",
+        "body_15_7.md",
+        "body_15_8.md",
+        "body_15_9.md",
+        "body_15_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"자원 순환\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_16_0.md",
+        "gold_16_1.md",
+        "gold_16_2.md",
+        "body_16_11.md",
+        "body_16_10.md",
+        "body_16_9.md",
+        "body_16_8.md",
+        "body_16_7.md",
+        "body_16_6.md",
+        "body_16_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"건강 증진\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_17_0.md",
+        "gold_17_1.md",
+        "gold_17_2.md",
+        "body_17_11.md",
+        "body_17_10.md",
+        "body_17_9.md",
+        "body_17_8.md",
+        "body_17_7.md",
+        "body_17_6.md",
+        "body_17_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    }
+  },
+  "rust": {
+    "행정 절차": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_0_0.md",
+        "gold_0_1.md",
+        "gold_0_2.md",
+        "gold_0_3.md",
+        "body_0_33.md",
+        "body_0_34.md",
+        "body_0_35.md",
+        "body_0_29.md",
+        "body_0_30.md",
+        "body_0_31.md"
+      ],
+      "top_10_breadcrumbs": [
+        "행정 절차 기준과 실행 계획",
+        "행정 절차 기준과 실행 계획",
+        "행정 절차 기준과 실행 계획",
+        "행정 절차 기준과 실행 계획",
+        "일반 업무 기록 33",
+        "일반 업무 기록 34",
+        "일반 업무 기록 35",
+        "일반 업무 기록 29",
+        "일반 업무 기록 30",
+        "일반 업무 기록 31"
+      ]
+    },
+    "예산 편성": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_1_0.md",
+        "gold_1_1.md",
+        "gold_1_2.md",
+        "gold_1_3.md",
+        "body_1_35.md",
+        "body_1_34.md",
+        "body_1_33.md",
+        "body_1_32.md",
+        "body_1_31.md",
+        "body_1_30.md"
+      ],
+      "top_10_breadcrumbs": [
+        "예산 편성 기준과 실행 계획",
+        "예산 편성 기준과 실행 계획",
+        "예산 편성 기준과 실행 계획",
+        "예산 편성 기준과 실행 계획",
+        "일반 업무 기록 35",
+        "일반 업무 기록 34",
+        "일반 업무 기록 33",
+        "일반 업무 기록 32",
+        "일반 업무 기록 31",
+        "일반 업무 기록 30"
+      ]
+    },
+    "안전 점검": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_2_0.md",
+        "gold_2_1.md",
+        "gold_2_2.md",
+        "gold_2_3.md",
+        "body_2_35.md",
+        "body_2_34.md",
+        "body_2_33.md",
+        "body_2_32.md",
+        "body_2_31.md",
+        "body_2_30.md"
+      ],
+      "top_10_breadcrumbs": [
+        "안전 점검 기준과 실행 계획",
+        "안전 점검 기준과 실행 계획",
+        "안전 점검 기준과 실행 계획",
+        "안전 점검 기준과 실행 계획",
+        "일반 업무 기록 35",
+        "일반 업무 기록 34",
+        "일반 업무 기록 33",
+        "일반 업무 기록 32",
+        "일반 업무 기록 31",
+        "일반 업무 기록 30"
+      ]
+    },
+    "주민 상담": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_3_0.md",
+        "gold_3_1.md",
+        "gold_3_2.md",
+        "gold_3_3.md",
+        "negative_3_2.md",
+        "body_3_10.md",
+        "body_3_11.md",
+        "body_3_6.md",
+        "body_3_7.md",
+        "body_3_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "주민 상담",
+        "주민 상담",
+        "주민 상담",
+        "주민 상담",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "도시 녹화": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_4_0.md",
+        "gold_4_1.md",
+        "gold_4_2.md",
+        "gold_4_3.md",
+        "negative_4_2.md",
+        "body_4_10.md",
+        "body_4_11.md",
+        "body_4_8.md",
+        "body_4_9.md",
+        "body_4_4.md"
+      ],
+      "top_10_breadcrumbs": [
+        "도시 녹화",
+        "도시 녹화",
+        "도시 녹화",
+        "도시 녹화",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "복지 연계": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_5_0.md",
+        "gold_5_1.md",
+        "gold_5_2.md",
+        "gold_5_3.md",
+        "negative_5_2.md",
+        "body_5_10.md",
+        "body_5_11.md",
+        "body_5_6.md",
+        "body_5_7.md",
+        "body_5_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "복지 연계",
+        "복지 연계",
+        "복지 연계",
+        "복지 연계",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "교통 조사": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_6_0.md",
+        "gold_6_1.md",
+        "gold_6_2.md",
+        "negative_6_2.md",
+        "body_6_10.md",
+        "body_6_11.md",
+        "body_6_8.md",
+        "body_6_9.md",
+        "body_6_4.md",
+        "body_6_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "문화 행사": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_7_0.md",
+        "gold_7_1.md",
+        "gold_7_2.md",
+        "negative_7_2.md",
+        "body_7_11.md",
+        "body_7_10.md",
+        "body_7_6.md",
+        "body_7_7.md",
+        "body_7_8.md",
+        "body_7_9.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "체육 시설": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_8_0.md",
+        "gold_8_1.md",
+        "gold_8_2.md",
+        "negative_8_2.md",
+        "body_8_11.md",
+        "body_8_10.md",
+        "body_8_9.md",
+        "body_8_8.md",
+        "body_8_7.md",
+        "body_8_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "재난 대응": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_9_0.md",
+        "gold_9_1.md",
+        "gold_9_2.md",
+        "gold_9_3.md",
+        "negative_9_2.md",
+        "body_9_11.md",
+        "body_9_10.md",
+        "body_9_6.md",
+        "body_9_7.md",
+        "body_9_8.md"
+      ],
+      "top_10_breadcrumbs": [
+        "재난 대응",
+        "재난 대응",
+        "재난 대응",
+        "재난 대응",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "청년 창업": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_10_0.md",
+        "gold_10_1.md",
+        "gold_10_2.md",
+        "gold_10_3.md",
+        "negative_10_2.md",
+        "body_10_11.md",
+        "body_10_10.md",
+        "body_10_9.md",
+        "body_10_8.md",
+        "body_10_7.md"
+      ],
+      "top_10_breadcrumbs": [
+        "청년 창업",
+        "청년 창업",
+        "청년 창업",
+        "청년 창업",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "보육 서비스": {
+      "recall_at_10": 1.0,
+      "mrr": 1.0,
+      "relevant_in_top_10": 4,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_11_0.md",
+        "gold_11_1.md",
+        "gold_11_2.md",
+        "gold_11_3.md",
+        "negative_11_2.md",
+        "body_11_10.md",
+        "body_11_11.md",
+        "body_11_8.md",
+        "body_11_9.md",
+        "body_11_3.md"
+      ],
+      "top_10_breadcrumbs": [
+        "보육 서비스",
+        "보육 서비스",
+        "보육 서비스",
+        "보육 서비스",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "공원 정비": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_12_0.md",
+        "gold_12_1.md",
+        "gold_12_2.md",
+        "negative_12_2.md",
+        "body_12_11.md",
+        "body_12_10.md",
+        "body_12_6.md",
+        "body_12_7.md",
+        "body_12_8.md",
+        "body_12_9.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "도로 보수": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_13_0.md",
+        "gold_13_1.md",
+        "gold_13_2.md",
+        "negative_13_2.md",
+        "body_13_11.md",
+        "body_13_10.md",
+        "body_13_9.md",
+        "body_13_8.md",
+        "body_13_7.md",
+        "body_13_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "환경 보전": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_14_0.md",
+        "gold_14_1.md",
+        "gold_14_2.md",
+        "negative_14_2.md",
+        "body_14_11.md",
+        "body_14_10.md",
+        "body_14_9.md",
+        "body_14_8.md",
+        "body_14_7.md",
+        "body_14_6.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "참고 문서",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"디지털 역량\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_15_0.md",
+        "gold_15_1.md",
+        "gold_15_2.md",
+        "body_15_11.md",
+        "body_15_10.md",
+        "body_15_6.md",
+        "body_15_7.md",
+        "body_15_8.md",
+        "body_15_9.md",
+        "body_15_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"자원 순환\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_16_0.md",
+        "gold_16_1.md",
+        "gold_16_2.md",
+        "body_16_11.md",
+        "body_16_10.md",
+        "body_16_9.md",
+        "body_16_8.md",
+        "body_16_7.md",
+        "body_16_6.md",
+        "body_16_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    },
+    "\"건강 증진\"": {
+      "recall_at_10": 0.75,
+      "mrr": 1.0,
+      "relevant_in_top_10": 3,
+      "relevant_total": 4,
+      "first_relevant_rank": 1,
+      "gold_order_pairwise_accuracy": 1.0,
+      "top_10": [
+        "gold_17_0.md",
+        "gold_17_1.md",
+        "gold_17_2.md",
+        "body_17_11.md",
+        "body_17_10.md",
+        "body_17_9.md",
+        "body_17_8.md",
+        "body_17_7.md",
+        "body_17_6.md",
+        "body_17_5.md"
+      ],
+      "top_10_breadcrumbs": [
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "분야별 업무 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록",
+        "일반 참고 기록"
+      ]
+    }
+  },
+  "rust_index_errors": [],
+  "result_sets": {
+    "행정 절차": {
+      "sqlite": 40,
+      "rust": 40,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "예산 편성": {
+      "sqlite": 40,
+      "rust": 40,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "안전 점검": {
+      "sqlite": 40,
+      "rust": 40,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "주민 상담": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "도시 녹화": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "복지 연계": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "교통 조사": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "문화 행사": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "체육 시설": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "재난 대응": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "청년 창업": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "보육 서비스": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "공원 정비": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "도로 보수": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "환경 보전": {
+      "sqlite": 17,
+      "rust": 17,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "\"디지털 역량\"": {
+      "sqlite": 16,
+      "rust": 16,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "\"자원 순환\"": {
+      "sqlite": 16,
+      "rust": 16,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    },
+    "\"건강 증진\"": {
+      "sqlite": 16,
+      "rust": 16,
+      "equal": true,
+      "missing": [],
+      "extra": []
+    }
+  }
+}

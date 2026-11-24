@@ -5,11 +5,12 @@ from hashlib import sha256
 import json
 
 from .api_contract import ServiceError
-from .settings_schema import DEFAULTS, normalize_search_engine
+from .settings_schema import DEFAULTS, normalize_search_engine, normalize_search_backend_mode
 from .settings_migrations import migrate
 
 LABELS = {
  'search_engine':'검색 엔진',
+ 'search_backend_mode':'몽땅검색 backend 모드',
  'shell_menu':'탐색기 우클릭 메뉴',
  'mongttang_search':'퀵몽땅검색 단축키(Ctrl+Alt+Space)',
  'file_rename_sendto':'탐색기 보내기 메뉴에 파일명 일괄변경 넣기',
@@ -49,7 +50,7 @@ LABELS = {
  'all_cell_image_to_bg':'한 번에 적용: 표 셀 내 그림을 배경으로 변경',
 }
 EXCLUDED = {'ui_tk_fallback', 'hierarchy_engine', 'abbreviations', 'abbreviation_source', 'active_format_profile',
-            'rust_rename_preview', 'rust_timemachine_scan', 'rust_search_hierarchy', 'theme_mode', 'menu_display_mode', 'kclip_settings_mode', 'outliner_ui', 'settings_ui', 'docview_ui', 'photoview_ui', 'conversion_ui', 'rename_ui', 'dock_auto_hide'} | {k for k in DEFAULTS if k.endswith('_rev')}
+            'rust_rename_preview', 'rust_timemachine_scan', 'rust_search_hierarchy', 'search_backend_mode', 'theme_mode', 'menu_display_mode', 'kclip_settings_mode', 'outliner_ui', 'settings_ui', 'docview_ui', 'photoview_ui', 'conversion_ui', 'rename_ui', 'dock_auto_hide'} | {k for k in DEFAULTS if k.endswith('_rev')}
 
 
 def leaves(values, prefix=''):
@@ -105,6 +106,7 @@ class ConfigurationService:
             else:
                 merged[key] = value
         merged['search_engine'] = normalize_search_engine(merged.get('search_engine'))
+        merged['search_backend_mode'] = normalize_search_backend_mode(merged.get('search_backend_mode'))
         known = {f['key'] for f in fields()}
         return {'fields':fields(), 'values':{k:v for k,v in leaves(merged) if k in known},
                 'revision':revision(saved), 'running':bool(running)}

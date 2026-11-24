@@ -45,7 +45,8 @@ class ApplicationService:
                 # 쉬는 시간 색인(IDLE1): 자동 재색인은 사용자가 쉬는 동안에만, 낮은 우선순위로.
                 self._timemachine_service = TimemachineService(self.store._path.parent,
                                                                idle_scheduler=shared_scheduler(),
-                                                               search_engine_provider=lambda: normalize_search_engine(self.store.read().get("search_engine")))
+                                                               search_engine_provider=lambda: normalize_search_engine(self.store.read().get("search_engine")),
+                                                               search_backend_mode_provider=lambda: self.store.read().get("search_backend_mode", "sqlite"))
             return self._timemachine_service
 
     def start_job(self, kind, params=None):

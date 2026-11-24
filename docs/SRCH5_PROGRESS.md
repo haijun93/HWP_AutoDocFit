@@ -1,0 +1,1 @@
+- 2026-11-24: Rust schema v5 위계·위치·SHA-256/extractor 변경 감지와 shadow 상위20/집합 로그 구현. 합성 품질(3질의) SQLite·Rust Recall@10/MRR 1.00, gold 순서 일치율 1.00/0.389. 1천·5천 성능 측정 및 전체 Python 3,597개(20 skip) OK; SRCH5 결과 문서 작성. 실제 한글·스캔 PDF·설치본 시험은 남음.

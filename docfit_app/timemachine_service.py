@@ -21,6 +21,7 @@ from types import SimpleNamespace
 from docfit_core.timemachine import thumbs
 from docfit_core.path_utils import path_is_within
 from docfit_core.timemachine.content_search import ContentSearchIndex
+from docfit_core.timemachine.search_backend import ModeSearchBackend, RustBackend, SearchBackend, SqliteBackend
 from docfit_core.timemachine.kfind_records import doc_from_records, doc_key
 from docfit_core.timemachine.content_search import CURRENT_HIERARCHY_SCHEMA_VERSION
 from docfit_core.timemachine.kfind_results import to_keyword_rows, to_hierarchy_rows
@@ -31,7 +32,8 @@ from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
 from .kfind_client import KfindClient, KfindError
-from .settings_schema import normalize_search_engine
+from .rust_scan import find_klib_executable
+from .settings_schema import normalize_search_engine, normalize_search_backend_mode
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -48,14 +50,22 @@ ALLOWED_FEATURES = frozenset(("rename_batch", "convert", "document_edit"))
 class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
-                 developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None):
+                 developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None,
+                 search_backend_mode_provider=None,
+                 search_backend: SearchBackend | None = None):
         self.search_engine_provider = search_engine_provider
+        self.search_backend_mode_provider = search_backend_mode_provider
+        self._unsupported_search_backend_logged = set()
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
         excluded_rows = self.store.purge_excluded()
         content_db = (Path(db_path).with_suffix(".content.sqlite") if db_path else data_dir() / "timeline-content.sqlite")
         self.content_index = ContentSearchIndex(content_db)
+        self.search_backend = search_backend if search_backend is not None else ModeSearchBackend(
+            SqliteBackend(self.content_index),
+            RustBackend(executable=find_klib_executable(), index_dir=data_dir() / "timemachine-tantivy"),
+            self._search_backend_mode)
         self.kfind = kfind_client if kfind_client is not None else KfindClient()
         self._kfind_ids = itertools.count(secrets.randbits(63))
         self._kfind_pending = {}
@@ -144,6 +154,7 @@ class TimemachineService:
     def _defaults(self):
         return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
                 "search_engine": "kfind",
+                "search_backend_mode": "sqlite",
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
 
     def _search_engine(self):
@@ -151,6 +162,12 @@ class TimemachineService:
             return normalize_search_engine(self.search_engine_provider())
         value = self._settings.get("search_engine", "kfind")
         return value if value in {"kfind", "legacy", "shadow"} else "kfind"
+
+    def _search_backend_mode(self):
+        source = (self.search_backend_mode_provider() if self.search_backend_mode_provider is not None
+                  else self._settings.get("search_backend_mode", "sqlite"))
+        requested = normalize_search_backend_mode(source)
+        return requested
 
     def _engine_status(self):
         with self._content_lock:
@@ -449,6 +466,9 @@ class TimemachineService:
             if worker and worker.ident is not None and worker is not threading.current_thread():
                 worker.join()
         self.kfind.close()
+        close_backend = getattr(self.search_backend, "close", None)
+        if close_backend:
+            close_backend()
         self.content_index.close()
         self.store.close()
 
@@ -463,7 +483,7 @@ class TimemachineService:
             state["yielded"] = True
         idle = self.idle_scheduler.status() if self.idle_scheduler is not None else None
         return {"ok": True, **state, "idle": idle, **self._engine_status(),
-                **self.content_index.status_summary(roots=self._settings["roots"])}
+                **self.search_backend.status(roots=self._settings["roots"])}
 
     @staticmethod
     def _new_content_state(*, running, phase, trigger):
@@ -574,21 +594,27 @@ class TimemachineService:
                     with self._content_lock:
                         self._content_state.update(errors=errors)
                     advance()
-                for path in python_paths:
-                    if not proceed(): break
-                    result = self.content_index.index_file(path)
-                    self._kfind_sync(path, result)
-                    seen += 1
-                    indexed += bool(result["indexed"])
-                    errors += bool(result["error"])
-                    with self._content_lock:
-                        self._content_state.update(seen=seen, indexed=indexed, errors=errors)
-                    advance()
+                batch_size = 250 if self._search_backend_mode() == "rust" else 1
+                for offset in range(0, len(python_paths), batch_size):
+                    batch_paths = []
+                    for path in python_paths[offset:offset + batch_size]:
+                        if not proceed(): break
+                        batch_paths.append(path)
+                    if not batch_paths: break
+                    results = self.search_backend.index_files(batch_paths, batch_size=batch_size)
+                    for path, result in zip(batch_paths, results):
+                        self._kfind_sync(path, result)
+                        seen += 1
+                        indexed += bool(result["indexed"])
+                        errors += bool(result["error"])
+                        with self._content_lock:
+                            self._content_state.update(seen=seen, indexed=indexed, errors=errors)
+                        advance()
             # 취소가 끝나기 전에 건너뛴 파일을 지우지 않도록 색인 완료 후 정리한다.
             if not cancel_event.is_set():
                 for path in stale_paths:
                     if cancel_event.is_set(): break
-                    self.content_index.remove_file(path)
+                    self.search_backend.remove_file(path)
                     self._kfind_sync(path, {"removed": True})
             # 연결이 끊긴 드라이브의 문서는 지워진 것으로 보지 않는다.
             available = [os.path.normcase(os.path.abspath(root)) + os.sep for root in roots if os.path.isdir(root)]
@@ -604,7 +630,7 @@ class TimemachineService:
                 in_active_roots = normalized.startswith(tuple(active_roots))
                 extension_allowed = Path(path).suffix.lower().lstrip(".") in self._settings["extensions"]
                 if in_scan_roots and (not in_active_roots or not extension_allowed or not os.path.exists(path)):
-                    self.content_index.remove_file(path)
+                    self.search_backend.remove_file(path)
                     self._kfind_sync(path, {"removed": True})
             if not cancel_event.is_set():
                 self._seed_kfind(cancel_event)
@@ -649,7 +675,7 @@ class TimemachineService:
             worker = self._content_thread
             if not self._content_state["running"]:
                 return self.content_status()
-            cancel_event.set()
+            self.search_backend.cancel(cancel_event)
             self._content_state["phase"] = "cancel_requested"
             process = self._content_process
         if process and process.poll() is None:
@@ -961,12 +987,15 @@ class TimemachineService:
             raise ValueError("본문 검색어를 입력해 주세요.")
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
             raise ValueError("결과 개수와 시작 위치를 확인해 주세요.")
+        backend_mode = self._search_backend_mode()
         def legacy():
             if not self._settings["roots"]:
                 return []
             if hierarchy:
-                return self.content_index.search(query, roots=self._settings["roots"], limit=limit, sort=sort, start=start, end=end)
-            return self.content_index.keyword_search(query, roots=self._settings["roots"], limit=limit, offset=offset, start=start, end=end)
+                return self.search_backend.search(query, roots=self._settings["roots"], hierarchy=True,
+                    limit=limit, sort=sort, start=start, end=end)
+            return self.search_backend.search(query, roots=self._settings["roots"], hierarchy=False,
+                limit=limit, offset=offset, sort=sort, start=start, end=end)
         def kfind_day(timestamp, *, end_boundary=False):
             if timestamp is None: return None
             from datetime import datetime, timedelta
@@ -975,9 +1004,10 @@ class TimemachineService:
                 value -= timedelta(days=1)
             return int(value.strftime("%Y%m%d"))
         requested = self._search_engine()
-        if requested == "legacy":
+        if backend_mode != "sqlite" or requested == "legacy":
             with self._content_lock:
-                self._engine_state.update(engine="legacy", engine_reason="configured_legacy")
+                reason = "configured_legacy" if requested == "legacy" else f"search_backend_mode_{backend_mode}"
+                self._engine_state.update(engine="legacy", engine_reason=reason)
             return legacy()
         if not self._settings["roots"]:
             return []
@@ -1114,7 +1144,7 @@ class TimemachineService:
                     any(content_rules.skip_dir(part) for part in self._parts_under_root(path)) or
                     content_rules.skip_file(Path(path).name)):
                 return self._error("INVALID_INPUT", "현재 조사 폴더의 허용된 문서를 선택해 주세요.")
-            result = self.content_index.index_file(path)
+            result = self.search_backend.index_file(path)
             self._kfind_sync(path, result)
             return {"ok": True, **result}
         if action in ("content_index_all", "content_index_start"):
@@ -1132,11 +1162,12 @@ class TimemachineService:
                 row["file_name"] = row["name"]
             return {"ok": True, "items": rows, **self._engine_status()}
         if action == "content_export_markdown":
+            self._search_backend_mode()
             target = payload.get("path")
             if not isinstance(target, str) or not target.strip():
                 raise ValueError("Markdown 저장 경로를 확인해 주세요.")
             query = payload.get("query")
-            rows = self.content_index.keyword_search(query, roots=self._settings["roots"],
+            rows = self.search_backend.search(query, roots=self._settings["roots"], hierarchy=False,
                 limit=payload.get("limit", 500), offset=payload.get("offset", 0))
             target_abs = os.path.normcase(os.path.abspath(target))
             if any(target_abs == os.path.normcase(os.path.abspath(item["path"])) for item in rows):

@@ -3,7 +3,10 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-use crate::search::{Paragraph, SearchIndex};
+use crate::search::{Paragraph, SearchBlock, SearchIndex};
+use sha2::{Digest, Sha256};
+
+const EXTRACTOR_VERSION: &str = "srch5-1";
 
 pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
     index_file_in_boxes(index, path, name, &[box_id.to_string()])
@@ -11,38 +14,75 @@ pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> R
 
 /// 같은 파일이 여러 자료함에 들어 있을 때 자료함 id를 한 문서에 모두 싣는다(색인 다시 만들기에서 쓴다).
 pub fn index_file_in_boxes(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<(), String> {
+    index_into(index, path, name, box_ids, false).map(|_| ())
+}
+
+/// Opt-in content search indexing. Structural metadata and unchanged-file detection are isolated here.
+pub fn index_content_file(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<bool, String> {
+    index_into(index, path, name, box_ids, true)
+}
+
+fn index_into(index: &SearchIndex, path: &str, name: &str, box_ids: &[String], content_mode: bool) -> Result<bool, String> {
     let p = Path::new(path);
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-    if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(()); }
-    // hwpx·docx는 문단마다 개요 수준을 싣는다. 수준 정보가 없는 형식(txt·md·pptx·xlsx)은 모두 본문(0)이다.
-    let blocks = if matches!(ext.as_str(), "hwpx" | "docx") { Some(leveled_blocks(p, &ext)?) } else { None };
+    if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(false); }
+    let (content_hash, extractor_version) = if content_mode {
+        let raw = fs::read(p).map_err(|e| e.to_string())?;
+        let hash = format!("{:x}", Sha256::digest(&raw));
+        if index.is_current(path, &hash, EXTRACTOR_VERSION, name, box_ids) { return Ok(false); }
+        (hash, EXTRACTOR_VERSION.to_string())
+    } else { (String::new(), String::new()) };
+    // Markdown hierarchy and richer structural metadata belong only to search-content.
+    let wants_blocks = if content_mode { matches!(ext.as_str(), "hwpx" | "docx" | "md") }
+        else { matches!(ext.as_str(), "hwpx" | "docx") };
+    let blocks = if wants_blocks {
+        let mut blocks = leveled_blocks(p, &ext)?;
+        if !content_mode {
+            for block in &mut blocks { block.node_id.clear(); block.parent_id = None; block.breadcrumb.clear(); block.table = false; block.row = None; }
+        }
+        Some(blocks)
+    } else { None };
     let body = if blocks.is_some() { String::new() } else { extract_text(p, &ext)? };
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
-    let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None };
+    let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None, content_hash, extractor_version };
     match blocks {
+        Some(blocks) if content_mode => index.add_or_update_content_blocks(&paragraph, &blocks),
         Some(blocks) => index.add_or_update_blocks(&paragraph, &blocks),
         None => index.add_or_update(&paragraph),
-    }.map_err(|e| e.to_string())
+    }.map(|_| true).map_err(|e| e.to_string())
 }
 
-/// 본문 색인용 문단과 위계 수준. `extract_blocks`의 수준(0=본문, 1이 가장 위, 클수록 아래)을 그대로 쓴다.
+/// 본문 색인용 구조 문단과 위치. `extract_blocks`의 수준(0=본문, 1이 가장 위, 클수록 아래)을 그대로 쓴다.
 /// 이 체계는 `hierarchy::search::aggregate`의 순위(0=본문, 작은 양수일수록 위)와 같다.
 /// docx의 머리글·바닥글은 `extract_blocks`가 읽지 않으므로 본문 수준으로 덧붙인다(예전 색인도 검색 대상이었다).
-fn leveled_blocks(path: &Path, ext: &str) -> Result<Vec<(u8, String)>, String> {
-    let mut out: Vec<(u8, String)> = match extract_blocks(path, ext) {
-        Ok(blocks) => blocks.into_iter().map(|b| (b.level.clamp(0, u8::MAX as i64) as u8, b.text)).collect(),
+fn leveled_blocks(path: &Path, ext: &str) -> Result<Vec<SearchBlock>, String> {
+    let mut out: Vec<Block> = match extract_blocks(path, ext) {
+        Ok(blocks) => blocks,
         // 본문은 비었어도 머리글·바닥글에 글이 있을 수 있다.
         Err(_) if ext == "docx" => Vec::new(),
         Err(e) => return Err(e),
     };
     if ext == "docx" {
         for (_, xml) in read_entries(path, |n| (n.starts_with("word/header") || n.starts_with("word/footer")) && n.ends_with(".xml"))? {
-            out.extend(structured_blocks(&xml, &|_| None, &|_, _| None).into_iter().map(|b| (0, b.text)));
+            out.extend(structured_blocks(&xml, &|_| None, &|_, _| None));
         }
     }
     if out.is_empty() { return Err("파일 본문에서 텍스트를 추출하지 못했습니다.".into()); }
-    Ok(out)
+    let mut parents: Vec<(u8, String, String)> = Vec::new();
+    let mut table_row = 0u64;
+    let mut result = Vec::with_capacity(out.len());
+    for (ordinal, block) in out.into_iter().enumerate() {
+        let level = block.level.clamp(0, u8::MAX as i64) as u8;
+        while parents.last().is_some_and(|(parent_level, _, _)| *parent_level >= level) && level > 0 { parents.pop(); }
+        let node_id = format!("{:x}#{ordinal}", md5::compute(path.to_string_lossy().to_lowercase().as_bytes()));
+        let parent_id = parents.last().map(|(_, id, _)| id.clone());
+        let mut breadcrumb: Vec<String> = parents.iter().map(|(_, _, text)| text.clone()).collect();
+        if level > 0 { breadcrumb.push(block.text.clone()); parents.push((level, node_id.clone(), block.text.clone())); }
+        let row = if block.table { let value=table_row; table_row+=1; Some(value) } else { None };
+        result.push(SearchBlock { level, text:block.text, ordinal:ordinal as u64, node_id, parent_id, breadcrumb, table:block.table, row });
+    }
+    Ok(result)
 }
 
 pub fn remove_file(index: &SearchIndex, path: &str) -> Result<(), String> {

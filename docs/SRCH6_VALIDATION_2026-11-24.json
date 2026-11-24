@@ -1,0 +1,82 @@
+[
+  {
+    "test": "cargo_release_default_profile",
+    "command": "cargo test --release --no-fail-fast --manifest-path klib/Cargo.toml -- --test-threads=1",
+    "exit_code": 101,
+    "elapsed_seconds": 247.928,
+    "summaries": [],
+    "note": "panic=abort/unwind dependency strategy conflict prevented test execution; retried with CARGO_PROFILE_RELEASE_PANIC=unwind"
+  },
+  {
+    "test": "cargo",
+    "command": "cargo test --release --no-fail-fast --manifest-path klib/Cargo.toml -- --test-threads=1",
+    "exit_code": 101,
+    "elapsed_seconds": 328.824,
+    "summaries": [
+      "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s",
+      "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s",
+      "failures:",
+      "failures:",
+      "test result: FAILED. 125 passed; 4 failed; 1 ignored; 0 measured; 0 filtered out; finished in 37.20s",
+      "error: test failed, to rerun pass `--test test_klib`",
+      "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.37s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+    ],
+    "environment_overrides": {
+      "CARGO_PROFILE_RELEASE_PANIC": "unwind"
+    }
+  },
+  {
+    "test": "cargo_baseline_search",
+    "command": "cargo test --release --manifest-path <3f65771d>/klib/Cargo.toml --test test_klib search::tests:: -- --test-threads=1",
+    "exit_code": 101,
+    "elapsed_seconds": 251.228,
+    "summaries": [
+      "failures:",
+      "failures:",
+      "test result: FAILED. 21 passed; 3 failed; 1 ignored; 0 measured; 105 filtered out; finished in 10.65s",
+      "error: test failed, to rerun pass `--test test_klib`"
+    ],
+    "environment_overrides": {
+      "CARGO_PROFILE_RELEASE_PANIC": "unwind"
+    }
+  },
+  {
+    "test": "python",
+    "command": "python -m unittest discover -s tests",
+    "exit_code": 0,
+    "elapsed_seconds": 1038.756,
+    "summaries": [
+      "Ran 3605 tests in 1024.503s",
+      "OK (skipped=20)"
+    ],
+    "source_commit": "988e58c2",
+    "release_binary_sha256": "322ed0ec23ab564134d21f7ca3525085b4e4cd5f51dd43efcaee482241176519",
+    "hancom_com_guard_enabled": true,
+    "hancom_com_blocked_requests": 0,
+    "cleanup_warning": "Existing SQLite file lock caused atexit PermissionError after OK; exit code remained 0"
+  },
+  {
+    "test": "cargo_baseline_content",
+    "command": "<3f65771d test_klib executable> content::block_tests::heading_hit_ranks_before_body_only_hit --exact --test-threads=1",
+    "exit_code": 101,
+    "elapsed_seconds": 1.31,
+    "summaries": [
+      "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 129 filtered out; finished in 1.22s"
+    ],
+    "baseline_commit": "3f65771d",
+    "current_failed_tests": [
+      "content::block_tests::heading_hit_ranks_before_body_only_hit",
+      "search::tests::fast_columns_handle_missing_pages_and_multiple_segments",
+      "search::tests::schema_change_keeps_result_set_and_order_for_flat_levels",
+      "search::tests::search_matches_original_order_scores_and_snippets"
+    ],
+    "baseline_failed_tests": [
+      "content::block_tests::heading_hit_ranks_before_body_only_hit",
+      "search::tests::fast_columns_handle_missing_pages_and_multiple_segments",
+      "search::tests::schema_change_keeps_result_set_and_order_for_flat_levels",
+      "search::tests::search_matches_original_order_scores_and_snippets"
+    ],
+    "all_cargo_failures_reproduced": true
+  }
+]

@@ -1,0 +1,61 @@
+{
+  "documents": 1000,
+  "seed": 20261124,
+  "status": "complete",
+  "index_errors": [],
+  "batch_error_count": 0,
+  "rust_status": {
+    "needs_reindex_count": 0,
+    "needs_reindex": false,
+    "reindex_guide": null,
+    "has_index": true,
+    "indexed_document_count": 1000,
+    "persistent_error_count": 0
+  },
+  "comparisons": {
+    "keyword": {
+      "query": "행정",
+      "sqlite_match_count": 1000,
+      "rust_match_count": 1000,
+      "result_sets_truncated_by_api": false,
+      "result_set_match_rate": 1.0,
+      "top20_overlap": 1,
+      "top20_match_rate": 0.05,
+      "missing_in_rust": [],
+      "extra_in_rust": []
+    },
+    "and": {
+      "query": "행정 정책",
+      "sqlite_match_count": 994,
+      "rust_match_count": 994,
+      "result_sets_truncated_by_api": false,
+      "result_set_match_rate": 1.0,
+      "top20_overlap": 1,
+      "top20_match_rate": 0.05,
+      "missing_in_rust": [],
+      "extra_in_rust": []
+    },
+    "phrase": {
+      "query": "\"행정 절차 지원\"",
+      "sqlite_match_count": 1000,
+      "rust_match_count": 1000,
+      "result_sets_truncated_by_api": false,
+      "result_set_match_rate": 1.0,
+      "top20_overlap": 0,
+      "top20_match_rate": 0.0,
+      "missing_in_rust": [],
+      "extra_in_rust": []
+    },
+    "hierarchy": {
+      "query": "행정 정책 문서 안전 지원",
+      "sqlite_match_count": 1000,
+      "rust_match_count": 1000,
+      "result_sets_truncated_by_api": false,
+      "result_set_match_rate": 1.0,
+      "top20_overlap": 1,
+      "top20_match_rate": 0.05,
+      "missing_in_rust": [],
+      "extra_in_rust": []
+    }
+  }
+}

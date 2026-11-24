@@ -15,7 +15,9 @@
 - [ ] **[상태 2026-11-23: UI2(문서뷰 `docview_win`, v2.2.89)·UI3(사진뷰 `photoview_win`, v2.2.89) 1~2단계 및 셸 썸네일(THUMBSHELL2), UI4(아웃라이너 `outliner_win`, 차이 0 하네스 OUTLINERWIN5, v2.2.89), UI5(설정 `settings_win`, SETTINGSWIN4·KCLIPSET4, v2.2.89), UI7(파일변환 `convert_win`, CONVWIN2~4, v2.2.90~91), UI8(파일명 변경 `rename_win`, RENAMEWIN2~4 실제 변경·되돌리기, v2.2.90~91), 독 자동 숨김(DOCK2, v2.2.90) 및 독 아이콘 Material 통일·안티앨리어싱·투명 모서리(v2.2.93), 아웃라이너 실행 취소·Logseq 키·다중 선택(v2.2.95), hwpx_fmt 14종 Rust 이식(v2.2.94~95), 릴리스 프로필 정비(PROFILE1·2) 반영. 남은 일: 실기 확인, UI별 잔여 세부 기능(IME 등), 기본 전환 및 Flutter/Python 제거]** [상] 전면 Rust 전환(UI0 완료·UI1 완료·UI2~UI10, R0~R9): 한/글 COM 필수부 외 전면 Rust화 및 몽땅클립보드 Win32 네이티브 기술 기반 화면 이식(UI0 공용 부품 ui_theme 완료, UI1 클립보드 관리창 완료, UI2~UI10 및 코어 R0~R9 단계 순차 진행; `docs/RUSTALL1_PLAN_2026-11-13.md`).
 - [ ] **[상태 2026-11-21: 감사 일부 완료 — COMX1은 `01b17317`(Rust 프로토타입), COMX2 코드 없음. 참조 `docs/COMX1_LINESEG_2026-11-13.md`는 현재 트리에 없고 커밋 `01b17317`에만 있음(복원 필요). 사용자 조치: 한/글 실기 검증]** [상] 한/글 COM 대체(COMX1 완료·COMX2): 한/글 화면줄 단위 COM 호출 의존성 대체(COMX1 라인 세그먼트 분석 완료, COMX2 실기 검증 및 COM 호출 대폭 축소; `docs/COMX1_LINESEG_2026-11-13.md`).
 
-## [미착수·핵심 개발] Rust 기반 고속·저자원 몽땅검색엔진 통합 (사용자 요청, 2026-11-24)
+## [진행·핵심 개발] Rust 기반 고속·저자원 몽땅검색엔진 통합 (사용자 요청, 2026-11-24)
+
+> [상태 2026-11-24 SRCH6 검증 완료] 선택형 Rust의 페이지 선택 후 복원·세대/동의어별 캐시·위계 가중 발생 수 순위를 구현했다. 1천/5천 정식 warm 중앙값 4.907~27.594ms, 합성 18질의 품질 SQLite 동률·1천 4유형 전체 집합 100%. 전체 Python 3,605개(20제외) OK; cargo 169통과·4실패·1제외이며 실패 4개는 SRCH5 기준에서도 재현된다. 기본 SQLite·승격 불가 유지. 실제 문서·맥 빌드·5천 전체 집합 대조는 미확인. 결과는 `docs/SRCH6_RESULT_2026-11-24.md`, 맥 후속 설계는 `docs/SRCH6_MAC_FEASIBILITY_2026-11-24.md`에 기록했다.
 
 목표: 기존 Python `ContentSearchIndex`·SQLite FTS5와 Rust `klib`·Tantivy가 분리된 현재 구조를 통합하여, 검색 시 원본 문서를 다시 열지 않고 낮은 메모리와 짧은 지연시간으로 문서·페이지·위계·표 위치를 반환한다. 기존 API와 SQLite fallback은 Rust 엔진의 검증이 끝날 때까지 보존한다.
 

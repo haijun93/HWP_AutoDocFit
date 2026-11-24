@@ -136,6 +136,7 @@
   "theme_mode": "system",
   "dock_auto_hide": false,
   "search_engine": "kfind",
+  "search_backend_mode": "sqlite",
   "kclip_settings_mode": "dialog",
   "outliner_ui": "flutter",
   "settings_ui": "flutter",
