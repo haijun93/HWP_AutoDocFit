@@ -58,3 +58,7 @@
 - `tests.test_hwp_process_restart_policy`와 `tests.test_allqa_tools`: 12개 통과.
 - 전체 `unittest discover -s tests`: 3,584개 통과, 28개 건너뜀. unittest는 `OK`와 종료 코드 0으로 끝났다. 종료 뒤 테스트 임시 디렉터리의 `timeline-content.sqlite` 잠금 정리에서 `PermissionError`가 무시 경고로 출력됐다. 변경된 추적 fixture 4개는 기준 상태로 복구했다.
 - `hwp-auto-docfit.py`는 수정하지 않았다(CRLF 유지). 저장소에는 PC 전용 경로를 추가하지 않았다.
+
+## PM 결정(2026-11-24)
+
+결과 재현성이 비용(문서당 +2.1초, +3.15%)보다 중요하므로 **기본 켬**으로 바꿨다. 자동 닫기를 끈 경우와 비교 보기에서는(창 누적·좌우 배치 미검증) 기본을 끄고, `DOCFIT_RESTART_BETWEEN_DOCS=1`로 강제, `=0`으로 해제한다. 문서가 1개면 재시작하지 않는다. 정책 시험 2건을 갱신했다(`tests.test_hwp_process_restart_policy`·`test_allqa_tools` 13건 통과). 이 변경 뒤 COM 실측은 하지 않았다.
