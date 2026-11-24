@@ -35,3 +35,45 @@ def fixtures() -> dict[str, tuple[str, dict]]:
     for name, source in overrides.items():
         cases[name] = (source, cases[name][1])
     return cases
+
+
+def fixtures_v2() -> dict[str, tuple[str, dict]]:
+    """기존 11종을 그대로 포함한다. 정답은 출력과 독립적인 블록 명세다."""
+    cases = fixtures()
+    specs = {
+        'heading_456': ('#### 네 단계\n\n##### 다섯 단계\n\n###### 여섯 단계\n\n본문',
+                        [('h', 4, '네 단계'), ('h', 5, '다섯 단계'), ('h', 6, '여섯 단계'), ('p', '본문')]),
+        'links': ('[한글 링크](https://example.invalid/a?x=1&y=2) 및 [**강조**](mailto:test@example.invalid)',
+                  [('p', '한글 링크 및 강조')]),
+        'code': ('```python\ndef sample():\n    return "<br> **원문**"\n\nprint(sample())\n```\n\n끝',
+                 [('p', 'def sample():\n    return "<br> **원문**"\n\nprint(sample())'), ('p', '끝')]),
+        'png_wide': ('# 넓은 그림\n\n![넓은 합성 그림](wide.png)\n\n끝',
+                     [('h', 1, '넓은 그림'), ('img', '넓은 합성 그림'), ('p', '끝')]),
+        'jpeg_relative': ('앞 ![한글 대체글 & 설명](images/photo.jpg) 뒤',
+                          [('p', '앞  뒤'), ('img', '한글 대체글 & 설명')]),
+        'table_picture': ('| 그림 | 설명 |\n| --- | --- |\n| ![칸 안 그림](wide.png) | 칸 **내용** |',
+                          [('table', [['그림', '설명'], ['', '칸 내용']]), ('img', '칸 안 그림')]),
+        'code_inline': ('코드 `a < b && **c**` 끝\n\n~~~~\n![그림 아님](missing.png)\n\t코드 탭\n~~~~~',
+                        [('p', '코드 a < b && **c** 끝'), ('p', '![그림 아님](missing.png)\n    코드 탭')]),
+        'breaks_mixed': ('#### 줄바꿈 제목\n\n가  \n나\\\n다<br/>라<br />마\n\n| A | B |\n| --- | --- |\n| 첫<br>둘<br/>셋 | 끝 |',
+                         [('h', 4, '줄바꿈 제목'), ('p', '가 나 다 라 마'), ('table', [['A', 'B'], ['첫 둘 셋', '끝']])]),
+    }
+    for name, (source, blocks) in specs.items():
+        cases[name] = source, expected_from_blocks(blocks)
+    return cases
+
+
+def write_images(directory):
+    """사용자 파일 없이 PNG/JPG 자원을 만든다."""
+    import io
+    from pathlib import Path
+    from PIL import Image
+    from .conversion_fixtures import png_bytes
+
+    root = Path(directory)
+    (root / 'images').mkdir(parents=True, exist_ok=True)
+    (root / 'image1.png').write_bytes(png_bytes())
+    (root / 'wide.png').write_bytes(png_bytes(1200, 300))
+    stream = io.BytesIO()
+    Image.new('RGB', (80, 120), (40, 80, 160)).save(stream, format='JPEG')
+    (root / 'images' / 'photo.jpg').write_bytes(stream.getvalue())

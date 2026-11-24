@@ -1,4 +1,4 @@
-"""KORDOCC1 합성 11종 생성·동일 harness 비교·선택적 한/글 COM 검증.
+"""KORDOCC2 합성 19종 생성·동일 harness 비교·선택적 한/글 COM 검증.
 
 python scripts/benchmark_markdown_hwpx.py generate --out NEW_DIR [--reference]
 python scripts/benchmark_markdown_hwpx.py com --out EXISTING_DIR
@@ -21,10 +21,9 @@ sys.path.insert(0, str(ROOT))
 
 from defusedxml import ElementTree as ET
 from docfit_core import conversion_fidelity as cf
-from docfit_core.conversion_fixtures import png_bytes
 from docfit_core.hwpx import validate_hwpx
-from docfit_core.markdown_hwpx import BODY_WIDTH, HP, generate_hwpx
-from docfit_core.markdown_hwpx_fixtures import fixtures
+from docfit_core.markdown_hwpx import BODY_WIDTH, HP, HH, HC, generate_hwpx, render_hwpx
+from docfit_core.markdown_hwpx_fixtures import fixtures_v2 as fixtures, write_images
 
 
 def write_json(path, value):
@@ -33,6 +32,38 @@ def write_json(path, value):
 
 def sha(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def features(path: Path) -> dict:
+    """일반 harness에 없는 대체글/바이너리/줄바꿈/코드 글꼴을 별도 대조한다."""
+    with ZipFile(path) as archive:
+        section = ET.fromstring(archive.read('Contents/section0.xml'))
+        header = ET.fromstring(archive.read('Contents/header.xml'))
+        package = ET.fromstring(archive.read('Contents/content.hpf'))
+        opf = '{http://www.idpf.org/2007/opf/}'
+        items = {i.get('id'): i for i in package.findall(f'{opf}manifest/{opf}item')}
+        pictures = []
+        for pic in section.findall(f'.//{{{HP}}}pic'):
+            ref = pic.find(f'{{{HC}}}img').get('binaryItemIDRef')
+            item = items[ref]
+            size = pic.find(f'{{{HP}}}sz')
+            pictures.append({'sha256': hashlib.sha256(archive.read(item.get('href'))).hexdigest(),
+                             'alt': pic.findtext(f'{{{HP}}}shapeComment', ''),
+                             'width': int(size.get('width')), 'height': int(size.get('height'))})
+        chars = {c.get('id'): c for c in header.findall(f'.//{{{HH}}}charPr')}
+        fonts = {f.get('lang'): {n.get('id'): n.get('face') for n in f} for f in header.findall(f'.//{{{HH}}}fontface')}
+        code_runs = []
+        for run in section.findall(f'.//{{{HP}}}run'):
+            char = chars.get(run.get('charPrIDRef'))
+            if char is None:
+                continue
+            ref = char.find(f'{{{HH}}}fontRef')
+            if ref is not None and fonts.get('HANGUL', {}).get(ref.get('hangul')) == '굴림체':
+                text = ''.join(run.itertext())
+                if text:
+                    code_runs.append(text)
+        return {'pictures': pictures, 'linebreaks': len(section.findall(f'.//{{{HP}}}lineBreak')),
+                'code_runs': code_runs}
 
 
 def validate_structure(path: Path) -> dict:
@@ -78,9 +109,10 @@ def generate(out: Path, reference: bool) -> int:
     out.mkdir(parents=True, exist_ok=False)
     sources = out / "sources"
     sources.mkdir()
-    (sources / "image1.png").write_bytes(png_bytes())
+    write_images(sources)
     cases = fixtures()
-    manifest = {"suite": "KORDOCC1-synthetic-v1", "fixtures": []}
+    manifest = {"suite": "KORDOCC2-synthetic-v2", "fixtures": [],
+                "assets": {p.relative_to(sources).as_posix(): sha(p) for p in sorted(sources.rglob('*')) if p.is_file()}}
     expected = {}
     for name, (source, structure) in cases.items():
         path = sources / f"{name}.md"
@@ -99,12 +131,13 @@ def generate(out: Path, reference: bool) -> int:
         for name, (source, _) in cases.items():
             target = folder / f"{name}.hwpx"
             start = time.perf_counter()
-            result = generate_hwpx(source, target)
+            result = generate_hwpx(source, target, image_dir=sources)
             valid = validate_structure(target)
             hashes[name] = sha(target)
             if repeat == 0:
                 generations.append({"fixture": name, **valid, "warnings": result.warnings,
-                                    "seconds": round(time.perf_counter() - start, 6), "sha256": hashes[name]})
+                                    "seconds": round(time.perf_counter() - start, 6), "sha256": hashes[name],
+                                    "features": features(target)})
         candidate_hashes.append(hashes)
     candidate = cf.collect_outputs(out / "candidate")
     cf.save_golden(out / "candidate.json", "DocFit Markdown", "1", candidate)
@@ -153,7 +186,7 @@ def generate(out: Path, reference: bool) -> int:
         write_json(out / "reference_executions.json", executions)
     write_json(out / "summary.json", summary)
     print(json.dumps({k: v for k, v in summary.items() if k != "generation"}, ensure_ascii=False, indent=2))
-    # 미지원 그림 fixture의 불합격을 성공으로 숨기지 않는다.
+    # 합성 정답 대비 불합격을 성공으로 숨기지 않는다.
     return 0 if passed == len(cases) else 1
 
 
@@ -163,15 +196,21 @@ def com(out: Path) -> int:
     import win32com.client
     # 이 스크립트가 만든 합성 입력임을 바이트로 확인한다.
     manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("suite") != "KORDOCC1-synthetic-v1":
-        raise ValueError("KORDOCC1 합성 묶음만 시험할 수 있습니다.")
+    if manifest.get("suite") != "KORDOCC2-synthetic-v2":
+        raise ValueError("KORDOCC2 합성 묶음만 시험할 수 있습니다.")
     for name, (source, _) in fixtures().items():
         if (out / "sources" / f"{name}.md").read_text(encoding="utf-8") != source:
             raise ValueError(f"합성 원문 불일치: {name}")
+        generated, _ = render_hwpx(source, image_dir=out / 'sources')
+        if (out / 'candidate' / f'{name}.hwpx').read_bytes() != generated:
+            raise ValueError(f"합성 생성본 불일치: {name}")
+    for name, expected_sha in manifest['assets'].items():
+        if sha(out / 'sources' / name) != expected_sha:
+            raise ValueError(f"합성 그림 불일치: {name}")
     roundtrip = out / "roundtrip"
     roundtrip.mkdir(exist_ok=False)
     results = []
-    with com_test_lock("KORDOCC1", "합성 Markdown HWPX 열기·사본 저장", timeout_sec=60):
+    with com_test_lock("KORDOCC2", "합성 Markdown HWPX 열기·사본 저장", timeout_sec=60):
         pythoncom.CoInitialize()
         app = None
         try:
@@ -193,6 +232,9 @@ def com(out: Path) -> int:
                     row["save"] = True
                     validate_hwpx(target, structure_only=True, parse_xml=True)
                     row["fidelity"] = cf.compare(cf.extract_hwpx(source), cf.extract_hwpx(target))
+                    row['features_before'] = features(source)
+                    row['features_after'] = features(target)
+                    row['features_preserved'] = row['features_before'] == row['features_after']
                 except Exception as exc:
                     row["error"] = f"{type(exc).__name__}: {exc}"
                 finally:
@@ -209,7 +251,8 @@ def com(out: Path) -> int:
                     pythoncom.CoUninitialize()
             else:
                 pythoncom.CoUninitialize()
-    return 0 if all(r.get("save") and r.get("pages", 0) > 0 and r["fidelity"]["verdict"]["pass"] for r in results) else 1
+    return 0 if all(r.get("save") and r.get("pages", 0) > 0 and r["fidelity"]["verdict"]["pass"]
+                    and r.get('features_preserved') for r in results) else 1
 
 
 def main():
