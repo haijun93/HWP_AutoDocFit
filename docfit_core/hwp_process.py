@@ -8,12 +8,29 @@
 """
 import csv
 import io
+import os
 from threading import Lock, local
 
 _lock = Lock()
 _owned = set()
 _bound = {}            # id(작업 COM 객체) -> 그 객체를 만들 때 등록된 PID들
 _thread = local()      # 이 스레드에서 마지막으로 등록한 PID들(take_registered가 가져감)
+
+
+def restart_between_documents_enabled(
+    document_count: int,
+    *,
+    env_value: str | None = None,
+) -> bool:
+    """문서 간 한/글 재시작 정책. 환경변수로 명시할 때만 활성화한다."""
+    if document_count < 2:
+        return False
+    value = os.environ.get("DOCFIT_RESTART_BETWEEN_DOCS") if env_value is None else env_value
+    if value is None:
+        return False
+    return str(value).strip().casefold() in {
+        "1", "true", "yes", "on"
+    }
 
 
 def _run(args):

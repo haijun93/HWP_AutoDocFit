@@ -829,12 +829,37 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         # FileClose alone leaves Hancom's document-to-document style state
                         # alive. Start each next input in a fresh COM process so its HWPX
                         # defaults and local style table do not depend on the prior file.
-                        if 자동닫기_설정:
-                            작업창_닫기()
+                        from docfit_core.hwp_process import restart_between_documents_enabled
+                        restart_enabled = restart_between_documents_enabled(total)
+                        if restart_enabled:
+                            from time import perf_counter
+                            restart_started = perf_counter()
+                            이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
+                            if 자동닫기_설정:
+                                작업창_닫기()
+                            else:
+                                작업창_분리()
+                            hwp = 한글_COM_인스턴스_생성(독립=True)
+                            from docfit_core import hwp_process
+                            from docfit_core.com_perf import wrap_if_enabled
+                            hwp = wrap_if_enabled(hwp)
+                            hwp_process.bind_owner(hwp, hwp_process.take_registered())
+                            hwp.XHwpWindows.Item(0).Visible = True
+                            if not hwp.RegisterModule(REGISTER_MODULE_NAME, REGISTER_MODULE_VALUE):
+                                raise RuntimeError("문서 간 재시작 뒤 보안 모듈 등록에 실패했습니다.")
+                            if 비교보기_사용 and 이전_창목록 is not None:
+                                작업창_임베드(이전_창목록)
+                            restart_seconds = perf_counter() - restart_started
+                            로그(
+                                "다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작하고 "
+                                "보안 모듈을 등록했습니다. "
+                                f"재시작 소요: {restart_seconds:.3f}초"
+                            )
                         else:
-                            작업창_분리()
-                        hwp = 한글_COM_인스턴스_생성(독립=True)
-                        로그("다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작했습니다.")
+                            로그(
+                                "문서 간 한/글 재시작은 기본 비활성화 상태입니다. "
+                                "DOCFIT_RESTART_BETWEEN_DOCS=1로 활성화, 0으로 비활성화할 수 있습니다."
+                            )
 
                 로그("=" * 45)
                 로그(f"문장부호 줄병합 자간조정 통계({작업_반복횟수}회 누적): 대상 {문장부호_통계['대상']}건 (성공 {문장부호_통계['성공']}/실패 {문장부호_통계['실패']})")

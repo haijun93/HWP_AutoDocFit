@@ -17,6 +17,14 @@ def main() -> int:
                         help="experimental: close the saved HWP document before processing the next input")
     parser.add_argument("--restart-after-each", action="store_true",
                         help="experimental: recreate the HWP COM process between input documents")
+    parser.add_argument("--keep-open", action="store_true",
+                        help="disable automatic closing of each processed working window")
+    parser.add_argument("--compare-view", action="store_true",
+                        help="enable the production side-by-side comparison view")
+    parser.add_argument("--start-index", type=int, default=1,
+                        help="resume at this one-based input index")
+    parser.add_argument("--cancel-after-first-save", action="store_true",
+                        help="request cancellation from the saved-event callback after the first document")
     parser.add_argument("files", nargs="+", type=Path)
     args = parser.parse_args()
     repo = Path(__file__).resolve().parents[1]
@@ -51,15 +59,21 @@ def main() -> int:
         globals_["문서_처리"] = process_then_close
     events: list = []
     messages: list = []
-    callbacks = PipelineCallbacks(event=events.append, log=messages.append)
-    options = RunOptions(mode="all", verify_result=False, autoclose=True)
+    context = None
+    def on_event(event):
+        events.append(event)
+        if args.cancel_after_first_save and event[0] == "saved":
+            context.cancellation.set()
+    callbacks = PipelineCallbacks(event=on_event, log=messages.append)
+    options = RunOptions(mode="all", verify_result=False, autoclose=not args.keep_open)
     context = session_for(globals_).new_context(options=options, callbacks=callbacks)
     active_state = context.state
     values = {name: parameter.default for name, parameter in inspect.signature(func).parameters.items()
               if name not in ("context", "callbacks") and parameter.default is not inspect._empty}
     values.update(파일목록=[str(path.resolve()) for path in args.files], 표준서식=True, 준말_등록={},
                   실행모드=options.effective_mode, 표자간조정=options.effective_table_spacing,
-                  자동닫기=True, 검수=False, 쪽범위=None,
+                  자동닫기=not args.keep_open, 비교보기=args.compare_view,
+                  시작_인덱스=args.start_index, 검수=False, 쪽범위=None,
                   세부작업_선택=options.resolve_stages({}))
     names = [name for name in inspect.signature(func).parameters
              if name not in ("context", "callbacks")]
