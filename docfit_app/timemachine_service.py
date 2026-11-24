@@ -32,6 +32,7 @@ from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
 from .kfind_client import KfindClient, KfindError
+from .rust_scan import find_klib_executable
 from .settings_schema import normalize_search_engine, normalize_search_backend_mode
 
 THUMBNAIL_SLOTS = 2
@@ -63,7 +64,7 @@ class TimemachineService:
         self.content_index = ContentSearchIndex(content_db)
         self.search_backend = search_backend if search_backend is not None else ModeSearchBackend(
             SqliteBackend(self.content_index),
-            RustBackend(index_dir=data_dir() / "timemachine-tantivy"),
+            RustBackend(executable=find_klib_executable(), index_dir=data_dir() / "timemachine-tantivy"),
             self._search_backend_mode)
         self.kfind = kfind_client if kfind_client is not None else KfindClient()
         self._kfind_ids = itertools.count(secrets.randbits(63))
