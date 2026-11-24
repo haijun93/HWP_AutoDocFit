@@ -3135,5 +3135,35 @@
         "cand_form": "hwpx"
       }
     }
-  ]
+  ],
+  "full_suite": {
+    "commit": "af6f8ce37bb31be5dc76804a52ce8c10e3584246",
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests"
+    ],
+    "returncode": 0,
+    "seconds": 998.094,
+    "source_tree": "6e2c894b11f6b9d73c20edd7a85ae8a0ea500538",
+    "equivalent_commit": "45317d65",
+    "complete": true,
+    "tests": 3609,
+    "skipped": 28,
+    "failures": 0,
+    "errors": 0,
+    "unittest_seconds": 981.618,
+    "warnings": [
+      "logging: format argument xref_issue_nr: %d requires a real number, not str (2회)",
+      "atexit: 임시 timeline-content.sqlite 잠금으로 인한 정리 실패 (1건)",
+      "별도 기준선 재현 및 원인 확인 못 함"
+    ]
+  },
+  "existing_compare_cli": {
+    "returncode": 1,
+    "same_rows_as_benchmark": true
+  }
 }
