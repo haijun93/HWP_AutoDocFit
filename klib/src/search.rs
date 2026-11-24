@@ -552,20 +552,24 @@ impl SearchIndex {
             level: p.level, text: text.trim().to_string(), ordinal: i as u64,
             node_id: format!("{}#{i}", id(&p.path)), ..SearchBlock::default()
         }).collect();
-        self.add_or_update_blocks(p, &blocks)
+        self.put(p, blocks.iter(), false)
     }
     /// 문단마다 위계 수준이 다른 문서를 넣는다(수준, 글). `p.body`·`p.level`은 쓰지 않는다.
     /// 수준은 `hierarchy::search::aggregate`의 순위와 같다: 0은 본문, 1이 가장 위이고 클수록 아래.
     pub fn add_or_update_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
-        self.put(p, blocks.iter())
+        self.put(p, blocks.iter(), false)
     }
-    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=&'a SearchBlock>) -> tantivy::Result<()> {
+    /// Store structural title and location metadata for the opt-in content search index.
+    pub fn add_or_update_content_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
+        self.put(p, blocks.iter(), true)
+    }
+    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=&'a SearchBlock>, content_mode: bool) -> tantivy::Result<()> {
         self.write(|w| {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
         for block in parts {
             let text=block.text.trim(); if text.is_empty() { continue; }
             let crumb=block.breadcrumb.join("\u{1f}");
-            let title=if block.level>0 { text } else { p.title.as_str() };
+            let title=if content_mode && block.level>0 { text } else { p.title.as_str() };
             let mut d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>title.to_string(), self.fields.level=>block.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string(), self.fields.paragraph_ordinal=>block.ordinal, self.fields.node_id=>block.node_id.clone(), self.fields.breadcrumb=>crumb, self.fields.content_hash=>p.content_hash.clone(), self.fields.extractor_version=>p.extractor_version.clone(), self.fields.is_table=>u64::from(block.table));
             if let Some(parent_id)=&block.parent_id { d.add_text(self.fields.parent_id,parent_id); }
             #[cfg(test)]
@@ -618,7 +622,7 @@ impl SearchIndex {
                 synonym_terms.extend(group.iter().filter(|s|!s.eq_ignore_ascii_case(term)).cloned());
             }
         }
-        parser.set_conjunction_by_default();
+        if scope.is_some() { parser.set_conjunction_by_default(); }
         let base=parser.parse_query(&parsed.text).unwrap_or_else(|_| Box::new(tantivy::query::EmptyQuery));
         let mut query_clauses: Vec<(Occur, Box<dyn Query>)>=vec![(Occur::Should,base)];
         if !synonym_terms.is_empty() {
@@ -634,9 +638,10 @@ impl SearchIndex {
             q=Box::new(BooleanQuery::new(cho_clauses));
         }
         let searcher=self.reader.searcher();
-        let candidate_limit=options.limit.max(1).saturating_mul(20).min(10000);
+        let candidate_cap=if scope.is_some() { 10000 } else { 4000 };
+        let candidate_limit=options.limit.max(1).saturating_mul(20).min(candidate_cap);
         // 여러 낱말 AND와 따옴표 구문은 오타 확장 시 OR로 풀지 않는다.
-        let fuzzy=if parsed.text.split_whitespace().count() <= 1 && !parsed.text.contains('"') {
+        let fuzzy=if (scope.is_none() || parsed.text.split_whitespace().count() <= 1) && !parsed.text.contains('"') {
             fuzzy_query(&parsed.text,self.fields.body_jamo)
         } else { None };
         let probe_limit=if parsed.filters.is_empty() && box_id.is_none() { candidate_limit.max(options.limit.max(1)) } else { options.limit.max(1) };
@@ -718,13 +723,13 @@ impl SearchIndex {
                 title:d.get_first(self.fields.title).and_then(|v|v.as_str()).unwrap_or("").to_string(),
                 score:row.best_score,paragraph_count:row.mentions,snippets:Vec::new(),page:c.4,
                 box_ids:d.get_all(self.fields.box_ids).filter_map(|v|v.as_str().map(str::to_string)).collect(),hit_pages:Vec::new(),highlighted:Vec::new(),
-                paragraph_index:d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0),
-                breadcrumb:d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").split('\u{1f}').filter(|s|!s.is_empty()).map(str::to_string).collect(),
-                breadcrumb_text:d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").replace('\u{1f}'," > "),
-                node_id:d.get_first(self.fields.node_id).and_then(|v|v.as_str()).unwrap_or("").to_string(),
-                parent_id:d.get_first(self.fields.parent_id).and_then(|v|v.as_str()).map(str::to_string),
-                table:d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
-                row:d.get_first(self.fields.row).and_then(|v|v.as_u64()), locations:Vec::new(), level:row.best_rank};
+                paragraph_index:if scope.is_some() { d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0) } else { 0 },
+                breadcrumb:if scope.is_some() { d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").split('\u{1f}').filter(|s|!s.is_empty()).map(str::to_string).collect() } else { Vec::new() },
+                breadcrumb_text:if scope.is_some() { d.get_first(self.fields.breadcrumb).and_then(|v|v.as_str()).unwrap_or("").replace('\u{1f}'," > ") } else { String::new() },
+                node_id:if scope.is_some() { d.get_first(self.fields.node_id).and_then(|v|v.as_str()).unwrap_or("").to_string() } else { String::new() },
+                parent_id:if scope.is_some() { d.get_first(self.fields.parent_id).and_then(|v|v.as_str()).map(str::to_string) } else { None },
+                table:scope.is_some() && d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
+                row:if scope.is_some() { d.get_first(self.fields.row).and_then(|v|v.as_u64()) } else { None }, locations:Vec::new(), level:row.best_rank};
             let body=d.get_first(self.fields.body).and_then(|v|v.as_str()).unwrap_or("");
             let snippet_phase=std::time::Instant::now();
             let snippet=generator.snippet(body);
@@ -744,12 +749,12 @@ impl SearchIndex {
                 let snippet_phase=std::time::Instant::now();
                 let snippet=generator.snippet(body);
                 profile_elapsed("snippet_ms",snippet_phase);
-                hit.locations.push(SearchLocation {
+                if scope.is_some() { hit.locations.push(SearchLocation {
                     paragraph_index:d.get_first(self.fields.paragraph_ordinal).and_then(|v|v.as_u64()).unwrap_or(0),
                     page:c.4, row:d.get_first(self.fields.row).and_then(|v|v.as_u64()),
                     table:d.get_first(self.fields.is_table).and_then(|v|v.as_u64()).unwrap_or(0)!=0,
                     snippet:snippet.fragment().to_string(), breadcrumb, level:columns[c.5.segment_ord as usize].level(c.5.doc_id),
-                });
+                }); }
             }
         }
         profile_elapsed("stored_breadcrumb_snippet_ms", phase);

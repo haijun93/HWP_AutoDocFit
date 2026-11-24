@@ -49,7 +49,7 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
         "index_file" => {
             let Some(path) = request.str("path") else { return error_value("path is required") };
             let name = request.str("name").unwrap_or_else(|| Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(""));
-            match crate::content::index_file(ix, path, name, 0) {
+            match crate::content::index_content_file(ix, path, name, &["0".to_string()]) {
                 Ok(changed) => Value::obj(vec![("ok", true.into()), ("indexed", true.into()), ("changed", changed.into()), ("error", Value::Null)]),
                 Err(error) => error_value(&error),
             }
@@ -65,7 +65,7 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
                     continue;
                 };
                 let name = Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("");
-                match crate::content::index_file(ix, path, name, 0) {
+                match crate::content::index_content_file(ix, path, name, &["0".to_string()]) {
                     Ok(changed) => results.push(Value::obj(vec![("indexed", true.into()), ("changed", changed.into()), ("error", Value::Null)])),
                     Err(error) => results.push(Value::obj(vec![("indexed", false.into()), ("error", error.into())])),
                 }

@@ -8,25 +8,46 @@ use sha2::{Digest, Sha256};
 
 const EXTRACTOR_VERSION: &str = "srch5-1";
 
-pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<bool, String> {
+pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
     index_file_in_boxes(index, path, name, &[box_id.to_string()])
 }
 
 /// 같은 파일이 여러 자료함에 들어 있을 때 자료함 id를 한 문서에 모두 싣는다(색인 다시 만들기에서 쓴다).
-pub fn index_file_in_boxes(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<bool, String> {
+pub fn index_file_in_boxes(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<(), String> {
+    index_into(index, path, name, box_ids, false).map(|_| ())
+}
+
+/// Opt-in content search indexing. Structural metadata and unchanged-file detection are isolated here.
+pub fn index_content_file(index: &SearchIndex, path: &str, name: &str, box_ids: &[String]) -> Result<bool, String> {
+    index_into(index, path, name, box_ids, true)
+}
+
+fn index_into(index: &SearchIndex, path: &str, name: &str, box_ids: &[String], content_mode: bool) -> Result<bool, String> {
     let p = Path::new(path);
-    let raw = fs::read(p).map_err(|e| e.to_string())?;
-    let content_hash = format!("{:x}", Sha256::digest(&raw));
-    if index.is_current(path, &content_hash, EXTRACTOR_VERSION, name, box_ids) { return Ok(false); }
     let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
     if !matches!(ext.as_str(), "txt" | "md" | "hwpx" | "docx" | "pptx" | "xlsx") { return Ok(false); }
-    // hwpx·docx·md는 문단마다 위계 수준을 싣는다. txt·pptx·xlsx는 본문 수준으로 색인한다.
-    let blocks = if matches!(ext.as_str(), "hwpx" | "docx" | "md") { Some(leveled_blocks(p, &ext)?) } else { None };
+    let (content_hash, extractor_version) = if content_mode {
+        let raw = fs::read(p).map_err(|e| e.to_string())?;
+        let hash = format!("{:x}", Sha256::digest(&raw));
+        if index.is_current(path, &hash, EXTRACTOR_VERSION, name, box_ids) { return Ok(false); }
+        (hash, EXTRACTOR_VERSION.to_string())
+    } else { (String::new(), String::new()) };
+    // Markdown hierarchy and richer structural metadata belong only to search-content.
+    let wants_blocks = if content_mode { matches!(ext.as_str(), "hwpx" | "docx" | "md") }
+        else { matches!(ext.as_str(), "hwpx" | "docx") };
+    let blocks = if wants_blocks {
+        let mut blocks = leveled_blocks(p, &ext)?;
+        if !content_mode {
+            for block in &mut blocks { block.node_id.clear(); block.parent_id = None; block.breadcrumb.clear(); block.table = false; block.row = None; }
+        }
+        Some(blocks)
+    } else { None };
     let body = if blocks.is_some() { String::new() } else { extract_text(p, &ext)? };
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
-    let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None, content_hash, extractor_version: EXTRACTOR_VERSION.into() };
+    let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None, content_hash, extractor_version };
     match blocks {
+        Some(blocks) if content_mode => index.add_or_update_content_blocks(&paragraph, &blocks),
         Some(blocks) => index.add_or_update_blocks(&paragraph, &blocks),
         None => index.add_or_update(&paragraph),
     }.map(|_| true).map_err(|e| e.to_string())

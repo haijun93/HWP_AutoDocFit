@@ -1254,20 +1254,6 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
                                 .map(|p| p.map(|v| (v as i64).into()).unwrap_or(Value::Null)).collect();
 
-                            let breadcrumb: Vec<Value> = hit.breadcrumb.iter().cloned().map(Value::from).collect();
-                            let locations: Vec<Value> = hit.locations.iter().map(|location| Value::obj(vec![
-                                ("paragraph_index", (location.paragraph_index as i64).into()),
-                                ("snippet", location.snippet.clone().into()),
-                                ("level", (location.level as i64).into()), ("table", location.table.into()),
-                                ("breadcrumb", Value::Arr(location.breadcrumb.iter().cloned().map(Value::from).collect())),
-                                ("breadcrumb_text", location.breadcrumb.join(" > ").into()),
-                                ("position", Value::obj(vec![
-                                    ("page", location.page.map(|v|(v as i64).into()).unwrap_or(Value::Null)),
-                                    ("sheet", Value::Null),
-                                    ("row", location.row.map(|v|(v as i64).into()).unwrap_or(Value::Null)),
-                                ])),
-                            ])).collect();
-
                             Value::obj(vec![
 
                                 ("path", hit.path.into()), ("name", hit.name.into()),
@@ -1279,13 +1265,6 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
                                 ("page", hit.page.map(|p| (p as i64).into()).unwrap_or(Value::Null)),
 
                                 ("pages", Value::Arr(pages)), ("score", (hit.score as f64).into()),
-
-                                ("paragraph_index", (hit.paragraph_index as i64).into()),
-                                ("breadcrumb", Value::Arr(breadcrumb)), ("breadcrumb_text", hit.breadcrumb_text.into()),
-                                ("node_id", hit.node_id.into()), ("parent_id", hit.parent_id.map(Value::from).unwrap_or(Value::Null)),
-                                ("level", (hit.level as i64).into()),
-                                ("position", Value::obj(vec![("page", hit.page.map(|v|(v as i64).into()).unwrap_or(Value::Null)), ("sheet", Value::Null), ("row", hit.row.map(|v|(v as i64).into()).unwrap_or(Value::Null))])),
-                                ("locations", Value::Arr(locations)), ("sections", Value::Arr(Vec::new())),
 
                             ])
 
@@ -1317,7 +1296,7 @@ pub fn handle_request(req_str: &str, db: &Mutex<Database>, running: &AtomicBool)
 
             match crate::search_index().and_then(|ix| crate::content::index_file(ix, path, name, box_id).map_err(|e| e.to_string())) {
 
-                Ok(_) => ok_val(vec![]), Err(e) => err_val(&e)
+                Ok(()) => ok_val(vec![]), Err(e) => err_val(&e)
 
             }
 
