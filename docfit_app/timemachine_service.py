@@ -32,7 +32,7 @@ from docfit_core.timemachine.store import Store
 from .idle_gate import DEFAULT_IDLE_SECONDS, clamp_idle_seconds
 from .kagent_client import KAgentClient, data_dir
 from .kfind_client import KfindClient, KfindError
-from .settings_schema import normalize_search_engine
+from .settings_schema import normalize_search_engine, normalize_search_backend_mode
 
 THUMBNAIL_SLOTS = 2
 THUMBNAIL_WAIT_SECONDS = 8.0
@@ -50,8 +50,11 @@ class TimemachineService:
     def __init__(self, settings_root, *, db_path=None, agent=None, opener=None,
                  revealer=None, scanner=scan_roots, thumb_dir=None, feature_api=None,
                  developer_mode=None, idle_scheduler=None, kfind_client=None, search_engine_provider=None,
+                 search_backend_mode_provider=None,
                  search_backend: SearchBackend | None = None):
         self.search_engine_provider = search_engine_provider
+        self.search_backend_mode_provider = search_backend_mode_provider
+        self._unsupported_search_backend_logged = set()
         self.settings_root = Path(settings_root)
         self.settings_path = self.settings_root / "timemachine.json"
         self.store = Store(db_path or data_dir() / "timeline.db")
@@ -147,6 +150,7 @@ class TimemachineService:
     def _defaults(self):
         return {"roots": default_roots(), "time_mode": "max", "enabled": False, "extensions": list(DEFAULT_EXTENSIONS), "rust_content_index": True,
                 "search_engine": "kfind",
+                "search_backend_mode": "sqlite",
                 "idle_indexing": True, "idle_seconds": DEFAULT_IDLE_SECONDS}
 
     def _search_engine(self):
@@ -154,6 +158,18 @@ class TimemachineService:
             return normalize_search_engine(self.search_engine_provider())
         value = self._settings.get("search_engine", "kfind")
         return value if value in {"kfind", "legacy", "shadow"} else "kfind"
+
+    def _search_backend_mode(self):
+        source = (self.search_backend_mode_provider() if self.search_backend_mode_provider is not None
+                  else self._settings.get("search_backend_mode", "sqlite"))
+        requested = normalize_search_backend_mode(source)
+        if requested != "sqlite" and requested not in self._unsupported_search_backend_logged:
+            logging.getLogger(__name__).warning(
+                "search_backend_mode=%s 요청을 SQLite로 대체합니다: Rust search backend가 아직 연결되지 않았습니다.",
+                requested,
+            )
+            self._unsupported_search_backend_logged.add(requested)
+        return requested
 
     def _engine_status(self):
         with self._content_lock:
@@ -964,6 +980,7 @@ class TimemachineService:
             raise ValueError("본문 검색어를 입력해 주세요.")
         if type(limit) is not int or not 1 <= limit <= 500 or type(offset) is not int or offset < 0:
             raise ValueError("결과 개수와 시작 위치를 확인해 주세요.")
+        backend_mode = self._search_backend_mode()
         def legacy():
             if not self._settings["roots"]:
                 return []
@@ -980,9 +997,10 @@ class TimemachineService:
                 value -= timedelta(days=1)
             return int(value.strftime("%Y%m%d"))
         requested = self._search_engine()
-        if requested == "legacy":
+        if backend_mode != "sqlite" or requested == "legacy":
             with self._content_lock:
-                self._engine_state.update(engine="legacy", engine_reason="configured_legacy")
+                reason = "configured_legacy" if requested == "legacy" else "unsupported_search_backend_mode"
+                self._engine_state.update(engine="legacy", engine_reason=reason)
             return legacy()
         if not self._settings["roots"]:
             return []
