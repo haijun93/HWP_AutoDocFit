@@ -17,7 +17,10 @@ void main() {
             body: PdfEditWorkspace(
               api: (name, args) async {
                 apiCalls.add([name, ...args]);
-                return {'ok': true, 'data': {'pages': []}};
+                return {
+                  'ok': true,
+                  'data': {'pages': []},
+                };
               },
             ),
           ),
@@ -42,7 +45,10 @@ void main() {
           body: PdfEditWorkspace(
             api: (name, args) async {
               apiCalls.add([name, ...args]);
-              return {'ok': true, 'data': {'pages': []}};
+              return {
+                'ok': true,
+                'data': {'pages': []},
+              };
             },
           ),
         ),
@@ -58,6 +64,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('PDF 선택 단추는 호스트 파일 대화상자 경로를 사용한다', (tester) async {
+    tester.view.physicalSize = const Size(1024, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final actions = <String>[];
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PdfEditWorkspace(
+            api: (name, args) async {
+              final request = args.single as Map;
+              final action = request['action'] as String;
+              actions.add(action);
+              if (action == 'pick_source') {
+                return {
+                  'ok': true,
+                  'paths': ['C:/docs/chosen.pdf'],
+                };
+              }
+              return {
+                'ok': true,
+                'data': {
+                  'pages': [
+                    {'number': 1},
+                  ],
+                },
+              };
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('내 기기에서 PDF 선택'));
+    await tester.pumpAndSettle();
+    expect(find.text('chosen.pdf'), findsOneWidget);
+    expect(actions, ['pick_source', 'info', 'thumbnail']);
+  });
+
   testWidgets('PDF 편집 드롭 영역과 비활성 실행 상태를 표시한다', (tester) async {
     tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
     tester.binding.window.devicePixelRatioTestValue = 1;
@@ -66,55 +110,132 @@ void main() {
     final calls = <List<Object?>>[];
     Future<Object?> api(String name, List<Object?> args) async {
       calls.add([name, ...args]);
-      return {'ok': false, 'error': {'message': '테스트 안내'}};
+      return {
+        'ok': false,
+        'error': {'message': '테스트 안내'},
+      };
     }
 
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
-    expect(find.text('PDF 편집'), findsOneWidget);
-    expect(find.text('파일 선택'), findsOneWidget);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: PdfEditWorkspace(api: api)),
+      ),
+    );
+    expect(find.text('PDF 작업실'), findsOneWidget);
+    expect(find.text('내 기기에서 PDF 선택'), findsOneWidget);
     expect(find.byKey(const Key('pdfEditDropZone')), findsOneWidget);
-    expect(find.text('PDF를 여기로 끌어다 놓거나 클릭해서 선택'), findsOneWidget);
-    expect(tester.widget<FilledButton>(find.byKey(const Key('pdfEditRun'))).onPressed, isNull);
+    expect(find.text('PDF 파일을 끌어다 놓으세요'), findsOneWidget);
+    expect(find.byKey(const Key('pdfEditToolBar')), findsOneWidget);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('pdfEditRun')))
+          .onPressed,
+      isNull,
+    );
     expect(find.byKey(const Key('pdfEditTool_페이지삭제')), findsOneWidget);
     expect(calls, isEmpty);
   });
 
+  testWidgets('PDF 쪽 정보 오류를 빈 미리보기 대신 안내하고 다시 시도할 수 있다', (tester) async {
+    tester.view.physicalSize = const Size(1024, 768);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    var attempts = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PdfEditWorkspace(
+            api: (name, args) async {
+              final request = args.single as Map;
+              if (request['action'] == 'info') {
+                attempts++;
+                return {
+                  'ok': false,
+                  'error': {'message': 'PDF 엔진을 찾을 수 없습니다.'},
+                };
+              }
+              return {'ok': false};
+            },
+          ),
+        ),
+      ),
+    );
+    dispatchDocumentDropPaths(['C:/docs/broken.pdf']);
+    await tester.pumpAndSettle();
+    expect(find.text('PDF 엔진을 찾을 수 없습니다.'), findsOneWidget);
+    await tester.tap(find.text('다시 시도'));
+    await tester.pumpAndSettle();
+    expect(attempts, 2);
+    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsNothing);
+  });
+
   testWidgets('작업 도구 선택 상태를 강조한다', (tester) async {
     Future<Object?> api(String name, List<Object?> args) async => {'ok': true};
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: PdfEditWorkspace(api: api)),
+      ),
+    );
     await tester.tap(find.byKey(const Key('pdfEditTool_회전')));
     await tester.pumpAndSettle();
-    final chip = tester.widget<InkWell>(find.byKey(const Key('pdfEditTool_회전')));
+    final chip = tester.widget<InkWell>(
+      find.byKey(const Key('pdfEditTool_회전')),
+    );
     expect(chip.onTap, isNotNull);
     expect(find.text('회전'), findsOneWidget);
   });
 
-  testWidgets('PDF page metadata determines card count and failed renders keep numbered cards', (tester) async {
-    tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
-    tester.binding.window.devicePixelRatioTestValue = 1;
-    addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
-    addTearDown(tester.binding.window.clearDevicePixelRatioTestValue);
-    final actions = <String>[];
-    Future<Object?> api(String name, List<Object?> args) async {
-      final payload = args.single as Map;
-      final action = payload['action'] as String;
-      actions.add(action);
-      if (action == 'info') {
-        return {'ok': true, 'data': {'page_count': 2, 'pages': [{'number': 1}, {'number': 2}]}};
+  testWidgets(
+    'PDF page metadata determines card count and failed renders keep numbered cards',
+    (tester) async {
+      tester.binding.window.physicalSizeTestValue = const Size(1024, 768);
+      tester.binding.window.devicePixelRatioTestValue = 1;
+      addTearDown(tester.binding.window.clearPhysicalSizeTestValue);
+      addTearDown(tester.binding.window.clearDevicePixelRatioTestValue);
+      final actions = <String>[];
+      Future<Object?> api(String name, List<Object?> args) async {
+        final payload = args.single as Map;
+        final action = payload['action'] as String;
+        actions.add(action);
+        if (action == 'info') {
+          return {
+            'ok': true,
+            'data': {
+              'page_count': 2,
+              'pages': [
+                {'number': 1},
+                {'number': 2},
+              ],
+            },
+          };
+        }
+        return {
+          'ok': false,
+          'error': {'message': 'render unavailable'},
+        };
       }
-      return {'ok': false, 'error': {'message': 'render unavailable'}};
-    }
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: PdfEditWorkspace(api: api))));
-    final target = tester.widget<DragTarget<String>>(find.byType(DragTarget<String>));
-    target.onAcceptWithDetails!(DragTargetDetails(data: 'sample.pdf', offset: Offset.zero));
-    await tester.pump();
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsOneWidget);
-    expect(find.text('2'), findsOneWidget);
-    expect(find.text('3'), findsNothing);
-    expect(actions, contains('info'));
-    expect(actions, contains('thumbnail'));
-  });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: PdfEditWorkspace(api: api)),
+        ),
+      );
+      final target = tester.widget<DragTarget<String>>(
+        find.byType(DragTarget<String>),
+      );
+      target.onAcceptWithDetails!(
+        DragTargetDetails(data: 'sample.pdf', offset: Offset.zero),
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsOneWidget);
+      expect(find.text('2'), findsOneWidget);
+      expect(find.text('3'), findsNothing);
+      expect(find.text('미리보기 실패'), findsNWidgets(2));
+      expect(actions, contains('info'));
+      expect(actions, contains('thumbnail'));
+    },
+  );
 
   testWidgets('쪽 클릭, Shift 범위, Ctrl 토글과 전체 선택 및 해제를 반영한다', (tester) async {
     await _loadPdf(tester, (name, args) async => _pdfResponse(args));
@@ -255,22 +376,15 @@ void main() {
 
   testWidgets('합치기 입력 순서를 저장 인자로 보낸다', (tester) async {
     final calls = <Map>[];
-    const selector = MethodChannel('plugins.flutter.io/file_selector');
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      selector,
-      (call) async => call.method == 'openFile'
-          ? ['C:/docs/first.pdf', 'C:/docs/second.pdf']
-          : null,
-    );
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        selector,
-        null,
-      ),
-    );
     await _loadPdf(tester, (name, args) async {
       final payload = args.single as Map;
       calls.add(payload);
+      if (payload['action'] == 'pick_sources') {
+        return {
+          'ok': true,
+          'paths': ['C:/docs/first.pdf', 'C:/docs/second.pdf'],
+        };
+      }
       return _pdfResponse(args);
     });
     await tester.tap(find.byKey(const Key('pdfEditTool_합치기')));
@@ -290,22 +404,13 @@ void main() {
   });
 
   testWidgets('결과 경로가 원본과 같으면 서비스 호출 없이 거부한다', (tester) async {
-    const selector = MethodChannel('plugins.flutter.io/file_selector');
-    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-      selector,
-      (call) async =>
-          call.method == 'getSavePath' ? 'C:/docs/source.pdf' : null,
-    );
-    addTearDown(
-      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        selector,
-        null,
-      ),
-    );
     final calls = <Map>[];
     await _loadPdf(tester, (name, args) async {
       final payload = args.single as Map;
       calls.add(payload);
+      if (payload['action'] == 'pick_output') {
+        return {'ok': true, 'path': 'C:/docs/source.pdf'};
+      }
       return _pdfResponse(args);
     });
     await tester.tap(find.byKey(const Key('pdfEditPickOutput')));
@@ -348,7 +453,6 @@ void main() {
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
 }
-
 
 typedef _Api = Future<Object?> Function(String, List<Object?>);
 

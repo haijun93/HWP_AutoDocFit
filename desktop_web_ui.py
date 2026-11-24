@@ -2419,6 +2419,23 @@ class DesktopWebBridge:
     def pdf_edit(self, payload):
         """PDF 편집(쪽 삭제·순서·회전·분할·합치기·쪽 정보)."""
         from docfit_app.api_contract import ServiceError
+        if isinstance(payload, dict) and payload.get("action") in {"pick_source", "pick_sources"}:
+            import uuid
+            multiple = payload.get("action") == "pick_sources"
+            purpose = "pdf_edit_sources" if multiple else "pdf_edit_source"
+            selection = self._file_dialogs.select_files(uuid.uuid4().hex, purpose, "open", multiple=multiple)
+            if selection.get("cancelled"):
+                return {"ok": True, "cancelled": True}
+            paths = self._file_dialogs.resolve_selection(selection.get("selection_id"), purpose)
+            return {"ok": True, "paths": paths}
+        if isinstance(payload, dict) and payload.get("action") == "pick_output":
+            import uuid
+            purpose = "pdf_edit_output"
+            selection = self._file_dialogs.select_files(uuid.uuid4().hex, purpose, "save")
+            if selection.get("cancelled"):
+                return {"ok": True, "cancelled": True}
+            paths = self._file_dialogs.resolve_selection(selection.get("selection_id"), purpose)
+            return {"ok": True, "path": paths[0]}
         service = getattr(self, "_pdf_edit_service", None)
         if service is None:
             from docfit_app.pdf_edit_service import PdfEditService

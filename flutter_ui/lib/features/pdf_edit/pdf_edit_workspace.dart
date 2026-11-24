@@ -1,7 +1,8 @@
 import 'dart:convert';
+import 'dart:math' as math;
+
 import 'package:flutter/services.dart';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
@@ -17,7 +18,6 @@ class PdfEditWorkspace extends StatefulWidget {
 }
 
 class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
-  static const _pdfType = XTypeGroup(label: 'PDF', extensions: ['pdf']);
   static const _tools = [
     ('delete', '페이지 삭제', Icons.delete_outline),
     ('rotate', '회전', Icons.rotate_right),
@@ -33,8 +33,10 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   int _degrees = 90;
   String _message = '';
   bool _busy = false;
+  bool _loadingPages = false;
   int? _pageCount;
   final Map<int, Uint8List> _thumbnails = {};
+  final Map<int, String> _thumbnailErrors = {};
   final Set<int> _thumbnailRequests = {};
   final List<int> _pageOrder = [];
   final Set<int> _selectedPages = {};
@@ -62,11 +64,36 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
 
   void _onDocumentDrop(List<String> paths) {
     if (!mounted || _busy || !_dropWatchActive) return;
-    for (final path in paths) {
-      if (path.toLowerCase().endsWith('.pdf')) {
-        _addFile(path);
-        return;
-      }
+    final pdfs = paths
+        .where((path) => path.toLowerCase().endsWith('.pdf'))
+        .toList();
+    if (pdfs.isEmpty) {
+      setState(() => _message = 'PDF 파일만 추가할 수 있습니다.');
+      return;
+    }
+    if (_action == 'merge' && pdfs.length > 1) {
+      setState(() {
+        _mergeSources
+          ..clear()
+          ..addAll(pdfs.toSet());
+        _source = _mergeSources.first;
+        _output = _outputFor(_source!, '_합본');
+        _pageCount = null;
+        _loadingPages = true;
+        _thumbnails.clear();
+        _thumbnailErrors.clear();
+        _thumbnailRequests.clear();
+        _message = '${_mergeSources.length}개 PDF를 합칠 순서로 추가했습니다.';
+      });
+      _loadPages(_source!);
+      return;
+    }
+    _addFile(pdfs.first);
+    if (pdfs.length > 1 && mounted) {
+      setState(
+        () => _message =
+            'PDF 여러 개를 놓았습니다. 첫 번째 파일을 열었습니다. 합치려면 ‘합치기’를 선택한 뒤 다시 놓아 주세요.',
+      );
     }
   }
 
@@ -96,8 +123,26 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   }
 
   Future<void> _pickSource() async {
-    final file = await openFile(acceptedTypeGroups: [_pdfType]);
-    if (file != null) _addFile(file.path);
+    try {
+      final response = await widget.api('pdf_edit', [
+        {'action': 'pick_source'},
+      ]);
+      final envelope = response is Map ? response : const {};
+      final paths = envelope['paths'];
+      if (envelope['cancelled'] == true) return;
+      if (paths is List && paths.isNotEmpty && paths.first is String) {
+        _addFile(paths.first as String);
+      } else {
+        final error = envelope['error'];
+        final message = error is Map ? '${error['message'] ?? ''}' : '';
+        if (mounted)
+          setState(
+            () => _message = message.isEmpty ? 'PDF 파일을 선택하지 못했습니다.' : message,
+          );
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = 'PDF 파일 선택 창을 열지 못했습니다: $error');
+    }
   }
 
   void _addFile(String path) {
@@ -111,6 +156,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       _output = _outputFor(path, _action == 'merge' ? '_합본' : '_편집');
       _message = '';
       _pageCount = null;
+      _loadingPages = true;
       _pageOrder.clear();
       _selectedPages.clear();
       _operations.clear();
@@ -118,6 +164,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       _initialOrder = [];
       _completedPath = null;
       _thumbnails.clear();
+      _thumbnailErrors.clear();
       _thumbnailRequests.clear();
       _dragActive = false;
     });
@@ -130,7 +177,17 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
         {'action': 'info', 'source': path},
       ]);
       final envelope = response is Map ? response : const {};
-      if (envelope['ok'] != true) return;
+      if (envelope['ok'] != true) {
+        final error = envelope['error'];
+        final message = error is Map ? '${error['message'] ?? ''}' : '';
+        if (mounted && _source == path) {
+          setState(() {
+            _loadingPages = false;
+            _message = message.isEmpty ? 'PDF 쪽 정보를 읽지 못했습니다.' : message;
+          });
+        }
+        return;
+      }
       final data = envelope['data'];
       final pages = data is Map && data['pages'] is List
           ? data['pages'] as List
@@ -138,13 +195,19 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       if (!mounted || _source != path) return;
       setState(() {
         _pageCount = pages.length;
+        _loadingPages = false;
         _pageOrder
           ..clear()
           ..addAll(List<int>.generate(pages.length, (i) => i + 1));
         _initialOrder = List.of(_pageOrder);
       });
-    } catch (_) {
-      /* Keep numbered cards when metadata is unavailable. */
+    } catch (error) {
+      if (mounted && _source == path) {
+        setState(() {
+          _loadingPages = false;
+          _message = 'PDF 쪽 정보를 읽지 못했습니다: $error';
+        });
+      }
     }
   }
 
@@ -160,40 +223,78 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       ]);
       final envelope = response is Map ? response : const {};
       final data = envelope['data'];
-      if (data is! Map ||
+      if (envelope['ok'] != true ||
+          data is! Map ||
           data['data'] is! String ||
           !mounted ||
           _source != path) {
+        final error = envelope['error'];
+        final message = error is Map ? '${error['message'] ?? ''}' : '';
+        if (mounted && _source == path) {
+          setState(
+            () => _thumbnailErrors[page] = message.isEmpty
+                ? '쪽 미리보기를 만들지 못했습니다.'
+                : message,
+          );
+        }
         return;
       }
-      setState(() => _thumbnails[page] = base64Decode(data['data'] as String));
-    } catch (_) {
-      /* Keep the numbered card when rendering is unavailable. */
+      setState(() {
+        _thumbnailErrors.remove(page);
+        _thumbnails[page] = base64Decode(data['data'] as String);
+      });
+    } catch (error) {
+      if (mounted && _source == path) {
+        setState(() => _thumbnailErrors[page] = '쪽 미리보기 오류: $error');
+      }
     } finally {
       _thumbnailRequests.remove(page);
     }
   }
 
   Future<void> _pickMergeSources() async {
-    final files = await openFiles(acceptedTypeGroups: [_pdfType]);
-    if (files.length < 2 || !mounted) return;
-    setState(() {
-      _mergeSources
-        ..clear()
-        ..addAll(files.map((file) => file.path));
-      _source = files.first.path;
-      _output = _outputFor(files.first.path, '_합본');
-      _message = '';
-    });
+    try {
+      final response = await widget.api('pdf_edit', [
+        {'action': 'pick_sources'},
+      ]);
+      final envelope = response is Map ? response : const {};
+      final paths = envelope['paths'];
+      if (envelope['cancelled'] == true || !mounted) return;
+      if (paths is! List ||
+          paths.length < 2 ||
+          paths.any((path) => path is! String)) {
+        setState(() => _message = '합칠 PDF를 두 개 이상 선택해 주세요.');
+        return;
+      }
+      setState(() {
+        _mergeSources
+          ..clear()
+          ..addAll(paths.cast<String>());
+        _source = _mergeSources.first;
+        _output = _outputFor(_source!, '_합본');
+        _message = '';
+      });
+      _loadPages(_source!);
+    } catch (error) {
+      if (mounted) setState(() => _message = 'PDF 파일 선택 창을 열지 못했습니다: $error');
+    }
   }
 
   Future<void> _pickOutput() async {
     if (_action != 'merge' && _source == null) return;
-    final location = await getSaveLocation(
-      suggestedName: _output?.split(RegExp(r'[/\\]')).last ?? '편집본.pdf',
-      acceptedTypeGroups: [_pdfType],
-    );
-    if (location != null && mounted) setState(() => _output = location.path);
+    try {
+      final response = await widget.api('pdf_edit', [
+        {'action': 'pick_output'},
+      ]);
+      final envelope = response is Map ? response : const {};
+      final path = envelope['path'];
+      if (path is String && mounted) setState(() => _output = path);
+      if (path == null && envelope['cancelled'] != true && mounted) {
+        setState(() => _message = '저장할 위치를 선택하지 못했습니다.');
+      }
+    } catch (error) {
+      if (mounted) setState(() => _message = '저장 위치 선택 창을 열지 못했습니다: $error');
+    }
   }
 
   bool get _canRun =>
@@ -373,25 +474,21 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     });
   }
 
-  void _rotateSelected(int degrees) {
-    if (_selectedPages.isNotEmpty) {
-      _record(
-        _EditOperation(
-          'rotate',
-          _selectedPages.toList()..sort(),
-          degrees: degrees,
-        ),
-      );
-    }
+  void _rotatePage(int page, int degrees) {
+    final targets = _selectedPages.contains(page)
+        ? (_selectedPages.toList()..sort())
+        : <int>[page];
+    _record(_EditOperation('rotate', targets, degrees: degrees));
   }
 
-  void _deleteSelected() {
-    if (_selectedPages.isEmpty) return;
-    final pages = _selectedPages.toList()..sort();
+  void _deletePage(int page) {
+    final pages = _selectedPages.contains(page)
+        ? (_selectedPages.toList()..sort())
+        : <int>[page];
     _record(_EditOperation('delete', pages));
     setState(() {
       _pageOrder.removeWhere(pages.contains);
-      _selectedPages.clear();
+      _selectedPages.removeAll(pages);
     });
   }
 
@@ -457,9 +554,14 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     final c = context.colors;
     return LayoutBuilder(
       builder: (context, constraints) {
-        final compact = constraints.maxWidth < 900;
+        final compact = constraints.maxWidth < 980;
         return Padding(
-          padding: EdgeInsets.all(compact ? 16 : 24),
+          padding: EdgeInsets.fromLTRB(
+            compact ? 16 : 28,
+            22,
+            compact ? 16 : 28,
+            20,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -470,16 +572,16 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'PDF 편집',
+                          'PDF 작업실',
                           style: Theme.of(context).textTheme.headlineSmall
                               ?.copyWith(
                                 color: c.ink,
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 5),
                         Text(
-                          '페이지를 정리하고 새 PDF로 저장합니다.',
+                          '페이지를 정리하고 편집본을 새 파일로 저장합니다.',
                           style: TextStyle(color: c.muted),
                         ),
                       ],
@@ -488,64 +590,107 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                   OutlinedButton.icon(
                     key: const Key('pdfEditPickSource'),
                     onPressed: _busy ? null : _pickSource,
-                    icon: const Icon(Icons.add),
-                    label: const Text('PDF 추가'),
+                    icon: const Icon(Icons.note_add_outlined),
+                    label: const Text('파일 열기'),
                   ),
                 ],
               ),
-              const SizedBox(height: 20),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final tool in _tools)
-                    _ToolChip(
-                      label: tool.$2,
-                      icon: tool.$3,
-                      selected: _action == tool.$1,
-                      onTap: _busy
-                          ? null
-                          : () => setState(() {
-                              _action = tool.$1;
-                              if (tool.$1 == 'merge') {
-                                _output = _source == null
-                                    ? null
-                                    : _outputFor(_source!, '_합본');
-                              } else if (tool.$1 == 'split' &&
-                                  _source != null) {
-                                _output = _outputFor(_source!, '_분할');
-                              } else if (_source != null) {
-                                _output = _outputFor(_source!, '_편집');
-                              }
-                            }),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
               Expanded(
-                child: Row(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(
-                      child: _source == null ? _dropZone(c) : _editor(c),
-                    ),
-                    if (!compact) ...[
-                      const SizedBox(width: 16),
-                      SizedBox(width: 284, child: _sidePanel(c)),
+                    if (_source != null) ...[
+                      _fileCard(c),
+                      const SizedBox(height: 14),
                     ],
+                    _toolBar(c),
+                    const SizedBox(height: 14),
+                    Expanded(
+                      child: compact && _source != null
+                          ? Column(
+                              children: [
+                                Expanded(child: _editorCanvas(c)),
+                                const SizedBox(height: 10),
+                                SizedBox(
+                                  height: 190,
+                                  child: SingleChildScrollView(
+                                    child: _sidePanel(c),
+                                  ),
+                                ),
+                              ],
+                            )
+                          : Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  child: _source == null
+                                      ? _dropZone(c)
+                                      : _editorCanvas(c),
+                                ),
+                                if (!compact && _source != null) ...[
+                                  const SizedBox(width: 16),
+                                  SizedBox(width: 296, child: _sidePanel(c)),
+                                ],
+                              ],
+                            ),
+                    ),
                   ],
                 ),
               ),
-              if (compact && _source != null) ...[
-                const SizedBox(height: 12),
-                _sidePanel(c),
-              ],
             ],
           ),
         );
       },
     );
   }
+
+  Widget _toolBar(AppColors c) => Container(
+    key: const Key('pdfEditToolBar'),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    decoration: BoxDecoration(
+      color: c.surface,
+      border: Border.all(color: c.line),
+      borderRadius: BorderRadius.circular(14),
+    ),
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: Text(
+              '도구',
+              style: TextStyle(color: c.muted, fontWeight: FontWeight.w700),
+            ),
+          ),
+          for (var i = 0; i < _tools.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _ToolChip(
+              label: _tools[i].$2,
+              icon: _tools[i].$3,
+              selected: _action == _tools[i].$1,
+              onTap: _busy
+                  ? null
+                  : () => setState(() {
+                      _action = _tools[i].$1;
+                      if (_action == 'merge') {
+                        _output = _source == null
+                            ? null
+                            : _outputFor(_source!, '_합본');
+                      } else if (_source != null) {
+                        _output = _outputFor(
+                          _source!,
+                          _action == 'split' ? '_분할' : '_편집',
+                        );
+                      }
+                    }),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 
   Widget _dropZone(AppColors c) => DragTarget<String>(
     onWillAcceptWithDetails: (_) {
@@ -554,57 +699,78 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     },
     onLeave: (_) => setState(() => _dragActive = false),
     onAcceptWithDetails: (details) => _addFile(details.data),
-    builder: (context, candidates, rejected) => Center(
-      child: InkWell(
+    builder: (context, candidates, rejected) => CustomPaint(
+      painter: _DashedDropBorder(
+        color: _dragActive ? c.accent : c.lineStrong,
+        strokeWidth: _dragActive ? 2 : 1.5,
+      ),
+      child: AnimatedContainer(
         key: const Key('pdfEditDropZone'),
-        onTap: _pickSource,
-        borderRadius: BorderRadius.circular(8),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 140),
-          width: double.infinity,
-          constraints: const BoxConstraints(maxWidth: 720, maxHeight: 340),
-          decoration: BoxDecoration(
-            color: _dragActive ? c.accentSoft : c.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: _dragActive ? c.accent : c.lineStrong,
-              width: _dragActive ? 2 : 1,
+        duration: const Duration(milliseconds: 160),
+        decoration: BoxDecoration(
+          color: _dragActive ? c.accentSoft : c.surface,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 640),
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 84,
+                    height: 84,
+                    decoration: BoxDecoration(
+                      color: c.accentSoft,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.drive_folder_upload_outlined,
+                      size: 42,
+                      color: c.accent,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  Text(
+                    'PDF 파일을 끌어다 놓으세요',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: c.textStrong,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '파일을 열어 쪽을 미리 보고, 원하는 도구를 적용할 수 있습니다.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: c.muted, fontSize: 14),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: _pickSource,
+                    icon: const Icon(Icons.folder_open_outlined),
+                    label: const Text('내 기기에서 PDF 선택'),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'PDF · 원본 파일은 그대로 보존됩니다.',
+                    style: TextStyle(color: c.muted, fontSize: 12),
+                  ),
+                ],
+              ),
             ),
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.upload_file_outlined, size: 38, color: c.accent),
-              const SizedBox(height: 14),
-              Text(
-                'PDF를 여기로 끌어다 놓거나 클릭해서 선택',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: c.textStrong,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 6),
-              Text('PDF 파일 한 개를 추가할 수 있습니다.', style: TextStyle(color: c.muted)),
-              const SizedBox(height: 18),
-              OutlinedButton.icon(
-                onPressed: _pickSource,
-                icon: const Icon(Icons.folder_open_outlined),
-                label: const Text('파일 선택'),
-              ),
-            ],
           ),
         ),
       ),
     ),
   );
 
-  Widget _editor(AppColors c) => Column(
+  Widget _editorCanvas(AppColors c) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      _fileCard(c),
-      const SizedBox(height: 14),
       Expanded(
         child: DecoratedBox(
           decoration: BoxDecoration(
@@ -620,16 +786,24 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
 
   Widget _fileCard(AppColors c) => Container(
     key: const Key('pdfEditFileCard'),
-    padding: const EdgeInsets.all(14),
+    padding: const EdgeInsets.fromLTRB(16, 13, 14, 13),
     decoration: BoxDecoration(
       color: c.surface,
       border: Border.all(color: c.line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(14),
     ),
     child: Row(
       children: [
-        Icon(Icons.picture_as_pdf_outlined, color: c.accent),
-        const SizedBox(width: 12),
+        Container(
+          width: 44,
+          height: 44,
+          decoration: BoxDecoration(
+            color: c.accentSoft,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(Icons.picture_as_pdf_outlined, color: c.accent, size: 25),
+        ),
+        const SizedBox(width: 14),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -643,7 +817,9 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                 ),
               ),
               Text(
-                '쪽 수는 파일을 실행할 때 확인됩니다.',
+                _loadingPages
+                    ? 'PDF 정보를 읽는 중…'
+                    : '${_pageCount ?? 0}쪽 · 편집 작업 공간',
                 style: TextStyle(color: c.muted, fontSize: 12),
               ),
             ],
@@ -710,64 +886,114 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
         ),
       ),
       Expanded(
-        child: GridView.builder(
-          key: const Key('pdfEditThumbnailGrid'),
-          padding: const EdgeInsets.all(16),
-          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-            maxCrossAxisExtent: 150,
-            mainAxisExtent: 178,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-          ),
-          itemCount: _pageCount == null ? 12 : _pageOrder.length,
-          itemBuilder: (context, i) {
-            final number = i < _pageOrder.length ? _pageOrder[i] : i + 1;
-            if (_pageCount != null &&
-                _source != null &&
-                !_thumbnails.containsKey(number)) {
-              _loadThumbnail(_source!, number);
-            }
-            return _PageCard(
-              key: ValueKey(number),
-              number: number,
-              c: c,
-              thumbnail: _thumbnails[number],
-              selected: _selectedPages.contains(number),
-              onTap: (shift, control) =>
-                  _selectPage(number, shift: shift, control: control),
-              onRotateLeft: () => _rotateSelected(-90),
-              onRotateRight: () => _rotateSelected(90),
-              onDelete: _deleteSelected,
-              onMove: (target) {
-                final from = _pageOrder.indexOf(number),
-                    to = _pageOrder.indexOf(target);
-                if (from < 0 || to < 0) return;
-                final order = List<int>.of(_pageOrder)
-                  ..removeAt(from)
-                  ..insert(to, number);
-                _record(_EditOperation('reorder', order));
-                setState(() {
-                  _pageOrder
-                    ..clear()
-                    ..addAll(order);
-                });
-              },
-              onKey: (delta) {
-                final from = _pageOrder.indexOf(number), to = from + delta;
-                if (from < 0 || to < 0 || to >= _pageOrder.length) return;
-                final order = List<int>.of(_pageOrder)
-                  ..removeAt(from)
-                  ..insert(to, number);
-                _record(_EditOperation('reorder', order));
-                setState(() {
-                  _pageOrder
-                    ..clear()
-                    ..addAll(order);
-                });
-              },
-            );
-          },
-        ),
+        child: _loadingPages
+            ? Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 260),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const CircularProgressIndicator(),
+                      const SizedBox(height: 14),
+                      Text(
+                        'PDF 쪽 정보를 읽고 있습니다…',
+                        style: TextStyle(color: c.muted),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : _pageCount == null
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: c.danger,
+                        size: 34,
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _message.isEmpty ? 'PDF 쪽 정보를 불러오지 못했습니다.' : _message,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: c.danger),
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: _source == null
+                            ? null
+                            : () => _loadPages(_source!),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('다시 시도'),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : GridView.builder(
+                key: const Key('pdfEditThumbnailGrid'),
+                padding: const EdgeInsets.all(16),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 150,
+                  mainAxisExtent: 178,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: _pageCount == null ? 12 : _pageOrder.length,
+                itemBuilder: (context, i) {
+                  final number = i < _pageOrder.length ? _pageOrder[i] : i + 1;
+                  if (_pageCount != null &&
+                      _source != null &&
+                      !_thumbnails.containsKey(number) &&
+                      !_thumbnailErrors.containsKey(number)) {
+                    _loadThumbnail(_source!, number);
+                  }
+                  return _PageCard(
+                    key: ValueKey(number),
+                    number: number,
+                    c: c,
+                    thumbnail: _thumbnails[number],
+                    thumbnailError: _thumbnailErrors[number],
+                    selected: _selectedPages.contains(number),
+                    onTap: (shift, control) =>
+                        _selectPage(number, shift: shift, control: control),
+                    onRotateLeft: () => _rotatePage(number, -90),
+                    onRotateRight: () => _rotatePage(number, 90),
+                    onDelete: () => _deletePage(number),
+                    onMove: (target) {
+                      final from = _pageOrder.indexOf(number),
+                          to = _pageOrder.indexOf(target);
+                      if (from < 0 || to < 0) return;
+                      final order = List<int>.of(_pageOrder)
+                        ..removeAt(from)
+                        ..insert(to, number);
+                      _record(_EditOperation('reorder', order));
+                      setState(() {
+                        _pageOrder
+                          ..clear()
+                          ..addAll(order);
+                      });
+                    },
+                    onKey: (delta) {
+                      final from = _pageOrder.indexOf(number),
+                          to = from + delta;
+                      if (from < 0 || to < 0 || to >= _pageOrder.length) return;
+                      final order = List<int>.of(_pageOrder)
+                        ..removeAt(from)
+                        ..insert(to, number);
+                      _record(_EditOperation('reorder', order));
+                      setState(() {
+                        _pageOrder
+                          ..clear()
+                          ..addAll(order);
+                      });
+                    },
+                  );
+                },
+              ),
       ),
       Padding(
         padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
@@ -781,7 +1007,8 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                 decoration: InputDecoration(
                   isDense: true,
                   labelText: _action == 'split' ? '분할할 페이지' : '페이지 번호',
-                  errorText: _action == 'split' &&
+                  errorText:
+                      _action == 'split' &&
                           _pages.text.isNotEmpty &&
                           _parsePages() == null
                       ? '문서 쪽 수 안에서 올바른 범위를 입력해 주세요.'
@@ -858,19 +1085,38 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   );
 
   Widget _sidePanel(AppColors c) => Container(
+    key: const Key('pdfEditTaskPanel'),
     padding: const EdgeInsets.all(16),
     decoration: BoxDecoration(
       color: c.surface,
       border: Border.all(color: c.line),
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(16),
     ),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          '작업 설정',
-          style: TextStyle(color: c.textStrong, fontWeight: FontWeight.w600),
+        Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: c.accentSoft,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.tune, color: c.accent, size: 19),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              '작업 설정',
+              style: TextStyle(
+                color: c.textStrong,
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 12),
         Text(
@@ -936,10 +1182,12 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
               style: TextStyle(color: c.muted, fontSize: 11),
             ),
         ],
-        FilledButton(
+        FilledButton.icon(
           key: const Key('pdfEditRun'),
           onPressed: _canRun ? _run : null,
-          child: Text(_busy ? '처리 중…' : '저장'),
+          icon: Icon(_busy ? Icons.hourglass_top : Icons.save_outlined),
+          label: Text(_busy ? '처리 중…' : '편집본 저장'),
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(46)),
         ),
         if (_message.isNotEmpty) ...[
           const SizedBox(height: 10),
@@ -1039,12 +1287,13 @@ class _ToolChip extends StatelessWidget {
   }
 }
 
-class _PageCard extends StatelessWidget {
+class _PageCard extends StatefulWidget {
   const _PageCard({
     super.key,
     required this.number,
     required this.c,
     this.thumbnail,
+    this.thumbnailError,
     required this.selected,
     required this.onTap,
     required this.onRotateLeft,
@@ -1056,47 +1305,56 @@ class _PageCard extends StatelessWidget {
   final int number;
   final AppColors c;
   final Uint8List? thumbnail;
+  final String? thumbnailError;
   final bool selected;
   final void Function(bool, bool) onTap;
   final VoidCallback onRotateLeft, onRotateRight, onDelete;
   final ValueChanged<int> onMove, onKey;
   @override
+  State<_PageCard> createState() => _PageCardState();
+}
+
+class _PageCardState extends State<_PageCard> {
+  bool _hovered = false;
+
+  @override
   Widget build(BuildContext context) => DragTarget<int>(
-    onAcceptWithDetails: (d) => onMove(d.data),
+    onAcceptWithDetails: (d) => widget.onMove(d.data),
     builder: (context, _, _) => Draggable<int>(
-      data: number,
+      data: widget.number,
       feedback: Material(
         color: Colors.transparent,
         child: SizedBox(
           width: 110,
           height: 140,
-          child: Center(child: Text('쪽 $number')),
+          child: Center(child: Text('쪽 ${widget.number}')),
         ),
       ),
       childWhenDragging: const SizedBox.shrink(),
       child: FocusableActionDetector(
-        autofocus: selected,
+        autofocus: widget.selected,
         shortcuts: const {
           SingleActivator(LogicalKeyboardKey.arrowLeft): _MoveIntent(-1),
           SingleActivator(LogicalKeyboardKey.arrowRight): _MoveIntent(1),
         },
-        actions: {_MoveIntent: _MoveAction(onKey)},
+        actions: {_MoveIntent: _MoveAction(widget.onKey)},
         child: Material(
-          color: selected ? c.accentSoft : c.surfaceMuted,
+          color: widget.selected ? widget.c.accentSoft : widget.c.surfaceMuted,
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
-            onTap: () => onTap(
+            onHover: (value) => setState(() => _hovered = value),
+            onTap: () => widget.onTap(
               HardwareKeyboard.instance.isShiftPressed,
               HardwareKeyboard.instance.isControlPressed ||
                   HardwareKeyboard.instance.isMetaPressed,
             ),
-            onLongPress: () => onTap(false, true),
-            onSecondaryTap: () => onTap(false, true),
+            onLongPress: () => widget.onTap(false, true),
+            onSecondaryTap: () => widget.onTap(false, true),
             child: Container(
               decoration: BoxDecoration(
                 border: Border.all(
-                  color: selected ? c.accent : c.line,
-                  width: selected ? 2 : 1,
+                  color: widget.selected ? widget.c.accent : widget.c.line,
+                  width: widget.selected ? 2 : 1,
                 ),
                 borderRadius: BorderRadius.circular(8),
               ),
@@ -1106,9 +1364,9 @@ class _PageCard extends StatelessWidget {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (thumbnail != null)
+                        if (widget.thumbnail != null)
                           Image.memory(
-                            thumbnail!,
+                            widget.thumbnail!,
                             fit: BoxFit.contain,
                             height: 118,
                           )
@@ -1116,13 +1374,24 @@ class _PageCard extends StatelessWidget {
                           Icon(
                             Icons.description_outlined,
                             size: 54,
-                            color: c.lineStrong,
+                            color: widget.c.lineStrong,
                           ),
                         const SizedBox(height: 8),
                         Text(
-                          '쪽 $number',
-                          style: TextStyle(color: c.muted, fontSize: 12),
+                          '쪽 ${widget.number}',
+                          style: TextStyle(color: widget.c.muted, fontSize: 12),
                         ),
+                        if (widget.thumbnailError != null)
+                          Tooltip(
+                            message: widget.thumbnailError!,
+                            child: Text(
+                              '미리보기 실패',
+                              style: TextStyle(
+                                color: widget.c.danger,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1135,17 +1404,20 @@ class _PageCard extends StatelessWidget {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: c.surface,
+                        color: widget.c.surface,
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: c.line),
+                        border: Border.all(color: widget.c.line),
                       ),
                       child: Text(
-                        '$number',
-                        style: TextStyle(color: c.textSecondary, fontSize: 11),
+                        '${widget.number}',
+                        style: TextStyle(
+                          color: widget.c.textSecondary,
+                          fontSize: 11,
+                        ),
                       ),
                     ),
                   ),
-                  if (selected)
+                  if (widget.selected || _hovered)
                     Positioned(
                       right: 4,
                       top: 4,
@@ -1153,17 +1425,17 @@ class _PageCard extends StatelessWidget {
                         children: [
                           IconButton(
                             tooltip: '왼쪽 90° 회전',
-                            onPressed: onRotateLeft,
+                            onPressed: widget.onRotateLeft,
                             icon: const Icon(Icons.rotate_left, size: 18),
                           ),
                           IconButton(
                             tooltip: '오른쪽 90° 회전',
-                            onPressed: onRotateRight,
+                            onPressed: widget.onRotateRight,
                             icon: const Icon(Icons.rotate_right, size: 18),
                           ),
                           IconButton(
                             tooltip: '쪽 삭제',
-                            onPressed: onDelete,
+                            onPressed: widget.onDelete,
                             icon: const Icon(Icons.delete_outline, size: 18),
                           ),
                         ],
@@ -1199,4 +1471,35 @@ class _MoveAction extends Action<_MoveIntent> {
     move(intent.delta);
     return null;
   }
+}
+
+class _DashedDropBorder extends CustomPainter {
+  const _DashedDropBorder({required this.color, required this.strokeWidth});
+  final Color color;
+  final double strokeWidth;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final path = Path()
+      ..addRRect(
+        RRect.fromRectAndRadius(Offset.zero & size, const Radius.circular(22)),
+      );
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.round;
+    for (final metric in path.computeMetrics()) {
+      var distance = 0.0;
+      while (distance < metric.length) {
+        final end = math.min(distance + 9, metric.length);
+        canvas.drawPath(metric.extractPath(distance, end), paint);
+        distance = end + 6;
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_DashedDropBorder oldDelegate) =>
+      oldDelegate.color != color || oldDelegate.strokeWidth != strokeWidth;
 }

@@ -1,9 +1,48 @@
 import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
+
 import 'core/ipc/native_client.dart';
 
 final _client = NativeClient();
 Future<Object?> callApi(String method, List<Object?> args) async {
+  if (method == 'pdf_edit' && args.isNotEmpty && args[0] is Map) {
+    final action = (args[0] as Map)['action'];
+    if (action == 'pick_source') {
+      final file = await openFile(
+        acceptedTypeGroups: [
+          const XTypeGroup(label: 'PDF', extensions: ['pdf']),
+        ],
+      );
+      return file == null
+          ? {'ok': true, 'cancelled': true}
+          : {
+              'ok': true,
+              'paths': [file.path],
+            };
+    }
+    if (action == 'pick_sources') {
+      final files = await openFiles(
+        acceptedTypeGroups: [
+          const XTypeGroup(label: 'PDF', extensions: ['pdf']),
+        ],
+      );
+      return files.isEmpty
+          ? {'ok': true, 'cancelled': true}
+          : {'ok': true, 'paths': files.map((file) => file.path).toList()};
+    }
+    if (action == 'pick_output') {
+      final location = await getSaveLocation(
+        suggestedName: '편집본.pdf',
+        acceptedTypeGroups: [
+          const XTypeGroup(label: 'PDF', extensions: ['pdf']),
+        ],
+      );
+      return location == null
+          ? {'ok': true, 'cancelled': true}
+          : {'ok': true, 'path': location.path};
+    }
+  }
   if (method == 'restart_backend') {
     await _client.close();
     await _client.start();
@@ -46,7 +85,8 @@ Future<Object?> callApi(String method, List<Object?> args) async {
   if (method == 'file_rename' && args.isNotEmpty && args[0] == 'pick_files') {
     // 파일이름 탭: 모든 확장자. 경로는 호스트가 검증·보관하고 화면에는 이름만 돌아온다.
     final picked = await openFiles();
-    if (picked.isEmpty) return _client.call('file_rename', ['list', <String, Object?>{}]);
+    if (picked.isEmpty)
+      return _client.call('file_rename', ['list', <String, Object?>{}]);
     return _client.call('file_rename', [
       'add_paths',
       {'paths': picked.map((file) => file.path).toList()},
@@ -54,11 +94,17 @@ Future<Object?> callApi(String method, List<Object?> args) async {
   }
   if (method == 'file_rename' && args.isNotEmpty && args[0] == 'pick_folder') {
     final folder = await getDirectoryPath();
-    if (folder == null) return _client.call('file_rename', ['list', <String, Object?>{}]);
-    final payload = args.length > 1 && args[1] is Map ? args[1] as Map : const {};
+    if (folder == null)
+      return _client.call('file_rename', ['list', <String, Object?>{}]);
+    final payload = args.length > 1 && args[1] is Map
+        ? args[1] as Map
+        : const {};
     return _client.call('file_rename', [
       'add_paths',
-      {'paths': [folder], 'recursive': payload['recursive'] == true},
+      {
+        'paths': [folder],
+        'recursive': payload['recursive'] == true,
+      },
     ]);
   }
   if (method == 'hwp_bulk' && args.isNotEmpty && args[0] == 'pick_folder') {
@@ -68,7 +114,9 @@ Future<Object?> callApi(String method, List<Object?> args) async {
   if (method == 'doc_grid' && args.isNotEmpty && args[0] == 'pick_folder') {
     final folder = await getDirectoryPath();
     if (folder == null) return {'ok': false, 'cancelled': true};
-    final payload = args.length > 1 && args[1] is Map ? Map<String, Object?>.from(args[1] as Map) : <String, Object?>{};
+    final payload = args.length > 1 && args[1] is Map
+        ? Map<String, Object?>.from(args[1] as Map)
+        : <String, Object?>{};
     payload['folder'] = folder;
     return _client.call('doc_grid', ['list', payload]);
   }
