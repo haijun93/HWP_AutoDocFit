@@ -13,6 +13,25 @@
 - [ ] **[상태 2026-11-23: UI2(문서뷰 `docview_win`, v2.2.89)·UI3(사진뷰 `photoview_win`, v2.2.89) 1~2단계 및 셸 썸네일(THUMBSHELL2), UI4(아웃라이너 `outliner_win`, 차이 0 하네스 OUTLINERWIN5, v2.2.89), UI5(설정 `settings_win`, SETTINGSWIN4·KCLIPSET4, v2.2.89), UI7(파일변환 `convert_win`, CONVWIN2~4, v2.2.90~91), UI8(파일명 변경 `rename_win`, RENAMEWIN2~4 실제 변경·되돌리기, v2.2.90~91), 독 자동 숨김(DOCK2, v2.2.90) 및 독 아이콘 Material 통일·안티앨리어싱·투명 모서리(v2.2.93), 아웃라이너 실행 취소·Logseq 키·다중 선택(v2.2.95), hwpx_fmt 14종 Rust 이식(v2.2.94~95), 릴리스 프로필 정비(PROFILE1·2) 반영. 남은 일: 실기 확인, UI별 잔여 세부 기능(IME 등), 기본 전환 및 Flutter/Python 제거]** [상] 전면 Rust 전환(UI0 완료·UI1 완료·UI2~UI10, R0~R9): 한/글 COM 필수부 외 전면 Rust화 및 몽땅클립보드 Win32 네이티브 기술 기반 화면 이식(UI0 공용 부품 ui_theme 완료, UI1 클립보드 관리창 완료, UI2~UI10 및 코어 R0~R9 단계 순차 진행; `docs/RUSTALL1_PLAN_2026-11-13.md`).
 - [ ] **[상태 2026-11-21: 감사 일부 완료 — COMX1은 `01b17317`(Rust 프로토타입), COMX2 코드 없음. 참조 `docs/COMX1_LINESEG_2026-11-13.md`는 현재 트리에 없고 커밋 `01b17317`에만 있음(복원 필요). 사용자 조치: 한/글 실기 검증]** [상] 한/글 COM 대체(COMX1 완료·COMX2): 한/글 화면줄 단위 COM 호출 의존성 대체(COMX1 라인 세그먼트 분석 완료, COMX2 실기 검증 및 COM 호출 대폭 축소; `docs/COMX1_LINESEG_2026-11-13.md`).
 
+## [미착수·핵심 개발] Rust 기반 고속·저자원 몽땅검색엔진 통합 (사용자 요청, 2026-11-24)
+
+목표: 기존 Python `ContentSearchIndex`·SQLite FTS5와 Rust `klib`·Tantivy가 분리된 현재 구조를 통합하여, 검색 시 원본 문서를 다시 열지 않고 낮은 메모리와 짧은 지연시간으로 문서·페이지·위계·표 위치를 반환한다. 기존 API와 SQLite fallback은 Rust 엔진의 검증이 끝날 때까지 보존한다.
+
+- [ ] `docfit_app/timemachine_service.py`가 `ContentSearchIndex`를 직접 호출하지 않도록 `SearchBackend` 계약(`index_file`, `remove_file`, `search`, `status`, `cancel`)을 정의하고 SQLite·Rust 구현을 같은 응답 형식으로 맞춘다. `content_search`, `content_index_*`, `content_errors`, Markdown 내보내기 API의 하위 호환성을 유지한다.
+- [ ] 기존 `klib/src/search.rs`를 몽땅검색 backend로 연결한다. 자료함·노트북 전용 경로에 머물지 않게 전체 조사 폴더의 문서 등록·삭제·변경 감지·검색을 연결하고, Rust 장애·미설치·인덱스 손상 시 SQLite로 자동 fallback한다.
+- [ ] Rust 색인 스키마를 확장한다: `document_id`, `node_id`, `parent_id`, `breadcrumb_id`, `level`, `page`, `paragraph`, `table`, `ocr`, `confidence`, `content_hash`, `schema_version`. 제목·장·절·표 제목과 본문을 분리해 위계 가중치와 경로 표시를 지원한다.
+- [ ] HWP/HWPX·PDF·DOCX·TXT·MD·XLSX의 색인 입력 계약을 Rust에서 통일한다. 텍스트 PDF는 페이지별 추출, 스캔 PDF는 별도 OCR 대기열 결과를 받아 색인하며, OCR 처리를 검색 요청 중에 실행하지 않는다.
+- [ ] 한국어 검색은 형태소 분석기를 기본 경로에서 제외하고 단어 토큰·문자 바이그램·숫자·날짜·파일명 토큰을 조합한다. `□·ㅇ·-·※`, 로마자·아라비아 숫자·한글 번호 체계와 기존 항목기호 공백 규칙을 위계 분석에 반영한다.
+- [ ] Tantivy writer를 문서마다 생성·commit·reload하지 않고 배치 writer로 전환한다. 100~500개 문서 단위 commit, 유휴 시간 세그먼트 병합, 읽기 전용 메모리 매핑 reader, 검색 Top-N 제한을 적용한다.
+- [ ] Python 검색의 후보 전체 메모리 적재·반복 `LIKE`·문서별 Python 후처리를 Rust 역색인·필드 필터·상위 후보 정렬로 대체한다. 긴 검색어·짧은 검색어·AND·phrase·near·exclude·ext/path/date 필터의 결과 계약을 회귀시험으로 고정한다.
+- [ ] Python과 Rust에 중복 저장되는 본문·바이그램·메타데이터의 책임을 정리한다. Rust 인덱스에는 검색 필드와 최소 stored field만 보관하고, SQLite에는 설정·오류·상태·fallback 메타데이터만 남기는 방안을 비교 측정한다.
+- [ ] 파일 크기·mtime만 확인하는 변경 감지를 빠른 해시와 필요 시 SHA-256으로 보강한다. `extractor_version`, `hierarchy_schema_version`, `ocr_model_version`, `index_version`을 캐시 키에 포함하고 변경 문서만 재색인한다.
+- [ ] Windows Named Pipe 기반 Rust IPC를 유지하되 요청·응답 크기·timeout·취소·프로세스 재시작·예약 이름·권한 검사를 명확히 한다. 검색 프로세스와 색인 프로세스를 분리해 색인 실패가 검색을 중단시키지 않게 한다.
+- [ ] `klib/src/content.rs`의 PDF·HWP·OCR·페이지 위치 누락을 보완하고, Rust가 직접 처리하지 못하는 형식은 명확한 상태와 Python fallback으로 보고한다. 원본 파일은 읽기 전용으로만 열고 결과·캐시 경로를 분리한다.
+- [ ] 동일 코퍼스에서 SQLite와 Rust 결과를 병행 비교한다. 상위 20개 일치율, Recall@k, MRR, 제목·장·절 누락률, 페이지 위치 정확도, OCR 문서 검색률을 측정하고 결과가 다르면 원인을 기록한다.
+- [ ] 성능 시험을 추가한다: 1천·1만·10만 문서, 10만·100만 문단 기준으로 cold/warm 검색 지연, 초기·증분 색인 시간, 검색 중 CPU·메모리, 색인 중 검색 지연, 인덱스 디스크 크기를 측정한다. 목표 수치와 실제 측정값을 분리 보고한다.
+- [ ] 기능 플래그로 `sqlite`, `rust`, `shadow_compare` 모드를 제공한다. Rust 결과를 검증한 뒤에만 기본 backend로 승격하고, Windows EXE·폐쇄망 설치·실제 한글 문서·스캔 PDF 시험을 통과하기 전에는 정식 배포로 표시하지 않는다.
+
 ## 사용자 요청 (2026-11-20)
 - [x] **[상태 2026-11-23: 수정 보강(v2.2.94, v2.2.95) — 사용자 화면 확인 필요]** **[오류] 몽땅클립보드 '켜기'를 누르면 "켜는 중…"이 끝나지 않고, 켠 뒤에도 창이 안 닫힘 (사용자 보고, 2026-11-20, 첨부 이미지)**: 소개·동의 창에서 [몽땅클립보드 켜기]를 누르면 단추가 "켜는 중…"(진행 표시)에서 계속 멈춰 있다. [상태 2026-11-23: v2.2.94에서 '즉시 응답 + 상태 조회' 구조로 전환해 15초 제한 타임아웃 완화, 이미 실행 중이면 재시작 생략, 구간별 계측·구체 실패 사유 표시, kagent --status 무잠금 반영. v2.2.95에서 Win32 설정 창의 15초 제한을 없애고 최대 60초 대기, 새 프로세스 신호 대기 3초→60초 확대, `lifecycle-timings.jsonl` 기록 반영. 실제 지연 원인은 실기 측정 대기] 요청: **켜기를 누르고 기능이 적용되면 창이 닫히게** 한다. 원인 후보(코드 확인, 2026-11-20): ① `kclip_dialog.dart`의 `_act('enable')`는 `await _call(...)`에 제한 시간이 없어, Python 쪽 `KClipService.enable`(`docfit_app/kclip_service.py`)이 `kagent.exe --enable`(`_lifecycle`) 응답이나 이미 실행 중인 에이전트의 `upgrade_if_stale`(교체 대기)에서 멈추면 `busy`가 풀리지 않는다. ② 켠 뒤 상태 확인 반복(최대 10초)이 끝나도 창을 닫는 동작이 없어, 성공해도 안내 화면에 그대로 남는다. ③ 단일 `_tk()` 통로가 막혀 있으면(120초 제한) 명령이 대기열에 갇힌다. 개선: 켜기 호출에 제한 시간(예: 15초)과 실패 안내("켜지 못했습니다. 다시 시도"·진단 값 표시) 추가, 켜짐이 확인되면 창을 자동으로 닫고 상주 목록(퀵몽땅클립보드)을 안내하는 토스트 한 줄, 동의·자동 시작 값은 닫기 전에 저장. 시험: 켜기 성공·실패·제한 시간 초과·이미 켜진 상태에서 창이 닫히거나 오류가 보이는지(위젯 시험), Windows 실기 확인.
 
