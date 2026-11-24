@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:docfit_ui/core/document_drop_paths_stub.dart';
+import 'package:docfit_ui/core/theme/app_theme.dart';
 import 'package:docfit_ui/features/pdf_edit/pdf_edit_workspace.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -149,10 +150,13 @@ void main() {
               final request = args.single as Map;
               if (request['action'] == 'info') {
                 attempts++;
-                return {
-                  'ok': false,
-                  'error': {'message': 'PDF 엔진을 찾을 수 없습니다.'},
-                };
+                if (attempts == 1) {
+                  return {
+                    'ok': false,
+                    'error': {'message': 'PDF 엔진을 찾을 수 없습니다.'},
+                  };
+                }
+                return _pdfResponse(args);
               }
               return {'ok': false};
             },
@@ -163,10 +167,20 @@ void main() {
     dispatchDocumentDropPaths(['C:/docs/broken.pdf']);
     await tester.pumpAndSettle();
     expect(find.text('PDF 엔진을 찾을 수 없습니다.'), findsOneWidget);
+    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsNothing);
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('pdfEditRun')))
+          .onPressed,
+      isNull,
+    );
     await tester.tap(find.text('다시 시도'));
     await tester.pumpAndSettle();
     expect(attempts, 2);
-    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsNothing);
+    expect(find.byKey(const Key('pdfEditThumbnailGrid')), findsOneWidget);
+    expect(find.text('PDF 엔진을 찾을 수 없습니다.'), findsNothing);
+    expect(_cardOrder(tester), [1, 2, 3]);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('작업 도구 선택 상태를 강조한다', (tester) async {
@@ -314,6 +328,14 @@ void main() {
     final edit = calls.lastWhere((call) => call['action'] == 'reorder');
     expect(edit['pages'], [2, 3, 1]);
     expect(edit['pages'], everyElement(isA<int>()));
+    expect(edit['output'], 'C:/docs/source_편집.pdf');
+    expect(
+      calls.where((call) => call['action'] == 'delete'),
+      isEmpty,
+      reason: '순서 변경 뒤 남은 선택을 삭제 작업으로 추가하지 않는다.',
+    );
+    expect(find.text('완료: C:/docs/source_편집.pdf'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('회전 후 삭제한 누적 변경을 순서대로 정수 인자로 저장한다', (tester) async {
@@ -348,6 +370,10 @@ void main() {
       isTrue,
     );
     expect(edits.last['output'], 'C:/docs/source_편집.pdf');
+    expect(edits.first['degrees'], 90);
+    expect(edits.last['source'], edits.first['output']);
+    expect(find.text('완료: C:/docs/source_편집.pdf'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('분할 잘못된 범위를 비활성화하고 입력 오류 응답을 표시한다', (tester) async {
@@ -452,6 +478,69 @@ void main() {
     expect(find.textContaining('저장 거부'), findsOneWidget);
     expect(find.byType(LinearProgressIndicator), findsNothing);
   });
+
+  for (final dark in [false, true]) {
+    testWidgets('PDF 화면 한글과 기호는 앱 글꼴 폴백을 상속한다 (dark=$dark)', (tester) async {
+      tester.view.physicalSize = const Size(1024, 768);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildAppTheme(
+            dark ? AppColors.dark : AppColors.light,
+            dark ? KioskColors.dark : KioskColors.light,
+          ),
+          home: Scaffold(
+            body: PdfEditWorkspace(
+              api: (name, args) async => _pdfResponse(args),
+            ),
+          ),
+        ),
+      );
+      _expectKoreanFonts(tester);
+      dispatchDocumentDropPaths(['C:/docs/한글_기호_∑.pdf']);
+      await tester.pumpAndSettle();
+      await _tapCard(tester, 1);
+      await tester.pump();
+      await tester.tap(find.byTooltip('오른쪽 90° 회전'));
+      await tester.pump();
+      _expectKoreanFonts(tester);
+      final field = tester.widget<EditableText>(
+        find.byType(EditableText).first,
+      );
+      expect(field.style.fontFamily, 'NotoSansKR');
+      expect(
+        field.style.fontFamilyFallback,
+        containsAll(['NotoSansSymbols2', 'STIXTwoMath']),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+}
+
+void _expectKoreanFonts(WidgetTester tester) {
+  final texts = tester
+      .widgetList<RichText>(
+        find.descendant(
+          of: find.byType(PdfEditWorkspace),
+          matching: find.byType(RichText),
+        ),
+      )
+      .where((text) => RegExp(r'[가-힣]').hasMatch(text.text.toPlainText()))
+      .toList();
+  expect(texts, isNotEmpty);
+  for (final text in texts) {
+    expect(
+      text.text.style?.fontFamily,
+      'NotoSansKR',
+      reason: text.text.toPlainText(),
+    );
+    expect(
+      text.text.style?.fontFamilyFallback,
+      containsAll(['NotoSansSymbols2', 'STIXTwoMath']),
+      reason: text.text.toPlainText(),
+    );
+  }
 }
 
 typedef _Api = Future<Object?> Function(String, List<Object?>);

@@ -34,6 +34,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   String _message = '';
   bool _busy = false;
   bool _loadingPages = false;
+  String? _pageError;
   int? _pageCount;
   final Map<int, Uint8List> _thumbnails = {};
   final Map<int, String> _thumbnailErrors = {};
@@ -135,10 +136,11 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       } else {
         final error = envelope['error'];
         final message = error is Map ? '${error['message'] ?? ''}' : '';
-        if (mounted)
+        if (mounted) {
           setState(
             () => _message = message.isEmpty ? 'PDF 파일을 선택하지 못했습니다.' : message,
           );
+        }
       }
     } catch (error) {
       if (mounted) setState(() => _message = 'PDF 파일 선택 창을 열지 못했습니다: $error');
@@ -172,6 +174,11 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   }
 
   Future<void> _loadPages(String path) async {
+    setState(() {
+      _loadingPages = true;
+      _pageError = null;
+      _message = '';
+    });
     try {
       final response = await widget.api('pdf_edit', [
         {'action': 'info', 'source': path},
@@ -183,7 +190,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
         if (mounted && _source == path) {
           setState(() {
             _loadingPages = false;
-            _message = message.isEmpty ? 'PDF 쪽 정보를 읽지 못했습니다.' : message;
+            _pageError = message.isEmpty ? 'PDF 쪽 정보를 읽지 못했습니다.' : message;
           });
         }
         return;
@@ -205,7 +212,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       if (mounted && _source == path) {
         setState(() {
           _loadingPages = false;
-          _message = 'PDF 쪽 정보를 읽지 못했습니다: $error';
+          _pageError = 'PDF 쪽 정보를 읽지 못했습니다: $error';
         });
       }
     }
@@ -303,6 +310,8 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       (_action == 'merge'
           ? _mergeSources.length >= 2
           : _source != null &&
+                !_loadingPages &&
+                _pageCount != null &&
                 (_action == 'split'
                     ? _parsePages() != null
                     : _operations.isNotEmpty ||
@@ -357,7 +366,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       } else {
         if (_action == 'split') {
           queue.add(_EditOperation('split', pages));
-        } else if (_operations.isEmpty || _selectedPages.isNotEmpty) {
+        } else if (_operations.isEmpty) {
           final selected = _selectedPages.isNotEmpty
               ? (_selectedPages.toList()..sort())
               : pages;
@@ -614,9 +623,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                                 const SizedBox(height: 10),
                                 SizedBox(
                                   height: 190,
-                                  child: SingleChildScrollView(
-                                    child: _sidePanel(c),
-                                  ),
+                                  child: _sidePanel(c),
                                 ),
                               ],
                             )
@@ -628,13 +635,22 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                                       ? _dropZone(c)
                                       : _editorCanvas(c),
                                 ),
-                                if (!compact && _source != null) ...[
+                                if (!compact) ...[
                                   const SizedBox(width: 16),
                                   SizedBox(width: 296, child: _sidePanel(c)),
                                 ],
                               ],
                             ),
                     ),
+                    if (compact && _source == null) ...[
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        key: const Key('pdfEditRun'),
+                        onPressed: null,
+                        icon: const Icon(Icons.save_outlined),
+                        label: const Text('편집본 저장'),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -917,7 +933,8 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        _message.isEmpty ? 'PDF 쪽 정보를 불러오지 못했습니다.' : _message,
+                        _pageError ?? 'PDF 쪽 정보를 불러오지 못했습니다.',
+                        key: const Key('pdfEditPageError'),
                         textAlign: TextAlign.center,
                         style: TextStyle(color: c.danger),
                       ),
@@ -1092,146 +1109,150 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       border: Border.all(color: c.line),
       borderRadius: BorderRadius.circular(16),
     ),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: c.accentSoft,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Icon(Icons.tune, color: c.accent, size: 19),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              '작업 설정',
-              style: TextStyle(
-                color: c.textStrong,
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Text(
-          _action == 'merge' ? '입력 파일' : '대상 페이지',
-          style: TextStyle(color: c.muted, fontSize: 12),
-        ),
-        Text(
-          _action == 'merge'
-              ? '${_mergeSources.length}개 선택'
-              : _pages.text.isEmpty
-              ? '선택 없음'
-              : _pages.text,
-          style: TextStyle(color: c.text),
-        ),
-        const SizedBox(height: 14),
-        OutlinedButton(
-          key: const Key('pdfEditPickOutput'),
-          onPressed: _busy || (_action != 'merge' && _source == null)
-              ? null
-              : _pickOutput,
-          child: const Text('저장 위치 변경'),
-        ),
-        if (_output != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              _output!,
-              key: const Key('pdfEditOutputPath'),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: c.muted, fontSize: 12),
-            ),
-          ),
-        const SizedBox(height: 12),
-        if (_busy) const LinearProgressIndicator(minHeight: 2),
-        if (_action != 'merge') ...[
+    child: SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
           Row(
             children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: c.accentSoft,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.tune, color: c.accent, size: 19),
+              ),
+              const SizedBox(width: 10),
               Text(
-                '작업 목록 ${_operations.length}개',
-                style: TextStyle(color: c.textSecondary),
-              ),
-              const Spacer(),
-              IconButton(
-                tooltip: '실행 취소',
-                onPressed: _operations.isEmpty || _busy ? null : _undo,
-                icon: const Icon(Icons.undo),
-              ),
-              IconButton(
-                tooltip: '다시 실행',
-                onPressed: _redo.isEmpty || _busy ? null : _redoEdit,
-                icon: const Icon(Icons.redo),
+                '작업 설정',
+                style: TextStyle(
+                  color: c.textStrong,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 16,
+                ),
               ),
             ],
           ),
-          for (final op in _operations.take(4))
-            Text(
-              '${op.action == 'delete'
-                  ? '삭제'
-                  : op.action == 'rotate'
-                  ? '회전 ${op.degrees}°'
-                  : '순서 변경'} · ${op.pages.join(', ')}',
-              style: TextStyle(color: c.muted, fontSize: 11),
-            ),
-        ],
-        FilledButton.icon(
-          key: const Key('pdfEditRun'),
-          onPressed: _canRun ? _run : null,
-          icon: Icon(_busy ? Icons.hourglass_top : Icons.save_outlined),
-          label: Text(_busy ? '처리 중…' : '편집본 저장'),
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(46)),
-        ),
-        if (_message.isNotEmpty) ...[
-          const SizedBox(height: 10),
-          SelectableText(
-            _message,
-            key: const Key('pdfEditMessage'),
-            style: TextStyle(
-              color: _message.startsWith('완료') ? c.success : c.danger,
-            ),
+          const SizedBox(height: 12),
+          Text(
+            _action == 'merge' ? '입력 파일' : '대상 페이지',
+            style: TextStyle(color: c.muted, fontSize: 12),
           ),
-        ],
-        const SizedBox(height: 8),
-        if (_completedPath != null)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle_outline, color: c.success),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _completedPath!,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: '파일 열기',
-                    onPressed: () => widget.api('doc_grid', [
-                      'open',
-                      {'path': _completedPath},
-                    ]),
-                    icon: const Icon(Icons.open_in_new),
-                  ),
-                ],
+          Text(
+            _action == 'merge'
+                ? '${_mergeSources.length}개 선택'
+                : _pages.text.isEmpty
+                ? '선택 없음'
+                : _pages.text,
+            style: TextStyle(color: c.text),
+          ),
+          const SizedBox(height: 14),
+          OutlinedButton(
+            key: const Key('pdfEditPickOutput'),
+            onPressed: _busy || (_action != 'merge' && _source == null)
+                ? null
+                : _pickOutput,
+            child: const Text('저장 위치 변경'),
+          ),
+          if (_output != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _output!,
+                key: const Key('pdfEditOutputPath'),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: c.muted, fontSize: 12),
               ),
             ),
+          const SizedBox(height: 12),
+          if (_busy) const LinearProgressIndicator(minHeight: 2),
+          if (_action != 'merge') ...[
+            Row(
+              children: [
+                Text(
+                  '작업 목록 ${_operations.length}개',
+                  style: TextStyle(color: c.textSecondary),
+                ),
+                const Spacer(),
+                IconButton(
+                  tooltip: '실행 취소',
+                  onPressed: _operations.isEmpty || _busy ? null : _undo,
+                  icon: const Icon(Icons.undo),
+                ),
+                IconButton(
+                  tooltip: '다시 실행',
+                  onPressed: _redo.isEmpty || _busy ? null : _redoEdit,
+                  icon: const Icon(Icons.redo),
+                ),
+              ],
+            ),
+            for (final op in _operations.take(4))
+              Text(
+                '${op.action == 'delete'
+                    ? '삭제'
+                    : op.action == 'rotate'
+                    ? '회전 ${op.degrees}°'
+                    : '순서 변경'} · ${op.pages.join(', ')}',
+                style: TextStyle(color: c.muted, fontSize: 11),
+              ),
+          ],
+          FilledButton.icon(
+            key: const Key('pdfEditRun'),
+            onPressed: _canRun ? _run : null,
+            icon: Icon(_busy ? Icons.hourglass_top : Icons.save_outlined),
+            label: Text(_busy ? '처리 중…' : '편집본 저장'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(46),
+            ),
           ),
-        Text(
-          '원본은 유지되고 결과는 새 파일로 저장됩니다.',
-          style: TextStyle(color: c.muted, fontSize: 11),
-        ),
-      ],
+          if (_message.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            SelectableText(
+              _message,
+              key: const Key('pdfEditMessage'),
+              style: TextStyle(
+                color: _message.startsWith('완료') ? c.success : c.danger,
+              ),
+            ),
+          ],
+          const SizedBox(height: 8),
+          if (_completedPath != null)
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Row(
+                  children: [
+                    Icon(Icons.check_circle_outline, color: c.success),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _completedPath!,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '파일 열기',
+                      onPressed: () => widget.api('doc_grid', [
+                        'open',
+                        {'path': _completedPath},
+                      ]),
+                      icon: const Icon(Icons.open_in_new),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          Text(
+            '원본은 유지되고 결과는 새 파일로 저장됩니다.',
+            style: TextStyle(color: c.muted, fontSize: 11),
+          ),
+        ],
+      ),
     ),
   );
 }
