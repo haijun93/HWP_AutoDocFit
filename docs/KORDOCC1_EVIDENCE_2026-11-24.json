@@ -1,0 +1,3169 @@
+{
+  "manifest": {
+    "suite": "KORDOCC1-synthetic-v1",
+    "fixtures": [
+      {
+        "id": "doc_basic",
+        "format": "md",
+        "file": "doc_basic.md",
+        "sha256": "110d84c75a679d3f04380482ce92db74c3ccdc57e6a2211039a351890dc26fdd",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "마포구 합성 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              2,
+              "추진 일정"
+            ],
+            [
+              3,
+              "세부 표"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "주민 편의 개선"
+            ],
+            [
+              1,
+              false,
+              "창구 대기시간 단축"
+            ],
+            [
+              1,
+              false,
+              "누리집 안내 정비"
+            ],
+            [
+              0,
+              false,
+              "예산 절감"
+            ],
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              1,
+              true,
+              "1차 점검"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "건수",
+                "비고"
+              ],
+              [
+                "접수",
+                "120",
+                "정상"
+              ],
+              [
+                "처리",
+                "118",
+                "2건 보류"
+              ]
+            ]
+          ],
+          "images": 1,
+          "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝."
+        }
+      },
+      {
+        "id": "doc_tables",
+        "format": "md",
+        "file": "doc_tables.md",
+        "sha256": "320bcf21e76d7291fccedb10b6fffeb51035a4f1d003a207384df91e476b3c86",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "표 중심 문서"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "값"
+              ],
+              [
+                "가",
+                "1"
+              ]
+            ],
+            [
+              [
+                "부서",
+                "담당",
+                "연락처"
+              ],
+              [
+                "기획",
+                "김하나",
+                "02-0000-0001"
+              ],
+              [
+                "총무",
+                "이두리",
+                "02-0000-0002"
+              ],
+              [
+                "복지",
+                "박세나",
+                "02-0000-0003"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+        }
+      },
+      {
+        "id": "doc_text_only",
+        "format": "md",
+        "file": "doc_text_only.md",
+        "sha256": "2a36a40ea3809f3a979ca9e598e63f79dc740cc459d26196a05caed20a0c10cf",
+        "expected": {
+          "headings": [],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+        }
+      },
+      {
+        "id": "headings",
+        "format": "md",
+        "file": "headings.md",
+        "sha256": "239365cd029c4f0f55095e597aca95721a1b33be7871d197dae4dc18d78baaff",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "공공 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              3,
+              "세부 계획"
+            ]
+          ],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "공공 보고서\n추진 배경\n세부 계획\n기본 내용"
+        }
+      },
+      {
+        "id": "public_markers",
+        "format": "md",
+        "file": "public_markers.md",
+        "sha256": "44a7b69062526825f717e89d72369a2e0a4ab609a4ac6a74bd1ae748ac373c7d",
+        "expected": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "추진 방향"
+            ],
+            [
+              1,
+              false,
+              "운영 방식"
+            ],
+            [
+              2,
+              false,
+              "세부 내용"
+            ],
+            [
+              0,
+              false,
+              "참고 사항"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "추진 방향\n운영 방식\n세부 내용\n참고 사항"
+        }
+      },
+      {
+        "id": "bullets",
+        "format": "md",
+        "file": "bullets.md",
+        "sha256": "19f0ac32c7caf79ea92a69d1dbda39c82377c8dfb1307adb978867c5223dd010",
+        "expected": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "일반 하이픈"
+            ],
+            [
+              0,
+              false,
+              "별표 항목"
+            ],
+            [
+              0,
+              false,
+              "추가 항목"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "일반 하이픈\n별표 항목\n추가 항목"
+        }
+      },
+      {
+        "id": "ordered",
+        "format": "md",
+        "file": "ordered.md",
+        "sha256": "4fd0767fd7911d019621d27bfaac867a78a982eaeaeff7b9b1d30e2aaac1be9e",
+        "expected": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "계획 수립\n시범 운영\n전면 시행"
+        }
+      },
+      {
+        "id": "nested",
+        "format": "md",
+        "file": "nested.md",
+        "sha256": "d7093929cd4aed903498408d117954d14c31e4c47a95c33b821a908d5ebcff03",
+        "expected": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "상위 가"
+            ],
+            [
+              1,
+              false,
+              "하위 가"
+            ],
+            [
+              2,
+              false,
+              "세부 가"
+            ],
+            [
+              1,
+              false,
+              "하위 나"
+            ],
+            [
+              0,
+              false,
+              "상위 나"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "상위 가\n하위 가\n세부 가\n하위 나\n상위 나"
+        }
+      },
+      {
+        "id": "emphasis",
+        "format": "md",
+        "file": "emphasis.md",
+        "sha256": "f68a42ff0e83432e4046ca74462f236504ac37cc622f2d9b9ce27ccde6207803",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "강조 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "굵은 칸",
+                "기울인 칸"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "강조 시험\n일반 굵게 기울임 동시 강조 끝\n항목\n설명\n굵은 칸\n기울인 칸"
+        }
+      },
+      {
+        "id": "linebreaks",
+        "format": "md",
+        "file": "linebreaks.md",
+        "sha256": "7c0c7da4f8eb5c6cf40e431613333356bd47e38975cb6cad300c875f60d7ea58",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "줄바꿈 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "줄 하나 줄 둘",
+                "A B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "줄바꿈 시험\n첫째 줄 둘째 줄 셋째 줄 넷째 줄\n항목\n설명\n줄 하나 줄 둘\nA B"
+        }
+      },
+      {
+        "id": "mixed",
+        "format": "md",
+        "file": "mixed.md",
+        "sha256": "e6377a31947c8a039628c405577b8c0fa1d7017580ec9d27ae20b57710e2ac5f",
+        "expected": {
+          "headings": [
+            [
+              1,
+              "2026년 업무 보고"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "접수 120건"
+            ],
+            [
+              1,
+              false,
+              "처리 118건"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "값"
+              ],
+              [
+                "합계",
+                "1,234"
+              ],
+              [
+                "부호",
+                "A | B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "2026년 업무 보고\n한국어 English 1,234 & <태그>\n접수 120건\n처리 118건\n구분\n값\n합계\n1,234\n부호\nA | B\n끝."
+        }
+      }
+    ]
+  },
+  "summary": {
+    "fixtures": 11,
+    "structure_valid": 11,
+    "candidate_repeats_byte_identical": true,
+    "expected_vs_candidate_pass": 10,
+    "generation": [
+      {
+        "fixture": "doc_basic",
+        "valid": true,
+        "entries": 7,
+        "warnings": [
+          "그림 삽입 미지원: Markdown 참조를 일반 글자로 보존했습니다."
+        ],
+        "seconds": 0.040481,
+        "sha256": "f23d74820cfe6646824777bfe03c52a89e2b70292183025ef0d4a7c2f8900481"
+      },
+      {
+        "fixture": "doc_tables",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.025204,
+        "sha256": "fb8ae2989717c7cf7f3a8e7c2e9e2035ee95f90eb90c35099ad688469853ddd7"
+      },
+      {
+        "fixture": "doc_text_only",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.025566,
+        "sha256": "a4937a3bf45aa6f3ba643b569db735178e79eaa822c1aa520f312908ea50605f"
+      },
+      {
+        "fixture": "headings",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.022367,
+        "sha256": "d5daa808fee29468842c913c94b8a67ced71f1bf6c09042e8561c5ab7e49407d"
+      },
+      {
+        "fixture": "public_markers",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.024272,
+        "sha256": "41fb2c8a7ad928d4e8010b886acac33dbb8ce7769111fa20d810c6c3733591ac"
+      },
+      {
+        "fixture": "bullets",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.024611,
+        "sha256": "6204b55eef3d08a150cb1ccf4e01e686cce205fedfb2b056318a5054512fd7c0"
+      },
+      {
+        "fixture": "ordered",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.026073,
+        "sha256": "65082610d171c456708af3e48a63e89e6faccec77154e417a1c4b7d5e485b1f0"
+      },
+      {
+        "fixture": "nested",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.023239,
+        "sha256": "441718c55a43b057829f8f57f1012af3fe3b2ddc70d3494accff8744cd24f307"
+      },
+      {
+        "fixture": "emphasis",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.023871,
+        "sha256": "c2ea6ac4176ec8bd0d15e1e5fb245e715789358087c571d507f45d55a64ea206"
+      },
+      {
+        "fixture": "linebreaks",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.022864,
+        "sha256": "2ff7cff245c1d9dfe4d5eb5b3b0af08dc7f86288edc6708265a9eda6e7e876bd"
+      },
+      {
+        "fixture": "mixed",
+        "valid": true,
+        "entries": 7,
+        "warnings": [],
+        "seconds": 0.024973,
+        "sha256": "fbc9bbd95406fc1292c48703946bdd61509dae51030360e372c1544568a4cf50"
+      }
+    ],
+    "kordoc_version": "4.24.9",
+    "reference_repeats_structure_identical": true,
+    "expected_vs_reference_pass": 5,
+    "reference_vs_candidate_pass": 5,
+    "reference_command": [
+      "generate",
+      "sources/<id>.md",
+      "-o",
+      "reference/<id>.hwpx",
+      "--preset",
+      "보고서",
+      "--silent",
+      "--image-dir",
+      "sources"
+    ]
+  },
+  "expected": {
+    "engine": "합성 정답",
+    "version": "v1",
+    "results": {
+      "doc_basic": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "마포구 합성 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              2,
+              "추진 일정"
+            ],
+            [
+              3,
+              "세부 표"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "주민 편의 개선"
+            ],
+            [
+              1,
+              false,
+              "창구 대기시간 단축"
+            ],
+            [
+              1,
+              false,
+              "누리집 안내 정비"
+            ],
+            [
+              0,
+              false,
+              "예산 절감"
+            ],
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              1,
+              true,
+              "1차 점검"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "건수",
+                "비고"
+              ],
+              [
+                "접수",
+                "120",
+                "정상"
+              ],
+              [
+                "처리",
+                "118",
+                "2건 보류"
+              ]
+            ]
+          ],
+          "images": 1,
+          "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝.",
+          "form": "hwpx"
+        }
+      },
+      "doc_tables": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "표 중심 문서"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "값"
+              ],
+              [
+                "가",
+                "1"
+              ]
+            ],
+            [
+              [
+                "부서",
+                "담당",
+                "연락처"
+              ],
+              [
+                "기획",
+                "김하나",
+                "02-0000-0001"
+              ],
+              [
+                "총무",
+                "이두리",
+                "02-0000-0002"
+              ],
+              [
+                "복지",
+                "박세나",
+                "02-0000-0003"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003",
+          "form": "hwpx"
+        }
+      },
+      "doc_text_only": {
+        "hwpx": {
+          "headings": [],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다.",
+          "form": "hwpx"
+        }
+      },
+      "headings": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "공공 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              3,
+              "세부 계획"
+            ]
+          ],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "공공 보고서\n추진 배경\n세부 계획\n기본 내용",
+          "form": "hwpx"
+        }
+      },
+      "public_markers": {
+        "hwpx": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "추진 방향"
+            ],
+            [
+              1,
+              false,
+              "운영 방식"
+            ],
+            [
+              2,
+              false,
+              "세부 내용"
+            ],
+            [
+              0,
+              false,
+              "참고 사항"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "추진 방향\n운영 방식\n세부 내용\n참고 사항",
+          "form": "hwpx"
+        }
+      },
+      "bullets": {
+        "hwpx": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "일반 하이픈"
+            ],
+            [
+              0,
+              false,
+              "별표 항목"
+            ],
+            [
+              0,
+              false,
+              "추가 항목"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "일반 하이픈\n별표 항목\n추가 항목",
+          "form": "hwpx"
+        }
+      },
+      "ordered": {
+        "hwpx": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "계획 수립\n시범 운영\n전면 시행",
+          "form": "hwpx"
+        }
+      },
+      "nested": {
+        "hwpx": {
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "상위 가"
+            ],
+            [
+              1,
+              false,
+              "하위 가"
+            ],
+            [
+              2,
+              false,
+              "세부 가"
+            ],
+            [
+              1,
+              false,
+              "하위 나"
+            ],
+            [
+              0,
+              false,
+              "상위 나"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "상위 가\n하위 가\n세부 가\n하위 나\n상위 나",
+          "form": "hwpx"
+        }
+      },
+      "emphasis": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "강조 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "굵은 칸",
+                "기울인 칸"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "강조 시험\n일반 굵게 기울임 동시 강조 끝\n항목\n설명\n굵은 칸\n기울인 칸",
+          "form": "hwpx"
+        }
+      },
+      "linebreaks": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "줄바꿈 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "줄 하나 줄 둘",
+                "A B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "줄바꿈 시험\n첫째 줄 둘째 줄 셋째 줄 넷째 줄\n항목\n설명\n줄 하나 줄 둘\nA B",
+          "form": "hwpx"
+        }
+      },
+      "mixed": {
+        "hwpx": {
+          "headings": [
+            [
+              1,
+              "2026년 업무 보고"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "접수 120건"
+            ],
+            [
+              1,
+              false,
+              "처리 118건"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "값"
+              ],
+              [
+                "합계",
+                "1,234"
+              ],
+              [
+                "부호",
+                "A | B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "2026년 업무 보고\n한국어 English 1,234 & <태그>\n접수 120건\n처리 118건\n구분\n값\n합계\n1,234\n부호\nA | B\n끝.",
+          "form": "hwpx"
+        }
+      }
+    }
+  },
+  "candidate": {
+    "engine": "DocFit Markdown",
+    "version": "1",
+    "results": {
+      "bullets": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "일반 하이픈"
+            ],
+            [
+              0,
+              false,
+              "별표 항목"
+            ],
+            [
+              0,
+              false,
+              "추가 항목"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "일반 하이픈\n별표 항목\n추가 항목"
+        }
+      },
+      "doc_basic": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "마포구 합성 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              2,
+              "추진 일정"
+            ],
+            [
+              3,
+              "세부 표"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "주민 편의 개선"
+            ],
+            [
+              1,
+              false,
+              "창구 대기시간 단축"
+            ],
+            [
+              1,
+              false,
+              "누리집 안내 정비"
+            ],
+            [
+              0,
+              false,
+              "예산 절감"
+            ],
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              1,
+              true,
+              "1차 점검"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "건수",
+                "비고"
+              ],
+              [
+                "접수",
+                "120",
+                "정상"
+              ],
+              [
+                "처리",
+                "118",
+                "2건 보류"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n![현황 그림](image1.png)\n끝."
+        }
+      },
+      "doc_tables": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "표 중심 문서"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "값"
+              ],
+              [
+                "가",
+                "1"
+              ]
+            ],
+            [
+              [
+                "부서",
+                "담당",
+                "연락처"
+              ],
+              [
+                "기획",
+                "김하나",
+                "02-0000-0001"
+              ],
+              [
+                "총무",
+                "이두리",
+                "02-0000-0002"
+              ],
+              [
+                "복지",
+                "박세나",
+                "02-0000-0003"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+        }
+      },
+      "doc_text_only": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+        }
+      },
+      "emphasis": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "강조 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "굵은 칸",
+                "기울인 칸"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "강조 시험\n일반 굵게 기울임 동시 강조 끝\n항목\n설명\n굵은 칸\n기울인 칸"
+        }
+      },
+      "headings": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "공공 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              3,
+              "세부 계획"
+            ]
+          ],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "공공 보고서\n추진 배경\n세부 계획\n기본 내용"
+        }
+      },
+      "linebreaks": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "줄바꿈 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "줄 하나 줄 둘",
+                "A B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "줄바꿈 시험\n첫째 줄 둘째 줄 셋째 줄 넷째 줄\n항목\n설명\n줄 하나 줄 둘\nA B"
+        }
+      },
+      "mixed": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "2026년 업무 보고"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "접수 120건"
+            ],
+            [
+              1,
+              false,
+              "처리 118건"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "값"
+              ],
+              [
+                "합계",
+                "1,234"
+              ],
+              [
+                "부호",
+                "A | B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "2026년 업무 보고\n한국어 English 1,234 & <태그>\n접수 120건\n처리 118건\n구분\n값\n합계\n1,234\n부호\nA | B\n끝."
+        }
+      },
+      "nested": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "상위 가"
+            ],
+            [
+              1,
+              false,
+              "하위 가"
+            ],
+            [
+              2,
+              false,
+              "세부 가"
+            ],
+            [
+              1,
+              false,
+              "하위 나"
+            ],
+            [
+              0,
+              false,
+              "상위 나"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "상위 가\n하위 가\n세부 가\n하위 나\n상위 나"
+        }
+      },
+      "ordered": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              true,
+              "계획 수립"
+            ],
+            [
+              0,
+              true,
+              "시범 운영"
+            ],
+            [
+              0,
+              true,
+              "전면 시행"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "계획 수립\n시범 운영\n전면 시행"
+        }
+      },
+      "public_markers": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "추진 방향"
+            ],
+            [
+              1,
+              false,
+              "운영 방식"
+            ],
+            [
+              2,
+              false,
+              "세부 내용"
+            ],
+            [
+              0,
+              false,
+              "참고 사항"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "추진 방향\n운영 방식\n세부 내용\n참고 사항"
+        }
+      }
+    }
+  },
+  "reference": {
+    "engine": "kordoc",
+    "version": "4.24.9",
+    "results": {
+      "bullets": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "일반 하이픈"
+            ],
+            [
+              1,
+              false,
+              "별표 항목"
+            ],
+            [
+              0,
+              false,
+              "추가 항목"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "일반 하이픈\n별표 항목\n추가 항목"
+        }
+      },
+      "doc_basic": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "마포구 합성 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ],
+            [
+              2,
+              "추진 일정"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "주민 편의 개선"
+            ],
+            [
+              1,
+              false,
+              "창구 대기시간 단축"
+            ],
+            [
+              1,
+              false,
+              "누리집 안내 정비"
+            ],
+            [
+              0,
+              false,
+              "예산 절감"
+            ],
+            [
+              0,
+              false,
+              "계획 수립"
+            ],
+            [
+              0,
+              false,
+              "시범 운영"
+            ],
+            [
+              1,
+              false,
+              "1차 점검"
+            ],
+            [
+              0,
+              false,
+              "전면 시행"
+            ],
+            [
+              0,
+              false,
+              "세부 표"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "건수",
+                "비고"
+              ],
+              [
+                "접수",
+                "120",
+                "정상"
+              ],
+              [
+                "처리",
+                "118",
+                "2건 보류"
+              ]
+            ]
+          ],
+          "images": 1,
+          "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝."
+        }
+      },
+      "doc_tables": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "표 중심 문서"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "값"
+              ],
+              [
+                "가",
+                "1"
+              ]
+            ],
+            [
+              [
+                "부서",
+                "담당",
+                "연락처"
+              ],
+              [
+                "기획",
+                "김하나",
+                "02-0000-0001"
+              ],
+              [
+                "총무",
+                "이두리",
+                "02-0000-0002"
+              ],
+              [
+                "복지",
+                "박세나",
+                "02-0000-0003"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+        }
+      },
+      "doc_text_only": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [],
+          "tables": [],
+          "images": 0,
+          "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+        }
+      },
+      "emphasis": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "강조 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "굵은 칸",
+                "기울인 칸"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "강조 시험\n일반 굵게 기울임 동시 강조 끝\n항목\n설명\n굵은 칸\n기울인 칸"
+        }
+      },
+      "headings": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "공공 보고서"
+            ],
+            [
+              2,
+              "추진 배경"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "세부 계획"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "공공 보고서\n추진 배경\n세부 계획\n기본 내용"
+        }
+      },
+      "linebreaks": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "줄바꿈 시험"
+            ]
+          ],
+          "lists": [],
+          "tables": [
+            [
+              [
+                "항목",
+                "설명"
+              ],
+              [
+                "줄 하나 줄 둘",
+                "A B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "줄바꿈 시험\n첫째 줄\n둘째 줄\\\n셋째 줄<br>넷째 줄\n항목\n설명\n줄 하나 줄 둘\nA B"
+        }
+      },
+      "mixed": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [
+            [
+              1,
+              "2026년 업무 보고"
+            ]
+          ],
+          "lists": [
+            [
+              0,
+              false,
+              "접수 120건"
+            ],
+            [
+              1,
+              false,
+              "처리 118건"
+            ]
+          ],
+          "tables": [
+            [
+              [
+                "구분",
+                "값"
+              ],
+              [
+                "합계",
+                "1,234"
+              ],
+              [
+                "부호",
+                "A | B"
+              ]
+            ]
+          ],
+          "images": 0,
+          "text": "2026년 업무 보고\n한국어 English 1,234 & <태그>\n접수 120건\n처리 118건\n구분\n값\n합계\n1,234\n부호\nA | B\n끝."
+        }
+      },
+      "nested": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "상위 가"
+            ],
+            [
+              1,
+              false,
+              "하위 가"
+            ],
+            [
+              2,
+              false,
+              "세부 가"
+            ],
+            [
+              1,
+              false,
+              "하위 나"
+            ],
+            [
+              0,
+              false,
+              "상위 나"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "상위 가\n하위 가\n세부 가\n하위 나\n상위 나"
+        }
+      },
+      "ordered": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "계획 수립"
+            ],
+            [
+              0,
+              false,
+              "시범 운영"
+            ],
+            [
+              0,
+              false,
+              "전면 시행"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "계획 수립\n시범 운영\n전면 시행"
+        }
+      },
+      "public_markers": {
+        "hwpx": {
+          "form": "hwpx",
+          "headings": [],
+          "lists": [
+            [
+              0,
+              false,
+              "추진 방향"
+            ],
+            [
+              1,
+              false,
+              "운영 방식"
+            ],
+            [
+              2,
+              false,
+              "세부 내용"
+            ],
+            [
+              3,
+              false,
+              "참고 사항"
+            ]
+          ],
+          "tables": [],
+          "images": 0,
+          "text": "추진 방향\n운영 방식\n세부 내용\n참고 사항"
+        }
+      }
+    }
+  },
+  "expected_vs_candidate": [
+    {
+      "fixture": "bullets",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_basic",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": 0.0,
+        "recall": 1.0,
+        "precision": 0.8689655172413793,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": false,
+        "recall": true,
+        "precision": false,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_tables",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_text_only",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "emphasis",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "headings",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "linebreaks",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "mixed",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "nested",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "ordered",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "public_markers",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    }
+  ],
+  "expected_vs_reference": [
+    {
+      "fixture": "bullets",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.6666666666666666,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_basic",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 0.75,
+        "list_text": 1.0,
+        "list_shape": 0.5,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": 1.0,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": false,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": true,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_tables",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_text_only",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "emphasis",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "headings",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 0.6666666666666666,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": false,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "linebreaks",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 0.8484848484848485,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": false,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "mixed",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "nested",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "ordered",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "public_markers",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.75,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    }
+  ],
+  "reference_vs_candidate": [
+    {
+      "fixture": "bullets",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.6666666666666666,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_basic",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 0.8888888888888888,
+        "list_shape": 0.4444444444444444,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": 0.0,
+        "recall": 1.0,
+        "precision": 0.8689655172413793,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": false,
+        "list_shape": false,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": false,
+        "recall": true,
+        "precision": false,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_tables",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "doc_text_only",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "emphasis",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "headings",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 0.0,
+        "list_shape": 0.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": false,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "linebreaks",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 0.8484848484848485,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": null,
+        "list_shape": null,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": false,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "mixed",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": 1.0,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": 1.0,
+        "table_shape": 1.0,
+        "table_cells": 1.0,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": true,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": true,
+        "table_shape": true,
+        "table_cells": true,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "nested",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 1.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": true,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": true
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "ordered",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.0,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    },
+    {
+      "fixture": "public_markers",
+      "group": "md",
+      "form": "hwpx",
+      "missing": false,
+      "metrics": {
+        "heading": null,
+        "list_text": 1.0,
+        "list_shape": 0.75,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": 1.0,
+        "precision": 1.0,
+        "text_method": "sequence"
+      },
+      "verdict": {
+        "heading": null,
+        "list_text": true,
+        "list_shape": false,
+        "table_count": null,
+        "table_shape": null,
+        "table_cells": null,
+        "images": null,
+        "recall": true,
+        "precision": true,
+        "pass": false
+      },
+      "ref_form": "hwpx",
+      "cand_form": "hwpx"
+    }
+  ],
+  "com": [
+    {
+      "fixture": "doc_basic",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "doc_tables",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "doc_text_only",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "headings",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "public_markers",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "bullets",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "ordered",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "nested",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "emphasis",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "linebreaks",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    },
+    {
+      "fixture": "mixed",
+      "hancom_version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "fidelity": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      }
+    }
+  ],
+  "full_suite": {
+    "commit": "af6f8ce37bb31be5dc76804a52ce8c10e3584246",
+    "command": [
+      "python",
+      "-m",
+      "unittest",
+      "discover",
+      "-s",
+      "tests"
+    ],
+    "returncode": 0,
+    "seconds": 998.094,
+    "source_tree": "6e2c894b11f6b9d73c20edd7a85ae8a0ea500538",
+    "equivalent_commit": "45317d65",
+    "complete": true,
+    "tests": 3609,
+    "skipped": 28,
+    "failures": 0,
+    "errors": 0,
+    "unittest_seconds": 981.618,
+    "warnings": [
+      "logging: format argument xref_issue_nr: %d requires a real number, not str (2회)",
+      "atexit: 임시 timeline-content.sqlite 잠금으로 인한 정리 실패 (1건)",
+      "별도 기준선 재현 및 원인 확인 못 함"
+    ]
+  },
+  "existing_compare_cli": {
+    "returncode": 1,
+    "same_rows_as_benchmark": true
+  }
+}

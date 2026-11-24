@@ -52,7 +52,7 @@ def _inline_text(text: str) -> str:
 
 # ───────────────────────── 마크다운 ─────────────────────────
 _HEAD = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-_LIST = re.compile(r"^(\s*)([-*+]|\d+[.)])\s+(.*)$")
+_LIST = re.compile(r"^(\s*)([□ㅇ※]|[-*+]|\d+[.)])\s+(.*)$")
 _SEP = re.compile(r"^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$")
 
 
@@ -137,17 +137,25 @@ def _local(tag: str) -> str:
 
 
 _STYLE_HEADING = re.compile(r"^(?:개요|제목|heading|outline)\s*(\d)$", re.I)
-_MARK_BULLET = re.compile(r"^(\s*)([•·‣▪○●■□◦◆◇\-*]|[ㅇ-])\s+(.*)$")
+_MARK_BULLET = re.compile(r"^(\s*)([•·‣▪○●■□◦◆◇※\-*]|[ㅇ-])\s+(.*)$")
 _MARK_NUMBER = re.compile(r"^(\s*)(\d+[.)]|[가-힣][.)]|\(\d+\)|[①-⑳])\s+(.*)$")
 
 
 def _paragraph_text(p) -> str:
     parts = []
-    for el in p.iter():
-        if _local(el.tag) == "t" and el.text:
+
+    def visit(el, in_text=False):
+        in_text = in_text or _local(el.tag) == "t"
+        if in_text and el.text:
             parts.append(el.text)
-        elif _local(el.tag) in ("lineBreak", "tab"):
+        if _local(el.tag) in ("lineBreak", "tab", "fwSpace", "nbSpace"):
             parts.append(" ")
+        for child in el:
+            visit(child, in_text)
+            if in_text and child.tail:
+                parts.append(child.tail)
+
+    visit(p)
     return "".join(parts)
 
 
@@ -171,7 +179,9 @@ def _header_info(zf: zipfile.ZipFile) -> tuple[dict[str, int], dict[str, dict]]:
                 info = {}
                 for child in el.iter():
                     if _local(child.tag) == "heading":
-                        info = {"kind": (child.get("type") or "").upper(), "level": int(child.get("level") or 0)}
+                        info.update(kind=(child.get("type") or "").upper(), level=int(child.get("level") or 0))
+                    elif _local(child.tag) == "left" and "left" not in info:
+                        info["left"] = int(child.get("value") or 0)
                 para_pr[el.get("id", "")] = info
     return style_level, para_pr
 
@@ -184,8 +194,21 @@ def extract_hwpx(path: str | Path) -> dict[str, Any]:
         sections = sorted((n for n in zf.namelist() if re.fullmatch(r"Contents/section\d+\.xml", n)),
                           key=lambda n: int(re.findall(r"\d+", n)[-1]))
         bin_count = len([n for n in zf.namelist() if n.startswith("BinData/") and not n.endswith("/")])
-        for name in sections:
-            root = ET.fromstring(zf.read(name))
+        roots = [ET.fromstring(zf.read(name)) for name in sections]
+        # 문자 기호 목록의 실제 들여쓰기는 본문 빈칸 대신 문단 여백일 수도 있다.
+        # 사용된 여백의 오름차순을 깊이로 정규화한다. 기호 유형은 바꾸지 않는다.
+        lefts = set()
+        for root in roots:
+            for p in root.iter():
+                if _local(p.tag) != "p" or any(_local(n.tag) == "tbl" for n in p.iter()):
+                    continue
+                raw = _paragraph_text(p)
+                if _MARK_BULLET.match(raw) or _MARK_NUMBER.match(raw):
+                    lefts.add(para_pr.get(p.get("paraPrIDRef", ""), {}).get("left", 0))
+        ranks = {left: depth for depth, left in enumerate(sorted(lefts))}
+        for info in para_pr.values():
+            info["fallback_depth"] = ranks.get(info.get("left", 0), 0)
+        for root in roots:
             _walk_hwpx(root, style_level, para_pr, headings, lists, tables, texts, in_table=False)
             images += sum(1 for el in root.iter() if _local(el.tag) == "pic")
     if images == 0:
@@ -198,6 +221,17 @@ def _walk_hwpx(node, style_level, para_pr, headings, lists, tables, texts, in_ta
     for child in node:
         tag = _local(child.tag)
         if tag == "tbl" and not in_table:
+            # kordoc 보고서 프리셋의 제목 장식 표. h1은 1칸, h2는
+            # 장 번호·빈칸·이름 붙은 제목 칸이다. 생성된 장 번호는 제외한다.
+            cells = [c for c in child.iter() if _local(c.tag) == "tc"]
+            marked = [(c, re.fullmatch(r"__kordoc_h([1-6])", c.get("name", ""))) for c in cells]
+            marked = [(c, m) for c, m in marked if m]
+            if len(marked) == 1 and len([c for c in child if _local(c.tag) == "tr"]) == 1:
+                cell, marker = marked[0]
+                text = " ".join(_paragraph_text(p).strip() for p in cell.iter() if _local(p.tag) == "p").strip()
+                headings.append([int(marker[1]), text])
+                texts.append(text)
+                continue
             rows = []
             for tr in (c for c in child.iter() if _local(c.tag) == "tr"):
                 row = []
@@ -240,7 +274,7 @@ def _hwpx_paragraph(p, style_level, para_pr, headings, lists, tables, texts) -> 
     for pattern, ordered in ((_MARK_NUMBER, True), (_MARK_BULLET, False)):
         m = pattern.match(raw)
         if m:
-            depth = len(m.group(1).replace("\t", "    ")) // 2
+            depth = len(m.group(1).replace("\t", "    ")) // 2 if m.group(1) else info.get("fallback_depth", 0)
             lists.append([depth, ordered, m.group(3).strip()])
             texts.append(m.group(3).strip())
             return
