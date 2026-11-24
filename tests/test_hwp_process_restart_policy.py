@@ -9,9 +9,15 @@ class RestartBetweenDocumentsPolicyTests(unittest.TestCase):
         self.assertFalse(restart_between_documents_enabled(1, env_value="1"))
         self.assertFalse(restart_between_documents_enabled(0, env_value="1"))
 
-    def test_multiple_documents_do_not_restart_by_default(self):
+    def test_multiple_documents_restart_by_default(self):
         with patch.dict("os.environ", {}, clear=True):
-            self.assertFalse(restart_between_documents_enabled(2))
+            self.assertTrue(restart_between_documents_enabled(2))
+
+    def test_default_skips_when_auto_close_off_or_compare_view(self):
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertFalse(restart_between_documents_enabled(3, auto_close=False))
+            self.assertFalse(restart_between_documents_enabled(3, compare_view=True))
+            self.assertTrue(restart_between_documents_enabled(3, auto_close=False, env_value="1"))
 
     def test_environment_variable_can_disable_restart(self):
         for value in ("0", "false", "NO", "off", ""):

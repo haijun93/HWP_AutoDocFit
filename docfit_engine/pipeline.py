@@ -830,7 +830,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         # alive. Start each next input in a fresh COM process so its HWPX
                         # defaults and local style table do not depend on the prior file.
                         from docfit_core.hwp_process import restart_between_documents_enabled
-                        restart_enabled = restart_between_documents_enabled(total)
+                        restart_enabled = restart_between_documents_enabled(
+                            total, auto_close=bool(자동닫기_설정), compare_view=bool(비교보기_사용))
                         if restart_enabled:
                             from time import perf_counter
                             restart_started = perf_counter()
@@ -857,8 +858,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             )
                         else:
                             로그(
-                                "문서 간 한/글 재시작은 기본 비활성화 상태입니다. "
-                                "DOCFIT_RESTART_BETWEEN_DOCS=1로 활성화, 0으로 비활성화할 수 있습니다."
+                                "문서 간 한/글 재시작을 건너뜁니다(자동 닫기 끔 또는 비교 보기). "
+                                "DOCFIT_RESTART_BETWEEN_DOCS=1로 강제, 0으로 해제할 수 있습니다."
                             )
 
                 로그("=" * 45)
