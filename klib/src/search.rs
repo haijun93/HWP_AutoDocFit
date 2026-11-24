@@ -679,6 +679,21 @@ impl SearchIndex {
                 clauses.push((Occur::Must, Box::new(tantivy::query::InvertedIndexRangeQuery::new(std::ops::Bound::Unbounded, std::ops::Bound::Excluded(tantivy::Term::from_field_i64(self.fields.mtime,value))))));
             }
         }
+        // 콘텐츠 모드에서는 문서 범위를 후보 상한보다 먼저 적용한다. 폴더별 검색에서
+        // 전역 상위 후보를 먼저 자르면 뒤쪽 폴더 문서가 결과에서 빠질 수 있다.
+        if let Some(scope) = scope {
+            if !scope.roots.is_empty() {
+                let roots: Result<Vec<(Occur, Box<dyn Query>)>, tantivy::TantivyError> = scope.roots.iter().map(|root| {
+                    let pattern = format!(r"(?i)^{}([/\\\\].*)?$", regex::escape(root));
+                    Ok((Occur::Should, Box::new(tantivy::query::RegexQuery::from_pattern(&pattern, self.fields.path)?) as Box<dyn Query>))
+                }).collect();
+                clauses.push((Occur::Must, Box::new(BooleanQuery::new(roots?))));
+            }
+            if let Some(allowed) = scope.allowed {
+                let terms = allowed.iter().map(|path| tantivy::Term::from_field_text(self.fields.path, path));
+                clauses.push((Occur::Must, Box::new(tantivy::query::TermSetQuery::new(terms))));
+            }
+        }
         q=Box::new(BooleanQuery::new(clauses));
         let top=if reusable { initial.unwrap().into_iter().take(candidate_limit).collect() } else { searcher.search(&q,&TopDocs::with_limit(candidate_limit).order_by_score())? };
         profile_elapsed("tantivy_ms", phase);
