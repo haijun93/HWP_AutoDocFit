@@ -175,16 +175,25 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 상태(f"{파일명} : {확장자[1:].upper()} → HWPX 변환 중")
                 작업_임시폴더 = tempfile.TemporaryDirectory(prefix="docfit_외부문서_")
                 작업파일경로 = Path(작업_임시폴더.name) / f"{파일경로.stem}.hwpx"
-                변환문서_열림 = 외부문서_hwpx로_변환(파일경로, 확장자, 작업파일경로)
-                if 검수_사용:
-                    검사정보, 원본_구조 = validate_and_inspect_hwpx(작업파일경로)
-                else:
-                    검사정보 = validate_hwpx(작업파일경로)
-                로그(f"변환 완료: {작업파일경로.name} / 압축 항목 {검사정보['entry_count']}개")
-                if not 변환문서_열림:
-                    단계표시("열기")
-                    if 한글_문서_열기(hwp, 작업파일경로, "HWPX", "forceopen:true") is False:
-                        raise RuntimeError(f"변환한 문서를 열지 못했습니다: {파일}")
+                from docfit_engine.context import current_context
+                변환_콜백 = current_context().callbacks
+                변환_단계 = f"{확장자[1:].upper()} → HWPX 변환"
+                변환_콜백.on_stage_enter(변환_단계)
+                try:
+                    변환문서_열림 = 외부문서_hwpx로_변환(파일경로, 확장자, 작업파일경로)
+                    if 검수_사용:
+                        검사정보, 원본_구조 = validate_and_inspect_hwpx(작업파일경로)
+                    else:
+                        검사정보 = validate_hwpx(작업파일경로)
+                    로그(f"변환 완료: {작업파일경로.name} / 압축 항목 {검사정보['entry_count']}개")
+                    if not 변환문서_열림:
+                        단계표시("열기")
+                        if 한글_문서_열기(hwp, 작업파일경로, "HWPX", "forceopen:true") is False:
+                            raise RuntimeError(f"변환한 문서를 열지 못했습니다: {파일}")
+                except BaseException as error:
+                    변환_콜백.on_stage_error(변환_단계, error)
+                    raise
+                변환_콜백.on_stage_exit(변환_단계, True)
                 # 원본이 HWP/HWPX가 아니므로 좌우 비교 보기 대상에서는 제외한다.
             if (작업_모드 in ('spacing', 'all', 'format') and
                     stage_enabled(선택_세부작업, 'cell_image_to_bg', 작업_모드)):

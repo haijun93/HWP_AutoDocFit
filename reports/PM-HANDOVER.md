@@ -1,3 +1,7 @@
+# HANG1 인계 (2026-11-24)
+
+보고서형 합성 TXT는 이번 PC에서 약 14분 만에 정상 완료했다. 지연의 대부분은 본문 자간·단어 분리 단계(전체 입력 792.1초, 352,420 COM 호출)였고, 앞 3장 절반 입력은 389.6초·176,278회였다. 15분 타임아웃·단계 로그·창/모달 스냅샷을 추가했다. 모달은 관찰되지 않았고, 최소 정지 구조는 재현되지 않았다. 회귀시험 및 미확인 범위는 `docs/HANG1_RESULT_2026-11-24.md`를 확인한다. 현재 작업은 feature/HANG1에서 결과 문서·픽스처·재현기·시험을 로컬 커밋하는 단계이며 푸시하지 않는다.
+
 # OUTLINERQA1 인계 (2026-11-23)
 
 `feature/OUTLINERQA1`에서 Logseq 공개 기능 기준과 Flutter·Win32·엔진 차이를 문서화했다(`docs/OUTLINERQA1_RESULT_2026-11-22.md`). Flutter Tab/Shift+Tab이 입력 문자를 저장하지 않던 결함을 먼저 실패 시험으로 재현하고 `_setTextAndEdit` 경로로 수정했다. Core 70+CLI 1, Win32 124, Flutter 위젯 6, Python 서비스 9 통과; `flutter analyze` 지적 0. 실제 한글 IME, 설치본의 `outliner_win.exe`, 다중 선택·드래그·undo/redo·블록 참조 UI·Flutter 전역 검색/역링크는 남았다. Logseq Windows 기본 블록 이동은 Alt+Shift+위/아래이고 현재 Win32 Alt+위/아래와 달라 실기 UX 판정이 필요하다. 푸시·태그·한/글 COM·실행 앱 접근 없음.

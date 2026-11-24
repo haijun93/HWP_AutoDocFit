@@ -6,6 +6,7 @@ from pathlib import Path
 import runpy
 import shutil
 import sys
+from datetime import datetime, timezone
 from time import perf_counter
 
 
@@ -14,6 +15,8 @@ def main():
     parser.add_argument('source', type=Path)
     parser.add_argument('--mode', choices=('spacing', 'unify', 'format', 'all'), required=True)
     parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--trace-jsonl', type=Path,
+                        help='단계 진입·종료를 실행 중 JSONL 파일에 즉시 기록한다.')
     args = parser.parse_args()
     if sys.platform != 'win32':
         parser.error('Windows + 한/글 COM 환경이 필요합니다.')
@@ -36,12 +39,30 @@ def main():
     namespace = ns['작업_실행'].__globals__
     events = []
     messages = []
-    callbacks = PipelineCallbacks(event=events.append, log=messages.append)
+    def trace(kind, **fields):
+        if args.trace_jsonl is None:
+            return
+        record = {'time': datetime.now(timezone.utc).isoformat(), 'kind': kind, **fields}
+        args.trace_jsonl.parent.mkdir(parents=True, exist_ok=True)
+        with args.trace_jsonl.open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + '\n')
+            stream.flush()
+
+    callbacks = PipelineCallbacks(
+        event=events.append, log=messages.append,
+        progress=lambda name: trace('stage_mark', stage=name),
+        on_stage_enter=lambda name: trace('stage_start', stage=name),
+        on_stage_exit=lambda name, ok: trace('stage_end', stage=name, ok=ok),
+        on_stage_error=lambda name, error: trace(
+            'stage_error', stage=name, error=f'{type(error).__name__}: {error}'),
+    )
     options = RunOptions(mode=args.mode, verify_result=False, autoclose=True)
     context = session_for(namespace).new_context(options=options, callbacks=callbacks)
     started = perf_counter()
+    trace('pipeline_start', source=str(source), copy=str(copied), mode=args.mode)
     ns['작업_실행']([str(copied)], context=context, callbacks=callbacks,
                   표준서식=args.mode in ('all', 'format'), 준말_등록={})
+    trace('pipeline_return')
     errors = [event for event in events if event[0] in ('fatal_error', 'document_error')]
     saved = [event for event in events if event[0] == 'saved']
     outputs = [Path(event[2]) for event in saved]
