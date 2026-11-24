@@ -20,6 +20,7 @@
 | nb_store.rs | share_mode(0) 이전 잠금은 cfg(windows). 비Windows는 파일 열기만 해서 상호 배제 보장 없음 | search-content에서 제외. 이식 시 File::try_lock 등 실제 프로세스 잠금을 구현·경합 시험 |
 | search.rs | 재색인 잠금 share_mode(0), 비Windows는 파일 열기만 함. search_notebook/replace_notebook_source가 crate::notebook 자료형 참조 | Windows 잠금은 유지. 비Windows 재색인에 실제 파일 잠금 필요. notebook용 메서드만 cfg(windows) 또는 공용 자료형 모듈로 분리 |
 | search_cli.rs | std::io JSONL 자체는 공용. 기본 index_dir가 data_dir + 역슬래시 | PathBuf::join 사용. KLIB_TANTIVY_DIR 명시 경로 우선. 경로/roots 비교의 대소문자 규칙을 플랫폼별로 분리 |
+| search_content_policy.rs | 이번에 추가한 std·Tantivy 기반 순위/캐시. 직접 Win32 없음 | search.rs의 하위 모듈로 함께 보존. roots의 Windows 대소문자 규칙은 search_cli와 같이 후속 점검 |
 | content.rs | 직접 Win32 없음. ZIP/XML·추출 모듈 사용. 검색 블록·지문은 공용 | extract·hwp5·classify_levels·unify_marker·legacy_records와 필요한 JSON 모듈을 함께 포함 |
 
 ## 권장 최소 후속 변경
@@ -31,3 +32,5 @@
 5. 맥에서 `cargo build --release --bin klib`, 공용 단위 시험, 합성 Markdown·TXT·HWPX JSONL 색인/검색/삭제/재시작을 실행한다. macOS 빌드 가능 여부는 이 단계 통과 전까지 **확인 못 함**이다.
 
 의존성 target 분리 성공만으로 맥 빌드 성공이나 완전한 이식을 주장하지 않는다. macOS ARM64 링커, bundled SQLite·zstd C 컴파일, 파일 잠금·경로 의미, Python client의 실행 파일 탐색은 맥 실기기 검증 항목이다.
+
+Windows 최종 검증: release 성공, Python 전체 3,605개(20제외) OK. cargo는 시험 환경 panic=unwind로 169통과·4실패·1제외였으며 실패 4개 모두 변경 전 기준에서도 재현됐다. 기존 실패를 의존성 target 분리 성공의 근거로 숨기지 않는다. 상세는 `SRCH6_RESULT_2026-11-24.md`와 `SRCH6_VALIDATION_2026-11-24.json`을 본다.

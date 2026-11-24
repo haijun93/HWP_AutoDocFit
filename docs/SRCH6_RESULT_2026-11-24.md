@@ -1,6 +1,6 @@
 # SRCH6 결과 — warm 지연·순위 개선과 맥 빌드 가능성
 
-검증 진행 중인 중간 기록이다. 최종 시험 결과를 뒤에 보완한다.
+구현·성능·합성 품질 검증과 로컬 커밋까지 완료했다. 기본 backend 승격은 불가하다. Python 전체는 통과했으나 cargo에는 기준선에서도 재현되는 기존 실패 4개가 남아 있다.
 
 - 기준: `feature/SRCH5`의 `3f65771d`, 작업: `feature/SRCH6`. 처음 작업 폴더가 가리키던 다른 커밋은 미커밋 변경이 없는 것을 확인한 뒤 지정 기준으로 맞췄다.
 - Windows x64·Python 3.15.2·로컬 MinGW release. 합성 생성 시드 `20261124`. 한/글 COM·사용자 문서·GitLab·푸시는 사용하지 않았다.
@@ -65,6 +65,8 @@ SRCH5는 reader와 writer를 이미 재사용했다. 병목은 최종 응답 20�
 
 Rust 선택 모드만 위계 수준 → 가중 발생 수 → BM25 → 최신 → 경로 순으로 정렬한다. 발생 수는 stored 본문을 전부 읽지 않고 postings의 term_freq에서 모은다. 수준 1 제목 8·수준 2 제목 4·그 밖 위계 2·본문 1의 가중치를 둔다. 두 글자 한글 질의에서는 실제 토큰 발생 수, 긴 어절에서는 bigram 발생 수 근사값이다. 문서 AND의 교집합은 모든 단어로 구하되 대표 순위/위치는 기존처럼 첫 단어의 후보를 사용한다. 이 한계도 실제 사용자 평가에서 확인해야 한다.
 
+응답의 `score`는 기존 BM25 값을 유지하고, 새 가중 발생 수는 내부 순위 신호로만 사용한다. 따라서 최종 결과가 `score` 단독 내림차순인 것은 아니다.
+
 평가를 기존 3질의/120문서에서 **18질의/405문서**로 확장했다. 기존 3개를 보존하고 제목 일치·본문 밀도·위계 깊이·AND·phrase를 각 3개 추가했다. 질의마다 정답 4개와 단발성 참고 문서, AND 단일어·phrase 비연속 음성 대조군을 뒀다. 파일 이름에는 질의어를 넣지 않았다. 정답 내부 순서 일치율은 기대 정답 4개의 6쌍 중 순서를 지킨 비율이다. Recall@10은 상위 10개에 든 정답 비율, MRR은 첫 정답 순위의 역수다.
 
 | 유형(각 3질의) | 질의 | SQLite Recall@10 / MRR / 순서 | Rust 전 Recall@10 / MRR / 순서 | Rust 후 Recall@10 / MRR / 순서 |
@@ -98,8 +100,19 @@ Rust 선택 모드만 위계 수준 → 가중 발생 수 → BM25 → 최신 �
 
 Windows 전용 의존과 경로·잠금·서비스 결합을 [맥 가능성 설계](SRCH6_MAC_FEASIBILITY_2026-11-24.md)에 목록화했다. `windows-sys`만 `[target.'cfg(windows)'.dependencies]`로 옮겼고 Windows release는 성공했다. 실제 맥 빌드 성공 여부는 **확인 못 함**이며 후속 맥 카드가 필요하다.
 
-- Windows release 성공. 첫 개선 빌드의 `Postings` trait import 위치 오류는 고친 뒤 빌드했다. 기존 deprecated·dead-code 경고는 남았다.
+- Windows release 성공. 검증한 최종 실행 파일 SHA-256은 `322ED0EC23AB564134D21F7CA3525085B4E4CD5F51DD43EFCAEE482241176519`다. 첫 개선 빌드의 `Postings` trait import 위치 오류는 고친 뒤 빌드했다. 집합 캐시 검토 중 동의어 무효화를 보완하려고 진행 중 빌드 1회를 중단하고 최종 빌드했다. 기존 deprecated·dead-code 경고는 남았다.
 - 관련 Python 시험 최종 26개 OK. 새 회귀 시험은 제목/밀도 순위·페이지/roots·profile 응답·캐시 갱신/삭제/재시작·동의어 변경·실시간 날짜 필터·문단 분산 AND/phrase·평가 유형/지표를 다룬다.
-- 전체 cargo 시험 실행 중, Python 전체 시험 대기. 최종 결과를 여기에 보완한다.
+- 전체 Python: `python -m unittest discover -s tests`, **3,605개 실행·20개 제외·OK, 종료 코드 0**, unittest 본체 1,024.503초(프로세스 전체 1,038.756초). 한/글 COM 생성 차단이 활성화된 환경에서 실행했고 차단 요청도 0건이었다. `KLIB_EXE`는 보존한 최종 release 실행 파일을 사용했다. 시험 중 생성된 fixture 4개는 원복했다. 종료 후 기존 샌드박스 SQLite 잠금에 따른 atexit `PermissionError`와 ResourceWarning이 출력됐으나 unittest 결과·종료 코드는 성공이었다.
+- cargo 전체: 기본 release 시험의 첫 시도는 `panic=abort`/`unwind` 의존성 충돌로 시험 전에 실패했다. 충돌 원인 확인 후 초기 기준선 빌드도 중단하고 시험 환경에서만 `CARGO_PROFILE_RELEASE_PANIC=unwind`를 설정해 본시험·기준선을 다시 검증했다. 본시험 명령은 `cargo test --release --no-fail-fast --manifest-path klib/Cargo.toml -- --test-threads=1`이다. **169개 통과·4개 실패·1개 제외, 종료 코드 101**. 라이브러리 19개·HWP5 22개·스캔 3개는 모두 통과했고 `test_klib`는 125통과·4실패·1제외였다.
+- 기존 실패 확인: 변경 전 `3f65771d`를 별도 사본으로 추출해 같은 MinGW·unwind 시험 환경에서 대조했다. 검색 시험 25개는 21통과·3실패·1제외였고, 제목 점수 시험을 따로 실행하니 나머지 1실패도 재현됐다. **현재 cargo 실패 4개의 이름이 기준선 실패 4개와 모두 일치**했다. 기존 시험을 수정하거나 제외해 통과시키지 않았다. 판정용 전체 Python 중에는 다른 시험·빌드를 실행하지 않았고, 30분 기록 주기에 진행 문서 1줄만 커밋했다(검증 대상 소스는 `988e58c2`로 고정).
 
-**기본 backend 승격은 보류한다.** warm·합성 품질의 목표는 개선했으나, 실제 사용자 판정 정답·실제 한글/OCR·페이지/표 좌표·설치본·폐쇄망·맥 빌드는 이 카드에서 확인하지 않았다. 큰 코퍼스의 후보 상한과 검색/색인 직렬화도 남아 있다. SQLite 기본값을 유지하며 공개 배포·태그·푸시는 하지 않는다.
+| 기존 cargo 실패 | 재현 원인·관찰 |
+|---|---|
+| `content::block_tests::heading_hit_ranks_before_body_only_hit` | 제목·본문 점수가 같다는 기대와 실제 8.993946 / 4.987192가 불일치. 기준선에서도 같은 실패 |
+| `search::tests::fast_columns_handle_missing_pages_and_multiple_segments` | 참조 검색이 v5 `node_id`·`locations` 등을 채우지 않은 전체 구조 비교 |
+| `search::tests::schema_change_keeps_result_set_and_order_for_flat_levels` | 참조 검색의 위치 필드 결측과 새 결과 전체 구조 비교 |
+| `search::tests::search_matches_original_order_scores_and_snippets` | 참조 결과의 빈 `node_id`·위치 목록과 v5 결과 비교 |
+
+명령·종료 코드·실행 시간·기준선 대조는 [검증 원시 요약](SRCH6_VALIDATION_2026-11-24.json)에 기록했다. SRCH5 문서의 일부 하네스 통과 기록과 이번 실제 cargo 전체 결과를 같은 범위로 해석하지 않는다.
+
+**기본 backend 승격은 불가하다.** warm·합성 품질 목표는 달성했으나 cargo 기존 실패 4개가 해소되지 않았고, 실제 사용자 판정 정답·실제 한글/OCR·페이지/표 좌표·설치본·폐쇄망·맥 빌드는 이 카드에서 확인하지 않았다. 큰 코퍼스의 후보 상한과 검색/색인 직렬화, 문서 AND 캐시 최대 용량 메모리도 남아 있다. 5천 전체 집합 재대조·실제 맥 빌드는 **확인 못 함**으로 남긴다. SQLite 기본값을 유지하며 공개 배포·태그·푸시는 하지 않았다.
