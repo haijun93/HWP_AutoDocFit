@@ -8,12 +8,35 @@
 """
 import csv
 import io
+import os
 from threading import Lock, local
 
 _lock = Lock()
 _owned = set()
 _bound = {}            # id(작업 COM 객체) -> 그 객체를 만들 때 등록된 PID들
 _thread = local()      # 이 스레드에서 마지막으로 등록한 PID들(take_registered가 가져감)
+
+
+def restart_between_documents_enabled(
+    document_count: int,
+    *,
+    env_value: str | None = None,
+    auto_close: bool = True,
+    compare_view: bool = False,
+) -> bool:
+    """문서 간 한/글 재시작 정책(PM 결정 2026-11-24).
+
+    여러 문서를 한 한/글로 이어 처리하면 앞 문서의 상태가 뒤 문서 산출물에 남아
+    결과가 달라지므로(SEQDIFF1) 기본은 재시작한다. 다만 자동 닫기를 끈 경우(창이
+    문서 수만큼 쌓임)와 비교 보기(좌우 창 배치 미검증)에서는 기본을 끄고,
+    환경변수 DOCFIT_RESTART_BETWEEN_DOCS=1 로 강제, 0 으로 해제할 수 있다.
+    """
+    if document_count < 2:
+        return False
+    value = os.environ.get("DOCFIT_RESTART_BETWEEN_DOCS") if env_value is None else env_value
+    if value is not None:
+        return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+    return bool(auto_close) and not compare_view
 
 
 def _run(args):
