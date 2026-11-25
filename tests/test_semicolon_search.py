@@ -93,11 +93,12 @@ class RelatedSearchTests(unittest.TestCase):
     def test_rust_parity_evidence_filters_updates_and_deletes(self):
         from docfit_core.timemachine.content_search import extract_paragraphs
         paths = [self.add("2026 공사 계약.md", ["# 2026", "공사 계약", "R&D a;b"]),
-                 self.add("split.txt", ["2026", "공사", "계약"])]
+                 self.add("split.txt", ["2026", "공사", "계약"]),
+                 self.add("Report R&D.txt", ["İ REPORT a;b"])]
         rust = RustBackend(os.environ["SEMI1_KLIB_EXE"], index_dir=self.root / "rust")
         try:
             rust.index_many((str(p), extract_paragraphs(p)) for p in paths)
-            for query in ("2026; 공사 계약", '2026; "공사 계약"', 'R&D; "a;b"', '; ;'):
+            for query in ("2026; 공사 계약", '2026; "공사 계약"', 'R&D; "a;b"', '; ;', "report; R&D", 'i; "a;b"'):
                 for filenames in (False, True):
                     options = dict(related_groups=True, filenames=filenames)
                     left = self.backend.search(query, **options)
@@ -107,6 +108,12 @@ class RelatedSearchTests(unittest.TestCase):
                         self.assertEqual([r["group_matches"] for r in left], [r["group_matches"] for r in right])
             self.assertEqual(rust.search("2026", related_groups=True, roots=[self.root / "other"]), [])
             self.assertEqual(rust.search("2026", related_groups=True, end=0), [])
+            self.assertEqual(rust.status()["indexed_document_count"], 3)
+            rust.close()
+            self.assertEqual(len(rust.search("2026; 공사 계약", related_groups=True)), 1)
+            paths[0].write_text("없는 내용", encoding="utf-8")
+            rust.index_file(paths[0])
+            self.assertEqual(rust.search("2026; 공사 계약", related_groups=True), [])
             rust.remove_file(str(paths[0]))
             self.assertEqual(rust.search("2026; 공사 계약", related_groups=True), [])
         finally:

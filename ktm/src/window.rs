@@ -2329,7 +2329,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             // ② 검색창 아래 연관 검색어 묶음 칩
             let related_groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
             let chip_top = quick_layout(h, u).related.top;
-            let chip_labels: Vec<String> = related_groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
+            let chip_labels: Vec<String> = if u.settings.related_queries && related_groups.len()<2 { Vec::new() }
+                else { related_groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect() };
             let chip_rects = related_chip_rects(&chip_labels, pad + side_w, chip_top, r.right - pad, scale(h, 100));
             SelectObject(mem, u.small);
             for (i, (group, chip)) in chip_labels.iter().zip(chip_rects.iter()).enumerate() {

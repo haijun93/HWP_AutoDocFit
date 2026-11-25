@@ -78,6 +78,18 @@ pub fn related_normalized(text: &str) -> String {
 }
 
 pub fn related_matches(text: &str, group: &RelatedGroup) -> bool {
+    text.split(|c: char| matches!(c, '.' | '!' | '?' | '。' | '！' | '？' | '\r' | '\n'))
+        .any(|sentence| {
+            let folded = related_normalized(sentence);
+            group
+                .terms
+                .iter()
+                .all(|t| folded.contains(&related_normalized(t)))
+        })
+}
+
+/// File names are one search unit, including their extension punctuation.
+pub fn related_matches_single(text: &str, group: &RelatedGroup) -> bool {
     let folded = related_normalized(text);
     group
         .terms
@@ -110,6 +122,8 @@ mod tests {
         let group = &parse_related_query("공사 계약").unwrap()[0];
         assert!(related_matches("계약 검토 후 공사를 추진", group));
         assert!(!related_matches("공사", group));
+        assert!(!related_matches("공사 일정. 계약 검토", group));
+        assert!(related_matches_single("공사 계약.pdf", group));
         assert!(!related_matches(
             "RD",
             &parse_related_query("R&D").unwrap()[0]

@@ -82,7 +82,8 @@ class RustBackend:
                             replies.put(line)
                     finally:
                         replies.put(None)
-                threading.Thread(target=reader, daemon=True).start()
+                self._reader = threading.Thread(target=reader, daemon=True)
+                self._reader.start()
             try:
                 self._process.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
                 self._process.stdin.flush()
@@ -149,6 +150,7 @@ class RustBackend:
                 if process.poll() is None:
                     process.terminate()
                 process.wait(timeout=5)
+                self._reader.join(timeout=1)
                 process.stdin.close()
                 process.stdout.close()
 

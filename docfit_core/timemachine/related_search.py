@@ -62,7 +62,9 @@ def search_related(index, query, *, roots=None, limit=100, offset=0,
                 # 실제 부분 문자열 AND를 검증한다(구문·기호도 정확히 판정).
                 anchor = max(group.terms, key=len)
                 if len(anchor) >= 3:
-                    expression = '"' + anchor.replace('"', '""') + '"'
+                    # Prefix 확장으로 토크나이저가 붙여 쓴 조사를 포함해 후보를 놓치지 않는다.
+                    # 최종 결과는 아래 문장 단위 부분 문자열 AND로 다시 판정한다.
+                    expression = '"' + anchor.replace('"', '""') + '"*'
                     rows = index.db.execute(
                         "SELECT path,paragraph_index,body,level,level_rank FROM content_paragraph_fts "
                         "WHERE content_paragraph_fts MATCH ?", (expression,)).fetchall()
@@ -70,7 +72,7 @@ def search_related(index, query, *, roots=None, limit=100, offset=0,
                     rows = index.db.execute(
                         "SELECT path,paragraph_index,body,level,level_rank FROM content_paragraph_fts").fetchall()
             for path, para, body, level, rank in rows:
-                if path not in valid or not matches(body, group):
+                if path not in valid or not matches(body, group, single_unit=filenames):
                     continue
                 rank = int(rank) if rank is not None else 8
                 found.setdefault(path, []).append(evidence(body, int(para) if para is not None else None,

@@ -4,6 +4,7 @@
 따옴표 안 공백과 세미콜론은 그대로 두며 &, ~N, 필터는 일반 문자다.
 """
 from dataclasses import dataclass
+import re
 import unicodedata
 
 
@@ -68,6 +69,11 @@ def normalized(text):
     return unicodedata.normalize("NFC", text or "").lower()
 
 
-def matches(text, group):
-    folded = normalized(text)
-    return all(normalized(term) in folded for term in group.terms)
+def matches(text, group, *, single_unit=False):
+    # 문장 경계를 넘겨 묶음의 낱말을 합치지 않는다. 저장된 문단에는
+    # 여러 문장이 들어갈 수 있으므로 문단 단위 contains로 끝내면 안 된다.
+    # 파일명은 문장 부호를 포함해 이름 전체를 한 검색 단위로 다룬다.
+    units = [text or ""] if single_unit else re.split(r"[.!?。！？\r\n]+", text or "")
+    sentences = (part for part in units if part)
+    return any(all(normalized(term) in normalized(sentence) for term in group.terms)
+               for sentence in sentences)

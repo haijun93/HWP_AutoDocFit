@@ -36,6 +36,7 @@ def run(executable, count):
             "split.md": "2026\n공사\n계약\n",
             "2026 공사계약 RD.txt": "2026\n공사 계약\nRD\n",
             "count.txt": "2026\n2026\n공사 계약\n공사 계약\n",
+            "Report R&D.txt": "İ REPORT a;b\n공사 계약\n",
         }
         for name, text in controls.items():
             path = corpus / name
@@ -53,7 +54,8 @@ def run(executable, count):
             # A late intersection must survive >500 candidates in an earlier group.
             queries = ["행정; 정책", '행정; "안전 점검 계획"', "행정 정책; 안전 지원",
                        "2026; 공사 계약", '; 2026;; "공사 계약";', 'R&D; "a;b"',
-                       "행정; 없는검색어", "2026; 2026", "synthetic; 000", '""; ;']
+                       "행정; 없는검색어", "2026; 2026", "synthetic; 000", '""; ;',
+                       "report; R&D", 'i; "a;b"']
             for filenames in (False, True):
                 for query in queries:
                     left = all_rows(sqlite, query, filenames)

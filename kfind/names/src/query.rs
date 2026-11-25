@@ -863,12 +863,18 @@ pub fn search(v: &View, q: &Query, opts: &Options) -> Result<Results> {
 /// SEMI1 opt-in: filename is one paragraph, therefore all group terms must
 /// occur in that filename. Verify literal punctuation before applying the limit.
 pub fn search_related(v: &View, text: &str, opts: &Options) -> Result<Results> {
-    use kfind_core::related_query::{parse_related_query, related_matches, related_normalized};
+    use kfind_core::related_query::{parse_related_query, related_matches_single as related_matches, related_normalized};
     let groups=parse_related_query(text).map_err(crate::Error::Corrupt)?;
     if groups.is_empty() { return Ok(Results { total:0,top:Vec::new(),narrowed:false }); }
     let q=Query { words:groups.iter().flat_map(|g|g.terms.iter()).map(|t|fold_b(t)).filter(|t|!t.is_empty()).collect(),..Query::default() };
-    let (_,_,candidates)=run(v,&q,opts,None,true,false)?;
-    let mut ids: Vec<_>=candidates.into_iter().filter(|&i|groups.iter().all(|g|related_matches(v.name_of(i),g))).collect();
+    let mut candidates_options=opts.clone();
+    candidates_options.limit=0;
+    let (_,_,candidates)=run(v,&q,&candidates_options,None,true,false)?;
+    let mut ids=Vec::new();
+    for id in candidates {
+        if cancelled(opts.cancel.as_deref()) { return Err(Error::Cancelled); }
+        if groups.iter().all(|g|related_matches(v.name_of(id),g)) { ids.push(id); }
+    }
     // Every filename has the same hierarchy and one match per group.
     ids.sort_by_cached_key(|&i|related_normalized(&format!("{}/{}",v.dir_path(i),v.name_of(i))));
     let total=ids.len();

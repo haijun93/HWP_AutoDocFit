@@ -1427,7 +1427,8 @@ mod tests {
             ("synthetic/3.txt",0,"2026"),("synthetic/3.txt",1,"공사 안내. 계약 검토.")]).unwrap();
         let mut backend=Backend::open(&t.0).unwrap().with_paragraphs(Some(db)).with_related_queries(true);
         let answer=backend.search_cancel(" ;2026;; 공사 계약;",false,None).unwrap();
-        assert_eq!(answer.rows.iter().map(|r|r.doc_id).collect::<Vec<_>>(),[1,3]);
+        // 문서 3은 한 문단의 서로 다른 두 문장에 묶음 낱말이 나뉘므로 제외한다.
+        assert_eq!(answer.rows.iter().map(|r|r.doc_id).collect::<Vec<_>>(),[1]);
         assert_eq!(answer.groups,["2026","공사 계약"]);
         assert_eq!(answer.rows[0].group_matches.len(),2);
         assert_eq!(answer.rows[0].group_matches[1].paragraphs,[(1,8)]);

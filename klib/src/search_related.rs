@@ -1,6 +1,6 @@
 //! Literal paragraph AND -> document intersection. No top-N clipping before intersection.
 use super::related_query::{
-    RelatedGroup, parse_related_query, related_matches, related_normalized,
+    RelatedGroup, parse_related_query, related_matches, related_matches_single, related_normalized,
 };
 use super::*;
 use crate::json::Value as J;
@@ -146,6 +146,15 @@ mod tests {
                     &[(8, "2026"), (8, "공사"), (8, "계약")],
                 ))
                 .unwrap();
+            index
+                .replace_related(&document(
+                    "synthetic/split_sentences.txt",
+                    &[(8, "2026 공사 일정. 계약 검토.")],
+                ))
+                .unwrap();
+            index
+                .replace_related(&document("synthetic/2026 계약.pdf", &[]))
+                .unwrap();
             batch.finish().unwrap();
             let hits = index.search_related("2026; 공사 계약", 0, false).unwrap();
             assert_eq!(hits.len(), 2);
@@ -171,6 +180,11 @@ mod tests {
                     .unwrap()
                     .is_empty()
             );
+            let filenames = index
+                .search_related("2026; 계약 pdf", 0, true)
+                .unwrap();
+            assert_eq!(filenames.len(), 1);
+            assert_eq!(filenames[0].str("path"), Some("synthetic/2026 계약.pdf"));
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -218,8 +232,8 @@ impl SearchIndex {
                 let rank = p.i64("level_rank").unwrap_or(8).clamp(0,8);
                 let level = if rank == 8 { 0 } else { rank+1 };
                 writer.add_document(doc!(self.fields.doc_id=>id(path),self.fields.path=>path,
-                    self.fields.name=>name.clone(),self.fields.title=>name.clone(),
-                    self.fields.level=>level as u64,self.fields.body_bi=>text.clone(),self.fields.body=>text,
+                    self.fields.name=>related_normalized(&name),self.fields.title=>name.clone(),
+                    self.fields.level=>level as u64,self.fields.body_bi=>related_normalized(&text),self.fields.body=>text,
                     self.fields.location=>p.str("level").unwrap_or(LEVELS[rank as usize]),
                     self.fields.sheet=>request.num("mtime").unwrap_or(0.0).to_string(),
                     self.fields.row=>request.i64("size").unwrap_or(0).max(0) as u64,
@@ -230,7 +244,7 @@ impl SearchIndex {
             // 파일명이 있지만 본문이 없는 문서도 이름 검색에서 찾는다.
             if paragraphs.is_empty() {
                 writer.add_document(doc!(self.fields.doc_id=>id(path),self.fields.path=>path,
-                    self.fields.name=>name,self.fields.level=>0u64,
+                    self.fields.name=>related_normalized(&name),self.fields.title=>name,self.fields.level=>0u64,
                     self.fields.sheet=>request.num("mtime").unwrap_or(0.0).to_string(),
                     self.fields.row=>request.i64("size").unwrap_or(0).max(0) as u64,
                     self.fields.mtime=>request.i64("mtime_us").unwrap_or(0)))?;
@@ -269,7 +283,12 @@ impl SearchIndex {
                 .iter()
                 .max_by_key(|s| s.chars().count())
                 .expect("nonempty group");
-            let expression = format!("\"{}\"", anchor.replace('\\', "\\\\").replace('"', "\\\""));
+            let expression = format!(
+                "\"{}\"",
+                related_normalized(anchor)
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+            );
             // Candidate retrieval only. Literal AND below removes tokenizer false positives.
             let q: Box<dyn Query> = if anchor.chars().any(|c| c.is_alphanumeric()) {
                 parser
@@ -291,7 +310,7 @@ impl SearchIndex {
                 }
                 let d = searcher.doc::<TantivyDocument>(addr)?;
                 let name = d
-                    .get_first(self.fields.name)
+                    .get_first(self.fields.title)
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
                 let raw = if filenames {
@@ -302,7 +321,11 @@ impl SearchIndex {
                         .unwrap_or("")
                 };
                 let body: String = raw.nfc().collect();
-                if !related_matches(&body, group) {
+                if !(if filenames {
+                    related_matches_single(&body, group)
+                } else {
+                    related_matches(&body, group)
+                }) {
                     continue;
                 }
                 let para = if filenames {
