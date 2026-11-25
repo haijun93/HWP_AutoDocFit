@@ -61,3 +61,6 @@ OK (skipped=23)
 
 - 기존 파이프 시험의 OS 모의 컨텍스트 2곳 수정에 대한 예외 허용 후 적용·검증.
 - Linux에서 전체 실제 Tk CI 재실행 및 두 실패 해소 확인. 이번 작업에서는 푸시·원격 CI 실행을 하지 않았다.
+
+## PM 판정(2026-11-26)
+기존 시험의 OS 모의 범위 수정 2곳을 허용해 적용했다(assertion 불변). tests.test_scan_cache_service: Ran 6 / OK(Windows). Linux 확인은 main 병합 뒤 CI 로 한다.

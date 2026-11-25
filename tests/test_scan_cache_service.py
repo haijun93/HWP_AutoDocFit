@@ -42,7 +42,8 @@ class _Pipe:
 class ScanCacheServiceTests(unittest.TestCase):
     def test_names_pipe_ready_returns_filtered_rows_and_optional_metadata(self):
         pipe = _Pipe()
-        with patch("docfit_app.rust_scan.os.name", "nt"):
+        with patch("docfit_app.rust_scan.os", wraps=os) as platform_os:
+            platform_os.name = "nt"
             rows = rust_scan.names_query({".pdf"}, opener=lambda _: pipe)
         self.assertEqual([r["name"] for r in rows], ["one.pdf"])
         self.assertNotIn("size", rows[0])
@@ -59,7 +60,8 @@ class ScanCacheServiceTests(unittest.TestCase):
         klib.assert_not_called()
 
     def test_names_pipe_building_and_missing_fall_back(self):
-        with patch("docfit_app.rust_scan.os.name", "nt"):
+        with patch("docfit_app.rust_scan.os", wraps=os) as platform_os:
+            platform_os.name = "nt"
             self.assertIsNone(rust_scan.names_query({"pdf"}, opener=lambda _: _Pipe("building")))
             self.assertIsNone(rust_scan.names_query({"pdf"}, opener=lambda _: _Pipe("ready", "user")))
             self.assertIsNone(rust_scan.names_query({"pdf"}, opener=lambda _: (_ for _ in ()).throw(FileNotFoundError())))
