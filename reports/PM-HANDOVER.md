@@ -1,3 +1,7 @@
+# CILINUX2 인계 (2026-11-26)
+
+`feature/CILINUX2`, 기준 `cd138da5`. 일반 zlib 1.3.1 대조에서 Linux CI와 같은 해시 접두부 및 기존 실패 4건을 재현했다. 환경 간 fixture 비교를 ZIP 전체 압축 해시에서 모든 항목의 원시 바이트·15개 메타데이터 필드 대조로 수정하고 각 실물의 manifest 해시·크기 검증을 유지했다. fixture·manifest 갱신 및 skip 추가 없음. 관련 46시험은 기본 zlib-ng·일반 zlib 모두 OK. MCP pywin32 Windows 마커로 OSV 추출 오류 해소, 기존 스캔 경로 36개 누락 0·전이 해석·pywin32 검사 유지. OSV 기존 영향 항목 8건/취약점 11건과 조치안은 결과 문서에 기록했고 감사 전체 성공은 아니다. Windows 전체 Ran 3751 tests in 929.047s / OK (skipped=29), 종료 코드 0. 기존 atexit SQLite 정리 WinError 32·ResourceWarning은 남는다. 생성 바이너리 4개 원복·COM 잠금 해제·기존 한/글 2개 보존. Linux 수정 후 직접 실행은 미확인. 결과: `docs/CILINUX2_RESULT_2026-11-26.md`. 커밋만 수행하며 푸시·태그·병합·배포 없음.
+
 # UNIFIED1M 인계 (2026-11-26)
 
 `feature/UNIFIED1M`: v2.2.101 `e550ad48` + UNIFIED1 `a56e7c60`을 병합 커밋 `158650bb`로 통합했다. window.rs 충돌에서 SEMI2 칩·묶음 색·근거·입력 계측과 통합 스트리밍·취소·정렬을 모두 보존했다. 두 설정을 켜면 파일명은 원문 질의의 names_related, 위계·본문은 main과 같은 연관 문단 backend를 사용하며 pipe 모드도 같다. 설정 4조합 회귀 포함 ktm 276개 통과·기존 수동 벤치 1개 제외, release 빌드 성공. 전체 Python Ran 3695 tests in 1494.272s / OK (skipped=22), 종료 코드 0. 전체 시험은 20분 내 확인 못 함을 기록한 뒤 최종 완료됐으며 기존 표 썸네일 시험의 defusedxml 파싱 실행을 읽기 전용으로 확인했다. COM 차단 요청 0건·공통 잠금 해제·생성 fixture 4개 원복. 기존 ResourceWarning·sandbox SQLite 정리 PermissionError는 남는다. unified_search와 related_queries 기본 false, 16ms 목표 미달 상태 유지·재측정 없음. 실사용 문서·COM·설치 서비스·실제 UI·맥은 미확인. 결과: `docs/UNIFIED1M_RESULT_2026-11-25.md`. 로컬 커밋만, main 이동·푸시·태그·배포 없음. 카드 target은 PM 정리 대상.

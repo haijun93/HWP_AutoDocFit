@@ -11,10 +11,10 @@ from defusedxml import ElementTree as ET
 
 from docfit_core import conversion_fidelity as cf
 from docfit_core import conversion_fixtures as fx
+from tests.conversion_fixture_checks import assert_generation_matches_committed
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "compare_conversion_fidelity.py"
-COMMITTED = ROOT / "tests" / "fixtures" / "conversion_fidelity"
 
 
 def expected_struct(blocks, form="markdown"):
@@ -44,8 +44,7 @@ class FixtureGeneratorTest(unittest.TestCase):
         self.assertEqual(again, self.manifest)
 
     def test_committed_manifest_matches_generator(self):
-        committed = json.loads((COMMITTED / "manifest.json").read_text(encoding="utf-8"))
-        self.assertEqual(committed, self.manifest)
+        assert_generation_matches_committed(self, self.dir, self.manifest)
 
     def test_office_parts_are_wellformed_xml_zips(self):
         for e in self.manifest["fixtures"]:

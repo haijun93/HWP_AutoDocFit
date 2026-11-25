@@ -60,7 +60,7 @@ SLIDE_SPECS: dict[str, list[dict[str, Any]]] = {
 
 
 class _FixedZip(zipfile.ZipFile):
-    """항목 시각을 고정해 같은 입력이면 바이트까지 같은 파일이 나오게 한다(manifest 해시 안정)."""
+    """ZIP 메타데이터를 고정한다. 압축 바이트는 zlib 구현·버전에 따라 다를 수 있다."""
 
     def writestr(self, item, data, compress_type=None, compresslevel=None):
         if isinstance(item, str):
@@ -455,7 +455,11 @@ def sha256(path: Path) -> str:
 
 
 def generate_fixtures(out_dir: str | Path) -> dict[str, Any]:
-    """out_dir 에 합성 문서를 만들고 manifest.json 을 쓴다. 같은 코드면 같은 manifest 가 나온다."""
+    """합성 문서와 해당 실물의 해시·크기·기대 구조를 담은 manifest.json을 쓴다.
+
+    같은 압축 환경에서는 바이트도 재현된다. 환경 간 비교는 압축을 푼 모든 항목의
+    원시 바이트와 ZIP 메타데이터로 한다(압축 파일 해시·크기는 환경별일 수 있다).
+    """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     entries: list[dict[str, Any]] = []

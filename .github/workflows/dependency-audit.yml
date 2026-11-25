@@ -57,14 +57,17 @@ jobs:
             --lockfile "requirements.txt:requirements-mcp.txt" \
             --format markdown --output osv-report.md .
           code=$?
+          # 실제 검사 범위(조건부 Windows 패키지·전이 의존성 포함)도 산출물에 남긴다.
           osv-scanner scan source --recursive \
             --lockfile "requirements.txt:requirements-lock.txt" \
             --lockfile "requirements.txt:requirements-mcp.txt" \
-            --format json --output osv-report.json . >/dev/null 2>&1
+            --all-packages --format json --output osv-report.json .
+          json_code=$?
           {
             echo '### OSV vulnerability scan'
             if [ -s osv-report.md ]; then cat osv-report.md; else echo 'No report produced.'; fi
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$code" -eq 0 ]; then code=$json_code; fi
           exit $code
 
       - name: Upload vulnerability report
