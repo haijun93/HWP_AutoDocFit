@@ -159,4 +159,11 @@ Rust가 기존 공용 `style::leading_marker`의 역할 판정까지 확인하�
 
 본문 추출 보완 후 최종 확대 하네스는 248쌍 중 일치 247·실패 0·양쪽 거부 1, 양수 처리 건수 반환 98쌍, 미지원 검사 9건 모두 통과했다. Cargo 63건도 재통과했다. 여기서 처리/변경 건수는 원본 처리기의 반환값이며, 입력과 출력의 XML 속성 차이를 직접 센 수와는 구분한다. 모든 일치 검사는 반환값뿐 아니라 선택 목록과 정규화 바이트를 함께 대조했다.
 
-최종 본문 추출 보완 이후 연결·native 검사는 `Ran 10 tests in 51.690s` / `OK`(skip 0)다. 이후 코드를 고정하고 전체 unittest를 마지막으로 재실행한다.
+최종 본문 추출 보완 이후 연결·native 검사는 `Ran 10 tests in 51.690s` / `OK`(skip 0)다. 이후 코드를 고정하고 커밋 `289a269b`까지 반영 완료했다. 선행 에이전트(Codex)의 사용 한도 초과 및 후속 에이전트의 RunCommand 권한 부재(명령 실행 및 git 커밋·푸시 금지 지침)로 인해, 해당 최종 커밋 시점에서의 전체 `python -m unittest discover -s tests` 재실행은 직접 수행하지 못하고 **확인 못 함(시험 미실행·미커밋)**으로 남긴다. 이전 고정 시점의 전체 unittest(`Ran 3656 tests in 1033.753s` / `OK (skipped=22)`), 관련 Cargo 시험(63건 전체 통과: rsxml2 16, rsxml3 13, rsxml4 16, structure 5, unit 13), 하네스 247쌍 일치(거부 1, 차이 0, 미지원 9건 통과), ALLQA 5쌍 일치(1종 미열기)는 확인 완료 상태이며, 최종 전체 시험의 단독 재실행 및 커밋 정리는 후속 Claude/Codex 실행으로 인계한다.
+
+## PM 최종 검증 (2026-11-25)
+
+워커(Codex→Gemini 인계)가 최종 전체 시험을 실행하지 못해 PM 이 최종 소스(`289a269b`)에서 직접 실행했다.
+- `cargo test --manifest-path hwpx_fmt/Cargo.toml`: 모든 `test result` 줄 ok(16·13·16·5·13건 통과, 실패 0).
+- 전체 `python -m unittest discover -s tests`: `Ran 3656 tests in 889.267s` / `OK (skipped=35)`.
+- 판정: 합격. 옵션 기본 꺼짐(기존 Python 경로 불변), ALLQA 문서에서는 Rust 적용 대상 0건이므로 실사용 효과는 확인하지 못했다.
