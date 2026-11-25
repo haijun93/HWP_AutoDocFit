@@ -8,10 +8,14 @@ import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/drop_events.dart';
 import '../../core/theme/app_theme.dart';
+import '../common/file_handoff.dart';
 
 class PdfEditWorkspace extends StatefulWidget {
-  const PdfEditWorkspace({super.key, required this.api});
+  const PdfEditWorkspace({super.key, required this.api, this.incoming});
   final ApiCall api;
+
+  /// 다른 화면(문서뷰)에서 보낸 PDF.
+  final FileInbox? incoming;
 
   @override
   State<PdfEditWorkspace> createState() => _PdfEditWorkspaceState();
@@ -54,10 +58,76 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   void initState() {
     super.initState();
     _stopDropWatch = watchDocumentDropPaths(_onDocumentDrop);
+    widget.incoming?.addListener(_takeIncoming);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _takeIncoming());
+  }
+
+  /// 보낸 PDF 한 개는 편집 대상으로, 여러 개는 합칠 목록으로 연다.
+  Future<void> _takeIncoming() async {
+    if (!mounted) return;
+    final paths = widget.incoming?.take() ?? const <String>[];
+    if (paths.isEmpty) return;
+    if (_busy) {
+      setState(() => _message = 'PDF 작업이 끝난 뒤 다시 보내 주세요.');
+      return;
+    }
+    if (_operations.isNotEmpty && _completedPath == null) {
+      final discard = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('저장하지 않은 PDF 편집'),
+          content: const Text('지금 편집 내용을 버리고 보낸 PDF를 열까요?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('계속 편집'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('버리고 열기'),
+            ),
+          ],
+        ),
+      );
+      if (discard != true || !mounted) return;
+    }
+    setState(() {
+      _action = paths.length > 1 ? 'merge' : 'delete';
+      _mergeSources.clear();
+      _operations.clear();
+      _redo.clear();
+      _pageOrder.clear();
+      _selectedPages.clear();
+      _initialOrder = [];
+      _completedPath = null;
+    });
+    if (paths.length > 1) {
+      _openMergeSources(paths);
+    } else {
+      _addFile(paths.single);
+    }
+  }
+
+  void _openMergeSources(List<String> pdfs) {
+    setState(() {
+      _mergeSources
+        ..clear()
+        ..addAll(pdfs.toSet());
+      _source = _mergeSources.first;
+      _output = _outputFor(_source!, '_합본');
+      _pageCount = null;
+      _loadingPages = true;
+      _thumbnails.clear();
+      _thumbnailErrors.clear();
+      _thumbnailRequests.clear();
+      _message = '${_mergeSources.length}개 PDF를 합칠 순서로 추가했습니다.';
+    });
+    _loadPages(_source!);
   }
 
   @override
   void dispose() {
+    widget.incoming?.removeListener(_takeIncoming);
     _stopDropWatch?.call();
     _pages.dispose();
     super.dispose();
@@ -73,20 +143,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
       return;
     }
     if (_action == 'merge' && pdfs.length > 1) {
-      setState(() {
-        _mergeSources
-          ..clear()
-          ..addAll(pdfs.toSet());
-        _source = _mergeSources.first;
-        _output = _outputFor(_source!, '_합본');
-        _pageCount = null;
-        _loadingPages = true;
-        _thumbnails.clear();
-        _thumbnailErrors.clear();
-        _thumbnailRequests.clear();
-        _message = '${_mergeSources.length}개 PDF를 합칠 순서로 추가했습니다.';
-      });
-      _loadPages(_source!);
+      _openMergeSources(pdfs);
       return;
     }
     _addFile(pdfs.first);

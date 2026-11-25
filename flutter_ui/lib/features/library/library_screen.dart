@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/drop_events.dart';
 import '../../core/instant_search.dart';
+import '../common/file_handoff.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../notebook/notebook_api.dart';
@@ -149,7 +150,11 @@ class LibraryScreen extends StatefulWidget {
     this.initialPaneCount,
     this.documentSearch,
     this.scopedDocumentSearch,
+    this.incoming,
   });
+
+  /// 다른 화면(문서뷰·사진뷰)에서 보낸 파일. 열리면 넣을 가상 폴더를 묻는다.
+  final FileInbox? incoming;
 
   /// 검색창의 본문검색·위계검색(ISUI2). 있으면 검색창 옆에 파일명·본문검색·위계검색 메뉴가 나타나고
   /// 세 메뉴가 검색어를 함께 쓴다. 기존 호출자의 검색 어댑터를 주입할 때 사용한다.
@@ -292,7 +297,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _paneCount = widget.initialPaneCount!;
     }
     unawaited(_restoreViewMode());
-    _loadBoxes();
+    // 불러오기에 실패해도 다음에 열 때 뒤늦게 들어가지 않게 먼저 가져간다.
+    final incoming = widget.incoming?.take() ?? const <String>[];
+    unawaited(_loadBoxes().then((_) => _receiveFiles(incoming)));
     final drops = _dropApi;
     if (drops != null) {
       _stopDrops = (widget.watchDropEvents ??
@@ -333,6 +340,40 @@ class _LibraryScreenState extends State<LibraryScreen> {
       setState(() => _statusMessage = '먼저 가상 폴더를 고르거나 만든 뒤 파일을 놓아 주세요.');
       return;
     }
+    await _addPaths(paths);
+  }
+
+  /// 보낸 파일을 사용자가 고른(또는 새로 만든) 가상 폴더에 넣는다.
+  Future<void> _receiveFiles(List<String> paths) async {
+    if (paths.isEmpty || !mounted) return;
+    // 가상 폴더를 불러오지 못했으면 그 안내를 그대로 둔다.
+    if (_boxes.isEmpty && _statusMessage != null) return;
+    final choice = await showBoxPickDialog(
+      context,
+      kind: '가상 폴더',
+      fileCount: paths.length,
+      names: [for (final box in _boxes) box.name],
+    );
+    if (!mounted) return;
+    if (choice == null) {
+      setState(() => _statusMessage = '파일을 가상 폴더에 넣지 않았습니다.');
+      return;
+    }
+    try {
+      if (choice.newName != null) {
+        _newBoxController.text = choice.newName!;
+        await _createBox();
+      } else {
+        await _selectBox(_boxes[choice.index!]);
+      }
+    } catch (error) {
+      if (mounted) setState(() => _statusMessage = '추가하지 못했습니다: $error');
+      return;
+    }
+    if (mounted) await _addPaths(paths);
+  }
+
+  Future<void> _addPaths(List<String> paths) async {
     var added = 0;
     // 탐색기 형식에서 영역 폴더를 열어 두었으면 그 영역에, 아니면 핵심자료에 넣는다.
     final space = (_viewMode == LibraryViewMode.explorer ? _explorer.folder : null) ?? _defaultDropSpace;

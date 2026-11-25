@@ -6,6 +6,8 @@ import ntpath
 from pathlib import Path
 from typing import Iterable
 
+from docfit_core.path_utils import path_is_within
+
 _EXCLUDED_NAMES = frozenset({
     "windows", "program files", "program files (x86)", "programdata",
     "$recycle.bin", "system volume information", "appdata", "node_modules", ".git",
@@ -113,3 +115,9 @@ def current_default_roots() -> tuple[Path, ...]:
     one_drive = [Path(value) / "Desktop" for key, value in os.environ.items()
                  if key.upper() in {"ONEDRIVE", "ONEDRIVECONSUMER", "ONEDRIVECOMMERCIAL"} and value]
     return default_roots(fixed_drive_roots(), profile, one_drive_paths=one_drive)
+
+
+def is_listed_location(path: str | Path, roots: Iterable[str | Path], excluded_folders: Iterable[str | Path] = ()) -> bool:
+    """옮기거나 복사한 파일이 기본 목록 범위(루트 안, 제외 폴더 밖)에 있는지."""
+    excluded = tuple(excluded_folders)
+    return any(path_is_within(path, root) and not is_excluded_path(path, excluded, base=root) for root in roots)

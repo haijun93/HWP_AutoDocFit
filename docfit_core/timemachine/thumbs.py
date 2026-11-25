@@ -273,6 +273,22 @@ class ThumbnailCache:
             else:
                 self._total += len(data)
 
+    def discard(self, key):
+        """캐시 항목 하나를 지운다(없으면 그대로)."""
+        try:
+            os.unlink(self._file(key))
+        except OSError:
+            return
+        with self._lock:
+            self._total = None  # 다음 저장 때 다시 센다.
+
+    def rekey(self, old_key, new_key):
+        """원본이 옮겨졌을 때 만든 썸네일을 새 키로 이어 쓴다."""
+        try:
+            os.replace(self._file(old_key), self._file(new_key))
+        except OSError:
+            pass
+
     def clear(self):
         """캐시 폴더 안의 캐시 파일(.jpg, .tmp)만 삭제하고 삭제한 파일 수를 반환한다."""
         count = 0
