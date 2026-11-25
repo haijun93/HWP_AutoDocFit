@@ -1,0 +1,122 @@
+{
+  "source_commit": "bbbf578c",
+  "release_sha256": "6F122D935B8AD00C83FCE7ECD850E356136EBE11ACBCDE52E2DE652FE4FC215B",
+  "mandatory_checks_passed": true,
+  "com_blocked_requests": 0,
+  "rust_stderr_bytes": 0,
+  "tests": {
+    "cargo": {
+      "command": "cargo test --manifest-path klib/Cargo.toml --no-fail-fast -- --test-threads=1",
+      "exit_code": 0,
+      "elapsed_seconds": 85.89,
+      "summaries": [
+        "test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.62s",
+        "test result: ok. 22 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.39s",
+        "test result: ok. 132 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 52.33s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.53s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "core": {
+      "command": "cargo test --manifest-path kfind/core/Cargo.toml",
+      "exit_code": 0,
+      "elapsed_seconds": 100.823,
+      "summaries": [
+        "test result: ok. 32 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.93s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.14s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.66s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.47s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.12s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.26s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.24s",
+        "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.31s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.69s",
+        "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s",
+        "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "names": {
+      "command": "cargo test --manifest-path kfind/names/Cargo.toml",
+      "exit_code": 0,
+      "elapsed_seconds": 100.116,
+      "summaries": [
+        "test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s",
+        "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.53s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.21s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "ktm": {
+      "command": "cargo test --manifest-path ktm/Cargo.toml",
+      "exit_code": 0,
+      "elapsed_seconds": 73.769,
+      "summaries": [
+        "test result: ok. 260 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.60s",
+        "test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+      ]
+    },
+    "service": {
+      "command": "cargo test --manifest-path crates/kfind/Cargo.toml",
+      "exit_code": 101,
+      "elapsed_seconds": 108.709,
+      "summaries": [
+        "test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s",
+        "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+        "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s",
+        "test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s"
+      ]
+    },
+    "focus": {
+      "command": "python -m unittest (SEMI/SRCH/backend integration modules)",
+      "exit_code": 0,
+      "elapsed_seconds": 24.42,
+      "summaries": [
+        "Ran 59 tests in 20.867s",
+        "OK"
+      ]
+    },
+    "release": {
+      "command": "cargo build --release --manifest-path klib/Cargo.toml --bin klib",
+      "exit_code": 0,
+      "elapsed_seconds": 494.829,
+      "summaries": []
+    },
+    "python_initial": {
+      "command": "python -m unittest discover -s tests",
+      "exit_code": 1,
+      "elapsed_seconds": 940.379,
+      "summaries": [
+        "Ran 3695 tests in 927.060s",
+        "FAILED (errors=1, skipped=22)"
+      ]
+    },
+    "launcher_isolation": {
+      "exit_code": 0,
+      "summaries": [
+        "Ran 1 test in 9.781s",
+        "OK"
+      ]
+    },
+    "python_final": {
+      "command": "python -m unittest discover -s tests",
+      "exit_code": 0,
+      "elapsed_seconds": 907.847,
+      "summaries": [
+        "Ran 3695 tests in 903.680s",
+        "OK (skipped=22)"
+      ]
+    }
+  }
+}

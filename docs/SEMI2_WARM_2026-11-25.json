@@ -1,0 +1,103 @@
+{
+  "seed": 20261124,
+  "documents": 5000,
+  "limit": 20,
+  "index_seconds": 48.63,
+  "cases": [
+    {
+      "case": "short",
+      "query": "행정",
+      "hierarchy": false,
+      "returned_documents": 20,
+      "cold_ms": 56.843,
+      "warm_samples_ms": [
+        19.406,
+        19.569,
+        18.608,
+        18.912,
+        16.926
+      ],
+      "warm_median_ms": 18.912
+    },
+    {
+      "case": "long",
+      "query": "행정 정책 문서 안전 지원",
+      "hierarchy": false,
+      "returned_documents": 20,
+      "cold_ms": 13.282,
+      "warm_samples_ms": [
+        10.221,
+        11.95,
+        9.966,
+        9.423,
+        10.126
+      ],
+      "warm_median_ms": 10.126
+    },
+    {
+      "case": "and",
+      "query": "행정 정책",
+      "hierarchy": false,
+      "returned_documents": 20,
+      "cold_ms": 28.223,
+      "warm_samples_ms": [
+        19.608,
+        19.029,
+        21.152,
+        22.178,
+        24.118
+      ],
+      "warm_median_ms": 21.152
+    },
+    {
+      "case": "phrase",
+      "query": "\"행정 절차 지원\"",
+      "hierarchy": false,
+      "returned_documents": 20,
+      "cold_ms": 30.283,
+      "warm_samples_ms": [
+        27.286,
+        25.753,
+        25.507,
+        26.259,
+        25.047
+      ],
+      "warm_median_ms": 25.753
+    },
+    {
+      "case": "hierarchy_and2",
+      "query": "행정 정책",
+      "hierarchy": true,
+      "returned_documents": 20,
+      "cold_ms": 40.013,
+      "warm_samples_ms": [
+        17.984,
+        16.632,
+        17.632,
+        20.35,
+        36.171,
+        19.839,
+        18.155
+      ],
+      "warm_median_ms": 18.155
+    },
+    {
+      "case": "hierarchy_and5",
+      "query": "행정 정책 문서 안전 지원",
+      "hierarchy": true,
+      "returned_documents": 20,
+      "cold_ms": 56.857,
+      "warm_samples_ms": [
+        18.743,
+        19.664,
+        18.568,
+        18.275,
+        19.695,
+        19.346,
+        17.898
+      ],
+      "warm_median_ms": 18.743
+    }
+  ],
+  "ok": true
+}
