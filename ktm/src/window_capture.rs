@@ -117,7 +117,9 @@ unsafe fn setup(h: HWND, name: &str) {
             u.within_open = false;
             u.timing = None;
         });
+        let long_query = (1..=4).map(|i|format!("{i}번 아주 긴 한글 검색어와 공사 계약 안전관리계획 ").repeat(4)).collect::<Vec<_>>().join("; ");
         let query = match name {
+            "25_long_labels" => long_query.as_str(),
             "03_results" | "05_date_7d" | "06_date_30d" | "07_ext_pdf" | "08_options_open" | "09_autocomplete"
             | "12_stats" | "13_stats_history" | "14_settings" | "15_sidebar" | "16_grid" | "17_collapsed"
             | "19_within_open" | "20_status_text" | "10_error" | "11_searching" | "22_date_today" | "23_date_year"
@@ -163,9 +165,8 @@ unsafe fn setup(h: HWND, name: &str) {
                 "02_empty_history" => {}
                 "25_long_labels" => {
                     result_phase(u);
-                    u.state.query="아주 긴 한글 검색어의 첫 번째 관련 묶음 및 상세 추진 계획; 두 번째 한글 검색어의 공사 계약 안전관리계획".into();
                     u.state.options.within_query="아주 긴 한글 결과 내 검색어와 검토 결과".into();
-                    u.state.selected_folder=Some("아주 긴 한글 폴더 이름과 세부 추진 일정 및 검토 결과".into());
+                    u.state.selected_folder=Some("아주 긴 한글 폴더 이름과 세부 추진 일정 및 검토 결과 ".repeat(3));
                     u.state.options.options_open=true;
                     u.state.autocompletes.clear();
                 }
@@ -517,6 +518,27 @@ pub unsafe fn run(h: HWND, dir: &Path, dpi: i32, scenario: &str) -> Result<(), S
             setup(h, name);
             let file = dir.join(format!("{name}_{dpi}dpi.png"));
             snapshot(h, &file)?;
+            let m=with(|u|quick_controls(h,u));
+            let b=m.bands;
+            let sequential = [b.related,b.options,b.filters,b.summary,b.autocomplete]
+                .windows(2).all(|p|p[0].bottom<=p[1].top);
+            let controls: Vec<_> = m.related.iter().chain(&m.dates).chain(&m.extensions).chain(&m.folders)
+                .filter(|r|r.right>r.left && r.bottom>r.top).collect();
+            let disjoint = controls.iter().enumerate().all(|(i,a)|controls.iter().skip(i+1).all(|other|
+                a.right<=other.left || other.right<=a.left || a.bottom<=other.top || other.bottom<=a.top));
+            report.push(format!("{} 배치 {name}: 띠 순서={sequential}, 칩 교차 없음={disjoint}",
+                if sequential && disjoint { "PASS" } else { "FAIL" }));
+            let mut geometry=Vec::new();
+            for (label,rc) in [("related",b.related),("options",b.options),("filters",b.filters),("summary",b.summary),("autocomplete",b.autocomplete)] {
+                geometry.push(format!("{label}: {},{}..{},{}",rc.left,rc.top,rc.right,rc.bottom));
+            }
+            for (label,rects) in [("related",&m.related),("dates",&m.dates),("extensions",&m.extensions),("folders",&m.folders)] {
+                for (i,rc) in rects.iter().enumerate() {
+                    geometry.push(format!("{label}[{i}]: {},{}..{},{}",rc.left,rc.top,rc.right,rc.bottom));
+                }
+            }
+            std::fs::write(file.with_extension("txt"),geometry.join("\n")).map_err(|e|e.to_string())?;
+
             report.push(format!("장면 {name}: {}", file.file_name().unwrap().to_string_lossy()));
         }
         setup(h, "03_results");

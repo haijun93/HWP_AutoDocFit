@@ -713,6 +713,11 @@ pub struct MeasuredQuickLayout {
 pub const DATE_LABELS: [&str; 6] = ["기간:", "전체", "오늘", "7일간", "30일간", "올해"];
 pub const EXT_LABELS: [&str; 6] = ["형식:", "전체", "HWP", "PDF", "DOC", "XLS"];
 
+/// 결과 한 줄과 미리보기를 함께 넣을 수 있을 때만 하단 미리보기 높이를 확보한다.
+pub fn fitting_preview_height(available: i32, row_height: i32, desired: i32, selected: bool) -> i32 {
+    if selected && available >= row_height + desired { desired } else { 0 }
+}
+
 /// 칩은 글꼴 폭 + 좌우 여백으로 배치하고, 긴 한 칩은 영역 폭까지 제한한다.
 pub fn measured_chip_rects<S: AsRef<str>>(
     labels: &[S], left: i32, top: i32, right: i32, row_h: i32,
@@ -756,7 +761,16 @@ pub fn measured_quick_search_layout(
     y = dates.last().map_or(y, |r| r.bottom + gap);
     let extensions = chips(&EXT_LABELS.map(str::to_owned), y);
     y = extensions.last().map_or(y, |r| r.bottom + gap);
-    let folder_rects = chips(folders, y);
+    // 폴더 후보가 많아도 목록을 화면 밖으로 밀지 않는다. 기존처럼 한 줄에 들어가는 후보만
+    // 보이되, 선택 폴더(호출자가 앞에 둠)는 남은 폭 안에서 말줄임한다.
+    let mut folder_rects = Vec::new();
+    let mut x = left;
+    for label in folders {
+        if right-x < s(40) { break; }
+        let w = (measure(label)+s(12)).max(0).min(right-x);
+        folder_rects.push(RECT { left:x, top:y, right:x+w, bottom:y+row_h });
+        x += w+gap;
+    }
     if let Some(last) = folder_rects.last() { y = last.bottom + gap; }
     let filters = band(filter_top, y);
     let summary = band(y, y + s(SUMMARY_H).max(font_height + s(8)));

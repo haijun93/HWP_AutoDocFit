@@ -1,0 +1,46 @@
+PASS 배치 01_empty: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 02_empty_history: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 03_results: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 04_related_chips: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 05_date_7d: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 06_date_30d: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 07_ext_pdf: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 08_options_open: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 09_autocomplete: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 10_error: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 11_searching: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 12_stats: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 13_stats_history: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 14_settings: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 15_sidebar: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 16_grid: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 17_collapsed: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 18_no_results: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 19_within_open: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 20_status_text: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 21_mixed_names: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 22_date_today: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 23_date_year: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 24_error_incomplete: 띠 순서=true, 칩 교차 없음=true
+PASS 배치 25_long_labels: 띠 순서=true, 칩 교차 없음=true
+PASS 히트 통계 칩: x=605 y=20 code=1
+PASS 히트 설정 칩: x=707 y=20 code=1
+PASS 히트 최소화: x=790 y=20 code=1
+PASS 히트 닫기: x=847 y=20 code=1
+PASS 히트 제목 줄 빈 곳: code=2
+PASS 통계 칩 클릭: modal=Some(Statistics)
+PASS 설정 칩 클릭: modal=Some(Settings)
+PASS 기간 칩 전체: date_filter=All query="예산"
+PASS 기간 칩 오늘: date_filter=Today query="예산"
+PASS 기간 칩 7일간: date_filter=Last7Days query="예산"
+PASS 기간 칩 30일간: date_filter=Last30Days query="예산"
+PASS 기간 칩 올해: date_filter=ThisYear query="예산"
+PASS 형식 칩 전체: ext=None
+PASS 형식 칩 HWP: ext=Some("hwp")
+PASS 형식 칩 PDF: ext=Some("pdf")
+PASS 형식 칩 DOC: ext=Some("docx")
+PASS 형식 칩 XLS: ext=Some("xlsx")
+PASS 폴더 칩: 기획
+PASS 요약 파일명 접기: 상태 전이
+PASS [옵션] 단추: false -> true
+PASS 옵션 팝업 '하나 이상': AnyTerm

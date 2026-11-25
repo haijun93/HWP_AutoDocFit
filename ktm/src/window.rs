@@ -241,7 +241,7 @@ fn quick_controls(h: HWND, u: &Ui) -> MeasuredQuickLayout {
             groups.iter().take(8).enumerate().map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect()
         } else { Vec::new() };
         let folders: Vec<String> = folder_chips(u).into_iter().map(|(label,_)| label).collect();
-        let result = measured_quick_search_layout(scale, r.right, r.bottom,
+        let result = measured_quick_search_layout(scale, r.right, (r.bottom-scale_u(h,STATUS_H,u)).max(0),
             side + scale_u(h, 12, u), metrics.tmHeight + metrics.tmExternalLeading,
             &related, &folders, u.state.options.options_open, !u.state.autocompletes.is_empty(),
             |text| frame::text_width(dc, text));
@@ -503,11 +503,8 @@ fn event(h: HWND, e: Event) {
             let top_y = list_top_coord(h, u);
             let compact = u.settings.result_density == "compact";
             let rh = scale_u(h, ktm::layout::result_card_height(100, compact), u).max(1);
-            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
-                scale_u(h, PREVIEW_H, u)
-            } else {
-                0
-            };
+            let preview_h = fitting_preview_height(rc.bottom-top_y-scale_u(h,STATUS_H,u),rh,
+                scale_u(h,PREVIEW_H,u),u.state.selected.is_some() && !u.rows.is_empty());
             let count = ((rc.bottom - top_y - scale_u(h, STATUS_H, u) - preview_h).max(0) / rh)
                 .max(1) as usize;
             if index < u.top {
@@ -1679,7 +1676,10 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                     let label = match kind { 0 => DATE_LABELS[i], 1 => EXT_LABELS[i], _ => &folder_labels[i].0 };
                     let active = i > 0 && match kind {
                         0 => u.state.date_filter == dates[i-1],
-                        1 => u.state.selected_ext.as_deref() == extensions[i-1],
+                        1 => match extensions[i-1] {
+                            None => u.state.selected_ext.is_none(),
+                            Some(ext) => u.state.selected_ext.as_deref().is_some_and(|s|s.contains(ext)),
+                        },
                         _ => u.state.selected_folder == folder_labels[i].1,
                     };
                     if i > 0 { fill(*rc, if active { p.accent } else { p.tab_hover }); }
@@ -1886,11 +1886,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             let top_y = list_top_coord(h, u);
             let rh = row_height(h);
             let status_h = scale(h, STATUS_H);
-            let preview_h = if u.state.selected.is_some() && !u.rows.is_empty() {
-                scale(h, PREVIEW_H)
-            } else {
-                0
-            };
+            let preview_h = fitting_preview_height(r.bottom-top_y-status_h,rh,scale(h,PREVIEW_H),
+                u.state.selected.is_some() && !u.rows.is_empty());
             let visible = ((r.bottom - top_y - status_h - preview_h).max(0) / rh).max(0) as usize;
             let visible_indices = display_ids;
 
@@ -2221,7 +2218,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             }
 
             // ③ 결과 선택 시 미리보기 줄 (선택 행의 일치 문단 전체 3줄)
-            if let Some(sel_idx) = u.state.selected {
+            if let Some(sel_idx) = u.state.selected.filter(|_|preview_h>0) {
                 if let Some(sel_r) = u.rows.get(sel_idx) {
                     let prev_y = r.bottom - status_h - preview_h;
                     let prev_rc = RECT {
@@ -3649,7 +3646,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             Err(e) => edit(|u| u.status_text = format!("CSV 저장 실패: {e}")),
                         }
                     } else if let Some(filename) =
-                        hit_summary_group(x, y, sy, scale(h, SUMMARY_H), group_left, group_right)
+                        hit_summary_group(x, y, sy, bands.summary.bottom-sy, group_left, group_right)
                     {
                         event(h, Event::ToggleGroup(filename));
                     } else if x >= side_w && x < pad + side_w + scale(h, 34) {
@@ -3733,11 +3730,8 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     let rh = row_height(h);
                     let folder_w = scale(h, ROW_FOLDER_W);
                     let preview_h = with(|u| {
-                        if u.state.selected.is_some() && !u.rows.is_empty() {
-                            scale(h, PREVIEW_H)
-                        } else {
-                            0
-                        }
+                        fitting_preview_height(client_bottom(h)-top_y-scale(h,STATUS_H),rh,scale(h,PREVIEW_H),
+                            u.state.selected.is_some() && !u.rows.is_empty())
                     });
                     if y >= top_y && y < client_bottom(h) - scale(h, STATUS_H) - preview_h {
                         let slot = with(|u| u.top) + ((y - top_y) / rh) as usize;
