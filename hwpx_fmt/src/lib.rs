@@ -16,6 +16,7 @@ pub mod style;
 pub mod tbl;
 pub mod tstyle;
 pub mod zipio;
+pub mod structure;
 
 use config::Config;
 use dom::Doc;
@@ -42,11 +43,21 @@ pub enum Processor {
     TableStyle,
     TableStyleAlign,
     ConnectorTab,
+    ReportHeader,
+    Title,
+    Midtitle,
+    Attachment,
+    BoxStyle,
 }
 
 impl Processor {
     pub fn parse(name: &str) -> Option<Processor> {
         match name {
+            "report_header" | "보고서머리_hwpx_처리" => Some(Processor::ReportHeader),
+            "title" | "제목_hwpx_처리" => Some(Processor::Title),
+            "midtitle" | "중제목_hwpx_처리" => Some(Processor::Midtitle),
+            "attachment" | "붙임_hwpx_처리" => Some(Processor::Attachment),
+            "box" | "상자서식_hwpx_처리" => Some(Processor::BoxStyle),
             "date" | "표날짜칸_hwpx_처리" => Some(Processor::Date),
             "twochar" | "두글자칸_hwpx_처리" => Some(Processor::TwoChar),
             "overview_lead" | "개요첫칸_hwpx_처리" => Some(Processor::OverviewLead),
@@ -69,6 +80,10 @@ impl Processor {
     /// RSXML4 처리기(표 칸 너비·기본 표 서식·정렬 재확인·연결 부호 탭).
     pub fn is_rsxml4(self) -> bool {
         matches!(self, Processor::TableWidth | Processor::TableStyle | Processor::TableStyleAlign | Processor::ConnectorTab)
+    }
+
+    pub fn is_structure(self) -> bool {
+        matches!(self, Processor::ReportHeader | Processor::Title | Processor::Midtitle | Processor::Attachment | Processor::BoxStyle)
     }
 
     pub fn is_rsxml3(self) -> bool {
@@ -359,7 +374,9 @@ pub fn process_with(p: Processor, source: &Path, target: &Path, selections: Opti
 
 /// 조사 모드(모든 처리기). 선택 목록을 JSON 으로 돌려준다.
 pub fn survey_json(p: Processor, source: &Path, cfg: &Config) -> R<serde_json::Value> {
-    if p.is_rsxml4() {
+    if p.is_structure() {
+        structure::survey(p, source, cfg)
+    } else if p.is_rsxml4() {
         run4::survey(p, source, cfg)
     } else if p.is_rsxml3() {
         run3::survey(p, source, cfg)
@@ -370,7 +387,9 @@ pub fn survey_json(p: Processor, source: &Path, cfg: &Config) -> R<serde_json::V
 
 /// 처리 모드(모든 처리기). selections 는 survey_json 이 돌려준 모양의 JSON.
 pub fn process_json(p: Processor, source: &Path, target: &Path, sel: Option<&serde_json::Value>, cfg: &Config) -> R<usize> {
-    if p.is_rsxml4() {
+    if p.is_structure() {
+        structure::process(p, source, target, sel, cfg)
+    } else if p.is_rsxml4() {
         run4::process(p, source, target, sel, cfg)
     } else if p.is_rsxml3() {
         run3::process(p, source, target, sel, cfg)
