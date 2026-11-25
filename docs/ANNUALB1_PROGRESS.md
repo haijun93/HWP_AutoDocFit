@@ -9,3 +9,4 @@
 - 2026-11-25 22:42 [검증기 및 테스트] `scripts/validate_annual_hwpx.py`, `scripts/validate_annual_xlsx.py`, `scripts/verify_annual_com.py` (한/글 2020 COM 잠금 검증 스크립트), Python 단위 테스트 3종 작성 완료
 
 - 2026-11-25 23:39 이어받은 구현 검토·수정: Rust 전체 59건, 신규 Python 7건, HWPX/XLSX 구조 검증 통과. NEO COM 3쪽/2쪽 열기·저장·재열기 확인(2020 미확인). 중간 커밋 후 전체 Python 시험 예정.
+- 2026-11-26 00:01 중간 커밋 c762b4b6 후 전체 Python 시험 실제 실행: 1200.419초 상한 중단(exit 124), Ran/OK 최종 줄 없음으로 전체 통과 여부 미확인. fixture 변경 없음·소유 잠금 회수. COM 저장본 108/530셀 배경색·16/11pt·170mm 보존 대조 완료. 결과 문서 보완 후 최종 로컬 커밋, 푸시 안 함.
