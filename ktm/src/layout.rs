@@ -697,6 +697,86 @@ pub fn quick_search_layout(scale: i32, width: i32, height: i32, has_related: boo
     quick_layout_at(option_top, width, height, scale, has_related, show_options, has_autocomplete, s(OPTION_H), s(FILTER_H), s(SUMMARY_H), s(22))
 }
 
+/// 실제 글꼴로 잰 폭·높이를 받는 화면 배치. 기존 고정 치수 API는 호환용으로 유지한다.
+/// 상태 전이(관련어/옵션/폴더/자동완성 표시)는 이 계산 한 곳에서 띠 높이로 바뀐다.
+pub struct MeasuredQuickLayout {
+    pub bands: QuickSearchLayout,
+    pub related: Vec<RECT>,
+    /// 각 줄의 첫 칸은 제목, 나머지는 클릭 가능한 칩이다.
+    pub dates: Vec<RECT>,
+    pub extensions: Vec<RECT>,
+    pub folders: Vec<RECT>,
+    pub modes: Vec<RECT>,
+    pub option_line_height: i32,
+}
+
+pub const DATE_LABELS: [&str; 6] = ["기간:", "전체", "오늘", "7일간", "30일간", "올해"];
+pub const EXT_LABELS: [&str; 6] = ["형식:", "전체", "HWP", "PDF", "DOC", "XLS"];
+
+/// 칩은 글꼴 폭 + 좌우 여백으로 배치하고, 긴 한 칩은 영역 폭까지 제한한다.
+pub fn measured_chip_rects<S: AsRef<str>>(
+    labels: &[S], left: i32, top: i32, right: i32, row_h: i32,
+    gap: i32, padding: i32, measure: impl Fn(&str) -> i32,
+) -> Vec<RECT> {
+    let right = right.max(left);
+    let mut x = left;
+    let mut y = top;
+    labels.iter().map(|label| {
+        let width = (measure(label.as_ref()).max(0) + 2 * padding).min(right - left);
+        if x > left && x + width > right { x = left; y += row_h + gap; }
+        let rect = RECT { left: x, top: y, right: x + width, bottom: y + row_h };
+        x += width + gap;
+        rect
+    }).collect()
+}
+
+pub fn measured_quick_search_layout(
+    scale: i32, width: i32, height: i32, left: i32, font_height: i32,
+    related: &[String], folders: &[String], show_options: bool, has_autocomplete: bool,
+    measure: impl Fn(&str) -> i32,
+) -> MeasuredQuickLayout {
+    let s = |v: i32| (v * scale.max(1) / 100).max(1);
+    let gap = s(4);
+    let right = (width - s(12)).max(left);
+    let row_h = s(FILTER_H).max(font_height + s(8));
+    let option_line_height = s(OPTION_H / 2).max(font_height + s(8));
+    let mut y = s(HEAD_H + SEARCH_BOX_H + 12);
+    let band = |top, bottom| RECT { left, top, right, bottom };
+    let chips = |labels: &[String], top| measured_chip_rects(labels, left, top, right, row_h, gap, s(6), &measure);
+    let related_top = y;
+    let related_rects = if related.len() > 1 { chips(related, y) } else { Vec::new() };
+    if let Some(last) = related_rects.last() { y = last.bottom + gap; }
+    let related_band = band(related_top, y);
+    let options = band(y, y + option_line_height * if show_options { 2 } else { 1 });
+    let modes = measured_chip_rects(&["모두 포함", "하나 이상", "정확히 일치"], left,
+        y + option_line_height, right, option_line_height - gap, gap, s(6), &measure);
+    y = options.bottom;
+    let filter_top = y;
+    let dates = chips(&DATE_LABELS.map(str::to_owned), y);
+    y = dates.last().map_or(y, |r| r.bottom + gap);
+    let extensions = chips(&EXT_LABELS.map(str::to_owned), y);
+    y = extensions.last().map_or(y, |r| r.bottom + gap);
+    let folder_rects = chips(folders, y);
+    if let Some(last) = folder_rects.last() { y = last.bottom + gap; }
+    let filters = band(filter_top, y);
+    let summary = band(y, y + s(SUMMARY_H).max(font_height + s(8)));
+    y = summary.bottom;
+    let autocomplete = band(y, y + if has_autocomplete { row_h + gap } else { 0 });
+    // 자식 컨트롤도 같은 사각형을 써야 한다. 높이가 작은 창의 컨트롤은 보이는 부분만 판정한다.
+    let clip = |r: RECT| RECT { top: r.top.min(height.max(0)), bottom: r.bottom.min(height.max(0)), ..r };
+    MeasuredQuickLayout {
+        bands: QuickSearchLayout {
+            related: clip(related_band), tabs: clip(band(options.top, options.top)),
+            options: clip(options), filters: clip(filters), summary: clip(summary),
+            autocomplete: clip(autocomplete), list_top: autocomplete.bottom.min(height.max(0)),
+        },
+        related: related_rects.into_iter().map(clip).collect(),
+        dates: dates.into_iter().map(clip).collect(),
+        extensions: extensions.into_iter().map(clip).collect(),
+        folders: folder_rects.into_iter().map(clip).collect(), modes, option_line_height,
+    }
+}
+
 /// Compatibility wrappers delegate their band positions to the shared layout calculation.
 pub fn filter_band_top(option_top: i32, option_h: i32) -> i32 {
     quick_layout_at(option_top, i32::MAX, i32::MAX, 100, false, true, false, option_h, 0, 0, 0).filters.top

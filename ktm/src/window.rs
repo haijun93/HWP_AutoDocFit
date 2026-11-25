@@ -214,14 +214,45 @@ fn scale_u(h: HWND, n: i32, u: &Ui) -> i32 {
     frame::scale(h, n) * u.settings.bounded_ui_scale() as i32 / 100
 }
 
+fn folder_chips(u: &Ui) -> Vec<(String, Option<String>)> {
+    if u.state.folder_counts.is_empty() && u.state.selected_folder.is_none() { return Vec::new(); }
+    let mut labels = vec![("폴더:".into(), None), ("전체".into(), None)];
+    if let Some(sel) = &u.state.selected_folder {
+        if !u.state.folder_counts.iter().any(|(f, _)| f == sel) {
+            labels.push((sel.clone(), Some(sel.clone())));
+        }
+    }
+    labels.extend(u.state.folder_counts.iter().map(|(f, c)| (format!("{f}({c})"), Some(f.clone()))));
+    labels
+}
+
+fn quick_controls(h: HWND, u: &Ui) -> MeasuredQuickLayout {
+    unsafe {
+        let mut r: RECT = std::mem::zeroed();
+        GetClientRect(h, &mut r);
+        let dc = GetDC(h);
+        let old = SelectObject(dc, u.small);
+        let mut metrics: TEXTMETRICW = std::mem::zeroed();
+        GetTextMetricsW(dc, &mut metrics);
+        let scale = scale_u(h, 100, u);
+        let side = sidebar_width_px(u.state.options.sidebar_open, r.right, scale_u(h, SIDEBAR_W, u));
+        let groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
+        let related: Vec<String> = if groups.len() > 1 {
+            groups.iter().take(8).enumerate().map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect()
+        } else { Vec::new() };
+        let folders: Vec<String> = folder_chips(u).into_iter().map(|(label,_)| label).collect();
+        let result = measured_quick_search_layout(scale, r.right, r.bottom,
+            side + scale_u(h, 12, u), metrics.tmHeight + metrics.tmExternalLeading,
+            &related, &folders, u.state.options.options_open, !u.state.autocompletes.is_empty(),
+            |text| frame::text_width(dc, text));
+        SelectObject(dc, old);
+        ReleaseDC(h, dc);
+        result
+    }
+}
+
 fn quick_layout(h: HWND, u: &Ui) -> QuickSearchLayout {
-    let mut r: RECT = unsafe { std::mem::zeroed() };
-    unsafe { GetClientRect(h, &mut r); }
-    let groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
-    ktm::layout::quick_search_layout(
-        scale_u(h, 100, u), r.right, r.bottom, groups.len() > 1, u.state.options.options_open,
-        !u.state.autocompletes.is_empty(),
-    )
+    quick_controls(h, u).bands
 }
 
 fn row_height(h: HWND) -> i32 {
@@ -861,7 +892,8 @@ unsafe fn layout(h: HWND) {
         );
         ShowWindow(with(|u| u.edit), if modal_open { SW_HIDE } else { SW_SHOW });
         let spans = option_spans(pad + side_w, r.right - pad);
-        let option_top = with(|u| quick_layout(h, u).options.top);
+        let controls = with(|u| quick_controls(h, u));
+        let option_top = controls.bands.options.top;
         let within = spans[5];
         let within_hwnd = with(|u| u.within_edit);
         MoveWindow(
@@ -869,7 +901,7 @@ unsafe fn layout(h: HWND) {
             within.0 + scale(h, 2),
             option_top,
             (within.1 - within.0 - scale(h, 4)).max(1),
-            scale(h, OPTION_H / 2),
+            controls.option_line_height,
             1,
         );
         ShowWindow(
@@ -884,7 +916,7 @@ unsafe fn layout(h: HWND) {
         MoveWindow(
             days,
             pad + side_w + scale(h, 258),
-            option_top + scale(h, OPTION_H / 2),
+            option_top + controls.option_line_height,
             scale(h, 48),
             scale(h, 22),
             1,
@@ -1181,6 +1213,7 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             DeleteObject(b);
         };
         let text = |s: &str, mut rc: RECT, c: u32, flags: u32| {
+            if rc.right <= rc.left || rc.bottom <= rc.top { return; }
             SetTextColor(mem, c);
             let ws = wide(s);
             DrawTextW(
@@ -1407,7 +1440,8 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
         // ③ 통합 검색: 탭 줄은 없다(본문·위계·파일명을 한 번에 찾는다).
         with(|u| {
-            let bands = quick_layout(h, u);
+            let controls = quick_controls(h, u);
+            let bands = controls.bands;
             let lpad = pad + side_w;
 
             // ③a 옵션 바: 모드, 필터, 제외, 저장 프리셋
@@ -1486,28 +1520,20 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         left: left + scale(h, 2),
                         top: oy,
                         right: (right - scale(h, 4)).max(left + scale(h, 2)),
-                        bottom: oy + scale(h, OPTION_H / 2),
+                        bottom: oy + controls.option_line_height,
                     },
                     p.text_sub,
                     DT_END_ELLIPSIS,
                 );
             }
 
-            let second_y = oy + scale(h, OPTION_H / 2);
             if u.state.options.options_open {
                 let modes = [
                     (tm_state::MatchMode::AllTerms, "모두 포함"),
                     (tm_state::MatchMode::AnyTerm, "하나 이상"),
                     (tm_state::MatchMode::Exact, "정확히 일치"),
                 ];
-                let mut mx = pad + side_w + scale(h, 2);
-                for (mode, label) in modes {
-                    let rc = RECT {
-                        left: mx,
-                        top: second_y,
-                        right: mx + scale(h, 82),
-                        bottom: second_y + scale(h, 22),
-                    };
+                for ((mode, label), rc) in modes.into_iter().zip(controls.modes.iter().copied()) {
                     fill(
                         rc,
                         if u.state.options.match_mode == mode {
@@ -1526,7 +1552,6 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                         },
                         DT_CENTER,
                     );
-                    mx += scale(h, 86);
                 }
             }
 
@@ -1578,13 +1603,13 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 RECT {
                     left: lpad,
                     top: sy,
-                    right: lpad + scale(h, 230),
+                    right: lpad + (r.right - lpad - scale(h, 132)).max(0) / 3,
                     bottom: sy + sh,
                 },
                 p.text_sub,
                 DT_END_ELLIPSIS,
             );
-            let group_left = lpad + scale(h, 235);
+            let group_left = lpad + (r.right - lpad - scale(h, 132)).max(0) / 3;
             let group_right = r.right - scale(h, 132);
             let group_mid = group_left + (group_right - group_left) / 2;
             let fit_label = |full: String, short: String, avail: i32| -> String {
@@ -1644,164 +1669,21 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
             text("[복사]", copy_rc, p.text, DT_CENTER);
             text("[CSV]", csv_rc, p.text, DT_CENTER);
 
-            // ④ 통합 검색 범위 줄 (기간 / 형식 / 폴더)
-            let fy = bands.filters.top;
-            let fh = bands.filters.bottom - bands.filters.top;
-            SelectObject(mem, u.small);
-            text(
-                "기간:",
-                RECT {
-                    left: lpad,
-                    top: fy,
-                    right: lpad + scale(h, 32),
-                    bottom: fy + fh,
-                },
-                p.text_sub,
-                0,
-            );
-            let mut fx = lpad + scale(h, 34);
-            let date_chips = [
-                (DateFilter::All, "전체", 36),
-                (DateFilter::Today, "오늘", 36),
-                (DateFilter::Last7Days, "7일간", 46),
-                (DateFilter::Last30Days, "30일간", 52),
-                (DateFilter::ThisYear, "올해", 36),
-            ];
-            for (df, lbl, w) in &date_chips {
-                let cw = scale(h, *w);
-                let rc = RECT {
-                    left: fx,
-                    top: fy,
-                    right: fx + cw,
-                    bottom: fy + fh,
-                };
-                let active = u.state.date_filter == *df;
-                if active {
-                    fill(rc, p.accent);
-                    text(lbl, rc, p.bg, DT_CENTER);
-                } else {
-                    fill(rc, p.tab_hover);
-                    text(lbl, rc, p.tab_text, DT_CENTER);
-                }
-                fx += cw + scale(h, 3);
-            }
-
-            // 확장자(형식) 칩
-            fx += scale(h, 6);
-            text(
-                "형식:",
-                RECT {
-                    left: fx,
-                    top: fy,
-                    right: fx + scale(h, 32),
-                    bottom: fy + fh,
-                },
-                p.text_sub,
-                0,
-            );
-            fx += scale(h, 34);
-            let ext_chips: [(Option<&'static str>, &'static str, i32); 5] = [
-                (None, "전체", 36),
-                (Some("hwp"), "HWP", 40),
-                (Some("pdf"), "PDF", 38),
-                (Some("docx"), "DOC", 40),
-                (Some("xlsx"), "XLS", 38),
-            ];
-            for (opt, lbl, w) in &ext_chips {
-                let cw = scale(h, *w);
-                let rc = RECT {
-                    left: fx,
-                    top: fy,
-                    right: fx + cw,
-                    bottom: fy + fh,
-                };
-                let active = match opt {
-                    None => u.state.selected_ext.is_none(),
-                    Some(e) => u
-                        .state
-                        .selected_ext
-                        .as_deref()
-                        .map(|s| s.contains(e))
-                        .unwrap_or(false),
-                };
-                if active {
-                    fill(rc, p.accent);
-                    text(lbl, rc, p.bg, DT_CENTER);
-                } else {
-                    fill(rc, p.tab_hover);
-                    text(lbl, rc, p.tab_text, DT_CENTER);
-                }
-                fx += cw + scale(h, 3);
-            }
-
-            // 폴더 칩
-            let has_folder_info =
-                !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some();
-            if has_folder_info && fx + scale(h, 80) < r.right - pad {
-                fx += scale(h, 6);
-                text(
-                    "폴더:",
-                    RECT {
-                        left: fx,
-                        top: fy,
-                        right: fx + scale(h, 32),
-                        bottom: fy + fh,
-                    },
-                    p.text_sub,
-                    0,
-                );
-                fx += scale(h, 34);
-                let all_active = u.state.selected_folder.is_none();
-                let all_rc = RECT {
-                    left: fx,
-                    top: fy,
-                    right: fx + scale(h, 38),
-                    bottom: fy + fh,
-                };
-                if all_active {
-                    fill(all_rc, p.accent);
-                    text("전체", all_rc, p.bg, DT_CENTER);
-                } else {
-                    fill(all_rc, p.tab_hover);
-                    text("전체", all_rc, p.tab_text, DT_CENTER);
-                }
-                fx += scale(h, 41);
-
-                let mut folders_to_show: Vec<(String, Option<u32>)> = Vec::new();
-                if let Some(ref sel) = u.state.selected_folder {
-                    if !u.state.folder_counts.iter().any(|(f, _)| f == sel) {
-                        folders_to_show.push((sel.clone(), None));
-                    }
-                }
-                for (f, c) in &u.state.folder_counts {
-                    folders_to_show.push((f.clone(), Some(*c)));
-                }
-
-                for (folder, count) in folders_to_show {
-                    let lbl = if let Some(c) = count {
-                        format!("{folder}({c})")
-                    } else {
-                        folder.clone()
+            // 기간·형식·폴더를 독립된 줄에 쌓는다. 그리기와 클릭은 같은 측정 사각형을 쓴다.
+            let dates = [DateFilter::All, DateFilter::Today, DateFilter::Last7Days,
+                DateFilter::Last30Days, DateFilter::ThisYear];
+            let extensions = [None, Some("hwp"), Some("pdf"), Some("docx"), Some("xlsx")];
+            let folder_labels = folder_chips(u);
+            for (kind, rects) in [&controls.dates, &controls.extensions, &controls.folders].into_iter().enumerate() {
+                for (i, rc) in rects.iter().enumerate() {
+                    let label = match kind { 0 => DATE_LABELS[i], 1 => EXT_LABELS[i], _ => &folder_labels[i].0 };
+                    let active = i > 0 && match kind {
+                        0 => u.state.date_filter == dates[i-1],
+                        1 => u.state.selected_ext.as_deref() == extensions[i-1],
+                        _ => u.state.selected_folder == folder_labels[i].1,
                     };
-                    let cw = scale(h, 68).min(r.right - fx - pad);
-                    if cw < scale(h, 28) {
-                        break;
-                    }
-                    let rc = RECT {
-                        left: fx,
-                        top: fy,
-                        right: fx + cw,
-                        bottom: fy + fh,
-                    };
-                    let active = u.state.selected_folder.as_deref() == Some(&folder);
-                    if active {
-                        fill(rc, p.accent);
-                        text(&lbl, rc, p.bg, DT_CENTER | DT_END_ELLIPSIS);
-                    } else {
-                        fill(rc, p.tab_hover);
-                        text(&lbl, rc, p.tab_text, DT_CENTER | DT_END_ELLIPSIS);
-                    }
-                    fx += cw + scale(h, 3);
+                    if i > 0 { fill(*rc, if active { p.accent } else { p.tab_hover }); }
+                    text(label, *rc, if active { p.bg } else { p.text_sub }, DT_CENTER | DT_END_ELLIPSIS);
                 }
             }
 
@@ -2328,10 +2210,9 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
 
             // ② 검색창 아래 연관 검색어 묶음 칩
             let related_groups = ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries);
-            let chip_top = quick_layout(h, u).related.top;
             let chip_labels: Vec<String> = if u.settings.related_queries && related_groups.len()<2 { Vec::new() }
                 else { related_groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect() };
-            let chip_rects = related_chip_rects(&chip_labels, pad + side_w, chip_top, r.right - pad, scale(h, 100));
+            let chip_rects = quick_controls(h, u).related;
             SelectObject(mem, u.small);
             for (i, (group, chip)) in chip_labels.iter().zip(chip_rects.iter()).enumerate() {
                 let (bg, fg) = p.group_highlight(i, ui_theme::theme().kind == ui_theme::Kind::Dark);
@@ -3567,20 +3448,21 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     return 0;
                 }
 
-                let bands = with(|u| quick_layout(h, u));
+                let controls = with(|u| quick_controls(h,u));
+                let bands = controls.bands;
 
                 if hit_quick_band(x, y, bands.options) {
-                    match hit_option(x, y, bands.options.top, scale(h, OPTION_H), pad + side_w, rc_w.right - pad) {
+                    let hit = if y >= bands.options.top + controls.option_line_height {
+                        controls.modes.iter().any(|rc|hit_quick_band(x,y,*rc)).then_some(OptionControl::MatchMode)
+                    } else { hit_option(x,y,bands.options.top,2*controls.option_line_height,pad+side_w,rc_w.right-pad) };
+                    match hit {
                         Some(OptionControl::MatchMode) => {
                             let modes = [
                                 (tm_state::MatchMode::AllTerms, "모두 포함"),
                                 (tm_state::MatchMode::AnyTerm, "하나 이상"),
                                 (tm_state::MatchMode::Exact, "정확히 일치"),
                             ];
-                            let start = pad + side_w + scale(h, 2);
-                            let idx = ktm::layout::hit_match_chip(x, start, scale(h, 86), 3)
-                                .unwrap_or(0)
-                                .min(2);
+                            let idx = controls.modes.iter().position(|rc|hit_quick_band(x,y,*rc)).unwrap_or(0);
                             event(h, Event::SetMatchMode(modes[idx].0));
                         }
                         // 직접 일수 입력은 없앴다. 옵션 팝업에는 검색어 결합 방식만 남는다.
@@ -3711,7 +3593,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                     }
                 } else if hit_quick_band(x, y, bands.summary) {
                     let sy = bands.summary.top;
-                    let group_left = pad + side_w + scale(h, 235);
+                    let group_left = pad + side_w + (rc_w.right - pad - side_w - scale(h, 132)).max(0) / 3;
                     let group_right = rc_w.right - scale(h, 132);
                     if x >= rc_w.right - scale(h, 124) && x < rc_w.right - scale(h, 66) {
                         let rows = with(|u| {
@@ -3774,99 +3656,19 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                         event(h, Event::ToggleView);
                     }
                 } else if hit_quick_band(x, y, bands.filters) {
-                    // ③ 통합 검색 범위 단추 (기간 / 형식 / 폴더)
-                    let mut fx = pad + side_w + scale(h, 34);
-                    let date_chips = [
-                        (DateFilter::All, 36),
-                        (DateFilter::Today, 36),
-                        (DateFilter::Last7Days, 46),
-                        (DateFilter::Last30Days, 52),
-                        (DateFilter::ThisYear, 36),
-                    ];
-                    let mut handled = false;
-                    for (df, w) in &date_chips {
-                        let cw = scale(h, *w);
-                        if x >= fx && x < fx + cw {
-                            event(h, Event::SetDateFilter(*df));
-                            handled = true;
-                            break;
-                        }
-                        fx += cw + scale(h, 3);
-                    }
-
-                    // 형식(확장자) 칩 클릭
-                    if !handled {
-                        fx += scale(h, 6) + scale(h, 34);
-                        let ext_chips: [(Option<&'static str>, i32); 5] = [
-                            (None, 36),
-                            (Some("hwp"), 40),
-                            (Some("pdf"), 38),
-                            (Some("docx"), 40),
-                            (Some("xlsx"), 38),
-                        ];
-                        for (opt, w) in &ext_chips {
-                            let cw = scale(h, *w);
-                            if x >= fx && x < fx + cw {
-                                let cur = with(|u| u.state.selected_ext.clone());
-                                match opt {
-                                    None => event(h, Event::SetExtFilter(None)),
-                                    Some(ext) => {
-                                        if cur.as_deref() == Some(*ext) {
-                                            event(h, Event::SetExtFilter(None));
-                                        } else {
-                                            event(h, Event::SetExtFilter(Some(ext.to_string())));
-                                        }
-                                    }
-                                }
-                                handled = true;
-                                break;
-                            }
-                            fx += cw + scale(h, 3);
-                        }
-                    }
-
-                    // 폴더 칩 클릭
-                    if !handled {
-                        let has_folder_info = with(|u| {
-                            !u.state.folder_counts.is_empty() || u.state.selected_folder.is_some()
-                        });
-                        if has_folder_info && fx + scale(h, 80) < rc_w.right - pad {
-                            fx += scale(h, 6) + scale(h, 34);
-                            let all_w = scale(h, 38);
-                            if x >= fx && x < fx + all_w {
-                                event(h, Event::SetFolderFilter(None));
-                            } else {
-                                fx += scale(h, 41);
-                                let mut folders_to_check: Vec<String> = Vec::new();
-                                let sel_opt = with(|u| u.state.selected_folder.clone());
-                                let fcs = with(|u| u.state.folder_counts.clone());
-                                if let Some(ref sel) = sel_opt {
-                                    if !fcs.iter().any(|(f, _)| f == sel) {
-                                        folders_to_check.push(sel.clone());
-                                    }
-                                }
-                                for (f, _) in fcs {
-                                    folders_to_check.push(f);
-                                }
-
-                                for folder in folders_to_check {
-                                    let cw = scale(h, 68).min(rc_w.right - fx - pad);
-                                    if cw < scale(h, 28) {
-                                        break;
-                                    }
-                                    if x >= fx && x < fx + cw {
-                                        let cur = with(|u| u.state.selected_folder.clone());
-                                        if cur.as_deref() == Some(&folder) {
-                                            event(h, Event::SetFolderFilter(None));
-                                        } else {
-                                            event(h, Event::SetFolderFilter(Some(folder)));
-                                        }
-                                        break;
-                                    }
-                                    fx += cw + scale(h, 3);
-                                }
-                            }
-                        }
+                    let dates = [DateFilter::All, DateFilter::Today, DateFilter::Last7Days,
+                        DateFilter::Last30Days, DateFilter::ThisYear];
+                    if let Some(i) = controls.dates.iter().skip(1).position(|rc| hit_quick_band(x,y,*rc)) {
+                        event(h, Event::SetDateFilter(dates[i]));
+                    } else if let Some(i) = controls.extensions.iter().skip(1).position(|rc| hit_quick_band(x,y,*rc)) {
+                        let exts = [None, Some("hwp"), Some("pdf"), Some("docx"), Some("xlsx")];
+                        let ext = exts[i].map(str::to_owned);
+                        let selected = with(|u| u.state.selected_ext.clone());
+                        event(h, Event::SetExtFilter(if selected == ext { None } else { ext }));
+                    } else if let Some(i) = controls.folders.iter().skip(1).position(|rc| hit_quick_band(x,y,*rc)) {
+                        let folder = with(|u| folder_chips(u)[i+1].1.clone());
+                        let selected = with(|u| u.state.selected_folder.clone());
+                        event(h, Event::SetFolderFilter(if selected == folder { None } else { folder }));
                     }
                 } else if with(|u| u.state.query.trim().is_empty() && u.rows.is_empty()) {
                     let entries = with(|u| u.state.history_entries());
@@ -3921,8 +3723,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                 } else if hit_quick_band(x, y, bands.related)
                 {
                     let groups = with(|u| ktm::backend::display_query_groups(&u.state.query, u.settings.related_queries));
-                    let labels: Vec<String> = groups.iter().enumerate().take(8).map(|(i,g)| format!("{}. {}", i+1, g.trim())).collect();
-                    let rects = related_chip_rects(&labels, pad + side_w, bands.related.top, rc_w.right - pad, scale(h, 100));
+                    let rects = controls.related;
                     if let Some(index) = rects.iter().position(|rc| x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom) {
                         if let Some(group) = groups.get(index) { event(h, Event::Input(group.clone())); }
                     }
