@@ -1,6 +1,6 @@
 # UNIFIED1M — v2.2.101 기준 통합 검색 병합·재시험
 
-`feature/UNIFIED1M`에서 v2.2.101 기준 `e550ad48`에 `feature/UNIFIED1`을 `git merge --no-ff`로 병합했다. 로컬 기능 브랜치에서 커밋하며 main 브랜치 이동·푸시·태그·배포·설치본 교체는 하지 않는다. 전체 검증은 아래 진행 상태를 따른다.
+`feature/UNIFIED1M`에서 v2.2.101 기준 `e550ad48`에 `feature/UNIFIED1`(`a56e7c60`)을 `git merge --no-ff`로 병합했다. 병합 커밋은 `158650bb`다. 설정 4조합·ktm 전체 276개·release 빌드·전체 Python 3,695개 검증을 통과했다(기존 Rust 1개·Python 22개 제외). 로컬 기능 브랜치에 커밋했으며 main 브랜치 이동·푸시·태그·배포·설치본 교체는 하지 않았다.
 
 ## 병합과 검색 의미
 
@@ -59,7 +59,24 @@ Finished `release` profile [optimized] target(s) in 2m 10s
 
 ktm.exe: 2,108,928바이트, SHA-256 `BED4D37B6FF9259EC7ED8548EB2BF9EA2DA422CC577BE4D46976495A2A9F2C23`.
 
-전체 Python은 진행 중이다. 최종 unittest의 Ran/OK 원문은 완료 후 기록한다. Python은 지정된 3.15 가상환경을 사용한다. 기존 SEMI2 release klib를 `KLIB_EXE`와 `SEMI1_KLIB_EXE`로 지정하며 SHA-256은 `6F122D935B8AD00C83FCE7ECD850E356136EBE11ACBCDE52E2DE652FE4FC215B`다. klib는 이번 변경 크레이트가 아니며 이번 카드에서 새로 빌드한 산출물이 아니다.
+`python -m unittest discover -s tests` — 종료 코드 0. 지정된 Python 3.15.2 가상환경으로 실행했다. 실제 Ran/OK 줄:
+
+```text
+Ran 3695 tests in 1494.272s
+OK (skipped=22)
+```
+
+3,673개 통과·조건부 제외 22개·실패/오류 0이다. 제품·시험 소스는 `158650bb`로 고정했다. 전체 실행 중의 중간 커밋 `8357f270`은 문서만 변경했다. 다른 전체 Python 시험이 끝난 뒤 실행했고, 이번 카드의 다른 빌드·시험은 동시에 실행하지 않았다.
+
+필수 전체 시험은 약 24분 54초 걸렸다. 20분 내 완료를 확인하지 못한 사실을 진행 문서에 남겼고, 한 차례의 읽기 전용 비정지 프로파일에서 기존 `test_thumbnails_are_made_once_and_cached`의 `defusedxml` 파싱이 실행 중임을 확인했다. 장시간 원인의 추가 조사는 하지 않았으며, 실행 중인 전체 시험의 완료 결과를 위와 같이 받았다. 시험 생략·기준 완화·기존 시험 수정·재실행은 하지 않았다.
+
+실제 한/글 COM 활성화를 차단한 별도 시험 프로세스를 사용했고 공통 COM 잠금을 실행 내내 보유했다. 차단 요청 기록은 **0건**이며, 종료 후 이번 실행이 만든 잠금을 해제했다. 사용자 문서는 사용하지 않았다. 시험이 다시 만든 docx/hwpx/pptx/xlsx fixture 4개는 원복했다.
+
+기존 ResourceWarning 및 종료 후 sandbox의 열린 `timeline-content.sqlite` 정리 PermissionError는 출력됐다. unittest 결과와 프로세스 종료 코드는 성공이며 정리 경고를 고쳤다고 주장하지 않는다.
+
+기존 SEMI2 release klib를 `KLIB_EXE`와 `SEMI1_KLIB_EXE`로 지정했다. SHA-256은 시험 전후 동일한 `6F122D935B8AD00C83FCE7ECD850E356136EBE11ACBCDE52E2DE652FE4FC215B`다. klib는 이번 변경 크레이트가 아니며 이번 카드에서 새로 빌드한 산출물이 아니다.
+
+UTF-8 엄격 디코딩, 추가 diff의 한글과 PC 전용 경로 부재, `git diff --check`, 기존 Python 시험·Flutter·본체 Python 파일 무변경을 확인했다. 본체의 CRLF는 유지했다. 빌드 산출물은 저장소 밖 카드 전용 target에 남겼으며 PM 정리 대상이다.
 
 ## 확인하지 않은 범위
 

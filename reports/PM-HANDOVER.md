@@ -1,3 +1,7 @@
+# UNIFIED1M 인계 (2026-11-26)
+
+`feature/UNIFIED1M`: v2.2.101 `e550ad48` + UNIFIED1 `a56e7c60`을 병합 커밋 `158650bb`로 통합했다. window.rs 충돌에서 SEMI2 칩·묶음 색·근거·입력 계측과 통합 스트리밍·취소·정렬을 모두 보존했다. 두 설정을 켜면 파일명은 원문 질의의 names_related, 위계·본문은 main과 같은 연관 문단 backend를 사용하며 pipe 모드도 같다. 설정 4조합 회귀 포함 ktm 276개 통과·기존 수동 벤치 1개 제외, release 빌드 성공. 전체 Python Ran 3695 tests in 1494.272s / OK (skipped=22), 종료 코드 0. 전체 시험은 20분 내 확인 못 함을 기록한 뒤 최종 완료됐으며 기존 표 썸네일 시험의 defusedxml 파싱 실행을 읽기 전용으로 확인했다. COM 차단 요청 0건·공통 잠금 해제·생성 fixture 4개 원복. 기존 ResourceWarning·sandbox SQLite 정리 PermissionError는 남는다. unified_search와 related_queries 기본 false, 16ms 목표 미달 상태 유지·재측정 없음. 실사용 문서·COM·설치 서비스·실제 UI·맥은 미확인. 결과: `docs/UNIFIED1M_RESULT_2026-11-25.md`. 로컬 커밋만, main 이동·푸시·태그·배포 없음. 카드 target은 PM 정리 대상.
+
 # UNIFIED1 인계 (2026-11-25)
 
 `feature/UNIFIED1`, 기준 `8b18b99d`. 기본 false `unified_search` 뒤에 ktm 단일 요청·파일명→위계→본문 스트리밍과 후보 창 안의 최고 단 대표 행을 구현했다. 단별 200후보→중복 제거→20/20/40 출력이다. 합성 1천 문서의 독립 기대값·실제 격리 UI 2질의 일치, 정렬 5종의 단 순서/요약 보존, Rust 전체 271통과·기존 수동 벤치 1제외. 보정한 입력→이름 첫 GDI 19.77/15.84ms로 16ms 미달, 적은 결과의 전체 탐침은 약 6.89ms 증가, 쉴 때 개인 작업 집합 2.71MiB. 기본 활성화/승격 근거 없음. 첫 Python 실행은 정렬 결함 보완을 위해 의도 중단했고 최종 전체는 Ran 3660 tests in 953.856s / OK(skipped=22), 종료 코드 0이다. COM 활성화 0건, 기존 sandbox SQLite 정리 PermissionError 출력, binary fixture 4개 원복. 전역 최고 단·페이지 처리·실키보드 IME·설치 서비스·사용자 문서·COM·타사 비교는 미확인. 상세 `docs/UNIFIED1_RESULT_2026-11-25.md`, 설계·예비/최종 원시 JSON 동반. 중간 커밋 cf2762f8. 커밋만 하며 푸시·태그·병합·배포 금지.
