@@ -65,6 +65,19 @@ pub fn classify_bytes(raw: &[u8]) -> Result<(), ClassifyError> {
             doc.trailer.set("Root", Object::Reference(id));
         }
     }
+    // lopdf 0.42 가 빈 암호로 이미 복호화한 문서: `/Encrypt` 가 지워졌으므로 권한값은 암호 상태에서 읽는다.
+    if let Some(state) = doc.encryption_state.as_ref() {
+        if state.permissions().bits() as i64 != -1 {
+            return Err(err(
+                "PDF_RESTRICTED",
+                "권한 제한이 설정된 PDF는 현재 편집할 수 없습니다.",
+            ));
+        }
+        return Err(err(
+            "PDF_ENCRYPTED",
+            "암호가 설정된 PDF는 현재 편집할 수 없습니다.",
+        ));
+    }
     let encrypt = doc.trailer.get(b"Encrypt").ok().cloned();
     if doc.is_encrypted() || encrypt.is_some() {
         let opens = encrypt
@@ -141,7 +154,7 @@ pub fn classify_bytes(raw: &[u8]) -> Result<(), ClassifyError> {
 
 // ---------------------------------------------------------------------------
 // 열기 암호(빈 사용자 암호) 검증 — pypdf `reader.decrypt('')` 대응.
-// lopdf 0.34 는 V1~2/R2~3(RC4)만 검증하므로 R2~R6(AES-128/256 포함)을 직접 계산한다.
+// lopdf 가 스스로 복호화하지 못한 문서에 대비해 R2~R6(AES-128/256 포함)을 직접 계산한다.
 // ---------------------------------------------------------------------------
 use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 use md5::{Digest as _, Md5};

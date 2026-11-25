@@ -30,11 +30,40 @@ fn load(path: &Path) -> Result<Document> {
     if path.metadata()?.len() > 1024 * 1024 * 1024 {
         return Err(invalid("PDF exceeds 1 GB"));
     }
-    validate_doc(Document::load(path)?)
+    validate_doc(open_strict(path)?)
+}
+/// lopdf 0.42 는 `%PDF-` 앞의 군더더기 바이트를 건너뛰고 읽는다. 예전처럼 맨 앞에 없으면 거부한다.
+fn check_header(raw: &[u8]) -> Result<()> {
+    if !raw.starts_with(b"%PDF-") {
+        return Err(invalid("Invalid PDF header"));
+    }
+    Ok(())
+}
+fn open_strict(path: &Path) -> Result<Document> {
+    let mut head = Vec::new();
+    std::io::Read::read_to_end(
+        &mut std::io::Read::take(std::fs::File::open(path)?, 5),
+        &mut head,
+    )?;
+    check_header(&head)?;
+    Ok(Document::load(path)?)
+}
+/// lopdf 0.42 는 빈 암호로 열리는 암호화 PDF 를 읽으면서 복호화하고 `/Encrypt` 를 지운다.
+/// 그대로 저장하면 보호가 벗겨지므로 "원래 암호화돼 있었는지"까지 본다.
+fn is_protected(doc: &Document) -> bool {
+    doc.was_encrypted() || doc.trailer.get(b"Encrypt").is_ok()
+}
+/// 합치기 입력 열기: 헤더·암호화 검사.
+pub fn open_for_merge(path: impl AsRef<Path>) -> Result<Document> {
+    let doc = open_strict(path.as_ref())?;
+    if is_protected(&doc) {
+        return Err(invalid("Encrypted PDFs are not supported"));
+    }
+    Ok(doc)
 }
 /// 편집 가능한 문서인지(암호화·서명·쪽수) 검사하고 그대로 돌려준다.
 fn validate_doc(doc: Document) -> Result<Document> {
-    if doc.is_encrypted() {
+    if is_protected(&doc) {
         return Err(invalid(
             "Encrypted PDFs require protection-preserving editing",
         ));

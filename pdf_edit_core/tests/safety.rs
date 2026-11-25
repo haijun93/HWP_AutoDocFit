@@ -117,3 +117,59 @@ fn signed_and_encrypted_documents_are_refused_before_writing() {
     assert!(rotate_pages(&input, &out, &[1], 90).is_err());
     assert!(!out.exists());
 }
+
+/// 암호화(열기 암호 유무 모두)·앞에 군더더기가 있는 PDF 는 어떤 편집 경로로도 사본이 만들어지면 안 된다.
+#[test]
+fn protected_or_prefixed_pdfs_are_rejected_by_every_edit_path() {
+    let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/classify");
+    let dir = tempfile::tempdir().unwrap();
+    let ok = fixtures.join("ok_single.pdf");
+    let names = [
+        "enc_rc440_nouserpw", "enc_rc4128_nouserpw", "enc_aes128_nouserpw", "enc_aes256_nouserpw",
+        "enc_rc440_userpw", "enc_rc4128_userpw", "enc_aes128_userpw", "enc_aes256_userpw",
+        "leading_junk",
+    ];
+    for name in names {
+        let input = fixtures.join(format!("{name}.pdf"));
+        let out = dir.path().join(format!("{name}.pdf"));
+        assert!(pdf_edit_core::page_count(&input).is_err(), "{name}: count");
+        assert!(pdf_edit_core::rotate_pages(&input, &out, &[1], 90).is_err(), "{name}: rotate");
+        assert!(pdf_edit_core::pipeline::EditSession::open(&input).is_err(), "{name}: open");
+        let raw = std::fs::read(&input).unwrap();
+        assert!(pdf_edit_core::pipeline::EditSession::from_bytes(&raw).is_err(), "{name}: bytes");
+        let status = std::process::Command::new(env!("CARGO_BIN_EXE_pdf-edit"))
+            .arg("merge").arg(&out).arg(&ok).arg(&input)
+            .status()
+            .unwrap();
+        assert!(!status.success(), "{name}: merge");
+        assert!(!out.exists(), "{name}: output written");
+    }
+}
+
+/// RUSTSEC-2026-0187: 깊게 중첩된 객체를 읽어도 스택 오버플로로 프로세스가 죽지 않아야 한다.
+#[test]
+fn deeply_nested_objects_do_not_overflow_the_stack() {
+    let nested = "[".repeat(200_000) + &"]".repeat(200_000);
+    let objects = [
+        "<</Type/Catalog/Pages 2 0 R>>",
+        "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        "<</Type/Page/Parent 2 0 R/MediaBox[0 0 10 10]>>",
+        nested.as_str(),
+    ];
+    let mut pdf = String::from("%PDF-1.5\n");
+    let mut offsets = Vec::new();
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf += &format!("{} 0 obj\n{body}\nendobj\n", i + 1);
+    }
+    let xref = pdf.len();
+    pdf += "xref\n0 5\n0000000000 65535 f \n";
+    for offset in offsets {
+        pdf += &format!("{offset:010} 00000 n \n");
+    }
+    pdf += &format!("trailer\n<</Size 5/Root 1 0 R>>\nstartxref\n{xref}\n%%EOF\n");
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("deep.pdf");
+    std::fs::write(&input, pdf).unwrap();
+    assert_eq!(pdf_edit_core::page_count(&input).unwrap(), 1);
+}

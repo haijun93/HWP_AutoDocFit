@@ -5,6 +5,8 @@ tkinterdnd2==0.7.0
 Pillow==13.0.0
 defusedxml==0.7.1
 pywebview==6.2.1
+# bottle 은 pywebview 의 하위 의존성. 범위 선언만 있어 취약한 옛 버전으로 해석될 수 있어 잠금 파일과 같은 버전으로 고정한다.
+bottle==0.13.4
 pypdfium2==5.14.0
 pypdf==6.21.4
 cryptography==50.0.2
