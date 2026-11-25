@@ -120,8 +120,9 @@ class RustBackend(SearchBackend):
                 self._stop_locked()
                 raise TimeoutError(f"klib {payload.get('op')} 요청이 {self.timeout:g}초를 넘었습니다.")
             if not response[0]:
+                returncode = process.poll()
                 self._stop_locked()
-                raise RuntimeError("klib 프로세스가 응답 전에 종료되었습니다.")
+                raise RuntimeError(f"klib 프로세스가 응답 전에 종료되었습니다 (exit={returncode}).")
             try:
                 result = json.loads(response[0])
             except json.JSONDecodeError as error:
@@ -139,6 +140,11 @@ class RustBackend(SearchBackend):
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
+                process.wait(timeout=2)
+        if process is not None:
+            for stream in (process.stdin, process.stdout):
+                if stream is not None:
+                    stream.close()
 
     def close(self):
         with self._lock:
@@ -150,6 +156,10 @@ class RustBackend(SearchBackend):
                     self._process.wait(timeout=2)
                 except (OSError, subprocess.TimeoutExpired):
                     self._stop_locked()
+            if self._process is not None:
+                for stream in (self._process.stdin, self._process.stdout):
+                    if stream is not None:
+                        stream.close()
             self._process = None
 
     def index_file(self, path):

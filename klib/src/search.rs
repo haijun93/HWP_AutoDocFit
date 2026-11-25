@@ -567,7 +567,7 @@ impl SearchIndex {
     pub fn add_or_update_content_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
         self.put(p, blocks.iter(), true, None)
     }
-    /// 기존 검색 필드와 독립된 연관 검색 자료를 v5의 예약 location 필드에 저장한다.
+    /// 연관 자료는 v5의 STORED 전용 body 두 번째 값에 둔다. 첫 값·검색 토큰은 불변이다.
     pub fn add_content_with_related(&self, p: &Paragraph, blocks: Option<&[SearchBlock]>, related: &str) -> tantivy::Result<()> {
         if let Some(blocks) = blocks {
             self.put(p, blocks.iter(), true, Some(related))
@@ -588,7 +588,7 @@ impl SearchIndex {
             let crumb=block.breadcrumb.join("\u{1f}");
             let title=if content_mode && block.level>0 { text } else { p.title.as_str() };
             let mut d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>title.to_string(), self.fields.level=>block.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string(), self.fields.paragraph_ordinal=>block.ordinal, self.fields.node_id=>block.node_id.clone(), self.fields.breadcrumb=>crumb, self.fields.content_hash=>p.content_hash.clone(), self.fields.extractor_version=>p.extractor_version.clone(), self.fields.is_table=>u64::from(block.table));
-            if first { if let Some(related) = related { d.add_text(self.fields.location, related); } first = false; }
+            if first { if let Some(related) = related { d.add_text(self.fields.body, related); } first = false; }
             if let Some(parent_id)=&block.parent_id { d.add_text(self.fields.parent_id,parent_id); }
             #[cfg(test)]
             if let Some(body_ko)=self.legacy_body_ko { d.add_text(body_ko,text); }

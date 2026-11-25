@@ -76,6 +76,25 @@ class CommonRelatedBackendTests(unittest.TestCase):
         self.assertTrue(self.rust.cancel(threading.Event()))
         self.assert_same("2026")
 
+    def test_large_related_metadata_keeps_default_tokens_and_all_evidence(self):
+        path = self.root / "large.txt"
+        path.write_text(("공사 계약 " + "자료 " * 60 + "\n") * 500, encoding="utf-8")
+        self.sqlite.index_file(path)
+        self.rust.index_file(path)
+        rows = self.assert_same("공사 계약", roots=[self.root], limit=500)
+        large = next(row for row in rows if row["path"] == str(path))
+        self.assertEqual(large["group_matches"][0]["match_count"], 500)
+        self.assertTrue(any(r["path"] == str(path) for r in self.rust.search("공사", hierarchy=True)))
+
+    def test_auxiliary_extraction_error_does_not_break_default_content_index(self):
+        path = self.root / "legacy-lossy.txt"
+        path.write_bytes(b"native common \xff")
+        self.assertTrue(self.rust.index_file(path)["indexed"])
+        self.assertTrue(any(r["path"] == str(path) for r in self.rust.search("native", hierarchy=True)))
+        with self.assertRaisesRegex(RuntimeError, "연관 검색 자료 추출 실패"):
+            self.rust.search("native", related_groups=True)
+        self.assertTrue(any(r["path"] == str(path) for r in self.rust.search("native", hierarchy=True)))
+
     def test_shadow_compares_groups_order_and_returns_sqlite_authority(self):
         log = self.root / "shadow.jsonl"
         backend = ModeSearchBackend(self.sqlite, self.rust, lambda: "shadow_compare", shadow_log=log)

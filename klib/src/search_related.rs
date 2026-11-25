@@ -237,7 +237,7 @@ impl SearchIndex {
         let p = Paragraph {path:path.into(),name:name.clone(),box_ids:vec!["0".into()],title:String::new(),
             level:0,body:String::new(),ext:Path::new(path).extension().and_then(|s|s.to_str()).unwrap_or("").into(),
             mtime:(request.num("mtime").unwrap_or(0.0)*1000.0) as i64, page:None,sheet:None,row:None,
-            content_hash:String::new(),extractor_version:"semi2-records-1".into()};
+            content_hash:String::new(),extractor_version:"semi2-records-2".into()};
         let blocks:Vec<_> = paragraphs.iter().map(|r| {
             let rank=r.i64("level_rank").unwrap_or(8).clamp(0,8);
             let ordinal=r.i64("paragraph_index").unwrap_or(0).max(0) as u64;
@@ -249,7 +249,7 @@ impl SearchIndex {
             return self.write(|w| {
                 w.delete_term(tantivy::Term::from_field_text(self.fields.path,path));
                 w.add_document(doc!(self.fields.doc_id=>id(path),self.fields.path=>path,self.fields.name=>name.clone(),
-                    self.fields.level=>0u64,self.fields.mtime=>p.mtime,self.fields.location=>related.clone(),
+                    self.fields.level=>0u64,self.fields.mtime=>p.mtime,self.fields.body=>"",self.fields.body=>related.clone(),
                     self.fields.extractor_version=>p.extractor_version.clone()))?;
                 Ok(())
             });
@@ -286,8 +286,12 @@ impl SearchIndex {
             let path = c.path(addr.doc_id)?;
             let d = searcher.doc::<TantivyDocument>(addr)?;
             let location = d.get_first(self.fields.location).and_then(|v|v.as_str()).unwrap_or("");
-            if let Some(raw) = location.strip_prefix("related-v1:") {
+            let metadata = d.get_all(self.fields.body).nth(1).and_then(|v|v.as_str());
+            if let Some(raw) = metadata.and_then(|s|s.strip_prefix("related-v1:")) {
                 let data = crate::json::parse(raw).ok_or_else(||tantivy::TantivyError::InvalidArgument("invalid related metadata".into()))?;
+                if let Some(error) = data.str("error") {
+                    return Err(tantivy::TantivyError::InvalidArgument(format!("연관 검색 자료 추출 실패: {error}")));
+                }
                 names.insert(path.clone(), data.str("name").unwrap_or("").into());
                 mtimes.insert(path.clone(), data.num("mtime").unwrap_or(0.0));
                 sizes.insert(path.clone(), data.i64("size").unwrap_or(0).max(0) as u64);
