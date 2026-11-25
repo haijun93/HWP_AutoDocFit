@@ -20,14 +20,14 @@
 | 항목 | 결과 | 비고 |
 |---|---|---|
 | 집중 Python 회귀시험 | `Ran 30 tests`, `OK (skipped=1)` | 파서·빈 묶음·따옴표·문장 AND·교집합·순위·근거·기본 응답·파일명 |
-| kfind-core | `103 passed, 0 failed` | `cargo test --manifest-path kfind/core/Cargo.toml` |
-| kfind-names | `32 passed, 0 failed` | 전체 단위·통합 시험 |
+| kfind-core | 전체 `103 passed, 0 failed`; 최종 보정 후 파서 `2 passed` | `cargo test --manifest-path kfind/core/Cargo.toml` |
+| kfind-names | 전체 `32 passed, 0 failed`; 최종 보정 후 이름 그룹 검색 `1 passed` | 전체 단위·통합 시험 및 `literal_groups_before_limit` 재실행 |
 | klib library | `19 passed, 0 failed` | `cargo test --manifest-path klib/Cargo.toml --lib` |
 | klib 연관 검색 | `1 passed, 0 failed` | 바이너리 테스트를 로컬에서만 임시 활성화해 실행 후 `Cargo.toml` 원복. 후보 상한·교집합·순위·근거·문장 분리 검증 |
 | ktm | `260 passed, 0 failed, 1 ignored` | 문장 분리 기대값 수정 후 재실행 |
 | klib 바이너리 빌드 | 성공 | `cargo build --manifest-path klib/Cargo.toml --bin klib`; 기존 경고만 출력 |
-| SQLite/Rust 합성 대조 | 24/24 조합 일치 | 시드 20261124, 합성 문서 1,000개 + 제어 문서 5개, 본문·파일명 각각. 집합·정렬·묶음 근거 차이 0 |
-| 전체 Python unittest | `Ran 3620 tests in 1005.198s`, `OK (skipped=26)` | Rust 실행 파일 경로를 지정해 parity 시험 포함. 요약 후 임시 폴더 정리에서 잠긴 SQLite 파일의 `PermissionError`가 출력됐으나 종료 코드는 0 |
+| SQLite/Rust 합성 대조 | 최종 보정 후 24/24 조합 일치 | 시드 20261124, 합성 문서 1,000개 + 제어 문서 5개, 본문·파일명 각각. 집합·정렬·묶음 근거 차이 0 |
+| 전체 Python unittest | `Ran 3620 tests in 1331.923s`, `OK (skipped=26)` | 최종 보정 코드와 Rust 실행 파일 경로로 재실행. 요약 후 임시 폴더 정리에서 잠긴 SQLite 파일의 `PermissionError`가 출력됐으나 종료 코드는 0 |
 
 ### 추가 및 변경된 파일 목록
 - `tests/test_related_query.py`: 세미콜론(;) 분리, 공백·따옴표·빈 묶음, 특수문자(&, ~N), NFC, 200자 제한, 문단 matches 순수 단위시험 작성
@@ -39,7 +39,7 @@
 
 문장 단위 규칙과 다르던 기존 ktm 기대값 1건을 같은 문단의 서로 다른 문장 사례로 고쳐 검색 결과에서 제외하도록 했다. 기준을 낮추지 않았고, 전체 Python 시험의 WebView 재시작 경고와 임시 SQLite 잠금 정리 오류는 기능 시험 실패가 아닌 종료 후 환경 경고로 기록한다.
 
-최종 검토에서 파일명 확장자의 점을 문장 경계로 잘못 볼 수 있어 파일명은 전체 이름을 단일 검색 단위로 처리하도록 보완했다. 이 보정 후 집중 Python 18개, kfind-core 파서 2개, kfind-names 실제 그룹 검색 1개, klib 연관 검색 1개가 통과했다. 위 전체 Python 및 1,000문서 parity 수치는 이 마지막 파일명 경계 보정 전 결과이며, 보정 후 재실행이 남아 있다.
+최종 검토에서 파일명 확장자의 점을 문장 경계로 잘못 볼 수 있어 파일명은 전체 이름을 단일 검색 단위로 처리하도록 보완했다. 이 보정 후 집중 Python 18개, kfind-core 파서 2개, kfind-names 실제 그룹 검색 1개, klib 연관 검색 1개, 1,000문서 parity 24/24, 전체 Python 3,620개가 통과했다.
 
 ## SRCH6 backend 통합 제안(후속 카드, 이번 카드에서 구현하지 않음)
 
@@ -63,4 +63,5 @@
 
 - 설치본·실사용 문서·한/글 조판/COM 기능은 시험하지 않는다. 합성 파일만 사용한다.
 - 기본 backend 승격·설치 서비스 교체·SRCH 통합 병합·배포는 수행하지 않는다.
+- ktm 첫 그림 16ms 단일 실측은 실행하지 않았다. 한/글 COM은 이 카드의 범위가 아니어서 호출하지 않았다.
 - 대규모 코퍼스의 메모리·검색 속도 및 첫 그림 16ms 일반 보장은 별도 실측 항목이다.
