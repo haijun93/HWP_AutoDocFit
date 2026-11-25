@@ -33,7 +33,7 @@ RSXML1~4는 고유 13종(14슬롯)을 구현했으며, 남은 다섯 종류는 �
 - **제목 유형 4·5 및 다른 표가 섞인 문서**: 제목다운 글/기관 정보/대표 글자 크기 판정 미이식. 본문 또는 쪽 나눔이 제목과 개요 사이에 있으면 거부한다. Python이 원래 맡는다.
 - **일반 로마자·`로1` 문단→중제목 표**: 새 표 id·zOrder, 원래 run/컨트롤 이동·삭제의 동등성 미확인. 해당 후보가 있으면 Rust가 문서 전체를 거부해 Python으로 넘긴다.
 - 설정된 담당자 글 및 활성 기호 체계의 제목/중제목 경로는 미지원이다. 잘못된 예시 프로필도 Rust 적용을 중단한다.
-- 전체 Python 시험, 최종 Cargo 시험, 최종 확대 하네스, 속도, ALLQA COM 결과는 진행 중이며 아래에 실제 결과로 갱신한다.
+- 드문 Unicode 숫자·잘못된 수치 속성·위 제한 밖의 사용자 프로필 조합 전체는 확인하지 못했다. 이 카드의 차이 0은 아래 명시한 시험 범위의 결과다.
 
 ## 최종 하네스·속도
 
@@ -69,6 +69,36 @@ test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 
 합계 62건, 실패 0. lib/bin/doc-test는 각 0건이며 모두 성공했다. 연결·비교기 별도 시험은 `Ran 9 tests in 0.300s` / `OK`다.
 
+## ALLQA COM 전후 대조
+
+공통 COM 잠금을 하나 소유한 상태에서 다른 빌드·시험 없이 OFF 6문서 → ON 6문서를 순차 실행했다. 각 실행은 20분 제한 안에서 종료했다. 원본 및 처리 사본 해시는 6문서 모두 불변이다.
+상세 비교는 수정하지 않은 `scripts/allqa_compare.py`로 생성한 [HWPXFMT5_ALLQA_2026-11-24.md](HWPXFMT5_ALLQA_2026-11-24.md)에 보관했다.
+
+| 문서 | OFF 초 | ON 초 | 문단 수 전→후 | 텍스트/원시 서식/정규화 서식 | 판정 |
+|---|---:|---:|---:|---|---|
+| txt_short | 31.757 | 24.803 | 4→4 | 모두 일치 | 결과 동일 |
+| txt_long | 282.767 | 265.096 | 38→38 | 모두 일치 | 결과 동일 |
+| hwp_reference | 63.143 | 54.513 | 16→16 | 모두 일치 | 결과 동일 |
+| hwpx_table | 3.665 | 3.259 | — | 결과 없음 | 확인 못 함 |
+| hwpx_continuation | 22.472 | 19.842 | 4→4 | 모두 일치 | 결과 동일 |
+| hwpx_shapes | 14.026 | 12.917 | 7→7 | 모두 일치 | 결과 동일 |
+
+**6문서 중 결과 5쌍의 차이 0, 1문서는 확인 못 했다. 전체 QA 통과로 보고하지 않는다.** `hwpx_table`은 OFF/ON 모두 한/글 `Open`에서 실패해 서식 처리에 진입하지 못했다. 수정 없이 유지했다.
+기존 자동 검수의 원문 텍스트 보존(공백 무시)은 `hwp_reference`·`txt_long`·`txt_short`에서 OFF/ON 모두 FAIL이며, 이번 카드에서 그 원인을 해소하거나 기준을 완화하지 않았다.
+
+이 세트의 ON 로그에는 Rust 조사 11회·Python 폴백 4회·**Rust 실제 적용 0회**가 기록됐다. 서식 프로필이 없는 상자·보고서 머리는 원래 실행되지 않는다. 따라서 전체 시간 감소를 이식 효과로 주장하지 않으며, ALLQA만으로 네 처리기의 실제 변경 후 COM 호환성이 검증됐다고도 하지 않는다.
+
+이를 보완해 `scripts/hwpxfmt5_com_probe.py`로 내장 합성 표의 실제 변경 산출물을 별도 검사했다. 저장소 리소스 패키지는 읽기만 하고 외부 사본에 내장 header/section을 조합했다. Python/Rust 출력 각각을 독립 한/글로 열어 쪽 수와 추출 텍스트 해시를 대조했다.
+
+| 처리기 | 실제 변경 수(Python/Rust) | 정규화 출력 | COM 쪽 수 | COM 텍스트 |
+|---|---:|---|---:|---|
+| 붙임 | 1/1 | 동일 | 1/1 | 동일 |
+| 상자 | 1/1 | 동일 | 1/1 | 동일 |
+| 중제목 | 1/1 | 동일 | 1/1 | 동일 |
+| 제목 | 1/1 | 동일 | 1/1 | 동일 |
+
+8개 산출물 모두 열기 성공, 입력 및 패키지 리소스 원본 해시 불변. [HWPXFMT5_COM_2026-11-24.json](HWPXFMT5_COM_2026-11-24.json)에 결과를 보관했다. 최초 제목 합성 자료 준비에서 defusedxml에 없는 `Element` 생성 API를 사용해 실패했고, 파싱된 요소의 타입으로 생성하도록 고친 뒤 제목만 재시험해 통과했다. 사용자 문서는 쓰지 않았다. 이는 열기·쪽 수·텍스트 검사이며 PDF/화면 전수 대조는 하지 않았다.
+
 ## 개발 중 확인
 
 초기 대조 186쌍 중 185쌍 일치. `attp_table.hwpx`의 붙임 처리 1쌍은 헤더에 `fontfaces`가 없어 양쪽 모두 거부했다. 통과에 넣지 않는다.
@@ -86,3 +116,15 @@ test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 | 제목 | 0.612 | 1.046 | 0.59 | 400 | 예 |
 
 제목은 첫 버전에서 느려졌다. 표마다 날짜 정규식을 다시 컴파일하는 부분을 캐시하는 후속 변경을 진행하며, 이 변경 이후의 시험·측정 결과는 별도로 기록한다. 첫 결과를 숨기거나 가장 빠른 회차를 고르지 않는다.
+
+## 검증 명령과 후속 검사
+
+```text
+cargo test --release --locked -j 2 --manifest-path hwpx_fmt/Cargo.toml
+python scripts/hwpxfmt5_parity.py --bin <실행 파일> --out <외부 폴더> --bench
+python scripts/hwpxfmt5_com_probe.py --bin <실행 파일> --out <외부 폴더>
+HWPX_FMT_BIN=<실행 파일> python -m unittest tests.test_hwpxfmt5_parity tests.test_hwpx_fmt_backend
+python -m unittest discover -s tests
+```
+
+실제 명령은 지정된 Python 3.15.2 가상환경으로 실행했다. `HWPX_FMT_BIN`을 지정한 신규 연결·native 차이 대조 시험은 `Ran 10 tests in 49.655s` / `OK`(skip 0)다. 기존 RSXML 전체 하네스와 마지막 전체 Python 시험은 후속 기록에 실제 결과를 적는다.

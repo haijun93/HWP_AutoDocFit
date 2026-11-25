@@ -1,0 +1,70 @@
+[
+  {
+    "processor": "attachment",
+    "count": 1,
+    "normalized_equal": true,
+    "python": {
+      "pages": 1,
+      "text_sha256": "b58b37ce7de52f29fc6b5b9dfc7011f4864c920f39095987dbfc0f9be0eee0b2",
+      "text_length": 25
+    },
+    "rust": {
+      "pages": 1,
+      "text_sha256": "b58b37ce7de52f29fc6b5b9dfc7011f4864c920f39095987dbfc0f9be0eee0b2",
+      "text_length": 25
+    },
+    "source_unchanged": true,
+    "ok": true
+  },
+  {
+    "processor": "box",
+    "count": 1,
+    "normalized_equal": true,
+    "python": {
+      "pages": 1,
+      "text_sha256": "43eba490c99afb4e9f87e9f611de33cccce3ac517ba43ed4d9ae41f5de317b48",
+      "text_length": 78
+    },
+    "rust": {
+      "pages": 1,
+      "text_sha256": "43eba490c99afb4e9f87e9f611de33cccce3ac517ba43ed4d9ae41f5de317b48",
+      "text_length": 78
+    },
+    "source_unchanged": true,
+    "ok": true
+  },
+  {
+    "processor": "midtitle",
+    "count": 1,
+    "normalized_equal": true,
+    "python": {
+      "pages": 1,
+      "text_sha256": "b894a4e56f251607aad9ee65c712d292d92e21b0484014a153961dde5e6da8ba",
+      "text_length": 13
+    },
+    "rust": {
+      "pages": 1,
+      "text_sha256": "b894a4e56f251607aad9ee65c712d292d92e21b0484014a153961dde5e6da8ba",
+      "text_length": 13
+    },
+    "source_unchanged": true,
+    "ok": true
+  },
+  {
+    "processor": "title",
+    "count": 1,
+    "normalized_equal": true,
+    "python": {
+      "pages": 1,
+      "text_sha256": "b0eb5d57fe48211daa710d6b2a666224e53a2ba3856f7aac8d9e5b46f2e0daf0",
+      "text_length": 91
+    },
+    "rust": {
+      "pages": 1,
+      "text_sha256": "b0eb5d57fe48211daa710d6b2a666224e53a2ba3856f7aac8d9e5b46f2e0daf0",
+      "text_length": 91
+    },
+    "source_unchanged": true,
+    "ok": true
+  }
+]

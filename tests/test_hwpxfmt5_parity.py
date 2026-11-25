@@ -34,5 +34,19 @@ class ComparatorTests(unittest.TestCase):
             self.assertEqual(harness.normalized_bytes(left), harness.normalized_bytes(right))
 
 
+@unittest.skipUnless(harness.base.find_bin(None), 'HWPX_FMT_BIN을 지정하면 구조 처리기 차이를 대조합니다')
+class NativeParityTests(unittest.TestCase):
+    def test_structure_processors_preserve_python_results(self):
+        with tempfile.TemporaryDirectory(prefix='hwpxfmt5_parity_test_') as folder:
+            result = harness.run(Path(harness.base.find_bin(None)), Path(folder))
+        self.assertEqual(result['failed'], 0, [r for r in result['results'] if r['ok'] is False])
+        self.assertEqual(result['unsupported_failed'], 0, result['unsupported'])
+        self.assertGreaterEqual(result['passed'], 233)
+        self.assertGreaterEqual(result['changed'], 84)
+        for name in ('attachment', 'box', 'title', 'midtitle'):
+            changed = sum(bool(r.get('count')) for r in result['results'] if r['processor'] == name)
+            self.assertGreaterEqual(changed, 15, name)
+
+
 if __name__ == '__main__':
     unittest.main()
