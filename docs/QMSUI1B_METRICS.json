@@ -1,0 +1,47 @@
+{
+  "measurement_date": "2026-11-26",
+  "before": {
+    "firstpaint": {
+      "clock": "EN_CHANGE to EndPaint (GDI), not DWM presentation",
+      "complete_group_evidence": true,
+      "first_input_paint_ms": 24.5544,
+      "first_paint_under_16ms": false,
+      "input_to_results_ms": 103.6674,
+      "ok": true,
+      "query": "2026; 공사 계약",
+      "rows": 2,
+      "samples": 1
+    },
+    "idle": {
+      "seconds": 60.67575920000672,
+      "cpu_ms": 62.5,
+      "private_working_set_start": 1716224,
+      "private_working_set_end": 1695744,
+      "private_bytes_start": 2543616,
+      "private_bytes_end": 2506752,
+      "concurrent_build_or_test_pids": []
+    }
+  },
+  "after": {
+    "firstpaint": {
+      "clock": "EN_CHANGE to EndPaint (GDI), not DWM presentation",
+      "complete_group_evidence": true,
+      "first_input_paint_ms": 12.7499,
+      "first_paint_under_16ms": true,
+      "input_to_results_ms": 30.5735,
+      "ok": true,
+      "query": "2026; 공사 계약",
+      "rows": 2,
+      "samples": 1
+    },
+    "idle": {
+      "seconds": 60.68911450001178,
+      "cpu_ms": 0.0,
+      "private_working_set_start": 1712128,
+      "private_working_set_end": 1691648,
+      "private_bytes_start": 2486272,
+      "private_bytes_end": 2449408,
+      "concurrent_build_or_test_pids": []
+    }
+  }
+}
