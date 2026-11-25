@@ -91,6 +91,7 @@ struct WorkTimes {
 }
 
 enum Reply {
+    Unified(u64, ktm::backend::unified::Snapshot, Instant, WorkTimes),
     Search(u64, Tab, Result<Answer, String>, Instant, WorkTimes),
     Snippets(u64, Vec<(usize, Row)>),
     TopTopics(Vec<String>),
@@ -119,6 +120,7 @@ struct Ui {
     status: mpsc::Sender<String>,
     top: usize,
     timing: Option<Instant>,
+    unified_paint: Option<(Instant, bool)>,
     ready_at: Option<Instant>,
     hotkey: String,
     hotkey_error: String,
@@ -435,7 +437,12 @@ fn event(h: HWND, e: Event) {
                         if tab == Tab::All {
                             edit(|u| { u.combined_batches.clear(); u.leg_errors.clear(); });
                             p.search.clear();
-                            for (part, limit) in [(Tab::Names, 20), (Tab::Hierarchy, 20), (Tab::Body, 40)] {
+                            let parts = if with(|u| u.settings.unified_search) {
+                                vec![(Tab::All, max_results)]
+                            } else {
+                                vec![(Tab::Names, 20), (Tab::Hierarchy, 20), (Tab::Body, 40)]
+                            };
+                            for (part, limit) in parts {
                                 p.search.push((generation, query.clone(), part, Instant::now(), cancel.clone(), sort,
                                     date_filter, custom_date_range, folder.clone(), ext.clone(), match_mode,
                                     max_results.min(limit), skip_cloud_network));
@@ -1102,6 +1109,9 @@ unsafe fn paint(h: HWND) {
             draw(h, dc, r);
         }
         EndPaint(h, &ps);
+        if let Some((start, complete)) = edit(|u| u.unified_paint.take()) {
+            phase(if complete { "unified_complete_to_paint_ms" } else { "unified_names_to_paint_ms" }, start.elapsed());
+        }
         if let Some(start) = edit(|u| u.timing.take()) {
             log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
             if let Some(ready) = edit(|u| u.ready_at.take()) {
@@ -4026,6 +4036,47 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             });
                             continue;
                         }
+                        Reply::Unified(g, snapshot, start, times) => {
+                            if g != with(|u| u.state.generation) || with(|u| u.state.phase) == Phase::Hidden {
+                                continue;
+                            }
+                            phase("search_queue_ms", times.picked - start);
+                            phase("search_work_ms", times.done - times.picked);
+                            phase("search_deliver_ms", times.done.elapsed());
+                            let mut answer = snapshot.answer;
+                            let (settings, folder, selected_path) = with(|u| (
+                                u.settings.clone(), u.state.selected_folder.clone(),
+                                u.state.selected.and_then(|i| u.rows.get(i)).map(|r| ktm::backend::unified::path_key(&r.path)),
+                            ));
+                            let allowed = ktm::layout::filter_row_indices(&answer.rows, &settings, folder.as_deref());
+                            answer.rows = allowed.into_iter().map(|i| answer.rows[i].clone()).collect();
+                            event(h, Event::SearchPartFinished {
+                                generation: g, kind: snapshot.completed,
+                                count: answer.rows.len(), final_part: snapshot.final_part,
+                            });
+                            edit(|u| {
+                                u.rows = answer.rows;
+                                u.terms = answer.terms;
+                                u.state.folder_counts = answer.folder_counts;
+                                u.state.autocompletes = answer.autocompletes;
+                                u.leg_errors = snapshot.errors;
+                                u.state.error = (!u.leg_errors.is_empty()).then(|| u.leg_errors.join(" · "));
+                                if let Some(path) = selected_path {
+                                    if let Some(i) = u.rows.iter().position(|r| ktm::backend::unified::path_key(&r.path) == path) {
+                                        u.state.selected = Some(i);
+                                    }
+                                }
+                                u.timing.get_or_insert(start);
+                                u.ready_at.get_or_insert_with(Instant::now);
+                                if snapshot.completed == tm_state::ResultKind::Names || snapshot.final_part {
+                                    u.unified_paint = Some((start, snapshot.final_part));
+                                }
+                            });
+                            // Paint each published state even if faster later sources
+                            // are already queued in rx; the first filenames stay observable.
+                            InvalidateRect(h, null(), 0);
+                            UpdateWindow(h);
+                        }
                         Reply::Search(g, tab, result, start, times) => {
                             phase("search_queue_ms", times.picked - start);
                             phase("search_work_ms", times.done - times.picked);
@@ -4313,6 +4364,7 @@ pub fn run() -> Result<(), String> {
                 status: status_tx,
                 top: 0,
                 timing: None,
+                unified_paint: None,
                 ready_at: None,
                 hotkey: String::new(),
                 hotkey_error: String::new(),
@@ -4411,6 +4463,40 @@ pub fn run() -> Result<(), String> {
                         skip_cloud_network,
                     )) => {
                         let picked = Instant::now();
+                        if tab == Tab::All {
+                            // Only the opt-in adapter queues All as one job. The legacy
+                            // path continues to queue the original three independent jobs.
+                            let date_range = ktm::backend::date_range_for_filter(date_filter, custom_date_range);
+                            let _ = ktm::backend::unified::stream(max_results, &cancel, |kind, top| {
+                                if kind == tm_state::ResultKind::Names {
+                                    let (text, dates) = ktm::backend::unified::names_query(&q, date_range, folder.as_deref(), ext.as_deref());
+                                    let mut rows = ktm::backend::pipe_names_limit(&pipe_name, &text, sort, top)?;
+                                    ktm::backend::unified::filter_name_dates(&mut rows, dates);
+                                    return Ok(Answer { rows,
+                                        terms: ktm::backend::unified::query_terms(&q),
+                                        groups: kfind_core::split_semicolon_groups(&q),
+                                        ..Answer::default() });
+                                }
+                                let hierarchy = kind == tm_state::ResultKind::Hierarchy;
+                                if pipe_mode {
+                                    let text = ktm::backend::unified::scoped_query(&q, date_range, folder.as_deref(), ext.as_deref(), match_mode);
+                                    let rows = ktm::backend::pipe_search_limit(&pipe_name, &text, hierarchy, top)?;
+                                    return Ok(Answer { rows,
+                                        terms: ktm::backend::unified::query_terms(&q),
+                                        groups: kfind_core::split_semicolon_groups(&q),
+                                        ..Answer::default() });
+                                }
+                                if backend.is_none() { backend = Some(open(&root)?); }
+                                backend.as_mut().unwrap().search_with_scope_ext_limit_cloud(
+                                    &q, hierarchy, date_range, folder.as_deref(), ext.as_deref(), match_mode,
+                                    top, Some(cancel.clone()), skip_cloud_network,
+                                )
+                            }, |snapshot| {
+                                let _ = tx.send(Reply::Unified(g, snapshot, start, WorkTimes { picked, done: Instant::now() }));
+                                PostMessageW(handle as HWND, READY, 0, 0);
+                            });
+                            continue;
+                        }
                         let hierarchy = tab == Tab::Hierarchy;
                         let answer = (|| {
                             if tab == Tab::Names {
@@ -4630,6 +4716,10 @@ pub fn run() -> Result<(), String> {
 
         if let Some(output) = arg("--self-test").or_else(|| arg("--measure")) {
             probe::smoke(h, std::path::Path::new(&output), arg("--measure").is_some())?;
+        }
+
+        if let Some(output) = arg("--unified-measure") {
+            probe::unified_measure(h, std::path::Path::new(&output))?;
         }
 
         let mut msg: MSG = std::mem::zeroed();

@@ -1,0 +1,1613 @@
+{
+  "backend": {
+    "documents": 1000,
+    "includes_transport_or_paint": false,
+    "queries": [
+      {
+        "legacy_body": {
+          "max_ms": 1.0711,
+          "p50_ms": 0.7567999999999999,
+          "samples_ms": [
+            0.7923,
+            0.7567999999999999,
+            0.7216,
+            1.0711,
+            0.7031000000000001,
+            0.6986,
+            0.7832
+          ]
+        },
+        "legacy_count": 61,
+        "legacy_full": {
+          "max_ms": 2.0793999999999997,
+          "p50_ms": 1.7703,
+          "samples_ms": [
+            1.9680000000000002,
+            1.7703,
+            1.7034,
+            2.0793999999999997,
+            1.6666,
+            1.6782,
+            1.7731999999999999
+          ]
+        },
+        "legacy_hierarchy": {
+          "max_ms": 0.9091,
+          "p50_ms": 0.7484,
+          "samples_ms": [
+            0.9091,
+            0.7667,
+            0.7484,
+            0.7422000000000001,
+            0.7297,
+            0.7503,
+            0.7479
+          ]
+        },
+        "legacy_names": {
+          "max_ms": 0.0746,
+          "p50_ms": 0.04,
+          "samples_ms": [
+            0.0746,
+            0.0388,
+            0.0391,
+            0.04,
+            0.0386,
+            0.04,
+            0.0407
+          ]
+        },
+        "query": "예산집행",
+        "unified_count": 80,
+        "unified_first": {
+          "max_ms": 0.1384,
+          "p50_ms": 0.1226,
+          "samples_ms": [
+            0.132,
+            0.1226,
+            0.12029999999999999,
+            0.1384,
+            0.11560000000000001,
+            0.1367,
+            0.1152
+          ]
+        },
+        "unified_full": {
+          "max_ms": 3.1289,
+          "p50_ms": 2.7236000000000002,
+          "samples_ms": [
+            2.7236000000000002,
+            2.7085999999999997,
+            2.6256,
+            2.8800000000000003,
+            2.7491999999999996,
+            2.6397,
+            3.1289
+          ]
+        }
+      },
+      {
+        "legacy_body": {
+          "max_ms": 0.4753,
+          "p50_ms": 0.43570000000000003,
+          "samples_ms": [
+            0.4753,
+            0.4412,
+            0.43570000000000003,
+            0.4354,
+            0.429,
+            0.42969999999999997,
+            0.4372
+          ]
+        },
+        "legacy_count": 4,
+        "legacy_full": {
+          "max_ms": 1.1905999999999999,
+          "p50_ms": 0.9316,
+          "samples_ms": [
+            1.1905999999999999,
+            0.933,
+            0.9240999999999999,
+            0.9337,
+            0.9243,
+            0.9206000000000001,
+            0.9316
+          ]
+        },
+        "legacy_hierarchy": {
+          "max_ms": 0.6529,
+          "p50_ms": 0.4452,
+          "samples_ms": [
+            0.6529,
+            0.4415,
+            0.4393,
+            0.4491,
+            0.4458,
+            0.4424,
+            0.4452
+          ]
+        },
+        "legacy_names": {
+          "max_ms": 0.0346,
+          "p50_ms": 0.0248,
+          "samples_ms": [
+            0.0346,
+            0.0248,
+            0.0249,
+            0.0249,
+            0.0247,
+            0.0247,
+            0.0246
+          ]
+        },
+        "query": "2026; 공사 계약",
+        "unified_count": 4,
+        "unified_first": {
+          "max_ms": 0.0322,
+          "p50_ms": 0.0291,
+          "samples_ms": [
+            0.0322,
+            0.0291,
+            0.0292,
+            0.0291,
+            0.0283,
+            0.028900000000000002,
+            0.0286
+          ]
+        },
+        "unified_full": {
+          "max_ms": 0.9825999999999999,
+          "p50_ms": 0.9449000000000001,
+          "samples_ms": [
+            0.9449000000000001,
+            0.9659,
+            0.9825999999999999,
+            0.9494,
+            0.9437,
+            0.9444,
+            0.9443
+          ]
+        }
+      }
+    ],
+    "samples_per_query": 7,
+    "seed": 20261124
+  },
+  "ui": {
+    "legacy": {
+      "idle_cpu_ms": 0.0,
+      "idle_private_bytes_end": 3489792,
+      "idle_private_bytes_start": 3489792,
+      "idle_private_working_set_end": 2834432,
+      "idle_private_working_set_start": 2834432,
+      "idle_seconds": 2,
+      "queries": [
+        {
+          "input_to_complete_ms": 65.60470000000001,
+          "query": "예산집행",
+          "rows": [
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0230.txt",
+              "path": "documents/예산 집행-0230.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0231.txt",
+              "path": "documents/예산 집행-0231.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0232.txt",
+              "path": "documents/예산 집행-0232.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0233.txt",
+              "path": "documents/예산 집행-0233.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0234.txt",
+              "path": "documents/예산 집행-0234.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0235.txt",
+              "path": "documents/예산 집행-0235.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0236.txt",
+              "path": "documents/예산 집행-0236.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0237.txt",
+              "path": "documents/예산 집행-0237.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0238.txt",
+              "path": "documents/예산 집행-0238.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0239.txt",
+              "path": "documents/예산 집행-0239.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0240.txt",
+              "path": "documents/예산 집행-0240.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0241.txt",
+              "path": "documents/예산 집행-0241.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0242.txt",
+              "path": "documents/예산 집행-0242.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0243.txt",
+              "path": "documents/예산 집행-0243.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0244.txt",
+              "path": "documents/예산 집행-0244.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0245.txt",
+              "path": "documents/예산 집행-0245.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0246.txt",
+              "path": "documents/예산 집행-0246.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0247.txt",
+              "path": "documents/예산 집행-0247.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0248.txt",
+              "path": "documents/예산 집행-0248.txt"
+            },
+            {
+              "kinds": "[Names, Hierarchy]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0249.txt",
+              "path": "documents/예산 집행-0249.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "예산 집행-0250.txt",
+              "path": "documents/예산 집행-0250.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0500.txt",
+              "path": "documents/예산 집행-0500.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0499.txt",
+              "path": "documents/예산 집행-0499.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0498.txt",
+              "path": "documents/예산 집행-0498.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0497.txt",
+              "path": "documents/예산 집행-0497.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0496.txt",
+              "path": "documents/예산 집행-0496.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0495.txt",
+              "path": "documents/예산 집행-0495.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0494.txt",
+              "path": "documents/예산 집행-0494.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0493.txt",
+              "path": "documents/예산 집행-0493.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0492.txt",
+              "path": "documents/예산 집행-0492.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0491.txt",
+              "path": "documents/예산 집행-0491.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0490.txt",
+              "path": "documents/예산 집행-0490.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0489.txt",
+              "path": "documents/예산 집행-0489.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0488.txt",
+              "path": "documents/예산 집행-0488.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0487.txt",
+              "path": "documents/예산 집행-0487.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0486.txt",
+              "path": "documents/예산 집행-0486.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0485.txt",
+              "path": "documents/예산 집행-0485.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0484.txt",
+              "path": "documents/예산 집행-0484.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0483.txt",
+              "path": "documents/예산 집행-0483.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0482.txt",
+              "path": "documents/예산 집행-0482.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0481.txt",
+              "path": "documents/예산 집행-0481.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "예산 집행-0480.txt",
+              "path": "documents/예산 집행-0480.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0479.txt",
+              "path": "documents/합성문서-0479.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0478.txt",
+              "path": "documents/합성문서-0478.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0477.txt",
+              "path": "documents/합성문서-0477.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0476.txt",
+              "path": "documents/합성문서-0476.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0475.txt",
+              "path": "documents/합성문서-0475.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0474.txt",
+              "path": "documents/합성문서-0474.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0473.txt",
+              "path": "documents/합성문서-0473.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0472.txt",
+              "path": "documents/합성문서-0472.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0471.txt",
+              "path": "documents/합성문서-0471.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0470.txt",
+              "path": "documents/합성문서-0470.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0469.txt",
+              "path": "documents/합성문서-0469.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0468.txt",
+              "path": "documents/합성문서-0468.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0467.txt",
+              "path": "documents/합성문서-0467.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0466.txt",
+              "path": "documents/합성문서-0466.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0465.txt",
+              "path": "documents/합성문서-0465.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0464.txt",
+              "path": "documents/합성문서-0464.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0463.txt",
+              "path": "documents/합성문서-0463.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0462.txt",
+              "path": "documents/합성문서-0462.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0461.txt",
+              "path": "documents/합성문서-0461.txt"
+            }
+          ],
+          "document_ids": [
+            230,
+            231,
+            232,
+            233,
+            234,
+            235,
+            236,
+            237,
+            238,
+            239,
+            240,
+            241,
+            242,
+            243,
+            244,
+            245,
+            246,
+            247,
+            248,
+            249,
+            250,
+            500,
+            499,
+            498,
+            497,
+            496,
+            495,
+            494,
+            493,
+            492,
+            491,
+            490,
+            489,
+            488,
+            487,
+            486,
+            485,
+            484,
+            483,
+            482,
+            481,
+            480,
+            479,
+            478,
+            477,
+            476,
+            475,
+            474,
+            473,
+            472,
+            471,
+            470,
+            469,
+            468,
+            467,
+            466,
+            465,
+            464,
+            463,
+            462,
+            461
+          ]
+        },
+        {
+          "input_to_complete_ms": 40.989900000000006,
+          "query": "2026; 공사 계약",
+          "rows": [
+            {
+              "kinds": "[Names, Hierarchy, Body]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "2026 공사 계약-0901.txt",
+              "path": "documents/2026 공사 계약-0901.txt"
+            },
+            {
+              "kinds": "[Hierarchy, Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0904.txt",
+              "path": "documents/합성문서-0904.txt"
+            },
+            {
+              "kinds": "[Hierarchy, Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0903.txt",
+              "path": "documents/합성문서-0903.txt"
+            },
+            {
+              "kinds": "[Hierarchy, Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0902.txt",
+              "path": "documents/합성문서-0902.txt"
+            }
+          ],
+          "document_ids": [
+            901,
+            904,
+            903,
+            902
+          ]
+        }
+      ],
+      "unified_search": false,
+      "metrics": [
+        {
+          "metric": "startup_prerender_ms",
+          "ms": 249.7527
+        },
+        {
+          "metric": "startup_warm_ms",
+          "ms": 9.592
+        },
+        {
+          "metric": "show_setwindowpos_ms",
+          "ms": 3.9638
+        },
+        {
+          "metric": "show_foreground_ms",
+          "ms": 0.2465
+        },
+        {
+          "metric": "show_focus_ms",
+          "ms": 0.0287
+        },
+        {
+          "metric": "show_update_ms",
+          "ms": 39.2828
+        },
+        {
+          "metric": "hotkey_to_paint_ms",
+          "ms": 43.5704
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 17.9421
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.0673
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 1.273
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 16.7936
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 1.3598
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 3.0723
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 13.849
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 4.4513
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 2.8341
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 11.1086
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 63.9787
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 45.7181
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 39.8281
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.0502
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 0.7203
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 6.7023
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.7918
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 1.5221
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 5.2284
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 2.3066
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 0.8545
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 4.459
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 32.9584
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 25.4391
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 21.1898
+        }
+      ]
+    },
+    "unified": {
+      "idle_cpu_ms": 0.0,
+      "idle_private_bytes_end": 3620864,
+      "idle_private_bytes_start": 3620864,
+      "idle_private_working_set_end": 2854912,
+      "idle_private_working_set_start": 2854912,
+      "idle_seconds": 2,
+      "queries": [
+        {
+          "input_to_complete_ms": 66.6321,
+          "query": "예산집행",
+          "rows": [
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0230.txt",
+              "path": "documents/예산 집행-0230.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0231.txt",
+              "path": "documents/예산 집행-0231.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0232.txt",
+              "path": "documents/예산 집행-0232.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0233.txt",
+              "path": "documents/예산 집행-0233.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0234.txt",
+              "path": "documents/예산 집행-0234.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0235.txt",
+              "path": "documents/예산 집행-0235.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0236.txt",
+              "path": "documents/예산 집행-0236.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0237.txt",
+              "path": "documents/예산 집행-0237.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0238.txt",
+              "path": "documents/예산 집행-0238.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0239.txt",
+              "path": "documents/예산 집행-0239.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0240.txt",
+              "path": "documents/예산 집행-0240.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0241.txt",
+              "path": "documents/예산 집행-0241.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0242.txt",
+              "path": "documents/예산 집행-0242.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0243.txt",
+              "path": "documents/예산 집행-0243.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0244.txt",
+              "path": "documents/예산 집행-0244.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0245.txt",
+              "path": "documents/예산 집행-0245.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0246.txt",
+              "path": "documents/예산 집행-0246.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0247.txt",
+              "path": "documents/예산 집행-0247.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0248.txt",
+              "path": "documents/예산 집행-0248.txt"
+            },
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "예산 집행-0249.txt",
+              "path": "documents/예산 집행-0249.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0229.txt",
+              "path": "documents/합성문서-0229.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0228.txt",
+              "path": "documents/합성문서-0228.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0227.txt",
+              "path": "documents/합성문서-0227.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0226.txt",
+              "path": "documents/합성문서-0226.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0225.txt",
+              "path": "documents/합성문서-0225.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0224.txt",
+              "path": "documents/합성문서-0224.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0223.txt",
+              "path": "documents/합성문서-0223.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0222.txt",
+              "path": "documents/합성문서-0222.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0221.txt",
+              "path": "documents/합성문서-0221.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0220.txt",
+              "path": "documents/합성문서-0220.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0219.txt",
+              "path": "documents/합성문서-0219.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0218.txt",
+              "path": "documents/합성문서-0218.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0217.txt",
+              "path": "documents/합성문서-0217.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0216.txt",
+              "path": "documents/합성문서-0216.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0215.txt",
+              "path": "documents/합성문서-0215.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0214.txt",
+              "path": "documents/합성문서-0214.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0213.txt",
+              "path": "documents/합성문서-0213.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0212.txt",
+              "path": "documents/합성문서-0212.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0211.txt",
+              "path": "documents/합성문서-0211.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 0",
+              "name": "합성문서-0210.txt",
+              "path": "documents/합성문서-0210.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0479.txt",
+              "path": "documents/합성문서-0479.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0478.txt",
+              "path": "documents/합성문서-0478.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0477.txt",
+              "path": "documents/합성문서-0477.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0476.txt",
+              "path": "documents/합성문서-0476.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0475.txt",
+              "path": "documents/합성문서-0475.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0474.txt",
+              "path": "documents/합성문서-0474.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0473.txt",
+              "path": "documents/합성문서-0473.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0472.txt",
+              "path": "documents/합성문서-0472.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0471.txt",
+              "path": "documents/합성문서-0471.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0470.txt",
+              "path": "documents/합성문서-0470.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0469.txt",
+              "path": "documents/합성문서-0469.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0468.txt",
+              "path": "documents/합성문서-0468.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0467.txt",
+              "path": "documents/합성문서-0467.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0466.txt",
+              "path": "documents/합성문서-0466.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0465.txt",
+              "path": "documents/합성문서-0465.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0464.txt",
+              "path": "documents/합성문서-0464.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0463.txt",
+              "path": "documents/합성문서-0463.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0462.txt",
+              "path": "documents/합성문서-0462.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0461.txt",
+              "path": "documents/합성문서-0461.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0460.txt",
+              "path": "documents/합성문서-0460.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0459.txt",
+              "path": "documents/합성문서-0459.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0458.txt",
+              "path": "documents/합성문서-0458.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0457.txt",
+              "path": "documents/합성문서-0457.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0456.txt",
+              "path": "documents/합성문서-0456.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0455.txt",
+              "path": "documents/합성문서-0455.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0454.txt",
+              "path": "documents/합성문서-0454.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0453.txt",
+              "path": "documents/합성문서-0453.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0452.txt",
+              "path": "documents/합성문서-0452.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0451.txt",
+              "path": "documents/합성문서-0451.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0450.txt",
+              "path": "documents/합성문서-0450.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0449.txt",
+              "path": "documents/합성문서-0449.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0448.txt",
+              "path": "documents/합성문서-0448.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0447.txt",
+              "path": "documents/합성문서-0447.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0446.txt",
+              "path": "documents/합성문서-0446.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0445.txt",
+              "path": "documents/합성문서-0445.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0444.txt",
+              "path": "documents/합성문서-0444.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0443.txt",
+              "path": "documents/합성문서-0443.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0442.txt",
+              "path": "documents/합성문서-0442.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0441.txt",
+              "path": "documents/합성문서-0441.txt"
+            },
+            {
+              "kinds": "[Body]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0440.txt",
+              "path": "documents/합성문서-0440.txt"
+            }
+          ],
+          "document_ids": [
+            230,
+            231,
+            232,
+            233,
+            234,
+            235,
+            236,
+            237,
+            238,
+            239,
+            240,
+            241,
+            242,
+            243,
+            244,
+            245,
+            246,
+            247,
+            248,
+            249,
+            229,
+            228,
+            227,
+            226,
+            225,
+            224,
+            223,
+            222,
+            221,
+            220,
+            219,
+            218,
+            217,
+            216,
+            215,
+            214,
+            213,
+            212,
+            211,
+            210,
+            479,
+            478,
+            477,
+            476,
+            475,
+            474,
+            473,
+            472,
+            471,
+            470,
+            469,
+            468,
+            467,
+            466,
+            465,
+            464,
+            463,
+            462,
+            461,
+            460,
+            459,
+            458,
+            457,
+            456,
+            455,
+            454,
+            453,
+            452,
+            451,
+            450,
+            449,
+            448,
+            447,
+            446,
+            445,
+            444,
+            443,
+            442,
+            441,
+            440
+          ]
+        },
+        {
+          "input_to_complete_ms": 52.0677,
+          "query": "2026; 공사 계약",
+          "rows": [
+            {
+              "kinds": "[Names]",
+              "location": "256 B · 2026-11-24 09:00",
+              "name": "2026 공사 계약-0901.txt",
+              "path": "documents/2026 공사 계약-0901.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0904.txt",
+              "path": "documents/합성문서-0904.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0903.txt",
+              "path": "documents/합성문서-0903.txt"
+            },
+            {
+              "kinds": "[Hierarchy]",
+              "location": "문단 1 · 위계 8",
+              "name": "합성문서-0902.txt",
+              "path": "documents/합성문서-0902.txt"
+            }
+          ],
+          "document_ids": [
+            901,
+            904,
+            903,
+            902
+          ]
+        }
+      ],
+      "unified_search": true,
+      "metrics": [
+        {
+          "metric": "startup_prerender_ms",
+          "ms": 73.0278
+        },
+        {
+          "metric": "startup_warm_ms",
+          "ms": 7.61
+        },
+        {
+          "metric": "show_setwindowpos_ms",
+          "ms": 3.6779
+        },
+        {
+          "metric": "show_foreground_ms",
+          "ms": 0.2769
+        },
+        {
+          "metric": "show_focus_ms",
+          "ms": 0.0258
+        },
+        {
+          "metric": "show_update_ms",
+          "ms": 7.8393
+        },
+        {
+          "metric": "hotkey_to_paint_ms",
+          "ms": 11.8831
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 15.308
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.0548
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 3.0577
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 12.5057
+        },
+        {
+          "metric": "unified_names_to_paint_ms",
+          "ms": 28.2939
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 28.3021
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 12.5219
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.0548
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 10.3019
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 19.2037
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 39.7401
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 9.8138
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 32789,
+          "to_edit": false,
+          "value": 24.180400000000002
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.0548
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 17.9612
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 21.7755
+        },
+        {
+          "metric": "unified_complete_to_paint_ms",
+          "ms": 54.8319
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 54.8408
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 11.3638
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 32789,
+          "to_edit": false,
+          "value": 15.0782
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 11.4186
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 15,
+          "to_edit": false,
+          "value": 10.064200000000001
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.032
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 0.9687
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 9.2715
+        },
+        {
+          "metric": "unified_names_to_paint_ms",
+          "ms": 18.1215
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 18.1331
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 7.8221
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.032
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 2.4049
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 17.3999
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 31.536
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 11.4257
+        },
+        {
+          "metric": "search_queue_ms",
+          "ms": 0.032
+        },
+        {
+          "metric": "search_work_ms",
+          "ms": 3.3543
+        },
+        {
+          "metric": "search_deliver_ms",
+          "ms": 28.177
+        },
+        {
+          "metric": "unified_complete_to_paint_ms",
+          "ms": 44.1121
+        },
+        {
+          "metric": "input_to_paint_ms",
+          "ms": 44.1203
+        },
+        {
+          "metric": "search_ready_to_paint_ms",
+          "ms": 8.9616
+        },
+        {
+          "metric": "slow_dispatch_ms",
+          "msg": 32789,
+          "to_edit": false,
+          "value": 33.878699999999995
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,496 @@
+//! Opt-in, bounded, streaming composition of the existing three search sources.
+//! No handles, index copies, background threads or persistent caches live here.
+use super::{Answer, MAX_SEARCH_RESULTS, Result, Row};
+use crate::tm_state::ResultKind;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+pub const TIERS: [(ResultKind, usize); 3] = [
+    (ResultKind::Names, 20),
+    (ResultKind::Hierarchy, 20),
+    (ResultKind::Body, 40),
+];
+pub const OUTPUT_LIMIT: usize = 80;
+
+// The name parser accepts ext:hwp;pdf while the content syntax parser accepts
+// comma lists. Protect that existing filename syntax before using the latter.
+fn normalize_ext_lists(query: &str) -> String {
+    let mut output = String::with_capacity(query.len());
+    let mut quoted = false;
+    let mut start = 0;
+    for (i, c) in query.char_indices() {
+        if c == '"' {
+            quoted = !quoted;
+        }
+        if !quoted && c.is_whitespace() {
+            start = i + c.len_utf8();
+        }
+        let ext = query.get(start..i).is_some_and(|token| {
+            token
+                .get(..4)
+                .is_some_and(|p| p.eq_ignore_ascii_case("ext:"))
+        });
+        output.push(if c == ';' && !quoted && ext { ',' } else { c });
+    }
+    output
+}
+
+pub fn query_terms(query: &str) -> Vec<String> {
+    let mut terms = Vec::new();
+    for group in kfind_core::split_semicolon_groups(query) {
+        let syntax = kfind_core::parse_query_syntax(&group);
+        terms.extend(syntax.clean_text.split_whitespace().map(str::to_owned));
+        terms.extend(syntax.phrases);
+    }
+    terms.sort();
+    terms.dedup();
+    terms
+}
+
+/// Serialize common scope options for the legacy pipe query protocol.
+pub fn scoped_query(
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+    ext: Option<&str>,
+    mode: crate::tm_state::MatchMode,
+) -> String {
+    let mut parts: Vec<String> = kfind_core::split_semicolon_groups(query)
+        .into_iter()
+        .map(|group| super::query_for_match_mode(&group, mode))
+        .collect();
+    let mut suffix = Vec::new();
+    if let Some((start, end)) = dates {
+        suffix.push(format!(
+            "after:{} before:{}",
+            crate::tm_state::format_ymd(start),
+            crate::tm_state::format_ymd(end)
+        ));
+    }
+    if let Some(folder) = folder {
+        suffix.push(format!("path:\"{folder}\""));
+    }
+    if let Some(ext) = ext {
+        suffix.push(format!("ext:{ext}"));
+    }
+    if !suffix.is_empty() {
+        for group in &mut parts {
+            *group = format!("{} {group}", suffix.join(" "));
+        }
+    }
+    parts.join("; ")
+}
+
+/// Names use FILETIME metadata and a separate parser; do not send after:/before:
+/// as filename words. Keep quoted groups and exclusions when rebuilding the request.
+pub fn names_query(
+    query: &str,
+    dates: Option<(i64, i64)>,
+    folder: Option<&str>,
+    ext: Option<&str>,
+) -> (String, Option<(i64, i64)>) {
+    let mut groups = Vec::new();
+    let mut start = dates.map(|d| d.0);
+    let mut end = dates.map(|d| d.1);
+    for group in kfind_core::split_semicolon_groups(query) {
+        let syntax = kfind_core::parse_query_syntax(&normalize_ext_lists(&group));
+        // apply_syntax lets an explicit query date override a UI preset too.
+        if syntax.start_date.is_some() {
+            start = syntax.start_date;
+        }
+        if syntax.end_date.is_some() {
+            end = syntax.end_date;
+        }
+        let mut parts = vec![syntax.clean_text];
+        parts.extend(syntax.phrases.into_iter().map(|p| format!("\"{p}\"")));
+        parts.extend(syntax.excludes.into_iter().map(|p| format!("-\"{p}\"")));
+        if let Some(path) = syntax.folder {
+            parts.push(format!("path:\"{path}\""));
+        }
+        if let Some(path) = folder {
+            parts.push(format!("path:\"{path}\""));
+        }
+        let mut types = syntax.file_types.unwrap_or_default();
+        if let Some(ext) = ext {
+            types.extend(kfind_core::parse_ext_term(ext).unwrap_or_default());
+        }
+        if !types.is_empty() {
+            parts.push(format!("ext:{}", types.join(",")));
+        }
+        parts.push("file:".into());
+        groups.push(parts.join(" "));
+    }
+    let dates = if start.is_some() || end.is_some() {
+        Some((start.unwrap_or(0), end.unwrap_or(99991231)))
+    } else {
+        None
+    };
+    (groups.join("; "), dates)
+}
+
+pub fn filter_name_dates(rows: &mut Vec<Row>, dates: Option<(i64, i64)>) {
+    let Some((start, end)) = dates else { return };
+    rows.retain(|row| {
+        super::format_filetime(row.date)
+            .and_then(|s| s.get(..10).map(|d| d.replace('-', "")))
+            .and_then(|d| d.parse::<i64>().ok())
+            .is_some_and(|d| start <= d && d <= end)
+    });
+}
+
+#[derive(Clone, Debug)]
+pub struct Snapshot {
+    pub answer: Answer,
+    pub completed: ResultKind,
+    pub final_part: bool,
+    /// A failed source is completed too; later successes must not erase its error.
+    pub errors: Vec<String>,
+}
+
+/// Windows lexical identity, independent of host OS; never opens the user's file.
+pub fn path_key(path: &str) -> String {
+    let mut p = path.replace('/', "\\").to_lowercase();
+    if let Some(rest) = p.strip_prefix(r"\\?\unc\") {
+        p = format!(r"\\{rest}");
+    } else if let Some(rest) = p.strip_prefix(r"\\?\") {
+        p = rest.to_owned();
+    }
+    let prefix = if p.starts_with(r"\\") {
+        r"\\"
+    } else if p.starts_with('\\') {
+        r"\"
+    } else {
+        ""
+    };
+    let mut components = Vec::new();
+    for part in p.split('\\').filter(|p| !p.is_empty() && *p != ".") {
+        if part == ".."
+            && components
+                .last()
+                .is_some_and(|p: &&str| *p != ".." && !p.ends_with(':'))
+        {
+            components.pop();
+        } else {
+            components.push(part);
+        }
+    }
+    format!("{prefix}{}", components.join("\\"))
+}
+
+/// Highest returned source wins even when that source's display quota is full.
+/// Input order is irrelevant; rank within each source remains stable.
+pub fn merge(batches: &[(ResultKind, Vec<Row>)], limit: usize) -> Vec<Row> {
+    let mut aliases = HashMap::new();
+    for (kind, _) in TIERS {
+        for (_, batch) in batches.iter().filter(|(k, _)| *k == kind) {
+            for row in batch.iter().take(MAX_SEARCH_RESULTS) {
+                if row.doc_id != 0 && !row.path.is_empty() {
+                    aliases
+                        .entry(row.doc_id)
+                        .or_insert_with(|| path_key(&row.path));
+                }
+            }
+        }
+    }
+    let mut seen = HashSet::new();
+    let mut output = Vec::new();
+    for (kind, cap) in TIERS {
+        let mut accepted = 0;
+        for (_, batch) in batches.iter().filter(|(k, _)| *k == kind) {
+            for (ordinal, row) in batch.iter().take(MAX_SEARCH_RESULTS).enumerate() {
+                let key = if row.doc_id != 0 {
+                    aliases
+                        .get(&row.doc_id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("id:{}", row.doc_id))
+                } else if !row.path.is_empty() {
+                    path_key(&row.path)
+                } else {
+                    format!("anonymous:{kind:?}:{ordinal}")
+                };
+                if !seen.insert(key) || accepted >= cap {
+                    continue;
+                }
+                accepted += 1;
+                let mut row = row.clone();
+                row.match_kinds = vec![kind];
+                row.rank = output.len();
+                output.push(row);
+            }
+        }
+    }
+    output.truncate(limit.min(OUTPUT_LIMIT));
+    output
+}
+
+/// One worker request, three incremental snapshots. Sources are called only after
+/// the preceding snapshot has been published. Cancellation never publishes stale work.
+pub fn stream(
+    limit: usize,
+    cancel: &AtomicBool,
+    mut fetch: impl FnMut(ResultKind, usize) -> Result<Answer>,
+    mut publish: impl FnMut(Snapshot),
+) -> Result<()> {
+    let check = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err("검색 취소".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let mut batches = Vec::with_capacity(3);
+    let mut errors = Vec::new();
+    let mut terms = Vec::new();
+    let mut groups = Vec::new();
+    let mut folder_counts = Vec::new();
+    let mut autocompletes = Vec::new();
+    for (kind, _) in TIERS {
+        check()?;
+        let result = fetch(kind, MAX_SEARCH_RESULTS);
+        check()?;
+        match result {
+            Ok(mut answer) => {
+                answer.rows.truncate(MAX_SEARCH_RESULTS);
+                batches.push((kind, answer.rows));
+                for term in answer.terms {
+                    if !terms.contains(&term) {
+                        terms.push(term);
+                    }
+                }
+                if !answer.groups.is_empty() {
+                    groups = answer
+                        .groups
+                        .into_iter()
+                        .map(|g| g.trim().to_owned())
+                        .collect();
+                }
+                if !answer.folder_counts.is_empty() {
+                    folder_counts = answer.folder_counts;
+                }
+                if !answer.autocompletes.is_empty() {
+                    autocompletes = answer.autocompletes;
+                }
+            }
+            Err(error) => errors.push(format!("{}: {error}", label(kind))),
+        }
+        let answer = Answer {
+            rows: merge(&batches, limit),
+            terms: terms.clone(),
+            groups: groups.clone(),
+            folder_counts: folder_counts.clone(),
+            autocompletes: autocompletes.clone(),
+        };
+        check()?;
+        publish(Snapshot {
+            answer,
+            completed: kind,
+            final_part: kind == ResultKind::Body,
+            errors: errors.clone(),
+        });
+    }
+    Ok(())
+}
+
+pub fn label(kind: ResultKind) -> &'static str {
+    match kind {
+        ResultKind::Names => "파일명",
+        ResultKind::Hierarchy => "위계",
+        ResultKind::Body => "본문",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(path: &str, id: u64) -> Row {
+        Row {
+            path: path.into(),
+            doc_id: id,
+            ..Row::default()
+        }
+    }
+
+    #[test]
+    fn identity_handles_windows_paths_id_aliases_and_anonymous_rows() {
+        assert_eq!(
+            path_key(r"\\?\C:\자료\.\임시\..\예산.hwp\"),
+            path_key("c:/자료/예산.hwp")
+        );
+        assert_eq!(
+            path_key(r"\\?\UNC\server\share\a.hwp"),
+            path_key("//SERVER/share/a.hwp")
+        );
+        let rows = merge(
+            &[
+                (ResultKind::Body, vec![row("", 41), row("", 0), row("", 0)]),
+                (ResultKind::Hierarchy, vec![row("c:/자료/예산.hwp", 41)]),
+                (
+                    ResultKind::Names,
+                    vec![row(r"C:\자료\예산.hwp", 0), row(r"C:\다른폴더\예산.hwp", 0)],
+                ),
+            ],
+            80,
+        );
+        assert_eq!(rows.len(), 4);
+        assert_eq!(rows[0].match_kinds, [ResultKind::Names]);
+        assert_eq!(rows[1].match_kinds, [ResultKind::Names]);
+    }
+
+    #[test]
+    fn quotas_apply_after_dedup_and_hidden_higher_candidates_do_not_reappear() {
+        let names = (1..=25).map(|id| row(&format!("/{id}"), id)).collect();
+        let hierarchy = (1..=50).map(|id| row(&format!("/{id}"), id)).collect();
+        let body = (1..=100).map(|id| row(&format!("/{id}"), id)).collect();
+        let rows = merge(
+            &[
+                (ResultKind::Body, body),
+                (ResultKind::Names, names),
+                (ResultKind::Hierarchy, hierarchy),
+            ],
+            80,
+        );
+        assert_eq!(rows.len(), 80);
+        assert_eq!(rows[20].doc_id, 26);
+        assert_eq!(rows[40].doc_id, 51);
+        assert_eq!(rows[79].doc_id, 90);
+        assert!(rows.iter().all(|r| r.match_kinds.len() == 1));
+    }
+
+    #[test]
+    fn stream_publishes_names_before_requesting_content_and_keeps_errors() {
+        use std::cell::Cell;
+        let published = Cell::new(0);
+        let mut snapshots = Vec::new();
+        stream(
+            80,
+            &AtomicBool::new(false),
+            |kind, top| {
+                assert_eq!(top, MAX_SEARCH_RESULTS);
+                match kind {
+                    ResultKind::Names => Ok(Answer {
+                        rows: vec![row("/name", 0)],
+                        ..Answer::default()
+                    }),
+                    ResultKind::Hierarchy => {
+                        assert_eq!(published.get(), 1);
+                        Err("offline".into())
+                    }
+                    ResultKind::Body => {
+                        assert_eq!(published.get(), 2);
+                        Ok(Answer::default())
+                    }
+                }
+            },
+            |s| {
+                published.set(published.get() + 1);
+                snapshots.push(s);
+            },
+        )
+        .unwrap();
+        assert_eq!(snapshots.len(), 3);
+        assert!(!snapshots[0].final_part);
+        assert!(snapshots[2].final_part);
+        assert_eq!(snapshots[2].errors, ["위계: offline"]);
+        assert_eq!(snapshots[2].answer.rows.len(), 1);
+    }
+
+    #[test]
+    fn cancellation_before_fetch_after_fetch_and_between_parts_never_publishes() {
+        let stopped = AtomicBool::new(true);
+        assert!(
+            stream(
+                80,
+                &stopped,
+                |_, _| panic!("must not fetch"),
+                |_| panic!("must not publish")
+            )
+            .is_err()
+        );
+        stopped.store(false, Ordering::Relaxed);
+        assert!(
+            stream(
+                80,
+                &stopped,
+                |_, _| {
+                    stopped.store(true, Ordering::Relaxed);
+                    Ok(Answer::default())
+                },
+                |_| panic!("must not publish")
+            )
+            .is_err()
+        );
+        stopped.store(false, Ordering::Relaxed);
+        let mut calls = 0;
+        assert!(
+            stream(
+                80,
+                &stopped,
+                |_, _| {
+                    calls += 1;
+                    Ok(Answer::default())
+                },
+                |_| stopped.store(true, Ordering::Relaxed)
+            )
+            .is_err()
+        );
+        assert_eq!(calls, 1);
+    }
+
+    #[test]
+    fn old_settings_stay_disabled_and_flag_roundtrips() {
+        let mut settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
+        assert!(!settings.unified_search);
+        settings.unified_search = true;
+        let decoded: crate::settings::Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert!(decoded.unified_search);
+    }
+
+    #[test]
+    fn scope_dates_and_related_quoted_groups_do_not_turn_into_name_terms() {
+        let (query, dates) = names_query(
+            r#"2026; "공사 계약" -초안 ext:hwp;pdf after:2026-01-01 before:2026-12-31"#,
+            None,
+            Some(r"C:\합성 자료"),
+            Some("txt"),
+        );
+        assert!(!query.contains("after:"));
+        assert!(!query.contains("before:"));
+        assert!(query.contains("ext:hwp,pdf,txt"));
+        assert!(query.contains(r#"-"초안""#));
+        assert_eq!(dates, Some((20260101, 20261231)));
+        assert_eq!(kfind_core::split_semicolon_groups(&query).len(), 2);
+        assert_eq!(query_terms("2026; 공사 계약"), ["2026", "계약", "공사"]);
+        let scoped = scoped_query(
+            "예산; 집행",
+            Some((20260101, 20261231)),
+            None,
+            Some("pdf"),
+            crate::tm_state::MatchMode::Exact,
+        );
+        assert!(scoped.contains("\"예산\""));
+        assert_eq!(kfind_core::split_semicolon_groups(&scoped).len(), 2);
+        let mut rows = vec![row("/unknown", 1)];
+        filter_name_dates(&mut rows, dates);
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn failed_sources_still_complete_and_a_total_limit_is_enforced() {
+        let mut snapshots = Vec::new();
+        stream(
+            7,
+            &AtomicBool::new(false),
+            |_, _| Err("offline".into()),
+            |s| snapshots.push(s),
+        )
+        .unwrap();
+        assert_eq!(snapshots.len(), 3);
+        assert!(snapshots[2].final_part);
+        assert_eq!(snapshots[2].errors.len(), 3);
+        assert!(snapshots[2].answer.rows.is_empty());
+        let rows = (1..=1000).map(|id| row(&format!("/{id}"), id)).collect();
+        assert_eq!(merge(&[(ResultKind::Body, rows)], 7).len(), 7);
+    }
+}

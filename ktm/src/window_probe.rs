@@ -37,6 +37,45 @@ pub unsafe fn wait_results(h: HWND) -> Result<(), String> {
 fn ms(start: Instant) -> f64 {
     start.elapsed().as_secs_f64() * 1000.0
 }
+
+/// Isolated, opt-in UNIFIED1 GDI measurement. Does not alter installed settings.
+pub unsafe fn unified_measure(h: HWND, output: &std::path::Path) -> Result<(), String> {
+    unsafe {
+        pump_until(20000, || with(|u| u.warmed))?;
+        if std::env::var_os("KTM_TEST_ROOT").is_none() {
+            return Err("통합 측정에는 격리 KTM_TEST_ROOT가 필요합니다".into());
+        }
+        show(h);
+        let _ = pump_until(250, || false);
+        let mut queries = Vec::new();
+        for query in ["예산집행", "2026; 공사 계약"] {
+            let start = Instant::now();
+            SetWindowTextW(with(|u| u.edit), wide(query).as_ptr());
+            pump_until(10000, || with(|u| u.state.pending_parts == 0 && u.state.phase == Phase::Results))?;
+            UpdateWindow(h);
+            let elapsed = ms(start);
+            let rows = with(|u| u.rows.iter().map(|r| serde_json::json!({
+                "path":r.path,"name":r.name,"kinds":format!("{:?}",r.match_kinds),"location":r.location
+            })).collect::<Vec<_>>());
+            let errors = with(|u| u.leg_errors.clone());
+            if !errors.is_empty() { return Err(errors.join(" · ")); }
+            queries.push(serde_json::json!({"query":query,"input_to_complete_ms":elapsed,"rows":rows}));
+        }
+        capture(h, &output.with_extension("bmp"))?;
+        event(h, Event::Hide);
+        let before = memory();
+        let cpu_before = cpu();
+        let _ = pump_until(2000, || false);
+        let after = memory();
+        let report = serde_json::json!({"unified_search":with(|u| u.settings.unified_search),"queries":queries,
+            "idle_seconds":2,"idle_cpu_ms":(cpu()-cpu_before) as f64/10000.0,
+            "idle_private_bytes_start":before.0,"idle_private_bytes_end":after.0,
+            "idle_private_working_set_start":before.2,"idle_private_working_set_end":after.2});
+        std::fs::write(output, serde_json::to_vec_pretty(&report).unwrap()).map_err(|e| e.to_string())?;
+        DestroyWindow(h);
+        Ok(())
+    }
+}
 /// 검색어를 넣고 결과를 그릴 때까지(입력 → 결과 그리기).
 unsafe fn type_query(h: HWND, text: &str) -> Result<f64, String> {
     unsafe {

@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
+pub mod unified;
+
 pub type Result<T> = std::result::Result<T, String>;
 pub const PIPE_NAME: &str = r"\\.\pipe\HwpAutoDocFit.Index";
 /// 검색·이름 질의 기본 제한 시간.
