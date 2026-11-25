@@ -10,3 +10,4 @@
 - 2026-11-25 검증 1차: Rust core 85개·Win32 131개·Flutter 아웃라이너 14개 통과, parity 하네스 동등 42 시나리오 차이 0; Flutter analyze 이상 없음. 전체 Python 시험은 진행 중.
 - 2026-11-25 서비스 점검: 페이지 참조 확인을 Rust `check_page_references` API로 연결하고, rename/undo 실패 시 페이지 파일을 원위치로 복구하도록 보완. 휴지통 이동 실패는 영구 삭제하지 않고 오류 처리. 서비스 시험 14개 통과.
 - 2026-11-25 Win32 블록 참조 자동완성: `((( id )))` / `(( id ))`에서 여백과 닫는 괄호를 함께 치환하는 경계 수정 및 UTF-16/이모지 포함 시험 추가. cargo test outliner_win 전체 재실행 통과(132개); parity 차이 0 포함.
+- 2026-11-25 전체 Python 시험 종료: Ran 3594 tests in 1438.941s / OK (skipped=26), 종료 코드 0. atexit 임시 폴더 정리에서 잠긴 SQLite WinError 32가 성공 요약 뒤 출력됨; 최신 서비스 코드 시험 14개 별도 통과.

@@ -83,9 +83,9 @@ PM 결정(2026-11-23) 4절 우선순위 2 "블록 참조 UI와 페이지 이름 
 - `cargo test --release --locked --test parity` (`outliner_win`): 하네스 5개 통과(닫는 괄호 공백 경계 시험 포함). 동등 시나리오 **42개 차이 0**, 허용 차이 12개는 등록된 기대값대로 고정.
 - `flutter analyze`: `No issues found!`.
 - `flutter test test/outliner_workspace_test.dart test/outliner_undo_test.dart`: **14개 통과**.
-- 전체 Python `python -m unittest discover -s tests`: 실행 중. 최종 `Ran` / `OK` 줄은 완료 후 여기에 기록합니다. 아웃라이너 서비스 단위 시험은 별도로 `Ran 14 tests` / `OK`로 통과했습니다.
+- 전체 Python `python -m unittest discover -s tests`: `Ran 3594 tests in 1438.941s` / `OK (skipped=26)`, 종료 코드 0. 이어서 최신 서비스 수정 상태에서 `python -m unittest tests.test_outliner_service`: `Ran 14 tests` / `OK`.
 
-저장소에 `.venv\Scripts\python.exe`가 없어 시스템 Python으로 전체 시험을 시작했습니다. 초기 Flutter 시험에서 발견된 `역링크` 레이블 회귀는 수정 후 재실행해 통과했습니다. `outliner_core` 회귀 시험의 첫 실행에서 드러난 잘못된 기대값 두 곳도 수정하고 전체 Rust 시험을 재실행해 통과했습니다.
+저장소에 `.venv\Scripts\python.exe`가 없어 시스템 Python 3.14로 전체 시험을 실행했습니다. 전체 시험의 성공 요약 뒤 테스트 패키지 atexit 임시 폴더 정리에서 잠긴 SQLite 파일에 대한 WinError 32가 출력됐습니다(시험 요약은 `OK`, 프로세스 종료 코드 0). 전체 Python 실행은 마지막 서비스 신뢰성 변경 전에 시작됐고, 이 변경 후 서비스 시험 14개를 다시 실행해 통과했습니다. 초기 Flutter 시험에서 발견된 `역링크` 레이블 회귀는 수정 후 재실행해 통과했습니다. `outliner_core` 회귀 시험의 첫 실행에서 드러난 잘못된 기대값 두 곳도 수정하고 전체 Rust 시험을 재실행해 통과했습니다.
 
 ### 실행하지 못한 항목
 
