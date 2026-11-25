@@ -15,6 +15,7 @@ mod index;
 mod manifest;
 mod qcache;
 mod query;
+pub mod related_query;
 mod segment;
 mod sentence;
 mod textcode;

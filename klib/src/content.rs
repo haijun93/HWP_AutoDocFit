@@ -6,7 +6,7 @@ use std::time::UNIX_EPOCH;
 use crate::search::{Paragraph, SearchBlock, SearchIndex};
 use sha2::{Digest, Sha256};
 
-const EXTRACTOR_VERSION: &str = "srch5-1";
+const EXTRACTOR_VERSION: &str = "srch5-semi2-1";
 
 pub fn index_file(index: &SearchIndex, path: &str, name: &str, box_id: i64) -> Result<(), String> {
     index_file_in_boxes(index, path, name, &[box_id.to_string()])
@@ -46,8 +46,17 @@ fn index_into(index: &SearchIndex, path: &str, name: &str, box_ids: &[String], c
     let metadata = fs::metadata(p).map_err(|e| e.to_string())?;
     let mtime = metadata.modified().ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64).unwrap_or(0);
     let paragraph = Paragraph { path: path.to_string(), box_ids: box_ids.to_vec(), name: name.to_string(), title: String::new(), level: 0, body, ext, mtime, page: None, sheet: None, row: None, content_hash, extractor_version };
+    if content_mode {
+        let records = klib::extract::related_records(p)?;
+        let related = crate::json::Value::obj(vec![
+            ("paragraphs", crate::json::parse(&records).ok_or("invalid related records")?),
+            ("name", name.into()), ("mtime", metadata.modified().ok().and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|crate::json::Value::from(d.as_secs_f64())).unwrap_or(crate::json::Value::Null)),
+            ("size", (metadata.len() as i64).into()),
+        ]);
+        let related = format!("related-v1:{}", crate::json::to_string(&related));
+        return index.add_content_with_related(&paragraph, blocks.as_deref(), &related).map(|_|true).map_err(|e|e.to_string());
+    }
     match blocks {
-        Some(blocks) if content_mode => index.add_or_update_content_blocks(&paragraph, &blocks),
         Some(blocks) => index.add_or_update_blocks(&paragraph, &blocks),
         None => index.add_or_update(&paragraph),
     }.map(|_| true).map_err(|e| e.to_string())

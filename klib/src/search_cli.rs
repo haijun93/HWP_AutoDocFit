@@ -46,6 +46,21 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
     }
     let ix = index.as_ref().expect("initialized above");
     match op {
+        "replace" => match ix.replace_related(&request) {
+            Ok(()) => Value::obj(vec![("ok",true.into()), ("indexed",true.into())]),
+            Err(error) => error_value(&error.to_string()),
+        },
+        "replace_many" => {
+            let Some(documents) = request.arr("documents") else {return error_value("documents required")};
+            let batch = ix.batch();
+            for document in documents {
+                if let Err(error) = ix.replace_related(document) {return error_value(&error.to_string())}
+            }
+            match batch.finish() {
+                Ok(()) => Value::obj(vec![("ok",true.into())]),
+                Err(error) => error_value(&error.to_string()),
+            }
+        },
         "index_file" => {
             let Some(path) = request.str("path") else { return error_value("path is required") };
             let name = request.str("name").unwrap_or_else(|| Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or(""));
@@ -91,6 +106,7 @@ fn handle(line: &str, index: &mut Option<SearchIndex>) -> Value {
 }
 
 fn search(ix: &SearchIndex, request: &Value) -> Value {
+    if request.bool("related_groups").unwrap_or(false) { return related_search(ix, request); }
     let query = request.str("query").unwrap_or("");
     let limit = request.i64("limit").unwrap_or(100).clamp(1, 5000) as usize;
     let offset = request.i64("offset").unwrap_or(0).max(0) as usize;
@@ -177,4 +193,32 @@ fn search(ix: &SearchIndex, request: &Value) -> Value {
 
 fn error_value(message: &str) -> Value {
     Value::obj(vec![("ok", false.into()), ("error", message.into())])
+}
+
+fn related_search(ix: &SearchIndex, request: &Value) -> Value {
+    let hits = match ix.search_related(request.str("query").unwrap_or(""), 0,
+                                      request.bool("filenames").unwrap_or(false)) {
+        Ok(hits) => hits, Err(error) => return error_value(&error.to_string()),
+    };
+    let roots = request.arr("roots").unwrap_or(&[]);
+    let offset = request.i64("offset").unwrap_or(0).max(0) as usize;
+    let limit = request.i64("limit").unwrap_or(100).clamp(1,500) as usize;
+    let mut rows: Vec<_> = hits.into_iter().filter(|hit| {
+        let path = hit.str("path").unwrap_or("").replace('\\',"/").to_lowercase();
+        let allowed = roots.is_empty() || roots.iter().any(|root| {
+            let Value::Str(root) = root else {return false};
+            let root = root.replace('\\',"/").to_lowercase();
+            let root = root.trim_end_matches('/');
+            path == root || path.strip_prefix(root).is_some_and(|p|p.starts_with('/'))
+        });
+        let mtime = hit.num("mtime").unwrap_or(0.0);
+        allowed && request.num("start").is_none_or(|s|mtime>=s)
+            && request.num("end").is_none_or(|e|mtime<e)
+    }).skip(offset).take(limit).collect();
+    for (i,row) in rows.iter_mut().enumerate() {
+        if let Value::Obj(fields) = row {
+            if let Some((_,rank)) = fields.iter_mut().find(|(k,_)|k=="relevance_rank") { *rank=(offset+i+1).into(); }
+        }
+    }
+    Value::obj(vec![("ok",true.into()),("results",Value::Arr(rows))])
 }

@@ -82,6 +82,8 @@ pub struct Settings {
     pub max_file_size_mb: u64,
     pub skip_cloud_network: bool,
     pub allow_system_folders: bool,
+    /// SEMI1: literal paragraph groups; off preserves the existing quick-search path.
+    pub related_queries: bool,
 }
 
 impl Default for Settings {
@@ -110,6 +112,7 @@ impl Default for Settings {
             max_file_size_mb: 0,
             skip_cloud_network: true,
             allow_system_folders: false,
+            related_queries: false,
         }
     }
 }

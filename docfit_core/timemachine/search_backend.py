@@ -29,7 +29,8 @@ class SearchBackend(ABC):
     @abstractmethod
     def search(self, query: str, *, roots=None, hierarchy: bool = False,
                limit: int = 100, offset: int = 0,
-               sort: str = "hierarchy_relevance", start=None, end=None) -> list[dict[str, Any]]:
+               sort: str = "hierarchy_relevance", start=None, end=None,
+               related_groups: bool = False, filenames: bool = False) -> list[dict[str, Any]]:
         """기존 본문검색 또는 위계검색 결과 형식으로 검색한다."""
 
     @abstractmethod
@@ -59,7 +60,14 @@ class SqliteBackend(SearchBackend):
 
     def search(self, query: str, *, roots=None, hierarchy: bool = False,
                limit: int = 100, offset: int = 0,
-               sort: str = "hierarchy_relevance", start=None, end=None) -> list[dict[str, Any]]:
+               sort: str = "hierarchy_relevance", start=None, end=None,
+               related_groups: bool = False, filenames: bool = False) -> list[dict[str, Any]]:
+        if related_groups:
+            from .related_search import search_related
+            return search_related(self.index, query, roots=roots, limit=limit, offset=offset,
+                                  start=start, end=end, filenames=filenames)
+        if filenames:
+            return self.index.search_files(query, roots=roots, limit=limit, start=start, end=end)
         if hierarchy:
             return self.index.search(query, roots=roots, limit=limit, sort=sort, start=start, end=end)
         return self.index.keyword_search(query, roots=roots, limit=limit, offset=offset,
@@ -163,8 +171,34 @@ class RustBackend(SearchBackend):
     def remove_file(self, path):
         self._request({"op": "remove_file", "path": os.path.abspath(path)})
 
+    @staticmethod
+    def _document(path, records):
+        path = os.path.abspath(path)
+        stat = os.stat(path)
+        return {"path": path, "name": Path(path).name,
+                "mtime_us": int(stat.st_mtime * 1_000_000), "mtime": stat.st_mtime,
+                "size": stat.st_size,
+                "paragraphs": [{"paragraph_index": r.paragraph_index, "text": r.text,
+                                "level_rank": r.level_rank, "level": r.level} for r in records]}
+
+    def index_records(self, path, records):
+        """이미 추출한 문단도 같은 프로세스·v5 색인에 반영한다."""
+        return self._request(dict(self._document(path, records), op="replace"))
+
+    def index_many(self, documents):
+        return self._request({"op": "replace_many", "documents": [
+            self._document(path, records) for path, records in documents]})
+
     def search(self, query, *, roots=None, hierarchy=False, limit=100, offset=0,
-               sort="hierarchy_relevance", start=None, end=None):
+               sort="hierarchy_relevance", start=None, end=None, related_groups=False,
+               filenames=False):
+        if related_groups:
+            # SEMI1 응답은 이미 공통 행 계약이다. 기존 SRCH 변환을 거치면 근거를 잃는다.
+            return self._request({"op": "search", "query": query, "related_groups": True,
+                "filenames": filenames, "roots": [os.path.abspath(p) for p in roots] if roots else [],
+                "limit": limit, "offset": offset, "start": start, "end": end})["results"]
+        if filenames:
+            raise ValueError("Rust 파일명 검색은 related_groups=True 또는 names 서비스를 사용하세요.")
         result = self._request({"op": "search", "query": query, "roots": roots or [],
                                 "hierarchy": hierarchy, "limit": limit, "offset": offset,
                                 "sort": sort, "start": start, "end": end})
@@ -259,7 +293,14 @@ class ModeSearchBackend(SearchBackend):
                     left, right = set(sqlite_paths), set(rust_paths)
                     all_left = {row.get("path") for row in sqlite_result}
                     all_right = {row.get("path") for row in rust_result}
+                    related = {}
+                    if kwargs.get("related_groups"):
+                        related = {"related_groups": True, "filenames": bool(kwargs.get("filenames")),
+                            "result_order_match": [r.get("path") for r in sqlite_result] == [r.get("path") for r in rust_result],
+                            "group_matches_match": {r.get("path"): r.get("group_matches") for r in sqlite_result}
+                                == {r.get("path"): r.get("group_matches") for r in rust_result}}
                     self._log({"operation": method, "query": args[0] if args else "",
+                               **related,
                                "sqlite_top20": sqlite_paths, "rust_top20": rust_paths,
                                "sqlite_result_count": len(sqlite_result), "rust_result_count": len(rust_result),
                                "result_set_match": all_left == all_right,

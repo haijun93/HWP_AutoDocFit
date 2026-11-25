@@ -27,6 +27,22 @@ pub struct IndexedParagraph {
     pub marker: String,
 }
 
+/// 연관 검색은 SQLite와 같은 추출 문단·위계 번호를 보존한다.
+/// 직렬화 경계만 공유하며 검색 문법은 kfind/core의 순수 파서를 사용한다.
+pub fn related_records(path: &Path) -> Result<String, String> {
+    let paragraphs = extract(path)?;
+    let texts: Vec<_> = paragraphs.iter().map(|p|p.text.clone()).collect();
+    let scheme = hierarchy::compat::marker_scheme::detect_scheme(&texts);
+    let levels = crate::classify_levels::classify_extracted_for_path(&paragraphs, &scheme, &path.to_string_lossy());
+    let records = paragraphs.iter().zip(levels).map(|(p,level)| {
+        let rank = match level.as_str() { "document_title"=>0, "chapter"=>1, "section"=>2, "topic"=>3,
+            "square"=>4, "circle"=>5, "dash"=>6, "asterisk"=>7, _=>8 };
+        Value::obj(vec![("paragraph_index", (p.sequence - 1).into()), ("text",p.text.clone().into()),
+            ("level",level.into()), ("level_rank",Value::from(rank as i64))])
+    }).collect();
+    Ok(crate::json::to_string(&Value::Arr(records)))
+}
+
 /// Run hierarchy::compat directly on extracted paragraphs without a JSON round trip.
 pub fn analyze_hierarchy(paragraphs: Vec<Paragraph>) -> Result<Vec<IndexedParagraph>, String> {
     let input: Vec<_> = paragraphs.iter().map(|p| hierarchy::compat::analyze_hierarchy::ParagraphInput {

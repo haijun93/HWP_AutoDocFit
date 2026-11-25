@@ -36,6 +36,10 @@ fn profile_add(name: &'static str, value: f64) {
 fn profile_elapsed(name: &'static str, start: std::time::Instant) {
     profile_add(name, start.elapsed().as_secs_f64() * 1000.0);
 }
+#[path = "../../kfind/core/src/related_query.rs"]
+pub mod related_query;
+#[path = "search_related.rs"]
+mod related;
 
 const TOKENIZER: &str = "ko_bigram";
 /// writer 힙 예산. writer는 처음 쓸 때 한 번만 만들고 계속 재사용한다.
@@ -552,25 +556,39 @@ impl SearchIndex {
             level: p.level, text: text.trim().to_string(), ordinal: i as u64,
             node_id: format!("{}#{i}", id(&p.path)), ..SearchBlock::default()
         }).collect();
-        self.put(p, blocks.iter(), false)
+        self.put(p, blocks.iter(), false, None)
     }
     /// 문단마다 위계 수준이 다른 문서를 넣는다(수준, 글). `p.body`·`p.level`은 쓰지 않는다.
     /// 수준은 `hierarchy::search::aggregate`의 순위와 같다: 0은 본문, 1이 가장 위이고 클수록 아래.
     pub fn add_or_update_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
-        self.put(p, blocks.iter(), false)
+        self.put(p, blocks.iter(), false, None)
     }
     /// Store structural title and location metadata for the opt-in content search index.
     pub fn add_or_update_content_blocks(&self, p: &Paragraph, blocks: &[SearchBlock]) -> tantivy::Result<()> {
-        self.put(p, blocks.iter(), true)
+        self.put(p, blocks.iter(), true, None)
     }
-    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=&'a SearchBlock>, content_mode: bool) -> tantivy::Result<()> {
+    /// 기존 검색 필드와 독립된 연관 검색 자료를 v5의 예약 location 필드에 저장한다.
+    pub fn add_content_with_related(&self, p: &Paragraph, blocks: Option<&[SearchBlock]>, related: &str) -> tantivy::Result<()> {
+        if let Some(blocks) = blocks {
+            self.put(p, blocks.iter(), true, Some(related))
+        } else {
+            let blocks: Vec<_> = p.body.split_inclusive(['\n','\r']).enumerate().map(|(i, text)| SearchBlock {
+                level:p.level, text:text.trim().into(), ordinal:i as u64,
+                node_id:format!("{}#{i}", id(&p.path)), ..SearchBlock::default()
+            }).collect();
+            self.put(p, blocks.iter(), false, Some(related))
+        }
+    }
+    fn put<'a>(&self, p: &Paragraph, parts: impl Iterator<Item=&'a SearchBlock>, content_mode: bool, related: Option<&str>) -> tantivy::Result<()> {
         self.write(|w| {
         w.delete_term(tantivy::Term::from_field_text(self.fields.path, &p.path));
+        let mut first = true;
         for block in parts {
             let text=block.text.trim(); if text.is_empty() { continue; }
             let crumb=block.breadcrumb.join("\u{1f}");
             let title=if content_mode && block.level>0 { text } else { p.title.as_str() };
             let mut d=doc!(self.fields.doc_id=>id(&p.path), self.fields.path=>p.path.clone(), self.fields.name=>p.name.clone(), self.fields.title=>title.to_string(), self.fields.level=>block.level as u64, self.fields.body_bi=>text.to_string(), self.fields.body_jamo=>jamo_text(text), self.fields.body_cho=>cho_text(text), self.fields.ext=>p.ext.clone(), self.fields.mtime=>p.mtime, self.fields.body=>text.to_string(), self.fields.paragraph_ordinal=>block.ordinal, self.fields.node_id=>block.node_id.clone(), self.fields.breadcrumb=>crumb, self.fields.content_hash=>p.content_hash.clone(), self.fields.extractor_version=>p.extractor_version.clone(), self.fields.is_table=>u64::from(block.table));
+            if first { if let Some(related) = related { d.add_text(self.fields.location, related); } first = false; }
             if let Some(parent_id)=&block.parent_id { d.add_text(self.fields.parent_id,parent_id); }
             #[cfg(test)]
             if let Some(body_ko)=self.legacy_body_ko { d.add_text(body_ko,text); }
