@@ -42,6 +42,7 @@ from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
 from .rust_scan import scan as _rust_scan, scan_default_roots as _scan_default_roots
 from . import library_scan_cache
+from .open_listed_file import open_listed_file
 from .doc_grid_service import find_klib_executable
 
 logger = logging.getLogger(__name__)
@@ -1852,6 +1853,10 @@ class PhotoAlbumService:
 
     # ---- 8. 디스패처 ----
 
+    def open_file(self, path: str | Path) -> dict[str, Any]:
+        """지정된 사진을 시스템 기본 연결 프로그램으로 연다(사진 확장자만)."""
+        return open_listed_file(path, PHOTO_EXTENSIONS, self.opener, "사진")
+
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """브리지 명령 디스패처."""
         payload = payload or {}
@@ -1935,6 +1940,12 @@ class PhotoAlbumService:
                     as_base64=bool(payload.get("as_base64", True)),
                     timeout=float(payload.get("timeout", SLOT_TIMEOUT)),
                 )
+
+            if action == "open":
+                path = payload.get("path")
+                if not path or not isinstance(path, str):
+                    return {"ok": False, "code": "INVALID_PATH", "message": "파일 경로를 지정해 주세요."}
+                return self.open_file(path)
 
             if action == "toggle_favorite":
                 path = payload.get("path")

@@ -5,6 +5,7 @@
 //! - `state`: 스캔 상태 표시값과 키보드 이동
 //! - `items`: 목록 항목(`Doc`)·검색·정렬(`Collection`)
 //! - `layout`: 격자 배치·가상화·스크롤바·도구줄(`GridSpec` 로 문서뷰/사진뷰 규칙 구분)
+//! - `open`: 목록 항목을 연결 앱으로 열기(대상 확장자 검사)
 //! - `scan`: 줄 소스(자식 프로세스)를 읽는 비동기 작업·취소
 //! - `gdi`(Windows): 그리기 도우미·메모리 DC 캡처·드라이브·시간대
 pub mod app;
@@ -12,6 +13,7 @@ pub mod fmt;
 pub mod items;
 pub mod json;
 pub mod layout;
+pub mod open;
 pub mod png;
 pub mod scan;
 pub mod state;

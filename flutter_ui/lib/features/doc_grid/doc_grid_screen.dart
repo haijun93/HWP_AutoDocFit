@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:flutter/gestures.dart' show kPrimaryButton;
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
@@ -61,6 +62,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
     return '${seconds ~/ 60}분 ${seconds % 60}초 경과';
   }
   String? _currentFolder;
+  /// 마지막으로 누른 문서(선택 표시).
+  String? _selectedPath;
   List<Map<String, Object?>> _documents = [];
   bool _loading = false;
   String? _errorMessage;
@@ -430,6 +433,12 @@ class _DocGridScreenState extends State<DocGridScreen> {
                 onThumbLoaded: (bytes) {
                   _thumbCache[path] = bytes;
                 },
+                selected: _selectedPath == path,
+                onSelect: () {
+                  if (_selectedPath != path) {
+                    setState(() => _selectedPath = path);
+                  }
+                },
                 onDoubleTap: () => _openDocument(path),
               );
             },
@@ -455,6 +464,8 @@ class _DocCard extends StatefulWidget {
     required this.doc,
     required this.api,
     required this.onDoubleTap,
+    required this.onSelect,
+    this.selected = false,
     this.cachedThumb,
     this.onThumbLoaded,
   });
@@ -462,6 +473,8 @@ class _DocCard extends StatefulWidget {
   final Map<String, Object?> doc;
   final ApiCall api;
   final VoidCallback onDoubleTap;
+  final VoidCallback onSelect;
+  final bool selected;
   final Uint8List? cachedThumb;
   final ValueChanged<Uint8List>? onThumbLoaded;
 
@@ -548,112 +561,122 @@ class _DocCardState extends State<_DocCard> {
 
     return Tooltip(
       message: '$name\n더블클릭하여 열기',
-      child: InkWell(
-        onDoubleTap: widget.onDoubleTap,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).colorScheme.surface,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Theme.of(context).dividerColor.withValues(alpha: 0.3),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 4,
-                offset: const Offset(0, 2),
+      // 선택은 누르는 즉시 표시한다(InkWell.onTap 은 더블클릭 판정 뒤에야 온다).
+      child: Listener(
+        onPointerDown: (event) {
+          if (event.buttons == kPrimaryButton) widget.onSelect();
+        },
+        child: InkWell(
+          onDoubleTap: widget.onDoubleTap,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            key: ValueKey('docCardFrame-${widget.doc['path']}'),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.surface,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: widget.selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).dividerColor.withValues(alpha: 0.3),
+                width: widget.selected ? 2.5 : 1.0,
               ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // 상단 썸네일 영역
-              Expanded(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                  ),
-                  clipBehavior: Clip.antiAlias,
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      if (_thumbBytes != null)
-                        Image.memory(
-                          _thumbBytes!,
-                          fit: BoxFit.contain,
-                          filterQuality: FilterQuality.medium,
-                          width: double.infinity,
-                          height: double.infinity,
-                        )
-                      else if (_loadingThumb)
-                        const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      else if (isCloud)
-                        const Icon(Icons.cloud_outlined, size: 36, color: Colors.blueGrey)
-                      else if (_thumbFailed)
-                        Icon(Icons.description_outlined, size: 40, color: extColor.withValues(alpha: 0.6))
-                      else
-                        Icon(Icons.insert_drive_file_outlined, size: 40, color: extColor.withValues(alpha: 0.5)),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.03),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 상단 썸네일 영역
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        if (_thumbBytes != null)
+                          Image.memory(
+                            _thumbBytes!,
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.medium,
+                            width: double.infinity,
+                            height: double.infinity,
+                          )
+                        else if (_loadingThumb)
+                          const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else if (isCloud)
+                          const Icon(Icons.cloud_outlined, size: 36, color: Colors.blueGrey)
+                        else if (_thumbFailed)
+                          Icon(Icons.description_outlined, size: 40, color: extColor.withValues(alpha: 0.6))
+                        else
+                          Icon(Icons.insert_drive_file_outlined, size: 40, color: extColor.withValues(alpha: 0.5)),
 
-                      // 좌측 상단 확장자 배지
-                      Positioned(
-                        top: 6,
-                        left: 6,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: extColor,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            ext.isEmpty ? 'DOC' : ext,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.bold,
+                        // 좌측 상단 확장자 배지
+                        Positioned(
+                          top: 6,
+                          left: 6,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: extColor,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              ext.isEmpty ? 'DOC' : ext,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 9,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                           ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // 하단 파일 정보 영역
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _formatBytes(size),
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.7),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-
-              // 하단 파일 정보 영역
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        height: 1.25,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _formatBytes(size),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: Theme.of(context).textTheme.bodySmall?.color?.withValues(alpha: 0.7),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
