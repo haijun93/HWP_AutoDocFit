@@ -614,6 +614,17 @@ def lint_document(source: str | Path) -> Path:
 PRESET_NAMES = {"보고서": "보고서", "계획서": "계획서", "기안문": "기안문"}
 
 
+def convert_to_hwpx_routed(path: str | Path, preset: str = "보고서", engine: str = "auto",
+                           *, target: str | Path | None = None):
+    """선택형 새 API. 기존 convert_to_hwpx 및 호출 지점은 변경하지 않는다.
+
+    설정을 사용하는 후속 소비자는 engine=settings.get('docx_engine', 'kordoc')을
+    명시한다. 결과에는 path·실제 engine·상태 전이·fallback_reason이 담긴다.
+    """
+    from .conversion_routing import convert_to_hwpx_routed as routed
+    return routed(path, preset, engine, target=target)
+
+
 def generate_hwpx(markdown: str | Path, preset: str, target: str | Path | None = None,
                    *, image_dir: str | Path | None = None) -> Path:
     markdown = Path(markdown)

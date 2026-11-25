@@ -1,4 +1,5 @@
 {
+  "docx_engine": "kordoc",
   "shell_menu": false,
   "menu_display_mode": "sidebar",
   "mongttang_search": true,
