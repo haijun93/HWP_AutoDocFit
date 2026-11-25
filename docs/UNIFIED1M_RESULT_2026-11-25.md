@@ -51,7 +51,15 @@ test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ## Release 빌드·전체 Python
 
-진행 중. 최종 결과·해시·전체 unittest의 Ran/OK 원문은 완료 후 기록한다. Python은 지정된 3.15 가상환경을 사용한다. 기존 SEMI2 release klib를 `KLIB_EXE`와 `SEMI1_KLIB_EXE`로 지정하며 SHA-256은 `6F122D935B8AD00C83FCE7ECD850E356136EBE11ACBCDE52E2DE652FE4FC215B`다. klib는 이번 변경 크레이트가 아니며 이번 카드에서 새로 빌드한 산출물이 아니다.
+`cargo build --release --manifest-path ktm/Cargo.toml --bin ktm --example unified_bench` — 종료 코드 0.
+
+```text
+Finished `release` profile [optimized] target(s) in 2m 10s
+```
+
+ktm.exe: 2,108,928바이트, SHA-256 `BED4D37B6FF9259EC7ED8548EB2BF9EA2DA422CC577BE4D46976495A2A9F2C23`.
+
+전체 Python은 진행 중이다. 최종 unittest의 Ran/OK 원문은 완료 후 기록한다. Python은 지정된 3.15 가상환경을 사용한다. 기존 SEMI2 release klib를 `KLIB_EXE`와 `SEMI1_KLIB_EXE`로 지정하며 SHA-256은 `6F122D935B8AD00C83FCE7ECD850E356136EBE11ACBCDE52E2DE652FE4FC215B`다. klib는 이번 변경 크레이트가 아니며 이번 카드에서 새로 빌드한 산출물이 아니다.
 
 ## 확인하지 않은 범위
 
