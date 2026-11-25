@@ -95,3 +95,22 @@ pub fn backlinks_all(store: &PageStore, target: &str, current: Option<(&str, &st
     }
     out
 }
+
+/// 데이터 폴더 전체에서 특정 블록 id 또는 UUID를 `((참조))` 로 가리키는 블록.
+pub fn block_backlinks_all(store: &PageStore, target_uuid: &str, current: Option<(&str, &str)>) -> Vec<BackItem> {
+    let mut out = Vec::new();
+    let needle = target_uuid.trim();
+    if needle.is_empty() {
+        return out;
+    }
+    for p in store.list() {
+        let Some(doc) = load_doc(store, &p, current) else { continue };
+        let ids = outliner_core::resolve_block_ref(&doc, needle).backlinks;
+        for id in ids {
+            if let Some(idx) = doc.blocks.iter().position(|b| b.id == id) {
+                out.push(BackItem { page: p.clone(), block: idx, text: snippet(&doc.blocks[idx].text) });
+            }
+        }
+    }
+    out
+}

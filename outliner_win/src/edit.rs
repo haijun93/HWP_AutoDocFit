@@ -573,9 +573,9 @@ impl<H: EditHost> Editor<H> {
         }
     }
 
-    // ---------- `[[` 자동완성 ----------
+    // ---------- `[[` 및 `((` 자동완성 ----------
 
-    /// 글·캐럿이 바뀐 뒤 부른다: 캐럿이 `[[` 뒤면 팝업을 열거나 후보를 갱신하고, 아니면 닫는다.
+    /// 글·캐럿이 바뀐 뒤 부른다: 캐럿이 `[[` 또는 `((` 뒤면 팝업을 열거나 후보를 갱신하고, 아니면 닫는다.
     pub fn refresh_popup(&mut self) {
         if self.session.is_none() {
             self.popup = None;
@@ -583,7 +583,7 @@ impl<H: EditHost> Editor<H> {
         }
         let text = self.host.read_text();
         let (s, e) = self.host.selection();
-        let ctx = if s == e { links::link_context(&text, s) } else { None };
+        let ctx = if s == e { links::any_completion_context(&text, s) } else { None };
         let Some(ctx) = ctx else {
             self.popup = None;
             self.popup_off = None;
@@ -594,7 +594,23 @@ impl<H: EditHost> Editor<H> {
             return;
         }
         self.popup_off = None;
-        let items = links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8);
+        let items = match ctx.kind {
+            links::RefKind::Page => links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8),
+            links::RefKind::Block | links::RefKind::TripleBlock => {
+                let q = ctx.query.trim().to_lowercase();
+                let mut out = Vec::new();
+                for b in &self.view.doc.blocks {
+                    let id_str = b.properties.get("id").cloned().unwrap_or_else(|| b.id.to_string());
+                    if q.is_empty() || b.text.to_lowercase().contains(&q) || id_str.to_lowercase().contains(&q) {
+                        out.push(id_str);
+                        if out.len() >= 8 {
+                            break;
+                        }
+                    }
+                }
+                out
+            }
+        };
         if items.is_empty() {
             self.popup = None;
             return;
@@ -619,14 +635,14 @@ impl<H: EditHost> Editor<H> {
         }
     }
 
-    /// 후보(번호 없으면 선택된 것)로 `[[질의` 를 `[[이름]]` 으로 바꾸고 캐럿을 `]]` 뒤에 둔다.
+    /// 후보(번호 없으면 선택된 것)로 `[[질의` 를 `[[이름]]` (또는 `((id))`) 으로 바꾸고 캐럿을 닫는 괄호 뒤에 둔다.
     pub fn accept_popup(&mut self, index: Option<usize>) -> bool {
         let Some(p) = self.popup.take() else { return false };
         let Some(name) = p.items.get(index.unwrap_or(p.selected)).cloned() else { return false };
         let text = self.host.read_text();
         // 팝업이 열린 뒤 글이 바뀌었을 수 있어 문맥을 다시 구한다.
         let (s, _) = self.host.selection();
-        let ctx = links::link_context(&text, s).unwrap_or(p.ctx);
+        let ctx = links::any_completion_context(&text, s).unwrap_or(p.ctx);
         let (new, caret) = links::apply_completion(&text, &ctx, &name);
         self.host.set_text(&new, caret);
         self.popup_off = None;

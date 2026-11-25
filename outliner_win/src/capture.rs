@@ -220,3 +220,57 @@ pub fn capture_gap_set(dir: &Path, data: &Path, kind: Kind, dpi: u32) -> Result<
     shot(&mut hn, "gap_newblock")?;
     Ok(out)
 }
+
+/// 블록 참조·페이지 관리 카드(OUTLINERREF1) 캡처 3장:
+/// ① 블록 편집 중 `((` 입력 시 블록 참조 자동완성 팝업
+/// ② 블록 역참조가 반영된 오른쪽 패널
+/// ③ 페이지 관리(이름 바꾸기·삭제) 실행 후 상태
+pub fn capture_ref_set(dir: &Path, data: &Path, kind: Kind, dpi: u32) -> Result<Vec<PathBuf>, String> {
+    use crate::edit::EditHost;
+    use crate::pages::PageStore;
+    use crate::shell::Shell;
+    use crate::window::{Harness, WinHost};
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    if !data.join("2026_11_21.md").exists() {
+        seed_demo_pages(data)?;
+    }
+    let store = PageStore::new(data, Some(dir.join("recent_ref.json")));
+    let mut shell = Shell::with_store(WinHost::new(), store, demo_clock)?;
+    shell.start()?;
+    shell.open_page("2026_11_21")?;
+    let (w, h) = (crate::paint::scale(1000, dpi), crate::paint::scale(600, dpi));
+    let mut hn = Harness::new_shell(shell, "아웃라이너", kind, dpi, w, h)?;
+    let name = |tag: &str| dir.join(format!("outliner_{tag}_{}_{}dpi.png", kind_name(kind), dpi));
+    let mut out = Vec::new();
+    let mut shot = |hn: &mut Harness, tag: &str| -> Result<(), String> {
+        hn.layout();
+        let s = hn.render()?;
+        let path = name(tag);
+        crate::png::write(&path, s.width, s.height, &s.bgra)?;
+        out.push(path);
+        Ok(())
+    };
+
+    // ① 블록 편집 중 `((` 입력 → 블록 참조 자동완성 팝업
+    let row = hn.editor().view.rows.iter().position(|r| r.text.contains("점심")).ok_or("점심 줄이 없습니다")?;
+    hn.editor().view.set_selected(row, 15);
+    hn.editor().start_edit_selected();
+    let t = "점심 약속 확인 ((";
+    hn.editor().host.set_text(t, t.encode_utf16().count());
+    shot(&mut hn, "ref_popup")?;
+
+    // ② 블록 역참조 확인
+    hn.editor().submit(crate::edit::Cmd::Cancel, 0, false, false);
+    hn.shell().open_page("예산 지침")?;
+    hn.editor().view.set_selected(0, 15);
+    hn.shell().refresh_backlinks();
+    shot(&mut hn, "ref_backlinks")?;
+
+    // ③ 페이지 관리 동작(이름 바꾸기 등)
+    let _ = hn.shell().rename_current("2027_예산_지침");
+    shot(&mut hn, "ref_renamed")?;
+    // 되돌리기
+    let _ = hn.shell().undo_rename();
+
+    Ok(out)
+}
