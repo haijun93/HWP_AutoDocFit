@@ -1,0 +1,14 @@
+PASS 히트 통계 칩: x=964 y=32 code=1
+PASS 히트 설정 칩: x=1130 y=32 code=1
+PASS 히트 최소화: x=1262 y=32 code=1
+PASS 히트 닫기: x=1354 y=32 code=1
+PASS 히트 제목 줄 빈 곳: code=2
+PASS 통계 칩 클릭: modal=Some(Statistics)
+PASS 설정 칩 클릭: modal=Some(Settings)
+PASS 기간 칩 전체: date_filter=All query="예산"
+PASS 기간 칩 오늘: date_filter=Today query="예산"
+PASS 기간 칩 7일간: date_filter=Last7Days query="예산"
+PASS 기간 칩 30일간: date_filter=Last30Days query="예산"
+PASS 기간 칩 올해: date_filter=ThisYear query="예산"
+PASS [옵션] 단추: false -> true
+PASS 옵션 팝업 '하나 이상': AnyTerm

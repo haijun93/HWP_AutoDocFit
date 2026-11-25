@@ -32,6 +32,7 @@ const SCENARIOS: &[&str] = &[
     "22_date_today",
     "23_date_year",
     "24_error_incomplete",
+    "25_long_labels",
 ];
 
 fn rows() -> Vec<Row> {
@@ -116,7 +117,9 @@ unsafe fn setup(h: HWND, name: &str) {
             u.within_open = false;
             u.timing = None;
         });
+        let long_query = (1..=4).map(|i|format!("{i}번 아주 긴 한글 검색어와 공사 계약 안전관리계획 ").repeat(4)).collect::<Vec<_>>().join("; ");
         let query = match name {
+            "25_long_labels" => long_query.as_str(),
             "03_results" | "05_date_7d" | "06_date_30d" | "07_ext_pdf" | "08_options_open" | "09_autocomplete"
             | "12_stats" | "13_stats_history" | "14_settings" | "15_sidebar" | "16_grid" | "17_collapsed"
             | "19_within_open" | "20_status_text" | "10_error" | "11_searching" | "22_date_today" | "23_date_year"
@@ -160,6 +163,13 @@ unsafe fn setup(h: HWND, name: &str) {
                     u.state.favorite_queries.clear();
                 }
                 "02_empty_history" => {}
+                "25_long_labels" => {
+                    result_phase(u);
+                    u.state.options.within_query="아주 긴 한글 결과 내 검색어와 검토 결과".into();
+                    u.state.selected_folder=Some("아주 긴 한글 폴더 이름과 세부 추진 일정 및 검토 결과 ".repeat(3));
+                    u.state.options.options_open=true;
+                    u.state.autocompletes.clear();
+                }
                 "03_results" => result_phase(u),
                 "04_related_chips" => {
                     result_phase(u);
@@ -430,38 +440,41 @@ unsafe fn interaction_checks(h: HWND) -> Vec<String> {
         let bands = with(|u| quick_layout(h, u));
         let pad = scale(h, 12);
         let side_w = { let full = scale(h, SIDEBAR_W); with(|u| ktm::layout::sidebar_width_px(u.state.options.sidebar_open, r.right, full)) };
-        let fy = (bands.filters.top + bands.filters.bottom) / 2;
         let before = with(|u| u.state.query.clone());
-        let mut fx = pad + scale(h, 34);
-        for (lbl, df, w) in [
-            ("전체", DateFilter::All, 36),
-            ("오늘", DateFilter::Today, 36),
-            ("7일간", DateFilter::Last7Days, 46),
-            ("30일간", DateFilter::Last30Days, 52),
-            ("올해", DateFilter::ThisYear, 36),
-        ] {
-            let cw = scale(h, w);
-            click(h, fx + cw / 2, fy);
-            let (got, query) = with(|u| (u.state.date_filter, u.state.query.clone()));
-            check(
-                &format!("기간 칩 {lbl}"),
-                got == df && query == before && !query.contains("after:") && !query.contains("before:"),
-                format!("date_filter={got:?} query={query:?}"),
-            );
-            fx += cw + scale(h, 3);
+        for (i, df) in [DateFilter::All, DateFilter::Today, DateFilter::Last7Days, DateFilter::Last30Days, DateFilter::ThisYear].into_iter().enumerate() {
+            let rc = with(|u| quick_controls(h,u).dates[i+1]);
+            click(h, (rc.left+rc.right)/2, (rc.top+rc.bottom)/2);
+            let (got, query) = with(|u| (u.state.date_filter,u.state.query.clone()));
+            check(&format!("기간 칩 {}", DATE_LABELS[i+1]),got==df && query==before,
+                format!("date_filter={got:?} query={query:?}"));
         }
+        for (i, ext) in [None,Some("hwp"),Some("pdf"),Some("docx"),Some("xlsx")].into_iter().enumerate() {
+            edit(|u| u.state.selected_ext=None);
+            let rc = with(|u| quick_controls(h,u).extensions[i+1]);
+            click(h,(rc.left+rc.right)/2,(rc.top+rc.bottom)/2);
+            check(&format!("형식 칩 {}", EXT_LABELS[i+1]),with(|u|u.state.selected_ext.as_deref()==ext),format!("ext={ext:?}"));
+        }
+        let rc=with(|u|quick_controls(h,u).folders[2]);
+        click(h,(rc.left+rc.right)/2,(rc.top+rc.bottom)/2);
+        check("폴더 칩",with(|u|u.state.selected_folder.as_deref()==Some("기획")),"기획".into());
+        // 요약 줄의 접기 영역이 기간·형식 클릭을 가로채지 않는지도 실제 상태로 확인한다.
+        let summary=with(|u|quick_controls(h,u).bands.summary);
+        let group_left=pad+side_w+(r.right-pad-side_w-scale(h,132)).max(0)/3;
+        let group_right=r.right-scale(h,132);
+        let old=with(|u|u.state.options.collapsed_filename);
+        click(h,(3*group_left+group_right)/4,(summary.top+summary.bottom)/2);
+        check("요약 파일명 접기",with(|u|u.state.options.collapsed_filename)!=old,"상태 전이".into());
         // 옵션 단추([옵션])를 누르면 팝업(모두 포함 등)이 열렸다 닫힌다.
         let spans = option_spans(pad + side_w, r.right - pad);
-        let oy = bands.options.top + scale(h, OPTION_H / 4);
+        let oy = bands.options.top + with(|u|quick_controls(h,u).option_line_height)/2;
         let ox = (spans[6].0 + spans[6].1) / 2;
         let was = with(|u| u.state.options.options_open);
         click(h, ox, oy);
         let now = with(|u| u.state.options.options_open);
         check("[옵션] 단추", was != now, format!("{was} -> {now}"));
         if with(|u| u.state.options.options_open) {
-            let bands2 = with(|u| quick_layout(h, u));
-            let py = bands2.options.top + scale(h, OPTION_H / 2) + scale(h, 11);
-            click(h, pad + side_w + scale(h, 2) + scale(h, 86) + scale(h, 40), py);
+            let rc = with(|u|quick_controls(h,u).modes[1]);
+            click(h,(rc.left+rc.right)/2,(rc.top+rc.bottom)/2);
             let mode = with(|u| u.state.options.match_mode);
             check("옵션 팝업 '하나 이상'", mode == tm_state::MatchMode::AnyTerm, format!("{mode:?}"));
             click(h, ox, oy);
@@ -505,11 +518,33 @@ pub unsafe fn run(h: HWND, dir: &Path, dpi: i32, scenario: &str) -> Result<(), S
             setup(h, name);
             let file = dir.join(format!("{name}_{dpi}dpi.png"));
             snapshot(h, &file)?;
-            report.push(format!("장면 {name}: {}", file.display()));
+            let m=with(|u|quick_controls(h,u));
+            let b=m.bands;
+            let sequential = [b.related,b.options,b.filters,b.summary,b.autocomplete]
+                .windows(2).all(|p|p[0].bottom<=p[1].top);
+            let controls: Vec<_> = m.related.iter().chain(&m.dates).chain(&m.extensions).chain(&m.folders)
+                .filter(|r|r.right>r.left && r.bottom>r.top).collect();
+            let disjoint = controls.iter().enumerate().all(|(i,a)|controls.iter().skip(i+1).all(|other|
+                a.right<=other.left || other.right<=a.left || a.bottom<=other.top || other.bottom<=a.top));
+            report.push(format!("{} 배치 {name}: 띠 순서={sequential}, 칩 교차 없음={disjoint}",
+                if sequential && disjoint { "PASS" } else { "FAIL" }));
+            let mut geometry=Vec::new();
+            for (label,rc) in [("related",b.related),("options",b.options),("filters",b.filters),("summary",b.summary),("autocomplete",b.autocomplete)] {
+                geometry.push(format!("{label}: {},{}..{},{}",rc.left,rc.top,rc.right,rc.bottom));
+            }
+            for (label,rects) in [("related",&m.related),("dates",&m.dates),("extensions",&m.extensions),("folders",&m.folders)] {
+                for (i,rc) in rects.iter().enumerate() {
+                    geometry.push(format!("{label}[{i}]: {},{}..{},{}",rc.left,rc.top,rc.right,rc.bottom));
+                }
+            }
+            std::fs::write(file.with_extension("txt"),geometry.join("\n")).map_err(|e|e.to_string())?;
+
+            report.push(format!("장면 {name}: {}", file.file_name().unwrap().to_string_lossy()));
         }
         setup(h, "03_results");
         report.extend(interaction_checks(h));
         std::fs::write(dir.join(format!("capture-report_{dpi}dpi.txt")), report.join("\n")).map_err(|e| e.to_string())?;
+        if report.iter().any(|line|line.starts_with("FAIL")) { return Err("캡처 상호작용 검사 실패".into()); }
         Ok(())
     }
 }

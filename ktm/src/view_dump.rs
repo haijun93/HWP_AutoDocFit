@@ -91,7 +91,8 @@ pub fn recent_searches(state: &State) -> Vec<String> {
     }).collect()
 }
 
-/// Dump the native quick-search bands with the same row captions and geometry as the painter.
+/// Legacy fixed-band dump retained for API compatibility. Native painting uses
+/// measured_quick_search_layout; --capture-dir also writes its actual geometry.
 pub fn quick_search_bands(
     width: i32,
     height: i32,
