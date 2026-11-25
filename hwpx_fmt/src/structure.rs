@@ -977,7 +977,9 @@ fn title_shrink(d: &mut Doc, t: usize, h: &mut Doc, cfg: &Config) -> R<()> {
         return Ok(());
     };
     let mut cache = HashMap::new();
-    let pattern = regex::Regex::new(r"\([^()]+\)").unwrap();
+    static PATTERN: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(r"\([^()]+\)").unwrap());
+    let pattern = &*PATTERN;
     for p in d.cell_paras(cell) {
         for r in d.nodes[p].children.clone() {
             if d.tag(r) != "run" || d.nodes[r].children.len() != 1 {
@@ -1219,5 +1221,8 @@ fn title_process(source: &Path, target: &Path, cfg: &Config, sel: &Value) -> R<u
     Ok(count)
 }
 fn date_match(text: &str) -> bool {
-    regex::Regex::new(r"[’'‘`]?\d{2,4}\s*[.년/\-]\s*\d{1,2}\s*[.월/\-]\s*\d{1,2}|\d{1,2}\s*[.월]\s*\d{1,2}\s*[.일]?\s*\(\s*[월화수목금토일]\s*\)").unwrap().is_match(text)
+    static PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"[’'‘`]?\d{2,4}\s*[.년/\-]\s*\d{1,2}\s*[.월/\-]\s*\d{1,2}|\d{1,2}\s*[.월]\s*\d{1,2}\s*[.일]?\s*\(\s*[월화수목금토일]\s*\)").unwrap()
+    });
+    PATTERN.is_match(text)
 }

@@ -35,6 +35,40 @@ RSXML1~4는 고유 13종(14슬롯)을 구현했으며, 남은 다섯 종류는 �
 - 설정된 담당자 글 및 활성 기호 체계의 제목/중제목 경로는 미지원이다. 잘못된 예시 프로필도 Rust 적용을 중단한다.
 - 전체 Python 시험, 최종 Cargo 시험, 최종 확대 하네스, 속도, ALLQA COM 결과는 진행 중이며 아래에 실제 결과로 갱신한다.
 
+## 최종 하네스·속도
+
+Python 3.15.2, Unicode 17.0.0. 기존 로컬 MinGW를 사용했고 빌드 산출물 위치는 `CARGO_TARGET_DIR` 환경변수로만 지정했다.
+정규식 캐시 변경 후에도 **234쌍 중 일치 233·차이 0·양쪽 거부 1**, 실제 변경 84쌍, 미지원 검사 8건 통과다. 양쪽 거부는 일치 수에서 제외한다.
+세부 사례와 측정값은 [HWPXFMT5_PARITY_2026-11-24.json](HWPXFMT5_PARITY_2026-11-24.json)에 보관했다.
+비교기는 ZIP 항목 순서·바이너리 바이트·조사 목록·변경 수·원본 해시와 XML 정규화 UTF-8 바이트를 대조한다. XML 접두사·속성 순서와 `t` 밖 들여쓰기만 정규화하며, 글 안 공백·속성 값·자식 순서는 보존한다.
+
+각 입력·처리기당 1회, 다른 빌드·시험 없이 순차 측정했다. Python은 모듈 적재 제외 조사+적용, Rust는 CLI 프로세스 기동을 포함한 조사+적용이다. 이전의 느린 제목 결과는 아래 개발 기록에 그대로 남겼다.
+
+| 입력 | 처리기 | Python 초 | Rust 초 | 배수 | 변경 수 | 출력 동일 |
+|---|---|---:|---:|---:|---:|---|
+| 최소 합성 400표 | 붙임 | 0.353 | 0.175 | 2.02 | 400 | 예 |
+| 최소 합성 400표 | 상자 | 0.197 | 0.162 | 1.22 | 400 | 예 |
+| 최소 합성 400표 | 중제목 | 2.176 | 0.197 | 11.06 | 400 | 예 |
+| 최소 합성 400표 | 제목 | 0.603 | 0.239 | 2.52 | 400 | 예 |
+| 내장 표 구조 400표 | 붙임 | 0.651 | 0.272 | 2.39 | 400 | 예 |
+| 내장 표 구조 400표 | 상자 | 0.428 | 0.221 | 1.93 | 400 | 예 |
+| 내장 표 구조 400표 | 중제목 | 0.762 | 0.296 | 2.57 | 400 | 예 |
+| 내장 표 구조 400표 | 제목 | 1.040 | 0.431 | 2.42 | 400 | 예 |
+
+최소 합성 표에는 표 크기 속성이 없어 일부 폭 계산을 건너뛴다. 실제 내장 표 구조는 `sz`·칸 크기·안팎 여백·쪽 폭을 포함한다. 최소 합성 중제목의 11배를 대표 성능으로 주장하지 않는다. 보고서 머리 속도는 미측정이다.
+
+최종 관련 Cargo 시험(`cargo test --release --locked -j 2 --manifest-path hwpx_fmt/Cargo.toml`) 결과:
+
+```text
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s  (rsxml2)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s  (rsxml3)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s  (rsxml4)
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s   (structure)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s  (unit)
+```
+
+합계 62건, 실패 0. lib/bin/doc-test는 각 0건이며 모두 성공했다. 연결·비교기 별도 시험은 `Ran 9 tests in 0.300s` / `OK`다.
+
 ## 개발 중 확인
 
 초기 대조 186쌍 중 185쌍 일치. `attp_table.hwpx`의 붙임 처리 1쌍은 헤더에 `fontfaces`가 없어 양쪽 모두 거부했다. 통과에 넣지 않는다.

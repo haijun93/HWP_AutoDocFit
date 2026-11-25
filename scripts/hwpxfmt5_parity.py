@@ -251,6 +251,23 @@ def run(binary, out, bench=False):
             same, diffs, _ = base.compare_outputs(py, rs) if err is None else (False, [err], None)
             measurements.append({'processor': proc, 'python_seconds': pt, 'rust_seconds': rt,
                                  'speedup': pt / rt, 'count': pn, 'ok': same and pn == sn and ps == ss, 'diffs': diffs})
+        for proc, loader, ordinal in [('attachment', '개요붙임_원본자료', 1),
+                                       ('box', '개요붙임_원본자료', 0),
+                                       ('midtitle', '중제목_원본자료', 0),
+                                       ('title', '제목_원본자료', 0)]:
+            sh, ss = base.PY_NS[loader]()
+            table = [x for x in ss.iter() if x.tag.rsplit('}', 1)[-1] == 'tbl'][ordinal]
+            body = base.para('', raw='<hp:secPr><hp:pagePr width="44520" height="80000"><hp:margin left="1000" right="1000"/></hp:pagePr></hp:secPr>')
+            body += base.host(*([ET.tostring(table, encoding='unicode')] * 400))
+            cfg = {'format_samples': examples()}
+            src, py, rs = [out / f'bench_geometry_{proc}_{x}.hwpx' for x in ('source', 'python', 'rust')]
+            src.write_bytes(base.hwpx_bytes({'Contents/section0.xml': base.section(body)}, header=ET.tostring(sh, encoding='unicode')))
+            start = time.perf_counter(); ps, pn = run_python(procs[proc], src, py, cfg); pt = time.perf_counter() - start
+            start = time.perf_counter(); ss, sn, err = base.run_rs(str(binary), proc, src, rs, cfg, out / 'bench_config.json'); rt = time.perf_counter() - start
+            same, diffs, _ = base.compare_outputs(py, rs) if err is None else (False, [err], None)
+            measurements.append({'processor': proc, 'geometry': True, 'python_seconds': pt,
+                                 'rust_seconds': rt, 'speedup': pt / rt, 'count': pn,
+                                 'ok': same and pn == sn and ps == ss, 'diffs': diffs})
     unsupported = check_unsupported(binary, out)
     result = {'pairs': len(rows), 'passed': sum(r['ok'] is True for r in rows),
               'failed': sum(r['ok'] is False or r.get('source_unchanged') is False for r in rows),
