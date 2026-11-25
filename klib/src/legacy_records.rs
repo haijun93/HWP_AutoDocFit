@@ -16,7 +16,8 @@ fn parse(xml: &[u8]) -> Result<Node,String> {
   Ok(Event::Empty(e)) => { let mut n=Node{name:local(e.name().as_ref()),..Default::default()}; for a in e.attributes().with_checks(false).flatten(){ n.attrs.insert(local(a.key.as_ref()),a.decode_and_unescape_value(r.decoder()).map_err(|e|e.to_string())?.into_owned()); } if let Some(p)=stack.last_mut(){p.content.push(Content::Node(n))}else{root.content.push(Content::Node(n))} }
   Ok(Event::Text(e)) => {let s=e.decode().map_err(|e|e.to_string())?.into_owned(); if let Some(n)=stack.last_mut(){n.content.push(Content::Text(s));}}
   Ok(Event::CData(e)) => {let s=e.decode().map_err(|e|e.to_string())?.into_owned(); if let Some(n)=stack.last_mut(){n.content.push(Content::Text(s));}}
-  Ok(Event::GeneralRef(e)) => {let s=match e.resolve_char_ref(){Ok(Some(c))=>c.to_string(),_=>format!("&{};",e.decode().unwrap_or_default())}; if let Some(n)=stack.last_mut(){n.content.push(Content::Text(s));}}
+  Ok(Event::GeneralRef(e)) => {let s=crate::extract::resolve_xml_ref(&e).ok_or("corrupt: XML 엔티티 참조 거부")?; if let Some(n)=stack.last_mut(){n.content.push(Content::Text(s));}}
+  Ok(Event::DocType(_)) => return Err("corrupt: DTD 및 외부 엔티티 거부".into()),
   Ok(Event::End(_)) => {let n=stack.pop().ok_or("malformed XML")?; if let Some(p)=stack.last_mut(){p.content.push(Content::Node(n))}else{root.content.push(Content::Node(n))}}
   Ok(Event::Eof)=>break, Ok(_)=>{}, Err(e)=>return Err(e.to_string())
  }} Ok(root)

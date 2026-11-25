@@ -570,6 +570,16 @@ struct XmlNode { name: String, attrs: std::collections::HashMap<String, String>,
 #[derive(Clone)]
 enum XmlContent { Text(String), Node(XmlNode) }
 
+/// `&...;` 참조를 푼다. XML 기본 엔티티 5개와 XML 1.0 허용 문자의 숫자 참조만 인정하고,
+/// DTD를 받지 않으므로 그 밖의 이름(사용자 정의·외부 엔티티)은 `None`(거부)이다.
+pub(crate) fn resolve_xml_ref(reference: &quick_xml::events::BytesRef) -> Option<String> {
+    match reference.resolve_char_ref() {
+        Ok(Some(c)) => matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..).then(|| c.to_string()),
+        Ok(None) => quick_xml::escape::resolve_xml_entity(&reference.decode().ok()?).map(str::to_owned),
+        Err(_) => None,
+    }
+}
+
 fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, String> {
     use quick_xml::events::Event;
     let mut reader = quick_xml::Reader::from_reader(xml);
@@ -604,7 +614,10 @@ fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, 
                 let decoded = e.decode().map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
                 if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
             }
-            Ok(Event::GeneralRef(_)) => return Err(format!("corrupt: XML 엔티티 참조 거부 ({context})")),
+            Ok(Event::GeneralRef(e)) => {
+                let value = resolve_xml_ref(&e).ok_or_else(|| format!("corrupt: XML 엔티티 참조 거부 ({context})"))?;
+                if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(value)); }
+            }
             Ok(Event::DocType(_)) => return Err(format!("corrupt: DTD 및 외부 엔티티 거부 ({context})")),
             Ok(Event::End(_)) => {
                 let node = stack.pop().ok_or_else(|| format!("corrupt: 잘못된 XML 구조 ({context})"))?;
@@ -654,7 +667,10 @@ fn extract_section(xml: &[u8], section: &str) -> Result<Vec<String>, String> {
                 let decoded = e.decode().map_err(|e| format!("corrupt: HWPX 섹션 XML 파싱 실패 ({section}): {e}"))?;
                 if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(decoded.into_owned())); }
             }
-            Ok(Event::GeneralRef(_)) => return Err(format!("corrupt: XML 엔티티 참조 거부 ({section})")),
+            Ok(Event::GeneralRef(e)) => {
+                let value = resolve_xml_ref(&e).ok_or_else(|| format!("corrupt: XML 엔티티 참조 거부 ({section})"))?;
+                if let Some(node) = stack.last_mut() { node.content.push(XmlContent::Text(value)); }
+            }
             Ok(Event::DocType(_)) => return Err(format!("corrupt: DTD 및 외부 엔티티 거부 ({section})")),
             Ok(Event::End(_)) => {
                 let node = stack.pop().ok_or_else(|| format!("corrupt: 잘못된 XML 구조 ({section})"))?;
