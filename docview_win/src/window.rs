@@ -301,6 +301,7 @@ unsafe fn panel_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
 
 unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
     unsafe {
+        s.app.clicked = None;
         if s.panel.is_some() {
             panel_click(hwnd, s, x, y);
             return;
@@ -350,7 +351,7 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
                 return;
             }
         }
-        s.app.select(&m, m.hit(x, y, s.app.scroll, n));
+        s.app.click(&m, m.hit(x, y, s.app.scroll, n));
         redraw(hwnd);
     }
 }
@@ -434,6 +435,15 @@ unsafe fn on_char(hwnd: HWND, s: &mut State, ch: u16) {
     redraw(hwnd);
 }
 
+/// 연결 앱으로 연다. 셸 호출 중 창 메시지가 다시 들어올 수 있어 상태는 호출이 끝난 뒤에 다시 얻는다.
+unsafe fn open_item(hwnd: HWND, path: &str) {
+    let result = grid_core::open::open_with(path, &crate::scan::DOC_EXTENSIONS, |p| grid_core::open::shell_open(hwnd as isize, p));
+    if let Some(s) = unsafe { state(hwnd) } {
+        s.app.open_error = result.err().unwrap_or_default();
+        redraw(hwnd);
+    }
+}
+
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -483,6 +493,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 }
                 0
             }
+            // 항목 위 더블클릭만 연다(도구줄·빈 곳·패널에서는 `clicked` 가 비어 있다).
+            WM_LBUTTONDBLCLK => {
+                let target = state(hwnd).and_then(|s| s.app.clicked.take());
+                if let Some(path) = target {
+                    open_item(hwnd, &path);
+                }
+                0
+            }
             WM_MOUSEMOVE => {
                 if let Some(s) = state(hwnd) {
                     let (x, y) = xy(lp);
@@ -527,6 +545,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             WM_KEYDOWN => {
+                // Enter = 선택 항목 열기. 누르고 있어 반복되는 입력(lp 30번 비트)은 무시한다.
+                if wp as u16 == VK_RETURN && lp & (1 << 30) == 0 {
+                    let target = state(hwnd).filter(|s| s.panel.is_none()).and_then(|s| s.app.enter_target());
+                    if let Some(path) = target {
+                        open_item(hwnd, &path);
+                        return 0;
+                    }
+                }
                 if let Some(s) = state(hwnd) {
                     if on_key(hwnd, s, wp as u32) {
                         return 0;

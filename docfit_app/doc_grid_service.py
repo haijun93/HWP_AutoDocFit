@@ -15,7 +15,6 @@ import logging
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 import threading
 from pathlib import Path
@@ -33,6 +32,7 @@ from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
 from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots
 from . import library_scan_cache
+from .open_listed_file import open_listed_file
 from docfit_core.log_mask import mask_log_text
 
 logger = logging.getLogger(__name__)
@@ -579,35 +579,9 @@ class DocGridService:
         finally:
             self._slots.release()
 
-    @staticmethod
-    def _default_open(path: str) -> None:
-        if hasattr(os, "startfile"):
-            os.startfile(path)
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", path])
-        else:
-            subprocess.Popen(["xdg-open", path])
-
     def open_file(self, path: str | Path) -> dict[str, Any]:
-        """지정된 문서를 시스템 기본 연결 프로그램으로 연다."""
-        p = Path(path).resolve()
-        if not p.is_file():
-            return {
-                "ok": False,
-                "code": "FILE_NOT_FOUND",
-                "message": f"파일을 찾을 수 없습니다: {path}",
-            }
-        try:
-            fn = self.opener or self._default_open
-            fn(str(p))
-            return {"ok": True, "path": str(p)}
-        except Exception as exc:
-            logger.exception("문서 열기 실패: %s", p)
-            return {
-                "ok": False,
-                "code": "OPEN_FAILED",
-                "message": f"문서를 열지 못했습니다: {exc}",
-            }
+        """지정된 문서를 시스템 기본 연결 프로그램으로 연다(목록 대상 확장자만)."""
+        return open_listed_file(path, DOC_EXTENSIONS, self.opener, "문서")
 
     def command(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         """외부 IPC / 브리지 명령을 라우팅한다."""

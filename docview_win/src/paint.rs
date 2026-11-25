@@ -173,6 +173,7 @@ unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Pale
         let lw = text_width(hdc, f.small, &left) + s(24);
         text(hdc, f.small, &Rect::new(s(16), r.top, s(16) + lw, r.bottom), &left, pal.text_sub, ONE_LINE);
         let right = match app.selected_doc() {
+            _ if !app.open_error.is_empty() => app.open_error.clone(),
             Some(d) => d.path.clone(),
             None => app.notice.clone(),
         };

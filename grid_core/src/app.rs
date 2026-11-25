@@ -19,6 +19,10 @@ pub struct App {
     pub tz_offset: i64,
     /// 안내 줄(오류 등).
     pub notice: String,
+    /// 마지막 클릭이 누른 항목의 경로(더블클릭이 열 대상).
+    pub clicked: Option<String>,
+    /// 연결 앱으로 열기 실패 안내. 다음 선택 때 지운다.
+    pub open_error: String,
     /// 격자 규칙(문서뷰·사진뷰).
     pub spec: GridSpec,
     /// 설정이 없거나 잘못됐을 때 쓰는 썸네일 크기(문서뷰 190·사진뷰 160).
@@ -43,6 +47,8 @@ impl App {
             excluded_count: 0,
             tz_offset: 0,
             notice: String::new(),
+            clicked: None,
+            open_error: String::new(),
             spec,
             default_thumb,
         }
@@ -67,10 +73,22 @@ impl App {
     }
 
     pub fn select(&mut self, m: &Metrics, n: Option<usize>) {
+        self.open_error.clear();
         self.selected = n.filter(|i| *i < self.coll.len());
         if let Some(i) = self.selected {
             self.scroll = m.scroll_to_show(i, self.scroll, self.coll.len());
         }
+    }
+
+    /// 격자 클릭: 선택하고 누른 항목을 기억한다. 선택이 화면을 스크롤해도 더블클릭은 이 항목을 연다.
+    pub fn click(&mut self, m: &Metrics, n: Option<usize>) {
+        self.select(m, n);
+        self.clicked = self.selected_doc().map(|d| d.path.clone());
+    }
+
+    /// Enter 로 열 경로. 검색칸 입력 중이면 없다.
+    pub fn enter_target(&self) -> Option<String> {
+        if self.search_focus { None } else { self.selected_doc().map(|d| d.path.clone()) }
     }
 
     pub fn nav(&mut self, m: &Metrics, key: Nav) {

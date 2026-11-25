@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
+import 'package:flutter/gestures.dart' show kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -771,6 +772,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     return all;
   }
 
+  void _openWithApp(Map<String, Object?> photo) {
+    _openPhotoWithApp(context, widget.api, '${photo['path'] ?? ''}');
+  }
+
   void _openViewerModal(
     int initialIndex, {
     List<Map<String, Object?>>? customPhotos,
@@ -1476,6 +1481,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       _openViewerModal(index);
                     }
                   },
+                  // 선택 모드에서는 연속 클릭이 곧 선택 전환이라 더블클릭 판정을 두지 않는다.
+                  onDoubleTap: _selectionMode
+                      ? null
+                      : () => _openWithApp(photo),
                   onToggleFavorite: () => _toggleFavorite(photo),
                 );
               }, childCount: results.length),
@@ -1561,6 +1570,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                         _openViewerModal(thisGlobalIndex);
                       }
                     },
+                    onDoubleTap: _selectionMode
+                        ? null
+                        : () => _openWithApp(photo),
                     onToggleFavorite: () => _toggleFavorite(photo),
                   );
                 }, childCount: ((group['photos'] as List?)?.length ?? 0)),
@@ -1742,6 +1754,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       onTap: () {
                         _openViewerModal(index, customPhotos: items);
                       },
+                      onDoubleTap: () => _openWithApp(item),
                       onToggleFavorite: () => _toggleFavorite(item),
                     ),
                     // 대표 배지 및 거리 배지
@@ -1811,6 +1824,31 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   }
 }
 
+/// 사진을 시스템 연결 앱으로 연다. 실패하면 안내 줄을 띄운다.
+Future<void> _openPhotoWithApp(
+  BuildContext context,
+  ApiCall api,
+  String path,
+) async {
+  if (path.isEmpty) return;
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    final res = await api('photo_album', [
+      'open',
+      {'path': path},
+    ]);
+    if (res is Map && res['ok'] != true && messenger.mounted) {
+      messenger.showSnackBar(
+        SnackBar(content: Text('${res['message'] ?? '사진을 열지 못했습니다.'}')),
+      );
+    }
+  } catch (e) {
+    if (messenger.mounted) {
+      messenger.showSnackBar(SnackBar(content: Text('사진 열기 실패: $e')));
+    }
+  }
+}
+
 /// 사진 카드 위젯 (화면에 보일 때 비동기 썸네일 요청).
 class _PhotoCard extends StatefulWidget {
   const _PhotoCard({
@@ -1819,6 +1857,7 @@ class _PhotoCard extends StatefulWidget {
     required this.api,
     required this.onTap,
     required this.onToggleFavorite,
+    this.onDoubleTap,
     this.cachedThumb,
     this.onThumbLoaded,
     this.selectionMode = false,
@@ -1828,6 +1867,8 @@ class _PhotoCard extends StatefulWidget {
   final Map<String, Object?> photo;
   final ApiCall api;
   final VoidCallback onTap;
+  /// 있으면 한 번 클릭([onTap])은 더블클릭 판정 시간 뒤에 실행된다.
+  final VoidCallback? onDoubleTap;
   final VoidCallback onToggleFavorite;
   final Uint8List? cachedThumb;
   final ValueChanged<Uint8List>? onThumbLoaded;
@@ -1838,7 +1879,44 @@ class _PhotoCard extends StatefulWidget {
   State<_PhotoCard> createState() => _PhotoCardState();
 }
 
-class _PhotoCardState extends State<_PhotoCard> {
+class _PhotoCardState extends State<_PhotoCard>
+    with SingleTickerProviderStateMixin {
+  // 클릭 상태: 쉼 → (첫 클릭) 두 번째 클릭 대기 → 더블클릭이면 열기, 시간이 지나면 [onTap].
+  // InkWell.onDoubleTap 대신 직접 두어 대기 중임이 카드 테두리로 보이게 한다.
+  late final AnimationController _clickWait = AnimationController(
+    vsync: this,
+    duration: kDoubleTapTimeout,
+    animationBehavior: AnimationBehavior.preserve,
+  )..addStatusListener(_onClickWaitStatus);
+
+  bool get _awaitingSecondClick => _clickWait.isAnimating;
+
+  void _handleTap() {
+    final onDoubleTap = widget.onDoubleTap;
+    if (onDoubleTap == null) {
+      widget.onTap();
+    } else if (_awaitingSecondClick) {
+      setState(_clickWait.reset);
+      onDoubleTap();
+    } else {
+      setState(() {
+        _clickWait.forward(from: 0);
+      });
+    }
+  }
+
+  void _onClickWaitStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed || !mounted) return;
+    setState(_clickWait.reset);
+    widget.onTap();
+  }
+
+  @override
+  void dispose() {
+    _clickWait.dispose();
+    super.dispose();
+  }
+
   Uint8List? _thumbBytes;
   bool _loadingThumb = false;
 
@@ -1857,6 +1935,10 @@ class _PhotoCardState extends State<_PhotoCard> {
     super.didUpdateWidget(oldWidget);
     if (widget.cachedThumb != null && widget.cachedThumb != _thumbBytes) {
       _thumbBytes = widget.cachedThumb;
+    }
+    // 대기 중 선택 모드로 바뀌면 예약된 크게 보기를 버린다.
+    if (widget.onDoubleTap == null && _clickWait.isAnimating) {
+      _clickWait.reset();
     }
   }
 
@@ -1911,14 +1993,14 @@ class _PhotoCardState extends State<_PhotoCard> {
     final dateTaken = widget.photo['date_taken'] as String?;
 
     return InkWell(
-      onTap: widget.onTap,
+      onTap: _handleTap,
       borderRadius: BorderRadius.circular(8),
       child: Container(
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
-            color: widget.isSelected
+            color: widget.isSelected || _awaitingSecondClick
                 ? theme.colorScheme.primary
                 : theme.dividerColor.withValues(alpha: 0.3),
             width: widget.isSelected ? 2.5 : 1.0,
@@ -2318,25 +2400,31 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
               Expanded(
                 child: Stack(
                   children: [
-                    Center(
-                      child: thumbBytes != null
-                          ? Image.memory(
-                              thumbBytes,
-                              fit: BoxFit.contain,
-                              errorBuilder: (_, _, _) => const Center(
-                                child: Text(
-                                  '사진을 표시할 수 없습니다.',
-                                  style: TextStyle(color: Colors.white54),
+                    GestureDetector(
+                      key: const ValueKey('photoViewerImageArea'),
+                      behavior: HitTestBehavior.opaque,
+                      onDoubleTap: () =>
+                          _openPhotoWithApp(context, widget.api, path),
+                      child: Center(
+                        child: thumbBytes != null
+                            ? Image.memory(
+                                thumbBytes,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, _, _) => const Center(
+                                  child: Text(
+                                    '사진을 표시할 수 없습니다.',
+                                    style: TextStyle(color: Colors.white54),
+                                  ),
+                                ),
+                              )
+                            : const Center(
+                                child: Icon(
+                                  Icons.photo,
+                                  size: 64,
+                                  color: Colors.white30,
                                 ),
                               ),
-                            )
-                          : const Center(
-                              child: Icon(
-                                Icons.photo,
-                                size: 64,
-                                color: Colors.white30,
-                              ),
-                            ),
+                      ),
                     ),
                     // 이전 버튼
                     if (_currentIndex > 0)
