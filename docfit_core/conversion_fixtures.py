@@ -65,6 +65,8 @@ class _FixedZip(zipfile.ZipFile):
     def writestr(self, item, data, compress_type=None, compresslevel=None):
         if isinstance(item, str):
             info = zipfile.ZipInfo(item, date_time=(2026, 1, 1, 0, 0, 0))
+            # 커밋된 ZIP과 동일하게 고정한다. 기본값은 생성 OS에 따라 0/3으로 달라진다.
+            info.create_system = 0
             info.external_attr = 0o600 << 16
             info.compress_type = compress_type if compress_type is not None else self.compression
             item = info
