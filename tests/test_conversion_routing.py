@@ -36,6 +36,10 @@ class ConversionRoutingTest(unittest.TestCase):
         self.assertEqual(result.states, ('prepare', 'native_attempt', 'native_validation', 'publish', 'complete'))
         self.assertTrue(result.quality['verdict']['pass'])
 
+    def test_new_internal_key_does_not_change_existing_settings_form(self):
+        from docfit_app.configuration_service import fields
+        self.assertNotIn('docx_engine', {field['key'] for field in fields()})
+
     def test_kordoc_setting_skips_native(self):
         with patch.object(kb, 'convert_to_hwpx', side_effect=self.kordoc) as fallback, patch.object(route, '_native') as native:
             result = route.convert_to_hwpx_routed(self.source, engine=route.configured_engine({}), target=self.target)

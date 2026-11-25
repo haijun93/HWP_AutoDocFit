@@ -7196,7 +7196,12 @@
     "scripts/benchmark_kordoc_routing.py": "dbe452e8028161022a208274ba971ebcea3cb028d3fd2e1337d4f8050e8b96c3"
   },
   "tests": {
-    "focused": "Ran 94 tests in 7.687s\nOK",
-    "full": "pending"
+    "focused": "Ran 103 tests in 7.817s\nOK",
+    "full": "pending",
+    "interrupted_full": {
+      "seconds": 119.100647,
+      "reason": "new internal docx_engine key missing from configuration form EXCLUDED; fixed and new regression added",
+      "complete": false
+    }
   }
 }

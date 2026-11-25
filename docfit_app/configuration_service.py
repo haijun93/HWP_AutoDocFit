@@ -49,7 +49,7 @@ LABELS = {
  'spacing_cell_image_to_bg':'자간 정리: 표 셀 내 그림을 배경으로 변경',
  'all_cell_image_to_bg':'한 번에 적용: 표 셀 내 그림을 배경으로 변경',
 }
-EXCLUDED = {'ui_tk_fallback', 'hierarchy_engine', 'abbreviations', 'abbreviation_source', 'active_format_profile',
+EXCLUDED = {'ui_tk_fallback', 'hierarchy_engine', 'abbreviations', 'abbreviation_source', 'active_format_profile', 'docx_engine',
             'rust_rename_preview', 'rust_timemachine_scan', 'rust_search_hierarchy', 'search_backend_mode', 'theme_mode', 'menu_display_mode', 'kclip_settings_mode', 'outliner_ui', 'settings_ui', 'docview_ui', 'photoview_ui', 'conversion_ui', 'rename_ui', 'dock_auto_hide'} | {k for k in DEFAULTS if k.endswith('_rev')}
 
 
