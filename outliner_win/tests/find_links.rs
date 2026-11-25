@@ -103,6 +103,25 @@ fn link_context_detects_open_brackets_before_caret() {
     assert_eq!(c.start16, 3);
 }
 
+#[test]
+fn block_ref_context_detects_double_and_triple_parens_and_preserves_caret_units() {
+    let text = "😀 ((( blk-alpha )))";
+    let caret = "😀 ((( blk-alpha".encode_utf16().count();
+    let ctx = any_completion_context(text, caret).unwrap();
+    assert_eq!(ctx.kind, RefKind::TripleBlock);
+    assert_eq!(ctx.query, " blk-alpha");
+    assert_eq!(ctx.end16, text.encode_utf16().count());
+    let (completed, completed_caret) = apply_completion(text, &ctx, "blk-beta");
+    assert_eq!(completed, "😀 (((blk-beta)))");
+    assert_eq!(completed_caret, completed.encode_utf16().count());
+
+    let text = "(( blk-alpha ))";
+    let ctx = any_completion_context(text, "(( blk-alpha".encode_utf16().count()).unwrap();
+    assert_eq!(ctx.kind, RefKind::Block);
+    assert_eq!(ctx.query, " blk-alpha");
+    assert_eq!(apply_completion(text, &ctx, "42").0, "((42))");
+}
+
 fn pages() -> Vec<String> {
     ["회의록", "예산 지침", "예산 지침 초안", "참고 예산", "Alpha"].iter().map(|s| s.to_string()).collect()
 }

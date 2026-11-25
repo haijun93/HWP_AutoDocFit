@@ -780,3 +780,117 @@ fn api_rename_preview_markdown_matches_applied_markdown() {
         "- [[새페이지|별칭]] #옛페이지\n```md\n[[옛페이지]]\n```\n"
     );
 }
+
+#[test]
+fn test_triple_and_double_parentheses_block_refs() {
+    let source = "- 첫 블록 id:: blk-alpha\n- 2중 괄호 참조 ((blk-alpha))\n- 3중 괄호 공백 참조 ((( blk-alpha )))\n- 숫자 ID 참조 (( 1 ))\n";
+    let doc = parse(source).unwrap();
+    assert_eq!(doc.blocks.len(), 4);
+    assert_eq!(doc.blocks[1].block_refs, ["blk-alpha"]);
+    assert_eq!(doc.blocks[2].block_refs, ["blk-alpha"]);
+    assert_eq!(doc.blocks[3].block_refs, ["1"]);
+
+    let res = resolve_block_ref(&doc, "blk-alpha");
+    assert!(res.found);
+    assert_eq!(res.block_id, Some(1));
+    assert_eq!(res.backlinks, vec![2, 3, 4]);
+
+    let res_num = resolve_block_ref(&doc, "1");
+    assert!(res_num.found);
+    assert_eq!(res_num.block_id, Some(1));
+    assert_eq!(res_num.backlinks, vec![2, 3, 4]);
+}
+
+#[test]
+fn test_api_insert_block_ref_and_block_backlinks() {
+    use serde_json::json;
+
+    let doc = "- 원본 블록\n- 다른 블록\n";
+    let req = json!({
+        "id": "ins-1",
+        "op": "insert_block_ref",
+        "document": doc,
+        "args": {
+            "block_id": 2,
+            "target": "1",
+            "style": "triple"
+        }
+    });
+    let res = handle_request(req);
+    assert_eq!(res["ok"], true);
+    assert_eq!(res["result"]["inserted"], "(((1)))");
+    let updated_md = res["result"]["markdown"].as_str().unwrap();
+    assert!(updated_md.contains("- 다른 블록 (((1)))"));
+
+    let req_bb = json!({
+        "id": "bb-1",
+        "op": "block_backlinks",
+        "document": updated_md,
+        "args": {
+            "target": "1"
+        }
+    });
+    let res_bb = handle_request(req_bb);
+    assert_eq!(res_bb["ok"], true);
+    assert_eq!(res_bb["result"]["found"], true);
+    assert_eq!(res_bb["result"]["backlinks"], json!([2]));
+    assert_eq!(res_bb["result"]["referring_blocks"][0]["id"], 2);
+}
+
+#[test]
+fn test_api_check_page_references() {
+    use serde_json::json;
+
+    let dir = temp_path("check-page-refs");
+    fs::create_dir_all(&dir).unwrap();
+    let f1 = dir.join("page_a.md");
+    let f2 = dir.join("page_b.md");
+    fs::write(&f1, "- 본문\n- [[참조대상]] 링크 포함\n").unwrap();
+    fs::write(&f2, "- 일반 내용\n").unwrap();
+
+    let req = json!({
+        "id": "chk-1",
+        "op": "check_page_references",
+        "args": {
+            "page": "참조대상",
+            "directory": dir.to_string_lossy()
+        }
+    });
+    let res = handle_request(req);
+    assert_eq!(res["ok"], true);
+    assert_eq!(res["result"]["has_references"], true);
+    assert_eq!(res["result"]["count"], 1);
+
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_regression_enter_tab_undo_multiselect() {
+    let source = "- 첫째\n- 둘째\n- 셋째\n";
+    let mut doc = parse(source).unwrap();
+
+    // 1. Enter (split at cursor)
+    edit_with_offset(&mut doc, "split", 2, None, Some(1)).unwrap();
+    assert_eq!(doc.blocks.len(), 4);
+    assert_eq!(doc.blocks[1].text, "둘");
+    assert_eq!(doc.blocks[2].text, "째");
+
+    // 2. Tab (indent / outdent)
+    edit(&mut doc, "indent", 2, None).unwrap();
+    assert_eq!(doc.blocks[1].indent, 1);
+    edit(&mut doc, "outdent", 2, None).unwrap();
+    assert_eq!(doc.blocks[1].indent, 0);
+
+    // 3. Multi-select edit_many
+    let ids = vec![2, 3];
+    edit_many(&mut doc, "indent", &ids, None).unwrap();
+    assert_eq!(doc.blocks[1].indent, 1);
+    assert_eq!(doc.blocks[3].indent, 1);
+
+    // 4. UndoHistory restores exact previous state
+    let mut history = UndoHistory::default();
+    history.record(source);
+    let serialized = serialize(&doc);
+    let undone = history.undo(&serialized).unwrap();
+    assert_eq!(undone, source);
+}

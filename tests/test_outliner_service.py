@@ -154,5 +154,115 @@ class OutlinerNativeWindowTest(unittest.TestCase):
         self.assertIn('outliner_ui', EXCLUDED)
 
 
+class OutlinerPageManagementTest(unittest.TestCase):
+    """OUTLINERREF1: 페이지 관리(이름 바꾸기·삭제·복원) 및 블록 참조 연동."""
+
+    def test_rename_page_and_undo_rename(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            executable = root / 'engine.exe'
+            executable.touch()
+            outliner_dir = root / 'Outliner'
+            outliner_dir.mkdir(parents=True)
+            p1 = outliner_dir / 'OldPage.md'
+            p1.write_text('- content\n', encoding='utf-8')
+            p2 = outliner_dir / 'OtherPage.md'
+            p2.write_text('- [[OldPage]] link\n', encoding='utf-8')
+
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'markdown': '- content\n', 'document': {'blocks': []}, 'count': 1}})
+
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(root, executable=executable, runner=runner)
+            res = service.execute({'action': 'rename', 'page': 'OldPage', 'new_name': 'NewPage'})
+            self.assertEqual(res['page'], 'NewPage')
+            self.assertTrue((outliner_dir / 'NewPage.md').exists())
+            self.assertFalse((outliner_dir / 'OldPage.md').exists())
+
+            # undo_rename
+            res_undo = service.execute({'action': 'undo_rename'})
+            self.assertEqual(res_undo['page'], 'OldPage')
+            self.assertTrue((outliner_dir / 'OldPage.md').exists())
+            self.assertFalse((outliner_dir / 'NewPage.md').exists())
+
+    def test_delete_page_trash_and_restore(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            executable = root / 'engine.exe'
+            executable.touch()
+            outliner_dir = root / 'Outliner'
+            outliner_dir.mkdir(parents=True)
+            p = outliner_dir / 'MyPage.md'
+            p.write_text('- delete target\n', encoding='utf-8')
+
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'markdown': '- delete target\n', 'document': {'blocks': []}}})
+
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(root, executable=executable, runner=runner)
+            res = service.execute({'action': 'delete', 'page': 'MyPage'})
+            self.assertTrue(res['deleted'])
+            self.assertFalse(p.exists())
+            trash_files = list((outliner_dir / '.trash').glob('MyPage.*.md'))
+            self.assertEqual(len(trash_files), 1)
+
+            # restore
+            res_res = service.execute({'action': 'restore'})
+            self.assertEqual(res_res['page'], 'MyPage')
+            self.assertTrue(p.exists())
+
+    def test_check_delete_page_references(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            executable = root / 'engine.exe'
+            executable.touch()
+            outliner_dir = root / 'Outliner'
+            outliner_dir.mkdir(parents=True)
+            (outliner_dir / 'Target.md').write_text('- target\n', encoding='utf-8')
+            (outliner_dir / 'Ref1.md').write_text('- [[Target]] ref\n', encoding='utf-8')
+            (outliner_dir / 'Ref2.md').write_text('- [[Target|alias]] ref\n', encoding='utf-8')
+            (outliner_dir / 'Unrelated.md').write_text('- nothing\n', encoding='utf-8')
+
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {
+                    'referring_files': [str(outliner_dir / 'Ref1.md'), str(outliner_dir / 'Ref2.md')],
+                    'referring_blocks': [],
+                }})
+
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(root, executable=executable, runner=runner)
+            res = service.execute({'action': 'check_delete', 'page': 'Target'})
+            self.assertTrue(res['has_references'])
+            self.assertEqual(res['count'], 2)
+            self.assertIn('Ref1', res['referring_pages'])
+            self.assertIn('Ref2', res['referring_pages'])
+            sent = json.loads(runner.call_args.kwargs['input'])
+            self.assertEqual(sent['op'], 'check_page_references')
+
+    def test_block_ref_and_backlinks_forwarding(self):
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'engine.exe'
+            executable.touch()
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'found': True, 'block_id': 1, 'backlinks': [2]}})
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(folder, executable=executable, runner=runner)
+            res = service.execute({
+                'action': 'resolve_block_ref',
+                'page': 'MyPage',
+                'markdown': '- text\n',
+                'uuid': 'blk-1'
+            })
+            self.assertTrue(res['found'])
+            self.assertEqual(res['backlinks'], [2])
+            sent = json.loads(runner.call_args.kwargs['input'])
+            self.assertEqual(sent['op'], 'resolve_block_ref')
+            self.assertEqual(sent['args']['uuid'], 'blk-1')
+
+
 if __name__ == '__main__':
     unittest.main()

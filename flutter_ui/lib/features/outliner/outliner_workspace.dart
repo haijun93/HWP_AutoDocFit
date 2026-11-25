@@ -59,6 +59,8 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
   final Map<Object, TextEditingController> _editors = {};
   final Map<Object, FocusNode> _focusNodes = {};
   String _linkQuery = '';
+  String _blockRefQuery = '';
+  String _blockRefOpen = '';
   final Set<Object?> _selectedIds = <Object?>{};
   Object? _selectionAnchor;
   Object? _selectionCurrent;
@@ -245,20 +247,71 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
     final name = await _pageNameDialog('페이지 이름 바꾸기', _page!);
     if (name == null || name.isEmpty || name == _page) return;
     await _run(() async {
-      _applyDocument(
-        await _call({'action': 'rename', 'page': _page, 'new_name': name}),
-      );
+      final res = await _call({'action': 'rename', 'page': _page, 'new_name': name});
+      _applyDocument(res);
+      await _refreshPages();
+      if (mounted) {
+        final count = res['updated_links'] ?? 0;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('페이지 이름을 "$name"(으)로 변경했습니다. (링크 $count개 갱신)'),
+            action: SnackBarAction(
+              label: '실행 취소',
+              onPressed: () => _undoRename(),
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _undoRename() async {
+    await _run(() async {
+      final res = await _call({'action': 'undo_rename'});
+      _applyDocument(res);
       await _refreshPages();
     });
   }
 
   Future<void> _deletePage() async {
     if (_page == null) return;
+    List<dynamic> referring = [];
+    try {
+      final check = await _call({'action': 'check_delete', 'page': _page});
+      referring = check['referring_pages'] as List? ?? [];
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('페이지 참조를 확인하지 못해 삭제를 취소했습니다.')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+
+    final contentWidget = referring.isEmpty
+        ? Text('“$_page” 페이지를 삭제할까요?')
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('“$_page” 페이지를 삭제할까요?'),
+              const SizedBox(height: 8),
+              Text(
+                '⚠ 이 페이지를 참조하는 페이지가 있습니다:\n${referring.map((p) => '• $p').join('\n')}',
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.error,
+                  fontSize: 13,
+                ),
+              ),
+            ],
+          );
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('페이지 삭제'),
-        content: Text('“$_page” 페이지를 삭제할까요?'),
+        content: contentWidget,
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -272,8 +325,9 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       ),
     );
     if (confirmed != true) return;
+    final deletedPage = _page;
     await _run(() async {
-      await _call({'action': 'delete', 'page': _page});
+      await _call({'action': 'delete', 'page': _page, 'force': true});
       _page = null;
       _markdown = '';
       _blocks = [];
@@ -286,6 +340,25 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
       } else {
         await _openToday();
       }
+      if (mounted && deletedPage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('"$deletedPage" 페이지를 삭제했습니다.'),
+            action: SnackBarAction(
+              label: '실행 취소(복원)',
+              onPressed: () => _restorePage(),
+            ),
+          ),
+        );
+      }
+    });
+  }
+
+  Future<void> _restorePage() async {
+    await _run(() async {
+      final res = await _call({'action': 'restore'});
+      _applyDocument(res);
+      await _refreshPages();
     });
   }
 
@@ -986,10 +1059,17 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                                         final match = RegExp(
                                           r'\[\[([^\]]*)$',
                                         ).firstMatch(value);
-                                        setState(
-                                          () => _linkQuery =
-                                              match?.group(1) ?? '',
-                                        );
+                                        final refMatch = RegExp(
+                                          r'(\({2,3})([^\)]*)$',
+                                        ).firstMatch(value);
+                                        setState(() {
+                                          _linkQuery =
+                                              match?.group(1) ?? '';
+                                          _blockRefOpen =
+                                              refMatch?.group(1) ?? '';
+                                          _blockRefQuery =
+                                              refMatch?.group(2) ?? '';
+                                        });
                                       },
                                       decoration: const InputDecoration(
                                         border: InputBorder.none,
@@ -1075,6 +1155,43 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
                           },
                         ),
                     ],
+                    if (_blockRefOpen.isNotEmpty) ...[
+                      for (final b
+                          in _blocks
+                              .where((b) {
+                                final text = '${b['text'] ?? ''}'.toLowerCase();
+                                final idStr = '${b['id']}';
+                                final q = _blockRefQuery.toLowerCase();
+                                return q.isEmpty || text.contains(q) || idStr.contains(q);
+                              })
+                              .take(6))
+                        ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.tag),
+                          title: Text('블록 ${b['id']}: ${b['text'] ?? ''}'),
+                          onTap: () {
+                            final focused = _focusNodes.entries
+                                .where((e) => e.value.hasFocus)
+                                .firstOrNull;
+                            if (focused != null) {
+                              final controller = _editors[focused.key]!;
+                              final start = controller.text.lastIndexOf(_blockRefOpen);
+                              if (start >= 0) {
+                                final close = _blockRefOpen == '(((' ? ')))' : '))';
+                                controller.text =
+                                    '${controller.text.substring(0, start)}$_blockRefOpen${b['id']}$close';
+                                controller.selection = TextSelection.collapsed(
+                                  offset: controller.text.length,
+                                );
+                              }
+                            }
+                            setState(() {
+                              _blockRefOpen = '';
+                              _blockRefQuery = '';
+                            });
+                          },
+                        ),
+                    ],
                     for (final block in _blocks)
                       if ((block['page_links'] as List? ?? []).isNotEmpty)
                         Padding(
@@ -1113,6 +1230,7 @@ class _OutlinerWorkspaceState extends State<OutlinerWorkspace> {
             api: widget.api,
             page: _page,
             markdown: _markdown,
+            selectedBlockId: _selectedIds.firstOrNull,
             onOpen: (name) => _open(name),
           ),
         ),
@@ -1126,11 +1244,13 @@ class _BacklinksPanel extends StatefulWidget {
     required this.api,
     required this.page,
     required this.markdown,
+    this.selectedBlockId,
     required this.onOpen,
   });
   final ApiCall api;
   final String? page;
   final String markdown;
+  final Object? selectedBlockId;
   final ValueChanged<String> onOpen;
   @override
   State<_BacklinksPanel> createState() => _BacklinksPanelState();
@@ -1138,11 +1258,14 @@ class _BacklinksPanel extends StatefulWidget {
 
 class _BacklinksPanelState extends State<_BacklinksPanel> {
   List<dynamic> _ids = [];
+  List<dynamic> _blockRefIds = [];
+
   @override
   void didUpdateWidget(covariant _BacklinksPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.page != widget.page ||
-        oldWidget.markdown != widget.markdown) {
+        oldWidget.markdown != widget.markdown ||
+        oldWidget.selectedBlockId != widget.selectedBlockId) {
       _load();
     }
   }
@@ -1165,6 +1288,28 @@ class _BacklinksPanelState extends State<_BacklinksPanel> {
         );
       }
     } catch (_) {}
+
+    if (widget.selectedBlockId != null) {
+      try {
+        final raw = await widget.api('outliner', [
+          {
+            'action': 'block_backlinks',
+            'page': widget.page,
+            'markdown': widget.markdown,
+            'target': '${widget.selectedBlockId}',
+          },
+        ]);
+        final data = raw is Map ? raw['data'] : null;
+        if (mounted) {
+          setState(
+            () => _blockRefIds =
+                data is Map ? (data['backlinks'] as List? ?? []) : [],
+          );
+        }
+      } catch (_) {}
+    } else {
+      if (mounted) setState(() => _blockRefIds = []);
+    }
   }
 
   @override
@@ -1173,12 +1318,22 @@ class _BacklinksPanelState extends State<_BacklinksPanel> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('역링크', style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 8),
+        Text('역링크', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
         if (_ids.isEmpty)
-          const Text('참조가 없습니다.')
+          const Text('참조가 없습니다.', style: TextStyle(fontSize: 12))
         else
-          for (final id in _ids) Text('블록 $id'),
+          for (final id in _ids) Text('블록 $id', style: const TextStyle(fontSize: 12)),
+        const SizedBox(height: 16),
+        Text('역참조 (선택 블록)', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 6),
+        if (widget.selectedBlockId == null)
+          const Text('선택된 블록이 없습니다.', style: TextStyle(fontSize: 12))
+        else if (_blockRefIds.isEmpty)
+          const Text('이 블록을 참조하는 블록이 없습니다.', style: TextStyle(fontSize: 12))
+        else
+          for (final id in _blockRefIds)
+            Text('블록 $id 에서 참조', style: const TextStyle(fontSize: 12)),
       ],
     ),
   );

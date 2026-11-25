@@ -32,6 +32,8 @@ class OutlinerService:
         self._lock = threading.RLock()
         self._versions: dict[str, str] = {}
         self._recent: list[str] = []
+        self._trash_history: list[dict[str, str]] = []
+        self._rename_history: list[dict[str, str]] = []
 
     @staticmethod
     def _find_executable(name=None, dev_dir='outliner_core', which='outliner'):
@@ -83,6 +85,17 @@ class OutlinerService:
             raise ServiceError('INVALID_PATH', '사용자 데이터 폴더 밖의 경로는 사용할 수 없습니다.')
         return path
 
+    def _page_references(self, page_path):
+        files = [str(p) for p in sorted(self.root.glob('*.md'))
+                 if p.is_file() and p.resolve() != page_path.resolve()]
+        result = self._engine({
+            'id': 'check-page-references',
+            'op': 'check_page_references',
+            'args': {'page': page_path.stem, 'files': files},
+        })
+        referring = [Path(name).stem for name in result.get('referring_files', [])]
+        return referring, result.get('referring_blocks', [])
+
     @staticmethod
     def _digest(path):
         try:
@@ -127,19 +140,108 @@ class OutlinerService:
                 target = self._path(payload.get('new_name'))
                 if not source.exists():
                     raise ServiceError('OUTLINER_PAGE_MISSING', '페이지를 찾을 수 없습니다.')
-                if target.exists():
+                if target.exists() and source.resolve() != target.resolve():
                     raise ServiceError('OUTLINER_PAGE_EXISTS', '같은 이름의 페이지가 이미 있습니다.')
                 source.rename(target)
                 self._versions.pop(source.name, None)
+                # 링크 일괄 갱신: 다른 모든 페이지 파일의 [[옛이름]]을 [[새이름]]으로 치환
+                all_files = [str(p) for p in sorted(self.root.glob('*.md')) if p.is_file()]
+                try:
+                    update_result = self._engine({
+                        'id': 'rename_page',
+                        'op': 'rename_page',
+                        'args': {
+                            'old_name': source.stem,
+                            'new_name': target.stem,
+                            'files': all_files,
+                            'preview': False,
+                        }
+                    })
+                except ServiceError:
+                    target.rename(source)
+                    raise
+                self._rename_history.append({'old': source.stem, 'new': target.stem})
+                loaded = self._load(target.stem)
+                if update_result:
+                    loaded['updated_links'] = update_result.get('count', 0)
+                    loaded['affected_files'] = update_result.get('affected_files', [])
+                return loaded
+            if action == 'undo_rename':
+                if not self._rename_history:
+                    raise ServiceError('OUTLINER_NO_HISTORY', '되돌릴 이름 변경 내역이 없습니다.')
+                last = self._rename_history[-1]
+                source = self._path(last['new'])
+                target = self._path(last['old'])
+                if not source.exists():
+                    raise ServiceError('OUTLINER_PAGE_MISSING', '이름을 되돌릴 페이지를 찾을 수 없습니다.')
+                source.rename(target)
+                self._versions.pop(source.name, None)
+                all_files = [str(p) for p in sorted(self.root.glob('*.md')) if p.is_file()]
+                try:
+                    self._engine({
+                        'id': 'rename_page',
+                        'op': 'rename_page',
+                        'args': {
+                            'old_name': last['new'],
+                            'new_name': last['old'],
+                            'files': all_files,
+                            'preview': False,
+                        }
+                    })
+                except ServiceError:
+                    target.rename(source)
+                    raise
+                self._rename_history.pop()
                 return self._load(target.stem)
+            if action in {'check_delete', 'page_references'}:
+                page_name = payload.get('page')
+                path = self._path(page_name)
+                referring, blocks = self._page_references(path)
+                return {'page': path.stem, 'has_references': len(referring) > 0,
+                        'count': len(referring), 'referring_pages': referring,
+                        'referring_blocks': blocks}
             if action == 'delete':
                 path = self._path(payload.get('page'))
                 if not path.exists():
                     raise ServiceError('OUTLINER_PAGE_MISSING', '페이지를 찾을 수 없습니다.')
-                path.unlink()
+                # 참조 검사 옵션이 있는 경우
+                if payload.get('check_references'):
+                    referring, _ = self._page_references(path)
+                    if referring and not payload.get('force'):
+                        return {
+                            'deleted': False,
+                            'page': path.stem,
+                            'has_references': True,
+                            'referring_pages': referring,
+                            'warning': f"'{path.stem}' 페이지를 참조하는 다른 페이지가 {len(referring)}개 있습니다."
+                        }
+                # 휴지통 보관으로 실행 취소 가능하게 처리
+                trash_dir = self.root / '.trash'
+                try:
+                    trash_dir.mkdir(parents=True, exist_ok=True)
+                    from datetime import datetime
+                    stamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    trash_path = trash_dir / f"{path.stem}.{stamp}.md"
+                    shutil.move(str(path), str(trash_path))
+                    self._trash_history.append({'page': path.stem, 'trash_path': str(trash_path), 'original': str(path)})
+                except OSError as exc:
+                    raise ServiceError('OUTLINER_TRASH_FAILED', f'페이지를 휴지통으로 이동하지 못했습니다: {exc}') from exc
                 self._versions.pop(path.name, None)
                 self._recent = [name for name in self._recent if name != path.stem]
-                return {'deleted': True, 'page': path.stem}
+                return {'deleted': True, 'page': path.stem, 'can_restore': True}
+            if action == 'restore':
+                if not self._trash_history:
+                    raise ServiceError('OUTLINER_NO_HISTORY', '복원할 삭제 페이지가 없습니다.')
+                last = self._trash_history[-1]
+                trash_path = Path(last['trash_path'])
+                original_path = Path(last['original'])
+                if not trash_path.exists():
+                    raise ServiceError('OUTLINER_PAGE_MISSING', '휴지통에서 파일을 찾을 수 없습니다.')
+                if original_path.exists():
+                    raise ServiceError('OUTLINER_PAGE_EXISTS', '같은 이름의 페이지가 이미 있어 복원하지 못했습니다.')
+                shutil.move(str(trash_path), str(original_path))
+                self._trash_history.pop()
+                return self._load(original_path.stem)
             if action == 'daily':
                 from datetime import date
                 filename = self._engine({'id': 'daily', 'op': 'daily_page', 'args': {'date': date.today().isoformat()}})['filename']
@@ -158,7 +260,7 @@ class OutlinerService:
                 version = self._digest(path)
                 self._versions[path.name] = version
                 return {'page': path.stem, 'version': version, 'saved': True}
-            if action in {'edit', 'history', 'search', 'backlinks', 'parse'}:
+            if action in {'edit', 'history', 'search', 'backlinks', 'parse', 'resolve_block_ref', 'block_ref', 'insert_block_ref', 'block_backlinks'}:
                 page = self._path(payload.get('page'))
                 markdown = payload.get('markdown')
                 if not isinstance(markdown, str):

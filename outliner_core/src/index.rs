@@ -55,32 +55,60 @@ pub fn backlinks(document: &Document, target: &str) -> Vec<u64> {
 }
 
 /// Resolves a block reference by looking up the block with property `id:: UUID`
-/// and gathering referring block IDs. Missing ID returns an empty result instead of an error.
+/// or by matching the numeric block ID, and gathering referring block IDs.
+/// Missing ID returns an empty result instead of an error.
 pub fn resolve_block_ref(document: &Document, uuid: &str) -> BlockRefResolution {
+    let trimmed = uuid.trim();
     let target_block = document
         .blocks
         .iter()
-        .find(|block| block.properties.get("id").map(String::as_str) == Some(uuid));
+        .find(|block| {
+            block.properties.get("id").map(String::as_str) == Some(trimmed)
+                || block.id.to_string() == trimmed
+        });
 
-    let backlinks = backlinks(document, uuid);
+    let mut backlinks_list = backlinks(document, trimmed);
 
     if let Some(block) = target_block {
+        let block_id_str = block.id.to_string();
+        if block_id_str != trimmed {
+            for ref_id in backlinks(document, &block_id_str) {
+                if !backlinks_list.contains(&ref_id) {
+                    backlinks_list.push(ref_id);
+                }
+            }
+        }
+        if let Some(prop_id) = block.properties.get("id") {
+            if prop_id != trimmed {
+                for ref_id in backlinks(document, prop_id) {
+                    if !backlinks_list.contains(&ref_id) {
+                        backlinks_list.push(ref_id);
+                    }
+                }
+            }
+        }
+        backlinks_list.sort_unstable();
+        backlinks_list.dedup();
+
         BlockRefResolution {
             found: true,
             text: block.text.clone(),
             content: block.text.clone(),
             block_id: Some(block.id),
-            uuid: uuid.to_string(),
-            backlinks,
+            uuid: trimmed.to_string(),
+            backlinks: backlinks_list,
         }
     } else {
+        backlinks_list.sort_unstable();
+        backlinks_list.dedup();
+
         BlockRefResolution {
             found: false,
             text: String::new(),
             content: String::new(),
             block_id: None,
-            uuid: uuid.to_string(),
-            backlinks,
+            uuid: trimmed.to_string(),
+            backlinks: backlinks_list,
         }
     }
 }

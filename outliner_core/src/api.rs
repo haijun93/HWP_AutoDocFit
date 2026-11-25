@@ -215,6 +215,132 @@ pub fn handle_request(value: Value) -> Value {
             Ok(serde_json::to_value(&resolution)
                 .map_err(|error| OutlinerError::Invalid(error.to_string()))?)
         }
+        "insert_block_ref" => {
+            let mut document = parse(document_text)?;
+            let block_id = args["block_id"].as_u64().unwrap_or(0);
+            let target = args
+                .get("target")
+                .or_else(|| args.get("uuid"))
+                .or_else(|| args.get("id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| OutlinerError::Invalid("args.target 또는 uuid가 필요합니다".into()))?;
+            let style = args["style"].as_str().unwrap_or("double");
+            let ref_text = if style == "triple" {
+                format!("((({target})))")
+            } else {
+                format!("(({target}))")
+            };
+            let block_index = document
+                .blocks
+                .iter()
+                .position(|b| b.id == block_id)
+                .ok_or_else(|| OutlinerError::Invalid(format!("블록을 찾을 수 없습니다: {block_id}")))?;
+            if !document.blocks[block_index].text.is_empty() {
+                document.blocks[block_index].text.push(' ');
+            }
+            document.blocks[block_index].text.push_str(&ref_text);
+            crate::parse_serialize::refresh_metadata(&mut document.blocks[block_index]);
+            document.edited = true;
+            let mut result = json!({
+                "markdown": serialize(&document),
+                "document": document,
+                "inserted": ref_text,
+                "block_id": block_id
+            });
+            if args.get("history").is_some_and(|value| !value.is_null()) {
+                let mut history = history_from(&args)?;
+                history.bind(args["page"].as_str(), args["version"].as_str());
+                history.record(document_text);
+                result["history"] = history_value(&history)?;
+            }
+            Ok(result)
+        }
+        "block_backlinks" => {
+            let target = args
+                .get("target")
+                .or_else(|| args.get("uuid"))
+                .or_else(|| args.get("id"))
+                .or_else(|| args.get("block_id"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let document = if let Some(path) = path_arg {
+                let content = fs::read_to_string(path)
+                    .map_err(|error| OutlinerError::Io(error.to_string()))?;
+                parse(&content)?
+            } else {
+                parse(document_text)?
+            };
+            let resolution = resolve_block_ref(&document, target);
+            let referring_blocks: Vec<Value> = resolution.backlinks.iter().filter_map(|&ref_id| {
+                document.blocks.iter().find(|b| b.id == ref_id).map(|b| {
+                    json!({
+                        "id": b.id,
+                        "text": b.text,
+                        "indent": b.indent,
+                        "line_index": b.line_index,
+                    })
+                })
+            }).collect();
+            Ok(json!({
+                "target": target,
+                "found": resolution.found,
+                "block_id": resolution.block_id,
+                "text": resolution.text,
+                "backlinks": resolution.backlinks,
+                "referring_blocks": referring_blocks,
+            }))
+        }
+        "check_page_references" | "page_references" => {
+            let page_name = args
+                .get("page")
+                .or_else(|| args.get("name"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| OutlinerError::Invalid("args.page가 필요합니다".into()))?;
+
+            let paths = if let Some(files_array) = args.get("files").and_then(Value::as_array) {
+                files_array
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .map(PathBuf::from)
+                    .collect()
+            } else if let Some(target_dir) = path_arg.or_else(|| args.get("directory").and_then(Value::as_str)) {
+                collect_markdown_files(Path::new(target_dir))?
+            } else {
+                Vec::new()
+            };
+
+            let mut referring_files = Vec::new();
+            let mut referring_blocks = Vec::new();
+
+            for path in &paths {
+                let Ok(content) = fs::read_to_string(path) else { continue };
+                let Ok(doc) = parse(&content) else { continue };
+                let file_display = path.display().to_string();
+                let mut file_referred = false;
+                for b in &doc.blocks {
+                    if b.page_links.iter().any(|link| link.trim().eq_ignore_ascii_case(page_name.trim())) {
+                        file_referred = true;
+                        referring_blocks.push(json!({
+                            "file": file_display,
+                            "block_id": b.id,
+                            "text": b.text,
+                        }));
+                    }
+                }
+                if file_referred {
+                    referring_files.push(file_display);
+                }
+            }
+
+            let count = referring_files.len();
+            Ok(json!({
+                "page": page_name,
+                "has_references": count > 0,
+                "count": count,
+                "referring_files": referring_files,
+                "referring_blocks": referring_blocks,
+            }))
+        }
         "rename_page" | "update_links" => {
             let old_name = args
                 .get("old_name")

@@ -142,6 +142,29 @@ impl PageStore {
         Ok(stem)
     }
 
+    /// 삭제 전 참조 확인: 이 페이지를 `[[링크]]` 로 가리키는 다른 페이지 목록.
+    pub fn check_references(&self, name: &str) -> Result<Vec<String>, String> {
+        let stem = validate_name(name)?;
+        let mut referring = Vec::new();
+        for file in self.files() {
+            if let Some(other_stem) = file.file_stem().and_then(|s| s.to_str()) {
+                if other_stem.eq_ignore_ascii_case(&stem) {
+                    continue;
+                }
+                if let Ok(content) = fs::read_to_string(&file) {
+                    if let Ok(doc) = outliner_core::parse(&content) {
+                        if doc.blocks.iter().any(|b| b.page_links.iter().any(|l| l.eq_ignore_ascii_case(&stem))) {
+                            referring.push(other_stem.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        referring.sort();
+        referring.dedup();
+        Ok(referring)
+    }
+
     /// 이름 바꾸기 + 모든 페이지의 `[[옛 이름]]` 링크 갱신. 링크를 고친 파일 수를 돌려준다.
     pub fn rename(&self, old: &str, new: &str) -> Result<usize, String> {
         let old = validate_name(old)?;
@@ -162,6 +185,11 @@ impl PageStore {
             Ok(r) => Ok(r.count),
             Err(e) => Err(format!("이름은 바꿨지만 링크를 갱신하지 못했습니다: {e}")),
         }
+    }
+
+    /// 이름 바꾸기 실행 취소.
+    pub fn undo_rename(&self, old: &str, new: &str) -> Result<usize, String> {
+        self.rename(new, old)
     }
 
     /// 삭제 = `.trash/<이름>.<시각>.md` 로 옮김. 옮긴 경로를 돌려준다.

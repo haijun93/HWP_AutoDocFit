@@ -39,11 +39,28 @@ fn metadata(
                 continue;
             }
         }
+        if at + 2 < chars.len() && chars[at] == '(' && chars[at + 1] == '(' && chars[at + 2] == '(' {
+            if let Some(end) = (at + 3..chars.len().saturating_sub(2))
+                .find(|&i| chars[i] == ')' && chars[i + 1] == ')' && chars[i + 2] == ')')
+            {
+                let content: String = chars[at + 3..end].iter().collect();
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    refs.push(trimmed.to_string());
+                }
+                at = end + 3;
+                continue;
+            }
+        }
         if at + 1 < chars.len() && (chars[at], chars[at + 1]) == ('(', '(') {
             if let Some(end) = (at + 2..chars.len().saturating_sub(1))
                 .find(|&i| chars[i] == ')' && chars[i + 1] == ')')
             {
-                refs.push(chars[at + 2..end].iter().collect());
+                let content: String = chars[at + 2..end].iter().collect();
+                let trimmed = content.trim();
+                if !trimmed.is_empty() {
+                    refs.push(trimmed.to_string());
+                }
                 at = end + 2;
                 continue;
             }

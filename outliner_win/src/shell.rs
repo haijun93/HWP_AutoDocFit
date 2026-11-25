@@ -40,6 +40,7 @@ pub struct Shell<H: EditHost> {
     pub left_first: usize,
     pub prompt: Option<PromptKind>,
     pub clock: fn() -> Now,
+    pub last_rename: Option<(String, String)>,
 }
 
 fn fixed_clock() -> Now {
@@ -65,6 +66,7 @@ impl<H: EditHost> Shell<H> {
             left_first: 0,
             prompt: None,
             clock: fixed_clock,
+            last_rename: None,
         }
     }
 
@@ -115,7 +117,29 @@ impl<H: EditHost> Shell<H> {
             return;
         };
         let md = self.editor.markdown();
-        self.back = find::backlinks_all(&store, &page, Some((&page, &md)));
+        let mut list = find::backlinks_all(&store, &page, Some((&page, &md)));
+        // 현재 선택된 블록의 블록 역참조도 함께 가져온다.
+        let sel_block = self.editor.view.rows.get(self.editor.view.selected).map(|r| r.block);
+        if let Some(block_idx) = sel_block {
+            if let Some(block) = self.editor.view.doc.blocks.get(block_idx) {
+                let id_str = block.id.to_string();
+                let block_refs = find::block_backlinks_all(&store, &id_str, Some((&page, &md)));
+                for item in block_refs {
+                    if !list.iter().any(|b| b.page == item.page && b.block == item.block) {
+                        list.push(item);
+                    }
+                }
+                if let Some(prop_id) = block.properties.get("id") {
+                    let prop_refs = find::block_backlinks_all(&store, prop_id, Some((&page, &md)));
+                    for item in prop_refs {
+                        if !list.iter().any(|b| b.page == item.page && b.block == item.block) {
+                            list.push(item);
+                        }
+                    }
+                }
+            }
+        }
+        self.back = list;
     }
 
     /// 편집 중 글을 확정하고 변경이 있으면 저장한다. 실패하면 이유를 돌려주고 아무것도 바꾸지 않는다.
@@ -200,15 +224,28 @@ impl<H: EditHost> Shell<H> {
         self.persist()?;
         let n = store.rename(&old, new_name)?;
         let stem = crate::pages::validate_name(new_name)?;
+        self.last_rename = Some((old, stem.clone()));
         self.load_page(&stem)?;
         self.say(format!("이름을 '{stem}' 로 바꿨습니다(링크를 고친 파일 {n}개)"));
         Ok(())
     }
 
-    /// 현재 페이지를 `.trash` 로 옮기고(되돌릴 수 있다) 오늘의 일지를 연다.
+    /// 이름 바꾸기 실행 취소.
+    pub fn undo_rename(&mut self) -> Result<(), String> {
+        let store = self.store()?;
+        let (old, new) = self.last_rename.take().ok_or("되돌릴 이름 변경 내역이 없습니다")?;
+        self.persist()?;
+        let n = store.undo_rename(&old, &new)?;
+        self.load_page(&old)?;
+        self.say(format!("이름을 다시 '{old}' 로 되돌렸습니다(링크를 고친 파일 {n}개)"));
+        Ok(())
+    }
+
+    /// 현재 페이지를 `.trash` 로 옮기고(되돌릴 수 있다) 오늘의 일지를 연다. 참조가 있으면 경고 메시지를 포함한다.
     pub fn delete_current(&mut self) -> Result<(), String> {
         let store = self.store()?;
         let old = self.page.clone().ok_or("열린 페이지가 없습니다")?;
+        let referring = store.check_references(&old).unwrap_or_default();
         self.persist()?;
         let now = (self.clock)();
         store.delete(&old, &now.stamp)?;
@@ -217,7 +254,11 @@ impl<H: EditHost> Shell<H> {
         self.refresh_lists();
         let today = store.journal_today(&now.date_iso)?;
         self.load_page(&today)?;
-        self.say(format!("'{old}' 를 .trash 로 옮겼습니다"));
+        if referring.is_empty() {
+            self.say(format!("'{old}' 를 .trash 로 옮겼습니다"));
+        } else {
+            self.say(format!("'{old}' 를 .trash 로 옮겼습니다 (참조하는 페이지 {}개 있음: {})", referring.len(), referring.join(", ")));
+        }
         Ok(())
     }
 
