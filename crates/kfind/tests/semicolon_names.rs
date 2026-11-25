@@ -12,7 +12,7 @@ fn names_related_command_carries_evidence() {
     let handler = Handler::new(index.path().into());
     let call = |v| {
         handler.handle(
-            "S-1-5-21-semi1",
+            "S-1-5-21-7",
             decode(&serde_json::to_vec(&v).unwrap()).unwrap(),
         )
     };
