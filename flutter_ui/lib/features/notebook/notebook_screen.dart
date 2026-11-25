@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/drop_events.dart';
 import '../../core/instant_search.dart';
+import '../common/file_handoff.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
 import '../library/library_api.dart';
@@ -59,7 +60,10 @@ String _errorText(Object error) => error.toString().replaceFirst(RegExp(r'^(Bad 
 String _fileName(String path) => path.split(RegExp(r'[\\/]')).last;
 
 class NotebookScreen extends StatefulWidget {
-  const NotebookScreen({super.key, required this.api, this.library, this.watchDropEvents, this.openLibraryItem});
+  const NotebookScreen({super.key, required this.api, this.library, this.watchDropEvents, this.openLibraryItem, this.incoming});
+
+  /// 다른 화면(문서뷰)에서 보낸 파일. 열리면 넣을 업무자료함을 묻는다.
+  final FileInbox? incoming;
 
   final NotebookApi api;
 
@@ -132,7 +136,39 @@ class _NotebookScreenState extends State<NotebookScreen> {
     )..addListener(_searchPhaseChanged);
     _stopDrops = (widget.watchDropEvents ?? _watchNotebookDrops)(() => unawaited(_takeDrops()));
     unawaited(widget.api.watchDrops(true).catchError((Object _) {}));
-    _run(_loadNotebooks);
+    // 불러오기에 실패해도 다음에 열 때 뒤늦게 들어가지 않게 먼저 가져간다.
+    final incoming = widget.incoming?.take() ?? const <String>[];
+    unawaited(_run(_loadNotebooks).then((_) => _receiveFiles(incoming)));
+  }
+
+  /// 보낸 파일을 사용자가 고른(또는 새로 만든) 업무자료함의 출처로 넣는다.
+  Future<void> _receiveFiles(List<String> paths) async {
+    if (paths.isEmpty || !mounted || !_loaded) return;
+    final choice = await showBoxPickDialog(
+      context,
+      kind: '업무자료함',
+      fileCount: paths.length,
+      names: [for (final nb in _notebooks) nb.name],
+    );
+    if (!mounted) return;
+    if (choice == null) {
+      setState(() => _status = '파일을 업무자료함에 넣지 않았습니다.');
+      return;
+    }
+    if (choice.newName != null) {
+      var created = false;
+      await _run(() async {
+        final id = await widget.api.createNotebook(choice.newName!);
+        _notebook = Notebook(id: id, name: choice.newName!);
+        await _loadNotebooks();
+        created = true;
+      });
+      if (!created) return;
+    } else {
+      final target = _notebooks[choice.index!];
+      if (target.id != _notebook?.id) await _selectNotebook(target);
+    }
+    if (mounted) await _addPaths(paths);
   }
 
   @override
@@ -204,7 +240,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
   List<NbNote> get _visibleNotes =>
       _tagFilter == null ? _notes : _notes.where((n) => n.tags.contains(_tagFilter)).toList();
 
-  void _selectNotebook(Notebook nb) {
+  Future<void> _selectNotebook(Notebook nb) {
     setState(() {
       _notebook = nb;
       _sources = [];
@@ -219,7 +255,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
       _previewParagraphs = [];
       _newNote();
     });
-    _run(_loadNotebookContent);
+    return _run(_loadNotebookContent);
   }
 
   Future<String?> _askText({

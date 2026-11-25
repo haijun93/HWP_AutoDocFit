@@ -38,6 +38,7 @@ import 'features/workspace/tab_navigation_shell.dart';
 import 'features/workspace/sidebar_menu_settings.dart';
 import 'features/workspace/dock_mode_controller.dart';
 import 'features/workspace/tab_open_events.dart';
+import 'features/common/file_handoff.dart';
 import 'features/kclip/kclip_dialog.dart';
 import 'features/workspace/quick_action_bar.dart';
 
@@ -318,6 +319,72 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   final tabRequest = ValueNotifier<int?>(null);
   final photoPasteTrigger = ValueNotifier<int>(0);
 
+  // 문서뷰·사진뷰에서 보낸 파일(CTXMENU1).
+  final libraryInbox = FileInbox();
+  final notebookInbox = FileInbox();
+  final pdfInbox = FileInbox();
+
+  /// 숨긴 메뉴의 화면은 열 수 없다.
+  String? _handoffBlocked(FileTarget target) {
+    final tab = switch (target) {
+      FileTarget.conversion => kTabFileConversion,
+      FileTarget.pdfEdit => kTabPdfEdit,
+      _ => null,
+    };
+    if (tab == null) return null;
+    return {...kDefaultHiddenTabs, ...hiddenTabsNotifier.value}.contains(tab)
+        ? '메뉴에서 숨긴 화면입니다(설정 > 쓸 메뉴 고르기)'
+        : null;
+  }
+
+  void _openTab(int tab) {
+    tabRequest.value = null;
+    tabRequest.value = tab;
+  }
+
+  /// 고른 파일을 대상 기능의 기존 진입 경로에 넣고 그 화면을 연다. 원본은 여기서 바꾸지 않는다.
+  Future<String?> _sendFiles(FileTarget target, List<String> paths) async {
+    switch (target) {
+      case FileTarget.virtualFolder:
+        libraryInbox.put(paths);
+        _openTab(12);
+        return null;
+      case FileTarget.notebook:
+        notebookInbox.put(paths);
+        _openTab(13);
+        return null;
+      case FileTarget.pdfEdit:
+        pdfInbox.put(paths);
+        _openTab(kTabPdfEdit);
+        return null;
+      case FileTarget.documentEditor:
+      case FileTarget.conversion:
+        final conversion = target == FileTarget.conversion;
+        if (conversion && await _conversionUsesNativeWindow()) {
+          return '파일변환이 새 창(Win32) 방식이라 파일을 넘길 수 없습니다. 파일변환 화면에서 ‘앱 안에서 변환’을 눌러 주세요.';
+        }
+        final host = workspace.currentState;
+        if (host == null) return '문서편집 화면이 준비되지 않았습니다.';
+        final result = await host.receiveFiles(paths, conversion: conversion);
+        if (mounted && result.added > 0) {
+          _openTab(conversion ? kTabFileConversion : 0);
+        }
+        return result.message;
+    }
+  }
+
+  Future<bool> _conversionUsesNativeWindow() async {
+    try {
+      final raw = await widget.api('conversion_window', [
+        {'action': 'ui_mode'},
+      ]);
+      final data = raw is Map ? raw['data'] : null;
+      return data is Map && data['mode'] == 'native';
+    } catch (_) {
+      return false; // 파일변환 화면도 읽지 못하면 앱 안 화면을 쓴다.
+    }
+  }
+
   /// 표그림판 탭에서는 끌어 놓은 사진을 칸 배경 그림으로, 그림판 탭에서는 배경 사진으로 받고,
   /// 나가면 문서 목록으로 되돌린다.
   void routeDrops(int index) {
@@ -350,7 +417,11 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     valueListenable: hiddenTabsNotifier,
     builder: (context, hiddenTabs, _) => ValueListenableBuilder<bool>(
       valueListenable: sidebarModeVisible,
-      builder: (context, showSidebar, _) => _workspace(hiddenTabs, showSidebar),
+      builder: (context, showSidebar, _) => FileHandoff(
+        send: _sendFiles,
+        blocked: _handoffBlocked,
+        child: _workspace(hiddenTabs, showSidebar),
+      ),
     ),
   );
 
@@ -359,6 +430,9 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
     hiddenTabs: {...kDefaultHiddenTabs, ...hiddenTabs},
     tabRequest: tabRequest,
     photoPasteTrigger: photoPasteTrigger,
+    libraryInbox: libraryInbox,
+    notebookInbox: notebookInbox,
+    pdfInbox: pdfInbox,
     developerMode: developerMode,
     documentEditorWidget: Workspace(
       key: workspace,
@@ -1187,6 +1261,45 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     }
     if (locked || mode != 'file_format') return;
     await command('set_mode', [_modeBeforeConversion]);
+  }
+
+  /// 문서뷰·사진뷰에서 보낸 파일을 목록에 더한다(탐색기 끌어 놓기와 같은 add_paths).
+  /// [added]는 목록에 들어 있는 보낸 파일 수다.
+  Future<({int added, String? message})> receiveFiles(
+    List<String> paths, {
+    required bool conversion,
+  }) async {
+    // 다른 명령이 처리 중이면 [command]가 조용히 버리므로 잠시 기다린다.
+    for (var i = 0; i < 50 && mounted && (busy || state.isEmpty); i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    if (!mounted || locked) {
+      return (
+        added: 0,
+        message: running
+            ? '문서 작업 중에는 파일을 넣을 수 없습니다. 끝난 뒤 다시 눌러 주세요.'
+            : '앱이 아직 준비되지 않았습니다. 잠시 후 다시 눌러 주세요.',
+      );
+    }
+    // 파일 변환 방식이 남아 있으면 목록이 바뀔 때 포맷 창이 뜬다. 변환 탭은 열 때 다시 바꾼다.
+    if (mode == 'file_format') {
+      await command('set_mode', [_modeBeforeConversion]);
+    }
+    await command('add_paths', [paths]);
+    if (!mounted) return (added: 0, message: null);
+    String key(Object? path) => '$path'.replaceAll('/', '\\').toLowerCase();
+    final listed = {for (final file in files.whereType<Map>()) key(file['path'])};
+    final added = paths.where((path) => listed.contains(key(path))).length;
+    if (added > 0 && !conversion) setState(() => tab = 0);
+    final missing = paths.length - added;
+    return (
+      added: added,
+      message: missing == 0
+          ? null
+          : added == 0
+          ? '파일을 목록에 넣지 못했습니다. 파일이 있는지, 지원하는 형식인지 확인해 주세요.'
+          : '$missing개는 목록에 넣지 못했습니다.',
+    );
   }
 
   /// 파일변환 탭의 '파일 선택'.

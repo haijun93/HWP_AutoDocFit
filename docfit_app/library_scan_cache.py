@@ -40,6 +40,10 @@ def save(view: str, extensions: Any, excluded: Any, items: list[dict[str, Any]],
     directory = (root or _data_root()) / "scan-cache"
     directory.mkdir(parents=True, exist_ok=True)
     payload = {"version": 1, "signature": _signature(extensions, excluded, roots), "items": items}
+    _write(directory, view, payload)
+
+
+def _write(directory: Path, view: str, payload: dict[str, Any]) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{view}-", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
@@ -52,3 +56,17 @@ def save(view: str, extensions: Any, excluded: Any, items: list[dict[str, Any]],
             os.unlink(tmp_name)
         except FileNotFoundError:
             pass
+
+
+def rewrite(view: str, change: Any, *, root: Path | None = None) -> None:
+    """저장된 목록의 항목만 바꾼다(`change(items) -> items`). 범위 서명은 그대로 둔다."""
+    directory = (root or _data_root()) / "scan-cache"
+    try:
+        payload = json.loads((directory / f"{view}.json").read_text(encoding="utf-8"))
+        items = payload["items"]
+    except (OSError, ValueError, TypeError, KeyError):
+        return
+    if not isinstance(items, list) or not all(isinstance(row, dict) for row in items):
+        return
+    payload["items"] = change(items)
+    _write(directory, view, payload)

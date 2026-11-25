@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../common/file_handoff.dart';
+import '../common/file_ops_area.dart';
+import '../common/file_selection.dart';
 import '../common/thumb_size_slider.dart';
 
 /// 문서 확장자별 대표 테마 색상.
@@ -62,8 +65,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
     return '${seconds ~/ 60}분 ${seconds % 60}초 경과';
   }
   String? _currentFolder;
-  /// 마지막으로 누른 문서(선택 표시).
-  String? _selectedPath;
+  final FileSelection _selection = FileSelection();
+  final GlobalKey<FileOpsAreaState> _fileOps = GlobalKey<FileOpsAreaState>();
   List<Map<String, Object?>> _documents = [];
   bool _loading = false;
   String? _errorMessage;
@@ -99,6 +102,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
 
   Future<void> _loadDefault() async {
     try {
+      _selection.clear();
       setState(() { _loading = true; _scanRunning = true; _scanVisited = 0; _scanFolder = ''; _scanStartedAt = DateTime.now(); _scanLastProgressAt = _scanStartedAt; _scanNow = DateTime.now(); _scanUiTimer?.cancel(); _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now()); }); _errorMessage = null; });
       final res = await widget.api('doc_grid', ['list_default', {}]);
       if (!mounted) return;
@@ -212,6 +216,49 @@ class _DocGridScreenState extends State<DocGridScreen> {
         );
       }
     }
+  }
+
+  /// 오른쪽 클릭 메뉴의 연결 항목.
+  List<FileMenuEntry> _menuEntries(List<String> targets) {
+    final handoff = FileHandoff.maybeOf(context);
+    if (handoff == null) return const [];
+    FileMenuEntry entry(FileTarget target, String label, IconData icon) =>
+        handoffEntry(context, handoff, target, targets, label: label, icon: icon);
+    return [
+      entry(FileTarget.documentEditor, '문서편집', Icons.description_outlined),
+      entry(FileTarget.virtualFolder, '가상 폴더에 추가', Icons.dashboard_customize_outlined),
+      entry(FileTarget.notebook, '업무자료함에 넣기', Icons.menu_book_outlined),
+      entry(FileTarget.conversion, '파일 변환', Icons.transform),
+      entry(FileTarget.pdfEdit, 'PDF 편집', Icons.picture_as_pdf_outlined),
+    ];
+  }
+
+  void _showContextMenu(Offset position, String path) =>
+      _fileOps.currentState?.showContextMenu(
+        position,
+        path,
+        onOpen: _openDocument,
+        extraEntries: _menuEntries,
+      );
+
+  List<String> get _order => [for (final doc in _documents) '${doc['path'] ?? ''}'];
+
+  /// 파일 작업 결과를 목록과 썸네일 메모리 캐시에 반영한다.
+  void _applyFileResults(String op, List<Map<String, Object?>> results) {
+    if (!mounted || op == 'clipboard') return;
+    setState(() {
+      _documents = applyFileResults(_documents, op, results, (doc, path, name) {
+        final thumb = _thumbCache['${doc['path']}'];
+        if (thumb != null) _thumbCache[path] = thumb;
+        final dot = name.lastIndexOf('.');
+        return {...doc, 'path': path, 'name': name, 'stem': dot > 0 ? name.substring(0, dot) : name};
+      })..sort((a, b) => '${a['name']}'.toLowerCase().compareTo('${b['name']}'.toLowerCase()));
+      if (op != 'copy') {
+        for (final result in results) {
+          if (result['ok'] == true) _thumbCache.remove('${result['path']}');
+        }
+      }
+    });
   }
 
   @override
@@ -433,25 +480,38 @@ class _DocGridScreenState extends State<DocGridScreen> {
                 onThumbLoaded: (bytes) {
                   _thumbCache[path] = bytes;
                 },
-                selected: _selectedPath == path,
-                onSelect: () {
-                  if (_selectedPath != path) {
-                    setState(() => _selectedPath = path);
-                  }
-                },
+                selected: _selection.paths.contains(path),
+                onSelect: () => setState(() => _selection.click(
+                  path,
+                  _order,
+                  toggle: FileSelection.toggleKeyPressed,
+                  range: FileSelection.rangeKeyPressed,
+                )),
                 onDoubleTap: () => _openDocument(path),
+                onContextMenu: (position) => _showContextMenu(position, path),
               );
             },
           ),
         );
 
+        final area = FileOpsArea(
+          key: _fileOps,
+          api: widget.api,
+          method: 'doc_grid',
+          selection: _selection,
+          order: _order,
+          directoryPicker: widget.directoryPicker,
+          onSelectionChanged: () => setState(() {}),
+          onApplied: _applyFileResults,
+          child: grid,
+        );
         if (!constraints.hasBoundedHeight) {
           return SizedBox(
             height: 600,
-            child: grid,
+            child: area,
           );
         }
-        return grid;
+        return area;
       },
     );
   }
@@ -465,6 +525,7 @@ class _DocCard extends StatefulWidget {
     required this.api,
     required this.onDoubleTap,
     required this.onSelect,
+    required this.onContextMenu,
     this.selected = false,
     this.cachedThumb,
     this.onThumbLoaded,
@@ -474,6 +535,7 @@ class _DocCard extends StatefulWidget {
   final ApiCall api;
   final VoidCallback onDoubleTap;
   final VoidCallback onSelect;
+  final ValueChanged<Offset> onContextMenu;
   final bool selected;
   final Uint8List? cachedThumb;
   final ValueChanged<Uint8List>? onThumbLoaded;
@@ -567,7 +629,13 @@ class _DocCardState extends State<_DocCard> {
           if (event.buttons == kPrimaryButton) widget.onSelect();
         },
         child: InkWell(
-          onDoubleTap: widget.onDoubleTap,
+          onSecondaryTapUp: (details) => widget.onContextMenu(details.globalPosition),
+          // Ctrl·Shift 클릭은 선택만 한다.
+          onDoubleTap: () {
+            if (!FileSelection.toggleKeyPressed && !FileSelection.rangeKeyPressed) {
+              widget.onDoubleTap();
+            }
+          },
           borderRadius: BorderRadius.circular(8),
           child: Container(
             key: ValueKey('docCardFrame-${widget.doc['path']}'),

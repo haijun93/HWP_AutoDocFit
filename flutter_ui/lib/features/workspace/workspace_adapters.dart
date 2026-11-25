@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../common/file_handoff.dart';
 import '../file_rename/rename_ui_gate.dart';
 import '../timemachine/timemachine_screen.dart';
 import '../flows/flow_editor_screen.dart';
@@ -193,7 +194,15 @@ class IntegratedWorkspace extends StatelessWidget {
     this.qmsBenchScreen,
     this.hiddenTabs = kDefaultHiddenTabs,
     this.quickActions = const [],
+    this.libraryInbox,
+    this.notebookInbox,
+    this.pdfInbox,
   });
+
+  /// 문서뷰·사진뷰에서 보낸 파일을 각 화면이 가져가는 곳(CTXMENU1).
+  final FileInbox? libraryInbox;
+  final FileInbox? notebookInbox;
+  final FileInbox? pdfInbox;
 
   /// 오른쪽 빠른 실행 막대 항목.
   final List<QuickAction> quickActions;
@@ -231,8 +240,9 @@ class IntegratedWorkspace extends StatelessWidget {
             api: BridgeLibraryApi(api),
             notebookApi: BridgeNotebookApi(api),
             scopedDocumentSearch: scopedLibraryDocumentSearch(api),
+            incoming: libraryInbox,
           ),
-      notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api)),
+      notebookScreen: notebookScreen ?? NotebookScreen(api: BridgeNotebookApi(api), library: BridgeLibraryApi(api), incoming: notebookInbox),
       onOpenExternalApp: (context, app) => openExternalApp(context, api, app),
       quickActions: quickActions,
       documentEditor: DocumentEditorAdapter(child: documentEditorWidget),
@@ -241,7 +251,7 @@ class IntegratedWorkspace extends StatelessWidget {
       diagram: DiagramAdapter(api: api),
       mindMap: MindMapAdapter(api: api),
       fileConversion: FileConversionAdapter(child: fileConversionWidget),
-      pdfEdit: PdfEditWorkspace(api: api),
+      pdfEdit: PdfEditWorkspace(api: api, incoming: pdfInbox),
       paint: PaintAdapter(api: api, photoPasteTrigger: photoPasteTrigger),
       fileRename: FileRenameAdapter(api: api),
       timemachine: _LazyTimemachineAdapter(api: api),

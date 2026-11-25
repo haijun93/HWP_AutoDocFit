@@ -6,7 +6,8 @@
 사진대지 HWPX 생성 연동 기반(2×2·2×3 표에 촬영일/설명 캡션 넣기)을 제공한다.
 
 동시 썸네일 생성 제한(기본 2개)을 지키며, 클라우드 전용 파일(OneDrive 등)은 내용을 절대 읽지 않는다.
-원본 사진 파일은 어떠한 경우에도 수정하거나 변경하지 않는다(읽기 전용).
+원본 사진 파일의 내용은 어떠한 경우에도 수정하지 않는다.
+사용자가 지시한 복사·이동·이름 변경·휴지통 삭제만 file_ops 를 거쳐 한다(FILEOPS1).
 """
 from __future__ import annotations
 
@@ -36,7 +37,8 @@ from docfit_core.table_builder import _Header, _cell, _child, _element, _table, 
 from docfit_core.timemachine import thumbs
 from docfit_core.path_utils import path_is_within
 from docfit_core.timemachine.rules import cloud_only, excluded_name
-from .library_scope import current_default_roots, is_excluded_path
+from .library_scope import current_default_roots, is_excluded_path, is_listed_location
+from .file_ops import FileOps, handle_command as handle_file_ops
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
@@ -441,6 +443,48 @@ class PhotoAlbumDb:
                     conn.execute("INSERT INTO tags (photo_path, tag) VALUES (?, ?)", (norm, t))
         return cleaned
 
+    def delete_photo(self, path: str) -> None:
+        """없어진 사진의 행과 태그를 지운다."""
+        norm = _norm_path(path)
+        with self._lock, closing(self._connect()) as conn:
+            with conn:
+                conn.execute("DELETE FROM tags WHERE photo_path = ?", (norm,))
+                conn.execute("DELETE FROM photos WHERE path = ?", (norm,))
+
+    def transfer_photo(self, source: str, target: str, *, keep_source: bool) -> None:
+        """사진 정보를 새 경로에 옮긴다(태그·즐겨찾기 보존).
+
+        `keep_source`(복사)면 원본 행은 두고, 촬영일 같은 파일 정보만 새 행에 쓴다.
+        `source`·`target`은 작업 전후의 경로 문자열 그대로 정규화한다.
+        """
+        # 파일 이름의 대소문자는 받은 그대로 둔다(resolve 는 대소문자만 바꾼 이름 변경을 구분하지 못한다).
+        old = str(Path(source).parent.resolve() / Path(source).name)
+        new = str(Path(target).parent.resolve() / Path(target).name)
+        folder, name = os.path.dirname(new), os.path.basename(new)
+        with self._lock, closing(self._connect()) as conn:
+            with conn:
+                row = conn.execute("SELECT * FROM photos WHERE path = ?", (old,)).fetchone()
+                if row is None:
+                    return
+                tags = [r["tag"] for r in conn.execute("SELECT tag FROM tags WHERE photo_path = ?", (old,))]
+                removed = [new] if keep_source else [old, new]
+                for path in removed:
+                    # 새 경로에 남아 있던 옛 행은 이미 없는 파일의 것이다.
+                    conn.execute("DELETE FROM tags WHERE photo_path = ?", (path,))
+                    conn.execute("DELETE FROM photos WHERE path = ?", (path,))
+                conn.execute(
+                    """
+                    INSERT INTO photos
+                        (path, folder, filename, size, mtime, date_taken, orientation, favorite, cloud)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (new, folder, name, row["size"], row["mtime"], row["date_taken"], row["orientation"],
+                     0 if keep_source else row["favorite"], row["cloud"]),
+                )
+                if not keep_source:
+                    conn.executemany("INSERT INTO tags (photo_path, tag) VALUES (?, ?)",
+                                     [(new, tag) for tag in tags])
+
     def list_photos(self, folder: str | None = None, *, recursive: bool = True) -> list[dict[str, Any]]:
         with self._lock, closing(self._connect()) as conn:
             if folder:
@@ -579,6 +623,55 @@ class PhotoAlbumService:
         self._background_scan = BackgroundScan()
         self.settings_store = settings_store
         self._default_name_paths: set[str] | None = None
+        self.file_ops = FileOps(PHOTO_EXTENSIONS, after_item=self._after_file_op, after_all=self._after_file_ops)
+
+    def _after_file_op(self, op: str, source: Path, target: Path | None, before: os.stat_result) -> dict[str, Any]:
+        """성공한 파일 하나의 DB·썸네일 캐시를 맞추고, 새 위치가 목록 범위인지 알려 준다."""
+        old_key = self.cache.key(source, before.st_mtime_ns, before.st_size)
+        names = self._default_name_paths
+        old_name = os.path.normcase(os.path.abspath(source))
+        if target is None:
+            self.db.delete_photo(str(source))
+            self.cache.discard(old_key)
+            if names is not None:
+                names.discard(old_name)
+            return {"listed": False}
+        listed = op == "rename" or is_listed_location(
+            target, self._default_roots(), read_exclusions(self.settings_store))
+        if op != "copy":
+            self.cache.rekey(old_key, self.cache.key(target, before.st_mtime_ns, before.st_size))
+            # 목록 범위 밖으로 옮겨도 태그·즐겨찾기는 지우지 않는다.
+            self.db.transfer_photo(str(source), str(target), keep_source=False)
+            if names is not None:
+                names.discard(old_name)
+        elif listed:
+            self.db.transfer_photo(str(source), str(target), keep_source=True)
+        if names is not None and listed:
+            names.add(os.path.normcase(os.path.abspath(target)))
+        return {"listed": listed}
+
+    def _after_file_ops(self, op: str, results: list[dict[str, Any]]) -> None:
+        """다음에 화면을 열 때 보이는 저장된 목록에서도 옛 경로를 걷어낸다."""
+        done = {os.path.normcase(item["path"]): item for item in results if item["ok"]}
+        if not done:
+            return
+
+        def change(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            changed: list[dict[str, Any]] = []
+            for row in rows:
+                item = done.get(os.path.normcase(str(row.get("path", ""))))
+                if item is None or op == "copy":
+                    changed.append(row)
+                if item is None or not item.get("listed") or "new_path" not in item:
+                    continue
+                moved = {**row, "path": item["new_path"], "folder": os.path.dirname(item["new_path"]),
+                         "filename": item["new_name"]}
+                if op == "copy":
+                    moved.update(tags=[], favorite=False)
+                changed.append(moved)
+            return changed
+
+        library_scan_cache.rewrite("photos", change)
 
     def _get_klib_exe(self) -> Path | None:
         return find_klib_executable()
@@ -757,6 +850,13 @@ class PhotoAlbumService:
             "updated": updated_count,
         }
 
+    def _without_excluded(self, photos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """제외 폴더의 사진은 목록에서만 감춘다. DB의 태그·즐겨찾기는 남겨 제외를 풀면 다시 보인다."""
+        excluded = read_exclusions(self.settings_store)
+        if not excluded:
+            return photos
+        return [p for p in photos if not any(path_is_within(p["path"], folder) for folder in excluded)]
+
     def scan_default_scope(self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
                            excluded_folders: Any = (), return_engine: bool = False) -> dict[str, Any]:
         """Desktop 및 고정 드라이브 사진을 스캔한다. 이동식·네트워크는 제외한다."""
@@ -864,7 +964,7 @@ class PhotoAlbumService:
                 except OSError: continue
                 valid = path in self._default_name_paths if self._default_name_paths is not None else Path(row["path"]).is_file()
                 if valid and any(path_is_within(path, root) for root in roots): existing.append(row)
-            rows = existing
+            rows = self._without_excluded(existing)
             if not cancel.is_set(): library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
             result["engine"] = engine
             return result
@@ -888,7 +988,7 @@ class PhotoAlbumService:
     def list_by_date(self, folder: str | Path | None = None) -> list[dict[str, Any]]:
         """촬영일(또는 수정일) 기준 연·월 묶음 목록을 반환한다."""
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         # 연·월별로 그룹화
         groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
@@ -966,14 +1066,14 @@ class PhotoAlbumService:
     ) -> list[dict[str, Any]]:
         """파일명, 태그, 날짜 범위, 즐겨찾기로 사진을 검색한다."""
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.search(
+        photos = self._without_excluded(self.db.search(
             query=query,
             folder=folder_str,
             tag=tag,
             start_date=start_date,
             end_date=end_date,
             favorite_only=favorite_only,
-        )
+        ))
         results: list[dict[str, Any]] = []
         for p in photos:
             item = {
@@ -1022,9 +1122,9 @@ class PhotoAlbumService:
 
     def list_tags(self, *, folder: str | Path | None = None) -> dict[str, Any]:
         """사진뷰 DB에서 사용 중인 태그와 사진 수를 반환한다."""
-        photos = self.db.list_photos(
+        photos = self._without_excluded(self.db.list_photos(
             str(Path(folder).resolve()) if folder and str(folder).strip() else None
-        )
+        ))
         counts: dict[str, int] = {}
         for photo in photos:
             for tag in photo.get("tags", []):
@@ -1454,7 +1554,7 @@ class PhotoAlbumService:
         threshold_val = min(64, threshold_val)
 
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         scanned = 0
         skipped_cloud = 0
@@ -1762,7 +1862,7 @@ class PhotoAlbumService:
             }
 
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         groups_map: dict[str, dict[str, Any]] = {}
 
@@ -2027,6 +2127,10 @@ class PhotoAlbumService:
                     folder=payload.get("folder"),
                     group_by=str(payload.get("group_by", "folder")),
                 )
+
+            handled = handle_file_ops(self.file_ops, action, payload)
+            if handled is not None:
+                return handled
 
             if action == "clear_cache":
                 cleared = self.clear_cache()

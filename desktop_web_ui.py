@@ -2391,7 +2391,7 @@ class DesktopWebBridge:
             service = getattr(self, "_photo_album_service", None)
             if service is None:
                 from docfit_app.photo_album_service import PhotoAlbumService
-                self._photo_album_service = PhotoAlbumService()
+                self._photo_album_service = PhotoAlbumService(settings_store=self._settings_store())
             return self._photo_album_service.command(action, payload)
         except Exception as exc:
             logging.getLogger(__name__).warning("사진뷰 처리 실패", exc_info=True)

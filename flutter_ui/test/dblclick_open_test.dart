@@ -213,9 +213,12 @@ void main() {
     expect(borderWidth('나.pdf'), 2.5);
     expect(api.opened, ['doc_grid:/docs/나.pdf']);
 
-    // 마우스 오른쪽 단추는 선택을 바꾸지 않는다.
+    // 선택 밖 항목을 오른쪽 단추로 누르면 그 항목만 선택하고 메뉴를 연다(CTXMENU1). 열지는 않는다.
     await tester.tap(first, buttons: kSecondaryButton);
     await tester.pumpAndSettle();
-    expect(borderWidth('가.hwpx'), 1.0);
+    expect(borderWidth('가.hwpx'), 2.5);
+    expect(borderWidth('나.pdf'), 1.0);
+    expect(find.byKey(const ValueKey('fileMenu-delete')), findsOneWidget);
+    expect(api.opened, hasLength(1));
   });
 }
