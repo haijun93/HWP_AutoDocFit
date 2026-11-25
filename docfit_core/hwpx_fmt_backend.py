@@ -44,7 +44,9 @@ def configured_processor(processor, log=None, *, namespace=None):
                'marker_scheme_active': bool(g.get('활성_항목기호_체계')),
                'title_parenthesis_reduce': bool(g.get('괄호_축소_사용', True)),
                'title_parenthesis_pt': g.get('괄호_축소_pt', 2) or 2,
-               'title_subtitle_pt': g.get('제목_부제_크기_pt', 15) or 15}
+               'title_subtitle_pt': g.get('제목_부제_크기_pt', 15) or 15,
+               'marker_roles': ((g.get('표준서식_설정') or {}).get('항목기호_역할')
+                                or (g.get('표준서식_설정') or {}).get('문두기호_역할') or {})}
         key = None
         try:
             key = (str(source), json.dumps(cfg, ensure_ascii=False, sort_keys=True))

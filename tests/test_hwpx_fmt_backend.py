@@ -68,10 +68,11 @@ class BackendTests(unittest.TestCase):
             self.assertTrue(any('rust_applied' in s for s in messages))
 
     def test_live_run_context_settings_are_forwarded(self):
-        namespace = {'제목_담당자_글': '현재 실행의 담당자'}
+        namespace = {'제목_담당자_글': '현재 실행의 담당자', '표준서식_설정': {'문두기호_역할': {'□': ''}}}
         def invoke(command, **kwargs):
             config = json.loads(Path(command[-1]).read_text(encoding='utf-8'))
             self.assertEqual(config['title_owner_text'], '현재 실행의 담당자')
+            self.assertEqual(config['marker_roles'], {'□': ''})
             return subprocess.CompletedProcess(command, 0, '{}', '')
         with patch.dict(os.environ, {'DOCFIT_HWPXFMT5': '1', 'HWPX_FMT_BIN': 'test.exe'}), patch('subprocess.run', side_effect=invoke):
             fn = configured_processor(self.processor, namespace=namespace)

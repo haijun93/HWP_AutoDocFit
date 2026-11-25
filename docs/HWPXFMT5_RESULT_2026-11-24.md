@@ -33,13 +33,14 @@ RSXML1~4는 고유 13종(14슬롯)을 구현했으며, 남은 다섯 종류는 �
 - **제목 유형 4·5 및 다른 표가 섞인 문서**: 제목다운 글/기관 정보/대표 글자 크기 판정 미이식. 본문 또는 쪽 나눔이 제목과 개요 사이에 있으면 거부한다. Python이 원래 맡는다.
 - **일반 로마자·`로1` 문단→중제목 표**: 새 표 id·zOrder, 원래 run/컨트롤 이동·삭제의 동등성 미확인. 해당 후보가 있으면 Rust가 문서 전체를 거부해 Python으로 넘긴다.
 - 중제목 사전 검사는 보수적이어서 ASCII `I`/`V`/`X` 또는 `로`로 시작하는 일반 문장도 Python으로 넘길 수 있다. 이 경우의 적용률 최적화는 하지 않았다.
-- 설정된 담당자 글 및 활성 기호 체계의 제목/중제목 경로는 미지원이다. 잘못된 예시 프로필도 Rust 적용을 중단한다.
+- 설정된 담당자 글 및 활성 기호 체계의 제목/중제목 경로는 미지원이다. 하네스에서 검사한 잘못된 예시 프로필은 Rust 적용을 중단한다.
+- 사용자 지정 `항목기호_역할`/`문두기호_역할` 표가 비어 있지 않으면 제목 처리는 Python으로 넘긴다. `marker_roles`로 현재 실행의 역할표를 전달하며 조용히 무시하지 않는다.
 - 드문 Unicode 숫자·잘못된 수치 속성·위 제한 밖의 사용자 프로필 조합 전체는 확인하지 못했다. 이 카드의 차이 0은 아래 명시한 시험 범위의 결과다.
 
 ## 최종 하네스·속도
 
 Python 3.15.2, Unicode 17.0.0. 기존 로컬 MinGW를 사용했고 빌드 산출물 위치는 `CARGO_TARGET_DIR` 환경변수로만 지정했다.
-정규식 캐시 변경 후에도 **234쌍 중 일치 233·차이 0·양쪽 거부 1**, 실제 변경 84쌍, 미지원 검사 8건 통과다. 양쪽 거부는 일치 수에서 제외한다.
+기호 경계 수정 후 **246쌍 중 일치 245·차이 0·양쪽 거부 1**, 실제 변경 96쌍, 미지원 검사 9건 통과다. 양쪽 거부는 일치 수에서 제외한다.
 세부 사례와 측정값은 [HWPXFMT5_PARITY_2026-11-24.json](HWPXFMT5_PARITY_2026-11-24.json)에 보관했다.
 비교기는 ZIP 항목 순서·바이너리 바이트·조사 목록·변경 수·원본 해시와 XML 정규화 UTF-8 바이트를 대조한다. XML 접두사·속성 순서와 `t` 밖 들여쓰기만 정규화하며, 글 안 공백·속성 값·자식 순서는 보존한다.
 
@@ -61,14 +62,14 @@ Python 3.15.2, Unicode 17.0.0. 기존 로컬 MinGW를 사용했고 빌드 산출
 최종 관련 Cargo 시험(`cargo test --release --locked -j 2 --manifest-path hwpx_fmt/Cargo.toml`) 결과:
 
 ```text
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s  (rsxml2)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s  (rsxml3)
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s  (rsxml4)
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s   (structure)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s  (unit)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s  (rsxml2)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s  (rsxml3)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s  (rsxml4)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s   (structure)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s  (unit)
 ```
 
-합계 62건, 실패 0. lib/bin/doc-test는 각 0건이며 모두 성공했다. 연결·비교기 별도 시험은 `Ran 9 tests in 0.300s` / `OK`다.
+합계 63건, 실패 0. lib/bin/doc-test는 각 0건이며 모두 성공했다. 연결·비교기 별도 시험은 `Ran 9 tests in 0.300s` / `OK`다.
 
 ## ALLQA COM 전후 대조
 
@@ -138,3 +139,18 @@ python -m unittest discover -s tests
 수정하지 않은 `scripts/rsxml_parity.py`를 별도로 단독 실행했다. 문서 1,099건·2,751쌍 모두 하네스 통과, 실패 0, 실제 변경 828쌍, 엄격 공백 비교 잡음 0, 미지원 검사 55건 모두 통과, 종료 코드 0(324.24초)이다. 기존 하네스의 통과에는 양쪽 거부 224쌍이 포함된다. 새 처리기의 양쪽 거부 1쌍은 위와 같이 통과에서 분리했다.
 
 신규 native 검사와 기존 native 하네스는 실행 파일 경로를 명시해 각각 완료했다. 마지막 전체 unittest는 별도 기본 환경에서 실행한다(해당 프로세스에는 `HWPX_FMT_BIN`·`CARGO_TARGET_DIR` 미지정). 전체 시험의 조건부 native skip과 실제 별도 native 검증 결과를 구분해 기록한다.
+
+## 추가 경계 검사에서 발견한 차이
+
+첫 전체 시험은 소스 기준 `59602a76`에서 다음과 같이 통과했다(종료 코드 0, 실행기 전체 1049.193초).
+
+```text
+Ran 3656 tests in 1033.753s
+OK (skipped=22)
+```
+
+그 뒤 제목 표·빈 줄·기호 문장이라는 추가 합성 대조에서 `□추진`·`-본문`·`*주석`의 3쌍 차이를 확인했다. Python은 기호 뒤 공백이 없어 항목으로 판정하지 않고 빈 줄을 보존하는데, Rust는 첫 글자만 보고 빈 줄을 삭제했다. 첫 하네스의 경계 사례가 부족했다.
+Rust가 기존 공용 `style::leading_marker`의 역할 판정까지 확인하도록 수정하고, 붙여 쓴 기호 8종·띄어 쓴 기호 4종을 추가했다. 사용자 역할표는 별도 설정으로 전달하고 제목 경로에서 명시적으로 Python으로 넘긴다. 아래 최종 기록은 이 변경 이후의 결과로 갱신한다.
+속도 표는 정규식 캐시 버전에서 각 1회 측정한 값이다. 추가 경계 수정은 그 측정 입력에 없는 빈 줄 뒤 기호 판정만 바꾸며, 같은 입력의 속도 측정을 반복하지 않았다.
+
+경계 수정 후 하네스는 246쌍 중 일치 245·실패 0·양쪽 거부 1, 실제 변경 96쌍, 미지원 검사 9건 모두 통과했다. Cargo 63건(16+13+16+5+13) 및 `Ran 10 tests in 51.023s` / `OK`도 통과했다. 최종 ON 산출물을 원래 OFF 기준과 다시 대조하고 전체 시험을 재확인한다.

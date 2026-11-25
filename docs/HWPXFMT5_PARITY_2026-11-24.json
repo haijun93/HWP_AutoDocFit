@@ -1,10 +1,106 @@
 {
-  "pairs": 234,
-  "passed": 233,
+  "pairs": 246,
+  "passed": 245,
   "failed": 0,
   "both_rejected": 1,
-  "changed": 84,
+  "changed": 96,
   "results": [
+    {
+      "name": "title_marker_boundary_0",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_1",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_2",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_3",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_4",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_5",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_6",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_7",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_8",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_9",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_10",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_marker_boundary_11",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
     {
       "name": "full_geometry_attachment_30001_False",
       "processor": "attachment",
@@ -1983,6 +2079,10 @@
       "ok": true
     },
     {
+      "name": "custom_marker_roles",
+      "ok": true
+    },
+    {
       "name": "box_bad_sample",
       "ok": true
     },
@@ -1991,5 +2091,6 @@
       "ok": true
     }
   ],
-  "unsupported_failed": 0
+  "unsupported_failed": 0,
+  "benchmark_revision": "9aea1d66: 정규식 캐시 후 측정. 후속 빈 줄 기호 경계 수정 뒤 속도 재측정 없음."
 }

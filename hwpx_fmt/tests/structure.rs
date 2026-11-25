@@ -60,6 +60,16 @@ fn same_file_is_rejected_before_noop_copy() {
 }
 
 #[test]
+fn custom_marker_roles_are_not_silently_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = source(dir.path());
+    let cfg = Config::from_json(&serde_json::json!({"marker_roles": {"□": ""}})).unwrap();
+    assert!(survey_json(Processor::Title, &src, &cfg)
+        .unwrap_err()
+        .starts_with("미지원 입력:"));
+}
+
+#[test]
 fn roman_paragraph_is_explicitly_unsupported_instead_of_silently_skipped() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("roman.hwpx");

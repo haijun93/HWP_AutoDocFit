@@ -576,6 +576,11 @@ fn builtin(key: &str, index: usize) -> R<(Doc, Doc, usize)> {
     Ok((h, d, t))
 }
 fn check(p: Processor, cfg: &Config) -> R<()> {
+    if p == Processor::Title && cfg.marker_roles_nonempty {
+        return unsupported(
+            "사용자 문두기호 역할표의 제목 뒤 빈 줄 판정은 Python 경로를 사용합니다.",
+        );
+    }
     if !cfg.title_owner_text.is_empty() {
         return unsupported("설정 담당자 글 판별 미이식");
     }
@@ -1204,7 +1209,9 @@ fn title_process(source: &Path, target: &Path, cfg: &Config, sel: &Value) -> R<u
             if end > start && end < d.nodes[0].children.len() {
                 let text = rules::py_strip(&d.jstr_walk(d.nodes[0].children[end])).to_owned();
                 let first = text.chars().next();
-                if matches!(first, Some('□' | 'ㅁ' | 'ㅇ' | '○' | '-' | '※' | '*')) {
+                if matches!(first, Some('□' | 'ㅁ' | 'ㅇ' | '○' | '-' | '※' | '*'))
+                    && !crate::style::leading_marker(&text).1.is_empty()
+                {
                     for p in d.nodes[0].children[start..end].to_vec() {
                         d.remove_child(0, p);
                     }

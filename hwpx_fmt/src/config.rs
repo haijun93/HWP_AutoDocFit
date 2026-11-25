@@ -39,6 +39,7 @@ pub struct Config {
     pub title_parenthesis_reduce: bool,
     pub title_parenthesis_pt: f64,
     pub title_subtitle_pt: f64,
+    pub marker_roles_nonempty: bool,
 }
 
 impl Default for Config {
@@ -62,6 +63,7 @@ impl Default for Config {
             title_parenthesis_reduce: true,
             title_parenthesis_pt: 2.0,
             title_subtitle_pt: 15.0,
+            marker_roles_nonempty: false,
         }
     }
 }
@@ -72,6 +74,13 @@ impl Config {
         let mut c = Config::default();
         for (k, val) in obj {
             match k.as_str() {
+                "marker_roles" => {
+                    c.marker_roles_nonempty = match val {
+                        serde_json::Value::Null => false,
+                        serde_json::Value::Object(m) => !m.is_empty(),
+                        _ => return unsupported("marker_roles 는 객체여야 합니다."),
+                    };
+                }
                 "format_samples" => {
                     if !val.is_null() && !val.is_object() { return unsupported("format_samples 는 객체여야 합니다."); }
                     c.format_samples = if val.is_null() { None } else { Some(val.clone()) };

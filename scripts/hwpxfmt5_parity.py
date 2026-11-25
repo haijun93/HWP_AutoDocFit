@@ -44,6 +44,9 @@ def settings(fn, cfg):
                '제목_부제_크기_pt': cfg.get('title_subtitle_pt', 15),
                '활성_항목기호_체계': None}
     saved = {k: g.get(k) for k in changes}
+    saved['표준서식_설정'] = g.get('표준서식_설정')
+    if cfg.get('marker_roles'):
+        changes['표준서식_설정'] = dict(g.get('표준서식_설정') or {}, 문두기호_역할=cfg['marker_roles'])
     g.update(changes)
     try:
         with contextlib.redirect_stdout(io.StringIO()):
@@ -72,6 +75,10 @@ def cases():
     h, _ = base.PY_NS['개요붙임_원본자료']()
     header = ET.tostring(h, encoding='unicode')
     samples = examples()
+    for i, text in enumerate(['□추진', 'ㅁ추진', 'ㅇ본문', '○본문', '-본문', '※주석', '*주석', '**주석',
+                              '□ 추진', 'ㅇ 본문', '- 본문', '* 주석']):
+        body = base.host(base.title_table_type1()) + base.para('') + base.para(text)
+        yield f'title_marker_boundary_{i}', base.hwpx_bytes({'Contents/section0.xml': base.section(body)}, header=header), 'title', {}
     # 실제 내장 표의 sz/cellMargin/pagePr로 폭 맞춤도 실행한다.
     for proc, loader, ordinal in [('attachment', '개요붙임_원본자료', 1),
                                    ('box', '개요붙임_원본자료', 0),
@@ -166,6 +173,7 @@ def unsupported_cases():
         ('boxed_title', 'title', base.host(base.grid([['한 칸 제목입니다']])), {}),
         ('owner_setting', 'attachment', base.host(base.grid([['붙임', '계획서']])), {'title_owner_text': '사용자 담당자'}),
         ('unknown_config', 'attachment', '', {'unknown_key': True}),
+        ('custom_marker_roles', 'title', base.host(base.title_table_type1()), {'marker_roles': {'□': ''}}),
         ('box_bad_sample', 'box', '', {'format_samples': {'box': {'header_xml': '<head/>', 'table_xml': '<tbl/>'}}}),
         ('overview_across_body', 'title', base.host(base.title_table_type1()) + base.para('중간 본문') + base.host(base.grid([['한 칸 제목 후보가 될 수 있는 충분히 긴 내용입니다']])), {}),
     ]:
