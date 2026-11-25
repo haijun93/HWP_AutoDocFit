@@ -7,3 +7,6 @@ release-assets/* text eol=lf
 
 # PDF 시험 자료는 줄바꿈 변환 금지(Windows 체크아웃에서 CRLF 로 바뀌면 손상 PDF 가 된다)
 pdf_edit_core/tests/fixtures/** binary
+
+# 변환 충실도 시험 자료는 줄바꿈 변환 금지(manifest 해시와 바이트가 일치해야 한다)
+tests/fixtures/conversion_fidelity/** -text
