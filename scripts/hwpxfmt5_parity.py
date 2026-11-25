@@ -75,6 +75,10 @@ def cases():
     h, _ = base.PY_NS['개요붙임_원본자료']()
     header = ET.tostring(h, encoding='unicode')
     samples = examples()
+    for i, raw in enumerate(['<hp:t>*<hp:tab/>주석</hp:t>',
+                             '<hp:rect><hp:drawText><hp:subList>' + base.para('□ 표시') + '</hp:subList></hp:drawText></hp:rect>']):
+        body = base.host(base.title_table_type1()) + base.para('') + base.para('', raw=raw)
+        yield f'title_body_control_{i}', base.hwpx_bytes({'Contents/section0.xml': base.section(body)}, header=header), 'title', {}
     for i, text in enumerate(['□추진', 'ㅁ추진', 'ㅇ본문', '○본문', '-본문', '※주석', '*주석', '**주석',
                               '□ 추진', 'ㅇ 본문', '- 본문', '* 주석']):
         body = base.host(base.title_table_type1()) + base.para('') + base.para(text)

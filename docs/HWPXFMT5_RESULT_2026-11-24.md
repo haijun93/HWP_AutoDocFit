@@ -40,7 +40,7 @@ RSXML1~4는 고유 13종(14슬롯)을 구현했으며, 남은 다섯 종류는 �
 ## 최종 하네스·속도
 
 Python 3.15.2, Unicode 17.0.0. 기존 로컬 MinGW를 사용했고 빌드 산출물 위치는 `CARGO_TARGET_DIR` 환경변수로만 지정했다.
-기호 경계 수정 후 **246쌍 중 일치 245·차이 0·양쪽 거부 1**, 실제 변경 96쌍, 미지원 검사 9건 통과다. 양쪽 거부는 일치 수에서 제외한다.
+기호 경계·본문 추출 수정 후 **248쌍 중 일치 247·차이 0·양쪽 거부 1**, 양수 처리 건수 반환 98쌍, 미지원 검사 9건 통과다. 양쪽 거부는 일치 수에서 제외한다.
 세부 사례와 측정값은 [HWPXFMT5_PARITY_2026-11-24.json](HWPXFMT5_PARITY_2026-11-24.json)에 보관했다.
 비교기는 ZIP 항목 순서·바이너리 바이트·조사 목록·변경 수·원본 해시와 XML 정규화 UTF-8 바이트를 대조한다. XML 접두사·속성 순서와 `t` 밖 들여쓰기만 정규화하며, 글 안 공백·속성 값·자식 순서는 보존한다.
 
@@ -62,28 +62,28 @@ Python 3.15.2, Unicode 17.0.0. 기존 로컬 MinGW를 사용했고 빌드 산출
 최종 관련 Cargo 시험(`cargo test --release --locked -j 2 --manifest-path hwpx_fmt/Cargo.toml`) 결과:
 
 ```text
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s  (rsxml2)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s  (rsxml3)
-test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s  (rsxml4)
-test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s   (structure)
-test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.19s  (unit)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s  (rsxml2)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s  (rsxml3)
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s  (rsxml4)
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s   (structure)
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s  (unit)
 ```
 
 합계 63건, 실패 0. lib/bin/doc-test는 각 0건이며 모두 성공했다. 연결·비교기 별도 시험은 `Ran 9 tests in 0.300s` / `OK`다.
 
 ## ALLQA COM 전후 대조
 
-공통 COM 잠금을 하나 소유한 상태에서 다른 빌드·시험 없이 OFF 6문서 → ON 6문서를 순차 실행했다. 각 실행은 20분 제한 안에서 종료했다. 원본 및 처리 사본 해시는 6문서 모두 불변이다.
+공통 COM 잠금을 하나 소유한 상태에서 다른 빌드·시험 없이 OFF 6문서 → ON 6문서를 순차 실행했다. 기호 공백 경계 수정 후 ON 6문서를 다시 실행해 원래 OFF 기준과 비교했으며, 아래 표와 상세 비교 문서는 그 최신 ON 결과다(ON 실행기 368.503초). 각 실행은 20분 제한 안에서 종료했다. 원본 및 처리 사본 해시는 6문서 모두 불변이다.
 상세 비교는 수정하지 않은 `scripts/allqa_compare.py`로 생성한 [HWPXFMT5_ALLQA_2026-11-24.md](HWPXFMT5_ALLQA_2026-11-24.md)에 보관했다.
 
 | 문서 | OFF 초 | ON 초 | 문단 수 전→후 | 텍스트/원시 서식/정규화 서식 | 판정 |
 |---|---:|---:|---:|---|---|
-| txt_short | 31.757 | 24.803 | 4→4 | 모두 일치 | 결과 동일 |
-| txt_long | 282.767 | 265.096 | 38→38 | 모두 일치 | 결과 동일 |
-| hwp_reference | 63.143 | 54.513 | 16→16 | 모두 일치 | 결과 동일 |
-| hwpx_table | 3.665 | 3.259 | — | 결과 없음 | 확인 못 함 |
-| hwpx_continuation | 22.472 | 19.842 | 4→4 | 모두 일치 | 결과 동일 |
-| hwpx_shapes | 14.026 | 12.917 | 7→7 | 모두 일치 | 결과 동일 |
+| txt_short | 31.757 | 21.948 | 4→4 | 모두 일치 | 결과 동일 |
+| txt_long | 282.767 | 253.249 | 38→38 | 모두 일치 | 결과 동일 |
+| hwp_reference | 63.143 | 52.137 | 16→16 | 모두 일치 | 결과 동일 |
+| hwpx_table | 3.665 | 3.206 | — | 결과 없음 | 확인 못 함 |
+| hwpx_continuation | 22.472 | 18.628 | 4→4 | 모두 일치 | 결과 동일 |
+| hwpx_shapes | 14.026 | 12.205 | 7→7 | 모두 일치 | 결과 동일 |
 
 **6문서 중 결과 5쌍의 차이 0, 1문서는 확인 못 했다. 전체 QA 통과로 보고하지 않는다.** `hwpx_table`은 OFF/ON 모두 한/글 `Open`에서 실패해 서식 처리에 진입하지 못했다. 수정 없이 유지했다.
 기존 자동 검수의 원문 텍스트 보존(공백 무시)은 `hwp_reference`·`txt_long`·`txt_short`에서 OFF/ON 모두 FAIL이며, 이번 카드에서 그 원인을 해소하거나 기준을 완화하지 않았다.
@@ -154,3 +154,9 @@ Rust가 기존 공용 `style::leading_marker`의 역할 판정까지 확인하�
 속도 표는 정규식 캐시 버전에서 각 1회 측정한 값이다. 추가 경계 수정은 그 측정 입력에 없는 빈 줄 뒤 기호 판정만 바꾸며, 같은 입력의 속도 측정을 반복하지 않았다.
 
 경계 수정 후 하네스는 246쌍 중 일치 245·실패 0·양쪽 거부 1, 실제 변경 96쌍, 미지원 검사 9건 모두 통과했다. Cargo 63건(16+13+16+5+13) 및 `Ran 10 tests in 51.023s` / `OK`도 통과했다. 최종 ON 산출물을 원래 OFF 기준과 다시 대조하고 전체 시험을 재확인한다.
+
+같은 빈 줄 판정의 특수 컨트롤 사례도 추가 대조했다. `t` 자식 탭 뒤의 tail을 누락하거나 도형 안 글을 본문으로 섞는 차이 2쌍을 확인해, 원본 `_문단_본문글`과 똑같이 본문 run의 직접 t와 그 자식 tail만 읽도록 보완했다. 두 사례를 하네스에 추가했다. 이 보완은 실제 적용 때만 실행되며, 적용 0건인 위 ALLQA 세트의 조사/선택/출력 경로에는 영향이 없어 같은 COM 측정을 추가 반복하지 않는다.
+
+본문 추출 보완 후 최종 확대 하네스는 248쌍 중 일치 247·실패 0·양쪽 거부 1, 양수 처리 건수 반환 98쌍, 미지원 검사 9건 모두 통과했다. Cargo 63건도 재통과했다. 여기서 처리/변경 건수는 원본 처리기의 반환값이며, 입력과 출력의 XML 속성 차이를 직접 센 수와는 구분한다. 모든 일치 검사는 반환값뿐 아니라 선택 목록과 정규화 바이트를 함께 대조했다.
+
+최종 본문 추출 보완 이후 연결·native 검사는 `Ran 10 tests in 51.690s` / `OK`(skip 0)다. 이후 코드를 고정하고 전체 unittest를 마지막으로 재실행한다.

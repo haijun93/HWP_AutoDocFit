@@ -1064,6 +1064,27 @@ fn blank(d: &Doc, p: usize) -> bool {
                     }))
         })
 }
+
+// formatter_titles._문단_본문글: 본문 run의 직접 t만 읽고 t 자식의 tail은 포함한다.
+// 도형·표 안의 글은 현재 문단의 역할 판정에 섞지 않는다.
+fn body_text(d: &Doc, p: usize) -> String {
+    let mut text = String::new();
+    for &r in &d.nodes[p].children {
+        if d.tag(r) != "run" {
+            continue;
+        }
+        for &t in &d.nodes[r].children {
+            if d.tag(t) != "t" {
+                continue;
+            }
+            text.push_str(d.nodes[t].text.as_deref().unwrap_or(""));
+            for &child in &d.nodes[t].children {
+                text.push_str(d.nodes[child].tail.as_deref().unwrap_or(""));
+            }
+        }
+    }
+    text
+}
 fn title_process(source: &Path, target: &Path, cfg: &Config, sel: &Value) -> R<usize> {
     let mut contents = zipio::read_hwpx_safely(source)?;
     let (hi, mut h) = crate::parse_header(&contents)?;
@@ -1207,7 +1228,7 @@ fn title_process(source: &Path, target: &Path, cfg: &Config, sel: &Value) -> R<u
                 end += 1;
             }
             if end > start && end < d.nodes[0].children.len() {
-                let text = rules::py_strip(&d.jstr_walk(d.nodes[0].children[end])).to_owned();
+                let text = rules::py_strip(&body_text(d, d.nodes[0].children[end])).to_owned();
                 let first = text.chars().next();
                 if matches!(first, Some('□' | 'ㅁ' | 'ㅇ' | '○' | '-' | '※' | '*'))
                     && !crate::style::leading_marker(&text).1.is_empty()

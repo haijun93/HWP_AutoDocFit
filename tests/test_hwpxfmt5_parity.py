@@ -41,8 +41,8 @@ class NativeParityTests(unittest.TestCase):
             result = harness.run(Path(harness.base.find_bin(None)), Path(folder))
         self.assertEqual(result['failed'], 0, [r for r in result['results'] if r['ok'] is False])
         self.assertEqual(result['unsupported_failed'], 0, result['unsupported'])
-        self.assertGreaterEqual(result['passed'], 245)
-        self.assertGreaterEqual(result['changed'], 96)
+        self.assertGreaterEqual(result['passed'], 247)
+        self.assertGreaterEqual(result['changed'], 98)
         for name in ('attachment', 'box', 'title', 'midtitle'):
             changed = sum(bool(r.get('count')) for r in result['results'] if r['processor'] == name)
             self.assertGreaterEqual(changed, 15, name)

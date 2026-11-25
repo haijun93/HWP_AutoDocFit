@@ -1,10 +1,26 @@
 {
-  "pairs": 246,
-  "passed": 245,
+  "pairs": 248,
+  "passed": 247,
   "failed": 0,
   "both_rejected": 1,
-  "changed": 96,
+  "changed": 98,
   "results": [
+    {
+      "name": "title_body_control_0",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
+    {
+      "name": "title_body_control_1",
+      "processor": "title",
+      "ok": true,
+      "count": 1,
+      "strict_noise": 0,
+      "diffs": []
+    },
     {
       "name": "title_marker_boundary_0",
       "processor": "title",
