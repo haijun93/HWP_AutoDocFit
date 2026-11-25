@@ -58,6 +58,8 @@ pub fn relative_time_label(now_unix: u64, then_unix: u64) -> String {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct Settings {
+    /// UNIFIED1: 요청 하나로 세 검색 단을 순차 발행한다. 기존 설정은 꺼짐.
+    pub unified_search: bool,
     pub theme: String,
     pub hotkey: String,
     pub recent_queries: Vec<String>,
@@ -89,6 +91,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            unified_search: false,
             theme: "dark".into(),
             hotkey: "Ctrl+Alt+Space".into(),
             recent_queries: Vec::new(),
