@@ -26,7 +26,8 @@ from docfit_core.timemachine import thumbs
 from docfit_core.timemachine.rules import cloud_only, excluded_name
 from docfit_app.kfind_process import PIPE_NAME
 from docfit_core.timemachine.store import path_key
-from .library_scope import current_default_roots, is_excluded_path
+from .library_scope import current_default_roots, is_excluded_path, is_listed_location
+from .file_ops import FileOps, handle_command as handle_file_ops
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
@@ -191,6 +192,40 @@ class DocGridService:
         self._drive_roots = tuple(drive_roots) if drive_roots is not None else None
         self._background_scan = BackgroundScan()
         self.settings_store = settings_store
+        self.file_ops = FileOps(DOC_EXTENSIONS, after_item=self._after_file_op, after_all=self._after_file_ops)
+
+    def _after_file_op(self, op: str, source: Path, target: Path | None, before: os.stat_result) -> dict[str, Any]:
+        """성공한 파일 하나의 썸네일 캐시를 맞추고, 새 위치가 목록 범위인지 알려 준다."""
+        old_key = self.cache.key(source, before.st_mtime_ns, before.st_size)
+        if target is None:
+            self.cache.discard(old_key)
+            return {"listed": False}
+        if op != "copy":
+            self.cache.rekey(old_key, self.cache.key(target, before.st_mtime_ns, before.st_size))
+        # 이름 변경은 같은 폴더라 목록에 있던 그대로다.
+        return {"listed": op == "rename" or is_listed_location(
+            target, self._default_roots(), read_exclusions(self.settings_store))}
+
+    def _after_file_ops(self, op: str, results: list[dict[str, Any]]) -> None:
+        """다음에 화면을 열 때 보이는 저장된 목록에서도 옛 경로를 걷어낸다."""
+        done = {os.path.normcase(item["path"]): item for item in results if item["ok"]}
+        if not done:
+            return
+
+        def change(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            changed: list[dict[str, Any]] = []
+            for row in rows:
+                item = done.get(os.path.normcase(str(row.get("path", ""))))
+                if item is None or op == "copy":
+                    changed.append(row)
+                if item is None or not item.get("listed") or "new_path" not in item:
+                    continue
+                name = item["new_name"]
+                changed.append({**row, "path": item["new_path"], "name": name, "stem": Path(name).stem,
+                                "thumb_key": "", "has_thumb": False})
+            return changed
+
+        library_scan_cache.rewrite("documents", change)
 
     def _default_roots(self) -> tuple[Path, ...]:
         return tuple(Path(p) for p in (self._drive_roots if self._drive_roots is not None else current_default_roots()))
@@ -635,6 +670,10 @@ class DocGridService:
                 if not path or not isinstance(path, str):
                     return {"ok": False, "code": "INVALID_PATH", "message": "파일 경로를 지정해 주세요."}
                 return self.open_file(path)
+
+            handled = handle_file_ops(self.file_ops, action, payload)
+            if handled is not None:
+                return handled
 
             if action == "clear_cache":
                 cleared = self.clear_cache()

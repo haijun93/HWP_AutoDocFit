@@ -7,6 +7,8 @@ import 'package:flutter/gestures.dart' show kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../common/file_ops_area.dart';
+import '../common/file_selection.dart';
 import '../common/thumb_size_slider.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 
@@ -68,9 +70,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
 
-  // 다중 선택 모드 및 선택된 사진 경로
+  // 다중 선택 모드 및 선택된 사진 경로(선택 모드가 아니어도 클릭·Ctrl·Shift 로 선택한다)
   bool _selectionMode = false;
-  final Set<String> _selectedPaths = {};
+  final FileSelection _selection = FileSelection();
+  Set<String> get _selectedPaths => _selection.paths;
 
   // 검색 및 필터 상태
   final TextEditingController _searchController = TextEditingController();
@@ -341,7 +344,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       _errorMessage = null;
       _currentFolder = folder;
       _searchResults = null;
-      _selectedPaths.clear();
+      _selection.clear();
       _selectionMode = false;
       _showDuplicates = false;
     });
@@ -472,7 +475,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       _loading = true;
       _errorMessage = null;
       _searchResults = null;
-      _selectedPaths.clear();
+      _selection.clear();
       _selectionMode = false;
     });
 
@@ -548,6 +551,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       _loading = true;
       _errorMessage = null;
       _showDuplicates = false;
+      _selection.clear(); // 안 보이게 된 사진이 선택에 남지 않게 한다.
     });
 
     try {
@@ -816,10 +820,90 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   }
 
   void _clearSelection() {
-    setState(() {
-      _selectedPaths.clear();
-    });
+    setState(_selection.clear);
   }
+
+  /// 지금 화면에 보이는 순서의 사진 경로.
+  List<String> get _order => [
+    if (_showDuplicates)
+      for (final group in _duplicateGroups)
+        for (final item in (group['items'] as List<Map<String, Object?>>? ?? const []))
+          '${item['path'] ?? ''}'
+    else
+      for (final photo in _getAllCurrentPhotos()) '${photo['path'] ?? ''}',
+  ];
+
+  void _selectByClick(String path) {
+    final range = FileSelection.rangeKeyPressed;
+    // 선택 모드에서는 보조키 없는 클릭도 추가·해제다.
+    final toggle = FileSelection.toggleKeyPressed || (_selectionMode && !range);
+    setState(() => _selection.click(path, _order, toggle: toggle, range: range));
+  }
+
+  void _openViewerFor(String path, {List<Map<String, Object?>>? customPhotos}) {
+    final photos = customPhotos ?? _getAllCurrentPhotos();
+    _openViewerModal(
+      photos.indexWhere((p) => p['path'] == path),
+      customPhotos: customPhotos,
+    );
+  }
+
+  /// 파일 작업 결과를 모든 보기의 목록과 썸네일 메모리 캐시에 반영한다.
+  void _applyFileResults(String op, List<Map<String, Object?>> results) {
+    if (!mounted || op == 'clipboard') return;
+    List<Map<String, Object?>> apply(List<Map<String, Object?>> items) =>
+        applyFileResults(items, op, results, (photo, path, name) {
+          final thumb = _thumbCache['${photo['path']}'];
+          if (thumb != null) _thumbCache[path] = thumb;
+          return {
+            ...photo,
+            'path': path,
+            'name': name,
+            'filename': name,
+            if (op == 'copy') 'favorite': false,
+            if (op == 'copy') 'tags': <String>[],
+          };
+        });
+
+    // 중복 보기에서도 원래 목록(_groups)까지 함께 고친다.
+    setState(() {
+      for (final group in _groups) {
+        group['photos'] = apply(group['photos'] as List<Map<String, Object?>>? ?? []);
+        group.remove('count');
+      }
+      _groups.removeWhere((g) => (g['photos'] as List).isEmpty);
+      if (_searchResults != null) _searchResults = apply(_searchResults!);
+      for (final group in _duplicateGroups) {
+        group['items'] = apply(group['items'] as List<Map<String, Object?>>? ?? []);
+      }
+      _duplicateGroups.removeWhere((g) => (g['items'] as List).length < 2);
+      if (op != 'copy') {
+        for (final result in results) {
+          if (result['ok'] == true) _thumbCache.remove('${result['path']}');
+        }
+      }
+    });
+
+    // 폴더·위치 묶음은 경로에 따라 달라지므로 옮기거나 복사하면 다시 묶는다.
+    final regroup = (op == 'move' || op == 'copy') &&
+        (_currentViewMode == 'folder' || _currentViewMode == 'location') &&
+        _searchResults == null &&
+        !_showDuplicates &&
+        results.any((r) => r['ok'] == true);
+    if (regroup && _currentFolder != null) _loadPhotos(_currentFolder!);
+    _loadTagOptions();
+  }
+
+  Widget _withFileOps(Widget child) => FileOpsArea(
+    api: widget.api,
+    method: 'photo_album',
+    selection: _selection,
+    order: _order,
+    directoryPicker: widget.directoryPicker,
+    onSelectionChanged: () => setState(() {}),
+    onApplied: _applyFileResults,
+    child: child,
+  );
 
   Future<void> _startBatchExport() async {
     if (_selectedPaths.isEmpty) {
@@ -1056,7 +1140,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   setState(() {
                     _selectionMode = !_selectionMode;
                     if (!_selectionMode) {
-                      _selectedPaths.clear();
+                      _selection.clear();
                     }
                   });
                 },
@@ -1296,7 +1380,9 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     }
 
     if (_showDuplicates) {
-      return _buildDuplicatesView();
+      return _duplicateGroups.isEmpty
+          ? _buildDuplicatesView()
+          : _withFileOps(_buildDuplicatesView());
     }
 
     final allPhotos = _getAllCurrentPhotos();
@@ -1343,9 +1429,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           child: Row(
             children: [
               Expanded(
-                child: _searchResults != null
-                    ? _buildSearchResultsGrid()
-                    : _buildGroupedDateGrid(),
+                child: _withFileOps(
+                  _searchResults != null
+                      ? _buildSearchResultsGrid()
+                      : _buildGroupedDateGrid(),
+                ),
               ),
               if (_selectionMode && _selectedPaths.length == 1)
                 SizedBox(width: 260, child: _buildTagEditor()),
@@ -1438,6 +1526,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       _searchController.clear();
                       setState(() {
                         _searchResults = null;
+                        _selection.clear();
                       });
                     },
                   ),
@@ -1468,19 +1557,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   onThumbLoaded: (bytes) {
                     _thumbCache[path] = bytes;
                   },
-                  onTap: () {
-                    if (_selectionMode) {
-                      setState(() {
-                        if (selected) {
-                          _selectedPaths.remove(path);
-                        } else {
-                          _selectedPaths.add(path);
-                        }
-                      });
-                    } else {
-                      _openViewerModal(index);
-                    }
-                  },
+                  onSelect: () => _selectByClick(path),
+                  onTap: () => _openViewerFor(path),
                   // 선택 모드에서는 연속 클릭이 곧 선택 전환이라 더블클릭 판정을 두지 않는다.
                   onDoubleTap: _selectionMode
                       ? null
@@ -1496,7 +1574,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   }
 
   Widget _buildGroupedDateGrid() {
-    var globalIndexCounter = 0;
     return Scrollbar(
       child: CustomScrollView(
         key: const ValueKey('photoAlbumGroupedGridView'),
@@ -1546,7 +1623,6 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   final photo = photos[index];
                   final path = '${photo['path'] ?? ''}';
                   final selected = _selectedPaths.contains(path);
-                  final thisGlobalIndex = globalIndexCounter++;
                   return _PhotoCard(
                     key: ValueKey('photoCard-$path'),
                     photo: photo,
@@ -1557,19 +1633,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                     onThumbLoaded: (bytes) {
                       _thumbCache[path] = bytes;
                     },
-                    onTap: () {
-                      if (_selectionMode) {
-                        setState(() {
-                          if (selected) {
-                            _selectedPaths.remove(path);
-                          } else {
-                            _selectedPaths.add(path);
-                          }
-                        });
-                      } else {
-                        _openViewerModal(thisGlobalIndex);
-                      }
-                    },
+                    onSelect: () => _selectByClick(path),
+                    onTap: () => _openViewerFor(path),
                     onDoubleTap: _selectionMode
                         ? null
                         : () => _openWithApp(photo),
@@ -1751,10 +1816,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       onThumbLoaded: (bytes) {
                         _thumbCache[path] = bytes;
                       },
-                      onTap: () {
-                        _openViewerModal(index, customPhotos: items);
-                      },
-                      onDoubleTap: () => _openWithApp(item),
+                      selectionMode: _selectionMode,
+                      isSelected: _selectedPaths.contains(path),
+                      onSelect: () => _selectByClick(path),
+                      onTap: () => _openViewerFor(path, customPhotos: items),
+                      onDoubleTap: _selectionMode ? null : () => _openWithApp(item),
                       onToggleFavorite: () => _toggleFavorite(item),
                     ),
                     // 대표 배지 및 거리 배지
@@ -1856,6 +1922,7 @@ class _PhotoCard extends StatefulWidget {
     required this.photo,
     required this.api,
     required this.onTap,
+    required this.onSelect,
     required this.onToggleFavorite,
     this.onDoubleTap,
     this.cachedThumb,
@@ -1866,7 +1933,10 @@ class _PhotoCard extends StatefulWidget {
 
   final Map<String, Object?> photo;
   final ApiCall api;
+  /// 크게 보기(보조키 없는 한 번 클릭, 선택 모드가 아닐 때).
   final VoidCallback onTap;
+  /// 선택 반영. 클릭하는 즉시 불리며 Ctrl·Shift 는 부른 쪽이 읽는다.
+  final VoidCallback onSelect;
   /// 있으면 한 번 클릭([onTap])은 더블클릭 판정 시간 뒤에 실행된다.
   final VoidCallback? onDoubleTap;
   final VoidCallback onToggleFavorite;
@@ -1893,12 +1963,20 @@ class _PhotoCardState extends State<_PhotoCard>
 
   void _handleTap() {
     final onDoubleTap = widget.onDoubleTap;
-    if (onDoubleTap == null) {
+    // Ctrl·Shift 클릭과 선택 모드의 클릭은 선택만 한다.
+    if (widget.selectionMode ||
+        FileSelection.toggleKeyPressed ||
+        FileSelection.rangeKeyPressed) {
+      if (_awaitingSecondClick) setState(_clickWait.reset);
+      widget.onSelect();
+    } else if (onDoubleTap == null) {
+      widget.onSelect();
       widget.onTap();
     } else if (_awaitingSecondClick) {
       setState(_clickWait.reset);
       onDoubleTap();
     } else {
+      widget.onSelect();
       setState(() {
         _clickWait.forward(from: 0);
       });
