@@ -1,5 +1,7 @@
 """Shared settings defaults; storage keys and legacy adapter bindings are preserved."""
 DEFAULTS = {
+    # 기존 변환은 kordoc 유지. 선택형 라우팅의 후속 소비자가 명시적으로 읽는다.
+    'docx_engine': 'kordoc',
     'shell_menu': False,
     'menu_display_mode': 'sidebar',
     'kclip_settings_mode': 'dialog',

@@ -95,3 +95,7 @@ fix/rust-hierarchy-parity(기준 3a69b3e4)에서 Python 검색 위계 규칙 판
 SCM 명령·SID별 검색 파이프·대체 방식 저장·공개 색인 제거를 구현했다. 실제 SCM 등록과 예약 작업 생성은 시험하지 않는다.
 구현 범위·프로토콜·시험 결과·후속 작업은 docs/T4_KFIND_SERVICE_2026-11-13.md에 기록한다.
 이번 지시는 로컬 커밋만 허용한다. 푸시·태그·GitLab 접근 금지.
+
+# KORDOCD1 인계 (2026-11-26)
+
+feature/KORDOCD1, 기준 cd138da5. 사용자 2026-11-25 성능 우선 방침을 TODO에 반영했다. 합성 MD 19종·DOCX/XLSX/PPTX/HTML 각 5종의 native 변환 품질 및 한/글 2020 열기/사본 저장은 39/39, 각 1쪽이다. 단건·20건 및 자식 포함 최대 commit은 native 후보가 유리했으나 검증된 기능 범위만 권고한다. HWP 추출은 klib/kordoc 5/5, HWPX는 klib의 정상 엔티티 거부로 4/5·kordoc 5/5다. 기본 docx_engine=kordoc 및 기존 호출/추출 우선순위 유지, 선택형 라우팅만 추가했다. 관련 시험 94개 OK, 전체 시험은 고정 사본에서 별도 실행 예정. 결과/근거/미확인은 docs/KORDOCD1_RESULT_2026-11-25.md와 동봉 JSON 참조. 로컬 커밋만, 푸시 금지.

@@ -1,0 +1,7207 @@
+{
+  "suite": "KORDOCD1-synthetic-v1",
+  "base": "cd138da5",
+  "kordoc_version": "4.24.9",
+  "python": "3.15.2 (tags/v3.15.2:5e58eaa, Oct 25 2026, 17:27:03) [MSC v.1951 64 bit (AMD64)]",
+  "memory_metric": "Windows Job Object PeakJobMemoryUsed (commit, not RSS)",
+  "measurement": "fresh Python worker, startup included, descendant processes in job; once valid single and batch20; no concurrent builds/tests",
+  "manifest": [
+    {
+      "id": "doc_basic",
+      "format": "md",
+      "file": "sources/doc_basic.md",
+      "task": "convert",
+      "sha256": "d2c8c39d4ae076ebf29400eafa53eb0737bdf2c9385c81cccf0dcb22dc3716d0",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "마포구 합성 보고서"
+          ],
+          [
+            2,
+            "추진 배경"
+          ],
+          [
+            2,
+            "추진 일정"
+          ],
+          [
+            3,
+            "세부 표"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "주민 편의 개선"
+          ],
+          [
+            1,
+            false,
+            "창구 대기시간 단축"
+          ],
+          [
+            1,
+            false,
+            "누리집 안내 정비"
+          ],
+          [
+            0,
+            false,
+            "예산 절감"
+          ],
+          [
+            0,
+            true,
+            "계획 수립"
+          ],
+          [
+            0,
+            true,
+            "시범 운영"
+          ],
+          [
+            1,
+            true,
+            "1차 점검"
+          ],
+          [
+            0,
+            true,
+            "전면 시행"
+          ]
+        ],
+        "tables": [
+          [
+            [
+              "구분",
+              "건수",
+              "비고"
+            ],
+            [
+              "접수",
+              "120",
+              "정상"
+            ],
+            [
+              "처리",
+              "118",
+              "2건 보류"
+            ]
+          ]
+        ],
+        "images": 1,
+        "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝."
+      }
+    },
+    {
+      "id": "doc_tables",
+      "format": "md",
+      "file": "sources/doc_tables.md",
+      "task": "convert",
+      "sha256": "7c5bc70c5e3c8b521341ee065511fe1652342777a1cea2aaafd9d4fa48286d0a",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "표 중심 문서"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "값"
+            ],
+            [
+              "가",
+              "1"
+            ]
+          ],
+          [
+            [
+              "부서",
+              "담당",
+              "연락처"
+            ],
+            [
+              "기획",
+              "김하나",
+              "02-0000-0001"
+            ],
+            [
+              "총무",
+              "이두리",
+              "02-0000-0002"
+            ],
+            [
+              "복지",
+              "박세나",
+              "02-0000-0003"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+      }
+    },
+    {
+      "id": "doc_text_only",
+      "format": "md",
+      "file": "sources/doc_text_only.md",
+      "task": "convert",
+      "sha256": "6e9155ba735296530ead24c9573e6a45b1173bb7fd94764624de346db76bc35c",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+      }
+    },
+    {
+      "id": "headings",
+      "format": "md",
+      "file": "sources/headings.md",
+      "task": "convert",
+      "sha256": "ef5ccf53dd78809825998e23c52bd5f9fc3a8df989f69a7696a2ee579d1eaca9",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "공공 보고서"
+          ],
+          [
+            2,
+            "추진 배경"
+          ],
+          [
+            3,
+            "세부 계획"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "공공 보고서\n추진 배경\n세부 계획\n기본 내용"
+      }
+    },
+    {
+      "id": "public_markers",
+      "format": "md",
+      "file": "sources/public_markers.md",
+      "task": "convert",
+      "sha256": "69204150706e2e6c8998716deeb9a022cb1c3bfaa30db60eadb3be963a85dd46",
+      "expected": {
+        "headings": [],
+        "lists": [
+          [
+            0,
+            false,
+            "추진 방향"
+          ],
+          [
+            1,
+            false,
+            "운영 방식"
+          ],
+          [
+            2,
+            false,
+            "세부 내용"
+          ],
+          [
+            0,
+            false,
+            "참고 사항"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "추진 방향\n운영 방식\n세부 내용\n참고 사항"
+      }
+    },
+    {
+      "id": "bullets",
+      "format": "md",
+      "file": "sources/bullets.md",
+      "task": "convert",
+      "sha256": "c56eb8511023b61cdcbb073668b1eb4a7a6f77f4b7c67e7746305b4a32dee735",
+      "expected": {
+        "headings": [],
+        "lists": [
+          [
+            0,
+            false,
+            "일반 하이픈"
+          ],
+          [
+            0,
+            false,
+            "별표 항목"
+          ],
+          [
+            0,
+            false,
+            "추가 항목"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "일반 하이픈\n별표 항목\n추가 항목"
+      }
+    },
+    {
+      "id": "ordered",
+      "format": "md",
+      "file": "sources/ordered.md",
+      "task": "convert",
+      "sha256": "848fc5c9fe846c9d8088a43bffeb2e8eaf5b66c0bdf4b5227ee18291339c2df9",
+      "expected": {
+        "headings": [],
+        "lists": [
+          [
+            0,
+            true,
+            "계획 수립"
+          ],
+          [
+            0,
+            true,
+            "시범 운영"
+          ],
+          [
+            0,
+            true,
+            "전면 시행"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "계획 수립\n시범 운영\n전면 시행"
+      }
+    },
+    {
+      "id": "nested",
+      "format": "md",
+      "file": "sources/nested.md",
+      "task": "convert",
+      "sha256": "8b3e0714a21a83a2af30e45b32c4ca25b373cef0128727a6d5baf9c523ddf772",
+      "expected": {
+        "headings": [],
+        "lists": [
+          [
+            0,
+            false,
+            "상위 가"
+          ],
+          [
+            1,
+            false,
+            "하위 가"
+          ],
+          [
+            2,
+            false,
+            "세부 가"
+          ],
+          [
+            1,
+            false,
+            "하위 나"
+          ],
+          [
+            0,
+            false,
+            "상위 나"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "상위 가\n하위 가\n세부 가\n하위 나\n상위 나"
+      }
+    },
+    {
+      "id": "emphasis",
+      "format": "md",
+      "file": "sources/emphasis.md",
+      "task": "convert",
+      "sha256": "de1a88bd2e954b7cd1da1335fd2c5996f1a34b1f3c448677218b07ed8d30f1de",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "강조 시험"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "설명"
+            ],
+            [
+              "굵은 칸",
+              "기울인 칸"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "강조 시험\n일반 굵게 기울임 동시 강조 끝\n항목\n설명\n굵은 칸\n기울인 칸"
+      }
+    },
+    {
+      "id": "linebreaks",
+      "format": "md",
+      "file": "sources/linebreaks.md",
+      "task": "convert",
+      "sha256": "38fc8172304dc3609330fbec54f2bdca9e194cce60f59bf6ed8a9a106bfa12b5",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "줄바꿈 시험"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "설명"
+            ],
+            [
+              "줄 하나 줄 둘",
+              "A B"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "줄바꿈 시험\n첫째 줄 둘째 줄 셋째 줄 넷째 줄\n항목\n설명\n줄 하나 줄 둘\nA B"
+      }
+    },
+    {
+      "id": "mixed",
+      "format": "md",
+      "file": "sources/mixed.md",
+      "task": "convert",
+      "sha256": "49318a178c4c97df96249554f70535c7662272986dfc93f495a4f5a473dac001",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "2026년 업무 보고"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "접수 120건"
+          ],
+          [
+            1,
+            false,
+            "처리 118건"
+          ]
+        ],
+        "tables": [
+          [
+            [
+              "구분",
+              "값"
+            ],
+            [
+              "합계",
+              "1,234"
+            ],
+            [
+              "부호",
+              "A | B"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "2026년 업무 보고\n한국어 English 1,234 & <태그>\n접수 120건\n처리 118건\n구분\n값\n합계\n1,234\n부호\nA | B\n끝."
+      }
+    },
+    {
+      "id": "heading_456",
+      "format": "md",
+      "file": "sources/heading_456.md",
+      "task": "convert",
+      "sha256": "afb1cd78e03336b660bc010ade4d6673b508ffe65ab1f4cf31e425484d34866e",
+      "expected": {
+        "headings": [
+          [
+            4,
+            "네 단계"
+          ],
+          [
+            5,
+            "다섯 단계"
+          ],
+          [
+            6,
+            "여섯 단계"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "네 단계\n다섯 단계\n여섯 단계\n본문"
+      }
+    },
+    {
+      "id": "links",
+      "format": "md",
+      "file": "sources/links.md",
+      "task": "convert",
+      "sha256": "5ea916c6498e8308ce2ae87d0dc8f97a934ec8bfd61e59cedb992830a37d391f",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "한글 링크 및 강조"
+      }
+    },
+    {
+      "id": "code",
+      "format": "md",
+      "file": "sources/code.md",
+      "task": "convert",
+      "sha256": "e17ea74b18e8a484bcaaafead0eff566d66a4412f0d1be440b946d1ccabc610e",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "def sample():\n    return \"<br> **원문**\"\n\nprint(sample())\n끝"
+      }
+    },
+    {
+      "id": "png_wide",
+      "format": "md",
+      "file": "sources/png_wide.md",
+      "task": "convert",
+      "sha256": "e65e83700627289310c1f0855ed821af1043b9dd2f447e634b2c97fc8f93dbca",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "넓은 그림"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 1,
+        "text": "넓은 그림\n끝"
+      }
+    },
+    {
+      "id": "jpeg_relative",
+      "format": "md",
+      "file": "sources/jpeg_relative.md",
+      "task": "convert",
+      "sha256": "143f500b15c56324282254849e1da3287178d6242e9a2b78220190b9e321c9d0",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 1,
+        "text": "앞  뒤"
+      }
+    },
+    {
+      "id": "table_picture",
+      "format": "md",
+      "file": "sources/table_picture.md",
+      "task": "convert",
+      "sha256": "c364c4808532a351578df9a3852327976c73cd56a93528ab1f6e19cc112027d4",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "그림",
+              "설명"
+            ],
+            [
+              "",
+              "칸 내용"
+            ]
+          ]
+        ],
+        "images": 1,
+        "text": "그림\n설명\n\n칸 내용"
+      }
+    },
+    {
+      "id": "code_inline",
+      "format": "md",
+      "file": "sources/code_inline.md",
+      "task": "convert",
+      "sha256": "46f04dc8561aaa9ac425e0bf3ff59446c5539626b2c75688f0148c25fc312d5c",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "코드 a < b && **c** 끝\n![그림 아님](missing.png)\n    코드 탭"
+      }
+    },
+    {
+      "id": "breaks_mixed",
+      "format": "md",
+      "file": "sources/breaks_mixed.md",
+      "task": "convert",
+      "sha256": "218a683cf5312c4e4db16d5c938e0accebd9da3bb225be96674a8b56ea2ffa09",
+      "expected": {
+        "headings": [
+          [
+            4,
+            "줄바꿈 제목"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "A",
+              "B"
+            ],
+            [
+              "첫 둘 셋",
+              "끝"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "줄바꿈 제목\n가 나 다 라 마\nA\nB\n첫 둘 셋\n끝"
+      }
+    },
+    {
+      "id": "doc_basic",
+      "format": "docx",
+      "file": "sources/doc_basic.docx",
+      "task": "convert",
+      "sha256": "5bc5ab479197f1001475142c09bc28b0e9a82da9711d45f6cfaf0cc1aa1f3b42",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "마포구 합성 보고서"
+          ],
+          [
+            2,
+            "추진 배경"
+          ],
+          [
+            2,
+            "추진 일정"
+          ],
+          [
+            3,
+            "세부 표"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "주민 편의 개선"
+          ],
+          [
+            1,
+            false,
+            "창구 대기시간 단축"
+          ],
+          [
+            1,
+            false,
+            "누리집 안내 정비"
+          ],
+          [
+            0,
+            false,
+            "예산 절감"
+          ],
+          [
+            0,
+            true,
+            "계획 수립"
+          ],
+          [
+            0,
+            true,
+            "시범 운영"
+          ],
+          [
+            1,
+            true,
+            "1차 점검"
+          ],
+          [
+            0,
+            true,
+            "전면 시행"
+          ]
+        ],
+        "tables": [
+          [
+            [
+              "구분",
+              "건수",
+              "비고"
+            ],
+            [
+              "접수",
+              "120",
+              "정상"
+            ],
+            [
+              "처리",
+              "118",
+              "2건 보류"
+            ]
+          ]
+        ],
+        "images": 1,
+        "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝."
+      }
+    },
+    {
+      "id": "doc_basic",
+      "format": "html",
+      "file": "sources/doc_basic.html",
+      "task": "convert",
+      "sha256": "15ebc6a7f3206743e828368462460832e56bcfbe353d4c0578e3eeb42230fb47",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "마포구 합성 보고서"
+          ],
+          [
+            2,
+            "추진 배경"
+          ],
+          [
+            2,
+            "추진 일정"
+          ],
+          [
+            3,
+            "세부 표"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "주민 편의 개선"
+          ],
+          [
+            1,
+            false,
+            "창구 대기시간 단축"
+          ],
+          [
+            1,
+            false,
+            "누리집 안내 정비"
+          ],
+          [
+            0,
+            false,
+            "예산 절감"
+          ],
+          [
+            0,
+            true,
+            "계획 수립"
+          ],
+          [
+            0,
+            true,
+            "시범 운영"
+          ],
+          [
+            1,
+            true,
+            "1차 점검"
+          ],
+          [
+            0,
+            true,
+            "전면 시행"
+          ]
+        ],
+        "tables": [
+          [
+            [
+              "구분",
+              "건수",
+              "비고"
+            ],
+            [
+              "접수",
+              "120",
+              "정상"
+            ],
+            [
+              "처리",
+              "118",
+              "2건 보류"
+            ]
+          ]
+        ],
+        "images": 1,
+        "text": "마포구 합성 보고서\n이 문서는 변환 품질 시험용 합성 문서입니다. 숫자 1,234와 English words 포함.\n추진 배경\n주민 편의 개선\n창구 대기시간 단축\n누리집 안내 정비\n예산 절감\n추진 일정\n계획 수립\n시범 운영\n1차 점검\n전면 시행\n세부 표\n구분\n건수\n비고\n접수\n120\n정상\n처리\n118\n2건 보류\n끝."
+      }
+    },
+    {
+      "id": "doc_tables",
+      "format": "docx",
+      "file": "sources/doc_tables.docx",
+      "task": "convert",
+      "sha256": "54c75fe990bcaaa120d6c81cb5128ee9bc9d7968702af05c71497fb60aa9098b",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "표 중심 문서"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "값"
+            ],
+            [
+              "가",
+              "1"
+            ]
+          ],
+          [
+            [
+              "부서",
+              "담당",
+              "연락처"
+            ],
+            [
+              "기획",
+              "김하나",
+              "02-0000-0001"
+            ],
+            [
+              "총무",
+              "이두리",
+              "02-0000-0002"
+            ],
+            [
+              "복지",
+              "박세나",
+              "02-0000-0003"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+      }
+    },
+    {
+      "id": "doc_tables",
+      "format": "html",
+      "file": "sources/doc_tables.html",
+      "task": "convert",
+      "sha256": "58fe25ebcaefd6c901e633cd86751d664fe5c7c5eddaead3d2c38d69c2dab213",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "표 중심 문서"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "값"
+            ],
+            [
+              "가",
+              "1"
+            ]
+          ],
+          [
+            [
+              "부서",
+              "담당",
+              "연락처"
+            ],
+            [
+              "기획",
+              "김하나",
+              "02-0000-0001"
+            ],
+            [
+              "총무",
+              "이두리",
+              "02-0000-0002"
+            ],
+            [
+              "복지",
+              "박세나",
+              "02-0000-0003"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "표 중심 문서\n항목\n값\n가\n1\n표 사이 문단.\n부서\n담당\n연락처\n기획\n김하나\n02-0000-0001\n총무\n이두리\n02-0000-0002\n복지\n박세나\n02-0000-0003"
+      }
+    },
+    {
+      "id": "doc_text_only",
+      "format": "docx",
+      "file": "sources/doc_text_only.docx",
+      "task": "convert",
+      "sha256": "dea42722c58dccffb13d3aadeefa81e717dc3019d823220c13b0b7700e8191ee",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+      }
+    },
+    {
+      "id": "doc_text_only",
+      "format": "html",
+      "file": "sources/doc_text_only.html",
+      "task": "convert",
+      "sha256": "c5408949c3cd278b26c0e3aa7629a0b8381f1d9e656d8f616944b44d1aca5093",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "제목도 목록도 표도 없는 본문입니다.\n두 번째 문단에는 한국어와 English, 그리고 12345가 섞여 있습니다."
+      }
+    },
+    {
+      "id": "doc_image",
+      "format": "docx",
+      "file": "sources/doc_image.docx",
+      "task": "convert",
+      "sha256": "5ac4fbf094073ec265b6c8f2ce4c107639e0873972e85195bd528bfb04d7b79a",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "그림 보고서"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 1,
+        "text": "그림 보고서\n그림 다음 문단입니다."
+      }
+    },
+    {
+      "id": "doc_image",
+      "format": "html",
+      "file": "sources/doc_image.html",
+      "task": "convert",
+      "sha256": "cb703b1c3cf814874b2b7f6e5d73c1318d7c5af369e1968c5012dcd44d666896",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "그림 보고서"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 1,
+        "text": "그림 보고서\n그림 다음 문단입니다."
+      }
+    },
+    {
+      "id": "doc_nested",
+      "format": "docx",
+      "file": "sources/doc_nested.docx",
+      "task": "convert",
+      "sha256": "eca3fc95a623b61234550a0725b0a3a930289c7cc4f81b6aa30ce8ed93e04db4",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "계층"
+          ],
+          [
+            2,
+            "주제"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "상위"
+          ],
+          [
+            1,
+            false,
+            "하위"
+          ],
+          [
+            2,
+            false,
+            "세부"
+          ],
+          [
+            0,
+            true,
+            "첫 순서"
+          ],
+          [
+            0,
+            true,
+            "둘째 순서"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "계층\n주제\n상위\n하위\n세부\n첫 순서\n둘째 순서"
+      }
+    },
+    {
+      "id": "doc_nested",
+      "format": "html",
+      "file": "sources/doc_nested.html",
+      "task": "convert",
+      "sha256": "49902d3db4324fd11459ce98011832e278d47fa4100d0675bbe2a9a0c290b7c1",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "계층"
+          ],
+          [
+            2,
+            "주제"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "상위"
+          ],
+          [
+            1,
+            false,
+            "하위"
+          ],
+          [
+            2,
+            false,
+            "세부"
+          ],
+          [
+            0,
+            true,
+            "첫 순서"
+          ],
+          [
+            0,
+            true,
+            "둘째 순서"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "계층\n주제\n상위\n하위\n세부\n첫 순서\n둘째 순서"
+      }
+    },
+    {
+      "id": "sheet_basic",
+      "format": "xlsx",
+      "file": "sources/sheet_basic.xlsx",
+      "task": "convert",
+      "sha256": "0564dd95812f8c53f63418c66ab136327f0141dc044cd5ad3afab8392a895f77",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "항목",
+              "금액",
+              "비고"
+            ],
+            [
+              "인건비",
+              "1200",
+              "확정"
+            ],
+            [
+              "운영비",
+              "300",
+              "예정"
+            ]
+          ],
+          [
+            [
+              "월",
+              "건수"
+            ],
+            [
+              "1월",
+              "10"
+            ],
+            [
+              "2월",
+              "12"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "항목\n금액\n비고\n인건비\n1200\n확정\n운영비\n300\n예정\n월\n건수\n1월\n10\n2월\n12"
+      }
+    },
+    {
+      "id": "sheet_empty_cells",
+      "format": "xlsx",
+      "file": "sources/sheet_empty_cells.xlsx",
+      "task": "convert",
+      "sha256": "8050e7d8a94c550bb4c9696472ccfd76dee1c440b0594d47beff463b6d4fb88d",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "키",
+              "값",
+              "메모"
+            ],
+            [
+              "가",
+              "",
+              "끝"
+            ],
+            [
+              "",
+              "20",
+              ""
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "키\n값\n메모\n가\n\n끝\n\n20\n"
+      }
+    },
+    {
+      "id": "sheet_unicode",
+      "format": "xlsx",
+      "file": "sources/sheet_unicode.xlsx",
+      "task": "convert",
+      "sha256": "791c9d792f763a0c523d925af107c5e097c63c594b02b11aa728133eb1b4277a",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "한국어",
+              "English"
+            ],
+            [
+              "특수 & < >",
+              "1234.50"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "한국어\nEnglish\n특수 & < >\n1234.50"
+      }
+    },
+    {
+      "id": "sheet_wide",
+      "format": "xlsx",
+      "file": "sources/sheet_wide.xlsx",
+      "task": "convert",
+      "sha256": "2d1f0b2183aee7b1eec7ad89615c2aca33c875970f2455464de37ab8cb0f2046",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "열0",
+              "열1",
+              "열2",
+              "열3",
+              "열4",
+              "열5"
+            ],
+            [
+              "0",
+              "1",
+              "2",
+              "3",
+              "4",
+              "5"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "열0\n열1\n열2\n열3\n열4\n열5\n0\n1\n2\n3\n4\n5"
+      }
+    },
+    {
+      "id": "sheet_tall",
+      "format": "xlsx",
+      "file": "sources/sheet_tall.xlsx",
+      "task": "convert",
+      "sha256": "ead4723dd4f69eda9b5e41959cebff575c29dfce0a9378128e1513dea6e78615",
+      "expected": {
+        "headings": [],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "번호",
+              "이름"
+            ],
+            [
+              "0",
+              "항목 0"
+            ],
+            [
+              "1",
+              "항목 1"
+            ],
+            [
+              "2",
+              "항목 2"
+            ],
+            [
+              "3",
+              "항목 3"
+            ],
+            [
+              "4",
+              "항목 4"
+            ],
+            [
+              "5",
+              "항목 5"
+            ],
+            [
+              "6",
+              "항목 6"
+            ],
+            [
+              "7",
+              "항목 7"
+            ],
+            [
+              "8",
+              "항목 8"
+            ],
+            [
+              "9",
+              "항목 9"
+            ],
+            [
+              "10",
+              "항목 10"
+            ],
+            [
+              "11",
+              "항목 11"
+            ],
+            [
+              "12",
+              "항목 12"
+            ],
+            [
+              "13",
+              "항목 13"
+            ],
+            [
+              "14",
+              "항목 14"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "번호\n이름\n0\n항목 0\n1\n항목 1\n2\n항목 2\n3\n항목 3\n4\n항목 4\n5\n항목 5\n6\n항목 6\n7\n항목 7\n8\n항목 8\n9\n항목 9\n10\n항목 10\n11\n항목 11\n12\n항목 12\n13\n항목 13\n14\n항목 14"
+      }
+    },
+    {
+      "id": "slides_basic",
+      "format": "pptx",
+      "file": "sources/slides_basic.pptx",
+      "task": "convert",
+      "sha256": "95786386318523769a2c56964652c0c779edc6e9e3cdd33de7c7eaf9eae8ca05",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "개요 슬라이드"
+          ],
+          [
+            1,
+            "표 슬라이드"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "첫째 항목"
+          ],
+          [
+            0,
+            false,
+            "둘째 항목"
+          ],
+          [
+            1,
+            false,
+            "하위 항목"
+          ]
+        ],
+        "tables": [
+          [
+            [
+              "구분",
+              "값"
+            ],
+            [
+              "A",
+              "1"
+            ],
+            [
+              "B",
+              "2"
+            ]
+          ]
+        ],
+        "images": 1,
+        "text": "개요 슬라이드\n첫째 항목\n둘째 항목\n하위 항목\n표 슬라이드\n구분\n값\nA\n1\nB\n2"
+      }
+    },
+    {
+      "id": "slides_titles",
+      "format": "pptx",
+      "file": "sources/slides_titles.pptx",
+      "task": "convert",
+      "sha256": "02fcdf1fb5064d513de0602e78384373f25961cc202b9bab48a5302c56b32313",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "첫 제목"
+          ],
+          [
+            1,
+            "둘째 제목"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 0,
+        "text": "첫 제목\n둘째 제목"
+      }
+    },
+    {
+      "id": "slides_nested",
+      "format": "pptx",
+      "file": "sources/slides_nested.pptx",
+      "task": "convert",
+      "sha256": "f6ee963c05922d89d4eec30966bb0e841ed968afc6d233d3f872835c424d20ad",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "목록"
+          ]
+        ],
+        "lists": [
+          [
+            0,
+            false,
+            "위"
+          ],
+          [
+            1,
+            false,
+            "중간"
+          ],
+          [
+            2,
+            false,
+            "아래"
+          ]
+        ],
+        "tables": [],
+        "images": 0,
+        "text": "목록\n위\n중간\n아래"
+      }
+    },
+    {
+      "id": "slides_table",
+      "format": "pptx",
+      "file": "sources/slides_table.pptx",
+      "task": "convert",
+      "sha256": "511962a141df2c5542770e7a52b747c5568d675a8572b79d50732d85233d79e2",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "집계"
+          ]
+        ],
+        "lists": [],
+        "tables": [
+          [
+            [
+              "부서",
+              "건수"
+            ],
+            [
+              "총무",
+              "15"
+            ]
+          ]
+        ],
+        "images": 0,
+        "text": "집계\n부서\n건수\n총무\n15"
+      }
+    },
+    {
+      "id": "slides_image",
+      "format": "pptx",
+      "file": "sources/slides_image.pptx",
+      "task": "convert",
+      "sha256": "da81448188d96ce2cb13b1d2470bc409dec1974339360fd58546eebd108b8d73",
+      "expected": {
+        "headings": [
+          [
+            1,
+            "사진"
+          ]
+        ],
+        "lists": [],
+        "tables": [],
+        "images": 1,
+        "text": "사진"
+      }
+    },
+    {
+      "id": "body",
+      "format": "hwp",
+      "task": "extract",
+      "file": "sources/extract-body-saved.hwp",
+      "sha256": "dffce2258c2bd8044ad96ab25098fd682bc08d5231d1e629a23c2c1ae789d716",
+      "expected": {
+        "text": "한국어 본문과 English 12345입니다.\n두 번째 문단입니다."
+      }
+    },
+    {
+      "id": "body",
+      "format": "hwpx",
+      "task": "extract",
+      "file": "sources/extract-body-saved.hwpx",
+      "sha256": "1fb9457f33d51f0064c5462454d9789421d507ed71a2d21fb5aff1abbf074730",
+      "expected": {
+        "text": "한국어 본문과 English 12345입니다.\n두 번째 문단입니다."
+      }
+    },
+    {
+      "id": "heading",
+      "format": "hwp",
+      "task": "extract",
+      "file": "sources/extract-heading-saved.hwp",
+      "sha256": "4a2776c53db1471f4eb1698025501452d197de908049f7ae97be79429c1fdb39",
+      "expected": {
+        "text": "제목\n중제목\n본문 내용입니다."
+      }
+    },
+    {
+      "id": "heading",
+      "format": "hwpx",
+      "task": "extract",
+      "file": "sources/extract-heading-saved.hwpx",
+      "sha256": "55e0cebac5fee77ca2551c5250ed74b030f6e70720f4677457c7eb10cd08d971",
+      "expected": {
+        "text": "제목\n중제목\n본문 내용입니다."
+      }
+    },
+    {
+      "id": "table",
+      "format": "hwp",
+      "task": "extract",
+      "file": "sources/extract-table-saved.hwp",
+      "sha256": "aae55c284d3c3d2c3ab1187f0e42c19fb63a916508898da5c24daf023e837572",
+      "expected": {
+        "text": "항목\n값\n접수\n120\n처리\n118"
+      }
+    },
+    {
+      "id": "table",
+      "format": "hwpx",
+      "task": "extract",
+      "file": "sources/extract-table-saved.hwpx",
+      "sha256": "c9981ba0add098f955001a4824a2d8436f4c542ae7bf09f0bd15e88dad514300",
+      "expected": {
+        "text": "항목\n값\n접수\n120\n처리\n118"
+      }
+    },
+    {
+      "id": "break",
+      "format": "hwp",
+      "task": "extract",
+      "file": "sources/extract-break-saved.hwp",
+      "sha256": "8d9f73af5d125dcdc89edc77fe7f201f1bff74f3ef3ae7e64b2dcb548562d12b",
+      "expected": {
+        "text": "앞 문장\n뒤 문장\n특수 & < > 문장"
+      }
+    },
+    {
+      "id": "break",
+      "format": "hwpx",
+      "task": "extract",
+      "file": "sources/extract-break-saved.hwpx",
+      "sha256": "33573da38c1eef8d4bf8b7e1cb7da4c1f28dd1e1d715c5350b7fff557544ce42",
+      "expected": {
+        "text": "앞 문장\n뒤 문장\n특수 & < > 문장"
+      }
+    },
+    {
+      "id": "long",
+      "format": "hwp",
+      "task": "extract",
+      "file": "sources/extract-long-saved.hwp",
+      "sha256": "624722cac147c05e6c22af39be752108eff22bb940df04da0e285c20228757f5",
+      "expected": {
+        "text": "합성 문단 0: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 1: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 2: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 3: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 4: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 5: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 6: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 7: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 8: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 9: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 10: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 11: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 12: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 13: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 14: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 15: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 16: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 17: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 18: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 19: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 20: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 21: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 22: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 23: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 24: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 25: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 26: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 27: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 28: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 29: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 30: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 31: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 32: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 33: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 34: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 35: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 36: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 37: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 38: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 39: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 40: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 41: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 42: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 43: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 44: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 45: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 46: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 47: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 48: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 49: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 50: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 51: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 52: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 53: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 54: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 55: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 56: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 57: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 58: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 59: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 60: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 61: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 62: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 63: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 64: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 65: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 66: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 67: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 68: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 69: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 70: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 71: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 72: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 73: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 74: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 75: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 76: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 77: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 78: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 79: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 80: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 81: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 82: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 83: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 84: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 85: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 86: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 87: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 88: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 89: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 90: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 91: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 92: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 93: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 94: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 95: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 96: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 97: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 98: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 99: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 100: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 101: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 102: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 103: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 104: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 105: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 106: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 107: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 108: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 109: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 110: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 111: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 112: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 113: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 114: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 115: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 116: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 117: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 118: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 119: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 120: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 121: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 122: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 123: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 124: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 125: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 126: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 127: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 128: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 129: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 130: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 131: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 132: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 133: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 134: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 135: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 136: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 137: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 138: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 139: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 140: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 141: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 142: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 143: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 144: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 145: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 146: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 147: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 148: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 149: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 150: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 151: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 152: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 153: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 154: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 155: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 156: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 157: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 158: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 159: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 160: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 161: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 162: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 163: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 164: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 165: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 166: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 167: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 168: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 169: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 170: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 171: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 172: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 173: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 174: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 175: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 176: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 177: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 178: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 179: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 180: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 181: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 182: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 183: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 184: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 185: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 186: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 187: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 188: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 189: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 190: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 191: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 192: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 193: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 194: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 195: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 196: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 197: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 198: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 199: 주민 안내 및 예산 집행 점검입니다."
+      }
+    },
+    {
+      "id": "long",
+      "format": "hwpx",
+      "task": "extract",
+      "file": "sources/extract-long-saved.hwpx",
+      "sha256": "e54d12af881bcad6b838fd50d07d07787bb8234c8957138a7267756f0facb766",
+      "expected": {
+        "text": "합성 문단 0: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 1: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 2: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 3: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 4: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 5: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 6: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 7: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 8: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 9: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 10: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 11: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 12: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 13: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 14: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 15: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 16: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 17: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 18: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 19: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 20: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 21: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 22: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 23: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 24: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 25: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 26: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 27: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 28: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 29: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 30: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 31: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 32: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 33: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 34: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 35: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 36: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 37: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 38: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 39: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 40: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 41: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 42: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 43: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 44: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 45: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 46: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 47: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 48: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 49: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 50: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 51: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 52: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 53: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 54: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 55: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 56: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 57: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 58: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 59: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 60: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 61: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 62: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 63: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 64: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 65: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 66: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 67: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 68: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 69: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 70: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 71: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 72: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 73: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 74: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 75: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 76: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 77: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 78: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 79: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 80: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 81: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 82: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 83: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 84: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 85: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 86: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 87: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 88: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 89: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 90: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 91: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 92: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 93: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 94: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 95: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 96: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 97: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 98: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 99: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 100: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 101: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 102: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 103: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 104: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 105: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 106: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 107: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 108: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 109: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 110: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 111: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 112: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 113: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 114: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 115: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 116: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 117: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 118: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 119: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 120: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 121: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 122: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 123: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 124: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 125: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 126: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 127: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 128: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 129: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 130: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 131: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 132: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 133: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 134: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 135: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 136: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 137: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 138: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 139: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 140: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 141: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 142: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 143: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 144: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 145: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 146: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 147: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 148: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 149: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 150: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 151: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 152: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 153: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 154: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 155: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 156: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 157: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 158: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 159: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 160: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 161: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 162: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 163: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 164: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 165: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 166: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 167: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 168: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 169: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 170: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 171: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 172: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 173: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 174: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 175: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 176: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 177: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 178: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 179: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 180: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 181: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 182: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 183: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 184: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 185: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 186: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 187: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 188: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 189: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 190: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 191: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 192: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 193: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 194: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 195: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 196: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 197: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 198: 주민 안내 및 예산 집행 점검입니다.\n합성 문단 199: 주민 안내 및 예산 집행 점검입니다."
+      }
+    }
+  ],
+  "timing": [
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.4840620000031777,
+      "peak_job_commit_bytes": 37814272
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 1.0693303000298329,
+      "peak_job_commit_bytes": 41603072
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 2.0052355999941938,
+      "peak_job_commit_bytes": 141807616
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 32.6940542999655,
+      "peak_job_commit_bytes": 143015936
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.5849116000463255,
+      "peak_job_commit_bytes": 37978112
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 1.0433452999568544,
+      "peak_job_commit_bytes": 41684992
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.5614567999728024,
+      "peak_job_commit_bytes": 142594048
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 18.93208219995722,
+      "peak_job_commit_bytes": 143261696
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.4144685000064783,
+      "peak_job_commit_bytes": 37740544
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 0.9308707999880426,
+      "peak_job_commit_bytes": 40001536
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.1067127999849617,
+      "peak_job_commit_bytes": 142770176
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 16.57193570001982,
+      "peak_job_commit_bytes": 143179776
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.500534399994649,
+      "peak_job_commit_bytes": 38240256
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 1.0479812000412494,
+      "peak_job_commit_bytes": 41299968
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.9285922999843024,
+      "peak_job_commit_bytes": 142909440
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 31.999996799975634,
+      "peak_job_commit_bytes": 143499264
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.3889023999799974,
+      "peak_job_commit_bytes": 21061632
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 0.9380806999979541,
+      "peak_job_commit_bytes": 21573632
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.908315299951937,
+      "peak_job_commit_bytes": 141746176
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 33.68850829999428,
+      "peak_job_commit_bytes": 143212544
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.3305121999583207,
+      "peak_job_commit_bytes": 20402176
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 0.8836538000032306,
+      "peak_job_commit_bytes": 20905984
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "count": 1,
+      "seconds_with_startup": 0.33453009999357164,
+      "peak_job_commit_bytes": 20385792
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "count": 20,
+      "seconds_with_startup": 0.7231615999480709,
+      "peak_job_commit_bytes": 21192704
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.1633707000291906,
+      "peak_job_commit_bytes": 109125632
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 15.662102900038008,
+      "peak_job_commit_bytes": 111759360
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "count": 1,
+      "seconds_with_startup": 1.1351238999632187,
+      "peak_job_commit_bytes": 110956544
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "count": 20,
+      "seconds_with_startup": 16.581742499955,
+      "peak_job_commit_bytes": 113082368
+    }
+  ],
+  "quality": [
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "id": "doc_basic",
+      "output": "convert-docx-kordoc-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.7381079000188038,
+      "quality": {
+        "metrics": {
+          "heading": 0.75,
+          "list_text": 1.0,
+          "list_shape": 0.25,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "id": "doc_tables",
+      "output": "convert-docx-kordoc-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.6400775000220165,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "id": "doc_text_only",
+      "output": "convert-docx-kordoc-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5359200999955647,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "id": "doc_image",
+      "output": "convert-docx-kordoc-20/03-doc_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5915244999923743,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "kordoc",
+      "id": "doc_nested",
+      "output": "convert-docx-kordoc-20/04-doc_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5528969000442885,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 0.2,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "id": "doc_basic",
+      "output": "convert-docx-native-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.22921590000623837,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "id": "doc_tables",
+      "output": "convert-docx-native-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.026871400012169033,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "id": "doc_text_only",
+      "output": "convert-docx-native-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.02741879998939112,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "id": "doc_image",
+      "output": "convert-docx-native-20/03-doc_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.03541489999042824,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "docx",
+      "engine": "native",
+      "id": "doc_nested",
+      "output": "convert-docx-native-20/04-doc_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.02616530004888773,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "id": "doc_basic",
+      "output": "convert-html-kordoc-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.9420216999715194,
+      "quality": {
+        "metrics": {
+          "heading": 0.75,
+          "list_text": 1.0,
+          "list_shape": 0.5,
+          "table_count": 0.0,
+          "table_shape": 0.0,
+          "table_cells": 0.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 0.8513513513513513,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": false,
+          "table_shape": false,
+          "table_cells": false,
+          "images": true,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "id": "doc_tables",
+      "output": "convert-html-kordoc-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.8485412000445649,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 0.0,
+          "table_shape": 0.0,
+          "table_cells": 0.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.6607142857142857,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": false,
+          "table_shape": false,
+          "table_cells": false,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "id": "doc_text_only",
+      "output": "convert-html-kordoc-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.834878999972716,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "id": "doc_image",
+      "output": "convert-html-kordoc-20/03-doc_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.914279600023292,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "kordoc",
+      "id": "doc_nested",
+      "output": "convert-html-kordoc-20/04-doc_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.8426332999952137,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 0.6,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "id": "doc_basic",
+      "output": "convert-html-native-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.21846379997441545,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "id": "doc_tables",
+      "output": "convert-html-native-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.025275799969676882,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "id": "doc_text_only",
+      "output": "convert-html-native-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.024421900045126677,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "id": "doc_image",
+      "output": "convert-html-native-20/03-doc_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.037131500022951514,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "html",
+      "engine": "native",
+      "id": "doc_nested",
+      "output": "convert-html-native-20/04-doc_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.023478700022678822,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "doc_basic",
+      "output": "convert-md-kordoc-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.8634421000024304,
+      "quality": {
+        "metrics": {
+          "heading": 0.75,
+          "list_text": 1.0,
+          "list_shape": 0.5,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "doc_tables",
+      "output": "convert-md-kordoc-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7748325999709778,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "doc_text_only",
+      "output": "convert-md-kordoc-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7496667000232264,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "headings",
+      "output": "convert-md-kordoc-20/03-headings.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7548254999564961,
+      "quality": {
+        "metrics": {
+          "heading": 0.6666666666666666,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "public_markers",
+      "output": "convert-md-kordoc-20/04-public_markers.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7592927000368945,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 0.75,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "bullets",
+      "output": "convert-md-kordoc-20/05-bullets.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7668131999671459,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 0.6666666666666666,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "ordered",
+      "output": "convert-md-kordoc-20/06-ordered.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7788143000216223,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 0.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "nested",
+      "output": "convert-md-kordoc-20/07-nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.8508251000312157,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "emphasis",
+      "output": "convert-md-kordoc-20/08-emphasis.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7562869000248611,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "linebreaks",
+      "output": "convert-md-kordoc-20/09-linebreaks.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.762482899997849,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.8484848484848485,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "mixed",
+      "output": "convert-md-kordoc-20/10-mixed.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.778917099989485,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "heading_456",
+      "output": "convert-md-kordoc-20/11-heading_456.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7650698000215925,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.9285714285714286,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "links",
+      "output": "convert-md-kordoc-20/12-links.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7621650000219233,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "code",
+      "output": "convert-md-kordoc-20/13-code.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.0049617000040598,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "png_wide",
+      "output": "convert-md-kordoc-20/14-png_wide.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.9708550000214018,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "jpeg_relative",
+      "output": "convert-md-kordoc-20/15-jpeg_relative.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.9415704000275582,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 0.0,
+          "recall": 1.0,
+          "precision": 0.2,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": false,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "table_picture",
+      "output": "convert-md-kordoc-20/16-table_picture.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.8047726000077091,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "code_inline",
+      "output": "convert-md-kordoc-20/17-code_inline.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7753443999681622,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "kordoc",
+      "id": "breaks_mixed",
+      "output": "convert-md-kordoc-20/18-breaks_mixed.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.7980698000174016,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.5925925925925926,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "doc_basic",
+      "output": "convert-md-native-20/00-doc_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.17848060000687838,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "doc_tables",
+      "output": "convert-md-native-20/01-doc_tables.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.02804829995147884,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "doc_text_only",
+      "output": "convert-md-native-20/02-doc_text_only.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.022833299997728318,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "headings",
+      "output": "convert-md-native-20/03-headings.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.02236660005291924,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "public_markers",
+      "output": "convert-md-native-20/04-public_markers.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.029594700026791543,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "bullets",
+      "output": "convert-md-native-20/05-bullets.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.019864500034600496,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "ordered",
+      "output": "convert-md-native-20/06-ordered.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.022488999995402992,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "nested",
+      "output": "convert-md-native-20/07-nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.02326260000700131,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "emphasis",
+      "output": "convert-md-native-20/08-emphasis.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.027810500003397465,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "linebreaks",
+      "output": "convert-md-native-20/09-linebreaks.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.021830799989402294,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "mixed",
+      "output": "convert-md-native-20/10-mixed.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.028973600012250245,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "heading_456",
+      "output": "convert-md-native-20/11-heading_456.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.03191649995278567,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "links",
+      "output": "convert-md-native-20/12-links.hwpx",
+      "warnings": [
+        "하이퍼링크 대상 미지원: 표시 글자만 보존했습니다."
+      ],
+      "operation_seconds": 0.030081899953074753,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "code",
+      "output": "convert-md-native-20/13-code.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.024134799954481423,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "png_wide",
+      "output": "convert-md-native-20/14-png_wide.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.032415300025604665,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "jpeg_relative",
+      "output": "convert-md-native-20/15-jpeg_relative.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.04032790003111586,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "table_picture",
+      "output": "convert-md-native-20/16-table_picture.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.03079530003014952,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "code_inline",
+      "output": "convert-md-native-20/17-code_inline.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.024590799992438406,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "md",
+      "engine": "native",
+      "id": "breaks_mixed",
+      "output": "convert-md-native-20/18-breaks_mixed.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.024633799970615655,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "id": "slides_basic",
+      "output": "convert-pptx-kordoc-20/00-slides_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.6657966999919154,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "id": "slides_titles",
+      "output": "convert-pptx-kordoc-20/01-slides_titles.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5384943999815732,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "id": "slides_nested",
+      "output": "convert-pptx-kordoc-20/02-slides_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5581880999961868,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": 1.0,
+          "list_shape": 0.6666666666666666,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": true,
+          "list_shape": false,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "id": "slides_table",
+      "output": "convert-pptx-kordoc-20/03-slides_table.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.550974000012502,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "kordoc",
+      "id": "slides_image",
+      "output": "convert-pptx-kordoc-20/04-slides_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.6694138000020757,
+      "quality": {
+        "metrics": {
+          "heading": 0.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": false,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "id": "slides_basic",
+      "output": "convert-pptx-native-20/00-slides_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.22054710000520572,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "id": "slides_titles",
+      "output": "convert-pptx-native-20/01-slides_titles.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.024230399983935058,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "id": "slides_nested",
+      "output": "convert-pptx-native-20/02-slides_nested.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.023740300035569817,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "id": "slides_table",
+      "output": "convert-pptx-native-20/03-slides_table.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.025281800015363842,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "pptx",
+      "engine": "native",
+      "id": "slides_image",
+      "output": "convert-pptx-native-20/04-slides_image.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.03409569995710626,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "id": "sheet_basic",
+      "output": "convert-xlsx-kordoc-20/00-sheet_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.925538300012704,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.8947368421052632,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "id": "sheet_empty_cells",
+      "output": "convert-xlsx-kordoc-20/01-sheet_empty_cells.hwpx",
+      "warnings": [],
+      "operation_seconds": 2.205115500022657,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.8,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "id": "sheet_unicode",
+      "output": "convert-xlsx-kordoc-20/02-sheet_unicode.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.6742048000451177,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.88,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "id": "sheet_wide",
+      "output": "convert-xlsx-kordoc-20/03-sheet_wide.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.844739899970591,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.8571428571428571,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "kordoc",
+      "id": "sheet_tall",
+      "output": "convert-xlsx-kordoc-20/04-sheet_tall.hwpx",
+      "warnings": [],
+      "operation_seconds": 1.5322422999888659,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 0.9736842105263158,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": false,
+          "pass": false
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "id": "sheet_basic",
+      "output": "convert-xlsx-native-20/00-sheet_basic.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.1394031000090763,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "id": "sheet_empty_cells",
+      "output": "convert-xlsx-native-20/01-sheet_empty_cells.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.030047399981413037,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "id": "sheet_unicode",
+      "output": "convert-xlsx-native-20/02-sheet_unicode.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.0301016999874264,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "id": "sheet_wide",
+      "output": "convert-xlsx-native-20/03-sheet_wide.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.029897899948991835,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "convert",
+      "format": "xlsx",
+      "engine": "native",
+      "id": "sheet_tall",
+      "output": "convert-xlsx-native-20/04-sheet_tall.hwpx",
+      "warnings": [],
+      "operation_seconds": 0.028598300006706268,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "valid_hwpx": true
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "id": "body",
+      "output": "extract-hwp-kordoc-20/00-body.txt",
+      "warnings": [],
+      "operation_seconds": 0.8614346000249498,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "id": "heading",
+      "output": "extract-hwp-kordoc-20/01-heading.txt",
+      "warnings": [],
+      "operation_seconds": 0.7538985999999568,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "id": "table",
+      "output": "extract-hwp-kordoc-20/02-table.txt",
+      "warnings": [],
+      "operation_seconds": 0.8423102999804541,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "id": "break",
+      "output": "extract-hwp-kordoc-20/03-break.txt",
+      "warnings": [],
+      "operation_seconds": 0.757333799963817,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "kordoc",
+      "id": "long",
+      "output": "extract-hwp-kordoc-20/04-long.txt",
+      "warnings": [],
+      "operation_seconds": 0.7801461000344716,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "id": "body",
+      "output": "extract-hwp-native-20/00-body.txt",
+      "warnings": [],
+      "operation_seconds": 0.09787959995446727,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "id": "heading",
+      "output": "extract-hwp-native-20/01-heading.txt",
+      "warnings": [],
+      "operation_seconds": 0.029525100020691752,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "id": "table",
+      "output": "extract-hwp-native-20/02-table.txt",
+      "warnings": [],
+      "operation_seconds": 0.027816600049845874,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "id": "break",
+      "output": "extract-hwp-native-20/03-break.txt",
+      "warnings": [],
+      "operation_seconds": 0.028267999994568527,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwp",
+      "engine": "native",
+      "id": "long",
+      "output": "extract-hwp-native-20/04-long.txt",
+      "warnings": [],
+      "operation_seconds": 0.03419380000559613,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "id": "body",
+      "output": "extract-hwpx-kordoc-20/00-body.txt",
+      "warnings": [],
+      "operation_seconds": 0.8995143999927677,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "id": "heading",
+      "output": "extract-hwpx-kordoc-20/01-heading.txt",
+      "warnings": [],
+      "operation_seconds": 0.7904195999726653,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "id": "table",
+      "output": "extract-hwpx-kordoc-20/02-table.txt",
+      "warnings": [],
+      "operation_seconds": 0.7870877000386827,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "id": "break",
+      "output": "extract-hwpx-kordoc-20/03-break.txt",
+      "warnings": [],
+      "operation_seconds": 0.7879606999922544,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "kordoc",
+      "id": "long",
+      "output": "extract-hwpx-kordoc-20/04-long.txt",
+      "warnings": [],
+      "operation_seconds": 0.846393000043463,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "id": "body",
+      "output": "extract-hwpx-native-20/00-body.txt",
+      "warnings": [],
+      "operation_seconds": 0.09328859997913241,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "id": "heading",
+      "output": "extract-hwpx-native-20/01-heading.txt",
+      "warnings": [],
+      "operation_seconds": 0.02276640001218766,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "id": "table",
+      "output": "extract-hwpx-native-20/02-table.txt",
+      "warnings": [],
+      "operation_seconds": 0.022461800021119416,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "id": "break",
+      "output": "extract-hwpx-native-20/03-break.txt",
+      "error": "CalledProcessError: Command ['<local-path>', 'extract', '<local-path>'] returned non-zero exit status 1.",
+      "operation_seconds": 0.018760499951895326
+    },
+    {
+      "task": "extract",
+      "format": "hwpx",
+      "engine": "native",
+      "id": "long",
+      "output": "extract-hwpx-native-20/04-long.txt",
+      "warnings": [],
+      "operation_seconds": 0.02556490001734346,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "text",
+        "cand_form": "text"
+      }
+    }
+  ],
+  "com": [
+    {
+      "id": "doc_basic",
+      "format": "docx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_tables",
+      "format": "docx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_text_only",
+      "format": "docx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_image",
+      "format": "docx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_nested",
+      "format": "docx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_basic",
+      "format": "html",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황 그림",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황 그림",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_tables",
+      "format": "html",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_text_only",
+      "format": "html",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_image",
+      "format": "html",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_nested",
+      "format": "html",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_basic",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황 그림",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "현황 그림",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_tables",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "doc_text_only",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "headings",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "public_markers",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "bullets",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "ordered",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "nested",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "emphasis",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "linebreaks",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "mixed",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "heading_456",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "links",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "code",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "png_wide",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "add117e0cd0db26dd4d6f9dc62559cd4274af4197d0ba516bf51d7558efa63cd",
+          "alt": "넓은 합성 그림",
+          "width": 48189,
+          "height": 12047
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "add117e0cd0db26dd4d6f9dc62559cd4274af4197d0ba516bf51d7558efa63cd",
+          "alt": "넓은 합성 그림",
+          "width": 48189,
+          "height": 12047
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "jpeg_relative",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "2617b17b9f4f1b091f0765f08956ab643fab1b655ef2ef793bbbb63c1bbb9b36",
+          "alt": "한글 대체글 & 설명",
+          "width": 6000,
+          "height": 9000
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "2617b17b9f4f1b091f0765f08956ab643fab1b655ef2ef793bbbb63c1bbb9b36",
+          "alt": "한글 대체글 & 설명",
+          "width": 6000,
+          "height": 9000
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "table_picture",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "add117e0cd0db26dd4d6f9dc62559cd4274af4197d0ba516bf51d7558efa63cd",
+          "alt": "칸 안 그림",
+          "width": 23814,
+          "height": 5954
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "add117e0cd0db26dd4d6f9dc62559cd4274af4197d0ba516bf51d7558efa63cd",
+          "alt": "칸 안 그림",
+          "width": 23814,
+          "height": 5954
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "code_inline",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "breaks_mixed",
+      "format": "md",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "slides_basic",
+      "format": "pptx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "slides_titles",
+      "format": "pptx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "slides_nested",
+      "format": "pptx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": 1.0,
+          "list_shape": 1.0,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": true,
+          "list_shape": true,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "slides_table",
+      "format": "pptx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "slides_image",
+      "format": "pptx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": 1.0,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": 1.0,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": true,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": null,
+          "table_shape": null,
+          "table_cells": null,
+          "images": true,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_after": [
+        {
+          "sha256": "831301ce3d0686ffbde22550b2cdc989570d6a48f06d937b8d4ac15179fb19da",
+          "alt": "",
+          "width": 600,
+          "height": 600
+        }
+      ],
+      "pictures_preserved": true
+    },
+    {
+      "id": "sheet_basic",
+      "format": "xlsx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "sheet_empty_cells",
+      "format": "xlsx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "sheet_unicode",
+      "format": "xlsx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "sheet_wide",
+      "format": "xlsx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    },
+    {
+      "id": "sheet_tall",
+      "format": "xlsx",
+      "version": "9, 6, 1, 10778",
+      "open": true,
+      "pages": 1,
+      "save": true,
+      "quality": {
+        "metrics": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": 1.0,
+          "table_shape": 1.0,
+          "table_cells": 1.0,
+          "images": null,
+          "recall": 1.0,
+          "precision": 1.0,
+          "text_method": "sequence"
+        },
+        "verdict": {
+          "heading": null,
+          "list_text": null,
+          "list_shape": null,
+          "table_count": true,
+          "table_shape": true,
+          "table_cells": true,
+          "images": null,
+          "recall": true,
+          "precision": true,
+          "pass": true
+        },
+        "ref_form": "hwpx",
+        "cand_form": "hwpx"
+      },
+      "pictures_before": [],
+      "pictures_after": [],
+      "pictures_preserved": true
+    }
+  ],
+  "extract_source_com": [
+    {
+      "id": "body",
+      "open": true,
+      "pages": 1,
+      "version": "9, 6, 1, 10778"
+    },
+    {
+      "id": "heading",
+      "open": true,
+      "pages": 1,
+      "version": "9, 6, 1, 10778"
+    },
+    {
+      "id": "table",
+      "open": true,
+      "pages": 1,
+      "version": "9, 6, 1, 10778"
+    },
+    {
+      "id": "break",
+      "open": true,
+      "pages": 1,
+      "version": "9, 6, 1, 10778"
+    },
+    {
+      "id": "long",
+      "open": true,
+      "pages": 6,
+      "version": "9, 6, 1, 10778"
+    }
+  ],
+  "invalid_attempts": [
+    {
+      "reason": "kordoc rejects --format text",
+      "timing": [
+        {
+          "task": "extract",
+          "format": "hwp",
+          "engine": "kordoc",
+          "count": 1,
+          "seconds_with_startup": 1.0790364000131376,
+          "peak_job_commit_bytes": 107282432
+        },
+        {
+          "task": "extract",
+          "format": "hwp",
+          "engine": "kordoc",
+          "count": 20,
+          "seconds_with_startup": 15.541612299974076,
+          "peak_job_commit_bytes": 107761664
+        },
+        {
+          "task": "extract",
+          "format": "hwpx",
+          "engine": "kordoc",
+          "count": 1,
+          "seconds_with_startup": 1.145038000016939,
+          "peak_job_commit_bytes": 106725376
+        },
+        {
+          "task": "extract",
+          "format": "hwpx",
+          "engine": "kordoc",
+          "count": 20,
+          "seconds_with_startup": 15.589938700024504,
+          "peak_job_commit_bytes": 107753472
+        }
+      ]
+    },
+    {
+      "reason": "B2 helper strips literal < > from otherwise correct raw Markdown",
+      "timing": [
+        {
+          "task": "extract",
+          "format": "hwp",
+          "engine": "kordoc",
+          "count": 1,
+          "seconds_with_startup": 1.3914522000122815,
+          "peak_job_commit_bytes": 109314048
+        },
+        {
+          "task": "extract",
+          "format": "hwp",
+          "engine": "kordoc",
+          "count": 20,
+          "seconds_with_startup": 16.508285899995826,
+          "peak_job_commit_bytes": 109326336
+        },
+        {
+          "task": "extract",
+          "format": "hwpx",
+          "engine": "kordoc",
+          "count": 1,
+          "seconds_with_startup": 1.1153956999769434,
+          "peak_job_commit_bytes": 109559808
+        },
+        {
+          "task": "extract",
+          "format": "hwpx",
+          "engine": "kordoc",
+          "count": 20,
+          "seconds_with_startup": 16.646270799974445,
+          "peak_job_commit_bytes": 111575040
+        }
+      ]
+    }
+  ],
+  "source_sha256": {
+    "docfit_core/input_markdown.py": "6799673896608629d5af0e95ab4ea93c8bb5dda9cf4866816adc234538915af5",
+    "docfit_core/markdown_hwpx.py": "0294e4e4ba869fd21374f2b10d755592cfa66dfe7120c9119a8067fbdf975f98",
+    "scripts/benchmark_kordoc_routing.py": "dbe452e8028161022a208274ba971ebcea3cb028d3fd2e1337d4f8050e8b96c3"
+  },
+  "tests": {
+    "focused": "Ran 103 tests in 7.817s\nOK",
+    "full": "pending",
+    "interrupted_full": {
+      "seconds": 119.100647,
+      "reason": "new internal docx_engine key missing from configuration form EXCLUDED; fixed and new regression added",
+      "complete": false
+    }
+  }
+}
