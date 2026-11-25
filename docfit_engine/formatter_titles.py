@@ -1753,6 +1753,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                     if 진행단계:
                         단계표시(진행단계[0])
                     로그(f'{name} 구조 직접 분석 시작')
+                    from docfit_core.hwpx_fmt_backend import configured_processor
+                    processor = configured_processor(processor, 로그, namespace=globals())
                     selections = processor(source)
                     count = sum(len(items) for items in selections.values())
                     로그(f'{name} 구조 직접 분석 완료: {count}개')

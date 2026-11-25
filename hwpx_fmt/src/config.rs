@@ -34,6 +34,12 @@ pub struct Config {
     pub table_style: Option<serde_json::Value>,
     pub connector_tab_enabled: bool,
     pub standard_margin_planned: bool,
+    pub format_samples: Option<serde_json::Value>,
+    pub midtitle_number_bold: bool,
+    pub title_parenthesis_reduce: bool,
+    pub title_parenthesis_pt: f64,
+    pub title_subtitle_pt: f64,
+    pub marker_roles_nonempty: bool,
 }
 
 impl Default for Config {
@@ -52,6 +58,12 @@ impl Default for Config {
             table_style: None,
             connector_tab_enabled: true,
             standard_margin_planned: false,
+            format_samples: None,
+            midtitle_number_bold: true,
+            title_parenthesis_reduce: true,
+            title_parenthesis_pt: 2.0,
+            title_subtitle_pt: 15.0,
+            marker_roles_nonempty: false,
         }
     }
 }
@@ -62,6 +74,23 @@ impl Config {
         let mut c = Config::default();
         for (k, val) in obj {
             match k.as_str() {
+                "marker_roles" => {
+                    c.marker_roles_nonempty = match val {
+                        serde_json::Value::Null => false,
+                        serde_json::Value::Object(m) => !m.is_empty(),
+                        _ => return unsupported("marker_roles 는 객체여야 합니다."),
+                    };
+                }
+                "format_samples" => {
+                    if !val.is_null() && !val.is_object() { return unsupported("format_samples 는 객체여야 합니다."); }
+                    c.format_samples = if val.is_null() { None } else { Some(val.clone()) };
+                }
+                "midtitle_number_bold" => c.midtitle_number_bold = val.as_bool().ok_or("미지원 입력: 번호 굵게는 불리언이어야 합니다.")?,
+                "title_parenthesis_reduce" => c.title_parenthesis_reduce = val.as_bool().ok_or("미지원 입력: 괄호 축소는 불리언이어야 합니다.")?,
+                "title_parenthesis_pt" | "title_subtitle_pt" => {
+                    let n=val.as_f64().filter(|n|n.is_finite()&&n.abs()<1000.0).ok_or("미지원 입력: 제목 글자 크기는 유한한 숫자여야 합니다.")?;
+                    if k=="title_parenthesis_pt" {c.title_parenthesis_pt=n;}else{c.title_subtitle_pt=n;}
+                }
                 "page_number" => {
                     if val.is_null() {
                         continue;
