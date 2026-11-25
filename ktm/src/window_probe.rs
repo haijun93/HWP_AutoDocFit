@@ -50,6 +50,7 @@ pub unsafe fn unified_measure(h: HWND, output: &std::path::Path) -> Result<(), S
         let mut queries = Vec::new();
         for query in ["예산집행", "2026; 공사 계약"] {
             let start = Instant::now();
+            edit(|u| u.probe_input = Some(start));
             SetWindowTextW(with(|u| u.edit), wide(query).as_ptr());
             pump_until(10000, || with(|u| u.state.pending_parts == 0 && u.state.phase == Phase::Results))?;
             UpdateWindow(h);
@@ -60,8 +61,23 @@ pub unsafe fn unified_measure(h: HWND, output: &std::path::Path) -> Result<(), S
             let errors = with(|u| u.leg_errors.clone());
             if !errors.is_empty() { return Err(errors.join(" · ")); }
             queries.push(serde_json::json!({"query":query,"input_to_complete_ms":elapsed,"rows":rows}));
+            edit(|u| u.probe_input = None);
         }
         capture(h, &output.with_extension("bmp"))?;
+        if with(|u| u.settings.unified_search) {
+            for _ in 0..5 {
+                cycle_sort(h);
+                let valid = with(|u| {
+                    let tiers = u.rows.iter().map(|r| match r.match_kinds.first() {
+                        Some(tm_state::ResultKind::Names) => 0,
+                        Some(tm_state::ResultKind::Hierarchy) => 1,
+                        _ => 2,
+                    }).collect::<Vec<_>>();
+                    tiers.windows(2).all(|w| w[0] <= w[1])
+                });
+                if !valid { return Err("정렬이 통합 검색 단 순서를 바꿨습니다".into()); }
+            }
+        }
         event(h, Event::Hide);
         let before = memory();
         let cpu_before = cpu();

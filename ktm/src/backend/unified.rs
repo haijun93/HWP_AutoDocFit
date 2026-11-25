@@ -12,6 +12,27 @@ pub const TIERS: [(ResultKind, usize); 3] = [
 ];
 pub const OUTPUT_LIMIT: usize = 80;
 
+fn tier(row: &Row) -> usize {
+    match row.match_kinds.first() {
+        Some(ResultKind::Names) => 0,
+        Some(ResultKind::Hierarchy) => 1,
+        _ => 2,
+    }
+}
+
+/// Presentation sorting may reorder rows only inside their winning tier.
+pub fn sort_within_tiers(rows: &mut [Row], sort: super::BodySort) {
+    super::sort_rows(rows, sort);
+    rows.sort_by_key(tier);
+}
+
+pub fn match_groups(rows: &[&Row]) -> crate::layout::MatchGroups {
+    crate::layout::MatchGroups {
+        filename: rows.iter().filter(|r| tier(r) == 0).count(),
+        body: rows.iter().filter(|r| tier(r) != 0).count(),
+    }
+}
+
 // The name parser accepts ext:hwp;pdf while the content syntax parser accepts
 // comma lists. Protect that existing filename syntax before using the latter.
 fn normalize_ext_lists(query: &str) -> String {
@@ -445,6 +466,49 @@ mod tests {
         let decoded: crate::settings::Settings =
             serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
         assert!(decoded.unified_search);
+    }
+
+    #[test]
+    fn all_five_sorts_preserve_tiers_and_summary_uses_the_winning_reason() {
+        let batches = TIERS.map(|(kind, _)| {
+            (
+                kind,
+                vec![
+                    Row {
+                        name: "나".into(),
+                        date: 2,
+                        count: 4,
+                        ..row(&format!("/{kind:?}/2"), 0)
+                    },
+                    Row {
+                        name: "가".into(),
+                        date: 1,
+                        count: 8,
+                        ..row(&format!("/{kind:?}/1"), 0)
+                    },
+                ],
+            )
+        });
+        let original = merge(&batches, 80);
+        for mode in [
+            super::super::BodySort::Relevance,
+            super::super::BodySort::Confidence,
+            super::super::BodySort::Date,
+            super::super::BodySort::Oldest,
+            super::super::BodySort::Name,
+        ] {
+            let mut rows = original.clone();
+            sort_within_tiers(&mut rows, mode);
+            assert!(rows.windows(2).all(|w| tier(&w[0]) <= tier(&w[1])));
+            if mode == super::super::BodySort::Name {
+                assert_eq!(
+                    rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+                    ["가", "나", "가", "나", "가", "나"]
+                );
+            }
+            let groups = match_groups(&rows.iter().collect::<Vec<_>>());
+            assert_eq!((groups.filename, groups.body), (2, 4));
+        }
     }
 
     #[test]

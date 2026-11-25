@@ -121,6 +121,8 @@ struct Ui {
     top: usize,
     timing: Option<Instant>,
     unified_paint: Option<(Instant, bool)>,
+    /// External input clock, populated only by the isolated measurement probe.
+    probe_input: Option<Instant>,
     ready_at: Option<Instant>,
     hotkey: String,
     hotkey_error: String,
@@ -604,7 +606,11 @@ fn cycle_sort(h: HWND) {
             tm_state::SortMode::Newest | tm_state::SortMode::Oldest => 3,
             _ => 0,
         };
-        ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+        if u.settings.unified_search && u.state.tab == Tab::All {
+            ktm::backend::unified::sort_within_tiers(&mut u.rows, u.body_sort);
+        } else {
+            ktm::backend::sort_rows(&mut u.rows, u.body_sort);
+        }
     });
     unsafe { InvalidateRect(h, null(), 0) };
 }
@@ -1111,6 +1117,9 @@ unsafe fn paint(h: HWND) {
         EndPaint(h, &ps);
         if let Some((start, complete)) = edit(|u| u.unified_paint.take()) {
             phase(if complete { "unified_complete_to_paint_ms" } else { "unified_names_to_paint_ms" }, start.elapsed());
+            if let Some(input) = with(|u| u.probe_input) {
+                phase(if complete { "probe_input_to_complete_paint_ms" } else { "probe_input_to_names_paint_ms" }, input.elapsed());
+            }
         }
         if let Some(start) = edit(|u| u.timing.take()) {
             log("input_to_paint_ms", start.elapsed().as_secs_f64() * 1000.0);
@@ -1559,13 +1568,15 @@ unsafe fn draw(h: HWND, dc: HDC, r: RECT) {
                 &u.state.options.file_types,
             );
             let displayed: Vec<&Row> = group_ids.iter().filter_map(|i| u.rows.get(*i)).collect();
-            let groups = ktm::layout::match_groups(
+            let groups = if u.settings.unified_search && u.state.tab == Tab::All {
+                ktm::backend::unified::match_groups(&displayed)
+            } else { ktm::layout::match_groups(
                 &displayed.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
                 &displayed
                     .iter()
                     .map(|r| r.snippet.clone())
                     .collect::<Vec<_>>(),
-            );
+            ) };
             let view = if u.state.options.grid_view {
                 "▦"
             } else {
@@ -4050,6 +4061,7 @@ unsafe extern "system" fn proc(h: HWND, msg: u32, w: usize, l: isize) -> isize {
                             ));
                             let allowed = ktm::layout::filter_row_indices(&answer.rows, &settings, folder.as_deref());
                             answer.rows = allowed.into_iter().map(|i| answer.rows[i].clone()).collect();
+                            ktm::backend::unified::sort_within_tiers(&mut answer.rows, with(|u| u.body_sort));
                             event(h, Event::SearchPartFinished {
                                 generation: g, kind: snapshot.completed,
                                 count: answer.rows.len(), final_part: snapshot.final_part,
@@ -4365,6 +4377,7 @@ pub fn run() -> Result<(), String> {
                 top: 0,
                 timing: None,
                 unified_paint: None,
+                probe_input: None,
                 ready_at: None,
                 hotkey: String::new(),
                 hotkey_error: String::new(),
