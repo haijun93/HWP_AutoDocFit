@@ -82,7 +82,22 @@ OK
 
 Rust 변경 크레이트 0개로 cargo test 대상 없음. Flutter 변경 0개로 analyze/test 대상 없음. 새 시험은 형식별 5종 이상의 합성 문서, 원본 바이트 불변·그림 해시, 외부 이미지/상위 경로/엔티티 거절, 손실 경고, native 성공/실패·한 번 폴백·kordoc 실패·기존 결과·게시 경합·권한 오류·설정 기본값을 검사한다.
 
+재현 명령(기존 설치 런타임의 CLI/Node/Pandoc을 환경변수와 PATH로 지정하고, `KLIB_EXE`는 검증할 기존 바이너리로 지정한다):
+
+```text
+python scripts/benchmark_kordoc_routing.py prepare --out <새 외부 산출폴더>
+python scripts/benchmark_kordoc_routing.py prepare-extract --out <같은 산출폴더>
+python scripts/benchmark_kordoc_routing.py measure --out <같은 산출폴더>
+python scripts/benchmark_kordoc_routing.py quality --out <같은 산출폴더>
+python scripts/benchmark_kordoc_routing.py com --out <같은 산출폴더>
+python -m unittest discover -s tests
+```
+
+`prepare-extract`/`com`은 공용 COM 잠금을 직접 잡는다. 전체 시험도 별도 사본에서 같은 잠금 아래 실행했다. 비교에 사용한 klib는 기존 로컬 release 바이너리이며 이 카드에서 재빌드하지 않았다. 현재 소스와 바이너리의 출처 일치는 확인 못 함. Office 그림 fixture는 PNG이며, JPEG 자체 생성/COM은 재사용한 Markdown 묶음에서 확인했다.
+
 ## 남은 확인과 성능 개선 여지
+
+HWPX를 직접 klib 우선으로 읽는 소비자에 한해 **kordoc 우선 임시 복원안**을 PM 검토 대상으로 제시한다. 합성 품질은 4/5→5/5이나 단건 0.335→1.135초, 20건 0.723→16.582초, 최대 commit(20건) 20.2→107.8MiB의 비용이 있다. 현재 안전한 Python HWPX 추출을 쓰는 소비자까지 kordoc으로 바꿀 근거는 이 비교에 없고, HWP에서는 klib/kordoc 모두 5/5이므로 더 빠른 klib 우선을 유지한다. 이 제안은 우선순위를 실제로 바꾼 것이 아니다.
 
 - 실제 사용자 문서, 복잡한 DOCX 스타일/필드/각주·병합/중첩 표, XLSX 수식 재계산·날짜/표시 서식·차트/그림·시트명 의미, PPTX 위치/테마/SmartArt/노트, HTML CSS·복잡한 DOM·원격 자원은 이번 합성 묶음에서 확인 못 함. 검출되는 미지원 요소는 경고/폴백하며 완전한 지원 범위 판별기는 아니다.
 - kordoc은 parse→generate를 한 프로세스/일괄 요청으로 묶거나 상주 워커에서 모듈을 재사용할 여지가 있다. 이번 20건은 CLI를 매번 시작했으므로 상주 kordoc과 native의 우열은 확인 못 함. 실제 설치 번들의 CLI에 없는 API를 가정해 기본으로 연결하지 않았다.
