@@ -40,6 +40,7 @@ impl EditSession {
         if raw.len() as u64 > 1024 * 1024 * 1024 {
             return Err(invalid("PDF exceeds 1 GB"));
         }
+        super::check_header(raw)?;
         Ok(Self {
             doc: validate_doc(Document::load_mem(raw)?)?,
         })

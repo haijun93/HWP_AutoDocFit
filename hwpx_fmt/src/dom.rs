@@ -1,5 +1,6 @@
 //! 최소 XML 트리: Python ElementTree(defusedxml 파싱)와 같은 text/tail 모델.
 //! 요소는 문서 순서(선행 순회)로 배열에 쌓으므로, 한 요소의 `iter()`는 연속 구간 [i, end)이다.
+use quick_xml::escape::{resolve_predefined_entity, unescape};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -75,7 +76,9 @@ pub fn parse(data: &[u8]) -> Result<Doc, String> {
                 for a in e.attributes() {
                     let a = a.map_err(|e| format!("속성 오류: {e}"))?;
                     let k = std::str::from_utf8(a.key.as_ref()).map_err(|e| e.to_string())?.to_string();
-                    let v = a.unescape_value().map_err(|e| format!("속성 값 오류: {e}"))?.into_owned();
+                    // 참조만 푼다. quick-xml 의 normalized_value 는 속성 안의 줄바꿈·탭을 공백으로 바꾸므로 쓰지 않는다.
+                    let raw = std::str::from_utf8(&a.value).map_err(|e| e.to_string())?;
+                    let v = unescape(raw).map_err(|e| format!("속성 값 오류: {e}"))?.into_owned();
                     if v.chars().any(xml_invalid) {
                         return Err("속성 값에 허용되지 않는 글자(문자 참조)".into());
                     }
@@ -97,16 +100,30 @@ pub fn parse(data: &[u8]) -> Result<Doc, String> {
                 }
             }
             Event::Text(t) => {
-                let s = t.unescape().map_err(|e| format!("텍스트 오류: {e}"))?;
-                if s.chars().any(xml_invalid) {
-                    return Err("텍스트에 허용되지 않는 글자(문자 참조)".into());
-                }
+                // 참조(&…;)는 GeneralRef 로 따로 오므로 여기서는 해독만 한다(글자 유효성은 위에서 원문 전체를 검사).
+                let s = t.decode().map_err(|e| format!("텍스트 오류: {e}"))?;
                 if stack.is_empty() {
                     if !s.trim().is_empty() {
                         return Err("루트 밖 글자".into());
                     }
                 } else {
                     buf.push_str(&s);
+                }
+            }
+            Event::GeneralRef(r) => {
+                if stack.is_empty() {
+                    return Err("루트 밖 글자".into());
+                }
+                if let Some(c) = r.resolve_char_ref().map_err(|e| format!("텍스트 오류: {e}"))? {
+                    if xml_invalid(c) {
+                        return Err("텍스트에 허용되지 않는 글자(문자 참조)".into());
+                    }
+                    buf.push(c);
+                } else {
+                    let name = r.decode().map_err(|e| format!("텍스트 오류: {e}"))?;
+                    let value = resolve_predefined_entity(&name)
+                        .ok_or_else(|| format!("텍스트 오류: 정의되지 않은 엔티티 &{name};"))?;
+                    buf.push_str(value);
                 }
             }
             Event::CData(c) => {

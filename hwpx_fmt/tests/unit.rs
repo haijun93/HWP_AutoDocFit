@@ -195,3 +195,37 @@ fn mimetype_is_stored_and_order_kept() {
     assert_eq!(z.by_index(0).unwrap().compression(), zip::CompressionMethod::Stored);
     assert_eq!(z.by_index(1).unwrap().compression(), zip::CompressionMethod::Deflated);
 }
+
+// quick-xml 0.38 부터 `&…;` 는 글과 따로 오는 이벤트다. 글·속성이 한 글자도 빠지거나 바뀌지 않아야 한다.
+#[test]
+fn dom_keeps_references_and_whitespace_exactly() {
+    let xml = "<r a=\"x &amp; &lt;y&gt; &quot;z&apos; &#xAC00;&#10;\tq\nw\"> &#32;앞&amp;뒤 &lt;b&gt;&#xAC00;&#54620;<c/>&amp;꼬리&#13;\r\n<d> </d>&gt;</r>";
+    let doc = dom::parse(xml.as_bytes()).unwrap();
+    assert_eq!(doc.nodes[0].attrs, vec![("a".to_string(), "x & <y> \"z' 가\n\tq\nw".to_string())]);
+    assert_eq!(doc.nodes[0].text.as_deref(), Some("  앞&뒤 <b>가한"));
+    assert_eq!(doc.nodes[1].tail.as_deref(), Some("&꼬리\r\r\n"));
+    assert_eq!(doc.nodes[2].text.as_deref(), Some(" "));
+    assert_eq!(doc.nodes[2].tail.as_deref(), Some(">"));
+    let once = doc.tostring();
+    let again = dom::parse(&once).unwrap();
+    assert_eq!(again.tostring(), once);
+}
+
+#[test]
+fn dom_still_rejects_unsafe_or_broken_xml() {
+    for xml in [
+        "<!DOCTYPE r [<!ENTITY x \"y\">]><r>&x;</r>",
+        "<r>&unknown;</r>",
+        "<r a=\"&unknown;\"/>",
+        "<r>&#0;</r>",
+        "<r>&#1;</r>",
+        "<r a=\"&#1;\"/>",
+        "<r>a & b</r>",
+        "<r a=\"1\" a=\"2\"/>",
+        "<r/>&amp;",
+        "<r></x>",
+        "<r>",
+    ] {
+        assert!(dom::parse(xml.as_bytes()).is_err(), "{xml}");
+    }
+}

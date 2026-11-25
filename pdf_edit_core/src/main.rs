@@ -90,12 +90,7 @@ fn main() -> ExitCode {
             let mut merged = lopdf::Document::with_version("1.5");
             let mut order = Vec::new();
             for input in &a[2..] {
-                let doc = lopdf::Document::load(input).map_err(pdf_edit_core::PdfEditError::Pdf)?;
-                if doc.is_encrypted() {
-                    return Err(pdf_edit_core::PdfEditError::Invalid(
-                        "Encrypted PDFs are not supported".into(),
-                    ));
-                }
+                let doc = pdf_edit_core::open_for_merge(input)?;
                 let pages = doc.get_pages();
                 let ids = doc.objects.keys().copied().collect::<Vec<_>>();
                 let start = merged.max_id + 1;
