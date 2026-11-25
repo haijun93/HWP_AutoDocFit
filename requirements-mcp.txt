@@ -21,7 +21,8 @@ pydantic-settings==2.15.0
 PyJWT==2.15.1
 python-dotenv==1.2.4
 python-multipart==0.0.32
-pywin32==312
+# Windows 전용 패키지. OSV의 고정 버전 검사는 유지하고 불필요한 전이 해석을 막는다.
+pywin32==312; sys_platform == "win32"
 referencing==0.37.0
 rpds-py==2026.9.1
 sse-starlette==3.5.0
