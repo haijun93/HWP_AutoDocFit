@@ -1456,7 +1456,11 @@ class ContentSearchIndex:
             path_is_within(os.path.normcase(os.path.abspath(row["path"])), root)
             for root in allowed if os.path.splitdrive(root)[0].casefold() == os.path.splitdrive(os.path.abspath(row["path"]))[0].casefold()))]
 
-    def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance", start=None, end=None):
+    def search(self, query, *, roots=None, limit=100, sort="hierarchy_relevance", start=None, end=None,
+               related_groups=False):
+        if related_groups:
+            from .related_search import search_related
+            return search_related(self, query, roots=roots, limit=limit, start=start, end=end)
         self._ensure_paragraph_map()
         query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
@@ -1997,8 +2001,12 @@ class ContentSearchIndex:
         return [dict(row, table_cell_id=cells.get((row["path"], int(row["paragraph_index"]))))
                 for row in rows]
 
-    def keyword_search(self, query, *, roots=None, limit=100, offset=0, start=None, end=None):
+    def keyword_search(self, query, *, roots=None, limit=100, offset=0, start=None, end=None,
+                       related_groups=False):
         """Docufinder식 키워드 검색. 위계 필드 없이 BM25로 문서 순위를 정한다."""
+        if related_groups:
+            from .related_search import search_related
+            return search_related(self, query, roots=roots, limit=limit, offset=offset, start=start, end=end)
         self._ensure_paragraph_map()
         query = _nfc(query) if isinstance(query, str) else query
         parsed = self.parse_query(query)
@@ -2326,8 +2334,11 @@ class ContentSearchIndex:
                             "score": score, "relevance_rank": offset + len(results) + 1})
         return results
 
-    def search_files(self, query, *, roots=None, limit=500, start=None, end=None):
+    def search_files(self, query, *, roots=None, limit=500, start=None, end=None, related_groups=False):
         """Immediate in-memory filename cache populated from indexed metadata."""
+        if related_groups:
+            from .related_search import search_related
+            return search_related(self, query, roots=roots, limit=limit, start=start, end=end, filenames=True)
         query = _nfc(query) if isinstance(query, str) else str(query or "")
         words = [w.casefold() for w in query.split() if w]
         if not words: return []

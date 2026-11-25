@@ -1,0 +1,500 @@
+{
+  "records": {
+    "seed": 20261124,
+    "generated_documents": 1000,
+    "native_index": false,
+    "control_documents": 5,
+    "cases": [
+      {
+        "query": "행정; 정책",
+        "filenames": false,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; \"안전 점검 계획\"",
+        "filenames": false,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정 정책; 안전 지원",
+        "filenames": false,
+        "sqlite": 993,
+        "rust": 993,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 공사 계약",
+        "filenames": false,
+        "sqlite": 3,
+        "rust": 3,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "; 2026;; \"공사 계약\";",
+        "filenames": false,
+        "sqlite": 3,
+        "rust": 3,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "R&D; \"a;b\"",
+        "filenames": false,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 없는검색어",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 2026",
+        "filenames": false,
+        "sqlite": 4,
+        "rust": 4,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "synthetic; 000",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "\"\"; ;",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "report; R&D",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "i; \"a;b\"",
+        "filenames": false,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 정책",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; \"안전 점검 계획\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정 정책; 안전 지원",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 공사 계약",
+        "filenames": true,
+        "sqlite": 2,
+        "rust": 2,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "; 2026;; \"공사 계약\";",
+        "filenames": true,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "R&D; \"a;b\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 없는검색어",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 2026",
+        "filenames": true,
+        "sqlite": 2,
+        "rust": 2,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "synthetic; 000",
+        "filenames": true,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "\"\"; ;",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "report; R&D",
+        "filenames": true,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "i; \"a;b\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      }
+    ],
+    "ok": true
+  },
+  "native": {
+    "seed": 20261124,
+    "generated_documents": 1000,
+    "native_index": true,
+    "control_documents": 5,
+    "cases": [
+      {
+        "query": "행정; 정책",
+        "filenames": false,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; \"안전 점검 계획\"",
+        "filenames": false,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정 정책; 안전 지원",
+        "filenames": false,
+        "sqlite": 993,
+        "rust": 993,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 공사 계약",
+        "filenames": false,
+        "sqlite": 3,
+        "rust": 3,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "; 2026;; \"공사 계약\";",
+        "filenames": false,
+        "sqlite": 3,
+        "rust": 3,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "R&D; \"a;b\"",
+        "filenames": false,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 없는검색어",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 2026",
+        "filenames": false,
+        "sqlite": 4,
+        "rust": 4,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "synthetic; 000",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "\"\"; ;",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "report; R&D",
+        "filenames": false,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "i; \"a;b\"",
+        "filenames": false,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 정책",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; \"안전 점검 계획\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정 정책; 안전 지원",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 공사 계약",
+        "filenames": true,
+        "sqlite": 2,
+        "rust": 2,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "; 2026;; \"공사 계약\";",
+        "filenames": true,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "R&D; \"a;b\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "행정; 없는검색어",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "2026; 2026",
+        "filenames": true,
+        "sqlite": 2,
+        "rust": 2,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "synthetic; 000",
+        "filenames": true,
+        "sqlite": 1000,
+        "rust": 1000,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "\"\"; ;",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "report; R&D",
+        "filenames": true,
+        "sqlite": 1,
+        "rust": 1,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      },
+      {
+        "query": "i; \"a;b\"",
+        "filenames": true,
+        "sqlite": 0,
+        "rust": 0,
+        "missing": [],
+        "extra": [],
+        "order_equal": true,
+        "evidence_equal": true
+      }
+    ],
+    "ok": true
+  }
+}

@@ -90,6 +90,12 @@ pub enum Request {
         limit: usize,
     },
     /// FN1: 드라이브 전체 파일명 검색.
+    NamesRelated {
+        id: u64,
+        text: String,
+        #[serde(default = "default_names_limit")]
+        limit: usize,
+    },
     NamesQuery {
         id: u64,
         text: String,
@@ -585,6 +591,12 @@ impl Handler {
                 after,
                 limit,
             } => self.stale(sid, scope.as_deref(), level_rule, after.as_deref(), limit),
+            Request::NamesRelated { id, text, limit } => {
+                let (_lease,flag)=self.lease(sid,id)?;
+                let mut result=self.names.query_related(sid,&text,limit,flag)?;
+                result["id"]=json!(id);
+                Ok(result)
+            },
             Request::NamesQuery {
                 id,
                 text,

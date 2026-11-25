@@ -1585,6 +1585,7 @@ mod tests {
     }
     fn row(name: &str, snippet: &str) -> crate::backend::Row {
         crate::backend::Row {
+            group_matches: Vec::new(),
             match_kinds: Vec::new(),
             doc_id: 0,
             path: format!("C:\\{name}"),
