@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import '../common/file_handoff.dart';
 import '../common/file_ops_area.dart';
 import '../common/file_selection.dart';
 import '../common/thumb_size_slider.dart';
@@ -65,6 +66,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
   }
   String? _currentFolder;
   final FileSelection _selection = FileSelection();
+  final GlobalKey<FileOpsAreaState> _fileOps = GlobalKey<FileOpsAreaState>();
   List<Map<String, Object?>> _documents = [];
   bool _loading = false;
   String? _errorMessage;
@@ -215,6 +217,29 @@ class _DocGridScreenState extends State<DocGridScreen> {
       }
     }
   }
+
+  /// 오른쪽 클릭 메뉴의 연결 항목.
+  List<FileMenuEntry> _menuEntries(List<String> targets) {
+    final handoff = FileHandoff.maybeOf(context);
+    if (handoff == null) return const [];
+    FileMenuEntry entry(FileTarget target, String label, IconData icon) =>
+        handoffEntry(context, handoff, target, targets, label: label, icon: icon);
+    return [
+      entry(FileTarget.documentEditor, '문서편집', Icons.description_outlined),
+      entry(FileTarget.virtualFolder, '가상 폴더에 추가', Icons.dashboard_customize_outlined),
+      entry(FileTarget.notebook, '업무자료함에 넣기', Icons.menu_book_outlined),
+      entry(FileTarget.conversion, '파일 변환', Icons.transform),
+      entry(FileTarget.pdfEdit, 'PDF 편집', Icons.picture_as_pdf_outlined),
+    ];
+  }
+
+  void _showContextMenu(Offset position, String path) =>
+      _fileOps.currentState?.showContextMenu(
+        position,
+        path,
+        onOpen: _openDocument,
+        extraEntries: _menuEntries,
+      );
 
   List<String> get _order => [for (final doc in _documents) '${doc['path'] ?? ''}'];
 
@@ -463,12 +488,14 @@ class _DocGridScreenState extends State<DocGridScreen> {
                   range: FileSelection.rangeKeyPressed,
                 )),
                 onDoubleTap: () => _openDocument(path),
+                onContextMenu: (position) => _showContextMenu(position, path),
               );
             },
           ),
         );
 
         final area = FileOpsArea(
+          key: _fileOps,
           api: widget.api,
           method: 'doc_grid',
           selection: _selection,
@@ -498,6 +525,7 @@ class _DocCard extends StatefulWidget {
     required this.api,
     required this.onDoubleTap,
     required this.onSelect,
+    required this.onContextMenu,
     this.selected = false,
     this.cachedThumb,
     this.onThumbLoaded,
@@ -507,6 +535,7 @@ class _DocCard extends StatefulWidget {
   final ApiCall api;
   final VoidCallback onDoubleTap;
   final VoidCallback onSelect;
+  final ValueChanged<Offset> onContextMenu;
   final bool selected;
   final Uint8List? cachedThumb;
   final ValueChanged<Uint8List>? onThumbLoaded;
@@ -600,6 +629,7 @@ class _DocCardState extends State<_DocCard> {
           if (event.buttons == kPrimaryButton) widget.onSelect();
         },
         child: InkWell(
+          onSecondaryTapUp: (details) => widget.onContextMenu(details.globalPosition),
           // Ctrl·Shift 클릭은 선택만 한다.
           onDoubleTap: () {
             if (!FileSelection.toggleKeyPressed && !FileSelection.rangeKeyPressed) {

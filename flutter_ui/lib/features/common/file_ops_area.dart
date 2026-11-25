@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/api/abbreviation_api.dart' show ApiCall;
+import 'file_handoff.dart';
 import 'file_selection.dart';
 
 String _baseName(String path) => path.split(RegExp(r'[\\/]')).last;
@@ -11,7 +12,8 @@ String _baseName(String path) => path.split(RegExp(r'[\\/]')).last;
 /// 문서뷰·사진뷰 공용 파일 작업 영역(FILEOPS1).
 ///
 /// 선택 개수와 작업 단추 줄을 목록 위에 두고, 목록에 초점이 있을 때
-/// Ctrl+A·Esc·Ctrl+C·Delete·F2 를 처리한다. 작업은 백엔드가 배경에서 하고
+/// Ctrl+A·Esc·Ctrl+C·Delete·F2 를 처리한다. 오른쪽 클릭 메뉴도 여기서 만든다(CTXMENU1).
+/// 작업은 백엔드가 배경에서 하고
 /// 이 위젯은 진행 상태만 물어보므로 화면은 멈추지 않는다.
 class FileOpsArea extends StatefulWidget {
   const FileOpsArea({
@@ -40,10 +42,10 @@ class FileOpsArea extends StatefulWidget {
   final Future<String?> Function()? directoryPicker;
 
   @override
-  State<FileOpsArea> createState() => _FileOpsAreaState();
+  State<FileOpsArea> createState() => FileOpsAreaState();
 }
 
-class _FileOpsAreaState extends State<FileOpsArea> {
+class FileOpsAreaState extends State<FileOpsArea> {
   final FocusNode _focus = FocusNode(debugLabel: 'fileOpsArea');
 
   /// 확인창·폴더 선택·작업 중. 같은 작업이 겹쳐 시작되지 않게 한다.
@@ -87,6 +89,92 @@ class _FileOpsAreaState extends State<FileOpsArea> {
       return KeyEventResult.ignored;
     }
     return KeyEventResult.handled;
+  }
+
+  /// 파일 위 오른쪽 클릭 메뉴. 선택 밖 항목이면 그 항목만 고르고, 선택 안이면 선택 전체가 대상이다.
+  ///
+  /// [onOpen]은 한 개를 여는 동작, [extraEntries]는 화면별 연결 메뉴다.
+  Future<void> showContextMenu(
+    Offset position,
+    String path, {
+    required void Function(String path) onOpen,
+    required List<FileMenuEntry> Function(List<String> targets) extraEntries,
+  }) async {
+    if (!widget.selection.paths.contains(path)) {
+      widget.selection.click(path, widget.order);
+      widget.onSelectionChanged();
+    }
+    _focus.requestFocus();
+    final targets = _targets;
+    if (targets.isEmpty) return;
+    final busy = _busy ? '다른 파일 작업이 진행 중입니다' : null;
+    final single = targets.length == 1 ? null : '한 개만 선택했을 때 쓸 수 있습니다';
+    FileMenuEntry op(String id, String label, IconData icon, [String? reason]) =>
+        FileMenuEntry(
+          id: id,
+          label: label,
+          icon: icon,
+          disabledReason: busy ?? reason,
+          onSelected: () => _run(id),
+        );
+    final common = [
+      FileMenuEntry(
+        id: 'open',
+        label: '열기',
+        icon: Icons.open_in_new,
+        disabledReason: single,
+        onSelected: () => onOpen(targets.single),
+      ),
+      op('clipboard', '복사', Icons.copy),
+      op('copy', '폴더로 복사', Icons.file_copy_outlined),
+      op('move', '이동', Icons.drive_file_move_outline),
+      op('rename', '파일명 변경', Icons.edit_outlined, single),
+      op('delete', '삭제', Icons.delete_outline),
+    ];
+    final extras = extraEntries(targets);
+    final overlay = Overlay.of(context).context.findRenderObject()! as RenderBox;
+    final point = overlay.globalToLocal(position);
+    final picked = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        point & Size.zero,
+        Offset.zero & overlay.size,
+      ),
+      items: <PopupMenuEntry<String>>[
+        for (final entry in common) _menuItem(entry),
+        if (extras.isNotEmpty) const PopupMenuDivider(),
+        for (final entry in extras) _menuItem(entry),
+      ],
+    );
+    if (picked == null || !mounted) return;
+    [...common, ...extras].firstWhere((e) => e.id == picked).onSelected();
+  }
+
+  PopupMenuItem<String> _menuItem(FileMenuEntry entry) {
+    final reason = entry.disabledReason;
+    return PopupMenuItem<String>(
+      key: ValueKey('fileMenu-${entry.id}'),
+      value: entry.id,
+      enabled: reason == null,
+      height: 36,
+      child: Row(
+        children: [
+          Icon(entry.icon, size: 18),
+          const SizedBox(width: 10),
+          Flexible(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(entry.label, style: const TextStyle(fontSize: 13)),
+                if (reason != null)
+                  Text(reason, style: const TextStyle(fontSize: 11)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<String?> _pickDestination() async {

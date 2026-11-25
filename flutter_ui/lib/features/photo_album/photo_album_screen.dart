@@ -7,6 +7,7 @@ import 'package:flutter/gestures.dart' show kDoubleTapTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../common/file_handoff.dart';
 import '../common/file_ops_area.dart';
 import '../common/file_selection.dart';
 import '../common/thumb_size_slider.dart';
@@ -74,6 +75,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   bool _selectionMode = false;
   final FileSelection _selection = FileSelection();
   Set<String> get _selectedPaths => _selection.paths;
+  final GlobalKey<FileOpsAreaState> _fileOps = GlobalKey<FileOpsAreaState>();
 
   // 검색 및 필터 상태
   final TextEditingController _searchController = TextEditingController();
@@ -894,7 +896,64 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     _loadTagOptions();
   }
 
+  /// 오른쪽 클릭 메뉴의 사진 편집·연결 항목.
+  List<FileMenuEntry> _menuEntries(List<String> targets) {
+    final photo = targets.length == 1
+        ? [
+            ..._getAllCurrentPhotos(),
+            for (final group in _duplicateGroups)
+              ...(group['items'] as List<Map<String, Object?>>? ?? const []),
+          ].where((p) => p['path'] == targets.single).firstOrNull
+        : null;
+    final handoff = FileHandoff.maybeOf(context);
+    return [
+      FileMenuEntry(
+        id: 'photoEdit',
+        label: '사진 편집(사본)',
+        icon: Icons.tune,
+        disabledReason: photo == null
+            ? '한 개만 선택했을 때 쓸 수 있습니다'
+            : photo['cloud'] == true
+            ? '클라우드에만 있는 사진은 편집할 수 없습니다'
+            : null,
+        onSelected: () => _showPhotoEditCopyDialog(
+          context,
+          widget.api,
+          photo!,
+          _refreshCurrentFolder,
+        ),
+      ),
+      if (handoff != null) ...[
+        handoffEntry(context, handoff, FileTarget.conversion, targets,
+            label: '파일 변환', icon: Icons.transform),
+        handoffEntry(context, handoff, FileTarget.virtualFolder, targets,
+            label: '가상 폴더에 추가', icon: Icons.dashboard_customize_outlined),
+      ],
+      FileMenuEntry(
+        id: 'photoExport',
+        label: '공문 첨부용 사본 저장',
+        icon: Icons.file_copy_outlined,
+        onSelected: _startBatchExport,
+      ),
+      FileMenuEntry(
+        id: 'photoSheet',
+        label: '사진대지 만들기',
+        icon: Icons.table_chart_outlined,
+        onSelected: _startBuildPhotoSheet,
+      ),
+    ];
+  }
+
+  void _showContextMenu(Offset position, String path) =>
+      _fileOps.currentState?.showContextMenu(
+        position,
+        path,
+        onOpen: (target) => _openPhotoWithApp(context, widget.api, target),
+        extraEntries: _menuEntries,
+      );
+
   Widget _withFileOps(Widget child) => FileOpsArea(
+    key: _fileOps,
     api: widget.api,
     method: 'photo_album',
     selection: _selection,
@@ -1564,6 +1623,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       ? null
                       : () => _openWithApp(photo),
                   onToggleFavorite: () => _toggleFavorite(photo),
+                  onContextMenu: (position) => _showContextMenu(position, path),
                 );
               }, childCount: results.length),
             ),
@@ -1639,6 +1699,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                         ? null
                         : () => _openWithApp(photo),
                     onToggleFavorite: () => _toggleFavorite(photo),
+                    onContextMenu: (position) => _showContextMenu(position, path),
                   );
                 }, childCount: ((group['photos'] as List?)?.length ?? 0)),
               ),
@@ -1822,6 +1883,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                       onTap: () => _openViewerFor(path, customPhotos: items),
                       onDoubleTap: _selectionMode ? null : () => _openWithApp(item),
                       onToggleFavorite: () => _toggleFavorite(item),
+                      onContextMenu: (position) => _showContextMenu(position, path),
                     ),
                     // 대표 배지 및 거리 배지
                     Positioned(
@@ -1890,6 +1952,30 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   }
 }
 
+/// 사본 편집 창(크게 보기와 오른쪽 클릭 메뉴가 함께 쓴다). 원본은 바꾸지 않는다.
+Future<void> _showPhotoEditCopyDialog(
+  BuildContext context,
+  ApiCall api,
+  Map<String, Object?> photo,
+  VoidCallback? onPhotoEdited,
+) {
+  final messenger = ScaffoldMessenger.of(context);
+  return showDialog<void>(
+    context: context,
+    barrierDismissible: true,
+    builder: (_) => _PhotoEditCopyDialog(
+      photo: photo,
+      api: api,
+      onSuccess: (outPath) {
+        onPhotoEdited?.call();
+        if (messenger.mounted) {
+          messenger.showSnackBar(SnackBar(content: Text('사본이 저장되었습니다: $outPath')));
+        }
+      },
+    ),
+  );
+}
+
 /// 사진을 시스템 연결 앱으로 연다. 실패하면 안내 줄을 띄운다.
 Future<void> _openPhotoWithApp(
   BuildContext context,
@@ -1924,6 +2010,7 @@ class _PhotoCard extends StatefulWidget {
     required this.onTap,
     required this.onSelect,
     required this.onToggleFavorite,
+    required this.onContextMenu,
     this.onDoubleTap,
     this.cachedThumb,
     this.onThumbLoaded,
@@ -1940,6 +2027,7 @@ class _PhotoCard extends StatefulWidget {
   /// 있으면 한 번 클릭([onTap])은 더블클릭 판정 시간 뒤에 실행된다.
   final VoidCallback? onDoubleTap;
   final VoidCallback onToggleFavorite;
+  final ValueChanged<Offset> onContextMenu;
   final Uint8List? cachedThumb;
   final ValueChanged<Uint8List>? onThumbLoaded;
   final bool selectionMode;
@@ -2072,6 +2160,11 @@ class _PhotoCardState extends State<_PhotoCard>
 
     return InkWell(
       onTap: _handleTap,
+      onSecondaryTapUp: (details) {
+        // 예약된 크게 보기가 메뉴 뒤에서 열리지 않게 버린다.
+        if (_awaitingSecondClick) setState(_clickWait.reset);
+        widget.onContextMenu(details.globalPosition);
+      },
       borderRadius: BorderRadius.circular(8),
       child: Container(
         decoration: BoxDecoration(
@@ -2316,20 +2409,7 @@ class _PhotoViewerModalState extends State<_PhotoViewerModal> {
       _toggleSlideshow();
     }
 
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => _PhotoEditCopyDialog(
-        photo: photo,
-        api: widget.api,
-        onSuccess: (outPath) {
-          widget.onPhotoEdited?.call();
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('사본이 저장되었습니다: $outPath')));
-        },
-      ),
-    );
+    await _showPhotoEditCopyDialog(context, widget.api, photo, widget.onPhotoEdited);
   }
 
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
