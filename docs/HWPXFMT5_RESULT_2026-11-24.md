@@ -32,6 +32,7 @@ RSXML1~4는 고유 13종(14슬롯)을 구현했으며, 남은 다섯 종류는 �
 - **보고서 머리**: `report_header.py`의 보고서 경계, 날짜·기관·담당자 값 추출과 예시 틀 재배치, 원본 run 이동과 섹션 컨트롤 보존까지 함께 이식해야 한다. 단순 표 서식 복제로 대체할 수 없어 이번 범위에서는 미이식으로 남긴다. CLI 이름은 미지원 이유를 반환하는 식별자이며 구현 완료를 뜻하지 않는다.
 - **제목 유형 4·5 및 다른 표가 섞인 문서**: 제목다운 글/기관 정보/대표 글자 크기 판정 미이식. 본문 또는 쪽 나눔이 제목과 개요 사이에 있으면 거부한다. Python이 원래 맡는다.
 - **일반 로마자·`로1` 문단→중제목 표**: 새 표 id·zOrder, 원래 run/컨트롤 이동·삭제의 동등성 미확인. 해당 후보가 있으면 Rust가 문서 전체를 거부해 Python으로 넘긴다.
+- 중제목 사전 검사는 보수적이어서 ASCII `I`/`V`/`X` 또는 `로`로 시작하는 일반 문장도 Python으로 넘길 수 있다. 이 경우의 적용률 최적화는 하지 않았다.
 - 설정된 담당자 글 및 활성 기호 체계의 제목/중제목 경로는 미지원이다. 잘못된 예시 프로필도 Rust 적용을 중단한다.
 - 드문 Unicode 숫자·잘못된 수치 속성·위 제한 밖의 사용자 프로필 조합 전체는 확인하지 못했다. 이 카드의 차이 0은 아래 명시한 시험 범위의 결과다.
 
@@ -115,16 +116,25 @@ test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 | 중제목 | 2.828 | 0.233 | 12.11 | 400 | 예 |
 | 제목 | 0.612 | 1.046 | 0.59 | 400 | 예 |
 
-제목은 첫 버전에서 느려졌다. 표마다 날짜 정규식을 다시 컴파일하는 부분을 캐시하는 후속 변경을 진행하며, 이 변경 이후의 시험·측정 결과는 별도로 기록한다. 첫 결과를 숨기거나 가장 빠른 회차를 고르지 않는다.
+제목은 첫 버전에서 느려졌다. 표마다 날짜 정규식을 다시 컴파일하던 부분을 캐시로 고쳤고, 변경 후 결과는 위 최종 하네스·속도 절에 기록했다. 첫 결과를 숨기거나 가장 빠른 회차를 고르지 않았다.
 
 ## 검증 명령과 후속 검사
 
-```text
+```powershell
+$env:CARGO_TARGET_DIR = "<저장소 밖 빌드 폴더>"
+$env:PATH = "$env:LOCALAPPDATA/DocFitTools/mingw64/bin;$env:PATH"
 cargo test --release --locked -j 2 --manifest-path hwpx_fmt/Cargo.toml
-python scripts/hwpxfmt5_parity.py --bin <실행 파일> --out <외부 폴더> --bench
-python scripts/hwpxfmt5_com_probe.py --bin <실행 파일> --out <외부 폴더>
-HWPX_FMT_BIN=<실행 파일> python -m unittest tests.test_hwpxfmt5_parity tests.test_hwpx_fmt_backend
+python scripts/hwpxfmt5_parity.py --bin "<실행 파일>" --out "<외부 폴더>" --bench
+python scripts/hwpxfmt5_com_probe.py --bin "<실행 파일>" --out "<외부 폴더>"
+$env:HWPX_FMT_BIN = "<실행 파일>"
+python -m unittest tests.test_hwpxfmt5_parity tests.test_hwpx_fmt_backend
 python -m unittest discover -s tests
 ```
 
 실제 명령은 지정된 Python 3.15.2 가상환경으로 실행했다. `HWPX_FMT_BIN`을 지정한 신규 연결·native 차이 대조 시험은 `Ran 10 tests in 49.655s` / `OK`(skip 0)다. 기존 RSXML 전체 하네스와 마지막 전체 Python 시험은 후속 기록에 실제 결과를 적는다.
+
+## 기존 처리기 회귀 대조
+
+수정하지 않은 `scripts/rsxml_parity.py`를 별도로 단독 실행했다. 문서 1,099건·2,751쌍 모두 하네스 통과, 실패 0, 실제 변경 828쌍, 엄격 공백 비교 잡음 0, 미지원 검사 55건 모두 통과, 종료 코드 0(324.24초)이다. 기존 하네스의 통과에는 양쪽 거부 224쌍이 포함된다. 새 처리기의 양쪽 거부 1쌍은 위와 같이 통과에서 분리했다.
+
+신규 native 검사와 기존 native 하네스는 실행 파일 경로를 명시해 각각 완료했다. 마지막 전체 unittest는 별도 기본 환경에서 실행한다(해당 프로세스에는 `HWPX_FMT_BIN`·`CARGO_TARGET_DIR` 미지정). 전체 시험의 조건부 native skip과 실제 별도 native 검증 결과를 구분해 기록한다.
