@@ -850,6 +850,13 @@ class PhotoAlbumService:
             "updated": updated_count,
         }
 
+    def _without_excluded(self, photos: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """제외 폴더의 사진은 목록에서만 감춘다. DB의 태그·즐겨찾기는 남겨 제외를 풀면 다시 보인다."""
+        excluded = read_exclusions(self.settings_store)
+        if not excluded:
+            return photos
+        return [p for p in photos if not any(path_is_within(p["path"], folder) for folder in excluded)]
+
     def scan_default_scope(self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
                            excluded_folders: Any = (), return_engine: bool = False) -> dict[str, Any]:
         """Desktop 및 고정 드라이브 사진을 스캔한다. 이동식·네트워크는 제외한다."""
@@ -957,7 +964,7 @@ class PhotoAlbumService:
                 except OSError: continue
                 valid = path in self._default_name_paths if self._default_name_paths is not None else Path(row["path"]).is_file()
                 if valid and any(path_is_within(path, root) for root in roots): existing.append(row)
-            rows = existing
+            rows = self._without_excluded(existing)
             if not cancel.is_set(): library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
             result["engine"] = engine
             return result
@@ -981,7 +988,7 @@ class PhotoAlbumService:
     def list_by_date(self, folder: str | Path | None = None) -> list[dict[str, Any]]:
         """촬영일(또는 수정일) 기준 연·월 묶음 목록을 반환한다."""
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         # 연·월별로 그룹화
         groups: dict[tuple[int, int], list[dict[str, Any]]] = {}
@@ -1059,14 +1066,14 @@ class PhotoAlbumService:
     ) -> list[dict[str, Any]]:
         """파일명, 태그, 날짜 범위, 즐겨찾기로 사진을 검색한다."""
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.search(
+        photos = self._without_excluded(self.db.search(
             query=query,
             folder=folder_str,
             tag=tag,
             start_date=start_date,
             end_date=end_date,
             favorite_only=favorite_only,
-        )
+        ))
         results: list[dict[str, Any]] = []
         for p in photos:
             item = {
@@ -1115,9 +1122,9 @@ class PhotoAlbumService:
 
     def list_tags(self, *, folder: str | Path | None = None) -> dict[str, Any]:
         """사진뷰 DB에서 사용 중인 태그와 사진 수를 반환한다."""
-        photos = self.db.list_photos(
+        photos = self._without_excluded(self.db.list_photos(
             str(Path(folder).resolve()) if folder and str(folder).strip() else None
-        )
+        ))
         counts: dict[str, int] = {}
         for photo in photos:
             for tag in photo.get("tags", []):
@@ -1547,7 +1554,7 @@ class PhotoAlbumService:
         threshold_val = min(64, threshold_val)
 
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         scanned = 0
         skipped_cloud = 0
@@ -1855,7 +1862,7 @@ class PhotoAlbumService:
             }
 
         folder_str = str(Path(folder).resolve()) if folder else None
-        photos = self.db.list_photos(folder_str)
+        photos = self._without_excluded(self.db.list_photos(folder_str))
 
         groups_map: dict[str, dict[str, Any]] = {}
 
