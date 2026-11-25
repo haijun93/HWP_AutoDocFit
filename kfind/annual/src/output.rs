@@ -170,7 +170,12 @@ pub fn monthly_topics_csv(input: &AnnualInput) -> String {
 
 /// 주제별 연도·월 문서 수를 시간순으로 Excel 호환 CSV로 만든다.
 pub fn topic_timeline_csv(input: &AnnualInput) -> String {
-    let mut rows = vec![csv_row(&["연도".into(), "월".into(), "주제".into(), "문서 수".into()])];
+    let mut rows = vec![csv_row(&[
+        "연도".into(),
+        "월".into(),
+        "주제".into(),
+        "문서 수".into(),
+    ])];
     if let Some(r) = &input.report {
         let mut topics = r.stats.top_topics.clone();
         topics.sort_by_key(|t| t.topic_id);
@@ -281,30 +286,53 @@ pub fn weekday_heatmap_csv(input: &AnnualInput) -> String {
 }
 
 fn xml_escape(value: &str) -> String {
-    value.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-        .replace('"', "&quot;").replace('\'', "&apos;")
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 fn svg_start(title: &str, description: &str, width: u32, height: u32) -> String {
-    format!("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-labelledby=\"chart-title chart-desc\"><title id=\"chart-title\">{}</title><desc id=\"chart-desc\">{}</desc><rect width=\"100%\" height=\"100%\" fill=\"{}\"/><g font-family=\"'Apple SD Gothic Neo', 'Malgun Gothic', 'Nanum Gothic', sans-serif\" fill=\"{}\">",
-        xml_escape(title), xml_escape(description), chart_colors::BACKGROUND, chart_colors::TEXT)
+    format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" role=\"img\" aria-labelledby=\"chart-title chart-desc\"><title id=\"chart-title\">{}</title><desc id=\"chart-desc\">{}</desc><rect width=\"100%\" height=\"100%\" fill=\"{}\"/><g font-family=\"'Apple SD Gothic Neo', 'Malgun Gothic', 'Nanum Gothic', sans-serif\" fill=\"{}\">",
+        xml_escape(title),
+        xml_escape(description),
+        chart_colors::BACKGROUND,
+        chart_colors::TEXT
+    )
 }
 
 /// Render total monthly document counts as a standalone UTF-8 SVG bar chart.
 pub fn monthly_documents_svg(input: &AnnualInput) -> String {
-    const W: u32 = 760; const H: u32 = 360;
-    let mut svg = svg_start("월별 문서 수", "1월부터 12월까지 월별 문서 수 막대 그래프", W, H);
-    svg.push_str("<text x=\"380\" y=\"28\" text-anchor=\"middle\" font-size=\"18\">월별 문서 수</text>");
+    const W: u32 = 760;
+    const H: u32 = 360;
+    let mut svg = svg_start(
+        "월별 문서 수",
+        "1월부터 12월까지 월별 문서 수 막대 그래프",
+        W,
+        H,
+    );
+    svg.push_str(
+        "<text x=\"380\" y=\"28\" text-anchor=\"middle\" font-size=\"18\">월별 문서 수</text>",
+    );
     let mut values = [0u64; 12];
     if let Some(report) = &input.report {
         for counts in report.stats.topic_by_month.values() {
-            for (i, &count) in counts.iter().enumerate() { values[i] += u64::from(count); }
+            for (i, &count) in counts.iter().enumerate() {
+                values[i] += u64::from(count);
+            }
         }
     }
     let max = values.iter().copied().max().unwrap_or(0);
     for (i, value) in values.iter().enumerate() {
         let x = 52 + i as u32 * 58;
-        let bh = if max == 0 { 0 } else { (value * 240 / max) as u32 };
+        let bh = if max == 0 {
+            0
+        } else {
+            (value * 240 / max) as u32
+        };
         let y = 300 - bh;
         svg.push_str(&format!("<line x1=\"{x}\" y1=\"60\" x2=\"{x}\" y2=\"300\" stroke=\"{}\"/><rect x=\"{}\" y=\"{y}\" width=\"32\" height=\"{bh}\" fill=\"{}\"/><text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"11\">{value}</text><text x=\"{}\" y=\"322\" text-anchor=\"middle\" font-size=\"12\">{}월</text>", chart_colors::GRID, x+4, chart_colors::BAR, x+20, if bh == 0 { 292 } else { y.saturating_sub(5) }, x+20, i+1));
     }
@@ -330,7 +358,10 @@ pub fn weekly_documents_svg(input: &AnnualInput) -> String {
         W,
         H,
     );
-    svg.push_str(&format!("<text x=\"{}\" y=\"28\" text-anchor=\"middle\" font-size=\"18\">주차별 문서 수</text>", W / 2));
+    svg.push_str(&format!(
+        "<text x=\"{}\" y=\"28\" text-anchor=\"middle\" font-size=\"18\">주차별 문서 수</text>",
+        W / 2
+    ));
 
     let mut values = [0u64; 53];
     if let Some(report) = &input.report {
@@ -392,40 +423,88 @@ pub fn weekly_documents_svg(input: &AnnualInput) -> String {
 /// Render each ISO year-week and weekday count as a labeled heatmap cell.
 pub fn weekday_heatmap_svg(input: &AnnualInput) -> String {
     const W: u32 = 760;
-    let rows = input.report.as_ref().map_or(0, |r| r.stats.week_day_heatmap.len());
+    let rows = input
+        .report
+        .as_ref()
+        .map_or(0, |r| r.stats.week_day_heatmap.len());
     let height = (100 + rows as u32 * 26).max(140);
-    let mut svg = svg_start("주차별 요일 열지도", "ISO 연도와 주차별 문서 수를 월요일부터 일요일까지 색으로 표시", W, height);
+    let mut svg = svg_start(
+        "주차별 요일 열지도",
+        "ISO 연도와 주차별 문서 수를 월요일부터 일요일까지 색으로 표시",
+        W,
+        height,
+    );
     svg.push_str("<text x=\"380\" y=\"24\" text-anchor=\"middle\" font-size=\"18\">주차별 요일 열지도</text>");
     let weekdays = ["월", "화", "수", "목", "금", "토", "일"];
     for (i, day) in weekdays.iter().enumerate() {
-        svg.push_str(&format!("<text x=\"{}\" y=\"52\" text-anchor=\"middle\" font-size=\"12\">{day}</text>", 158+i*76));
+        svg.push_str(&format!(
+            "<text x=\"{}\" y=\"52\" text-anchor=\"middle\" font-size=\"12\">{day}</text>",
+            158 + i * 76
+        ));
     }
     if let Some(report) = &input.report {
-        let max = report.stats.week_day_heatmap.values().flat_map(|v| v.iter()).copied().max().unwrap_or(0);
+        let max = report
+            .stats
+            .week_day_heatmap
+            .values()
+            .flat_map(|v| v.iter())
+            .copied()
+            .max()
+            .unwrap_or(0);
         for (row, (&(year, week), counts)) in report.stats.week_day_heatmap.iter().enumerate() {
             let y = 62 + row as u32 * 26;
             svg.push_str(&format!("<text x=\"145\" y=\"{}\" text-anchor=\"end\" font-size=\"11\">{year}-W{week:02}</text>", y+16));
             for (col, count) in counts.iter().enumerate() {
-                let color = if max == 0 || *count == 0 { chart_colors::HEAT_LOW } else if u64::from(*count)*2 >= u64::from(max) { chart_colors::HEAT_HIGH } else { "#91b4d1" };
+                let color = if max == 0 || *count == 0 {
+                    chart_colors::HEAT_LOW
+                } else if u64::from(*count) * 2 >= u64::from(max) {
+                    chart_colors::HEAT_HIGH
+                } else {
+                    "#91b4d1"
+                };
                 let x = 158 + col as u32 * 76;
                 svg.push_str(&format!("<rect x=\"{x}\" y=\"{y}\" width=\"68\" height=\"22\" rx=\"3\" fill=\"{color}\"/><text x=\"{}\" y=\"{}\" text-anchor=\"middle\" font-size=\"11\">{count}</text>", x+34, y+15));
             }
         }
     }
-    svg.push_str("</g></svg>"); svg
+    svg.push_str("</g></svg>");
+    svg
 }
 
 /// Render per-topic document counts across calendar months as a timeline.
 pub fn topic_timeline_svg(input: &AnnualInput) -> String {
     const W: u32 = 900;
-    let topic_count = input.report.as_ref().map_or(0, |r| r.stats.top_topics.len());
+    let topic_count = input
+        .report
+        .as_ref()
+        .map_or(0, |r| r.stats.top_topics.len());
     let height = (100 + topic_count as u32 * 42).max(140);
-    let mut svg = svg_start("주제별 월 타임라인", "주제별로 월 단위 문서 수를 시간순으로 표시", W, height);
+    let mut svg = svg_start(
+        "주제별 월 타임라인",
+        "주제별로 월 단위 문서 수를 시간순으로 표시",
+        W,
+        height,
+    );
     svg.push_str("<text x=\"450\" y=\"24\" text-anchor=\"middle\" font-size=\"18\">주제별 월 타임라인</text>");
     if let Some(report) = &input.report {
-        let mut topics = report.stats.top_topics.clone(); topics.sort_by_key(|t| t.topic_id);
-        let month_keys: Vec<(i32,u32)> = report.stats.topic_timeline_by_month.values().flat_map(|m| m.keys().copied()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-        let max = report.stats.topic_timeline_by_month.values().flat_map(|m| m.values()).copied().max().unwrap_or(0);
+        let mut topics = report.stats.top_topics.clone();
+        topics.sort_by_key(|t| t.topic_id);
+        let month_keys: Vec<(i32, u32)> = report
+            .stats
+            .topic_timeline_by_month
+            .values()
+            .flat_map(|m| m.keys().copied())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let max = report
+            .stats
+            .topic_timeline_by_month
+            .values()
+            .flat_map(|m| m.values())
+            .copied()
+            .max()
+            .unwrap_or(0);
         if !month_keys.is_empty() {
             for (i, &(year, month)) in month_keys.iter().enumerate() {
                 let x = 190 + i as u32 * (660 / month_keys.len().max(1) as u32);
@@ -434,27 +513,40 @@ pub fn topic_timeline_svg(input: &AnnualInput) -> String {
         }
         for (row, topic) in topics.iter().enumerate() {
             let y = 65 + row as u32 * 42;
-            svg.push_str(&format!("<text x=\"178\" y=\"{}\" text-anchor=\"end\" font-size=\"11\">{}</text>", y+13, xml_escape(&topic.topic_name)));
+            svg.push_str(&format!(
+                "<text x=\"178\" y=\"{}\" text-anchor=\"end\" font-size=\"11\">{}</text>",
+                y + 13,
+                xml_escape(&topic.topic_name)
+            ));
             if let Some(months) = report.stats.topic_timeline_by_month.get(&topic.topic_id) {
                 for (i, key) in month_keys.iter().enumerate() {
                     let count = months.get(key).copied().unwrap_or(0);
                     let x = 190 + i as u32 * (660 / month_keys.len().max(1) as u32);
-                    let width = if max == 0 { 0 } else { (count as u64 * 34 / u64::from(max)) as u32 };
+                    let width = if max == 0 {
+                        0
+                    } else {
+                        (count as u64 * 34 / u64::from(max)) as u32
+                    };
                     svg.push_str(&format!("<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"{}\" stroke-width=\"3\"/><circle cx=\"{}\" cy=\"{}\" r=\"4\" fill=\"{}\"/><text x=\"{}\" y=\"{}\" font-size=\"9\">{count}</text>", x, y+9, x+width, y+9, chart_colors::TIMELINE, x+width, y+9, chart_colors::TIMELINE, x+width+4, y+12));
                 }
             }
         }
     }
-    svg.push_str("</g></svg>"); svg
+    svg.push_str("</g></svg>");
+    svg
 }
 
 /// Write a complete SVG via a sibling temporary file, then atomically replace the destination.
 pub fn write_svg(path: impl AsRef<Path>, svg: &str) -> io::Result<()> {
     let path = path.as_ref();
-    let mut temp = path.as_os_str().to_owned(); temp.push(".tmp");
+    let mut temp = path.as_os_str().to_owned();
+    temp.push(".tmp");
     let temp = std::path::PathBuf::from(temp);
     fs::write(&temp, svg.as_bytes())?;
-    if let Err(error) = fs::rename(&temp, path) { let _ = fs::remove_file(&temp); return Err(error); }
+    if let Err(error) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(error);
+    }
     Ok(())
 }
 
@@ -493,8 +585,18 @@ pub fn render_report_json(input: &AnnualInput) -> String {
                 Date::from_timestamp(p.end, crate::KST_OFFSET_SECS).to_string_ymd(),
             )
         } else if !input.docs.is_empty() {
-            let min_ts = input.docs.iter().map(|d| d.created_at().min(d.modified_at())).min().unwrap_or(0);
-            let max_ts = input.docs.iter().map(|d| d.created_at().max(d.modified_at())).max().unwrap_or(0);
+            let min_ts = input
+                .docs
+                .iter()
+                .map(|d| d.created_at().min(d.modified_at()))
+                .min()
+                .unwrap_or(0);
+            let max_ts = input
+                .docs
+                .iter()
+                .map(|d| d.created_at().max(d.modified_at()))
+                .max()
+                .unwrap_or(0);
             (
                 Date::from_timestamp(min_ts, crate::KST_OFFSET_SECS).to_string_ymd(),
                 Date::from_timestamp(max_ts, crate::KST_OFFSET_SECS).to_string_ymd(),
@@ -507,7 +609,10 @@ pub fn render_report_json(input: &AnnualInput) -> String {
     };
 
     out.push_str("  \"period\": {\n");
-    out.push_str(&format!("    \"start\": {},\n", json_escape_str(&start_str)));
+    out.push_str(&format!(
+        "    \"start\": {},\n",
+        json_escape_str(&start_str)
+    ));
     out.push_str(&format!("    \"end\": {}\n", json_escape_str(&end_str)));
     out.push_str("  },\n");
 
@@ -528,7 +633,10 @@ pub fn render_report_json(input: &AnnualInput) -> String {
     for month in 1..=12 {
         let count = monthly[month - 1];
         let comma = if month == 12 { "" } else { "," };
-        out.push_str(&format!("    {{\"month\": {}, \"doc_count\": {}}}{}\n", month, count, comma));
+        out.push_str(&format!(
+            "    {{\"month\": {}, \"doc_count\": {}}}{}\n",
+            month, count, comma
+        ));
     }
     out.push_str("  ],\n");
 
@@ -558,16 +666,24 @@ pub fn render_report_json(input: &AnnualInput) -> String {
                             .iter()
                             .filter_map(|&i| input.docs.get(i).map(|d| d.modified_at()))
                             .collect();
-                        if let (Some(&min_t), Some(&max_t)) = (topic_ts.iter().min(), topic_ts.iter().max()) {
-                            topic_start_date = Date::from_timestamp(min_t, crate::KST_OFFSET_SECS).to_string_ymd();
-                            topic_end_date = Date::from_timestamp(max_t, crate::KST_OFFSET_SECS).to_string_ymd();
+                        if let (Some(&min_t), Some(&max_t)) =
+                            (topic_ts.iter().min(), topic_ts.iter().max())
+                        {
+                            topic_start_date =
+                                Date::from_timestamp(min_t, crate::KST_OFFSET_SECS).to_string_ymd();
+                            topic_end_date =
+                                Date::from_timestamp(max_t, crate::KST_OFFSET_SECS).to_string_ymd();
                         }
                     }
                 }
 
                 if topic_start_date.is_empty() {
-                    if let Some(months) = r.stats.topic_timeline_by_month.get(&topic_summary.topic_id) {
-                        if let (Some(&(y1, m1)), Some(&(y2, m2))) = (months.keys().next(), months.keys().next_back()) {
+                    if let Some(months) =
+                        r.stats.topic_timeline_by_month.get(&topic_summary.topic_id)
+                    {
+                        if let (Some(&(y1, m1)), Some(&(y2, m2))) =
+                            (months.keys().next(), months.keys().next_back())
+                        {
                             topic_start_date = format!("{y1}-{m1:02}");
                             topic_end_date = format!("{y2}-{m2:02}");
                         }
@@ -576,10 +692,22 @@ pub fn render_report_json(input: &AnnualInput) -> String {
 
                 let comma = if idx + 1 == top_count { "" } else { "," };
                 out.push_str("    {\n");
-                out.push_str(&format!("      \"topic_id\": {},\n", topic_summary.topic_id));
-                out.push_str(&format!("      \"topic_name\": {},\n", json_escape_str(&topic_summary.topic_name)));
-                out.push_str(&format!("      \"doc_count\": {},\n", topic_summary.doc_count));
-                out.push_str(&format!("      \"percentage\": {:.1},\n", topic_summary.percentage));
+                out.push_str(&format!(
+                    "      \"topic_id\": {},\n",
+                    topic_summary.topic_id
+                ));
+                out.push_str(&format!(
+                    "      \"topic_name\": {},\n",
+                    json_escape_str(&topic_summary.topic_name)
+                ));
+                out.push_str(&format!(
+                    "      \"doc_count\": {},\n",
+                    topic_summary.doc_count
+                ));
+                out.push_str(&format!(
+                    "      \"percentage\": {:.1},\n",
+                    topic_summary.percentage
+                ));
 
                 // representative_docs 배열
                 out.push_str("      \"representative_docs\": [");
@@ -596,8 +724,14 @@ pub fn render_report_json(input: &AnnualInput) -> String {
 
                 // period 객체
                 out.push_str("      \"period\": {\n");
-                out.push_str(&format!("        \"start\": {},\n", json_escape_str(&topic_start_date)));
-                out.push_str(&format!("        \"end\": {}\n", json_escape_str(&topic_end_date)));
+                out.push_str(&format!(
+                    "        \"start\": {},\n",
+                    json_escape_str(&topic_start_date)
+                ));
+                out.push_str(&format!(
+                    "        \"end\": {}\n",
+                    json_escape_str(&topic_end_date)
+                ));
                 out.push_str("      }\n");
 
                 out.push_str(&format!("    }}{}\n", comma));
@@ -652,7 +786,9 @@ pub fn render_report_json(input: &AnnualInput) -> String {
                 let mut active_months = Vec::new();
 
                 if let Some(months) = r.stats.topic_timeline_by_month.get(&topic.topic_id) {
-                    if let (Some(&(y1, m1)), Some(&(y2, m2))) = (months.keys().next(), months.keys().next_back()) {
+                    if let (Some(&(y1, m1)), Some(&(y2, m2))) =
+                        (months.keys().next(), months.keys().next_back())
+                    {
                         start_month = format!("{y1}-{m1:02}");
                         end_month = format!("{y2}-{m2:02}");
                     }
@@ -673,14 +809,27 @@ pub fn render_report_json(input: &AnnualInput) -> String {
 
                 out.push_str("    {\n");
                 out.push_str(&format!("      \"topic_id\": {},\n", topic.topic_id));
-                out.push_str(&format!("      \"topic_name\": {},\n", json_escape_str(&topic.topic_name)));
-                out.push_str(&format!("      \"start_month\": {},\n", json_escape_str(&start_month)));
-                out.push_str(&format!("      \"end_month\": {},\n", json_escape_str(&end_month)));
+                out.push_str(&format!(
+                    "      \"topic_name\": {},\n",
+                    json_escape_str(&topic.topic_name)
+                ));
+                out.push_str(&format!(
+                    "      \"start_month\": {},\n",
+                    json_escape_str(&start_month)
+                ));
+                out.push_str(&format!(
+                    "      \"end_month\": {},\n",
+                    json_escape_str(&end_month)
+                ));
                 out.push_str("      \"active_months\": [");
                 if !active_months.is_empty() {
                     out.push('\n');
                     for (m_i, &(y, m, c)) in active_months.iter().enumerate() {
-                        let m_comma = if m_i + 1 == active_months.len() { "" } else { "," };
+                        let m_comma = if m_i + 1 == active_months.len() {
+                            ""
+                        } else {
+                            ","
+                        };
                         out.push_str(&format!(
                             "        {{\"year\": {}, \"month\": {}, \"year_month\": \"{}-{:02}\", \"doc_count\": {}}}{}\n",
                             y, m, y, m, c, m_comma
@@ -721,16 +870,31 @@ pub fn write_report_json(path: impl AsRef<Path>, input: &AnnualInput) -> io::Res
 
 /// 보고서와 BOM CSV 6종 및 보고서 데이터 JSON을 출력 폴더에 쓴다.
 pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Result<()> {
-    let folder = folder.as_ref();
+    write_outputs_impl(input, folder.as_ref(), false)
+}
+
+fn write_outputs_impl(input: &AnnualInput, folder: &Path, charts: bool) -> io::Result<()> {
     fs::create_dir_all(folder)?;
     let source = folder.join("원자료");
     fs::create_dir_all(&source)?;
     fs::write(source.join("인수인계_연보.md"), render_markdown(input))?;
     write_report_json(source.join("보고서_데이터.json"), input)?;
-    write_svg(&source.join("월별_문서수.svg"), &monthly_documents_svg(input))?;
-    write_svg(&source.join("주차별_문서수.svg"), &weekly_documents_svg(input))?;
-    write_svg(&source.join("주차_요일_열지도.svg"), &weekday_heatmap_svg(input))?;
-    write_svg(&source.join("주제별_월_타임라인.svg"), &topic_timeline_svg(input))?;
+    write_svg(
+        &source.join("월별_문서수.svg"),
+        &monthly_documents_svg(input),
+    )?;
+    write_svg(
+        &source.join("주차별_문서수.svg"),
+        &weekly_documents_svg(input),
+    )?;
+    write_svg(
+        &source.join("주차_요일_열지도.svg"),
+        &weekday_heatmap_svg(input),
+    )?;
+    write_svg(
+        &source.join("주제별_월_타임라인.svg"),
+        &topic_timeline_svg(input),
+    )?;
     for (name, csv) in [
         ("월별_주제.csv", monthly_topics_csv(input)),
         ("주제별_타임라인.csv", topic_timeline_csv(input)),
@@ -743,8 +907,19 @@ pub fn write_outputs(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Resul
         bytes.extend_from_slice(csv.as_bytes());
         fs::write(source.join(name), bytes)?;
     }
-    crate::hwpx::write_hwpx_outputs(input, folder)?;
+    if charts {
+        crate::hwpx::write_hwpx_outputs_with_charts(input, folder)?;
+    } else {
+        crate::hwpx::write_hwpx_outputs(input, folder)?;
+    }
     Ok(())
+}
+
+/// Explicit opt-in bundle; the existing report API retains its original outputs.
+pub fn write_annual_bundle(input: &AnnualInput, folder: impl AsRef<Path>) -> io::Result<()> {
+    let folder = folder.as_ref();
+    write_outputs_impl(input, folder, true)?;
+    crate::xlsx::write_xlsx_outputs(input, folder.join("통계.xlsx"))
 }
 
 #[cfg(test)]
@@ -833,10 +1008,13 @@ mod tests {
     #[test]
     fn timeline_csv_contains_topic_month_rows_by_year() {
         let mut input = sample();
-        input.report.as_mut().unwrap().stats.topic_timeline_by_month.insert(
-            0,
-            [((2025, 1), 2), ((2026, 1), 3), ((2026, 2), 1)].into(),
-        );
+        input
+            .report
+            .as_mut()
+            .unwrap()
+            .stats
+            .topic_timeline_by_month
+            .insert(0, [((2025, 1), 2), ((2026, 1), 3), ((2026, 2), 1)].into());
         let csv = topic_timeline_csv(&input);
         assert!(csv.starts_with("\"연도\",\"월\",\"주제\",\"문서 수\"\r\n"));
         assert!(csv.contains("\"2025\",\"1월\",\"예산, \"\"정산\"\"\n업무\",\"2\""));
@@ -878,7 +1056,12 @@ mod tests {
     fn files_have_utf8_bom() {
         let d = tempfile::tempdir().unwrap();
         write_outputs(&sample(), d.path()).unwrap();
-        for n in ["월별_주제.csv", "주제별_타임라인.csv", "주기_업무.csv", "폴더_이력.csv"] {
+        for n in [
+            "월별_주제.csv",
+            "주제별_타임라인.csv",
+            "주기_업무.csv",
+            "폴더_이력.csv",
+        ] {
             let b = fs::read(d.path().join("원자료").join(n)).unwrap();
             assert_eq!(&b[..3], &[0xef, 0xbb, 0xbf]);
         }
@@ -906,12 +1089,18 @@ mod tests {
     fn weekly_and_weekday_csv_include_headers_and_statistics() {
         let mut input = sample();
         let report = input.report.as_mut().unwrap();
-        report.stats.topic_by_iso_week.insert(0, [((2025, 3), 1), ((2026, 3), 2)].into());
+        report
+            .stats
+            .topic_by_iso_week
+            .insert(0, [((2025, 3), 1), ((2026, 3), 2)].into());
         report
             .stats
             .week_day_heatmap
             .insert((2025, 3), [1, 0, 0, 0, 0, 0, 0]);
-        report.stats.week_day_heatmap.insert((2026, 3), [0, 0, 2, 0, 0, 0, 0]);
+        report
+            .stats
+            .week_day_heatmap
+            .insert((2026, 3), [0, 0, 2, 0, 0, 0, 0]);
 
         let weekly = weekly_topics_csv(&input);
         assert!(weekly.starts_with("\"ISO 연도\",\"ISO 주차\",\"주제\",\"문서 수\"\r\n"));
@@ -941,7 +1130,10 @@ mod tests {
             rest = &rest[start + 1..];
             let end = rest.find('>').expect("closed tag");
             let tag = rest[..end].trim();
-            if tag.starts_with('?') || tag.starts_with('!') { rest = &rest[end + 1..]; continue; }
+            if tag.starts_with('?') || tag.starts_with('!') {
+                rest = &rest[end + 1..];
+                continue;
+            }
             if let Some(closing) = tag.strip_prefix('/') {
                 assert_eq!(stack.pop(), Some(closing), "mismatched XML close tag {tag}");
             } else if !tag.ends_with('/') {
@@ -956,7 +1148,12 @@ mod tests {
     #[test]
     fn chart_svgs_are_balanced_and_empty_input_is_valid() {
         let input = AnnualInput::default();
-        for svg in [monthly_documents_svg(&input), weekly_documents_svg(&input), weekday_heatmap_svg(&input), topic_timeline_svg(&input)] {
+        for svg in [
+            monthly_documents_svg(&input),
+            weekly_documents_svg(&input),
+            weekday_heatmap_svg(&input),
+            topic_timeline_svg(&input),
+        ] {
             assert!(svg.starts_with("<svg "));
             assert!(svg.contains("<title") && svg.contains("<desc"));
             assert_well_formed_svg(&svg);
@@ -967,10 +1164,21 @@ mod tests {
     fn monthly_bars_scale_proportionally_and_svg_topic_text_is_escaped() {
         let mut input = sample();
         let report = input.report.as_mut().unwrap();
-        report.stats.topic_by_month.insert(0, { let mut a = [0; 12]; a[0] = 2; a[1] = 4; a });
+        report.stats.topic_by_month.insert(0, {
+            let mut a = [0; 12];
+            a[0] = 2;
+            a[1] = 4;
+            a
+        });
         report.stats.top_topics[0].topic_name = "예산 <정산> & \"보고\"".into();
-        report.stats.topic_timeline_by_month.insert(0, [((2020, 12), 2), ((2021, 1), 4)].into());
-        report.stats.week_day_heatmap.insert((2020, 53), [1, 0, 0, 0, 0, 0, 0]);
+        report
+            .stats
+            .topic_timeline_by_month
+            .insert(0, [((2020, 12), 2), ((2021, 1), 4)].into());
+        report
+            .stats
+            .week_day_heatmap
+            .insert((2020, 53), [1, 0, 0, 0, 0, 0, 0]);
         let bars = monthly_documents_svg(&input);
         assert!(bars.contains("y=\"180\" width=\"32\" height=\"120\""));
         assert!(bars.contains("y=\"60\" width=\"32\" height=\"240\""));
@@ -1004,10 +1212,13 @@ mod tests {
     #[test]
     fn weekly_chart_with_all_zero_counts_keeps_axes_and_valid_svg() {
         let mut input = sample();
-        input.report.as_mut().unwrap().stats.topic_by_iso_week.insert(
-            0,
-            [((2026, 1), 0), ((2026, 53), 0)].into(),
-        );
+        input
+            .report
+            .as_mut()
+            .unwrap()
+            .stats
+            .topic_by_iso_week
+            .insert(0, [((2026, 1), 0), ((2026, 53), 0)].into());
         let svg = weekly_documents_svg(&input);
         assert!(svg.contains("<text x=\"46\"")); // y축 눈금
         assert!(svg.contains("x1=\"54\" y1=\"318\"")); // x축
@@ -1037,13 +1248,16 @@ mod tests {
     fn test_report_json_empty_input() {
         let input = AnnualInput::default();
         let json_str = render_report_json(&input);
-        let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("유효한 JSON이어야 함");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json_str).expect("유효한 JSON이어야 함");
 
         assert_eq!(parsed["total_docs"], 0);
         assert_eq!(parsed["period"]["start"], "");
         assert_eq!(parsed["period"]["end"], "");
 
-        let monthly = parsed["monthly_docs"].as_array().expect("monthly_docs 배열");
+        let monthly = parsed["monthly_docs"]
+            .as_array()
+            .expect("monthly_docs 배열");
         assert_eq!(monthly.len(), 12);
         for (i, item) in monthly.iter().enumerate() {
             assert_eq!(item["month"], (i + 1) as u64);
@@ -1096,7 +1310,10 @@ mod tests {
         // JSON 파서를 통한 역직렬화 무결성 검증
         let parsed: serde_json::Value = serde_json::from_str(&json_str).expect("파싱 성공");
         assert_eq!(parsed["top_topics"][0]["topic_name"], complex_topic_name);
-        assert_eq!(parsed["top_topics"][0]["representative_docs"][0], complex_doc_path);
+        assert_eq!(
+            parsed["top_topics"][0]["representative_docs"][0],
+            complex_doc_path
+        );
         assert_eq!(parsed["timeline"][0]["topic_name"], complex_topic_name);
     }
 

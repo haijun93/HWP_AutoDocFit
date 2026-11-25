@@ -15,6 +15,8 @@ pub mod output;
 pub mod series;
 pub mod sim;
 pub mod stats;
+pub mod synthetic;
+pub mod xlsx;
 
 pub use cluster::{Topic, UnionFind, cluster_topics};
 pub use date::{
