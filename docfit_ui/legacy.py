@@ -729,7 +729,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 # 그 오른쪽 옆에 저장 안내 / '[작업 결과]' 문구를 둔다.
                 self._결과목록 = []
                 self._재개_대기중 = False    # 중단 버튼으로 멈춘 작업이 있어 실행 버튼으로 이어서 진행할 수 있는 상태
-                self._재개_시작_인덱스 = 1
+                self._재개_지문 = None
                 self._재개_모드 = None
                 self._작업시작시각 = None
                 self._작업모드 = "all"
@@ -1868,7 +1868,6 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 결과목록도_지우기:
                     self._결과목록 = []
                     self._재개_대기중 = False
-                    self._재개_시작_인덱스 = 1
                 self.open_result_button.config(state="disabled")
                 self._원본폴더_버튼_갱신()      # 원본 폴더 버튼은 목록에 문서가 있으면 계속 켜 둔다.
                 self.footer_note_var.set(self.FOOTER_NOTE_DEFAULT)
@@ -4686,11 +4685,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     except Exception as exc:
                         서식예시_알림 = f"서식예시 파일 검사 실패(서식 설정은 그대로): {exc}"
 
-                # 중단 버튼으로 멈춘 작업과 같은 모드로 다시 실행하면, 이미 끝낸
-                # 문서는 건너뛰고 그 다음 문서부터 이어서 진행한다. 모드가 다르면
-                # 새 작업으로 보고 처음부터 다시 시작한다.
+                # 중단 버튼으로 멈춘 작업과 같은 모드·옵션으로 다시 실행하면 결과가 있는 문서만
+                # 건너뛴다. 옵션 비교는 실행 인자를 모두 모은 뒤(작업 스레드 시작 직전) 한다.
                 이어서_진행 = self._재개_대기중 and self._재개_모드 == mode
-                시작_인덱스 = self._재개_시작_인덱스 if 이어서_진행 else 1
                 self._재개_대기중 = False
 
                 from docfit_app.jobs import manager_for, prepare_legacy
@@ -4710,8 +4707,6 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 self.버튼_작업중()
 
                 self.로그표시("")
-                if 이어서_진행:
-                    self.로그표시(f"중단된 작업을 이어서 진행합니다 ({시작_인덱스}/{len(self.files)}번째 문서부터).")
                 self.로그표시("=" * 45)
                 self.로그표시(f"{APP_NAME} 작업 시작 — {dict(spacing='자간조정', unify='서식통일', format='서식적용', all='일괄적용')[mode]}")
                 self.로그표시(f"문서: {len(self.files)}개")
@@ -4831,6 +4826,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 from docfit_engine.runtime import session_for
                 self._run_context = session_for(globals()).new_context(
                     options=self.state.options, profile=표준서식_세부_전달, cancellation=중단_event)
+                시작_인덱스 = 1   # 위치로 건너뛰지 않는다. 이어하기는 완료_문서로 파일별 판단한다.
+                완료_문서 = []   # 스레드 시작 전에 채운다.
                 self.worker = threading.Thread(
                     target=작업_실행,
                     args=(
@@ -4866,9 +4863,23 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         self.integrity_report_file_var.get(),
                         self.final_review_file_var.get(),
                     ),
-                    kwargs={"context": self._run_context, "callbacks": self._run_context.callbacks},
+                    kwargs={"context": self._run_context, "callbacks": self._run_context.callbacks,
+                            "완료_문서": 완료_문서},
                     daemon=True
                 )
+                # 서식 프로필·장평 설정은 인자가 아니라 전역·설정 파일로 전달되므로 지문에 함께 넣는다.
+                from docfit_engine.job_state import options_fingerprint
+                지문 = options_fingerprint([mode, self.worker._args[1:], 표준서식_설정, 설정_불러오기().get("ratio_shrink")])
+                if 이어서_진행 and 지문 == self._재개_지문:
+                    완료_문서.extend({"source": r["원본"], "output": r["결과"], "status": r.get("status", "saved")}
+                                  for r in self._결과목록 if os.path.isfile(r["결과"]))
+                    self.로그표시(f"중단된 작업을 이어서 진행합니다 (결과가 있는 {len(완료_문서)}개 문서는 건너뜁니다).")
+                elif 이어서_진행:
+                    self.로그표시("옵션이 바뀌어 처음부터 다시 처리합니다.")
+                    self._결과_초기화()
+                    self._실패목록 = {}
+                    self._작업시작시각 = time.monotonic()
+                self._재개_지문 = 지문
                 manager_for(self).attach(self._job_id, self.worker)
                 self.worker.start()
 
@@ -5551,6 +5562,11 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                 "final_size": final_size,
                                 "steps": steps,
                             })
+                        elif event == "document_state":
+                            for 항목 in self._결과목록:
+                                if 항목["원본"] == item[1]:
+                                    항목["status"] = item[2]
+                            self.로그표시(f"{Path(item[1]).name}: {item[3]}")
                         elif event == "document_error":
                             self._실패목록[str(item[1])] = str(item[2])
                             self.stage_board.finish("오류")
@@ -5597,13 +5613,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             self._안내_설정(0)
                             self.버튼_대기중()
                             self.stage_board.finish("중단")
-                            완료수 = len(self._결과목록)
+                            from docfit_engine.job_state import file_key
+                            저장됨 = {file_key(r["원본"]) for r in self._결과목록 if os.path.isfile(r["결과"])}
+                            완료수 = sum(1 for 파일 in self.files if file_key(파일) in 저장됨)
                             # 완료된 문서 수가 전체와 같으면(마지막 문서 저장 직후 중단) 더 이어갈 게 없다.
                             if 0 < 완료수 < len(self.files):
                                 self._재개_대기중 = True
-                                self._재개_시작_인덱스 = 완료수 + 1
                                 self._재개_모드 = self._작업모드
-                                안내 = f"작업이 중단되었습니다. ({완료수}/{len(self.files)}개 완료 — 실행을 누르면 이어서 진행합니다.)"
+                                안내 = f"작업이 중단되었습니다. ({완료수}/{len(self.files)}개 저장 — 실행을 누르면 나머지 문서를 이어서 처리합니다.)"
                             else:
                                 self._재개_대기중 = False
                                 안내 = "작업이 중단되었습니다."
@@ -5622,8 +5639,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             if self._안내키:
                                 self._안내지남.add(self._안내키)
                             self._안내키 = "done" if item[2] == 0 else self._안내키
-                            절약한_초 = self._절약초 or 0
-                            절약한_시간 = 절약시간_분초_표시(self._절약초 or 0)
+                            절약한_초 = getattr(self, '_절약초', None) or 0   # 실패가 있는 첫 작업에는 아직 없다
+                            절약한_시간 = 절약시간_분초_표시(절약한_초)
                             self._절약초 = None
                             self._작업결과_표시(item[2] == 0)
                             최종검수 = item[6] if len(item) >= 8 else None
@@ -5638,6 +5655,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                                 self.status_var.set(f"처리 완료 · 성공 {item[1]}개 / 실패 {item[2]}개")
                             self.로그표시("=" * 45 + f"\n작업 완료 - 성공 {item[1]}개 / 실패 {item[2]}개\n" + "=" * 45)
                             상세 = [f"성공 {item[1]}개 · 실패 {item[2]}개"]
+                            # 저장은 됐지만 확인이 필요한 파일은 성공 수와 따로 보여 준다.
+                            for 상태값, 이름 in (("integrity_failed", "무결성 확인 필요"), ("inspection_failed", "검수 실패")):
+                                대상 = [Path(r["원본"]).name for r in self._결과목록 if r.get("status") == 상태값]
+                                if 대상:
+                                    self.status_var.set(f"{self.status_var.get()} · {이름} {len(대상)}개")
+                                    상세.extend(f"{이름}(저장됨): {파일명}" for 파일명 in 대상)
                             if len(item) >= 6:
                                 상세.append(f"세부 작업 {item[3]}건 · 성공 {item[4]}건 · 실패 {item[5]}건")
                             if not item[2]:

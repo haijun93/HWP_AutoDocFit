@@ -551,54 +551,89 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             # 내어쓰기는 한/글의 Shift+Tab 값이 최종이다. 저장 뒤 기준 서식 값으로 덮지 않는다(사용자 2026-11-02).
             로그(f"전체 처리 {총회차}회 완료")
             로그(f"저장 완료: {저장파일}")
-            단계시간_구간('저장 후 규칙 검수')
-            최종규칙검사 = 저장결과_규칙검수(파일, 저장파일, 결과창=_결과창_띄우는가(total))
-            if 최종규칙검사 is False:
-                return False
-            단계시간_구간('무결성·숫자 대조')
-            무결성 = None
-            if 검수_사용 and 원본_구조 is not None:
-                결과_구조 = inspect_hwpx(저장파일)
-                무결성 = compare_documents(원본_구조, 결과_구조)
-                보고서경로 = None
-                if 무결성보고서파일_사용:
-                    보고서경로 = Path(저장파일).with_name(Path(저장파일).stem + "(무결성검사).json")
-                    보고서경로.write_text(json.dumps(무결성, ensure_ascii=False, indent=2), encoding="utf-8")
-                로그(
-                    f"문서 무결성 검사: {'통과' if 무결성['ok'] else '확인 필요'} / "
-                    f"본문 일치도 {무결성['text_similarity']:.1%} / "
-                    f"보고서 {보고서경로.name if 보고서경로 else '파일 저장 안 함'}"
-                )
-                for 문제 in 무결성["issues"]:
-                    로그(f"  - [{문제['severity']}] {문제['message']}")
-            if 검수_사용:
-                # 숫자 데이터 일치 검사(TODO 4순위): 표 가까이의 본문 수치가 그 표에 같은 단위로
-                # 있는지 본다. 읽기 전용이며 실패가 아닌 '확인 필요'로만 알린다.
-                try:
-                    대조 = 숫자_대조(결과_구조 if 원본_구조 is not None else inspect_hwpx(저장파일))
-                    최종규칙검사['number_check'] = 대조
-                    if 대조['status'] == 'skipped':
-                        진단로그(f"숫자 대조: {대조['reason']}")
-                    else:
-                        로그(f"숫자 대조: 표 가까이 본문 수치 {대조['checked']}개 중 표에서 찾지 못한 "
-                             f"{len(대조['review'])}개(확인 필요)")
-                        for 항목 in 대조['review']:
-                            로그(f"  - [숫자 대조 확인 필요] {항목['text']}: {항목['context']}")
-                except Exception as exc:
-                    진단로그(f"숫자 대조 실패(무시): {exc}")
-            최종검수_문서목록.append({
-                "source": str(파일),
-                "output": str(저장파일),
-                "success": True,
-                "rule_checks": 최종규칙검사,
-                "processed_pages": 처리쪽수,
-                "integrity_ok": 무결성["ok"] if 무결성 is not None else None,
-                "text_similarity": 무결성.get("text_similarity") if 무결성 is not None else None,
-            })
-            if 작업_임시폴더 is not None:
-                작업_임시폴더.cleanup()
+            # 결과 파일이 확정된 즉시 목록과 saved 사건에 남긴다. 뒤의 검수가 취소·실패해도
+            # 파일이 사라진 것처럼 보이지 않게 상태만 바꾼다(F04).
+            from docfit_engine.job_state import DocumentStatus
+            기록 = {"source": str(파일), "output": str(저장파일), "success": False,
+                  "status": DocumentStatus.SAVED, "integrity_ok": None, "processed_pages": 처리쪽수}
+            최종검수_문서목록.append(기록)
             # 실행창이 '작업 결과' 표시와 '결과파일 열기'에 쓰도록 알린다.
             gui_queue.put(("saved", str(파일), str(저장파일), 처리쪽수))
+
+            def 저장후_상태(상태값, 안내):
+                기록["status"] = 상태값
+                로그(f"{안내}: {저장파일}")
+                gui_queue.put(("document_state", str(파일), 상태값, 안내))
+
+            try:
+                단계시간_구간('저장 후 규칙 검수')
+                최종규칙검사 = 저장결과_규칙검수(파일, 저장파일, 결과창=_결과창_띄우는가(total))
+                if 최종규칙검사 is False:
+                    if 중단_요청됨():
+                        저장후_상태(DocumentStatus.CANCELLED, "저장 후 검수 중 중단(결과 파일은 저장됨)")
+                    else:
+                        기록["error"] = "저장 후 규칙 검수 실패"
+                        저장후_상태(DocumentStatus.INSPECTION_FAILED, "저장 후 규칙 검수 실패(결과 파일은 저장됨)")
+                    return False
+                단계시간_구간('무결성·숫자 대조')
+                무결성 = None
+                if 검수_사용 and 원본_구조 is not None:
+                    결과_구조 = inspect_hwpx(저장파일)
+                    무결성 = compare_documents(원본_구조, 결과_구조)
+                    보고서경로 = None
+                    if 무결성보고서파일_사용:
+                        보고서경로 = Path(저장파일).with_name(Path(저장파일).stem + "(무결성검사).json")
+                        보고서경로.write_text(json.dumps(무결성, ensure_ascii=False, indent=2), encoding="utf-8")
+                    로그(
+                        f"문서 무결성 검사: {'통과' if 무결성['ok'] else '확인 필요'} / "
+                        f"본문 일치도 {무결성['text_similarity']:.1%} / "
+                        f"보고서 {보고서경로.name if 보고서경로 else '파일 저장 안 함'}"
+                    )
+                    for 문제 in 무결성["issues"]:
+                        로그(f"  - [{문제['severity']}] {문제['message']}")
+                if 검수_사용:
+                    # 숫자 데이터 일치 검사(TODO 4순위): 표 가까이의 본문 수치가 그 표에 같은 단위로
+                    # 있는지 본다. 읽기 전용이며 실패가 아닌 '확인 필요'로만 알린다.
+                    try:
+                        대조 = 숫자_대조(결과_구조 if 원본_구조 is not None else inspect_hwpx(저장파일))
+                        최종규칙검사['number_check'] = 대조
+                        if 대조['status'] == 'skipped':
+                            진단로그(f"숫자 대조: {대조['reason']}")
+                        else:
+                            로그(f"숫자 대조: 표 가까이 본문 수치 {대조['checked']}개 중 표에서 찾지 못한 "
+                                 f"{len(대조['review'])}개(확인 필요)")
+                            for 항목 in 대조['review']:
+                                로그(f"  - [숫자 대조 확인 필요] {항목['text']}: {항목['context']}")
+                    except Exception as exc:
+                        진단로그(f"숫자 대조 실패(무시): {exc}")
+                기록.update({
+                    "success": True,
+                    "rule_checks": 최종규칙검사,
+                    "integrity_ok": 무결성["ok"] if 무결성 is not None else None,
+                    "text_similarity": 무결성.get("text_similarity") if 무결성 is not None else None,
+                })
+                검수_오류 = [f"{key}: {항목.get('error') or '검사 오류'}"
+                          for key, 항목 in (최종규칙검사 if isinstance(최종규칙검사, dict) else {}).items()
+                          if isinstance(항목, dict) and 항목.get('status') == 'error']
+                if 검수_오류:
+                    # 재열기 실패처럼 검사 자체를 하지 못한 항목이 있으면 검수 실패다. 항목별 결과와
+                    # 무결성 대조는 최종 검수가 쓰도록 남긴다.
+                    무결성_안내 = " / 무결성 확인 필요" if 무결성 is not None and not 무결성["ok"] else ""
+                    기록.update({"success": False, "error": f"저장 후 규칙 검수 실패 — {'; '.join(검수_오류)}{무결성_안내}"})
+                    저장후_상태(DocumentStatus.INSPECTION_FAILED,
+                            f"저장 후 규칙 검수 실패(결과 파일은 저장됨){무결성_안내}")
+                    return False
+                if 무결성 is not None and not 무결성["ok"]:
+                    # success 는 기존 의미(파일 처리·저장)를 유지하고 상태로 구분한다(F05).
+                    저장후_상태(DocumentStatus.INTEGRITY_FAILED, "무결성 확인 필요(결과 파일은 저장됨)")
+            except Exception as exc:
+                traceback.print_exc()
+                기록["error"] = str(exc)
+                저장후_상태(DocumentStatus.INSPECTION_FAILED, f"저장 후 검수 오류(결과 파일은 저장됨): {exc}")
+                return False
+            finally:
+                if 작업_임시폴더 is not None:
+                    작업_임시폴더.cleanup()
             return True
         return bind_function(_문서_처리_본체, _docfit_namespace)
     if _docfit_symbol == '절전_방지':
@@ -651,6 +686,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             준말_등록=None,  # 화면이 위치 인자로 호출하므로 새 매개변수는 항상 맨 끝에만 추가한다.
             무결성보고서파일=False,
             최종검수파일=False,
+            *,
+            완료_문서=None,   # 이어하기: 건너뛸 문서의 결과 기록(키워드 전용)
         ):
             global 작업_모드, 문두라벨_기호설정
             global 표_자간조정_사용, 쪽범위_요청, 로그파일_사용
@@ -836,22 +873,67 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             "resumed_result": True,
                         })
 
+                from docfit_engine.job_state import (
+                    DocumentCancelled, DocumentFailed, DocumentStatus, classify_result, close_failed_document,
+                    file_key, resumed_records)
+
+                def 미처리_보고(처리한_번호, 사유):
+                    """더 진행할 수 없을 때 남은 문서를 건너뛰지 않았다는 듯 보이지 않게 남긴다."""
+                    nonlocal 실패
+                    로그(f"{사유} — 남은 문서는 처리하지 않습니다.")
+                    for 남은파일 in 파일목록[처리한_번호:]:
+                        if file_key(남은파일) in 완료_기록:
+                            continue
+                        실패 += 1
+                        최종검수_문서목록.append({
+                            "source": str(남은파일), "output": None, "success": False,
+                            "status": DocumentStatus.UNPROCESSED, "integrity_ok": None, "error": 사유,
+                        })
+                        gui_queue.put(("document_state", str(남은파일), DocumentStatus.UNPROCESSED, f"미처리 — {사유}"))
+                        gui_queue.put(("document_error", str(남은파일), f"미처리 — {사유}"))
+
+                # 이어하기는 위치가 아니라 파일별로 판단한다(F08). 실패·미처리 파일은 다시 처리한다.
+                완료_기록 = resumed_records(파일목록, 완료_문서)
+                if 완료_기록:
+                    로그(f"이전에 중단된 작업을 이어서 진행합니다: 결과가 있는 {len(완료_기록)}개 문서는 건너뜁니다.")
+                    최종검수_문서목록.extend(완료_기록.values())
+
                 for index, 파일 in enumerate(파일목록, 1):
-                    if index < 시작_인덱스:
+                    if index < 시작_인덱스 or file_key(파일) in 완료_기록:
                         continue
                     if 중단_요청됨():
                         break
+                    문서_실패 = False
                     try:
-                        result = 문서_처리(파일, index, total, 문장부호기능)
-                        if result is False:
+                        outcome = classify_result(
+                            문서_처리(파일, index, total, 문장부호기능), 중단_요청됨())
+                        if isinstance(outcome, DocumentCancelled):
                             break
-                        성공 += 1
-                        진행률(index / total * 100)
+                        if isinstance(outcome, DocumentFailed):
+                            문서_실패 = True
+                            실패 += 1
+                            # 저장 뒤 실패는 본체가 이미 결과 경로와 함께 기록했다.
+                            기록 = next((r for r in 최종검수_문서목록 if r.get("source") == str(파일)), None)
+                            if 기록 is None:
+                                최종검수_문서목록.append({
+                                    "source": str(파일), "output": None, "success": False,
+                                    "status": DocumentStatus.FAILED, "integrity_ok": None,
+                                    "error": outcome.error,
+                                })
+                            사유 = (기록 or {}).get("error") or outcome.error
+                            if (기록 or {}).get("output"):
+                                사유 = f"{사유} (결과 파일 있음: {Path(기록['output']).name})"
+                            로그(f"문서 처리 실패: {파일} — {사유}")
+                            gui_queue.put(("document_error", str(파일), 사유))
+                        else:
+                            성공 += 1
+                            진행률(index / total * 100)
                     except Exception as e:
+                        문서_실패 = True
                         실패 += 1
                         최종검수_문서목록.append({
                             "source": str(파일), "output": None, "success": False,
-                            "integrity_ok": None, "error": str(e),
+                            "status": DocumentStatus.FAILED, "integrity_ok": None, "error": str(e),
                         })
                         traceback.print_exc()
                         로그(f"문서 처리 오류: {파일} — {e}")
@@ -865,30 +947,41 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         restart_enabled = restart_between_documents_enabled(
                             total, auto_close=bool(자동닫기_설정), compare_view=bool(비교보기_사용))
                         if restart_enabled:
-                            from time import perf_counter
-                            restart_started = perf_counter()
-                            이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
-                            if 자동닫기_설정:
-                                작업창_닫기()
-                            else:
-                                작업창_분리()
-                            hwp = 한글_COM_인스턴스_생성(독립=True)
-                            from docfit_core import hwp_process
-                            from docfit_core.com_perf import wrap_if_enabled
-                            hwp = wrap_if_enabled(hwp)
-                            hwp_process.bind_owner(hwp, hwp_process.take_registered())
-                            hwp.XHwpWindows.Item(0).Visible = True
-                            if not hwp.RegisterModule(REGISTER_MODULE_NAME, REGISTER_MODULE_VALUE):
-                                raise RuntimeError("문서 간 재시작 뒤 보안 모듈 등록에 실패했습니다.")
-                            if 비교보기_사용 and 이전_창목록 is not None:
-                                작업창_임베드(이전_창목록)
-                            restart_seconds = perf_counter() - restart_started
-                            로그(
-                                "다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작하고 "
-                                "보안 모듈을 등록했습니다. "
-                                f"재시작 소요: {restart_seconds:.3f}초"
-                            )
+                            try:
+                                from time import perf_counter
+                                restart_started = perf_counter()
+                                이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
+                                if 자동닫기_설정:
+                                    작업창_닫기()
+                                else:
+                                    작업창_분리()
+                                hwp = 한글_COM_인스턴스_생성(독립=True)
+                                from docfit_core import hwp_process
+                                from docfit_core.com_perf import wrap_if_enabled
+                                hwp = wrap_if_enabled(hwp)
+                                hwp_process.bind_owner(hwp, hwp_process.take_registered())
+                                hwp.XHwpWindows.Item(0).Visible = True
+                                if not hwp.RegisterModule(REGISTER_MODULE_NAME, REGISTER_MODULE_VALUE):
+                                    raise RuntimeError("문서 간 재시작 뒤 보안 모듈 등록에 실패했습니다.")
+                                if 비교보기_사용 and 이전_창목록 is not None:
+                                    작업창_임베드(이전_창목록)
+                                restart_seconds = perf_counter() - restart_started
+                                로그(
+                                    "다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작하고 "
+                                    "보안 모듈을 등록했습니다. "
+                                    f"재시작 소요: {restart_seconds:.3f}초"
+                                )
+                            except Exception as e:
+                                traceback.print_exc()
+                                미처리_보고(index, f"문서 간 한/글 재시작 실패: {e}")
+                                break
                         else:
+                            if 문서_실패:
+                                try:
+                                    close_failed_document(hwp)
+                                except Exception as e:
+                                    미처리_보고(index, f"실패한 문서를 닫지 못함: {e}")
+                                    break
                             로그(
                                 "문서 간 한/글 재시작을 건너뜁니다(자동 닫기 끔 또는 비교 보기). "
                                 "DOCFIT_RESTART_BETWEEN_DOCS=1로 강제, 0으로 해제할 수 있습니다."
@@ -954,7 +1047,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         로그(f"  - 확인: {사유}")
                     for 참고 in 최종검수.get("notes", []):
                         로그(f"  - 참고: {참고}")
-                    상태("모든 작업 완료")
+                    상태("모든 작업 완료" if not 실패 else f"작업 종료 — 실패 또는 확인이 필요한 문서 {실패}개")
                     gui_queue.put(("finished", 성공, 실패, 총작업_대상, 총작업_성공, 총작업_실패,
                                    최종검수, str(검수보고서) if 검수보고서 else None))
 

@@ -336,6 +336,9 @@ def legacy_event(manager, identifier, item):
         manager.report(identifier, 'progress', {'percent':100 * (max(0, n - 1) + fraction) / total if total else 0})
     elif event == 'document_error':
         manager.report(identifier, 'log', {'message':str(values[1]), 'source':str(values[0]), 'legacy_event':'document_error', 'legacy_values':[str(values[0]), str(values[1])]})
+    elif event == 'document_state':
+        # saved/item_done 계약은 그대로 두고 파일 상태만 덧붙여 알린다.
+        manager.report(identifier, 'log', {'message':str(values[2]), 'source':str(values[0]), 'result_status':str(values[1])})
     elif event == 'saved':
         details = {'source':str(values[0]), 'status':'converted', 'output':str(values[1])}
         if len(values) > 9 and values[7] is not None:

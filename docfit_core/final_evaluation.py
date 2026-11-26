@@ -176,7 +176,7 @@ def evaluate_work(goal, documents, item_stats=None, unresolved=None, verificatio
     elif not required and not verification_enabled:
         blockers.append('선택된 작업 중 저장 결과에서 확인할 수 있는 규칙이 없음')
     if failed:
-        blockers.append(f"처리하지 못한 문서 {failed}개")
+        blockers.append(f"실패 또는 확인이 필요한 문서 {failed}개")
     if valid_outputs < succeeded:
         blockers.append(f"확인할 수 없는 결과물 {succeeded - valid_outputs}개")
     integrity_failed = sum(1 for item in verified if item.get("integrity_ok") is False)
