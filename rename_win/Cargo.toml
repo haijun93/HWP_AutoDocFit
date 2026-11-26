@@ -8,6 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
+native_tasks = { path = "../native_tasks" }
 ui_theme = { path = "../ui_theme" }
 grid_core = { path = "../grid_core" }
 regex = { version = "1.13.1", default-features = false, features = ["std", "unicode", "perf"] }

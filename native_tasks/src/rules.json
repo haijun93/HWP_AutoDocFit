@@ -1,0 +1,188 @@
+[
+  {
+    "kind": "replace",
+    "label": "문자열 바꾸기",
+    "defaults": {
+      "find": "",
+      "to": "",
+      "regex": false,
+      "case": true,
+      "count": "all"
+    }
+  },
+  {
+    "kind": "add",
+    "label": "앞/뒤에 추가",
+    "defaults": {
+      "text": "",
+      "position": "prefix",
+      "sep": ""
+    }
+  },
+  {
+    "kind": "uuid_replace",
+    "label": "무작위 UUID 파일명 바꾸기",
+    "defaults": {
+      "text": ""
+    }
+  },
+  {
+    "kind": "date",
+    "label": "날짜·시각 넣기",
+    "defaults": {
+      "source": "mtime",
+      "format": "YYYYMMDD",
+      "position": "prefix",
+      "sep": "_"
+    }
+  },
+  {
+    "kind": "exif_date",
+    "label": "사진 촬영일(EXIF)",
+    "defaults": {
+      "format": "YYYYMMDD",
+      "position": "prefix",
+      "sep": "_"
+    }
+  },
+  {
+    "kind": "number",
+    "label": "번호 붙이기",
+    "defaults": {
+      "start": 1,
+      "step": 1,
+      "digits": 3,
+      "position": "suffix",
+      "per_folder": false,
+      "sep": "_"
+    }
+  },
+  {
+    "kind": "number_shift",
+    "label": "번호 늘리기/줄이기",
+    "defaults": {
+      "delta": 1,
+      "which": "first"
+    }
+  },
+  {
+    "kind": "digits_pad",
+    "label": "자리수 맞추기",
+    "defaults": {
+      "digits": 3,
+      "which": "last"
+    }
+  },
+  {
+    "kind": "del_pos",
+    "label": "위치 지우기",
+    "defaults": {
+      "start": 1,
+      "end": 1,
+      "origin": "start"
+    }
+  },
+  {
+    "kind": "del_between",
+    "label": "묶인 곳 지우기",
+    "defaults": {
+      "open": "(",
+      "close": ")",
+      "nest": "outer",
+      "keep_marks": false
+    }
+  },
+  {
+    "kind": "digits_keep",
+    "label": "숫자만 남기기",
+    "defaults": {}
+  },
+  {
+    "kind": "digits_delete",
+    "label": "숫자 지우기",
+    "defaults": {}
+  },
+  {
+    "kind": "clear",
+    "label": "이름 지우기(확장자만 남김)",
+    "defaults": {}
+  },
+  {
+    "kind": "strip_result_suffix",
+    "label": "결과 접미사 지우기",
+    "defaults": {
+      "to": ""
+    }
+  },
+  {
+    "kind": "doc_title",
+    "label": "문서 제목으로",
+    "defaults": {
+      "position": "replace",
+      "sep": "_",
+      "max_length": 60
+    }
+  },
+  {
+    "kind": "template",
+    "label": "공문서 이름 틀",
+    "defaults": {
+      "template": "{date}_{dept}_{title}",
+      "dept": "",
+      "digits": 1,
+      "max_length": 60
+    }
+  },
+  {
+    "kind": "cleanup",
+    "label": "공백·밑줄·전각 정리",
+    "defaults": {
+      "nfc": true,
+      "collapse_spaces": true,
+      "underscore": "keep",
+      "strip": true,
+      "width": "keep"
+    }
+  },
+  {
+    "kind": "case",
+    "label": "대/소문자",
+    "defaults": {
+      "mode": "lower"
+    }
+  },
+  {
+    "kind": "names_list",
+    "label": "이름 목록 붙여넣기(엑셀·메모장 줄)",
+    "defaults": {
+      "names": "",
+      "keep_ext": true
+    }
+  },
+  {
+    "kind": "ext_case",
+    "label": "확장자 대/소문자",
+    "defaults": {
+      "mode": "lower"
+    }
+  },
+  {
+    "kind": "ext_replace",
+    "label": "확장자 바꾸기",
+    "defaults": {
+      "ext": "txt"
+    }
+  },
+  {
+    "kind": "ext_add",
+    "label": "확장자 덧붙이기",
+    "defaults": {
+      "ext": "bak"
+    }
+  },
+  {
+    "kind": "ext_del",
+    "label": "확장자 지우기",
+    "defaults": {}
+  }
+]

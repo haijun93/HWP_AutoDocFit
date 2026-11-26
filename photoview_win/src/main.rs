@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
-//! `photoview_win [--settings 파일] [--klib klib.exe] [--synthetic N] [--no-scan]` — 사진뷰 창(읽기 전용 격자).
+//! `photoview_win [--settings 파일] [--klib klib.exe] [--synthetic N] [--no-scan] [--photo-db 파일]` — 사진뷰 창.
+//!   `--photo-db`: 즐겨찾기·태그 DB(기본은 앱 화면과 같은 파일). 원본 사진 편집은 하지 않고 사본만 만든다.
 //! `photoview_win --capture-dir <폴더> --scan-root <폴더> --klib <klib.exe> --settings <파일> [--panel] [--panel-add <폴더>] [--dark] [--dpi N]`
 //!   — 합성 모델 대신 **실제 `klib scan`** 결과(제외 폴더는 설정에서 읽어 `--exclude` 로 전달)와 제외 폴더 편집 패널을 그린다(PHOTOWIN2).
 //! `photoview_win --capture-dir <폴더> [--dark] [--dpi N] [--size WxH] [--scene 이름] [--settings 파일]`
@@ -25,6 +26,7 @@ struct Args {
     scan_root: Option<String>,
     panel: bool,
     panel_add: Option<String>,
+    photo_db: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -43,6 +45,7 @@ fn parse_args() -> Result<Args, String> {
             "--klib" => a.klib = Some(val("파일")?),
             "--synthetic" => a.synthetic = Some(val("개수")?.parse().map_err(|_| "--synthetic 에 숫자가 필요합니다".to_string())?),
             "--no-scan" => a.no_scan = true,
+            "--photo-db" => a.photo_db = Some(val("파일")?),
             "--scan-root" => a.scan_root = Some(val("폴더")?),
             "--panel" => a.panel = true,
             "--panel-add" => {
@@ -63,6 +66,7 @@ fn run() -> Result<String, String> {
             klib: a.klib.map(Into::into),
             synthetic: a.synthetic,
             no_scan: a.no_scan,
+            photo_db: a.photo_db.map(Into::into),
         })?;
         return Ok(String::new());
     };

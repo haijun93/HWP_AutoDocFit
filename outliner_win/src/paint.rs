@@ -197,6 +197,29 @@ pub fn link_spans_x(row_text: &str, tx: i32, dpi: u32) -> Vec<(i32, i32, String)
     }
 }
 
+/// Display and hit testing use identical spans and the same GDI font metrics.
+pub fn reference_spans_x(row: &crate::view::Row, line: usize, tx: i32, dpi: u32) -> Vec<(i32, i32, outliner_core::references::RefTarget)> {
+    let Some(spans) = row.presentation.get(line) else {
+        return link_spans_x(row.text.lines().nth(line).unwrap_or(""), tx, dpi).into_iter()
+            .map(|(l, r, p)| (l, r, outliner_core::references::RefTarget::Page(p))).collect();
+    };
+    unsafe {
+        let screen = GetDC(null_mut());
+        let dc = CreateCompatibleDC(screen);
+        let f = font(&Metrics::new(dpi), false);
+        let old = SelectObject(dc, f);
+        let mut x = tx;
+        let mut out = Vec::new();
+        for span in spans {
+            let wd = text_width(dc, &span.text);
+            if let Some(target) = &span.target { out.push((x, x + wd, target.clone())); }
+            x += wd;
+        }
+        SelectObject(dc, old); DeleteObject(f); DeleteDC(dc); ReleaseDC(null_mut(), screen);
+        out
+    }
+}
+
 /// `w`×`h` 화소의 `dc` 에 목록을 그린다(읽기 전용 모양).
 pub unsafe fn draw(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi: u32, title: &str) {
     unsafe { draw_ext(dc, w, h, view, pal, dpi, title, &Extras::default()) }
@@ -323,6 +346,18 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
                 continue;
             }
             if row.text.is_empty() {
+                continue;
+            }
+            if !row.presentation.is_empty() {
+                for (n, spans) in row.presentation.iter().enumerate() {
+                    let top = top + n as i32 * m.row_h;
+                    let mut x = tx;
+                    for span in spans {
+                        let c = if span.target.is_some() || span.state != outliner_core::references::RefState::Found { pal.row_text(selected, pal.accent) } else { color };
+                        text(dc, &span.text, RECT { left: x, top, right: (w - m.pad).max(x), bottom: top + m.row_h }, c, DT_LEFT);
+                        x += text_width(dc, &span.text);
+                    }
+                }
                 continue;
             }
             for (n, part) in row.text.split('\n').enumerate() {

@@ -36,11 +36,18 @@ fn main() {
             Err(e) => Err(e),
         }
     } else {
-        win::run()
+        native_tasks::window::run(true, docfit_data_dir())
     };
     if let Err(e) = result {
         fail(&e, 1);
     }
+}
+
+#[cfg(windows)]
+fn docfit_data_dir() -> std::path::PathBuf {
+    let args:Vec<_>=std::env::args().collect();
+    args.windows(2).find(|v|v[0]=="--data-dir").map(|v|v[1].clone().into())
+        .unwrap_or_else(||native_tasks::data_dir())
 }
 
 #[cfg(windows)]

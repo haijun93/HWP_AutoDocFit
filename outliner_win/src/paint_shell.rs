@@ -95,6 +95,7 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         let label = match shell.prompt {
             Some(PromptKind::NewPage) => "새 이름",
             Some(PromptKind::Rename) => "바꿀 이름",
+            Some(PromptKind::Property) => "속성",
             None => match shell.search_mode {
                 crate::shell::SearchMode::Quick => "찾기",
                 crate::shell::SearchMode::Commands => "명령",
@@ -194,9 +195,9 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
         let head = R::new(r.l + 1, r.t, r.r, r.t + lay.head_h);
         fill(dc, rc(head), pal.head_bg);
         SelectObject(dc, fb);
-        text(dc, &format!("카드 {} · 역링크 {}", shell.cards.len(), shell.back.len()), rc(inset(head, pad)), pal.text, 0);
+        text(dc, &format!("연결 참조 {} · 언급 {}", shell.back.len(), shell.unlinked.len()), rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
-        if shell.back.is_empty() && shell.cards.is_empty() {
+        if shell.back.is_empty() && shell.cards.is_empty() && shell.editor.view.rows.is_empty() {
             let row = R::new(r.l + 1, lay.list_top(r), r.r, lay.list_top(r) + lay.item_h * 2);
             text(dc, "Shift+클릭으로 카드를 여세요", rc(inset(row, pad)), pal.text_muted, 0);
             return;
@@ -208,6 +209,21 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
             let top = lay.list_top(r) + slot as i32 * lay.item_h;
             let row = R::new(r.l + 1, top, r.r, top + lay.item_h);
             match item {
+                RightItem::AddProperty => {
+                    SelectObject(dc, fb);
+                    text(dc, "선택 블록 속성 · ＋ 추가", rc(inset(row, pad)), pal.accent, 0);
+                    SelectObject(dc, f);
+                }
+                RightItem::Property(key, value) => {
+                    text(dc, &format!("{key}:: {value}"), rc(inset(row, pad)), pal.text_sub, 0);
+                }
+                RightItem::Tag(tag) => {
+                    text(dc, &format!("#{tag} · 태그 검색"), rc(inset(row, pad)), pal.accent, 0);
+                }
+                RightItem::Unlinked(i) => {
+                    let b = &shell.unlinked[*i];
+                    text(dc, &format!("{} · {}", b.page, b.text.replace('\n', " · ")), rc(inset(row, pad)), pal.text, 0);
+                }
                 RightItem::Card(i) => {
                     fill(dc, rc(row), pal.head_bg);
                     frame(dc, row, pal.divider);

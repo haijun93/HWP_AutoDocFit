@@ -12,6 +12,15 @@ pub const TARGETS: [(&str, &str); 7] = [
     ("TXT", "txt"),
     ("MD", "md"),
 ];
+/// 앱 출력 형식 전체. 기존 7개 순서는 자동화·단축 인자의 호환을 위해 유지한다.
+pub const ALL_TARGETS: [(&str, &str); 12] = [
+    TARGETS[0],TARGETS[1],("PDF 합치기","pdfm"),TARGETS[3],TARGETS[4],TARGETS[5],TARGETS[6],
+    ("PDF 압축", "pdfz"),("이미지 PDF", "pdfi"),("DOCX", "docx"),("EPUB", "epub"),("HTML", "html"),
+];
+pub fn format_rect(i:usize)->Rect {
+    let x=28+(i%6) as i32*162;let y=96+(i/6) as i32*46;
+    Rect {left:x,top:y,right:x+152,bottom:y+36}
+}
 pub const MARGIN: i32 = 28;
 pub const TARGET_W: i32 = 130;
 pub const TARGET_STEP: i32 = 142;
@@ -22,7 +31,7 @@ pub const ROW_STEP: i32 = 28;
 
 /// 파일 한 건의 명시적 변환 상태. 전이는 `transition`만으로 적용한다.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FileStatus { Waiting, Running, Succeeded(PathBuf), Failed(String), Cancelled }
+pub enum FileStatus { Waiting, Running, Succeeded(PathBuf), Failed(String), Skipped(String), Cancelled }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileResult { pub source: PathBuf, pub status: FileStatus }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,6 +140,11 @@ pub struct Model {
     pub selected_file: usize,
 }
 impl Model {
+    pub fn select_output(&mut self,i:usize) { self.target=i.min(ALL_TARGETS.len()-1); }
+    pub fn remove_selected(&mut self) {
+        if self.selected_file<self.files.len() {self.files.remove(self.selected_file);}
+        self.selected_file=self.selected_file.min(self.files.len().saturating_sub(1));
+    }
     /// 드롭된 경로를 목록에 더한다. 파일이 아닌 것(폴더·없는 경로)과 이미 있는 경로는 건너뛴다.
     /// 더해진 개수를 돌려준다.
     pub fn add_dropped<I, F>(&mut self, paths: I, is_file: F) -> usize
@@ -158,7 +172,7 @@ impl Model {
         true
     }
     pub fn format(&self) -> &'static str {
-        TARGETS[self.target.min(TARGETS.len() - 1)].1
+        ALL_TARGETS[self.target.min(ALL_TARGETS.len() - 1)].1
     }
     pub fn header(&self) -> String {
         format!("변환할 파일  ·  {}개", self.files.len())
@@ -192,7 +206,7 @@ pub fn decode_open_request(data: &[u8]) -> Result<(String,Vec<PathBuf>), &'stati
     let req:serde_json::Value=serde_json::from_slice(data).map_err(|_|"invalid_json")?;
     if req.get("cmd").and_then(|v|v.as_str())!=Some("convert_open") { return Err("invalid_cmd"); }
     let target=req.get("target").and_then(|v|v.as_str()).ok_or("invalid_target")?;
-    if !TARGETS.iter().any(|(_,f)|*f==target) { return Err("invalid_target"); }
+    if !ALL_TARGETS.iter().any(|(_,f)|*f==target) { return Err("invalid_target"); }
     let values=req.get("paths").and_then(|v|v.as_array()).ok_or("invalid_paths")?;
     if values.is_empty()||values.len()>2000 { return Err("invalid_paths"); }
     let paths=values.iter().map(|v|v.as_str().map(PathBuf::from).ok_or("invalid_paths")).collect::<Result<Vec<_>,_>>()?;

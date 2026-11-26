@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../../core/drop_events.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/close_guards.dart';
 import '../common/file_handoff.dart';
 
 class PdfEditWorkspace extends StatefulWidget {
@@ -52,6 +53,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
   String? _completedPath;
   bool _dragActive = false;
   void Function()? _stopDropWatch;
+  WorkWatch? _closeWatch;
   bool _dropWatchActive = false;
 
   @override
@@ -59,6 +61,10 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
     super.initState();
     _stopDropWatch = watchDocumentDropPaths(_onDocumentDrop);
     widget.incoming?.addListener(_takeIncoming);
+    _closeWatch = CloseGuards.watch(
+      unsaved: () => _operations.isNotEmpty && _completedPath == null ? 'PDF 편집 내용' : null,
+      saving: () => _busy,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _takeIncoming());
   }
 
@@ -127,6 +133,7 @@ class _PdfEditWorkspaceState extends State<PdfEditWorkspace> {
 
   @override
   void dispose() {
+    _closeWatch?.release();
     widget.incoming?.removeListener(_takeIncoming);
     _stopDropWatch?.call();
     _pages.dispose();

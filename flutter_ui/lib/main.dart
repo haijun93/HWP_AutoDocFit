@@ -198,16 +198,26 @@ class DocFitApp extends StatelessWidget {
     super.key,
     this.api = bridge.callApi,
     this.useIntegratedShell = true,
+    this.soloTab,
   });
   final ApiCall api;
   final bool useIntegratedShell;
+
+  /// 전용 창의 화면 번호. 보통은 주소에서 읽는다(시험에서만 직접 준다).
+  final int? soloTab;
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: appThemeListenable(),
     builder: (context, _) {
       // 고대비가 켜져 있으면 Flutter가 highContrast(Dark)Theme을 고른다(시스템 색 우선).
       final highContrast = highContrastAppTheme();
+      final solo = soloTab ?? soloTabFrom(Uri.base);
+      final Widget home = useIntegratedShell ? _IntegratedHome(api: api, soloTab: solo) : Workspace(api: api);
       return MaterialApp(
+        // 전용 창의 주소 조각(#screen=N)은 화면 경로가 아니므로 첫 경로로 해석하지 않는다.
+        // home 과 onGenerateInitialRoutes 는 함께 줄 수 없다(디버그 단언).
+        onGenerateInitialRoutes: solo == null ? null : (_) => [MaterialPageRoute<void>(builder: (_) => home)],
+        onGenerateRoute: solo == null ? null : (_) => MaterialPageRoute<void>(builder: (_) => home),
         title: '한글편집 후처리',
         debugShowCheckedModeBanner: false,
         theme: lightAppTheme,
@@ -215,7 +225,7 @@ class DocFitApp extends StatelessWidget {
         highContrastTheme: highContrast,
         highContrastDarkTheme: highContrast,
         themeMode: appThemeChoice.value.mode,
-        home: useIntegratedShell ? _IntegratedHome(api: api) : Workspace(api: api),
+        home: solo == null ? home : null,
       );
     },
   );
@@ -226,8 +236,9 @@ class DocFitApp extends StatelessWidget {
 /// 파일변환 탭: 문서편집 상태(_WorkspaceState)를 읽어 3단 화면을 그린다. 처음에는 상태가 만들어지길 기다린다.
 
 class _IntegratedHome extends StatefulWidget {
-  const _IntegratedHome({required this.api});
+  const _IntegratedHome({required this.api, this.soloTab});
   final ApiCall api;
+  final int? soloTab;
   @override
   State<_IntegratedHome> createState() => _IntegratedHomeState();
 }
@@ -241,17 +252,69 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   List<void Function()> _stopTabOpenEvents = const [];
   List<void Function()> _stopTabCloseEvents = const [];
 
+  /// 전용 창이 파일(5 는 붙여넣기 요청)을 받는 화면.
+  static const _receivingScreens = {0, 5, 10, 11, 12, 13};
+  Timer? _handoffTimer;
+  bool _taking = false;
+
+  /// 이 창의 수신함을 비워 앱 안 보내기와 같은 길([_sendFiles])로 넘긴다.
+  /// 받을 준비가 안 됐으면(상태를 아직 못 읽음·작업 중·닫는 중) 가져가지 않는다: 요청은 남아 있다.
+  Future<void> _takeHandoff() async {
+    final solo = widget.soloTab!;
+    final host = workspace.currentState;
+    if (_taking || host == null || host.appClosing) return;
+    if ((solo == 0 || solo == kTabFileConversion) && host.locked) return;
+    _taking = true;
+    try {
+      final raw = await widget.api('handoff', [
+        {'action': 'take'},
+      ]);
+      final data = raw is Map ? raw['data'] : null;
+      if (!mounted || data is! Map) return;
+      if (data['photo_paste'] == true) photoPasteTrigger.value++;
+      final paths = [for (final p in data['paths'] as List? ?? const []) '$p'];
+      final rejected = (data['rejected'] as num?)?.toInt() ?? 0;
+      String? message;
+      if (paths.isNotEmpty) {
+        final target = switch (solo) {
+          0 => FileTarget.documentEditor,
+          kTabFileConversion => FileTarget.conversion,
+          kTabPdfEdit => FileTarget.pdfEdit,
+          12 => FileTarget.virtualFolder,
+          _ => FileTarget.notebook,
+        };
+        message = await _sendFiles(target, paths);
+      }
+      if (rejected > 0) {
+        message = [?message, '넣을 수 없는 파일 $rejected개는 뺐습니다.'].join(' ');
+      }
+      if (message != null && mounted) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (_) {
+      // 앱 연결이 아직이면 다음 차례에 다시 본다.
+    } finally {
+      _taking = false;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    if (_receivingScreens.contains(widget.soloTab)) {
+      _handoffTimer = Timer.periodic(const Duration(milliseconds: 700), (_) => unawaited(_takeHandoff()));
+    }
     unawaited(widget.api('get_state', []).then((value) {
       if (!mounted || value is! Map) return;
-      unawaited(DockModeController(
-        api: widget.api,
-        runtime: ProcessDockRuntime(widget.api),
-        showSidebar: () async { sidebarModeVisible.value = true; },
-        hideSidebar: () async { sidebarModeVisible.value = false; },
-      ).restore(value['menu_display_mode'] as String?));
+      // 전용 창은 저장된 하단 Dock 방식을 되살리지 않는다.
+      if (widget.soloTab == null) {
+        unawaited(DockModeController(
+          api: widget.api,
+          runtime: ProcessDockRuntime(widget.api),
+          showSidebar: () async { sidebarModeVisible.value = true; },
+          hideSidebar: () async { sidebarModeVisible.value = false; },
+        ).restore(value['menu_display_mode'] as String?));
+      }
       setState(() {
         developerMode = value['developer_mode'] == true;
       });
@@ -277,6 +340,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
 
   @override
   void dispose() {
+    _handoffTimer?.cancel();
     _stopPhotoEditEvent?.call();
     for (final stop in _stopTabOpenEvents) {
       stop();
@@ -324,6 +388,14 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
   final notebookInbox = FileInbox();
   final pdfInbox = FileInbox();
 
+  static int _menuOf(FileTarget target) => switch (target) {
+    FileTarget.virtualFolder => 12,
+    FileTarget.notebook => 13,
+    FileTarget.pdfEdit => kTabPdfEdit,
+    FileTarget.conversion => kTabFileConversion,
+    FileTarget.documentEditor => 0,
+  };
+
   /// 숨긴 메뉴의 화면은 열 수 없다.
   String? _handoffBlocked(FileTarget target) {
     final tab = switch (target) {
@@ -344,6 +416,16 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
 
   /// 고른 파일을 대상 기능의 기존 진입 경로에 넣고 그 화면을 연다. 원본은 여기서 바꾸지 않는다.
   Future<String?> _sendFiles(FileTarget target, List<String> paths) async {
+    // 전용 창에서 다른 화면으로: 그 화면의 창에 보낸다(없으면 열린다).
+    final solo = widget.soloTab;
+    if (solo != null && _menuOf(target) != solo) {
+      final raw = await widget.api('handoff', [
+        {'action': 'send', 'menu': _menuOf(target), 'paths': paths},
+      ]);
+      if (raw is Map && raw['ok'] == true) return '파일 ${paths.length}개를 보냈습니다.';
+      final error = raw is Map ? raw['error'] : null;
+      return error is Map ? '${error['message']}' : '다른 창으로 보내지 못했습니다.';
+    }
     switch (target) {
       case FileTarget.virtualFolder:
         libraryInbox.put(paths);
@@ -360,7 +442,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
       case FileTarget.documentEditor:
       case FileTarget.conversion:
         final conversion = target == FileTarget.conversion;
-        if (conversion && await _conversionUsesNativeWindow()) {
+        if (conversion && solo == null && await _conversionUsesNativeWindow()) {
           return '파일변환이 새 창(Win32) 방식이라 파일을 넘길 수 없습니다. 파일변환 화면에서 ‘앱 안에서 변환’을 눌러 주세요.';
         }
         final host = workspace.currentState;
@@ -427,6 +509,7 @@ class _IntegratedHomeState extends State<_IntegratedHome> {
 
   Widget _workspace(Set<int> hiddenTabs, bool showSidebar) => IntegratedWorkspace(
     api: widget.api,
+    soloTab: widget.soloTab,
     hiddenTabs: {...kDefaultHiddenTabs, ...hiddenTabs},
     tabRequest: tabRequest,
     photoPasteTrigger: photoPasteTrigger,
@@ -2770,7 +2853,7 @@ class _WorkspaceState extends State<Workspace> implements ConversionHost {
     var accepted = false;
     try {
       await widget.api('acknowledge_close', [request['id']]);
-      accepted = !busy && await CloseGuards.prepareAll();
+      accepted = !busy && mounted && await CloseGuards.confirmWork(context) && await CloseGuards.prepareAll();
       // An unregistered dialog may hold edits or a pending RPC: fail closed.
       if (!mounted) return;
       final route = ModalRoute.of(context);

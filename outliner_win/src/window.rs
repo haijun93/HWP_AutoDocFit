@@ -181,7 +181,7 @@ pub struct State {
     edit_brush_color: u32,
     last_title: String,
     /// Ctrl+클릭으로 따라갈 링크(EDIT 에서 창으로 우편 전달).
-    pending_link: Option<(String, bool)>,
+    pending_link: Option<(outliner_core::references::RefTarget, bool)>,
     pointer: crate::bullet::Pointer,
     pointer_at: (i32, i32),
 }
@@ -257,6 +257,8 @@ fn search_rect(lay: &Layout, prompt: bool) -> RECT {
 unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
+        s.shell.refresh_presentations();
+        s.shell.refresh_backlinks();
         let lay = layout_of(hwnd, s);
         let m = Metrics::new(s.dpi);
         let page = m.page_rows(lay.center.h());
@@ -830,6 +832,16 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                     if let Some(item) = items.get(s.shell.back_first + slot) {
                         let page = page_rows(hwnd, s);
                         let r = match item {
+                            RightItem::AddProperty | RightItem::Property(_, _) => {
+                                let initial = if let RightItem::Property(k, v) = item { format!("{k}:: {v}") } else { String::from("속성:: ") };
+                                if s.shell.begin_prompt(PromptKind::Property).is_some() {
+                                    set_search_text(s, &initial);
+                                    focus_search(hwnd);
+                                }
+                                Ok(())
+                            }
+                            RightItem::Tag(tag) => s.shell.search_tag(tag),
+                            RightItem::Unlinked(i) => s.shell.goto_unlinked(*i, page),
                             RightItem::Card(i) if x >= rt.r - scale(38, s.dpi) => { s.shell.close_card(*i); Ok(()) }
                             RightItem::Card(i) | RightItem::Preview(i) => s.shell.activate_card(*i, page),
                             RightItem::Block(i) if shift => {
@@ -866,11 +878,17 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
         if let Some(i) = row {
             let r = s.shell.editor.view.rows[i].clone();
             let block = r.block;
+            let line = ((cy - m.header_h) / m.row_h) as usize - s.shell.editor.view.slot_of(i);
             if lay.panels && shift {
-                let link = crate::paint::link_spans_x(&r.text, m.text_x(r.depth) + if r.status.is_some() { m.status_shift(s.dpi) } else { 0 }, s.dpi)
+                let link = crate::paint::reference_spans_x(&r, line, m.text_x(r.depth) + if r.status.is_some() { m.status_shift(s.dpi) } else { 0 }, s.dpi)
                     .into_iter().find(|(l, rr, _)| cx >= *l && cx < *rr);
-                let target = if let Some((_, _, name)) = link { Some((name, None)) }
-                    else if (cx - m.marker_x(r.depth)).abs() <= scale(8, s.dpi) || (cx - m.bullet_x(r.depth)).abs() <= scale(6, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
+                if let Some((_, _, target)) = link {
+                    let res = s.shell.follow_target(&target, true, page);
+                    report(s, res);
+                    ui_sync(hwnd, true);
+                    return;
+                }
+                let target = if (cx - m.marker_x(r.depth)).abs() <= scale(8, s.dpi) || (cx - m.bullet_x(r.depth)).abs() <= scale(6, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
                     else { None };
                 if let Some((name, block)) = target {
                     let res = s.shell.open_card(&name, block);
@@ -880,7 +898,7 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                 }
             }
             // 접기 삼각형과 불릿은 독립된 표적이다.
-            if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(5, s.dpi) {
+            if line == 0 && r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(5, s.dpi) {
                 if s.shell.editor.finish_edit() {
                     s.shell.editor.view.set_selected(i, page);
                     s.shell.editor.view.set_fold(!r.folded, page);
@@ -888,7 +906,7 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                 ui_sync(hwnd, true);
                 return;
             }
-            if (cx - m.bullet_x(r.depth)).abs() <= scale(5, s.dpi) {
+            if line == 0 && (cx - m.bullet_x(r.depth)).abs() <= scale(5, s.dpi) {
                 let id = s.shell.editor.view.doc.blocks[block].id;
                 s.shell.editor.focus(Some(id));
                 ui_sync(hwnd, true);
@@ -898,7 +916,7 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
             if r.status.is_some() {
                 // 체크 칸 클릭 = TODO ↔ DONE.
                 let b = scale(7, s.dpi);
-                if cx >= tx - scale(2, s.dpi) && cx <= tx + 2 * b + scale(2, s.dpi) {
+                if line == 0 && cx >= tx - scale(2, s.dpi) && cx <= tx + 2 * b + scale(2, s.dpi) {
                     s.shell.editor.toggle_block(block);
                     if !s.shell.editor.editing() {
                         s.shell.editor.view.set_selected(i, page);
@@ -909,9 +927,12 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                 tx += m.status_shift(s.dpi);
             }
             // `[[링크]]` 클릭 = 그 페이지로 이동(없으면 만든다).
-            if s.shell.store.is_some() {
-                if let Some((_, _, name)) = crate::paint::link_spans_x(&r.text, tx, s.dpi).into_iter().find(|(l, rr, _)| cx >= *l && cx < *rr) {
-                    let res = s.shell.follow_link(&name);
+            {
+                // 데이터 폴더 없이 연 단일 파일에서는 현재 문서의 블록 참조만 따라간다.
+                let folder = s.shell.store.is_some();
+                if let Some((_, _, target)) = crate::paint::reference_spans_x(&r, line, tx, s.dpi).into_iter()
+                    .find(|(l, rr, t)| cx >= *l && cx < *rr && (folder || matches!(t, outliner_core::references::RefTarget::Block(_)))) {
+                    let res = s.shell.follow_target(&target, false, page);
                     report(s, res);
                     ui_sync(hwnd, true);
                     return;
@@ -1180,9 +1201,14 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let mut buf = vec![0u16; GetWindowTextLengthW(hwnd).max(0) as usize + 2];
                 let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32).max(0) as usize;
                 let text = String::from_utf16_lossy(&buf[..n]);
-                if let Some(name) = crate::links::link_at(&text, pos as usize) {
+                let target = outliner_core::references::reference_tokens(&text).into_iter().find(|t| {
+                    let start = text[..t.start].encode_utf16().count();
+                    let end = text[..t.end].encode_utf16().count();
+                    pos as usize >= start && (pos as usize) < end
+                }).map(|t| t.target);
+                if let Some(target) = target {
                     if let Some(s) = state(parent) {
-                        s.pending_link = Some((name, shift_down()));
+                        s.pending_link = Some((target, shift_down()));
                         PostMessageW(parent, WM_APP_FOLLOW, 0, 0);
                         return 0;
                     }
@@ -1370,8 +1396,9 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_APP_FOLLOW => {
                 if let Some(s) = state(hwnd) {
-                    if let Some((name, sidebar)) = s.pending_link.take() {
-                        let r = if sidebar { s.shell.open_card(&name, None) } else { s.shell.follow_link(&name) };
+                    if let Some((target, sidebar)) = s.pending_link.take() {
+                        let page = page_rows(hwnd, s);
+                        let r = s.shell.follow_target(&target, sidebar, page);
                         report(s, r);
                     }
                 }

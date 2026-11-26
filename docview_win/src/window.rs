@@ -509,16 +509,28 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
             // 도구줄·빈 곳에서는 항목 메뉴를 열지 않는다.
             if hit.is_none() { return None; }
         }
-        let count = s.app.selected_docs().len();
-        if count == 0 { return None; }
+        let paths: Vec<String> = s.app.selected_docs().into_iter().map(|d| d.path).collect();
+        if paths.is_empty() { return None; }
         s.app.clicked = None;
         s.file_ops.phase = Phase::Preparing;
-        Some(count)
+        Some((paths, s.settings_path.clone()))
     });
-    let Some(count) = snapshot else { return };
-    let action = native_ops::menu(hwnd, x, y, count, false);
+    let Some((paths, settings)) = snapshot else { return };
+    // 파일 작업 아래에 '다른 창으로 보내기'. 선택한 파일 전부가 대상이다.
+    let send = grid_core::send_menu::lines(&grid_core::handoff::DOCVIEW_MENUS, &paths, &settings);
+    let choice = native_ops::menu(hwnd, x, y, paths.len(), false, &send, &[]);
     if let Some(s) = unsafe { state(hwnd) } { s.file_ops.phase = Phase::Complete; }
-    if let Some(action) = action { unsafe { file_action(hwnd, action); } }
+    match choice {
+        Some(native_ops::Choice::File(action)) => unsafe { file_action(hwnd, action) },
+        Some(native_ops::Choice::Send(menu)) => {
+            let result = grid_core::send_menu::send(menu, &paths, &settings);
+            if let (Err(message), Some(s)) = (result, unsafe { state(hwnd) }) {
+                s.app.open_error = message;
+                redraw(hwnd);
+            }
+        }
+        Some(native_ops::Choice::Extra(_)) | None => {}
+    }
 }
 
 unsafe fn poll_file_ops(hwnd: HWND) {
@@ -637,6 +649,12 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_LBUTTONUP => {
                 if let Some(s) = state(hwnd) {
+                    if s.drag == Drag::Slider && s.opts.synthetic.is_none() {
+                        if let Err(e) = docfit_config::set_thumb_size(&s.settings_path, "doc_grid", s.app.thumb) {
+                            s.app.open_error = format!("크기를 저장하지 못했습니다({})", e.message);
+                            redraw(hwnd);
+                        }
+                    }
                     if s.drag != Drag::None {
                         s.drag = Drag::None;
                         ReleaseCapture();

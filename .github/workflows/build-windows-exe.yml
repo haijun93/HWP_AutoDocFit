@@ -187,6 +187,10 @@ jobs:
           Copy-Item dock/target/release/dock.exe resources/dock.exe -Force
           (Get-FileHash resources/dock.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/dock.exe.sha256
           if (!(Test-Path resources/dock.exe) -or !(Test-Path resources/dock.exe.sha256)) { throw 'dock bundle missing' }
+          # 같은 크레이트의 사이드바(launch_mode='sidebar' 또는 --sidebar 로 고르는 실행 방식)
+          Copy-Item dock/target/release/sidebar.exe resources/sidebar.exe -Force
+          (Get-FileHash resources/sidebar.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/sidebar.exe.sha256
+          if (!(Test-Path resources/sidebar.exe) -or !(Test-Path resources/sidebar.exe.sha256)) { throw 'sidebar bundle missing' }
 
       - name: Build virtual folder (kvf.exe, Rust)
         shell: pwsh
@@ -347,6 +351,8 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:LOCALAPPDATA\DocFitTools\mingw64\bin;$env:USERPROFILE\.cargo\bin;$env:PATH"
+          cargo test --release --locked --manifest-path native_tasks/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --release --locked --manifest-path convert_win/Cargo.toml
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo build --release --locked --manifest-path convert_win/Cargo.toml --bin convert_win
@@ -367,7 +373,7 @@ jobs:
         # v2.2.65 설치 오류(ktm.exe: VCRUNTIME140.dll 없음) 재발 방지: .cargo/config.toml의 crt-static이 적용됐는지 확인한다.
         shell: pwsh
         run: |
-          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe') |
+          $files = @('kagent.exe','kclip_ffi.dll','kvf.exe','pdf-edit.exe','outliner.exe','qms_bench.exe','kfind.exe','ktm.exe','hierarchy.exe','hierarchy.dll','klib.exe','mdm-ctx.exe','outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe','rename_win.exe','dock.exe','sidebar.exe') |
             ForEach-Object { Join-Path 'resources' $_ }
           $bad = @()
           foreach ($file in $files) {
@@ -405,7 +411,7 @@ jobs:
         run: |
           $folder = 'dist/HWP_AutoDocFit/_internal/resources'
           $missing = @()
-          foreach ($name in @('outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe','rename_win.exe','mdm-ctx.exe','dock.exe','kagent.exe','klib.exe')) {
+          foreach ($name in @('outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe','rename_win.exe','mdm-ctx.exe','dock.exe','sidebar.exe','kagent.exe','klib.exe')) {
             if (-not (Test-Path -LiteralPath "$folder/$name")) { $missing += $name }
           }
           if ($missing.Count) { throw ("frozen bundle is missing: " + ($missing -join ', ')) }

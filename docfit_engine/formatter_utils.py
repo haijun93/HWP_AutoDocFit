@@ -434,13 +434,17 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             except Exception as e:
                 if _콘솔_출력_가능:
                     print(f"설정 불러오기 실패(기본값 사용): {e}")
+            from docfit_app import screen_mode
+            screen_mode.remember(설정)
             return 설정
         return bind_function(설정_불러오기, _docfit_namespace)
     if _docfit_symbol == '설정_저장':
         def 설정_저장(설정):
             try:
                 from docfit_app.settings_service import SettingsService
-                SettingsService(설정_파일_경로).update(lambda current: current.update(설정))
+                from docfit_app import screen_mode
+                바꿀값 = screen_mode.changed_only(설정)  # 전용 창은 바뀐 항목만(다른 창의 변경 보존)
+                SettingsService(설정_파일_경로).update(lambda current: current.update(바꿀값))
                 return True
             except Exception as e:
                 로그(f"설정 저장 실패: {e}")

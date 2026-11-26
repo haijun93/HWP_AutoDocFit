@@ -9,6 +9,8 @@
 
 ## 1. 한눈에 보기
 
+2026-11-26 RUSTVIEW1(feature/RUSTVIEW1, 미배포): Rust 사진뷰에 크게 보기·즐겨찾기·태그·중복 찾기·첨부용 사본·사본 편집을 추가했다. 즐겨찾기·태그는 앱 화면과 같은 `photo_album.db` 를 쓰므로 **표를 바꾸면 `photoview_win/src/library.rs` 의 SCHEMA 도 함께** 고친다(`tests/test_photoview_library_schema.py` 가 대조). 썸네일 크기 저장은 `docfit_config::set_thumb_size`. 상세·미확인 항목: docs/RUSTVIEW1_RESULT_2026-11-26.md.
+
 2026-10-25 1.80.10 알파: 항목기호 뒤 hp:tab을 작업용 사본에서 일반 빈칸 1개로 정리해 일괄 서식 제외 문제를 보완했다. 기호 앞 ㅁ/□ 0·ㅇ 1·- 3개 불변 규칙과 낫표 앞 빈칸 1개 정책을 반영한다. 자간/쪽 맞춤 전용 경로는 유지한다. 공개 배포·Windows 실측은 별도 게이트. 상세: docs/V1_80_10_MARKER_TAB_2026-10-25.md.
 
 2026-10-23 v1.80.9 통합 검증(C15): 런처 사용 중 캐시 삭제로 생긴 표그림판 HWPX 없음·다이어그램/마인드맵 404 수정, 표 반복 단위 최대 50(축별 실측 상한), 연간·주간 일정표 날짜 자동 계산, 사진첨부용 모양 1·2 아래로 추가, 표 이름 자판형 배치, 내장 미리보기 69장 동봉. 배포 검증·SHA-256은 `releases/v1.80.9.md`, 작업 보고는 `C:\HWP_AUTODOCFIT\v1803\reports\C15.md`에 기록한다.
@@ -352,6 +354,23 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 문서뷰·사진뷰 스캔은 `klib scan`(Rust) → 파일명 색인 서비스 → Python 순으로 폴백하여 대량 파일 훑기 속도를 개선했다. 앱 설정 저장소는 Rust 라이브러리 `docfit_config`로 전환 중이며 아직 Python과 병행 운용된다. 몽땅클립보드 설정·켜기는 전용 Win32 네이티브 창(`kagent/src/settings_window.rs`)으로 분리되었고, 메인 화면 배치는 하단 Dock과 사이드바 구조(1차 묶음·위쪽 가로 탭·오른쪽 빠른 실행 막대)로 개편되어 작동한다.
 
 ---
+
+### 사이드바 실행 방식 (RUSTSIDE1, 2026-11-26 — 선택 기능, 기본 아님)
+
+- `sidebar.exe`(`dock` 크레이트의 `src/bin/sidebar.rs`, 판단은 `src/sidebar.rs`). 메뉴마다 창 1개를 연다. Rust 창이 없는 메뉴는 앱을 `--screen N`(`docfit_app/screen_mode.py`)으로 연다.
+- 고르는 법: `sidebar.exe` 직접 실행, 앱에 `--sidebar`, 또는 설정 `launch_mode: "sidebar"`(`--full-app` 이면 무시). 자동 숨김은 기존 키 `dock_auto_hide`.
+- 전용 창에서는 상주 도우미 점검·파이프·업데이트 확인을 하지 않는다. 새 시작 작업을 넣을 때 전용 창에서도 돌려야 하는지 정할 것.
+- 메뉴를 더하거나 이름을 바꾸면 `sidebar.rs` 의 `label`, `screen_mode.SCREENS`, Flutter `_labels` 를 함께 고친다(시험이 대조).
+- 결과 `docs/RUSTSIDE1_RESULT_2026-11-26.md`, 다음 일 `docs/RUSTSIDE1_PLAN_2026-11-26.md`.
+
+### 창 간 전달·종료 안전·상주 작업 (RUSTSIDE2, 2026-11-26)
+
+- 파일 넘기기의 보내는 곳은 `sidebar.exe --send` 하나다. 형식·개수 표는 세 곳(`grid_core/src/handoff.rs`, `docfit_app/handoff.py`, Flutter `file_handoff.dart`)이며 시험이 대조한다. `dock` 은 `grid_core/src/handoff.rs` 를 `#[path]` 로 포함하므로 그 파일에 의존성을 넣지 않는다.
+- 설치·제거는 `installer/close_windows.iss` → `sidebar.exe --close-all` 로 창마다 닫기를 한 번 보낸다. 새 창 프로그램은 저장 안 한 것이 있으면 `WM_CLOSE` 에서 물어야 한다.
+- 화면(Flutter)에서 저장 안 한 상태가 생기는 편집기는 `CloseGuards.watch` 에 등록한다.
+- 상주 작업은 `docfit_app/resident.py`(보통 앱과 `--resident` 가 함께 쓴다). 새 시작 작업은 여기에 넣는다.
+- 창을 띄우는 쪽은 출력 통로를 물려주지 않는다(`dock/src/sidebar_os.rs` `start`): 물려주면 파이프로 결과를 받는 앱이 멈춘다.
+- 결과 `docs/RUSTSIDE2_RESULT_2026-11-26.md`.
 
 ## 4. 핵심 동작 이해
 

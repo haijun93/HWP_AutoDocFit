@@ -284,6 +284,10 @@ pub fn left_items(pages: &[String], recent: &[String]) -> Vec<LeftItem> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RightItem {
+    Unlinked(usize),
+    AddProperty,
+    Property(String, String),
+    Tag(String),
     Card(usize),
     Preview(usize),
     Group(String),

@@ -1,4 +1,4 @@
-use crate::logic::{self, Event, FileResult, FileStatus, Hit, Layout, Model, TARGETS};
+use crate::logic::{self, Event, FileResult, FileStatus, Hit, Layout, Model, ALL_TARGETS};
 use std::{ffi::OsString, os::windows::ffi::{OsStringExt, OsStrExt}, path::PathBuf, ptr::null_mut, sync::{Arc, atomic::{AtomicBool, Ordering}, Mutex}};
 use windows_sys::Win32::{
     Foundation::*,
@@ -12,8 +12,8 @@ use windows_sys::Win32::{
     },
 };
 
-struct State { model: Model, results: Arc<Mutex<Vec<FileResult>>>, cancel: Option<Arc<AtomicBool>>, worker_done: bool, close_requested:bool }
-impl Default for State { fn default()->Self { Self { model:Model::default(), results:Arc::new(Mutex::new(Vec::new())), cancel:None, worker_done:true, close_requested:false } } }
+struct State { model: Model, results: Arc<Mutex<Vec<FileResult>>>, cancel: Option<Arc<AtomicBool>>, worker_done: bool, close_requested:bool, output_dir:Option<PathBuf>, scroll:usize, pending:Vec<PathBuf> }
+impl Default for State { fn default()->Self { Self { model:Model::default(), results:Arc::new(Mutex::new(Vec::new())), cancel:None, worker_done:true, close_requested:false, output_dir:None, scroll:0, pending:Vec::new() } } }
 const WM_TIMER: u32 = 0x0113;
 const WM_APP: u32 = 0x8000;
 const WM_WORKER_DONE: u32 = WM_APP + 1;
@@ -24,6 +24,7 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 fn open_path(path:&std::path::Path, folder:bool) {
+    if path.is_dir() {native_tasks::window::open_path(path);return;}
     let Some(candidate)=logic::validated_open_path(path,folder,|p|p.is_file(),|p|p.is_dir()) else { return; };
     let Ok(valid)=candidate.canonicalize() else { return; };
     let target:Vec<u16>=valid.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -78,8 +79,8 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
         color(78, 88, 104),
     );
     text(hdc, 28, 102, "변환 대상", color(45, 55, 70));
-    for (i, (label, _)) in TARGETS.iter().enumerate() {
-        let r = lay.target_rect(i);
+    for (i, (label, _)) in ALL_TARGETS.iter().enumerate() {
+        let r = logic::format_rect(i);
         let selected = i == st.model.target;
         fill(
             hdc,
@@ -103,17 +104,17 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
         );
     }
     let results = st.results.lock().unwrap();
-    let head = if st.worker_done { st.model.header() } else { format!("변환 진행 중  ·  {}/{}", results.iter().filter(|x| matches!(x.status,FileStatus::Succeeded(_)|FileStatus::Failed(_)|FileStatus::Cancelled)).count(), results.len()) };
+    let head = if st.worker_done { st.model.header() } else { format!("변환 진행 중  ·  {}/{}", results.iter().filter(|x| matches!(x.status,FileStatus::Succeeded(_)|FileStatus::Failed(_)|FileStatus::Skipped(_)|FileStatus::Cancelled)).count(), results.len()) };
     text(hdc, 28, 198, &head, color(45, 55, 70));
     fill(hdc, lay.list_rect(), color(255, 255, 255));
     if results.is_empty() {
         text(hdc, 48, 250, "여기에 파일을 놓으세요", color(130, 140, 154));
     } else {
-        for (i, item) in results.iter().take(lay.visible_rows()).enumerate() {
+        for (i, item) in results.iter().enumerate().skip(st.scroll).take(lay.visible_rows()) {
             let name=item.source.file_name().unwrap_or_default().to_string_lossy();
-            let (mark,c,detail)=match &item.status { FileStatus::Waiting=>("대기",color(100,110,125),String::new()), FileStatus::Running=>("진행",color(20,95,190),String::new()), FileStatus::Succeeded(_)=>("완료",color(20,130,70),String::new()), FileStatus::Failed(reason)=>("실패",color(190,45,45),reason.clone()), FileStatus::Cancelled=>("취소",color(130,100,40),String::new()) };
-            let row_y=logic::ROW_TOP + i as i32 * logic::ROW_STEP;
-            if st.worker_done && st.model.format()=="pdfm" && st.model.selected_file==i {
+            let (mark,c,detail)=match &item.status { FileStatus::Waiting=>("대기",color(100,110,125),String::new()), FileStatus::Running=>("진행",color(20,95,190),String::new()), FileStatus::Succeeded(p)=>("완료",color(20,130,70),p.file_name().unwrap_or_default().to_string_lossy().into_owned()), FileStatus::Failed(reason)=>("실패",color(190,45,45),reason.clone()), FileStatus::Skipped(reason)=>("건너뜀",color(100,110,125),reason.clone()), FileStatus::Cancelled=>("취소",color(130,100,40),String::new()) };
+            let row_y=logic::ROW_TOP + (i-st.scroll) as i32 * logic::ROW_STEP;
+            if st.worker_done && st.model.selected_file==i {
                 fill(hdc,logic::Rect{left:34,top:row_y-4,right:w-34,bottom:row_y+20},color(225,239,255));
             }
             text(hdc, 48, row_y, &format!("{mark}  {name}  {detail}"), c);
@@ -128,7 +129,57 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
     let s = lay.start_rect();
     fill(hdc, s, color(40, 105, 190));
     text(hdc, s.left + 26, s.top + 15, "변환 시작", color(255, 255, 255));
+    let destination=st.output_dir.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"원본 파일 옆".into());
+    text(hdc,28,h-96,&format!("저장 위치: {destination} · 결과를 두 번 누르면 엽니다. 순서: Alt+↑/↓"),color(78,88,104));
 }
+/// 끌어 놓기·다른 창에서 보낸 파일·명령줄을 같은 길로 넣고, 대기 중이면 화면 목록도 함께 바꾼다.
+unsafe fn add_files(hwnd: HWND, paths: Vec<PathBuf>) {
+    unsafe {
+        let st = state(hwnd);
+        if !st.worker_done {st.pending.extend(paths);return;}
+        if st.model.add_dropped(paths, |p| p.is_file()) > 0 && st.worker_done {
+            *st.results.lock().unwrap() = logic::results(&st.model.files);
+        }
+        InvalidateRect(hwnd, null_mut(), 1);
+    }
+}
+
+/// 닫기 확인 창이 떠 있다(겹쳐 묻지 않는다).
+static CONFIRMING_CLOSE: AtomicBool = AtomicBool::new(false);
+
+/// 닫기 상태: 대기 → 바로 닫음. 변환 중 → 묻기 → (계속) 변환 중 | (중단) 취소 중 → 작업이 끝나면 닫음.
+/// 취소 중의 닫기는 아무것도 하지 않는다.
+unsafe fn close_request(hwnd: HWND) {
+    unsafe {
+        let st = state(hwnd);
+        if st.worker_done {
+            DestroyWindow(hwnd);
+            return;
+        }
+        if st.close_requested || CONFIRMING_CLOSE.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let body = wide("변환이 진행 중입니다. 중단하고 닫을까요?
+이미 만든 결과 파일은 남습니다.");
+        let title = wide("몽땅파일변환");
+        let answer = MessageBoxW(hwnd, body.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+        CONFIRMING_CLOSE.store(false, Ordering::Release);
+        if answer != IDYES {
+            return;
+        }
+        // 묻는 동안 변환이 끝났을 수 있다.
+        let st = state(hwnd);
+        if st.worker_done {
+            DestroyWindow(hwnd);
+        } else {
+            st.close_requested = true;
+            if let Some(c) = &st.cancel {
+                c.store(true, Ordering::Release);
+            }
+        }
+    }
+}
+
 fn message(hwnd: HWND, body: &str, flags: u32) {
     let p = wide(body);
     let t = wide("몽땅파일변환");
@@ -136,74 +187,39 @@ fn message(hwnd: HWND, body: &str, flags: u32) {
         MessageBoxW(hwnd, p.as_ptr(), t.as_ptr(), flags);
     }
 }
-fn conversion_temps(dir:&std::path::Path)->std::collections::HashSet<PathBuf> {
-    std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e|e.path()).filter(|p| {
-        let n=p.file_name().unwrap_or_default().to_string_lossy();
-        n.starts_with("docfit_pdf_") || n.starts_with("docfit_hwp_") || n.starts_with(".docfit_")
-    }).collect()
-}
-fn remove_new_conversion_temps(dir:&std::path::Path,before:&std::collections::HashSet<PathBuf>) {
-    for p in conversion_temps(dir).difference(before) { let _=std::fs::remove_file(p); }
-}
 fn start_conversion(hwnd: HWND, s: &mut State) {
     if !s.worker_done { return; }
-    if s.model.files.is_empty() {
-        message(hwnd, "먼저 파일을 끌어다 놓으세요.", 0x40);
-        return;
-    }
-    let exe = logic::resolve_engine(
-        std::env::var_os("DOCFIT_APP_EXE").map(PathBuf::from),
-        std::env::current_exe().ok(),
-        |p| p.is_file(),
-    );
-    match exe {
-        Some(exe) => {
-            let files=s.model.files.clone(); let format=s.model.format().to_string();
-            *s.results.lock().unwrap()=logic::results(&files);
-            let shared=s.results.clone(); let cancel=Arc::new(AtomicBool::new(false)); s.cancel=Some(cancel.clone()); s.worker_done=false;
-            let hwnd_num=hwnd as usize;
-            std::thread::spawn(move || {
-                if format=="pdfm" {
-                    let args=logic::merge_engine_args(&files);
-                    let mut r=shared.lock().unwrap();
-                    for i in 0..files.len() { logic::transition(&mut r,Event::Start(i)); }
-                    drop(r);
-                    let output_dir=files[0].parent().unwrap_or_else(||std::path::Path::new("."));
-                    let before=conversion_temps(output_dir);
-                    let outcome=std::process::Command::new(&exe).args(args).output();
-                    let mut r=shared.lock().unwrap();
-                    match outcome {
-                        Ok(out) if out.status.success()=>{ for i in 0..files.len() { if let Some(x)=r.get_mut(i) { x.status=FileStatus::Succeeded(files[0].clone()); } } },
-                        Ok(out)=>{ let reason=logic::failure_reason(out.status.code(),&String::from_utf8_lossy(&out.stderr)); for x in r.iter_mut() { x.status=FileStatus::Failed(reason.clone()); } },
-                        Err(e)=>for x in r.iter_mut() { x.status=FileStatus::Failed(e.to_string()); },
-                    }
-                    drop(r);
-                    if cancel.load(Ordering::Acquire) { remove_new_conversion_temps(output_dir,&before); }
-                } else { for (i,file) in files.iter().enumerate() {
-                    if cancel.load(Ordering::Acquire) { let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Cancel(i)); break; }
-                    { let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Start(i)); }
-                    let output_dir=file.parent().unwrap_or_else(||std::path::Path::new("."));
-                    let temps_before=conversion_temps(output_dir);
-                    let args=logic::engine_file_args(file,&format);
-                    let mut child=match std::process::Command::new(&exe).args(args).stderr(std::process::Stdio::piped()).spawn() {
-                        Ok(c)=>c, Err(e)=>{let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())}; continue}
-                    };
-                    loop {
-                        if cancel.load(Ordering::Acquire) { let _=child.kill(); let _=child.wait(); remove_new_conversion_temps(output_dir,&temps_before); let mut r=shared.lock().unwrap(); logic::transition(&mut r,Event::Cancel(i)); break; }
-                        match child.try_wait() { Ok(Some(status))=>{let output=child.wait_with_output().ok(); let mut r=shared.lock().unwrap(); if status.success() { if let Some(x)=r.get_mut(i) { x.status=FileStatus::Succeeded(logic::output_path_for(file,&format).unwrap_or_else(||file.clone())); } } else if let Some(x)=r.get_mut(i) { x.status=FileStatus::Failed(logic::failure_reason(status.code(),&output.map(|o|String::from_utf8_lossy(&o.stderr).into_owned()).unwrap_or_default())); } break}, Ok(None)=>std::thread::sleep(std::time::Duration::from_millis(100)), Err(e)=>{let _=child.kill();let mut r=shared.lock().unwrap(); if let Some(x)=r.get_mut(i){x.status=FileStatus::Failed(e.to_string())};break} }
-                    }
-                    if cancel.load(Ordering::Acquire) { break; }
-                } }
-                unsafe { PostMessageW(hwnd_num as HWND, WM_WORKER_DONE, 0, 0); }
-            });
-            unsafe { SetTimer(hwnd,1,100,None); }
-        }
-        None => message(
-            hwnd,
-            "기존 앱 실행 파일을 찾지 못했습니다. DOCFIT_APP_EXE를 지정해 주세요.",
-            0x10,
-        ),
-    }
+    if s.model.files.is_empty() {message(hwnd,"먼저 파일을 추가해 주세요.",MB_ICONINFORMATION);return;}
+    let mb=unsafe {let mut b=[0u16;32];let n=GetWindowTextW(GetDlgItem(hwnd,204),b.as_mut_ptr(),32);String::from_utf16_lossy(&b[..n.max(0) as usize])}.parse::<f64>();
+    let Ok(mb)=mb else {message(hwnd,"PDF 목표 크기에 숫자를 입력해 주세요.",MB_ICONERROR);return;};
+    if !(1.0..=1000.0).contains(&mb) {message(hwnd,"PDF 목표 크기는 1~1000 MB입니다.",MB_ICONERROR);return;}
+    let method=unsafe {SendMessageW(GetDlgItem(hwnd,205),0x147,0,0)};
+    let method=["auto","preserve_text","image_pdf"].get(method.max(0) as usize).copied().unwrap_or("auto");
+    let files=s.model.files.clone();let format=s.model.format().to_string();let out=s.output_dir.clone();
+    *s.results.lock().unwrap()=logic::results(&files);
+    let shared=s.results.clone();let cancel=Arc::new(AtomicBool::new(false));s.cancel=Some(cancel.clone());s.worker_done=false;
+    let window=hwnd as usize;
+    std::thread::spawn(move|| {
+        let outcome=(||->Result<(),String>{
+            let mut client=native_tasks::Client::start(&native_tasks::data_dir())?;
+            let first=client.call(&serde_json::json!({"op":"convert","payload":{"paths":files,"target":format,"output_dir":out,"pdf_target_mb":mb,"pdf_compress_method":method}}))?;
+            if first["ok"]==false {return Err(first["message"].as_str().unwrap_or("변환 시작 실패").into());}
+            let id=first["job_id"].as_str().ok_or("작업 번호가 없습니다.")?;
+            for i in 0..files.len(){logic::transition(&mut shared.lock().unwrap(),Event::Start(i));}
+            let mut cancel_sent=false;
+            loop {
+                if cancel.load(Ordering::Acquire)&&!cancel_sent {client.call(&serde_json::json!({"op":"cancel","payload":{"job_id":id}}))?;cancel_sent=true;}
+                let result=client.call(&serde_json::json!({"op":"job_status","payload":{"job_id":id}}))?;
+                if result["ok"]==false {return Err(result["message"].as_str().unwrap_or("변환 상태 오류").into());}
+                if matches!(result["state"].as_str(),Some("done"|"failed"|"cancelled")) {crate::task::finish(&mut shared.lock().unwrap(),&result);break;}
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            Ok(())
+        })();
+        if let Err(e)=outcome {for item in shared.lock().unwrap().iter_mut(){if !matches!(item.status,FileStatus::Succeeded(_)){item.status=FileStatus::Failed(e.clone());}}}
+        unsafe {PostMessageW(window as HWND,WM_WORKER_DONE,0,0);}
+    });
+    unsafe {SetTimer(hwnd,1,100,None);}
 }
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
@@ -215,6 +231,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_CREATE => {
                 DragAcceptFiles(hwnd, 1);
+                for (id,title,x,width) in [(201,"파일 추가",650,90),(202,"선택 제거",745,90),(203,"비우기",840,90),(206,"저장 폴더",28,110),(207,"원본 옆 저장",145,110)] {
+                    let y=if id>=206 {8}else{42};
+                    CreateWindowExW(0,wide("BUTTON").as_ptr(),wide(title).as_ptr(),WS_CHILD|WS_VISIBLE|WS_TABSTOP,x,y,width,28,hwnd,id as _,GetModuleHandleW(std::ptr::null()),std::ptr::null());
+                }
+                CreateWindowExW(WS_EX_CLIENTEDGE,wide("EDIT").as_ptr(),wide("10").as_ptr(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|ES_AUTOHSCROLL as u32,780,8,50,26,hwnd,204 as _,GetModuleHandleW(std::ptr::null()),std::ptr::null());
+                CreateWindowExW(0,wide("STATIC").as_ptr(),wide("목표 MB").as_ptr(),WS_CHILD|WS_VISIBLE,670,12,105,24,hwnd,std::ptr::null_mut(),GetModuleHandleW(std::ptr::null()),std::ptr::null());
+                let method=CreateWindowExW(0,wide("COMBOBOX").as_ptr(),wide("").as_ptr(),WS_CHILD|WS_VISIBLE|WS_TABSTOP|CBS_DROPDOWNLIST as u32,840,8,160,200,hwnd,205 as _,GetModuleHandleW(std::ptr::null()),std::ptr::null());
+                for label in ["자동 압축","글자층 유지","이미지 PDF"] {SendMessageW(method,0x143,0,wide(label).as_ptr() as isize);}SendMessageW(method,0x14e,0,0);
                 0
             }
             WM_DROPFILES => {
@@ -228,8 +252,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     paths.push(PathBuf::from(OsString::from_wide(&buf[..len as usize])));
                 }
                 DragFinish(drop);
-                state(hwnd).model.add_dropped(paths, |p| p.is_file());
-                InvalidateRect(hwnd, null_mut(), 1);
+                add_files(hwnd, paths);
                 0
             }
             WM_LBUTTONUP => {
@@ -239,12 +262,13 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 let mut r: RECT = std::mem::zeroed();
                 GetClientRect(hwnd, &mut r);
                 let st=state(hwnd);
-                if st.worker_done && st.model.format()=="pdfm" && y>=logic::ROW_TOP {
-                    let i=((y-logic::ROW_TOP)/logic::ROW_STEP) as usize;
+                if st.worker_done && y>=logic::ROW_TOP && y<r.bottom-104 {
+                    let i=st.scroll+((y-logic::ROW_TOP)/logic::ROW_STEP) as usize;
                     if i<st.model.files.len() { st.model.selected_file=i; }
                 }
+                if st.worker_done {if let Some(i)=(0..ALL_TARGETS.len()).find(|i|logic::format_rect(*i).contains(x,y)){st.model.select_output(i);}}
                 match Layout::new(r.right, r.bottom).hit(x, y) {
-                    Hit::Target(i) => state(hwnd).model.select(i),
+                    Hit::Target(_) => {},
                     Hit::Start => start_conversion(hwnd, state(hwnd)),
                     Hit::Cancel => if let Some(c)=&state(hwnd).cancel { c.store(true,Ordering::Release); },
                     Hit::OpenFolder => { let st=state(hwnd); if let Some(item)=st.results.lock().unwrap().iter().find(|x|matches!(x.status,FileStatus::Succeeded(_))) { if let FileStatus::Succeeded(p)=&item.status { open_path(p,true); } } },
@@ -263,7 +287,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_LBUTTONDBLCLK => {
                 let y=((lp>>16)&0xffff) as i16 as i32;
-                if y>=logic::ROW_TOP { let i=((y-logic::ROW_TOP)/logic::ROW_STEP) as usize; if let Some(item)=state(hwnd).results.lock().unwrap().get(i) { if let FileStatus::Succeeded(path)=&item.status { open_path(path,false); } } }
+                if y>=logic::ROW_TOP { let st=state(hwnd);let i=st.scroll+((y-logic::ROW_TOP)/logic::ROW_STEP) as usize; if let Some(item)=st.results.lock().unwrap().get(i) { if let FileStatus::Succeeded(path)=&item.status { open_path(path,false); } } }
                 0
             }
             WM_PAINT => {
@@ -275,10 +299,24 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 EndPaint(hwnd, &ps);
                 0
             }
-            WM_TIMER => { InvalidateRect(hwnd,null_mut(),1); 0 }
-            WM_CLOSE => { let st=state(hwnd); if st.worker_done { DestroyWindow(hwnd); } else { st.close_requested=true; if let Some(c)=&st.cancel { c.store(true,Ordering::Release); } } 0 }
-            WM_WORKER_DONE => { let st=state(hwnd); st.worker_done=true; st.cancel=None; KillTimer(hwnd,1); if st.close_requested { DestroyWindow(hwnd); } else { InvalidateRect(hwnd,null_mut(),1); } 0 }
-            WM_OPEN_REQUEST => { let req=Box::from_raw(wp as *mut OpenRequest); let st=state(hwnd); st.model.add_dropped(req.paths,|p|p.is_file()); if let Some(i)=TARGETS.iter().position(|(_,v)|*v==req.target) { st.model.select(i); } SetForegroundWindow(hwnd); InvalidateRect(hwnd,null_mut(),1); 0 }
+            WM_COMMAND => {
+                let st=state(hwnd);
+                if st.worker_done {match wp&0xffff {
+                    201=>add_files(hwnd,native_tasks::window::pick_files(hwnd)),
+                    202=>{st.model.remove_selected();st.scroll=st.scroll.min(st.model.files.len().saturating_sub(1));*st.results.lock().unwrap()=logic::results(&st.model.files);},
+                    203=>{st.model.files.clear();st.scroll=0;*st.results.lock().unwrap()=Vec::new();},
+                    206=>{if let Some(folder)=native_tasks::window::pick_folder(hwnd){st.output_dir=Some(folder);}},
+                    207=>st.output_dir=None,_=>{}
+                }}
+                InvalidateRect(hwnd,null_mut(),1);0
+            }
+            WM_SIZE=>{let mut r:RECT=std::mem::zeroed();GetClientRect(hwnd,&mut r);for (id,x) in [(206,28),(207,145)]{SetWindowPos(GetDlgItem(hwnd,id),null_mut(),x,r.bottom-70,110,28,SWP_NOZORDER|SWP_NOACTIVATE);}0}
+            WM_MOUSEWHEEL=>{let st=state(hwnd);let delta=((wp>>16)&0xffff) as i16;let mut r:RECT=std::mem::zeroed();GetClientRect(hwnd,&mut r);let max=st.model.files.len().saturating_sub(Layout::new(r.right,r.bottom).visible_rows());st.scroll=if delta<0{(st.scroll+3).min(max)}else{st.scroll.saturating_sub(3)};InvalidateRect(hwnd,null_mut(),1);0}
+            WM_GETMINMAXINFO=>{let info=&mut *(lp as *mut MINMAXINFO);info.ptMinTrackSize=POINT{x:1050,y:650};0}
+            WM_TIMER => { InvalidateRect(hwnd,null_mut(),0); 0 }
+            WM_CLOSE => { close_request(hwnd); 0 }
+            WM_WORKER_DONE => { let st=state(hwnd); st.worker_done=true; st.cancel=None; KillTimer(hwnd,1); let pending=std::mem::take(&mut st.pending); if !pending.is_empty(){add_files(hwnd,pending);} if state(hwnd).close_requested { DestroyWindow(hwnd); } else { InvalidateRect(hwnd,null_mut(),1); } 0 }
+            WM_OPEN_REQUEST => { let req=Box::from_raw(wp as *mut OpenRequest); add_files(hwnd, req.paths); let st=state(hwnd); if st.worker_done { if let Some(i)=ALL_TARGETS.iter().position(|(_,v)|*v==req.target) { st.model.select_output(i); } } SetForegroundWindow(hwnd); InvalidateRect(hwnd,null_mut(),1); 0 }
             WM_DESTROY => {
                 let p = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !p.is_null() {
@@ -367,12 +405,19 @@ pub fn run(args:Vec<String>) -> Result<(), String> {
             CloseHandle(mutex);
             return Err("창을 만들지 못했습니다".into());
         }
+        native_tasks::window::apply_saved_topmost(hwnd,&native_tasks::data_dir().join("settings.json"));
+        // 처음 뜨는 창도 명령줄의 파일을 받는다(이미 떠 있는 창에는 forward_to_instance 가 넘긴다).
+        if !args.is_empty() {
+            add_files(hwnd, args.iter().map(PathBuf::from).collect());
+        }
         let hwnd_num=hwnd as usize;
         std::thread::spawn(move||pipe_server(hwnd_num));
         let mut m: MSG = std::mem::zeroed();
         while GetMessageW(&mut m, null_mut(), 0, 0) > 0 {
-            TranslateMessage(&m);
-            DispatchMessageW(&m);
+            if IsDialogMessageW(hwnd,&m)==0 {
+                TranslateMessage(&m);
+                DispatchMessageW(&m);
+            }
         }
         CloseHandle(mutex);
         Ok(())
@@ -388,7 +433,7 @@ pub fn capture_model(path: &std::path::Path, st: &Model) -> Result<PathBuf, Stri
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let shot = grid_core::gdi::render(1050, 650, |hdc| {
-        let state=State { model:st.clone(), results:Arc::new(Mutex::new(logic::results(&st.files))), cancel:None, worker_done:true, close_requested:false };
+        let state=State { model:st.clone(), results:Arc::new(Mutex::new(logic::results(&st.files))), cancel:None, worker_done:true, close_requested:false, output_dir:None, scroll:0, pending:Vec::new() };
         draw(hdc, 1050, 650, &state);
         st.files.len()
     })?;
@@ -403,7 +448,7 @@ pub fn capture_status(path:&std::path::Path, mode:&str)->Result<PathBuf,String> 
     if mode=="progress" { logic::transition(&mut items,Event::Start(active)); }
     if mode=="failure" { logic::transition(&mut items,Event::Start(active)); logic::transition(&mut items,Event::Failure(active)); }
     if let Some(parent)=path.parent(){std::fs::create_dir_all(parent).map_err(|e|e.to_string())?;}
-    let st=State { model, results:Arc::new(Mutex::new(items)), cancel:None, worker_done:mode!="progress", close_requested:false };
+    let st=State { model, results:Arc::new(Mutex::new(items)), cancel:None, worker_done:mode!="progress", close_requested:false, output_dir:None, scroll:0, pending:Vec::new() };
     let shot=grid_core::gdi::render(1050,650,|hdc|{draw(hdc,1050,650,&st);3})?;
     grid_core::png::write(path,shot.width,shot.height,&shot.bgra)?; Ok(path.to_path_buf())
 }

@@ -35,6 +35,8 @@ Name: "desktopicon"; Description: "바탕 화면 바로 가기 만들기"; Group
 
 [Files]
 ; kvf.exe, pdf-edit.exe, outliner.exe, outliner_win.exe, settings_win.exe, docview_win.exe, photoview_win.exe, convert_win.exe, dock.exe, qms_bench.exe와 SHA256은 resources 꾸러미에 포함. Dock은 DOCK2에서 자동 시작하지 않는다.
+; 설치 전 안전 종료 도우미(PrepareToInstall 이 임시 폴더에 풀어 실행한다). 이전 버전에 없어도 되도록 설치 파일에 담는다.
+Source: "..\dist\HWP_AutoDocFit\_internal\resources\sidebar.exe"; DestName: "docfit-close.exe"; Flags: dontcopy skipifsourcedoesntexist
 Source: "..\dist\HWP_AutoDocFit\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
@@ -80,6 +82,9 @@ Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.png\shell\Mongttan
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpg\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\SystemFileAssociations\.jpeg\shell\MongttangFileConvert"; Flags: dontcreatekey uninsdeletekey
 
+; 사이드바 '로그온 때 시작'(사이드바 오른쪽 메뉴에서만 켠다, 기본 꺼짐). 제거 때 값만 지운다.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "HwpAutoDocFitSidebar"; Flags: dontcreatekey uninsdeletevalue
+
 [Code]
 // 설치 기록(INSTALL1, 2026-11-22): 설치·정리 단계의 결과를 %LOCALAPPDATA%\HwpAutoDocFit\logs\install.log에 덧붙인다.
 // 기록 실패는 설치를 막지 않는다(예외를 삼킨다). Inno는 [Run] 종료 코드를 [Code]에 주지 않으므로
@@ -96,6 +101,8 @@ begin
   except
   end;
 end;
+
+#include "close_windows.iss"
 
 procedure LogRunStart(const ExePath: String);
 var
@@ -283,6 +290,17 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   InstallLog('설치 준비 시작');
+  // 먼저 열린 창들에 닫기를 요청해 저장 확인을 거친다. 아래의 강제 종료는 창 없는 도우미를 위한 것이다.
+  try
+    ExtractTemporaryFile('docfit-close.exe');
+  except
+    InstallLog('창 닫기 도우미가 설치 파일에 없음');
+  end;
+  if not CloseAppWindows(ExpandConstant('{tmp}\docfit-close.exe'), ExpandConstant('{app}'), WizardSilent) then
+  begin
+    Result := '열려 있는 창을 닫지 않아 설치를 중단했습니다. 작업을 저장하고 창을 닫은 뒤 다시 실행해 주세요.';
+    Exit;
+  end;
   StopHelper('kagent.exe');
   StopHelper('klib.exe');
   StopHelper('kvf.exe');
@@ -304,6 +322,8 @@ begin
   StopHelper('convert_win.exe');
   // 파일명 변경 미리보기 창(rename_win.exe)이 열려 있으면 설치 파일 교체를 막는다.
   StopHelper('rename_win.exe');
+  // 사이드바(sidebar.exe)는 계속 떠 있는 창이라 {app} 안 파일을 붙잡는다.
+  StopHelper('sidebar.exe');
   Sleep(500);
   // 앱·도우미를 끝낸 뒤에도 잠긴 파일(색인 서비스의 kfind.exe 등)은 이름을 바꿔 둔다.
   CleanStaleOld;
@@ -405,6 +425,12 @@ begin
       MsgBox('설치가 완료되지 않았습니다. 한/글 후처리 앱이 실행 중이면 파일을 바꿀 수 없습니다.' + #13#10 +
              '앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);
   end;
+end;
+
+// 제거 전에도 열린 창의 저장 확인을 거친다. 닫지 않으면 제거를 시작하지 않는다.
+function InitializeUninstall: Boolean;
+begin
+  Result := CloseAppWindows(ExpandConstant('{app}\_internal\resources\sidebar.exe'), ExpandConstant('{app}'), UninstallSilent);
 end;
 
 // 설정에서 관리자 서비스(HwpAutoDocFit.Index)를 설치했다면 서비스가 {app} 안의 kfind.exe를 가리킨다.

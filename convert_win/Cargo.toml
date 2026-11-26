@@ -9,6 +9,7 @@ publish = false
 [workspace]
 
 [dependencies]
+native_tasks = { path = "../native_tasks" }
 ui_theme = { path = "../ui_theme" }
 grid_core = { path = "../grid_core" }
 windows-sys = { version = "0.59", features = [
