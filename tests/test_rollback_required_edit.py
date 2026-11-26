@@ -171,6 +171,38 @@ class RequiredEditTests(unittest.TestCase):
         self.assertFalse(result)
         fake.SaveAs.assert_not_called()
 
+    def test_caught_spacing_restore_error_also_blocks_document_save(self):
+        fake = CharShapeHwp()
+        fake.SaveAs = Mock(return_value=True)
+        start, end = (0, 0, 0), (0, 0, 2)
+        runs = ([(start, end, (0,) * 7)], [(start, end, (100,) * 7)])
+
+        def apply_ratio(saved, delta):
+            if delta == 0:
+                raise RuntimeError('장평 복원 실패')
+
+        def search(maximum, check, **kwargs):
+            check(5)
+            return None
+
+        def one_pass(*args):
+            try:
+                self.ns['단어_장평_추가축소_시도'](start, end, start, end, 4, 보관=runs)
+            except RuntimeError:
+                pass
+            return True
+
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder) / 'synthetic.hwpx'
+            make_hwpx(source)
+            with self.assertRaisesRegex(RuntimeError, '복원 실패'):
+                test_pipeline_review.PipelineReviewTest._process_document(self, source, {
+                    'hwp': fake, '문서_처리_1회': one_pass, '장평_줄이기_사용': True,
+                    '단어모드_장평적용': apply_ratio, '단어모드_자간적용': lambda *a: None,
+                    '단어모드_줄범위': lambda _: (start, end), '최소_성공단계_탐색': search,
+                })
+        fake.SaveAs.assert_not_called()
+
     def test_movement_false_without_edit_failure_is_still_allowed(self):
         fn = self.ns['_문서_처리_1회']
         with patch.dict(fn.__globals__, {

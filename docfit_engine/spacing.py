@@ -1090,11 +1090,15 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     # 취소·측정 예외도 같은 복원 경로를 지난다. 한쪽 복원이
                     # 실패하더라도 다른 속성은 복원을 시도하고 예외는 전파한다.
                     try:
-                        if 장평적용됨:
-                            단어모드_장평적용(ratio_runs, 0)
-                    finally:
-                        if 자간적용됨:
-                            단어모드_자간적용(spacing_runs, 0)
+                        try:
+                            if 장평적용됨:
+                                단어모드_장평적용(ratio_runs, 0)
+                        finally:
+                            if 자간적용됨:
+                                단어모드_자간적용(spacing_runs, 0)
+                    except Exception as 복원오류:
+                        from docfit_engine.edit_failures import fail_required_edit
+                        fail_required_edit(f'단어 모드 자간·장평 복원 실패: {복원오류}', 복원오류)
             return 성공
         return bind_function(단어_장평_추가축소_시도, _docfit_namespace)
     if _docfit_symbol == '다음단어_당김_시도':
