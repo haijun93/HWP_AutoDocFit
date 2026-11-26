@@ -121,7 +121,18 @@ pub fn client_context(owner: HWND, x: i32, y: i32) -> bool {
 pub enum Choice {
     File(Action),
     Send(u8),
+    Extra(u8),
 }
+
+/// 창마다 다른 메뉴 줄(파일 작업 위에 붙는다).
+pub struct Extra {
+    pub id: u8,
+    pub label: String,
+    pub enabled: bool,
+}
+
+/// 창 고유 줄의 명령 번호.
+const EXTRA_ID: usize = 400;
 
 /// 보내기 줄의 명령 번호는 파일 작업(1부터)과 겹치지 않게 이 값부터다.
 const SEND_ID: usize = 100;
@@ -129,6 +140,7 @@ const SEND_ID: usize = 100;
 fn choice(id: usize, actions: &[Action]) -> Option<Choice> {
     match id {
         0 => None,
+        id if id >= EXTRA_ID => u8::try_from(id - EXTRA_ID).ok().map(Choice::Extra),
         id if id >= SEND_ID => u8::try_from(id - SEND_ID).ok().map(Choice::Send),
         id => actions.get(id - 1).copied().map(Choice::File),
     }
@@ -142,6 +154,7 @@ pub fn menu(
     count: usize,
     busy: bool,
     send: &[crate::send_menu::Entry],
+    extra: &[Extra],
 ) -> Option<Choice> {
     let actions = [
         Action::Open,
@@ -163,6 +176,17 @@ pub fn menu(
         let menu = CreatePopupMenu();
         if menu.is_null() {
             return None;
+        }
+        for entry in extra {
+            AppendMenuW(
+                menu,
+                MF_STRING | if entry.enabled && !busy { 0 } else { MF_GRAYED },
+                EXTRA_ID + entry.id as usize,
+                wide(&entry.label).as_ptr(),
+            );
+        }
+        if !extra.is_empty() {
+            AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         }
         for (i, (action, label)) in actions.iter().zip(labels).enumerate() {
             let label = if !action.enabled(count, busy) {
@@ -321,7 +345,7 @@ pub fn show_results(owner: HWND, results: &[FileResult]) {
     );
 }
 
-fn pick_folder(owner: HWND) -> Option<PathBuf> {
+pub fn pick_folder(owner: HWND) -> Option<PathBuf> {
     use windows::{
         Win32::{Foundation::HWND as Window, System::Com::*, UI::Shell::*},
         core::PCWSTR,
@@ -398,7 +422,7 @@ unsafe extern "system" fn dialog_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
 }
 
 /// 메모리 대화상자: 이름 입력 또는 모든 실패를 스크롤할 수 있는 읽기 전용 결과창.
-fn text_dialog(
+pub fn text_dialog(
     owner: HWND,
     title: &str,
     description: &str,
@@ -528,5 +552,6 @@ mod tests {
         // 문서편집은 메뉴 번호 0 이다(취소의 0 과 섞이면 안 된다).
         assert_eq!(choice(SEND_ID, &actions), Some(Choice::Send(0)));
         assert_eq!(choice(SEND_ID + 13, &actions), Some(Choice::Send(13)));
+        assert_eq!(choice(EXTRA_ID + 1, &actions), Some(Choice::Extra(1)));
     }
 }

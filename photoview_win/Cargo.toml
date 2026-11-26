@@ -13,8 +13,19 @@ publish = false
 [dependencies]
 docfit_config = { path = "../docfit_config" }
 grid_core = { path = "../grid_core" }
+# 즐겨찾기·태그는 앱과 같은 SQLite 파일(`photo_album.db`)을 쓴다(klib 와 같은 판).
+rusqlite = { version = "0.41", features = ["bundled"] }
 ui_theme = { path = "../ui_theme" }
 serde_json = { version = "1", features = ["preserve_order"] }
+# 그림 해독·사본 저장(WIC).
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Imaging",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Ole",
+    "Win32_System_Variant",
+] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

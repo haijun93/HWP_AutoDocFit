@@ -518,7 +518,7 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
     let Some((paths, settings)) = snapshot else { return };
     // 파일 작업 아래에 '다른 창으로 보내기'. 선택한 파일 전부가 대상이다.
     let send = grid_core::send_menu::lines(&grid_core::handoff::DOCVIEW_MENUS, &paths, &settings);
-    let choice = native_ops::menu(hwnd, x, y, paths.len(), false, &send);
+    let choice = native_ops::menu(hwnd, x, y, paths.len(), false, &send, &[]);
     if let Some(s) = unsafe { state(hwnd) } { s.file_ops.phase = Phase::Complete; }
     match choice {
         Some(native_ops::Choice::File(action)) => unsafe { file_action(hwnd, action) },
@@ -529,7 +529,7 @@ unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
                 redraw(hwnd);
             }
         }
-        None => {}
+        Some(native_ops::Choice::Extra(_)) | None => {}
     }
 }
 
@@ -649,6 +649,12 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_LBUTTONUP => {
                 if let Some(s) = state(hwnd) {
+                    if s.drag == Drag::Slider && s.opts.synthetic.is_none() {
+                        if let Err(e) = docfit_config::set_thumb_size(&s.settings_path, "doc_grid", s.app.thumb) {
+                            s.app.open_error = format!("크기를 저장하지 못했습니다({})", e.message);
+                            redraw(hwnd);
+                        }
+                    }
                     if s.drag != Drag::None {
                         s.drag = Drag::None;
                         ReleaseCapture();

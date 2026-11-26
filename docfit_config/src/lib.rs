@@ -193,6 +193,20 @@ pub fn set(path:&Path, patch:&Value)->Result<Value,SettingsError>{
     if current!=to_save { atomic_write_unlocked(path,&to_save)?; }
     current=to_save; Ok(merged(&current))
 }
+/// 문서뷰·사진뷰 썸네일 크기(`ui_thumb_sizes.<view>`)만 바꾼다(앱 `thumb_size_setting.write_thumb_size` 대응).
+/// 설정 창이 다루지 않는 내부 키라 `set` 의 목록 검사 대신 같은 잠금·원자 저장을 쓴다.
+pub fn set_thumb_size(path:&Path, view:&str, size:f64)->Result<(),SettingsError>{
+    if !matches!(view,"doc_grid"|"photo_album")||!size.is_finite(){return Err(SettingsError::new("INVALID_INPUT","unknown thumbnail view"));}
+    let _lock=FileLock::acquire(&path.with_file_name(format!("{}.lock",path.file_name().unwrap_or_default().to_string_lossy()))).map_err(|e|SettingsError::new("SETTINGS_WRITE_FAILED",e.to_string()))?;
+    let mut current=read_json(path)?;
+    let Some(root)=current.as_object_mut() else{return Err(SettingsError::new("INVALID_SETTINGS","settings must be object"));};
+    let sizes=root.entry("ui_thumb_sizes").or_insert_with(||json!({}));
+    if !sizes.is_object(){*sizes=json!({});}
+    let value=json!(size.clamp(100.0,240.0));
+    if sizes.get(view)==Some(&value){return Ok(());}
+    sizes[view]=value;
+    atomic_write_unlocked(path,&current)
+}
 pub fn revision(value:&Value)->String{
     fn sorted(v:&Value)->Value{match v{Value::Object(m)=>{let mut entries:Vec<_>=m.iter().collect();entries.sort_by(|a,b|a.0.cmp(b.0));let mut out=Map::new();for(k,v)in entries{out.insert(k.clone(),sorted(v));}Value::Object(out)},Value::Array(a)=>Value::Array(a.iter().map(sorted).collect()),_=>v.clone()}}
     use sha2::{Digest,Sha256};let bytes=serde_json::to_string(&sorted(value)).unwrap_or_default().into_bytes();let hash=Sha256::digest(bytes);hash.iter().map(|b|format!("{b:02x}")).collect()
@@ -219,6 +233,11 @@ fn atomic_write_unlocked(path:&Path,value:&Value)->Result<(),SettingsError>{let 
         set(&p,&json!({"hidden_tabs":[2,5],"library_excluded_folders":["C:/x"]})).unwrap();let raw=read_json(&p).unwrap();
         assert_eq!(raw["hidden_tabs"],json!([2,5]));assert_eq!(raw["library_excluded_folders"],json!(["C:/x"]));assert_eq!(raw["custom"]["x"],1);
         assert_eq!(set(&p,&json!({"hidden_tabs":[13]})).unwrap_err().code,"INVALID_INPUT");}
+    #[test] fn thumb_size_keeps_other_view_and_unknown_keys(){let d=tempdir().unwrap();let p=d.path().join("s.json");fs::write(&p,r#"{"custom":1,"ui_thumb_sizes":{"doc_grid":200.0}}"#).unwrap();
+        set_thumb_size(&p,"photo_album",999.0).unwrap();let v=read_json(&p).unwrap();
+        assert_eq!(v["ui_thumb_sizes"],json!({"doc_grid":200.0,"photo_album":240.0}));assert_eq!(v["custom"],1);
+        assert!(set_thumb_size(&p,"other",120.0).is_err());assert!(set_thumb_size(&p,"doc_grid",f64::NAN).is_err());
+        fs::write(&p,"{").unwrap();assert!(set_thumb_size(&p,"doc_grid",120.0).is_err());assert_eq!(fs::read_to_string(&p).unwrap(),"{");}
     #[test] fn large_file_roundtrip(){let d=tempdir().unwrap();let p=d.path().join("s.json");let v=json!({"big":"x".repeat(2*1024*1024)});atomic_write(&p,&v).unwrap();assert_eq!(read_json(&p).unwrap(),v);}
     #[test] fn concurrent_updates_do_not_lose_keys(){let d=tempdir().unwrap();let p=Arc::new(d.path().join("s.json"));let mut joins=vec![];for i in 0..8{let p=p.clone();joins.push(thread::spawn(move||{let _guard=FileLock::acquire(&p.with_file_name("s.json.lock")).unwrap();let mut v=read_json(&p).unwrap();v.as_object_mut().unwrap().insert(format!("k{i}"),json!(i));atomic_write_unlocked(&p,&v).unwrap();}));}for j in joins{j.join().unwrap();}let v=read_json(&p).unwrap();for i in 0..8{assert_eq!(v[format!("k{i}")],i);}}
 }

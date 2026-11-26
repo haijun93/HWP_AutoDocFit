@@ -41,6 +41,7 @@ pub const MIN_H: i32 = 480;
 
 pub const TOOLBAR_H: i32 = 52;
 pub const BANNER_H: i32 = 30;
+pub const ROW2_H: i32 = 40;
 pub const STATUS_H: i32 = 28;
 pub const PAD: i32 = 16;
 pub const GAP: i32 = 14;
@@ -52,13 +53,15 @@ pub struct GridSpec {
     pub gap: i32,
     pub pad: i32,
     pub aspect: f64,
+    /// 도구줄 아래 둘째 줄 높이(없으면 0).
+    pub extra_top: i32,
 }
 
 impl GridSpec {
     /// 문서뷰: 간격 14·여백 16·비 0.74.
-    pub const DOC: GridSpec = GridSpec { gap: GAP, pad: PAD, aspect: ASPECT };
-    /// 사진뷰(`photo_album_screen.dart`): 간격 10·여백 16·비 0.8.
-    pub const PHOTO: GridSpec = GridSpec { gap: 10, pad: PAD, aspect: 0.8 };
+    pub const DOC: GridSpec = GridSpec { gap: GAP, pad: PAD, aspect: ASPECT, extra_top: 0 };
+    /// 사진뷰(`photo_album_screen.dart`): 간격 10·여백 16·비 0.8, 즐겨찾기·태그 줄.
+    pub const PHOTO: GridSpec = GridSpec { gap: 10, pad: PAD, aspect: 0.8, extra_top: ROW2_H };
 }
 pub const SCROLLBAR_W: i32 = 12;
 
@@ -86,7 +89,7 @@ impl Metrics {
     }
 
     pub fn with_spec(spec: GridSpec, w: i32, h: i32, dpi: u32, thumb: f64, banner: bool) -> Metrics {
-        let top = scale(TOOLBAR_H, dpi) + if banner { scale(BANNER_H, dpi) } else { 0 };
+        let top = scale(TOOLBAR_H, dpi) + scale(spec.extra_top, dpi) + if banner { scale(BANNER_H, dpi) } else { 0 };
         let bottom = (h - scale(STATUS_H, dpi)).max(top + 1);
         let viewport = Rect::new(0, top, w.max(1), bottom);
         let gap = scale(spec.gap, dpi);
