@@ -458,22 +458,9 @@ fn read_hwpx_title(path: &str) -> Result<Option<String>, ()> {
         rest = &rest[start..]; let Some(open_end) = rest.find('>') else { break; }; rest = &rest[open_end + 1..];
         let Some(end) = rest.find("</hp:p>") else { break; };
         let paragraph = &rest[..end]; rest = &rest[end + 7..];
-        let text = xml_text(paragraph).trim().to_string(); if !text.is_empty() { paragraphs.push(text); }
+        let text = klib::extract::xml_text(paragraph).map_err(|_| ())?.trim().to_string(); if !text.is_empty() { paragraphs.push(text); }
     }
     Ok(Some(paragraphs.into_iter().next().unwrap_or_default()))
-}
-
-fn xml_text(xml: &str) -> String {
-    let mut out = String::new(); let mut in_tag = false; let mut entity = String::new(); let mut in_entity = false;
-    for ch in xml.chars() {
-        if in_tag { if ch == '>' { in_tag = false; } continue; }
-        if ch == '<' { in_tag = true; continue; }
-        if in_entity {
-            if ch == ';' { out.push(match entity.as_str() { "amp" => '&', "lt" => '<', "gt" => '>', "quot" => '"', "apos" => '\'', _ => ' ' }); entity.clear(); in_entity = false; }
-            else if entity.len() < 12 { entity.push(ch); }
-        } else if ch == '&' { in_entity = true; } else { out.push(ch); }
-    }
-    out
 }
 
 fn read_exif_datetime(path: &str, ext: &str) -> Option<time::OffsetDateTime> {
@@ -542,5 +529,33 @@ mod tests {
         assert_eq!(invalid_rename_reason("a/b"), Some("쓸 수 없는 글자(\\ / : * ? \" < > |)가 있습니다.".into()));
         assert_eq!(invalid_rename_reason(&"a".repeat(256)), Some("이름이 UTF-16 기준 255단위를 넘습니다(일부 이모지는 2단위로 계산됩니다).".into()));
         assert_eq!(invalid_rename_reason("report.jpg"), None);
+    }
+
+    #[test]
+    fn hwpx_title_decodes_numeric_references_and_rejects_dtd_and_illegal() {
+        use std::io::Write;
+        let create_hwpx = |name: &str, sec_xml: &str| -> std::path::PathBuf {
+            let path = std::env::temp_dir().join(format!("klib-rename-{}-{name}.hwpx", std::process::id()));
+            let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+            let opt = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("Contents/section0.xml", opt).unwrap();
+            zip.write_all(sec_xml.as_bytes()).unwrap();
+            zip.finish().unwrap();
+            path
+        };
+        // 정상 숫자 참조 및 표준 엔티티
+        let ok_path = create_hwpx("ok", r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>&#xAC00;&#44;&#x20;&#128512;&amp;</hp:t></hp:run></hp:p></hs:sec>"#);
+        assert_eq!(super::read_hwpx_title(ok_path.to_str().unwrap()), Ok(Some("가, 😀&".into())));
+        let _ = std::fs::remove_file(&ok_path);
+
+        // DTD 거부
+        let dtd_path = create_hwpx("dtd", r#"<?xml version="1.0"?><!DOCTYPE a><hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>제목</hp:t></hp:run></hp:p></hs:sec>"#);
+        assert!(super::read_hwpx_title(dtd_path.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&dtd_path);
+
+        // 모르는 엔티티 거부
+        let custom_path = create_hwpx("custom", r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>&secret;</hp:t></hp:run></hp:p></hs:sec>"#);
+        assert!(super::read_hwpx_title(custom_path.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_file(&custom_path);
     }
 }

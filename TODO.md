@@ -10,7 +10,7 @@
 ## ★ 핵심 진행 과제 (최우선)
 - [x] **[수정·자동 시험 2026-11-26: KLIBENT1]** klib HWPX·DOCX 본문 추출이 `&amp;` 등 표준 XML 엔티티를 거부하던 문제 수정. 색인 경로의 `&amp;` 글자 잔존도 수정, DTD·사용자 정의/외부 엔티티는 계속 거부. 커밋만(푸시 안 함). 상세: `docs/KLIBENT1_RESULT_2026-11-26.md`.
 - [ ] [중] 디버그 klib `search-content` 가 SEMI2 연동 시험에서 간헐 종료(tantivy `debug_assert!(self.doc() <= target)`). 수정 전 바이너리 재현·release 결과 정확성 확인. [상태 2026-11-26: KLIBENT1 에서 발견, 미수정]
-- [ ] [하] `content.rs` 자체 XML 훑기: DTD 미거부, `xml_text`(content·rename)는 숫자 참조를 공백 처리. [상태 2026-11-26: 코드로만 확인, 미수정]
+- [x] **[수정·자동 시험 2026-11-26: KLIBENT2]** 자료함 색인(`content.rs`)·이름 바꾸기(`rename.rs`)·DOCX 속성(`extract.rs`) XML 처리 보안·정확성 통일(KLIBENT1 규칙: DTD·정의되지 않은 참조 거부, 표준 5종 및 숫자 참조 정상 디코딩). 상세: `docs/KLIBENT2_RESULT_2026-11-26.md`.
 - [x] **[구현·자동 시험 2026-11-25: CTXMENU1 — 실기 확인 대기]** 사진뷰·문서뷰 마우스 오른쪽 메뉴: 파일 작업과 문서편집·가상 폴더·업무자료함·파일 변환·PDF 편집·사진 편집 연결. 상세: `docs/CTXMENU1_RESULT_2026-11-25.md`.
 - [ ] [중] CTXMENU1 실기 확인: 설치본에서 오른쪽 클릭 메뉴(기본 브라우저 메뉴 겹침 여부), 실제 백엔드로 각 대상에 파일 전달, 네트워크·클라우드 전용 파일, 네이티브 Flutter 실행기. [상태 2026-11-25: 미확인]
 - [ ] [하] 파일 목록 추가 통로(`native_file_dialog_service.ADDABLE`)가 xls·ppt·pptx·hml 을 받지 않아 문서뷰에서 파일 변환으로 보낼 수 없음. [상태 2026-11-25: 코드로만 확인, 미수정]

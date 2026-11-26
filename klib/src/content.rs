@@ -78,7 +78,7 @@ fn leveled_blocks(path: &Path, ext: &str) -> Result<Vec<SearchBlock>, String> {
     };
     if ext == "docx" {
         for (_, xml) in read_entries(path, |n| (n.starts_with("word/header") || n.starts_with("word/footer")) && n.ends_with(".xml"))? {
-            out.extend(structured_blocks(&xml, &|_| None, &|_, _| None));
+            out.extend(structured_blocks(&xml, &|_| None, &|_, _| None)?);
         }
     }
     if out.is_empty() { return Err("파일 본문에서 텍스트를 추출하지 못했습니다.".into()); }
@@ -127,7 +127,7 @@ pub(crate) fn extract_text(path: &Path, ext: &str) -> Result<String, String> {
         let mut xml = String::new();
         use std::io::Read;
         entry.read_to_string(&mut xml).map_err(|e| e.to_string())?;
-        output.push_str(&xml_text(&xml)); output.push('\n');
+        output.push_str(&klib::extract::xml_text(&xml)?); output.push('\n');
     }
     if output.trim().is_empty() { return Err("파일 본문에서 텍스트를 추출하지 못했습니다.".into()); }
     Ok(output)
@@ -144,22 +144,22 @@ pub(crate) fn extract_blocks(path: &Path, ext: &str) -> Result<Vec<Block>, Strin
         "hwpx" => {
             let header = read_entries(path, |n| n == "Contents/header.xml")?;
             let sections = read_entries(path, |n| n.starts_with("Contents/section") && n.ends_with(".xml"))?;
-            let levels = header.first().map(|(_, xml)| hwpx_outline_levels(xml)).unwrap_or_default();
+            let levels = header.first().map(|(_, xml)| hwpx_outline_levels(xml)).transpose()?.unwrap_or_default();
             let mut out = Vec::new();
-            for (_, xml) in &sections { out.extend(structured_blocks(xml, &|attrs| attr(attrs, "paraPrIDRef").and_then(|id| levels.get(id).copied()), &|_, _| None)); }
+            for (_, xml) in &sections { out.extend(structured_blocks(xml, &|attrs| attr(attrs, "paraPrIDRef").and_then(|id| levels.get(id).copied()), &|_, _| None)?); }
             out
         }
         "docx" => {
             let styles = read_entries(path, |n| n == "word/styles.xml")?;
             let document = read_entries(path, |n| n == "word/document.xml")?;
-            let levels = styles.first().map(|(_, xml)| docx_style_levels(xml)).unwrap_or_default();
+            let levels = styles.first().map(|(_, xml)| docx_style_levels(xml)).transpose()?.unwrap_or_default();
             let mut out = Vec::new();
             for (_, xml) in &document {
                 out.extend(structured_blocks(xml, &|_| None, &|name, attrs| match name {
                     "pStyle" => attr(attrs, "val").and_then(|id| levels.get(id).copied()),
                     "outlineLvl" => attr(attrs, "val").and_then(|v| v.parse::<i64>().ok()).filter(|v| (0..9).contains(v)).map(|v| v + 1),
                     _ => None,
-                }));
+                })?);
             }
             out
         }
@@ -217,16 +217,16 @@ fn read_entries(path: &Path, want: impl Fn(&str) -> bool) -> Result<Vec<(String,
 enum Ev<'a> { Start(&'a str, &'a str, bool), End(&'a str), Text(&'a str) }
 
 /// 의존성 없는 얕은 XML 훑기: 이름은 접두사를 뗀 지역 이름으로 준다.
-fn scan<'a>(xml: &'a str, mut f: impl FnMut(Ev<'a>)) {
+fn scan<'a>(xml: &'a str, mut f: impl FnMut(Ev<'a>) -> Result<(), String>) -> Result<(), String> {
     let bytes = xml.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
-        let Some(lt) = xml[i..].find('<').map(|p| p + i) else { f(Ev::Text(&xml[i..])); break };
-        if lt > i { f(Ev::Text(&xml[i..lt])); }
+        let Some(lt) = xml[i..].find('<').map(|p| p + i) else { f(Ev::Text(&xml[i..]))?; break };
+        if lt > i { f(Ev::Text(&xml[i..lt]))?; }
         let rest = &xml[lt..];
         if let Some(body) = rest.strip_prefix("<![CDATA[") {
             let end = body.find("]]>").unwrap_or(body.len());
-            f(Ev::Text(&body[..end]));
+            f(Ev::Text(&body[..end]))?;
             i = lt + 9 + end + 3;
             continue;
         }
@@ -236,14 +236,19 @@ fn scan<'a>(xml: &'a str, mut f: impl FnMut(Ev<'a>)) {
         while j < bytes.len() { let c = bytes[j]; if quote != 0 { if c == quote { quote = 0; } } else if c == b'"' || c == b'\'' { quote = c; } else if c == b'>' { break; } j += 1; }
         let tag = &xml[lt + 1..j.min(bytes.len())];
         i = j + 1;
+        let tag_upper = tag.to_ascii_uppercase();
+        if tag_upper.starts_with("!DOCTYPE") || tag_upper.starts_with("!ENTITY") {
+            return Err("corrupt: DTD 및 외부 엔티티 거부".into());
+        }
         if tag.starts_with('?') || tag.starts_with('!') { continue; }
         let local = |n: &'a str| n.rsplit(':').next().unwrap_or(n);
-        if let Some(name) = tag.strip_prefix('/') { f(Ev::End(local(name.trim()))); continue; }
+        if let Some(name) = tag.strip_prefix('/') { f(Ev::End(local(name.trim())))?; continue; }
         let empty = tag.ends_with('/');
         let tag = tag.trim_end_matches('/');
         let split = tag.find(char::is_whitespace).unwrap_or(tag.len());
-        f(Ev::Start(local(&tag[..split]), &tag[split..], empty));
+        f(Ev::Start(local(&tag[..split]), &tag[split..], empty))?;
     }
+    Ok(())
 }
 
 /// 속성 값(접두사 무시). 예: attr(r#" w:val="1""#, "val") == Some("1").
@@ -262,97 +267,104 @@ fn attr<'a>(attrs: &'a str, name: &str) -> Option<&'a str> {
     None
 }
 
-fn unescape(text: &str) -> String {
-    if !text.contains('&') { return text.to_string(); }
-    let mut out = String::new(); let mut rest = text;
+fn unescape(text: &str) -> Result<String, String> {
+    if !text.contains('&') { return Ok(text.to_string()); }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
     while let Some(p) = rest.find('&') {
         out.push_str(&rest[..p]); rest = &rest[p..];
-        let Some(end) = rest.find(';').filter(|e| *e <= 12) else { out.push('&'); rest = &rest[1..]; continue };
+        let end = rest.find(';').ok_or_else(|| "corrupt: XML 엔티티 참조 거부".to_string())?;
         let name = &rest[1..end];
-        let ch = match name {
-            "amp" => Some('&'), "lt" => Some('<'), "gt" => Some('>'), "quot" => Some('"'), "apos" => Some('\''),
-            _ if name.starts_with("#x") || name.starts_with("#X") => u32::from_str_radix(&name[2..], 16).ok().and_then(char::from_u32),
-            _ if name.starts_with('#') => name[1..].parse().ok().and_then(char::from_u32),
-            _ => None,
-        };
-        out.push(ch.unwrap_or(' ')); rest = &rest[end + 1..];
+        let ch = klib::extract::resolve_xml_ref_name(name)
+            .ok_or_else(|| "corrupt: XML 엔티티 참조 거부".to_string())?;
+        out.push_str(&ch); rest = &rest[end + 1..];
     }
-    out.push_str(rest); out
+    out.push_str(rest);
+    Ok(out)
 }
 
 /// hwpx header.xml: 문단 모양 id → 개요 수준(heading type="OUTLINE" level은 0부터).
-fn hwpx_outline_levels(xml: &str) -> std::collections::HashMap<String, i64> {
+fn hwpx_outline_levels(xml: &str) -> Result<std::collections::HashMap<String, i64>, String> {
     let mut map = std::collections::HashMap::new(); let mut current: Option<&str> = None;
-    scan(xml, |ev| match ev {
-        Ev::Start("paraPr", attrs, _) => current = attr(attrs, "id"),
-        Ev::Start("heading", attrs, _) => if let (Some(id), Some("OUTLINE"), Some(level)) = (current, attr(attrs, "type"), attr(attrs, "level").and_then(|v| v.parse::<i64>().ok())) {
-            if (0..10).contains(&level) { map.insert(id.to_string(), level + 1); }
-        },
-        Ev::End("paraPr") => current = None,
-        _ => {}
-    });
-    map
+    scan(xml, |ev| {
+        match ev {
+            Ev::Start("paraPr", attrs, _) => current = attr(attrs, "id"),
+            Ev::Start("heading", attrs, _) => if let (Some(id), Some("OUTLINE"), Some(level)) = (current, attr(attrs, "type"), attr(attrs, "level").and_then(|v| v.parse::<i64>().ok())) {
+                if (0..10).contains(&level) { map.insert(id.to_string(), level + 1); }
+            },
+            Ev::End("paraPr") => current = None,
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(map)
 }
 
 /// docx styles.xml: 스타일 id → 수준(Title 1, heading N은 N, outlineLvl k는 k+1).
-fn docx_style_levels(xml: &str) -> std::collections::HashMap<String, i64> {
+fn docx_style_levels(xml: &str) -> Result<std::collections::HashMap<String, i64>, String> {
     let mut map = std::collections::HashMap::new(); let mut current: Option<String> = None;
-    scan(xml, |ev| match ev {
-        Ev::Start("style", attrs, _) => current = attr(attrs, "styleId").map(str::to_string),
-        Ev::Start("name", attrs, _) => if let (Some(id), Some(name)) = (&current, attr(attrs, "val")) {
-            let lower = name.to_ascii_lowercase();
-            let level = if lower == "title" { Some(1) } else { lower.strip_prefix("heading ").and_then(|n| n.trim().parse::<i64>().ok()).filter(|n| (1..10).contains(n)) };
-            if let Some(level) = level { map.insert(id.clone(), level); }
-        },
-        Ev::Start("outlineLvl", attrs, _) => if let (Some(id), Some(v)) = (&current, attr(attrs, "val").and_then(|v| v.parse::<i64>().ok())) {
-            if (0..9).contains(&v) { map.entry(id.clone()).or_insert(v + 1); }
-        },
-        Ev::End("style") => current = None,
-        _ => {}
-    });
-    map
+    scan(xml, |ev| {
+        match ev {
+            Ev::Start("style", attrs, _) => current = attr(attrs, "styleId").map(str::to_string),
+            Ev::Start("name", attrs, _) => if let (Some(id), Some(name)) = (&current, attr(attrs, "val")) {
+                let lower = name.to_ascii_lowercase();
+                let level = if lower == "title" { Some(1) } else { lower.strip_prefix("heading ").and_then(|n| n.trim().parse::<i64>().ok()).filter(|n| (1..10).contains(n)) };
+                if let Some(level) = level { map.insert(id.clone(), level); }
+            },
+            Ev::Start("outlineLvl", attrs, _) => if let (Some(id), Some(v)) = (&current, attr(attrs, "val").and_then(|v| v.parse::<i64>().ok())) {
+                if (0..9).contains(&v) { map.entry(id.clone()).or_insert(v + 1); }
+            },
+            Ev::End("style") => current = None,
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(map)
 }
 
 /// hwpx 구역·docx 본문 공통 문단·표 훑기(p·t·tbl·tr·tc는 두 형식 모두 같은 지역 이름).
 /// `para_level`은 문단 시작 태그 속성으로, `prop_level`은 문단 안 속성 태그(pStyle 등)로 수준을 정한다.
-fn structured_blocks(xml: &str, para_level: &dyn Fn(&str) -> Option<i64>, prop_level: &dyn Fn(&str, &str) -> Option<i64>) -> Vec<Block> {
+fn structured_blocks(xml: &str, para_level: &dyn Fn(&str) -> Option<i64>, prop_level: &dyn Fn(&str, &str) -> Option<i64>) -> Result<Vec<Block>, String> {
     let mut out = Vec::new();
     let mut stack: Vec<(i64, String)> = Vec::new();
     let mut in_text = 0usize; let mut table_depth = 0usize;
     let mut row: Vec<String> = Vec::new(); let mut cell = String::new(); let mut rows: Vec<String> = Vec::new();
-    scan(xml, |ev| match ev {
-        Ev::Start("p", attrs, false) => stack.push((para_level(attrs).unwrap_or(0), String::new())),
-        Ev::End("p") => if let Some((level, text)) = stack.pop() {
-            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if text.is_empty() {}
-            else if table_depth > 0 { if !cell.is_empty() { cell.push(' '); } cell.push_str(&text); }
-            else { out.push(Block { level, table: false, text }); }
-        },
-        Ev::Start("t", _, false) => in_text += 1,
-        Ev::End("t") => in_text = in_text.saturating_sub(1),
-        Ev::Start("tab" | "br" | "lineBreak", _, _) => if let Some(top) = stack.last_mut() { top.1.push(' '); },
-        Ev::Text(text) => if in_text > 0 { if let Some(top) = stack.last_mut() { top.1.push_str(&unescape(text)); } },
-        Ev::Start("tbl", _, false) => { table_depth += 1; if table_depth == 1 { row.clear(); rows.clear(); cell.clear(); } },
-        // 한 행짜리 표는 제목 상자·요약 상자로 보고 일반 문단으로 낸다(예: "Ⅰ | 추진 배경" → "Ⅰ 추진 배경", 수준 1).
-        Ev::End("tbl") => {
-            if table_depth == 1 {
-                if let [only] = rows.as_slice() {
-                    let text = only.split('\t').filter(|c| !c.trim().is_empty()).collect::<Vec<_>>().join(" ");
-                    out.push(Block { level: 0, table: false, text });
-                } else {
-                    out.extend(rows.drain(..).map(|text| Block { level: 0, table: true, text }));
+    scan(xml, |ev| {
+        match ev {
+            Ev::Start("p", attrs, false) => stack.push((para_level(attrs).unwrap_or(0), String::new())),
+            Ev::End("p") => if let Some((level, text)) = stack.pop() {
+                let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+                if text.is_empty() {}
+                else if table_depth > 0 { if !cell.is_empty() { cell.push(' '); } cell.push_str(&text); }
+                else { out.push(Block { level, table: false, text }); }
+            },
+            Ev::Start("t", _, false) => in_text += 1,
+            Ev::End("t") => in_text = in_text.saturating_sub(1),
+            Ev::Start("tab" | "br" | "lineBreak", _, _) => if let Some(top) = stack.last_mut() { top.1.push(' '); },
+            Ev::Text(text) => if in_text > 0 { if let Some(top) = stack.last_mut() { top.1.push_str(&unescape(text)?); } },
+            Ev::Start("tbl", _, false) => { table_depth += 1; if table_depth == 1 { row.clear(); rows.clear(); cell.clear(); } },
+            // 한 행짜리 표는 제목 상자·요약 상자로 보고 일반 문단으로 낸다(예: "Ⅰ | 추진 배경" → "Ⅰ 추진 배경", 수준 1).
+            Ev::End("tbl") => {
+                if table_depth == 1 {
+                    if let [only] = rows.as_slice() {
+                        let text = only.split('\t').filter(|c| !c.trim().is_empty()).collect::<Vec<_>>().join(" ");
+                        out.push(Block { level: 0, table: false, text });
+                    } else {
+                        out.extend(rows.drain(..).map(|text| Block { level: 0, table: true, text }));
+                    }
+                    rows.clear();
                 }
-                rows.clear();
+                table_depth = table_depth.saturating_sub(1);
             }
-            table_depth = table_depth.saturating_sub(1);
+            Ev::Start("tr", _, false) if table_depth == 1 => row.clear(),
+            Ev::End("tc") if table_depth == 1 => { row.push(std::mem::take(&mut cell).replace('\t', " ")); },
+            Ev::End("tr") if table_depth == 1 => if row.iter().any(|c| !c.trim().is_empty()) { rows.push(row.join("\t")); row.clear(); },
+            Ev::Start(name, attrs, _) => if let (Some(level), Some(top)) = (prop_level(name, attrs), stack.last_mut()) { top.0 = level; },
+            _ => {}
         }
-        Ev::Start("tr", _, false) if table_depth == 1 => row.clear(),
-        Ev::End("tc") if table_depth == 1 => { row.push(std::mem::take(&mut cell).replace('\t', " ")); },
-        Ev::End("tr") if table_depth == 1 => if row.iter().any(|c| !c.trim().is_empty()) { rows.push(row.join("\t")); row.clear(); },
-        Ev::Start(name, attrs, _) => if let (Some(level), Some(top)) = (prop_level(name, attrs), stack.last_mut()) { top.0 = level; },
-        _ => {}
-    });
-    out
+        Ok(())
+    })?;
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -467,18 +479,23 @@ mod block_tests {
         let _ = fs::remove_file(&path);
         assert_eq!(blocks.iter().map(|b| (b.level, b.text.as_str())).collect::<Vec<_>>(), vec![(1, "제목"), (2, "소제목"), (0, "본문"), (0, "#해시태그")]);
     }
-}
 
-fn xml_text(xml: &str) -> String {
-    let mut out = String::new(); let mut in_tag = false; let mut entity = String::new(); let mut in_entity = false;
-    for ch in xml.chars() {
-        if in_tag { if ch == '>' { in_tag = false; } continue; }
-        if ch == '<' { in_tag = true; continue; }
-        if in_entity {
-            if ch == ';' { out.push(match entity.as_str() { "amp" => '&', "lt" => '<', "gt" => '>', "quot" => '"', "apos" => '\'', _ => ' ' }); entity.clear(); in_entity = false; }
-            else if entity.len() < 12 { entity.push(ch); }
-        } else if ch == '&' { in_entity = true; }
-        else { out.push(ch); }
+    #[test]
+    fn xml_security_and_decoding_in_content() {
+        // DTD 거부
+        let dtd_hwpx = zip_file("dtd.hwpx", &[("Contents/header.xml", r#"<?xml version="1.0"?><!DOCTYPE a><hh:head xmlns:hh="h"/>"#), ("Contents/section0.xml", r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>본문</hp:t></hp:run></hp:p></hs:sec>"#)]);
+        assert!(extract_blocks(&dtd_hwpx, "hwpx").is_err());
+        let _ = fs::remove_file(&dtd_hwpx);
+
+        // 모르는 엔티티 거부
+        let custom_hwpx = zip_file("custom.hwpx", &[("Contents/header.xml", r#"<hh:head xmlns:hh="h"/>"#), ("Contents/section0.xml", r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>&secret;</hp:t></hp:run></hp:p></hs:sec>"#)]);
+        assert!(extract_blocks(&custom_hwpx, "hwpx").is_err());
+        let _ = fs::remove_file(&custom_hwpx);
+
+        // 숫자 참조 정상 풀림
+        let num_hwpx = zip_file("num.hwpx", &[("Contents/header.xml", r#"<hh:head xmlns:hh="h"/>"#), ("Contents/section0.xml", r#"<hs:sec xmlns:hs="s" xmlns:hp="p"><hp:p><hp:run><hp:t>&#xAC00;&#44;&#x20;&#128512;&amp;</hp:t></hp:run></hp:p></hs:sec>"#)]);
+        let blocks = extract_blocks(&num_hwpx, "hwpx").unwrap();
+        assert_eq!(blocks[0].text, "가, 😀&");
+        let _ = fs::remove_file(&num_hwpx);
     }
-    out
 }

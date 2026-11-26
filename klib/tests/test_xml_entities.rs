@@ -80,3 +80,30 @@ fn dtd_custom_external_and_illegal_references_stay_rejected() {
         assert_rejected(run("extract", &format!("{name}.docx"), &[("word/document.xml", &document(prolog, text))]), &format!("extract docx {name}"));
     }
 }
+
+#[test]
+fn docx_attribute_rejects_custom_and_illegal_references() {
+    let cases = [
+        ("custom", "&secret;"),
+        ("html", "&nbsp;"),
+        ("nul", "&#0;"),
+        ("control", "&#x1;"),
+        ("surrogate", "&#xD800;"),
+        ("noncharacter", "&#xFFFE;"),
+        ("out-of-range", "&#x110000;"),
+        ("signed", "&#+65;"),
+    ];
+    for (name, attr_val) in cases {
+        let doc = format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="w"><w:body><w:p><w:pPr><w:pStyle w:val="{attr_val}"/></w:pPr><w:r><w:t>본문</w:t></w:r></w:p></w:body></w:document>"#);
+        assert_rejected(run("extract", &format!("attr_{name}.docx"), &[("word/document.xml", &doc)]), &format!("extract docx attr {name}"));
+    }
+}
+
+#[test]
+fn docx_attribute_decodes_standard_and_numeric_references() {
+    let doc = format!(r#"<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="w"><w:body><w:p><w:pPr><w:pStyle w:val="{ENCODED}"/></w:pPr><w:r><w:t>본문</w:t></w:r></w:p></w:body></w:document>"#);
+    let output = run("extract", "attr_ok.docx", &[("word/document.xml", &doc)]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "docx attribute decoding failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(stdout.contains("본문"), "extract docx output missing body: {stdout}");
+}
