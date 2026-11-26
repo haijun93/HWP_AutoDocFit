@@ -1017,6 +1017,22 @@ fn reference_jamo_text(s:&str)->String { s.chars().map(reference_jamo_char).coll
     assert_eq!(ix.file_count(),3);
     drop(ix); let _=std::fs::remove_dir_all(dir);
  }
+ #[test] fn occurrences_handles_sparse_and_skipped_doc_ids(){
+    let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
+    let p=paragraph("structured.md","ignored");
+    let blocks=vec![
+        SearchBlock{level:1,text:"개요 제목".into(),ordinal:0,node_id:"n0".into(),parent_id:None,breadcrumb:vec!["개요 제목".into()],table:false,row:None},
+        SearchBlock{level:0,text:"공사 계약 내용".into(),ordinal:1,node_id:"n1".into(),parent_id:Some("n0".into()),breadcrumb:vec!["개요 제목".into()],table:false,row:None},
+        SearchBlock{level:0,text:"기타 부록".into(),ordinal:2,node_id:"n2".into(),parent_id:Some("n0".into()),breadcrumb:vec!["개요 제목".into()],table:false,row:None},
+    ];
+    ix.add_or_update_content_blocks(&p,&blocks).unwrap();
+    let roots:Vec<String>=Vec::new();
+    let scope=ContentScope{roots:&roots,allowed:None,start:None,end:None,offset:0,limit:10,hydrate:true};
+    let res=ix.search_content("공사",SearchOptions{limit:10},&scope).unwrap();
+    assert_eq!(res.len(),1);
+    assert_eq!(res[0].path,"structured.md");
+    drop(ix); let _=std::fs::remove_dir_all(dir);
+ }
  #[test] fn content_fingerprint_and_structure_are_persisted(){
     let dir=temp(); let ix=SearchIndex::open_or_create(&dir).unwrap();
     let mut p=paragraph("structured.md","ignored"); p.content_hash="sha256-a".into(); p.extractor_version="srch5-1".into();
