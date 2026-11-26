@@ -49,7 +49,7 @@ class FormatSaveTest(unittest.TestCase):
         forbidden = Mock(side_effect=AssertionError('글자 내용을 읽으면 안 됨'))
         with patch.dict(fn.__globals__, {
             'hwp': doc, 'hwp_run': run, '중단_요청됨': lambda: False,
-            '자간조정_본문범위': lambda a, b: (a, b),
+            '자간조정_본문범위': lambda a, b: (a, b), '장평_줄이기_사용': True,
             '단어모드_한글자': forbidden, '현재선택영역_텍스트': forbidden,
         }):
             spacing_runs, ratio_runs = fn((0, 0, 0), (0, 0, 5))

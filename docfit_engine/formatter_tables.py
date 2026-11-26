@@ -813,6 +813,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         return bind_function(표_테두리_전체_적용, _docfit_namespace)
     if _docfit_symbol == '컨트롤_내부_문장부호_처리':
         def 컨트롤_내부_문장부호_처리():
+            if 재검사_본문뿐인가():
+                return not 중단_요청됨()
             한칸표영역 = 한칸표_영역_목록()
             area = 1
             while True:
