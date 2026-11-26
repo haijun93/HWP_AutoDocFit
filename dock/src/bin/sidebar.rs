@@ -3,7 +3,11 @@
 //!
 //! 인자: `--settings <settings.json>` `--resources <Rust 창 폴더>` `--app <HWP_AutoDocFit.exe>`
 //! `--python <python.exe> --source-root <소스 폴더>`(개발) `--state-file <상태 JSON>`
-//! `--capture <png> [--dpi N] [--height N]`(창 없이 그림만 저장)
+//! `--capture <png> [--dpi N] [--height N]`(창 없이 그림만 저장) `--logon`(로그온 시작: 초점을 가져가지 않음) `--no-resident`
+//! 창 없는 명령:
+//!   `--send <메뉴> (--path <파일>)… | --list <json> [--photo-paste] [--notify]`  파일을 그 메뉴 창에 보낸다
+//!   `--close-all --install-dir <폴더> [--wait <초>] [--report <파일>]`       설치·제거 전 안전 종료(0 닫힘, 3 남음)
+//!   `--autostart on|off|status`                                          로그온 때 사이드바 시작(기본 꺼짐)
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(not(windows))]
@@ -17,13 +21,19 @@ fn main() {
 }
 
 #[cfg(windows)]
+#[path = "../sidebar_os.rs"]
+mod os;
+
+#[cfg(windows)]
 mod win {
     #![allow(unsafe_op_in_unsafe_fn)]
-    use dock::sidebar::{self, Click, Entry, Env, Identity, MenuState};
+    use crate::os::{self, activate, find, visible_windows, wide, window_text};
+    use dock::sidebar::{self, Click, Entry, Env, MenuState};
+    use dock::{handoff, shutdown};
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
-    use std::process::{Child, Command};
+    use std::process::Child;
     use std::ptr::{null, null_mut};
     use std::time::SystemTime;
     use windows_sys::Win32::{
@@ -42,6 +52,12 @@ mod win {
     const CLASS: &str = "DocFitSidebar";
     const ID_PIN: usize = 100;
     const ID_CLOSE: usize = 101;
+    const ID_QUIT: usize = 102;
+    const ID_UPDATE: usize = 103;
+    /// 단추 목록 앞의 머리줄 단추 수(전체 종료·고정·닫기·새 버전).
+    const HEADER_BUTTONS: usize = 4;
+    const CMD_AUTOSTART: usize = 150;
+    const CMD_QUIT: usize = 151;
     const ID_MENU_BASE: usize = 200;
     const TIMER_POLL: usize = 1;
     /// 다른 실행(두 번째 사이드바)이 이미 떠 있는 사이드바를 보이게 할 때 보내는 메시지.
@@ -52,6 +68,8 @@ mod win {
     struct Config {
         env: Env,
         state_file: Option<PathBuf>,
+        logon: bool,
+        resident: bool,
     }
 
     #[derive(Default)]
@@ -75,6 +93,15 @@ mod win {
         ticks: u32,
         notice: Option<String>,
         written: String,
+        /// '전체 종료' 진행 중이면 이미 닫기를 보낸 창들. None 이면 평소.
+        quitting: Option<BTreeSet<isize>>,
+        quit_since_ms: u64,
+        /// 상주 작업이 알려 준 새 버전(`update_notice.json`).
+        update: Option<String>,
+        autostart: bool,
+        /// 이 사이드바가 띄운 상주 작업 프로세스(사이드바 PID 를 보고 스스로 끝난다).
+        #[allow(dead_code)]
+        resident: Option<Child>,
     }
 
     thread_local!(static STATE: RefCell<Option<State>> = const { RefCell::new(None) });
@@ -82,10 +109,6 @@ mod win {
     /// 재진입(MessageBox 의 안쪽 메시지 루프 등)에서는 아무것도 하지 않는다.
     fn with<T>(f: impl FnOnce(&mut State) -> T) -> Option<T> {
         STATE.with(|s| s.try_borrow_mut().ok().and_then(|mut s| s.as_mut().map(f)))
-    }
-
-    fn wide(s: &str) -> Vec<u16> {
-        s.encode_utf16().chain(Some(0)).collect()
     }
 
     fn scale(v: i32, dpi: u32) -> i32 {
@@ -112,6 +135,13 @@ mod win {
     fn stamp(path: &Path) -> Option<(SystemTime, u64)> {
         let meta = std::fs::metadata(path).ok()?;
         Some((meta.modified().ok()?, meta.len()))
+    }
+
+    /// 상주 작업(`docfit_app/resident.py`)이 남기는 새 버전 알림. 형식이 틀리면 없는 것으로 본다.
+    fn read_update(settings: &Path) -> Option<String> {
+        let text = std::fs::read_to_string(settings.with_file_name("update_notice.json")).ok()?;
+        let latest = serde_json::from_str::<serde_json::Value>(&text).ok()?.get("latest")?.as_str()?.to_owned();
+        (!latest.is_empty() && latest.len() <= 20 && latest.chars().all(|c| c.is_ascii_digit() || c == '.')).then_some(latest)
     }
 
     fn palette(dark: bool) -> dock::Palette {
@@ -187,7 +217,13 @@ mod win {
 
     unsafe fn draw_header_button(dc: HDC, rect: RECT, dpi: u32, p: dock::Palette, id: usize, on: bool, hot: bool) {
         fill(dc, &rect, if hot { p.border } else { p.background });
+        if id == ID_UPDATE {
+            let mut r = rect;
+            text(dc, "새 버전", &mut r, "맑은 고딕", scale(12, dpi), p.accent, DT_CENTER);
+            return;
+        }
         let glyph = match (id, on) {
+            (ID_QUIT, _) => "\u{E7E8}",    // 전체 종료
             (ID_PIN, true) => "\u{E77A}",  // 자동 숨김 켜짐(고정 풀림)
             (ID_PIN, false) => "\u{E718}", // 고정
             _ => "\u{E8BB}",               // 닫기
@@ -196,10 +232,11 @@ mod win {
         text(dc, glyph, &mut r, "Segoe MDL2 Assets", scale(11, dpi), p.foreground, DT_CENTER);
     }
 
-    unsafe fn draw_background(dc: HDC, client: RECT, dpi: u32, p: dock::Palette, entries: &[Entry], rows: &[(i32, i32)]) {
+    unsafe fn draw_background(dc: HDC, client: RECT, dpi: u32, p: dock::Palette, entries: &[Entry], rows: &[(i32, i32)],
+                             heading: &str) {
         fill(dc, &client, p.background);
-        let mut title = RECT { left: scale(14, dpi), top: 0, right: client.right - scale(64, dpi), bottom: scale(sidebar::HEADER, dpi) };
-        text(dc, "DocFit", &mut title, "맑은 고딕", scale(13, dpi), p.accent, DT_LEFT);
+        let mut title = RECT { left: scale(14, dpi), top: 0, right: client.right - scale(90, dpi), bottom: scale(sidebar::HEADER, dpi) };
+        text(dc, heading, &mut title, "맑은 고딕", scale(13, dpi), p.accent, DT_LEFT);
         for i in 1..rows.len() {
             if entries[i - 1].group != entries[i].group {
                 let y = scale(rows[i].0, dpi) - scale(sidebar::GAP, dpi) / 2;
@@ -237,8 +274,10 @@ mod win {
             (s.entries.clone(), s.prefs.auto_hide)
         }) else { return };
         let mut buttons = vec![
+            button(hwnd, ID_QUIT, "전체 종료"),
             button(hwnd, ID_PIN, if auto_hide { "자동 숨김 끄기" } else { "자동 숨김 켜기" }),
             button(hwnd, ID_CLOSE, "사이드바 닫기"),
+            button(hwnd, ID_UPDATE, "새 버전: 앱을 열어 업데이트"),
         ];
         buttons.extend(entries.iter().map(|e| button(hwnd, ID_MENU_BASE + e.id as usize, sidebar::label(e.id))));
         with(|s| s.buttons = buttons);
@@ -251,16 +290,21 @@ mod win {
         let (width, height) = (scale(sidebar::WIDTH, dpi), work.bottom - work.top);
         SetWindowPos(hwnd, HWND_TOPMOST, work.left, work.top, width, height, SWP_NOACTIVATE);
         let Some((entries, buttons)) = with(|s| (s.entries.clone(), s.buttons.clone())) else { return };
-        if buttons.len() != entries.len() + 2 {
+        if buttons.len() != entries.len() + HEADER_BUTTONS {
             return;
         }
         let logical = (height as i64 * 96 / dpi as i64) as i32;
         let rows = sidebar::rows(&entries, logical);
         let side = scale(26, dpi);
         let top = (scale(sidebar::HEADER, dpi) - side) / 2;
-        MoveWindow(buttons[0], width - side * 2 - scale(8, dpi), top, side, side, 1);
-        MoveWindow(buttons[1], width - side - scale(6, dpi), top, side, side, 1);
-        for (b, (y0, y1)) in buttons[2..].iter().zip(rows) {
+        for (i, b) in buttons[..3].iter().enumerate() {
+            let from_right = 3 - i as i32;
+            MoveWindow(*b, width - side * from_right - scale(4 + from_right * 2, dpi), top, side, side, 1);
+        }
+        MoveWindow(buttons[3], scale(8, dpi), top, scale(62, dpi), side, 1);
+        let update = with(|s| s.update.is_some() && s.quitting.is_none()).unwrap_or(false);
+        ShowWindow(buttons[3], if update { SW_SHOWNA } else { SW_HIDE });
+        for (b, (y0, y1)) in buttons[HEADER_BUTTONS..].iter().zip(rows) {
             MoveWindow(*b, 0, scale(y0, dpi), width - 1, scale(y1, dpi) - scale(y0, dpi), 1);
         }
         InvalidateRect(hwnd, null(), 1);
@@ -274,7 +318,8 @@ mod win {
         GetClientRect(hwnd, &mut client);
         with(|s| {
             let rows = sidebar::rows(&s.entries, (client.bottom as i64 * 96 / dpi as i64) as i32);
-            draw_background(dc, client, dpi, palette(s.prefs.dark), &s.entries, &rows);
+            let heading = if s.quitting.is_some() { "닫는 중…" } else { "DocFit" };
+            draw_background(dc, client, dpi, palette(s.prefs.dark), &s.entries, &rows, heading);
         });
         EndPaint(hwnd, &ps);
     }
@@ -295,62 +340,12 @@ mod win {
         });
     }
 
-    // ---- 창 찾기·열기 ----
-
-    unsafe fn window_text(f: unsafe extern "system" fn(HWND, *mut u16, i32) -> i32, hwnd: HWND) -> String {
-        let mut buffer = [0u16; 256];
-        let n = f(hwnd, buffer.as_mut_ptr(), buffer.len() as i32).max(0) as usize;
-        String::from_utf16_lossy(&buffer[..n])
-    }
-
-    struct Seen {
-        hwnd: HWND,
-        class: String,
-        title: String,
-    }
-
-    unsafe extern "system" fn collect(hwnd: HWND, data: LPARAM) -> i32 {
-        if IsWindowVisible(hwnd) != 0 {
-            let list = &mut *(data as *mut Vec<Seen>);
-            list.push(Seen { hwnd, class: window_text(GetClassNameW, hwnd), title: window_text(GetWindowTextW, hwnd) });
-        }
-        1
-    }
-
-    unsafe fn visible_windows() -> Vec<Seen> {
-        let mut list: Vec<Seen> = Vec::new();
-        EnumWindows(Some(collect), &mut list as *mut _ as LPARAM);
-        list
-    }
-
-    fn find(windows: &[Seen], id: u8) -> Option<HWND> {
-        sidebar::identities(id).iter().find_map(|identity| {
-            windows.iter().find(|w| match identity {
-                Identity::Class(c) => w.class == *c,
-                Identity::Title(t) => &w.title == t,
-            }).map(|w| w.hwnd)
-        })
-    }
-
-    unsafe fn activate(hwnd: HWND) {
-        if IsIconic(hwnd) != 0 {
-            ShowWindow(hwnd, SW_RESTORE);
-        }
-        SetForegroundWindow(hwnd);
-    }
-
-    fn start(spawn: &sidebar::Spawn) -> std::io::Result<Child> {
-        let mut command = Command::new(&spawn.program);
-        command.args(&spawn.args).envs(spawn.envs.iter().map(|(k, v)| (*k, v)));
-        if let Some(cwd) = &spawn.cwd {
-            command.current_dir(cwd);
-        }
-        command.spawn()
-    }
+    // ---- 창 열기 ----
 
     unsafe fn open(hwnd: HWND, id: u8) {
         let windows = visible_windows();
         let found = find(&windows, id);
+        cancel_quit(hwnd); // 메뉴를 누르면 전체 종료를 그만둔다.
         let error = with(|s| {
             let state = s.menus.get(&id).copied().unwrap_or_default();
             match sidebar::on_click(state, found.is_some()) {
@@ -360,7 +355,7 @@ mod win {
                     None
                 }
                 Click::Spawn => match sidebar::spawn_for(id, &s.config.env, &|p| p.is_file()) {
-                    Ok(spawn) => match start(&spawn) {
+                    Ok(spawn) => match os::start(&spawn, &s.config.env) {
                         Ok(child) => {
                             AllowSetForegroundWindow(child.id());
                             s.children.insert(id, child);
@@ -405,6 +400,7 @@ mod win {
                 .collect();
             let body = serde_json::json!({
                 "visible": s.visible, "auto_hide": s.prefs.auto_hide, "menus": menus, "notice": s.notice,
+                "quitting": s.quitting.is_some(), "update": s.update, "autostart": s.autostart,
             }).to_string();
             if body != s.written {
                 let temporary = path.with_extension("tmp");
@@ -413,6 +409,131 @@ mod win {
                 }
             }
         });
+    }
+
+    // ---- 전체 종료·로그온 시작 ----
+
+    /// 사이드바가 아는 메뉴 창(몽땅검색은 따로 상주하는 단축키 앱이라 뺀다)과 설치본 앱의 본 창.
+    fn docfit_windows(env: &Env) -> Vec<os::Seen> {
+        let app = match env.app(&|p| p.is_file()) {
+            Some(sidebar::AppLocation::Installed(exe)) => Some(exe),
+            _ => None,
+        };
+        let own = std::process::id();
+        visible_windows()
+            .into_iter()
+            .filter(|w| {
+                w.pid != own
+                    && !w.owned
+                    && w.class != CLASS
+                    && ((0..=sidebar::SETTINGS_ENTRY).filter(|id| *id != 7).any(|id| os::matches(w, id))
+                        || app.as_ref().is_some_and(|app| {
+                            os::process_image(w.pid).is_some_and(|image| image.as_os_str().eq_ignore_ascii_case(app))
+                        }))
+            })
+            .collect()
+    }
+
+    unsafe fn start_quit(hwnd: HWND) {
+        if with(|s| s.quitting.is_some()).unwrap_or(false) {
+            cancel_quit(hwnd); // 다시 누르면 그만둔다.
+            return;
+        }
+        with(|s| {
+            s.quitting = Some(BTreeSet::new());
+            s.quit_since_ms = GetTickCount64();
+        });
+        layout(hwnd);
+        refresh(hwnd);
+        continue_quit(hwnd);
+    }
+
+    unsafe fn cancel_quit(hwnd: HWND) {
+        if with(|s| s.quitting.take().is_some()).unwrap_or(false) {
+            layout(hwnd);
+            refresh(hwnd);
+        }
+    }
+
+    /// 열린 창마다 닫기를 한 번 보낸다(확인 창은 각 창이 띄운다). 모두 사라지면 사이드바도 끝난다.
+    unsafe fn continue_quit(hwnd: HWND) {
+        // 사용자가 어느 창에서 닫기를 취소했으면 한도 뒤에 평소로 돌아간다.
+        if with(|s| GetTickCount64().saturating_sub(s.quit_since_ms) >= shutdown::QUIT_TIMEOUT_MS).unwrap_or(false) {
+            cancel_quit(hwnd);
+        }
+        let Some(env) = with(|s| s.quitting.is_some().then(|| s.config.env.clone())).flatten() else { return };
+        let windows = docfit_windows(&env);
+        // 아직 뜨는 중인 창은 뜬 뒤에 닫는다.
+        let launching = with(|s| s.menus.values().any(|m| matches!(m, MenuState::Launching { .. }))).unwrap_or(false);
+        if windows.is_empty() && !launching {
+            DestroyWindow(hwnd);
+            return;
+        }
+        let list: Vec<_> = windows.iter().map(os::closable).collect();
+        let ask = with(|s| s.quitting.as_mut().map(|asked| shutdown::to_ask(&list, asked))).flatten().unwrap_or_default();
+        for handle in ask {
+            os::ask_close(handle as HWND);
+        }
+    }
+
+    unsafe fn context_menu(hwnd: HWND, x: i32, y: i32) {
+        let Some((autostart, quitting)) = with(|s| (s.autostart, s.quitting.is_some())) else { return };
+        let menu = CreatePopupMenu();
+        let flags = MF_STRING | if autostart { MF_CHECKED } else { MF_UNCHECKED };
+        AppendMenuW(menu, flags, CMD_AUTOSTART, wide("Windows 로그온 때 사이드바 시작(&L)").as_ptr());
+        AppendMenuW(menu, MF_SEPARATOR, 0, null());
+        AppendMenuW(menu, MF_STRING, CMD_QUIT,
+                    wide(if quitting { "전체 종료 그만두기(&Q)" } else { "전체 종료(&Q)" }).as_ptr());
+        let (mut x, mut y) = (x, y);
+        if x == -1 && y == -1 {
+            // 키보드(메뉴 키·Shift+F10)
+            let mut r: RECT = std::mem::zeroed();
+            GetWindowRect(GetFocus(), &mut r);
+            (x, y) = (r.left, r.bottom);
+        }
+        SetForegroundWindow(hwnd);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, 0, hwnd, null());
+        DestroyMenu(menu);
+        if command != 0 {
+            PostMessageW(hwnd, WM_COMMAND, command as usize, 0);
+        }
+    }
+
+    unsafe fn toggle_autostart(hwnd: HWND) {
+        let Some((env, on)) = with(|s| (s.config.env.clone(), !s.autostart)) else { return };
+        let result = if on {
+            os::autostart_command(&env, &docfit_config::settings_path()).and_then(|c| os::set_autostart(Some(&c)))
+        } else {
+            os::set_autostart(None)
+        };
+        with(|s| s.autostart = os::autostart_enabled());
+        write_state();
+        if let Err(message) = result {
+            warn(hwnd, &message);
+        }
+    }
+
+    /// 새 버전 알림: 업데이트는 기존 앱이 묻고 설치한다.
+    unsafe fn open_update(hwnd: HWND) {
+        let Some(env) = with(|s| s.config.env.clone()) else { return };
+        let started = match env.app(&|p| p.is_file()) {
+            Some(sidebar::AppLocation::Installed(exe)) => std::process::Command::new(&exe)
+                .arg("--full-app")
+                .current_dir(exe.parent().unwrap_or(Path::new(".")))
+                .spawn(),
+            Some(sidebar::AppLocation::Source { python, root }) => std::process::Command::new(python)
+                .arg(root.join(sidebar::APP_SCRIPT))
+                .arg("--full-app")
+                .current_dir(&root)
+                .spawn(),
+            None => Err(std::io::ErrorKind::NotFound.into()),
+        };
+        match started {
+            Ok(child) => {
+                AllowSetForegroundWindow(child.id());
+            }
+            Err(e) => warn(hwnd, &format!("앱을 열지 못했습니다.\n{e}")),
+        }
     }
 
     // ---- 주기 점검 ----
@@ -476,8 +597,17 @@ mod win {
             }
         }
 
-        // 빠른 박자(150ms)에서 창 훑기는 여는 중일 때만 매번, 그 밖에는 약 1초마다.
-        if !launching && ticks % 7 != 0 {
+        if ticks % 7 == 0 {
+            let next = with(|s| read_update(&s.config.env.settings)).flatten();
+            if with(|s| s.update != next).unwrap_or(false) {
+                with(|s| s.update = next);
+                layout(hwnd);
+                write_state();
+            }
+        }
+        let quitting = with(|s| s.quitting.is_some()).unwrap_or(false);
+        // 빠른 박자(150ms)에서 창 훑기는 여는 중·닫는 중일 때만 매번, 그 밖에는 약 1초마다.
+        if !launching && !quitting && ticks % 7 != 0 {
             return;
         }
         let current = with(|s| stamp(&s.config.env.settings)).flatten();
@@ -531,6 +661,7 @@ mod win {
         if let Some(message) = failure {
             warn(hwnd, &message);
         }
+        continue_quit(hwnd);
     }
 
     unsafe fn toggle_auto_hide(hwnd: HWND) {
@@ -562,6 +693,9 @@ mod win {
                 let id = w & 0xFFFF;
                 match id {
                     ID_PIN => toggle_auto_hide(hwnd),
+                    ID_QUIT | CMD_QUIT => start_quit(hwnd),
+                    ID_UPDATE => open_update(hwnd),
+                    CMD_AUTOSTART => toggle_autostart(hwnd),
                     ID_CLOSE => {
                         DestroyWindow(hwnd);
                     }
@@ -576,6 +710,10 @@ mod win {
                     id if id >= ID_MENU_BASE => open(hwnd, (id - ID_MENU_BASE) as u8),
                     _ => {}
                 }
+                0
+            }
+            WM_CONTEXTMENU => {
+                context_menu(hwnd, (l & 0xFFFF) as u16 as i16 as i32, ((l >> 16) & 0xFFFF) as u16 as i16 as i32);
                 0
             }
             WM_SETCURSOR => {
@@ -614,7 +752,7 @@ mod win {
                 0
             }
             WM_DESTROY => {
-                // 띄운 창은 독립 프로세스라 그대로 둔다.
+                // 띄운 창은 독립 프로세스라 그대로 둔다. 상주 작업 프로세스는 사이드바 PID 를 보고 스스로 끝난다.
                 PostQuitMessage(0);
                 0
             }
@@ -629,19 +767,40 @@ mod win {
         capture: Option<PathBuf>,
         dpi: u32,
         height: i32,
+        command: Command,
+    }
+
+    enum Command {
+        Sidebar,
+        Send { menu: u8, paths: Vec<String>, list: Option<PathBuf>, photo_paste: bool, notify: bool },
+        CloseAll { install_dir: PathBuf, wait: u64, report: Option<PathBuf> },
+        Autostart(String),
     }
 
     fn parse(args: impl Iterator<Item = std::ffi::OsString>) -> Result<Args, String> {
+        const FLAGS: [&str; 5] = ["--photo-paste", "--notify", "--close-all", "--logon", "--no-resident"];
+        const VALUES: [&str; 16] = ["--settings", "--resources", "--app", "--python", "--source-root", "--state-file",
+                                    "--capture", "--dpi", "--height", "--send", "--path", "--list", "--install-dir", "--wait",
+                                    "--report", "--autostart"];
         let mut values: BTreeMap<String, std::ffi::OsString> = BTreeMap::new();
+        let mut flags = BTreeSet::new();
+        let mut paths = Vec::new();
         let mut args = args;
         while let Some(name) = args.next() {
             let name = name.to_string_lossy().into_owned();
-            if !["--settings", "--resources", "--app", "--python", "--source-root", "--state-file", "--capture", "--dpi",
-                 "--height"].contains(&name.as_str()) {
+            if FLAGS.contains(&name.as_str()) {
+                flags.insert(name);
+                continue;
+            }
+            if !VALUES.contains(&name.as_str()) {
                 return Err(format!("알 수 없는 인자: {name}"));
             }
             let value = args.next().ok_or_else(|| format!("{name} 값이 없습니다"))?;
-            values.insert(name, value);
+            if name == "--path" {
+                paths.push(value.into_string().map_err(|_| "경로를 읽지 못했습니다")?);
+            } else {
+                values.insert(name, value);
+            }
         }
         let number = |key: &str, default: i32| -> Result<i32, String> {
             match values.get(key) {
@@ -652,24 +811,109 @@ mod win {
         let dpi = number("--dpi", 96)?.clamp(96, 384) as u32;
         let height = number("--height", 1040)?.clamp(300, 4000);
         let path = |key: &str| values.get(key).map(PathBuf::from);
-        let source = match (path("--python"), path("--source-root")) {
+        // 사이드바가 띄운 창(문서뷰 등)이 부른 `--send` 는 환경변수로 같은 앱 위치를 받는다.
+        let sending = values.contains_key("--send");
+        let inherited = |key: &str, name: &str| {
+            path(key).or_else(|| if sending { std::env::var_os(name).map(PathBuf::from) } else { None })
+        };
+        let source = match (inherited("--python", "DOCFIT_SIDEBAR_PYTHON"), inherited("--source-root", "DOCFIT_SIDEBAR_SOURCE")) {
             (Some(python), Some(root)) => Some((python, root)),
             (None, None) => None,
             _ => return Err("--python 과 --source-root 는 함께 지정합니다".into()),
         };
-        let resources = path("--resources")
+        let resources = inherited("--resources", "DOCFIT_SIDEBAR_RESOURCES")
             .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)))
             .ok_or("실행 위치를 알 수 없습니다")?;
         let settings = path("--settings").unwrap_or_else(docfit_config::settings_path);
+        let command = if sending {
+            Command::Send {
+                menu: u8::try_from(number("--send", 0)?).map_err(|_| "잘못된 --send")?,
+                paths,
+                list: path("--list"),
+                photo_paste: flags.contains("--photo-paste"),
+                notify: flags.contains("--notify"),
+            }
+        } else if flags.contains("--close-all") {
+            Command::CloseAll {
+                install_dir: path("--install-dir").ok_or("--install-dir 가 필요합니다")?,
+                wait: number("--wait", 30)?.clamp(0, 3600) as u64,
+                report: path("--report"),
+            }
+        } else if let Some(value) = values.get("--autostart") {
+            Command::Autostart(value.to_string_lossy().into_owned())
+        } else {
+            Command::Sidebar
+        };
         Ok(Args {
             config: Config {
-                env: Env { resources, settings, app_override: path("--app"), source },
+                env: Env { resources, settings, app_override: inherited("--app", "DOCFIT_SIDEBAR_APP"), source },
                 state_file: path("--state-file"),
+                logon: flags.contains("--logon"),
+                resident: !flags.contains("--no-resident"),
             },
             capture: path("--capture"),
             dpi,
             height,
+            command,
         })
+    }
+
+    /// 창 없는 명령. 결과 글은 표준 출력(UTF-8)으로도 낸다(부른 쪽이 파이프로 받는다).
+    unsafe fn run_command(args: &Args) -> Option<i32> {
+        use std::io::Write;
+        let say = |text: &str| {
+            let _ = std::io::stdout().write_all(text.as_bytes());
+            let _ = std::io::stdout().flush();
+        };
+        match &args.command {
+            Command::Sidebar => None,
+            Command::Send { menu, paths, list, photo_paste, notify } => {
+                let paths = match list {
+                    Some(file) => std::fs::read_to_string(file)
+                        .map_err(|e| format!("보낼 목록을 읽지 못했습니다: {e}"))
+                        .and_then(|text| handoff::parse_list(&text)),
+                    None => Ok(paths.clone()),
+                };
+                Some(match paths.and_then(|paths| os::send(&args.config.env, *menu, &paths, *photo_paste)) {
+                    Ok(()) => 0,
+                    Err(message) => {
+                        say(&message);
+                        if *notify {
+                            warn(null_mut(), &message);
+                        }
+                        2
+                    }
+                })
+            }
+            Command::CloseAll { install_dir, wait, report } => {
+                let (code, text) = os::close_all(install_dir, std::time::Duration::from_secs(*wait));
+                say(&text);
+                if let Some(file) = report {
+                    // Inno Setup 이 한글을 읽도록 UTF-8 BOM 을 붙인다.
+                    let _ = std::fs::write(file, format!("\u{FEFF}{text}"));
+                }
+                Some(code)
+            }
+            Command::Autostart(value) => {
+                let result = match value.as_str() {
+                    "on" => os::autostart_command(&args.config.env, &docfit_config::settings_path())
+                        .and_then(|c| os::set_autostart(Some(&c))),
+                    "off" => os::set_autostart(None),
+                    "status" => Ok(()),
+                    _ => Err("--autostart 는 on, off, status 중 하나입니다".into()),
+                };
+                Some(match result {
+                    Ok(()) => {
+                        say(if os::autostart_enabled() { "on" } else { "off" });
+                        0
+                    }
+                    Err(message) => {
+                        say(&message);
+                        2
+                    }
+                })
+            }
+        }
     }
 
     /// 같은 설정 파일의 사이드바는 하나만 뜬다(시험용 설정은 사용자의 사이드바와 섞이지 않는다).
@@ -702,7 +946,7 @@ mod win {
         let old = SelectObject(dc, bitmap);
         let p = palette(prefs.dark);
         let rows = sidebar::rows(&entries, args.height);
-        draw_background(dc, RECT { left: 0, top: 0, right: w, bottom: h }, dpi, p, &entries, &rows);
+        draw_background(dc, RECT { left: 0, top: 0, right: w, bottom: h }, dpi, p, &entries, &rows, "DocFit");
         for (i, (e, (y0, y1))) in entries.iter().zip(&rows).enumerate() {
             let rect = RECT { left: 0, top: scale(*y0, dpi), right: w - 1, bottom: scale(*y1, dpi) };
             let state = match i { 0 => MenuState::Open, 1 => MenuState::Launching { since_ms: 0 }, _ => MenuState::Closed };
@@ -710,7 +954,9 @@ mod win {
         }
         let side = scale(26, dpi);
         let top = (scale(sidebar::HEADER, dpi) - side) / 2;
-        for (id, left) in [(ID_PIN, w - side * 2 - scale(8, dpi)), (ID_CLOSE, w - side - scale(6, dpi))] {
+        for (i, id) in [ID_QUIT, ID_PIN, ID_CLOSE].into_iter().enumerate() {
+            let from_right = 3 - i as i32;
+            let left = w - side * from_right - scale(4 + from_right * 2, dpi);
             let rect = RECT { left, top, right: left + side, bottom: top + side };
             draw_header_button(dc, rect, dpi, p, id, prefs.auto_hide, false);
         }
@@ -734,6 +980,9 @@ mod win {
             };
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             load_icon_font();
+            if let Some(code) = run_command(&args) {
+                std::process::exit(code);
+            }
             if let Some(out) = args.capture.clone() {
                 std::process::exit(if capture(&args, &out).is_ok() { 0 } else { 1 });
             }
@@ -748,7 +997,9 @@ mod win {
                         let mut pid = 0;
                         GetWindowThreadProcessId(existing, &mut pid);
                         AllowSetForegroundWindow(pid);
-                        PostMessageW(existing, WM_SHOW_SIDEBAR, 0, 0);
+                        if !args.config.logon {
+                            PostMessageW(existing, WM_SHOW_SIDEBAR, 0, 0);
+                        }
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(50));
@@ -774,6 +1025,9 @@ mod win {
             }
             let prefs = read_prefs(&args.config.env.settings);
             let stamp = stamp(&args.config.env.settings);
+            let logon = args.config.logon;
+            let resident = args.config.resident.then(|| os::start_resident(&args.config.env)).flatten();
+            let update = read_update(&args.config.env.settings);
             STATE.with(|s| {
                 *s.borrow_mut() = Some(State {
                     config: args.config,
@@ -788,10 +1042,15 @@ mod win {
                     ticks: 0,
                     notice: None,
                     written: String::new(),
+                    quitting: None,
+                    quit_since_ms: 0,
+                    update,
+                    autostart: os::autostart_enabled(),
+                    resident,
                 });
             });
             rebuild(hwnd);
-            ShowWindow(hwnd, SW_SHOW);
+            ShowWindow(hwnd, if logon { SW_SHOWNOACTIVATE } else { SW_SHOW });
             write_state();
             SetTimer(hwnd, TIMER_POLL, 150, None);
             let mut msg: MSG = std::mem::zeroed();

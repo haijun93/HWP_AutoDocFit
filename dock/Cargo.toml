@@ -12,7 +12,7 @@ serde_json = "1"
 # 사이드바가 자동 숨김을 저장할 때 설정 소유자를 쓴다(앱과 같은 잠금·원자 교체).
 docfit_config = { path = "../docfit_config" }
 ui_theme = { path = "../ui_theme" }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Accessibility", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Security_Authorization", "Win32_UI_Controls"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_GdiPlus", "Win32_System_Threading", "Win32_System_SystemInformation", "Win32_System_Pipes", "Win32_System_IO", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Accessibility", "Win32_System_LibraryLoader", "Win32_Security", "Win32_Security_Authorization", "Win32_UI_Controls", "Win32_System_Registry", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
 
 [profile.release]
 opt-level = 3

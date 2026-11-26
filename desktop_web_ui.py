@@ -2514,6 +2514,24 @@ class DesktopWebBridge:
             raise ServiceError("INVALID_INPUT", "파일명 변경 창 입력을 확인해 주세요.")
         return self._service_response(lambda: service.execute(payload))
 
+    def handoff(self, payload):
+        """창끼리 파일 넘기기. 메뉴 하나만 담은 창에서만: take(내 수신함 비우기)·send(다른 창으로)."""
+        from docfit_app.api_contract import ServiceError
+        from docfit_app import handoff
+        if not isinstance(payload, dict):
+            raise ServiceError("INVALID_INPUT", "파일 넘기기 입력을 확인해 주세요.")
+
+        def execute():
+            menu = screen_mode.current()
+            if payload.get('action') == 'take':
+                if menu is None:
+                    return {'paths': [], 'photo_paste': False, 'rejected': 0}
+                return handoff.take(menu)
+            if payload.get('action') == 'send' and menu is not None:
+                return handoff.send(payload.get('menu'), payload.get('paths'))
+            raise ServiceError('INVALID_INPUT', '파일 넘기기 명령을 확인해 주세요.')
+        return self._service_response(execute)
+
     def _dock_runtime(self):
         runtime = getattr(self, "_dock_runtime_instance", None)
         if runtime is None:
@@ -4098,7 +4116,7 @@ class _BrowserApi:
             "set_exclude_tables", "set_card_option",
             "set_sidebar_collapsed", "set_hidden_tabs", "set_theme_mode", "set_drop_target", "add_format_file", "write_format_example", "rename_profile", "delete_profile",
             "edit_profile", "show_format_example", "open_format_samples", "format_gallery",
-            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "photoview_window", "conversion_window", "rename_window", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
+            "doc_grid", "pdf_edit", "outliner", "settings_window", "docview_window", "photoview_window", "conversion_window", "rename_window", "handoff", "dock_start", "dock_ready", "dock_stop", "set_menu_display_mode", "excel_table", "qms_bench",
             "set_conversion_target", "set_pdf_compress_target_mb", "set_pdf_compress_method", "start_single_file_conversion", "check_update", "start_update", "open_update_page",
         ):
             setattr(self, name, getattr(bridge, name))
@@ -4486,40 +4504,16 @@ def run_webview(gui):
             start_resident_services()
 
     def start_resident_services():
-        # 몽땅클립보드(kagent)가 엑셀 표를 '목표 결과'로 붙일 때 부르는 앱 서비스 파이프. 실패해도 앱은 그대로.
-        try:
-            from docfit_app.kagent_app_service import start_background, set_photo_edit_handler
-            start_background()
-            set_photo_edit_handler(bridge.request_photo_edit)
-        except Exception:
-            logging.getLogger(__name__).exception("Could not start kagent app service pipe")
-        # 앱을 업데이트한 뒤에도 예전 몽땅클립보드 에이전트(kagent.exe)가 계속 떠 있으면 새 파일로 바꿔 다시 켠다.
-        def upgrade_kagent():
-            try:
-                from docfit_app.kclip_service import KClipService
-                result = KClipService().upgrade_if_stale()
-                if result.get("upgraded") or not result.get("ok", True):
-                    logging.getLogger(__name__).info("몽땅클립보드 에이전트 점검: %s", result)
-            except Exception:
-                logging.getLogger(__name__).exception("몽땅클립보드 에이전트 업그레이드 점검 실패")
+        # 몽땅클립보드 앱 파이프·도우미 갱신·몽땅검색 점검. 사이드바만 쓸 때는 `--resident` 가 같은 함수를 부른다.
+        from docfit_app import resident
+        resident.start_app_pipe(bridge.request_photo_edit)
+        resident.upgrade_helpers()
 
-        threading.Thread(target=upgrade_kagent, name="kclip-upgrade", daemon=True).start()
-        def upgrade_kvf():
-            from docfit_app.kvf_client import KvfClient
-            result = KvfClient().sync()
-            if not result.get("ok"):
-                logging.getLogger(__name__).warning("가상 폴더 창 점검 실패: %s", result)
-
-        threading.Thread(target=upgrade_kvf, name="kvf-upgrade", daemon=True).start()
-        # 몽땅검색(ktm.exe, 기본 켬): 설치·갱신·자동 실행을 설정에 맞춘다. 할 일이 없으면 아무것도 띄우지 않는다.
-        try:
+        def ktm_values():
             from docfit_app.configuration_service import ConfigurationService
-            from docfit_app.ktm_service import SETTING_KEY, sync_in_background
-            ktm_values = ConfigurationService(bridge._settings_store()).snapshot(
-                running=gui.running).get('values', {})
-            sync_in_background(bool(ktm_values.get(SETTING_KEY, True)))
-        except Exception:
-            logging.getLogger(__name__).exception("몽땅검색 점검 시작 실패")
+            return ConfigurationService(bridge._settings_store()).snapshot(running=gui.running).get('values', {})
+
+        resident.sync_search(ktm_values)
 
     # 창 아이콘: 지정하지 않으면 실행 파일(python.exe 또는 exe)의 아이콘을 쓴다.
     아이콘 = {"icon": APP_ICON} if APP_ICON and Path(APP_ICON).is_file() else {}

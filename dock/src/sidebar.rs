@@ -204,6 +204,11 @@ pub fn spawn_for(id: u8, env: &Env, is_file: &dyn Fn(&Path) -> bool) -> Result<S
             ));
         }
     }
+    spawn_app_screen(id, env, is_file)
+}
+
+/// 기존 앱의 `--screen N`(Rust 창이 있는 메뉴라도 앱 화면을 연다. 파일 넘기기 수신함은 앱 화면이 읽는다).
+pub fn spawn_app_screen(id: u8, env: &Env, is_file: &dyn Fn(&Path) -> bool) -> Result<Spawn, String> {
     let location = env
         .app(is_file)
         .ok_or_else(|| format!("{} 화면을 열 앱({APP_EXE})을 찾을 수 없습니다.", label(id)))?;

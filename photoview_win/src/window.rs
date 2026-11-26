@@ -444,6 +444,36 @@ unsafe fn open_item(hwnd: HWND, path: &str) {
     }
 }
 
+/// 오른쪽 클릭·메뉴 키: 고른 파일을 다른 창으로 보내는 메뉴. 마우스는 누른 항목, 키보드는 선택 항목이 대상이다.
+unsafe fn send_menu(hwnd: HWND, lp: LPARAM) {
+    unsafe {
+        let keyboard = lp == -1;
+        let Some((path, settings)) = state(hwnd).filter(|s| s.panel.is_none()).and_then(|s| {
+            let path = if keyboard { s.app.selected_doc().map(|d| d.path.clone()) } else { s.app.clicked.clone() };
+            path.map(|p| (p, s.settings_path.clone()))
+        }) else {
+            return;
+        };
+        let (mut x, mut y) = xy(lp);
+        if keyboard {
+            let mut origin = POINT { x: scale(24, GetDpiForWindow(hwnd)), y: scale(96, GetDpiForWindow(hwnd)) };
+            ClientToScreen(hwnd, &mut origin);
+            (x, y) = (origin.x, origin.y);
+        }
+        // 도구줄을 오른쪽 클릭한 것은 항목 메뉴가 아니다.
+        let mut point = POINT { x, y };
+        ScreenToClient(hwnd, &mut point);
+        if !keyboard && state(hwnd).is_some_and(|s| Toolbar::new(client_size(hwnd).0, s.dpi).bar.contains(point.x, point.y)) {
+            return;
+        }
+        let result = grid_core::send_menu::show(hwnd as isize, x, y, &grid_core::handoff::PHOTOVIEW_MENUS, &path, &settings);
+        if let (Err(message), Some(s)) = (result, state(hwnd)) {
+            s.app.open_error = message;
+            redraw(hwnd);
+        }
+    }
+}
+
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     unsafe {
         match msg {
@@ -559,6 +589,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     }
                 }
                 DefWindowProcW(hwnd, msg, wp, lp)
+            }
+            WM_CONTEXTMENU => {
+                send_menu(hwnd, lp);
+                0
             }
             WM_GETDLGCODE => 4 /* DLGC_WANTARROWS */ | 2 /* DLGC_WANTCHARS */,
             WM_CHAR => {

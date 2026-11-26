@@ -226,6 +226,18 @@ if __name__ == "__main__":
             pass
         raise SystemExit(0)
 
+APP_VERSION = "2.2.105"  # 화면 없는 상주 작업이 무거운 import 전에 써야 해서 여기 둔다.
+
+# 사이드바만 쓸 때의 상주 작업(--resident): Tk·COM 을 올리지 않는다.
+if __name__ == "__main__" and _selftest_sys.argv[1:2] == ["--resident"]:
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except Exception:
+        pass
+    from docfit_app.resident import main as _resident_main
+    raise SystemExit(_resident_main(_selftest_sys.argv[1:], APP_VERSION))
+
 # Read-only CLI commands do not need Windows COM or GUI imports.
 if __name__ == "__main__" and len(_selftest_sys.argv) > 1:
     from docfit_app.cli import is_cli_command as _early_cli, main as _early_cli_main
@@ -380,7 +392,6 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.105"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"

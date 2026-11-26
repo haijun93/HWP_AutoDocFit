@@ -10,6 +10,7 @@
 //! - `gdi`(Windows): 그리기 도우미·메모리 DC 캡처·드라이브·시간대
 pub mod app;
 pub mod fmt;
+pub mod handoff;
 pub mod items;
 pub mod json;
 pub mod layout;
@@ -24,3 +25,6 @@ pub mod shell_thumb;
 
 #[cfg(windows)]
 pub mod gdi;
+
+#[cfg(windows)]
+pub mod send_menu;

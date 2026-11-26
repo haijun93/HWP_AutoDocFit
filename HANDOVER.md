@@ -361,6 +361,15 @@ Flutter UI 빌드는 `powershell -File build_flutter.ps1`로 수행하며 `build
 - 메뉴를 더하거나 이름을 바꾸면 `sidebar.rs` 의 `label`, `screen_mode.SCREENS`, Flutter `_labels` 를 함께 고친다(시험이 대조).
 - 결과 `docs/RUSTSIDE1_RESULT_2026-11-26.md`, 다음 일 `docs/RUSTSIDE1_PLAN_2026-11-26.md`.
 
+### 창 간 전달·종료 안전·상주 작업 (RUSTSIDE2, 2026-11-26)
+
+- 파일 넘기기의 보내는 곳은 `sidebar.exe --send` 하나다. 형식·개수 표는 세 곳(`grid_core/src/handoff.rs`, `docfit_app/handoff.py`, Flutter `file_handoff.dart`)이며 시험이 대조한다. `dock` 은 `grid_core/src/handoff.rs` 를 `#[path]` 로 포함하므로 그 파일에 의존성을 넣지 않는다.
+- 설치·제거는 `installer/close_windows.iss` → `sidebar.exe --close-all` 로 창마다 닫기를 한 번 보낸다. 새 창 프로그램은 저장 안 한 것이 있으면 `WM_CLOSE` 에서 물어야 한다.
+- 화면(Flutter)에서 저장 안 한 상태가 생기는 편집기는 `CloseGuards.watch` 에 등록한다.
+- 상주 작업은 `docfit_app/resident.py`(보통 앱과 `--resident` 가 함께 쓴다). 새 시작 작업은 여기에 넣는다.
+- 창을 띄우는 쪽은 출력 통로를 물려주지 않는다(`dock/src/sidebar_os.rs` `start`): 물려주면 파이프로 결과를 받는 앱이 멈춘다.
+- 결과 `docs/RUSTSIDE2_RESULT_2026-11-26.md`.
+
 ## 4. 핵심 동작 이해
 
 ### 작업 유형 (실행창 카드 3장, v1.69 Beta 6부터)
