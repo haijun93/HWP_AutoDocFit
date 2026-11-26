@@ -152,6 +152,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "native_tasks"
+version = "0.1.0"
+dependencies = [
+ "docfit_config",
+ "serde_json",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -243,6 +252,7 @@ name = "settings_win"
 version = "0.1.0"
 dependencies = [
  "docfit_config",
+ "native_tasks",
  "serde_json",
  "tempfile",
  "ui_theme",

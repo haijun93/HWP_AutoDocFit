@@ -41,7 +41,7 @@ impl ReadOnly {
     pub fn chip(&self) -> &'static str {
         match self {
             ReadOnly::Unimplemented(_) => "미구현",
-            ReadOnly::MultiOwner(_) => "소유자 둘 이상",
+            ReadOnly::MultiOwner(_) => "관리 창",
             ReadOnly::Internal(_) => "내부",
         }
     }
@@ -144,8 +144,8 @@ fn group_of(key: &str) -> usize {
 /// 소유자가 둘 이상인 키(설계 문서 ⑤-1 표) 중 앱 `settings.json` 의 화면 노출 키.
 fn multi_owner(key: &str) -> Option<&'static str> {
     match key {
-        "mongttang_search" => Some("소유자 2(설계 5-D): 저장하면 상주 프로그램도 켜고 꺼야 해서 앱 설정 서랍에서만 바꿉니다"),
-        "always_on_top" => Some("소유자 3(설계 5-B): 켜는 즉시 창을 바꾸는 전용 명령이 필요해 앱 설정 서랍에서만 바꿉니다"),
+        "mongttang_search" => Some("위쪽 [관리…] → [창·검색]에서 검색 프로그램과 설정을 함께 바꿉니다."),
+        "always_on_top" => Some("위쪽 [관리…] → [창·검색]에서 열려 있는 Rust 창의 표시 상태와 함께 바꿉니다."),
         _ => None,
     }
 }

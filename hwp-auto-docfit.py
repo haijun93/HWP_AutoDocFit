@@ -209,6 +209,12 @@ python -m pip install pywin32 tkinterdnd2
 
 # Frozen smoke test runs before GUI/COM bootstrap and reports missing packages.
 import sys as _selftest_sys
+APP_VERSION = "2.2.107"  # 화면 없는 작업 프로세스·상주 작업도 같은 버전을 쓴다.
+# Rust 작업 요청은 GUI·상주 작업·COM 초기화 전에 처리한다.
+if __name__ == "__main__" and _selftest_sys.argv[1:2] == ["--native-tasks"]:
+    from docfit_app.native_tasks import main as _native_tasks_main
+    raise SystemExit(_native_tasks_main(_selftest_sys.argv[2:]))
+
 if __name__ == "__main__" and "--self-test" in _selftest_sys.argv:
     from docfit_app.self_test import check as _packaging_check, finish as _packaging_finish
     _packaging_result = _packaging_check()
@@ -226,7 +232,6 @@ if __name__ == "__main__":
             pass
         raise SystemExit(0)
 
-APP_VERSION = "2.2.106"  # 화면 없는 상주 작업이 무거운 import 전에 써야 해서 여기 둔다.
 
 # 사이드바만 쓸 때의 상주 작업(--resident): Tk·COM 을 올리지 않는다.
 if __name__ == "__main__" and _selftest_sys.argv[1:2] == ["--resident"]:
@@ -392,7 +397,6 @@ from docfit_core import (
 # ============================================================
 
 APP_NAME = "한글편집 후처리"
-APP_VERSION = "2.2.107"
 PROJECT_URL = "https://gitlab.aigov.go.kr/haijun93/hwp_autodocfit"
 UPDATE_API_URL = "https://gitlab.aigov.go.kr/api/v4/projects/haijun93%2Fhwp_autodocfit/releases/permalink/latest"
 GITHUB_UPDATE_API_URL = "https://api.github.com/repos/haijun93/hwp-auto-docfit/releases/latest"

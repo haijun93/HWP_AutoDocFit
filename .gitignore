@@ -71,3 +71,5 @@ photoview_win/target/
 convert_win/target/
 rename_win/target/
 /hwpx_fmt/target/
+native_tasks/target/
+.rustview2/

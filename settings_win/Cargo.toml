@@ -12,6 +12,7 @@ publish = false
 # 의존성 3개: docfit_config(설정 읽기·검증·원자 저장의 정본)·ui_theme(팔레트)·windows-sys(Win32).
 # serde_json 은 docfit_config 의 공개 API(Value)를 받기 위해 같은 버전을 직접 선언한다(새 외부 크레이트 아님).
 [dependencies]
+native_tasks = { path = "../native_tasks" }
 docfit_config = { path = "../docfit_config" }
 ui_theme = { path = "../ui_theme" }
 serde_json = { version = "1", features = ["preserve_order"] }

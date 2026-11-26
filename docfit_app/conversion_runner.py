@@ -200,7 +200,7 @@ def run_conversion(files, target, output_dir=None, progress=None, stop_event=Non
                     target = convert_to_images(app, source, target)
                 elif target_format == "pdfz":
                     from docfit_core.pdf_compress import compress_pdf
-                    target_bytes = kwargs.get("pdf_target_bytes", 10 * 1024 * 1024)
+                    target_bytes = pdf_target_bytes if pdf_target_bytes is not None else 10 * 1024 * 1024
                     압축결과 = compress_pdf(
                         source, target, target_bytes=target_bytes,
                         method=kwargs.get("pdf_compress_method", "auto"),
