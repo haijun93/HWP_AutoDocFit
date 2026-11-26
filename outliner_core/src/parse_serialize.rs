@@ -20,6 +20,17 @@ fn metadata(
     let (mut tags, mut pages, mut refs) = (Vec::new(), Vec::new(), Vec::new());
     let mut at = 0;
     while at < chars.len() {
+        if chars[at..].starts_with(&['#', '[', '[']) {
+            if let Some(end) = (at + 3..chars.len().saturating_sub(1)).find(|&i| chars[i] == ']' && chars[i + 1] == ']') {
+                let name: String = chars[at + 3..end].iter().collect();
+                if !name.trim().is_empty() {
+                    tags.push(name.trim().to_owned());
+                    pages.push(name.trim().to_owned());
+                    at = end + 2;
+                    continue;
+                }
+            }
+        }
         if chars[at] == '#' {
             let end = (at + 1..chars.len())
                 .find(|&i| !(chars[i].is_alphanumeric() || chars[i] == '_' || chars[i] == '-'))
@@ -273,10 +284,24 @@ pub fn serialize(document: &Document) -> String {
 }
 
 pub(crate) fn refresh_metadata(block: &mut Block) {
-    let (tags, mut properties, page_links, block_refs) = metadata(&block.text);
+    let (mut tags, mut properties, mut page_links, mut block_refs) = metadata(&block.text);
     for item in &block.extra {
         if let Some((key, value)) = item.line.split_once("::") {
             properties.insert(key.to_owned(), value.trim().to_owned());
+            for token in crate::references::reference_tokens(value) {
+                use crate::references::RefTarget;
+                let (list, name) = match token.target {
+                    RefTarget::Page(name) => (&mut page_links, name),
+                    RefTarget::Block(name) => (&mut block_refs, name),
+                    RefTarget::Tag(name) => (&mut tags, name),
+                };
+                if !list.contains(&name) { list.push(name); }
+            }
+            if key == "tags" {
+                for name in value.split(',').map(|s| s.trim().trim_start_matches('#').trim_start_matches("[[").trim_end_matches("]]")) {
+                    if !name.is_empty() && !tags.iter().any(|t| t == name) { tags.push(name.to_owned()); }
+                }
+            }
         }
     }
     block.tags = tags;

@@ -19,6 +19,8 @@ pub struct Row {
     pub text: String,
     /// 블록 안 줄 수(최소 1) — 화면에서 차지하는 줄 칸.
     pub lines: usize,
+    /// Read-only reference/embed presentation; editing always uses Document::blocks.
+    pub presentation: Vec<Vec<outliner_core::references::DisplaySpan>>,
 }
 
 /// 파일에는 접힘이 저장되지 않으므로(엔진 `parse` 는 항상 펼침) Logseq 관례인 `collapsed:: true`
@@ -104,6 +106,7 @@ fn scoped_rows(doc: &Document, root: Option<usize>) -> Vec<Row> {
             status: block.status.clone(),
             text: display_text(block),
             lines: block.text.split('\n').count(),
+            presentation: Vec::new(),
         });
     }
     rows

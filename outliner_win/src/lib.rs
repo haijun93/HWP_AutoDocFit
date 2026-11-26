@@ -20,3 +20,4 @@ pub mod commands;
 
 /// 시험·캡처 기본 문서(저장소 안 작은 .md).
 pub const SAMPLE_MD: &str = include_str!("../tests/sample.md");
+mod references;
