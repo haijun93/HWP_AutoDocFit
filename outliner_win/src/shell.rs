@@ -28,6 +28,7 @@ pub struct SidebarCard {
 pub enum PromptKind {
     NewPage,
     Rename,
+    Property,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,6 +73,12 @@ pub struct Shell<H: EditHost> {
     pub visits: Vec<Visit>,
     pub visit_at: usize,
     pub toggle_prefix: Option<u64>,
+    pub graph: std::collections::BTreeMap<String, outliner_core::Document>,
+    pub unlinked: Vec<BackItem>,
+    pub property_block: Option<u64>,
+    pub reference_revision: Option<(String, Option<u64>)>,
+    pub presentation_revision: String,
+    pub presentation_cache: std::collections::BTreeMap<u64, Vec<Vec<outliner_core::references::DisplaySpan>>>,
 }
 
 fn fixed_clock() -> Now {
@@ -109,6 +116,12 @@ impl<H: EditHost> Shell<H> {
             visits: Vec::new(),
             visit_at: 0,
             toggle_prefix: None,
+            graph: Default::default(),
+            unlinked: Vec::new(),
+            property_block: None,
+            reference_revision: None,
+            presentation_revision: String::new(),
+            presentation_cache: Default::default(),
         }
     }
 
@@ -146,6 +159,7 @@ impl<H: EditHost> Shell<H> {
         self.editor.recent_names = self.recent.clone();
         (self.editor.tag_names, self.editor.graph_blocks) = find::completion_catalog(&store, self.page.as_deref());
         self.editor.today = (self.clock)().date_iso;
+        self.refresh_reference_graph();
     }
 
     /// 왼쪽 패널에 그릴 목록(검색 칸 글로 거른 것). 이름 입력 줄이 열려 있는 동안은 거르지 않는다.
@@ -206,8 +220,18 @@ impl<H: EditHost> Shell<H> {
     pub fn right_list(&self) -> Vec<RightItem> {
         let mut items = Vec::new();
         for i in 0..self.cards.len() { items.extend([RightItem::Card(i), RightItem::Preview(i)]); }
-        if !self.cards.is_empty() && !self.back.is_empty() { items.push(RightItem::Group("역링크".into())); }
+        if !self.cards.is_empty() && !self.back.is_empty() { items.push(RightItem::Group(format!("연결 참조 ({})", self.back.len()))); }
         items.extend(crate::layout::right_items(&self.back));
+        items.push(RightItem::Group(format!("미연결 언급 ({})", self.unlinked.len())));
+        items.extend((0..self.unlinked.len()).map(RightItem::Unlinked));
+        items.push(RightItem::AddProperty);
+        if let Some(b) = self.editor.view.rows.get(self.editor.view.selected).and_then(|r| self.editor.view.doc.blocks.get(r.block)) {
+            items.extend(b.properties.iter().map(|(k, v)| RightItem::Property(k.clone(), v.clone())));
+            let tags: std::collections::BTreeSet<_> = crate::references::block_targets(b).into_iter().filter_map(|t| {
+                if let outliner_core::references::RefTarget::Tag(tag) = t { Some(tag) } else { None }
+            }).collect();
+            items.extend(tags.into_iter().map(RightItem::Tag));
+        }
         items
     }
 
@@ -262,35 +286,36 @@ impl<H: EditHost> Shell<H> {
     }
 
     pub fn refresh_backlinks(&mut self) {
-        self.back_first = 0;
-        let (Some(store), Some(page)) = (self.store.clone(), self.page.clone()) else {
+        let selected_id = self.editor.view.rows.get(self.editor.view.selected).map(|r| self.editor.view.doc.blocks[r.block].id);
+        let revision = (outliner_core::content_digest(&self.editor.markdown()), selected_id);
+        if self.reference_revision.as_ref() == Some(&revision) { return; }
+        self.reference_revision = Some(revision);
+        let Some(page) = self.page.as_deref() else {
             self.back.clear();
             return;
         };
-        let md = self.editor.markdown();
-        let mut list = find::backlinks_all(&store, &page, Some((&page, &md)));
-        // 현재 선택된 블록의 블록 역참조도 함께 가져온다.
-        let sel_block = self.editor.view.rows.get(self.editor.view.selected).map(|r| r.block);
-        if let Some(block_idx) = sel_block {
-            if let Some(block) = self.editor.view.doc.blocks.get(block_idx) {
-                let id_str = block.id.to_string();
-                let block_refs = find::block_backlinks_all(&store, &id_str, Some((&page, &md)));
-                for item in block_refs {
-                    if !list.iter().any(|b| b.page == item.page && b.block == item.block) {
-                        list.push(item);
-                    }
-                }
-                if let Some(prop_id) = block.properties.get("id") {
-                    let prop_refs = find::block_backlinks_all(&store, prop_id, Some((&page, &md)));
-                    for item in prop_refs {
-                        if !list.iter().any(|b| b.page == item.page && b.block == item.block) {
-                            list.push(item);
-                        }
-                    }
+        let mut list = Vec::new();
+        let selected = self.editor.view.rows.get(self.editor.view.selected).map(|r| &self.editor.view.doc.blocks[r.block]);
+        let canonical = |p: &str| outliner_core::normalize_journal_name(p).unwrap_or_else(|_| p.to_lowercase());
+        for source in &self.pages {
+            let source = source.as_str();
+            let doc = if source == page { &self.editor.view.doc }
+                else { let Some(doc) = self.graph.get(source) else { continue; }; doc };
+            for (i, b) in doc.blocks.iter().enumerate() {
+                use outliner_core::references::RefTarget;
+                let targets = crate::references::block_targets(b);
+                let page_ref = source != page && targets.iter().any(|t| matches!(t, RefTarget::Page(p) | RefTarget::Tag(p) if canonical(p) == canonical(page)));
+                let block_ref = selected.is_some_and(|sel| targets.iter().any(|t| {
+                    matches!(t, RefTarget::Block(id) if sel.properties.get("id") == Some(id) || (source == page && sel.id.to_string() == *id))
+                }));
+                if page_ref || block_ref {
+                    list.push(BackItem { page: source.into(), block: i, text: b.text.chars().take(find::SNIPPET_CHARS).collect() });
+                    if list.len() >= find::MAX_HITS { break; }
                 }
             }
+            if list.len() >= find::MAX_HITS { break; }
         }
-        self.back = list;
+        if self.back != list { self.back_first = 0; self.back = list; }
     }
 
     /// 편집 중 글을 확정하고 변경이 있으면 저장한다. 실패하면 이유를 돌려주고 아무것도 바꾸지 않는다.
@@ -317,6 +342,10 @@ impl<H: EditHost> Shell<H> {
         self.remember_position();
         self.editor.replace_document(view, Some(info), base);
         self.page = Some(stem.to_string());
+        // The pending property input belongs to a block of the previous page.
+        if self.prompt == Some(PromptKind::Property) {
+            self.cancel_prompt();
+        }
         self.recent.retain(|r| r != stem);
         self.recent.insert(0, stem.to_string());
         self.recent.truncate(RECENT_MAX);
@@ -565,6 +594,12 @@ impl<H: EditHost> Shell<H> {
         if self.store.is_none() || (kind == PromptKind::Rename && self.page.is_none()) {
             return None;
         }
+        if kind == PromptKind::Property {
+            if self.editor.host.composing() || self.editor.host.candidate_open() { return None; }
+            if !self.editor.finish_edit() { return None; }
+            self.property_block = self.editor.view.rows.get(self.editor.view.selected).map(|r| self.editor.view.doc.blocks[r.block].id);
+            self.property_block?;
+        }
         self.prompt = Some(kind);
         self.search_open = false;
         self.search_mode = SearchMode::Legacy;
@@ -575,6 +610,7 @@ impl<H: EditHost> Shell<H> {
 
     pub fn cancel_prompt(&mut self) {
         self.prompt = None;
+        self.property_block = None;
     }
 
     /// Enter: 입력 줄 확정. 실패하면 줄을 그대로 둔다(고쳐 쓸 수 있게).
@@ -583,9 +619,15 @@ impl<H: EditHost> Shell<H> {
         let r = match kind {
             PromptKind::NewPage => self.new_page(text),
             PromptKind::Rename => self.rename_current(text),
+            PromptKind::Property => {
+                let (key, value) = text.split_once("::").ok_or("이름:: 값 형식으로 입력해 주세요")?;
+                self.editor.set_property(self.property_block.ok_or("속성 대상 블록이 없습니다")?, key.trim(), value.trim())
+            }
         };
         if r.is_ok() {
             self.prompt = None;
+            self.property_block = None;
+            self.refresh_backlinks();
         }
         r
     }

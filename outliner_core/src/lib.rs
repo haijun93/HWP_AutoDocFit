@@ -107,6 +107,7 @@ mod parse_serialize;
 mod rename;
 mod search;
 mod store;
+pub mod references;
 
 pub use api::handle_request;
 pub use history::{UndoHistory, MAX_UNDO_BYTES, MAX_UNDO_DEPTH};

@@ -948,6 +948,15 @@ impl<H: EditHost> Editor<H> {
         self.recorded(|ed| ed.finish_edit_inner())
     }
 
+    pub fn set_property(&mut self, id: u64, key: &str, value: &str) -> Result<(), String> {
+        if !self.finish_edit() { return Err("편집을 확정하지 못했습니다".into()); }
+        self.recorded(|ed| {
+            outliner_core::references::set_property(&mut ed.view.doc, id, key, value).map_err(|e| e.to_string())?;
+            ed.view.rebuild();
+            Ok(())
+        })
+    }
+
     fn finish_edit_inner(&mut self) -> bool {
         if self.session.is_none() {
             return true;
