@@ -612,6 +612,17 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     "integrity_ok": 무결성["ok"] if 무결성 is not None else None,
                     "text_similarity": 무결성.get("text_similarity") if 무결성 is not None else None,
                 })
+                검수_오류 = [f"{key}: {항목.get('error') or '검사 오류'}"
+                          for key, 항목 in (최종규칙검사 if isinstance(최종규칙검사, dict) else {}).items()
+                          if isinstance(항목, dict) and 항목.get('status') == 'error']
+                if 검수_오류:
+                    # 재열기 실패처럼 검사 자체를 하지 못한 항목이 있으면 검수 실패다. 항목별 결과와
+                    # 무결성 대조는 최종 검수가 쓰도록 남긴다.
+                    무결성_안내 = " / 무결성 확인 필요" if 무결성 is not None and not 무결성["ok"] else ""
+                    기록.update({"success": False, "error": f"저장 후 규칙 검수 실패 — {'; '.join(검수_오류)}{무결성_안내}"})
+                    저장후_상태(DocumentStatus.INSPECTION_FAILED,
+                            f"저장 후 규칙 검수 실패(결과 파일은 저장됨){무결성_안내}")
+                    return False
                 if 무결성 is not None and not 무결성["ok"]:
                     # success 는 기존 의미(파일 처리·저장)를 유지하고 상태로 구분한다(F05).
                     저장후_상태(DocumentStatus.INTEGRITY_FAILED, "무결성 확인 필요(결과 파일은 저장됨)")

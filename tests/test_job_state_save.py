@@ -119,6 +119,51 @@ class AfterSaveTests(unittest.TestCase):
                          [('inspection_failed', str(output))])
         self.assertIn('대조 예외', records[0]['error'])
 
+    def test_check_item_error_is_inspection_failure(self):
+        checks = {'page_group': {'status': 'error', 'checked': 0, 'issues': [], 'error': '저장 결과 재열기 실패'},
+                  'word_check': {'status': 'passed', 'checked': 1, 'issues': []}}
+        result, records, events, source, output = self.run_document(audit=lambda *a, **k: dict(checks))
+        self.assertFalse(result)
+        self.assert_saved_once(events, source, output)
+        self.assertEqual(self.states(events), ['inspection_failed'])
+        self.assertEqual([(r['status'], r['success'], r['output']) for r in records],
+                         [('inspection_failed', False, str(output))])
+        self.assertIn('저장 결과 재열기 실패', records[0]['error'])
+        # 최종 검수가 쓰는 항목별 결과와 무결성 대조는 남긴다.
+        self.assertEqual(records[0]['rule_checks']['page_group']['status'], 'error')
+        self.assertIs(records[0]['integrity_ok'], True)
+
+    def test_reopen_failure_in_real_inspection_is_inspection_failure(self):
+        audit = self.ns['저장결과_규칙검수']
+        opened = Mock(return_value=False)
+        with patch.dict(audit.__globals__, {
+                '선택_세부작업': {'style_unify': False}, '검수_사용': True, '작업_모드': 'format',
+                '중단_요청됨': lambda: False, '한글_문서_열기': opened, '검수_문제_기록': Mock(),
+                '로그': Mock(), 'hwp': Mock()}):
+            checks = audit('source.hwpx', 'result.hwpx', 결과창=False)
+        opened.assert_called_once()
+        self.assertEqual({item['status'] for item in checks.values()}, {'error'})
+        result, records, events, _, _ = self.run_document(audit=lambda *a, **k: checks)
+        self.assertFalse(result)
+        self.assertEqual(self.states(events), ['inspection_failed'])
+
+    def test_non_error_check_statuses_stay_saved(self):
+        checks = {key: {'status': key, 'checked': 0, 'issues': []}
+                  for key in ('passed', 'failed', 'incomplete', 'not_applicable')}
+        result, records, events, _, _ = self.run_document(audit=lambda *a, **k: checks)
+        self.assertIs(result, True)
+        self.assertEqual(self.states(events), [])
+        self.assertEqual(records[0]['status'], 'saved')
+
+    def test_check_error_keeps_integrity_failure_visible(self):
+        checks = {'page_group': {'status': 'error', 'checked': 0, 'issues': [], 'error': '검사 예외'}}
+        result, records, events, _, _ = self.run_document(
+            audit=lambda *a, **k: checks, compare=lambda a, b: BAD_CHECK)
+        self.assertFalse(result)
+        self.assertEqual(self.states(events), ['inspection_failed'])
+        self.assertIs(records[0]['integrity_ok'], False)
+        self.assertIn('무결성 확인 필요', records[0]['error'])
+
     def test_integrity_failure_is_a_separate_status(self):
         result, records, events, source, output = self.run_document(compare=lambda a, b: BAD_CHECK)
         self.assertIs(result, True)   # 기존 필드 호환: 파일은 처리·저장됐다.
