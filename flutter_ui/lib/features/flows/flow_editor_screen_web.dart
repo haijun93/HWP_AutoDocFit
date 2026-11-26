@@ -51,6 +51,7 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
   late final draftClient = FlowDraftClient(widget.api, widget.initialMode);
   bool dirty = false, ready = false, busy = false;
   CloseLease? _closeLease;
+  WorkWatch? _closeWatch;
   Future<bool> _prepareHostClose() async {
     if (saveState.saving || busy || !canCloseEditor(context)) return false;
     if (!await confirmDiscard() || !mounted) return false;
@@ -63,6 +64,14 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
     super.initState();
     if (widget.isModal) {
       _closeLease = CloseGuards.register(_prepareHostClose);
+    } else {
+      // 화면에 머무는 편집기(다이어그램·마인드맵·붙임사진): 창을 닫기 전에 저장 안 한 내용을 묻는다.
+      _closeWatch = CloseGuards.watch(
+        unsaved: () => dirty
+            ? '${switch (widget.initialMode) { 'mindmap' => '마인드맵', 'paint' => '붙임사진 편집', _ => '다이어그램' }} 편집 내용(임시본은 다음에 되살릴 수 있습니다)'
+            : null,
+        saving: () => saveState.saving,
+      );
     }
     if (widget.initialMode == 'paint') {
       // 그림판 탭에 끌어 놓은 사진은 앱이 받아(창 위 놓기 층) 배경으로 넘긴다.
@@ -623,6 +632,7 @@ class _FlowEditorScreenState extends State<FlowEditorScreen> {
     _stopPhotoPaste?.call();
     widget.photoPasteTrigger?.removeListener(_onPhotoPasteTrigger);
     _closeLease?.release();
+    _closeWatch?.release();
     web.window.removeEventListener('message', listener);
     super.dispose();
   }

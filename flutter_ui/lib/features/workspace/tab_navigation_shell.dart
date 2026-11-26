@@ -20,6 +20,14 @@ const kTabOutliner = 14;
 const kTabQmsBench = 15;
 const kTabCount = 16;
 
+/// 메뉴 하나만 담은 창(`--screen N`)의 화면 번호. 앱이 주소 조각 `#screen=N` 으로 넘긴다.
+/// 없거나 틀리면 null(보통 앱). 7(몽땅검색)은 별도 프로그램이라 전용 창이 없다.
+int? soloTabFrom(Uri uri) {
+  final match = RegExp(r'^/?screen=(\d{1,2})$').firstMatch(uri.fragment);
+  final tab = match == null ? null : int.parse(match.group(1)!);
+  return tab == null || tab >= kTabCount || tab == 7 ? null : tab;
+}
+
 /// 왼쪽 메뉴 폭. 저장값이 없으면 창 폭이 기준 이상일 때 펼친다.
 const kSidebarCollapsedWidth = 56.0;
 const kSidebarExpandedWidth = 200.0;
@@ -108,6 +116,7 @@ class TabNavigationShell extends StatefulWidget {
     this.notebookScreen,
     this.onOpenExternalApp,
     this.quickActions = const [],
+    this.soloTab,
   }) : assert(initialIndex >= 0 && initialIndex < kTabCount);
 
   final Widget documentEditor;
@@ -142,6 +151,9 @@ class TabNavigationShell extends StatefulWidget {
   /// 오른쪽 빠른 실행 막대 항목. 비어 있으면 막대를 만들지 않는다.
   final List<QuickAction> quickActions;
   final ValueChanged<int>? onTabChanged;
+
+  /// 이 창이 담는 화면 하나. 있으면 왼쪽 메뉴·가로 탭·빠른 실행 막대를 만들지 않고 다른 화면으로 바꾸지 않는다.
+  final int? soloTab;
 
   /// 왼쪽 메뉴 아래쪽의 앱 전체 메뉴(사용 방법·작업 로그·설정 등).
   final Widget? trailing;
@@ -225,7 +237,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
   ];
 
   void _select(int index) {
-    if (widget.hiddenTabs.contains(index)) return;
+    if (widget.soloTab != null || widget.hiddenTabs.contains(index)) return;
     if (index == _index && _extra == null) {
       widget.onTabChanged?.call(index);
       return;
@@ -245,6 +257,22 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
     _applySaved();
     widget.savedSidebarExpanded?.addListener(_applySaved);
     widget.tabRequest?.addListener(_applyTabRequest);
+    _enterSolo();
+  }
+
+  /// 전용 창: 시작할 때 그 화면으로 정한다(숨긴 메뉴여도 사용자가 이 창을 열었으므로 연다).
+  void _enterSolo() {
+    final solo = widget.soloTab;
+    if (solo == null) return;
+    if (solo == 12 || solo == 13) {
+      _extra = solo == 12 ? WorkspaceExtraPage.library : WorkspaceExtraPage.notebook;
+      return;
+    }
+    _index = solo;
+    // 놓기 대상·작업 방식 같은 화면 진입 처리는 보통 앱에서 탭을 고를 때와 같게 한다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.onTabChanged?.call(solo);
+    });
   }
 
   /// 저장값은 첫 상태 응답 때 늦게 온다. 사용자가 이미 눌렀으면 덮지 않는다.
@@ -261,7 +289,7 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
 
   void _applyTabRequest() {
     final index = widget.tabRequest?.value;
-    if (!mounted) return;
+    if (!mounted || widget.soloTab != null) return;
     if (index == null) {
       if (_extra != null) setState(() => _extra = null);
     } else if (index == 12 || index == 13) {
@@ -390,6 +418,39 @@ class _TabNavigationShellState extends State<TabNavigationShell> {
       WorkspaceExtraPage.notebook => widget.notebookScreen,
       null => null,
     };
+    final solo = widget.soloTab;
+    if (solo != null) {
+      // 문서편집(0)은 파일 변환·서버 대화창·닫기 보호를 맡고 있어 늘 만들어 둔다. 나머지는 만들지 않는다.
+      return Scaffold(
+        body: WorkspaceTabScope(
+          goHome: () {},
+          selectTab: (_) {},
+          child: Focus(
+            autofocus: true,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                Offstage(
+                  offstage: extraChild != null,
+                  child: IndexedStack(
+                    index: _index,
+                    children: [
+                      for (var i = 0; i < pages.length; i++)
+                        TickerMode(
+                          key: ValueKey('workspace-tab-$i'),
+                          enabled: i == _index && extraChild == null,
+                          child: i == 0 || i == solo ? pages[i] : const SizedBox(),
+                        ),
+                    ],
+                  ),
+                ),
+                ?extraChild,
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final Widget? extraPage = extraChild == null
         ? null
         : HostClosablePage(
