@@ -7,6 +7,8 @@ pub enum RefKind {
     Page,
     Block,
     TripleBlock,
+    Tag,
+    Slash,
 }
 
 /// 캐럿이 `[[` 또는 `((`, `(((` 뒤에 있을 때의 문맥.
@@ -105,15 +107,25 @@ pub fn block_ref_context(text: &str, caret16: usize) -> Option<LinkCtx> {
 
 /// 캐럿 위치의 자동완성 문맥(페이지 링크 또는 블록 참조).
 pub fn any_completion_context(text: &str, caret16: usize) -> Option<LinkCtx> {
-    // 더 뒤에 있는 문맥을 우선한다.
-    let link = link_context(text, caret16);
-    let block = block_ref_context(text, caret16);
-    match (link, block) {
-        (Some(l), Some(b)) => if l.start16 >= b.start16 { Some(l) } else { Some(b) },
-        (Some(l), None) => Some(l),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
+    let before = &text[..byte_at(text, caret16)];
+    // 인라인 코드와 코드 울타리에서는 입력 후보를 열지 않는다.
+    if before.chars().filter(|c| *c == '`').count() % 2 != 0 { return None; }
+    [link_context(text, caret16), block_ref_context(text, caret16),
+        token_context(text, caret16, '#', RefKind::Tag),
+        token_context(text, caret16, '/', RefKind::Slash)]
+        .into_iter().flatten().max_by_key(|c| c.start16)
+}
+
+fn token_context(text: &str, caret16: usize, trigger: char, kind: RefKind) -> Option<LinkCtx> {
+    let cb = byte_at(text, caret16);
+    let before = &text[..cb];
+    let open = before.rfind(trigger)?;
+    if open > 0 && !before[..open].chars().last()?.is_whitespace() { return None; }
+    let query = &before[open + 1..];
+    if query.chars().count() > MAX_QUERY_CHARS || query.chars().any(|c| c.is_whitespace() || "[]()/#`".contains(c)) {
+        return None;
     }
+    Some(LinkCtx { start16: utf16(&text[..open]), caret16, end16: caret16, query: query.into(), kind })
 }
 
 /// 질의로 후보 이름을 거른다: 앞부분 일치 → 포함 일치 순(대소문자 무시). 질의가 비면 `recent` 먼저.
@@ -151,6 +163,8 @@ pub fn apply_completion(text: &str, ctx: &LinkCtx, name: &str) -> (String, usize
         RefKind::Page => ("[[", "]]"),
         RefKind::Block => ("((", "))"),
         RefKind::TripleBlock => ("(((", ")))"),
+        RefKind::Tag => if name.chars().any(char::is_whitespace) { ("#[[", "]]") } else { ("#", "") },
+        RefKind::Slash => ("", ""),
     };
     let new = format!("{}{}{}{}{}", &text[..a], open, name, close, &text[b..]);
     let caret = ctx.start16 + open.len() + utf16(name) + close.len();

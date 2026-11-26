@@ -151,6 +151,7 @@ pub enum Cmd {
 pub struct Popup {
     pub ctx: LinkCtx,
     pub items: Vec<String>,
+    pub labels: Vec<String>,
     pub selected: usize,
 }
 
@@ -185,10 +186,14 @@ pub struct Editor<H: EditHost> {
     /// 자동완성 후보가 될 페이지 이름·최근 페이지(셸이 채운다).
     pub page_names: Vec<String>,
     pub recent_names: Vec<String>,
+    pub tag_names: Vec<String>,
+    /// 다른 페이지의 영구 ID·페이지/본문 설명(페이지 전환 때 갱신).
+    pub graph_blocks: Vec<(String, String)>,
+    pub today: String,
     /// 열려 있는 `[[` 자동완성 팝업.
     pub popup: Option<Popup>,
     /// Esc 로 닫은 `[[` 의 위치 — 같은 `[[` 에서는 다시 열지 않는다.
-    popup_off: Option<usize>,
+    popup_off: Option<(usize, links::RefKind)>,
     /// `Cmd::Paste` 가 쓸 클립보드 글.
     pending_paste: Option<String>,
     /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 편집 명령 하나(=Enter 의 글 확정+분할 등)가 한 단계다.
@@ -278,6 +283,9 @@ impl<H: EditHost> Editor<H> {
             suppress: None,
             page_names: Vec::new(),
             recent_names: Vec::new(),
+            tag_names: Vec::new(),
+            graph_blocks: Vec::new(),
+            today: crate::clock::now().date_iso,
             popup: None,
             popup_off: None,
             pending_paste: None,
@@ -447,6 +455,11 @@ impl<H: EditHost> Editor<H> {
             return if self.history_step(!redo) { KeyResult::Swallow } else { KeyResult::Pass };
         }
         // 자동완성 팝업이 열려 있으면 ↑↓·Enter·Tab·Esc 는 팝업이 먼저 받는다(조합 중이면 확정만 하고 명령은 버림).
+        if self.popup.is_some() && ev.ctrl && !ev.alt && !ev.shift && matches!(ev.vk, 0x4E | 0x50) {
+            if composing || candidate || ev.processkey { return KeyResult::Pass; }
+            self.move_popup(ev.vk == 0x4E);
+            return KeyResult::Swallow;
+        }
         if self.popup.is_some() && !ev.alt && !ev.ctrl && !candidate {
             match ev.vk {
                 VK_UP | VK_DOWN if !ev.shift => {
@@ -459,10 +472,16 @@ impl<H: EditHost> Editor<H> {
                 VK_RETURN | VK_TAB if !ev.shift => {
                     if composing {
                         self.host.request_complete();
+                        // VK_PROCESSKEY 뒤 진짜 Enter/Tab이 다시 와도 이번 입력은 확정만 한다.
+                        self.suppress = Some((if ev.vk == VK_RETURN { Cmd::Enter } else { Cmd::Indent }, ev.now_ms + self.policy.dedupe_ms));
                         return if ev.processkey { KeyResult::Pass } else { KeyResult::Swallow };
                     }
                     if ev.processkey {
                         return KeyResult::Pass;
+                    }
+                    let cmd = if ev.vk == VK_RETURN { Cmd::Enter } else { Cmd::Indent };
+                    if self.suppress.is_some_and(|(c, until)| c == cmd && ev.now_ms <= until) {
+                        return KeyResult::Swallow;
                     }
                     self.accept_popup(None);
                     return KeyResult::Swallow;
@@ -641,6 +660,9 @@ impl<H: EditHost> Editor<H> {
             self.popup = None;
             return;
         }
+        // 이미 보인 후보는 조합 중 고정한다. 첫 트리거는 확정된 접두만 읽어 문맥을 만들 수 있다.
+        // 이 읽기는 표시 전용이며 조합 글을 엔진에 반영하거나 EDIT를 치환하지 않는다.
+        if self.host.candidate_open() || (self.host.composing() && self.popup.is_some()) { return; }
         let text = self.host.read_text();
         let (s, e) = self.host.selection();
         let ctx = if s == e { links::any_completion_context(&text, s) } else { None };
@@ -649,28 +671,44 @@ impl<H: EditHost> Editor<H> {
             self.popup_off = None;
             return;
         };
-        if self.popup_off == Some(ctx.start16) {
+        if self.popup_off == Some((ctx.start16, ctx.kind)) {
             self.popup = None;
             return;
         }
         self.popup_off = None;
-        let items = match ctx.kind {
-            links::RefKind::Page => links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8),
+        let pairs: Vec<(String, String)> = match ctx.kind {
+            links::RefKind::Page => links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8)
+                .into_iter().map(|s| (s.clone(), s)).collect(),
+            links::RefKind::Tag => {
+                let mut tags = self.tag_names.clone();
+                tags.extend(self.page_names.clone());
+                tags.extend(self.view.doc.blocks.iter().flat_map(|b| b.tags.clone()));
+                links::candidates(&tags, &[], &ctx.query, 8).into_iter().map(|s| (s.clone(), format!("#{s}"))).collect()
+            }
+            links::RefKind::Slash => crate::commands::slash(&ctx.query),
             links::RefKind::Block | links::RefKind::TripleBlock => {
                 let q = ctx.query.trim().to_lowercase();
                 let mut out = Vec::new();
-                for b in &self.view.doc.blocks {
+                for (i, b) in self.view.doc.blocks.iter().enumerate() {
+                    if self.editing_block() == Some(i) { continue; }
                     let id_str = b.properties.get("id").cloned().unwrap_or_else(|| b.id.to_string());
                     if q.is_empty() || b.text.to_lowercase().contains(&q) || id_str.to_lowercase().contains(&q) {
-                        out.push(id_str);
+                        out.push((id_str.clone(), format!("{} · {id_str}", b.text.replace('\n', " "))));
                         if out.len() >= 8 {
                             break;
                         }
                     }
                 }
+                for (id, label) in &self.graph_blocks {
+                    if out.len() >= 8 { break; }
+                    if !out.iter().any(|(v, _)| v == id) && (q.is_empty() || label.to_lowercase().contains(&q) || id.to_lowercase().contains(&q)) {
+                        out.push((id.clone(), label.clone()));
+                    }
+                }
                 out
             }
         };
+        let (items, labels): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
         if items.is_empty() {
             self.popup = None;
             return;
@@ -679,7 +717,7 @@ impl<H: EditHost> Editor<H> {
             Some(p) if p.ctx.query == ctx.query && p.ctx.start16 == ctx.start16 => p.selected.min(items.len() - 1),
             _ => 0,
         };
-        self.popup = Some(Popup { ctx, items, selected });
+        self.popup = Some(Popup { ctx, items, labels, selected });
     }
 
     pub fn move_popup(&mut self, down: bool) {
@@ -691,21 +729,62 @@ impl<H: EditHost> Editor<H> {
 
     pub fn dismiss_popup(&mut self) {
         if let Some(p) = self.popup.take() {
-            self.popup_off = Some(p.ctx.start16);
+            self.popup_off = Some((p.ctx.start16, p.ctx.kind));
         }
     }
 
     /// 후보(번호 없으면 선택된 것)로 `[[질의` 를 `[[이름]]` (또는 `((id))`) 으로 바꾸고 캐럿을 닫는 괄호 뒤에 둔다.
     pub fn accept_popup(&mut self, index: Option<usize>) -> bool {
-        let Some(p) = self.popup.take() else { return false };
+        if self.host.composing() || self.host.candidate_open() { return false; }
+        let Some(p) = self.popup.clone() else { return false };
         let Some(name) = p.items.get(index.unwrap_or(p.selected)).cloned() else { return false };
         let text = self.host.read_text();
         // 팝업이 열린 뒤 글이 바뀌었을 수 있어 문맥을 다시 구한다.
-        let (s, _) = self.host.selection();
-        let ctx = links::any_completion_context(&text, s).unwrap_or(p.ctx);
-        let (new, caret) = links::apply_completion(&text, &ctx, &name);
+        let (s, e) = self.host.selection();
+        let Some(ctx) = links::any_completion_context(&text, s).filter(|ctx| s == e && *ctx == p.ctx) else {
+            self.refresh_popup(); return false;
+        };
+        let (mut new, mut caret) = if ctx.kind == links::RefKind::Slash {
+            crate::commands::insert_slash(&text, &ctx, &name, &self.today)
+        } else { links::apply_completion(&text, &ctx, &name) };
+        if ctx.kind == links::RefKind::Slash && matches!(name.as_str(), "TODO" | "DONE") {
+            let Some(block) = self.editing_block() else { return false; };
+            new = new.strip_prefix(&format!("{name} ")).unwrap_or(&new).to_string();
+            caret = utf16_len(&new);
+            let mut doc = self.view.doc.clone();
+            let id = doc.blocks[block].id;
+            if let Err(error) = outliner_core::edit(&mut doc, "set_text", id, Some(&new)) {
+                self.fail(error.to_string()); return false;
+            }
+            doc.blocks[block].status = Some(name.clone());
+            self.recorded(|ed| {
+                ed.install(doc, block);
+            });
+        }
+        // 현재 문서의 임시 숫자 ID는 선택하는 순간 영구 속성으로 만든다. 대상 속성과 참조를 한 단계로 기록.
+        if matches!(ctx.kind, links::RefKind::Block | links::RefKind::TripleBlock) {
+            let target = self.view.doc.blocks.iter().position(|b| !b.properties.contains_key("id") && b.id.to_string() == name);
+            if let (Some(target), Some(block)) = (target, self.editing_block()) {
+                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+                let hash = outliner_core::content_digest(&format!("{stamp}:{}:{name}:{}", std::process::id(), self.markdown()));
+                let uuid = format!("{}-{}-4{}-a{}-{}", &hash[..8], &hash[8..12], &hash[13..16], &hash[17..20], &hash[20..32]);
+                (new, caret) = links::apply_completion(&text, &ctx, &uuid);
+                let mut doc = self.view.doc.clone();
+                let id = doc.blocks[block].id;
+                if let Err(error) = outliner_core::edit(&mut doc, "set_text", id, Some(&new)) {
+                    self.fail(error.to_string()); return false;
+                }
+                let after = doc.blocks[target].text.matches('\n').count();
+                doc.blocks[target].extra.push(outliner_core::ExtraLine { after, line: format!("id:: {uuid}") });
+                doc.blocks[target].properties.insert("id".into(), uuid);
+                self.recorded(|ed| ed.install(doc, block));
+            }
+        }
+        self.popup = None;
         self.host.set_text(&new, caret);
         self.popup_off = None;
+        // #태그는 닫는 괄호가 없으므로 같은 자리에서 즉시 다시 열리지 않게 한다.
+        if ctx.kind == links::RefKind::Tag { self.popup_off = Some((ctx.start16, ctx.kind)); }
         self.refresh_popup();
         true
     }

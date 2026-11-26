@@ -6,10 +6,10 @@ use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_OEM_1, VK_Y, VK
 use crate::layout::{self, Btn, Layout, LeftItem, RightItem};
 use crate::paint::{Extras, Metrics, create_font, scale, wide};
 use crate::paint_shell::{draw_shell, edit_rect_of};
-use crate::shell::{PromptKind, Shell};
+use crate::shell::{PromptKind, SearchMode, Shell};
 use crate::view::{Nav, ensure_visible};
 use std::ptr::{null, null_mut};
-use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
 use ui_theme::{Kind, Palette, ThemePref};
 use windows_sys::Win32::Foundation::*;
 use windows_sys::Win32::Graphics::Gdi::*;
@@ -23,6 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
 const WM_APP_RUN_PENDING: u32 = WM_APP + 1;
 const WM_APP_FOLLOW: u32 = WM_APP + 2;
+const WM_APP_SEARCH: u32 = WM_APP + 3;
 const TIMER_ID: usize = 1;
 const TIMER_MS: u32 = 100;
 const EDIT_ID: isize = 101;
@@ -60,6 +61,9 @@ unsafe extern "system" {
 /// EDIT 하나뿐이라 IME 상태는 전역(서브클래스 프로시저가 `State` 를 잡지 않고도 갱신해야 해서).
 static COMPOSING: AtomicBool = AtomicBool::new(false);
 static CANDIDATE: AtomicBool = AtomicBool::new(false);
+static SEARCH_COMPOSING: AtomicBool = AtomicBool::new(false);
+static SEARCH_CANDIDATE: AtomicBool = AtomicBool::new(false);
+static SEARCH_END_AT: AtomicU64 = AtomicU64::new(0);
 static ORIG_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
 static ORIG_SEARCH_PROC: AtomicIsize = AtomicIsize::new(0);
 /// 방금 KEYDOWN 을 우리가 처리했다 → 뒤따르는 제어 문자(Backspace 8 등)는 EDIT 에 넘기지 않는다.
@@ -453,7 +457,7 @@ unsafe fn read_edit(edit: HWND) -> String {
 unsafe fn search_changed(hwnd: HWND) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
-        if s.quiet || s.shell.prompt.is_some() {
+        if s.quiet || s.shell.prompt.is_some() || SEARCH_COMPOSING.load(Ordering::SeqCst) || SEARCH_CANDIDATE.load(Ordering::SeqCst) {
             return;
         }
         let text = read_edit(s.search_edit);
@@ -465,10 +469,15 @@ unsafe fn search_changed(hwnd: HWND) {
 unsafe fn open_hit(hwnd: HWND, i: usize) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
+        if SEARCH_COMPOSING.load(Ordering::SeqCst) || SEARCH_CANDIDATE.load(Ordering::SeqCst) || comp_len(s.search_edit) > 0 { return; }
         let page = page_rows(hwnd, s);
         let r = s.shell.open_hit(i, page);
         report(s, r);
-        SetFocus(hwnd);
+        if let Some(kind) = s.shell.prompt {
+            let text = if kind == PromptKind::Rename { s.shell.page.clone().unwrap_or_default() } else { String::new() };
+            set_search_text(s, &text);
+            focus_search(hwnd);
+        } else { SetFocus(hwnd); }
         ui_sync(hwnd, true);
     }
 }
@@ -525,6 +534,7 @@ unsafe fn do_button(hwnd: HWND, b: Btn) {
 unsafe fn search_key(parent: HWND, vk: u16) -> bool {
     unsafe {
         let Some(s) = state(parent) else { return false };
+        if SEARCH_COMPOSING.load(Ordering::SeqCst) || SEARCH_CANDIDATE.load(Ordering::SeqCst) || comp_len(s.search_edit) > 0 { return false; }
         match vk {
             VK_RETURN => {
                 if s.shell.prompt.is_some() {
@@ -571,6 +581,15 @@ unsafe fn global_key(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool, in
             return true;
         }
         if !s.shell.panels() || s.shell.prompt.is_some() { return false; }
+        if ctrl && !alt && ((!shift && vk == b'K' as u16) || (shift && vk == b'P' as u16)) {
+            let mode = if shift { SearchMode::Commands } else { SearchMode::Quick };
+            if s.shell.begin_search(mode) {
+                set_search_text(s, "");
+                ui_sync(hwnd, false);
+                focus_search(hwnd);
+            }
+            return true;
+        }
         let action = if ctrl && !alt && !shift && matches!(vk, 0xDB | 0xDD) {
             Some(if vk == 0xDB { Btn::Back } else { Btn::Forward })
         } else if ctrl && shift && !alt && vk == b'F' as u16 {
@@ -586,10 +605,6 @@ unsafe fn global_key(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool, in
             }
         } else { s.shell.toggle_prefix = None; None };
         if let Some(button) = action { do_button(hwnd, button); return true; }
-        if ctrl && !alt && !shift && vk == b'K' as u16 {
-            if s.shell.editor.finish_edit() { focus_search(hwnd); ui_sync(hwnd, false); }
-            return true;
-        }
         false
     }
 }
@@ -778,7 +793,8 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                 if let Some(slot) = lay.result_slot_at(y) {
                     let i = s.shell.hit_first + slot;
                     if i < s.shell.hits.len() {
-                        if shift {
+                        if shift && s.shell.search_mode != SearchMode::Commands
+                            && !(s.shell.search_mode == SearchMode::Quick && i + 1 == s.shell.hits.len() && s.shell.create_page.is_some()) {
                             let hit = s.shell.hits[i].clone();
                             let res = s.shell.open_card(&hit.page, hit.block);
                             report(s, res);
@@ -1214,8 +1230,8 @@ unsafe fn create_edit(parent: HWND, hinst: HINSTANCE, font: HFONT, dpi: u32) -> 
             WS_CHILD | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_AUTOHSCROLL as u32 | ES_LEFT as u32,
             0,
             0,
-            10,
-            10,
+            scale(200, dpi),
+            scale(28, dpi),
             parent,
             EDIT_ID as HMENU,
             hinst,
@@ -1235,7 +1251,25 @@ unsafe extern "system" fn search_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         let orig: WNDPROC = std::mem::transmute::<isize, WNDPROC>(ORIG_SEARCH_PROC.load(Ordering::SeqCst));
         let parent = GetParent(hwnd);
         match msg {
-            WM_KEYDOWN if wp as u32 != VK_PROCESSKEY as u32 && comp_len(hwnd) == 0 => {
+            WM_IME_STARTCOMPOSITION => { SEARCH_COMPOSING.store(true, Ordering::SeqCst); }
+            WM_IME_ENDCOMPOSITION => {
+                let result = CallWindowProcW(orig, hwnd, msg, wp, lp);
+                SEARCH_COMPOSING.store(false, Ordering::SeqCst);
+                SEARCH_END_AT.store(now_ms(), Ordering::SeqCst);
+                PostMessageW(parent, WM_APP_SEARCH, 0, 0);
+                return result;
+            }
+            WM_IME_NOTIFY => match wp as u32 {
+                IMN_OPENCANDIDATE => { SEARCH_CANDIDATE.store(true, Ordering::SeqCst); }
+                IMN_CLOSECANDIDATE => {
+                    SEARCH_CANDIDATE.store(false, Ordering::SeqCst);
+                    PostMessageW(parent, WM_APP_SEARCH, 0, 0);
+                }
+                _ => {}
+            },
+            WM_KEYDOWN if wp as u32 != VK_PROCESSKEY as u32 && comp_len(hwnd) == 0
+                && !SEARCH_COMPOSING.load(Ordering::SeqCst) && !SEARCH_CANDIDATE.load(Ordering::SeqCst) => {
+                if matches!(wp as u16, VK_RETURN | VK_TAB) && now_ms().saturating_sub(SEARCH_END_AT.load(Ordering::SeqCst)) <= 50 { return 0; }
                 if global_key(parent, wp as u16, ctrl_down(), alt_down(), shift_down(), true) { return 0; }
                 if search_key(parent, wp as u16) {
                     return 0;
@@ -1250,6 +1284,9 @@ unsafe extern "system" fn search_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
 
 unsafe fn create_search_edit(parent: HWND, hinst: HINSTANCE, font: HFONT, dpi: u32) -> HWND {
     unsafe {
+        SEARCH_COMPOSING.store(false, Ordering::SeqCst);
+        SEARCH_CANDIDATE.store(false, Ordering::SeqCst);
+        SEARCH_END_AT.store(0, Ordering::SeqCst);
         let edit = CreateWindowExW(0, wide("EDIT").as_ptr(), null(), WS_CHILD | ES_AUTOHSCROLL as u32 | ES_LEFT as u32, 0, 0, 10, 10, parent, SEARCH_ID as HMENU, hinst, null());
         SendMessageW(edit, WM_SETFONT, font as WPARAM, 0);
         let m = crate::paint::scale(4, dpi) as isize;
@@ -1341,6 +1378,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 ui_sync(hwnd, true);
                 0
             }
+            WM_APP_SEARCH => { search_changed(hwnd); 0 }
             WM_SETFOCUS => {
                 // Alt+Tab 으로 돌아왔을 때 편집 중이면 EDIT 로 포커스를 돌려 준다.
                 if let Some(s) = state(hwnd) {
@@ -1669,6 +1707,13 @@ impl Harness {
             search_changed(self.hwnd);
         }
     }
+
+    /// 실제 검색 EDIT의 메시지 처리 경로. 물리 키보드·포인터는 건드리지 않는다.
+    pub fn search_message(&mut self, msg: u32, wp: usize, lp: isize) {
+        unsafe { SendMessageW((*self.state).search_edit, msg, wp, lp); }
+    }
+
+    pub fn refresh_search(&mut self) { unsafe { search_changed(self.hwnd); } }
 
     /// 검색 칸·이름 입력 칸의 현재 글.
     pub fn search_text(&mut self) -> String {

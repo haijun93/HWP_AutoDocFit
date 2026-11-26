@@ -30,6 +30,9 @@ pub enum PromptKind {
     Rename,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchMode { Legacy, Quick, Commands }
+
 /// 오늘 날짜·시각 문자열(시험에서는 고정값으로 바꾼다).
 #[derive(Clone, Debug)]
 pub struct Now {
@@ -49,6 +52,9 @@ pub struct Shell<H: EditHost> {
     pub query: String,
     pub hits: Vec<Hit>,
     pub search_open: bool,
+    pub search_mode: SearchMode,
+    pub create_page: Option<String>,
+    pub command_hits: Vec<crate::commands::Action>,
     pub hit_sel: usize,
     pub hit_first: usize,
     pub back: Vec<BackItem>,
@@ -84,6 +90,9 @@ impl<H: EditHost> Shell<H> {
             query: String::new(),
             hits: Vec::new(),
             search_open: false,
+            search_mode: SearchMode::Legacy,
+            create_page: None,
+            command_hits: Vec::new(),
             hit_sel: 0,
             hit_first: 0,
             back: Vec::new(),
@@ -135,6 +144,8 @@ impl<H: EditHost> Shell<H> {
         self.recent = if keep.is_empty() { store.load_recent(&self.pages) } else { keep };
         self.editor.page_names = self.pages.clone();
         self.editor.recent_names = self.recent.clone();
+        (self.editor.tag_names, self.editor.graph_blocks) = find::completion_catalog(&store, self.page.as_deref());
+        self.editor.today = (self.clock)().date_iso;
     }
 
     /// 왼쪽 패널에 그릴 목록(검색 칸 글로 거른 것). 이름 입력 줄이 열려 있는 동안은 거르지 않는다.
@@ -313,6 +324,9 @@ impl<H: EditHost> Shell<H> {
         self.refresh_lists();
         self.refresh_backlinks();
         self.search_open = false;
+        self.search_mode = SearchMode::Legacy;
+        self.create_page = None;
+        self.command_hits.clear();
         self.hits.clear();
         self.query.clear();
         self.visits.truncate(if self.visits.is_empty() { 0 } else { self.visit_at + 1 });
@@ -427,12 +441,42 @@ impl<H: EditHost> Shell<H> {
 
     // ---------- 검색 ----------
 
+    pub fn begin_search(&mut self, mode: SearchMode) -> bool {
+        if self.store.is_none() || self.prompt.is_some() || !self.editor.finish_edit() { return false; }
+        self.search_mode = mode;
+        self.set_query("");
+        true
+    }
+
     /// 검색어가 바뀔 때마다(Enter 불필요) 부른다. 2글자 미만이면 결과를 닫는다.
     pub fn set_query(&mut self, q: &str) {
         self.query = q.to_string();
         self.left_first = 0;
         self.hit_sel = 0;
         self.hit_first = 0;
+        self.create_page = None;
+        self.command_hits.clear();
+        if self.search_mode == SearchMode::Commands {
+            let entries = crate::commands::palette(q);
+            self.command_hits = entries.iter().map(|(a, _)| *a).collect();
+            self.hits = entries.into_iter().map(|(_, label)| Hit { page: label, block: None, text: "명령 실행".into() }).collect();
+            self.search_open = true;
+            return;
+        }
+        if self.search_mode == SearchMode::Quick {
+            if let Some(store) = &self.store {
+                let md = self.editor.markdown();
+                self.hits = find::quick_search(store, q, &self.recent, self.page.as_deref().map(|p| (p, md.as_str())));
+                if let Ok(name) = crate::pages::validate_name(q) {
+                    if !store.list().iter().any(|p| p.eq_ignore_ascii_case(&name)) {
+                        self.create_page = Some(name.clone());
+                        self.hits.push(Hit { page: name, block: None, text: "새 페이지 생성 (Enter)".into() });
+                    }
+                }
+            }
+            self.search_open = true;
+            return;
+        }
         if q.trim().chars().count() < 2 {
             self.hits.clear();
             self.search_open = false;
@@ -448,6 +492,9 @@ impl<H: EditHost> Shell<H> {
 
     pub fn close_search(&mut self) {
         self.search_open = false;
+        self.search_mode = SearchMode::Legacy;
+        self.create_page = None;
+        self.command_hits.clear();
         self.hits.clear();
         self.query.clear();
     }
@@ -463,7 +510,38 @@ impl<H: EditHost> Shell<H> {
     /// 검색 결과로 이동: 페이지를 열고 해당 블록을 선택한다.
     pub fn open_hit(&mut self, i: usize, page_rows: usize) -> Result<(), String> {
         let hit = self.hits.get(i).cloned().ok_or("결과가 없습니다")?;
+        if self.search_mode == SearchMode::Commands {
+            let action = *self.command_hits.get(i).ok_or("명령이 없습니다")?;
+            return self.run_palette(action);
+        }
+        if self.search_mode == SearchMode::Quick && i + 1 == self.hits.len() && self.create_page.as_ref() == Some(&hit.page) {
+            self.new_page(&hit.page)?;
+            self.editor.start_edit_selected();
+            return Ok(());
+        }
+        if !self.store()?.exists(&hit.page) { return Err("검색 대상이 사라졌습니다. 다시 검색해 주세요".into()); }
         self.goto(&hit.page, hit.block, page_rows)
+    }
+
+    fn run_palette(&mut self, action: crate::commands::Action) -> Result<(), String> {
+        use crate::commands::Action;
+        use crate::edit::Cmd;
+        // 실패하는 명령도 팔레트를 닫고 기존 Editor 오류 문구를 보여 준다.
+        self.close_search();
+        match action {
+            Action::Save => if !self.editor.save() { return Err(self.editor.message.clone().unwrap_or("저장 실패".into())); },
+            Action::Undo => { self.editor.history_step(true); }
+            Action::Redo => { self.editor.history_step(false); }
+            Action::Left => self.left_open = !self.left_open,
+            Action::Right => self.right_open = !self.right_open,
+            Action::Today => self.open_today()?,
+            Action::New => { self.begin_prompt(PromptKind::NewPage); }
+            Action::Rename => { self.begin_prompt(PromptKind::Rename); }
+            Action::Todo => self.editor.nav_command(Cmd::Toggle),
+            Action::Collapse => self.editor.nav_command(Cmd::Collapse),
+            Action::Expand => self.editor.nav_command(Cmd::Expand),
+        }
+        Ok(())
     }
 
     pub fn goto_backlink(&mut self, i: usize, page_rows: usize) -> Result<(), String> {
@@ -489,6 +567,9 @@ impl<H: EditHost> Shell<H> {
         }
         self.prompt = Some(kind);
         self.search_open = false;
+        self.search_mode = SearchMode::Legacy;
+        self.create_page = None;
+        self.command_hits.clear();
         Some(if kind == PromptKind::Rename { self.page.clone().unwrap_or_default() } else { String::new() })
     }
 

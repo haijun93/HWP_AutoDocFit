@@ -95,7 +95,11 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         let label = match shell.prompt {
             Some(PromptKind::NewPage) => "새 이름",
             Some(PromptKind::Rename) => "바꿀 이름",
-            None => "검색",
+            None => match shell.search_mode {
+                crate::shell::SearchMode::Quick => "찾기",
+                crate::shell::SearchMode::Commands => "명령",
+                _ => "검색",
+            },
         };
         let mut lr = lay.search_label;
         lr.r += scale(24, lay.dpi) * shell.prompt.is_some() as i32;
@@ -241,7 +245,8 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
         fill(dc, rc(head), pal.head_bg);
         fill(dc, RECT { left: c.l, top: head.b - 1, right: c.r, bottom: head.b }, pal.divider);
         SelectObject(dc, fb);
-        text(dc, &format!("검색 결과 {}건 — {}", shell.hits.len(), shell.query.trim()), rc(inset(head, pad)), pal.text, 0);
+        let title = if shell.search_mode == crate::shell::SearchMode::Commands { "명령 팔레트" } else { "검색 결과" };
+        text(dc, &format!("{title} {}건 — {} · ↑↓ 선택 · Enter 실행 · Esc 닫기", shell.hits.len(), shell.query.trim()), rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
         if shell.hits.is_empty() {
             let row = R::new(c.l, head.b, c.r, head.b + lay.result_h * 2);
@@ -256,6 +261,10 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
             if sel {
                 fill(dc, rc(row), pal.selected);
             }
+            if shell.search_mode == crate::shell::SearchMode::Commands {
+                text(dc, &hit.page, rc(inset(row, pad)), pal.row_text(sel, pal.text), 0);
+                continue;
+            }
             let name_w = scale(150, lay.dpi);
             let mut nr = inset(row, pad);
             nr.r = nr.l + name_w;
@@ -264,7 +273,7 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
             SelectObject(dc, f);
             let mut br = inset(row, pad);
             br.l = nr.r + scale(8, lay.dpi);
-            let body = if hit.block.is_none() { "(페이지 이름)" } else { hit.text.as_str() };
+            let body = if hit.block.is_none() && hit.text.is_empty() { "(페이지 이름)" } else { hit.text.as_str() };
             text(dc, body, rc(br), pal.row_text(sel, if hit.block.is_none() { pal.text_muted } else { pal.text }), 0);
         }
     }
@@ -279,7 +288,7 @@ unsafe fn draw_popup<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
         frame(dc, r, pal.accent);
         SelectObject(dc, f);
         let pad = scale(8, dpi);
-        for (i, name) in p.items.iter().enumerate() {
+        for (i, name) in p.labels.iter().enumerate() {
             let top = r.t + scale(2, dpi) + i as i32 * lay.popup_h;
             let row = R::new(r.l + 1, top, r.r - 1, top + lay.popup_h);
             let sel = i == p.selected;
