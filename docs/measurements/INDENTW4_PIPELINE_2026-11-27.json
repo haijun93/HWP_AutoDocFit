@@ -1,0 +1,586 @@
+{
+  "runs": [
+    {
+      "kind": "hwpx",
+      "repeat": 1,
+      "enabled": false,
+      "wall_seconds": 27.281,
+      "document_seconds": 24.3123,
+      "com_calls": 19894,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 1.734,
+          "visits": 1,
+          "com_calls": 2278,
+          "com_seconds": 1.4134,
+          "python_seconds": 0.3205
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 1.123,
+          "visits": 1,
+          "com_calls": 2090,
+          "com_seconds": 0.9329,
+          "python_seconds": 0.1901
+        }
+      ],
+      "indent_seconds": 2.857,
+      "indent_com_calls": 4368,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단",
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단"
+      ]
+    },
+    {
+      "kind": "hwpx",
+      "repeat": 1,
+      "enabled": true,
+      "wall_seconds": 32.028,
+      "document_seconds": 29.0405,
+      "com_calls": 18653,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 3.8301,
+          "visits": 1,
+          "com_calls": 2092,
+          "com_seconds": 1.425,
+          "python_seconds": 2.4051
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 2.9618,
+          "visits": 1,
+          "com_calls": 1034,
+          "com_seconds": 0.8006,
+          "python_seconds": 2.1613
+        }
+      ],
+      "indent_seconds": 6.792,
+      "indent_com_calls": 3126,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] XML 직접 기록 10문단",
+        "[폭 표 내어쓰기] 표 처리 2문단 / 한/글 처리 12문단",
+        "[폭 표 내어쓰기] 표 처리 14문단 / 한/글 처리 0문단"
+      ]
+    },
+    {
+      "kind": "hwpx",
+      "repeat": 2,
+      "enabled": false,
+      "wall_seconds": 27.642,
+      "document_seconds": 24.6989,
+      "com_calls": 19894,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 1.5585,
+          "visits": 1,
+          "com_calls": 2278,
+          "com_seconds": 1.2793,
+          "python_seconds": 0.2791
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 1.1154,
+          "visits": 1,
+          "com_calls": 2090,
+          "com_seconds": 0.9274,
+          "python_seconds": 0.188
+        }
+      ],
+      "indent_seconds": 2.674,
+      "indent_com_calls": 4368,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단",
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단"
+      ]
+    },
+    {
+      "kind": "hwpx",
+      "repeat": 2,
+      "enabled": true,
+      "wall_seconds": 31.43,
+      "document_seconds": 28.569,
+      "com_calls": 18653,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 3.9132,
+          "visits": 1,
+          "com_calls": 2092,
+          "com_seconds": 1.4869,
+          "python_seconds": 2.4263
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 2.8491,
+          "visits": 1,
+          "com_calls": 1034,
+          "com_seconds": 0.7082,
+          "python_seconds": 2.1409
+        }
+      ],
+      "indent_seconds": 6.762,
+      "indent_com_calls": 3126,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] XML 직접 기록 10문단",
+        "[폭 표 내어쓰기] 표 처리 2문단 / 한/글 처리 12문단",
+        "[폭 표 내어쓰기] 표 처리 14문단 / 한/글 처리 0문단"
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 1,
+      "enabled": false,
+      "wall_seconds": 28.638,
+      "document_seconds": 25.6156,
+      "com_calls": 19898,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 1.5235,
+          "visits": 1,
+          "com_calls": 2278,
+          "com_seconds": 1.258,
+          "python_seconds": 0.2656
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 1.2726,
+          "visits": 1,
+          "com_calls": 2090,
+          "com_seconds": 1.0598,
+          "python_seconds": 0.2128
+        }
+      ],
+      "indent_seconds": 2.796,
+      "indent_com_calls": 4368,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단",
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단"
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 1,
+      "enabled": true,
+      "wall_seconds": 33.649,
+      "document_seconds": 30.126,
+      "com_calls": 18657,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 4.0247,
+          "visits": 1,
+          "com_calls": 2092,
+          "com_seconds": 1.4853,
+          "python_seconds": 2.5394
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 2.9707,
+          "visits": 1,
+          "com_calls": 1034,
+          "com_seconds": 0.6897,
+          "python_seconds": 2.2811
+        }
+      ],
+      "indent_seconds": 6.995,
+      "indent_com_calls": 3126,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] XML 직접 기록 10문단",
+        "[폭 표 내어쓰기] 표 처리 2문단 / 한/글 처리 12문단",
+        "[폭 표 내어쓰기] 표 처리 14문단 / 한/글 처리 0문단"
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 2,
+      "enabled": false,
+      "wall_seconds": 28.049,
+      "document_seconds": 25.1352,
+      "com_calls": 19898,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 1.5124,
+          "visits": 1,
+          "com_calls": 2278,
+          "com_seconds": 1.2549,
+          "python_seconds": 0.2575
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 1.1343,
+          "visits": 1,
+          "com_calls": 2090,
+          "com_seconds": 0.9457,
+          "python_seconds": 0.1886
+        }
+      ],
+      "indent_seconds": 2.647,
+      "indent_com_calls": 4368,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단",
+        "[폭 표 내어쓰기] 표 처리 0문단 / 한/글 처리 14문단"
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 2,
+      "enabled": true,
+      "wall_seconds": 33.31,
+      "document_seconds": 30.334,
+      "com_calls": 18657,
+      "indent_stages": [
+        {
+          "name": "최종 서식 기준 내어쓰기",
+          "seconds": 4.1544,
+          "visits": 1,
+          "com_calls": 2092,
+          "com_seconds": 1.4875,
+          "python_seconds": 2.6669
+        },
+        {
+          "name": "최종 내어쓰기 재확인",
+          "seconds": 2.9753,
+          "visits": 1,
+          "com_calls": 1034,
+          "com_seconds": 0.6754,
+          "python_seconds": 2.2999
+        }
+      ],
+      "indent_seconds": 7.13,
+      "indent_com_calls": 3126,
+      "pages": 3,
+      "original_unchanged": true,
+      "copy_unchanged": true,
+      "table_logs": [
+        "[폭 표 내어쓰기] XML 직접 기록 10문단",
+        "[폭 표 내어쓰기] 표 처리 2문단 / 한/글 처리 12문단",
+        "[폭 표 내어쓰기] 표 처리 14문단 / 한/글 처리 0문단"
+      ]
+    }
+  ],
+  "comparisons": [
+    {
+      "kind": "hwpx",
+      "repeat": 1,
+      "comparison": {
+        "paragraph_counts": [
+          15,
+          15
+        ],
+        "same_count": true,
+        "text": [],
+        "styles": [],
+        "paragraph_other": [],
+        "max_margin_error_pt": 0.0,
+        "over_half_pt": 0
+      },
+      "coverage": [
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        },
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        }
+      ]
+    },
+    {
+      "kind": "hwpx",
+      "repeat": 2,
+      "comparison": {
+        "paragraph_counts": [
+          15,
+          15
+        ],
+        "same_count": true,
+        "text": [],
+        "styles": [],
+        "paragraph_other": [],
+        "max_margin_error_pt": 0.0,
+        "over_half_pt": 0
+      },
+      "coverage": [
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        },
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        }
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 1,
+      "comparison": {
+        "paragraph_counts": [
+          15,
+          15
+        ],
+        "same_count": true,
+        "text": [],
+        "styles": [],
+        "paragraph_other": [],
+        "max_margin_error_pt": 0.0,
+        "over_half_pt": 0
+      },
+      "coverage": [
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        },
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        }
+      ]
+    },
+    {
+      "kind": "hwp",
+      "repeat": 2,
+      "comparison": {
+        "paragraph_counts": [
+          15,
+          15
+        ],
+        "same_count": true,
+        "text": [],
+        "styles": [],
+        "paragraph_other": [],
+        "max_margin_error_pt": 0.0,
+        "over_half_pt": 0
+      },
+      "coverage": [
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        },
+        {
+          "fonts": [
+            [
+              "HY견고딕",
+              "TTF"
+            ],
+            [
+              "신명 중명조",
+              "HFT"
+            ],
+            [
+              "한컴돋움",
+              "TTF"
+            ],
+            [
+              "함초롬바탕",
+              "TTF"
+            ],
+            [
+              "휴먼명조",
+              "TTF"
+            ]
+          ],
+          "aligns": {
+            "LEFT": 3,
+            "JUSTIFY": 12
+          }
+        }
+      ]
+    }
+  ]
+}

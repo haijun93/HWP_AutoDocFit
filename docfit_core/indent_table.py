@@ -3,7 +3,7 @@
 폭 계산은 ``font_widths``. 여기서는 INDENTW2 가 0.5pt 이내를 확인한 조건인지 **가려내기만** 한다.
 하나라도 확인하지 않은 조건이면 그 문단은 표를 쓰지 않고 기존 한/글 Shift+Tab 방식에 맡긴다.
 
-- 원본: HWP 문서가 아니어야 한다.
+- 원본: HWP 문서는 변환된 작업용 HWPX 를 확인한 경우만 허용한다(INDENTW4).
 - 환경: 한/글 판과 글꼴 파일이 표를 만들 때(``resources/font_widths_env.json``)와 같아야 한다.
 - 문단: 본문 최상위의 글자만 있는 문단(표 칸·글상자·개체·탭·고정폭/묶음 빈칸 제외).
 - 문단 모양: 왼쪽·양쪽 정렬, 최소 빈칸 0, 번호·글머리표 없음, 영문 낱말 유지, 자동 간격 없음.
@@ -119,15 +119,24 @@ def _hwp_source(path) -> bool:
         return False
 
 
-def enabled(hwp, load_settings, source=None) -> bool:
+def enabled(hwp, load_settings, source=None, *, converted_hwpx=None) -> bool:
     """설정이 켜져 있고(기본 켜짐) 열려 있는 한/글이 표를 실측한 판인가. 확인하지 못하면 False(기존 방식).
 
-    ``source`` 는 처리 중인 원본 파일. HWP 문서는 작업용 HWPX 로 바꿔 처리하더라도 기존 방식으로 둔다.
+    ``source`` 는 처리 중인 원본 파일. HWP 는 실제 작업용 ``converted_hwpx`` 패키지가 있을 때만 허용한다.
+    바이너리 원본 자체에는 XML 계산을 적용하지 않는다. 글꼴·문단 조건은 ``plan_document`` 가 가린다.
     """
     try:
-        if source is not None and _hwp_source(source):
+        if not bool(load_settings().get(SETTING_KEY, True)) or not version_matches(hwp.Version):
             return False
-        return bool(load_settings().get(SETTING_KEY, True)) and version_matches(hwp.Version)
+        if source is not None and _hwp_source(source):
+            if converted_hwpx is None or _hwp_source(converted_hwpx):
+                return False
+            # 경로 문자열이나 확장자만으로 HWP 변환이 끝났다고 간주하지 않는다.
+            snapshot = PackageSnapshot.load(converted_hwpx)
+            if "Contents/header.xml" not in snapshot.entries or not any(
+                    _SECTION_NAME.fullmatch(name) for name in snapshot.entries):
+                return False
+        return True
     except Exception:
         return False
 

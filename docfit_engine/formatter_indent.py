@@ -375,19 +375,20 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
         def _폭표_내어쓰기_검사():
             """현재 문서를 HWPX 로 한 번 떠서, 표 값이 맞는 문단을 가릴 검사기를 만든다(INDENTW3).
 
-            꺼짐·HWP 원본·다른 한/글 판·실패면 빈 검사기(모든 문단을 Shift+Tab 으로 처리).
+            꺼짐·다른 한/글 판·변환 확인 실패면 빈 검사기(모든 문단을 Shift+Tab 으로 처리).
             """
             from docfit_core import indent_table
             검사 = indent_table.StageCheck()
-            if not indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'),
-                                        globals().get('현재_처리파일')):
+            if not indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기')):
                 return 검사
             folder = Path(tempfile.mkdtemp(prefix='hwp_format_first_'))
             try:
                 원위치 = hwp.GetPos()
                 source = _제목_임시hwpx_저장(folder / 'indent_table.hwpx')
                 hwp.SetPos(*원위치)
-                검사.plans = indent_table.plan_document(source, 폭표_내어쓰기_오프셋).plans
+                if indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'),
+                                        globals().get('현재_처리파일'), converted_hwpx=source):
+                    검사.plans = indent_table.plan_document(source, 폭표_내어쓰기_오프셋).plans
             except Exception as e:
                 로그(f"[폭 표 내어쓰기] 문서 확인 실패, 모두 한/글 방식으로 처리: {e}")
             finally:

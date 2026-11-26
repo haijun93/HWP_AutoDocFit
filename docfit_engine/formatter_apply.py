@@ -1647,7 +1647,8 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             # 값이 그대로인 문단을 건너뛴다. 실패하면 일괄 서식 결과를 그대로 두고 모두 한/글 방식으로 처리한다.
             if result.applied and globals().get('표준서식_내어쓰기_사용', False):
                 from docfit_core import indent_table
-                if indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'), globals().get('현재_처리파일')):
+                if indent_table.enabled(globals().get('hwp'), globals().get('설정_불러오기'),
+                                        globals().get('현재_처리파일'), converted_hwpx=target):
                     try:
                         표문단수 = indent_table.apply_in_place(target, 폭표_내어쓰기_오프셋, texts=_표준서식_XML텍스트)
                         로그(f'[폭 표 내어쓰기] XML 직접 기록 {표문단수}문단')
