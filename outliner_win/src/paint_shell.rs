@@ -121,7 +121,7 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         }
         for (b, r) in layout::NAV_BUTTONS.iter().zip(lay.nav_buttons.iter()) {
             let enabled = match b {
-                layout::Btn::Back => shell.can_back(),
+                layout::Btn::Back => shell.can_back() || shell.editor.view.can_zoom_back(),
                 layout::Btn::Forward => shell.can_forward(),
                 layout::Btn::Favorite => shell.page.is_some(),
                 _ => true,

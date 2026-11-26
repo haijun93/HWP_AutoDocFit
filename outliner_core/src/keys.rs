@@ -85,6 +85,58 @@ pub(crate) fn carry_extra(into: &mut Block, from: &Block) {
 
 // ---------------------------------------------------------------- 트리 도우미
 
+/// 불릿 드롭 위치. After는 대상의 하위 전체 뒤, Child는 마지막 자식이다.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DropPlace { Before, After, Child }
+
+/// 하위를 동반하는 한 번의 드롭. 실패·같은 위치는 입력 문서를 바꾸지 않는다.
+pub fn move_subtree(doc: &mut Document, source: u64, target: u64, place: DropPlace) -> Result<bool, OutlinerError> {
+    let invalid = || OutlinerError::Invalid("자기 자신이나 하위로 옮길 수 없습니다".into());
+    let from = index_of(doc, source).ok_or_else(invalid)?;
+    let to = index_of(doc, target).ok_or_else(invalid)?;
+    let end = end_of(&doc.blocks, from);
+    if (from..end).contains(&to) { return Err(invalid()); }
+    let target_end = end_of(&doc.blocks, to);
+    let range = span(doc, from, end - 1);
+    let at = match place {
+        DropPlace::Before => seq_of(doc, to),
+        DropPlace::After | DropPlace::Child => seq_of(doc, target_end - 1) + 1,
+    };
+    let indent = match place {
+        DropPlace::Child => child_indent(&doc.blocks, to),
+        _ => doc.blocks[to].indent,
+    };
+    // 보존 Markdown 문법(코드 펜스·제목 등)을 넘어 구조를 붙이지 않는다.
+    let corridor = range.start.min(at)..range.end.max(at);
+    if doc.sequence[corridor].iter().any(|n| matches!(n, LineNode::Raw(s) if !s.trim().is_empty())) {
+        return Err(OutlinerError::Invalid("보존 문법 경계를 넘어 옮길 수 없습니다".into()));
+    }
+    let old = doc.blocks[from].indent;
+    if doc.blocks[from..end].iter().any(|b| b.indent.checked_sub(old).and_then(|n| n.checked_add(indent)).is_none()) {
+        return Err(OutlinerError::Invalid("들여쓰기 범위를 초과했습니다".into()));
+    }
+    if (range.start..=range.end).contains(&at) && indent == old { return Ok(false); }
+    let mut next = doc.clone();
+    for block in &mut next.blocks[from..end] { block.indent = block.indent - old + indent; }
+    // 대상이 조상이면 끝 경계가 구간 끝과 같을 수 있다(같은 자리에서 내어쓰기).
+    if at < range.start || at >= range.end { move_span(&mut next, range, at); }
+    if place == DropPlace::Child { next.blocks[to].folded = false; }
+    // 큰 문서에서도 블록 순서 재구성은 선형 시간이다.
+    let mut by_id: std::collections::HashMap<_, _> = next.blocks.drain(..).map(|b| (b.id, b)).collect();
+    for node in &next.sequence {
+        if let LineNode::Block(id) = node { next.blocks.push(by_id.remove(id).expect("existing block")); }
+    }
+    for (i, b) in next.blocks.iter_mut().enumerate() { b.line_index = i; }
+    let count = next.sequence.len();
+    for (i, ending) in next.line_endings.iter_mut().enumerate() {
+        if i + 1 == count && !next.trailing_newline { ending.clear(); }
+        else if ending.is_empty() { *ending = next.newline.clone(); }
+    }
+    next.edited = true;
+    *doc = next;
+    Ok(true)
+}
+
 fn end_of(blocks: &[Block], i: usize) -> usize {
     let mut e = i + 1;
     while e < blocks.len() && blocks[e].indent > blocks[i].indent {

@@ -111,6 +111,7 @@ mod store;
 pub use api::handle_request;
 pub use history::{UndoHistory, MAX_UNDO_BYTES, MAX_UNDO_DEPTH};
 pub use keys::{apply_key, pair_backspace, type_char, Cursor, KeyInput, KeyOutcome};
+pub use keys::{move_subtree, DropPlace};
 pub use index::{backlinks, build_index, resolve_block_ref, BlockRefResolution, Index};
 pub use ops::{edit, edit_many, edit_with_offset};
 pub use parse_serialize::{parse, serialize};

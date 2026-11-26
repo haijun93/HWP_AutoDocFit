@@ -41,7 +41,11 @@ impl Metrics {
 
     /// 깊이 `depth` 줄의 불릿(접기 삼각형) 중심 x.
     pub fn marker_x(&self, depth: usize) -> i32 {
-        self.pad + self.indent_w / 2 + depth as i32 * self.indent_w
+        self.pad + depth as i32 * self.indent_w
+    }
+
+    pub fn bullet_x(&self, depth: usize) -> i32 {
+        self.marker_x(depth) + self.indent_w / 2
     }
 
     /// 깊이 `depth` 줄의 글자 시작 x(TODO 칸이 없을 때).
@@ -83,6 +87,8 @@ pub struct Extras {
     pub message: Option<String>,
     /// 저장하지 않은 변경 → 머리글 제목 앞에 ●.
     pub dirty: bool,
+    pub drop_hint: Option<crate::bullet::DropHint>,
+    pub drag_invalid: bool,
 }
 
 /// 편집 창(EDIT)과 같은 글꼴을 만든다(호출한 쪽이 `DeleteObject`).
@@ -221,6 +227,15 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             }
         }
         fill(dc, RECT { left: 0, top: m.header_h - 1, right: w, bottom: m.header_h }, pal.divider);
+        if view.zoom.is_some() {
+            fill(dc, RECT { left: 0, top: 0, right: w, bottom: m.header_h - 1 }, pal.head_bg);
+            for crumb in crate::bullet::crumbs(view, dpi, w) {
+                let r = crumb.rect;
+                text(dc, &crumb.label, RECT { left: r.l + scale(4, dpi), top: r.t, right: r.r, bottom: r.b }, pal.accent, DT_LEFT);
+            }
+            let status = format!("{}{}", if extras.dirty { "● " } else { "" }, extras.message.as_deref().unwrap_or("블록 줌 · Ctrl+[ 뒤로 · ↑ 상위 블록"));
+            text(dc, &status, RECT { left: m.pad, top: m.header_h / 2, right: w - m.pad, bottom: m.header_h - 1 }, pal.text_sub, DT_LEFT);
+        }
 
         if view.rows.is_empty() {
             let r = RECT { left: m.pad, top: m.header_h, right: w - m.pad, bottom: m.header_h + m.row_h * 2 };
@@ -244,7 +259,7 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
             }
             // 들여쓰기 안내선(조상 단계마다 세로선).
             for d in 0..row.depth {
-                let x = m.marker_x(d);
+                let x = m.bullet_x(d);
                 line(dc, pal.divider, 1, &[(x, top), (x, top + height)]);
             }
             let mid = top + m.row_h / 2;
@@ -259,8 +274,10 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
                     [POINT { x: mx - s - 1, y: mid - s }, POINT { x: mx + s + 1, y: mid - s }, POINT { x: mx, y: mid + s }]
                 };
                 polygon(dc, pal.row_text(selected, pal.accent), &tri);
-            } else {
+            }
+            {
                 // 불릿 점.
+                let mx = m.bullet_x(row.depth);
                 let brush = CreateSolidBrush(pal.row_text(selected, pal.text_faint));
                 let pen = CreatePen(PS_SOLID, 1, pal.row_text(selected, pal.text_faint));
                 let (ob, op) = (SelectObject(dc, brush), SelectObject(dc, pen));
@@ -270,6 +287,14 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
                 SelectObject(dc, op);
                 DeleteObject(brush);
                 DeleteObject(pen);
+                if row.folded && row.has_children {
+                    let radius = scale(6, dpi);
+                    let brush = GetStockObject(NULL_BRUSH);
+                    let pen = CreatePen(PS_SOLID, scale(1, dpi).max(1), pal.row_text(selected, pal.accent));
+                    let (ob, op) = (SelectObject(dc, brush), SelectObject(dc, pen));
+                    Ellipse(dc, mx - radius, mid - radius, mx + radius + 1, mid + radius + 1);
+                    SelectObject(dc, ob); SelectObject(dc, op); DeleteObject(pen);
+                }
             }
             let mut tx = m.text_x(row.depth);
             let mut color = ink;
@@ -317,6 +342,23 @@ pub unsafe fn draw_ext(dc: HDC, w: i32, h: i32, view: &View, pal: &Palette, dpi:
                     }
                 }
             }
+        }
+        if let Some(hint) = extras.drop_hint {
+            if let Some(row) = view.rows.get(hint.row) {
+                let top = m.header_h + view.slot_of(hint.row) as i32 * m.row_h;
+                let last = view.rows.iter().enumerate().skip(hint.row + 1).take_while(|(_, r)| r.depth > row.depth).map(|(i, _)| i).last().unwrap_or(hint.row);
+                let subtree_bottom = m.header_h + (view.slot_of(last) + view.rows[last].lines) as i32 * m.row_h;
+                let (x, y) = match hint.place {
+                    outliner_core::DropPlace::Before => (m.bullet_x(row.depth), top),
+                    outliner_core::DropPlace::After => (m.bullet_x(row.depth), subtree_bottom),
+                    outliner_core::DropPlace::Child => (m.bullet_x(row.depth + 1), subtree_bottom),
+                };
+                line(dc, pal.accent, scale(2, dpi).max(1), &[(x, y), (w - m.pad, y)]);
+                let label = match hint.place { outliner_core::DropPlace::Before => "앞에 놓기", outliner_core::DropPlace::After => "하위 전체 뒤에 놓기", outliner_core::DropPlace::Child => "마지막 자식으로 놓기" };
+                text(dc, label, RECT { left: m.pad, top: h - m.row_h, right: w - m.pad, bottom: h }, pal.accent, DT_RIGHT);
+            }
+        } else if extras.drag_invalid {
+            text(dc, "여기에는 놓을 수 없습니다 · Esc 취소", RECT { left: m.pad, top: h - m.row_h, right: w - m.pad, bottom: h }, pal.accent, DT_RIGHT);
         }
         SelectObject(dc, old_font);
         DeleteObject(normal);

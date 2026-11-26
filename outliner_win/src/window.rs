@@ -178,6 +178,8 @@ pub struct State {
     last_title: String,
     /// Ctrl+클릭으로 따라갈 링크(EDIT 에서 창으로 우편 전달).
     pending_link: Option<(String, bool)>,
+    pointer: crate::bullet::Pointer,
+    pointer_at: (i32, i32),
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -233,7 +235,8 @@ unsafe fn page_rows(hwnd: HWND, s: &State) -> usize {
 fn extras_of(s: &mut State) -> Extras {
     let editing_row = s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b));
     let dirty = s.shell.editor.dirty();
-    Extras { editing_row, message: s.shell.editor.message.clone(), dirty }
+    Extras { editing_row, message: s.shell.editor.message.clone(), dirty,
+        drop_hint: s.pointer.hint(), drag_invalid: s.pointer.dragging() && s.pointer.hint().is_none() }
 }
 
 /// 검색·이름 입력 칸의 화면 위치(그리기와 같은 값).
@@ -478,8 +481,12 @@ unsafe fn do_button(hwnd: HWND, b: Btn) {
             Btn::ToggleRight => s.shell.right_open = !s.shell.right_open,
             Btn::Back | Btn::Forward => {
                 let rows = page_rows(hwnd, s);
-                let r = s.shell.navigate(b == Btn::Forward, rows);
-                report(s, r);
+                if b == Btn::Back && s.shell.editor.view.can_zoom_back() {
+                    if s.shell.editor.finish_edit() { s.shell.editor.view.zoom_back(rows); }
+                } else {
+                    let r = s.shell.navigate(b == Btn::Forward, rows);
+                    report(s, r);
+                }
             }
             Btn::Favorite => s.shell.toggle_favorite(),
             Btn::Today => {
@@ -555,6 +562,14 @@ unsafe fn search_key(parent: HWND, vk: u16) -> bool {
 unsafe fn global_key(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool, input: bool) -> bool {
     unsafe {
         let Some(s) = state(hwnd) else { return false };
+        if ctrl && !alt && !shift && vk == 0xDB && s.shell.editor.view.can_zoom_back() {
+            if s.shell.editor.finish_edit() {
+                let page = page_rows(hwnd, s);
+                s.shell.editor.view.zoom_back(page);
+            }
+            ui_sync(hwnd, true);
+            return true;
+        }
         if !s.shell.panels() || s.shell.prompt.is_some() { return false; }
         let action = if ctrl && !alt && !shift && matches!(vk, 0xDB | 0xDD) {
             Some(if vk == 0xDB { Btn::Back } else { Btn::Forward })
@@ -585,6 +600,14 @@ unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
 
 unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool) -> bool {
     unsafe {
+        if let Some(s) = state(hwnd) {
+            if s.pointer != crate::bullet::Pointer::Idle {
+                s.pointer = crate::bullet::Pointer::Idle;
+                ReleaseCapture();
+                ui_sync(hwnd, false);
+                if vk == VK_ESCAPE { return true; }
+            }
+        }
         if global_key(hwnd, vk, ctrl, alt, shift, false) { return true; }
         let Some(s) = state(hwnd) else { return false };
         if s.shell.editor.editing() {
@@ -813,6 +836,16 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
         let (cx, cy) = (x - lay.center.l, y - lay.center.t);
         let m = Metrics::new(s.dpi);
         let page = m.page_rows(lay.center.h());
+        if cy >= 0 && cy < m.header_h && s.shell.editor.view.zoom.is_some() {
+            let path = crate::bullet::crumbs(&s.shell.editor.view, s.dpi, lay.center.w());
+            if let Some((pos, crumb)) = path.iter().enumerate().find(|(_, c)| c.rect.contains(cx, cy)) {
+                if pos == 0 {
+                    if s.shell.editor.finish_edit() { s.shell.editor.view.zoom_back(page); }
+                } else { s.shell.editor.focus(crumb.root); }
+                ui_sync(hwnd, true);
+            }
+            return;
+        }
         let row = s.shell.editor.view.row_at(cy, m.header_h, m.row_h);
         if let Some(i) = row {
             let r = s.shell.editor.view.rows[i].clone();
@@ -821,7 +854,7 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                 let link = crate::paint::link_spans_x(&r.text, m.text_x(r.depth) + if r.status.is_some() { m.status_shift(s.dpi) } else { 0 }, s.dpi)
                     .into_iter().find(|(l, rr, _)| cx >= *l && cx < *rr);
                 let target = if let Some((_, _, name)) = link { Some((name, None)) }
-                    else if (cx - m.marker_x(r.depth)).abs() <= scale(9, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
+                    else if (cx - m.marker_x(r.depth)).abs() <= scale(8, s.dpi) || (cx - m.bullet_x(r.depth)).abs() <= scale(6, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
                     else { None };
                 if let Some((name, block)) = target {
                     let res = s.shell.open_card(&name, block);
@@ -830,12 +863,18 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
                     return;
                 }
             }
-            // 점·접기 삼각형 클릭 = 접기/펼치기.
-            if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(9, s.dpi) {
+            // 접기 삼각형과 불릿은 독립된 표적이다.
+            if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(5, s.dpi) {
                 if s.shell.editor.finish_edit() {
                     s.shell.editor.view.set_selected(i, page);
                     s.shell.editor.view.set_fold(!r.folded, page);
                 }
+                ui_sync(hwnd, true);
+                return;
+            }
+            if (cx - m.bullet_x(r.depth)).abs() <= scale(5, s.dpi) {
+                let id = s.shell.editor.view.doc.blocks[block].id;
+                s.shell.editor.focus(Some(id));
                 ui_sync(hwnd, true);
                 return;
             }
@@ -876,6 +915,145 @@ unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool)
 }
 
 /// 마우스 휠: 커서 아래 영역(왼쪽 목록·검색 결과·오른쪽 역링크·블록 목록)을 민다.
+unsafe fn pointer_down(hwnd: HWND, x: i32, y: i32) -> bool {
+    unsafe {
+        if shift_down() || ctrl_down() { return false; }
+        let Some(s) = state(hwnd) else { return false; };
+        if s.shell.search_open || s.shell.prompt.is_some() { return false; }
+        let lay = layout_of(hwnd, s);
+        if !lay.center.contains(x, y) { return false; }
+        let m = Metrics::new(s.dpi);
+        let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+        let Some(row) = s.shell.editor.view.row_at(cy, m.header_h, m.row_h) else { return false; };
+        let r = &s.shell.editor.view.rows[row];
+        let top = m.header_h + s.shell.editor.view.slot_of(row) as i32 * m.row_h;
+        if (cx - m.bullet_x(r.depth)).abs() > scale(5, s.dpi) || cy >= top + m.row_h { return false; }
+        let source = s.shell.editor.view.doc.blocks[r.block].id;
+        if !s.shell.editor.finish_edit() { ui_sync(hwnd, false); return true; }
+        s.pointer = crate::bullet::Pointer::Armed { source, x: cx, y: cy };
+        SetCapture(hwnd);
+        true
+    }
+}
+
+unsafe fn pointer_motion(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        s.pointer_at = (x, y);
+        if s.pointer == crate::bullet::Pointer::Idle { return; }
+        let lay = layout_of(hwnd, s);
+        let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+        let m = Metrics::new(s.dpi);
+        let threshold = (GetSystemMetricsForDpi(SM_CXDRAG, s.dpi), GetSystemMetricsForDpi(SM_CYDRAG, s.dpi));
+        s.pointer.motion(&s.shell.editor.view, &m, cx, cy, lay.center.w(), lay.center.h(), threshold);
+        if s.pointer.dragging() {
+            let valid = s.pointer.hint().is_some();
+            SetCursor(LoadCursorW(null_mut(), if valid { IDC_SIZEALL } else { IDC_NO }));
+        }
+        ui_sync(hwnd, false);
+    }
+}
+
+unsafe fn drag_scroll(hwnd: HWND) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        if !s.pointer.dragging() { return; }
+        let lay = layout_of(hwnd, s);
+        let (x, y) = s.pointer_at;
+        if !lay.center.contains(x, y) { return; }
+        let m = Metrics::new(s.dpi);
+        let step = if y >= lay.center.b - m.row_h { 1 }
+            else if y >= lay.center.t + m.header_h && y < lay.center.t + m.header_h + m.row_h { -1 }
+            else { return; };
+        s.shell.editor.view.scroll_by(step, m.page_rows(lay.center.h()));
+        pointer_motion(hwnd, x, y);
+    }
+}
+
+unsafe fn pointer_up(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        pointer_motion(hwnd, x, y);
+        let Some(s) = state(hwnd) else { return; };
+        let pointer = std::mem::take(&mut s.pointer);
+        match pointer {
+            crate::bullet::Pointer::Armed { source, .. } => {
+                if layout_of(hwnd, s).center.contains(x, y) { s.shell.editor.focus(Some(source)); }
+            }
+            crate::bullet::Pointer::Dragging { source, hint: Some(hint) } => {
+                let page = page_rows(hwnd, s);
+                s.shell.editor.drop_subtree(source, hint.target, hint.place, page);
+            }
+            _ => {}
+        }
+        ReleaseCapture();
+        ui_sync(hwnd, true);
+    }
+}
+
+/// 메뉴 준비·실행을 나눠 모달 메뉴 메시지 처리 중 State 참조를 보관하지 않는다.
+unsafe fn bullet_menu(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        let menu = {
+            let Some(s) = state(hwnd) else { return; };
+            if s.shell.search_open || s.shell.prompt.is_some() { return; }
+            let lay = layout_of(hwnd, s);
+            if !lay.center.contains(x, y) { return; }
+            let m = Metrics::new(s.dpi);
+            let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+            let Some(row) = s.shell.editor.view.row_at(cy, m.header_h, m.row_h) else { return; };
+            let r = &s.shell.editor.view.rows[row];
+            if (cx - m.bullet_x(r.depth)).abs() > scale(7, s.dpi) { return; }
+            let source = s.shell.editor.view.doc.blocks[r.block].id;
+            let has_children = r.has_children;
+            let folded = r.folded;
+            if !s.shell.editor.finish_edit() { ui_sync(hwnd, false); return; }
+            let Some(row) = s.shell.editor.view.rows.iter().position(|r| s.shell.editor.view.doc.blocks[r.block].id == source) else { return; };
+            s.shell.editor.view.set_selected(row, page_rows(hwnd, s));
+            s.pointer = crate::bullet::Pointer::Idle;
+            let menu = CreatePopupMenu();
+            if menu.is_null() { return; }
+            for (id, label, enabled) in [
+                (1, "이 블록으로 줌", true),
+                (2, "오른쪽에서 열기", s.shell.page.is_some()),
+                (3, if folded { "하위 펼치기" } else { "하위 접기" }, has_children),
+                (4, "하위 포함 복사", true),
+                (5, "하위 포함 삭제", true),
+                (6, "실행 취소\tCtrl+Z", s.shell.editor.can_undo()),
+            ] {
+                AppendMenuW(menu, MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED }, id, wide(label).as_ptr());
+            }
+            menu
+        };
+        ui_sync(hwnd, false);
+        let mut at = POINT { x, y };
+        ClientToScreen(hwnd, &mut at);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, null());
+        DestroyMenu(menu);
+        menu_action(hwnd, command as u32);
+    }
+}
+
+unsafe fn menu_action(hwnd: HWND, command: u32) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        let Some(row) = s.shell.editor.view.rows.get(s.shell.editor.view.selected).cloned() else { return; };
+        let source = s.shell.editor.view.doc.blocks[row.block].id;
+        let page = page_rows(hwnd, s);
+        match command {
+            1 => { s.shell.editor.focus(Some(source)); }
+            2 => if let Some(name) = s.shell.page.clone() {
+                let res = s.shell.open_card(&name, Some(row.block)); report(s, res);
+            },
+            3 => { s.shell.editor.view.set_fold(!row.folded, page); }
+            4 => if let Some(text) = s.shell.editor.selection_command("copy") { clipboard_write(hwnd, &text); },
+            5 => { s.shell.editor.selection_command("delete_selection"); }
+            6 => { s.shell.editor.history_step(true); }
+            _ => {}
+        }
+        ui_sync(hwnd, true);
+    }
+}
+
 unsafe fn wheel(hwnd: HWND, delta: i32, x: i32, y: i32) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
@@ -1181,6 +1359,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_TIMER => {
                 if wp == TIMER_ID {
+                    drag_scroll(hwnd);
                     if let Some(s) = state(hwnd) {
                         if s.shell.editor.waiting() {
                             s.shell.editor.run_pending(now_ms());
@@ -1222,7 +1401,25 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 SetFocus(hwnd);
                 let x = (lp & 0xFFFF) as u16 as i16 as i32;
                 let y = ((lp >> 16) & 0xFFFF) as u16 as i16 as i32;
-                click(hwnd, x, y, msg == WM_LBUTTONDBLCLK);
+                if !pointer_down(hwnd, x, y) { click(hwnd, x, y, msg == WM_LBUTTONDBLCLK); }
+                0
+            }
+            WM_MOUSEMOVE => {
+                pointer_motion(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
+                0
+            }
+            WM_LBUTTONUP => {
+                pointer_up(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
+                0
+            }
+            WM_CAPTURECHANGED | WM_CANCELMODE => {
+                if let Some(s) = state(hwnd) { s.pointer = crate::bullet::Pointer::Idle; }
+                if msg == WM_CANCELMODE && GetCapture() == hwnd { ReleaseCapture(); }
+                InvalidateRect(hwnd, null(), 0);
+                0
+            }
+            WM_RBUTTONUP => {
+                bullet_menu(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
                 0
             }
             WM_GETDLGCODE => (DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTALLKEYS) as isize,
@@ -1280,6 +1477,8 @@ unsafe fn make_state(mut shell: Shell<WinHost>, title: &str, dpi: u32, force_kin
             search_edit: null_mut(),
             quiet: false,
             pending_link: None,
+            pointer: crate::bullet::Pointer::Idle,
+            pointer_at: (0, 0),
             title: title.to_string(),
             dpi,
             pref: ThemePref::System,
@@ -1484,6 +1683,17 @@ impl Harness {
     pub fn shift_click_at(&mut self, x: i32, y: i32) {
         unsafe { click_modifiers(self.hwnd, x, y, false, true) }
     }
+
+    /// 실제 창 프로시저를 통과하는 포인터 입력. 시스템 포인터를 움직이지 않는다.
+    pub fn pointer_message(&mut self, message: u32, x: i32, y: i32) {
+        unsafe { SendMessageW(self.hwnd, message, 0, ((y as u16 as u32) << 16 | x as u16 as u32) as LPARAM); }
+    }
+
+    pub fn pointer_state(&self) -> crate::bullet::Pointer { unsafe { (*self.state).pointer } }
+
+    pub fn drag_tick(&mut self) { unsafe { SendMessageW(self.hwnd, WM_TIMER, TIMER_ID, 0); } }
+
+    pub fn bullet_action(&mut self, command: u32) { unsafe { menu_action(self.hwnd, command); } }
 
     pub fn layout_now(&mut self) -> Layout {
         unsafe { layout_of(self.hwnd, &*self.state) }

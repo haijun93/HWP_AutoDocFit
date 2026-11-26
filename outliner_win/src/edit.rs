@@ -9,7 +9,7 @@
 //!  5. IME 가 키를 `VK_PROCESSKEY` 로 한 번, 조합 확정 뒤 진짜 키로 또 한 번 보내도 명령은 한 번만(50 ms 중복 제거).
 use crate::docio::{self, FileInfo, SaveError};
 use crate::links::{self, LinkCtx};
-use crate::view::{View, build_rows};
+use crate::view::View;
 use outliner_core::{Document, KeyInput, KeyOutcome, UndoHistory, apply_key};
 use std::collections::VecDeque;
 
@@ -234,7 +234,8 @@ impl Tx {
     }
     fn act(&mut self, action: &str, idx: usize, text: Option<&str>) -> Result<(), String> {
         let id = self.doc.blocks.get(idx).ok_or("블록이 없습니다")?.id;
-        self.doc = docio::edit_doc(&self.doc, action, id, text)?;
+        // 화면 문서는 드래그 후에도 ID를 유지한다. JSON 왕복의 순번 재배정을 피한다.
+        outliner_core::edit(&mut self.doc, action, id, text).map_err(|e| e.to_string())?;
         Ok(())
     }
     fn set_text(&mut self, idx: usize, text: &str) -> Result<(), String> {
@@ -717,7 +718,7 @@ impl<H: EditHost> Editor<H> {
 
     fn install(&mut self, doc: Document, target_block: usize) {
         self.view.doc = doc;
-        self.view.rows = build_rows(&self.view.doc);
+        self.view.rebuild();
         if let Some(pos) = self.view.rows.iter().position(|r| r.block == target_block) {
             self.view.selected = pos;
         } else {
@@ -874,6 +875,10 @@ impl<H: EditHost> Editor<H> {
         }
         if self.host.composing() {
             self.host.request_complete();
+            if self.host.composing() {
+                self.message = Some("한글 조합을 확정한 뒤 다시 실행해 주세요".into());
+                return false;
+            }
         }
         if !self.commit_text() {
             return false;
@@ -881,6 +886,39 @@ impl<H: EditHost> Editor<H> {
         self.session = None;
         self.popup = None;
         true
+    }
+
+    pub fn focus(&mut self, root: Option<u64>) -> bool {
+        self.finish_edit() && self.view.focus(root)
+    }
+
+    /// 드롭과 확정할 글을 한 이력 단계에 기록한다. 거절되면 입력·문서·이력 유지.
+    pub fn drop_subtree(&mut self, source: u64, target: u64, place: outliner_core::DropPlace, page: usize) -> bool {
+        self.recorded(|ed| {
+            if ed.host.composing() {
+                ed.host.request_complete();
+                if ed.host.composing() { ed.fail("한글 조합 확정 대기 중입니다".into()); return false; }
+            }
+            let mut doc = ed.view.doc.clone();
+            if let Some(i) = ed.editing_block() {
+                let text = ed.typed_text();
+                let id = doc.blocks[i].id;
+                if let Err(e) = outliner_core::edit(&mut doc, "set_text", id, Some(&text)) { ed.fail(e.to_string()); return false; }
+            }
+            match outliner_core::move_subtree(&mut doc, source, target, place) {
+                Ok(changed) => {
+                    if !changed { return false; }
+                    let keep = doc.blocks.iter().position(|b| b.id == source).unwrap();
+                    ed.session = None;
+                    ed.popup = None;
+                    ed.install(doc, keep);
+                    ed.view.reveal_block(keep, page);
+                    ed.message = Some("하위 블록과 함께 옮김 · Ctrl+Z로 실행 취소".into());
+                    true
+                }
+                Err(e) => { ed.fail(e.to_string()); false }
+            }
+        })
     }
 
     /// 편집 중인 줄과 상관없이 `block` 의 TODO 상태를 토글한다(체크 칸 클릭). 편집 중이면 글을 먼저 확정하고 편집은 유지.
@@ -1023,6 +1061,8 @@ impl<H: EditHost> Editor<H> {
         match docio::parse_doc(&markdown) {
             Ok(doc) => {
                 let keep = editing.or_else(|| self.view.rows.get(self.view.selected).map(|r| r.block)).unwrap_or(0);
+                // 스냅샷은 Markdown이라 ID가 재배정된다. 다른 블록으로 줌하는 것을 막는다.
+                self.view.clear_zoom();
                 self.install(doc, keep);
                 self.popup = None;
                 self.popup_off = None;
