@@ -860,22 +860,58 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                             "resumed_result": True,
                         })
 
+                from docfit_engine.job_state import (
+                    DocumentCancelled, DocumentFailed, DocumentStatus, classify_result, close_failed_document)
+
+                def 미처리_보고(처리한_번호, 사유):
+                    """더 진행할 수 없을 때 남은 문서를 건너뛰지 않았다는 듯 보이지 않게 남긴다."""
+                    nonlocal 실패
+                    로그(f"{사유} — 남은 문서는 처리하지 않습니다.")
+                    for 남은파일 in 파일목록[처리한_번호:]:
+                        실패 += 1
+                        최종검수_문서목록.append({
+                            "source": str(남은파일), "output": None, "success": False,
+                            "status": DocumentStatus.UNPROCESSED, "integrity_ok": None, "error": 사유,
+                        })
+                        gui_queue.put(("document_state", str(남은파일), DocumentStatus.UNPROCESSED, f"미처리 — {사유}"))
+                        gui_queue.put(("document_error", str(남은파일), f"미처리 — {사유}"))
+
                 for index, 파일 in enumerate(파일목록, 1):
                     if index < 시작_인덱스:
                         continue
                     if 중단_요청됨():
                         break
+                    문서_실패 = False
                     try:
-                        result = 문서_처리(파일, index, total, 문장부호기능)
-                        if result is False:
+                        outcome = classify_result(
+                            문서_처리(파일, index, total, 문장부호기능), 중단_요청됨())
+                        if isinstance(outcome, DocumentCancelled):
                             break
-                        성공 += 1
-                        진행률(index / total * 100)
+                        if isinstance(outcome, DocumentFailed):
+                            문서_실패 = True
+                            실패 += 1
+                            # 저장 뒤 실패는 본체가 이미 결과 경로와 함께 기록했다.
+                            기록 = next((r for r in 최종검수_문서목록 if r.get("source") == str(파일)), None)
+                            if 기록 is None:
+                                최종검수_문서목록.append({
+                                    "source": str(파일), "output": None, "success": False,
+                                    "status": DocumentStatus.FAILED, "integrity_ok": None,
+                                    "error": outcome.error,
+                                })
+                            사유 = (기록 or {}).get("error") or outcome.error
+                            if (기록 or {}).get("output"):
+                                사유 = f"{사유} (결과 파일 있음: {Path(기록['output']).name})"
+                            로그(f"문서 처리 실패: {파일} — {사유}")
+                            gui_queue.put(("document_error", str(파일), 사유))
+                        else:
+                            성공 += 1
+                            진행률(index / total * 100)
                     except Exception as e:
+                        문서_실패 = True
                         실패 += 1
                         최종검수_문서목록.append({
                             "source": str(파일), "output": None, "success": False,
-                            "integrity_ok": None, "error": str(e),
+                            "status": DocumentStatus.FAILED, "integrity_ok": None, "error": str(e),
                         })
                         traceback.print_exc()
                         로그(f"문서 처리 오류: {파일} — {e}")
@@ -889,30 +925,41 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         restart_enabled = restart_between_documents_enabled(
                             total, auto_close=bool(자동닫기_설정), compare_view=bool(비교보기_사용))
                         if restart_enabled:
-                            from time import perf_counter
-                            restart_started = perf_counter()
-                            이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
-                            if 자동닫기_설정:
-                                작업창_닫기()
-                            else:
-                                작업창_분리()
-                            hwp = 한글_COM_인스턴스_생성(독립=True)
-                            from docfit_core import hwp_process
-                            from docfit_core.com_perf import wrap_if_enabled
-                            hwp = wrap_if_enabled(hwp)
-                            hwp_process.bind_owner(hwp, hwp_process.take_registered())
-                            hwp.XHwpWindows.Item(0).Visible = True
-                            if not hwp.RegisterModule(REGISTER_MODULE_NAME, REGISTER_MODULE_VALUE):
-                                raise RuntimeError("문서 간 재시작 뒤 보안 모듈 등록에 실패했습니다.")
-                            if 비교보기_사용 and 이전_창목록 is not None:
-                                작업창_임베드(이전_창목록)
-                            restart_seconds = perf_counter() - restart_started
-                            로그(
-                                "다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작하고 "
-                                "보안 모듈을 등록했습니다. "
-                                f"재시작 소요: {restart_seconds:.3f}초"
-                            )
+                            try:
+                                from time import perf_counter
+                                restart_started = perf_counter()
+                                이전_창목록 = _표시중인_최상위창_목록() if 비교보기_사용 else None
+                                if 자동닫기_설정:
+                                    작업창_닫기()
+                                else:
+                                    작업창_분리()
+                                hwp = 한글_COM_인스턴스_생성(독립=True)
+                                from docfit_core import hwp_process
+                                from docfit_core.com_perf import wrap_if_enabled
+                                hwp = wrap_if_enabled(hwp)
+                                hwp_process.bind_owner(hwp, hwp_process.take_registered())
+                                hwp.XHwpWindows.Item(0).Visible = True
+                                if not hwp.RegisterModule(REGISTER_MODULE_NAME, REGISTER_MODULE_VALUE):
+                                    raise RuntimeError("문서 간 재시작 뒤 보안 모듈 등록에 실패했습니다.")
+                                if 비교보기_사용 and 이전_창목록 is not None:
+                                    작업창_임베드(이전_창목록)
+                                restart_seconds = perf_counter() - restart_started
+                                로그(
+                                    "다음 문서의 결과 재현성을 위해 새 한/글 COM 인스턴스를 시작하고 "
+                                    "보안 모듈을 등록했습니다. "
+                                    f"재시작 소요: {restart_seconds:.3f}초"
+                                )
+                            except Exception as e:
+                                traceback.print_exc()
+                                미처리_보고(index, f"문서 간 한/글 재시작 실패: {e}")
+                                break
                         else:
+                            if 문서_실패:
+                                try:
+                                    close_failed_document(hwp)
+                                except Exception as e:
+                                    미처리_보고(index, f"실패한 문서를 닫지 못함: {e}")
+                                    break
                             로그(
                                 "문서 간 한/글 재시작을 건너뜁니다(자동 닫기 끔 또는 비교 보기). "
                                 "DOCFIT_RESTART_BETWEEN_DOCS=1로 강제, 0으로 해제할 수 있습니다."
@@ -978,7 +1025,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         로그(f"  - 확인: {사유}")
                     for 참고 in 최종검수.get("notes", []):
                         로그(f"  - 참고: {참고}")
-                    상태("모든 작업 완료")
+                    상태("모든 작업 완료" if not 실패 else f"작업 종료 — 처리하지 못한 문서 {실패}개")
                     gui_queue.put(("finished", 성공, 실패, 총작업_대상, 총작업_성공, 총작업_실패,
                                    최종검수, str(검수보고서) if 검수보고서 else None))
 
