@@ -817,15 +817,18 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 root.bind("<Configure>", self._메인_크기조정, add="+")
                 root.protocol("WM_DELETE_WINDOW", self.종료)
                 root.after_idle(self._창_최소높이_보정)
-                if getattr(sys, "frozen", False):
+                from docfit_app import screen_mode
+                # 전용 창(--screen)은 업데이트 신호·확인·알림을 맡지 않는다(설치가 다른 창을 닫는다).
+                if getattr(sys, "frozen", False) and screen_mode.current() is None:
                     업데이트_시작신호()
                     # 지난 업데이트가 남긴 구버전 백업과 내려받기 잔여물을 정리한다(교체가 끝난 다음 실행에서).
                     threading.Thread(target=업데이트_잔여정리, daemon=True, name="update-cleanup").start()
-                service = self._업데이트_서비스()
-                service.start_periodic_checks(
-                    root.after, lambda: self.check_updates_on_start_var.get(),
-                    self._서비스_업데이트_안내, alive=lambda: not self.closing)
-                root.after(2000, self._업데이트_버전알림)
+                if screen_mode.current() is None:
+                    service = self._업데이트_서비스()
+                    service.start_periodic_checks(
+                        root.after, lambda: self.check_updates_on_start_var.get(),
+                        self._서비스_업데이트_안내, alive=lambda: not self.closing)
+                    root.after(2000, self._업데이트_버전알림)
 
             def _업데이트_서비스(self):
                 if not hasattr(self, "_update_service"):

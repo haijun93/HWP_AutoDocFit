@@ -129,6 +129,53 @@ fn draw(hdc: HDC, w: i32, h: i32, st: &State) {
     fill(hdc, s, color(40, 105, 190));
     text(hdc, s.left + 26, s.top + 15, "변환 시작", color(255, 255, 255));
 }
+/// 끌어 놓기·다른 창에서 보낸 파일·명령줄을 같은 길로 넣고, 대기 중이면 화면 목록도 함께 바꾼다.
+unsafe fn add_files(hwnd: HWND, paths: Vec<PathBuf>) {
+    unsafe {
+        let st = state(hwnd);
+        if st.model.add_dropped(paths, |p| p.is_file()) > 0 && st.worker_done {
+            *st.results.lock().unwrap() = logic::results(&st.model.files);
+        }
+        InvalidateRect(hwnd, null_mut(), 1);
+    }
+}
+
+/// 닫기 확인 창이 떠 있다(겹쳐 묻지 않는다).
+static CONFIRMING_CLOSE: AtomicBool = AtomicBool::new(false);
+
+/// 닫기 상태: 대기 → 바로 닫음. 변환 중 → 묻기 → (계속) 변환 중 | (중단) 취소 중 → 작업이 끝나면 닫음.
+/// 취소 중의 닫기는 아무것도 하지 않는다.
+unsafe fn close_request(hwnd: HWND) {
+    unsafe {
+        let st = state(hwnd);
+        if st.worker_done {
+            DestroyWindow(hwnd);
+            return;
+        }
+        if st.close_requested || CONFIRMING_CLOSE.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let body = wide("변환이 진행 중입니다. 중단하고 닫을까요?
+이미 만든 결과 파일은 남습니다.");
+        let title = wide("몽땅파일변환");
+        let answer = MessageBoxW(hwnd, body.as_ptr(), title.as_ptr(), MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2);
+        CONFIRMING_CLOSE.store(false, Ordering::Release);
+        if answer != IDYES {
+            return;
+        }
+        // 묻는 동안 변환이 끝났을 수 있다.
+        let st = state(hwnd);
+        if st.worker_done {
+            DestroyWindow(hwnd);
+        } else {
+            st.close_requested = true;
+            if let Some(c) = &st.cancel {
+                c.store(true, Ordering::Release);
+            }
+        }
+    }
+}
+
 fn message(hwnd: HWND, body: &str, flags: u32) {
     let p = wide(body);
     let t = wide("몽땅파일변환");
@@ -228,8 +275,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                     paths.push(PathBuf::from(OsString::from_wide(&buf[..len as usize])));
                 }
                 DragFinish(drop);
-                state(hwnd).model.add_dropped(paths, |p| p.is_file());
-                InvalidateRect(hwnd, null_mut(), 1);
+                add_files(hwnd, paths);
                 0
             }
             WM_LBUTTONUP => {
@@ -276,9 +322,9 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             WM_TIMER => { InvalidateRect(hwnd,null_mut(),1); 0 }
-            WM_CLOSE => { let st=state(hwnd); if st.worker_done { DestroyWindow(hwnd); } else { st.close_requested=true; if let Some(c)=&st.cancel { c.store(true,Ordering::Release); } } 0 }
+            WM_CLOSE => { close_request(hwnd); 0 }
             WM_WORKER_DONE => { let st=state(hwnd); st.worker_done=true; st.cancel=None; KillTimer(hwnd,1); if st.close_requested { DestroyWindow(hwnd); } else { InvalidateRect(hwnd,null_mut(),1); } 0 }
-            WM_OPEN_REQUEST => { let req=Box::from_raw(wp as *mut OpenRequest); let st=state(hwnd); st.model.add_dropped(req.paths,|p|p.is_file()); if let Some(i)=TARGETS.iter().position(|(_,v)|*v==req.target) { st.model.select(i); } SetForegroundWindow(hwnd); InvalidateRect(hwnd,null_mut(),1); 0 }
+            WM_OPEN_REQUEST => { let req=Box::from_raw(wp as *mut OpenRequest); add_files(hwnd, req.paths); let st=state(hwnd); if let Some(i)=TARGETS.iter().position(|(_,v)|*v==req.target) { st.model.select(i); } SetForegroundWindow(hwnd); InvalidateRect(hwnd,null_mut(),1); 0 }
             WM_DESTROY => {
                 let p = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut State;
                 if !p.is_null() {
@@ -366,6 +412,10 @@ pub fn run(args:Vec<String>) -> Result<(), String> {
             drop(Box::from_raw(st));
             CloseHandle(mutex);
             return Err("창을 만들지 못했습니다".into());
+        }
+        // 처음 뜨는 창도 명령줄의 파일을 받는다(이미 떠 있는 창에는 forward_to_instance 가 넘긴다).
+        if !args.is_empty() {
+            add_files(hwnd, args.iter().map(PathBuf::from).collect());
         }
         let hwnd_num=hwnd as usize;
         std::thread::spawn(move||pipe_server(hwnd_num));

@@ -116,7 +116,33 @@ pub fn client_context(owner: HWND, x: i32, y: i32) -> bool {
     }
 }
 
-pub fn menu(owner: HWND, x: i32, y: i32, count: usize, busy: bool) -> Option<Action> {
+/// 오른쪽 메뉴에서 고른 것: 파일 작업 또는 다른 창(메뉴 번호)으로 보내기.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Choice {
+    File(Action),
+    Send(u8),
+}
+
+/// 보내기 줄의 명령 번호는 파일 작업(1부터)과 겹치지 않게 이 값부터다.
+const SEND_ID: usize = 100;
+
+fn choice(id: usize, actions: &[Action]) -> Option<Choice> {
+    match id {
+        0 => None,
+        id if id >= SEND_ID => u8::try_from(id - SEND_ID).ok().map(Choice::Send),
+        id => actions.get(id - 1).copied().map(Choice::File),
+    }
+}
+
+/// 파일 작업 아래에 `send` 줄을 붙인 메뉴 하나. 메시지 루프를 돌므로 창 상태 참조를 쥐지 않고 부른다.
+pub fn menu(
+    owner: HWND,
+    x: i32,
+    y: i32,
+    count: usize,
+    busy: bool,
+    send: &[crate::send_menu::Entry],
+) -> Option<Choice> {
     let actions = [
         Action::Open,
         Action::Clipboard,
@@ -167,6 +193,17 @@ pub fn menu(owner: HWND, x: i32, y: i32, count: usize, busy: bool) -> Option<Act
                 wide(&label).as_ptr(),
             );
         }
+        if !send.is_empty() {
+            AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+        }
+        for entry in send {
+            AppendMenuW(
+                menu,
+                MF_STRING | if entry.enabled && !busy { 0 } else { MF_GRAYED },
+                SEND_ID + entry.menu as usize,
+                wide(&entry.label).as_ptr(),
+            );
+        }
         let chosen = TrackPopupMenu(
             menu,
             TPM_RETURNCMD | TPM_RIGHTBUTTON,
@@ -177,11 +214,7 @@ pub fn menu(owner: HWND, x: i32, y: i32, count: usize, busy: bool) -> Option<Act
             std::ptr::null(),
         );
         DestroyMenu(menu);
-        if chosen > 0 {
-            actions.get(chosen as usize - 1).copied()
-        } else {
-            None
-        }
+        choice(usize::try_from(chosen).unwrap_or(0), &actions)
     }
 }
 
@@ -480,4 +513,20 @@ pub fn listed_destination(path: &str, excludes: &[String]) -> bool {
                 .strip_prefix(p)
                 .is_some_and(|tail| tail.starts_with('/'))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_numbers_separate_file_actions_from_send_targets() {
+        let actions = [Action::Open, Action::Delete];
+        assert_eq!(choice(0, &actions), None);
+        assert_eq!(choice(2, &actions), Some(Choice::File(Action::Delete)));
+        assert_eq!(choice(3, &actions), None);
+        // 문서편집은 메뉴 번호 0 이다(취소의 0 과 섞이면 안 된다).
+        assert_eq!(choice(SEND_ID, &actions), Some(Choice::Send(0)));
+        assert_eq!(choice(SEND_ID + 13, &actions), Some(Choice::Send(13)));
+    }
 }

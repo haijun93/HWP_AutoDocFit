@@ -1,6 +1,13 @@
 //! Pure layout and menu model for the native bottom dock.
 use serde::{Deserialize, Serialize};
 
+pub mod sidebar;
+pub mod handoff;
+pub mod shutdown;
+// 문서뷰·사진뷰(grid_core)와 같은 파일 전달 규칙을 그대로 포함한다.
+#[path = "../../grid_core/src/handoff.rs"]
+pub mod handoff_rules;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rect {
     pub left: i32,

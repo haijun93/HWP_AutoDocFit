@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 
 import '../../core/drop_events.dart';
 import '../../core/instant_search.dart';
+import '../../core/close_guards.dart';
 import '../common/file_handoff.dart';
 import '../editor/memo_editor.dart';
 import '../editor/memo_editor_page.dart';
@@ -299,7 +300,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
     unawaited(_restoreViewMode());
     // 불러오기에 실패해도 다음에 열 때 뒤늦게 들어가지 않게 먼저 가져간다.
     final incoming = widget.incoming?.take() ?? const <String>[];
-    unawaited(_loadBoxes().then((_) => _receiveFiles(incoming)));
+    _receiving = _loadBoxes().then((_) => _receiveFiles(incoming));
+    // 이 화면만 담은 창에서는 화면이 열린 뒤에도 파일이 온다.
+    widget.incoming?.addListener(_onIncoming);
+    _closeWatch = CloseGuards.watch(unsaved: () => _memoDraft == null ? null : '가상 폴더 메모 초안');
     final drops = _dropApi;
     if (drops != null) {
       _stopDrops = (widget.watchDropEvents ??
@@ -309,6 +313,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   void Function()? _stopDrops;
+  WorkWatch? _closeWatch;
+  Future<void> _receiving = Future.value();
+
+  /// 넣을 곳을 묻는 창이 겹치지 않게 앞의 것이 끝난 뒤에 처리한다.
+  void _onIncoming() {
+    final paths = widget.incoming?.take() ?? const <String>[];
+    if (paths.isNotEmpty) {
+      _receiving = _receiving.then((_) => _receiveFiles(paths));
+    }
+  }
 
   LibraryDropApi? get _dropApi {
     final Object api = widget.api;
@@ -508,6 +522,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   void dispose() {
+    _closeWatch?.release();
+    widget.incoming?.removeListener(_onIncoming);
     _stopDrops?.call();
     final drops = _dropApi;
     if (drops != null) unawaited(drops.watchDrops(false).catchError((Object _) {}));

@@ -31,6 +31,10 @@ if not dock_exe.is_file() or not dock_sha256.is_file():
     raise RuntimeError('Build the dock Rust app before PyInstaller packaging')
 binaries.append((str(dock_exe), 'resources'))
 binaries.append((str(dock_sha256), 'resources'))
+# 사이드바 실행 파일(dock 크레이트). 선택 실행 방식이라 있으면 넣는다(없으면 앱이 기존 화면을 연다).
+sidebar_exe = root / 'resources' / 'sidebar.exe'
+if sidebar_exe.is_file():
+    binaries.append((str(sidebar_exe), 'resources'))
 klib_exe = root / 'resources' / 'klib.exe'
 if klib_exe.is_file():
     binaries.append((str(klib_exe), 'resources'))
