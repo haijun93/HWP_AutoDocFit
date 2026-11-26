@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::HashSet;
 use std::sync::Arc;
-use tantivy::{DocAddress, DocSet};
+use tantivy::{DocAddress, DocSet, TERMINATED};
 use tantivy::postings::Postings;
 
 /// 후보 검색은 유지하고, 응답에 필요한 문서만 위치·본문을 복원한다.
@@ -122,7 +122,14 @@ fn occurrences(searcher: &tantivy::Searcher, field: Field, query: &str, candidat
             let Some(mut postings) = inverted.read_postings(&term, IndexRecordOption::WithFreqs)? else { continue; };
             for &i in indices.iter() {
                 let c = &candidates[i];
-                if postings.seek(c.5.doc_id) == c.5.doc_id {
+                let target = c.5.doc_id;
+                if postings.doc() == TERMINATED { break; }
+                let found = if postings.doc() > target {
+                    false
+                } else {
+                    postings.seek(target) == target
+                };
+                if found {
                     let weight = match c.2 { 0 => 1, 1 => 8, 2 => 4, _ => 2 };
                     totals[c.0] += u64::from(postings.term_freq()) * weight;
                 }
