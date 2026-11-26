@@ -209,7 +209,7 @@ python -m pip install pywin32 tkinterdnd2
 
 # Frozen smoke test runs before GUI/COM bootstrap and reports missing packages.
 import sys as _selftest_sys
-APP_VERSION = "2.2.110"  # 화면 없는 작업 프로세스·상주 작업도 같은 버전을 쓴다.
+APP_VERSION = "2.2.111"  # 화면 없는 작업 프로세스·상주 작업도 같은 버전을 쓴다.
 # Rust 작업 요청은 GUI·상주 작업·COM 초기화 전에 처리한다.
 if __name__ == "__main__" and _selftest_sys.argv[1:2] == ["--native-tasks"]:
     from docfit_app.native_tasks import main as _native_tasks_main
