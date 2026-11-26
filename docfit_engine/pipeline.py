@@ -507,7 +507,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 푼수 = 문서_쪽나누기_전체해제(보존 | 묶음보존)
                 if 푼수 or 묶음보존:
                     로그(f"저장 전 쪽 나누기 {푼수}개 해제(보고서 경계 {len(보존)}곳·쪽 배치 묶음 {len(묶음보존)}곳은 유지)")
-            저장파일 = 저장파일명(파일)
+            # 같은 이름의 결과가 있으면 덮어쓰지 않고 번호를 붙인다(손본 이전 결과·a.hwp/a.hwpx 충돌 보호).
+            from docfit_core.output_naming import available_output_path
+            기본_저장파일 = 저장파일명(파일)
+            저장파일 = available_output_path(기본_저장파일)
+            if 저장파일 != 기본_저장파일:
+                로그(f"같은 이름의 결과가 있어 덮어쓰지 않고 새 이름으로 저장합니다: {Path(저장파일).name}")
             단계표시("저장")
             상태(f"{파일명} : {총회차}회 처리 완료 / 최종 저장 중")
             처리쪽수 = 처리_쪽수_구하기()
@@ -806,7 +811,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 if 시작_인덱스 > 1:
                     로그(f"이전에 중단된 작업을 이어서 진행합니다: {시작_인덱스}/{total}번째 문서부터")
                     for 완료파일 in 파일목록[:시작_인덱스 - 1]:
-                        기존결과 = 저장파일명(완료파일)
+                        from docfit_core.output_naming import latest_output_path
+                        기존결과 = latest_output_path(저장파일명(완료파일))
                         최종검수_문서목록.append({
                             "source": str(완료파일), "output": str(기존결과),
                             "success": Path(기존결과).is_file(), "integrity_ok": None,
