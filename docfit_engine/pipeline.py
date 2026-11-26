@@ -675,6 +675,8 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             준말_등록=None,  # 화면이 위치 인자로 호출하므로 새 매개변수는 항상 맨 끝에만 추가한다.
             무결성보고서파일=False,
             최종검수파일=False,
+            *,
+            완료_문서=None,   # 이어하기: 건너뛸 문서의 결과 기록(키워드 전용)
         ):
             global 작업_모드, 문두라벨_기호설정
             global 표_자간조정_사용, 쪽범위_요청, 로그파일_사용
@@ -861,13 +863,16 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         })
 
                 from docfit_engine.job_state import (
-                    DocumentCancelled, DocumentFailed, DocumentStatus, classify_result, close_failed_document)
+                    DocumentCancelled, DocumentFailed, DocumentStatus, classify_result, close_failed_document,
+                    file_key, resumed_records)
 
                 def 미처리_보고(처리한_번호, 사유):
                     """더 진행할 수 없을 때 남은 문서를 건너뛰지 않았다는 듯 보이지 않게 남긴다."""
                     nonlocal 실패
                     로그(f"{사유} — 남은 문서는 처리하지 않습니다.")
                     for 남은파일 in 파일목록[처리한_번호:]:
+                        if file_key(남은파일) in 완료_기록:
+                            continue
                         실패 += 1
                         최종검수_문서목록.append({
                             "source": str(남은파일), "output": None, "success": False,
@@ -876,8 +881,14 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         gui_queue.put(("document_state", str(남은파일), DocumentStatus.UNPROCESSED, f"미처리 — {사유}"))
                         gui_queue.put(("document_error", str(남은파일), f"미처리 — {사유}"))
 
+                # 이어하기는 위치가 아니라 파일별로 판단한다(F08). 실패·미처리 파일은 다시 처리한다.
+                완료_기록 = resumed_records(파일목록, 완료_문서)
+                if 완료_기록:
+                    로그(f"이전에 중단된 작업을 이어서 진행합니다: 결과가 있는 {len(완료_기록)}개 문서는 건너뜁니다.")
+                    최종검수_문서목록.extend(완료_기록.values())
+
                 for index, 파일 in enumerate(파일목록, 1):
-                    if index < 시작_인덱스:
+                    if index < 시작_인덱스 or file_key(파일) in 완료_기록:
                         continue
                     if 중단_요청됨():
                         break

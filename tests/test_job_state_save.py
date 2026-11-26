@@ -169,6 +169,7 @@ class ScreenTests(unittest.TestCase):
         self.addCleanup(self.release.set)
         self.globals = self.app.작업시작.__globals__
         self.events = queue.Queue()
+        self.engine = self.globals['작업_실행']
         stubs = patch.dict(self.globals, {
             '작업_실행': self.fake_job, 'gui_queue': self.events})
         stubs.start()
@@ -178,7 +179,7 @@ class ScreenTests(unittest.TestCase):
         self.app._알림 = Mock(return_value=False)
 
     def fake_job(self, *args, **kwargs):
-        self.calls.append(args)
+        self.calls.append((args, kwargs))
         self.started.set()
         self.release.wait(30)   # 사건을 넣는 동안 작업 스레드는 살아 있어야 한다.
 
