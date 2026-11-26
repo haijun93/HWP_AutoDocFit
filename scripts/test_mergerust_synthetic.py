@@ -43,12 +43,28 @@ def synthetic_template(path: Path) -> None:
     """구역 설정과 글자 문단이 있는 합성 HWPX. 사용자/배포 문서는 읽지 않는다."""
     with zipfile.ZipFile(path, 'w') as archive:
         archive.writestr('mimetype', 'application/hwp+zip')
-        archive.writestr('Contents/header.xml', '<head/>')
+        archive.writestr('Preview/PrvText.txt', '합성 문단')
+        archive.writestr('Contents/content.hpf',
+            '<opf:package xmlns:opf="http://www.idpf.org/2007/opf/">'
+            '<opf:manifest><opf:item id="header" href="header.xml" media-type="application/xml"/>'
+            '<opf:item id="section0" href="section0.xml" media-type="application/xml"/>'
+            '</opf:manifest></opf:package>')
+        archive.writestr('Contents/header.xml',
+            '<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head">'
+            '<hh:refList><hh:fontfaces><hh:fontface lang="HANGUL" fontCnt="1">'
+            '<hh:font id="0" face="한컴돋움" type="TTF"/></hh:fontface></hh:fontfaces>'
+            '<hh:borderFills itemCnt="1"><hh:borderFill id="1"/></hh:borderFills>'
+            '<hh:charProperties itemCnt="1"><hh:charPr id="0" height="1000" textColor="#000000">'
+            '<hh:fontRef hangul="0"/></hh:charPr></hh:charProperties>'
+            '<hh:paraProperties itemCnt="1"><hh:paraPr id="0">'
+            '<hh:align horizontal="LEFT"/></hh:paraPr></hh:paraProperties></hh:refList></hh:head>')
         archive.writestr('Contents/section0.xml',
             '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
             'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
             '<hp:p id="0" paraPrIDRef="0" styleIDRef="0">'
-            '<hp:run charPrIDRef="0"><hp:secPr/></hp:run></hp:p>'
+            '<hp:run charPrIDRef="0"><hp:secPr><hp:pagePr width="59528" height="84188">'
+            '<hp:margin left="8504" right="8504" top="5669" bottom="4252"/>'
+            '</hp:pagePr></hp:secPr></hp:run></hp:p>'
             '<hp:p id="1" paraPrIDRef="0" styleIDRef="0">'
             '<hp:run charPrIDRef="0"><hp:t>합성 문단</hp:t></hp:run></hp:p></hs:sec>')
 

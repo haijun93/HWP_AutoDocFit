@@ -9,6 +9,8 @@
 
 ## 1. 한눈에 보기
 
+2026-11-26 RUSTVIEW1(feature/RUSTVIEW1, 미배포): Rust 사진뷰에 크게 보기·즐겨찾기·태그·중복 찾기·첨부용 사본·사본 편집을 추가했다. 즐겨찾기·태그는 앱 화면과 같은 `photo_album.db` 를 쓰므로 **표를 바꾸면 `photoview_win/src/library.rs` 의 SCHEMA 도 함께** 고친다(`tests/test_photoview_library_schema.py` 가 대조). 썸네일 크기 저장은 `docfit_config::set_thumb_size`. 상세·미확인 항목: docs/RUSTVIEW1_RESULT_2026-11-26.md.
+
 2026-10-25 1.80.10 알파: 항목기호 뒤 hp:tab을 작업용 사본에서 일반 빈칸 1개로 정리해 일괄 서식 제외 문제를 보완했다. 기호 앞 ㅁ/□ 0·ㅇ 1·- 3개 불변 규칙과 낫표 앞 빈칸 1개 정책을 반영한다. 자간/쪽 맞춤 전용 경로는 유지한다. 공개 배포·Windows 실측은 별도 게이트. 상세: docs/V1_80_10_MARKER_TAB_2026-10-25.md.
 
 2026-10-23 v1.80.9 통합 검증(C15): 런처 사용 중 캐시 삭제로 생긴 표그림판 HWPX 없음·다이어그램/마인드맵 404 수정, 표 반복 단위 최대 50(축별 실측 상한), 연간·주간 일정표 날짜 자동 계산, 사진첨부용 모양 1·2 아래로 추가, 표 이름 자판형 배치, 내장 미리보기 69장 동봉. 배포 검증·SHA-256은 `releases/v1.80.9.md`, 작업 보고는 `C:\HWP_AUTODOCFIT\v1803\reports\C15.md`에 기록한다.

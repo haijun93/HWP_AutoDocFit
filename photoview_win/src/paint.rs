@@ -1,6 +1,7 @@
 //! 그리기(GDI). 실제 창과 캡처 모드가 같은 `draw` 를 쓴다. 색은 `ui_theme::Palette` 와 확장자 색표(Flutter 와 같음)만 쓴다.
 //! 가상화: 화면에 걸리는 칸(`Metrics::visible_range`)만 그린다 — 항목이 수만이어도 한 번에 수십 칸.
-use crate::layout::{BANNER_H, Rect, Toolbar, scale};
+use crate::extras::{Command, Photo, Row2, Viewer, ViewerLayout, fit};
+use crate::layout::{BANNER_H, ROW2_H, Rect, Toolbar, scale};
 use crate::model::{App, ScanState, badge_text, photo_color, format_date, format_elapsed, format_size, group_digits};
 use crate::settings::{MAX_THUMB, MIN_THUMB};
 use grid_core::gdi::*;
@@ -11,7 +12,7 @@ use windows_sys::Win32::Graphics::Gdi::*;
 
 pub use grid_core::fmt::blend;
 /// 한 칸: 자리표시 썸네일(THUMBRS 전·해와 산 그림) + 확장자 배지 + 파일 이름 + 크기·수정일.
-unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32, bitmap: Option<&grid_core::shell_thumb::Bitmap>) {
+unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, selected: bool, tz: i64, pal: &Palette, dpi: u32, bitmap: Option<&grid_core::shell_thumb::Bitmap>, photo: &Photo) {
     unsafe {
         let s = |v: i32| scale(v, dpi);
         let col = photo_color(&d.ext);
@@ -49,6 +50,29 @@ unsafe fn draw_card(hdc: HDC, f: &Fonts, r: &Rect, d: &crate::model::Doc, select
         let badge = Rect::new(thumb.left + s(6), thumb.bottom - s(24), thumb.left + s(6) + bw, thumb.bottom - s(6));
         boxed(hdc, &badge, col, col, 1, s(8));
         text(hdc, f.badge, &badge, &label, 0x00FF_FFFF, CENTER);
+        // 즐겨찾기 별(오른쪽 위), 중복 묶음 번호(왼쪽 위), 태그(오른쪽 아래).
+        let mark = photo.mark(&d.path);
+        if mark.is_some_and(|m| m.favorite) {
+            let star = Rect::new(thumb.right - s(26), thumb.top + s(4), thumb.right - s(4), thumb.top + s(26));
+            boxed(hdc, &star, pal.bg, pal.divider, 1, s(22));
+            text(hdc, f.title, &star, "★", ui_theme::rgb(0xF5, 0x9E, 0x0B), CENTER);
+        }
+        if let Some(group) = photo.group_of(&d.path) {
+            let label = format!("묶음 {group}");
+            let chip = Rect::new(thumb.left + s(6), thumb.top + s(6), thumb.left + s(18) + text_width(hdc, f.badge, &label), thumb.top + s(24));
+            boxed(hdc, &chip, pal.accent, pal.accent, 1, s(8));
+            text(hdc, f.badge, &chip, &label, pal.bg, CENTER);
+        }
+        if let Some(tags) = mark.map(|m| &m.tags).filter(|t| !t.is_empty()) {
+            let more = if tags.len() > 1 { format!(" +{}", tags.len() - 1) } else { String::new() };
+            let label = format!("#{}{more}", tags[0]);
+            let width = (text_width(hdc, f.badge, &label) + s(12)).min((thumb.width() - bw - s(20)).max(0));
+            if width > s(24) {
+                let chip = Rect::new(thumb.right - s(6) - width, thumb.bottom - s(24), thumb.right - s(6), thumb.bottom - s(6));
+                boxed(hdc, &chip, pal.bg, pal.divider, 1, s(8));
+                text(hdc, f.badge, &chip, &label, pal.text_sub, CENTER);
+            }
+        }
         // 파일 이름(한 줄)·크기·수정일.
         let name = Rect::new(r.left + s(10), r.bottom - info_h, r.right - s(10), r.bottom - s(24));
         text(hdc, f.bold, &name, &d.name, pal.text, ONE_LINE);
@@ -125,10 +149,87 @@ unsafe fn draw_toolbar(hdc: HDC, f: &Fonts, tb: &Toolbar, app: &App, pal: &Palet
     }
 }
 
+unsafe fn draw_row2(hdc: HDC, f: &Fonts, w: i32, app: &App, photo: &Photo, pal: &Palette, dpi: u32) {
+    unsafe {
+        let row = Row2::new(w, dpi);
+        fill(hdc, &row.bar, pal.tab_bg);
+        line(hdc, 0, row.bar.bottom - 1, w, row.bar.bottom - 1, pal.divider, 1);
+        let selected = app.selection.paths.len();
+        for (command, r) in &row.buttons {
+            let tag;
+            let (label, on): (&str, bool) = match command {
+                Command::FavoritesOnly => ("★ 즐겨찾기만", photo.favorites_only),
+                Command::TagFilter => {
+                    tag = photo.tag.as_ref().map_or("태그: 전체 ▾".to_string(), |t| format!("#{t} ▾"));
+                    (&tag, photo.tag.is_some())
+                }
+                Command::Duplicates if photo.searching => ("중복 취소", true),
+                Command::Duplicates if photo.duplicates.is_some() => ("중복 닫기", true),
+                Command::Duplicates => ("중복 찾기", false),
+                Command::View => ("크게 보기", false),
+                Command::Favorite => ("즐겨찾기 ★", false),
+                Command::Tags => ("태그…", false),
+                Command::Export => ("첨부용 사본…", false),
+                Command::Edit => ("사본 편집…", false),
+            };
+            button(hdc, f, r, label, command.enabled(selected), on, pal, dpi);
+        }
+    }
+}
+
+/// 크게 보기(창 전체를 덮는다).
+unsafe fn draw_viewer(hdc: HDC, f: &Fonts, w: i32, h: i32, v: &Viewer, photo: &Photo, tz: i64, notice: &str, pal: &Palette, dpi: u32) {
+    unsafe {
+        let s = |value: i32| scale(value, dpi);
+        let l = ViewerLayout::new(w, h, dpi);
+        let doc = v.current();
+        let mark = photo.mark(&doc.path);
+        fill(hdc, &Rect::new(0, 0, w, h), pal.head_bg);
+        fill(hdc, &l.bar, pal.tab_bg);
+        let title = format!("{} / {}  {}", group_digits(v.index + 1), group_digits(v.items.len()), doc.name);
+        text(hdc, f.bold, &Rect::new(s(14), l.bar.top, l.prev.left - s(10), l.bar.bottom), &title, pal.text, ONE_LINE);
+        button(hdc, f, &l.prev, "◀", v.index > 0, false, pal, dpi);
+        button(hdc, f, &l.next, "▶", v.index + 1 < v.items.len() || v.playing, false, pal, dpi);
+        button(hdc, f, &l.play, if v.playing { "일시정지" } else { "슬라이드쇼" }, true, v.playing, pal, dpi);
+        let favorite = mark.is_some_and(|m| m.favorite);
+        button(hdc, f, &l.favorite, if favorite { "★ 즐겨찾기" } else { "☆ 즐겨찾기" }, true, favorite, pal, dpi);
+        button(hdc, f, &l.tags, "태그…", true, false, pal, dpi);
+        button(hdc, f, &l.edit, "사본 편집…", !doc.cloud, false, pal, dpi);
+        button(hdc, f, &l.open, "연결 앱 열기", true, false, pal, dpi);
+        button(hdc, f, &l.close, "닫기", true, false, pal, dpi);
+
+        let area = Rect::new(l.canvas.left + s(8), l.canvas.top + s(8), l.canvas.right - s(8), l.canvas.bottom - s(8));
+        match &v.image {
+            Some(Ok(image)) => {
+                let at = fit(image.width, image.height, &area);
+                let mut info: BITMAPINFO = std::mem::zeroed();
+                info.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+                info.bmiHeader.biWidth = image.width as i32;
+                info.bmiHeader.biHeight = -(image.height as i32);
+                info.bmiHeader.biPlanes = 1;
+                info.bmiHeader.biBitCount = 32;
+                info.bmiHeader.biCompression = BI_RGB;
+                SetStretchBltMode(hdc, HALFTONE);
+                SetBrushOrgEx(hdc, 0, 0, null_mut());
+                StretchDIBits(hdc, at.left, at.top, at.width(), at.height(), 0, 0, image.width as i32, image.height as i32, image.bgra.as_ptr().cast(), &info, DIB_RGB_COLORS, SRCCOPY);
+            }
+            Some(Err(message)) => text(hdc, f.normal, &area, message, pal.text_muted, CENTER),
+            None => text(hdc, f.normal, &area, "사진을 읽는 중…", pal.text_muted, CENTER),
+        }
+
+        fill(hdc, &l.info, pal.tab_bg);
+        let tags = mark.map(|m| m.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ")).unwrap_or_default();
+        let first = format!("{} · {}{}{}", format_size(doc.size), format_date(doc.mtime, tz), if tags.is_empty() { "" } else { " · " }, tags);
+        text(hdc, f.normal, &Rect::new(s(14), l.info.top + s(4), w - s(14), l.info.top + s(28)), &first, pal.text, ONE_LINE);
+        let second = if notice.is_empty() { doc.path.as_str() } else { notice };
+        text(hdc, f.small, &Rect::new(s(14), l.info.top + s(30), w - s(14), l.info.bottom - s(4)), second, pal.text_muted, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_PATH_ELLIPSIS);
+    }
+}
+
 unsafe fn draw_banner(hdc: HDC, f: &Fonts, w: i32, app: &App, pal: &Palette, dpi: u32) {
     unsafe {
         let s = |v: i32| scale(v, dpi);
-        let top = s(crate::layout::TOOLBAR_H);
+        let top = s(crate::layout::TOOLBAR_H + ROW2_H);
         let r = Rect::new(0, top, w, top + s(BANNER_H));
         fill(hdc, &r, blend(pal.bg, pal.accent, 0.10));
         line(hdc, 0, r.bottom - 1, w, r.bottom - 1, pal.divider, 1);
@@ -151,6 +252,7 @@ unsafe fn draw_empty(hdc: HDC, f: &Fonts, vp: &Rect, app: &App, pal: &Palette, d
                 pal.text,
             ),
             ScanState::Failed(e) => ("사진 목록을 불러오지 못했습니다.".into(), e.clone(), ui_theme::rgb(0xDC, 0x26, 0x26)),
+            _ if app.coll.total() > 0 && app.coll.restricted() => ("조건에 맞는 사진이 없습니다.".into(), "즐겨찾기만·태그·중복 보기를 풀거나 검색어를 바꿔 보세요.".into(), pal.text),
             _ if app.coll.total() > 0 => ("검색 결과가 없습니다.".into(), "다른 검색어를 입력해 보세요.".into(), pal.text),
             ScanState::Idle => ("모든 고정 드라이브의 사진을 확인합니다.".into(), "지원 형식: JPG, JPEG, PNG, WEBP, BMP, TIF, TIFF, HEIC".into(), pal.text),
             _ => ("사진이 없습니다.".into(), "폴더에 JPG, PNG, HEIC 등 사진 파일이 없습니다.".into(), pal.text),
@@ -161,7 +263,7 @@ unsafe fn draw_empty(hdc: HDC, f: &Fonts, vp: &Rect, app: &App, pal: &Palette, d
     }
 }
 
-unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Palette, dpi: u32) {
+unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, status: &str, pal: &Palette, dpi: u32) {
     unsafe {
         let s = |v: i32| scale(v, dpi);
         let r = Rect::new(0, h - s(crate::layout::STATUS_H), w, h);
@@ -169,7 +271,9 @@ unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Pale
         line(hdc, 0, r.top, w, r.top, pal.divider, 1);
         let engine = if app.engine.is_empty() { "-" } else { &app.engine };
         let mut left = format!("엔진: {engine} · 사진 {}장", group_digits(app.coll.total()));
-        if !app.coll.query.trim().is_empty() {
+        if app.coll.restricted() {
+            left.push_str(&format!(" (보기 {}장)", group_digits(app.coll.len())));
+        } else if !app.coll.query.trim().is_empty() {
             left.push_str(&format!(" (검색 {}장)", group_digits(app.coll.len())));
         }
         let st = match &app.scan.state {
@@ -186,6 +290,7 @@ unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Pale
         text(hdc, f.small, &Rect::new(s(16), r.top, s(16) + lw, r.bottom), &left, pal.text_sub, ONE_LINE);
         let right = match app.selected_doc() {
             _ if !app.open_error.is_empty() => app.open_error.clone(),
+            _ if !status.is_empty() => status.to_string(),
             _ if !app.file_status.is_empty() => app.file_status.clone(),
             Some(d) => d.path.clone(),
             None => app.notice.clone(),
@@ -256,22 +361,33 @@ pub fn draw_with_panel(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate
 }
 
 pub fn draw_with_shell_thumbs(hdc: HDC, w: i32, h: i32, app: &App, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32, thumbs: &std::collections::HashMap<String, grid_core::shell_thumb::Bitmap>) -> usize {
+    draw_all(hdc, w, h, app, &Photo::default(), panel, pal, dpi, thumbs)
+}
+
+/// 즐겨찾기·태그·중복 보기·크게 보기까지 포함한 전체 그리기.
+pub fn draw_all(hdc: HDC, w: i32, h: i32, app: &App, photo: &Photo, panel: Option<&crate::panel::ExcludePanel>, pal: &Palette, dpi: u32, thumbs: &std::collections::HashMap<String, grid_core::shell_thumb::Bitmap>) -> usize {
     unsafe {
         let f = Fonts::new(dpi);
         let banner = app.banner_shown();
         let m = app.metrics(w, h, dpi);
         fill(hdc, &Rect::new(0, 0, w, h), pal.head_bg);
         let mut drawn = 0;
+        if let Some(v) = &photo.viewer {
+            let notice = if app.open_error.is_empty() { &photo.status } else { &app.open_error };
+            draw_viewer(hdc, &f, w, h, v, photo, app.tz_offset, notice, pal, dpi);
+            f.free();
+            return 0;
+        }
         if app.coll.is_empty() {
             let mut vp = m.viewport;
-            vp.top = scale(crate::layout::TOOLBAR_H, dpi);
+            vp.top = scale(crate::layout::TOOLBAR_H + ROW2_H, dpi);
             draw_empty(hdc, &f, &vp, app, pal, dpi);
         } else {
             let clip = CreateRectRgn(m.viewport.left, m.viewport.top, m.viewport.right, m.viewport.bottom);
             SelectClipRgn(hdc, clip);
             for i in m.visible_range(app.scroll, app.coll.len()) {
                 if let Some(d) = app.coll.get(i) {
-                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.is_selected(i), app.tz_offset, pal, dpi, thumbs.get(&d.path));
+                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.is_selected(i), app.tz_offset, pal, dpi, thumbs.get(&d.path), photo);
                     drawn += 1;
                 }
             }
@@ -286,7 +402,8 @@ pub fn draw_with_shell_thumbs(hdc: HDC, w: i32, h: i32, app: &App, panel: Option
             draw_banner(hdc, &f, w, app, pal, dpi);
         }
         draw_toolbar(hdc, &f, &Toolbar::new(w, dpi), app, pal, dpi);
-        draw_status(hdc, &f, w, h, app, pal, dpi);
+        draw_row2(hdc, &f, w, app, photo, pal, dpi);
+        draw_status(hdc, &f, w, h, app, &photo.status, pal, dpi);
         if let Some(p) = panel {
             draw_panel(hdc, &f, w, h, p, pal, dpi);
         }

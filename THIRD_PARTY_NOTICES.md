@@ -68,6 +68,7 @@ The HWP application itself (HWPFrame.HwpObject) is not bundled; the user's insta
 | xlrd 2.0.1 | 엑셀(.xls) 읽기 | BSD-3-Clause | 의존성: `requirements.txt`, 라이선스는 일반 지식 |
 | windows-sys 0.59, png 0.17, qoi 0.4(썸네일 디스크 캐시, KCAP3) | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml`, 라이선스는 일반 지식 |
 | rusqlite 0.41.1(SQLite 포함), tantivy 0.27.0 | 자료함·검색 엔진(`klib`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `klib/Cargo.toml`, 라이선스는 일반 지식 |
+| rusqlite 0.41.1(SQLite 포함) | 사진뷰 창의 즐겨찾기·태그 저장(`photoview_win`, Rust) | MIT (SQLite는 퍼블릭 도메인) | 의존성: `photoview_win/Cargo.toml`, 라이선스는 일반 지식 |
 | quick-xml 0.41.0, zip 9.4.0(deflate), cfb 0.7.3, flate2 1.1.10, encoding_rs 0.8.44, regex 1.13.1, time 0.3.55, md5 0.7.0, sha2 0.10.9, unicode-normalization 0.1.26, rayon 1.12.0 | 자료함·문서 추출·HWP5 직접 읽기(`klib`, Rust) | quick-xml·zip·cfb: MIT, md5: Apache-2.0/MIT, encoding_rs: (Apache-2.0 OR MIT) AND BSD-3-Clause, unicode-normalization: (MIT OR Apache-2.0) AND Unicode-3.0, 나머지: MIT OR Apache-2.0 | 의존성: `klib/Cargo.toml`, 라이선스: `scripts/third_party_inventory.py`(cargo metadata) |
 | fancy-regex 0.14.0, regex 1.13.1, serde_json 1.0 | 위계 엔진(`hierarchy`, `hierarchy.exe`·`hierarchy.dll`, Rust) | fancy-regex: MIT, regex·serde_json: MIT OR Apache-2.0 | 의존성: `hierarchy/Cargo.toml` |
 | regex 1.13.1 | 몽땅클립보드 에이전트(`kagent`, Rust) | MIT OR Apache-2.0 | 의존성: `kagent/Cargo.toml` |

@@ -49,11 +49,20 @@ pub struct Collection {
     pub sort: SortKey,
     pub descending: bool,
     view: Vec<u32>,
+    /// 즐겨찾기·태그·중복 보기: 여기 있는 경로만 보인다.
+    only: Option<Only>,
+}
+
+/// 보일 경로(→ 순번). `ranked` 면 정렬 대신 순번대로 놓는다.
+#[derive(Clone, Debug, Default)]
+pub struct Only {
+    pub rank: std::collections::HashMap<String, u32>,
+    pub ranked: bool,
 }
 
 impl Default for Collection {
     fn default() -> Self {
-        Collection { docs: Vec::new(), query: String::new(), sort: SortKey::Name, descending: false, view: Vec::new() }
+        Collection { docs: Vec::new(), query: String::new(), sort: SortKey::Name, descending: false, view: Vec::new(), only: None }
     }
 }
 
@@ -74,6 +83,13 @@ impl Collection {
     pub fn set_query(&mut self, q: &str) {
         self.query = q.to_string();
         self.rebuild();
+    }
+    pub fn set_only(&mut self, only: Option<Only>) {
+        self.only = only;
+        self.rebuild();
+    }
+    pub fn restricted(&self) -> bool {
+        self.only.is_some()
     }
     pub fn set_sort(&mut self, key: SortKey, descending: bool) {
         self.sort = key;
@@ -107,6 +123,9 @@ impl Collection {
         let terms: Vec<&str> = q.split_whitespace().collect();
         let mut v: Vec<u32> = (0..self.docs.len() as u32)
             .filter(|i| {
+                if self.only.as_ref().is_some_and(|o| !o.rank.contains_key(&self.docs[*i as usize].path)) {
+                    return false;
+                }
                 if terms.is_empty() {
                     return true;
                 }
@@ -141,6 +160,9 @@ impl Collection {
         }
         if self.descending {
             v.reverse();
+        }
+        if let Some(only) = self.only.as_ref().filter(|o| o.ranked) {
+            v.sort_by_key(|i| only.rank.get(&docs[*i as usize].path).copied());
         }
         self.view = v;
     }
