@@ -367,7 +367,7 @@ begin
     begin
       if WizardSilent then
         InstallLog('새 색인 실행 파일 설치됨; 사용자 확인 후 서비스 재시작 필요')
-      else if MsgBox('새 색인 서비스 프로그램이 설치되었습니다.' + #13#10 +
+      else if MsgBox('새 색인 서비스 프로그램이 설치되었습니다. 서비스를 다시 시작해야 적용됩니다.' + #13#10 +
                      '색인 서비스(HwpAutoDocFit.Index)를 지금 다시 시작하시겠습니까?' + #13#10 +
                      '관리자 권한 승인 창이 나타나며 색인 준비에는 시간이 걸릴 수 있습니다.',
                      mbConfirmation, MB_YESNO) = idYes then
