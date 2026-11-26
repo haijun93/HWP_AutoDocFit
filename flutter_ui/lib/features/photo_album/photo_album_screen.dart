@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../common/file_handoff.dart';
 import '../common/file_ops_area.dart';
 import '../common/file_selection.dart';
+import '../common/library_delta.dart';
 import '../common/thumb_size_slider.dart';
 import '../../core/api/abbreviation_api.dart' show ApiCall;
 
@@ -52,6 +53,14 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   bool _scanRunning = false;
   // 검색 중에 찾은 사진을 이미 보여 주고 있는지.
   bool _streaming = false;
+  // 저장된 목록(DB)을 먼저 보여 주고 바뀐 것만 확인하는 중인지.
+  bool _fromDb = false;
+  // 검색 중 파일 작업으로 화면 목록이 바뀌었는지(다음 묶음은 그 목록에 이어 반영한다).
+  bool _filesChanged = false;
+  // 배경에서 도는 촬영 정보 정리의 진행.
+  bool _exifRunning = false;
+  int _exifDone = 0;
+  int _exifTotal = 0;
   // 목록을 새로 불러올 때마다 늘린다. 늘어난 뒤에는 검색 중 행을 이어 붙이지 않는다.
   int _listEpoch = 0;
   int _scanVisited = 0;
@@ -71,6 +80,86 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
   // 썸네일 크기 (100 ~ 240, 기본 160)
   double _thumbSize = 160.0;
+
+  // 색인 서비스 버전 점검 및 안내 상태
+  bool _serviceOutdated = false;
+  String? _serviceMessage;
+  bool _restartingService = false;
+
+  void _checkServiceStatus(Object? res) {
+    if (res is Map && res['service_status'] is Map) {
+      final status = res['service_status'] as Map;
+      if (status['outdated'] == true) {
+        setState(() {
+          _serviceOutdated = true;
+          _serviceMessage = status['message'] as String? ?? '색인 서비스가 이전 버전입니다.';
+        });
+      } else if (status['status'] == 'ok') {
+        setState(() {
+          _serviceOutdated = false;
+          _serviceMessage = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _restartService() async {
+    if (_restartingService) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('색인 서비스 재시작'),
+        content: const Text(
+          '새 버전의 기능을 적용하기 위해 색인 서비스(HwpAutoDocFit.Index)를 다시 시작합니다.\n'
+          '관리자 권한 승인 창(UAC)이 나타나면 승인해 주세요. 색인 준비에는 시간이 걸릴 수 있습니다.\n'
+          '직접 하려면 Windows 서비스(services.msc)에서 HwpAutoDocFit.Index를 찾아 다시 시작하세요. ',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            key: const ValueKey('photoAlbumConfirmRestartButton'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('재시작'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _restartingService = true);
+    try {
+      final res = await widget.api('photo_album', ['service_restart', {'confirmed': true}]);
+      if (!mounted) return;
+      if (res is Map && res['ok'] == true) {
+        final status = await widget.api('photo_album', ['service_status_get', {}]);
+        if (!mounted) return;
+        _checkServiceStatus(status);
+        setState(() {
+          _serviceMessage = '서비스가 다시 시작되었습니다. 기능 확인 및 색인 준비를 기다리는 중입니다.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('색인 서비스가 다시 시작되었습니다.')),
+        );
+        await _initFolders();
+      } else {
+        final msg = res is Map ? res['message'] : '서비스 재시작에 실패했습니다.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$msg')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('재시작 오류: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _restartingService = false);
+    }
+  }
 
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
@@ -126,21 +215,18 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     try {
       final started = await widget.api('photo_album', ['scan_default', {}]);
-      final cached = started is Map && started['state'] == 'cached';
-      if (cached && started['result'] is Map) {
-        final cachedItems = (started['result']['photos'] is List ? started['result']['photos'] as List : const [])
-            .whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
-        final months = <int, Map<String, Object?>>{};
-        _appendByMonth(months, cachedItems);
-        if (mounted) setState(() { _groups = _newestFirst(months); _currentFolder = ''; _loading = false; });
-        await _loadPhotos('', quiet: true);
-      }
-      var shown = false; // 이번 검색의 행을 화면에 붙였는지
+      if (!mounted) return;
+      _checkServiceStatus(started);
+      var shown = false; // 받은 행을 화면에 붙였는지
       var state = 'running';
+      var exifTotal = 0;
+      final epoch = _listEpoch;
       if (started is Map && started['task_id'] != null) {
-        // 저장된 목록이 없으면 찾는 대로 새 행만 받아 이어 붙인다.
-        final months = <int, Map<String, Object?>>{};
-        final epoch = _listEpoch;
+        _fromDb = started['from_db'] == true;
+        _filesChanged = false;
+        // 서비스는 저장 목록을 먼저, 이어서 추가·변경·삭제만 보낸다.
+        var delta = LibraryDelta();
+        var months = <int, Map<String, Object?>>{};
         var next = 0;
         var backlog = false;
         while (state == 'running' || state == 'cancelling' || backlog) {
@@ -148,17 +234,34 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           if (!mounted) return;
           final progress = await widget.api('photo_album', [
             'scan_progress',
-            cached ? {} : {'since': next},
+            {'since': next},
           ]);
           if (!mounted) return;
           if (progress is! Map || progress['ok'] != true) break;
+          _checkServiceStatus(progress);
           state = '${progress['state'] ?? 'running'}';
           final rows = progress['rows'];
-          final added = <Map<String, Object?>>[];
+          var applied = false;
           backlog = false;
-          if (!cached && rows is List) {
-            for (final item in rows) {
-              if (item is Map) added.add(Map<String, Object?>.from(item));
+          if (rows is List) {
+            if (rows.isNotEmpty && epoch == _listEpoch) {
+              var regroup = rows.any((row) => row is Map && row['op'] != null);
+              if (_filesChanged) {
+                _filesChanged = false;
+                delta = LibraryDelta(_flatten(_groups));
+                regroup = true;
+              }
+              final before = delta.items.length;
+              final changes = delta.apply(rows);
+              // 추가만 온 묶음은 이어 붙이고, 변경·삭제가 있으면 다시 묶는다.
+              if (regroup) months = <int, Map<String, Object?>>{};
+              _appendByMonth(months, regroup ? delta.items : delta.items.sublist(before));
+              for (final path in changes.changed.followedBy(changes.removed)) {
+                _thumbCache.remove(path);
+              }
+              _selection.paths.removeAll(changes.removed);
+              applied = shown || delta.items.isNotEmpty;
+              shown = applied;
             }
             final following = (progress['next'] as num?)?.toInt() ?? next;
             backlog = following > next && following < ((progress['total'] as num?)?.toInt() ?? 0);
@@ -169,18 +272,22 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             _scanFolder = '${progress['current_folder'] ?? ''}';
             _scanStartedAt ??= DateTime.now();
             _scanLastProgressAt = DateTime.now();
-            if (added.isNotEmpty && epoch == _listEpoch) {
-              _appendByMonth(months, added);
+            if (applied) {
               _groups = _newestFirst(months);
               _currentFolder = '';
               _loading = false;
               _streaming = true;
-              shown = true;
             }
           });
           if (state == 'failed') {
             throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
+          exifTotal = _exifTotalOf(progress['result']);
+        }
+        if (shown && epoch == _listEpoch) {
+          // 정렬은 끝났을 때 한 번만 한다.
+          _sortByDate(months.values);
+          setState(() => _groups = _newestFirst(months));
         }
       }
       if (mounted) {
@@ -189,6 +296,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _streaming = false;
         });
       }
+      if (exifTotal > 0) unawaited(_watchExif(exifTotal));
       final res = await widget.api('photo_album', ['list_folders', {}]);
       if (!mounted) return;
 
@@ -206,11 +314,11 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _registeredFolders = folders;
         });
       }
-      // 취소한 첫 검색은 DB에 아직 반영되지 않았으므로 화면에 붙인 목록을 그대로 둔다.
-      if (state != 'cancelled' || !shown) {
-        await _loadPhotos(_currentFolder ?? '', quiet: shown || cached);
-      } else {
+      // 받은 목록이 곧 최신 목록이다. 받은 것이 없거나 검색 중에 보기를 바꿨을 때만 다시 불러온다.
+      if (shown && epoch == _listEpoch) {
         await _loadTagOptions();
+      } else {
+        await _loadPhotos(_currentFolder ?? '', quiet: shown || epoch != _listEpoch);
       }
     } catch (e) {
       if (!mounted) return;
@@ -221,6 +329,100 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         _streaming = false;
       });
     }
+  }
+
+  static int _exifTotalOf(Object? result) {
+    final exif = result is Map ? result['exif'] : null;
+    return exif is Map ? (exif['total'] as num?)?.toInt() ?? 0 : 0;
+  }
+
+  static List<Map<String, Object?>> _flatten(List<Map<String, Object?>> groups) => [
+    for (final group in groups)
+      ...(group['photos'] as List<Map<String, Object?>>? ?? const []),
+  ];
+
+  static void _sortByDate(Iterable<Map<String, Object?>> groups) {
+    for (final group in groups) {
+      (group['photos'] as List<Map<String, Object?>>).sort(
+        (a, b) => '${b['date_taken'] ?? ''}'.compareTo('${a['date_taken'] ?? ''}'),
+      );
+    }
+  }
+
+  /// 배경 촬영 정보 정리를 지켜보며, 채워진 촬영일을 목록에 반영한다.
+  Future<void> _watchExif(int total) async {
+    if (_exifRunning) return;
+    setState(() {
+      _exifRunning = true;
+      _exifDone = 0;
+      _exifTotal = total;
+    });
+    final waiting = <String, Map<String, Object?>>{};
+    var run = '';
+    var since = 0;
+    var more = false;
+    var ticks = 0;
+    try {
+      while (mounted) {
+        if (!more) await Future<void>.delayed(const Duration(seconds: 1));
+        if (!mounted) return;
+        final status = await widget.api('photo_album', ['exif_status', {'since': since}]);
+        if (!mounted) return;
+        if (status is! Map || status['ok'] != true) break;
+        if ('${status['run'] ?? ''}' != run) {
+          run = '${status['run'] ?? ''}';
+          if (since != 0) {
+            since = 0;
+            more = true;
+            continue;
+          }
+        }
+        for (final row in status['rows'] as List? ?? const []) {
+          if (row is Map) {
+            waiting['${row['path']}'] = Map<String, Object?>.from(row)..remove('op');
+          }
+        }
+        since = (status['next'] as num?)?.toInt() ?? since;
+        more = status['more'] == true;
+        final finished = status['running'] != true && !more;
+        setState(() {
+          _exifDone = (status['done'] as num?)?.toInt() ?? 0;
+          _exifTotal = (status['total'] as num?)?.toInt() ?? 0;
+        });
+        // 큰 목록을 매번 다시 묶지 않게 몇 번에 한 번만 반영한다.
+        if (waiting.isNotEmpty && (finished || ++ticks >= 5)) {
+          _applyExif(waiting);
+          waiting.clear();
+          ticks = 0;
+        }
+        if (finished) break;
+      }
+    } catch (_) {
+      // 진행 확인에 실패해도 목록은 그대로 쓴다. 정리는 다음에 열 때 이어진다.
+    } finally {
+      if (mounted) setState(() => _exifRunning = false);
+    }
+  }
+
+  void _applyExif(Map<String, Map<String, Object?>> updates) {
+    void patch(List<Map<String, Object?>> items) {
+      for (final photo in items) {
+        final update = updates['${photo['path']}'];
+        if (update != null) photo.addAll(update);
+      }
+    }
+
+    setState(() {
+      if (_searchResults != null) patch(_searchResults!);
+      final photos = _flatten(_groups);
+      patch(photos);
+      if (_currentViewMode == 'date' && !_streaming) {
+        final months = <int, Map<String, Object?>>{};
+        _appendByMonth(months, photos);
+        _sortByDate(months.values);
+        _groups = _newestFirst(months);
+      }
+    });
   }
 
   /// 사진을 촬영 연·월 묶음에 이어 붙인다(묶음 안에서는 받은 순서).
@@ -490,6 +692,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     try {
       final started = await widget.api('photo_album', ['scan_default', {}]);
+      var exifTotal = 0;
       if (started is Map && started['task_id'] != null) {
         var state = 'running';
         while (state == 'running' || state == 'cancelling') {
@@ -510,6 +713,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           if (state == 'failed') {
             throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
+          exifTotal = _exifTotalOf(progress['result']);
         }
       }
       if (mounted) {
@@ -517,6 +721,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _scanRunning = false;
         });
       }
+      if (exifTotal > 0) unawaited(_watchExif(exifTotal));
       await _loadPhotos(_currentFolder!);
     } catch (e) {
       if (!mounted) return;
@@ -926,6 +1131,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         });
 
     // 중복 보기에서도 원래 목록(_groups)까지 함께 고친다.
+    _filesChanged = true;
     setState(() {
       for (final group in _groups) {
         group['photos'] = apply(group['photos'] as List<Map<String, Object?>>? ?? []);
@@ -1109,7 +1315,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             preferredSize: Size.fromHeight(_currentFolder != null ? 146 : 100),
             child: _buildTopBar(context),
           ),
-          body: _buildBody(),
+          body: Column(
+            children: [
+              if (_serviceOutdated) _buildServiceBanner(),
+              Expanded(child: _buildBody()),
+            ],
+          ),
         );
 
         if (!constraints.hasBoundedHeight) {
@@ -1119,6 +1330,43 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       },
     );
   }
+
+  /// 색인 서비스가 이전 버전일 때 표시하는 알림 배너.
+  Widget _buildServiceBanner() => Container(
+    key: const ValueKey('photoAlbumServiceOutdatedBanner'),
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.amber.shade50,
+      border: Border.all(color: Colors.amber.shade400),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.amber.shade800, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _serviceMessage ?? '색인 서비스가 이전 버전입니다. 빠른 목록 조회를 위해 서비스를 재시작해 주세요.',
+            style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+          ),
+        ),
+        if (_restartingService)
+          const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+        else
+          TextButton(
+            key: const ValueKey('photoAlbumRestartServiceButton'),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: _restartService,
+            child: const Text('서비스 재시작', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+      ],
+    ),
+  );
 
   Widget _buildTopBar(BuildContext context) {
     final theme = Theme.of(context);
@@ -1414,7 +1662,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            '사진 검색 중 · $count장 표시 · ${_scanNow.difference(_scanStartedAt ?? _scanNow).inSeconds}초 경과',
+            '${_fromDb ? '저장된 목록 표시 · 바뀐 사진 확인 중' : '사진 검색 중'} · $count장 표시 · ${_scanNow.difference(_scanStartedAt ?? _scanNow).inSeconds}초 경과',
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12),
           ),
@@ -1424,6 +1672,35 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           onPressed: _cancelScan,
           icon: const Icon(Icons.cancel_outlined, size: 16),
           label: const Text('스캔 취소'),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildExifBanner() => Padding(
+    key: const ValueKey('photoAlbumExifBanner'),
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Row(
+      children: [
+        SizedBox(
+          width: 120,
+          child: LinearProgressIndicator(
+            value: _exifTotal > 0 ? _exifDone / _exifTotal : 0,
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '촬영 정보 정리 중 · $_exifDone/$_exifTotal장 · 사진 보기와 검색은 계속할 수 있습니다',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        TextButton.icon(
+          key: const ValueKey('photoAlbumExifStopButton'),
+          onPressed: () => widget.api('photo_album', ['exif_cancel', {}]),
+          icon: const Icon(Icons.pause_circle_outline, size: 16),
+          label: const Text('정리 중지'),
         ),
       ],
     ),
@@ -1567,6 +1844,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     return Column(
       children: [
         if (_streaming) _buildScanBanner(allPhotos.length),
+        if (_exifRunning) _buildExifBanner(),
         if (_selectionMode) _buildSelectionBar(context),
         Expanded(
           child: Row(

@@ -31,8 +31,10 @@ from .file_ops import FileOps, handle_command as handle_file_ops
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
-from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots
+from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots, get_service_version_status, check_service_version, set_service_version_status
+from .kfind_process import restart_service
 from . import library_scan_cache
+from .library_db import LibraryDB, ViewSync, apply_file_ops, path_key as row_key
 from .open_listed_file import open_listed_file
 from docfit_core.log_mask import mask_log_text
 
@@ -178,6 +180,7 @@ class DocGridService:
         opener: Any | None = None,
         drive_roots: Any | None = None,
         settings_store: Any | None = None,
+        db_path: Path | str | None = None,
     ):
         if thumb_dir is None:
             try:
@@ -186,6 +189,9 @@ class DocGridService:
             except Exception:
                 thumb_dir = Path.home() / ".hwp_autodocfit" / "thumbs"
         self.cache = thumbs.ThumbnailCache(thumb_dir)
+        # 목록 DB 는 썸네일 폴더 옆에 둔다(운영: <데이터>/library-view/documents.db).
+        self.db = LibraryDB(db_path or Path(thumb_dir).parent / "library-view" / "documents.db")
+        self._sync: ViewSync | None = None
         self._klib_executable_path = Path(klib_path) if klib_path else None
         self._slots = threading.BoundedSemaphore(max_slots)
         self.max_slots = max_slots
@@ -208,25 +214,8 @@ class DocGridService:
             target, self._default_roots(), read_exclusions(self.settings_store))}
 
     def _after_file_ops(self, op: str, results: list[dict[str, Any]]) -> None:
-        """다음에 화면을 열 때 보이는 저장된 목록에서도 옛 경로를 걷어낸다."""
-        done = {os.path.normcase(item["path"]): item for item in results if item["ok"]}
-        if not done:
-            return
-
-        def change(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            changed: list[dict[str, Any]] = []
-            for row in rows:
-                item = done.get(os.path.normcase(str(row.get("path", ""))))
-                if item is None or op == "copy":
-                    changed.append(row)
-                if item is None or not item.get("listed") or "new_path" not in item:
-                    continue
-                name = item["new_name"]
-                changed.append({**row, "path": item["new_path"], "name": name, "stem": Path(name).stem,
-                                "thumb_key": "", "has_thumb": False})
-            return changed
-
-        library_scan_cache.rewrite("documents", change)
+        """다음에 화면을 열 때 보이는 목록 DB(와 진행 중인 비교)를 맞춘다."""
+        apply_file_ops(self.db, self._sync, op, results)
 
     def _default_roots(self) -> tuple[Path, ...]:
         return tuple(Path(p) for p in (self._drive_roots if self._drive_roots is not None else current_default_roots()))
@@ -322,11 +311,13 @@ class DocGridService:
     def list_default_documents(
         self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
         excluded_folders: Any = (), return_engine: bool = False, on_item: Any | None = None,
+        on_cloud: Any | None = None, status: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Desktop과 고정 드라이브의 지원 문서를 기본 제외 규칙으로 나열한다.
 
         `on_item` 을 주면 찾는 대로(같은 경로는 한 번만) 항목을 넘긴다.
         파일마다 stat·썸네일 키 계산은 하지 않는다(썸네일을 요청할 때 계산한다).
+        클라우드 전용 파일은 `on_cloud` 로만 알린다. `status["complete"]` 는 원천을 끝까지 읽었는지다.
         """
         roots = self._default_roots()
         if not any(root.is_dir() for root in roots):
@@ -335,8 +326,10 @@ class DocGridService:
 
         def accept(item: dict[str, Any]) -> None:
             if item.get("cloud"):
+                if on_cloud is not None:
+                    on_cloud(item)
                 return
-            key = os.path.normcase(item["path"])
+            key = row_key(item["path"])
             new = key not in results
             results[key] = item
             if new and on_item is not None:
@@ -349,7 +342,7 @@ class DocGridService:
             if "size" in row and "mtime" in row:
                 item.update(size=int(row["size"]), mtime=row["mtime"], cloud=bool(row.get("cloud", False)))
             elif row.get("cloud"):
-                return
+                item["cloud"] = True
             accept(item)
 
         engine = "python"
@@ -365,6 +358,7 @@ class DocGridService:
                                        on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
                                        roots=roots, **streaming)
             if rows is not None: engine = "klib"
+        complete = True
         if rows is not None:
             for row in rows:
                 accept_row(row)
@@ -378,41 +372,52 @@ class DocGridService:
                                                     on_progress=on_progress, excluded_folders=excluded_folders,
                                                     on_item=accept if on_item is not None else None):
                         accept(item)
-                except OSError: continue
+                except OSError:
+                    complete = False
+        if status is not None:
+            status["complete"] = complete and not (cancel_event is not None and cancel_event.is_set())
         result = sorted(results.values(), key=lambda item: item["name"].casefold())
         return (result, engine) if return_engine else result
 
     def start_default_scan(self) -> dict[str, Any]:
+        """목록 DB 를 먼저 내보내고, 배경에서 색인과 비교해 추가·변경·삭제만 잇달아 내보낸다.
+
+        결과는 `scan_progress` 의 `since` 로 받는다(`library_db.ViewSync` 의 항목).
+        """
         excluded = read_exclusions(self.settings_store)
         roots = [str(p) for p in self._default_roots()]
-        cached = library_scan_cache.load("documents", DOC_EXTENSIONS, excluded, roots=roots)
-        # 과거에 저장된 빈 스냅샷은 인덱서의 일시적 빈 응답일 수 있으므로 화면 초기값으로 쓰지 않는다.
-        if cached == []:
-            cached = None
-        live: list[dict[str, Any]] = []
-        if cached is not None:
-            # 배경 검색을 시작하기 전에 확인한다. 함께 돌면 파이썬 실행 잠금을 다퉈 몇 배 느려진다.
-            is_file = library_scan_cache.existing_file_checker()
-            live = [item for item in cached if is_file(str(item.get("path", "")))]
+        from_db = self.db.has_rows()
+        legacy = None
+        if not from_db:
+            # 이전 버전의 저장 목록(JSON)이 있으면 DB 로 옮겨 첫 화면에 쓴다.
+            legacy = library_scan_cache.load("documents", DOC_EXTENSIONS, excluded, roots=roots)
+
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
+            if legacy:
+                self.db.import_rows(legacy)
+            sync = self._sync = ViewSync(self.db, report.publish, roots=roots, excluded=excluded)
+            sync.publish_snapshot()
             visited = 0
+
             def tick(current_folder: str = "") -> None:
                 nonlocal visited
                 visited += 1
                 report(visited, current_folder)
-            docs, engine = self.list_default_documents(cancel_event=cancel, on_progress=tick,
-                                                       excluded_folders=excluded, return_engine=True,
-                                                       on_item=report.publish)
-            # 빈 스냅샷은 다음 실행 때 즉시 빈 화면을 고착시키지 않도록 캐시하지 않는다.
-            if docs and not cancel.is_set():
-                library_scan_cache.save("documents", DOC_EXTENSIONS, excluded, docs, roots=roots)
-            return {"documents": docs, "roots": roots, "engine": engine}
-        started = self._background_scan.start(worker, initial_result={"documents": cached, "roots": roots, "engine": "cache"}
-                                              if cached is not None else None,
-                                              engine="cache" if cached is not None else None,
-                                              streamed_key="documents")
-        if cached is not None and started.get("ok"):
-            started["result"] = {"documents": [{**item, "state": "cached"} for item in live], "roots": roots, "engine": "cache"}
+
+            status: dict[str, Any] = {}
+            try:
+                _, engine = self.list_default_documents(
+                    cancel_event=cancel, on_progress=tick, excluded_folders=excluded, return_engine=True,
+                    on_item=sync.feed, on_cloud=sync.feed, status=status)
+            finally:
+                # 중간에 실패·취소해도 찾은 것은 남기고, 삭제는 하지 않는다.
+                sync.finish(bool(status.get("complete")))
+                self._sync = None
+            return {"documents": sync.items(), "roots": roots, "engine": engine, "changes": sync.counts}
+
+        started = self._background_scan.start(worker, streamed_key="documents")
+        if started.get("ok"):
+            started.update(roots=roots, from_db=from_db or bool(legacy))
         return started
 
     def _run_klib_preview(self, hwp_path: Path, out_png: Path, timeout: float = 10.0) -> dict[str, Any]:
@@ -511,6 +516,7 @@ class DocGridService:
             })
 
         key = self.cache.key(path_obj, stat_info.st_mtime_ns, stat_info.st_size)
+        self.db.set_thumb_key(os.path.abspath(path_obj), key)
 
         # 1. 이미 캐시에 존재하는지 확인
         cached_data = self.cache.get(key)
@@ -644,12 +650,27 @@ class DocGridService:
             return {"ok": False, "code": "INVALID_INPUT", "message": "명령 매개변수를 확인해 주세요."}
 
         try:
+            if action == "service_status_get":
+                return {"ok": True, "service_status": check_service_version()}
+
+            if action == "service_restart":
+                if payload.get("confirmed") is not True:
+                    return {"ok": False, "message": "화면에서 서비스 재시작을 확인해 주세요."}
+                ok, msg = restart_service()
+                if ok:
+                    set_service_version_status("unknown", "재시작 후 색인 서비스 기능을 다시 확인합니다.")
+                return {"ok": ok, "message": msg, "service_status": get_service_version_status()}
+
             if action == "list_default":
-                return self.start_default_scan()
+                res = self.start_default_scan()
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_progress":
                 since = payload.get("since")
-                return self._background_scan.progress(since if isinstance(since, int) else None)
+                res = self._background_scan.progress(since if isinstance(since, int) else None)
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()

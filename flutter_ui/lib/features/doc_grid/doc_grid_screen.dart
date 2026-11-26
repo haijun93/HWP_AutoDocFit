@@ -10,6 +10,7 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../common/file_handoff.dart';
 import '../common/file_ops_area.dart';
 import '../common/file_selection.dart';
+import '../common/library_delta.dart';
 import '../common/thumb_size_slider.dart';
 
 /// 문서 확장자별 대표 테마 색상.
@@ -73,6 +74,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
   bool _scanRunning = false;
   // 검색 중에 찾은 항목을 이미 보여 주고 있는지.
   bool _streaming = false;
+  // 저장된 목록(DB)을 먼저 보여 주고 바뀐 것만 확인하는 중인지.
+  bool _fromDb = false;
   int _scanVisited = 0;
   String _scanFolder = '';
   DateTime? _scanStartedAt;
@@ -83,6 +86,86 @@ class _DocGridScreenState extends State<DocGridScreen> {
 
   // 썸네일 크기 (100 ~ 240, 기본 190 = 기존 고정값). 설정에 저장·복원한다.
   double _thumbSize = 190.0;
+
+  // 색인 서비스 버전 점검 및 안내 상태
+  bool _serviceOutdated = false;
+  String? _serviceMessage;
+  bool _restartingService = false;
+
+  void _checkServiceStatus(Object? res) {
+    if (res is Map && res['service_status'] is Map) {
+      final status = res['service_status'] as Map;
+      if (status['outdated'] == true) {
+        setState(() {
+          _serviceOutdated = true;
+          _serviceMessage = status['message'] as String? ?? '색인 서비스가 이전 버전입니다.';
+        });
+      } else if (status['status'] == 'ok') {
+        setState(() {
+          _serviceOutdated = false;
+          _serviceMessage = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _restartService() async {
+    if (_restartingService) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('색인 서비스 재시작'),
+        content: const Text(
+          '새 버전의 기능을 적용하기 위해 색인 서비스(HwpAutoDocFit.Index)를 다시 시작합니다.\n'
+          '관리자 권한 승인 창(UAC)이 나타나면 승인해 주세요. 색인 준비에는 시간이 걸릴 수 있습니다.\n'
+          '직접 하려면 Windows 서비스(services.msc)에서 HwpAutoDocFit.Index를 찾아 다시 시작하세요. ',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            key: const ValueKey('docGridConfirmRestartButton'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('재시작'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _restartingService = true);
+    try {
+      final res = await widget.api('doc_grid', ['service_restart', {'confirmed': true}]);
+      if (!mounted) return;
+      if (res is Map && res['ok'] == true) {
+        final status = await widget.api('doc_grid', ['service_status_get', {}]);
+        if (!mounted) return;
+        _checkServiceStatus(status);
+        setState(() {
+          _serviceMessage = '서비스가 다시 시작되었습니다. 기능 확인 및 색인 준비를 기다리는 중입니다.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('색인 서비스가 다시 시작되었습니다.')),
+        );
+        await _loadDefault();
+      } else {
+        final msg = res is Map ? res['message'] : '서비스 재시작에 실패했습니다.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$msg')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('재시작 오류: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _restartingService = false);
+    }
+  }
 
   @override
   void initState() {
@@ -108,24 +191,13 @@ class _DocGridScreenState extends State<DocGridScreen> {
       setState(() { _loading = true; _streaming = false; _scanRunning = true; _scanVisited = 0; _scanFolder = ''; _scanStartedAt = DateTime.now(); _scanLastProgressAt = _scanStartedAt; _scanNow = DateTime.now(); _scanUiTimer?.cancel(); _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now()); }); _errorMessage = null; });
       final res = await widget.api('doc_grid', ['list_default', {}]);
       if (!mounted) return;
+      _checkServiceStatus(res);
       // 화면을 다시 열었을 때 이미 도는 스캔이 있으면 그 스캔을 이어서 보여 준다.
       if (res is Map && (res['ok'] == true || res['code'] == 'SCAN_RUNNING')) {
         Object? result = res;
-        var cached = false;
-        if (res['state'] == 'cached' && res['result'] is Map) {
-          final cachedResult = res['result'] as Map;
-          final cachedItems = cachedResult['documents'];
-          if (cachedItems is List) {
-            cached = true;
-            setState(() {
-              _documents = cachedItems.whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
-              _loading = false;
-              _currentFolder = '모든 고정 드라이브';
-            });
-          }
-        }
-        // 저장된 목록이 없으면 찾는 대로 새 행만 받아 이어 붙인다.
-        var streamed = false;
+        _fromDb = res['from_db'] == true;
+        // 서비스는 저장 목록을 먼저, 이어서 추가·변경·삭제만 보낸다.
+        LibraryDelta? delta;
         if (res['task_id'] != null) {
           var state = 'running';
           var next = 0;
@@ -133,28 +205,37 @@ class _DocGridScreenState extends State<DocGridScreen> {
           while (state == 'running' || state == 'cancelling' || backlog) {
             if (!backlog) await Future<void>.delayed(const Duration(milliseconds: 120));
             if (!mounted) return;
-            final progress = await widget.api('doc_grid', ['scan_progress', cached ? {} : {'since': next}]);
+            final progress = await widget.api('doc_grid', ['scan_progress', {'since': next}]);
             if (!mounted) return;
             if (progress is! Map || progress['ok'] != true) break;
+            _checkServiceStatus(progress);
             state = '${progress['state'] ?? 'running'}';
             final rows = progress['rows'];
-            final added = <Map<String, Object?>>[];
-            if (!cached && rows is List) {
-              if (!streamed) _documents = [];
-              streamed = true;
-              for (final item in rows) {
-                if (item is Map) added.add(Map<String, Object?>.from(item));
+            backlog = false;
+            ({Set<String> changed, Set<String> removed})? applied;
+            if (rows is List) {
+              // 검색 중 파일 작업으로 목록이 새로 만들어졌으면 그 목록에 이어 반영한다.
+              if (delta == null) {
+                delta = LibraryDelta();
+              } else if (_streaming && !identical(delta.items, _documents)) {
+                delta = LibraryDelta(_documents);
               }
+              applied = delta.apply(rows);
               final following = (progress['next'] as num?)?.toInt() ?? next;
               backlog = following > next && following < ((progress['total'] as num?)?.toInt() ?? 0);
               next = following;
-            } else {
-              backlog = false;
             }
             setState(() {
               _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0; _scanFolder = '${progress['current_folder'] ?? ''}'; _scanStartedAt ??= DateTime.now(); _scanLastProgressAt = DateTime.now();
-              if (added.isNotEmpty) {
-                _documents.addAll(added);
+              if (applied != null) {
+                for (final path in applied.changed.followedBy(applied.removed)) {
+                  _thumbCache.remove(path);
+                }
+                _selection.paths.removeAll(applied.removed);
+              }
+              // 첫 항목이 오기 전에는 진행 화면을 그대로 둔다.
+              if (delta != null && (delta.items.isNotEmpty || _streaming)) {
+                _documents = delta.items;
                 _loading = false;
                 _streaming = true;
                 _currentFolder = '모든 고정 드라이브';
@@ -164,18 +245,16 @@ class _DocGridScreenState extends State<DocGridScreen> {
             if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
         }
+        final scanResult = result is Map ? result : res;
         final List<Map<String, Object?>> docs;
-        if (streamed) {
-          // 정렬은 검색이 끝났을 때 한 번만 한다(묶음마다 다시 정렬하지 않는다).
-          docs = _sortedByName(_documents);
+        if (scanResult['documents'] is List) {
+          docs = [
+            for (final item in scanResult['documents'] as List)
+              if (item is Map) Map<String, Object?>.from(item),
+          ];
         } else {
-          final scanResult = result is Map ? result : res;
-          docs = <Map<String, Object?>>[];
-          if (scanResult['documents'] is List) {
-            for (final item in scanResult['documents'] as List) {
-              if (item is Map) docs.add(Map<String, Object?>.from(item));
-            }
-          }
+          // 정렬은 검색이 끝났을 때 한 번만 한다(묶음마다 다시 정렬하지 않는다).
+          docs = _sortedByName(_streaming ? _documents : delta?.items ?? const []);
         }
         setState(() { _documents = docs; _loading = false; _scanRunning = false; _streaming = false; _currentFolder = '모든 고정 드라이브'; });
       } else {
@@ -387,7 +466,12 @@ class _DocGridScreenState extends State<DocGridScreen> {
               ),
             ),
           ),
-          body: _buildBody(),
+          body: Column(
+            children: [
+              if (_serviceOutdated) _buildServiceBanner(),
+              Expanded(child: _buildBody()),
+            ],
+          ),
         );
 
         if (!constraints.hasBoundedHeight) {
@@ -401,6 +485,43 @@ class _DocGridScreenState extends State<DocGridScreen> {
     );
   }
 
+  /// 색인 서비스가 이전 버전일 때 표시하는 알림 배너.
+  Widget _buildServiceBanner() => Container(
+    key: const ValueKey('docGridServiceOutdatedBanner'),
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.amber.shade50,
+      border: Border.all(color: Colors.amber.shade400),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.amber.shade800, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _serviceMessage ?? '색인 서비스가 이전 버전입니다. 빠른 목록 조회를 위해 서비스를 재시작해 주세요.',
+            style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+          ),
+        ),
+        if (_restartingService)
+          const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+        else
+          TextButton(
+            key: const ValueKey('docGridRestartServiceButton'),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: _restartService,
+            child: const Text('서비스 재시작', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+      ],
+    ),
+  );
+
   /// 목록을 보여 주면서 검색이 계속될 때의 진행 띠.
   Widget _buildScanBanner() => Padding(
     key: const ValueKey('docGridScanBanner'),
@@ -411,7 +532,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            '문서 검색 중 · ${_documents.length}개 표시 · $_scanElapsed',
+            '${_fromDb ? '저장된 목록 표시 · 바뀐 파일 확인 중' : '문서 검색 중'} · ${_documents.length}개 표시 · $_scanElapsed',
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12),
           ),
@@ -638,6 +759,11 @@ class _DocCardState extends State<_DocCard> {
   @override
   void didUpdateWidget(covariant _DocCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 파일 내용이 바뀌었으면 썸네일을 다시 받는다.
+    if (widget.doc['mtime'] != oldWidget.doc['mtime'] || widget.doc['size'] != oldWidget.doc['size']) {
+      _thumbBytes = widget.cachedThumb;
+      if (_thumbBytes == null) _requestThumbnail();
+    }
     if (widget.cachedThumb != null && widget.cachedThumb != _thumbBytes) {
       _thumbBytes = widget.cachedThumb;
     }

@@ -7,6 +7,9 @@ pub mod attr {
     pub const SYSTEM: u32 = 0x4;
     pub const DIRECTORY: u32 = 0x10;
     pub const REPARSE_POINT: u32 = 0x400;
+    pub const OFFLINE: u32 = 0x1000;
+    /// 내용을 읽으면 내려받기를 유발하는 Windows 속성. Python cloud_only와 같은 기준.
+    pub const CLOUD_RECALL_MASK: u32 = OFFLINE | 0x0004_0000 | 0x0040_0000;
 }
 
 /// USN 이유 값(`USN_REASON_*`).

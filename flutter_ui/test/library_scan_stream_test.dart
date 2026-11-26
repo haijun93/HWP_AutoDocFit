@@ -117,36 +117,108 @@ void main() {
     expect(find.byKey(const ValueKey('docGridScanBanner')), findsNothing);
   });
 
-  testWidgets('사진뷰: 검색 중 받은 사진을 월별로 보여 주고 끝나면 DB 목록으로 바꾼다', (tester) async {
+  testWidgets('문서뷰: 저장 목록을 먼저 보여 주고 바뀐 것만 반영한다', (tester) async {
+    _screen(tester);
+    var finished = false;
+    Future<Object?> api(String method, List<Object?> args) async {
+      final action = args.first as String;
+      if (action == 'list_default') return {'ok': true, 'task_id': 't', 'state': 'running', 'from_db': true};
+      if (action == 'scan_progress') {
+        final since = (args[1] as Map)['since'] as int;
+        final all = <Map<String, Object?>>[
+          _doc('나.pdf'),
+          _doc('다.pdf'),
+          if (finished) ...[
+            {..._doc('나.pdf'), 'size': 2048, 'op': 'update'},
+            _doc('가.pdf'),
+            {'op': 'remove', 'path': '/test/docs/다.pdf'},
+          ],
+        ];
+        final rows = all.skip(since).toList();
+        return {
+          'ok': true,
+          'state': finished ? 'complete' : 'running',
+          'visited': all.length,
+          'rows': rows,
+          'next': all.length,
+          'total': all.length,
+          if (finished) 'result': {'engine': 'service'},
+        };
+      }
+      return {'ok': true};
+    }
+
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(api: api)));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump();
+    expect(find.text('2개 문서'), findsOneWidget);
+    expect(find.textContaining('저장된 목록 표시'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('docCardFrame-/test/docs/다.pdf')));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    finished = true;
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pumpAndSettle();
+    expect(find.text('2개 문서'), findsOneWidget);
+    expect(find.byKey(const ValueKey('docCardFrame-/test/docs/다.pdf')), findsNothing);
+    expect(find.text('2.0 KB'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('docCardFrame-/test/docs/가.pdf'))).dx,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('docCardFrame-/test/docs/나.pdf'))).dx),
+    );
+  });
+
+  testWidgets('사진뷰: 저장 목록을 먼저 보여 주고 바뀐 것만 반영한 뒤 촬영 정보를 이어 채운다', (tester) async {
     _screen(tester);
     var finished = false;
     var listed = 0;
+    var exifDone = false;
+    var stopped = false;
+    final first = <Map<String, Object?>>[
+      _photo('a.jpg', '2025-03-02 10:00:00'),
+      _photo('b.jpg', '2026-01-05 09:00:00'),
+    ];
     Future<Object?> api(String method, List<Object?> args) async {
       final action = args.first as String;
-      if (action == 'scan_default') return {'ok': true, 'task_id': 't', 'state': 'running'};
+      if (action == 'scan_default') {
+        return {'ok': true, 'task_id': 't', 'state': 'running', 'from_db': true};
+      }
       if (action == 'scan_progress') {
         final since = (args[1] as Map)['since'] as int;
-        final all = [_photo('a.jpg', '2025-03-02 10:00:00'), _photo('b.jpg', '2026-01-05 09:00:00')];
+        final all = <Map<String, Object?>>[
+          ...first,
+          if (finished) ...[
+            {'op': 'remove', 'path': '/test/photos/b.jpg'},
+            _photo('c.jpg', '2026-02-01 00:00:00'),
+          ],
+        ];
         final rows = all.skip(since).toList();
         return {
           'ok': true,
           'state': finished ? 'complete' : 'running',
           'visited': 2,
           'rows': rows,
-          'next': since + rows.length,
+          'next': all.length,
           'total': all.length,
-          if (finished) 'result': {'scanned': 2},
+          if (finished) 'result': {'scanned': 2, 'exif': {'total': 1}},
         };
       }
-      if (action == 'list_by_date') {
-        listed++;
+      if (action == 'exif_status') {
         return {
           'ok': true,
-          'groups': [
-            {'year': 2024, 'month': 7, 'items': [_photo('a.jpg', '2024-07-01 00:00:00')]},
-          ],
+          'running': !exifDone,
+          'run': 'r',
+          'total': 1,
+          'done': exifDone ? 1 : 0,
+          'next': exifDone ? 1 : 0,
+          'more': false,
+          'rows': exifDone
+              ? [{..._photo('c.jpg', '2024-07-01 00:00:00'), 'op': 'info'}]
+              : <Object?>[],
         };
       }
+      if (action == 'exif_cancel') stopped = true;
+      if (action == 'list_by_date') listed++;
       if (action == 'list_folders') return {'ok': true, 'folders': <Object?>[]};
       return {'ok': true};
     }
@@ -154,21 +226,29 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: PhotoAlbumScreen(api: api))));
     await tester.pump(const Duration(milliseconds: 140));
     await tester.pump();
-    expect(listed, 0);
-    expect(find.byKey(const ValueKey('photoAlbumScanBanner')), findsOneWidget);
+    expect(find.textContaining('저장된 목록 표시'), findsOneWidget);
     expect(find.text('2026년 1월 (1장)'), findsOneWidget);
     expect(find.text('2025년 3월 (1장)'), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.text('2026년 1월 (1장)')).dy,
-      lessThan(tester.getTopLeft(find.text('2025년 3월 (1장)')).dy),
-    );
 
     finished = true;
     await tester.pump(const Duration(milliseconds: 140));
-    await tester.pumpAndSettle();
-    expect(listed, 1);
+    await tester.pump();
+    await tester.pump();
     expect(find.byKey(const ValueKey('photoAlbumScanBanner')), findsNothing);
-    expect(find.text('2024년 7월 (1장)'), findsOneWidget);
     expect(find.text('2026년 1월 (1장)'), findsNothing);
+    expect(find.text('2026년 2월 (1장)'), findsOneWidget);
+    expect(find.byKey(const ValueKey('photoAlbumExifBanner')), findsOneWidget);
+    expect(find.textContaining('0/1장'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('photoAlbumExifStopButton')));
+    expect(stopped, isTrue);
+
+    exifDone = true;
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('photoAlbumExifBanner')), findsNothing);
+    expect(find.text('2024년 7월 (1장)'), findsOneWidget);
+    expect(find.text('2026년 2월 (1장)'), findsNothing);
+    // 받은 목록을 그대로 쓰고 전체 목록을 다시 받지 않는다.
+    expect(listed, 0);
   });
 }
