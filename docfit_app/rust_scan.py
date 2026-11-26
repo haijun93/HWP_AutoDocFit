@@ -35,6 +35,9 @@ def names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
     """Query the ready service index. Return None for unavailable or invalid replies."""
     if os.name != "nt":
         return None
+    # 시험 격리: 실제 데이터 금지 표시가 있으면 이 PC 에 설치된 색인 서비스를 읽지 않는다(가짜 opener·격리 파이프는 그대로).
+    if opener is None and pipe_name == KFindPipeName and os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1":
+        return None
     try:
         from .kfind_process import is_pipe_alive
         if opener is None and not is_pipe_alive(pipe_name, timeout=0.1): return None
