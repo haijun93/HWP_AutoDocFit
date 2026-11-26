@@ -878,8 +878,12 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             return other
         return bind_function(_단어모드_다음위치, _docfit_namespace)
     if _docfit_symbol == '단어모드_서식보관':
-        def 단어모드_서식보관(start, end):
+        def 단어모드_서식보관(start, end, 장평포함=None):
             """자간과 장평을 한 번에 글자별로 읽어 (자간 runs, 장평 runs)로 보관한다.
+
+            장평포함=None 이면 '장평 줄이기' 설정을 따른다. 장평을 바꾸지 않는 경로는
+            장평 7슬롯을 읽지 않고 장평 runs 자리에 None 을 돌려준다(빈 목록이면
+            모르고 복원에 써도 조용히 지나간다). 글자별 선택·GetDefault 는 같다.
 
             실패 시 Undo 이력 대신 정확히 복원하기 위한 원래 값이다. 한글은 여러
             글자를 선택했을 때 서식이 섞여 있으면 값을 믿을 수 없게 돌려주므로(실측)
@@ -887,7 +891,9 @@ def _install(*, _docfit_namespace, _docfit_symbol):
             약 40% 감소). 자간과 장평을 따로 읽던 두 번의 순회도 한 번으로 줄인다.
             """
             start, end = 자간조정_본문범위(start, end)
-            spacing_runs, ratio_runs = [], []
+            if 장평포함 is None:
+                장평포함 = 장평_줄이기_사용
+            spacing_runs, ratio_runs = [], [] if 장평포함 else None
             pos = start
 
             def 병합(runs, pos, nxt, values):
@@ -917,9 +923,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 spacing = tuple(int(getattr(pset, key)) for key in _단어모드_자간필드)
                 if any(v < -50 or v > 50 for v in spacing):
                     raise RuntimeError('허용 범위 밖의 원래 자간')
-                ratio = tuple(int(getattr(pset, key)) for key in _단어모드_장평필드)
                 병합(spacing_runs, pos, nxt, spacing)
-                병합(ratio_runs, pos, nxt, ratio)
+                if 장평포함:
+                    ratio = tuple(int(getattr(pset, key)) for key in _단어모드_장평필드)
+                    병합(ratio_runs, pos, nxt, ratio)
                 pos = nxt
             hwp_run('Cancel')
             return spacing_runs, ratio_runs
@@ -927,7 +934,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '단어모드_자간보관':
         def 단어모드_자간보관(start, end):
             """혼합 자간을 연속 구간별 보관. 실패 시 Undo 이력 대신 정확히 복원."""
-            보관 = 단어모드_서식보관(start, end)
+            보관 = 단어모드_서식보관(start, end, 장평포함=False)
             return None if 보관 is None else 보관[0]
         return bind_function(단어모드_자간보관, _docfit_namespace)
     if _docfit_symbol == '단어모드_자간적용':
@@ -947,7 +954,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
     if _docfit_symbol == '단어모드_장평보관':
         def 단어모드_장평보관(start, end):
             """혼합 장평(글자 가로비율)을 연속 구간별 보관."""
-            보관 = 단어모드_서식보관(start, end)
+            보관 = 단어모드_서식보관(start, end, 장평포함=True)
             return None if 보관 is None else 보관[1]
         return bind_function(단어모드_장평보관, _docfit_namespace)
     if _docfit_symbol == '단어모드_장평적용':
