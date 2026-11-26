@@ -12,7 +12,9 @@ from concurrent.futures import ThreadPoolExecutor
 
 from .api_contract import ServiceError
 
-DOCUMENTS = frozenset({'.hwp', '.hwpx', '.pdf', '.doc', '.docx', '.txt', '.md'})
+# CTXEXT1: 기존 후처리·kordoc 변환에서 지원하는 카드 대상 입력만 추가한다(PPT 제외).
+DOCUMENTS = frozenset({'.hwp', '.hwpx', '.pdf', '.doc', '.docx', '.txt', '.md',
+                       '.xls', '.pptx', '.hml'})
 # 파일변환 탭의 그림 입력(JPG·PNG 등). 파일 선택·끌어 놓기·폴더 추가가 모두 이 목록을 쓴다.
 IMAGES = frozenset({'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.gif'})
 ADDABLE = DOCUMENTS | IMAGES

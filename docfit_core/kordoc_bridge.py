@@ -390,6 +390,7 @@ def _parse_hwp_rust(source: Path, target: Path, output_format: str = "markdown")
 def parse_document(source: str | Path, target: str | Path, *, output_format: str = "markdown",
                    pages: str | None = None, ocr: bool = False) -> Path:
     source_p, target_p = Path(source), Path(target)
+    _validate_context_xml_input(source_p)
     # kordoc 의존 줄이기 2단계: HWP5 문서의 '텍스트' 출력만 Rust(klib extract) 우선, 실패 시 kordoc parse 대체.
     # 마크다운은 파일변환(HWP→DOCX·MD)의 중간 결과라 표·제목 구조가 필요하다 — Rust 리더는 본문 글만 내므로
     # 표가 사라질 수 있어 kordoc을 그대로 쓴다(2026-11-15 검토).
@@ -410,6 +411,24 @@ def parse_document(source: str | Path, target: str | Path, *, output_format: str
         args.append("--ocr")
     run_kordoc(args)
     return Path(target)
+
+
+def _validate_context_xml_input(source: Path) -> None:
+    """CTXEXT1 입력은 외부 엔진에 넘기기 전 DTD·엔티티를 거부한다."""
+    from defusedxml import ElementTree as safe_et
+
+    if source.suffix.lower() == '.hml':
+        if source.stat().st_size > 50 * 1024 * 1024:
+            raise ValueError('HML 파일은 50MB 이하여야 합니다.')
+        safe_et.parse(source, forbid_dtd=True, forbid_entities=True, forbid_external=True)
+    elif source.suffix.lower() == '.pptx':
+        from docfit_core.timemachine.extractors_ooxml import _open_zip_safely
+        with _open_zip_safely(source) as archive:
+            for name in archive.namelist():
+                if name.lower().endswith(('.xml', '.rels')):
+                    with archive.open(name) as stream:
+                        safe_et.parse(stream, forbid_dtd=True, forbid_entities=True,
+                                      forbid_external=True)
 
 
 def convert_to_hwpx(source: str | Path, target: str | Path, *, preset: str = "보고서") -> Path:
