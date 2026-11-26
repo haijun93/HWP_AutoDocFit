@@ -341,21 +341,18 @@ class BookkeepingTests(_Base):
         moved = self._file("a.pdf")
         deleted = self._file("b.pdf")
         kept = self._file("c.pdf")
-        rows = [{"path": str(p), "name": p.name, "stem": p.stem} for p in (moved, deleted, kept)]
-        library_scan_cache.save("documents", {".pdf"}, [], rows, roots=["r"])
+        self.docs.db.import_rows([{"path": str(p), "name": p.name} for p in (moved, deleted, kept)])
         self._run(self.docs, "rename", [moved], new_name="d")
         self._run(self.docs, "delete", [deleted, self.source / "none.pdf"])
-        saved = library_scan_cache.load("documents", {".pdf"}, [], roots=["r"])
-        self.assertEqual([row["name"] for row in saved], ["d.pdf", "c.pdf"])
-        self.assertEqual(saved[0]["path"], str(self.source / "d.pdf"))
+        saved = self.docs.db.load()
+        self.assertEqual([row[2] for row in saved], ["c.pdf", "d.pdf"])
+        self.assertEqual(saved[1][1], str(self.source / "d.pdf"))
 
     def test_saved_photo_list_follows_a_move(self):
         path = self._photo()
-        library_scan_cache.save("photos", {".jpg"}, [], [{"path": str(path), "filename": path.name,
-                                                          "tags": ["행사"], "favorite": True}])
+        self.photo.add_tag(path, "행사")
         done = self._run(self.photo, "move", [path], destination=str(self.dest))["results"][0]
-        saved = library_scan_cache.load("photos", {".jpg"}, [])
-        self.assertEqual([(r["path"], r["folder"], r["tags"]) for r in saved],
+        self.assertEqual([(r["path"], r["folder"], r["tags"]) for r in self.photo.db.list_photos()],
                          [(done["new_path"], str(self.dest), ["행사"])])
 
     def test_bookkeeping_error_is_a_warning_not_a_failed_file(self):

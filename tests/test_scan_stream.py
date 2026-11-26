@@ -1,5 +1,4 @@
 """문서뷰·사진뷰 검색의 부분 결과 전달(SCANSPEED1) 시험."""
-import json
 import os
 import tempfile
 import threading
@@ -138,18 +137,6 @@ class DocumentStreamTests(unittest.TestCase):
         self.assertEqual(state["state"], "complete")
         self.assertEqual(sorted(row["name"] for row in rows), ["one.pdf", "two.hwpx"])
 
-    def test_cached_list_drops_deleted_files_without_per_file_stat(self):
-        kept = self.root / "kept.pdf"
-        kept.write_bytes(b"x")
-        rows = [{"path": str(kept), "name": "kept.pdf"}, {"path": str(self.root / "gone.pdf"), "name": "gone.pdf"}]
-        library_scan_cache.save("documents", {".hwp"}, [], rows, roots=[str(self.root)])
-        with patch("docfit_app.doc_grid_service.library_scan_cache.load", return_value=rows), \
-             patch.object(self.service._background_scan, "start", return_value={"ok": True}), \
-             patch.object(Path, "is_file", side_effect=AssertionError("행마다 is_file")):
-            started = self.service.start_default_scan()
-        self.assertEqual([row["name"] for row in started["result"]["documents"]], ["kept.pdf"])
-        self.assertEqual(json.loads((self.base / "data" / "scan-cache" / "documents.json").read_text("utf-8"))["version"], 1)
-
 
 class KlibDefaultScanTests(unittest.TestCase):
     def test_reserved_and_user_folders_stay_excluded_without_extra_arguments(self):
@@ -188,6 +175,7 @@ class PhotoStreamTests(unittest.TestCase):
         shown = Path(os.path.normcase(str(self.root)))
         self.service = PhotoAlbumService(db_path=self.base / "photos.sqlite", thumb_dir=self.base / "thumbs",
                                          drive_roots=[shown])
+        self.addCleanup(self.service.exif.wait, 10)  # 임시 폴더를 지우기 전에 촬영 정보 정리를 끝낸다.
         self.rows = [row_for(shown / path.name) for path in self.paths]
 
     def fake_klib(self, release: threading.Event | None = None):
@@ -204,7 +192,9 @@ class PhotoStreamTests(unittest.TestCase):
         with patch("docfit_app.doc_grid_service.query_names_service", return_value=None), \
              patch("docfit_app.photo_album_service._scan_default_roots", side_effect=self.fake_klib(release)):
             self.assertTrue(self.service.command("scan_default")["ok"])
-            return drain(self.service.command)
+            found = drain(self.service.command)
+            self.service.exif.wait(10)
+            return found
 
     def test_items_are_shown_before_database_and_exif_work(self):
         release = threading.Event()
@@ -223,6 +213,7 @@ class PhotoStreamTests(unittest.TestCase):
         self.assertEqual(state["state"], "complete")
         self.assertEqual(len(rows), 2)
         self.assertEqual(state["result"]["added"], 3)
+        self.service.exif.wait(10)
         listed = [p["path"] for g in self.service.command("list_by_date")["groups"] for p in g["items"]]
         self.assertEqual(sorted(listed), sorted([item["path"], *(row["path"] for row in rows)]))
 

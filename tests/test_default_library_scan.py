@@ -91,6 +91,7 @@ class DefaultLibraryScanTests(unittest.TestCase):
             self.assertEqual(state["state"], "complete")
             self.assertEqual(observed, sorted(observed))
             self.assertEqual(state["result"]["scanned"], 1)
+            service.exif.wait(10)
 
     def test_rust_scan_cancel_terminates_child_process(self):
         with tempfile.TemporaryDirectory() as temp:

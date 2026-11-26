@@ -1,5 +1,6 @@
 """사진뷰(PhotoAlbumService): 사진 라이브러리 백엔드 서비스 (MPLB1).
 
+저장해 둔 목록을 먼저 보여 주고 바뀐 사진만 반영하며, 촬영 정보는 배경에서 읽는다(PHOTOSYNC1, `photo_library`).
 사진 폴더 등록·증분 스캔, EXIF 촬영일 및 회전 방향(Orientation 1~8) 보정 썸네일,
 연·월 묶음 격자 목록, 즐겨찾기·태그·검색(SQLite DB),
 공문 첨부용 일괄 처리(축소 & EXIF 회전 정방향 반영 사본 저장),
@@ -44,6 +45,8 @@ from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
 from .rust_scan import scan as _rust_scan, scan_default_roots as _scan_default_roots
 from . import library_scan_cache
+from .library_db import _prefixes, file_record, path_key
+from .photo_library import ExifOrganizer, PhotoStore, PhotoViewSync, date_text, pending_photos
 from .open_listed_file import open_listed_file
 from .doc_grid_service import find_klib_executable
 
@@ -56,7 +59,6 @@ PHOTO_EXTENSIONS: frozenset[str] = frozenset(
 MAX_SLOTS: int = 2
 SLOT_TIMEOUT: float = 5.0
 DEFAULT_THUMB_SIZE: int = 160
-DB_BATCH: int = 500
 
 EXIF_ORIENTATION_TAG: int = 0x0112  # 274
 EXIF_DATETIME_ORIGINAL: int = 0x9003
@@ -217,30 +219,6 @@ def _read_photo_group_meta(path: Path | str) -> dict[str, Any]:
     return res
 
 
-def _unchanged(old: dict[str, Any] | None, size: int, mtime: float, cloud: bool) -> bool:
-    return bool(old and old["size"] == size and old["cloud"] == cloud and abs((old["mtime"] or 0) - mtime) < 0.001)
-
-
-def _scan_item(path: str, row: dict[str, Any], old: dict[str, Any] | None) -> dict[str, Any]:
-    """검색 중에 바로 보여 줄 항목. 촬영일은 DB에 있으면 그 값, 아직 없으면 수정 시각이다."""
-    name = os.path.basename(path)
-    cloud = bool(row.get("cloud", False))
-    size, mtime = row.get("size"), row.get("mtime")
-    date = ""
-    if old and old.get("date_taken") and (size is None or _unchanged(old, size, mtime, cloud)):
-        date = old["date_taken"]
-    elif mtime:
-        try:
-            date = datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
-        except (OverflowError, OSError, ValueError):
-            date = ""
-    return {"path": path, "name": name, "filename": name, "date": date, "date_taken": date,
-            "size": size if size is not None else (old or {}).get("size", 0),
-            "favorite": bool(old and old.get("favorite")), "tags": list(old.get("tags", [])) if old else [],
-            "orientation": (old or {}).get("orientation", 1), "cloud": cloud,
-            "metadata_pending": size is None and not date}
-
-
 def _path_within_root(path, root):
     """path 가 root 아래인지(드라이브가 다르면 아님). 공용 도우미 path_is_within 으로 위임한다."""
     return path_is_within(path, root)
@@ -297,6 +275,9 @@ class PhotoAlbumDb:
                     CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);
                     """
                 )
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(photos)")}
+                if "missing" not in columns:  # 이전 버전의 DB. 내용은 그대로 두고 열만 더한다.
+                    conn.execute("ALTER TABLE photos ADD COLUMN missing INTEGER NOT NULL DEFAULT 0")
 
     def register_folder(self, folder_path: str) -> None:
         norm = _norm_path(folder_path)
@@ -363,34 +344,10 @@ class PhotoAlbumDb:
                         mtime=excluded.mtime,
                         date_taken=excluded.date_taken,
                         orientation=excluded.orientation,
-                        cloud=excluded.cloud
+                        cloud=excluded.cloud,
+                        missing=0
                     """,
                     (norm, folder_norm, filename, size, mtime, date_taken, orientation, cloud),
-                )
-
-    def upsert_many(self, rows: list[tuple[Any, ...]]) -> None:
-        """(path, folder, filename, size, mtime, date_taken, orientation, cloud) 묶음을 한 번에 저장한다.
-
-        경로는 호출자가 정규화해 넘긴다. 한 장마다 연결·커밋하면 첫 검색이 사진 수만큼 느려진다.
-        """
-        if not rows:
-            return
-        with self._lock, closing(self._connect()) as conn:
-            with conn:
-                conn.executemany(
-                    """
-                    INSERT INTO photos (path, folder, filename, size, mtime, date_taken, orientation, cloud)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(path) DO UPDATE SET
-                        folder=excluded.folder,
-                        filename=excluded.filename,
-                        size=excluded.size,
-                        mtime=excluded.mtime,
-                        date_taken=excluded.date_taken,
-                        orientation=excluded.orientation,
-                        cloud=excluded.cloud
-                    """,
-                    rows,
                 )
 
     def get_photo(self, path: str) -> dict[str, Any] | None:
@@ -545,19 +502,19 @@ class PhotoAlbumDb:
                     rows = conn.execute(
                         """
                         SELECT * FROM photos
-                        WHERE folder = ? OR folder LIKE ? OR folder LIKE ?
+                        WHERE (folder = ? OR folder LIKE ? OR folder LIKE ?) AND missing = 0
                         ORDER BY date_taken DESC, filename ASC
                         """,
                         (folder_norm, prefix_slash + "%", prefix_backslash + "%"),
                     ).fetchall()
                 else:
                     rows = conn.execute(
-                        "SELECT * FROM photos WHERE folder = ? ORDER BY date_taken DESC, filename ASC",
+                        "SELECT * FROM photos WHERE folder = ? AND missing = 0 ORDER BY date_taken DESC, filename ASC",
                         (folder_norm,),
                     ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT * FROM photos ORDER BY date_taken DESC, filename ASC"
+                    "SELECT * FROM photos WHERE missing = 0 ORDER BY date_taken DESC, filename ASC"
                 ).fetchall()
 
             tag_rows = conn.execute("SELECT photo_path, tag FROM tags ORDER BY tag").fetchall()
@@ -575,6 +532,20 @@ class PhotoAlbumDb:
                 results.append(item)
             return results
 
+    def tag_uses(self, folder: str | None = None) -> list[tuple[str, str]]:
+        """(사진 경로, 태그). 태그가 달린 행만 읽는다."""
+        sql = "SELECT t.photo_path, t.tag FROM tags t JOIN photos p ON p.path = t.photo_path WHERE p.missing = 0"
+        with self._lock, closing(self._connect()) as conn:
+            rows = [(r[0], r[1]) for r in conn.execute(sql)]
+        if not folder:
+            return rows
+        prefixes = _prefixes([_norm_path(folder)])
+        return [r for r in rows if path_key(r[0]).startswith(prefixes)]
+
+    def has_photos(self) -> bool:
+        with self._lock, closing(self._connect()) as conn:
+            return conn.execute("SELECT 1 FROM photos WHERE missing = 0 LIMIT 1").fetchone() is not None
+
     def search(
         self,
         query: str = "",
@@ -585,7 +556,7 @@ class PhotoAlbumDb:
         end_date: str | None = None,
         favorite_only: bool = False,
     ) -> list[dict[str, Any]]:
-        conditions: list[str] = []
+        conditions: list[str] = ["p.missing = 0"]
         params: list[Any] = []
 
         if folder:
@@ -617,7 +588,7 @@ class PhotoAlbumDb:
             )
             params.append(tag.strip().lower())
 
-        where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+        where_clause = "WHERE " + " AND ".join(conditions)
         sql = f"SELECT p.* FROM photos p {where_clause} ORDER BY p.date_taken DESC, p.filename ASC"
 
         with self._lock, closing(self._connect()) as conn:
@@ -673,10 +644,16 @@ class PhotoAlbumService:
         self._background_scan = BackgroundScan()
         self.settings_store = settings_store
         self._default_name_paths: set[str] | None = None
-        self.file_ops = FileOps(PHOTO_EXTENSIONS, after_item=self._after_file_op, after_all=self._after_file_ops)
+        self._sync: PhotoViewSync | None = None
+        self.exif = ExifOrganizer(self.db, lambda path: read_exif_metadata(path),
+                                  lambda: self._listed_paths(pending_photos(self.db)))
+        self.file_ops = FileOps(PHOTO_EXTENSIONS, after_item=self._after_file_op)
 
     def _after_file_op(self, op: str, source: Path, target: Path | None, before: os.stat_result) -> dict[str, Any]:
         """성공한 파일 하나의 DB·썸네일 캐시를 맞추고, 새 위치가 목록 범위인지 알려 준다."""
+        sync = self._sync
+        if sync is not None and op != "copy":
+            sync.forget([str(source)])  # 진행 중인 비교가 옛 경로를 다시 저장하지 않게 먼저 뺀다.
         old_key = self.cache.key(source, before.st_mtime_ns, before.st_size)
         names = self._default_name_paths
         old_name = os.path.normcase(os.path.abspath(source))
@@ -698,30 +675,12 @@ class PhotoAlbumService:
             self.db.transfer_photo(str(source), str(target), keep_source=True)
         if names is not None and listed:
             names.add(os.path.normcase(os.path.abspath(target)))
+        if sync is not None and listed:
+            record = file_record(str(target))
+            if record is not None:
+                sync.store.refresh(str(target))
+                sync.adopt(record)
         return {"listed": listed}
-
-    def _after_file_ops(self, op: str, results: list[dict[str, Any]]) -> None:
-        """다음에 화면을 열 때 보이는 저장된 목록에서도 옛 경로를 걷어낸다."""
-        done = {os.path.normcase(item["path"]): item for item in results if item["ok"]}
-        if not done:
-            return
-
-        def change(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            changed: list[dict[str, Any]] = []
-            for row in rows:
-                item = done.get(os.path.normcase(str(row.get("path", ""))))
-                if item is None or op == "copy":
-                    changed.append(row)
-                if item is None or not item.get("listed") or "new_path" not in item:
-                    continue
-                moved = {**row, "path": item["new_path"], "folder": os.path.dirname(item["new_path"]),
-                         "filename": item["new_name"]}
-                if op == "copy":
-                    moved.update(tags=[], favorite=False)
-                changed.append(moved)
-            return changed
-
-        library_scan_cache.rewrite("photos", change)
 
     def _get_klib_exe(self) -> Path | None:
         return find_klib_executable()
@@ -755,7 +714,6 @@ class PhotoAlbumService:
         cancel_event: threading.Event | None = None,
         on_progress: Any | None = None,
         excluded_folders: Any = (),
-        on_found: Any | None = None,
     ) -> dict[str, Any]:
         """지정 폴더의 사진을 증분 스캔하여 DB에 등록/갱신한다.
 
@@ -794,17 +752,16 @@ class PhotoAlbumService:
                     st_size, mtime, is_cloud = row["size"], row["mtime"], row["cloud"]
                 path_str = str(path)
                 scanned_count += 1
-                if on_found is not None:
-                    on_found({"path": path_str, "name": name, "size": st_size, "mtime": mtime, "cloud": is_cloud})
+                old = existing_photos.get(path_str)
+                if (old is not None and old["size"] == st_size and old["cloud"] == is_cloud
+                        and abs((old["mtime"] or 0) - mtime) < 0.001):
+                    continue
                 if is_cloud:
                     date_taken, orientation = None, 1
                 else:
                     date_taken, orientation = read_exif_metadata(path)
                     if date_taken is None:
                         date_taken = datetime.fromtimestamp(mtime)
-                old = existing_photos.get(path_str)
-                if old is not None and old["size"] == st_size and old["cloud"] == is_cloud and abs(old["mtime"] - mtime) < 0.001:
-                    continue
                 self.db.upsert_photo(path=path_str, folder=str(path.parent), filename=name,
                     size=st_size, mtime=mtime, date_taken=date_taken.strftime("%Y-%m-%d %H:%M:%S") if date_taken else None,
                     orientation=orientation, cloud=is_cloud)
@@ -851,9 +808,6 @@ class PhotoAlbumService:
                             mtime = stat_info.st_mtime
                             size = stat_info.st_size
                             abs_path = _norm_path(entry.path)
-                            if on_found is not None:
-                                on_found({"path": abs_path, "name": name, "size": size,
-                                          "mtime": mtime, "cloud": is_cloud})
 
                             # 증분 검사: 기존에 있고 mtime/size/cloud 상태가 같으면 재추출 생략
                             cached = existing_photos.get(abs_path)
@@ -911,154 +865,132 @@ class PhotoAlbumService:
         excluded = read_exclusions(self.settings_store)
         if not excluded:
             return photos
-        return [p for p in photos if not any(path_is_within(p["path"], folder) for folder in excluded)]
+        prefixes = _prefixes(excluded)
+        return [p for p in photos if not path_key(p["path"]).startswith(prefixes)]
 
-    def scan_default_scope(self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
-                           excluded_folders: Any = (), return_engine: bool = False,
-                           on_item: Any | None = None, seen: set[str] | None = None) -> dict[str, Any]:
-        """Desktop 및 고정 드라이브 사진을 스캔한다. 이동식·네트워크는 제외한다.
+    # ---- 기본 범위: 저장 목록 즉시 표시 + 바뀐 것만 반영 ----
 
-        `on_item` 을 주면 찾는 대로 화면용 항목을 넘긴다(DB 저장·EXIF 읽기를 기다리지 않는다).
-        `seen` 에는 이번에 실제로 본 파일의 normcase 경로를 모은다.
-        """
-        known = {os.path.normcase(row["path"]): row for row in self.db.list_photos()}
-        parents: dict[str, str] = {}
-        found: dict[str, tuple[str, dict[str, Any]]] = {}  # key -> (저장 경로, 스캔 행)
+    def _listed_paths(self, paths: list[str]) -> list[str]:
+        """기본 범위 안이고 제외 폴더가 아닌 경로만 남긴다."""
+        roots = _prefixes(self._default_roots())
+        excluded = _prefixes(read_exclusions(self.settings_store))
+        return [p for p in paths if path_key(p).startswith(roots)
+                and not (excluded and path_key(p).startswith(excluded))]
+
+    def _compare_default(self, sync: PhotoViewSync, *, cancel_event: threading.Event,
+                         on_progress: Any, excluded_folders: Any) -> str:
+        """색인(서비스, 없으면 klib, 그다음 파이썬 순회)의 행을 저장 목록과 비교한다. 파일 내용은 읽지 않는다."""
+        folders: dict[str, str] = {}
 
         def accept(row: dict[str, Any]) -> None:
             parent, name = os.path.split(str(row["path"]))
-            folder = parents.get(parent)
+            folder = folders.get(parent)
             if folder is None:
-                folder = parents[parent] = _norm_path(parent)  # 폴더마다 한 번만 실제 경로를 확인한다
+                folder = folders[parent] = _norm_path(parent)  # 폴더마다 한 번만 실제 경로를 확인한다
             path = os.path.join(folder, name)
-            key = os.path.normcase(path)
-            new = key not in found
-            found[key] = (path, row)
-            if seen is not None:
-                seen.add(key)
-            if new and on_item is not None:
-                on_item(_scan_item(path, row, known.get(key)))
+            if sync.in_scope(path):
+                sync.feed({**row, "path": path, "name": name})
 
-        engine = "python"
-        rows = None
+        self._default_name_paths = None
         if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
             from .doc_grid_service import query_names_service
-            streaming: dict[str, Any] = {"on_row": accept} if on_item is not None else {}
-            rows = query_names_service(PHOTO_EXTENSIONS, excluded_folders, **streaming)
-            if rows is not None: engine = "service"
-            else:
-                rows = _scan_default_roots(PHOTO_EXTENSIONS, excluded_folders,
-                    executable=self._get_klib_exe(), cancel_event=cancel_event,
-                    on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
-                    roots=self._default_roots(), **streaming)
-                if rows is not None: engine = "klib"
-        if rows is not None:
-            self._default_name_paths = {os.path.normcase(os.path.abspath(row["path"])) for row in rows} if engine == "service" else None
-            root_keys = []
-            for root in self._default_roots():
-                if cancel_event is not None and cancel_event.is_set(): break
-                if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root): continue
-                self.db.register_folder(str(root))
-                root_keys.append(os.path.normcase(_norm_path(root)).rstrip("\\/") + os.sep)
-            for row in rows:
-                accept(row)
-            prefixes = tuple(root_keys)
-            inside = [(path, row, known.get(key)) for key, (path, row) in found.items() if key.startswith(prefixes)]
-            result = self._apply_default_rows(inside, engine, cancel_event)
-            response = {"ok": True, "roots": [str(p) for p in self._default_roots()], **result, "engine": engine}
-            return (response, engine) if return_engine else response
-        scanned = added = updated = 0
-        roots = []
-        self._default_name_paths = None
+            rows = query_names_service(PHOTO_EXTENSIONS, excluded_folders, on_row=accept)
+            if rows is not None:
+                for row in rows:
+                    accept(row)
+                self._default_name_paths = {os.path.normcase(os.path.abspath(row["path"])) for row in rows}
+                return "service"
+            rows = _scan_default_roots(PHOTO_EXTENSIONS, excluded_folders, executable=self._get_klib_exe(),
+                                       cancel_event=cancel_event, roots=self._default_roots(), on_row=accept,
+                                       on_progress=lambda n, p: on_progress(p))
+            if rows is not None:
+                for row in rows:
+                    accept(row)
+                return "klib"
         for root in self._default_roots():
-            if cancel_event is not None and cancel_event.is_set():
+            if cancel_event.is_set():
                 break
-            if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root):
-                continue
-            roots.append(str(root))
-            self.db.register_folder(str(root))
-            result = self.scan_folder(root, recursive=True, cancel_event=cancel_event,
-                                      on_progress=on_progress, excluded_folders=excluded_folders,
-                                      on_found=accept)
-            if result.get("ok"):
-                scanned += result.get("scanned", 0)
-                added += result.get("added", 0)
-                updated += result.get("updated", 0)
-        response = {"ok": True, "roots": roots, "scanned": scanned, "added": added, "updated": updated, "engine": "python"}
-        return (response, engine) if return_engine else response
+            if root.is_dir() and not is_excluded_path(root, excluded_folders, base=root):
+                self._walk(root, root, excluded_folders, cancel_event, on_progress, accept)
+        return "python"
 
-    def _apply_default_rows(self, entries: list[tuple[str, dict[str, Any], dict[str, Any] | None]], engine: str,
-                            cancel_event: threading.Event | None) -> dict[str, int]:
-        """검색 결과를 DB에 반영한다. 바뀌지 않은 사진은 파일을 다시 읽지 않는다."""
-        scanned = added = updated = 0
-        batch: list[tuple[Any, ...]] = []
-        for path, row, old in entries:
-            if cancel_event is not None and cancel_event.is_set(): break
-            scanned += 1
-            folder, name = os.path.split(path)
-            if engine == "service":
-                # 이름 색인 행에는 파일 정보가 없다. 새 경로만 심고 stat·EXIF 는 미룬다.
-                if old is None:
-                    batch.append((path, folder, name, 0, 0, "", 1, 0))
-                    added += 1
-            else:
-                if "size" in row and "mtime" in row:
-                    size, mtime, cloud = row["size"], row["mtime"], bool(row.get("cloud", False))
-                else:
+    def _walk(self, folder: Path, root: Path, excluded_folders: Any, cancel_event: threading.Event,
+              on_progress: Any, accept: Any) -> None:
+        try:
+            with os.scandir(folder) as iterator:
+                for entry in iterator:
+                    if cancel_event.is_set():
+                        return
+                    on_progress(str(folder))
                     try:
-                        st = os.stat(path)
+                        name = entry.name
+                        if name.startswith(".") or excluded_name(name):
+                            continue
+                        if entry.is_dir(follow_symlinks=False):
+                            if not is_excluded_path(entry.path, excluded_folders, base=root):
+                                self._walk(Path(entry.path), root, excluded_folders, cancel_event,
+                                           on_progress, accept)
+                            continue
+                        if (os.path.splitext(name)[1].lower() not in PHOTO_EXTENSIONS
+                                or not entry.is_file(follow_symlinks=False)
+                                or is_excluded_path(entry.path, excluded_folders, base=root)):
+                            continue
+                        st = entry.stat(follow_symlinks=False)
+                        accept({"path": entry.path, "name": name, "size": st.st_size, "mtime": st.st_mtime,
+                                "cloud": cloud_only(getattr(st, "st_file_attributes", 0))})
                     except OSError:
                         continue
-                    size, mtime = st.st_size, st.st_mtime
-                    cloud = bool(row.get("cloud", cloud_only(getattr(st, "st_file_attributes", 0))))
-                if _unchanged(old, size, mtime, cloud): continue
-                date_taken, orientation = (None, 1) if cloud else read_exif_metadata(path)
-                if date_taken is None: date_taken = datetime.fromtimestamp(mtime)
-                batch.append((path, folder, name, size, mtime, date_taken.strftime("%Y-%m-%d %H:%M:%S"),
-                              orientation, int(cloud)))
-                if old is None: added += 1
-                else: updated += 1
-            if len(batch) >= DB_BATCH:
-                self.db.upsert_many(batch)
-                batch = []
-        self.db.upsert_many(batch)
-        return {"scanned": scanned, "added": added, "updated": updated}
+        except OSError:
+            pass
 
     def start_default_scan(self) -> dict[str, Any]:
+        """저장된 목록을 먼저 내보내고, 배경에서 색인과 비교해 추가·변경·삭제만 잇달아 내보낸다.
+
+        결과는 `scan_progress` 의 `since` 로 받는다. 비교가 끝나면 촬영 정보 정리(`exif_status`)가 따로 돈다.
+        """
         excluded = read_exclusions(self.settings_store)
         roots = [str(p) for p in self._default_roots()]
-        cached = library_scan_cache.load("photos", PHOTO_EXTENSIONS, excluded, roots=roots)
+        from_db = self.db.has_photos()
+
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
+            sync = self._sync = PhotoViewSync(PhotoStore(self.db), report.publish, roots=roots, excluded=excluded)
+            sync.publish_snapshot()
+            for root in self._default_roots():
+                if root.is_dir() and not is_excluded_path(root, excluded, base=root):
+                    self.db.register_folder(str(root))
             visited = 0
+
             def tick(current_folder: str = "") -> None:
                 nonlocal visited
                 visited += 1
                 report(visited, current_folder)
-            seen: set[str] = set()
-            result, engine = self.scan_default_scope(cancel_event=cancel, on_progress=tick,
-                excluded_folders=excluded, return_engine=True, on_item=report.publish, seen=seen)
-            if not cancel.is_set():
-                # 이번에 본 파일만 남긴다(행마다 is_file 을 다시 부르지 않는다).
-                rows = self._without_excluded(
-                    [row for row in self.db.list_photos() if os.path.normcase(row["path"]) in seen])
-                library_scan_cache.save("photos", PHOTO_EXTENSIONS, excluded, rows, roots=roots)
-            result["engine"] = engine
-            return result
-        initial = {"photos": cached, "engine": "cache"} if cached is not None else None
-        started = self._background_scan.start(worker, initial_result=initial,
-                                              engine="cache" if cached is not None else None)
-        if cached is not None and started.get("ok"):
-            started["result"] = {"photos": [{**item, "state": "cached"} for item in cached], "engine": "cache"}
+
+            complete = False
+            try:
+                engine = self._compare_default(sync, cancel_event=cancel, on_progress=tick,
+                                               excluded_folders=excluded)
+                complete = not cancel.is_set()
+            finally:
+                # 중간에 실패·취소해도 찾은 것은 남기고, 삭제는 하지 않는다.
+                sync.finish(complete)
+                self._sync = None
+            pending = self.exif.start() if complete else 0
+            return {"roots": roots, "engine": engine, "scanned": sync.seen_count, **sync.counts,
+                    "exif": {"total": pending}}
+
+        started = self._background_scan.start(worker, streamed_key="photos")
+        if started.get("ok"):
+            started.update(roots=roots, from_db=from_db)
         return started
 
     def cached_default_photos(self) -> dict[str, Any]:
-        excluded = read_exclusions(self.settings_store)
-        rows = library_scan_cache.load("photos", PHOTO_EXTENSIONS, excluded, roots=[str(p) for p in self._default_roots()])
+        """저장된 목록(DB)에서 지금 있는 사진."""
+        photos = self.db.list_photos()
+        listed = set(self._listed_paths([p["path"] for p in photos]))
         is_file = library_scan_cache.existing_file_checker()
-        photos = [] if rows is None else [dict(row, name=row.get("filename", row.get("name", "")))
-            for row in rows if is_file(str(row.get("path", "")))]
-        return {"ok": True, "photos": photos, "state": "cached" if rows is not None else "empty",
-                "engine": "cache" if rows is not None else None}
+        rows = [{**p, "name": p["filename"]} for p in photos if p["path"] in listed and is_file(p["path"])]
+        return {"ok": True, "photos": rows, "state": "cached" if rows else "empty",
+                "engine": "cache" if rows else None}
 
     # ---- 2. 연·월 묶음 목록 및 검색 ----
 
@@ -1077,7 +1009,7 @@ class PhotoAlbumService:
                 continue
             if not service_row and not is_file(p["path"]):
                 continue
-            dt_str = p.get("date_taken") or ""
+            dt_str = p.get("date_taken") or date_text(p.get("mtime"))
             year, month = 0, 0
             if len(dt_str) >= 7:
                 try:
@@ -1098,7 +1030,7 @@ class PhotoAlbumService:
             item = {
                 "path": p["path"],
                 "name": p["filename"],
-                "date": p["date_taken"],
+                "date": dt_str,
                 "size": p["size"],
                 "favorite": p["favorite"],
                 "tags": p["tags"],
@@ -1150,7 +1082,7 @@ class PhotoAlbumService:
             item = {
                 "path": p["path"],
                 "name": p["filename"],
-                "date": p["date_taken"],
+                "date": p["date_taken"] or date_text(p.get("mtime")),
                 "size": p["size"],
                 "favorite": p["favorite"],
                 "tags": p["tags"],
@@ -1164,19 +1096,27 @@ class PhotoAlbumService:
 
     # ---- 3. 즐겨찾기 및 태그 관리 ----
 
+    def _marks_changed(self, path: str) -> None:
+        sync = self._sync
+        if sync is not None:
+            sync.store.refresh(path)
+
     def toggle_favorite(self, path: str | Path) -> dict[str, Any]:
         p = str(Path(path).resolve())
         new_val = self.db.toggle_favorite(p)
+        self._marks_changed(p)
         return {"ok": True, "path": p, "favorite": new_val}
 
     def add_tag(self, path: str | Path, tag: str) -> dict[str, Any]:
         p = str(Path(path).resolve())
         tags = self.db.add_tag(p, tag)
+        self._marks_changed(p)
         return {"ok": True, "path": p, "tags": tags}
 
     def remove_tag(self, path: str | Path, tag: str) -> dict[str, Any]:
         p = str(Path(path).resolve())
         tags = self.db.remove_tag(p, tag)
+        self._marks_changed(p)
         return {"ok": True, "path": p, "tags": tags}
 
     def get_tags(self, path: str | Path) -> dict[str, Any]:
@@ -1186,13 +1126,11 @@ class PhotoAlbumService:
 
     def list_tags(self, *, folder: str | Path | None = None) -> dict[str, Any]:
         """사진뷰 DB에서 사용 중인 태그와 사진 수를 반환한다."""
-        photos = self._without_excluded(self.db.list_photos(
-            str(Path(folder).resolve()) if folder and str(folder).strip() else None
-        ))
+        uses = self._without_excluded([{"path": path, "tag": tag} for path, tag in self.db.tag_uses(
+            str(Path(folder).resolve()) if folder and str(folder).strip() else None)])
         counts: dict[str, int] = {}
-        for photo in photos:
-            for tag in photo.get("tags", []):
-                counts[tag] = counts.get(tag, 0) + 1
+        for use in uses:
+            counts[use["tag"]] = counts.get(use["tag"], 0) + 1
         return {"ok": True, "tags": [
             {"tag": tag, "count": counts[tag]} for tag in sorted(counts, key=str.casefold)
         ]}
@@ -2040,6 +1978,14 @@ class PhotoAlbumService:
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()
+
+            if action == "exif_status":
+                since = payload.get("since")
+                return self.exif.status(since if isinstance(since, int) else 0)
+
+            if action == "exif_cancel":
+                self.exif.cancel()
+                return {"ok": True}
 
             if action in ("thumb_size_get", "thumb_size_set"):
                 return handle_thumb_size(self.settings_store, "photo_album", action, payload)
