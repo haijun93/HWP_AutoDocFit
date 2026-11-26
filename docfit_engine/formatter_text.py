@@ -964,13 +964,17 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
             pset.WidthType = 0   # 단 너비에 맞춤(2는 임의 너비라 글자 폭만큼 좁아진다)
             pset.HeightType = 0  # 자동 높이
             pset.TableProperties.TreatAsChar = 1
-            act.Execute("TableCreate", pset.HSet)
+            if act.Execute("TableCreate", pset.HSet) is False:
+                raise RuntimeError('박스 그림 표 생성 실패')
             칸들 = [칸 for 행 in 행들 for 칸 in (행 + [""] * (열수 - len(행)))]
             for 순번, 칸 in enumerate(칸들):
-                if 칸:
-                    텍스트_삽입(칸)
-                if 순번 < len(칸들) - 1:
-                    hwp_run("TableRightCell")
+                if 중단_요청됨():
+                    from docfit_engine.box_table_rollback import BoxTableCancelled
+                    raise BoxTableCancelled('박스 표 채우기 중단')
+                if 칸 and 텍스트_삽입(칸) is False:
+                    raise RuntimeError('박스 그림 표 칸 내용 삽입 실패')
+                if 순번 < len(칸들) - 1 and hwp_run("TableRightCell") is False:
+                    raise RuntimeError('박스 그림 표 다음 칸 이동 실패')
             hwp_run("Cancel")
         return bind_function(_박스그림표_한글표_삽입, _docfit_namespace)
     if _docfit_symbol == '_박스그림_줄인가':
@@ -994,11 +998,11 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
     if _docfit_symbol == '_박스그림표_교체':
         def _박스그림표_교체(시작문단, 끝문단, 행들):
             """문단 [시작문단, 끝문단](둘 다 본문, list id 0) 구간의 텍스트를 지우고
-            그 자리에 실제 표를 삽입한다.
+            그 자리에 실제 표를 삽입한다. 문서 파이프라인은 보관·삽입 확인·복원을 감싼다.
 
             2026-10-11 실측: 한/글 범위 선택이 실제로 잡히지 않았는데 실패를 돌려주지 않아, 원래 선 문자 줄 8개가 그대로
             남은 채 표만 들어간 결과가 있었다. 지운 뒤 선 문자 줄이 남았으면 문단 단위로 다시 지우고, 그래도 남으면 표를
-            넣지 않고 예외로 알린다(부르는 곳이 원래 글을 그대로 두고 건너뛴다)."""
+            넣지 않고 예외로 알린다. 삭제 후 실패는 보관 HWPX로 복원하고 문서 실패로 전파한다."""
             줄수 = 끝문단 - 시작문단 + 1
             hwp.SetPos(0, 끝문단, 0)
             hwp_run('MoveParaEnd')
@@ -1064,13 +1068,14 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                     _박스그림표_교체(시작, 끝, 행들)
                     변환수 += 1
                 except Exception as e:
-                    로그(f"텍스트 표(박스 그림) 변환 중 오류(건너뜀, {시작 + 1}~{끝 + 1}번째 문단): {e}")
-                    # 선 문자 표가 글로 남았으므로 최종 검수에 알린다(예전에는 기록이 없어 점수에 반영되지 않았다).
+                    로그(f"텍스트 표(박스 그림) 변환 실패(문서 중단, {시작 + 1}~{끝 + 1}번째 문단): {e}")
+                    # 삭제 뒤 실패일 수 있으므로 성공으로 진행하지 않는다. 파이프라인에서 복원 검증한다.
                     검수_문제_기록(현재_처리파일, f"[박스 그림 표 변환 실패] {시작 + 1}~{끝 + 1}번째 문단: {e}")
                     try:
                         hwp_run('Cancel')
                     except Exception:
                         pass
+                    raise
             로그(f"텍스트 표(박스 그림) 변환 완료: {변환수}개")
             hwp_run('MoveDocBegin')
             return True

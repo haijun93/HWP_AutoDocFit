@@ -288,7 +288,16 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                     and stage_enabled(선택_세부작업, 'text_table_convert')):
                 단계표시("텍스트 표(박스 그림) 변환")
                 상태(f"{파일명} : 텍스트 표(박스 그림) 변환")
-                if 박스그림_전체_적용() is False:
+                from docfit_engine.context import current_context
+                from docfit_engine.box_table_rollback import protect_box_replacements, BoxTableCancelled
+                try:
+                    with protect_box_replacements(
+                            current_context().state, save=_제목_임시hwpx_저장,
+                            reopen=lambda path: 한글_문서_열기(hwp, path, 'HWPX', 'forceopen:true'),
+                            cleanup=_제목_임시폴더_정리, cancelled=중단_요청됨, log=로그):
+                        if 박스그림_전체_적용() is False:
+                            return False
+                except BoxTableCancelled:
                     return False
                 박스그림_실행 = True
 
