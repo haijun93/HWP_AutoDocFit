@@ -5,11 +5,12 @@
 (status 가 measured)과 TTF 항목의 한/글 실측 폭(measured·bold)은 다시 만들 때 지우지 않는다.
 실측은 ``scripts/measure_indent_hangul.py widths`` 가 넣는다.
 
-사용: python scripts/make_font_width_table.py [--output 경로]
+사용: python scripts/make_font_width_table.py [--output 경로] [--hangul 한/글판]
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import struct
 import sys
@@ -202,6 +203,22 @@ def build(previous: dict | None = None) -> dict:
     return {"version": 1, "fonts": fonts}
 
 
+def environment(table: dict, hangul: str) -> dict:
+    """표를 만든 환경(한/글 판·글꼴 파일 지문). 앱은 이것이 같은 PC 에서만 표를 쓴다(INDENTW3)."""
+    from docfit_core import indent_table
+
+    fonts = {}
+    for entry in table["fonts"]:
+        if entry["type"] != "TTF":
+            continue
+        path = indent_table.font_file(entry["source_file"])
+        if path is None:
+            raise SystemExit(f"글꼴 파일을 찾지 못했습니다: {entry['face']}")
+        fonts[entry["face"]] = {"file": entry["source_file"],
+                                "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    return {"hangul": hangul, "fonts": fonts, "hft": indent_table.hft_fingerprint()}
+
+
 def dumps(table: dict) -> str:
     """글꼴 하나가 한 줄인 안정된 JSON(차이 보기와 크기를 위해)."""
     lines = [json.dumps(font, ensure_ascii=False, separators=(",", ":")) for font in table["fonts"]]
@@ -211,11 +228,16 @@ def dumps(table: dict) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--hangul", help="폭을 실측한 한/글 판(예: 9.6.1.10778). 주면 환경 지문 파일도 쓴다.")
     args = parser.parse_args(argv)
     previous = json.loads(args.output.read_text(encoding="utf-8")) if args.output.is_file() else None
     table = build(previous)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(dumps(table), encoding="utf-8", newline="\n")
+    if args.hangul:
+        env_path = args.output.with_name(args.output.stem + "_env.json")
+        content = json.dumps(environment(table, args.hangul), ensure_ascii=False, indent=1)
+        env_path.write_text(f"{content}\n", encoding="utf-8", newline="\n")
     for font in table["fonts"]:
         print(font["face"], font["type"], font["status"], len(font.get("ranges", [])))
     return 0

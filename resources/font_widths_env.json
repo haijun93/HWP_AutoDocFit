@@ -1,0 +1,34 @@
+{
+ "hangul": "9.6.1.10778",
+ "fonts": {
+  "휴먼명조": {
+   "file": "HMKMM.TTF",
+   "sha256": "d033df71fa41de48905407f7d39aca74ebd9ae87298c5420513acaa187fbefc6"
+  },
+  "함초롬바탕": {
+   "file": "HANBatang.ttf",
+   "sha256": "c5d544769d832477d48b7318222b9c3c2eced25455f7ba9acb23060dcecac104"
+  },
+  "함초롬돋움": {
+   "file": "HANDotum.ttf",
+   "sha256": "1d0437906d52e96af36943008f144ad74d6e994493df3a4210a9761e077ea898"
+  },
+  "HY헤드라인M": {
+   "file": "H2HDRM.TTF",
+   "sha256": "e50c7200521c3ea59840e5dd42e79708905a74a607f2300ed862fe2491caf831"
+  },
+  "맑은 고딕": {
+   "file": "malgun.ttf",
+   "sha256": "7a183cf1c6c56b9609fcc16eda8b5229fbc11758a21e669ec00343239b02192f"
+  },
+  "한컴돋움": {
+   "file": "HDOTUM.TTF",
+   "sha256": "63738010103c4b6b33c3b67ae07668f0ec215948804b5a130354c6076cc8e3d0"
+  },
+  "HY견고딕": {
+   "file": "H2GTRE.TTF",
+   "sha256": "820d3212f688b546a327ea43a7202e3379cdbbd767ebac9753997e3f3d285171"
+  }
+ },
+ "hft": "fc16d19519a23ee171bc4466c796e3b801c9b50d807d772c91c03871c4cde15b"
+}

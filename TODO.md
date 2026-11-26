@@ -1,5 +1,6 @@
 # 할 일 (미완성 항목만)
 
+- [ ] [INDENTW3 2026-11-26] 폭 표 내어쓰기를 일괄 적용에 연결(설정 `indent_table`, 기본 켜짐; 다른 한/글 판·글꼴·미검증 조건·HWP 원본은 Shift+Tab). 합성 TXT 실측: 전체 약 240→207초, 내어쓰기 두 단계 67→34초, COM 90,221→83,692회, 값 차이 8문단 0.01pt. 관련 시험 345개 통과(6개 제외), Rust 설정 40개 통과. 남은 일: HWP 문서 검증 후 확대 여부, HWPX 실제 서식 비교, 전체 시험·EXE(PM). 상세: `docs/INDENTW3_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 - [ ] [INDENTW2 2026-11-26] 한/글 9.6(NEO) Shift+Tab 실측으로 폭 계산 보정(왼쪽·양쪽, TTF 7종·HFT 25종): 합성 54,777건 최대 0.32pt, 0.5pt 초과 0건(8건은 '모름', 31건은 기준이 첫 줄 밖이라 제외). 관련 시험 178개 통과. 앱 내어쓰기에는 아직 미연결. 남은 일: 계산 연결(모름·어림은 Shift+Tab 폴백), 한/글 2020 이상·탭·condense·표 칸 검증, 전체 시험(PM). 상세: `docs/INDENTW2_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 - [ ] [INDENTW1 2026-11-26] 공문 글꼴 5종 글자 폭 표(`resources/font_widths.json`)·폭 계산(`docfit_core/font_widths.py`) 추가, 새 시험 19개·관련 시험 148개 통과. 기존 내어쓰기 동작은 그대로(미연결). 남은 일: 한/글 COM 대조(0.5pt 미검증), 신명 계열 HFT 측정(INDENTW2), 한컴돋움·HY견고딕 추가 여부 결정, 계산 연결. 상세: `docs/INDENTW1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 - [x] [CTXEXT1 2026-11-26] XLS·PPTX·HML의 문서편집/파일 변환 메뉴·목록 추가와 HML 문서뷰 검색 연결. PPT는 비활성+이유 유지, 기본 kordoc 유지. 실제 합성 변환/거부 4개 OK, 관련 Python 116개 OK(1개 제외), flutter analyze 이상 없음·관련 위젯 38개 통과. HML/PPTX의 DTD·외부 엔티티 사전 거부. 전체 Python/Flutter 시험·실제 WebView/COM 최종 처리는 미실행. 결과: `docs/CTXEXT1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
