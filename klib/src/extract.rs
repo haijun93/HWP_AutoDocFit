@@ -572,12 +572,116 @@ enum XmlContent { Text(String), Node(XmlNode) }
 
 /// `&...;` 참조를 푼다. XML 기본 엔티티 5개와 XML 1.0 허용 문자의 숫자 참조만 인정하고,
 /// DTD를 받지 않으므로 그 밖의 이름(사용자 정의·외부 엔티티)은 `None`(거부)이다.
-pub(crate) fn resolve_xml_ref(reference: &quick_xml::events::BytesRef) -> Option<String> {
-    match reference.resolve_char_ref() {
-        Ok(Some(c)) => matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..).then(|| c.to_string()),
-        Ok(None) => quick_xml::escape::resolve_xml_entity(&reference.decode().ok()?).map(str::to_owned),
-        Err(_) => None,
+pub fn resolve_xml_ref_name(name: &str) -> Option<String> {
+    if let Some(num) = name.strip_prefix('#') {
+        let (digits, radix) = if let Some(hex) = num.strip_prefix('x').or_else(|| num.strip_prefix('X')) {
+            (hex, 16)
+        } else {
+            (num, 10)
+        };
+        if digits.starts_with('+') || digits.starts_with('-') { return None; }
+        let code = u32::from_str_radix(digits, radix).ok()?;
+        if code == 0 { return None; }
+        let c = char::from_u32(code)?;
+        if matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..) {
+            Some(c.to_string())
+        } else {
+            None
+        }
+    } else {
+        match name {
+            "amp" => Some("&".to_string()),
+            "lt" => Some("<".to_string()),
+            "gt" => Some(">".to_string()),
+            "quot" => Some("\"".to_string()),
+            "apos" => Some("'".to_string()),
+            _ => None,
+        }
     }
+}
+
+pub fn resolve_xml_ref(reference: &quick_xml::events::BytesRef) -> Option<String> {
+    let name = reference.decode().ok()?;
+    resolve_xml_ref_name(&name)
+}
+
+fn unescape_xml_attr(raw: &str, context: &str) -> Result<String, String> {
+    if !raw.contains('&') { return Ok(raw.to_string()); }
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('&') {
+        out.push_str(&rest[..start]);
+        rest = &rest[start + 1..];
+        let end = rest.find(';').ok_or_else(|| format!("corrupt: XML 엔티티 참조 거부 ({context})"))?;
+        let entity = &rest[..end];
+        let val = resolve_xml_ref_name(entity).ok_or_else(|| format!("corrupt: XML 엔티티 참조 거부 ({context})"))?;
+        out.push_str(&val);
+        rest = &rest[end + 1..];
+    }
+    out.push_str(rest);
+    Ok(out)
+}
+
+/// DTD 및 불법 엔티티를 거부하고, 태그를 제거한 평문 텍스트를 추출한다.
+pub fn xml_text(xml: &str) -> Result<String, String> {
+    if let Some(pos) = xml.find("<!") {
+        let upper = xml[pos..].to_ascii_uppercase();
+        if upper.starts_with("<!DOCTYPE") || upper.starts_with("<!ENTITY") {
+            return Err("corrupt: DTD 및 외부 엔티티 거부".into());
+        }
+    }
+    let mut out = String::with_capacity(xml.len());
+    let mut chars = xml.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '<' {
+            let mut tag_content = String::new();
+            let mut in_quote = None;
+            let mut closed = false;
+            while let Some(tc) = chars.next() {
+                if let Some(q) = in_quote {
+                    if tc == q { in_quote = None; }
+                } else if tc == '"' || tc == '\'' {
+                    in_quote = Some(tc);
+                } else if tc == '>' {
+                    closed = true;
+                    break;
+                }
+                tag_content.push(tc);
+            }
+            if !closed {
+                return Err("corrupt: 닫히지 않은 XML 태그".into());
+            }
+            let trimmed = tag_content.trim();
+            let upper = trimmed.to_ascii_uppercase();
+            if upper.starts_with("!DOCTYPE") || upper.starts_with("!ENTITY") {
+                return Err("corrupt: DTD 및 외부 엔티티 거부".into());
+            }
+            continue;
+        }
+        if ch == '&' {
+            let mut entity = String::new();
+            let mut closed = false;
+            while let Some(ec) = chars.next() {
+                if ec == ';' {
+                    closed = true;
+                    break;
+                } else if ec == '<' || ec == '&' || entity.len() >= 32 {
+                    return Err("corrupt: XML 엔티티 참조 거부".into());
+                } else {
+                    entity.push(ec);
+                }
+            }
+            if !closed {
+                return Err("corrupt: XML 엔티티 참조 거부".into());
+            }
+            let resolved = resolve_xml_ref_name(&entity)
+                .ok_or_else(|| "corrupt: XML 엔티티 참조 거부".to_string())?;
+            out.push_str(&resolved);
+            continue;
+        }
+        out.push(ch);
+    }
+    Ok(out)
 }
 
 fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, String> {
@@ -591,18 +695,24 @@ fn parse_xml_tree(xml: &[u8], doc_type: &str, context: &str) -> Result<XmlNode, 
             Ok(Event::Start(e)) => {
                 let qname = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 let mut node = XmlNode { name: qname, ..Default::default() };
-                for attr in e.attributes().with_checks(false).flatten() {
+                for attr_res in e.attributes() {
+                    let attr = attr_res.map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
                     let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned();
-                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) { node.attrs.insert(key, value.into_owned()); }
+                    let raw = reader.decoder().decode(&attr.value).map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
+                    let value = unescape_xml_attr(&raw, context)?;
+                    node.attrs.insert(key, value);
                 }
                 stack.push(node);
             }
             Ok(Event::Empty(e)) => {
                 let name = String::from_utf8_lossy(e.local_name().as_ref()).into_owned();
                 let mut node = XmlNode { name, ..Default::default() };
-                for attr in e.attributes().with_checks(false).flatten() {
+                for attr_res in e.attributes() {
+                    let attr = attr_res.map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
                     let key = String::from_utf8_lossy(attr.key.local_name().as_ref()).into_owned();
-                    if let Ok(value) = attr.decode_and_unescape_value(reader.decoder()) { node.attrs.insert(key, value.into_owned()); }
+                    let raw = reader.decoder().decode(&attr.value).map_err(|e| format!("corrupt: {doc_type} XML 파싱 실패 ({context}): {e}"))?;
+                    let value = unescape_xml_attr(&raw, context)?;
+                    node.attrs.insert(key, value);
                 }
                 if let Some(parent) = stack.last_mut() { parent.content.push(XmlContent::Node(node)); } else { root.content.push(XmlContent::Node(node)); }
             }
