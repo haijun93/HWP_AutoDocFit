@@ -109,7 +109,7 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         fill(dc, rc(e), pal.bg);
         frame(dc, e, if shell.prompt.is_some() { pal.accent } else { pal.divider });
         if shell.prompt.is_some() {
-            let tip = R::new(e.r + scale(12, lay.dpi), 0, lay.w - scale(8, lay.dpi), lay.top.b);
+            let tip = R::new(scale(12, lay.dpi), scale(48, lay.dpi), lay.w - scale(8, lay.dpi), lay.top.b);
             text(dc, "Enter 확인 · Esc 취소", rc(tip), pal.text_sub, 0);
             return;
         }
@@ -118,6 +118,23 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
             fill(dc, rc(*r), pal.bg);
             frame(dc, *r, pal.divider);
             text(dc, b.label(), rc(*r), if enabled { pal.text } else { pal.text_faint }, DT_CENTER);
+        }
+        for (b, r) in layout::NAV_BUTTONS.iter().zip(lay.nav_buttons.iter()) {
+            let enabled = match b {
+                layout::Btn::Back => shell.can_back(),
+                layout::Btn::Forward => shell.can_forward(),
+                layout::Btn::Favorite => shell.page.is_some(),
+                _ => true,
+            };
+            let active = match b {
+                layout::Btn::ToggleLeft => shell.left_open,
+                layout::Btn::ToggleRight => shell.right_open,
+                layout::Btn::Favorite => shell.page.as_ref().is_some_and(|p| shell.favorites.contains(p)),
+                _ => false,
+            };
+            fill(dc, rc(*r), if active { pal.selected } else { pal.bg });
+            frame(dc, *r, pal.divider);
+            text(dc, b.label(), rc(*r), if enabled { pal.row_text(active, pal.text) } else { pal.text_faint }, DT_CENTER);
         }
     }
 }
@@ -131,6 +148,15 @@ unsafe fn draw_left<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: 
         SelectObject(dc, fb);
         text(dc, "페이지", rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
+        for (i, section) in layout::SECTIONS.iter().enumerate() {
+            let y = head.b + i as i32 * lay.item_h;
+            let row = R::new(l.l, y, l.r - 1, y + lay.item_h);
+            let selected = shell.section == *section;
+            if selected { fill(dc, rc(row), pal.selected); }
+            text(dc, section.label(), rc(inset(row, pad)), pal.row_text(selected, pal.text), 0);
+        }
+        let saved = SaveDC(dc);
+        IntersectClipRect(dc, l.l, lay.list_top(l), l.r, l.b);
         let items = shell.left_list();
         let slots = lay.left_slots() + 1;
         for (slot, item) in items.iter().skip(shell.left_first).take(slots).enumerate() {
@@ -153,6 +179,7 @@ unsafe fn draw_left<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: 
                 }
             }
         }
+        RestoreDC(dc, saved);
     }
 }
 
@@ -163,18 +190,32 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
         let head = R::new(r.l + 1, r.t, r.r, r.t + lay.head_h);
         fill(dc, rc(head), pal.head_bg);
         SelectObject(dc, fb);
-        text(dc, &format!("역링크 ({})", shell.back.len()), rc(inset(head, pad)), pal.text, 0);
+        text(dc, &format!("카드 {} · 역링크 {}", shell.cards.len(), shell.back.len()), rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
-        if shell.back.is_empty() {
+        if shell.back.is_empty() && shell.cards.is_empty() {
             let row = R::new(r.l + 1, lay.list_top(r), r.r, lay.list_top(r) + lay.item_h * 2);
-            text(dc, "이 페이지를 가리키는 링크가 없습니다", rc(inset(row, pad)), pal.text_muted, 0);
+            text(dc, "Shift+클릭으로 카드를 여세요", rc(inset(row, pad)), pal.text_muted, 0);
             return;
         }
-        let items = layout::right_items(&shell.back);
+        let saved = SaveDC(dc);
+        IntersectClipRect(dc, r.l, lay.list_top(r), r.r, r.b);
+        let items = shell.right_list();
         for (slot, item) in items.iter().skip(shell.back_first).take(lay.right_slots() + 1).enumerate() {
             let top = lay.list_top(r) + slot as i32 * lay.item_h;
             let row = R::new(r.l + 1, top, r.r, top + lay.item_h);
             match item {
+                RightItem::Card(i) => {
+                    fill(dc, rc(row), pal.head_bg);
+                    frame(dc, row, pal.divider);
+                    let mut title = inset(row, pad);
+                    title.r -= scale(28, lay.dpi);
+                    text(dc, &shell.cards[*i].target.page, rc(title), pal.accent, 0);
+                    text(dc, "×", rc(R::new(title.r, row.t, row.r, row.b)), pal.text, DT_CENTER);
+                }
+                RightItem::Preview(i) => {
+                    let preview = format!("↗ {}", shell.card_preview(*i).replace('\n', " · "));
+                    text(dc, &preview, rc(inset(row, pad)), pal.text, 0);
+                }
                 RightItem::Group(page) => {
                     SelectObject(dc, fb);
                     text(dc, page, rc(inset(row, pad)), pal.accent, 0);
@@ -188,6 +229,7 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
                 }
             }
         }
+        RestoreDC(dc, saved);
     }
 }
 

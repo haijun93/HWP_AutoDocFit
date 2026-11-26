@@ -6,6 +6,22 @@ use crate::edit::{EditHost, Editor};
 use crate::find::{self, BackItem, Hit};
 use crate::pages::{PageStore, RECENT_MAX};
 use crate::view::View;
+use crate::layout::{LeftSection, LeftItem, RightItem};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Visit {
+    pub page: String,
+    pub block: Option<usize>,
+}
+
+/// UI1 카드는 읽기 미리보기. 누르면 기존 중앙 편집기로 연다.
+#[derive(Clone, Debug)]
+pub struct SidebarCard {
+    pub target: Visit,
+    pub preview: String,
+    /// 순번 블록이 편집 뒤 다른 블록을 가리키는 일을 막는다(ID·파일 형식은 그대로).
+    pub version: String,
+}
 
 /// 위쪽 입력 칸이 "새 페이지 이름"·"이름 바꾸기" 입력으로 바뀐 상태.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +57,15 @@ pub struct Shell<H: EditHost> {
     pub prompt: Option<PromptKind>,
     pub clock: fn() -> Now,
     pub last_rename: Option<(String, String)>,
+    pub left_open: bool,
+    pub right_open: bool,
+    pub section: LeftSection,
+    /// 저장 형식·사용자 설정을 바꾸지 않는 실행 중 즐겨찾기.
+    pub favorites: Vec<String>,
+    pub cards: Vec<SidebarCard>,
+    pub visits: Vec<Visit>,
+    pub visit_at: usize,
+    pub toggle_prefix: Option<u64>,
 }
 
 fn fixed_clock() -> Now {
@@ -67,6 +92,14 @@ impl<H: EditHost> Shell<H> {
             prompt: None,
             clock: fixed_clock,
             last_rename: None,
+            left_open: true,
+            right_open: true,
+            section: LeftSection::All,
+            favorites: Vec::new(),
+            cards: Vec::new(),
+            visits: Vec::new(),
+            visit_at: 0,
+            toggle_prefix: None,
         }
     }
 
@@ -107,7 +140,114 @@ impl<H: EditHost> Shell<H> {
     /// 왼쪽 패널에 그릴 목록(검색 칸 글로 거른 것). 이름 입력 줄이 열려 있는 동안은 거르지 않는다.
     pub fn left_list(&self) -> Vec<crate::layout::LeftItem> {
         let q = if self.prompt.is_some() { "" } else { self.query.as_str() };
-        crate::layout::left_items_filtered(&self.pages, &self.recent, q)
+        if self.section == LeftSection::All {
+            return crate::layout::left_items_filtered(&self.pages, &self.recent, q);
+        }
+        let names: Vec<String> = match self.section {
+            LeftSection::Journals => self.pages.iter().filter(|p| crate::pages::looks_like_journal(p)).cloned().collect(),
+            LeftSection::Favorites => self.favorites.iter().filter(|p| self.pages.contains(p)).cloned().collect(),
+            LeftSection::Recent => self.recent.iter().filter(|p| self.pages.contains(p)).cloned().collect(),
+            LeftSection::All => unreachable!(),
+        };
+        let q = q.trim().to_lowercase();
+        let mut result = vec![LeftItem::Label(format!("{} ({})", self.section.label(), names.len()))];
+        result.extend(names.into_iter().filter(|p| p.to_lowercase().contains(&q)).map(LeftItem::Page));
+        result
+    }
+
+    pub fn select_section(&mut self, section: LeftSection) {
+        self.section = section;
+        self.left_first = 0;
+    }
+
+    pub fn toggle_favorite(&mut self) {
+        let Some(page) = self.page.clone() else { return };
+        if self.favorites.contains(&page) { self.favorites.retain(|p| p != &page); }
+        else { self.favorites.push(page); }
+        self.left_first = 0;
+        self.say("즐겨찾기는 이번 실행 동안 유지됩니다");
+    }
+
+    pub fn can_back(&self) -> bool { !self.visits.is_empty() && self.visit_at > 0 }
+    pub fn can_forward(&self) -> bool { self.visit_at + 1 < self.visits.len() }
+
+    fn remember_position(&mut self) {
+        if let Some(v) = self.visits.get_mut(self.visit_at) {
+            v.block = self.editor.view.rows.get(self.editor.view.selected).map(|r| r.block);
+        }
+    }
+
+    /// 저장/대상 읽기에 실패하면 방문 스택과 현재 페이지를 그대로 둔다. 삭제된 방문을 재생성하지 않는다.
+    pub fn navigate(&mut self, forward: bool, page_rows: usize) -> Result<(), String> {
+        if !(if forward { self.can_forward() } else { self.can_back() }) { return Ok(()); }
+        self.persist()?;
+        self.remember_position();
+        let at = if forward { self.visit_at + 1 } else { self.visit_at - 1 };
+        let target = self.visits[at].clone();
+        let history = self.visits.clone();
+        self.load_page(&target.page)?;
+        self.visits = history;
+        self.visit_at = at;
+        if let Some(block) = target.block { self.editor.view.reveal_block(block, page_rows); }
+        Ok(())
+    }
+
+    pub fn right_list(&self) -> Vec<RightItem> {
+        let mut items = Vec::new();
+        for i in 0..self.cards.len() { items.extend([RightItem::Card(i), RightItem::Preview(i)]); }
+        if !self.cards.is_empty() && !self.back.is_empty() { items.push(RightItem::Group("역링크".into())); }
+        items.extend(crate::layout::right_items(&self.back));
+        items
+    }
+
+    /// 페이지/블록을 새 카드로 연다. 같은 대상은 맨 위로 옮기며 원문·ID·방문 이력은 건드리지 않는다.
+    pub fn open_card(&mut self, page: &str, block: Option<usize>) -> Result<(), String> {
+        let page = crate::pages::validate_name(page)?;
+        if !self.editor.flush_for_close() { return Err("편집 중인 글을 반영하지 못했습니다".into()); }
+        let doc = if self.page.as_deref() == Some(page.as_str()) { self.editor.view.doc.clone() }
+        else {
+            let path = self.store()?.path_of(&page)?;
+            docio::load_file(&path)?.0
+        };
+        if block.is_some_and(|b| b >= doc.blocks.len()) { return Err("블록을 찾을 수 없습니다".into()); }
+        let preview = block.and_then(|b| doc.blocks.get(b)).map(|b| b.text.clone())
+            .unwrap_or_else(|| doc.blocks.iter().take(3).map(|b| b.text.as_str()).collect::<Vec<_>>().join(" · "));
+        let target = Visit { page, block };
+        self.cards.retain(|c| c.target != target);
+        self.cards.insert(0, SidebarCard { target, preview, version: outliner_core::content_digest(&outliner_core::serialize(&doc)) });
+        self.right_open = true;
+        self.back_first = 0;
+        Ok(())
+    }
+
+    pub fn close_card(&mut self, index: usize) {
+        if index < self.cards.len() { self.cards.remove(index); self.back_first = 0; }
+    }
+
+    pub fn activate_card(&mut self, index: usize, page_rows: usize) -> Result<(), String> {
+        let card = self.cards.get(index).ok_or("카드가 없습니다")?.clone();
+        let target = card.target;
+        // 미리보기는 없는 페이지를 생성하지 않는다.
+        if !self.store()?.exists(&target.page) { return Err("카드의 페이지가 없습니다".into()); }
+        if target.block.is_some() {
+            if !self.editor.flush_for_close() { return Err("편집 중인 글을 반영하지 못했습니다".into()); }
+            let markdown = if self.page.as_deref() == Some(target.page.as_str()) { self.editor.markdown() }
+                else { outliner_core::serialize(&docio::load_file(&self.store()?.path_of(&target.page)?)?.0) };
+            if outliner_core::content_digest(&markdown) != card.version {
+                return Err("블록이 바뀌었습니다. Shift+클릭으로 카드를 다시 열어 주세요".into());
+            }
+        }
+        self.goto(&target.page, target.block, page_rows)
+    }
+
+    pub fn card_preview(&self, index: usize) -> String {
+        self.cards[index].preview.clone()
+    }
+
+    fn remap_page(&mut self, old: &str, new: &str) {
+        for page in &mut self.favorites { if page == old { *page = new.to_string(); } }
+        for visit in &mut self.visits { if visit.page == old { visit.page = new.to_string(); } }
+        for card in &mut self.cards { if card.target.page == old { card.target.page = new.to_string(); } }
     }
 
     pub fn refresh_backlinks(&mut self) {
@@ -163,6 +303,7 @@ impl<H: EditHost> Shell<H> {
         let (_doc, text, info) = docio::load_file(&path)?;
         let view = View::from_markdown(&text)?;
         let base = outliner_core::serialize(&view.doc);
+        self.remember_position();
         self.editor.replace_document(view, Some(info), base);
         self.page = Some(stem.to_string());
         self.recent.retain(|r| r != stem);
@@ -173,6 +314,12 @@ impl<H: EditHost> Shell<H> {
         self.refresh_backlinks();
         self.search_open = false;
         self.hits.clear();
+        self.query.clear();
+        self.visits.truncate(if self.visits.is_empty() { 0 } else { self.visit_at + 1 });
+        if self.visits.last().is_none_or(|v| v.page != stem) {
+            self.visits.push(Visit { page: stem.to_string(), block: None });
+        }
+        self.visit_at = self.visits.len() - 1;
         Ok(())
     }
 
@@ -224,6 +371,7 @@ impl<H: EditHost> Shell<H> {
         self.persist()?;
         let n = store.rename(&old, new_name)?;
         let stem = crate::pages::validate_name(new_name)?;
+        self.remap_page(&old, &stem);
         self.last_rename = Some((old, stem.clone()));
         self.load_page(&stem)?;
         self.say(format!("이름을 '{stem}' 로 바꿨습니다(링크를 고친 파일 {n}개)"));
@@ -236,6 +384,7 @@ impl<H: EditHost> Shell<H> {
         let (old, new) = self.last_rename.take().ok_or("되돌릴 이름 변경 내역이 없습니다")?;
         self.persist()?;
         let n = store.undo_rename(&old, &new)?;
+        self.remap_page(&new, &old);
         self.load_page(&old)?;
         self.say(format!("이름을 다시 '{old}' 로 되돌렸습니다(링크를 고친 파일 {n}개)"));
         Ok(())

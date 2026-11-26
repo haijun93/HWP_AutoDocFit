@@ -177,7 +177,7 @@ pub struct State {
     edit_brush_color: u32,
     last_title: String,
     /// Ctrl+클릭으로 따라갈 링크(EDIT 에서 창으로 우편 전달).
-    pending_link: Option<String>,
+    pending_link: Option<(String, bool)>,
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -205,7 +205,7 @@ fn palette(s: &State) -> Palette {
 unsafe fn layout_of(hwnd: HWND, s: &State) -> Layout {
     unsafe {
         let r = client(hwnd);
-        layout::compute(r.right, r.bottom, s.dpi, s.shell.panels())
+        layout::compute_visible(r.right, r.bottom, s.dpi, s.shell.panels(), s.shell.left_open, s.shell.right_open)
     }
 }
 
@@ -255,7 +255,9 @@ unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
         let page = m.page_rows(lay.center.h());
         s.shell.editor.refresh_popup();
         let edit = s.shell.editor.host.edit;
-        let editing_pos = s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b));
+        let editing_pos = if s.shell.search_open { None } else {
+            s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b))
+        };
         match editing_pos {
             Some(pos) => {
                 if ensure {
@@ -304,6 +306,9 @@ unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
             }
         }
         if !s.search_edit.is_null() {
+            if s.shell.prompt.is_none() && read_edit(s.search_edit) != s.shell.query {
+                set_search_text(s, &s.shell.query.clone());
+            }
             let r = search_rect(&lay, s.shell.prompt.is_some());
             let show = lay.panels && lay.top.h() > 0;
             MoveWindow(s.search_edit, r.left, r.top, r.right - r.left, r.bottom - r.top, 1);
@@ -469,6 +474,14 @@ unsafe fn do_button(hwnd: HWND, b: Btn) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
         match b {
+            Btn::ToggleLeft => s.shell.left_open = !s.shell.left_open,
+            Btn::ToggleRight => s.shell.right_open = !s.shell.right_open,
+            Btn::Back | Btn::Forward => {
+                let rows = page_rows(hwnd, s);
+                let r = s.shell.navigate(b == Btn::Forward, rows);
+                report(s, r);
+            }
+            Btn::Favorite => s.shell.toggle_favorite(),
             Btn::Today => {
                 let r = s.shell.open_today();
                 report(s, r);
@@ -539,12 +552,40 @@ unsafe fn search_key(parent: HWND, vk: u16) -> bool {
 }
 
 /// 목록(편집 아님) 상태의 키.
+unsafe fn global_key(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool, input: bool) -> bool {
+    unsafe {
+        let Some(s) = state(hwnd) else { return false };
+        if !s.shell.panels() || s.shell.prompt.is_some() { return false; }
+        let action = if ctrl && !alt && !shift && matches!(vk, 0xDB | 0xDD) {
+            Some(if vk == 0xDB { Btn::Back } else { Btn::Forward })
+        } else if ctrl && shift && !alt && vk == b'F' as u16 {
+            Some(Btn::Favorite)
+        } else if !input && !ctrl && !alt && !shift {
+            let now = now_ms();
+            let prefix = s.shell.toggle_prefix.take().is_some_and(|t| now.saturating_sub(t) < 1500);
+            if prefix && matches!(vk, 0x4C | 0x52) {
+                Some(if vk == 0x4C { Btn::ToggleLeft } else { Btn::ToggleRight })
+            } else {
+                if vk == b'T' as u16 { s.shell.toggle_prefix = Some(now); return true; }
+                None
+            }
+        } else { s.shell.toggle_prefix = None; None };
+        if let Some(button) = action { do_button(hwnd, button); return true; }
+        if ctrl && !alt && !shift && vk == b'K' as u16 {
+            if s.shell.editor.finish_edit() { focus_search(hwnd); ui_sync(hwnd, false); }
+            return true;
+        }
+        false
+    }
+}
+
 unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
     unsafe { key_down_modifiers(hwnd, vk, ctrl_down(), alt_down(), shift_down()) }
 }
 
 unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool) -> bool {
     unsafe {
+        if global_key(hwnd, vk, ctrl, alt, shift, false) { return true; }
         let Some(s) = state(hwnd) else { return false };
         if s.shell.editor.editing() {
             return false;
@@ -682,6 +723,10 @@ unsafe fn clipboard_read(hwnd: HWND) -> Option<String> {
 
 /// 마우스 클릭. 위쪽 단추·왼쪽 페이지 목록·검색 결과·오른쪽 역링크·가운데 블록 목록을 가려 처리한다.
 unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
+    unsafe { click_modifiers(hwnd, x, y, double, shift_down()); }
+}
+
+unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
         let lay = layout_of(hwnd, s);
@@ -701,7 +746,7 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
         }
         if lay.panels {
             if lay.top.contains(x, y) {
-                if let Some(b) = lay.button_at(x, y) {
+                if let Some(b) = lay.button_at(x, y).filter(|_| s.shell.prompt.is_none()) {
                     do_button(hwnd, b);
                 }
                 return;
@@ -710,16 +755,30 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
                 if let Some(slot) = lay.result_slot_at(y) {
                     let i = s.shell.hit_first + slot;
                     if i < s.shell.hits.len() {
-                        open_hit(hwnd, i);
+                        if shift {
+                            let hit = s.shell.hits[i].clone();
+                            let res = s.shell.open_card(&hit.page, hit.block);
+                            report(s, res);
+                            ui_sync(hwnd, true);
+                        } else { open_hit(hwnd, i); }
                     }
                 }
                 return;
             }
             if let Some(l) = lay.left.filter(|l| l.contains(x, y)) {
+                if let Some(section) = lay.section_at(x, y) {
+                    s.shell.select_section(section);
+                    if section == layout::LeftSection::Journals {
+                        let res = s.shell.open_today();
+                        report(s, res);
+                    }
+                    ui_sync(hwnd, true);
+                    return;
+                }
                 if let Some(slot) = lay.slot_at(l, y) {
                     let items = s.shell.left_list();
                     if let Some(LeftItem::Page(name)) = items.get(s.shell.left_first + slot) {
-                        let r = s.shell.open_page(&name.clone());
+                        let r = if shift { s.shell.open_card(&name.clone(), None) } else { s.shell.open_page(&name.clone()) };
                         report(s, r);
                         ui_sync(hwnd, true);
                     }
@@ -728,10 +787,19 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
             }
             if let Some(rt) = lay.right.filter(|r| r.contains(x, y)) {
                 if let Some(slot) = lay.slot_at(rt, y) {
-                    let items = layout::right_items(&s.shell.back);
-                    if let Some(RightItem::Block(i)) = items.get(s.shell.back_first + slot) {
+                    let items = s.shell.right_list();
+                    if let Some(item) = items.get(s.shell.back_first + slot) {
                         let page = page_rows(hwnd, s);
-                        let r = s.shell.goto_backlink(*i, page);
+                        let r = match item {
+                            RightItem::Card(i) if x >= rt.r - scale(38, s.dpi) => { s.shell.close_card(*i); Ok(()) }
+                            RightItem::Card(i) | RightItem::Preview(i) => s.shell.activate_card(*i, page),
+                            RightItem::Block(i) if shift => {
+                                let target = s.shell.back[*i].clone();
+                                s.shell.open_card(&target.page, Some(target.block))
+                            }
+                            RightItem::Block(i) => s.shell.goto_backlink(*i, page),
+                            RightItem::Group(_) => Ok(()),
+                        };
                         report(s, r);
                         ui_sync(hwnd, true);
                     }
@@ -749,6 +817,19 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
         if let Some(i) = row {
             let r = s.shell.editor.view.rows[i].clone();
             let block = r.block;
+            if lay.panels && shift {
+                let link = crate::paint::link_spans_x(&r.text, m.text_x(r.depth) + if r.status.is_some() { m.status_shift(s.dpi) } else { 0 }, s.dpi)
+                    .into_iter().find(|(l, rr, _)| cx >= *l && cx < *rr);
+                let target = if let Some((_, _, name)) = link { Some((name, None)) }
+                    else if (cx - m.marker_x(r.depth)).abs() <= scale(9, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
+                    else { None };
+                if let Some((name, block)) = target {
+                    let res = s.shell.open_card(&name, block);
+                    report(s, res);
+                    ui_sync(hwnd, true);
+                    return;
+                }
+            }
             // 점·접기 삼각형 클릭 = 접기/펼치기.
             if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(9, s.dpi) {
                 if s.shell.editor.finish_edit() {
@@ -807,7 +888,7 @@ unsafe fn wheel(hwnd: HWND, delta: i32, x: i32, y: i32) {
             let total = s.shell.left_list().len();
             s.shell.left_first = mv(s.shell.left_first, total, lay.left_slots());
         } else if lay.panels && lay.right.is_some_and(|r| r.contains(x, y)) {
-            let total = layout::right_items(&s.shell.back).len();
+            let total = s.shell.right_list().len();
             s.shell.back_first = mv(s.shell.back_first, total, lay.right_slots());
         } else if lay.panels && s.shell.search_open && lay.center.contains(x, y) {
             s.shell.hit_first = mv(s.shell.hit_first, s.shell.hits.len(), lay.result_slots());
@@ -858,6 +939,11 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let processkey = wp as u32 == VK_PROCESSKEY as u32;
                 let vk = if processkey { ImmGetVirtualKey(hwnd) as u16 } else { wp as u16 };
                 let ev = KeyEvent { vk, processkey, shift: shift_down(), ctrl: ctrl_down(), alt: alt_down() || msg == WM_SYSKEYDOWN, now_ms: now_ms() };
+                if !processkey && comp_len(hwnd) == 0 && !COMPOSING.load(Ordering::SeqCst) && !CANDIDATE.load(Ordering::SeqCst)
+                    && global_key(parent, vk, ev.ctrl, ev.alt, ev.shift, true) {
+                    EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                    return 0;
+                }
                 let result = match state(parent) {
                     Some(s) => s.shell.editor.key(ev),
                     None => KeyResult::Pass,
@@ -894,7 +980,7 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 }
             }
             // Tab·Enter·Esc 글자 메시지는 우리가 명령으로 처리했으므로 EDIT 에 넘기지 않는다(경고음·탭 문자 방지).
-            WM_LBUTTONDOWN if ctrl_down() => {
+            WM_LBUTTONDOWN if ctrl_down() || shift_down() => {
                 // Ctrl+클릭 = 클릭한 글자가 `[[링크]]` 안이면 그 페이지로(창에 우편으로 부탁 — EDIT 처리 도중 문서를 바꾸지 않는다).
                 let pos = SendMessageW(hwnd, EM_CHARFROMPOS, 0, lp) as u32 & 0xFFFF;
                 let mut buf = vec![0u16; GetWindowTextLengthW(hwnd).max(0) as usize + 2];
@@ -902,7 +988,7 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let text = String::from_utf16_lossy(&buf[..n]);
                 if let Some(name) = crate::links::link_at(&text, pos as usize) {
                     if let Some(s) = state(parent) {
-                        s.pending_link = Some(name);
+                        s.pending_link = Some((name, shift_down()));
                         PostMessageW(parent, WM_APP_FOLLOW, 0, 0);
                         return 0;
                     }
@@ -972,11 +1058,12 @@ unsafe extern "system" fn search_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         let parent = GetParent(hwnd);
         match msg {
             WM_KEYDOWN if wp as u32 != VK_PROCESSKEY as u32 && comp_len(hwnd) == 0 => {
+                if global_key(parent, wp as u16, ctrl_down(), alt_down(), shift_down(), true) { return 0; }
                 if search_key(parent, wp as u16) {
                     return 0;
                 }
             }
-            WM_CHAR if wp == 13 || wp == 27 => return 0,
+            WM_CHAR if wp == 13 || wp == 27 || (wp < 32 && ctrl_down()) => return 0,
             _ => {}
         }
         CallWindowProcW(orig, hwnd, msg, wp, lp)
@@ -1068,8 +1155,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_APP_FOLLOW => {
                 if let Some(s) = state(hwnd) {
-                    if let Some(name) = s.pending_link.take() {
-                        let r = s.shell.follow_link(&name);
+                    if let Some((name, sidebar)) = s.pending_link.take() {
+                        let r = if sidebar { s.shell.open_card(&name, None) } else { s.shell.follow_link(&name) };
                         report(s, r);
                     }
                 }
@@ -1394,6 +1481,10 @@ impl Harness {
         unsafe { click(self.hwnd, x, y, double) }
     }
 
+    pub fn shift_click_at(&mut self, x: i32, y: i32) {
+        unsafe { click_modifiers(self.hwnd, x, y, false, true) }
+    }
+
     pub fn layout_now(&mut self) -> Layout {
         unsafe { layout_of(self.hwnd, &*self.state) }
     }
@@ -1432,7 +1523,7 @@ impl Harness {
             let s = &mut *self.state;
             let extras = extras_of(s);
             let pal = palette(s);
-            let lay = layout::compute(w, h, s.dpi, s.shell.panels());
+            let lay = layout::compute_visible(w, h, s.dpi, s.shell.panels(), s.shell.left_open, s.shell.right_open);
             let screen = GetDC(null_mut());
             let mem = CreateCompatibleDC(screen);
             let bm = CreateCompatibleBitmap(screen, w, h);
