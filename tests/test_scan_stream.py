@@ -1,5 +1,4 @@
 """문서뷰·사진뷰 검색의 부분 결과 전달(SCANSPEED1) 시험."""
-import json
 import os
 import tempfile
 import threading
@@ -137,18 +136,6 @@ class DocumentStreamTests(unittest.TestCase):
             rows, state = drain(self.service.command)
         self.assertEqual(state["state"], "complete")
         self.assertEqual(sorted(row["name"] for row in rows), ["one.pdf", "two.hwpx"])
-
-    def test_cached_list_drops_deleted_files_without_per_file_stat(self):
-        kept = self.root / "kept.pdf"
-        kept.write_bytes(b"x")
-        rows = [{"path": str(kept), "name": "kept.pdf"}, {"path": str(self.root / "gone.pdf"), "name": "gone.pdf"}]
-        library_scan_cache.save("documents", {".hwp"}, [], rows, roots=[str(self.root)])
-        with patch("docfit_app.doc_grid_service.library_scan_cache.load", return_value=rows), \
-             patch.object(self.service._background_scan, "start", return_value={"ok": True}), \
-             patch.object(Path, "is_file", side_effect=AssertionError("행마다 is_file")):
-            started = self.service.start_default_scan()
-        self.assertEqual([row["name"] for row in started["result"]["documents"]], ["kept.pdf"])
-        self.assertEqual(json.loads((self.base / "data" / "scan-cache" / "documents.json").read_text("utf-8"))["version"], 1)
 
 
 class KlibDefaultScanTests(unittest.TestCase):

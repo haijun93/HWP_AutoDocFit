@@ -10,6 +10,7 @@ import '../../core/api/abbreviation_api.dart' show ApiCall;
 import '../common/file_handoff.dart';
 import '../common/file_ops_area.dart';
 import '../common/file_selection.dart';
+import '../common/library_delta.dart';
 import '../common/thumb_size_slider.dart';
 
 /// 문서 확장자별 대표 테마 색상.
@@ -73,6 +74,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
   bool _scanRunning = false;
   // 검색 중에 찾은 항목을 이미 보여 주고 있는지.
   bool _streaming = false;
+  // 저장된 목록(DB)을 먼저 보여 주고 바뀐 것만 확인하는 중인지.
+  bool _fromDb = false;
   int _scanVisited = 0;
   String _scanFolder = '';
   DateTime? _scanStartedAt;
@@ -111,21 +114,9 @@ class _DocGridScreenState extends State<DocGridScreen> {
       // 화면을 다시 열었을 때 이미 도는 스캔이 있으면 그 스캔을 이어서 보여 준다.
       if (res is Map && (res['ok'] == true || res['code'] == 'SCAN_RUNNING')) {
         Object? result = res;
-        var cached = false;
-        if (res['state'] == 'cached' && res['result'] is Map) {
-          final cachedResult = res['result'] as Map;
-          final cachedItems = cachedResult['documents'];
-          if (cachedItems is List) {
-            cached = true;
-            setState(() {
-              _documents = cachedItems.whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
-              _loading = false;
-              _currentFolder = '모든 고정 드라이브';
-            });
-          }
-        }
-        // 저장된 목록이 없으면 찾는 대로 새 행만 받아 이어 붙인다.
-        var streamed = false;
+        _fromDb = res['from_db'] == true;
+        // 서비스는 저장 목록을 먼저, 이어서 추가·변경·삭제만 보낸다.
+        LibraryDelta? delta;
         if (res['task_id'] != null) {
           var state = 'running';
           var next = 0;
@@ -133,28 +124,36 @@ class _DocGridScreenState extends State<DocGridScreen> {
           while (state == 'running' || state == 'cancelling' || backlog) {
             if (!backlog) await Future<void>.delayed(const Duration(milliseconds: 120));
             if (!mounted) return;
-            final progress = await widget.api('doc_grid', ['scan_progress', cached ? {} : {'since': next}]);
+            final progress = await widget.api('doc_grid', ['scan_progress', {'since': next}]);
             if (!mounted) return;
             if (progress is! Map || progress['ok'] != true) break;
             state = '${progress['state'] ?? 'running'}';
             final rows = progress['rows'];
-            final added = <Map<String, Object?>>[];
-            if (!cached && rows is List) {
-              if (!streamed) _documents = [];
-              streamed = true;
-              for (final item in rows) {
-                if (item is Map) added.add(Map<String, Object?>.from(item));
+            backlog = false;
+            ({Set<String> changed, Set<String> removed})? applied;
+            if (rows is List) {
+              // 검색 중 파일 작업으로 목록이 새로 만들어졌으면 그 목록에 이어 반영한다.
+              if (delta == null) {
+                delta = LibraryDelta();
+              } else if (_streaming && !identical(delta.items, _documents)) {
+                delta = LibraryDelta(_documents);
               }
+              applied = delta.apply(rows);
               final following = (progress['next'] as num?)?.toInt() ?? next;
               backlog = following > next && following < ((progress['total'] as num?)?.toInt() ?? 0);
               next = following;
-            } else {
-              backlog = false;
             }
             setState(() {
               _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0; _scanFolder = '${progress['current_folder'] ?? ''}'; _scanStartedAt ??= DateTime.now(); _scanLastProgressAt = DateTime.now();
-              if (added.isNotEmpty) {
-                _documents.addAll(added);
+              if (applied != null) {
+                for (final path in applied.changed.followedBy(applied.removed)) {
+                  _thumbCache.remove(path);
+                }
+                _selection.paths.removeAll(applied.removed);
+              }
+              // 첫 항목이 오기 전에는 진행 화면을 그대로 둔다.
+              if (delta != null && (delta.items.isNotEmpty || _streaming)) {
+                _documents = delta.items;
                 _loading = false;
                 _streaming = true;
                 _currentFolder = '모든 고정 드라이브';
@@ -164,18 +163,16 @@ class _DocGridScreenState extends State<DocGridScreen> {
             if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
         }
+        final scanResult = result is Map ? result : res;
         final List<Map<String, Object?>> docs;
-        if (streamed) {
-          // 정렬은 검색이 끝났을 때 한 번만 한다(묶음마다 다시 정렬하지 않는다).
-          docs = _sortedByName(_documents);
+        if (scanResult['documents'] is List) {
+          docs = [
+            for (final item in scanResult['documents'] as List)
+              if (item is Map) Map<String, Object?>.from(item),
+          ];
         } else {
-          final scanResult = result is Map ? result : res;
-          docs = <Map<String, Object?>>[];
-          if (scanResult['documents'] is List) {
-            for (final item in scanResult['documents'] as List) {
-              if (item is Map) docs.add(Map<String, Object?>.from(item));
-            }
-          }
+          // 정렬은 검색이 끝났을 때 한 번만 한다(묶음마다 다시 정렬하지 않는다).
+          docs = _sortedByName(_streaming ? _documents : delta?.items ?? const []);
         }
         setState(() { _documents = docs; _loading = false; _scanRunning = false; _streaming = false; _currentFolder = '모든 고정 드라이브'; });
       } else {
@@ -411,7 +408,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
         const SizedBox(width: 12),
         Expanded(
           child: Text(
-            '문서 검색 중 · ${_documents.length}개 표시 · $_scanElapsed',
+            '${_fromDb ? '저장된 목록 표시 · 바뀐 파일 확인 중' : '문서 검색 중'} · ${_documents.length}개 표시 · $_scanElapsed',
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 12),
           ),
@@ -638,6 +635,11 @@ class _DocCardState extends State<_DocCard> {
   @override
   void didUpdateWidget(covariant _DocCard oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 파일 내용이 바뀌었으면 썸네일을 다시 받는다.
+    if (widget.doc['mtime'] != oldWidget.doc['mtime'] || widget.doc['size'] != oldWidget.doc['size']) {
+      _thumbBytes = widget.cachedThumb;
+      if (_thumbBytes == null) _requestThumbnail();
+    }
     if (widget.cachedThumb != null && widget.cachedThumb != _thumbBytes) {
       _thumbBytes = widget.cachedThumb;
     }
