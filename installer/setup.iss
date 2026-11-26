@@ -339,7 +339,8 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Missing: String;
+  Missing, KfindExe: String;
+  ResultCode: Integer;
 begin
   if CurStep = ssInstall then
   begin
@@ -349,7 +350,6 @@ begin
   if CurStep = ssPostInstall then
   begin
     InstallFinished := True;
-    FinishRenamed(True);
     Missing := MissingWindowExes;
     if Missing = '' then
       InstallLog('파일 설치 끝(필수 창 프로그램 확인됨)')
@@ -360,13 +360,38 @@ begin
         MsgBox('설치 파일 일부(' + Trim(Missing) + ')가 빠져 있습니다.' + #13#10 +
                '한/글 후처리 앱을 모두 닫고(트레이 아이콘 포함) 설치 프로그램을 다시 실행해 주세요.', mbError, MB_OK);
     end;
+    // INSTALL3: 복사 전에 잠긴 exe 이름을 바꾸는 절차를 유지한다.
+    // 무인 설치는 UAC/재시작을 자동 실행하지 않는다. 앱의 이전 버전 안내에서 사용자가 선택한다.
+    KfindExe := ExpandConstant('{app}\_internal\resources\kfind.exe');
     if KfindRenamed then
     begin
-      InstallLog('색인 서비스가 실행 중이어서 새 색인 프로그램은 서비스를 다시 시작해야 적용됩니다');
-      if not WizardSilent then
-        MsgBox('색인 서비스가 실행 중이어서 새 색인 프로그램은 서비스를 다시 시작해야 적용됩니다.' + #13#10 +
-               '(관리자 권한으로 서비스 HwpAutoDocFit.Index 를 다시 시작하세요.)', mbInformation, MB_OK);
+      if WizardSilent then
+        InstallLog('새 색인 실행 파일 설치됨; 사용자 확인 후 서비스 재시작 필요')
+      else if MsgBox('새 색인 서비스 프로그램이 설치되었습니다.' + #13#10 +
+                     '색인 서비스(HwpAutoDocFit.Index)를 지금 다시 시작하시겠습니까?' + #13#10 +
+                     '관리자 권한 승인 창이 나타나며 색인 준비에는 시간이 걸릴 수 있습니다.',
+                     mbConfirmation, MB_YESNO) = idYes then
+      begin
+        if FileExists(KfindExe) and
+           ShellExec('runas', KfindExe, '--restart', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+        begin
+          if ResultCode = 0 then
+            InstallLog('새 색인 서비스 재시작 완료')
+          else
+          begin
+            InstallLog('색인 서비스 재시작 실패, 종료 코드 ' + IntToStr(ResultCode));
+            MsgBox('색인 서비스 재시작을 완료하지 못했습니다.' + #13#10 +
+                   'Windows 서비스에서 HwpAutoDocFit.Index를 다시 시작해 주세요.', mbInformation, MB_OK);
+          end;
+        end
+        else
+          InstallLog('색인 서비스 재시작 실행 안 됨(권한 거절 또는 파일 없음)');
+      end
+      else
+        InstallLog('사용자가 서비스 재시작을 보류함');
     end;
+    // 재시작이 끝났으면 이전 exe를 정리하고, 여전히 잠겨 있으면 다음 설치까지 보존한다.
+    FinishRenamed(True);
   end;
 end;
 

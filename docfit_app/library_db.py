@@ -274,14 +274,15 @@ class ViewSync:
             return len(self._shown)
 
     def feed(self, row: dict[str, Any]) -> None:
-        """원천 행 하나. `size`·`mtime` 이 없으면(색인 서비스) 폴더를 훑어 채운다."""
+        """원천 행 하나. 메타데이터가 없거나 시각이 미상이면 폴더를 훑어 채운다."""
         path, name = row["path"], row["name"]
         key = path_key(path)
         with self._lock:
             if key in self._seen or key in self._gone:
                 return
             old = self._known.get(key)
-            if "size" in row and "mtime" in row:
+            # 신형 서비스의 미상 시각은 0이다. 빈 파일(size=0)의 유효한 시각은 그대로 쓴다.
+            if row.get("size") is not None and row.get("mtime") not in (None, 0):
                 size, mtime, cloud = int(row["size"]), row["mtime"], bool(row.get("cloud"))
             else:
                 found = self._stats.stat(path)

@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import subprocess
 import sys
 import threading
 import struct
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -17,6 +19,29 @@ KFindPipeError = OSError
 KFindPipeName = r"\\.\pipe\HwpAutoDocFit.Index"
 _MAX_PIPE_REQUEST = 64 << 10
 _MAX_PIPE_RESPONSE = 64 << 20
+
+# unknown → ok | outdated | unavailable; 재시작 성공 뒤 unknown, 다음 조회로 재확인.
+_SERVICE_STATUS_LOCK = threading.Lock()
+_SERVICE_STATUS: dict[str, Any] = {
+    "status": "unknown", "outdated": False, "message": "", "version": None, "last_checked": 0.0,
+}
+
+
+def get_service_version_status() -> dict[str, Any]:
+    with _SERVICE_STATUS_LOCK:
+        return dict(_SERVICE_STATUS)
+
+
+def set_service_version_status(status: str, message: str = "", version: Any = None) -> None:
+    if status not in {"unknown", "ok", "outdated", "unavailable"}:
+        raise ValueError("invalid service compatibility state")
+    with _SERVICE_STATUS_LOCK:
+        _SERVICE_STATUS.update(status=status, outdated=status == "outdated", message=message,
+                               version=version, last_checked=time.time())
+
+
+class _UnsupportedCommand(ValueError):
+    pass
 
 
 def _read_exact(pipe: Any, size: int) -> bytes:
@@ -29,74 +54,131 @@ def _read_exact(pipe: Any, size: int) -> bytes:
     return bytes(chunks)
 
 
+def _pipe_request(command: str, pipe_name: str, opener: Any, **fields: Any) -> dict[str, Any]:
+    payload = json.dumps(dict(command=command, **fields), ensure_ascii=False,
+                         separators=(",", ":")).encode("utf-8")
+    if len(payload) > _MAX_PIPE_REQUEST:
+        raise ValueError("request too large")
+    with opener(pipe_name) as pipe:
+        pipe.write(struct.pack("<I", len(payload)) + payload)
+        length = struct.unpack("<I", _read_exact(pipe, 4))[0]
+        if not 0 < length <= _MAX_PIPE_RESPONSE:
+            raise ValueError("invalid response length")
+        envelope = json.loads(_read_exact(pipe, length).decode("utf-8"))
+    if not isinstance(envelope, dict):
+        raise ValueError("invalid envelope")
+    if envelope.get("ok") is not True:
+        error = str(envelope.get("error", "")).casefold()
+        if any(x in error for x in ("unknown variant", "unknown command", "unsupported command", "모르는 명령")):
+            raise _UnsupportedCommand("unsupported service command")
+        raise ValueError("service request failed")
+    result = envelope.get("result")
+    if not isinstance(result, dict):
+        raise ValueError("invalid result")
+    return result
+
+
+def _open_service(pipe_name: str, opener: Any) -> Any:
+    if opener is not None:
+        return opener
+    if os.name != "nt" or (pipe_name == KFindPipeName and os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1"):
+        raise OSError("service access disabled")
+    from .kfind_process import is_pipe_alive
+    if not is_pipe_alive(pipe_name, timeout=0.1):
+        raise OSError("service unavailable")
+    return lambda name: open(name, "r+b", buffering=0)
+
+
+def _check_capabilities(status: dict[str, Any]) -> None:
+    for field in ("features", "commands"):
+        advertised = status.get(field)
+        if advertised is not None and (not isinstance(advertised, list) or "names_list" not in advertised):
+            raise _UnsupportedCommand("names_list unsupported")
+
+
+def _record_service_capabilities(status: dict[str, Any]) -> None:
+    # names_list만 되는 이전 서비스도 목록은 계속 쓰되, 새 메타데이터 기능 적용을 안내한다.
+    if "metadata_v2" not in (status.get("features") or []):
+        set_service_version_status("outdated", "색인 서비스가 이전 버전입니다. 목록 정보 개선을 적용하려면 최신 앱 설치 후 서비스를 다시 시작해 주세요.",
+                                   version=status.get("version"))
+    else:
+        set_service_version_status("ok", version=status.get("version"))
+
+
+def _failed_service_check(exc: Exception) -> None:
+    if isinstance(exc, _UnsupportedCommand):
+        set_service_version_status("outdated", "색인 서비스가 이전 버전입니다. 최신 앱 설치 후 서비스를 다시 시작해 주세요.")
+    else:
+        set_service_version_status("unavailable", "색인 서비스를 사용할 수 없어 파일 검색으로 목록을 표시합니다.")
+
+
+def check_service_version(*, pipe_name: str = KFindPipeName, opener: Any = None) -> dict[str, Any]:
+    """기능 광고가 없는 이전 프로토콜은 작은 names_list 요청으로 실제 지원을 확인한다."""
+    try:
+        open_pipe = _open_service(pipe_name, opener)
+        status = _pipe_request("names_status", pipe_name, open_pipe)
+        _check_capabilities(status)
+        if "features" not in status and "commands" not in status:
+            if status.get("state") != "ready":
+                set_service_version_status("unknown", "색인 준비가 끝나면 기능을 다시 확인합니다.")
+                return get_service_version_status()
+            _pipe_request("names_list", pipe_name, open_pipe, extensions=["hwpx"], limit=1)
+        _record_service_capabilities(status)
+    except (OSError, ValueError, TypeError) as exc:
+        _failed_service_check(exc)
+    return get_service_version_status()
+
+
 def names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
                 pipe_name: str = KFindPipeName, opener: Any = None,
                 on_row: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]] | None:
-    """Query the ready service index. Return None for unavailable or invalid replies."""
-    if os.name != "nt":
-        return None
-    # 시험 격리: 실제 데이터 금지 표시가 있으면 이 PC 에 설치된 색인 서비스를 읽지 않는다(가짜 opener·격리 파이프는 그대로).
-    if opener is None and pipe_name == KFindPipeName and os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1":
-        return None
+    """ready 서비스 조회. offset/next는 결과 개수가 아닌 색인 위치이며 다음 쪽으로 이어 간다."""
     try:
-        from .kfind_process import is_pipe_alive
-        if opener is None and not is_pipe_alive(pipe_name, timeout=0.1): return None
-        open_pipe = opener or (lambda name: open(name, "r+b", buffering=0))
-        counter = 1
-
-        def request(command: str, **fields: Any) -> dict[str, Any]:
-            nonlocal counter
-            payload = json.dumps(dict(command=command, **({"id": counter} if command == "names_query" else {}), **fields),
-                                 ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-            counter += 1
-            if len(payload) > _MAX_PIPE_REQUEST:
-                raise ValueError("request too large")
-            with open_pipe(pipe_name) as pipe:
-                pipe.write(struct.pack("<I", len(payload)) + payload)
-                length = struct.unpack("<I", _read_exact(pipe, 4))[0]
-                if not 0 < length <= _MAX_PIPE_RESPONSE:
-                    raise ValueError("invalid response length")
-                envelope = json.loads(_read_exact(pipe, length).decode("utf-8"))
-            if not isinstance(envelope, dict) or envelope.get("ok") is not True:
-                raise ValueError("kfind returned an error")
-            result = envelope.get("result")
-            if not isinstance(result, dict):
-                raise ValueError("invalid kfind result")
-            return result
-
-        status = request("names_status")
+        open_pipe = _open_service(pipe_name, opener)
+        status = _pipe_request("names_status", pipe_name, open_pipe)
+        _check_capabilities(status)
         if status.get("state") != "ready" or status.get("mode") != "service":
+            set_service_version_status("unavailable", "색인 서비스가 준비 중이어서 파일 검색으로 목록을 표시합니다.")
             return None
-        from .library_scope import _EXCLUDED_NAMES
         from .library_scope import current_default_roots
         roots = [str(p) for p in current_default_roots()]
-        full_excluded = [os.path.join(root, name) for root in roots for name in _EXCLUDED_NAMES]
-        full_excluded.extend(str(x) for x in excluded)
         rows = []
         offset = 0
         wanted = {x.lstrip(".").casefold() for x in extensions}
         while True:
-            result = request("names_list", extensions=sorted(x.lstrip(".").casefold() for x in extensions),
-                             roots=roots, exclude=full_excluded, offset=offset, limit=5000)
+            result = _pipe_request("names_list", pipe_name, open_pipe, extensions=sorted(wanted),
+                                   roots=roots, exclude=list(map(str, excluded)), offset=offset, limit=5000)
             items, next_offset, done = result.get("items"), result.get("next"), result.get("done")
-            if not isinstance(items, list) or not isinstance(next_offset, int) or not isinstance(done, bool): return None
+            if (not isinstance(items, list) or type(next_offset) is not int or next_offset < offset
+                    or not isinstance(done, bool) or (next_offset == offset and not done)):
+                raise ValueError("invalid names_list cursor")
             for item in items:
                 if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("name"), str):
                     raise ValueError("invalid names_list row")
                 path, name = item["path"], item["name"]
                 ext = os.path.splitext(name)[1].lstrip(".").casefold()
-                if ext not in wanted: continue
+                if ext not in wanted:
+                    continue
                 row = {"path": path, "name": name, "ext": ext}
                 for key in ("size", "mtime", "mtime_ns", "cloud"):
-                    if key in item: row[key] = item[key]
+                    if key in item:
+                        row[key] = item[key]
+                if (('size' in row and (type(row['size']) is not int or row['size'] < 0))
+                        or ('mtime' in row and (type(row['mtime']) not in (int, float) or not math.isfinite(row['mtime'])))
+                        or ('mtime_ns' in row and type(row['mtime_ns']) is not int)
+                        or ('cloud' in row and not isinstance(row['cloud'], bool))):
+                    raise ValueError("invalid names_list metadata")
                 rows.append(row)
-                if on_row: on_row(row)
-            if next_offset <= offset and not done: return None
+                if on_row:
+                    on_row(row)
             offset = next_offset
-            if done: break
+            if done:
+                break
+        _record_service_capabilities(status)
         return rows
-    except Exception as exc:
-        logger.debug("kfind names query unavailable; falling back", exc_info=exc)
+    except (OSError, ValueError, TypeError) as exc:
+        _failed_service_check(exc)
+        logger.debug("kfind names query unavailable; falling back (%s)", type(exc).__name__)
         return None
 
 
