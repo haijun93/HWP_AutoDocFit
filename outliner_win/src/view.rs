@@ -17,6 +17,8 @@ pub struct Row {
     pub status: Option<String>,
     /// 화면에 그릴 글(`collapsed:: true` 속성 글자는 뺀다).
     pub text: String,
+    /// 블록 안 줄 수(최소 1) — 화면에서 차지하는 줄 칸.
+    pub lines: usize,
 }
 
 /// 파일에는 접힘이 저장되지 않으므로(엔진 `parse` 는 항상 펼침) Logseq 관례인 `collapsed:: true`
@@ -61,15 +63,29 @@ fn display_text(block: &Block) -> String {
         kept.push(words[i]);
         i += 1;
     }
-    if kept.len() == words.len() { block.text.clone() } else { kept.join(" ") }
+    if kept.len() == words.len() {
+        block.text.clone()
+    } else if block.text.contains('\n') {
+        // 줄 구조를 유지하며 속성 글자만 뺀다.
+        block.text.replace("collapsed:: true", "").replace("collapsed::true", "")
+    } else {
+        kept.join(" ")
+    }
 }
 
 /// 보이는 줄 목록: 접힌 블록 뒤에서 들여쓰기가 더 깊은 연속 블록은 숨긴다(Flutter `_visibleBlocks` 와 같은 규칙).
 pub fn build_rows(doc: &Document) -> Vec<Row> {
+    scoped_rows(doc, None)
+}
+
+fn scoped_rows(doc: &Document, root: Option<usize>) -> Vec<Row> {
     let depth = depths(&doc.blocks);
+    let start = root.unwrap_or(0);
+    let end = root.map_or(doc.blocks.len(), |i| subtree_end(doc, i));
+    let base = root.map_or(0, |i| depth[i]);
     let mut rows = Vec::new();
     let mut hide_deeper_than: Option<usize> = None;
-    for (i, block) in doc.blocks.iter().enumerate() {
+    for (i, block) in doc.blocks.iter().enumerate().take(end).skip(start) {
         if let Some(limit) = hide_deeper_than {
             if block.indent > limit {
                 continue;
@@ -82,15 +98,23 @@ pub fn build_rows(doc: &Document) -> Vec<Row> {
         }
         rows.push(Row {
             block: i,
-            depth: depth[i],
+            depth: depth[i] - base,
             has_children,
             folded: block.folded,
             status: block.status.clone(),
             text: display_text(block),
+            lines: block.text.split('\n').count(),
         });
     }
     rows
 }
+
+pub fn subtree_end(doc: &Document, block: usize) -> usize {
+    (block + 1..doc.blocks.len()).find(|&i| doc.blocks[i].indent <= doc.blocks[block].indent).unwrap_or(doc.blocks.len())
+}
+
+#[derive(Clone, Debug)]
+struct FocusVisit { root: Option<u64>, selected: Option<u64>, first: usize }
 
 /// 한 화면에 들어가는 줄 수(최소 1).
 pub fn rows_per_page(client_h: i32, header_h: i32, row_h: i32) -> usize {
@@ -158,6 +182,9 @@ pub struct View {
     pub first: usize,
     pub selection_anchor: Option<usize>,
     pub selection_end: Option<usize>,
+    /// 파일에 저장하지 않는 블록 ID 기반 화면 범위.
+    pub zoom: Option<u64>,
+    zoom_back: Vec<FocusVisit>,
 }
 
 impl View {
@@ -165,7 +192,109 @@ impl View {
         let mut doc = outliner_core::parse(text).map_err(|e| e.to_string())?;
         apply_collapsed_property(&mut doc);
         let rows = build_rows(&doc);
-        Ok(View { doc, rows, selected: 0, first: 0, selection_anchor: None, selection_end: None })
+        Ok(View { doc, rows, selected: 0, first: 0, selection_anchor: None, selection_end: None, zoom: None, zoom_back: Vec::new() })
+    }
+
+    pub fn rebuild(&mut self) {
+        let root = self.zoom.and_then(|id| self.doc.blocks.iter().position(|b| b.id == id));
+        if self.zoom.is_some() && root.is_none() { self.clear_zoom(); }
+        self.rows = scoped_rows(&self.doc, root);
+        self.selected = self.selected.min(self.rows.len().saturating_sub(1));
+        self.first = self.first.min(self.rows.len().saturating_sub(1));
+        self.clear_selection();
+    }
+
+    pub fn clear_zoom(&mut self) { self.zoom = None; self.zoom_back.clear(); }
+    pub fn can_zoom_back(&self) -> bool { !self.zoom_back.is_empty() }
+
+    pub fn focus(&mut self, root: Option<u64>) -> bool {
+        if root == self.zoom { return false; }
+        if root.is_some_and(|id| !self.doc.blocks.iter().any(|b| b.id == id)) { return false; }
+        self.zoom_back.push(FocusVisit {
+            root: self.zoom,
+            selected: self.rows.get(self.selected).map(|r| self.doc.blocks[r.block].id),
+            first: self.first,
+        });
+        self.zoom = root;
+        self.selected = 0;
+        self.first = 0;
+        self.rebuild();
+        true
+    }
+
+    pub fn zoom_back(&mut self, page: usize) -> bool {
+        let Some(visit) = self.zoom_back.pop() else { return false; };
+        self.zoom = visit.root;
+        self.rebuild();
+        self.selected = visit.selected.and_then(|id| self.rows.iter().position(|r| self.doc.blocks[r.block].id == id)).unwrap_or(0);
+        self.first = ensure_visible(visit.first, self.selected, self.rows.len(), page);
+        true
+    }
+
+    /// 페이지를 제외한 조상 경로. 맨 끝은 현재 줌 블록이다.
+    pub fn ancestors(&self) -> Vec<usize> {
+        let Some(root) = self.zoom.and_then(|id| self.doc.blocks.iter().position(|b| b.id == id)) else { return Vec::new(); };
+        let mut path = vec![root];
+        let mut indent = self.doc.blocks[root].indent;
+        for i in (0..root).rev() {
+            if self.doc.blocks[i].indent < indent { path.push(i); indent = self.doc.blocks[i].indent; }
+        }
+        path.reverse();
+        path
+    }
+
+    /// 줄 `row` 가 맨 위 줄부터 몇 번째 줄 칸에서 시작하는가.
+    pub fn slot_of(&self, row: usize) -> usize {
+        self.rows.iter().take(row).skip(self.first).map(|r| r.lines).sum()
+    }
+
+    /// 화면 y → 줄 번호(여러 줄 블록 반영).
+    pub fn row_at(&self, y: i32, header_h: i32, row_h: i32) -> Option<usize> {
+        if y < header_h || row_h <= 0 {
+            return None;
+        }
+        let mut slot = ((y - header_h) / row_h) as usize;
+        for (i, row) in self.rows.iter().enumerate().skip(self.first) {
+            if slot < row.lines {
+                return Some(i);
+            }
+            slot -= row.lines;
+        }
+        None
+    }
+
+    /// 줄 `row` 전체가 보이도록 한 맨 위 줄 번호.
+    pub fn visible_first(&self, row: usize, page: usize) -> usize {
+        let mut first = ensure_visible(self.first, row, self.rows.len(), page);
+        while first < row && self.rows[first..=row].iter().map(|r| r.lines).sum::<usize>() > page {
+            first += 1;
+        }
+        first
+    }
+
+    /// 지금 줄 하나만 블록 선택.
+    pub fn select_current(&mut self) {
+        self.selection_anchor = Some(self.selected);
+        self.selection_end = Some(self.selected);
+    }
+
+    pub fn select_all(&mut self) {
+        let last = self.rows.len().saturating_sub(1);
+        self.selection_anchor = Some(0);
+        self.selection_end = Some(last);
+        self.selected = last;
+    }
+
+    /// 선택 상태에서 Ctrl+A: 부모 블록을 선택한다(최상위면 전체).
+    pub fn select_parent(&mut self) {
+        let depth = self.rows.get(self.selected).map_or(0, |r| r.depth);
+        match (0..self.selected).rev().find(|&i| self.rows[i].depth < depth) {
+            Some(parent) => {
+                self.selected = parent;
+                self.select_current();
+            }
+            None => self.select_all(),
+        }
     }
 
     pub fn block_count(&self) -> usize {
@@ -228,7 +357,7 @@ impl View {
             return false;
         }
         let keep = row.block;
-        self.rows = build_rows(&self.doc);
+        self.rebuild();
         self.selected = self.rows.iter().position(|r| r.block == keep).unwrap_or(0);
         self.first = ensure_visible(self.first, self.selected, self.rows.len(), page);
         true
@@ -244,6 +373,9 @@ impl View {
         if block >= self.doc.blocks.len() {
             return false;
         }
+        if let Some(root) = self.zoom.and_then(|id| self.doc.blocks.iter().position(|b| b.id == id)) {
+            if block < root || block >= subtree_end(&self.doc, root) { self.clear_zoom(); }
+        }
         let mut need = self.doc.blocks[block].indent;
         for i in (0..block).rev() {
             if self.doc.blocks[i].indent < need {
@@ -251,7 +383,7 @@ impl View {
                 self.doc.blocks[i].folded = false;
             }
         }
-        self.rows = build_rows(&self.doc);
+        self.rebuild();
         match self.row_of_block(block) {
             Some(row) => {
                 self.set_selected(row, page);

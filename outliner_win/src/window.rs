@@ -2,12 +2,12 @@
 //! 키·IME 처리는 `edit::Editor`(순수 상태 기계)에 맡기고, 여기서는 메시지를 `KeyEvent` 로 바꾸고
 //! 결과(EDIT 위치·제목 줄 ●·안내 문구)를 화면에 반영만 한다.
 use crate::capture::{Shot, palette_of};
-use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_Y, VK_Z};
+use crate::edit::{Cmd, EditHost, Editor, KeyEvent, KeyResult, VK_OEM_1, VK_Y, VK_Z};
 use crate::layout::{self, Btn, Layout, LeftItem, RightItem};
 use crate::paint::{Extras, Metrics, create_font, scale, wide};
 use crate::paint_shell::{draw_shell, edit_rect_of};
 use crate::shell::{PromptKind, Shell};
-use crate::view::{Nav, ensure_visible, row_at};
+use crate::view::{Nav, ensure_visible};
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use ui_theme::{Kind, Palette, ThemePref};
@@ -36,6 +36,7 @@ const EM_POSFROMCHAR: u32 = 0x00D6;
 const EM_SCROLLCARET: u32 = 0x00B7;
 const EM_CHARFROMPOS: u32 = 0x00D7;
 const CF_UNICODETEXT: u32 = 13;
+const EM_REPLACESEL: u32 = 0x00C2;
 const GMEM_MOVEABLE: u32 = 2;
 
 #[link(name = "user32")]
@@ -61,6 +62,28 @@ static COMPOSING: AtomicBool = AtomicBool::new(false);
 static CANDIDATE: AtomicBool = AtomicBool::new(false);
 static ORIG_EDIT_PROC: AtomicIsize = AtomicIsize::new(0);
 static ORIG_SEARCH_PROC: AtomicIsize = AtomicIsize::new(0);
+/// 방금 KEYDOWN 을 우리가 처리했다 → 뒤따르는 제어 문자(Backspace 8 등)는 EDIT 에 넘기지 않는다.
+static EAT_CONTROL_CHAR: AtomicBool = AtomicBool::new(false);
+
+/// 여러 줄 EDIT 의 줄바꿈은 `\r\n`, 규칙 쪽은 `\n` 이다. EDIT 오프셋 → 규칙 오프셋.
+fn from_edit_offset(raw: &[u16], offset: usize) -> usize {
+    offset - raw[..offset.min(raw.len())].iter().filter(|&&c| c == b'\r' as u16).count()
+}
+
+/// 규칙 오프셋(`\n` 한 글자) → EDIT 오프셋(`\r\n` 두 글자).
+fn to_edit_offset(text: &str, offset: usize) -> usize {
+    offset + text.encode_utf16().take(offset).filter(|&c| c == b'\n' as u16).count()
+}
+
+unsafe fn window_units(hwnd: HWND) -> Vec<u16> {
+    unsafe {
+        let n = GetWindowTextLengthW(hwnd).max(0) as usize;
+        let mut buf = vec![0u16; n + 2];
+        let got = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        buf.truncate(got.max(0) as usize);
+        buf
+    }
+}
 
 fn now_ms() -> u64 {
     unsafe { GetTickCount64() }
@@ -97,25 +120,28 @@ unsafe fn comp_len(hwnd: HWND) -> i32 {
 
 impl EditHost for WinHost {
     fn read_text(&mut self) -> String {
-        unsafe {
-            let n = GetWindowTextLengthW(self.edit).max(0) as usize;
-            let mut buf = vec![0u16; n + 2];
-            let got = GetWindowTextW(self.edit, buf.as_mut_ptr(), buf.len() as i32);
-            String::from_utf16_lossy(&buf[..got.max(0) as usize])
-        }
+        unsafe { String::from_utf16_lossy(&window_units(self.edit)).replace("\r\n", "\n") }
     }
     fn selection(&mut self) -> (usize, usize) {
         unsafe {
             let (mut s, mut e) = (0u32, 0u32);
             SendMessageW(self.edit, EM_GETSEL, &mut s as *mut u32 as WPARAM, &mut e as *mut u32 as LPARAM);
-            (s as usize, e as usize)
+            let raw = window_units(self.edit);
+            (from_edit_offset(&raw, s as usize), from_edit_offset(&raw, e as usize))
         }
     }
     fn set_text(&mut self, text: &str, caret: usize) {
         unsafe {
             COMPOSING.store(false, Ordering::SeqCst);
-            SetWindowTextW(self.edit, wide(text).as_ptr());
-            SendMessageW(self.edit, EM_SETSEL, caret, caret as LPARAM);
+            SetWindowTextW(self.edit, wide(&text.replace('\n', "\r\n")).as_ptr());
+            let at = to_edit_offset(text, caret);
+            SendMessageW(self.edit, EM_SETSEL, at, at as LPARAM);
+        }
+    }
+    fn set_selection(&mut self, start: usize, end: usize) {
+        let text = self.read_text();
+        unsafe {
+            SendMessageW(self.edit, EM_SETSEL, to_edit_offset(&text, start), to_edit_offset(&text, end) as LPARAM);
         }
     }
     fn composing(&mut self) -> bool {
@@ -151,7 +177,9 @@ pub struct State {
     edit_brush_color: u32,
     last_title: String,
     /// Ctrl+클릭으로 따라갈 링크(EDIT 에서 창으로 우편 전달).
-    pending_link: Option<String>,
+    pending_link: Option<(String, bool)>,
+    pointer: crate::bullet::Pointer,
+    pointer_at: (i32, i32),
 }
 
 unsafe fn state<'a>(hwnd: HWND) -> Option<&'a mut State> {
@@ -179,7 +207,7 @@ fn palette(s: &State) -> Palette {
 unsafe fn layout_of(hwnd: HWND, s: &State) -> Layout {
     unsafe {
         let r = client(hwnd);
-        layout::compute(r.right, r.bottom, s.dpi, s.shell.panels())
+        layout::compute_visible(r.right, r.bottom, s.dpi, s.shell.panels(), s.shell.left_open, s.shell.right_open)
     }
 }
 
@@ -207,7 +235,8 @@ unsafe fn page_rows(hwnd: HWND, s: &State) -> usize {
 fn extras_of(s: &mut State) -> Extras {
     let editing_row = s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b));
     let dirty = s.shell.editor.dirty();
-    Extras { editing_row, message: s.shell.editor.message.clone(), dirty }
+    Extras { editing_row, message: s.shell.editor.message.clone(), dirty,
+        drop_hint: s.pointer.hint(), drag_invalid: s.pointer.dragging() && s.pointer.hint().is_none() }
 }
 
 /// 검색·이름 입력 칸의 화면 위치(그리기와 같은 값).
@@ -229,19 +258,20 @@ unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
         let page = m.page_rows(lay.center.h());
         s.shell.editor.refresh_popup();
         let edit = s.shell.editor.host.edit;
-        let editing_pos = s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b));
+        let editing_pos = if s.shell.search_open { None } else {
+            s.shell.editor.editing_block().and_then(|b| s.shell.editor.view.rows.iter().position(|r| r.block == b))
+        };
         match editing_pos {
             Some(pos) => {
                 if ensure {
                     let total = s.shell.editor.view.rows.len();
-                    s.shell.editor.view.first = ensure_visible(s.shell.editor.view.first, pos, total, page);
+                    debug_assert!(pos < total);
+                    s.shell.editor.view.first = s.shell.editor.view.visible_first(pos, page);
                 }
                 let first = s.shell.editor.view.first;
-                let row = &s.shell.editor.view.rows[pos];
-                let in_view = pos >= first && pos <= first + page;
+                let in_view = pos >= first && s.shell.editor.view.slot_of(pos) <= page;
                 if in_view {
-                    let slot = pos - first;
-                    let er = m.edit_rect(s.dpi, row.depth, row.status.is_some(), slot, lay.center.w());
+                    let er = m.row_edit_rect(s.dpi, &s.shell.editor.view, pos, lay.center.w());
                     let (ex, ey) = (er.left + lay.center.l, er.top + lay.center.t);
                     let mut old: RECT = std::mem::zeroed();
                     GetWindowRect(edit, &mut old);
@@ -279,6 +309,9 @@ unsafe fn ui_sync(hwnd: HWND, ensure: bool) {
             }
         }
         if !s.search_edit.is_null() {
+            if s.shell.prompt.is_none() && read_edit(s.search_edit) != s.shell.query {
+                set_search_text(s, &s.shell.query.clone());
+            }
             let r = search_rect(&lay, s.shell.prompt.is_some());
             let show = lay.panels && lay.top.h() > 0;
             MoveWindow(s.search_edit, r.left, r.top, r.right - r.left, r.bottom - r.top, 1);
@@ -444,6 +477,18 @@ unsafe fn do_button(hwnd: HWND, b: Btn) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
         match b {
+            Btn::ToggleLeft => s.shell.left_open = !s.shell.left_open,
+            Btn::ToggleRight => s.shell.right_open = !s.shell.right_open,
+            Btn::Back | Btn::Forward => {
+                let rows = page_rows(hwnd, s);
+                if b == Btn::Back && s.shell.editor.view.can_zoom_back() {
+                    if s.shell.editor.finish_edit() { s.shell.editor.view.zoom_back(rows); }
+                } else {
+                    let r = s.shell.navigate(b == Btn::Forward, rows);
+                    report(s, r);
+                }
+            }
+            Btn::Favorite => s.shell.toggle_favorite(),
             Btn::Today => {
                 let r = s.shell.open_today();
                 report(s, r);
@@ -514,12 +559,56 @@ unsafe fn search_key(parent: HWND, vk: u16) -> bool {
 }
 
 /// 목록(편집 아님) 상태의 키.
+unsafe fn global_key(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool, input: bool) -> bool {
+    unsafe {
+        let Some(s) = state(hwnd) else { return false };
+        if ctrl && !alt && !shift && vk == 0xDB && s.shell.editor.view.can_zoom_back() {
+            if s.shell.editor.finish_edit() {
+                let page = page_rows(hwnd, s);
+                s.shell.editor.view.zoom_back(page);
+            }
+            ui_sync(hwnd, true);
+            return true;
+        }
+        if !s.shell.panels() || s.shell.prompt.is_some() { return false; }
+        let action = if ctrl && !alt && !shift && matches!(vk, 0xDB | 0xDD) {
+            Some(if vk == 0xDB { Btn::Back } else { Btn::Forward })
+        } else if ctrl && shift && !alt && vk == b'F' as u16 {
+            Some(Btn::Favorite)
+        } else if !input && !ctrl && !alt && !shift {
+            let now = now_ms();
+            let prefix = s.shell.toggle_prefix.take().is_some_and(|t| now.saturating_sub(t) < 1500);
+            if prefix && matches!(vk, 0x4C | 0x52) {
+                Some(if vk == 0x4C { Btn::ToggleLeft } else { Btn::ToggleRight })
+            } else {
+                if vk == b'T' as u16 { s.shell.toggle_prefix = Some(now); return true; }
+                None
+            }
+        } else { s.shell.toggle_prefix = None; None };
+        if let Some(button) = action { do_button(hwnd, button); return true; }
+        if ctrl && !alt && !shift && vk == b'K' as u16 {
+            if s.shell.editor.finish_edit() { focus_search(hwnd); ui_sync(hwnd, false); }
+            return true;
+        }
+        false
+    }
+}
+
 unsafe fn key_down(hwnd: HWND, vk: u16) -> bool {
     unsafe { key_down_modifiers(hwnd, vk, ctrl_down(), alt_down(), shift_down()) }
 }
 
 unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: bool) -> bool {
     unsafe {
+        if let Some(s) = state(hwnd) {
+            if s.pointer != crate::bullet::Pointer::Idle {
+                s.pointer = crate::bullet::Pointer::Idle;
+                ReleaseCapture();
+                ui_sync(hwnd, false);
+                if vk == VK_ESCAPE { return true; }
+            }
+        }
+        if global_key(hwnd, vk, ctrl, alt, shift, false) { return true; }
         let Some(s) = state(hwnd) else { return false };
         if s.shell.editor.editing() {
             return false;
@@ -557,40 +646,51 @@ unsafe fn key_down_modifiers(hwnd: HWND, vk: u16, ctrl: bool, alt: bool, shift: 
             VK_END => Some(Nav::End),
             _ => None,
         };
-        if vk == VK_ESCAPE && s.shell.editor.view.selection_anchor.is_some() {
+        let selecting = s.shell.editor.view.selection_anchor.is_some();
+        let vertical = vk == VK_UP || vk == VK_DOWN;
+        let up = vk == VK_UP;
+        let toward = if up { Nav::Up } else { Nav::Down };
+        if vk == VK_ESCAPE && selecting {
             s.shell.editor.view.clear_selection();
-        } else if alt && (vk == VK_UP || vk == VK_DOWN) {
-            if shift {
-                s.shell.editor.selection_command(if vk == VK_UP { "up" } else { "down" });
-            } else {
-                s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
-            }
-        } else if shift && (vk == VK_UP || vk == VK_DOWN) {
-            s.shell.editor.view.extend_selection(if vk == VK_UP { Nav::Up } else { Nav::Down }, page);
-        } else if (vk == VK_LEFT || vk == VK_RIGHT) && s.shell.editor.view.selection_anchor.is_some() {
-            s.shell.editor.selection_command(if vk == VK_LEFT { "fold" } else { "unfold" });
-        } else if ctrl && !alt && s.shell.editor.view.selection_anchor.is_some() && matches!(vk, 0x43 | 0x58 | 0x56) {
+        } else if alt && shift && vertical {
+            s.shell.editor.selection_command(if up { "move_up" } else { "move_down" });
+        } else if (alt || shift) && !ctrl && vertical {
+            s.shell.editor.view.extend_selection(toward, page);
+        } else if ctrl && !alt && (vertical || vk == VK_OEM_1) {
+            s.shell.editor.selection_command(if vk == VK_OEM_1 { "toggle_collapse" } else if up { "collapse" } else { "expand" });
+        } else if (vk == VK_LEFT || vk == VK_RIGHT) && selecting {
+            s.shell.editor.selection_command(if vk == VK_LEFT { "collapse" } else { "expand" });
+        } else if ctrl && !alt && shift && vk == b'A' as u16 {
+            s.shell.editor.view.select_all();
+        } else if ctrl && !alt && vk == b'A' as u16 && selecting {
+            s.shell.editor.view.select_parent();
+        } else if ctrl && !alt && selecting && matches!(vk, 0x43 | 0x58 | 0x56) {
             if vk == 0x56 {
-                if let Some(text) = clipboard_read(hwnd) { s.shell.editor.selection_paste(&text); }
-            } else {
-                let ids = s.shell.editor.view.selected_block_ids();
-                let markdown = s.shell.editor.view.doc.blocks.iter().filter(|b| ids.contains(&b.id))
-                    .map(|b| {
-                        let status = b.status.as_deref().map(|value| format!("{value} ")).unwrap_or_default();
-                        format!("{}- {status}{}", " ".repeat(b.indent), b.text)
-                    }).collect::<Vec<_>>().join("\r\n");
-                clipboard_write(hwnd, &markdown);
-                if vk == 0x58 { s.shell.editor.selection_command("delete"); }
+                if let Some(text) = clipboard_read(hwnd) {
+                    s.shell.editor.selection_paste(&text);
+                }
+            } else if let Some(markdown) = s.shell.editor.selection_command(if vk == 0x58 { "cut" } else { "copy" }) {
+                clipboard_write(hwnd, &markdown.replace('\n', "\r\n"));
             }
-        } else if (vk == 0x2E || vk == VK_TAB) && s.shell.editor.view.selection_anchor.is_some() {
-            s.shell.editor.selection_command(if vk == 0x2E { "delete" } else if shift { "outdent" } else { "indent" });
+        } else if (vk == 0x2E || vk == 0x08) && selecting {
+            s.shell.editor.selection_command("delete_selection");
+        } else if vk == VK_TAB && selecting {
+            s.shell.editor.selection_command(if shift { "outdent" } else { "indent" });
         } else if ctrl && vk == VK_RETURN {
-            s.shell.editor.nav_command(Cmd::Toggle);
+            if selecting {
+                s.shell.editor.selection_command("cycle_todo");
+            } else {
+                s.shell.editor.nav_command(Cmd::Toggle);
+            }
         } else if let Some(nav) = nav {
             s.shell.editor.view.select(nav, page);
+            if selecting && vertical {
+                s.shell.editor.view.select_current();
+            }
         } else if vk == VK_LEFT || vk == VK_RIGHT {
             s.shell.editor.view.set_fold(vk == VK_LEFT, page);
         } else if vk == VK_RETURN || vk == VK_F2 {
+            s.shell.editor.view.clear_selection();
             s.shell.editor.start_edit_selected();
         } else if vk == VK_TAB {
             s.shell.editor.nav_command(if shift { Cmd::Outdent } else { Cmd::Indent });
@@ -646,6 +746,10 @@ unsafe fn clipboard_read(hwnd: HWND) -> Option<String> {
 
 /// 마우스 클릭. 위쪽 단추·왼쪽 페이지 목록·검색 결과·오른쪽 역링크·가운데 블록 목록을 가려 처리한다.
 unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
+    unsafe { click_modifiers(hwnd, x, y, double, shift_down()); }
+}
+
+unsafe fn click_modifiers(hwnd: HWND, x: i32, y: i32, double: bool, shift: bool) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
         let lay = layout_of(hwnd, s);
@@ -665,7 +769,7 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
         }
         if lay.panels {
             if lay.top.contains(x, y) {
-                if let Some(b) = lay.button_at(x, y) {
+                if let Some(b) = lay.button_at(x, y).filter(|_| s.shell.prompt.is_none()) {
                     do_button(hwnd, b);
                 }
                 return;
@@ -674,16 +778,30 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
                 if let Some(slot) = lay.result_slot_at(y) {
                     let i = s.shell.hit_first + slot;
                     if i < s.shell.hits.len() {
-                        open_hit(hwnd, i);
+                        if shift {
+                            let hit = s.shell.hits[i].clone();
+                            let res = s.shell.open_card(&hit.page, hit.block);
+                            report(s, res);
+                            ui_sync(hwnd, true);
+                        } else { open_hit(hwnd, i); }
                     }
                 }
                 return;
             }
             if let Some(l) = lay.left.filter(|l| l.contains(x, y)) {
+                if let Some(section) = lay.section_at(x, y) {
+                    s.shell.select_section(section);
+                    if section == layout::LeftSection::Journals {
+                        let res = s.shell.open_today();
+                        report(s, res);
+                    }
+                    ui_sync(hwnd, true);
+                    return;
+                }
                 if let Some(slot) = lay.slot_at(l, y) {
                     let items = s.shell.left_list();
                     if let Some(LeftItem::Page(name)) = items.get(s.shell.left_first + slot) {
-                        let r = s.shell.open_page(&name.clone());
+                        let r = if shift { s.shell.open_card(&name.clone(), None) } else { s.shell.open_page(&name.clone()) };
                         report(s, r);
                         ui_sync(hwnd, true);
                     }
@@ -692,10 +810,19 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
             }
             if let Some(rt) = lay.right.filter(|r| r.contains(x, y)) {
                 if let Some(slot) = lay.slot_at(rt, y) {
-                    let items = layout::right_items(&s.shell.back);
-                    if let Some(RightItem::Block(i)) = items.get(s.shell.back_first + slot) {
+                    let items = s.shell.right_list();
+                    if let Some(item) = items.get(s.shell.back_first + slot) {
                         let page = page_rows(hwnd, s);
-                        let r = s.shell.goto_backlink(*i, page);
+                        let r = match item {
+                            RightItem::Card(i) if x >= rt.r - scale(38, s.dpi) => { s.shell.close_card(*i); Ok(()) }
+                            RightItem::Card(i) | RightItem::Preview(i) => s.shell.activate_card(*i, page),
+                            RightItem::Block(i) if shift => {
+                                let target = s.shell.back[*i].clone();
+                                s.shell.open_card(&target.page, Some(target.block))
+                            }
+                            RightItem::Block(i) => s.shell.goto_backlink(*i, page),
+                            RightItem::Group(_) => Ok(()),
+                        };
                         report(s, r);
                         ui_sync(hwnd, true);
                     }
@@ -709,16 +836,45 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
         let (cx, cy) = (x - lay.center.l, y - lay.center.t);
         let m = Metrics::new(s.dpi);
         let page = m.page_rows(lay.center.h());
-        let row = row_at(cy, m.header_h, m.row_h, s.shell.editor.view.first, s.shell.editor.view.rows.len());
+        if cy >= 0 && cy < m.header_h && s.shell.editor.view.zoom.is_some() {
+            let path = crate::bullet::crumbs(&s.shell.editor.view, s.dpi, lay.center.w());
+            if let Some((pos, crumb)) = path.iter().enumerate().find(|(_, c)| c.rect.contains(cx, cy)) {
+                if pos == 0 {
+                    if s.shell.editor.finish_edit() { s.shell.editor.view.zoom_back(page); }
+                } else { s.shell.editor.focus(crumb.root); }
+                ui_sync(hwnd, true);
+            }
+            return;
+        }
+        let row = s.shell.editor.view.row_at(cy, m.header_h, m.row_h);
         if let Some(i) = row {
             let r = s.shell.editor.view.rows[i].clone();
             let block = r.block;
-            // 점·접기 삼각형 클릭 = 접기/펼치기.
-            if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(9, s.dpi) {
+            if lay.panels && shift {
+                let link = crate::paint::link_spans_x(&r.text, m.text_x(r.depth) + if r.status.is_some() { m.status_shift(s.dpi) } else { 0 }, s.dpi)
+                    .into_iter().find(|(l, rr, _)| cx >= *l && cx < *rr);
+                let target = if let Some((_, _, name)) = link { Some((name, None)) }
+                    else if (cx - m.marker_x(r.depth)).abs() <= scale(8, s.dpi) || (cx - m.bullet_x(r.depth)).abs() <= scale(6, s.dpi) { s.shell.page.clone().map(|p| (p, Some(block))) }
+                    else { None };
+                if let Some((name, block)) = target {
+                    let res = s.shell.open_card(&name, block);
+                    report(s, res);
+                    ui_sync(hwnd, true);
+                    return;
+                }
+            }
+            // 접기 삼각형과 불릿은 독립된 표적이다.
+            if r.has_children && (cx - m.marker_x(r.depth)).abs() <= scale(5, s.dpi) {
                 if s.shell.editor.finish_edit() {
                     s.shell.editor.view.set_selected(i, page);
                     s.shell.editor.view.set_fold(!r.folded, page);
                 }
+                ui_sync(hwnd, true);
+                return;
+            }
+            if (cx - m.bullet_x(r.depth)).abs() <= scale(5, s.dpi) {
+                let id = s.shell.editor.view.doc.blocks[block].id;
+                s.shell.editor.focus(Some(id));
                 ui_sync(hwnd, true);
                 return;
             }
@@ -759,6 +915,145 @@ unsafe fn click(hwnd: HWND, x: i32, y: i32, double: bool) {
 }
 
 /// 마우스 휠: 커서 아래 영역(왼쪽 목록·검색 결과·오른쪽 역링크·블록 목록)을 민다.
+unsafe fn pointer_down(hwnd: HWND, x: i32, y: i32) -> bool {
+    unsafe {
+        if shift_down() || ctrl_down() { return false; }
+        let Some(s) = state(hwnd) else { return false; };
+        if s.shell.search_open || s.shell.prompt.is_some() { return false; }
+        let lay = layout_of(hwnd, s);
+        if !lay.center.contains(x, y) { return false; }
+        let m = Metrics::new(s.dpi);
+        let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+        let Some(row) = s.shell.editor.view.row_at(cy, m.header_h, m.row_h) else { return false; };
+        let r = &s.shell.editor.view.rows[row];
+        let top = m.header_h + s.shell.editor.view.slot_of(row) as i32 * m.row_h;
+        if (cx - m.bullet_x(r.depth)).abs() > scale(5, s.dpi) || cy >= top + m.row_h { return false; }
+        let source = s.shell.editor.view.doc.blocks[r.block].id;
+        if !s.shell.editor.finish_edit() { ui_sync(hwnd, false); return true; }
+        s.pointer = crate::bullet::Pointer::Armed { source, x: cx, y: cy };
+        SetCapture(hwnd);
+        true
+    }
+}
+
+unsafe fn pointer_motion(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        s.pointer_at = (x, y);
+        if s.pointer == crate::bullet::Pointer::Idle { return; }
+        let lay = layout_of(hwnd, s);
+        let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+        let m = Metrics::new(s.dpi);
+        let threshold = (GetSystemMetricsForDpi(SM_CXDRAG, s.dpi), GetSystemMetricsForDpi(SM_CYDRAG, s.dpi));
+        s.pointer.motion(&s.shell.editor.view, &m, cx, cy, lay.center.w(), lay.center.h(), threshold);
+        if s.pointer.dragging() {
+            let valid = s.pointer.hint().is_some();
+            SetCursor(LoadCursorW(null_mut(), if valid { IDC_SIZEALL } else { IDC_NO }));
+        }
+        ui_sync(hwnd, false);
+    }
+}
+
+unsafe fn drag_scroll(hwnd: HWND) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        if !s.pointer.dragging() { return; }
+        let lay = layout_of(hwnd, s);
+        let (x, y) = s.pointer_at;
+        if !lay.center.contains(x, y) { return; }
+        let m = Metrics::new(s.dpi);
+        let step = if y >= lay.center.b - m.row_h { 1 }
+            else if y >= lay.center.t + m.header_h && y < lay.center.t + m.header_h + m.row_h { -1 }
+            else { return; };
+        s.shell.editor.view.scroll_by(step, m.page_rows(lay.center.h()));
+        pointer_motion(hwnd, x, y);
+    }
+}
+
+unsafe fn pointer_up(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        pointer_motion(hwnd, x, y);
+        let Some(s) = state(hwnd) else { return; };
+        let pointer = std::mem::take(&mut s.pointer);
+        match pointer {
+            crate::bullet::Pointer::Armed { source, .. } => {
+                if layout_of(hwnd, s).center.contains(x, y) { s.shell.editor.focus(Some(source)); }
+            }
+            crate::bullet::Pointer::Dragging { source, hint: Some(hint) } => {
+                let page = page_rows(hwnd, s);
+                s.shell.editor.drop_subtree(source, hint.target, hint.place, page);
+            }
+            _ => {}
+        }
+        ReleaseCapture();
+        ui_sync(hwnd, true);
+    }
+}
+
+/// 메뉴 준비·실행을 나눠 모달 메뉴 메시지 처리 중 State 참조를 보관하지 않는다.
+unsafe fn bullet_menu(hwnd: HWND, x: i32, y: i32) {
+    unsafe {
+        let menu = {
+            let Some(s) = state(hwnd) else { return; };
+            if s.shell.search_open || s.shell.prompt.is_some() { return; }
+            let lay = layout_of(hwnd, s);
+            if !lay.center.contains(x, y) { return; }
+            let m = Metrics::new(s.dpi);
+            let (cx, cy) = (x - lay.center.l, y - lay.center.t);
+            let Some(row) = s.shell.editor.view.row_at(cy, m.header_h, m.row_h) else { return; };
+            let r = &s.shell.editor.view.rows[row];
+            if (cx - m.bullet_x(r.depth)).abs() > scale(7, s.dpi) { return; }
+            let source = s.shell.editor.view.doc.blocks[r.block].id;
+            let has_children = r.has_children;
+            let folded = r.folded;
+            if !s.shell.editor.finish_edit() { ui_sync(hwnd, false); return; }
+            let Some(row) = s.shell.editor.view.rows.iter().position(|r| s.shell.editor.view.doc.blocks[r.block].id == source) else { return; };
+            s.shell.editor.view.set_selected(row, page_rows(hwnd, s));
+            s.pointer = crate::bullet::Pointer::Idle;
+            let menu = CreatePopupMenu();
+            if menu.is_null() { return; }
+            for (id, label, enabled) in [
+                (1, "이 블록으로 줌", true),
+                (2, "오른쪽에서 열기", s.shell.page.is_some()),
+                (3, if folded { "하위 펼치기" } else { "하위 접기" }, has_children),
+                (4, "하위 포함 복사", true),
+                (5, "하위 포함 삭제", true),
+                (6, "실행 취소\tCtrl+Z", s.shell.editor.can_undo()),
+            ] {
+                AppendMenuW(menu, MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED }, id, wide(label).as_ptr());
+            }
+            menu
+        };
+        ui_sync(hwnd, false);
+        let mut at = POINT { x, y };
+        ClientToScreen(hwnd, &mut at);
+        let command = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, at.x, at.y, 0, hwnd, null());
+        DestroyMenu(menu);
+        menu_action(hwnd, command as u32);
+    }
+}
+
+unsafe fn menu_action(hwnd: HWND, command: u32) {
+    unsafe {
+        let Some(s) = state(hwnd) else { return; };
+        let Some(row) = s.shell.editor.view.rows.get(s.shell.editor.view.selected).cloned() else { return; };
+        let source = s.shell.editor.view.doc.blocks[row.block].id;
+        let page = page_rows(hwnd, s);
+        match command {
+            1 => { s.shell.editor.focus(Some(source)); }
+            2 => if let Some(name) = s.shell.page.clone() {
+                let res = s.shell.open_card(&name, Some(row.block)); report(s, res);
+            },
+            3 => { s.shell.editor.view.set_fold(!row.folded, page); }
+            4 => if let Some(text) = s.shell.editor.selection_command("copy") { clipboard_write(hwnd, &text); },
+            5 => { s.shell.editor.selection_command("delete_selection"); }
+            6 => { s.shell.editor.history_step(true); }
+            _ => {}
+        }
+        ui_sync(hwnd, true);
+    }
+}
+
 unsafe fn wheel(hwnd: HWND, delta: i32, x: i32, y: i32) {
     unsafe {
         let Some(s) = state(hwnd) else { return };
@@ -771,7 +1066,7 @@ unsafe fn wheel(hwnd: HWND, delta: i32, x: i32, y: i32) {
             let total = s.shell.left_list().len();
             s.shell.left_first = mv(s.shell.left_first, total, lay.left_slots());
         } else if lay.panels && lay.right.is_some_and(|r| r.contains(x, y)) {
-            let total = layout::right_items(&s.shell.back).len();
+            let total = s.shell.right_list().len();
             s.shell.back_first = mv(s.shell.back_first, total, lay.right_slots());
         } else if lay.panels && s.shell.search_open && lay.center.contains(x, y) {
             s.shell.hit_first = mv(s.shell.hit_first, s.shell.hits.len(), lay.result_slots());
@@ -822,17 +1117,48 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let processkey = wp as u32 == VK_PROCESSKEY as u32;
                 let vk = if processkey { ImmGetVirtualKey(hwnd) as u16 } else { wp as u16 };
                 let ev = KeyEvent { vk, processkey, shift: shift_down(), ctrl: ctrl_down(), alt: alt_down() || msg == WM_SYSKEYDOWN, now_ms: now_ms() };
+                if !processkey && comp_len(hwnd) == 0 && !COMPOSING.load(Ordering::SeqCst) && !CANDIDATE.load(Ordering::SeqCst)
+                    && global_key(parent, vk, ev.ctrl, ev.alt, ev.shift, true) {
+                    EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                    return 0;
+                }
                 let result = match state(parent) {
                     Some(s) => s.shell.editor.key(ev),
                     None => KeyResult::Pass,
                 };
                 ui_sync(parent, true);
+                EAT_CONTROL_CHAR.store(result == KeyResult::Swallow, Ordering::SeqCst);
                 if result == KeyResult::Swallow {
+                    return 0;
+                }
+                if ev.ctrl && !ev.alt && !processkey && vk == b'A' as u16 && !ev.shift {
+                    SendMessageW(hwnd, EM_SETSEL, 0, -1);
+                    EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                    return 0;
+                }
+                if ev.ctrl && !ev.alt && ev.shift && !processkey && vk == b'V' as u16 {
+                    if let (Some(s), Some(text)) = (state(parent), clipboard_read(parent)) {
+                        s.shell.editor.paste_inline(&text);
+                        ui_sync(parent, true);
+                        EAT_CONTROL_CHAR.store(true, Ordering::SeqCst);
+                        return 0;
+                    }
+                }
+            }
+            WM_PASTE => {
+                if let (Some(s), Some(text)) = (state(parent), clipboard_read(parent)) {
+                    if s.shell.editor.paste_text(&text, now_ms()) {
+                        ui_sync(parent, true);
+                        return 0;
+                    }
+                    // 한 줄: 줄 끝 문자를 떼고 그대로 넣는다.
+                    let one = wide(text.trim_end_matches(['\r', '\n']));
+                    SendMessageW(hwnd, EM_REPLACESEL, 1, one.as_ptr() as LPARAM);
                     return 0;
                 }
             }
             // Tab·Enter·Esc 글자 메시지는 우리가 명령으로 처리했으므로 EDIT 에 넘기지 않는다(경고음·탭 문자 방지).
-            WM_LBUTTONDOWN if ctrl_down() => {
+            WM_LBUTTONDOWN if ctrl_down() || shift_down() => {
                 // Ctrl+클릭 = 클릭한 글자가 `[[링크]]` 안이면 그 페이지로(창에 우편으로 부탁 — EDIT 처리 도중 문서를 바꾸지 않는다).
                 let pos = SendMessageW(hwnd, EM_CHARFROMPOS, 0, lp) as u32 & 0xFFFF;
                 let mut buf = vec![0u16; GetWindowTextLengthW(hwnd).max(0) as usize + 2];
@@ -840,13 +1166,22 @@ unsafe extern "system" fn edit_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM
                 let text = String::from_utf16_lossy(&buf[..n]);
                 if let Some(name) = crate::links::link_at(&text, pos as usize) {
                     if let Some(s) = state(parent) {
-                        s.pending_link = Some(name);
+                        s.pending_link = Some((name, shift_down()));
                         PostMessageW(parent, WM_APP_FOLLOW, 0, 0);
                         return 0;
                     }
                 }
             }
-            WM_CHAR if wp == 9 || wp == 13 || wp == 10 || wp == 27 => return 0,
+            WM_CHAR if wp == 9 || wp == 13 || wp == 10 || wp == 27 || wp == 1 => return 0,
+            WM_CHAR if wp < 32 && EAT_CONTROL_CHAR.load(Ordering::SeqCst) => return 0,
+            WM_CHAR if wp < 128 && b"[](){}`".contains(&(wp as u8)) && !ctrl_down() => {
+                if let Some(s) = state(parent) {
+                    if s.shell.editor.typed_char(wp as u8 as char) {
+                        ui_sync(parent, true);
+                        return 0;
+                    }
+                }
+            }
             WM_IME_STARTCOMPOSITION => COMPOSING.store(true, Ordering::SeqCst),
             WM_IME_ENDCOMPOSITION => {
                 let r = CallWindowProcW(orig, hwnd, msg, wp, lp);
@@ -876,7 +1211,7 @@ unsafe fn create_edit(parent: HWND, hinst: HINSTANCE, font: HFONT, dpi: u32) -> 
             0,
             class.as_ptr(),
             null(),
-            WS_CHILD | ES_AUTOHSCROLL as u32 | ES_LEFT as u32,
+            WS_CHILD | ES_MULTILINE as u32 | ES_AUTOVSCROLL as u32 | ES_AUTOHSCROLL as u32 | ES_LEFT as u32,
             0,
             0,
             10,
@@ -901,11 +1236,12 @@ unsafe extern "system" fn search_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
         let parent = GetParent(hwnd);
         match msg {
             WM_KEYDOWN if wp as u32 != VK_PROCESSKEY as u32 && comp_len(hwnd) == 0 => {
+                if global_key(parent, wp as u16, ctrl_down(), alt_down(), shift_down(), true) { return 0; }
                 if search_key(parent, wp as u16) {
                     return 0;
                 }
             }
-            WM_CHAR if wp == 13 || wp == 27 => return 0,
+            WM_CHAR if wp == 13 || wp == 27 || (wp < 32 && ctrl_down()) => return 0,
             _ => {}
         }
         CallWindowProcW(orig, hwnd, msg, wp, lp)
@@ -997,8 +1333,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_APP_FOLLOW => {
                 if let Some(s) = state(hwnd) {
-                    if let Some(name) = s.pending_link.take() {
-                        let r = s.shell.follow_link(&name);
+                    if let Some((name, sidebar)) = s.pending_link.take() {
+                        let r = if sidebar { s.shell.open_card(&name, None) } else { s.shell.follow_link(&name) };
                         report(s, r);
                     }
                 }
@@ -1023,6 +1359,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_TIMER => {
                 if wp == TIMER_ID {
+                    drag_scroll(hwnd);
                     if let Some(s) = state(hwnd) {
                         if s.shell.editor.waiting() {
                             s.shell.editor.run_pending(now_ms());
@@ -1064,7 +1401,25 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 SetFocus(hwnd);
                 let x = (lp & 0xFFFF) as u16 as i16 as i32;
                 let y = ((lp >> 16) & 0xFFFF) as u16 as i16 as i32;
-                click(hwnd, x, y, msg == WM_LBUTTONDBLCLK);
+                if !pointer_down(hwnd, x, y) { click(hwnd, x, y, msg == WM_LBUTTONDBLCLK); }
+                0
+            }
+            WM_MOUSEMOVE => {
+                pointer_motion(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
+                0
+            }
+            WM_LBUTTONUP => {
+                pointer_up(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
+                0
+            }
+            WM_CAPTURECHANGED | WM_CANCELMODE => {
+                if let Some(s) = state(hwnd) { s.pointer = crate::bullet::Pointer::Idle; }
+                if msg == WM_CANCELMODE && GetCapture() == hwnd { ReleaseCapture(); }
+                InvalidateRect(hwnd, null(), 0);
+                0
+            }
+            WM_RBUTTONUP => {
+                bullet_menu(hwnd, (lp & 0xFFFF) as u16 as i16 as i32, ((lp >> 16) & 0xFFFF) as u16 as i16 as i32);
                 0
             }
             WM_GETDLGCODE => (DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTALLKEYS) as isize,
@@ -1122,6 +1477,8 @@ unsafe fn make_state(mut shell: Shell<WinHost>, title: &str, dpi: u32, force_kin
             search_edit: null_mut(),
             quiet: false,
             pending_link: None,
+            pointer: crate::bullet::Pointer::Idle,
+            pointer_at: (0, 0),
             title: title.to_string(),
             dpi,
             pref: ThemePref::System,
@@ -1323,6 +1680,21 @@ impl Harness {
         unsafe { click(self.hwnd, x, y, double) }
     }
 
+    pub fn shift_click_at(&mut self, x: i32, y: i32) {
+        unsafe { click_modifiers(self.hwnd, x, y, false, true) }
+    }
+
+    /// 실제 창 프로시저를 통과하는 포인터 입력. 시스템 포인터를 움직이지 않는다.
+    pub fn pointer_message(&mut self, message: u32, x: i32, y: i32) {
+        unsafe { SendMessageW(self.hwnd, message, 0, ((y as u16 as u32) << 16 | x as u16 as u32) as LPARAM); }
+    }
+
+    pub fn pointer_state(&self) -> crate::bullet::Pointer { unsafe { (*self.state).pointer } }
+
+    pub fn drag_tick(&mut self) { unsafe { SendMessageW(self.hwnd, WM_TIMER, TIMER_ID, 0); } }
+
+    pub fn bullet_action(&mut self, command: u32) { unsafe { menu_action(self.hwnd, command); } }
+
     pub fn layout_now(&mut self) -> Layout {
         unsafe { layout_of(self.hwnd, &*self.state) }
     }
@@ -1361,7 +1733,7 @@ impl Harness {
             let s = &mut *self.state;
             let extras = extras_of(s);
             let pal = palette(s);
-            let lay = layout::compute(w, h, s.dpi, s.shell.panels());
+            let lay = layout::compute_visible(w, h, s.dpi, s.shell.panels(), s.shell.left_open, s.shell.right_open);
             let screen = GetDC(null_mut());
             let mem = CreateCompatibleDC(screen);
             let bm = CreateCompatibleBitmap(screen, w, h);
@@ -1388,8 +1760,9 @@ impl Harness {
                 BitBlt(mem, origin.x, origin.y, ew, eh, edc, 0, 0, SRCCOPY);
 
                 // 캐럿(시험용 그림에는 실제 캐럿이 안 찍히므로 같은 위치에 선을 긋는다).
-                let (start, _) = s.shell.editor.host.selection();
-                let pos = SendMessageW(edit, EM_POSFROMCHAR, start, 0) as u32;
+                let mut start = 0u32;
+                SendMessageW(edit, EM_GETSEL, &mut start as *mut u32 as WPARAM, 0);
+                let pos = SendMessageW(edit, EM_POSFROMCHAR, start as WPARAM, 0) as u32;
                 let cx = origin.x + (pos & 0xFFFF) as i16 as i32;
                 let pen = CreatePen(PS_SOLID, crate::paint::scale(2, s.dpi), pal.text);
                 let op = SelectObject(mem, pen);
@@ -1418,6 +1791,14 @@ impl Harness {
                 return Err("캡처 실패(GetDIBits)".into());
             }
             Ok(Shot { width: w as usize, height: h as usize, bgra: pixels })
+        }
+    }
+
+    /// EDIT 에 문자 메시지를 보낸다(시험용).
+    pub fn send_char(&mut self, ch: u16) {
+        unsafe {
+            let edit = self.state.as_ref().map(|s| s.shell.editor.host.edit).unwrap_or(null_mut());
+            SendMessageW(edit, WM_CHAR, ch as WPARAM, 0);
         }
     }
 

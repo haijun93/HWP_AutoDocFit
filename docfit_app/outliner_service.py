@@ -260,7 +260,7 @@ class OutlinerService:
                 version = self._digest(path)
                 self._versions[path.name] = version
                 return {'page': path.stem, 'version': version, 'saved': True}
-            if action in {'edit', 'history', 'search', 'backlinks', 'parse', 'resolve_block_ref', 'block_ref', 'insert_block_ref', 'block_backlinks'}:
+            if action in {'edit', 'key', 'history', 'search', 'backlinks', 'parse', 'resolve_block_ref', 'block_ref', 'insert_block_ref', 'block_backlinks'}:
                 page = self._path(payload.get('page'))
                 markdown = payload.get('markdown')
                 if not isinstance(markdown, str):
@@ -270,7 +270,7 @@ class OutlinerService:
                 if action != 'history':
                     args.pop('page', None)  # history 는 page 로 이력 소속 페이지를 구분한다
                 operation = args.pop('operation', None)
-                if action in {'edit', 'history'}:
+                if action in {'edit', 'key', 'history'}:
                     # 엔진은 op='edit' 아래 args.action 으로 편집 명령(set_text·insert·delete 등)을, op='history' 아래 args.action 으로
                     # 이력 명령(push·undo·redo·clear·status·rebase, 아웃라이너 UNDO1)을 받는다.
                     # 예전에는 편집 명령을 op 로 바로 보내 '지원하지 않는 명령: set_text' 오류가 났다(v2.2.83).

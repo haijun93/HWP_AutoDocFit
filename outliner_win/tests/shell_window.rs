@@ -81,8 +81,10 @@ fn list_keyboard_extends_selection_applies_batch_and_undoes_once() {
     let before = h.editor().markdown();
     assert!(h.list_key_modifiers(outliner_win::edit::VK_DOWN, false, true, false));
     assert_eq!(h.editor().view.selected_block_ids().len(), 2);
-    assert!(h.list_key_modifiers(0x09, false, false, false));
+    // 두 자식 블록을 함께 Shift+Tab(첫 자식은 Tab 으로 더 들여쓸 수 없다).
+    assert!(h.list_key_modifiers(0x09, false, false, true));
     assert_ne!(h.editor().markdown(), before);
+    assert_eq!(h.editor().view.selected_block_ids().len(), 2, "선택 유지");
     assert!(h.editor().can_undo());
     assert!(h.editor().history_step(true));
     assert_eq!(h.editor().markdown(), before);

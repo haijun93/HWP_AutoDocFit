@@ -179,9 +179,9 @@ fn backspace_at_start_merges_with_previous_block() {
     start(&mut ed, 1);
     ed.host.caret = 0;
     ed.key(KeyEvent::new(VK_BACK, 0));
-    // 엔진 merge 는 두 글 사이에 공백 1개를 넣는다(Flutter 는 공백 없음 — 차이로 보고).
-    assert_eq!(texts(&ed), ["앞 뒤", "끝"]);
-    assert_eq!((ed.host.text.as_str(), ed.host.caret), ("앞 뒤", 2), "캐럿은 이어 붙인 자리(공백 뒤)");
+    // Logseq 와 같이 공백 없이 잇는다(OUTLINEKEY1).
+    assert_eq!(texts(&ed), ["앞뒤", "끝"]);
+    assert_eq!((ed.host.text.as_str(), ed.host.caret), ("앞뒤", 1), "캐럿은 이어 붙인 자리");
     assert_eq!(ed.editing_block(), Some(0));
 }
 
@@ -194,26 +194,17 @@ fn only_block_is_never_deleted() {
 }
 
 #[test]
-fn esc_discards_uncommitted_typing_and_leaves_document_unchanged() {
+fn esc_commits_typing_and_selects_the_block() {
     let mut ed = editor("- 원래 글\n", false);
     start(&mut ed, 0);
     ed.host.text = "원래 글에 덧붙인 것".into();
     assert!(ed.dirty(), "입력만 해도 변경 표시");
     assert_eq!(ed.key(KeyEvent::new(VK_ESCAPE, 0)), KeyResult::Swallow);
     assert!(!ed.editing());
+    assert_eq!(ed.markdown(), "- 원래 글에 덧붙인 것\n", "입력은 버리지 않는다");
+    assert_eq!(ed.view.selection_anchor, Some(0));
+    assert!(ed.history_step(true));
     assert_eq!(ed.markdown(), "- 원래 글\n");
-    assert!(!ed.dirty());
-}
-
-#[test]
-fn esc_keeps_what_an_earlier_command_already_committed() {
-    let mut ed = editor("- a\n- b\n", false);
-    start(&mut ed, 1);
-    ed.host.text = "b1".into();
-    ed.key(KeyEvent::new(VK_TAB, 0)); // 확정: "b1" + 들여쓰기
-    ed.host.text = "b1 더".into();
-    ed.key(KeyEvent::new(VK_ESCAPE, 1));
-    assert_eq!(ed.markdown(), "- a\n - b1\n", "Esc 는 마지막 확정 이후의 입력만 버린다");
 }
 
 // ---------------- IME 순서 주입 ----------------
@@ -423,13 +414,17 @@ fn ctrl_s_commits_typing_before_saving() {
 }
 
 #[test]
-fn shift_enter_is_swallowed_and_changes_nothing() {
-    let mut ed = editor("- a\n", false);
+fn shift_enter_adds_a_line_inside_the_block() {
+    let mut ed = editor("- 가나\n", false);
     start(&mut ed, 0);
+    ed.host.caret = 1;
     let mut k = KeyEvent::new(VK_RETURN, 0);
     k.shift = true;
     assert_eq!(ed.key(k), KeyResult::Swallow);
     assert_eq!(ed.view.doc.blocks.len(), 1);
+    assert_eq!(ed.markdown(), "- 가\n  나\n");
+    assert_eq!((ed.host.text.as_str(), ed.host.caret), ("가\n나", 2));
+    assert_eq!(ed.view.rows[0].lines, 2);
 }
 
 #[test]
@@ -476,4 +471,108 @@ fn sample_document_roundtrips_without_changes_and_edit_marks_dirty() {
     start(&mut ed, 0);
     ed.host.text.push('!');
     assert!(ed.dirty());
+}
+
+// ---------------- OUTLINEKEY1: Logseq 키 ----------------
+
+fn press(ed: &mut Editor<Fake>, vk: u16, ctrl: bool, alt: bool, shift: bool, t: u64) -> KeyResult {
+    ed.key(KeyEvent { ctrl, alt, shift, ..KeyEvent::new(vk, t) })
+}
+
+#[test]
+fn enter_on_empty_nested_block_outdents_then_adds_at_top() {
+    let mut ed = editor("- a\n - \n", false);
+    start(&mut ed, 1);
+    ed.key(KeyEvent::new(VK_RETURN, 0));
+    assert_eq!(ed.markdown(), "- a\n- \n");
+    assert_eq!(ed.editing_block(), Some(1));
+    ed.key(KeyEvent::new(VK_RETURN, 100));
+    assert_eq!(ed.markdown(), "- a\n- \n- \n");
+    assert_eq!(ed.editing_block(), Some(2));
+}
+
+#[test]
+fn composing_enter_on_empty_looking_block_keeps_the_composed_letter() {
+    // 빈 블록에서 한 글자를 조합 중 Enter → 내어쓰기가 아니라 확정 후 새 블록(글자 유실·중복 없음).
+    let mut ed = editor("- a\n - \n", true);
+    start(&mut ed, 1);
+    ed.host.comp = "한".into();
+    ed.key(KeyEvent::new(VK_RETURN, 0));
+    assert_eq!(ed.markdown(), "- a\n - 한\n - \n");
+}
+
+#[test]
+fn delete_at_end_and_left_right_cross_blocks() {
+    let mut ed = editor("- ab\n- cd\n", false);
+    start(&mut ed, 0);
+    assert_eq!(press(&mut ed, VK_RIGHT, false, false, false, 0), KeyResult::Swallow);
+    assert_eq!((ed.editing_block(), ed.host.caret), (Some(1), 0));
+    assert_eq!(press(&mut ed, VK_LEFT, false, false, false, 100), KeyResult::Swallow);
+    assert_eq!((ed.editing_block(), ed.host.caret), (Some(0), 2));
+    assert_eq!(press(&mut ed, VK_DELETE, false, false, false, 200), KeyResult::Swallow);
+    assert_eq!(ed.markdown(), "- abcd\n");
+    assert_eq!(ed.host.caret, 2);
+    assert_eq!(press(&mut ed, VK_DELETE, false, false, false, 300), KeyResult::Pass);
+}
+
+#[test]
+fn up_down_move_inside_the_block_first_and_keep_column() {
+    let mut ed = editor("- abcd\n- ef\n  ghij\n", false);
+    start(&mut ed, 1);
+    ed.host.caret = 4; // 둘째 줄 → ↑ 는 EDIT 안에서
+    assert_eq!(press(&mut ed, VK_UP, false, false, false, 0), KeyResult::Pass);
+    ed.host.caret = 2; // 첫 줄 열 2
+    assert_eq!(press(&mut ed, VK_UP, false, false, false, 100), KeyResult::Swallow);
+    assert_eq!((ed.editing_block(), ed.host.caret), (Some(0), 2));
+}
+
+#[test]
+fn tab_takes_children_and_ctrl_keys_fold() {
+    let mut ed = editor("- a\n- b\n - c\n", false);
+    start(&mut ed, 1);
+    ed.key(KeyEvent::new(VK_TAB, 0));
+    assert_eq!(ed.markdown(), "- a\n - b\n  - c\n");
+    press(&mut ed, VK_UP, true, false, false, 100);
+    assert!(ed.view.doc.blocks[1].folded);
+    assert_eq!(ed.view.rows.len(), 2);
+    press(&mut ed, VK_OEM_1, true, false, false, 200);
+    assert!(!ed.view.doc.blocks[1].folded);
+}
+
+#[test]
+fn alt_up_selects_the_block_and_selection_keys_act_on_children() {
+    let mut ed = editor("- a\n- b\n - c\n- d\n", false);
+    start(&mut ed, 1);
+    press(&mut ed, VK_UP, false, true, false, 0);
+    assert!(!ed.editing());
+    assert_eq!(ed.view.selection_anchor, Some(1));
+    assert_eq!(ed.selection_command("copy").as_deref(), Some("- b\n - c"));
+    ed.selection_command("delete_selection");
+    assert_eq!(ed.markdown(), "- a\n- d\n");
+}
+
+#[test]
+fn multi_line_paste_builds_a_block_tree_and_single_line_is_left_to_edit() {
+    let mut ed = editor("- \n", false);
+    start(&mut ed, 0);
+    assert!(!ed.paste_text("한 줄\r\n", 0));
+    assert!(ed.paste_text("- 가\r\n  - 나\r\n", 100));
+    assert_eq!(ed.markdown(), "- 가\n - 나\n");
+    assert_eq!(ed.editing_block(), Some(1));
+    ed.paste_inline("x\r\ny");
+    assert_eq!(ed.markdown(), "- 가\n - 나x\n   y\n");
+}
+
+#[test]
+fn bracket_pairs_and_backspace_between_them() {
+    let mut ed = editor("- \n", false);
+    start(&mut ed, 0);
+    assert!(ed.typed_char('['));
+    assert!(ed.typed_char('['));
+    assert_eq!((ed.host.text.as_str(), ed.host.caret), ("[[]]", 2));
+    assert_eq!(ed.key(KeyEvent::new(VK_BACK, 0)), KeyResult::Swallow);
+    assert_eq!((ed.host.text.as_str(), ed.host.caret), ("[]", 1));
+    assert!(ed.typed_char(']'));
+    assert_eq!(ed.host.caret, 2);
+    assert!(!ed.typed_char('가'));
 }

@@ -30,6 +30,11 @@ impl R {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Btn {
+    ToggleLeft,
+    Back,
+    Forward,
+    ToggleRight,
+    Favorite,
     Today,
     New,
     Rename,
@@ -44,6 +49,11 @@ pub enum Btn {
 impl Btn {
     pub fn label(self) -> &'static str {
         match self {
+            Btn::ToggleLeft => "☰",
+            Btn::Back => "←",
+            Btn::Forward => "→",
+            Btn::ToggleRight => "우측",
+            Btn::Favorite => "☆ 즐겨찾기",
             Btn::Today => "오늘",
             Btn::New => "＋ 새 페이지",
             Btn::Rename => "이름 바꾸기",
@@ -58,6 +68,30 @@ impl Btn {
 /// 위쪽 줄 단추 7개(앞 4개 = 페이지, 뒤 3개 = 블록). 폭만 고정.
 pub const BUTTONS: [Btn; 7] = [Btn::Today, Btn::New, Btn::Rename, Btn::Delete, Btn::NewBlock, Btn::Indent, Btn::Outdent];
 
+pub const NAV_BUTTONS: [Btn; 5] = [Btn::ToggleLeft, Btn::Back, Btn::Forward, Btn::ToggleRight, Btn::Favorite];
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LeftSection {
+    Journals,
+    #[default]
+    All,
+    Favorites,
+    Recent,
+}
+
+pub const SECTIONS: [LeftSection; 4] = [LeftSection::Journals, LeftSection::All, LeftSection::Favorites, LeftSection::Recent];
+
+impl LeftSection {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Journals => "일지",
+            Self::All => "모든 페이지",
+            Self::Favorites => "즐겨찾기",
+            Self::Recent => "최근",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Layout {
     pub dpi: u32,
@@ -68,6 +102,7 @@ pub struct Layout {
     pub search_label: R,
     pub search_edit: R,
     pub buttons: [R; 7],
+    pub nav_buttons: [R; 5],
     pub left: Option<R>,
     pub center: R,
     pub right: Option<R>,
@@ -78,6 +113,12 @@ pub struct Layout {
 }
 
 pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
+    compute_visible(w, h, dpi, panels, true, true)
+}
+
+/// 표시 의도는 Shell 에 보존하며 좁은 창에서는 공간이 있는 패널만 배치한다.
+pub fn compute_visible(w: i32, h: i32, dpi: u32, panels: bool, left_open: bool, right_open: bool) -> Layout {
+    let (w, h) = (w.max(0), h.max(0));
     let (head_h, item_h, result_h, popup_h) = (scale(34, dpi), scale(26, dpi), scale(30, dpi), scale(24, dpi));
     if !panels {
         return Layout {
@@ -89,6 +130,7 @@ pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
             search_label: R::default(),
             search_edit: R::default(),
             buttons: [R::default(); 7],
+            nav_buttons: [R::default(); 5],
             left: None,
             center: R::new(0, 0, w, h),
             right: None,
@@ -98,23 +140,41 @@ pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
             popup_h,
         };
     }
-    let top_h = scale(48, dpi);
+    let bar_h = scale(48, dpi);
     let pad = scale(12, dpi);
-    let show_left = w >= scale(560, dpi);
-    let show_right = w >= scale(900, dpi);
-    let (lw, rw) = (scale(200, dpi), scale(250, dpi));
+    let (lw, rw) = (scale(220, dpi), scale(280, dpi));
+    let show_left = left_open && w >= scale(560, dpi);
+    let show_right = right_open && w >= scale(if show_left { 900 } else { 620 }, dpi);
+    let compact = w < scale(900, dpi);
+    let label = if compact { R::new(scale(136, dpi), 0, scale(176, dpi), bar_h) }
+        else { R::new(pad, 0, pad + scale(40, dpi), bar_h) };
+    let edit = R::new(label.r.min(w), scale(8, dpi), (if compact { w - scale(72, dpi) } else { label.r + scale(190, dpi) }).max(label.r).min(w), bar_h - scale(8, dpi));
+    let mut nav_buttons = [R::default(); 5];
+    let nav_left = if compact { pad } else { edit.r + scale(18, dpi) };
+    for i in 0..3 {
+        nav_buttons[i] = R::new(nav_left + i as i32 * scale(40, dpi), scale(8, dpi), nav_left + i as i32 * scale(40, dpi) + scale(34, dpi), bar_h - scale(8, dpi));
+    }
+    nav_buttons[3] = R::new((w - scale(60, dpi)).max(0), scale(8, dpi), (w - pad).max(0), bar_h - scale(8, dpi));
+    let widths = [scale(46, dpi), scale(92, dpi), scale(88, dpi), scale(46, dpi), scale(84, dpi), scale(64, dpi), scale(64, dpi)];
+    let mut buttons = [R::default(); 7];
+    let mut x = if compact { pad } else { edit.r + scale(14, dpi) };
+    let mut y = bar_h;
+    for (i, bw) in widths.iter().enumerate() {
+        if x + bw > w - pad && x > pad { x = pad; y += scale(40, dpi); }
+        buttons[i] = R::new(x, y, (x + bw).min(w), y + scale(32, dpi));
+        x += bw + scale(if i == 3 { 16 } else { 5 }, dpi);
+    }
+    let fw = scale(106, dpi);
+    if compact {
+        if x + fw > w - pad { x = pad; y += scale(40, dpi); }
+        nav_buttons[4] = R::new(x, y, (x + fw).min(w), y + scale(32, dpi));
+    } else {
+        nav_buttons[4] = R::new(pad, bar_h, pad + fw, bar_h + scale(32, dpi));
+    }
+    let top_h = (y + scale(40, dpi)).min(h);
     let left = show_left.then(|| R::new(0, top_h, lw, h));
     let right = show_right.then(|| R::new(w - rw, top_h, w, h));
     let center = R::new(left.map_or(0, |r| r.r), top_h, right.map_or(w, |r| r.l), h);
-    let label = R::new(pad, 0, pad + scale(40, dpi), top_h);
-    let edit = R::new(label.r, scale(8, dpi), label.r + scale(190, dpi), top_h - scale(8, dpi));
-    let widths = [scale(46, dpi), scale(92, dpi), scale(88, dpi), scale(46, dpi), scale(84, dpi), scale(64, dpi), scale(64, dpi)];
-    let mut buttons = [R::default(); 7];
-    let mut x = edit.r + scale(14, dpi);
-    for (i, bw) in widths.iter().enumerate() {
-        buttons[i] = R::new(x, scale(8, dpi), x + bw, top_h - scale(8, dpi));
-        x += bw + scale(if i == 3 { 16 } else { 5 }, dpi);
-    }
     Layout {
         dpi,
         w,
@@ -124,6 +184,7 @@ pub fn compute(w: i32, h: i32, dpi: u32, panels: bool) -> Layout {
         search_label: label,
         search_edit: edit,
         buttons,
+        nav_buttons,
         left,
         center,
         right,
@@ -144,12 +205,19 @@ impl Layout {
         if !self.panels {
             return None;
         }
-        BUTTONS.iter().zip(self.buttons.iter()).find(|(_, r)| r.contains(x, y)).map(|(b, _)| *b)
+        BUTTONS.iter().zip(self.buttons.iter()).chain(NAV_BUTTONS.iter().zip(self.nav_buttons.iter())).find(|(_, r)| r.contains(x, y)).map(|(b, _)| *b)
     }
 
     /// 패널 안 목록이 시작하는 y.
     pub fn list_top(&self, panel: R) -> i32 {
-        panel.t + self.head_h
+        panel.t + self.head_h + if self.left == Some(panel) { self.item_h * 4 } else { 0 }
+    }
+
+    pub fn section_at(&self, x: i32, y: i32) -> Option<LeftSection> {
+        let l = self.left?;
+        let top = l.t + self.head_h;
+        if !l.contains(x, y) || y < top || y >= self.list_top(l) { return None; }
+        SECTIONS.get(((y - top) / self.item_h) as usize).copied()
     }
 
     /// 왼쪽·오른쪽 패널에서 화면 y 에 해당하는 보이는 칸 번호(첫 칸 0).
@@ -159,7 +227,7 @@ impl Layout {
     }
 
     pub fn left_slots(&self) -> usize {
-        self.left.map_or(0, |l| ((l.h() - self.head_h) / self.item_h).max(0) as usize)
+        self.left.map_or(0, |l| ((l.b - self.list_top(l)) / self.item_h).max(0) as usize)
     }
 
     pub fn right_slots(&self) -> usize {
@@ -216,6 +284,8 @@ pub fn left_items(pages: &[String], recent: &[String]) -> Vec<LeftItem> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RightItem {
+    Card(usize),
+    Preview(usize),
     Group(String),
     /// `Shell::back` 안의 번호.
     Block(usize),

@@ -1,0 +1,29 @@
+{
+  "type": [
+    {"char": "[", "text": "", "start": 0, "end": 0, "expect": ["[]", 1, 1]},
+    {"char": "[", "text": "[]", "start": 1, "end": 1, "expect": ["[[]]", 2, 2]},
+    {"char": "(", "text": "참조 ", "start": 3, "end": 3, "expect": ["참조 ()", 4, 4]},
+    {"char": "(", "text": "()", "start": 1, "end": 1, "expect": ["(())", 2, 2]},
+    {"char": "(", "text": "과업", "start": 2, "end": 2, "expect": null},
+    {"char": "{", "text": "a", "start": 1, "end": 1, "expect": ["a{}", 2, 2]},
+    {"char": "`", "text": "", "start": 0, "end": 0, "expect": ["``", 1, 1]},
+    {"char": "`", "text": "``", "start": 1, "end": 1, "expect": ["````", 2, 2]},
+    {"char": "`", "text": "`a`", "start": 2, "end": 2, "expect": ["`a`", 3, 3]},
+    {"char": "]", "text": "[a]", "start": 2, "end": 2, "expect": ["[a]", 3, 3]},
+    {"char": ")", "text": "()", "start": 1, "end": 1, "expect": ["()", 2, 2]},
+    {"char": ")", "text": "a", "start": 1, "end": 1, "expect": null},
+    {"char": "[", "text": "가 계획 나", "start": 2, "end": 4, "expect": ["가 [계획] 나", 3, 5]},
+    {"char": "[", "text": "😀", "start": 2, "end": 2, "expect": ["😀[]", 3, 3]},
+    {"char": "~", "text": "3", "start": 1, "end": 1, "expect": null},
+    {"char": "a", "text": "", "start": 0, "end": 0, "expect": null}
+  ],
+  "backspace": [
+    {"text": "[]", "caret": 1, "expect": ["", 0]},
+    {"text": "[[]]", "caret": 2, "expect": ["[]", 1]},
+    {"text": "가()나", "caret": 2, "expect": ["가나", 1]},
+    {"text": "[a]", "caret": 1, "expect": null},
+    {"text": "(]", "caret": 1, "expect": null},
+    {"text": "()", "caret": 0, "expect": null},
+    {"text": "()", "caret": 2, "expect": null}
+  ]
+}

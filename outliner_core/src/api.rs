@@ -1,8 +1,8 @@
 use crate::{
-    backlinks, collect_markdown_files, daily_page, edit_many, edit_with_offset, journal_date, journal_list,
+    apply_key, backlinks, collect_markdown_files, daily_page, edit_many, edit_with_offset, journal_date, journal_list,
     journal_name, journal_relative, normalize_journal_name, parse, query, rename_page_in_files,
     resolve_block_ref, save_atomic_checked, search, serialize, update_page_links_text,
-    OutlinerError, UndoHistory,
+    KeyInput, OutlinerError, UndoHistory,
 };
 use serde_json::{json, Value};
 use std::{
@@ -142,6 +142,18 @@ pub fn handle_request(value: Value) -> Value {
                 result["history"] = history_value(&history)?;
             }
             Ok(result)
+        }
+        "key" => {
+            // 블록 편집 키 규칙(OUTLINEKEY1). args 는 keys::KeyInput.
+            let input: KeyInput = serde_json::from_value(args.clone())
+                .map_err(|error| OutlinerError::Invalid(format!("key 인자 형식 오류: {error}")))?;
+            let out = apply_key(&parse(document_text)?, &input)?;
+            Ok(json!({
+                "markdown": out.markdown, "document": out.document,
+                "handled": out.handled, "changed": out.changed, "cursor": out.cursor,
+                "selection": out.selection, "folded": out.folded,
+                "note": out.note, "clipboard": out.clipboard,
+            }))
         }
         "history" => {
             let action = args["action"].as_str().unwrap_or("status");
