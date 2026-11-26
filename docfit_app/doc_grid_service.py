@@ -52,9 +52,10 @@ def find_klib_executable() -> Path | None:
     return _find_klib_executable()
 
 
-def query_names_service(extensions: Any, excluded: Any = ()):
+def query_names_service(extensions: Any, excluded: Any = (), on_row: Any | None = None):
     from .rust_scan import service_names_query
-    return service_names_query(extensions, excluded, pipe_name=PIPE_NAME)
+    extra: dict[str, Any] = {"on_row": on_row} if on_row else {}
+    return service_names_query(extensions, excluded, pipe_name=PIPE_NAME, **extra)
 
 
 def render_text_card(
@@ -236,7 +237,8 @@ class DocGridService:
         return find_klib_executable()
 
     def _python_list_documents(self, folder_path: Path, recursive: bool, cancel_event: threading.Event | None,
-                               on_progress: Any | None, excluded_folders: Any) -> list[dict[str, Any]]:
+                               on_progress: Any | None, excluded_folders: Any,
+                               on_item: Any | None = None) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         scan_errors: list[OSError] = []
         def scan_dir(target_dir: Path) -> None:
@@ -270,6 +272,8 @@ class DocGridService:
                             results.append({"path": os.path.abspath(entry.path), "name": name, "stem": Path(name).stem,
                                 "ext": ext.lstrip("."), "size": st.st_size, "mtime": st.st_mtime,
                                 "cloud": cloud_only(getattr(st, "st_file_attributes", 0)), "thumb_key": key, "has_thumb": has_thumb})
+                            if on_item is not None:
+                                on_item(results[-1])
                         except OSError as exc:
                             scan_errors.append(exc)
                             continue
@@ -290,6 +294,7 @@ class DocGridService:
         cancel_event: threading.Event | None = None,
         on_progress: Any | None = None,
         excluded_folders: Any = (),
+        on_item: Any | None = None,
     ) -> list[dict[str, Any]]:
         """지정 폴더의 지원 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF) 목록을 반환한다."""
         folder_path = Path(folder)
@@ -312,61 +317,67 @@ class DocGridService:
             if cancel_event is not None and cancel_event.is_set():
                 return []
             # A missing or malformed Rust scanner falls through to the canonical Python walk.
-        return self._python_list_documents(folder_path, recursive, cancel_event, on_progress, excluded_folders)
+        return self._python_list_documents(folder_path, recursive, cancel_event, on_progress, excluded_folders, on_item)
 
     def list_default_documents(
         self, *, cancel_event: threading.Event | None = None, on_progress: Any | None = None,
-        excluded_folders: Any = (), return_engine: bool = False,
+        excluded_folders: Any = (), return_engine: bool = False, on_item: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """Desktop과 고정 드라이브의 지원 문서를 기본 제외 규칙으로 나열한다."""
+        """Desktop과 고정 드라이브의 지원 문서를 기본 제외 규칙으로 나열한다.
+
+        `on_item` 을 주면 찾는 대로(같은 경로는 한 번만) 항목을 넘긴다.
+        파일마다 stat·썸네일 키 계산은 하지 않는다(썸네일을 요청할 때 계산한다).
+        """
         roots = self._default_roots()
         if not any(root.is_dir() for root in roots):
             raise FileNotFoundError("검색할 수 있는 고정 드라이브 또는 Desktop 폴더를 찾지 못했습니다.")
         results: dict[str, dict[str, Any]] = {}
+
+        def accept(item: dict[str, Any]) -> None:
+            if item.get("cloud"):
+                return
+            key = os.path.normcase(item["path"])
+            new = key not in results
+            results[key] = item
+            if new and on_item is not None:
+                on_item(item)
+
+        def accept_row(row: dict[str, Any]) -> None:
+            path, name = row["path"], row["name"]
+            item = {"path": path, "name": name, "stem": os.path.splitext(name)[0],
+                    "ext": row["ext"].lower(), "thumb_key": "", "has_thumb": False}
+            if "size" in row and "mtime" in row:
+                item.update(size=int(row["size"]), mtime=row["mtime"], cloud=bool(row.get("cloud", False)))
+            elif row.get("cloud"):
+                return
+            accept(item)
+
         engine = "python"
         rows = None
-        if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
-            rows = query_names_service(DOC_EXTENSIONS, excluded_folders)
+        python_only = os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() == "python"
+        streaming: dict[str, Any] = {"on_row": accept_row} if on_item is not None else {}
+        if not python_only:
+            rows = query_names_service(DOC_EXTENSIONS, excluded_folders, **streaming)
             if rows is not None: engine = "service"
-        if rows is None and os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() != "python":
+        if rows is None and not python_only:
             rows = _scan_default_roots(DOC_EXTENSIONS, excluded_folders, executable=self._get_klib_exe(),
-                                         cancel_event=cancel_event,
-                                         on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
-                                         roots=roots)
+                                       cancel_event=cancel_event,
+                                       on_progress=(lambda n, p: on_progress(p)) if on_progress else None,
+                                       roots=roots, **streaming)
             if rows is not None: engine = "klib"
         if rows is not None:
             for row in rows:
-                path = row["path"]
-                name = row["name"]
-                ext = row["ext"]
-                if engine == "service":
-                    key = self.cache.key(path, 0, 0)
-                    results[os.path.normcase(path)] = {"path": path, "name": name, "stem": Path(name).stem,
-                        "ext": ext.lower(), "thumb_key": key, "has_thumb": False}
-                    continue
-                try:
-                    st = Path(path).stat() if "size" not in row or "mtime" not in row else None
-                except OSError:
-                    continue
-                size = int(row.get("size", st.st_size if st else 0))
-                mtime = row.get("mtime", st.st_mtime if st else 0)
-                cloud = bool(row.get("cloud", False if st is None else cloud_only(getattr(st, "st_file_attributes", 0))))
-                if cloud: continue
-                key = self.cache.key(path, int(row.get("mtime_ns", st.st_mtime_ns if st else round(mtime * 1e9))), size)
-                results[os.path.normcase(path)] = {"path": path, "name": name, "stem": Path(name).stem,
-                    "ext": ext.lower(), "size": size, "mtime": mtime,
-                    "cloud": cloud, "thumb_key": key, "has_thumb": False}
-            result = sorted(results.values(), key=lambda item: item["name"].casefold())
-            return (result, engine) if return_engine else result
-        for root in roots:
-            if cancel_event is not None and cancel_event.is_set():
-                break
-            if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root): continue
-            if engine == "python":
+                accept_row(row)
+        else:
+            for root in roots:
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+                if not root.is_dir() or is_excluded_path(root, excluded_folders, base=root): continue
                 try:
                     for item in self.list_documents(root, recursive=True, cancel_event=cancel_event,
-                                                    on_progress=on_progress, excluded_folders=excluded_folders):
-                        if not item.get("cloud"): results[os.path.normcase(item["path"])] = item
+                                                    on_progress=on_progress, excluded_folders=excluded_folders,
+                                                    on_item=accept if on_item is not None else None):
+                        accept(item)
                 except OSError: continue
         result = sorted(results.values(), key=lambda item: item["name"].casefold())
         return (result, engine) if return_engine else result
@@ -378,6 +389,11 @@ class DocGridService:
         # 과거에 저장된 빈 스냅샷은 인덱서의 일시적 빈 응답일 수 있으므로 화면 초기값으로 쓰지 않는다.
         if cached == []:
             cached = None
+        live: list[dict[str, Any]] = []
+        if cached is not None:
+            # 배경 검색을 시작하기 전에 확인한다. 함께 돌면 파이썬 실행 잠금을 다퉈 몇 배 느려진다.
+            is_file = library_scan_cache.existing_file_checker()
+            live = [item for item in cached if is_file(str(item.get("path", "")))]
         def worker(report: Any, cancel: threading.Event) -> dict[str, Any]:
             visited = 0
             def tick(current_folder: str = "") -> None:
@@ -385,16 +401,17 @@ class DocGridService:
                 visited += 1
                 report(visited, current_folder)
             docs, engine = self.list_default_documents(cancel_event=cancel, on_progress=tick,
-                                                       excluded_folders=excluded, return_engine=True)
+                                                       excluded_folders=excluded, return_engine=True,
+                                                       on_item=report.publish)
             # 빈 스냅샷은 다음 실행 때 즉시 빈 화면을 고착시키지 않도록 캐시하지 않는다.
             if docs and not cancel.is_set():
                 library_scan_cache.save("documents", DOC_EXTENSIONS, excluded, docs, roots=roots)
             return {"documents": docs, "roots": roots, "engine": engine}
         started = self._background_scan.start(worker, initial_result={"documents": cached, "roots": roots, "engine": "cache"}
                                               if cached is not None else None,
-                                              engine="cache" if cached is not None else None)
+                                              engine="cache" if cached is not None else None,
+                                              streamed_key="documents")
         if cached is not None and started.get("ok"):
-            live = [item for item in cached if Path(item.get("path", "")).is_file()]
             started["result"] = {"documents": [{**item, "state": "cached"} for item in live], "roots": roots, "engine": "cache"}
         return started
 
@@ -631,7 +648,8 @@ class DocGridService:
                 return self.start_default_scan()
 
             if action == "scan_progress":
-                return self._background_scan.progress()
+                since = payload.get("since")
+                return self._background_scan.progress(since if isinstance(since, int) else None)
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()
