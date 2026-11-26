@@ -129,6 +129,7 @@ version = "0.1.0"
 dependencies = [
  "ui_theme",
  "windows",
+ "windows-core",
  "windows-sys 0.59.0",
 ]
 

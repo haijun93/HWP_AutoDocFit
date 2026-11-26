@@ -170,10 +170,12 @@ unsafe fn draw_status(hdc: HDC, f: &Fonts, w: i32, h: i32, app: &App, pal: &Pale
             ScanState::Failed(_) => " · 실패".into(),
         };
         left.push_str(&st);
+        left.push_str(&format!(" · {}개 선택", app.selection.paths.len()));
         let lw = text_width(hdc, f.small, &left) + s(24);
         text(hdc, f.small, &Rect::new(s(16), r.top, s(16) + lw, r.bottom), &left, pal.text_sub, ONE_LINE);
         let right = match app.selected_doc() {
             _ if !app.open_error.is_empty() => app.open_error.clone(),
+            _ if !app.file_status.is_empty() => app.file_status.clone(),
             Some(d) => d.path.clone(),
             None => app.notice.clone(),
         };
@@ -258,7 +260,7 @@ pub fn draw_with_shell_thumbs(hdc: HDC, w: i32, h: i32, app: &App, panel: Option
             SelectClipRgn(hdc, clip);
             for i in m.visible_range(app.scroll, app.coll.len()) {
                 if let Some(d) = app.coll.get(i) {
-                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.selected == Some(i), app.tz_offset, pal, dpi, thumbs.get(&d.path));
+                    draw_card(hdc, &f, &m.item_rect(i, app.scroll), d, app.is_selected(i), app.tz_offset, pal, dpi, thumbs.get(&d.path));
                     drawn += 1;
                 }
             }

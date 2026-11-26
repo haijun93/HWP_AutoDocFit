@@ -21,6 +21,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::*;
 const WM_SCAN: u32 = WM_APP + 1;
 const WM_SHELL_THUMB: u32 = WM_APP + 2;
 const TIMER_ELAPSED: usize = 1;
+const TIMER_FILE_OPS: usize = 2;
 
 #[derive(Clone, Default)]
 pub struct Options {
@@ -42,6 +43,7 @@ enum Drag {
 
 struct State {
     app: App,
+    file_ops: grid_core::native_ops::NativeOps,
     pal: Palette,
     pref: ThemePref,
     dpi: u32,
@@ -94,7 +96,7 @@ fn ctrl_down() -> bool {
 
 /// 스캔을 시작한다(이미 돌고 있으면 무시). 목록은 비우고 들어오는 대로 채운다.
 unsafe fn start_scan(hwnd: HWND, s: &mut State) {
-    if s.job.as_ref().is_some() {
+    if s.job.as_ref().is_some() || s.file_ops.busy() {
         return;
     }
     let h = hwnd as usize;
@@ -128,7 +130,8 @@ unsafe fn start_scan(hwnd: HWND, s: &mut State) {
     match job {
         Ok(j) => {
             s.app.coll.replace(Vec::new());
-            s.app.selected = None;
+            s.app.retired_paths.clear();
+            s.app.clear_selection();
             s.app.scroll = 0;
             s.app.scan = crate::model::ScanView { state: ScanState::Running, ..Default::default() };
             s.job = Some(j);
@@ -177,7 +180,8 @@ unsafe fn pump(hwnd: HWND, s: &mut State) {
             if let Some(mut j) = s.job.take() {
                 j.join();
             }
-            if std::mem::take(&mut s.rescan) {
+            if s.rescan && !s.file_ops.busy() {
+                s.rescan = false;
                 start_scan(hwnd, s);
             }
         }
@@ -249,7 +253,7 @@ unsafe fn close_panel(hwnd: HWND, s: &mut State) {
     }
     s.excludes = p.items.clone();
     s.app.excluded_count = s.excludes.len();
-    if s.job.is_some() {
+    if s.job.is_some() || s.file_ops.busy() {
         s.rescan = true;
         unsafe { cancel_scan(hwnd, s) };
     } else {
@@ -318,7 +322,7 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
                 } else {
                     s.app.coll.cycle_sort();
                 }
-                s.app.selected = None;
+                s.app.clear_selection();
                 s.app.scroll = 0;
             } else if tb.slider.contains(x, y) || tb.slider_label.contains(x, y) {
                 s.drag = Drag::Slider;
@@ -338,6 +342,11 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
         }
         let n = s.app.coll.len();
         let m = s.app.metrics(w, h, s.dpi);
+        if right {
+            s.app.click_modified(&m, m.hit(x, y, s.app.scroll, n), false, false, true);
+            redraw(hwnd);
+            return;
+        }
         if let Some(t) = m.scrollbar_thumb(s.app.scroll, n) {
             if t.contains(x, y) {
                 s.drag = Drag::Thumb(y - t.top);
@@ -351,7 +360,7 @@ unsafe fn on_click(hwnd: HWND, s: &mut State, x: i32, y: i32, right: bool) {
                 return;
             }
         }
-        s.app.click(&m, m.hit(x, y, s.app.scroll, n));
+        s.app.click_modified(&m, m.hit(x, y, s.app.scroll, n), ctrl_down(), GetKeyState(VK_SHIFT as i32) < 0, right);
         redraw(hwnd);
     }
 }
@@ -379,7 +388,7 @@ unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
                 VK_ESCAPE if !s.app.coll.query.is_empty() => {
                     s.app.coll.set_query("");
                     s.app.scroll = 0;
-                    s.app.selected = None;
+                    s.app.clear_selection();
                 }
                 VK_ESCAPE | VK_RETURN => s.app.search_focus = false,
                 VK_DOWN => {
@@ -391,14 +400,17 @@ unsafe fn on_key(hwnd: HWND, s: &mut State, vk: u32) -> bool {
             redraw(hwnd);
             return true;
         }
-        if let Some(n) = nav {
+        if vk == 0x41 && ctrl_down() {
+            s.app.select_all();
+        } else if vk as u16 == VK_ESCAPE {
+            if s.app.selection.paths.is_empty() && s.job.is_some() { cancel_scan(hwnd, s); }
+            s.app.clear_selection();
+        } else if let Some(n) = nav {
             s.app.nav(&m, n);
         } else if vk == 0x46 && ctrl_down() {
             s.app.search_focus = true; // Ctrl+F
         } else if vk as u16 == VK_F5 {
             start_scan(hwnd, s);
-        } else if vk as u16 == VK_ESCAPE && s.job.is_some() {
-            cancel_scan(hwnd, s);
         } else {
             return false;
         }
@@ -430,7 +442,7 @@ unsafe fn on_char(hwnd: HWND, s: &mut State, ch: u16) {
         }
     }
     s.app.coll.set_query(&q);
-    s.app.selected = None;
+    s.app.clear_selection();
     s.app.scroll = 0;
     redraw(hwnd);
 }
@@ -441,6 +453,104 @@ unsafe fn open_item(hwnd: HWND, path: &str) {
     if let Some(s) = unsafe { state(hwnd) } {
         s.app.open_error = result.err().unwrap_or_default();
         redraw(hwnd);
+    }
+}
+
+/// 공용 메뉴·대화상자를 부르기 전 State 참조를 놓아 모달 메시지 재진입을 보호한다.
+unsafe fn file_action(hwnd: HWND, action: grid_core::native_ops::Action) {
+    use grid_core::native_ops::{self, Phase, Action};
+    let docs = unsafe { state(hwnd) }.and_then(|s| {
+        let docs = s.app.selected_docs();
+        if s.panel.is_some() || s.app.search_focus || !action.enabled(docs.len(), s.file_ops.busy()) { return None; }
+        s.file_ops.phase = Phase::Preparing;
+        Some(docs)
+    });
+    let Some(docs) = docs else { return };
+    if action == Action::Open {
+        unsafe { open_item(hwnd, &docs[0].path); }
+        if let Some(s) = unsafe { state(hwnd) } { s.file_ops.phase = Phase::Complete; }
+        return;
+    }
+    let prepared = native_ops::prepare(hwnd, action, docs, &crate::scan::PHOTO_EXTENSIONS);
+    if let Some(s) = unsafe { state(hwnd) } {
+        s.file_ops.phase = Phase::Complete;
+        if let Some(request) = prepared {
+            match s.file_ops.start(hwnd, request) {
+                Ok(()) => {
+                    s.app.file_status = "파일 작업 중".into();
+                    unsafe { SetTimer(hwnd, TIMER_FILE_OPS, 100, None); }
+                }
+                Err(e) => s.app.open_error = e,
+            }
+        }
+        redraw(hwnd);
+    }
+}
+
+unsafe fn context_menu(hwnd: HWND, lp: LPARAM) {
+    use grid_core::native_ops::{self, Phase};
+    let (mut x, mut y) = xy(lp);
+    let snapshot = unsafe { state(hwnd) }.and_then(|s| {
+        if s.panel.is_some() || s.app.search_focus || s.file_ops.busy() { return None; }
+        if x == -1 && y == -1 {
+            // 메뉴 키·Shift+F10: 초점 카드 옆에 연다.
+            let (w, h) = client_size(hwnd);
+            let m = s.app.metrics(w, h, s.dpi);
+            let r = m.item_rect(s.app.selected.unwrap_or(0), s.app.scroll);
+            let mut p = POINT { x: r.left, y: r.top };
+            unsafe { ClientToScreen(hwnd, &mut p); }
+            x = p.x; y = p.y;
+        } else {
+            let mut p = POINT { x, y };
+            unsafe { ScreenToClient(hwnd, &mut p); }
+            let (w, h) = client_size(hwnd);
+            let m = s.app.metrics(w, h, s.dpi);
+            let hit = m.hit(p.x, p.y, s.app.scroll, s.app.coll.len());
+            // 도구줄·빈 곳에서는 항목 메뉴를 열지 않는다.
+            if hit.is_none() { return None; }
+        }
+        let count = s.app.selected_docs().len();
+        if count == 0 { return None; }
+        s.app.clicked = None;
+        s.file_ops.phase = Phase::Preparing;
+        Some(count)
+    });
+    let Some(count) = snapshot else { return };
+    let action = native_ops::menu(hwnd, x, y, count, false);
+    if let Some(s) = unsafe { state(hwnd) } { s.file_ops.phase = Phase::Complete; }
+    if let Some(action) = action { unsafe { file_action(hwnd, action); } }
+}
+
+unsafe fn poll_file_ops(hwnd: HWND) {
+    let completion = unsafe { state(hwnd) }.and_then(|s| {
+        let done = s.file_ops.poll();
+        if let Some(progress) = s.file_ops.progress() { s.app.file_status = progress; }
+        let (op, results) = done?;
+        for result in results.iter().filter(|r| r.error.is_none()) {
+            for path in std::iter::once(&result.source.path).chain(result.target.as_ref().map(|d| &d.path)) {
+                if let Some(old) = s.thumbs.remove(path) { s.thumb_bytes = s.thumb_bytes.saturating_sub(old.bgra.len()); }
+                s.thumb_order.retain(|p| p != path);
+                s.thumb_service.forget(std::path::Path::new(path));
+            }
+        }
+        let excludes = &s.excludes;
+        s.app.apply_file_results(op, &results, |d| grid_core::native_ops::listed_destination(&d.path, excludes));
+        let failed = results.iter().filter(|r| r.error.is_some()).count();
+        s.app.file_status = format!("파일 작업 완료: 성공 {}개 · 실패 {}개", results.len() - failed, failed);
+        s.app.open_error.clear();
+        let (w, h) = client_size(hwnd);
+        s.app.clamp_scroll(&s.app.metrics(w, h, s.dpi));
+        unsafe { KillTimer(hwnd, TIMER_FILE_OPS); }
+        s.file_ops.phase = grid_core::native_ops::Phase::Preparing;
+        Some(results)
+    });
+    redraw(hwnd);
+    if let Some(results) = completion {
+        grid_core::native_ops::show_results(hwnd, &results);
+        if let Some(s) = unsafe { state(hwnd) } {
+            s.file_ops.phase = grid_core::native_ops::Phase::Complete;
+            if s.rescan && s.job.is_none() { s.rescan = false; unsafe { start_scan(hwnd, s); } }
+        }
     }
 }
 
@@ -494,6 +604,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             // 항목 위 더블클릭만 연다(도구줄·빈 곳·패널에서는 `clicked` 가 비어 있다).
+            WM_CONTEXTMENU => {
+                let (x, y) = xy(lp);
+                if grid_core::native_ops::client_context(hwnd, x, y) { context_menu(hwnd, lp); 0 }
+                else { DefWindowProcW(hwnd, msg, wp, lp) }
+            }
             WM_LBUTTONDBLCLK => {
                 let target = state(hwnd).and_then(|s| s.app.clicked.take());
                 if let Some(path) = target {
@@ -545,6 +660,12 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             WM_KEYDOWN => {
+                let action = state(hwnd).filter(|s| s.panel.is_none() && !s.app.search_focus)
+                    .and_then(|_| grid_core::native_ops::shortcut(wp as u32, ctrl_down(), GetKeyState(VK_SHIFT as i32) < 0));
+                if let Some(action) = action {
+                    if lp & (1 << 30) == 0 { file_action(hwnd, action); }
+                    return 0;
+                }
                 // Enter = 선택 항목 열기. 누르고 있어 반복되는 입력(lp 30번 비트)은 무시한다.
                 if wp as u16 == VK_RETURN && lp & (1 << 30) == 0 {
                     let target = state(hwnd).filter(|s| s.panel.is_none()).and_then(|s| s.app.enter_target());
@@ -578,12 +699,20 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 0
             }
             WM_TIMER => {
+                if wp == TIMER_FILE_OPS { poll_file_ops(hwnd); return 0; }
                 if let Some(s) = state(hwnd) {
                     pump(hwnd, s);
                 }
                 0
             }
             WM_CLOSE => {
+                if let Some(s) = state(hwnd) {
+                    if s.file_ops.busy() {
+                        s.app.open_error = "파일 작업을 마친 뒤 창을 닫아 주세요".into();
+                        redraw(hwnd);
+                        return 0;
+                    }
+                }
                 DestroyWindow(hwnd);
                 0
             }
@@ -685,7 +814,7 @@ pub fn run(opts: Options) -> Result<(), String> {
             let target = worker_hwnd.load(Ordering::Relaxed);
             if target != 0 { PostMessageW(target as HWND, WM_SHELL_THUMB, 0, 0); }
         }));
-        let raw = Box::into_raw(Box::new(State { app, pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes, settings_path: path.clone(), panel: None, rescan: false, thumb_service, thumbs: HashMap::new(), thumb_order: VecDeque::new(), thumb_bytes: 0, notify_hwnd }));
+        let raw = Box::into_raw(Box::new(State { app, file_ops: Default::default(), pal, pref, dpi, job: None, drag: Drag::None, high: None, opts, excludes, settings_path: path.clone(), panel: None, rescan: false, thumb_service, thumbs: HashMap::new(), thumb_order: VecDeque::new(), thumb_bytes: 0, notify_hwnd }));
         let hwnd = CreateWindowExW(
             0,
             class.as_ptr(),
