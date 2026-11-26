@@ -12,6 +12,9 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
+// 같은 시각값이 나오면 병렬 시험의 임시 폴더 이름이 겹친다.
+static FIXTURE_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 struct Fixture {
     root: PathBuf,
     names: Names,
@@ -19,8 +22,9 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = std::env::temp_dir().join(format!(
-            "unified1m-{}-{}",
+            "unified1m-{}-{}-{}",
             std::process::id(),
+            FIXTURE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
