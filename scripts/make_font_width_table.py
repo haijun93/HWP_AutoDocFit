@@ -2,7 +2,8 @@
 
 설치된 TTF/OTF/TTC 의 cmap·hmtx 에서 글자별 폭(글꼴 단위)만 뽑는다. 글꼴 파일은 저장소에 넣지 않는다.
 한/글 전용 HFT 글꼴은 읽지 않고 '측정 필요'(needs_measurement)로 남긴다. 이미 측정해 넣은 HFT 항목
-(status 가 measured)은 다시 만들 때 지우지 않는다.
+(status 가 measured)과 TTF 항목의 한/글 실측 폭(measured·bold)은 다시 만들 때 지우지 않는다.
+실측은 ``scripts/measure_indent_hangul.py widths`` 가 넣는다.
 
 사용: python scripts/make_font_width_table.py [--output 경로]
 """
@@ -28,6 +29,8 @@ TTF_FONTS = (
     ("함초롬돋움", ("HCR Dotum",)),
     ("HY헤드라인M", ("HYHeadLine M",)),
     ("맑은 고딕", ("Malgun Gothic",)),
+    ("한컴돋움", ("Haansoft Dotum",)),
+    ("HY견고딕", ()),
 )
 
 # 한/글 HFTInfo.dat 의 신명 계열 이름. 휴먼명조는 TTF 와 이름이 같은 HFT 가 따로 있다.
@@ -147,19 +150,42 @@ def _find_face(path: Path, names: tuple[str, ...]) -> int:
     return 0
 
 
-def _bold_path(path: Path) -> Path | None:
-    """같은 폴더의 굵은 글꼴 파일(HANBatang → HANBatangB, malgun → malgunbd). 없으면 None."""
-    for suffix in ("bd", "B"):
-        candidate = path.with_name(path.stem + suffix + path.suffix)
-        if candidate.is_file():
-            return candidate
+def _installed() -> dict[str, Path]:
+    """글꼴 이름 → 파일. 같은 이름이 Windows 글꼴 폴더에도 있으면 그것을 쓴다.
+
+    한/글은 설치된 Windows 글꼴이 있으면 자기 폴더의 동명 글꼴보다 그 폭을 쓴다(HY헤드라인M 실측, INDENTW2).
+    """
+    installed = {entry["name"]: Path(entry["path"]) for entry in hangul_fonts.catalog()}
+    for folder in hangul_fonts.system_font_dirs():
+        for path in sorted(folder.iterdir()):
+            if path.suffix.lower() not in hangul_fonts.FONT_EXTENSIONS or not path.is_file():
+                continue
+            try:
+                pairs = hangul_fonts._font_names(path)
+            except (OSError, struct.error, ValueError):
+                continue
+            for korean, english in pairs:
+                name = korean or english
+                if name in installed and _bold_stem(path) is None:
+                    installed[name] = path
+    return installed
+
+
+def _bold_stem(path: Path) -> str | None:
+    """굵은·가는 파생 글꼴 파일(malgunbd, HANBatangB, malgunsl)이면 그 표시. 보통 글꼴이면 None."""
+    for suffix in ("bd", "sl", "B"):
+        base = path.stem[: -len(suffix)]
+        if path.stem.endswith(suffix) and path.with_name(base + path.suffix).is_file():
+            return suffix
     return None
 
 
 def build(previous: dict | None = None) -> dict:
-    installed = {entry["name"]: Path(entry["path"]) for entry in hangul_fonts.catalog()}
+    installed = _installed()
     kept = {entry["face"]: entry for entry in (previous or {}).get("fonts", [])
             if entry["type"] == "HFT" and entry["status"] == "measured"}
+    overrides = {entry["face"]: {key: entry[key] for key in ("measured", "bold") if key in entry}
+                 for entry in (previous or {}).get("fonts", []) if entry["type"] == "TTF"}
     fonts = []
     for face, aliases in TTF_FONTS:
         path = next((installed[name] for name in (face, *aliases) if name in installed), None)
@@ -168,11 +194,7 @@ def build(previous: dict | None = None) -> dict:
         units, advances = read_advances(path, _find_face(path, (face, *aliases)))
         entry = {"face": face, "type": "TTF", "aliases": list(aliases), "status": "ok",
                  "source_file": path.name, "units_per_em": units, "ranges": compress(advances)}
-        bold = _bold_path(path)
-        if bold is not None:
-            bold_units, bold_advances = read_advances(bold)
-            entry["bold"] = {"source_file": bold.name, "units_per_em": bold_units,
-                             "ranges": compress(bold_advances)}
+        entry.update(overrides.get(face, {}))
         fonts.append(entry)
     for face in HFT_FONTS:
         fonts.append(kept.get(face) or {"face": face, "type": "HFT", "aliases": [],
