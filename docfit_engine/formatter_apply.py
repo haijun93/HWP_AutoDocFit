@@ -973,8 +973,9 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
     if _docfit_symbol == '문자모양_적용_현재선택':
         def 문자모양_적용_현재선택(폰트=None, 크기_pt=None, 굵게=None, 장평=None, 자간=None,
                                 자간_유지=False):
+            from docfit_engine.edit_failures import fail_required_edit
             if hwp is None:
-                return
+                fail_required_edit('문자모양 적용 실패: HWP 객체가 없습니다.')
             try:
                 # 일부 한컴오피스 버전은 글꼴/크기만 지정한 CharShape 부분 적용에서도
                 # 선택 영역의 자간을 기본값으로 돌린다. 서식통일처럼 기존 자간을 보존해야
@@ -990,12 +991,16 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                             if 값 is not None:
                                 보존할_자간[필드] = int(값)
                     except Exception as e:
-                        로그(f"자간 보존값 읽기 실패: {e}")
+                        raise RuntimeError(f"자간 보존값 읽기 실패: {e}") from e
                 # GetDefault로 HCharShape 전체를 채운 뒤 Execute하면 선택 영역에
                 # 서로 다른 서식이 섞여 있을 때 지정하지 않은 속성(특히 Bold)이
                 # 기본값으로 덮인다. 빈 파라미터셋에 변경할 항목만 넣어 실행한다.
                 act = hwp.CreateAction("CharShape")
                 pset = act.CreateSet()
+
+                def 지정(필드, 값):
+                    if pset.SetItem(필드, 값) is False:
+                        raise RuntimeError(f'CharShape 필드 설정 실패: {필드}')
                 if 폰트:
                     # v1.12 버그수정: FaceName* 만 SetItem하면 한글 오토메이션에서
                     # 실제로는 글꼴이 반영되지 않는다(Height/Bold는 정상 반영되는데
@@ -1019,21 +1024,12 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                         ("FaceNameSymbol", "FontTypeSymbol"),
                         ("FaceNameUser", "FontTypeUser"),
                     ):
-                        try:
-                            pset.SetItem(필드, 폰트)
-                            pset.SetItem(타입필드, ttf_타입)
-                        except Exception:
-                            pass
+                        지정(필드, 폰트)
+                        지정(타입필드, ttf_타입)
                 if 크기_pt:
-                    try:
-                        pset.SetItem("Height", hwp.PointToHwpUnit(크기_pt))
-                    except Exception:
-                        pass
+                    지정("Height", hwp.PointToHwpUnit(크기_pt))
                 if 굵게 is not None:
-                    try:
-                        pset.SetItem("Bold", 1 if 굵게 else 0)
-                    except Exception:
-                        pass
+                    지정("Bold", 1 if 굵게 else 0)
                 # 분석한 서식 프로필은 장평·자간을 100.0처럼 실수로 담는다. COM에 실수를 넘기면
                 # 정수 항목이 0으로 들어가 글자가 완전히 눌리므로 정수로 바꾸고 허용 범위로 제한한다.
                 if 장평 is not None:
@@ -1043,30 +1039,23 @@ def _install(*, _docfit_namespace, _docfit_symbol, bind_function):
                 if 장평 is not None:
                     for 필드 in ("RatioHangul", "RatioLatin", "RatioHanja", "RatioJapanese",
                                  "RatioOther", "RatioSymbol", "RatioUser"):
-                        try:
-                            pset.SetItem(필드, 장평)
-                        except Exception:
-                            pass
+                        지정(필드, 장평)
                 if 자간 is not None:
                     for 필드 in ("SpacingHangul", "SpacingLatin", "SpacingHanja", "SpacingJapanese",
                                  "SpacingOther", "SpacingSymbol", "SpacingUser"):
-                        try:
-                            pset.SetItem(필드, 자간)
-                        except Exception:
-                            pass
+                        지정(필드, 자간)
                 elif 보존할_자간:
                     for 필드, 값 in 보존할_자간.items():
-                        try:
-                            pset.SetItem(필드, 값)
-                        except Exception:
-                            pass
+                        지정(필드, 값)
                 if act.Execute(pset) is False:
                     # 글꼴 형식(TTF·HFT)이 이 PC의 글꼴과 맞지 않으면 실패한다(같은 이름이 두 형식으로 든 문서 등). 다른 형식으로
                     # 한 번 더 해 보고, 되면 그 형식을 기억한다(2026-10-04 범정부오피스 서식: HCI Poppy가 TTF·HFT 둘 다 있음).
                     if not (폰트 and _다른_글꼴형식으로_재실행(act, pset, 폰트, _언어별_글꼴형식)):
                         raise RuntimeError("CharShape 부분 적용 결과가 False입니다.")
             except Exception as e:
-                로그(f"문자모양 적용 실패(무시): {e}")
+                메시지 = f"문자모양 적용 실패: {e}"
+                로그(메시지)
+                fail_required_edit(메시지, e)
         return bind_function(문자모양_적용_현재선택, _docfit_namespace)
     if _docfit_symbol == '_다른_글꼴형식으로_재실행':
         def _다른_글꼴형식으로_재실행(action, params, 글꼴, 형식필드):
