@@ -1047,7 +1047,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         로그(f"  - 확인: {사유}")
                     for 참고 in 최종검수.get("notes", []):
                         로그(f"  - 참고: {참고}")
-                    상태("모든 작업 완료" if not 실패 else f"작업 종료 — 처리하지 못한 문서 {실패}개")
+                    상태("모든 작업 완료" if not 실패 else f"작업 종료 — 실패 또는 확인이 필요한 문서 {실패}개")
                     gui_queue.put(("finished", 성공, 실패, 총작업_대상, 총작업_성공, 총작업_실패,
                                    최종검수, str(검수보고서) if 검수보고서 else None))
 
