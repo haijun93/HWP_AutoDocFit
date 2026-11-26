@@ -1,6 +1,6 @@
 """문서뷰(DocGridService): 폴더 내 문서 목록과 썸네일/글자 카드 제공 서비스 (DVF2).
 
-문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF)를 스캔하여 목록을 반환하고,
+문서(HWP·HWPX·HML·XLS·XLSX·PPT·PPTX·PDF)를 스캔하여 목록을 반환하고,
 기존 타임머신 썸네일 엔진(docfit_core/timemachine/thumbs.py) 및 디스크 캐시를 재사용한다.
 HWP는 klib preview 하위 명령으로 미리보기를 추출하며,
 미리보기 이미지가 없으면 PrvText 또는 첫 문단으로 160px '글자 카드'를 생성한다.
@@ -39,7 +39,7 @@ from docfit_core.log_mask import mask_log_text
 logger = logging.getLogger(__name__)
 
 DOC_EXTENSIONS: frozenset[str] = frozenset(
-    (".hwp", ".hwpx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf")
+    (".hwp", ".hwpx", ".hml", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf")
 )
 
 MAX_SLOTS: int = 2
@@ -296,7 +296,7 @@ class DocGridService:
         excluded_folders: Any = (),
         on_item: Any | None = None,
     ) -> list[dict[str, Any]]:
-        """지정 폴더의 지원 문서(HWP·HWPX·XLS·XLSX·PPT·PPTX·PDF) 목록을 반환한다."""
+        """지정 폴더의 지원 문서(HWP·HWPX·HML·XLS·XLSX·PPT·PPTX·PDF) 목록을 반환한다."""
         folder_path = Path(folder)
         if not folder_path.is_dir():
             raise FileNotFoundError(f"폴더를 찾을 수 없거나 디렉터리가 아닙니다: {folder}")

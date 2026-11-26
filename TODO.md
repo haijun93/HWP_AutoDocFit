@@ -1,5 +1,7 @@
 # 할 일 (미완성 항목만)
 
+- [x] [CTXEXT1 2026-11-26] XLS·PPTX·HML의 문서편집/파일 변환 메뉴·목록 추가와 HML 문서뷰 검색 연결. PPT는 비활성+이유 유지, 기본 kordoc 유지. 실제 합성 변환/거부 4개 OK, 관련 Python 116개 OK(1개 제외), flutter analyze 이상 없음·관련 위젯 38개 통과. HML/PPTX의 DTD·외부 엔티티 사전 거부. 전체 Python/Flutter 시험·실제 WebView/COM 최종 처리는 미실행. 결과: `docs/CTXEXT1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
+
 - [ ] [DEPSEC1 2026-11-26] 알려진 취약점 11건 해소(lopdf 0.42·quick-xml 0.41·bottle 0.13.4·url 2.5.9), 전체 3,751개 OK(22개 제외). 남은 일: CI(MSVC) 빌드·번들 실행 파일 갱신, 유지보수 중단 경고 5건(ttf-parser 는 이번 lopdf 갱신으로 유입). 세부: `docs/DEPSEC1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 - [ ] [CILINUX2 2026-11-26] zlib 구현별 fixture 비교 및 MCP OSV 추출 오류 수정. 관련 46시험(두 압축 구현)·Windows 전체 3,751개 OK(29개 제외), 기존 스캔 경로 36개 유지. 남은 일: 수정 후 Linux CI 확인, OSV 기존 영향 항목 8건/취약점 11건의 갱신·유지보수 대체 검토. 세부 조치와 미확인 범위: `docs/CILINUX2_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 

@@ -7,13 +7,25 @@ enum FileTarget { documentEditor, virtualFolder, notebook, conversion, pdfEdit }
 /// 대상별로 받을 수 있는 형식(null 이면 형식 제한 없음). 대상 기능의 기존 진입 경로 규칙을 따른다.
 const Map<FileTarget, Set<String>?> kFileTargetExtensions = {
   // add_paths 가 받는 문서 형식.
-  FileTarget.documentEditor: {'hwp', 'hwpx', 'pdf', 'doc', 'docx', 'txt', 'md'},
+  FileTarget.documentEditor: {
+    'hwp',
+    'hwpx',
+    'pdf',
+    'doc',
+    'docx',
+    'txt',
+    'md',
+    'xls',
+    'pptx',
+    'hml',
+  },
   FileTarget.virtualFolder: null,
   // notebook_service.SOURCE_EXTENSIONS.
   FileTarget.notebook: {'hwpx', 'hwp', 'docx', 'pdf', 'xlsx', 'pptx', 'txt', 'md'},
   // add_paths 가 받고 파일변환 입력(CONVERSION_INPUTS)이기도 한 형식.
   FileTarget.conversion: {
     'hwp', 'hwpx', 'pdf', 'docx', 'txt', 'md', //
+    'xls', 'pptx', 'hml', // CTXEXT1: kordoc 입력 지원, PPT는 미지원.
     'png', 'jpg', 'jpeg', 'webp', 'bmp', 'tif', 'tiff', 'gif',
   },
   FileTarget.pdfEdit: {'pdf'},
