@@ -539,10 +539,8 @@ impl Work {
             }
         }
         let empty = text.is_empty() && block.status.is_none();
-        if empty
-            && next_sibling(&self.doc.blocks, i).is_none()
-            && parent_of(&self.doc.blocks, i).is_some()
-        {
+        // 빈 블록은 뒤에 형제가 있어도 항상 내어쓴다(사용자 지시 2026-11-26. Logseq 는 마지막 형제일 때만).
+        if empty && parent_of(&self.doc.blocks, i).is_some() {
             let id = block.id;
             outdent_run(&mut self.doc, &[id]);
             self.cursor = Some((id, 0, 0));

@@ -56,9 +56,10 @@ fn r01_empty_last_child_enter_outdents_one_level() {
 }
 
 #[test]
-fn r01_empty_block_with_next_sibling_inserts_instead() {
+fn r01_empty_block_with_next_sibling_also_outdents() {
+    // 사용자 지시: 항상 내어쓰기. 빈 블록은 부모의 하위 전체 뒤로 가고, 뒤 형제는 원래 부모에 남는다.
     let out = key("- a\n - \n - c\n", "enter", 1, 0);
-    assert_eq!(out.markdown, "- a\n - \n - \n - c\n");
+    assert_eq!(out.markdown, "- a\n - c\n- \n");
     assert_eq!(out.cursor, at(2, 0));
 }
 
