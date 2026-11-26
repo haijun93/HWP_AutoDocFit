@@ -138,7 +138,17 @@ class _NotebookScreenState extends State<NotebookScreen> {
     unawaited(widget.api.watchDrops(true).catchError((Object _) {}));
     // 불러오기에 실패해도 다음에 열 때 뒤늦게 들어가지 않게 먼저 가져간다.
     final incoming = widget.incoming?.take() ?? const <String>[];
-    unawaited(_run(_loadNotebooks).then((_) => _receiveFiles(incoming)));
+    _receiving = _run(_loadNotebooks).then((_) => _receiveFiles(incoming));
+    widget.incoming?.addListener(_onIncoming);
+  }
+
+  Future<void> _receiving = Future.value();
+
+  void _onIncoming() {
+    final paths = widget.incoming?.take() ?? const <String>[];
+    if (paths.isNotEmpty) {
+      _receiving = _receiving.then((_) => _receiveFiles(paths));
+    }
   }
 
   /// 보낸 파일을 사용자가 고른(또는 새로 만든) 업무자료함의 출처로 넣는다.
@@ -173,6 +183,7 @@ class _NotebookScreenState extends State<NotebookScreen> {
 
   @override
   void dispose() {
+    widget.incoming?.removeListener(_onIncoming);
     _stopDrops?.call();
     unawaited(widget.api.watchDrops(false).catchError((Object _) {}));
     _searchBox.dispose();

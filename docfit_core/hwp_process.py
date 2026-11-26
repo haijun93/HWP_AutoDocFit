@@ -6,6 +6,7 @@
 작업 한/글 창은 만들 때 bind_owner로 그 COM 객체에 PID를 묶어 두고,
 자동닫기 끔으로 창을 사용자에게 넘길 때(작업창_분리) hand_over로 소유를 푼다.
 """
+import contextlib
 import csv
 import io
 import os
@@ -72,6 +73,36 @@ def hwp_pids(*, runner=None) -> set[int]:
             except ValueError:
                 pass
     return pids
+
+
+@contextlib.contextmanager
+def spawn_guard(timeout_ms=60000):
+    """한/글을 띄우며 '새로 생긴 PID'를 세는 구간을 프로세스끼리 겹치지 않게 한다.
+
+    앱 창이 여러 프로세스일 때 겹치면 남의 한/글을 내 것으로 등록해 강제 정리할 수 있다.
+    잠금을 못 얻어도(시간 초과) 작업은 막지 않는다.
+    """
+    if os.name != 'nt':
+        yield
+        return
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel32.CreateMutexW.argtypes = (ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR)
+    kernel32.CreateMutexW.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.ReleaseMutex.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    handle = kernel32.CreateMutexW(None, False, 'Local\\HwpAutoDocFit.HwpSpawn')
+    held = bool(handle) and kernel32.WaitForSingleObject(handle, timeout_ms) in (0x00000000, 0x00000080)
+    try:
+        yield
+    finally:
+        if held:
+            kernel32.ReleaseMutex(handle)
+        if handle:
+            kernel32.CloseHandle(handle)
 
 
 def register_owned(pids):

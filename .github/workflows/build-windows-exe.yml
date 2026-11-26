@@ -187,6 +187,8 @@ jobs:
           Copy-Item dock/target/release/dock.exe resources/dock.exe -Force
           (Get-FileHash resources/dock.exe -Algorithm SHA256).Hash | Out-File -Encoding ascii resources/dock.exe.sha256
           if (!(Test-Path resources/dock.exe) -or !(Test-Path resources/dock.exe.sha256)) { throw 'dock bundle missing' }
+          # 같은 크레이트의 사이드바(launch_mode='sidebar' 또는 --sidebar 로 고르는 실행 방식)
+          Copy-Item dock/target/release/sidebar.exe resources/sidebar.exe -Force
 
       - name: Build virtual folder (kvf.exe, Rust)
         shell: pwsh
@@ -405,7 +407,7 @@ jobs:
         run: |
           $folder = 'dist/HWP_AutoDocFit/_internal/resources'
           $missing = @()
-          foreach ($name in @('outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe','rename_win.exe','mdm-ctx.exe','dock.exe','kagent.exe','klib.exe')) {
+          foreach ($name in @('outliner_win.exe','settings_win.exe','docview_win.exe','photoview_win.exe','convert_win.exe','rename_win.exe','mdm-ctx.exe','dock.exe','sidebar.exe','kagent.exe','klib.exe')) {
             if (-not (Test-Path -LiteralPath "$folder/$name")) { $missing += $name }
           }
           if ($missing.Count) { throw ("frozen bundle is missing: " + ($missing -join ', ')) }

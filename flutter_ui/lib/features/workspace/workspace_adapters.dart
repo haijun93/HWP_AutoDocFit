@@ -197,7 +197,11 @@ class IntegratedWorkspace extends StatelessWidget {
     this.libraryInbox,
     this.notebookInbox,
     this.pdfInbox,
+    this.soloTab,
   });
+
+  /// 전용 창(`--screen N`)이 담는 화면. null 이면 보통 앱.
+  final int? soloTab;
 
   /// 문서뷰·사진뷰에서 보낸 파일을 각 화면이 가져가는 곳(CTXMENU1).
   final FileInbox? libraryInbox;
@@ -229,6 +233,7 @@ class IntegratedWorkspace extends StatelessWidget {
   Widget build(BuildContext context) {
     return TabNavigationShell(
       hiddenTabs: hiddenTabs,
+      soloTab: soloTab,
       initialIndex: initialIndex,
       tabRequest: tabRequest,
       onTabChanged: onTabChanged,

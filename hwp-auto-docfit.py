@@ -215,6 +215,29 @@ if __name__ == "__main__" and "--self-test" in _selftest_sys.argv:
     if not _packaging_result["ok"]:
         raise SystemExit(_packaging_finish(_packaging_result))
 
+# 설정(launch_mode='sidebar')이나 --sidebar 면 사이드바(sidebar.exe)를 띄우고 끝낸다. 기본은 기존 앱 그대로다.
+if __name__ == "__main__":
+    from docfit_app.sidebar_launch import redirect as _sidebar_redirect
+    if _sidebar_redirect(_selftest_sys.argv):
+        try:
+            import pyi_splash
+            pyi_splash.close()
+        except Exception:
+            pass
+        raise SystemExit(0)
+
+APP_VERSION = "2.2.106"  # 화면 없는 상주 작업이 무거운 import 전에 써야 해서 여기 둔다.
+
+# 사이드바만 쓸 때의 상주 작업(--resident): Tk·COM 을 올리지 않는다.
+if __name__ == "__main__" and _selftest_sys.argv[1:2] == ["--resident"]:
+    try:
+        import pyi_splash
+        pyi_splash.close()
+    except Exception:
+        pass
+    from docfit_app.resident import main as _resident_main
+    raise SystemExit(_resident_main(_selftest_sys.argv[1:], APP_VERSION))
+
 # Read-only CLI commands do not need Windows COM or GUI imports.
 if __name__ == "__main__" and len(_selftest_sys.argv) > 1:
     from docfit_app.cli import is_cli_command as _early_cli, main as _early_cli_main
@@ -3406,15 +3429,28 @@ def main():
     from docfit_app.instance_files import split_rename_arguments
     rename_requested, _rename_paths = split_rename_arguments(sys.argv[1:])
     import importlib.util
-
-    if not _단일_인스턴스_확인():
-        return
+    from docfit_app import screen_mode
 
     try:
-        from docfit_app.shell_menu import refresh_registered
-        refresh_registered()
-    except OSError:
-        pass
+        전용_화면 = screen_mode.parse(sys.argv[1:])
+    except ValueError as 오류:
+        _닫기_스플래시()
+        raise SystemExit(str(오류))
+    if 전용_화면 is not None:
+        # 메뉴 하나만 담은 창(--screen N): 보통 앱과 따로, 메뉴마다 하나만 뜬다.
+        screen_mode.activate(전용_화면)
+        if not screen_mode.claim():
+            _닫기_스플래시()
+            return
+    elif not _단일_인스턴스_확인():
+        return
+
+    if 전용_화면 is None:
+        try:
+            from docfit_app.shell_menu import refresh_registered
+            refresh_registered()
+        except OSError:
+            pass
 
     from docfit_app import startup_deferral
     startup_deferral.mark("main_enter")
@@ -3445,8 +3481,9 @@ def main():
         root = TkinterDnD.Tk()
         _앱아이콘_적용(root)
         gui = HwpAutoDocFitGUI(root)
-        from docfit_app.instance_files import start
-        start(gui)
+        if 전용_화면 is None:
+            from docfit_app.instance_files import start
+            start(gui)
         _새창_맨앞으로(root)
         root.mainloop()
         return
@@ -3459,8 +3496,9 @@ def main():
             root = TkinterDnD.Tk()
             _앱아이콘_적용(root)
             gui = HwpAutoDocFitGUI(root)
-            from docfit_app.instance_files import start
-            start(gui)
+            if 전용_화면 is None:  # 전용 창은 '열기'로 넘어온 파일 대기열을 가져가지 않는다.
+                from docfit_app.instance_files import start
+                start(gui)
             웹모드_기본창_숨김(root)
             보관.update(root=root, gui=gui)
             준비됨.set()
