@@ -1,3 +1,15 @@
+# OUTLINEUI3 인계 (2026-11-26)
+
+`feature/OUTLINEUI3`: OUTLINEUI2 `e4a5e2d8` 커밋·통과 근거 확인 후 지시한 병합 `9cf919d4` 완료, 병합 직후 win 159개 통과. Rust+Win32 슬래시 8종·[[ ]]/(( ))/# 완성·본문 설명/현재 블록 영구 ID·빠른 검색 Ctrl+K(페이지/블록/명시적 생성)·명령 팔레트 Ctrl+Shift+P 11종을 구현했다. 한글 조합/후보 메시지·중복 Enter·오래된 문맥/선택 보호, 192 DPI 초기 EDIT 서식 영역 0 문제 보완. 최종 win 174개·core 130개·관련 Python 33개 통과, 새 시험 15개·기존 시험 수정 없음. 초기 컴파일/새 시험 오류·기존 IME 회귀 1개는 모두 수정 후 통과. 실제 화면 밖 Win32 캡처 18장 중 6장 직접 확인, 실제 출력 줄·한계는 `docs/OUTLINEUI3_RESULT_2026-11-26.md`. 물리 키보드 IME/후보창·다중 모니터·PM 전체 Python/Flutter/CI·기본 Rust 전환은 미확인이다. 타 페이지는 기존 영구 ID만 후보로 제공하며 외부 변경 실시간 감시는 없다. 설치본·서비스·자동 실행·사용자 설정·Flutter 변경 없음. 속도 측정 없음. 로컬 커밋만·푸시/태그/main 병합/배포/GitLab 접근 없음.
+
+# OUTLINEUI2 인계 (2026-11-26)
+
+`feature/OUTLINEUI2`: `a502f109`에서 지시대로 OUTLINEUI1 `bfe01e2d`까지 fast-forward, 병합 직후 core 122개·win 146개 재시험 통과. Rust 불릿·접기 표시 분리/안내선, 블록 줌·상위 경로·뒤로, 하위 포함 드래그(앞/뒤/마지막 자식·자동 스크롤·Esc/캡처 상실 취소·한 단계 실행 취소), Win32 불릿 메뉴 6종을 구현했다. 최종 core 130개·win 159개·관련 Python 33개 통과, 기존 시험 수정 없음. 중간 EDIT 좌표 시험 1개 실패는 기존 본문/EDIT 좌표를 유지하고 왼쪽 여백에서 표적을 분리해 해결했다. Logseq 공개 동작만 확인·AGPL 자산 복사 없음·파일 형식 유지. 실제 화면 밖 캡처 18장 중 6장 직접 육안 확인과 실제 출력 줄은 `docs/OUTLINEUI2_RESULT_2026-11-26.md`. 줌은 현재 페이지 메모리만 보존하며 undo/redo 후 ID 오지정 방지를 위해 전체 보기로 복귀한다. 실제 IME/포인터/다중 모니터/모달 메뉴·PM 전체 Python/Flutter/CI·기본 Rust 전환은 미확인이다. 설치본·서비스·자동 실행·사용자 설정 변경 없음. 속도 측정 없음. 로컬 커밋만·푸시/태그/main 병합/배포 없음.
+
+# OUTLINEUI1 인계 (2026-11-26)
+
+`feature/OUTLINEUI1`: `a502f109`에서 OUTLINEKEY1 `8019ea39`까지 fast-forward 후 Rust 3단 창·상단 토글/방문 이력/검색, 왼쪽 일지·모든 페이지·실행 중 즐겨찾기·최근, Shift+클릭 우측 미리보기 카드와 기존 역링크를 구현했다. Logseq 0.10.9 공개 소스로 토글(t l/t r)·방문(Ctrl+[/])·검색(Ctrl+K) 키를 확인했다. 기존 시험 수정 없이 core 122개·win 146개(새 시험 9개 포함), 관련 Python 33개 통과. 실제 화면 밖 Win32·EDIT 캡처 6장과 실제 출력 줄은 `docs/OUTLINEUI1_RESULT_2026-11-26.md`에 있다. 즐겨찾기·카드·방문 이력은 메모리에만 유지하며 카드 편집은 가운데에서 한다. PM의 전체 Python·Flutter, 실제 키보드/IME/다중 모니터, 기본 Rust 전환은 남아 있다. 설치본·서비스·자동 실행·사용자 설정·Flutter 화면 변경 없음. 속도 측정 없음. 기능 브랜치 커밋만, 푸시·main 병합·배포 없음.
+
 # CILINUX2 인계 (2026-11-26)
 
 `feature/CILINUX2`, 기준 `cd138da5`. 일반 zlib 1.3.1 대조에서 Linux CI와 같은 해시 접두부 및 기존 실패 4건을 재현했다. 환경 간 fixture 비교를 ZIP 전체 압축 해시에서 모든 항목의 원시 바이트·15개 메타데이터 필드 대조로 수정하고 각 실물의 manifest 해시·크기 검증을 유지했다. fixture·manifest 갱신 및 skip 추가 없음. 관련 46시험은 기본 zlib-ng·일반 zlib 모두 OK. MCP pywin32 Windows 마커로 OSV 추출 오류 해소, 기존 스캔 경로 36개 누락 0·전이 해석·pywin32 검사 유지. OSV 기존 영향 항목 8건/취약점 11건과 조치안은 결과 문서에 기록했고 감사 전체 성공은 아니다. Windows 전체 Ran 3751 tests in 929.047s / OK (skipped=29), 종료 코드 0. 기존 atexit SQLite 정리 WinError 32·ResourceWarning은 남는다. 생성 바이너리 4개 원복·COM 잠금 해제·기존 한/글 2개 보존. Linux 수정 후 직접 실행은 미확인. 결과: `docs/CILINUX2_RESULT_2026-11-26.md`. 커밋만 수행하며 푸시·태그·병합·배포 없음.

@@ -84,6 +84,25 @@ class OutlinerNativeWindowTest(unittest.TestCase):
         executable.touch()
         return OutlinerService(folder, executable=executable, **kw)
 
+    def test_key_requests_are_sent_as_op_key_with_args_action(self):
+        """블록 편집 키 규칙(OUTLINEKEY1): op='key', args.action=operation, 커서·선택·접힘은 그대로."""
+        with tempfile.TemporaryDirectory() as folder:
+            executable = Path(folder) / 'engine.exe'
+            executable.touch()
+            class Completed:
+                returncode = 0
+                stdout = json.dumps({'ok': True, 'result': {'handled': True, 'markdown': '- a\n'}})
+            runner = unittest.mock.Mock(return_value=Completed())
+            service = OutlinerService(folder, executable=executable, runner=runner)
+            result = service.execute({'action': 'key', 'operation': 'enter', 'page': 'Home', 'markdown': '- a\n',
+                                      'block': 0, 'start': 1, 'end': 1, 'text': 'a', 'selection': [], 'folded': [0]})
+            self.assertTrue(result['handled'])
+            sent = json.loads(runner.call_args.kwargs['input'])
+            self.assertEqual((sent['op'], sent['document']), ('key', '- a\n'))
+            self.assertEqual(sent['args']['action'], 'enter')
+            self.assertEqual((sent['args']['block'], sent['args']['folded']), (0, [0]))
+            self.assertNotIn('operation', sent['args'])
+
     def test_history_requests_map_operation_to_engine_args_action_and_keep_page(self):
         """실행 취소(OUTLINERUNDO1): history 는 op='history', args.action=operation, page 유지."""
         with tempfile.TemporaryDirectory() as folder:

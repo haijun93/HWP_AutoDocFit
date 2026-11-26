@@ -59,6 +59,17 @@ class _FakeEngine {
         }
         final md = _md(lines);
         return {'ok': true, 'data': {'markdown': md, 'document': doc(md)}};
+      case 'key':
+        // 칸의 글 반영 + Enter 는 아래에 빈 블록(규칙 자체는 Rust 시험).
+        final lines = _lines(p['markdown'] as String);
+        final index = p['block'] as int;
+        lines[index] = p['text'] as String;
+        if (p['operation'] == 'enter') lines.insert(index + 1, '');
+        final md = _md(lines);
+        return {'ok': true, 'data': {
+          'handled': true, 'markdown': md, 'document': doc(md), 'selection': [],
+          'cursor': {'block': p['operation'] == 'enter' ? index + 1 : index, 'start': 0, 'end': 0},
+        }};
       case 'save':
         if (conflictPage == page) {
           return {'ok': false, 'error': {'message': '페이지가 다른 곳에서 변경되었습니다.'}};
@@ -156,7 +167,7 @@ void main() {
     expect(_enabled(tester, 'outliner-undo'), isTrue);
 
     await _ctrl(tester, LogicalKeyboardKey.keyZ);
-    expect(engine.pages['홈'], '- 첫 항목\n', reason: 'set_text + insert 가 한 단계로 되돌려진다');
+    expect(engine.pages['홈'], '- 첫 항목\n', reason: '글 확정 + 새 블록이 한 단계로 되돌려진다');
     expect(_field(2), findsNothing);
     expect(
       tester.widget<EditableText>(find.descendant(of: _field(1), matching: find.byType(EditableText))).controller.text,

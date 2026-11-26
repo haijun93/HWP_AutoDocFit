@@ -95,7 +95,11 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         let label = match shell.prompt {
             Some(PromptKind::NewPage) => "새 이름",
             Some(PromptKind::Rename) => "바꿀 이름",
-            None => "검색",
+            None => match shell.search_mode {
+                crate::shell::SearchMode::Quick => "찾기",
+                crate::shell::SearchMode::Commands => "명령",
+                _ => "검색",
+            },
         };
         let mut lr = lay.search_label;
         lr.r += scale(24, lay.dpi) * shell.prompt.is_some() as i32;
@@ -109,7 +113,7 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
         fill(dc, rc(e), pal.bg);
         frame(dc, e, if shell.prompt.is_some() { pal.accent } else { pal.divider });
         if shell.prompt.is_some() {
-            let tip = R::new(e.r + scale(12, lay.dpi), 0, lay.w - scale(8, lay.dpi), lay.top.b);
+            let tip = R::new(scale(12, lay.dpi), scale(48, lay.dpi), lay.w - scale(8, lay.dpi), lay.top.b);
             text(dc, "Enter 확인 · Esc 취소", rc(tip), pal.text_sub, 0);
             return;
         }
@@ -118,6 +122,23 @@ unsafe fn draw_top<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: &
             fill(dc, rc(*r), pal.bg);
             frame(dc, *r, pal.divider);
             text(dc, b.label(), rc(*r), if enabled { pal.text } else { pal.text_faint }, DT_CENTER);
+        }
+        for (b, r) in layout::NAV_BUTTONS.iter().zip(lay.nav_buttons.iter()) {
+            let enabled = match b {
+                layout::Btn::Back => shell.can_back() || shell.editor.view.can_zoom_back(),
+                layout::Btn::Forward => shell.can_forward(),
+                layout::Btn::Favorite => shell.page.is_some(),
+                _ => true,
+            };
+            let active = match b {
+                layout::Btn::ToggleLeft => shell.left_open,
+                layout::Btn::ToggleRight => shell.right_open,
+                layout::Btn::Favorite => shell.page.as_ref().is_some_and(|p| shell.favorites.contains(p)),
+                _ => false,
+            };
+            fill(dc, rc(*r), if active { pal.selected } else { pal.bg });
+            frame(dc, *r, pal.divider);
+            text(dc, b.label(), rc(*r), if enabled { pal.row_text(active, pal.text) } else { pal.text_faint }, DT_CENTER);
         }
     }
 }
@@ -131,6 +152,15 @@ unsafe fn draw_left<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: 
         SelectObject(dc, fb);
         text(dc, "페이지", rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
+        for (i, section) in layout::SECTIONS.iter().enumerate() {
+            let y = head.b + i as i32 * lay.item_h;
+            let row = R::new(l.l, y, l.r - 1, y + lay.item_h);
+            let selected = shell.section == *section;
+            if selected { fill(dc, rc(row), pal.selected); }
+            text(dc, section.label(), rc(inset(row, pad)), pal.row_text(selected, pal.text), 0);
+        }
+        let saved = SaveDC(dc);
+        IntersectClipRect(dc, l.l, lay.list_top(l), l.r, l.b);
         let items = shell.left_list();
         let slots = lay.left_slots() + 1;
         for (slot, item) in items.iter().skip(shell.left_first).take(slots).enumerate() {
@@ -153,6 +183,7 @@ unsafe fn draw_left<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay: 
                 }
             }
         }
+        RestoreDC(dc, saved);
     }
 }
 
@@ -163,18 +194,32 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
         let head = R::new(r.l + 1, r.t, r.r, r.t + lay.head_h);
         fill(dc, rc(head), pal.head_bg);
         SelectObject(dc, fb);
-        text(dc, &format!("역링크 ({})", shell.back.len()), rc(inset(head, pad)), pal.text, 0);
+        text(dc, &format!("카드 {} · 역링크 {}", shell.cards.len(), shell.back.len()), rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
-        if shell.back.is_empty() {
+        if shell.back.is_empty() && shell.cards.is_empty() {
             let row = R::new(r.l + 1, lay.list_top(r), r.r, lay.list_top(r) + lay.item_h * 2);
-            text(dc, "이 페이지를 가리키는 링크가 없습니다", rc(inset(row, pad)), pal.text_muted, 0);
+            text(dc, "Shift+클릭으로 카드를 여세요", rc(inset(row, pad)), pal.text_muted, 0);
             return;
         }
-        let items = layout::right_items(&shell.back);
+        let saved = SaveDC(dc);
+        IntersectClipRect(dc, r.l, lay.list_top(r), r.r, r.b);
+        let items = shell.right_list();
         for (slot, item) in items.iter().skip(shell.back_first).take(lay.right_slots() + 1).enumerate() {
             let top = lay.list_top(r) + slot as i32 * lay.item_h;
             let row = R::new(r.l + 1, top, r.r, top + lay.item_h);
             match item {
+                RightItem::Card(i) => {
+                    fill(dc, rc(row), pal.head_bg);
+                    frame(dc, row, pal.divider);
+                    let mut title = inset(row, pad);
+                    title.r -= scale(28, lay.dpi);
+                    text(dc, &shell.cards[*i].target.page, rc(title), pal.accent, 0);
+                    text(dc, "×", rc(R::new(title.r, row.t, row.r, row.b)), pal.text, DT_CENTER);
+                }
+                RightItem::Preview(i) => {
+                    let preview = format!("↗ {}", shell.card_preview(*i).replace('\n', " · "));
+                    text(dc, &preview, rc(inset(row, pad)), pal.text, 0);
+                }
                 RightItem::Group(page) => {
                     SelectObject(dc, fb);
                     text(dc, page, rc(inset(row, pad)), pal.accent, 0);
@@ -188,6 +233,7 @@ unsafe fn draw_right<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
                 }
             }
         }
+        RestoreDC(dc, saved);
     }
 }
 
@@ -199,7 +245,8 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
         fill(dc, rc(head), pal.head_bg);
         fill(dc, RECT { left: c.l, top: head.b - 1, right: c.r, bottom: head.b }, pal.divider);
         SelectObject(dc, fb);
-        text(dc, &format!("검색 결과 {}건 — {}", shell.hits.len(), shell.query.trim()), rc(inset(head, pad)), pal.text, 0);
+        let title = if shell.search_mode == crate::shell::SearchMode::Commands { "명령 팔레트" } else { "검색 결과" };
+        text(dc, &format!("{title} {}건 — {} · ↑↓ 선택 · Enter 실행 · Esc 닫기", shell.hits.len(), shell.query.trim()), rc(inset(head, pad)), pal.text, 0);
         SelectObject(dc, f);
         if shell.hits.is_empty() {
             let row = R::new(c.l, head.b, c.r, head.b + lay.result_h * 2);
@@ -214,6 +261,10 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
             if sel {
                 fill(dc, rc(row), pal.selected);
             }
+            if shell.search_mode == crate::shell::SearchMode::Commands {
+                text(dc, &hit.page, rc(inset(row, pad)), pal.row_text(sel, pal.text), 0);
+                continue;
+            }
             let name_w = scale(150, lay.dpi);
             let mut nr = inset(row, pad);
             nr.r = nr.l + name_w;
@@ -222,7 +273,7 @@ unsafe fn draw_results<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, la
             SelectObject(dc, f);
             let mut br = inset(row, pad);
             br.l = nr.r + scale(8, lay.dpi);
-            let body = if hit.block.is_none() { "(페이지 이름)" } else { hit.text.as_str() };
+            let body = if hit.block.is_none() && hit.text.is_empty() { "(페이지 이름)" } else { hit.text.as_str() };
             text(dc, body, rc(br), pal.row_text(sel, if hit.block.is_none() { pal.text_muted } else { pal.text }), 0);
         }
     }
@@ -237,7 +288,7 @@ unsafe fn draw_popup<H: EditHost>(dc: HDC, shell: &Shell<H>, pal: &Palette, lay:
         frame(dc, r, pal.accent);
         SelectObject(dc, f);
         let pad = scale(8, dpi);
-        for (i, name) in p.items.iter().enumerate() {
+        for (i, name) in p.labels.iter().enumerate() {
             let top = r.t + scale(2, dpi) + i as i32 * lay.popup_h;
             let row = R::new(r.l + 1, top, r.r - 1, top + lay.popup_h);
             let sel = i == p.selected;
@@ -256,10 +307,9 @@ pub fn edit_rect_of<H: EditHost>(shell: &Shell<H>, lay: &Layout) -> Option<R> {
     let pos = ed.view.rows.iter().position(|r| r.block == block)?;
     let m = Metrics::new(lay.dpi);
     let page = m.page_rows(lay.center.h());
-    if pos < ed.view.first || pos > ed.view.first + page {
+    if pos < ed.view.first || ed.view.slot_of(pos) > page {
         return None;
     }
-    let row = &ed.view.rows[pos];
-    let e = m.edit_rect(lay.dpi, row.depth, row.status.is_some(), pos - ed.view.first, lay.center.w());
+    let e = m.row_edit_rect(lay.dpi, &ed.view, pos, lay.center.w());
     Some(R::new(e.left, e.top, e.right, e.bottom))
 }

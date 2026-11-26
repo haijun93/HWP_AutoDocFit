@@ -48,8 +48,8 @@ fn real_edit_control_receives_keys_through_the_subclass() {
     h.editor().host.set_text("다라", 0);
     h.send_key(VK_BACK);
     assert_eq!(h.editor().view.doc.blocks.len(), 2);
-    assert_eq!(h.editor().view.doc.blocks[0].text, "가나 다라");
-    // Esc 는 편집만 끝낸다.
+    assert_eq!(h.editor().view.doc.blocks[0].text, "가나다라");
+    // Esc 는 글을 확정하고 블록을 선택한다.
     h.send_key(VK_ESCAPE);
     assert!(!h.editor().editing());
 }
@@ -129,4 +129,28 @@ fn capture_cli_edit_mode_writes_three_extra_pngs() {
         assert!(dir.join(format!("outliner_{tag}_dark_96dpi.png")).exists(), "{tag}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn real_multiline_edit_keeps_offsets_and_swallows_backspace_char() {
+    let view = View::from_markdown("- 앞\n- 첫줄\n  둘째\n").unwrap();
+    let base = outliner_core::serialize(&view.doc);
+    let editor = Editor::new(view, WinHost::new(), None, base);
+    let mut h = Harness::new(editor, "multiline", Kind::Light, 96, 720, 400).unwrap();
+    h.editor().view.set_selected(1, 10);
+    assert!(h.editor().start_edit_selected());
+    h.layout();
+    assert_eq!(h.editor().host.read_text(), "첫줄\n둘째");
+    assert_eq!(h.editor().host.selection(), (5, 5), "줄바꿈은 한 글자로 센다");
+    h.editor().host.set_text("첫줄\n둘째", 3);
+    assert_eq!(h.editor().host.selection(), (3, 3));
+    // 둘째 줄 맨 앞의 Backspace 는 EDIT 안 처리, 블록 맨 앞은 합치기.
+    h.editor().host.set_text("첫줄\n둘째", 0);
+    h.send_key(VK_BACK);
+    assert_eq!(h.editor().markdown(), "- 앞첫줄\n  둘째\n");
+    // 뒤따르는 WM_CHAR(8)는 삼켜서 이음매 앞 글자가 지워지지 않는다.
+    h.send_char(8);
+    assert_eq!(h.editor().host.read_text(), "앞첫줄\n둘째");
+    h.send_char(b'(' as u16);
+    assert_eq!(h.editor().host.read_text(), "앞(첫줄\n둘째", "글 중간의 ( 는 짝을 만들지 않는다");
 }

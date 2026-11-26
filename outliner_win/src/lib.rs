@@ -15,6 +15,8 @@ pub mod sha256;
 pub mod probe_fmt;
 pub mod view;
 pub mod window;
+pub mod bullet;
+pub mod commands;
 
 /// 시험·캡처 기본 문서(저장소 안 작은 .md).
 pub const SAMPLE_MD: &str = include_str!("../tests/sample.md");

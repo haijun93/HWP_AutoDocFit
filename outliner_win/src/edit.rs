@@ -9,8 +9,8 @@
 //!  5. IME 가 키를 `VK_PROCESSKEY` 로 한 번, 조합 확정 뒤 진짜 키로 또 한 번 보내도 명령은 한 번만(50 ms 중복 제거).
 use crate::docio::{self, FileInfo, SaveError};
 use crate::links::{self, LinkCtx};
-use crate::view::{View, build_rows};
-use outliner_core::{Document, UndoHistory};
+use crate::view::View;
+use outliner_core::{Document, KeyInput, KeyOutcome, UndoHistory, apply_key};
 use std::collections::VecDeque;
 
 pub const VK_BACK: u16 = 0x08;
@@ -19,6 +19,12 @@ pub const VK_RETURN: u16 = 0x0D;
 pub const VK_ESCAPE: u16 = 0x1B;
 pub const VK_UP: u16 = 0x26;
 pub const VK_DOWN: u16 = 0x28;
+pub const VK_LEFT: u16 = 0x25;
+pub const VK_RIGHT: u16 = 0x27;
+pub const VK_DELETE: u16 = 0x2E;
+/// `;` 키(VK_OEM_1) — Ctrl+; 접기 토글.
+pub const VK_OEM_1: u16 = 0xBA;
+pub const VK_A: u16 = 0x41;
 pub const VK_S: u16 = 0x53;
 pub const VK_Y: u16 = 0x59;
 pub const VK_Z: u16 = 0x5A;
@@ -37,6 +43,8 @@ pub trait EditHost {
     fn candidate_open(&mut self) -> bool;
     /// `ImmNotifyIME(NI_COMPOSITIONSTR, CPS_COMPLETE, 0)`.
     fn request_complete(&mut self);
+    /// 선택 범위만 바꾼다(괄호 감싸기).
+    fn set_selection(&mut self, _start: usize, _end: usize) {}
 }
 
 /// 조합 중 키를 받았을 때의 동작. U1·U2(실기 확인)가 끝나면 값만 바꾸면 된다.
@@ -102,23 +110,40 @@ pub enum KeyResult {
     Swallow,
 }
 
+/// 편집 명령. 규칙 자체는 `outliner_core::apply_key`(docs/OUTLINEKEY1_DESIGN_2026-11-26.md).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cmd {
     Enter,
+    /// Shift+Enter: 블록 안 줄바꿈.
+    NewLine,
     Indent,
     Outdent,
+    /// 첫 줄의 ↑ / 마지막 줄의 ↓.
     Up,
     Down,
+    /// 맨 앞의 ← / 맨 끝의 →.
+    Left,
+    Right,
     Backspace,
+    Delete,
+    /// 글을 확정하고 그 블록을 선택(Esc, Alt/Shift+↑↓).
+    SelectBlock,
+    SelectAllBlocks,
+    /// 대기 중인 클립보드 글을 블록 트리로 붙여넣기.
+    Paste,
     /// 다른 블록(문서 안 순서 번호)으로 편집 이동.
     Goto(usize),
     Save,
+    /// 확정하지 않은 입력을 버리고 편집 종료(창 내부용).
     Cancel,
-    /// TODO 토글(Ctrl+Enter).
+    /// TODO 순환(Ctrl+Enter): 없음 → TODO → DONE → 없음.
     Toggle,
-    /// 블록(하위 포함)을 같은 단계의 위/아래 형제 위로 옮긴다(Alt+↑/↓).
+    /// 블록(하위 포함) 위/아래 이동(Alt+Shift+↑/↓).
     MoveUp,
     MoveDown,
+    Collapse,
+    Expand,
+    ToggleFold,
 }
 
 /// `[[` 자동완성 팝업 상태(편집 중에만).
@@ -126,6 +151,7 @@ pub enum Cmd {
 pub struct Popup {
     pub ctx: LinkCtx,
     pub items: Vec<String>,
+    pub labels: Vec<String>,
     pub selected: usize,
 }
 
@@ -160,17 +186,23 @@ pub struct Editor<H: EditHost> {
     /// 자동완성 후보가 될 페이지 이름·최근 페이지(셸이 채운다).
     pub page_names: Vec<String>,
     pub recent_names: Vec<String>,
+    pub tag_names: Vec<String>,
+    /// 다른 페이지의 영구 ID·페이지/본문 설명(페이지 전환 때 갱신).
+    pub graph_blocks: Vec<(String, String)>,
+    pub today: String,
     /// 열려 있는 `[[` 자동완성 팝업.
     pub popup: Option<Popup>,
     /// Esc 로 닫은 `[[` 의 위치 — 같은 `[[` 에서는 다시 열지 않는다.
-    popup_off: Option<usize>,
+    popup_off: Option<(usize, links::RefKind)>,
+    /// `Cmd::Paste` 가 쓸 클립보드 글.
+    pending_paste: Option<String>,
     /// 문서 단위 실행 취소/다시 실행 이력(OUTLINERUNDO1). 편집 명령 하나(=Enter 의 글 확정+분할 등)가 한 단계다.
     pub history: UndoHistory,
 }
 
-/// 한 줄 규칙: 줄바꿈·탭은 공백으로.
+/// 블록 글 규칙: 줄바꿈은 `\n`, 탭은 공백.
 pub fn sanitize(s: &str) -> String {
-    s.chars().map(|c| if matches!(c, '\r' | '\n' | '\t') { ' ' } else { c }).collect()
+    s.replace("\r\n", "\n").replace('\r', "\n").replace('\t', " ")
 }
 
 pub fn utf16_len(s: &str) -> usize {
@@ -207,7 +239,8 @@ impl Tx {
     }
     fn act(&mut self, action: &str, idx: usize, text: Option<&str>) -> Result<(), String> {
         let id = self.doc.blocks.get(idx).ok_or("블록이 없습니다")?.id;
-        self.doc = docio::edit_doc(&self.doc, action, id, text)?;
+        // 화면 문서는 드래그 후에도 ID를 유지한다. JSON 왕복의 순번 재배정을 피한다.
+        outliner_core::edit(&mut self.doc, action, id, text).map_err(|e| e.to_string())?;
         Ok(())
     }
     fn set_text(&mut self, idx: usize, text: &str) -> Result<(), String> {
@@ -220,77 +253,6 @@ impl Tx {
         self.act("insert", idx, Some(text))?;
         self.folded.insert(idx + 1, false);
         Ok(())
-    }
-    fn delete(&mut self, idx: usize) -> Result<(), String> {
-        self.act("delete", idx, None)?;
-        self.folded.remove(idx);
-        Ok(())
-    }
-    /// `idx` 블록에 바로 다음 블록을 합친다.
-    fn merge_next(&mut self, idx: usize) -> Result<(), String> {
-        self.act("merge", idx, None)?;
-        self.folded.remove(idx + 1);
-        Ok(())
-    }
-    fn subtree_end(&self, idx: usize) -> usize {
-        let ind = self.doc.blocks[idx].indent;
-        let mut e = idx + 1;
-        while e < self.doc.blocks.len() && self.doc.blocks[e].indent > ind {
-            e += 1;
-        }
-        e
-    }
-    /// 블록 `i` 와 바로 위 블록을 맞바꾼다(엔진 `up`).
-    fn swap_up(&mut self, i: usize) -> Result<(), String> {
-        self.act("up", i, None)?;
-        self.folded.swap(i, i - 1);
-        Ok(())
-    }
-    /// 구간 `[start, end)` 를 위치 `to`(< start) 로 끌어올린다(인접 교환 반복).
-    fn move_range_up(&mut self, start: usize, end: usize, to: usize) -> Result<(), String> {
-        if (end - start) * (start - to) > 2000 {
-            return Err("한 번에 옮기기에는 블록이 너무 많습니다".into());
-        }
-        for k in 0..(end - start) {
-            let cur = start + k;
-            for step in 0..(start - to) {
-                self.swap_up(cur - step)?;
-            }
-        }
-        Ok(())
-    }
-    /// `idx` 블록과 그 하위를 같은 단계의 위/아래 형제 건너편으로 옮기고 옮긴 블록의 새 번호를 돌려준다.
-    fn move_subtree(&mut self, idx: usize, up: bool) -> Result<usize, String> {
-        let len = self.doc.blocks.len();
-        if idx >= len {
-            return Err("블록이 없습니다".into());
-        }
-        let ind = self.doc.blocks[idx].indent;
-        let end = self.subtree_end(idx);
-        if up {
-            let mut p = idx;
-            loop {
-                if p == 0 {
-                    return Err("위로 이동할 블록이 없습니다".into());
-                }
-                p -= 1;
-                if self.doc.blocks[p].indent <= ind {
-                    break;
-                }
-            }
-            if self.doc.blocks[p].indent < ind {
-                return Err("같은 단계의 위쪽 블록이 없습니다".into());
-            }
-            self.move_range_up(idx, end, p)?;
-            Ok(p)
-        } else {
-            if end >= len || self.doc.blocks[end].indent != ind {
-                return Err("같은 단계의 아래쪽 블록이 없습니다".into());
-            }
-            let nend = self.subtree_end(end);
-            self.move_range_up(end, nend, idx)?;
-            Ok(idx + (nend - end))
-        }
     }
     fn finish(mut self) -> Result<Document, String> {
         if self.folded.len() != self.doc.blocks.len() {
@@ -321,8 +283,12 @@ impl<H: EditHost> Editor<H> {
             suppress: None,
             page_names: Vec::new(),
             recent_names: Vec::new(),
+            tag_names: Vec::new(),
+            graph_blocks: Vec::new(),
+            today: crate::clock::now().date_iso,
             popup: None,
             popup_off: None,
+            pending_paste: None,
             history: UndoHistory::default(),
         }
     }
@@ -408,15 +374,65 @@ impl<H: EditHost> Editor<H> {
 
     // ---------- 키 입력 ----------
 
-    fn cmd_of(ev: &KeyEvent) -> Option<(Cmd, fn(&ImePolicy) -> ComposingKey)> {
-        if ev.ctrl || ev.alt {
-            return None;
+    /// 캐럿이 글의 첫 줄(`up`) / 마지막 줄에 있는가.
+    fn on_edge_line(&mut self, up: bool) -> bool {
+        let text = sanitize(&self.host.read_text());
+        let (start, end) = self.host.selection();
+        let at = if up { start } else { end };
+        let (before, after) = split_utf16(&text, at, at);
+        if up { !before.contains('\n') } else { !after.contains('\n') }
+    }
+
+    fn text_len(&mut self) -> usize {
+        utf16_len(&sanitize(&self.host.read_text()))
+    }
+
+    /// 키 → (명령, 조합 중 정책). `None` 이면 EDIT 의 기본 처리.
+    fn cmd_of(&mut self, ev: &KeyEvent) -> Option<(Cmd, fn(&ImePolicy) -> ComposingKey)> {
+        let enter: fn(&ImePolicy) -> ComposingKey = |p| p.enter;
+        let tab: fn(&ImePolicy) -> ComposingKey = |p| p.tab;
+        let arrows: fn(&ImePolicy) -> ComposingKey = |p| p.arrows;
+        let vertical = ev.vk == VK_UP || ev.vk == VK_DOWN;
+        let up = ev.vk == VK_UP;
+        if ev.alt {
+            if ev.ctrl || !vertical {
+                return None;
+            }
+            return Some(match (ev.shift, up) {
+                (true, true) => (Cmd::MoveUp, arrows),
+                (true, false) => (Cmd::MoveDown, arrows),
+                (false, _) => (Cmd::SelectBlock, arrows),
+            });
         }
+        if ev.ctrl {
+            return match ev.vk {
+                VK_RETURN if !ev.shift => Some((Cmd::Toggle, enter)),
+                VK_UP if !ev.shift => Some((Cmd::Collapse, arrows)),
+                VK_DOWN if !ev.shift => Some((Cmd::Expand, arrows)),
+                VK_OEM_1 if !ev.shift => Some((Cmd::ToggleFold, arrows)),
+                VK_A if ev.shift => Some((Cmd::SelectAllBlocks, arrows)),
+                VK_A => {
+                    // 글을 이미 모두 선택했으면 블록 선택으로.
+                    let length = self.text_len();
+                    (self.host.selection() == (0, length)).then_some((Cmd::SelectBlock, arrows))
+                }
+                _ => None,
+            };
+        }
+        let (start, end) = self.host.selection();
+        let caret = start == end;
         match ev.vk {
-            VK_RETURN if !ev.shift => Some((Cmd::Enter, |p| p.enter)),
-            VK_TAB => Some((if ev.shift { Cmd::Outdent } else { Cmd::Indent }, |p| p.tab)),
-            VK_UP if !ev.shift => Some((Cmd::Up, |p| p.arrows)),
-            VK_DOWN if !ev.shift => Some((Cmd::Down, |p| p.arrows)),
+            VK_RETURN => Some((if ev.shift { Cmd::NewLine } else { Cmd::Enter }, enter)),
+            VK_TAB => Some((if ev.shift { Cmd::Outdent } else { Cmd::Indent }, tab)),
+            VK_UP | VK_DOWN => {
+                if !self.on_edge_line(up) {
+                    return None;
+                }
+                let cmd = if ev.shift { Cmd::SelectBlock } else if up { Cmd::Up } else { Cmd::Down };
+                Some((cmd, arrows))
+            }
+            VK_LEFT if !ev.shift && caret && start == 0 => Some((Cmd::Left, arrows)),
+            VK_RIGHT if !ev.shift && caret && start == self.text_len() => Some((Cmd::Right, arrows)),
             _ => None,
         }
     }
@@ -439,6 +455,11 @@ impl<H: EditHost> Editor<H> {
             return if self.history_step(!redo) { KeyResult::Swallow } else { KeyResult::Pass };
         }
         // 자동완성 팝업이 열려 있으면 ↑↓·Enter·Tab·Esc 는 팝업이 먼저 받는다(조합 중이면 확정만 하고 명령은 버림).
+        if self.popup.is_some() && ev.ctrl && !ev.alt && !ev.shift && matches!(ev.vk, 0x4E | 0x50) {
+            if composing || candidate || ev.processkey { return KeyResult::Pass; }
+            self.move_popup(ev.vk == 0x4E);
+            return KeyResult::Swallow;
+        }
         if self.popup.is_some() && !ev.alt && !ev.ctrl && !candidate {
             match ev.vk {
                 VK_UP | VK_DOWN if !ev.shift => {
@@ -451,10 +472,16 @@ impl<H: EditHost> Editor<H> {
                 VK_RETURN | VK_TAB if !ev.shift => {
                     if composing {
                         self.host.request_complete();
+                        // VK_PROCESSKEY 뒤 진짜 Enter/Tab이 다시 와도 이번 입력은 확정만 한다.
+                        self.suppress = Some((if ev.vk == VK_RETURN { Cmd::Enter } else { Cmd::Indent }, ev.now_ms + self.policy.dedupe_ms));
                         return if ev.processkey { KeyResult::Pass } else { KeyResult::Swallow };
                     }
                     if ev.processkey {
                         return KeyResult::Pass;
+                    }
+                    let cmd = if ev.vk == VK_RETURN { Cmd::Enter } else { Cmd::Indent };
+                    if self.suppress.is_some_and(|(c, until)| c == cmd && ev.now_ms <= until) {
+                        return KeyResult::Swallow;
                     }
                     self.accept_popup(None);
                     return KeyResult::Swallow;
@@ -469,26 +496,13 @@ impl<H: EditHost> Editor<H> {
                 _ => {}
             }
         }
-        if ev.vk == VK_RETURN && ev.ctrl && !ev.shift && !ev.alt {
-            self.submit(Cmd::Toggle, ev.now_ms, ev.processkey, composing);
-            return KeyResult::Swallow;
-        }
-        if ev.alt && !ev.ctrl && !ev.shift && (ev.vk == VK_UP || ev.vk == VK_DOWN) {
-            if candidate {
-                return KeyResult::Pass;
-            }
-            self.submit(if ev.vk == VK_UP { Cmd::MoveUp } else { Cmd::MoveDown }, ev.now_ms, ev.processkey, composing);
-            return KeyResult::Swallow;
-        }
-        if ev.vk == VK_RETURN && (ev.shift || ev.ctrl) && !ev.alt {
-            return KeyResult::Swallow; // 한 줄 규칙: 줄바꿈 입력 없음
-        }
+        let plain = !ev.alt && !ev.ctrl && !ev.shift;
         match ev.vk {
-            VK_ESCAPE if !ev.alt && !ev.ctrl && !ev.shift => {
+            VK_ESCAPE if plain => {
                 if composing || candidate {
                     return KeyResult::Pass; // 조합 취소는 IME 소유
                 }
-                self.submit(Cmd::Cancel, ev.now_ms, ev.processkey, false);
+                self.submit(Cmd::SelectBlock, ev.now_ms, ev.processkey, false);
                 return KeyResult::Swallow;
             }
             VK_BACK if !ev.alt && !ev.ctrl => {
@@ -496,16 +510,33 @@ impl<H: EditHost> Editor<H> {
                     return KeyResult::Pass;
                 }
                 let (s, e) = self.host.selection();
-                let empty = self.host.read_text().is_empty();
-                if s == e && (empty || s == 0) {
+                if s == e && s == 0 {
                     self.submit(Cmd::Backspace, ev.now_ms, false, false);
+                    return KeyResult::Swallow;
+                }
+                if s == e {
+                    // 빈 괄호 짝 안: 둘 다 지운다.
+                    if let Some((text, caret)) = outliner_core::pair_backspace(&sanitize(&self.host.read_text()), s) {
+                        self.host.set_text(&text, caret);
+                        return KeyResult::Swallow;
+                    }
+                }
+                return KeyResult::Pass;
+            }
+            VK_DELETE if plain => {
+                if composing || candidate || ev.processkey {
+                    return KeyResult::Pass;
+                }
+                let (s, e) = self.host.selection();
+                if s == e && s == self.text_len() {
+                    self.submit(Cmd::Delete, ev.now_ms, false, false);
                     return KeyResult::Swallow;
                 }
                 return KeyResult::Pass;
             }
             _ => {}
         }
-        let Some((cmd, pick)) = Self::cmd_of(&ev) else { return KeyResult::Pass };
+        let Some((cmd, pick)) = self.cmd_of(&ev) else { return KeyResult::Pass };
         if candidate {
             return KeyResult::Pass; // 후보창 조작은 IME 소유
         }
@@ -537,6 +568,54 @@ impl<H: EditHost> Editor<H> {
         }
         self.submit(cmd, ev.now_ms, ev.processkey, composing);
         if composing && ev.processkey { KeyResult::Pass } else { KeyResult::Swallow }
+    }
+
+    /// 편집 중 친 글자의 괄호 짝 규칙. true 면 처리했다(EDIT 에 넘기지 않는다).
+    pub fn typed_char(&mut self, ch: char) -> bool {
+        if self.session.is_none() || self.host.composing() {
+            return false;
+        }
+        let text = sanitize(&self.host.read_text());
+        let (s, e) = self.host.selection();
+        let Some((new, start, end)) = outliner_core::type_char(&text, s, e, ch) else { return false };
+        self.host.set_text(&new, start);
+        if end != start {
+            self.host.set_selection(start, end);
+        }
+        true
+    }
+
+    /// 편집 중 붙여넣기. 여러 줄·`- ` 목록은 블록 트리로(true), 한 줄 글은 EDIT 에 맡긴다(false).
+    pub fn paste_text(&mut self, clip: &str, now_ms: u64) -> bool {
+        let trimmed = clip.trim_end_matches(['\r', '\n']);
+        let blocks = trimmed.contains('\n') || trimmed.trim_start().starts_with("- ");
+        if self.session.is_none() || !blocks {
+            return false;
+        }
+        self.pending_paste = Some(clip.to_string());
+        let composing = self.host.composing();
+        self.submit(Cmd::Paste, now_ms, false, composing);
+        true
+    }
+
+    /// Ctrl+Shift+V: 블록을 나누지 않고 지금 블록 안에 그대로 넣는다.
+    pub fn paste_inline(&mut self, clip: &str) {
+        if self.session.is_none() {
+            return;
+        }
+        if self.host.composing() {
+            self.host.request_complete();
+        }
+        let text = sanitize(&self.host.read_text());
+        let (s, e) = self.host.selection();
+        let (left, right) = split_utf16(&text, s, e);
+        let value = sanitize(clip);
+        let caret = utf16_len(&left) + utf16_len(&value);
+        let joined = format!("{left}{value}{right}");
+        self.recorded(|ed| {
+            ed.host.set_text(&joined, caret);
+            ed.run_key("commit", None);
+        });
     }
 
     /// 키·클릭·창 닫기에서 온 명령을 순서대로 처리한다. 조합 중이면 먼저 확정하고 대기(F).
@@ -581,6 +660,9 @@ impl<H: EditHost> Editor<H> {
             self.popup = None;
             return;
         }
+        // 이미 보인 후보는 조합 중 고정한다. 첫 트리거는 확정된 접두만 읽어 문맥을 만들 수 있다.
+        // 이 읽기는 표시 전용이며 조합 글을 엔진에 반영하거나 EDIT를 치환하지 않는다.
+        if self.host.candidate_open() || (self.host.composing() && self.popup.is_some()) { return; }
         let text = self.host.read_text();
         let (s, e) = self.host.selection();
         let ctx = if s == e { links::any_completion_context(&text, s) } else { None };
@@ -589,28 +671,44 @@ impl<H: EditHost> Editor<H> {
             self.popup_off = None;
             return;
         };
-        if self.popup_off == Some(ctx.start16) {
+        if self.popup_off == Some((ctx.start16, ctx.kind)) {
             self.popup = None;
             return;
         }
         self.popup_off = None;
-        let items = match ctx.kind {
-            links::RefKind::Page => links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8),
+        let pairs: Vec<(String, String)> = match ctx.kind {
+            links::RefKind::Page => links::candidates(&self.page_names, &self.recent_names, &ctx.query, 8)
+                .into_iter().map(|s| (s.clone(), s)).collect(),
+            links::RefKind::Tag => {
+                let mut tags = self.tag_names.clone();
+                tags.extend(self.page_names.clone());
+                tags.extend(self.view.doc.blocks.iter().flat_map(|b| b.tags.clone()));
+                links::candidates(&tags, &[], &ctx.query, 8).into_iter().map(|s| (s.clone(), format!("#{s}"))).collect()
+            }
+            links::RefKind::Slash => crate::commands::slash(&ctx.query),
             links::RefKind::Block | links::RefKind::TripleBlock => {
                 let q = ctx.query.trim().to_lowercase();
                 let mut out = Vec::new();
-                for b in &self.view.doc.blocks {
+                for (i, b) in self.view.doc.blocks.iter().enumerate() {
+                    if self.editing_block() == Some(i) { continue; }
                     let id_str = b.properties.get("id").cloned().unwrap_or_else(|| b.id.to_string());
                     if q.is_empty() || b.text.to_lowercase().contains(&q) || id_str.to_lowercase().contains(&q) {
-                        out.push(id_str);
+                        out.push((id_str.clone(), format!("{} · {id_str}", b.text.replace('\n', " "))));
                         if out.len() >= 8 {
                             break;
                         }
                     }
                 }
+                for (id, label) in &self.graph_blocks {
+                    if out.len() >= 8 { break; }
+                    if !out.iter().any(|(v, _)| v == id) && (q.is_empty() || label.to_lowercase().contains(&q) || id.to_lowercase().contains(&q)) {
+                        out.push((id.clone(), label.clone()));
+                    }
+                }
                 out
             }
         };
+        let (items, labels): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
         if items.is_empty() {
             self.popup = None;
             return;
@@ -619,7 +717,7 @@ impl<H: EditHost> Editor<H> {
             Some(p) if p.ctx.query == ctx.query && p.ctx.start16 == ctx.start16 => p.selected.min(items.len() - 1),
             _ => 0,
         };
-        self.popup = Some(Popup { ctx, items, selected });
+        self.popup = Some(Popup { ctx, items, labels, selected });
     }
 
     pub fn move_popup(&mut self, down: bool) {
@@ -631,21 +729,62 @@ impl<H: EditHost> Editor<H> {
 
     pub fn dismiss_popup(&mut self) {
         if let Some(p) = self.popup.take() {
-            self.popup_off = Some(p.ctx.start16);
+            self.popup_off = Some((p.ctx.start16, p.ctx.kind));
         }
     }
 
     /// 후보(번호 없으면 선택된 것)로 `[[질의` 를 `[[이름]]` (또는 `((id))`) 으로 바꾸고 캐럿을 닫는 괄호 뒤에 둔다.
     pub fn accept_popup(&mut self, index: Option<usize>) -> bool {
-        let Some(p) = self.popup.take() else { return false };
+        if self.host.composing() || self.host.candidate_open() { return false; }
+        let Some(p) = self.popup.clone() else { return false };
         let Some(name) = p.items.get(index.unwrap_or(p.selected)).cloned() else { return false };
         let text = self.host.read_text();
         // 팝업이 열린 뒤 글이 바뀌었을 수 있어 문맥을 다시 구한다.
-        let (s, _) = self.host.selection();
-        let ctx = links::any_completion_context(&text, s).unwrap_or(p.ctx);
-        let (new, caret) = links::apply_completion(&text, &ctx, &name);
+        let (s, e) = self.host.selection();
+        let Some(ctx) = links::any_completion_context(&text, s).filter(|ctx| s == e && *ctx == p.ctx) else {
+            self.refresh_popup(); return false;
+        };
+        let (mut new, mut caret) = if ctx.kind == links::RefKind::Slash {
+            crate::commands::insert_slash(&text, &ctx, &name, &self.today)
+        } else { links::apply_completion(&text, &ctx, &name) };
+        if ctx.kind == links::RefKind::Slash && matches!(name.as_str(), "TODO" | "DONE") {
+            let Some(block) = self.editing_block() else { return false; };
+            new = new.strip_prefix(&format!("{name} ")).unwrap_or(&new).to_string();
+            caret = utf16_len(&new);
+            let mut doc = self.view.doc.clone();
+            let id = doc.blocks[block].id;
+            if let Err(error) = outliner_core::edit(&mut doc, "set_text", id, Some(&new)) {
+                self.fail(error.to_string()); return false;
+            }
+            doc.blocks[block].status = Some(name.clone());
+            self.recorded(|ed| {
+                ed.install(doc, block);
+            });
+        }
+        // 현재 문서의 임시 숫자 ID는 선택하는 순간 영구 속성으로 만든다. 대상 속성과 참조를 한 단계로 기록.
+        if matches!(ctx.kind, links::RefKind::Block | links::RefKind::TripleBlock) {
+            let target = self.view.doc.blocks.iter().position(|b| !b.properties.contains_key("id") && b.id.to_string() == name);
+            if let (Some(target), Some(block)) = (target, self.editing_block()) {
+                let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+                let hash = outliner_core::content_digest(&format!("{stamp}:{}:{name}:{}", std::process::id(), self.markdown()));
+                let uuid = format!("{}-{}-4{}-a{}-{}", &hash[..8], &hash[8..12], &hash[13..16], &hash[17..20], &hash[20..32]);
+                (new, caret) = links::apply_completion(&text, &ctx, &uuid);
+                let mut doc = self.view.doc.clone();
+                let id = doc.blocks[block].id;
+                if let Err(error) = outliner_core::edit(&mut doc, "set_text", id, Some(&new)) {
+                    self.fail(error.to_string()); return false;
+                }
+                let after = doc.blocks[target].text.matches('\n').count();
+                doc.blocks[target].extra.push(outliner_core::ExtraLine { after, line: format!("id:: {uuid}") });
+                doc.blocks[target].properties.insert("id".into(), uuid);
+                self.recorded(|ed| ed.install(doc, block));
+            }
+        }
+        self.popup = None;
         self.host.set_text(&new, caret);
         self.popup_off = None;
+        // #태그는 닫는 괄호가 없으므로 같은 자리에서 즉시 다시 열리지 않게 한다.
+        if ctx.kind == links::RefKind::Tag { self.popup_off = Some((ctx.start16, ctx.kind)); }
         self.refresh_popup();
         true
     }
@@ -658,7 +797,7 @@ impl<H: EditHost> Editor<H> {
 
     fn install(&mut self, doc: Document, target_block: usize) {
         self.view.doc = doc;
-        self.view.rows = build_rows(&self.view.doc);
+        self.view.rebuild();
         if let Some(pos) = self.view.rows.iter().position(|r| r.block == target_block) {
             self.view.selected = pos;
         } else {
@@ -704,123 +843,100 @@ impl<H: EditHost> Editor<H> {
 
     fn execute_inner(&mut self, cmd: Cmd) {
         self.message = None;
-        if let Cmd::Cancel = cmd {
-            self.popup = None;
-            self.session = None; // 문서는 마지막 확정 상태 그대로 — 확정되지 않은 입력만 버린다
-            return;
-        }
-        let editing = self.session.is_some();
-        let (sel_start, sel_end) = if editing { self.host.selection() } else { (0, 0) };
-        // 분할·삭제·합치기는 글 반영을 자기 트랜잭션 안에서 한다. 나머지는 먼저 글을 반영한다.
-        if !matches!(cmd, Cmd::Enter | Cmd::Backspace) && editing && !self.commit_text() {
-            return;
-        }
-        match cmd {
-            Cmd::Cancel => {}
-            Cmd::Toggle => {
-                let Some(block) = self.target_block() else { return };
-                let mut tx = Tx::new(&self.view.doc);
-                match tx.act("toggle_status", block, None).and_then(|_| tx.finish()) {
-                    Ok(doc) => self.install(doc, block),
-                    Err(e) => self.fail(e),
-                }
-            }
-            Cmd::MoveUp | Cmd::MoveDown => {
-                let Some(block) = self.target_block() else { return };
-                let mut tx = Tx::new(&self.view.doc);
-                let moved = tx.move_subtree(block, cmd == Cmd::MoveUp).and_then(|nb| tx.finish().map(|d| (d, nb)));
-                match moved {
-                    Ok((doc, nb)) => {
-                        self.install(doc, nb);
-                        if editing {
-                            self.begin(nb, Some(sel_start));
-                        }
-                    }
-                    Err(e) => self.fail(e),
-                }
+        let action = match cmd {
+            Cmd::Cancel => {
+                self.popup = None;
+                self.session = None; // 문서는 마지막 확정 상태 그대로 — 확정되지 않은 입력만 버린다
+                return;
             }
             Cmd::Save => {
+                if self.session.is_some() && !self.commit_text() {
+                    return;
+                }
                 self.save();
+                return;
             }
             Cmd::Goto(block) => {
+                if self.session.is_some() && !self.commit_text() {
+                    return;
+                }
                 if block < self.view.doc.blocks.len() {
                     self.begin(block, None);
                 }
+                return;
             }
-            Cmd::Up | Cmd::Down => {
-                let cur = self.editing_block();
-                if let Some(pos) = self.view.rows.iter().position(|r| Some(r.block) == cur) {
-                    let to = if cmd == Cmd::Up { pos.checked_sub(1) } else { Some(pos + 1) };
-                    if let Some(row) = to.and_then(|t| self.view.rows.get(t)) {
-                        let b = row.block;
-                        self.begin(b, None);
-                    }
+            Cmd::SelectBlock | Cmd::SelectAllBlocks => {
+                if !self.finish_edit_inner() {
+                    return;
                 }
-            }
-            Cmd::Indent | Cmd::Outdent => {
-                let Some(block) = self.target_block() else { return };
-                let mut tx = Tx::new(&self.view.doc);
-                let r = tx.act(if cmd == Cmd::Indent { "indent" } else { "outdent" }, block, None).and_then(|_| tx.finish());
-                match r {
-                    Ok(doc) => self.install(doc, block),
-                    Err(e) => self.fail(e),
-                }
-            }
-            Cmd::Enter => {
-                let Some(block) = self.session.as_ref().map(|s| s.block) else { return };
-                let text = self.typed_text();
-                let (left, right) = split_utf16(&text, sel_start, sel_end);
-                // 엔진에 "커서 위치 분할"이 없어 set_text(앞) + insert(뒤) 로 구성한다.
-                let mut tx = Tx::new(&self.view.doc);
-                let r = tx.set_text(block, &left).and_then(|_| tx.insert_after(block, &right)).and_then(|_| tx.finish());
-                match r {
-                    Ok(doc) => {
-                        self.install(doc, block + 1);
-                        self.begin(block + 1, Some(0));
-                    }
-                    Err(e) => self.fail(format!("분할하지 못했습니다(입력은 그대로 둠): {e}")),
-                }
-            }
-            Cmd::Backspace => {
-                let Some(block) = self.session.as_ref().map(|s| s.block) else { return };
-                let text = self.typed_text();
-                let pos = self.view.rows.iter().position(|r| r.block == block).unwrap_or(0);
-                if text.is_empty() {
-                    if self.view.doc.blocks.len() <= 1 {
-                        return; // 마지막 한 블록은 지우지 않는다
-                    }
-                    let target = if pos > 0 { self.view.rows[pos - 1].block } else { block };
-                    let mut tx = Tx::new(&self.view.doc);
-                    match tx.delete(block).and_then(|_| tx.finish()) {
-                        Ok(doc) => {
-                            self.install(doc, target);
-                            self.begin(target, None);
-                        }
-                        Err(e) => self.fail(e),
-                    }
+                let (anchor, end) = if cmd == Cmd::SelectAllBlocks {
+                    (0, self.view.rows.len().saturating_sub(1))
                 } else {
-                    // 맨 앞 Backspace: 바로 앞 블록과 합치기(엔진 merge: 두 글이 있으면 사이에 공백 1개).
-                    let prev = match pos.checked_sub(1).map(|p| self.view.rows[p].block) {
-                        Some(p) if p + 1 == block => p,
-                        _ => {
-                            self.fail("바로 앞 블록과 붙어 있지 않아 합칠 수 없습니다(접힌 하위 또는 보존 줄)".into());
-                            return;
-                        }
-                    };
-                    let prev_len = utf16_len(&self.view.doc.blocks[prev].text);
-                    let gap = if prev_len > 0 { 1 } else { 0 };
-                    let mut tx = Tx::new(&self.view.doc);
-                    let r = tx.set_text(block, &text).and_then(|_| tx.merge_next(prev)).and_then(|_| tx.finish());
-                    match r {
-                        Ok(doc) => {
-                            self.install(doc, prev);
-                            self.begin(prev, Some(prev_len + gap));
-                        }
-                        Err(e) => self.fail(format!("합치지 못했습니다(입력은 그대로 둠): {e}")),
-                    }
-                }
+                    (self.view.selected, self.view.selected)
+                };
+                self.view.selection_anchor = Some(anchor);
+                self.view.selection_end = Some(end);
+                self.view.selected = end;
+                return;
             }
+            Cmd::Enter => "enter",
+            Cmd::NewLine => "newline",
+            Cmd::Indent => "indent",
+            Cmd::Outdent => "outdent",
+            Cmd::Up => "up",
+            Cmd::Down => "down",
+            Cmd::Left => "left",
+            Cmd::Right => "right",
+            Cmd::Backspace => "backspace",
+            Cmd::Delete => "delete",
+            Cmd::Paste => "paste",
+            Cmd::Toggle => "cycle_todo",
+            Cmd::MoveUp => "move_up",
+            Cmd::MoveDown => "move_down",
+            Cmd::Collapse => "collapse",
+            Cmd::Expand => "expand",
+            Cmd::ToggleFold => "toggle_collapse",
+        };
+        let paste = if cmd == Cmd::Paste { self.pending_paste.take() } else { None };
+        self.run_key(action, paste);
+    }
+
+    /// 편집 중이면 그 블록(칸의 글·커서), 아니면 선택한 줄에 core 규칙을 적용한다.
+    fn run_key(&mut self, action: &str, paste: Option<String>) {
+        let editing = self.editing_block().is_some();
+        let Some(block) = self.target_block() else { return };
+        let mut input = KeyInput { action: action.to_string(), block: Some(block), paste, ..KeyInput::default() };
+        if editing {
+            (input.start, input.end) = self.host.selection();
+            input.text = Some(self.typed_text());
         }
+        let outcome = match apply_key(&self.view.doc, &input) {
+            Ok(outcome) => outcome,
+            Err(e) => return self.fail(format!("처리하지 못했습니다(입력은 그대로 둠): {e}")),
+        };
+        if !outcome.handled {
+            return;
+        }
+        self.message = outcome.note.clone();
+        let cursor = outcome.cursor.map(|c| (c.block, c.start));
+        let (target, caret) = match cursor {
+            Some((b, caret)) => (b, Some(caret)),
+            None => (block, None),
+        };
+        self.adopt(outcome, target);
+        if editing {
+            let target = target.min(self.view.doc.blocks.len().saturating_sub(1));
+            self.view.reveal_block(target, usize::MAX / 4);
+            self.view.first = self.view.first.min(self.view.selected);
+            self.begin(target, caret);
+        }
+    }
+
+    /// core 결과 문서를 화면에 반영한다(스크롤 위치는 유지).
+    fn adopt(&mut self, outcome: KeyOutcome, target: usize) {
+        let first = self.view.first;
+        self.install(outcome.document, target);
+        self.view.first = first.min(self.view.rows.len().saturating_sub(1));
     }
 
     fn target_block(&self) -> Option<usize> {
@@ -838,6 +954,10 @@ impl<H: EditHost> Editor<H> {
         }
         if self.host.composing() {
             self.host.request_complete();
+            if self.host.composing() {
+                self.message = Some("한글 조합을 확정한 뒤 다시 실행해 주세요".into());
+                return false;
+            }
         }
         if !self.commit_text() {
             return false;
@@ -845,6 +965,39 @@ impl<H: EditHost> Editor<H> {
         self.session = None;
         self.popup = None;
         true
+    }
+
+    pub fn focus(&mut self, root: Option<u64>) -> bool {
+        self.finish_edit() && self.view.focus(root)
+    }
+
+    /// 드롭과 확정할 글을 한 이력 단계에 기록한다. 거절되면 입력·문서·이력 유지.
+    pub fn drop_subtree(&mut self, source: u64, target: u64, place: outliner_core::DropPlace, page: usize) -> bool {
+        self.recorded(|ed| {
+            if ed.host.composing() {
+                ed.host.request_complete();
+                if ed.host.composing() { ed.fail("한글 조합 확정 대기 중입니다".into()); return false; }
+            }
+            let mut doc = ed.view.doc.clone();
+            if let Some(i) = ed.editing_block() {
+                let text = ed.typed_text();
+                let id = doc.blocks[i].id;
+                if let Err(e) = outliner_core::edit(&mut doc, "set_text", id, Some(&text)) { ed.fail(e.to_string()); return false; }
+            }
+            match outliner_core::move_subtree(&mut doc, source, target, place) {
+                Ok(changed) => {
+                    if !changed { return false; }
+                    let keep = doc.blocks.iter().position(|b| b.id == source).unwrap();
+                    ed.session = None;
+                    ed.popup = None;
+                    ed.install(doc, keep);
+                    ed.view.reveal_block(keep, page);
+                    ed.message = Some("하위 블록과 함께 옮김 · Ctrl+Z로 실행 취소".into());
+                    true
+                }
+                Err(e) => { ed.fail(e.to_string()); false }
+            }
+        })
     }
 
     /// 편집 중인 줄과 상관없이 `block` 의 TODO 상태를 토글한다(체크 칸 클릭). 편집 중이면 글을 먼저 확정하고 편집은 유지.
@@ -902,39 +1055,58 @@ impl<H: EditHost> Editor<H> {
         self.submit(cmd, 0, false, false);
     }
 
-    /// 선택된 블록에 한 명령을 적용하고 전체를 하나의 UndoHistory 단계로 기록한다.
-    pub fn selection_command(&mut self, action: &str) {
-        if self.editing() { return; }
+    /// 선택 줄의 블록 번호(문서 순서).
+    fn selected_blocks(&self) -> Vec<usize> {
         let ids = self.view.selected_block_ids();
-        if ids.is_empty() { return; }
-        if ids.len() == 1 && matches!(action, "up" | "down") {
-            self.execute(if action == "up" { Cmd::MoveUp } else { Cmd::MoveDown });
-            return;
-        }
-        self.recorded(|ed| match outliner_core::edit_many(&mut ed.view.doc, action, &ids, None) {
-            Ok(()) => {
-                let keep = ids.first().and_then(|id| ed.view.doc.blocks.iter().position(|b| b.id == *id)).unwrap_or(0);
-                ed.view.rows = build_rows(&ed.view.doc);
-                ed.view.selected = ed.view.row_of_block(keep).unwrap_or(0);
-                ed.view.clear_selection();
-            }
-            Err(e) => ed.fail(e.to_string()),
-        });
+        (0..self.view.doc.blocks.len()).filter(|&i| ids.contains(&self.view.doc.blocks[i].id)).collect()
+    }
+
+    /// 선택된 블록(하위 포함)에 한 명령을 적용하고 전체를 하나의 이력 단계로 기록한다.
+    /// `action` 은 core 동작 이름이다. 복사·잘라내기면 클립보드 글을 돌려준다.
+    pub fn selection_command(&mut self, action: &str) -> Option<String> {
+        self.selection_run(action, None)
     }
 
     pub fn selection_paste(&mut self, markdown: &str) {
-        if self.editing() { return; }
-        let ids = self.view.selected_block_ids();
-        if ids.is_empty() { return; }
-        self.recorded(|ed| match outliner_core::edit_many(&mut ed.view.doc, "paste", &ids, Some(markdown)) {
-            Ok(()) => {
-                let keep = ids.last().and_then(|id| ed.view.doc.blocks.iter().position(|b| b.id == *id)).unwrap_or(0);
-                ed.view.rows = build_rows(&ed.view.doc);
-                ed.view.selected = ed.view.row_of_block(keep).unwrap_or(0);
-                ed.view.clear_selection();
+        self.selection_run("paste", Some(markdown.to_string()));
+    }
+
+    fn selection_run(&mut self, action: &str, paste: Option<String>) -> Option<String> {
+        if self.editing() {
+            return None;
+        }
+        let selection = self.selected_blocks();
+        if selection.is_empty() {
+            return None;
+        }
+        self.message = None;
+        self.recorded(|ed| {
+            let had_range = ed.view.selection_anchor.is_some();
+            let forward = ed.view.selection_anchor <= ed.view.selection_end;
+            let keep = selection[0];
+            let input = KeyInput { action: action.to_string(), selection, paste, ..KeyInput::default() };
+            let outcome = match apply_key(&ed.view.doc, &input) {
+                Ok(outcome) => outcome,
+                Err(e) => {
+                    ed.fail(e.to_string());
+                    return None;
+                }
+            };
+            ed.message = outcome.note.clone();
+            let clipboard = outcome.clipboard.clone();
+            let chosen = outcome.selection.clone();
+            let target = chosen.first().copied().or(outcome.cursor.map(|c| c.block)).unwrap_or(keep);
+            ed.adopt(outcome, target);
+            let rows: Vec<usize> = chosen.iter().filter_map(|&b| ed.view.row_of_block(b)).collect();
+            ed.view.clear_selection();
+            if let (true, Some(&lo), Some(&hi)) = (had_range, rows.iter().min(), rows.iter().max()) {
+                let (anchor, end) = if forward { (lo, hi) } else { (hi, lo) };
+                ed.view.selection_anchor = Some(anchor);
+                ed.view.selection_end = Some(end);
+                ed.view.selected = end;
             }
-            Err(e) => ed.fail(e.to_string()),
-        });
+            clipboard
+        })
     }
 
     // ---------- 실행 취소 / 다시 실행 ----------
@@ -968,6 +1140,8 @@ impl<H: EditHost> Editor<H> {
         match docio::parse_doc(&markdown) {
             Ok(doc) => {
                 let keep = editing.or_else(|| self.view.rows.get(self.view.selected).map(|r| r.block)).unwrap_or(0);
+                // 스냅샷은 Markdown이라 ID가 재배정된다. 다른 블록으로 줌하는 것을 막는다.
+                self.view.clear_zoom();
                 self.install(doc, keep);
                 self.popup = None;
                 self.popup_off = None;

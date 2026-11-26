@@ -6,6 +6,37 @@ use outliner_core::{Document, backlinks, build_index, parse, search};
 pub const MAX_HITS: usize = 300;
 pub const SNIPPET_CHARS: usize = 160;
 
+/// 자동완성용 읽기 전용 스냅숏. 다른 페이지의 임시 숫자 ID는 참조 후보로 쓰지 않는다.
+pub fn completion_catalog(store: &PageStore, current: Option<&str>) -> (Vec<String>, Vec<(String, String)>) {
+    let mut tags = std::collections::BTreeSet::new();
+    let mut blocks = std::collections::BTreeMap::new();
+    let mut ambiguous = std::collections::BTreeSet::new();
+    for page in store.list() {
+        if current == Some(page.as_str()) { continue; }
+        let Ok(path) = store.path_of(&page) else { continue; };
+        let Ok((doc, _, _)) = crate::docio::load_file(&path) else { continue; };
+        for b in doc.blocks {
+            tags.extend(b.tags);
+            if let Some(id) = b.properties.get("id").filter(|id| !id.trim().is_empty() && !id.contains(['(', ')', '\n', '\r'])) {
+                if blocks.insert(id.clone(), format!("{page} · {} · {id}", snippet(&b.text))).is_some() { ambiguous.insert(id.clone()); }
+            }
+        }
+    }
+    (tags.into_iter().collect(), blocks.into_iter().filter(|(id, _)| !ambiguous.contains(id)).collect())
+}
+
+/// 빠른 검색: 빈 질의는 최근 페이지, 1글자는 이름, 2글자부터 본문. 파일 생성 없음.
+pub fn quick_search(store: &PageStore, query: &str, recent: &[String], current: Option<(&str, &str)>) -> Vec<Hit> {
+    let pages = store.list();
+    let q = query.trim();
+    let mut hits: Vec<Hit> = crate::links::candidates(&pages, recent, q, MAX_HITS)
+        .into_iter().map(|page| Hit { page, block: None, text: String::new() }).collect();
+    if q.chars().count() >= 2 {
+        hits.extend(search_all(store, q, current).into_iter().filter(|h| h.block.is_some()).take(MAX_HITS.saturating_sub(hits.len())));
+    }
+    hits
+}
+
 /// 검색 결과 한 건. `block` 이 None 이면 페이지 이름이 맞은 것.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hit {
