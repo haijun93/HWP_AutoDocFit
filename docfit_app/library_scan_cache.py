@@ -47,7 +47,8 @@ def _write(directory: Path, view: str, payload: dict[str, Any]) -> None:
     fd, tmp_name = tempfile.mkstemp(prefix=f".{view}-", suffix=".tmp", dir=directory)
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
+            # json.dump 는 순수 Python 인코더라 큰 목록에서 dumps 보다 훨씬 느리다.
+            stream.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(tmp_name, directory / f"{view}.json")
@@ -70,3 +71,30 @@ def rewrite(view: str, change: Any, *, root: Path | None = None) -> None:
         return
     payload["items"] = change(items)
     _write(directory, view, payload)
+
+
+def existing_file_checker() -> Any:
+    """`is_file(path)` 판정기. 파일마다 stat 하지 않고 폴더를 한 번씩만 훑는다."""
+    folders: dict[str, set[str]] = {}
+
+    def check(path: str) -> bool:
+        parent, name = os.path.split(path)
+        if not parent or not name:
+            return False
+        names = folders.get(parent)
+        if names is None:
+            names = set()
+            try:
+                with os.scandir(parent) as entries:
+                    for entry in entries:
+                        try:
+                            if entry.is_file():
+                                names.add(os.path.normcase(entry.name))
+                        except OSError:
+                            continue
+            except OSError:
+                pass
+            folders[parent] = names
+        return os.path.normcase(name) in names
+
+    return check

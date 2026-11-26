@@ -50,6 +50,10 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   List<Map<String, Object?>>? _searchResults;
   bool _loading = false;
   bool _scanRunning = false;
+  // 검색 중에 찾은 사진을 이미 보여 주고 있는지.
+  bool _streaming = false;
+  // 목록을 새로 불러올 때마다 늘린다. 늘어난 뒤에는 검색 중 행을 이어 붙이지 않는다.
+  int _listEpoch = 0;
   int _scanVisited = 0;
   String _scanFolder = '';
   DateTime? _scanStartedAt;
@@ -122,41 +126,57 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     try {
       final started = await widget.api('photo_album', ['scan_default', {}]);
-      if (started is Map && started['state'] == 'cached' && started['result'] is Map) {
+      final cached = started is Map && started['state'] == 'cached';
+      if (cached && started['result'] is Map) {
         final cachedItems = (started['result']['photos'] is List ? started['result']['photos'] as List : const [])
             .whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
-        final groups = <int, Map<String, Object?>>{};
-        for (final photo in cachedItems) {
-          final date = '${photo['date_taken'] ?? ''}';
-          final year = date.length >= 4 ? int.tryParse(date.substring(0, 4)) ?? 1970 : 1970;
-          final month = date.length >= 7 ? int.tryParse(date.substring(5, 7)) ?? 1 : 1;
-          final key = year * 100 + month;
-          final group = groups.putIfAbsent(key, () => {'year': year, 'month': month, 'label': '$year년 $month월', 'photos': <Map<String, Object?>>[]});
-          (group['photos'] as List<Map<String, Object?>>).add(photo);
-        }
-        if (mounted) setState(() { _groups = groups.values.toList(); _loading = false; });
+        final months = <int, Map<String, Object?>>{};
+        _appendByMonth(months, cachedItems);
+        if (mounted) setState(() { _groups = _newestFirst(months); _currentFolder = ''; _loading = false; });
+        await _loadPhotos('', quiet: true);
       }
-      if (started is Map && started['state'] == 'cached') {
-        setState(() { _loading = false; _scanRunning = true; });
-        await _loadPhotos(_currentFolder ?? '');
-        if (mounted) setState(() { _scanRunning = false; });
-      }
+      var shown = false; // 이번 검색의 행을 화면에 붙였는지
+      var state = 'running';
       if (started is Map && started['task_id'] != null) {
-        var state = 'running';
-        while (state == 'running' || state == 'cancelling') {
-          await Future<void>.delayed(const Duration(milliseconds: 120));
+        // 저장된 목록이 없으면 찾는 대로 새 행만 받아 이어 붙인다.
+        final months = <int, Map<String, Object?>>{};
+        final epoch = _listEpoch;
+        var next = 0;
+        var backlog = false;
+        while (state == 'running' || state == 'cancelling' || backlog) {
+          if (!backlog) await Future<void>.delayed(const Duration(milliseconds: 120));
           if (!mounted) return;
           final progress = await widget.api('photo_album', [
             'scan_progress',
-            {},
+            cached ? {} : {'since': next},
           ]);
+          if (!mounted) return;
           if (progress is! Map || progress['ok'] != true) break;
           state = '${progress['state'] ?? 'running'}';
+          final rows = progress['rows'];
+          final added = <Map<String, Object?>>[];
+          backlog = false;
+          if (!cached && rows is List) {
+            for (final item in rows) {
+              if (item is Map) added.add(Map<String, Object?>.from(item));
+            }
+            final following = (progress['next'] as num?)?.toInt() ?? next;
+            backlog = following > next && following < ((progress['total'] as num?)?.toInt() ?? 0);
+            next = following;
+          }
           setState(() {
             _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0;
             _scanFolder = '${progress['current_folder'] ?? ''}';
             _scanStartedAt ??= DateTime.now();
             _scanLastProgressAt = DateTime.now();
+            if (added.isNotEmpty && epoch == _listEpoch) {
+              _appendByMonth(months, added);
+              _groups = _newestFirst(months);
+              _currentFolder = '';
+              _loading = false;
+              _streaming = true;
+              shown = true;
+            }
           });
           if (state == 'failed') {
             throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
@@ -166,6 +186,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       if (mounted) {
         setState(() {
           _scanRunning = false;
+          _streaming = false;
         });
       }
       final res = await widget.api('photo_album', ['list_folders', {}]);
@@ -185,17 +206,49 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           _registeredFolders = folders;
         });
       }
-      await _loadPhotos('');
-      await _loadTagOptions();
+      // 취소한 첫 검색은 DB에 아직 반영되지 않았으므로 화면에 붙인 목록을 그대로 둔다.
+      if (state != 'cancelled' || !shown) {
+        await _loadPhotos(_currentFolder ?? '', quiet: shown || cached);
+      } else {
+        await _loadTagOptions();
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
         _errorMessage = '사진 폴더 목록을 불러오지 못했습니다: $e';
         _loading = false;
         _scanRunning = false;
+        _streaming = false;
       });
     }
   }
+
+  /// 사진을 촬영 연·월 묶음에 이어 붙인다(묶음 안에서는 받은 순서).
+  static void _appendByMonth(
+    Map<int, Map<String, Object?>> months,
+    List<Map<String, Object?>> photos,
+  ) {
+    for (final photo in photos) {
+      final date = '${photo['date_taken'] ?? ''}';
+      final year = date.length >= 4 ? int.tryParse(date.substring(0, 4)) ?? 1970 : 1970;
+      final month = date.length >= 7 ? int.tryParse(date.substring(5, 7)) ?? 1 : 1;
+      final group = months.putIfAbsent(year * 100 + month, () => {
+        'year': year,
+        'month': month,
+        'label': '$year년 $month월',
+        'photos': <Map<String, Object?>>[],
+      });
+      (group['photos'] as List<Map<String, Object?>>).add(photo);
+    }
+  }
+
+  static List<Map<String, Object?>> _newestFirst(
+    Map<int, Map<String, Object?>> months,
+  ) => [
+    for (final key in months.keys.toList()..sort((a, b) => b.compareTo(a)))
+      // 검색 중 파일 작업으로 비게 된 달은 빼고 보여 준다.
+      if ((months[key]!['photos'] as List).isNotEmpty) months[key]!,
+  ];
 
   Future<void> _loadTagOptions() async {
     final res = await widget.api('photo_album', [
@@ -340,16 +393,20 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     }
   }
 
-  Future<void> _loadPhotos(String folder) async {
-    setState(() {
-      _loading = true;
-      _errorMessage = null;
-      _currentFolder = folder;
-      _searchResults = null;
-      _selection.clear();
-      _selectionMode = false;
-      _showDuplicates = false;
-    });
+  Future<void> _loadPhotos(String folder, {bool quiet = false}) async {
+    final epoch = ++_listEpoch;
+    if (!quiet) {
+      setState(() {
+        _loading = true;
+        _streaming = false;
+        _errorMessage = null;
+        _currentFolder = folder;
+        _searchResults = null;
+        _selection.clear();
+        _selectionMode = false;
+        _showDuplicates = false;
+      });
+    }
 
     try {
       final Object? res;
@@ -365,7 +422,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         ]);
       }
 
-      if (!mounted) return;
+      if (!mounted || epoch != _listEpoch) return;
 
       if (res is Map && res['ok'] == true) {
         final rawGroups = res['groups'];
@@ -402,6 +459,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
         }
         setState(() {
           _groups = groups;
+          _currentFolder = folder;
           _loading = false;
         });
       } else {
@@ -1107,7 +1165,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
                   key: const ValueKey('photoAlbumRefreshButton'),
                   tooltip: '새로고침',
                   icon: const Icon(Icons.refresh, size: 20),
-                  onPressed: _loading ? null : _refreshCurrentFolder,
+                  onPressed: _loading || _scanRunning ? null : _refreshCurrentFolder,
                 ),
               ],
               IconButton(
@@ -1346,6 +1404,31 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
     );
   }
 
+  /// 목록을 보여 주면서 검색이 계속될 때의 진행 띠.
+  Widget _buildScanBanner(int count) => Padding(
+    key: const ValueKey('photoAlbumScanBanner'),
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Row(
+      children: [
+        const SizedBox(width: 120, child: LinearProgressIndicator()),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '사진 검색 중 · $count장 표시 · ${_scanNow.difference(_scanStartedAt ?? _scanNow).inSeconds}초 경과',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        TextButton.icon(
+          key: const ValueKey('photoAlbumCancelScanButton'),
+          onPressed: _cancelScan,
+          icon: const Icon(Icons.cancel_outlined, size: 16),
+          label: const Text('스캔 취소'),
+        ),
+      ],
+    ),
+  );
+
   Widget _buildBody() {
     if (_loading) {
       if (_scanRunning) {
@@ -1483,6 +1566,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     return Column(
       children: [
+        if (_streaming) _buildScanBanner(allPhotos.length),
         if (_selectionMode) _buildSelectionBar(context),
         Expanded(
           child: Row(
