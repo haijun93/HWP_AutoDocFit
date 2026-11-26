@@ -72,6 +72,86 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
   // 썸네일 크기 (100 ~ 240, 기본 160)
   double _thumbSize = 160.0;
 
+  // 색인 서비스 버전 점검 및 안내 상태
+  bool _serviceOutdated = false;
+  String? _serviceMessage;
+  bool _restartingService = false;
+
+  void _checkServiceStatus(Object? res) {
+    if (res is Map && res['service_status'] is Map) {
+      final status = res['service_status'] as Map;
+      if (status['outdated'] == true) {
+        setState(() {
+          _serviceOutdated = true;
+          _serviceMessage = status['message'] as String? ?? '색인 서비스가 이전 버전입니다.';
+        });
+      } else if (status['status'] == 'ok') {
+        setState(() {
+          _serviceOutdated = false;
+          _serviceMessage = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _restartService() async {
+    if (_restartingService) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('색인 서비스 재시작'),
+        content: const Text(
+          '새 버전의 기능을 적용하기 위해 색인 서비스(HwpAutoDocFit.Index)를 다시 시작합니다.\n'
+          '관리자 권한 승인 창(UAC)이 나타나면 승인해 주세요. 색인 준비에는 시간이 걸릴 수 있습니다.\n'
+          '직접 하려면 Windows 서비스(services.msc)에서 HwpAutoDocFit.Index를 찾아 다시 시작하세요. ',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('취소'),
+          ),
+          ElevatedButton(
+            key: const ValueKey('photoAlbumConfirmRestartButton'),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('재시작'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _restartingService = true);
+    try {
+      final res = await widget.api('photo_album', ['service_restart', {'confirmed': true}]);
+      if (!mounted) return;
+      if (res is Map && res['ok'] == true) {
+        final status = await widget.api('photo_album', ['service_status_get', {}]);
+        if (!mounted) return;
+        _checkServiceStatus(status);
+        setState(() {
+          _serviceMessage = '서비스가 다시 시작되었습니다. 기능 확인 및 색인 준비를 기다리는 중입니다.';
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('색인 서비스가 다시 시작되었습니다.')),
+        );
+        await _initFolders();
+      } else {
+        final msg = res is Map ? res['message'] : '서비스 재시작에 실패했습니다.';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$msg')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('재시작 오류: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _restartingService = false);
+    }
+  }
+
   // 썸네일 바이트 메모리 캐시 (경로 -> 바이트)
   final Map<String, Uint8List> _thumbCache = {};
 
@@ -126,6 +206,8 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
 
     try {
       final started = await widget.api('photo_album', ['scan_default', {}]);
+      if (!mounted) return;
+      _checkServiceStatus(started);
       final cached = started is Map && started['state'] == 'cached';
       if (cached && started['result'] is Map) {
         final cachedItems = (started['result']['photos'] is List ? started['result']['photos'] as List : const [])
@@ -152,6 +234,7 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
           ]);
           if (!mounted) return;
           if (progress is! Map || progress['ok'] != true) break;
+          _checkServiceStatus(progress);
           state = '${progress['state'] ?? 'running'}';
           final rows = progress['rows'];
           final added = <Map<String, Object?>>[];
@@ -1109,7 +1192,12 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
             preferredSize: Size.fromHeight(_currentFolder != null ? 146 : 100),
             child: _buildTopBar(context),
           ),
-          body: _buildBody(),
+          body: Column(
+            children: [
+              if (_serviceOutdated) _buildServiceBanner(),
+              Expanded(child: _buildBody()),
+            ],
+          ),
         );
 
         if (!constraints.hasBoundedHeight) {
@@ -1119,6 +1207,43 @@ class _PhotoAlbumScreenState extends State<PhotoAlbumScreen> {
       },
     );
   }
+
+  /// 색인 서비스가 이전 버전일 때 표시하는 알림 배너.
+  Widget _buildServiceBanner() => Container(
+    key: const ValueKey('photoAlbumServiceOutdatedBanner'),
+    margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: Colors.amber.shade50,
+      border: Border.all(color: Colors.amber.shade400),
+      borderRadius: BorderRadius.circular(6),
+    ),
+    child: Row(
+      children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.amber.shade800, size: 20),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _serviceMessage ?? '색인 서비스가 이전 버전입니다. 빠른 목록 조회를 위해 서비스를 재시작해 주세요.',
+            style: TextStyle(fontSize: 12, color: Colors.amber.shade900),
+          ),
+        ),
+        if (_restartingService)
+          const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+        else
+          TextButton(
+            key: const ValueKey('photoAlbumRestartServiceButton'),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: _restartService,
+            child: const Text('서비스 재시작', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          ),
+      ],
+    ),
+  );
 
   Widget _buildTopBar(BuildContext context) {
     final theme = Theme.of(context);

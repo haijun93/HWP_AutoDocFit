@@ -135,6 +135,8 @@ pub mod flag {
     /// 기본판(DFS 순서) 뒤에 덧붙인 항목: 하위 트리 구간이 없어 경로 조건은 부모 사슬로 확인한다.
     pub const APPENDED: u8 = 16;
     pub const REPARSE: u8 = 32;
+    /// OFFLINE / RECALL 표지. 로컬 reparse 파일은 클라우드 전용이 아니다.
+    pub const CLOUD_ONLY: u8 = 64;
 }
 
 pub(crate) const EXT_OTHER: u16 = u16::MAX;
@@ -163,6 +165,9 @@ pub(crate) fn flags_of(attrs: u32) -> u8 {
     if attrs & attr::REPARSE_POINT != 0 {
         f |= flag::REPARSE;
     }
+    if attrs & attr::CLOUD_RECALL_MASK != 0 {
+        f |= flag::CLOUD_ONLY;
+    }
     f
 }
 
@@ -179,6 +184,10 @@ pub(crate) fn attrs_of(f: u8) -> u32 {
     }
     if f & flag::REPARSE != 0 {
         a |= attr::REPARSE_POINT;
+    }
+    // compact가 필요한 분류를 유지한다. 세 recall 속성의 구분은 색인에 필요하지 않다.
+    if f & flag::CLOUD_ONLY != 0 {
+        a |= attr::OFFLINE;
     }
     a
 }

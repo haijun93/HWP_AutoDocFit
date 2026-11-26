@@ -10,6 +10,7 @@ use windows_service::{service::*, service_manager::*};
 pub enum Action {
     Install,
     Start,
+    Restart,
     Stop,
     Remove,
 }
@@ -110,6 +111,19 @@ impl ManagedService for Service {
 }
 fn control(service: &impl ManagedService, action: Action, mut wait: impl FnMut()) -> Result<()> {
     match action {
+        Action::Restart => {
+            // 중지 실패·시간 초과 뒤에는 시작하지 않는다. 같은 UAC 승인 안에서 처리한다.
+            control(service, Action::Stop, &mut wait as &mut dyn FnMut())?;
+            control(service, Action::Start, &mut wait as &mut dyn FnMut())?;
+            for _ in 0..150 {
+                match service.state()? {
+                    ServiceState::Running => return Ok(()),
+                    ServiceState::StartPending => wait(),
+                    _ => return Err("service failed to start".into()),
+                }
+            }
+            return Err("service start timed out".into());
+        }
         Action::Start => {
             if service.state()? != ServiceState::Running {
                 service.start()?;
@@ -250,6 +264,56 @@ mod tests {
         control(&fake, Action::Start, || {}).unwrap();
         control(&fake, Action::Remove, || {}).unwrap();
         assert_eq!(*fake.events.borrow(), ["start", "stop", "delete"]);
+    }
+    #[test]
+    fn restart_waits_for_stop_and_checks_running() {
+        let fake = ManagedFake::new(ServiceState::Running, false);
+        control(&fake, Action::Restart, || {}).unwrap();
+        assert_eq!(*fake.events.borrow(), ["stop", "start"]);
+        assert_eq!(fake.state.get(), ServiceState::Running);
+    }
+    #[test]
+    fn restart_does_not_start_until_stop_is_complete() {
+        let fake = ManagedFake::new(ServiceState::Running, true);
+        let mut waits = 0;
+        control(&fake, Action::Restart, || {
+            waits += 1;
+            assert_eq!(*fake.events.borrow(), ["stop"]);
+            if waits == 3 { fake.state.set(ServiceState::Stopped); }
+        }).unwrap();
+        assert_eq!(waits, 3);
+        assert_eq!(*fake.events.borrow(), ["stop", "start"]);
+    }
+    #[test]
+    fn restart_checks_start_pending_and_timeout() {
+        struct Pending(ManagedFake);
+        impl ManagedService for Pending {
+            fn state(&self) -> Result<ServiceState> { self.0.state() }
+            fn stop(&self) -> Result<()> { self.0.stop() }
+            fn delete(&self) -> Result<()> { panic!("must not delete") }
+            fn start(&self) -> Result<()> {
+                self.0.events.borrow_mut().push("start");
+                self.0.state.set(ServiceState::StartPending);
+                Ok(())
+            }
+        }
+        let fake = Pending(ManagedFake::new(ServiceState::Stopped, false));
+        let mut waits = 0;
+        assert!(control(&fake, Action::Restart, || waits += 1).is_err());
+        assert_eq!(waits, 150);
+        fake.0.state.set(ServiceState::Stopped);
+        waits = 0;
+        control(&fake, Action::Restart, || {
+            waits += 1;
+            fake.0.state.set(ServiceState::Running);
+        }).unwrap();
+        assert_eq!(waits, 1);
+    }
+    #[test]
+    fn failed_restart_never_starts() {
+        let fake = ManagedFake::new(ServiceState::Running, true);
+        assert!(control(&fake, Action::Restart, || {}).is_err());
+        assert_eq!(*fake.events.borrow(), ["stop"]);
     }
     #[test]
     fn stop_timeout_never_deletes() {

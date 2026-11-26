@@ -61,6 +61,7 @@ fn run() -> Result<()> {
             }
         },
         "--start" => install::execute(&scm, Action::Start, &base),
+        "--restart" => install::execute(&scm, Action::Restart, &base),
         "--stop" => install::execute(&scm, Action::Stop, &base),
         "--uninstall" => install::execute(&scm, Action::Remove, &base),
         "--user" => user_mode(
@@ -80,7 +81,7 @@ fn run() -> Result<()> {
         ),
         _ => {
             println!(
-                "kfind --install | --start | --stop | --uninstall | --service | --user [--index-root DIR]\nSCM operations: [--data-root DIR]. Pipe: length-prefixed UTF-8 JSON (u32 little endian), query/cancel/status."
+                "kfind --install | --start | --restart | --stop | --uninstall | --service | --user [--index-root DIR]\nSCM operations: [--data-root DIR]. Pipe: length-prefixed UTF-8 JSON (u32 little endian), query/cancel/status."
             );
             Ok(())
         }

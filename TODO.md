@@ -1,5 +1,7 @@
 # 할 일 (미완성 항목만)
 
+- [x] [SVCCHECK1 2026-11-26 / 11-27 검증] 색인 서비스 옛 버전·메타데이터 기능 점검, 문서·사진뷰 안내·사용자 확인 재시작, INSTALL3 유지, names_list 확장자 선별·size/mtime/cloud 반환 및 EXIF 보존. Rust 2크레이트 전체 84건+별도 측정 1건 통과, Python 관련 93건 OK(3개 조건부 제외), Flutter 분석 이상 없음·관련 위젯 25건 통과, 설치 스크립트 합성 컴파일 성공. 합성 40만 항목/8,000건 조회 169.503→38.300ms, 경로·이름·순서 일치. 설치 서비스 조작·실제 설치·전체 Python/Flutter 시험은 미실행(PM 후속). 로컬 커밋만·푸시 없음. 상세: `docs/SVCCHECK1_RESULT_2026-11-26.md`.
+
 - [x] [CTXEXT1 2026-11-26] XLS·PPTX·HML의 문서편집/파일 변환 메뉴·목록 추가와 HML 문서뷰 검색 연결. PPT는 비활성+이유 유지, 기본 kordoc 유지. 실제 합성 변환/거부 4개 OK, 관련 Python 116개 OK(1개 제외), flutter analyze 이상 없음·관련 위젯 38개 통과. HML/PPTX의 DTD·외부 엔티티 사전 거부. 전체 Python/Flutter 시험·실제 WebView/COM 최종 처리는 미실행. 결과: `docs/CTXEXT1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.
 
 - [ ] [DEPSEC1 2026-11-26] 알려진 취약점 11건 해소(lopdf 0.42·quick-xml 0.41·bottle 0.13.4·url 2.5.9), 전체 3,751개 OK(22개 제외). 남은 일: CI(MSVC) 빌드·번들 실행 파일 갱신, 유지보수 중단 경고 5건(ttf-parser 는 이번 lopdf 갱신으로 유입). 세부: `docs/DEPSEC1_RESULT_2026-11-26.md`. 로컬 커밋만·푸시 없음.

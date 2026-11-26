@@ -31,7 +31,8 @@ from .file_ops import FileOps, handle_command as handle_file_ops
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
-from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots
+from .rust_scan import find_klib_executable as _find_klib_executable, scan as _rust_scan, scan_default_roots as _scan_default_roots, get_service_version_status, check_service_version, set_service_version_status
+from .kfind_process import restart_service
 from . import library_scan_cache
 from .open_listed_file import open_listed_file
 from docfit_core.log_mask import mask_log_text
@@ -644,12 +645,27 @@ class DocGridService:
             return {"ok": False, "code": "INVALID_INPUT", "message": "명령 매개변수를 확인해 주세요."}
 
         try:
+            if action == "service_status_get":
+                return {"ok": True, "service_status": check_service_version()}
+
+            if action == "service_restart":
+                if payload.get("confirmed") is not True:
+                    return {"ok": False, "message": "화면에서 서비스 재시작을 확인해 주세요."}
+                ok, msg = restart_service()
+                if ok:
+                    set_service_version_status("unknown", "재시작 후 색인 서비스 기능을 다시 확인합니다.")
+                return {"ok": ok, "message": msg, "service_status": get_service_version_status()}
+
             if action == "list_default":
-                return self.start_default_scan()
+                res = self.start_default_scan()
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_progress":
                 since = payload.get("since")
-                return self._background_scan.progress(since if isinstance(since, int) else None)
+                res = self._background_scan.progress(since if isinstance(since, int) else None)
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()

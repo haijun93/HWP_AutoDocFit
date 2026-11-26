@@ -42,7 +42,8 @@ from .file_ops import FileOps, handle_command as handle_file_ops
 from .background_scan import BackgroundScan
 from .thumb_size_setting import handle_thumb_size
 from .library_exclusions import read_exclusions, update_exclusion
-from .rust_scan import scan as _rust_scan, scan_default_roots as _scan_default_roots
+from .rust_scan import scan as _rust_scan, scan_default_roots as _scan_default_roots, get_service_version_status, check_service_version, set_service_version_status
+from .kfind_process import restart_service
 from . import library_scan_cache
 from .open_listed_file import open_listed_file
 from .doc_grid_service import find_klib_executable
@@ -997,9 +998,24 @@ class PhotoAlbumService:
             scanned += 1
             folder, name = os.path.split(path)
             if engine == "service":
-                # 이름 색인 행에는 파일 정보가 없다. 새 경로만 심고 stat·EXIF 는 미룬다.
-                if old is None:
-                    batch.append((path, folder, name, 0, 0, "", 1, 0))
+                # 이름 색인 서비스: 신버전은 size·mtime·cloud를 포함하고, 구버전은 0으로 온다.
+                size = int(row.get("size", 0)) if "size" in row else 0
+                mtime = float(row.get("mtime", 0.0)) if "mtime" in row else 0.0
+                cloud = bool(row.get("cloud", False))
+                if size > 0 or mtime > 0.0:
+                    if _unchanged(old, size, mtime, cloud):
+                        continue
+                    date_taken, orientation = (None, 1) if cloud else read_exif_metadata(path)
+                    if date_taken is None and mtime > 0:
+                        date_taken = datetime.fromtimestamp(mtime)
+                    dt_str = date_taken.strftime("%Y-%m-%d %H:%M:%S") if date_taken else ""
+                    batch.append((path, folder, name, size, mtime, dt_str, orientation, int(cloud)))
+                    if old is None:
+                        added += 1
+                    else:
+                        updated += 1
+                elif old is None:
+                    batch.append((path, folder, name, 0, 0, "", 1, int(cloud)))
                     added += 1
             else:
                 if "size" in row and "mtime" in row:
@@ -2028,15 +2044,32 @@ class PhotoAlbumService:
             return {"ok": False, "code": "INVALID_INPUT", "message": "입력을 확인해 주세요."}
 
         try:
+            if action == "service_status_get":
+                return {"ok": True, "service_status": check_service_version()}
+
+            if action == "service_restart":
+                if payload.get("confirmed") is not True:
+                    return {"ok": False, "message": "화면에서 서비스 재시작을 확인해 주세요."}
+                ok, msg = restart_service()
+                if ok:
+                    set_service_version_status("unknown", "재시작 후 색인 서비스 기능을 다시 확인합니다.")
+                return {"ok": ok, "message": msg, "service_status": get_service_version_status()}
+
             if action == "scan_default":
-                return self.start_default_scan()
+                res = self.start_default_scan()
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "cached_default_photos":
-                return self.cached_default_photos()
+                res = self.cached_default_photos()
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_progress":
                 since = payload.get("since")
-                return self._background_scan.progress(since if isinstance(since, int) else None)
+                res = self._background_scan.progress(since if isinstance(since, int) else None)
+                res["service_status"] = get_service_version_status()
+                return res
 
             if action == "scan_cancel":
                 return self._background_scan.cancel()

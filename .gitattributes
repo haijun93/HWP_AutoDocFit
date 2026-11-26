@@ -10,3 +10,24 @@ pdf_edit_core/tests/fixtures/** binary
 
 # 변환 충실도 시험 자료는 줄바꿈 변환 금지(manifest 해시와 바이트가 일치해야 한다)
 tests/fixtures/conversion_fidelity/** -text
+
+# SVCCHECK1: 작업 파일은 UTF-8/CRLF로 유지하고 Git에는 LF로 정규화한다.
+crates/kfind/src/install.rs text eol=crlf
+crates/kfind/src/main.rs text eol=crlf
+crates/kfind/src/names.rs text eol=crlf
+docfit_app/doc_grid_service.py text eol=crlf
+docfit_app/kfind_process.py text eol=crlf
+docfit_app/photo_album_service.py text eol=crlf
+docfit_app/rust_scan.py text eol=crlf
+flutter_ui/lib/features/doc_grid/doc_grid_screen.dart text eol=crlf
+flutter_ui/lib/features/photo_album/photo_album_screen.dart text eol=crlf
+flutter_ui/test/service_version_notice_test.dart text eol=crlf
+installer/setup.iss text eol=crlf
+tests/test_svccheck1.py text eol=crlf
+docs/SVCCHECK1_RESULT_2026-11-26.md text eol=crlf
+.gitattributes text eol=crlf
+TODO.md text eol=crlf
+crates/kfind/tests/svccheck1_pipe.rs text eol=crlf
+kfind/names/src/source.rs text eol=crlf
+kfind/names/src/index.rs text eol=crlf
+kfind/names/tests/cloud_flags.rs text eol=crlf

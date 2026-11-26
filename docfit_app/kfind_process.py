@@ -258,3 +258,23 @@ def uninstall_service(exe: Path | str | None = None, timeout: float = 120.0) -> 
     if not exe_path:
         return False, "kfind.exe를 찾을 수 없습니다."
     return _run_elevated(exe_path, "--uninstall", timeout)
+
+
+def restart_service(exe: Path | str | None = None, timeout: float = 120.0) -> tuple[bool, str]:
+    """사용자가 확인한 경우에만 호출. 중지·시작 대기는 Rust SCM 경로가 맡는다."""
+    if os.environ.get("DOCFIT_FORBID_REAL_DATA") == "1":
+        return False, "시험 중 설치된 서비스 조작은 허용하지 않습니다."
+    exe_path = Path(exe) if exe else find_kfind_exe()
+    if not exe_path:
+        return False, "kfind.exe를 찾을 수 없습니다. 최신 설치 프로그램을 다시 실행해 주세요."
+    # 옛 실행 파일은 모르는 인자를 도움말+종료 코드 0으로 처리한다. 이를 재시작 성공으로 오인하지 않는다.
+    try:
+        help_result = subprocess.run([str(exe_path), "--help"], stdin=subprocess.DEVNULL,
+            capture_output=True, text=True, timeout=5, creationflags=_creation_flags())
+        if help_result.returncode != 0 or "--restart" not in (help_result.stdout or ""):
+            return False, "색인 실행 파일도 이전 버전입니다. 최신 설치 프로그램을 다시 실행해 주세요."
+    except (OSError, subprocess.TimeoutExpired):
+        return False, "색인 실행 파일을 확인하지 못했습니다. 최신 설치 프로그램을 다시 실행해 주세요."
+    ok, _ = _run_elevated(exe_path, "--restart", timeout)
+    return ok, ("서비스가 다시 시작되었습니다. 색인 준비에는 시간이 걸릴 수 있습니다." if ok else
+                "서비스 재시작을 완료하지 못했습니다. 관리자 권한 승인 후 다시 시도하거나 최신 설치 프로그램을 실행해 주세요.")
