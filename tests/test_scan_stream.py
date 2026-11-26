@@ -175,6 +175,7 @@ class PhotoStreamTests(unittest.TestCase):
         shown = Path(os.path.normcase(str(self.root)))
         self.service = PhotoAlbumService(db_path=self.base / "photos.sqlite", thumb_dir=self.base / "thumbs",
                                          drive_roots=[shown])
+        self.addCleanup(self.service.exif.wait, 10)  # 임시 폴더를 지우기 전에 촬영 정보 정리를 끝낸다.
         self.rows = [row_for(shown / path.name) for path in self.paths]
 
     def fake_klib(self, release: threading.Event | None = None):
@@ -191,7 +192,9 @@ class PhotoStreamTests(unittest.TestCase):
         with patch("docfit_app.doc_grid_service.query_names_service", return_value=None), \
              patch("docfit_app.photo_album_service._scan_default_roots", side_effect=self.fake_klib(release)):
             self.assertTrue(self.service.command("scan_default")["ok"])
-            return drain(self.service.command)
+            found = drain(self.service.command)
+            self.service.exif.wait(10)
+            return found
 
     def test_items_are_shown_before_database_and_exif_work(self):
         release = threading.Event()
@@ -210,6 +213,7 @@ class PhotoStreamTests(unittest.TestCase):
         self.assertEqual(state["state"], "complete")
         self.assertEqual(len(rows), 2)
         self.assertEqual(state["result"]["added"], 3)
+        self.service.exif.wait(10)
         listed = [p["path"] for g in self.service.command("list_by_date")["groups"] for p in g["items"]]
         self.assertEqual(sorted(listed), sorted([item["path"], *(row["path"] for row in rows)]))
 

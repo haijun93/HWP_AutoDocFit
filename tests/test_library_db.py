@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from docfit_app import library_scan_cache
-from docfit_app.doc_grid_service import DocGridService
+from docfit_app.doc_grid_service import DOC_EXTENSIONS, DocGridService
 from docfit_app.library_db import LibraryDB, ViewSync
 
 
@@ -222,7 +222,7 @@ class ServiceTests(Base):
 
     def test_old_saved_list_is_imported_once(self):
         path = self.file("a.pdf")
-        library_scan_cache.save("documents", {".hwp", ".hwpx", ".xls", ".xlsx", ".ppt", ".pptx", ".pdf"}, [],
+        library_scan_cache.save("documents", DOC_EXTENSIONS, [],
                                 [{"path": str(path), "name": "a.pdf"}], roots=[str(self.root)])
         started, state = self.run_scan(self.names(path))
         self.assertTrue(started["from_db"])

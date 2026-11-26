@@ -136,6 +136,7 @@ class PhotoAlbumSettingsTests(unittest.TestCase):
         while call("scan_progress")["state"] in ("running", "cancelling") and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertEqual(call("scan_progress")["state"], "complete")
+        owner._photo_album_service.exif.wait(10)  # 임시 폴더를 지우기 전에 촬영 정보 정리를 끝낸다.
         cached = owner._photo_album_service.cached_default_photos()
         self.assertEqual({item["name"] for item in cached["photos"]}, {shown.name})
 

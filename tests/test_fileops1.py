@@ -350,11 +350,9 @@ class BookkeepingTests(_Base):
 
     def test_saved_photo_list_follows_a_move(self):
         path = self._photo()
-        library_scan_cache.save("photos", {".jpg"}, [], [{"path": str(path), "filename": path.name,
-                                                          "tags": ["행사"], "favorite": True}])
+        self.photo.add_tag(path, "행사")
         done = self._run(self.photo, "move", [path], destination=str(self.dest))["results"][0]
-        saved = library_scan_cache.load("photos", {".jpg"}, [])
-        self.assertEqual([(r["path"], r["folder"], r["tags"]) for r in saved],
+        self.assertEqual([(r["path"], r["folder"], r["tags"]) for r in self.photo.db.list_photos()],
                          [(done["new_path"], str(self.dest), ["행사"])])
 
     def test_bookkeeping_error_is_a_warning_not_a_failed_file(self):

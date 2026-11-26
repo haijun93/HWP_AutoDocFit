@@ -249,6 +249,13 @@ class ViewSync:
         self._stats = FolderStats()
         self.counts = {"added": 0, "updated": 0, "removed": 0}
 
+    # 사진뷰(`photo_library`)가 바꾸는 부분: 화면 행의 모양과 목록에서 감출 항목.
+    def _row(self, record: Record) -> dict[str, Any]:
+        return view_row(record)
+
+    def _hidden(self, record: Record) -> bool:
+        return bool(record[6])  # 클라우드 전용 문서는 목록에 두지 않는다.
+
     def _in_scope(self, key: str) -> bool:
         return key.startswith(self._root_prefixes) and not (
             self._excluded_prefixes and key.startswith(self._excluded_prefixes))
@@ -260,9 +267,9 @@ class ViewSync:
             for record in records:
                 key = record[0]
                 self._known[key] = record
-                if record[6] or key in self._gone or not self._in_scope(key):
+                if self._hidden(record) or key in self._gone or not self._in_scope(key):
                     continue
-                row = self._shown[key] = view_row(record)
+                row = self._shown[key] = self._row(record)
                 self._publish(row)
             return len(self._shown)
 
@@ -299,8 +306,7 @@ class ViewSync:
                 record = old
             self._show(key, record, old, changed)
 
-    @staticmethod
-    def _changed(old: Record, name: str, size: int | None, mtime: float | None, cloud: bool) -> bool:
+    def _changed(self, old: Record, name: str, size: int | None, mtime: float | None, cloud: bool) -> bool:
         if old[2] != name or old[4] != size or bool(old[6]) != cloud:
             return True
         if old[5] is None or mtime is None:
@@ -309,17 +315,17 @@ class ViewSync:
 
     def _show(self, key: str, record: Record, old: Record | None, changed: bool) -> None:
         shown = self._shown.get(key)
-        if record[6]:  # 클라우드 전용은 목록에 두지 않는다.
+        if self._hidden(record):
             if shown is not None:
                 del self._shown[key]
                 self._remove_event(shown["path"])
             return
         if shown is None:
-            row = self._shown[key] = view_row(record)
+            row = self._shown[key] = self._row(record)
             self.counts["added"] += 1
             self._publish(row)
         elif changed:
-            row = self._shown[key] = view_row(record)
+            row = self._shown[key] = self._row(record)
             self.counts["updated"] += 1
             event = {**row, "op": "update"}
             if old is not None and old[1] != row["path"]:
@@ -376,8 +382,8 @@ class ViewSync:
             self._gone.discard(key)
             self._known[key] = record
             self._seen.add(key)
-            if not record[6]:
-                self._shown[key] = view_row(record)
+            if not self._hidden(record):
+                self._shown[key] = self._row(record)
 
 
 def file_record(path: str) -> Record | None:

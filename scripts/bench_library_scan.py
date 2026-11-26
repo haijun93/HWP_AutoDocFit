@@ -9,6 +9,9 @@
 
     python scripts/bench_library_scan.py --klib <klib.exe> --kind doc --count 65000 --runs first cached changed
 
+사진(PHOTOSYNC1)은 같은 방법에 `--kind photo --count 50000` 을 쓴다. 새 코드는 비교가 끝난 뒤의 촬영 정보
+정리까지 기다리며 그동안의 이름 검색 시간도 잰다.
+
 합성 파일과 DB·캐시는 --work 아래 임시 폴더에 만들고 끝나면 함께 지운다.
 """
 from __future__ import annotations
@@ -28,16 +31,18 @@ DOC_EXT = "hwp,hwpx,pdf,ppt,pptx,xls,xlsx"
 PHOTO_EXT = "bmp,heic,jpeg,jpg,png,tif,tiff,webp"
 
 
+def photo_bytes(color: tuple[int, int, int] = (90, 120, 150)) -> bytes:
+    from PIL import Image
+    image = Image.new("RGB", (32, 24), color)
+    exif = image.getexif()
+    exif[0x0132] = "2025:03:14 10:20:30"
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", exif=exif)
+    return buffer.getvalue()
+
+
 def make_files(root: Path, count: int, kind: str) -> None:
-    data = b""
-    if kind == "photo":
-        from PIL import Image
-        image = Image.new("RGB", (32, 24), (90, 120, 150))
-        exif = image.getexif()
-        exif[0x0132] = "2025:03:14 10:20:30"
-        buffer = io.BytesIO()
-        image.save(buffer, format="JPEG", exif=exif)
-        data = buffer.getvalue()
+    data = photo_bytes() if kind == "photo" else b""
     suffix = ".jpg" if kind == "photo" else ".pdf"
     for index in range(count):
         folder = root / f"folder{index // 100:04}"
@@ -63,15 +68,18 @@ def win32_scan(klib: str, roots: list[str], extensions: str, excluded: list[str]
     return {"rows": rows, "first": first, "total": time.perf_counter() - started}
 
 
-def change_files(source: Path) -> None:
-    """합성 문서의 1%: 0.4% 내용 변경, 0.3% 추가, 0.3% 삭제(직접 만든 임시 파일만)."""
-    files = sorted(source.rglob("item*.pdf"))
+def change_files(source: Path, kind: str = "doc") -> None:
+    """합성 파일의 1%: 0.4% 내용 변경, 0.3% 추가, 0.3% 삭제(직접 만든 임시 파일만)."""
+    suffix = ".jpg" if kind == "photo" else ".pdf"
+    changed = photo_bytes((10, 20, 30)) + b"changed" if kind == "photo" else b"changed"
+    added = photo_bytes() if kind == "photo" else b""
+    files = sorted(source.rglob(f"item*{suffix}"))
     step = len(files) // max(1, len(files) // 100)
     for number, path in enumerate(files[::step]):
         if number % 10 < 4:
-            path.write_bytes(b"changed")
+            path.write_bytes(changed)
         elif number % 10 < 7:
-            path.with_name(f"new{number:06}.pdf").write_bytes(b"")
+            path.with_name(f"new{number:06}{suffix}").write_bytes(added)
         else:
             path.unlink()
 
@@ -116,12 +124,17 @@ def app_scan(command, start_action: str, *, streaming: bool, list_action: str | 
     shown = 0
     shown_all = None
     ops = {"update": 0, "remove": 0}
+    changes_done = None
+    new_photo = False
     if response.get("state") == "cached":
         result = response.get("result", {})
         rows = len(result.get("documents", result.get("photos", [])))
         first = time.perf_counter() - started
         shown_all = first
     cached = first is not None
+    new_photo = start_action == "scan_default" and "from_db" in response
+    if new_photo:
+        list_action = None  # 새 화면은 이어 받은 목록을 그대로 쓴다.
     since = 0
     state = {"state": "running"}
     backlog = False
@@ -136,7 +149,8 @@ def app_scan(command, start_action: str, *, streaming: bool, list_action: str | 
             rows += len(state["rows"])
             for row in state["rows"]:
                 if "op" in row:
-                    ops[row["op"]] += 1
+                    ops[row["op"]] = ops.get(row["op"], 0) + 1
+                    changes_done = time.perf_counter() - started
                 else:
                     shown += 1
             if expected and shown_all is None and shown >= expected * 0.99:
@@ -152,15 +166,45 @@ def app_scan(command, start_action: str, *, streaming: bool, list_action: str | 
         shown_all = shown_all or time.perf_counter() - started
         first = first or time.perf_counter() - started
         all_rows = scan_done
+    exif = {}
+    if new_photo:
+        exif = watch_exif(command, call, started, state.get("result", {}))
     if list_action:
         listed = call(list_action, {})
         rows = sum(len(group["items"]) for group in listed["groups"])
         first = first or time.perf_counter() - started
-    return {"rows": rows, "first": first, "shown_all": shown_all, "updates": ops["update"],
+    return {**exif, "changes_done": changes_done, "rows": rows, "first": first, "shown_all": shown_all,
+            "updates": ops["update"],
             "removes": ops["remove"], "all_rows": all_rows or time.perf_counter() - started,
             "scan_done": scan_done, "total": time.perf_counter() - started,
             "bridge_s": bridge["seconds"], "bridge_mb": bridge["bytes"] / 1e6,
             "largest_mb": bridge["largest"] / 1e6, "engine": state.get("engine")}
+
+
+SEARCH_PROBE = True
+
+
+def watch_exif(command, call, started: float, result: dict) -> dict:
+    """촬영 정보 정리가 끝날 때까지 화면처럼 1초마다 확인하고, 그동안 이름 검색 시간을 잰다."""
+    total = result.get("exif", {}).get("total", 0)
+    since = 0
+    searches: list[float] = []
+    status = {"running": bool(total)}
+    while status.get("running"):
+        time.sleep(1.0)
+        if SEARCH_PROBE:
+            t0 = time.perf_counter()
+            command("search", {"query": "item0001"})
+            searches.append(time.perf_counter() - t0)
+        status = call("exif_status", {"since": since})
+        since = status.get("next", since)
+        while status.get("more"):
+            status = call("exif_status", {"since": since})
+            since = status.get("next", since)
+    searches.sort()
+    return {"exif_total": total, "exif_done": time.perf_counter() - started,
+            "search_during_median": searches[len(searches) // 2] if searches else None,
+            "search_during_max": searches[-1] if searches else None}
 
 
 def measure(kind: str, roots: list[str] | None, work: Path, streaming: bool, runs: tuple[str, ...],
@@ -183,7 +227,7 @@ def measure(kind: str, roots: list[str] | None, work: Path, streaming: bool, run
     from docfit_app import doc_grid_service
     for label in runs:
         if label == "changed":
-            change_files(source)
+            change_files(source, kind)
         if service_klib:
             doc_grid_service.query_names_service = fake_service(service_klib, roots, DOC_EXT)
         if label == "again":  # 저장된 목록 없이 다시 검색(DB는 남아 있음)
@@ -191,13 +235,16 @@ def measure(kind: str, roots: list[str] | None, work: Path, streaming: bool, run
         report(kind, label, app_scan(service.command, start, streaming=streaming, list_action=listing,
                                      expected=count))
         saved = [data / "library-view" / f"documents.db{suffix}" for suffix in ("", "-wal")]
+        if kind == "photo":
+            saved.append(data / "photos.db")
         saved.append(data / "scan-cache" / ("documents.json" if kind == "doc" else "photos.json"))
         for path in saved:
             if path.is_file():
                 print(f"# size {path.name} {path.stat().st_size / 1e6:.1f} MB", flush=True)
         service = make()
     if kind == "photo":
-        for label, payload in (("search name", {"query": "item0001"}), ("search all", {"query": "item"})):
+        for label, payload in (("search name", {"query": "item0001"}), ("search all", {"query": "item"}),
+                               ("search tag", {"tag": "없는태그"})):
             t0 = time.perf_counter()
             found = service.command("search", payload)["results"]
             queried = time.perf_counter() - t0
@@ -223,7 +270,11 @@ def main() -> None:
     parser.add_argument("--source-kind", choices=["klib", "service"], default="klib")
     parser.add_argument("--source", help="이미 만든 합성 폴더를 그대로 쓴다(전후 비교용)")
     parser.add_argument("--real", action="store_true", help="실제 기본 검색 범위를 한 번 잰다(개수·시간만)")
+    parser.add_argument("--no-search-probe", action="store_true",
+                        help="촬영 정보 정리 중 검색 시간을 재지 않는다(변경 전과 같은 조건)")
     args = parser.parse_args()
+    global SEARCH_PROBE
+    SEARCH_PROBE = not args.no_search_probe
     sys.path.insert(0, str(Path(args.code).resolve()))
     os.environ["KLIB_EXE"] = str(Path(args.klib).resolve())
     os.environ.pop("DOCFIT_SCAN_ENGINE", None)
