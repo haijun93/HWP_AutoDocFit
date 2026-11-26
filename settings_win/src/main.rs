@@ -10,6 +10,7 @@ use ui_theme::Kind;
 
 #[derive(Default)]
 struct Args {
+    manage: bool,
     capture_dir: Option<String>,
     dark: bool,
     hc: bool,
@@ -30,6 +31,7 @@ fn parse_args() -> Result<Args, String> {
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         match arg.as_str() {
+            "--manage" => a.manage = true,
             "--capture-dir" => a.capture_dir = Some(it.next().ok_or("--capture-dir 에 폴더가 필요합니다")?),
             "--dark" => a.dark = true,
             "--hc" => a.hc = true,
@@ -141,6 +143,11 @@ fn jobs_of(a: &Args) -> Vec<Job> {
 
 fn run() -> Result<String, String> {
     let a = parse_args()?;
+    if a.manage {
+        let data=a.settings.as_ref().and_then(|p|std::path::Path::new(p).parent()).map(std::path::Path::to_path_buf).unwrap_or_else(native_tasks::data_dir);
+        native_tasks::window::run(false,data)?;
+        return Ok(String::new());
+    }
     let Some(dir) = a.capture_dir.clone() else {
         let path = match &a.settings {
             Some(p) => std::path::PathBuf::from(p),

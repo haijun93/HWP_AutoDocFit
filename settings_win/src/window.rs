@@ -937,6 +937,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
                 DefWindowProcW(hwnd, msg, wp, lp)
             }
             WM_COMMAND => {
+                if wp & 0xffff == 110 {
+                    if let Some(s)=state(hwnd) {
+                        let result=std::env::current_exe().map_err(|e|e.to_string()).and_then(|exe|
+                            std::process::Command::new(exe).arg("--manage").arg("--settings").arg(&s.model.path).spawn().map(|_|()).map_err(|e|e.to_string()));
+                        if let Err(e)=result {s.model.status=Some(crate::model::Status{text:e,error:true});}
+                    }
+                    return 0;
+                }
                 if let Some(s) = state(hwnd) {
                     let (code, from) = (((wp >> 16) & 0xFFFF) as u32, lp as HWND);
                     if code == EN_SETFOCUS && from == s.search_edit {
@@ -1015,6 +1023,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             WM_DESTROY => {
                 PostQuitMessage(0);
+                0
+            }
+            0x8065 => {
+                let names=Box::from_raw(lp as *mut Vec<String>);
+                if let Some(s)=state(hwnd){s.model.fonts.extend(*names);s.model.fonts.sort();s.model.fonts.dedup();InvalidateRect(hwnd,null(),0);}
                 0
             }
             _ => {
@@ -1133,9 +1146,24 @@ pub fn run(model: Model) -> Result<(), String> {
         DeleteObject(old);
         s.search_edit = create_edit(hwnd, SEARCH_ID, s.font, dpi, false);
         s.value_edit = create_edit(hwnd, VALUE_ID, s.font, dpi, false);
+        let manage=CreateWindowExW(0,wide("BUTTON").as_ptr(),wide("관리…").as_ptr(),WS_CHILD|WS_VISIBLE|WS_TABSTOP,
+            scale(140,dpi),scale(14,dpi),scale(80,dpi),scale(28,dpi),hwnd,110 as _,GetModuleHandleW(null()),null());
+        SendMessageW(manage,WM_SETFONT,s.font as usize,0);
         ui_theme::apply_window(hwnd, kind);
         sync_edits(hwnd, s);
         ShowWindow(hwnd, SW_SHOW);
+        native_tasks::window::apply_saved_topmost(hwnd,&s.model.path);
+        let owner=hwnd as usize;
+        let data=s.model.path.parent().unwrap_or_else(||std::path::Path::new(".")).to_path_buf();
+        std::thread::spawn(move||{
+            if let Ok(mut client)=native_tasks::Client::start(&data){
+                if let Ok(reply)=client.call(&serde_json::json!({"op":"fonts"})){
+                    let names:Vec<String>=reply["fonts"].as_array().into_iter().flatten().filter_map(|v|v.as_str().map(str::to_owned)).collect();
+                    let raw=Box::into_raw(Box::new(names));
+                    if PostMessageW(owner as HWND,0x8065,0,raw as isize)==0{drop(Box::from_raw(raw));}
+                }
+            }
+        });
         SetFocus(hwnd);
         let mut msg: MSG = std::mem::zeroed();
         while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {

@@ -264,7 +264,9 @@ def manager_for(gui):
             import os
             from pathlib import Path
             folder = Path(os.environ.get('APPDATA') or Path.home()) / 'HwpAutoDocFit'
-            gui._job_manager = JobManager(state_path=folder / 'desktop-jobs.json')
+            from docfit_app.screen_mode import job_state_name
+            # 전용 창은 메뉴별 파일: 다른 창의 진행 중 작업을 '중단된 작업'으로 치우지 않는다.
+            gui._job_manager = JobManager(state_path=folder / job_state_name())
         return gui._job_manager
 
 

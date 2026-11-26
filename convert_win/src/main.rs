@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 mod logic;
+mod task;
 #[cfg(windows)]
 #[path = "win.rs"]
 mod win;
