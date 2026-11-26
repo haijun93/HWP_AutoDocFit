@@ -30,7 +30,8 @@ def _read_exact(pipe: Any, size: int) -> bytes:
 
 
 def names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
-                pipe_name: str = KFindPipeName, opener: Any = None) -> list[dict[str, Any]] | None:
+                pipe_name: str = KFindPipeName, opener: Any = None,
+                on_row: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]] | None:
     """Query the ready service index. Return None for unavailable or invalid replies."""
     if os.name != "nt":
         return None
@@ -70,6 +71,7 @@ def names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
         full_excluded.extend(str(x) for x in excluded)
         rows = []
         offset = 0
+        wanted = {x.lstrip(".").casefold() for x in extensions}
         while True:
             result = request("names_list", extensions=sorted(x.lstrip(".").casefold() for x in extensions),
                              roots=roots, exclude=full_excluded, offset=offset, limit=5000)
@@ -79,12 +81,13 @@ def names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
                 if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not isinstance(item.get("name"), str):
                     raise ValueError("invalid names_list row")
                 path, name = item["path"], item["name"]
-                ext = Path(name).suffix.lstrip(".").casefold()
-                if ext not in {x.lstrip(".").casefold() for x in extensions}: continue
+                ext = os.path.splitext(name)[1].lstrip(".").casefold()
+                if ext not in wanted: continue
                 row = {"path": path, "name": name, "ext": ext}
                 for key in ("size", "mtime", "mtime_ns", "cloud"):
                     if key in item: row[key] = item[key]
                 rows.append(row)
+                if on_row: on_row(row)
             if next_offset <= offset and not done: return None
             offset = next_offset
             if done: break
@@ -116,25 +119,29 @@ def scan_default(extensions: set[str] | frozenset[str], excluded: Any = (), *, e
 
 
 def service_names_query(extensions: set[str] | frozenset[str], excluded: Any = (), *,
-                        pipe_name: str = KFindPipeName, opener: Any = None) -> list[dict[str, Any]] | None:
+                        pipe_name: str = KFindPipeName, opener: Any = None,
+                        on_row: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]] | None:
     if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() == "python": return None
-    return names_query(extensions, excluded, pipe_name=pipe_name, opener=opener)
+    extra: dict[str, Any] = {"on_row": on_row} if on_row else {}
+    return names_query(extensions, excluded, pipe_name=pipe_name, opener=opener, **extra)
 
 
 def scan_default_roots(extensions: set[str] | frozenset[str], excluded: Any = (), *, executable: Path | None = None,
                        cancel_event: threading.Event | None = None, on_progress: Any | None = None,
-                       roots: Any = None) -> list[dict[str, Any]] | None:
+                       roots: Any = None,
+                       on_row: Callable[[dict[str, Any]], None] | None = None) -> list[dict[str, Any]] | None:
     """Rust scan all default desktop/fixed roots in one concurrent process."""
     if os.environ.get("DOCFIT_SCAN_ENGINE", "").strip().casefold() == "python": return None
     executable = executable or find_klib_executable()
     if not executable: return None
-    from .library_scope import current_default_roots, _EXCLUDED_NAMES
+    from .library_scope import current_default_roots
     scan_roots = [Path(p) for p in (roots if roots is not None else current_default_roots()) if Path(p).is_dir()]
     if not scan_roots: return None
     command = [str(executable), "scan", "--roots", *map(str, scan_roots), "--ext",
                ",".join(sorted(x.lstrip(".").lower() for x in extensions)), "--json-lines"]
-    excludes = [str(root / name) for root in scan_roots for name in _EXCLUDED_NAMES]
-    excludes.extend(map(str, excluded))
+    # 예약 폴더는 klib 이 스스로(루트 아래 폴더 이름으로) 건너뛴다. 루트×이름 목록까지 넘기면 klib 이
+    # 파일마다 그 목록을 모두 대조해 느려지므로, win32 창처럼 사용자 제외 폴더만 넘긴다.
+    excludes = list(map(str, excluded))
     if excludes: command += ["--exclude", *excludes]
     process = None
     rows = []
@@ -151,7 +158,8 @@ def scan_default_roots(extensions: set[str] | frozenset[str], excluded: Any = ()
             if not isinstance(row, dict) or not all(k in row for k in ("path", "name", "ext", "size", "mtime", "cloud")):
                 raise ValueError("invalid klib scan JSON row")
             rows.append(row)
-            if on_progress: on_progress(len(rows), str(Path(row["path"]).parent))
+            if on_row: on_row(row)
+            if on_progress: on_progress(len(rows), os.path.dirname(row["path"]))
         process.wait()
         if cancel_event is not None and cancel_event.is_set(): return rows
         return rows if process.returncode == 0 else None

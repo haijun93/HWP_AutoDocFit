@@ -71,6 +71,8 @@ class _DocGridScreenState extends State<DocGridScreen> {
   bool _loading = false;
   String? _errorMessage;
   bool _scanRunning = false;
+  // 검색 중에 찾은 항목을 이미 보여 주고 있는지.
+  bool _streaming = false;
   int _scanVisited = 0;
   String _scanFolder = '';
   DateTime? _scanStartedAt;
@@ -103,15 +105,18 @@ class _DocGridScreenState extends State<DocGridScreen> {
   Future<void> _loadDefault() async {
     try {
       _selection.clear();
-      setState(() { _loading = true; _scanRunning = true; _scanVisited = 0; _scanFolder = ''; _scanStartedAt = DateTime.now(); _scanLastProgressAt = _scanStartedAt; _scanNow = DateTime.now(); _scanUiTimer?.cancel(); _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now()); }); _errorMessage = null; });
+      setState(() { _loading = true; _streaming = false; _scanRunning = true; _scanVisited = 0; _scanFolder = ''; _scanStartedAt = DateTime.now(); _scanLastProgressAt = _scanStartedAt; _scanNow = DateTime.now(); _scanUiTimer?.cancel(); _scanUiTimer = Timer.periodic(const Duration(seconds: 1), (_) { if (mounted && _scanRunning) setState(() => _scanNow = DateTime.now()); }); _errorMessage = null; });
       final res = await widget.api('doc_grid', ['list_default', {}]);
       if (!mounted) return;
-      if (res is Map && res['ok'] == true) {
+      // 화면을 다시 열었을 때 이미 도는 스캔이 있으면 그 스캔을 이어서 보여 준다.
+      if (res is Map && (res['ok'] == true || res['code'] == 'SCAN_RUNNING')) {
         Object? result = res;
+        var cached = false;
         if (res['state'] == 'cached' && res['result'] is Map) {
           final cachedResult = res['result'] as Map;
           final cachedItems = cachedResult['documents'];
           if (cachedItems is List) {
+            cached = true;
             setState(() {
               _documents = cachedItems.whereType<Map>().map((e) => Map<String, Object?>.from(e)).toList();
               _loading = false;
@@ -119,39 +124,79 @@ class _DocGridScreenState extends State<DocGridScreen> {
             });
           }
         }
+        // 저장된 목록이 없으면 찾는 대로 새 행만 받아 이어 붙인다.
+        var streamed = false;
         if (res['task_id'] != null) {
           var state = 'running';
-          while (state == 'running' || state == 'cancelling') {
-            await Future<void>.delayed(const Duration(milliseconds: 120));
+          var next = 0;
+          var backlog = false;
+          while (state == 'running' || state == 'cancelling' || backlog) {
+            if (!backlog) await Future<void>.delayed(const Duration(milliseconds: 120));
             if (!mounted) return;
-            final progress = await widget.api('doc_grid', ['scan_progress', {}]);
+            final progress = await widget.api('doc_grid', ['scan_progress', cached ? {} : {'since': next}]);
+            if (!mounted) return;
             if (progress is! Map || progress['ok'] != true) break;
             state = '${progress['state'] ?? 'running'}';
-            setState(() { _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0; _scanFolder = '${progress['current_folder'] ?? ''}'; _scanStartedAt ??= DateTime.now(); _scanLastProgressAt = DateTime.now(); });
+            final rows = progress['rows'];
+            final added = <Map<String, Object?>>[];
+            if (!cached && rows is List) {
+              if (!streamed) _documents = [];
+              streamed = true;
+              for (final item in rows) {
+                if (item is Map) added.add(Map<String, Object?>.from(item));
+              }
+              final following = (progress['next'] as num?)?.toInt() ?? next;
+              backlog = following > next && following < ((progress['total'] as num?)?.toInt() ?? 0);
+              next = following;
+            } else {
+              backlog = false;
+            }
+            setState(() {
+              _scanVisited = (progress['visited'] as num?)?.toInt() ?? 0; _scanFolder = '${progress['current_folder'] ?? ''}'; _scanStartedAt ??= DateTime.now(); _scanLastProgressAt = DateTime.now();
+              if (added.isNotEmpty) {
+                _documents.addAll(added);
+                _loading = false;
+                _streaming = true;
+                _currentFolder = '모든 고정 드라이브';
+              }
+            });
             if (state == 'complete' || state == 'cancelled') result = progress['result'];
             if (state == 'failed') throw StateError('${progress['error'] ?? '스캔에 실패했습니다.'}');
           }
         }
-        final scanResult = result is Map ? result : res;
-        final docs = <Map<String, Object?>>[];
-        if (scanResult['documents'] is List) {
-          for (final item in scanResult['documents'] as List) {
-            if (item is Map) docs.add(Map<String, Object?>.from(item));
+        final List<Map<String, Object?>> docs;
+        if (streamed) {
+          // 정렬은 검색이 끝났을 때 한 번만 한다(묶음마다 다시 정렬하지 않는다).
+          docs = _sortedByName(_documents);
+        } else {
+          final scanResult = result is Map ? result : res;
+          docs = <Map<String, Object?>>[];
+          if (scanResult['documents'] is List) {
+            for (final item in scanResult['documents'] as List) {
+              if (item is Map) docs.add(Map<String, Object?>.from(item));
+            }
           }
         }
-        setState(() { _documents = docs; _loading = false; _scanRunning = false; _currentFolder = '모든 고정 드라이브'; });
+        setState(() { _documents = docs; _loading = false; _scanRunning = false; _streaming = false; _currentFolder = '모든 고정 드라이브'; });
       } else {
-        setState(() { _errorMessage = '${res is Map ? res['message'] : '문서 목록을 불러오지 못했습니다.'}'; _loading = false; _scanRunning = false; });
+        setState(() { _errorMessage = '${res is Map ? res['message'] : '문서 목록을 불러오지 못했습니다.'}'; _loading = false; _scanRunning = false; _streaming = false; });
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _errorMessage = '문서 목록을 불러오는 중 오류가 발생했습니다: $e';
           _scanRunning = false;
+          _streaming = false;
           _loading = false;
         });
       }
     }
+  }
+
+  static List<Map<String, Object?>> _sortedByName(List<Map<String, Object?>> docs) {
+    final keyed = [for (final doc in docs) ('${doc['name']}'.toLowerCase(), doc)]
+      ..sort((a, b) => a.$1.compareTo(b.$1));
+    return [for (final entry in keyed) entry.$2];
   }
 
   Future<void> _cancelScan() async {
@@ -328,7 +373,7 @@ class _DocGridScreenState extends State<DocGridScreen> {
                     IconButton(
                       tooltip: '새로고침',
                       icon: const Icon(Icons.refresh, size: 20),
-                      onPressed: _loading ? null : _loadDefault,
+                      onPressed: _loading || _scanRunning ? null : _loadDefault,
                     ),
                   ] else
                     const Expanded(
@@ -355,6 +400,31 @@ class _DocGridScreenState extends State<DocGridScreen> {
       },
     );
   }
+
+  /// 목록을 보여 주면서 검색이 계속될 때의 진행 띠.
+  Widget _buildScanBanner() => Padding(
+    key: const ValueKey('docGridScanBanner'),
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: Row(
+      children: [
+        const SizedBox(width: 120, child: LinearProgressIndicator()),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '문서 검색 중 · ${_documents.length}개 표시 · $_scanElapsed',
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+        TextButton.icon(
+          key: const ValueKey('docGridCancelScanButton'),
+          onPressed: _cancelScan,
+          icon: const Icon(Icons.cancel_outlined, size: 16),
+          label: const Text('스캔 취소'),
+        ),
+      ],
+    ),
+  );
 
   Widget _buildBody() {
     if (_loading) {
@@ -505,13 +575,19 @@ class _DocGridScreenState extends State<DocGridScreen> {
           onApplied: _applyFileResults,
           child: grid,
         );
+        final body = Column(
+          children: [
+            if (_streaming) _buildScanBanner(),
+            Expanded(child: area),
+          ],
+        );
         if (!constraints.hasBoundedHeight) {
           return SizedBox(
             height: 600,
-            child: area,
+            child: body,
           );
         }
-        return area;
+        return body;
       },
     );
   }
