@@ -117,6 +117,57 @@ void main() {
     expect(find.byKey(const ValueKey('docGridScanBanner')), findsNothing);
   });
 
+  testWidgets('문서뷰: 저장 목록을 먼저 보여 주고 바뀐 것만 반영한다', (tester) async {
+    _screen(tester);
+    var finished = false;
+    Future<Object?> api(String method, List<Object?> args) async {
+      final action = args.first as String;
+      if (action == 'list_default') return {'ok': true, 'task_id': 't', 'state': 'running', 'from_db': true};
+      if (action == 'scan_progress') {
+        final since = (args[1] as Map)['since'] as int;
+        final all = <Map<String, Object?>>[
+          _doc('나.pdf'),
+          _doc('다.pdf'),
+          if (finished) ...[
+            {..._doc('나.pdf'), 'size': 2048, 'op': 'update'},
+            _doc('가.pdf'),
+            {'op': 'remove', 'path': '/test/docs/다.pdf'},
+          ],
+        ];
+        final rows = all.skip(since).toList();
+        return {
+          'ok': true,
+          'state': finished ? 'complete' : 'running',
+          'visited': all.length,
+          'rows': rows,
+          'next': all.length,
+          'total': all.length,
+          if (finished) 'result': {'engine': 'service'},
+        };
+      }
+      return {'ok': true};
+    }
+
+    await tester.pumpWidget(MaterialApp(home: DocGridScreen(api: api)));
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pump();
+    expect(find.text('2개 문서'), findsOneWidget);
+    expect(find.textContaining('저장된 목록 표시'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('docCardFrame-/test/docs/다.pdf')));
+    await tester.pump(const Duration(milliseconds: 400));
+
+    finished = true;
+    await tester.pump(const Duration(milliseconds: 140));
+    await tester.pumpAndSettle();
+    expect(find.text('2개 문서'), findsOneWidget);
+    expect(find.byKey(const ValueKey('docCardFrame-/test/docs/다.pdf')), findsNothing);
+    expect(find.text('2.0 KB'), findsOneWidget);
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey('docCardFrame-/test/docs/가.pdf'))).dx,
+      lessThan(tester.getTopLeft(find.byKey(const ValueKey('docCardFrame-/test/docs/나.pdf'))).dx),
+    );
+  });
+
   testWidgets('사진뷰: 검색 중 받은 사진을 월별로 보여 주고 끝나면 DB 목록으로 바꾼다', (tester) async {
     _screen(tester);
     var finished = false;

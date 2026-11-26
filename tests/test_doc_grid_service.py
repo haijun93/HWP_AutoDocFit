@@ -218,11 +218,11 @@ class DocGridServiceTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "문서 폴더를 읽지 못했습니다: denied"):
                 self.service.list_documents(self.docs_dir)
 
-    def test_empty_persistent_scan_cache_is_not_used_as_initial_result(self):
+    def test_empty_persistent_scan_cache_is_not_imported(self):
         with patch("docfit_app.doc_grid_service.library_scan_cache.load", return_value=[]), \
-             patch.object(self.service._background_scan, "start", return_value={"ok": True}) as start:
-            self.service.start_default_scan()
-        self.assertIsNone(start.call_args.kwargs["initial_result"])
+             patch.object(self.service._background_scan, "start", return_value={"ok": True}):
+            started = self.service.start_default_scan()
+        self.assertFalse(started["from_db"])
 
     def test_recursive_scan_uses_rust_and_skips_thumbnail_cache_lookup(self):
         target = self.docs_dir / "recursive.pdf"
