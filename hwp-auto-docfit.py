@@ -1547,6 +1547,8 @@ _내어쓰기_여백쌍_설정 = _engine_resolve('docfit_engine.formatter', '_�
 
 
 재검사_영역인가 = _engine_resolve('docfit_engine.formatter', '재검사_영역인가', globals())
+본문_대상_지남 = _engine_resolve('docfit_engine.formatter', '본문_대상_지남', globals())
+재검사_본문뿐인가 = _engine_resolve('docfit_engine.formatter', '재검사_본문뿐인가', globals())
 
 
 문단_내어쓰기_전체_갱신 = _engine_resolve('docfit_engine.formatter', '문단_내어쓰기_전체_갱신', globals())

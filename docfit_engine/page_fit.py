@@ -4417,6 +4417,10 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                         or 표셀_자간_제외인가()):
                     # 작업 쪽 범위 밖, 2차 이후 재검사 대상이 아닌 문단, '표 안 문장 제외'인
                     # 표 셀이면 줄 병합을 하지 않고 넘어간다.
+                    if (not 재검사_대상인가(현재위치)
+                            and 본문_대상_지남(재검사_대상문단, 현재위치)):
+                        hwp_run('MoveDocEnd')   # 전수 순회가 끝나던 커서 위치를 유지한다.
+                        return True
                     try:
                         hwp_run("MoveParaEnd")
                         hwp_run("MoveNextChar")
