@@ -1,12 +1,13 @@
 //! v2.2.110 목록 DB와 Rust 사진뷰의 합성 DB 왕복. 사용자 DB는 열지 않는다.
-use photoview_win::library::Library;
+use photoview_win::library::{stored_path, Library};
 use rusqlite::{Connection, params};
 
 #[test]
 fn old_database_migration_preserves_photo_metadata_and_marks() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("photo_album.db");
-    let path = dir.path().join("synthetic.jpg").to_string_lossy().into_owned();
+    // 제품은 부모 폴더를 실제 경로로 풀어 저장한다(짧은 이름·정션 임시 폴더에서도 같은 열쇠).
+    let path = stored_path(&dir.path().join("synthetic.jpg").to_string_lossy());
     let conn = Connection::open(&database).unwrap();
     conn.execute_batch("CREATE TABLE photos (
         path TEXT PRIMARY KEY, folder TEXT, filename TEXT, size INTEGER, mtime REAL, date_taken TEXT,
@@ -33,7 +34,8 @@ fn old_database_migration_preserves_photo_metadata_and_marks() {
 fn editing_marks_keeps_missing_rows_and_unrelated_list_state() {
     let dir = tempfile::tempdir().unwrap();
     let database = dir.path().join("photo_album.db");
-    let path = dir.path().join("missing.jpg").to_string_lossy().into_owned();
+    // 제품은 부모 폴더를 실제 경로로 풀어 저장한다(짧은 이름·정션 임시 폴더에서도 같은 열쇠).
+    let path = stored_path(&dir.path().join("missing.jpg").to_string_lossy());
     let library = Library::new(database.clone());
     library.add_tag(&path, "keep").unwrap();
     let conn = Connection::open(&database).unwrap();
