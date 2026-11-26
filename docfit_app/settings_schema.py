@@ -27,6 +27,8 @@ DEFAULTS = {
     "prevent_word_split": True,
     # 장평 줄이기(가로 비율 축소)는 기본으로 끈다(2026-10-10 사용자 규칙). 끄면 자간 줄이기·늘리기만으로 조정한다.
     "ratio_shrink": False,
+    # 확인한 글꼴·조건의 내어쓰기를 폭 표로 계산해 HWPX 에 직접 쓴다(INDENTW3). False면 모두 한/글 Shift+Tab.
+    "indent_table": True,
     "punctuation": True,
     "punctuation_threshold": "5",
     "keep_punctuation_set_together": True,

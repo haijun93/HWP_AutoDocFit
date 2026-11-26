@@ -9,6 +9,7 @@ pub const LABELS: &[(&str, &str)] = &[
     ("file_rename_sendto", "탐색기 보내기 메뉴에 파일명 일괄변경 넣기"),
     ("prevent_word_split", "어절 줄 나눔 방지"),
     ("ratio_shrink", "장평 줄이기"),
+    ("indent_table", "폭 표 내어쓰기"),
     ("punctuation", "문장부호 위치 정리"),
     ("punctuation_threshold", "문장부호 이동 한도"),
     ("keep_punctuation_set_together", "문장부호 묶음 유지"),

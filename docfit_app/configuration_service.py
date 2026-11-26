@@ -14,7 +14,7 @@ LABELS = {
  'shell_menu':'탐색기 우클릭 메뉴',
  'mongttang_search':'퀵몽땅검색 단축키(Ctrl+Alt+Space)',
  'file_rename_sendto':'탐색기 보내기 메뉴에 파일명 일괄변경 넣기',
- 'prevent_word_split':'어절 줄 나눔 방지', 'ratio_shrink':'장평 줄이기', 'punctuation':'문장부호 위치 정리',
+ 'prevent_word_split':'어절 줄 나눔 방지', 'ratio_shrink':'장평 줄이기', 'indent_table':'폭 표 내어쓰기', 'punctuation':'문장부호 위치 정리',
  'punctuation_threshold':'문장부호 이동 한도', 'keep_punctuation_set_together':'문장부호 묶음 유지',
  'color_mark_on':'조정한 글자 색 표시', 'color':'표시 색', 'autoclose':'처리 후 한글 창 닫기',
  'stdformat':'보고서 표준서식 적용', 'verify':'상세 진단', 'integrity_report_file':'무결성 보고서 저장',
