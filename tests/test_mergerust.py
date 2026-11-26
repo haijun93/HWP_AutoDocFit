@@ -16,7 +16,9 @@ class MergeRustTest(unittest.TestCase):
         versions = [node for node in tree.body if isinstance(node, ast.Assign)
                     and any(isinstance(t, ast.Name) and t.id == 'APP_VERSION' for t in node.targets)]
         self.assertEqual(len(versions), 1)
-        self.assertEqual(ast.literal_eval(versions[0].value), '2.2.110')
+        version = ast.literal_eval(versions[0].value)
+        self.assertRegex(version, r'^\d+\.\d+\.\d+$')
+        self.assertTrue((ROOT / 'releases' / f'v{version}.md').is_file())
         self.assertLess(versions[0].lineno,
                         next(i for i, line in enumerate(source.decode('utf-8').splitlines(), 1)
                              if '--native-task' in line))
