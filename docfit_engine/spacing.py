@@ -959,7 +959,7 @@ def _install(*, _docfit_namespace, _docfit_symbol):
                 act = hwp.CreateAction('CharShape')
                 pset = act.CreateSet()
                 for key, value in zip(_단어모드_장평필드, values):
-                    pset.SetItem(key, max(85, min(150, value + delta)))
+                    pset.SetItem(key, value if delta == 0 else max(85, min(150, value + delta)))
                 if act.Execute(pset) is False:
                     raise RuntimeError('단어 모드 장평 적용 실패')
             hwp_run('Cancel')
